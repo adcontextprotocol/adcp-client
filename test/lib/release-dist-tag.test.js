@@ -13,6 +13,10 @@ test('release workflow publishes 13.x under the real adcp-3.1 dist-tag', () => {
   assert.doesNotMatch(workflow, /ADCP_NPM_TAG:.*\|\| 'latest'/);
   const parsed = parseYaml(workflow);
   assert.strictEqual(parsed.concurrency, undefined, 'interop must not hold the shared npm release lock');
+  assert.ok(
+    Object.prototype.hasOwnProperty.call(parsed.on, 'workflow_dispatch'),
+    'both release branches need a one-click recovery dispatch'
+  );
   assert.deepStrictEqual(parsed.jobs.release.concurrency, {
     group: 'npm-release-dist-tags',
     'cancel-in-progress': false,
@@ -71,21 +75,48 @@ test('a stable-line override cannot replace the Changesets prerelease tag', () =
   }
 });
 
-test('a prerelease SDK cannot publish to a stable tag without Changesets pre-mode', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-release-tag-'));
-  fs.writeFileSync(path.join(tempDir, 'package.json'), JSON.stringify({ name: '@adcp/sdk', version: '13.1.0-rc.1' }));
+test('a prerelease SDK cannot publish to latest or any stable compatibility tag without pre-mode', () => {
+  for (const tag of ['latest', 'adcp-3.0', 'adcp-3.1', 'adcp-14.12']) {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-release-tag-'));
+    fs.writeFileSync(path.join(tempDir, 'package.json'), JSON.stringify({ name: '@adcp/sdk', version: '13.1.0-rc.1' }));
+    try {
+      const result = require('node:child_process').spawnSync(
+        path.join(__dirname, '../../node_modules/.bin/tsx'),
+        [path.join(__dirname, '../../scripts/publish-adcp-release.ts'), '--dry-run'],
+        {
+          cwd: tempDir,
+          encoding: 'utf8',
+          env: { ...process.env, ADCP_NPM_TAG: tag },
+        }
+      );
+      assert.strictEqual(result.status, 1, tag);
+      assert.match(result.stderr, new RegExp(`stable npm dist-tag ${tag.replace('.', '\\.')}[^\\n]*`));
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  }
+});
+
+test('dist-tag report names the actual Changesets prerelease publish tag', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-release-report-'));
+  fs.mkdirSync(path.join(tempDir, '.changeset'));
+  fs.writeFileSync(
+    path.join(tempDir, '.changeset/pre.json'),
+    `${JSON.stringify({ mode: 'pre', tag: 'rc' }, null, 2)}\n`
+  );
   try {
-    const result = require('node:child_process').spawnSync(
-      path.join(__dirname, '../../node_modules/.bin/tsx'),
-      [path.join(__dirname, '../../scripts/publish-adcp-release.ts'), '--dry-run'],
-      {
-        cwd: tempDir,
-        encoding: 'utf8',
-        env: { ...process.env, ADCP_NPM_TAG: 'adcp-3.1' },
-      }
-    );
-    assert.strictEqual(result.status, 1);
-    assert.match(result.stderr, /Refusing to publish prerelease @adcp\/sdk@13\.1\.0-rc\.1/);
+    const output = execFileSync(process.execPath, [path.join(__dirname, '../../scripts/report-dist-tag-policy.mjs')], {
+      cwd: tempDir,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        ADCP_NPM_TAG: 'adcp-3.1',
+        ADCP_PUBLISHED_PACKAGES: JSON.stringify([{ name: '@adcp/sdk', version: '14.0.0-rc.1' }]),
+        ADCP_CURRENT_LATEST: '13.0.4',
+      },
+    });
+    assert.match(output, /@adcp\/sdk@14\.0\.0-rc\.1` under `rc`/);
+    assert.doesNotMatch(output, /under `adcp-3\.1`/);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 const SDK_PACKAGE = '@adcp/sdk';
@@ -41,7 +41,17 @@ export function readPublishedSdkVersion(value) {
   return sdk.version;
 }
 
-export function resolveLatestPolicy({ publishedVersion, latestVersion }) {
+export function resolvePublishTag(env = process.env, preStatePath = '.changeset/pre.json') {
+  if (existsSync(preStatePath)) {
+    const preState = JSON.parse(readFileSync(preStatePath, 'utf8'));
+    if (preState?.mode === 'pre' && typeof preState.tag === 'string' && preState.tag.length > 0) {
+      return preState.tag;
+    }
+  }
+  return env.ADCP_NPM_TAG || 'latest';
+}
+
+export function resolveLatestPolicy({ publishedVersion, latestVersion, publishTag = 'adcp-3.1' }) {
   const published = parseVersion(publishedVersion);
   const latest = parseVersion(latestVersion);
 
@@ -56,7 +66,7 @@ export function resolveLatestPolicy({ publishedVersion, latestVersion }) {
       action: 'preserve-latest',
       message:
         `Keep npm latest at ${latestVersion}; the ${publishedVersion} maintenance release is available only through ` +
-        '`adcp-3.1` and exact versions.',
+        `\`${publishTag}\` and exact versions.`,
     };
   }
   if (latest.major === published.major) {
@@ -123,7 +133,11 @@ export function applyLatestPolicy(policy, options = {}) {
   // maintenance run from moving latest backward without locking long interop jobs.
   const readLatestVersion = options.readLatestVersion ?? defaultReadLatestVersion;
   const latestVersion = readLatestVersion();
-  const currentPolicy = resolveLatestPolicy({ publishedVersion: options.publishedVersion, latestVersion });
+  const currentPolicy = resolveLatestPolicy({
+    publishedVersion: options.publishedVersion,
+    latestVersion,
+    publishTag: options.publishTag,
+  });
   if (currentPolicy.action !== 'promote-latest-with-credential') return currentPolicy;
 
   const run = options.run ?? ((command, args) => execFileSync(command, args, { stdio: 'inherit' }));
@@ -135,12 +149,12 @@ export function applyLatestPolicy(policy, options = {}) {
   };
 }
 
-function renderReport({ publishedVersion, policy }) {
+function renderReport({ publishedVersion, publishTag, policy }) {
   return [
     '## npm dist-tag policy',
     '',
     publishedVersion
-      ? `Changesets published \`${SDK_PACKAGE}@${publishedVersion}\` under \`adcp-3.1\`.`
+      ? `Changesets published \`${SDK_PACKAGE}@${publishedVersion}\` under \`${publishTag}\`.`
       : `Changesets did not publish \`${SDK_PACKAGE}\`; no SDK dist-tag action was taken.`,
     '',
     policy.message,
@@ -160,12 +174,15 @@ export function runCli(options = {}) {
   const env = options.env ?? process.env;
   const args = options.args ?? process.argv.slice(2);
   let publishedVersion;
+  let publishTag;
   try {
+    publishTag = resolvePublishTag(env, options.preStatePath);
     publishedVersion = readPublishedSdkVersion(env.ADCP_PUBLISHED_PACKAGES);
     if (!publishedVersion) {
       appendReport(
         renderReport({
           publishedVersion,
+          publishTag,
           policy: { action: 'sdk-not-published', message: 'Only other workspace packages were published.' },
         }),
         env
@@ -173,14 +190,15 @@ export function runCli(options = {}) {
       return 0;
     }
     const latestVersion = env.ADCP_CURRENT_LATEST || defaultReadLatestVersion();
-    const initialPolicy = resolveLatestPolicy({ publishedVersion, latestVersion });
+    const initialPolicy = resolveLatestPolicy({ publishedVersion, latestVersion, publishTag });
     const policy = applyLatestPolicy(initialPolicy, {
       apply: args.includes('--apply'),
       npmToken: env.NPM_TOKEN,
       publishedVersion,
+      publishTag,
       readLatestVersion: env.ADCP_CURRENT_LATEST ? () => env.ADCP_CURRENT_LATEST : undefined,
     });
-    appendReport(renderReport({ publishedVersion, policy }), env);
+    appendReport(renderReport({ publishedVersion, publishTag, policy }), env);
     if (policy.action === 'promotion-required-no-token') {
       console.error(`::error title=npm latest promotion blocked::${policy.command}`);
       return 1;
@@ -192,7 +210,9 @@ export function runCli(options = {}) {
     return 0;
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    const versionText = publishedVersion ? `${SDK_PACKAGE}@${publishedVersion} was published under adcp-3.1, but ` : '';
+    const versionText = publishedVersion
+      ? `${SDK_PACKAGE}@${publishedVersion} was published under ${publishTag ?? 'the selected npm tag'}, but `
+      : '';
     const recovery = publishedVersion
       ? ` Inspect with \`npm view ${SDK_PACKAGE} dist-tags --json\`; if latest is still major 13 and older, run \`npm dist-tag add ${SDK_PACKAGE}@${publishedVersion} latest\`.`
       : '';
@@ -200,6 +220,7 @@ export function runCli(options = {}) {
     appendReport(
       renderReport({
         publishedVersion,
+        publishTag: publishTag ?? 'unknown',
         policy: { action: 'reconciliation-error', message },
       }),
       env

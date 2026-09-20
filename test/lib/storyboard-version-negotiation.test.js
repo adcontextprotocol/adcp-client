@@ -669,17 +669,24 @@ describe('storyboard runner AdCP version negotiation', () => {
     );
   });
 
-  test('missing historical cache diagnostic requires matching external compliance and schema inputs', () => {
+  test('missing unbundled cache diagnostic names bundled versions and matching external inputs', () => {
     const { loadComplianceIndex } = require('../../dist/lib/testing/storyboard/compliance.js');
     const missing = path.join(os.tmpdir(), 'adcp-missing-historical-3.1.1');
     assert.throws(
       () => loadComplianceIndex({ complianceDir: missing, version: '3.1.1' }),
       err =>
-        /does not bundle historical compliance caches/.test(err.message) &&
+        /bundles compliance caches for 3\.0\.12, 3\.1\.20, 3\.2\.0/.test(err.message) &&
+        /not every historical patch/.test(err.message) &&
         /--compliance-dir/.test(err.message) &&
         /--schema-root/.test(err.message) &&
         !/cache ships with @adcp\/sdk/.test(err.message)
     );
+  });
+
+  test('loads a standalone bundled compliance version without external paths', () => {
+    const { loadComplianceIndex } = require('../../dist/lib/testing/storyboard/compliance.js');
+    const index = loadComplianceIndex({ version: '3.1.20' });
+    assert.strictEqual(index.adcp_version, '3.1.20');
   });
 
   test('hosted stable-line alias can resolve prerelease-backed compliance cache per call', () => {

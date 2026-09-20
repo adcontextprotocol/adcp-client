@@ -359,6 +359,25 @@ describe('storyboard A2A auth overrides', () => {
     assert.strictEqual(parsed.result.id, 'send-response');
   });
 
+  test('refuses to parse an incomplete SendMessage capture', () => {
+    const parsed = parseLastA2aMessageSendCapture([
+      {
+        url: 'https://seller.example/rpc',
+        method: 'POST',
+        requestJsonRpcMethod: 'SendMessage',
+        status: 200,
+        headers: {},
+        body: '{"jsonrpc":"2.0",',
+        latencyMs: 10_001,
+        timestamp: new Date(0).toISOString(),
+        bodyTruncated: true,
+        bodyCaptureError: 'Raw response capture timed out after 10000 ms before the response body completed',
+      },
+    ]);
+
+    assert.strictEqual(parsed, undefined);
+  });
+
   test('dispatches official SendMessage and never MCP tools/call while isolating credentials', async () => {
     const agentUrl = 'https://seller.example';
     const rpcUrl = `${agentUrl}/rpc`;

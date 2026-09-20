@@ -1179,6 +1179,17 @@ function filterResponseHeaders(headers: Record<string, string> | undefined): Rec
 }
 
 function httpProbeResultFromCapture(capture: RawHttpCapture): HttpProbeResult {
+  if (capture.bodyTruncated) {
+    return {
+      url: capture.url,
+      status: capture.status,
+      headers: Object.fromEntries(Object.entries(capture.headers).map(([name, value]) => [name.toLowerCase(), value])),
+      body: null,
+      error:
+        capture.bodyCaptureError ??
+        'Raw response capture was incomplete; storyboard validators cannot grade a partial response body',
+    };
+  }
   const contentType = Object.entries(capture.headers).find(([name]) => name.toLowerCase() === 'content-type')?.[1];
   let body: unknown = capture.body;
   if (contentType?.toLowerCase().includes('json') || /^[\s]*[{[]/.test(capture.body)) {
@@ -5036,7 +5047,7 @@ async function executeStep(
         const rpcCapture = selectLastA2aSkillCapture(captured.captures, effectiveStep.task);
         const crossOriginRpcCapture =
           rpcCapture !== undefined && new URL(rpcCapture.url).origin !== new URL(runState.agentUrl).origin;
-        if (rpcCapture && !crossOriginRpcCapture) {
+        if (rpcCapture && !crossOriginRpcCapture && !rpcCapture.bodyTruncated) {
           httpResult = httpProbeResultFromCapture(rpcCapture);
           requestUrl = rpcCapture.url;
           const filteredHeaders = filterResponseHeaders(httpResult.headers);
@@ -5051,7 +5062,10 @@ async function executeStep(
         } else {
           const error = crossOriginRpcCapture
             ? 'A2A auth probe selected a cross-origin RPC endpoint; credential-isolated responses cannot be graded'
-            : (stepResult.error ?? taskResult?.error ?? 'A2A auth probe produced no HTTP response');
+            : rpcCapture?.bodyTruncated
+              ? (rpcCapture.bodyCaptureError ??
+                'Raw response capture was incomplete; A2A auth validators cannot grade a partial response body')
+              : (stepResult.error ?? taskResult?.error ?? 'A2A auth probe produced no HTTP response');
           requestUrl = rpcCapture?.url ?? runState.agentUrl;
           httpResult = { url: requestUrl, status: 0, headers: {}, body: null, error };
           stepResult = { ...stepResult, passed: false, error };
@@ -5193,7 +5207,15 @@ async function executeStep(
         throw caughtError;
       }
       if (captureA2a && a2aCaptures) {
-        a2aEnvelope = parseLastA2aMessageSendCapture(a2aCaptures);
+        const skillCapture = selectLastA2aSkillCapture(a2aCaptures, effectiveStep.task);
+        if (skillCapture?.bodyTruncated) {
+          const error =
+            skillCapture.bodyCaptureError ??
+            'Raw response capture was incomplete; A2A validators cannot grade a partial response body';
+          stepResult = { ...stepResult, passed: false, error };
+        } else {
+          a2aEnvelope = parseLastA2aMessageSendCapture(a2aCaptures);
+        }
       }
       if (taskResult) {
         responseRecord = {
@@ -7184,7 +7206,7 @@ export function parseLastA2aMessageSendCapture(captures: readonly RawHttpCapture
     // As a compatibility fallback for older captures, parse the response and
     // look for either the A2A 0.3 Task result or 1.0 `{ task }` oneof envelope.
     const isMessageSend = cap.requestJsonRpcMethod === 'SendMessage' || cap.requestJsonRpcMethod === 'message/send';
-    if (isMessageSend) return parseA2aCapture(cap);
+    if (isMessageSend) return cap.bodyTruncated ? undefined : parseA2aCapture(cap);
     if (taskFallbackIdx === -1) {
       const env = tryParseJsonRpcEnvelope(cap.body);
       if (env && env.result !== undefined && isTaskShape(normalizeCapturedA2AResult(env.result))) {
@@ -7194,7 +7216,8 @@ export function parseLastA2aMessageSendCapture(captures: readonly RawHttpCapture
   }
   const idx = taskFallbackIdx !== -1 ? taskFallbackIdx : lastPostIdx;
   if (idx === -1) return undefined;
-  return parseA2aCapture(captures[idx]!);
+  const capture = captures[idx]!;
+  return capture.bodyTruncated ? undefined : parseA2aCapture(capture);
 }
 
 function parseA2aCapture(cap: RawHttpCapture): A2ATaskEnvelope | undefined {
@@ -7471,6 +7494,11 @@ function createA2AAuthOverrideClient(
   authHeaders: Record<string, string>
 ): TestClient {
   const headers: Record<string, string> = {};
+  // `auth: none` means remove credentials, not every configured header.
+  // Explicit routing headers such as x-tenant may be required to reach the
+  // intended seller tenant, so preserve non-credential custom headers and
+  // rely on the shared credential predicate for the narrow removal. Every
+  // preserved custom header is still origin-bound by the A2A transport.
   for (const [name, value] of Object.entries(options.headers ?? {})) {
     if (!isCredentialHeaderName(name)) headers[name] = value;
   }

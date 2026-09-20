@@ -1173,6 +1173,9 @@ function generateLlmsTxt(
   ln(`- Spec: https://adcontextprotocol.org`);
   ln(`- CLI: \`npx @adcp/sdk@adcp-3.1\` for the maintained 13.x / AdCP 3.1 line`);
   ln(
+    `- Bundled compliance caches: 3.0.12, 3.1.20, and 3.2.0; for example \`--compliance-version 3.1.20\` works without external cache paths`
+  );
+  ln(
     `- Historical patches: the npm package does not ship the 3.1.1 compliance cache; use matching external inputs such as \`--compliance-version 3.1.1 --compliance-dir /path/to/adcp-3.1.1/compliance --schema-root /path/to/adcp-3.1.1/schemas\` with the maintained runner; prerelease inputs remain exact`
   );
   ln();

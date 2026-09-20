@@ -225,7 +225,7 @@ export async function cancelA2ATask(
     return;
   }
   const agentUrl = agent.agent_uri;
-  const configuredHeaders = legacyCompat.enabled === false ? (agent.headers ?? {}) : {};
+  const configuredHeaders = agent.headers ?? {};
   const transportFetch = createAgentTransportFetch(agentUrl, {
     trustedFetchFn: fetchFn,
     allowPrivateIp,
@@ -263,7 +263,14 @@ export async function cancelA2ATask(
     const requestUrl = new URL(input instanceof Request ? input.url : input.toString());
     const nativeCrossOrigin = legacyCompat.enabled === false && requestUrl.origin !== new URL(agentUrl).origin;
     if (nativeCrossOrigin && (authToken || agent.request_signing)) {
-      throw new Error('A2A native cancel refused credentialed cross-origin dispatch declared by the agent card');
+      const credentialHeaderNames = [
+        ...(authToken ? ['authorization', 'x-adcp-auth'] : []),
+        ...(agent.request_signing ? ['content-digest', 'signature', 'signature-input'] : []),
+      ];
+      throw new Error(
+        `A2A native cancel refused credentialed cross-origin dispatch to ${requestUrl.origin}; ` +
+          `credential headers: ${credentialHeaderNames.join(', ')}`
+      );
     }
     if (authToken && !nativeCrossOrigin) {
       headers.set('authorization', `Bearer ${authToken}`);
@@ -385,8 +392,7 @@ function buildFetchImpl(authToken: string | undefined, agentUrl: string) {
   // with a different context.
   const signingContext = signingContextStorage.getStore();
   const creationContext = callContextStorage.getStore();
-  const originBoundCustomHeaderNames =
-    creationContext?.legacyCompat?.enabled === false ? Object.keys(creationContext.customHeaders ?? {}) : [];
+  const originBoundCustomHeaderNames = Object.keys(creationContext?.customHeaders ?? {});
   const pinnedFetch = createAgentTransportFetch(agentUrl, {
     trustedFetchFn: creationContext?.fetchFn,
     allowPrivateIp: creationContext?.allowPrivateIp,
@@ -435,7 +441,15 @@ function buildFetchImpl(authToken: string | undefined, agentUrl: string) {
     const nativeCrossOrigin =
       context?.legacyCompat?.enabled === false && new URL(urlString).origin !== new URL(agentUrl).origin;
     if (nativeCrossOrigin && (authToken || signingContext)) {
-      throw new Error('A2A native dispatch refused credentialed cross-origin endpoint declared by the agent card');
+      const targetOrigin = new URL(urlString).origin;
+      const credentialHeaderNames = [
+        ...(authToken ? ['authorization', 'x-adcp-auth'] : []),
+        ...(signingContext ? ['content-digest', 'signature', 'signature-input'] : []),
+      ];
+      throw new Error(
+        `A2A native dispatch refused credentialed cross-origin endpoint ${targetOrigin}; ` +
+          `credential headers: ${credentialHeaderNames.join(', ')}`
+      );
     }
     const customHeaders = nativeCrossOrigin ? undefined : context?.customHeaders;
     if (nativeCrossOrigin && Object.keys(context?.customHeaders ?? {}).length > 0) {

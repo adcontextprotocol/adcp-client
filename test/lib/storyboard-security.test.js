@@ -826,6 +826,41 @@ describe('rawMcpProbe', () => {
 // ────────────────────────────────────────────────────────────
 
 describe('rawA2aProbe', () => {
+  it('uses the caller-supplied trusted fetch without touching the global network', async () => {
+    const calls = [];
+    const { httpResult, taskResult } = await rawA2aProbe({
+      agentUrl: 'https://virtual.example/a2a',
+      method: 'message/send',
+      params: { message: { role: 'user', parts: [] } },
+      headers: { 'x-probe': 'trusted' },
+      fetchFn: async (input, init = {}) => {
+        calls.push({
+          url: String(input),
+          method: init.method,
+          probe: new Headers(init.headers).get('x-probe'),
+          body: JSON.parse(init.body),
+        });
+        return new Response(JSON.stringify({ jsonrpc: '2.0', id: calls[0].body.id, result: { ok: true } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+
+    assert.strictEqual(httpResult.status, 200);
+    assert.strictEqual(taskResult.success, true);
+    assert.strictEqual(calls.length, 1);
+    assert.deepStrictEqual(
+      { url: calls[0].url, method: calls[0].method, probe: calls[0].probe, rpcMethod: calls[0].body.method },
+      {
+        url: 'https://virtual.example/a2a',
+        method: 'POST',
+        probe: 'trusted',
+        rpcMethod: 'message/send',
+      }
+    );
+  });
+
   it('sends JSON-RPC message/send and surfaces HTTP 200 + text_fallback extraction', async () => {
     let seenBody, seenAuth, seenAccept;
     const server = http.createServer(async (req, res) => {

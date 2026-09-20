@@ -45,9 +45,36 @@ test('agent transport refuses credentialed cross-origin redirects before the sec
 
   await assert.rejects(
     () => guarded('https://seller.example/rpc', { method: 'POST', headers: { 'x-api-key': 'secret' } }),
-    /refused a credentialed cross-origin redirect/
+    error => {
+      assert.match(error.message, /refused credentialed cross-origin redirect/);
+      assert.match(error.message, /https:\/\/other\.example/);
+      assert.match(error.message, /x-api-key/);
+      assert.doesNotMatch(error.message, /secret/);
+      return true;
+    }
   );
   assert.deepEqual(calls, [{ url: 'https://seller.example/rpc', apiKey: 'secret' }]);
+});
+
+test('agent transport identifies but never exposes credentials on direct cross-origin refusal', async () => {
+  let calls = 0;
+  const guarded = createAgentTransportFetch('https://seller.example/rpc', {
+    trustedFetchFn: async () => {
+      calls += 1;
+      return new Response('{}');
+    },
+  });
+
+  await assert.rejects(
+    () => guarded('https://rpc.example/a2a', { headers: { Authorization: 'Bearer never-log-this' } }),
+    error => {
+      assert.match(error.message, /cross-origin dispatch to https:\/\/rpc\.example/);
+      assert.match(error.message, /authorization/);
+      assert.doesNotMatch(error.message, /never-log-this/);
+      return true;
+    }
+  );
+  assert.equal(calls, 0);
 });
 
 test('agent transport preserves caller-requested manual redirect handling', async () => {

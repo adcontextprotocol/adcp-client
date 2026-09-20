@@ -68,6 +68,10 @@ npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp sales-guaranteed
 # Specific tracks only (faster feedback when iterating)
 npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp --tracks core,products --auth $TOKEN
 
+# Select a compliance version bundled in this package (no external paths)
+npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp \
+  --compliance-version 3.1.20 --auth $TOKEN
+
 # Pin exact 3.1.1 data from an external matching compliance + schema bundle
 npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp \
   --compliance-version 3.1.1 \
@@ -97,7 +101,7 @@ temporary legacy compatibility harnesses rather than routine compliance runs.
 
 - `--tracks <a,b,c>` — limit to named tracks (e.g., `core,products,security_baseline`)
 - `--storyboards <id1,id2>` — limit to specific storyboard IDs
-- `--compliance-version <version>` — select an exact compliance/spec line; historical versions require the two matching external paths below because the npm package does not ship those caches
+- `--compliance-version <version>` — select an exact compliance/spec line; this package bundles 3.0.12, 3.1.20, and 3.2.0, while other historical patches require the two matching external paths below
 - `--compliance-dir <path>` — use the external compliance directory from the selected protocol release
 - `--schema-root <path>` — use the schema bundle that matches an external exact compliance cache
 - `--a2a-legacy-compat` — grade an A2A 0.3-only agent (including the maintained 13.x server adapter) through the official compatibility client; native A2A conformance otherwise uses the official 1.0 client

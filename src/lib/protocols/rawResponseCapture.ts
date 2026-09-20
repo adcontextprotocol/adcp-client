@@ -22,8 +22,10 @@ export interface RawHttpCapture {
   body: string;
   latencyMs: number;
   timestamp: string;
-  /** True when body capture hit `maxBodyBytes` and was truncated. */
+  /** True when byte limits, deadlines, or stream errors made the captured body incomplete. */
   bodyTruncated: boolean;
+  /** Actionable reason the captured body is incomplete. Never contains response bytes. */
+  bodyCaptureError?: string;
 }
 
 interface CaptureSlot {
@@ -36,7 +38,7 @@ interface CaptureSlot {
 // Request and response bodies are bounded as UTF-8 bytes while streaming.
 const DEFAULT_MAX_BODY_BYTES = 1_048_576;
 const DEFAULT_REQUEST_METADATA_TIMEOUT_MS = 1_000;
-const DEFAULT_RESPONSE_BODY_TIMEOUT_MS = 1_000;
+const DEFAULT_RESPONSE_BODY_TIMEOUT_MS = 10_000;
 
 export const rawResponseCaptureStorage = globalAsyncLocalStorage<CaptureSlot>('rawResponseCapture');
 
@@ -150,7 +152,11 @@ export function wrapFetchWithCapture(upstream: typeof fetch): typeof fetch {
 
     // Clone before reading so the SDK still gets a consumable body.
     const cloneForRead = response.clone();
-    const { body, bodyTruncated } = await readBodyBounded(cloneForRead, slot.maxBodyBytes, slot.responseBodyTimeoutMs);
+    const { body, bodyTruncated, bodyCaptureError } = await readBodyBounded(
+      cloneForRead,
+      slot.maxBodyBytes,
+      slot.responseBodyTimeoutMs
+    );
 
     const headers: Record<string, string> = {};
     response.headers.forEach((value, key) => {
@@ -168,6 +174,7 @@ export function wrapFetchWithCapture(upstream: typeof fetch): typeof fetch {
       latencyMs,
       timestamp: new Date(startedAt).toISOString(),
       bodyTruncated,
+      ...(bodyCaptureError !== undefined && { bodyCaptureError }),
     });
 
     return response;
@@ -287,12 +294,20 @@ async function readBodyBounded(
   response: Response,
   maxBodyBytes: number,
   timeoutMs: number
-): Promise<{ body: string; bodyTruncated: boolean }> {
+): Promise<{ body: string; bodyTruncated: boolean; bodyCaptureError?: string }> {
   if (!response.body) return { body: '', bodyTruncated: false };
   const reader = response.body.getReader();
-  const retained = new Uint8Array(maxBodyBytes);
+  const retained: Uint8Array[] = [];
   let retainedBytes = 0;
-  const decodeRetained = () => new TextDecoder().decode(retained.subarray(0, retainedBytes));
+  const decodeRetained = () => {
+    const bytes = new Uint8Array(retainedBytes);
+    let offset = 0;
+    for (const chunk of retained) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return new TextDecoder().decode(bytes);
+  };
   try {
     return await withAbortSignal([], timeoutMs, async signal => {
       const cancel = () => void reader.cancel(signal?.reason).catch(() => undefined);
@@ -306,7 +321,9 @@ async function readBodyBounded(
           const available = maxBodyBytes - retainedBytes;
           const copyBytes = Math.min(available, value.byteLength);
           if (copyBytes > 0) {
-            retained.set(value.subarray(0, copyBytes), retainedBytes);
+            // Copy only bytes actually observed. In particular, accepting a
+            // large safe maxBodyBytes must not allocate that full capacity.
+            retained.push(value.slice(0, copyBytes));
             retainedBytes += copyBytes;
           }
           if (copyBytes < value.byteLength) {
@@ -314,17 +331,28 @@ async function readBodyBounded(
             // to consume the original branch, which cannot happen until capture
             // returns, so cancel without awaiting.
             void reader.cancel().catch(() => undefined);
-            return { body: decodeRetained(), bodyTruncated: true };
+            return {
+              body: decodeRetained(),
+              bodyTruncated: true,
+              bodyCaptureError: `Raw response capture exceeded maxBodyBytes (${maxBodyBytes})`,
+            };
           }
         }
       } finally {
         signal?.removeEventListener('abort', cancel);
       }
     });
-  } catch {
+  } catch (error) {
     // Capture is observational: a stalled or broken clone must not prevent
     // the SDK from consuming the original response. Preserve bytes already
     // observed and mark the capture incomplete.
-    return { body: decodeRetained(), bodyTruncated: true };
+    const timedOut = error instanceof Error && error.name === 'TimeoutError';
+    return {
+      body: decodeRetained(),
+      bodyTruncated: true,
+      bodyCaptureError: timedOut
+        ? `Raw response capture timed out after ${timeoutMs} ms before the response body completed`
+        : 'Raw response capture ended before the response body completed',
+    };
   }
 }

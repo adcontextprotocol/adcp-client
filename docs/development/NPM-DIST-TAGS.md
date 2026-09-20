@@ -39,9 +39,18 @@ applies one of two guarded policies:
 - If `latest` is major 14 or newer, leave it there; the maintenance release is
   intentionally available through `adcp-3.1` and its exact version only.
 
-Main and 13.x release jobs share one concurrency group. The policy re-reads
-`latest` immediately before mutation and refuses to move it backward. Registry
-read/parse failures likewise fail with an inspection and recovery command.
+Only the main and 13.x release jobs share the `npm-release-dist-tags`
+concurrency group; the longer reference-seller interop jobs run outside that
+lock. GitHub allows one running and one pending job in a concurrency group and
+may replace an older pending job even with `cancel-in-progress: false`. If a
+pending release is replaced, wait for the active release to finish, open the
+superseded run, and choose **Re-run jobs** so the exact commit republishes or
+reconciles idempotently. The Release workflow also supports `workflow_dispatch`
+on both `main` and `13.x` as a one-click branch recovery path.
+
+The policy re-reads `latest` immediately before mutation and refuses to move it
+backward. Registry read/parse failures likewise fail with an inspection and
+recovery command.
 The 13.x Changesets config ignores `@adcp/eslint-plugin`: this maintenance
 channel and its compatibility tag apply only to the root `@adcp/sdk` package.
 
@@ -53,13 +62,16 @@ channel, for example `ADCP_NPM_TAG=adcp-3.0 npm run release`.
 npm trusted publishing via GitHub OIDC authenticates `npm publish`, so the
 chosen tag works without a long-lived npm token. Post-publish dist-tag mutation
 is a separate registry operation and is not covered by OIDC. The optional
-classic `NPM_TOKEN` is therefore scoped to the guarded `latest` move;
+classic or granular `NPM_TOKEN` must grant only the `@adcp/sdk` package access
+needed to read and update dist-tags (npm package **Read and write**), and no
+unrelated organization/package scope. It is used only for the guarded `latest`
+move;
 `adcp-3.1` publishing continues to use trusted publishing.
 
 Changesets pre-mode always uses the pre-mode tag for both the npm dist-tag and
 the semver prerelease identifier, even if `ADCP_NPM_TAG` is set. Post-publish
 reconciliation also rejects prerelease versions. Thus a prerelease cannot move
-either `adcp-3.1` or `latest`.
+`latest` or any stable compatibility tag matching `adcp-<major>.<minor>`.
 
 ## Stable compatibility policy
 

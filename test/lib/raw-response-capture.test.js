@@ -225,6 +225,7 @@ describe('rawResponseCapture', () => {
     assert.equal(captures[0].bodyTruncated, true);
     assert.equal(captures[0].body.length, 512);
     assert.equal(captures[0].body, 'A'.repeat(512));
+    assert.match(captures[0].bodyCaptureError, /exceeded maxBodyBytes \(512\)/);
   });
 
   test('stops reading the capture clone after maxBodyBytes', async () => {
@@ -266,7 +267,31 @@ describe('rawResponseCapture', () => {
     assert.ok(Date.now() - startedAt < 500, 'capture deadline must bound a response body that never closes');
     assert.strictEqual(captures[0].body, '{');
     assert.strictEqual(captures[0].bodyTruncated, true);
+    assert.match(captures[0].bodyCaptureError, /timed out after 20 ms/);
     await response.body.cancel();
+  });
+
+  test('captures a slow but valid response body within the default deadline', async () => {
+    const encoder = new TextEncoder();
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('{"ok":'));
+          setTimeout(() => {
+            controller.enqueue(encoder.encode('true}'));
+            controller.close();
+          }, 1_100);
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+    const { captures } = await withRawResponseCapture(() =>
+      wrapFetchWithCapture(async () => response)('https://seller.example/rpc')
+    );
+
+    assert.equal(captures[0].body, '{"ok":true}');
+    assert.equal(captures[0].bodyTruncated, false);
+    assert.equal(captures[0].bodyCaptureError, undefined);
   });
 
   test('rejects invalid response-body capture deadlines before dispatch', async () => {

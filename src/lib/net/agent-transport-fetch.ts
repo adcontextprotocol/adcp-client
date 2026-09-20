@@ -84,9 +84,29 @@ export function createAgentTransportFetch(agentUrl: string, options: AgentTransp
       if (stripped.length > 0) options.onOriginBoundHeadersStripped?.(stripped, target);
     };
 
+    const credentialHeaderNames = (): string[] => {
+      const names: string[] = [];
+      headers.forEach((_value, name) => {
+        if (isCredentialHeaderName(name)) names.push(name.toLowerCase());
+      });
+      return [...new Set(names)].sort();
+    };
+
+    const refuseCredentialedCrossOrigin = (target: URL, operation: 'dispatch' | 'redirect'): void => {
+      if (target.origin === initialUrl.origin) return;
+      const names = credentialHeaderNames();
+      if (names.length > 0) {
+        throw new TypeError(
+          `Agent transport refused credentialed cross-origin ${operation} to ${target.origin}; ` +
+            `credential headers: ${names.join(', ')}`
+        );
+      }
+    };
+
     for (let redirects = 0; ; redirects++) {
       assertTransportScheme(url);
       stripOriginBoundHeaders(url);
+      refuseCredentialedCrossOrigin(url, 'dispatch');
       const headerRecord: Record<string, string> = {};
       headers.forEach((value, key) => {
         headerRecord[key] = value;
@@ -128,13 +148,7 @@ export function createAgentTransportFetch(agentUrl: string, options: AgentTransp
         // Remove them before the generic credential check so an X-Session-like
         // header is stripped while SDK/auth/signature headers still fail closed.
         stripOriginBoundHeaders(next);
-        const credentialHeaders: string[] = [];
-        headers.forEach((_value, name) => {
-          if (isCredentialHeaderName(name)) credentialHeaders.push(name);
-        });
-        if (credentialHeaders.length > 0) {
-          throw new TypeError('Agent transport refused a credentialed cross-origin redirect');
-        }
+        refuseCredentialedCrossOrigin(next, 'redirect');
       }
       if (response.status === 303 || ((response.status === 301 || response.status === 302) && method === 'POST')) {
         method = 'GET';

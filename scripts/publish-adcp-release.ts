@@ -41,7 +41,7 @@ function resolvePublishTag(preState?: ChangesetPreState): string {
 }
 
 function assertStableTagHasStableSdkVersion(tag: string): void {
-  if (tag !== 'latest' && tag !== 'adcp-3.1') return;
+  if (tag !== 'latest' && !/^adcp-\d+\.\d+$/.test(tag)) return;
   const version = JSON.parse(readFileSync(PACKAGE_PATH, 'utf8')).version;
   if (typeof version === 'string' && version.includes('-')) {
     throw new Error(

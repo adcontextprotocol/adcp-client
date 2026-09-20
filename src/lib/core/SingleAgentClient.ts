@@ -1869,8 +1869,7 @@ export class SingleAgentClient {
       createAgentTransportFetch(agentUri, {
         trustedFetchFn: transport?.trustedFetchFn,
         allowPrivateIp: transport?.allowPrivateIp,
-        originBoundHeaders:
-          transport?.legacyCompat?.enabled === false ? Object.keys(this.normalizedAgent.headers ?? {}) : [],
+        originBoundHeaders: Object.keys(this.normalizedAgent.headers ?? {}),
       })
     );
 
@@ -6212,7 +6211,7 @@ export class SingleAgentClient {
         createAgentTransportFetch(this.normalizedAgent.agent_uri, {
           trustedFetchFn: transport?.trustedFetchFn,
           allowPrivateIp: transport?.allowPrivateIp,
-          originBoundHeaders: transport?.legacyCompat?.enabled === false ? Object.keys(agentHeaders) : [],
+          originBoundHeaders: Object.keys(agentHeaders),
         })
       );
       const fetchImpl = async (url: string | URL | Request, requestInit?: RequestInit) => {
@@ -7005,9 +7004,13 @@ function assertNativeA2ADiscoveryCredentialOrigin(
     if (configuredHeaderNames.has(name.toLowerCase()) || isCredentialHeaderName(name)) credentialHeaders.push(name);
   });
   if (credentialHeaders.length === 0) return;
+  const targetOrigin = new URL(targetUrl).origin;
   throw new Error(
-    `A2A native discovery refused credentialed cross-origin dispatch declared by the agent card ` +
-      `(credential headers: ${credentialHeaders.join(', ')})`
+    `A2A native discovery refused credentialed cross-origin dispatch to ${targetOrigin}; ` +
+      `credential headers: ${credentialHeaders
+        .map(name => name.toLowerCase())
+        .sort()
+        .join(', ')}`
   );
 }
 

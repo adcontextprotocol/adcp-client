@@ -236,9 +236,18 @@ function readAdcpVersion(): string {
 }
 
 function complianceMissingMessage(what: string, path: string): string {
+  const cacheRoot = join(getRepoRoot(), 'compliance', 'cache');
+  const bundledVersions = existsSync(cacheRoot)
+    ? readdirSync(cacheRoot, { withFileTypes: true })
+        .filter(entry => entry.isDirectory() && existsSync(join(cacheRoot, entry.name, 'index.json')))
+        .map(entry => entry.name)
+        .sort()
+    : [];
+  const bundledText = bundledVersions.length > 0 ? bundledVersions.join(', ') : 'none detected';
   return (
     `${what} not found at ${path}. ` +
-    `@adcp/sdk does not bundle historical compliance caches. For an exact version, pass ` +
+    `This @adcp/sdk package bundles compliance caches for ${bundledText}, but not every historical patch. ` +
+    `For an exact version that is not bundled, pass ` +
     `\`--compliance-dir /path/to/adcp-X.Y.Z/compliance\` and ` +
     `\`--schema-root /path/to/adcp-X.Y.Z/schemas\` from the same protocol release. ` +
     `If developing locally, run \`npm run sync-schemas\` to populate the checkout cache.`

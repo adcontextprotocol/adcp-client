@@ -78,10 +78,12 @@ test('remote MCP client negotiates 2026-07-28 with a modern-only server', async 
   const receivedAuthTokens = [];
   const receivedAuthorizationHeaders = [];
   const receivedBaggageHeaders = [];
+  const receivedSessionHeaders = [];
   const httpServer = createServer((req, res) => {
     receivedAuthTokens.push(req.headers['x-adcp-auth']);
     receivedAuthorizationHeaders.push(req.headers.authorization);
     receivedBaggageHeaders.push(req.headers.baggage);
+    receivedSessionHeaders.push(req.headers['x-session']);
     void nodeHandler(req, res);
   });
   const url = await listen(httpServer);
@@ -97,6 +99,7 @@ test('remote MCP client negotiates 2026-07-28 with a modern-only server', async 
   const directResult = await callMCPTool(url, 'echo', {}, 'modern-test-token', debugLogs, {
     authorization: 'Bearer stale-static-token',
     'X-Adcp-Auth': 'stale-static-token',
+    'X-Session': 'modern-same-origin',
   });
   await callMCPTool(url, 'echo', {}, undefined, debugLogs, { baggage: 'tenant=one' });
   await callMCPTool(url, 'echo', {}, undefined, debugLogs, { baggage: 'tenant=two' });
@@ -119,6 +122,7 @@ test('remote MCP client negotiates 2026-07-28 with a modern-only server', async 
 
   assert.equal(result.content[0].text, 'modern');
   assert.equal(directResult.content[0].text, 'modern');
+  assert.ok(receivedSessionHeaders.includes('modern-same-origin'), 'modern MCP must preserve X-Session same-origin');
   assert.equal(oauthResult.content[0].text, 'modern');
   assert.ok(
     agentInfo.tools.some(tool => tool.name === 'echo'),
@@ -339,7 +343,9 @@ test('remote MCP client preserves the v1 path for a legacy server', async t => {
   const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
   const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
 
+  const receivedSessionHeaders = [];
   const httpServer = createServer(async (req, res) => {
+    receivedSessionHeaders.push(req.headers['x-session']);
     const server = new McpServer({ name: 'legacy-test', version: '1.0.0' });
     server.registerTool('echo', { description: 'Echo a fixed legacy result' }, async () => ({
       content: [{ type: 'text', text: 'legacy' }],
@@ -360,9 +366,12 @@ test('remote MCP client preserves the v1 path for a legacy server', async t => {
   });
 
   const debugLogs = [];
-  const result = await callMCPToolWithTasks(url, 'echo', {}, undefined, debugLogs);
+  const result = await callMCPToolWithTasks(url, 'echo', {}, undefined, debugLogs, {
+    'X-Session': 'legacy-same-origin',
+  });
 
   assert.equal(result.content[0].text, 'legacy');
+  assert.ok(receivedSessionHeaders.includes('legacy-same-origin'), 'legacy MCP must preserve X-Session same-origin');
   assert.ok(
     debugLogs.some(entry => entry.message.includes('preserving the v1 Tasks path')),
     'legacy servers should retain the v1 client and Tasks compatibility path'
@@ -455,13 +464,15 @@ test('modern discovery 5xx fails closed without dispatching through the v1 clien
 
 test('modern client never forwards credentials across redirects', async t => {
   let redirectedRequests = 0;
+  let initialSession;
   const sink = createServer((req, res) => {
     redirectedRequests++;
     res.writeHead(500);
     res.end();
   });
   const sinkUrl = await listen(sink);
-  const redirector = createServer((_req, res) => {
+  const redirector = createServer((req, res) => {
+    initialSession = req.headers['x-session'];
     res.writeHead(307, { Location: sinkUrl });
     res.end();
   });
@@ -474,8 +485,9 @@ test('modern client never forwards credentials across redirects', async t => {
   });
 
   await assert.rejects(() =>
-    callMCPTool(redirectUrl, 'echo', {}, 'redirect-secret', [], { 'x-tenant-secret': 'tenant-secret' })
+    callMCPTool(redirectUrl, 'echo', {}, 'redirect-secret', [], { 'X-Session': 'same-origin-only' })
   );
+  assert.equal(initialSession, 'same-origin-only', 'configured header must reach the configured MCP origin');
   assert.equal(redirectedRequests, 0, 'redirect target must never receive credential-bearing MCP requests');
 });
 

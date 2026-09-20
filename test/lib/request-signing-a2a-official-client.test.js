@@ -330,6 +330,79 @@ test('native tool dispatch strips X-Session from every cross-origin redirect hop
   ]);
 });
 
+test('legacy A2A tool dispatch binds X-Session to the configured agent origin', async () => {
+  for (const mode of ['same-origin', 'cross-origin', 'redirect']) {
+    const agentUrl = `https://legacy-${mode}.example`;
+    const rpcUrl = mode === 'cross-origin' ? 'https://rpc.example/legacy-a2a' : `${agentUrl}/legacy-a2a`;
+    const calls = [];
+    const transportFetch = async (input, init = {}) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes('/.well-known/')) {
+        return new Response(
+          JSON.stringify({
+            protocolVersion: '0.3.0',
+            name: `legacy-${mode}-fixture`,
+            description: 'Configured header origin binding',
+            version: '1.0.0',
+            url: rpcUrl,
+            capabilities: {},
+            defaultInputModes: ['application/json'],
+            defaultOutputModes: ['application/json'],
+            skills: [],
+          }),
+          { headers: { 'content-type': 'application/json' } }
+        );
+      }
+      calls.push({ url, session: new Headers(init.headers).get('x-session') });
+      if (mode === 'redirect' && calls.length === 1) {
+        return new Response('', { status: 307, headers: { location: 'https://rpc.example/legacy-a2a' } });
+      }
+      const body = JSON.parse(init.body);
+      return new Response(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: body.id,
+          result: {
+            id: `legacy-${mode}-task`,
+            contextId: `legacy-${mode}-context`,
+            status: { state: 'completed' },
+            artifacts: [{ artifactId: 'result', parts: [{ data: { status: 'completed' } }] }],
+          },
+        }),
+        { headers: { 'content-type': 'application/json' } }
+      );
+    };
+
+    await callA2ATool(
+      agentUrl,
+      'get_products',
+      {},
+      undefined,
+      [],
+      undefined,
+      { 'X-Session': `${mode}-session` },
+      undefined,
+      undefined,
+      undefined,
+      1_000,
+      transportFetch,
+      undefined,
+      { enabled: true }
+    );
+
+    if (mode === 'same-origin') {
+      assert.deepStrictEqual(calls, [{ url: rpcUrl, session: 'same-origin-session' }]);
+    } else if (mode === 'cross-origin') {
+      assert.deepStrictEqual(calls, [{ url: rpcUrl, session: null }]);
+    } else {
+      assert.deepStrictEqual(calls, [
+        { url: rpcUrl, session: 'redirect-session' },
+        { url: 'https://rpc.example/legacy-a2a', session: null },
+      ]);
+    }
+  }
+});
+
 test('caches agent-card discovery across A2A signing vectors', async () => {
   let cardFetches = 0;
   const server = http.createServer(async (req, res) => {
