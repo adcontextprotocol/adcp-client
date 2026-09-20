@@ -22,6 +22,23 @@
 export { runConformance } from './runConformance';
 export { runWebhookConformance } from './webhook';
 export { seedFixtures } from './seeder';
+export {
+  TARGETING_GEOGRAPHY_CONFORMANCE_VECTORS,
+  buildTargetingInputConformanceVectors,
+  runTargetingInputConformance,
+} from './targeting';
+export type {
+  TargetingConformanceOutcome,
+  TargetingConformanceOperation,
+  TargetingDimensionSample,
+  TargetingDimensionSamples,
+  TargetingInputConformanceAdapter,
+  TargetingInputConformanceCaseResult,
+  TargetingInputConformanceObservation,
+  TargetingInputConformanceOptions,
+  TargetingInputConformanceReport,
+  TargetingInputConformanceVector,
+} from './targeting';
 export type { SeedOptions, SeedResult, SeederName, SeedWarning } from './seeder';
 export type { ConformanceSchemaOptions } from './schemaLoader';
 export {

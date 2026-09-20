@@ -516,6 +516,12 @@ products, accepted commercial snapshots, mutation responses, and package
 readback all use the strict Targeting *Overlay*, whose schema forbids `null`.
 That is why codegen emits two types: `TargetingOverlayInput` (nullable
 dimensions, request-only) and `TargetingOverlay` (strict, everywhere else).
+The package root also exports operation-named `CreateTargetingInput` and
+`UpdateTargetingInput` aliases so adapter code can state its boundary without
+reaching through a generated request type. Both include whole-field omission
+and are also exported from `@adcp/sdk/server`. They name the
+`targeting_overlay` field only: update requests separately expose incremental
+keyword and negative-keyword add/remove fields.
 
 Getting this backwards fails in two directions, and neither is loud: persisting
 a request overlay verbatim writes a clear command into durable state, and
@@ -525,7 +531,13 @@ Three helpers do the projection — exported from the package root and from
 `@adcp/sdk/server`:
 
 ```ts
-import { applyTargetingInput, hasTargetingClears, resolveTargetingInput } from '@adcp/sdk/server';
+import {
+  applyTargetingInput,
+  hasTargetingClears,
+  resolveTargetingInput,
+  type CreateTargetingInput,
+  type UpdateTargetingInput,
+} from '@adcp/sdk';
 
 // CREATE — merge with the selected product's strict defaults so the accepted
 // snapshot contains complete effective targeting. Null removes a default.
@@ -555,6 +567,20 @@ silently retaining the default.
 
 If you use `createMediaBuyStore`, this is already handled on both the create and
 update paths — it persists and echoes strict overlays only.
+
+Adapter test suites can generate the six command-state cases for every
+supported dimension with `buildTargetingInputConformanceVectors()` from
+`@adcp/sdk/conformance`. Pass two schema-valid values per dimension, then run
+the resulting corpus through the distinct `create` and `update` callbacks
+of `runTargetingInputConformance(vectors, adapter)`. Samples share a
+multi-dimension baseline; use the canonical-readback overrides or comparator
+when the seller materializes selections or canonicalizes set ordering. The observation
+contract separately records the request at the seller/provider dispatch seam
+and strict durable/readback state, so the runner catches both a dropped `null`
+command and a leaked `null` state value. Append
+`TARGETING_GEOGRAPHY_CONFORMANCE_VECTORS` to verify that changing countries
+preserves omitted regions and rejects an incompatible combined result without
+mutating prior state.
 
 ## Buyer projection policy
 

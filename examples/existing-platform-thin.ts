@@ -3,8 +3,11 @@
 import {
   ADCP_VERSION,
   AgentClient,
+  CapabilityPreflightError,
+  type AgentConfig,
   type CapabilityEvidenceScope,
   type CapabilityEvidenceSnapshot,
+  type SingleAgentClientConfig,
   type WebhookHandlerAdapter,
   type WebhookMetadata,
   type WebhookRegistration,
@@ -48,6 +51,7 @@ interface StoredWebhookSnapshot {
 }
 
 type CapabilityPreflight = (
+  client: AgentClient,
   scope: CapabilityEvidenceScope,
   signal: AbortSignal
 ) => Promise<Omit<CapabilityEvidenceSnapshot, 'scope'>>;
@@ -62,6 +66,30 @@ function taskSnapshot(result: ListProductsResult): StoredTaskSnapshot {
 }
 
 export class ExistingPlatformAdcp {
+  static async create(
+    agentConfig: AgentConfig,
+    clientOptions: SingleAgentClientConfig,
+    store: ExistingStore,
+    preflight: CapabilityPreflight,
+    signal: AbortSignal
+  ): Promise<ExistingPlatformAdcp> {
+    try {
+      const agent = await AgentClient.createWithCapabilityPreflight(
+        agentConfig,
+        async ({ client, scope }) => ({ ...(await preflight(client, scope, signal)), scope }),
+        clientOptions
+      );
+      return new ExistingPlatformAdcp(agent, store);
+    } catch (error) {
+      if (!(error instanceof CapabilityPreflightError)) throw error;
+      // Preserve scoped transports and availability: rejected evidence falls
+      // back to fresh discovery on a newly constructed client.
+      const agent = new AgentClient(agentConfig, clientOptions);
+      await agent.getCapabilities({ signal });
+      return new ExistingPlatformAdcp(agent, store);
+    }
+  }
+
   constructor(
     private readonly agent: AgentClient,
     private readonly store: ExistingStore
@@ -74,7 +102,7 @@ export class ExistingPlatformAdcp {
 
   async reuseCapabilityEvidence(preflight: CapabilityPreflight, signal: AbortSignal) {
     const scope = this.agent.getCapabilityEvidenceScope();
-    const observed = await preflight(scope, signal);
+    const observed = await preflight(this.agent, scope, signal);
     // Refusal clears any older cached evidence, so the following read performs
     // fresh, caller-cancellable discovery in the client's own transport scope.
     this.agent.primeCapabilities({ ...observed, scope });

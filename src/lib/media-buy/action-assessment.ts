@@ -28,6 +28,7 @@ import {
 } from './action-contracts';
 import { evaluateChangeTermConstraints, type ConstraintEvaluationOptions } from './action-constraints';
 import { decomposeUpdateMediaBuy, hasUnmappedMutation, mutationShapeIssue } from './mutations';
+import { LEGACY_REQUIRES_PROPOSAL_MODE } from './available-actions';
 
 export interface ActionAssessmentOptions extends ConstraintEvaluationOptions {
   /** Seller-served wire version. 3.1 term references are always opaque. Defaults to the current 3.2 shape. */
@@ -265,6 +266,12 @@ export function assessActionAvailability(
     return deny('condition_unresolved', 'The deliberately emitted term aliases disagree.', 'unknown');
   if (metadataOnly && entry.change_term_id !== undefined)
     return deny('condition_unresolved', 'Metadata-only actions cannot identify a commercial change term.', 'unknown');
+  if ((entry.mode as string) === LEGACY_REQUIRES_PROPOSAL_MODE)
+    return deny(
+      'mode_mismatch',
+      'This unpublished legacy mode requires the proposal lifecycle; do not dispatch the mutation directly.',
+      'blocked'
+    );
   if (!['self_serve', 'conditional_self_serve', 'seller_managed', 'requires_approval'].includes(entry.mode))
     return deny('condition_unresolved', 'Unknown live action mode; refresh the seller declaration.', 'unknown');
   if (term && (entry.mode !== term.service_mode || !slaWithin(term.processing_sla, entry.sla)))

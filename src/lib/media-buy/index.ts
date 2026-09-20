@@ -94,6 +94,7 @@ export {
 
 export { applyTargetingInput, hasTargetingClears, resolveTargetingInput } from './targeting-input';
 export type { ResolvedTargetingInput, TargetingInputFor } from './targeting-input';
+export type { CreateTargetingInput, UpdateTargetingInput } from '../types';
 
 export * from './compatibility';
 export * from './established-proposal-store';

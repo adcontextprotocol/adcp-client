@@ -655,7 +655,7 @@ export type ActionNotAllowedAttemptedAction = string;
 
 export interface ActionNotAllowedAvailableAction {
   action: ActionNotAllowedAttemptedAction;
-  mode: 'self_serve' | 'conditional_self_serve' | 'requires_proposal' | 'requires_approval';
+  mode: 'self_serve' | 'conditional_self_serve' | 'seller_managed' | 'requires_proposal' | 'requires_approval';
   sla?: unknown;
   terms_ref?: string;
 }
@@ -663,6 +663,7 @@ export interface ActionNotAllowedAvailableAction {
 export type ActionNotAllowedRecovery =
   | { kind: 'createProposal'; message: string }
   | { kind: 'waitForApproval'; message: string }
+  | { kind: 'waitForTask'; message: string }
   | { kind: 'reissueAsDirect'; message: string };
 
 function buildActionNotAllowedMessage(details: ActionNotAllowedErrorDetails): string {
@@ -683,6 +684,11 @@ function buildModeMismatchRecovery(details: ActionNotAllowedErrorDetails): Actio
   const match = details.currently_available_actions?.find(a => a.action === details.attempted_action);
   if (!match) return undefined;
   switch (match.mode) {
+    case 'seller_managed':
+      return {
+        kind: 'waitForTask',
+        message: 'Use the declared task and follow its submitted/working/completed lifecycle.',
+      };
     case 'requires_proposal':
       return {
         kind: 'createProposal',
@@ -882,6 +888,7 @@ function isActionMode(value: string): value is ActionNotAllowedAvailableAction['
   return (
     value === 'self_serve' ||
     value === 'conditional_self_serve' ||
+    value === 'seller_managed' ||
     value === 'requires_proposal' ||
     value === 'requires_approval'
   );

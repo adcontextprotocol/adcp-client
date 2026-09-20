@@ -778,7 +778,7 @@ function generateLlmsTxt(
   );
   ln();
   ln(
-    `**Existing applications.** The [thin existing-platform recipe](./guides/EXISTING-PLATFORM.md) shows one SDK task inside application-owned auth and transactions, durable submitted-task recording, the error/cancellation matrix, bounded diagnostics, and client-scoped capability evidence reuse with \`getCapabilityEvidenceScope()\` + \`primeCapabilities()\`. The SDK 14 release represented by the checkout, its registry integrity check, peer/runtime ranges, wire pin, and a historical rc.33/rc.35 → rc.36 example are generated in [the release worksheet](./migration-14.x-rc-worksheet.md).`
+    `**Existing applications.** The [thin existing-platform recipe](./guides/EXISTING-PLATFORM.md) shows one SDK task inside application-owned auth and transactions, durable submitted-task recording, the error/cancellation matrix, non-blocking bounded diagnostics, and same-instance capability evidence reuse with \`AgentClient.createWithCapabilityPreflight()\` (or the lower-level \`getCapabilityEvidenceScope()\` + \`primeCapabilities()\` pair). The SDK 14 release represented by the checkout, its registry integrity check, peer/runtime ranges, wire pin, and a historical rc.33/rc.35 → rc.36 example are generated in [the release worksheet](./migration-14.x-rc-worksheet.md).`
   );
   ln();
 
@@ -1483,6 +1483,16 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`  expiresAt: string;`);
   ln(`  toolSchemas?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;`);
   ln(`}`);
+  ln();
+  ln(`type CreateTargetingInput = TargetingOverlayInput | undefined; // whole field omitted / dimension null / value`);
+  ln(
+    `type UpdateTargetingInput = TargetingOverlayInput | undefined; // overlay field only; keyword deltas are siblings`
+  );
+  ln();
+  ln(`// Constructs, scopes, and primes one exact instance before first dispatch.`);
+  ln(`AgentClient.createWithCapabilityPreflight(agent, async ({ client, scope }) => ({`);
+  ln(`  ...(await loadCapabilityEvidence(client, scope)), scope,`);
+  ln(`}));`);
   ln();
   ln(`interface TaskResult<T = any> {`);
   ln(`  success: boolean;`);
