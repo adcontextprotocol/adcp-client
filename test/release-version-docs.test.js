@@ -7,6 +7,15 @@ const path = require('node:path');
 
 const ROOT = path.resolve(__dirname, '..');
 
+test('release workflow serializes package-global release state across branches', () => {
+  const workflow = readFileSync(path.join(ROOT, '.github', 'workflows', 'release.yml'), 'utf8');
+
+  assert.match(
+    workflow,
+    /^concurrency:\n(?:\s+#.*\n)*\s+group:\s*npm-release-dist-tags\s*\n\s+cancel-in-progress:\s*false\s*$/m
+  );
+});
+
 test('Changesets release versioning regenerates agent docs after the package version changes', () => {
   const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   const commands = pkg.scripts.version.split(/\s*&&\s*/);

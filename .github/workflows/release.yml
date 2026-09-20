@@ -5,7 +5,11 @@ on:
     branches:
       - main
 
-concurrency: ${{ github.workflow }}-${{ github.ref }}
+concurrency:
+  # Dist-tags are package-global state. Serialize main and maintenance
+  # releases so an older branch cannot race a newer branch's latest update.
+  group: npm-release-dist-tags
+  cancel-in-progress: false
 
 permissions:
   contents: read
