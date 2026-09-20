@@ -93,6 +93,38 @@ export interface A2aDispatchOptions {
 }
 
 /**
+ * The `legacyCompat` policy every dispatch in this file uses, named once so the
+ * two call sites cannot drift apart.
+ *
+ * `enabled: true` reads like "prefer the old dialect", and it is worth being
+ * precise that it does not mean that, because the naming invites exactly the
+ * wrong fix. MEASURED against `@a2a-js/sdk`, one `cancelTask`, four
+ * combinations:
+ *
+ * | card    | `enabled` | method emitted | `a2a-version` |
+ * |---------|-----------|----------------|---------------|
+ * | `1.0`   | `true`    | `CancelTask`   | `1.0`         |
+ * | `1.0`   | `false`   | `CancelTask`   | `1.0`         |
+ * | `0.3.0` | `true`    | `tasks/cancel` | `0.3`         |
+ * | `0.3.0` | `false`   | `CancelTask`   | `1.0`         |
+ *
+ * So `true` is the CARD-FOLLOWING setting: a 1.0 card is never downgraded (the
+ * first two rows are byte-identical), and a 0.3 card gets the `tasks/*` family
+ * the AdCP spec names for it (security.mdx @ 3.1.1 :1045 cites "A2A 0.3.0
+ * §7.x"). `false` is the setting that ignores the card — the last row is a
+ * 1.0 frame sent to an agent that published 0.3, silently, which is the class
+ * of defect this whole module exists to remove.
+ *
+ * A conformance runner grades the agent that the card describes, so the policy
+ * that defers to the card is the only correct one here. This is deliberately
+ * NOT operator-configurable at this layer: a flag that let a run select framing
+ * the agent never advertised would produce a verdict about an agent that does
+ * not exist. adcp-client#2973 tracks the separate questions of the library-wide
+ * default and a CLI knob.
+ */
+const CARD_DRIVEN_LEGACY_COMPAT = Object.freeze({ enabled: true });
+
+/**
  * Drive the official client for *call* and return the request it emitted.
  *
  * The client is constructed per call rather than cached: `ClientFactory`
@@ -130,12 +162,7 @@ export async function captureA2aRequest(
     transports: [
       new JsonRpcTransportFactory({
         fetchImpl: capturingFetch,
-        // A card declaring 0.3.x selects the legacy transport, whose method
-        // strings are the `tasks/*` family the AdCP spec names
-        // (security.mdx @ 3.1.1 :1045 cites "A2A 0.3.0 §7.x"). Without this the
-        // client would refuse a 0.3 card outright and the vectors would be
-        // unavailable for a version the spec explicitly covers.
-        legacyCompat: { enabled: true },
+        legacyCompat: CARD_DRIVEN_LEGACY_COMPAT,
       }),
     ],
     ...(options.cardFetch ? { cardResolver: await buildCardResolver(options.cardFetch) } : {}),
@@ -209,7 +236,7 @@ export async function resolveA2aDispatchTarget(agentUrl: string): Promise<{ endp
     throw new RequestCaptured({ url: endpoint, method: 'POST', headers: {}, body: '' });
   };
   const factory = new ClientFactory({
-    transports: [new JsonRpcTransportFactory({ fetchImpl: noteEndpoint, legacyCompat: { enabled: true } })],
+    transports: [new JsonRpcTransportFactory({ fetchImpl: noteEndpoint, legacyCompat: CARD_DRIVEN_LEGACY_COMPAT })],
   });
   // `createFromUrl` fetches and normalizes the card and selects the interface;
   // it throws when no transport matches, which IS the availability answer.

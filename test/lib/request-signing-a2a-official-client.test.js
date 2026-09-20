@@ -106,6 +106,44 @@ test('the JSON-RPC method and version header follow the card, for both protocol 
   assert.strictEqual(legacy.headers['a2a-version'], '0.3');
 });
 
+test('the legacy-compat policy defers to the card, and turning it off would not', async () => {
+  // adcp-client#2973 asked whether `legacyCompat: true` means "also accept
+  // 0.3" or "speak 0.3". It is the former, and this test is the measurement
+  // that settles it — the dispatch emits 1.0 framing for a 1.0 card while that
+  // policy is in force, so the policy is not a downgrade.
+  const modern = await withCardServer('1.0', base => captureA2aRequest(base, { kind: 'cancelTask', taskId: 't1' }));
+  assert.strictEqual(JSON.parse(modern.body).method, 'CancelTask');
+  assert.strictEqual(modern.headers['a2a-version'], '1.0');
+
+  // And the converse, which is why the policy must not be flipped or exposed
+  // as a knob: with it OFF, a card declaring 0.3 is answered in 1.0 framing.
+  // The SDK does not refuse the card, it silently speaks a dialect the agent
+  // never advertised — a verdict about an agent that does not exist.
+  const { ClientFactory, JsonRpcTransportFactory } = await import('@a2a-js/sdk/client');
+  const downgradeBlind = await withCardServer('0.3.0', async base => {
+    let sent;
+    const capture = async (input, init) => {
+      const req = new Request(input, init);
+      sent = { method: JSON.parse(await req.text()).method, version: req.headers.get('a2a-version') };
+      throw new Error('captured');
+    };
+    const factory = new ClientFactory({
+      transports: [new JsonRpcTransportFactory({ fetchImpl: capture, legacyCompat: { enabled: false } })],
+    });
+    const client = await factory.createFromUrl(base);
+    await client.cancelTask({ tenant: '', id: 't1', metadata: undefined }).catch(() => {});
+    return sent;
+  });
+  assert.strictEqual(downgradeBlind.method, 'CancelTask', 'legacyCompat off ignores a 0.3 card');
+  assert.strictEqual(downgradeBlind.version, '1.0');
+
+  // The dispatch under test keeps the card-following policy: same 0.3 card,
+  // the spec-named `tasks/*` method.
+  const legacy = await withCardServer('0.3.0', base => captureA2aRequest(base, { kind: 'cancelTask', taskId: 't1' }));
+  assert.strictEqual(JSON.parse(legacy.body).method, 'tasks/cancel');
+  assert.strictEqual(legacy.headers['a2a-version'], '0.3');
+});
+
 test('the version header is present at capture time, so signing covers it', async () => {
   const captured = await withCardServer('1.0', base =>
     captureA2aRequest(base, { kind: 'sendMessage', operation: 'get_products', args: {} })
