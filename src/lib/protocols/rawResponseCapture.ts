@@ -55,6 +55,10 @@ export async function withRawResponseCapture<T>(
   fn: () => Promise<T>,
   options: { maxBodyBytes?: number; requestMetadataTimeoutMs?: number; responseBodyTimeoutMs?: number } = {}
 ): Promise<{ result: T; captures: RawHttpCapture[] }> {
+  const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+  if (!Number.isSafeInteger(maxBodyBytes) || maxBodyBytes <= 0) {
+    throw new RangeError('maxBodyBytes must be a finite safe positive integer');
+  }
   const responseBodyTimeoutMs = options.responseBodyTimeoutMs ?? DEFAULT_RESPONSE_BODY_TIMEOUT_MS;
   if (
     !Number.isFinite(responseBodyTimeoutMs) ||
@@ -65,7 +69,7 @@ export async function withRawResponseCapture<T>(
   }
   const slot: CaptureSlot = {
     captures: [],
-    maxBodyBytes: options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES,
+    maxBodyBytes,
     requestMetadataTimeoutMs: options.requestMetadataTimeoutMs ?? DEFAULT_REQUEST_METADATA_TIMEOUT_MS,
     responseBodyTimeoutMs,
   };

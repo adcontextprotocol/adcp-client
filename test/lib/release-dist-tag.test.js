@@ -4,13 +4,20 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { parse: parseYaml } = require('yaml');
 
 test('release workflow publishes 13.x under the real adcp-3.1 dist-tag', () => {
   const workflow = fs.readFileSync(path.join(__dirname, '../../.github/workflows/release.yml'), 'utf8');
   assert.match(workflow, /^\s+- 13\.x$/m);
   assert.match(workflow, /ADCP_NPM_TAG:\s*\$\{\{ github\.ref_name == '13\.x' && 'adcp-3\.1' \|\| '' \}\}/);
   assert.doesNotMatch(workflow, /ADCP_NPM_TAG:.*\|\| 'latest'/);
-  assert.match(workflow, /group:\s*npm-release-dist-tags/);
+  const parsed = parseYaml(workflow);
+  assert.strictEqual(parsed.concurrency, undefined, 'interop must not hold the shared npm release lock');
+  assert.deepStrictEqual(parsed.jobs.release.concurrency, {
+    group: 'npm-release-dist-tags',
+    'cancel-in-progress': false,
+  });
+  assert.strictEqual(parsed.jobs['reference-seller-interop'].concurrency, undefined);
   assert.match(workflow, /ADCP_PUBLISHED_PACKAGES:\s*\$\{\{ steps\.changesets\.outputs\.publishedPackages \}\}/);
 });
 

@@ -203,6 +203,133 @@ test('native SendMessage honors always_sign through the actual official-client p
   assert.ok(rpcCalls[0].headers['content-digest'], 'native always_sign call must bind the official-client body');
 });
 
+test('native tool dispatch keeps X-Session same-origin and strips it from card-selected cross-origin targets', async () => {
+  for (const crossOrigin of [false, true]) {
+    const agentUrl = 'https://seller.example';
+    const rpcUrl = crossOrigin ? 'https://rpc.example/a2a' : `${agentUrl}/rpc`;
+    let receivedSession;
+    const transportFetch = async (input, init = {}) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes('/.well-known/')) {
+        return new Response(
+          JSON.stringify({
+            protocolVersion: '1.0',
+            name: 'custom-header-fixture',
+            description: 'Configured header origin binding',
+            version: '1.0.0',
+            capabilities: {},
+            defaultInputModes: ['application/json'],
+            defaultOutputModes: ['application/json'],
+            skills: [],
+            supportedInterfaces: [{ url: rpcUrl, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
+          }),
+          { headers: { 'content-type': 'application/json' } }
+        );
+      }
+      receivedSession = new Headers(init.headers).get('x-session');
+      const body = JSON.parse(init.body);
+      return new Response(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: body.id,
+          result: {
+            task: {
+              id: 'native-header-task',
+              contextId: 'native-header-context',
+              status: { state: 'TASK_STATE_COMPLETED' },
+              artifacts: [{ artifactId: 'result', parts: [{ data: { status: 'completed' } }] }],
+            },
+          },
+        }),
+        { headers: { 'content-type': 'application/json' } }
+      );
+    };
+
+    await callA2ATool(
+      agentUrl,
+      'get_products',
+      {},
+      undefined,
+      [],
+      undefined,
+      { 'X-Session': 'origin-bound-session' },
+      undefined,
+      undefined,
+      undefined,
+      1_000,
+      transportFetch,
+      undefined,
+      { enabled: false }
+    );
+    assert.strictEqual(receivedSession, crossOrigin ? null : 'origin-bound-session');
+  }
+});
+
+test('native tool dispatch strips X-Session from every cross-origin redirect hop', async () => {
+  const calls = [];
+  const agentUrl = 'https://seller.example';
+  const transportFetch = async (input, init = {}) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.includes('/.well-known/')) {
+      return new Response(
+        JSON.stringify({
+          protocolVersion: '1.0',
+          name: 'custom-header-redirect-fixture',
+          description: 'Configured header redirect origin binding',
+          version: '1.0.0',
+          capabilities: {},
+          defaultInputModes: ['application/json'],
+          defaultOutputModes: ['application/json'],
+          skills: [],
+          supportedInterfaces: [{ url: `${agentUrl}/rpc`, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
+        }),
+        { headers: { 'content-type': 'application/json' } }
+      );
+    }
+    calls.push({ url, session: new Headers(init.headers).get('x-session') });
+    if (url === `${agentUrl}/rpc`) {
+      return new Response('', { status: 307, headers: { location: 'https://rpc.example/a2a' } });
+    }
+    const body = JSON.parse(init.body);
+    return new Response(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: body.id,
+        result: {
+          task: {
+            id: 'native-redirect-task',
+            contextId: 'native-redirect-context',
+            status: { state: 'TASK_STATE_COMPLETED' },
+            artifacts: [{ artifactId: 'result', parts: [{ data: { status: 'completed' } }] }],
+          },
+        },
+      }),
+      { headers: { 'content-type': 'application/json' } }
+    );
+  };
+
+  await callA2ATool(
+    agentUrl,
+    'get_products',
+    {},
+    undefined,
+    [],
+    undefined,
+    { 'X-Session': 'redirect-origin-session' },
+    undefined,
+    undefined,
+    undefined,
+    1_000,
+    transportFetch,
+    undefined,
+    { enabled: false }
+  );
+  assert.deepStrictEqual(calls, [
+    { url: `${agentUrl}/rpc`, session: 'redirect-origin-session' },
+    { url: 'https://rpc.example/a2a', session: null },
+  ]);
+});
+
 test('caches agent-card discovery across A2A signing vectors', async () => {
   let cardFetches = 0;
   const server = http.createServer(async (req, res) => {
@@ -383,5 +510,80 @@ test('official client captures and signs A2A 0.3 message/send bytes', async () =
     assert.ok(received.headers.signature);
   } finally {
     await closeServer(server);
+  }
+});
+
+test('vector 027 uses transport push registration on both A2A wire versions', async () => {
+  const loaded = loadRequestSigningVectors();
+  const vector027 = loaded.negative.find(vector => vector.id === '027-webhook-registration-authentication-unsigned');
+  assert.ok(vector027, 'expected vector 027 fixture');
+  const vectorArgs = JSON.parse(vector027.request.body);
+  const pushNotificationConfig = vectorArgs.push_notification_config;
+  const reportingWebhook = {
+    url: 'https://buyer.example/reporting',
+    authentication: { schemes: ['HMAC-SHA256'], credentials: 'reporting-secret' },
+  };
+
+  for (const protocolVersion of ['0.3.0', '1.0']) {
+    const agentUrl = 'https://seller.example';
+    const cardFetch = async () =>
+      new Response(
+        JSON.stringify(
+          protocolVersion === '0.3.0'
+            ? {
+                protocolVersion,
+                name: 'legacy-vector-027',
+                description: 'Legacy push registration fixture',
+                version: '1.0.0',
+                url: `${agentUrl}/rpc`,
+                capabilities: {},
+                defaultInputModes: ['application/json'],
+                defaultOutputModes: ['application/json'],
+                skills: [],
+              }
+            : {
+                protocolVersion,
+                name: 'native-vector-027',
+                description: 'Native push registration fixture',
+                version: '1.0.0',
+                capabilities: {},
+                defaultInputModes: ['application/json'],
+                defaultOutputModes: ['application/json'],
+                skills: [],
+                supportedInterfaces: [{ url: `${agentUrl}/rpc`, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
+              }
+        ),
+        { headers: { 'content-type': 'application/json' } }
+      );
+    const captured = await captureA2aRequest(
+      agentUrl,
+      {
+        kind: 'sendMessage',
+        operation: 'update_media_buy',
+        args: {
+          ...vectorArgs,
+          reporting_webhook: reportingWebhook,
+        },
+      },
+      { cardFetch }
+    );
+    const body = JSON.parse(captured.body);
+    const skillPayload = body.params.message.parts[0].data;
+
+    assert.strictEqual(skillPayload.skill, 'update_media_buy');
+    const skillArgs = protocolVersion === '0.3.0' ? skillPayload.parameters : skillPayload.input;
+    assert.strictEqual(skillArgs.push_notification_config, undefined, protocolVersion);
+    assert.deepStrictEqual(skillArgs.reporting_webhook, reportingWebhook, protocolVersion);
+    if (protocolVersion === '0.3.0') {
+      assert.deepStrictEqual(body.params.configuration.pushNotificationConfig, {
+        url: pushNotificationConfig.url,
+        authentication: { schemes: ['HMAC-SHA256'], credentials: 'shared-secret-placeholder' },
+      });
+    } else {
+      assert.deepStrictEqual(body.params.configuration.taskPushNotificationConfig, {
+        url: pushNotificationConfig.url,
+        authentication: { scheme: 'HMAC-SHA256', credentials: 'shared-secret-placeholder' },
+      });
+    }
   }
 });

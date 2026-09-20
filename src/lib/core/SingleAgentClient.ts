@@ -1869,6 +1869,8 @@ export class SingleAgentClient {
       createAgentTransportFetch(agentUri, {
         trustedFetchFn: transport?.trustedFetchFn,
         allowPrivateIp: transport?.allowPrivateIp,
+        originBoundHeaders:
+          transport?.legacyCompat?.enabled === false ? Object.keys(this.normalizedAgent.headers ?? {}) : [],
       })
     );
 
@@ -6210,6 +6212,7 @@ export class SingleAgentClient {
         createAgentTransportFetch(this.normalizedAgent.agent_uri, {
           trustedFetchFn: transport?.trustedFetchFn,
           allowPrivateIp: transport?.allowPrivateIp,
+          originBoundHeaders: transport?.legacyCompat?.enabled === false ? Object.keys(agentHeaders) : [],
         })
       );
       const fetchImpl = async (url: string | URL | Request, requestInit?: RequestInit) => {

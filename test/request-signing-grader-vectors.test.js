@@ -229,18 +229,30 @@ describe('preflightSkip — operator-facing skip paths', () => {
     assert.strictEqual(result.skip_reason, 'rate_abuse_opt_out');
   });
 
-  test('MCP preserves its public URL-edge skip reason while A2A uses the transport-neutral reason', async () => {
-    const mcp = await gradeOneVector('005-default-port-stripped', 'positive', FAKE_URL, {
-      transport: 'mcp',
-      mcpSessionId: 'already-initialized',
-    });
-    const a2a = await gradeOneVector('005-default-port-stripped', 'positive', FAKE_URL, {
-      transport: 'a2a',
-    });
+  test('RPC transports skip every flattened URL vector with stable transport-specific reasons', async () => {
+    const flattened = loaded.positive.slice(4).map(vector => vector.id);
+    assert.deepStrictEqual(flattened, [
+      '005-default-port-stripped',
+      '006-dot-segment-path',
+      '007-query-byte-preserved',
+      '008-percent-encoded-path',
+      '009-percent-encoded-unreserved-decoded',
+      '010-percent-encoded-slash-preserved',
+      '011-ipv6-authority',
+      '012-ipv6-authority-default-port-stripped',
+    ]);
 
-    assert.strictEqual(mcp.skipped, true);
-    assert.strictEqual(mcp.skip_reason, 'mcp_mode_flattens_url_edges');
-    assert.strictEqual(a2a.skipped, true);
-    assert.strictEqual(a2a.skip_reason, 'transport_flattens_url_edges');
+    for (const vectorId of flattened) {
+      const mcp = await gradeOneVector(vectorId, 'positive', FAKE_URL, {
+        transport: 'mcp',
+        mcpSessionId: 'already-initialized',
+      });
+      const a2a = await gradeOneVector(vectorId, 'positive', FAKE_URL, { transport: 'a2a' });
+
+      assert.strictEqual(mcp.skipped, true, vectorId);
+      assert.strictEqual(mcp.skip_reason, 'mcp_mode_flattens_url_edges', vectorId);
+      assert.strictEqual(a2a.skipped, true, vectorId);
+      assert.strictEqual(a2a.skip_reason, 'transport_flattens_url_edges', vectorId);
+    }
   });
 });

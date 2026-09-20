@@ -70,9 +70,10 @@ test('canonical URL discovery refuses credentials on a native cross-origin exten
   await assertCrossOriginExtendedCardRefused(client => () => client.resolveCanonicalUrl());
 });
 
-test('getAgentInfo refuses credentials before following a native cross-origin redirect', async () => {
+test('getAgentInfo strips configured headers before following a native cross-origin redirect', async () => {
   const seenUrls = [];
-  const trustedFetchFn = async input => {
+  let redirectedSession;
+  const trustedFetchFn = async (input, init = {}) => {
     const url = String(input);
     seenUrls.push(url);
     if (url.startsWith(AGENT_ORIGIN) && url.includes('/.well-known/')) {
@@ -87,6 +88,14 @@ test('getAgentInfo refuses credentials before following a native cross-origin re
     if (url === `${AGENT_ORIGIN}/rpc`) {
       return new Response(null, { status: 307, headers: { location: `${EXTENDED_ORIGIN}/rpc` } });
     }
+    if (url === `${EXTENDED_ORIGIN}/rpc`) {
+      redirectedSession = new Headers(init.headers).get('x-session');
+      const body = JSON.parse(init.body);
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: nativeExtendedCard() }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
     throw new Error(`unexpected cross-origin network call: ${url}`);
   };
   const client = new AgentClient(
@@ -95,17 +104,15 @@ test('getAgentInfo refuses credentials before following a native cross-origin re
       agent_uri: AGENT_ORIGIN,
       protocol: 'a2a',
       name: 'native-extended-card-redirect',
-      headers: { 'x-api-key': 'redirect-sentinel' },
+      headers: { 'X-Session': 'redirect-sentinel' },
     },
     { transport: { trustedFetchFn, legacyCompat: { enabled: false } } }
   );
 
-  await assert.rejects(() => client.getAgentInfo(), /refused a credentialed cross-origin redirect/);
+  await client.getAgentInfo();
   assert.ok(seenUrls.includes(`${AGENT_ORIGIN}/rpc`), 'same-origin extended-card endpoint must be attempted');
-  assert.ok(
-    seenUrls.every(url => !url.startsWith(EXTENDED_ORIGIN)),
-    'cross-origin redirect target must be refused before the network call'
-  );
+  assert.ok(seenUrls.includes(`${EXTENDED_ORIGIN}/rpc`), 'cross-origin redirect target must be followed safely');
+  assert.strictEqual(redirectedSession, null, 'configured header must not cross the redirect origin');
 });
 
 test('same-origin native extended-card discovery preserves configured custom headers', async () => {

@@ -66,6 +66,54 @@ test('agent transport preserves caller-requested manual redirect handling', asyn
   assert.equal(lookups, 0);
 });
 
+test('agent transport preserves arbitrary origin-bound headers at the configured origin', async () => {
+  let session;
+  const guarded = createAgentTransportFetch('https://seller.example/rpc', {
+    originBoundHeaders: ['X-Session'],
+    trustedFetchFn: async (_url, init) => {
+      session = new Headers(init.headers).get('x-session');
+      return new Response('{}');
+    },
+  });
+
+  await guarded('https://seller.example/rpc', { headers: { 'X-Session': 'same-origin' } });
+  assert.equal(session, 'same-origin');
+});
+
+test('agent transport strips arbitrary origin-bound headers from a direct cross-origin target', async () => {
+  const calls = [];
+  const guarded = createAgentTransportFetch('https://seller.example/rpc', {
+    originBoundHeaders: ['X-Session'],
+    trustedFetchFn: async (url, init) => {
+      calls.push({ url: url.toString(), session: new Headers(init.headers).get('x-session') });
+      return new Response('{}');
+    },
+  });
+
+  await guarded('https://rpc.example/rpc', { headers: { 'X-Session': 'must-not-drift' } });
+  assert.deepEqual(calls, [{ url: 'https://rpc.example/rpc', session: null }]);
+});
+
+test('agent transport strips arbitrary origin-bound headers on a cross-origin redirect', async () => {
+  const calls = [];
+  const guarded = createAgentTransportFetch('https://seller.example/rpc', {
+    originBoundHeaders: ['X-Session'],
+    trustedFetchFn: async (url, init) => {
+      calls.push({ url: url.toString(), session: new Headers(init.headers).get('x-session') });
+      if (calls.length === 1) {
+        return new Response('', { status: 307, headers: { location: 'https://rpc.example/rpc' } });
+      }
+      return new Response('{}');
+    },
+  });
+
+  await guarded('https://seller.example/rpc', { headers: { 'X-Session': 'same-origin-only' } });
+  assert.deepEqual(calls, [
+    { url: 'https://seller.example/rpc', session: 'same-origin-only' },
+    { url: 'https://rpc.example/rpc', session: null },
+  ]);
+});
+
 test('local-agent trust does not extend to a different private redirect origin', async () => {
   const calls = [];
   const guarded = createAgentTransportFetch('http://localhost:3000/mcp', {

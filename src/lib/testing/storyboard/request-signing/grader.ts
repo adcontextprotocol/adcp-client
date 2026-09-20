@@ -321,6 +321,10 @@ const TRANSPORT_FLATTENED_VECTORS = new Set([
   '006-dot-segment-path',
   '007-query-byte-preserved',
   '008-percent-encoded-path',
+  '009-percent-encoded-unreserved-decoded',
+  '010-percent-encoded-slash-preserved',
+  '011-ipv6-authority',
+  '012-ipv6-authority-default-port-stripped',
 ]);
 
 // Vectors whose failure mode can't reach a live agent through HTTP. Document
@@ -398,7 +402,7 @@ function preflightSkip(
   if (transportReason) {
     return { ...base, skipped: true, skip_reason: 'transport_ungradable', diagnostic: transportReason };
   }
-  // Canonicalization-edge positive vectors (005–008) bake their edge case
+  // Canonicalization-edge positive vectors (005–012) bake their edge case
   // into the vector URL path, query, or port. RPC transports flatten every
   // vector to one selected endpoint, so these vectors become
   // indistinguishable from vector 001 — passing under an RPC transport is not evidence

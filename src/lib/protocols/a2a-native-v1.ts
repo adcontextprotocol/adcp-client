@@ -6,14 +6,9 @@ import {
   withA2AExtensions,
   type Client,
 } from '@a2a-js/sdk-v1/client';
-import {
-  Role,
-  TaskState,
-  type CancelTaskRequest,
-  type SendMessageRequest,
-  type TaskPushNotificationConfig,
-} from '@a2a-js/sdk-v1';
+import { Role, TaskState, type CancelTaskRequest, type SendMessageRequest } from '@a2a-js/sdk-v1';
 import type { PushNotificationConfig } from '../types/tools.generated';
+import { toA2ATaskPushNotificationConfig } from './a2a-push-notification';
 
 const ADCP_A2A_EXTENSION = 'https://adcontextprotocol.org/extensions/adcp/v3';
 const NATIVE_ONLY = Object.freeze({ enabled: false });
@@ -77,7 +72,7 @@ export async function callNativeA2ATool(options: {
     configuration: options.pushNotificationConfig
       ? {
           acceptedOutputModes: ['application/json'],
-          taskPushNotificationConfig: toPushNotificationConfig(options.pushNotificationConfig),
+          taskPushNotificationConfig: toA2ATaskPushNotificationConfig(options.pushNotificationConfig),
           returnImmediately: false,
         }
       : undefined,
@@ -89,23 +84,6 @@ export async function callNativeA2ATool(options: {
     signal: options.signal,
   });
   return normalizeNativeA2AResult(result);
-}
-
-function toPushNotificationConfig(config: PushNotificationConfig): TaskPushNotificationConfig {
-  const authentication = config.authentication as { schemes?: string[]; credentials?: string } | undefined;
-  return {
-    tenant: '',
-    id: '',
-    taskId: '',
-    url: config.url,
-    token: config.token ?? '',
-    authentication: authentication
-      ? {
-          scheme: authentication.schemes?.[0] ?? '',
-          credentials: authentication.credentials ?? '',
-        }
-      : undefined,
-  };
 }
 
 function normalizePart(part: any): Record<string, unknown> {

@@ -278,6 +278,29 @@ describe('rawResponseCapture', () => {
     }
   });
 
+  test('validates maxBodyBytes before dispatch or typed-array allocation', async () => {
+    let dispatched = false;
+    for (const maxBodyBytes of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
+      await assert.rejects(
+        withRawResponseCapture(
+          async () => {
+            dispatched = true;
+          },
+          { maxBodyBytes }
+        ),
+        /maxBodyBytes must be a finite safe positive integer/
+      );
+    }
+    assert.equal(dispatched, false);
+  });
+
+  test('accepts the finite safe positive integer boundaries for maxBodyBytes', async () => {
+    const minimum = await withRawResponseCapture(async () => 'minimum', { maxBodyBytes: 1 });
+    const maximum = await withRawResponseCapture(async () => 'maximum', { maxBodyBytes: Number.MAX_SAFE_INTEGER });
+    assert.equal(minimum.result, 'minimum');
+    assert.equal(maximum.result, 'maximum');
+  });
+
   test('records multiple requests in order', async () => {
     const { server, url } = await startServer((req, res) => {
       const id = req.url.slice(1);

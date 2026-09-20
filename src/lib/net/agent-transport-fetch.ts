@@ -25,6 +25,14 @@ export interface AgentTransportFetchOptions {
   /** Test seam for deterministic DNS answers. */
   lookup?: (hostname: string) => Promise<ResolvedAddress[]>;
   maxRedirects?: number;
+  /**
+   * Caller-configured headers that are trusted only at the configured agent
+   * origin. Unlike the credential-name denylist, this binds arbitrary names
+   * (for example X-Session) without classifying their contents.
+   */
+  originBoundHeaders?: readonly string[];
+  /** Called after origin-bound headers are removed, without exposing values. */
+  onOriginBoundHeadersStripped?: (headerNames: readonly string[], target: URL) => void;
 }
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -38,6 +46,7 @@ export function createAgentTransportFetch(agentUrl: string, options: AgentTransp
     process.env.ADCP_ALLOW_INTERNAL_PROBES === '1' ||
     process.env.ADCP_ALLOW_PRIVATE_AGENT_URL === '1';
   const allowPrivateInitialOrigin = isLikelyPrivateUrl(initialUrl.toString());
+  const originBoundHeaders = new Set((options.originBoundHeaders ?? []).map(name => name.toLowerCase()));
   const dispatchers = new Map<string, Promise<Agent>>();
 
   const dispatcherFor = (url: URL): Promise<Agent> => {
@@ -63,8 +72,21 @@ export function createAgentTransportFetch(agentUrl: string, options: AgentTransp
     new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
     const redirectMode = init?.redirect ?? request?.redirect ?? 'follow';
 
+    const stripOriginBoundHeaders = (target: URL): void => {
+      if (target.origin === initialUrl.origin) return;
+      const stripped: string[] = [];
+      for (const name of originBoundHeaders) {
+        if (headers.has(name)) {
+          headers.delete(name);
+          stripped.push(name);
+        }
+      }
+      if (stripped.length > 0) options.onOriginBoundHeadersStripped?.(stripped, target);
+    };
+
     for (let redirects = 0; ; redirects++) {
       assertTransportScheme(url);
+      stripOriginBoundHeaders(url);
       const headerRecord: Record<string, string> = {};
       headers.forEach((value, key) => {
         headerRecord[key] = value;
@@ -102,6 +124,10 @@ export function createAgentTransportFetch(agentUrl: string, options: AgentTransp
       const next = new URL(response.headers.get('location')!, url);
       await response.body?.cancel();
       if (next.origin !== url.origin) {
+        // Configured user headers are origin-bound regardless of their name.
+        // Remove them before the generic credential check so an X-Session-like
+        // header is stripped while SDK/auth/signature headers still fail closed.
+        stripOriginBoundHeaders(next);
         const credentialHeaders: string[] = [];
         headers.forEach((_value, name) => {
           if (isCredentialHeaderName(name)) credentialHeaders.push(name);

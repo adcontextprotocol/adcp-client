@@ -118,8 +118,9 @@ export function applyLatestPolicy(policy, options = {}) {
     };
   }
 
-  // Re-read immediately before mutation. Combined with workflow-wide release
-  // serialization, this prevents main/13.x races from moving latest backward.
+  // Re-read immediately before mutation. The shared release-job lock serializes
+  // main/13.x publish and reconciliation after interop, preventing a stale
+  // maintenance run from moving latest backward without locking long interop jobs.
   const readLatestVersion = options.readLatestVersion ?? defaultReadLatestVersion;
   const latestVersion = readLatestVersion();
   const currentPolicy = resolveLatestPolicy({ publishedVersion: options.publishedVersion, latestVersion });

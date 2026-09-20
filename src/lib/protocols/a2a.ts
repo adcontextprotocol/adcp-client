@@ -22,7 +22,6 @@ import { DEFAULT_REQUEST_TIMEOUT_MS, resolveRequestTimeoutMs, withAbortSignal } 
 import { getLatestA2ADataPartFromResponse } from '../utils/a2a-artifacts';
 import { createAgentTransportFetch } from '../net/agent-transport-fetch';
 import { isLikelyPrivateUrl } from '../net/address-guards';
-import { isCredentialHeaderName } from '../net/credential-headers';
 
 // The A2A SDK client is used untyped: request/response shapes are validated at
 // runtime against the AdCP wire contract, not against the SDK's exported
@@ -226,7 +225,12 @@ export async function cancelA2ATask(
     return;
   }
   const agentUrl = agent.agent_uri;
-  const transportFetch = createAgentTransportFetch(agentUrl, { trustedFetchFn: fetchFn, allowPrivateIp });
+  const configuredHeaders = legacyCompat.enabled === false ? (agent.headers ?? {}) : {};
+  const transportFetch = createAgentTransportFetch(agentUrl, {
+    trustedFetchFn: fetchFn,
+    allowPrivateIp,
+    originBoundHeaders: Object.keys(configuredHeaders),
+  });
   const authToken = agent.auth_token;
 
   // adcp-client#1617 Phase 2: sign the cancel POST when the agent has a
@@ -264,6 +268,9 @@ export async function cancelA2ATask(
     if (authToken && !nativeCrossOrigin) {
       headers.set('authorization', `Bearer ${authToken}`);
       headers.set('x-adcp-auth', authToken);
+    }
+    if (!nativeCrossOrigin) {
+      for (const [name, value] of Object.entries(configuredHeaders)) headers.set(name, value);
     }
     const signal = init.signal ? AbortSignal.any([init.signal, timeoutSignal]) : timeoutSignal;
     return requestFetch(input, { ...init, headers, signal }) as Promise<Response>;
@@ -377,9 +384,20 @@ function buildFetchImpl(authToken: string | undefined, agentUrl: string) {
   // requires a different cache entry, built on a separate call that enters ALS
   // with a different context.
   const signingContext = signingContextStorage.getStore();
+  const creationContext = callContextStorage.getStore();
+  const originBoundCustomHeaderNames =
+    creationContext?.legacyCompat?.enabled === false ? Object.keys(creationContext.customHeaders ?? {}) : [];
   const pinnedFetch = createAgentTransportFetch(agentUrl, {
-    trustedFetchFn: callContextStorage.getStore()?.fetchFn,
-    allowPrivateIp: callContextStorage.getStore()?.allowPrivateIp,
+    trustedFetchFn: creationContext?.fetchFn,
+    allowPrivateIp: creationContext?.allowPrivateIp,
+    originBoundHeaders: originBoundCustomHeaderNames,
+    onOriginBoundHeadersStripped: (headerNames, target) => {
+      callContextStorage.getStore()?.debugLogs.push({
+        type: 'warning',
+        message: `A2A: Stripped configured origin-bound headers (${headerNames.join(', ')}) before cross-origin dispatch to ${target.origin}`,
+        timestamp: new Date().toISOString(),
+      });
+    },
   });
 
   // Innermost wrapper: enforce response body size cap from the active
@@ -416,11 +434,17 @@ function buildFetchImpl(authToken: string | undefined, agentUrl: string) {
     const isDiscoveryRequest = isAgentCardPath(urlString);
     const nativeCrossOrigin =
       context?.legacyCompat?.enabled === false && new URL(urlString).origin !== new URL(agentUrl).origin;
-    const suppressedCredentialHeaders = Object.keys(context?.customHeaders ?? {}).filter(isCredentialHeaderName);
-    if (nativeCrossOrigin && (authToken || signingContext || suppressedCredentialHeaders.length > 0)) {
+    if (nativeCrossOrigin && (authToken || signingContext)) {
       throw new Error('A2A native dispatch refused credentialed cross-origin endpoint declared by the agent card');
     }
-    const customHeaders = context?.customHeaders;
+    const customHeaders = nativeCrossOrigin ? undefined : context?.customHeaders;
+    if (nativeCrossOrigin && Object.keys(context?.customHeaders ?? {}).length > 0) {
+      context?.debugLogs.push({
+        type: 'warning',
+        message: `A2A: Stripped configured origin-bound headers before cross-origin dispatch to ${new URL(urlString).origin}`,
+        timestamp: new Date().toISOString(),
+      });
+    }
     const traceHeaders = isDiscoveryRequest ? {} : injectTraceHeaders();
     const requestTimeoutMs = isDiscoveryRequest
       ? resolveRequestTimeoutMs(context?.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS)

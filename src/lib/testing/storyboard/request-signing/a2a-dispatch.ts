@@ -6,6 +6,10 @@
 import { createAgentTransportFetch } from '../../../net/agent-transport-fetch';
 import { MAX_TIMER_DELAY_MS, withAbortSignal } from '../../../protocols/abort';
 import { buildCardUrls } from '../../../utils/a2a-discovery';
+import {
+  toA2ATaskPushNotificationConfig,
+  type A2APushNotificationConfig,
+} from '../../../protocols/a2a-push-notification';
 import type { SendMessageRequest } from '@a2a-js/sdk-v1';
 import type { Client } from '@a2a-js/sdk-v1/client';
 
@@ -76,9 +80,10 @@ export async function captureA2aRequest(
     if (call.kind === 'cancelTask') {
       await client.cancelTask({ tenant: '', id: call.taskId, metadata: undefined });
     } else {
+      const { push_notification_config: pushNotificationConfig, ...skillArgs } = call.args;
       const invocation = legacyWire
-        ? { skill: call.operation, parameters: call.args }
-        : { skill: call.operation, input: call.args };
+        ? { skill: call.operation, parameters: skillArgs }
+        : { skill: call.operation, input: skillArgs };
       const request: SendMessageRequest = {
         tenant: '',
         message: {
@@ -98,7 +103,18 @@ export async function captureA2aRequest(
           extensions: legacyWire ? [] : [ADCP_A2A_EXTENSION],
           referenceTaskIds: [],
         },
-        configuration: undefined,
+        configuration:
+          pushNotificationConfig != null &&
+          typeof pushNotificationConfig === 'object' &&
+          !Array.isArray(pushNotificationConfig)
+            ? {
+                acceptedOutputModes: ['application/json'],
+                taskPushNotificationConfig: toA2ATaskPushNotificationConfig(
+                  pushNotificationConfig as A2APushNotificationConfig
+                ),
+                returnImmediately: false,
+              }
+            : undefined,
         metadata: undefined,
       };
       await client.sendMessage(request, {

@@ -6,12 +6,6 @@ on:
       - main
       - 13.x
 
-concurrency:
-  # Dist-tags are package-global state. Serialize main and maintenance
-  # releases so an older branch cannot race a newer branch's latest update.
-  group: npm-release-dist-tags
-  cancel-in-progress: false
-
 permissions:
   contents: read
 
@@ -25,6 +19,12 @@ jobs:
   release:
     name: Release
     needs: reference-seller-interop
+    concurrency:
+      # Dist-tags are package-global state. Serialize only the main/maintenance
+      # release jobs after interop passes, so long interop jobs do not hold the
+      # lock while publish and reconciliation remain one critical section.
+      group: npm-release-dist-tags
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     env:
       ADCP_REQUIRE_SIGNATURE: '1'
