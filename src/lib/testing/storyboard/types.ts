@@ -1818,31 +1818,20 @@ export interface StoryboardRunOptions extends TestOptions {
      *     The operation name is derived from the last path segment of the
      *     vector's target URL.
      *
-     * Defaults to the shape the run's `protocol` can actually grade: `mcp`
-     * on an MCP run, and neither shape on an A2A run — this runner
-     * implements only those two dispatches, and neither is an A2A request.
-     * Vectors that need a wire exchange then skip as
-     * `signing_transport_unavailable` — and because no vector reached the
-     * agent, the storyboard cannot report a pass and the track grades
-     * `partial` rather than the run being scored against a transport error
-     * (adcp-client#2954). Only the
-     * in-library `jwks_override` negatives still run there: the grader
-     * decides them against the library verifier with no wire exchange at
-     * all, so the run's protocol is irrelevant to them. Every other probed
-     * vector reports the coverage gap, the protocol-method negatives
-     * included — the official `@a2a-js/sdk` client can issue those methods,
-     * but this runner does not yet sign and dispatch a vector through it,
-     * and writing the fixture bytes to the endpoint directly would be a
-     * hand-rolled A2A dispatch. Setting this field explicitly overrides the
-     * inference on any protocol; on an A2A run, do that only when the
-     * agent's MCP or REST binding answers at the same URL.
+     * Defaults to the run's resolved protocol: MCP wraps each vector in a
+     * `tools/call` envelope; A2A captures and signs the exact request emitted
+     * by the official `@a2a-js/sdk` client after Agent Card discovery. If an
+     * A2A card cannot resolve to a supported JSON-RPC interface, networked
+     * vectors fail closed as `signing_transport_unavailable`. Setting this
+     * field explicitly overrides inference; on an A2A run, use an override
+     * only when the agent's MCP or REST binding answers at the same URL.
      *
      * Matches the `adcp grade request-signing --transport <mode>` CLI flag,
      * and `adcp storyboard run --signing-transport <mode>`. Agents that only
      * speak MCP JSON-RPC can't grade under `raw`; use `mcp` to let the runner
      * round-trip every vector through `tools/call`.
      */
-    transport?: 'raw' | 'mcp';
+    transport?: 'raw' | 'mcp' | 'a2a';
     /**
      * Pre-provisioned MCP session ID to attach as `Mcp-Session-Id` on every
      * vector probe after signing. When `transport` is `'mcp'` and this is

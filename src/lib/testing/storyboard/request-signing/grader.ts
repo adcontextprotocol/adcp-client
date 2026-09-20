@@ -107,6 +107,8 @@ export interface GradeOptions extends LoadVectorsOptions {
    * See adcontextprotocol/adcp-client#612 for the MCP-mode rationale.
    */
   transport?: 'raw' | 'mcp' | 'a2a';
+  /** Trusted Agent Card fetch seam for A2A tests and custom runtimes. */
+  cardFetch?: typeof fetch;
   /**
    * MCP session ID to attach as `Mcp-Session-Id` on every probe after
    * signing. When `transport` is `'mcp'` and this field is `undefined`,
@@ -170,6 +172,8 @@ export interface VectorGradeResult {
   /** For negatives: the error code the spec says we should see. */
   expected_error_code?: string;
   http_status: number;
+  /** Actual endpoint probed when it differs from the configured agent URL (notably A2A card routing). */
+  probe_url?: string;
   diagnostic?: string;
   /**
    * The request never completed: `ProbeResult.error` was set (DNS, connect,
@@ -269,8 +273,6 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
     mcpProtocolVersion: transport === 'mcp' ? mcpProtocolVersion : undefined,
   };
 
-  const buildOpts: BuildOptions = { baseUrl: agentUrl, transport };
-
   const positive: VectorGradeResult[] = [];
   for (const vector of loaded.positive) {
     const skip = preflightSkip(vector, 'positive', contract, options);
@@ -278,9 +280,10 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
       positive.push(skip);
       continue;
     }
+    const buildOpts = await buildOptionsForVector(vector, agentUrl, transport, options);
     const signed = buildPositiveRequest(vector, loaded.keys, buildOpts);
     const probed = await probeSignedRequest(signed, probeOpts);
-    positive.push(gradePositive(vector, probed));
+    positive.push(withA2aProbeUrl(gradePositive(vector, probed), buildOpts));
   }
 
   const negative: VectorGradeResult[] = [];
@@ -290,7 +293,12 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
       negative.push(skip);
       continue;
     }
-    negative.push(await gradeNegative(vector, loaded, contract, probeOpts, buildOpts, options));
+    const buildOpts = vector.jwks_override
+      ? { baseUrl: agentUrl, transport }
+      : await buildOptionsForVector(vector, agentUrl, transport, options);
+    negative.push(
+      withA2aProbeUrl(await gradeNegative(vector, loaded, contract, probeOpts, buildOpts, options), buildOpts)
+    );
   }
 
   const all = [...positive, ...negative];
@@ -529,39 +537,73 @@ function preflightSkip(
  */
 async function captureA2aRequestForVector(
   vector: PositiveVector | NegativeVector,
-  agentUrl: string
+  agentUrl: string,
+  options: Pick<GradeOptions, 'allowPrivateIp' | 'timeoutMs' | 'cardFetch'>
 ): Promise<CapturedA2aRequest> {
   const raw = vector.request.body;
-  const envelope = parseJsonRpcEnvelope(raw);
+  const body = parseA2aVectorBody(vector.id, raw);
+  const envelope = parseJsonRpcEnvelope(body);
   if (envelope) {
     if (envelope.method === 'tasks/cancel' || envelope.method === 'CancelTask') {
       const params = (envelope.params ?? {}) as Record<string, unknown>;
       const taskId = typeof params.taskId === 'string' ? params.taskId : String(params.id ?? '');
-      return captureA2aRequest(agentUrl, { kind: 'cancelTask', taskId });
+      return captureA2aRequest(agentUrl, { kind: 'cancelTask', taskId }, options);
     }
     throw new Error(
       `vector "${vector.id}" carries JSON-RPC method "${envelope.method}", which this transport does not ` +
         `map to an official-client call. Add the mapping rather than framing the envelope by hand.`
     );
   }
-  return captureA2aRequest(agentUrl, {
-    kind: 'sendMessage',
-    operation: operationFromVectorUrl(vector.request.url),
-    args: raw && raw.length > 0 ? (JSON.parse(raw) as Record<string, unknown>) : {},
-  });
+  return captureA2aRequest(
+    agentUrl,
+    {
+      kind: 'sendMessage',
+      operation: operationFromVectorUrl(vector.request.url),
+      args: body,
+    },
+    options
+  );
 }
 
-/** The fixture body as a JSON-RPC envelope, or `undefined` when it is not one. */
-function parseJsonRpcEnvelope(body: string | undefined): { method: string; params?: unknown } | undefined {
-  if (!body) return undefined;
+async function buildOptionsForVector(
+  vector: PositiveVector | NegativeVector,
+  agentUrl: string,
+  transport: NonNullable<GradeOptions['transport']>,
+  options: GradeOptions
+): Promise<BuildOptions> {
+  if (transport !== 'a2a') return { baseUrl: agentUrl, transport };
+  const a2aRequest = await captureA2aRequestForVector(vector, agentUrl, a2aDispatchOptions(options));
+  return { baseUrl: agentUrl, transport, a2aRequest };
+}
+
+function a2aDispatchOptions(options: GradeOptions): Pick<GradeOptions, 'allowPrivateIp' | 'timeoutMs' | 'cardFetch'> {
+  return {
+    allowPrivateIp: options.allowPrivateIp === true,
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options.cardFetch ? { cardFetch: options.cardFetch } : {}),
+  };
+}
+
+/** Parse once so malformed fixtures fail closed with a vector-specific error. */
+function parseA2aVectorBody(vectorId: string, body: string | undefined): Record<string, unknown> {
+  if (!body) return {};
   try {
-    const parsed = JSON.parse(body) as Record<string, unknown>;
-    if (parsed && parsed.jsonrpc === '2.0' && typeof parsed.method === 'string') {
-      return { method: parsed.method, params: parsed.params };
+    const parsed = JSON.parse(body) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new TypeError('body must be a JSON object');
     }
-  } catch {
-    // Not JSON at all — a fixture whose body is deliberately malformed. Those
-    // are AdCP-operation vectors; fall through to the SendMessage path.
+    return parsed as Record<string, unknown>;
+  } catch (cause) {
+    throw new Error(`vector "${vectorId}" has a body the official A2A client cannot frame: expected a JSON object`, {
+      cause,
+    });
+  }
+}
+
+/** The parsed fixture body as a JSON-RPC envelope, or `undefined`. */
+function parseJsonRpcEnvelope(body: Record<string, unknown>): { method: string; params?: unknown } | undefined {
+  if (body.jsonrpc === '2.0' && typeof body.method === 'string') {
+    return { method: body.method, params: body.params };
   }
   return undefined;
 }
@@ -611,7 +653,7 @@ export async function gradeOneVector(
   // here — visibly — instead of producing a framed guess.
   let a2aRequest: CapturedA2aRequest | undefined;
   if (transport === 'a2a' && requiresNetworkProbe) {
-    a2aRequest = await captureA2aRequestForVector(vector, agentUrl);
+    a2aRequest = await captureA2aRequestForVector(vector, agentUrl, a2aDispatchOptions(options));
   }
 
   const probeOpts: ProbeOptions = {
@@ -625,9 +667,18 @@ export async function gradeOneVector(
   if (kind === 'positive') {
     const signed = buildPositiveRequest(vector as PositiveVector, loaded.keys, buildOpts);
     const probe = await probeSignedRequest(signed, probeOpts);
-    return gradePositive(vector as PositiveVector, probe);
+    return withA2aProbeUrl(gradePositive(vector as PositiveVector, probe), buildOpts);
   }
-  return gradeNegative(vector as NegativeVector, loaded, contract, probeOpts, buildOpts, options);
+  return withA2aProbeUrl(
+    await gradeNegative(vector as NegativeVector, loaded, contract, probeOpts, buildOpts, options),
+    buildOpts
+  );
+}
+
+function withA2aProbeUrl(result: VectorGradeResult, buildOpts: BuildOptions): VectorGradeResult {
+  return buildOpts.transport === 'a2a' && buildOpts.a2aRequest
+    ? { ...result, probe_url: buildOpts.a2aRequest.url }
+    : result;
 }
 
 // ── Phase helpers ─────────────────────────────────────────────

@@ -5,6 +5,7 @@ import { gradeOneVector, semanticVectorExclusion } from './grader';
 import { parseRequestSigningStepId } from './synthesize';
 import { loadRequestSigningVectors } from './vector-loader';
 import { ADCP_VERSION } from '../../../version';
+import { redactCredentialPatterns } from '../../../utils/redact-credential-patterns';
 
 /**
  * Detail surfaced on each vector step an A2A run cannot frame. Written for
@@ -19,12 +20,10 @@ import { ADCP_VERSION } from '../../../version';
  * instead of letting a sibling storyboard's passes roll it up green.
  */
 export const SIGNING_VECTORS_UNAVAILABLE_DETAIL =
-  'Coverage unavailable: this runner dispatches request-signing vectors two ways — a verbatim replay of ' +
-  "the vector's recorded REST request (`raw`), or the same body re-framed as an MCP `tools/call` envelope " +
-  '(`mcp`) — and it does not yet dispatch them through the official A2A client, so nothing about this ' +
-  "agent's verifier was graded on this run (adcontextprotocol/adcp-client#2954). Remedy: grade the " +
-  "verifier through the agent's MCP or REST binding, or set `request_signing.transport` (CLI " +
-  '`--signing-transport`) when that binding answers at this same URL.';
+  'Coverage unavailable: the official A2A client could not prepare a dispatch, so the runner refused to ' +
+  "invent an endpoint or wire envelope and no request-signing vector reached the agent's verifier. Remedy: " +
+  'verify the A2A SDK peer is installed and publish a reachable modern or legacy Agent Card with a supported ' +
+  'JSON-RPC interface, or grade the verifier through an MCP or REST binding.';
 
 /**
  * Resolve the vector transport for a graded agent.
@@ -88,21 +87,36 @@ export function resolveVectorTransport(
  * too — an agent that published no JSONRPC interface will not grow one
  * mid-run, and retrying would turn one coverage gap into forty timeouts.
  */
-const a2aAvailability = new Map<string, Promise<boolean>>();
+interface A2aAvailability {
+  available: boolean;
+  error?: string;
+}
 
-function a2aDispatchAvailable(agentUrl: string): Promise<boolean> {
-  const cached = a2aAvailability.get(agentUrl);
+const a2aAvailability = new WeakMap<StoryboardRunOptions, Map<string, Promise<A2aAvailability>>>();
+
+function a2aDispatchAvailable(agentUrl: string, options: StoryboardRunOptions): Promise<A2aAvailability> {
+  let availabilityForRun = a2aAvailability.get(options);
+  if (!availabilityForRun) {
+    availabilityForRun = new Map();
+    a2aAvailability.set(options, availabilityForRun);
+  }
+  const cached = availabilityForRun.get(agentUrl);
   if (cached) return cached;
   const probe = (async () => {
     try {
       const { resolveA2aDispatchTarget } = await import('./a2a-dispatch');
-      await resolveA2aDispatchTarget(agentUrl);
-      return true;
-    } catch {
-      return false;
+      await resolveA2aDispatchTarget(agentUrl, {
+        allowPrivateIp: options.allow_http === true,
+        ...(options.transport?.trustedFetchFn ? { cardFetch: options.transport.trustedFetchFn } : {}),
+      });
+      return { available: true };
+    } catch (error) {
+      const raw = error instanceof Error ? error.message : String(error);
+      const redacted = redactCredentialPatterns(raw);
+      return { available: false, error: String(redacted).slice(0, 500) };
     }
   })();
-  a2aAvailability.set(agentUrl, probe);
+  availabilityForRun.set(agentUrl, probe);
   return probe;
 }
 
@@ -123,6 +137,7 @@ export async function probeRequestSigningVector(
   }
   const rsOpts = options.request_signing ?? {};
   let transport = resolveVectorTransport(rsOpts, options.protocol);
+  let transportUnavailableDetail = SIGNING_VECTORS_UNAVAILABLE_DETAIL;
   // Operator selection first, in the grader's own precedence (`onlyVectors`
   // over `skipVectors`, per `preflightSkip`). A vector the operator never
   // selected is out of scope — reporting it as a coverage gap would
@@ -207,10 +222,12 @@ export async function probeRequestSigningVector(
   // keeps the `signing_transport_unavailable` reporting #2958 built — which is why that
   // path and its guardrails stay exactly as they are.
   if (!transport && options.protocol === 'a2a' && !gradableWithoutVectorTransport(parsed.kind, vector)) {
-    if (await a2aDispatchAvailable(agentUrl)) transport = 'a2a';
+    const availability = await a2aDispatchAvailable(agentUrl, options);
+    if (availability.available) transport = 'a2a';
+    else if (availability.error) transportUnavailableDetail += ` Discovery error: ${availability.error}`;
   }
   if (!transport && !gradableWithoutVectorTransport(parsed.kind, vector)) {
-    return skipProbe(agentUrl, 'signing_transport_unavailable', SIGNING_VECTORS_UNAVAILABLE_DETAIL);
+    return skipProbe(agentUrl, 'signing_transport_unavailable', transportUnavailableDetail);
   }
   try {
     const result = await gradeOneVector(parsed.vector_id, parsed.kind, agentUrl, {
@@ -234,6 +251,7 @@ export async function probeRequestSigningVector(
         : {}),
       mcpSessionId: rsOpts.mcpSessionId,
       mcpProtocolVersion: rsOpts.mcpProtocolVersion,
+      ...(options.transport?.trustedFetchFn ? { cardFetch: options.transport.trustedFetchFn } : {}),
     });
     if (result.skipped) {
       return skipProbe(agentUrl, (result.skip_reason as RunnerDetailedSkipReason | undefined) ?? 'grader_skipped');
@@ -243,7 +261,7 @@ export async function probeRequestSigningVector(
       headers['www-authenticate'] = `Signature error="${result.actual_error_code}"`;
     }
     return {
-      url: agentUrl,
+      url: result.probe_url ?? agentUrl,
       status: result.http_status,
       headers,
       body: result.diagnostic ?? null,

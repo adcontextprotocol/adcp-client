@@ -28,7 +28,7 @@
  * | JSON-RPC method name  | the SDK, per the card's `protocolVersion`     |
  * | `a2a-version` header  | the SDK, from that same version               |
  * | proto-JSON encoding   | the SDK (`role` → `"ROLE_USER"`, not `1`)     |
- * | payload key           | the SDK (`input` on 1.x, `parameters` on 0.x) |
+ * | wire version          | the SDK client selected from the card         |
  *
  * That table is the whole argument. Observed, not assumed — against a card
  * declaring `1.0` the client emits `{"method":"SendMessage",...}` with
@@ -48,6 +48,15 @@
  * the A2A path, so grading an MCP agent never loads it and an adopter grading
  * MCP is never required to install it.
  */
+
+import { createAgentTransportFetch } from '../../../net/agent-transport-fetch';
+import { withAbortSignal } from '../../../protocols/abort';
+import { buildCardUrls } from '../../../utils/a2a-discovery';
+import type { SendMessageRequest } from '@a2a-js/sdk';
+import type { Client } from '@a2a-js/sdk/client';
+
+const DEFAULT_CARD_FETCH_TIMEOUT_MS = 10_000;
+const ADCP_A2A_EXTENSION = 'https://adcontextprotocol.org/extensions/adcp/v3';
 
 /**
  * A request the official A2A client produced: everything needed to sign it and
@@ -85,9 +94,11 @@ class RequestCaptured extends Error {
 export interface A2aDispatchOptions {
   /** Abort budget for the card fetch, in milliseconds. */
   timeoutMs?: number;
+  /** Permit private addresses while resolving the agent card. */
+  allowPrivateIp?: boolean;
   /**
-   * Injected for tests. Production passes nothing and the SDK's own default
-   * `fetch` performs the card fetch.
+   * Injected trusted fetch for tests and custom runtimes. Production card
+   * discovery uses the SDK's guarded, DNS-pinned transport fetch.
    */
   cardFetch?: typeof fetch;
 }
@@ -138,7 +149,9 @@ export async function captureA2aRequest(
   call: A2aCall,
   options: A2aDispatchOptions = {}
 ): Promise<CapturedA2aRequest> {
-  const { ClientFactory, JsonRpcTransportFactory } = await import('@a2a-js/sdk/client');
+  const { ClientFactory, JsonRpcTransportFactory, ServiceParameters, withA2AExtensions } =
+    await import('@a2a-js/sdk/client');
+  const { Role } = await import('@a2a-js/sdk');
 
   const capturingFetch: typeof fetch = async (input, init) => {
     const request = new Request(input as RequestInfo, init);
@@ -156,8 +169,10 @@ export async function captureA2aRequest(
 
   // The card fetch must NOT go through the capturing fetch — that fetch exists
   // to intercept the graded request, and swallowing the card fetch with it
-  // would leave the factory with no card at all. `cardFetch` is the test seam;
-  // production leaves it unset so the SDK uses its own default.
+  // would leave the factory with no card at all. Keep discovery on the same
+  // DNS-pinned, redirect-checked transport used by production protocol calls,
+  // with a caller-facing deadline even when an injected fetch ignores abort.
+  const cardFetch = buildGuardedCardFetch(agentUrl, options);
   const factory = new ClientFactory({
     transports: [
       new JsonRpcTransportFactory({
@@ -165,28 +180,44 @@ export async function captureA2aRequest(
         legacyCompat: CARD_DRIVEN_LEGACY_COMPAT,
       }),
     ],
-    ...(options.cardFetch ? { cardResolver: await buildCardResolver(options.cardFetch) } : {}),
+    cardResolver: await buildCardResolver(cardFetch),
   });
 
-  const client = await factory.createFromUrl(agentUrl);
+  const client = await createCardDrivenClient(agentUrl, factory);
+  const legacyWire = client.protocolVersion?.startsWith('0.') ?? false;
 
   try {
     if (call.kind === 'cancelTask') {
-      await client.cancelTask({ tenant: '', id: call.taskId, metadata: undefined } as never);
+      await client.cancelTask({ tenant: '', id: call.taskId, metadata: undefined });
     } else {
-      await client.sendMessage({
+      const invocation = legacyWire
+        ? { skill: call.operation, parameters: call.args }
+        : { skill: call.operation, input: call.args };
+      const request: SendMessageRequest = {
         tenant: '',
         message: {
           messageId: cryptoRandomId(),
-          // `1` is `Role.ROLE_USER` in the generated enum; the SDK proto-JSONs
-          // it to the string `"ROLE_USER"` on the wire. Writing the string here
-          // would be this file guessing at an encoding the SDK owns.
-          role: 1,
-          parts: [{ content: { $case: 'data', value: { skill: call.operation, input: call.args } } }],
-        } as never,
-        configuration: undefined as never,
-        metadata: undefined as never,
-      } as never);
+          contextId: '',
+          taskId: '',
+          role: Role.ROLE_USER,
+          parts: [
+            {
+              content: { $case: 'data', value: invocation },
+              metadata: undefined,
+              filename: '',
+              mediaType: 'application/json',
+            },
+          ],
+          metadata: undefined,
+          extensions: legacyWire ? [] : [ADCP_A2A_EXTENSION],
+          referenceTaskIds: [],
+        },
+        configuration: undefined,
+        metadata: undefined,
+      };
+      await client.sendMessage(request, {
+        ...(legacyWire ? {} : { serviceParameters: ServiceParameters.create(withA2AExtensions(ADCP_A2A_EXTENSION)) }),
+      });
     }
   } catch (err) {
     if (err instanceof RequestCaptured) return err.captured;
@@ -198,7 +229,37 @@ export async function captureA2aRequest(
 
 async function buildCardResolver(cardFetch: typeof fetch) {
   const { DefaultAgentCardResolver } = await import('@a2a-js/sdk/client');
-  return new DefaultAgentCardResolver({ fetchImpl: cardFetch });
+  return new DefaultAgentCardResolver({ fetchImpl: cardFetch, legacyCompat: CARD_DRIVEN_LEGACY_COMPAT });
+}
+
+async function createCardDrivenClient(
+  agentUrl: string,
+  factory: { createFromUrl(baseUrl: string, path?: string): Promise<Client> }
+): Promise<Client> {
+  let lastError: unknown;
+  for (const cardUrl of buildCardUrls(agentUrl)) {
+    try {
+      return await factory.createFromUrl(cardUrl, '');
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('A2A agent card discovery failed');
+}
+
+function buildGuardedCardFetch(agentUrl: string, options: A2aDispatchOptions): typeof fetch {
+  const transportFetch = createAgentTransportFetch(agentUrl, {
+    ...(options.cardFetch ? { trustedFetchFn: options.cardFetch } : {}),
+    allowPrivateIp: options.allowPrivateIp === true,
+  });
+  const timeoutMs = options.timeoutMs ?? DEFAULT_CARD_FETCH_TIMEOUT_MS;
+  return ((input: RequestInfo | URL, init: RequestInit = {}) =>
+    withAbortSignal([init.signal], timeoutMs, signal =>
+      transportFetch(input, {
+        ...init,
+        ...(signal ? { signal } : {}),
+      })
+    )) as typeof fetch;
 }
 
 function cryptoRandomId(): string {
@@ -228,7 +289,10 @@ export function operationFromVectorUrl(vectorUrl: string): string {
  * JSONRPC transport can drive. Callers treat that as "no A2A dispatch here"
  * rather than framing a request against a guess.
  */
-export async function resolveA2aDispatchTarget(agentUrl: string): Promise<{ endpoint: string }> {
+export async function resolveA2aDispatchTarget(
+  agentUrl: string,
+  options: A2aDispatchOptions = {}
+): Promise<{ endpoint: string }> {
   const { ClientFactory, JsonRpcTransportFactory } = await import('@a2a-js/sdk/client');
   let endpoint = '';
   const noteEndpoint: typeof fetch = async (input, init) => {
@@ -237,15 +301,16 @@ export async function resolveA2aDispatchTarget(agentUrl: string): Promise<{ endp
   };
   const factory = new ClientFactory({
     transports: [new JsonRpcTransportFactory({ fetchImpl: noteEndpoint, legacyCompat: CARD_DRIVEN_LEGACY_COMPAT })],
+    cardResolver: await buildCardResolver(buildGuardedCardFetch(agentUrl, options)),
   });
   // `createFromUrl` fetches and normalizes the card and selects the interface;
   // it throws when no transport matches, which IS the availability answer.
-  const client = await factory.createFromUrl(agentUrl);
+  const client = await createCardDrivenClient(agentUrl, factory);
   try {
-    await client.cancelTask({ tenant: '', id: 'a2a-dispatch-probe', metadata: undefined } as never);
+    await client.cancelTask({ tenant: '', id: 'a2a-dispatch-probe', metadata: undefined });
   } catch (err) {
     if (err instanceof RequestCaptured) return { endpoint };
     throw err;
   }
-  return { endpoint };
+  throw new Error('the A2A client returned without issuing a dispatch probe; no endpoint was resolved');
 }

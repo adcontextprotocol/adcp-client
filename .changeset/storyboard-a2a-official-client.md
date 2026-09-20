@@ -1,5 +1,5 @@
 ---
-'@adcp/sdk': patch
+'@adcp/sdk': minor
 ---
 
 Grade request-signing vectors over A2A by signing the request the official `@a2a-js/sdk` client emits.
@@ -17,3 +17,7 @@ Fail-closed behaviour is preserved rather than replaced: `resolveVectorTransport
 returns no framing for A2A, and the availability decision moved to the async dispatcher.
 An agent whose card does not resolve to a JSONRPC interface keeps the existing
 `signing_transport_unavailable` reporting and its guardrails.
+
+Agent Card discovery uses the runner's DNS-pinned, redirect-checked transport
+with a deadline, supports modern, path-scoped, and genuine v0.3 cards, and
+reports the card-selected endpoint as the probe provenance.

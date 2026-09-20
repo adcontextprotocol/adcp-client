@@ -8508,10 +8508,17 @@ function rateLimitTripObservationToProbeResult(
  * dispatch path with its own reason, and turning it into a brand.json error here would
  * relabel one failure as another.
  */
-async function resolveA2aProtocolEndpoint(agentUrl: string, fallback: string): Promise<string> {
+async function resolveA2aProtocolEndpoint(
+  agentUrl: string,
+  fallback: string,
+  options: { allowPrivateIp?: boolean; fetchFn?: typeof fetch }
+): Promise<string> {
   try {
     const { resolveA2aDispatchTarget } = await import('./request-signing/a2a-dispatch');
-    const { endpoint } = await resolveA2aDispatchTarget(agentUrl);
+    const { endpoint } = await resolveA2aDispatchTarget(agentUrl, {
+      allowPrivateIp: options.allowPrivateIp === true,
+      ...(options.fetchFn ? { cardFetch: options.fetchFn } : {}),
+    });
     return endpoint || fallback;
   } catch {
     return fallback;
@@ -8555,7 +8562,8 @@ async function probeBrandJwks(
   // resolves to. Matching the base produced zero byte-equal hits against a conformant
   // brand.json publishing the RPC endpoint — the agent was graded non-conformant for
   // publishing exactly what the spec asks for.
-  const matchUrl = options.protocol === 'a2a' ? await resolveA2aProtocolEndpoint(agentUrl, agentUrl) : agentUrl;
+  const matchUrl =
+    options.protocol === 'a2a' ? await resolveA2aProtocolEndpoint(agentUrl, agentUrl, options) : agentUrl;
 
   let jwksUri: string | undefined;
   try {

@@ -352,6 +352,7 @@ function passthrough(vector: NegativeVector, options: BuildOptions): SignedHttpR
  * the vector's URL verbatim otherwise.
  */
 function protocolMethodPassthrough(vector: NegativeVector, options: BuildOptions): SignedHttpRequest {
+  if (options.transport === 'a2a') return passthrough(vector, options);
   const url = options.baseUrl ?? vector.request.url;
   const headers = { ...vector.request.headers };
   // MCP Streamable HTTP requires this Accept negotiation header on JSON-RPC

@@ -21,6 +21,14 @@ const {
   captureA2aRequest,
   operationFromVectorUrl,
 } = require('../../dist/lib/testing/storyboard/request-signing/a2a-dispatch.js');
+const { probeRequestSigningVector } = require('../../dist/lib/testing/storyboard/request-signing/probe-dispatch.js');
+
+async function closeServer(server) {
+  await new Promise(resolve => {
+    server.close(resolve);
+    server.closeAllConnections();
+  });
+}
 
 /** Serve an agent card declaring one JSONRPC interface at *protocolVersion*. */
 async function withCardServer(protocolVersion, run) {
@@ -58,7 +66,39 @@ async function withCardServer(protocolVersion, run) {
   try {
     return await run(`http://127.0.0.1:${server.address().port}`);
   } finally {
-    server.close();
+    await closeServer(server);
+  }
+}
+
+/** Serve the genuine A2A v0.3 card shape (no supportedInterfaces array). */
+async function withLegacyCardServer(run) {
+  const server = http.createServer((req, res) => {
+    if (!req.url.includes('/.well-known/')) {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    const port = server.address().port;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        name: 'legacy-conformance-fixture-agent',
+        description: 'legacy card fixture',
+        url: `http://127.0.0.1:${port}/legacy-a2a`,
+        version: '1.0.0',
+        capabilities: {},
+        defaultInputModes: ['text/plain'],
+        defaultOutputModes: ['text/plain'],
+        skills: [],
+        preferredTransport: 'JSONRPC',
+      })
+    );
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    return await run(`http://127.0.0.1:${server.address().port}`);
+  } finally {
+    await closeServer(server);
   }
 }
 
@@ -72,6 +112,56 @@ test('the endpoint comes from the agent card, not from the URL we were given', a
   // the base, or to an assumed `/a2a`.
   assert.match(captured.url, /\/the-card-named-this-path$/);
   assert.strictEqual(captured.method, 'POST');
+});
+
+test('a storyboard probe reports the card-selected endpoint as its provenance', async () => {
+  const server = http.createServer(async (req, res) => {
+    const port = server.address().port;
+    if (req.url.startsWith('/.well-known/')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          protocolVersion: '1.0',
+          name: 'provenance-fixture-agent',
+          description: 'card fixture',
+          version: '1.0.0',
+          capabilities: {},
+          defaultInputModes: ['application/json'],
+          defaultOutputModes: ['application/json'],
+          skills: [],
+          supportedInterfaces: [
+            {
+              url: `http://127.0.0.1:${port}/card-selected-rpc`,
+              protocolBinding: 'JSONRPC',
+              protocolVersion: '1.0',
+            },
+          ],
+        })
+      );
+      return;
+    }
+    for await (const _chunk of req) {
+      // Drain the signed request before replying.
+    }
+    res.writeHead(401, {
+      'content-type': 'application/json',
+      'www-authenticate': 'Signature error="request_signature_required"',
+    });
+    res.end('{}');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const result = await probeRequestSigningVector('negative-001-no-signature-header', base, {
+      protocol: 'a2a',
+      allow_http: true,
+    });
+    assert.strictEqual(result.error, undefined);
+    assert.strictEqual(result.status, 401);
+    assert.strictEqual(result.url, `${base}/card-selected-rpc`);
+  } finally {
+    await closeServer(server);
+  }
 });
 
 test('the SDK proto-JSON encodes the message; the enum never reaches the wire as a number', async () => {
@@ -104,6 +194,75 @@ test('the JSON-RPC method and version header follow the card, for both protocol 
 
   assert.strictEqual(modern.headers['a2a-version'], '1.0');
   assert.strictEqual(legacy.headers['a2a-version'], '0.3');
+});
+
+test('a genuine v0.3 card resolves and uses the legacy AdCP invocation shape', async () => {
+  const cancel = await withLegacyCardServer(base =>
+    captureA2aRequest(base, { kind: 'cancelTask', taskId: 'legacy-task' })
+  );
+  assert.strictEqual(JSON.parse(cancel.body).method, 'tasks/cancel');
+  assert.strictEqual(cancel.headers['a2a-version'], '0.3');
+
+  const send = await withLegacyCardServer(base =>
+    captureA2aRequest(base, { kind: 'sendMessage', operation: 'get_products', args: { brief: 'x' } })
+  );
+  assert.deepStrictEqual(JSON.parse(send.body).params.message.parts[0].data, {
+    skill: 'get_products',
+    parameters: { brief: 'x' },
+  });
+});
+
+test('modern SendMessage activates the AdCP extension like the production buyer path', async () => {
+  const captured = await withCardServer('1.0', base =>
+    captureA2aRequest(base, { kind: 'sendMessage', operation: 'get_products', args: {} })
+  );
+  const body = JSON.parse(captured.body);
+  assert.deepStrictEqual(body.params.message.extensions, ['https://adcontextprotocol.org/extensions/adcp/v3']);
+  assert.strictEqual(captured.headers['a2a-extensions'], 'https://adcontextprotocol.org/extensions/adcp/v3');
+});
+
+test('path-scoped agent URLs discover a card beneath the full configured path', async () => {
+  const requested = [];
+  const server = http.createServer((req, res) => {
+    requested.push(req.url);
+    if (req.url !== '/tenant-a/a2a/.well-known/agent-card.json') {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    const port = server.address().port;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        protocolVersion: '1.0',
+        name: 'path-scoped-agent',
+        description: 'card fixture',
+        version: '1.0.0',
+        capabilities: {},
+        defaultInputModes: ['text/plain'],
+        defaultOutputModes: ['text/plain'],
+        skills: [],
+        securityRequirements: [],
+        supportedInterfaces: [
+          {
+            url: `http://127.0.0.1:${port}/tenant-a/rpc`,
+            protocolBinding: 'JSONRPC',
+            protocolVersion: '1.0',
+            tenant: '',
+          },
+        ],
+      })
+    );
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const base = `http://127.0.0.1:${server.address().port}/tenant-a/a2a`;
+    const target = await resolveA2aDispatchTarget(base);
+    assert.match(target.endpoint, /\/tenant-a\/rpc$/);
+    assert.strictEqual(requested[0], '/tenant-a/a2a/.well-known/agent-card.json');
+  } finally {
+    server.close();
+  }
 });
 
 test('the legacy-compat policy defers to the card, and turning it off would not', async () => {
@@ -178,7 +337,27 @@ test('an agent with no resolvable card leaves A2A dispatch unavailable, rather t
   await assert.rejects(() => resolveA2aDispatchTarget('http://127.0.0.1:1/'), /.*/);
 });
 
-const { buildPositiveRequest } = require('../../dist/lib/testing/storyboard/request-signing/builder.js');
+test('agent-card discovery honors its timeout even when an injected fetch ignores abort', async () => {
+  const neverSettles = () => new Promise(() => {});
+  await assert.rejects(
+    () =>
+      captureA2aRequest(
+        'https://hung-card.example',
+        { kind: 'sendMessage', operation: 'get_products', args: {} },
+        { cardFetch: neverSettles, timeoutMs: 10 }
+      ),
+    /timed out after 10 ms/i
+  );
+});
+
+test('production agent-card discovery rejects always-blocked metadata addresses', async () => {
+  await assert.rejects(() => resolveA2aDispatchTarget('http://169.254.169.254/'), /always-blocked address/i);
+});
+
+const {
+  buildPositiveRequest,
+  buildNegativeRequest,
+} = require('../../dist/lib/testing/storyboard/request-signing/builder.js');
 const { loadRequestSigningVectors } = require('../../dist/lib/testing/storyboard/request-signing/vector-loader.js');
 
 test('a header the fixture and the client both set goes on the wire ONCE', () => {
@@ -255,7 +434,26 @@ test("a header the FIXTURE deliberately malforms survives the transport's clean 
   assert.strictEqual(built.headers['accept'], 'application/json');
 });
 
-const { resolveA2aDispatchTarget: _r } = require('../../dist/lib/testing/storyboard/request-signing/a2a-dispatch.js');
+test('the protocol-method vector uses the captured A2A endpoint, headers, and body', () => {
+  const loaded = loadRequestSigningVectors({});
+  const vector = loaded.negative.find(v => v.id === '028-unsigned-protocol-method-required');
+  assert.ok(vector, 'expected vector 028');
+  const capturedBody = '{"id":1,"jsonrpc":"2.0","method":"tasks/cancel","params":{"id":"official"}}';
+  const built = buildNegativeRequest(vector, loaded.keys, {
+    baseUrl: 'https://agent.example/card-base',
+    transport: 'a2a',
+    a2aRequest: {
+      url: 'https://agent.example/card-selected-rpc',
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'a2a-version': '0.3' },
+      body: capturedBody,
+    },
+  });
+  assert.strictEqual(built.url, 'https://agent.example/card-selected-rpc');
+  assert.strictEqual(built.headers['a2a-version'], '0.3');
+  assert.strictEqual(built.body, capturedBody);
+});
+
 const { selectAgentByUrl } = require('../../dist/lib/signing/agent-resolver/select-agent.js');
 
 test('brand.json matching uses the PROTOCOL ENDPOINT, not the card base', async () => {

@@ -350,7 +350,7 @@ function formatStepVerdictLines(step, options = {}) {
   return [`${step?.passed ? '✅ Passed' : '❌ Failed'}${suffix}`];
 }
 
-const SIGNING_TRANSPORTS = ['raw', 'mcp'];
+const SIGNING_TRANSPORTS = ['raw', 'mcp', 'a2a'];
 
 // Tokens only ever passed as a (rejected) value for a boolean flag — no
 // storyboard id or agent URL looks like these, so treating them as a misuse
