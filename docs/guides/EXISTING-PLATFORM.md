@@ -72,20 +72,21 @@ The submitted continuation's `waitForCompletion` function is deliberately proces
 | Client task | `TaskOptions.timeout` is one absolute task deadline; `signal` is caller cancellation | Throws the abort/timeout error | Returns `TaskResult` with `success: false` and structured `adcpError` |
 | `validateAdAgents` | `signal` spans the whole discovery; `timeoutMs` bounds each fetch | Throws the signal's abort reason and starts no later fallback | Returns `valid: false` with discovery errors |
 | Submitted wait | `waitForCompletion(interval, signal)` | Stops polling; A2A cancellation is a best-effort protocol courtesy | Returns the latest/terminal `TaskResult` |
-| Transport observer | Operational responses return immediately. Only finite declared text bodies at or below 64 KiB are cloned and captured asynchronously, with a 1 s capture ceiling; skipped bodies emit `responseBodyTruncated: true` | Never consumes or delays the operational response stream | Observer rejection is isolated from protocol behavior |
+| Transport observer | Operational responses return immediately. Diagnostic text bodies are cloned and captured asynchronously up to 64 KiB with a 1 s capture ceiling; explicitly over-limit, SSE, and non-text bodies are skipped with `responseBodyTruncated: true` | Never consumes or delays the operational response stream | Observer rejection is isolated from protocol behavior |
 
 Do not catch every outcome into a string. Switch on `result.status`; use `result.adcpError` for failed results, and catch thrown cancellation/configuration errors separately. Internal transport retries reuse an idempotency key. A new application intent must receive a new key; after an ambiguous timeout, reconcile by the persisted natural key before deciding to retry.
 
 Transport diagnostics never delay delivery of the operational `Response`.
-SSE, non-text, missing/invalid-length, and over-limit bodies are not cloned;
-their single response event is emitted immediately with
-`responseBodyTruncated: true`. A finite declared text body at or below 64 KiB
-is cloned synchronously and captured in the background for at most
-`BODY_SNIPPET_TIMEOUT_MS` (currently 1 second). Its single response event is
-emitted when capture completes or expires, while the original response stream
-remains exclusively available to the protocol client. The enclosing task then
-waits within `OBSERVER_FLUSH_TIMEOUT_MS` for that event's asynchronous
-observer, so short-lived processes do not lose the final audit record. Observer
+SSE, non-text, and explicitly over-limit bodies are not cloned; their single
+response event is emitted immediately with `responseBodyTruncated: true`. Other
+diagnostic text bodies, including chunked responses without `Content-Length`
+and responses with an invalid length, are cloned synchronously and captured in
+the background up to 64 KiB for at most `BODY_SNIPPET_TIMEOUT_MS` (currently 1
+second). Their single response event is emitted when capture completes,
+truncates, or expires, while the original response stream remains exclusively
+available to the protocol client. The enclosing task then waits within
+`OBSERVER_FLUSH_TIMEOUT_MS` for that event's asynchronous observer, so
+short-lived processes do not lose the final audit record. Observer
 failures remain isolated. Applications should synchronously enqueue each event into their own
 bounded in-memory or durable queue and return promptly; flushing that queue is
 an application lifecycle concern.
