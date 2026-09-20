@@ -24,7 +24,7 @@
 
 import { AgentClient } from '../../core/AgentClient';
 import { randomUUID } from 'node:crypto';
-import { withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
+import { getCapturesFromError, withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
 import type { ConformanceFixtures, ConformanceToolName } from '../types';
 import { compareProbes, type ProbeComparisonResult } from './uniformErrorComparator';
 
@@ -261,6 +261,15 @@ async function capturedProbe(
     }
     return { capture: toolCallCapture };
   } catch (err) {
+    const toolCallCapture = lastPostCapture(getCapturesFromError(err) ?? []);
+    if (toolCallCapture?.bodyTruncated) {
+      return {
+        error:
+          toolCallCapture.bodyCaptureError ??
+          'Raw response capture was incomplete; uniform-error validation cannot compare partial bytes',
+        captureIncomplete: true,
+      };
+    }
     return { error: err instanceof Error ? err.message : String(err) };
   }
 }

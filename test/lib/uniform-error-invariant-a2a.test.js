@@ -40,7 +40,7 @@ const A_LIST_ID = 'list_owned_by_a';
  * controlled by `shape`. Returns `{ server, url }` where `url` is the
  * base that the conformance harness probes with `protocol: 'a2a'`.
  *
- * @param {'compliant' | 'leak_code' | 'echo_id_in_details'} shape
+ * @param {'compliant' | 'leak_code' | 'echo_id_in_details' | 'oversized_malformed'} shape
  */
 async function startA2AAgent(shape) {
   let actualUrl;
@@ -93,6 +93,11 @@ function handleJsonRpc(req, res, shape) {
   let body = '';
   req.on('data', chunk => (body += chunk));
   req.on('end', () => {
+    if (shape === 'oversized_malformed') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(`{"jsonrpc":"2.0","id":1,"result":"${'x'.repeat(4_096)}`);
+      return;
+    }
     let rpc;
     try {
       rpc = JSON.parse(body);
@@ -296,5 +301,23 @@ describe('conformance: uniform-error-response invariant (A2A)', () => {
     assert.ok(invariant);
     assert.equal(invariant.mode, 'baseline');
     assert.equal(invariant.verdict, 'pass');
+  });
+
+  test('oversized malformed rejection fails explicitly from attached incomplete captures', async () => {
+    const url = await start('oversized_malformed');
+    const report = await runConformance(url, {
+      seed: 6,
+      protocol: 'a2a',
+      tools: ['get_property_list'],
+      turnBudget: 1,
+      authToken: TENANT_B_TOKEN,
+      maxFailurePayloadBytes: 1_024,
+    });
+
+    const invariant = report.uniformError.find(r => r.tool === 'get_property_list');
+    assert.ok(invariant);
+    assert.equal(invariant.verdict, 'fail');
+    assert.match(invariant.differences.join('\n'), /raw response capture incomplete.*exceeded maxBodyBytes \(1024\)/);
+    assert.equal(invariant.skipReason, undefined);
   });
 });

@@ -378,6 +378,80 @@ describe('storyboard A2A auth overrides', () => {
     assert.strictEqual(parsed, undefined);
   });
 
+  test('capture truncation cannot satisfy expect_error for a successful native response', async () => {
+    const agentUrl = 'https://capture-limit.example';
+    const rpcUrl = `${agentUrl}/rpc`;
+    const oversizedStoryboard = storyboard('none');
+    oversizedStoryboard.id = 'a2a_capture_infrastructure_failure';
+    oversizedStoryboard.phases[0].steps[0].validations = [];
+
+    const fetchFn = async (input, init = {}) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes('/.well-known/')) {
+        const agentCard = card(rpcUrl);
+        agentCard.skills = ['get_adcp_capabilities', 'list_creatives'].map(name => ({
+          id: name,
+          name,
+          description: `${name} fixture`,
+          tags: [],
+          examples: [],
+          inputModes: ['application/json'],
+          outputModes: ['application/json'],
+        }));
+        return new Response(JSON.stringify(agentCard), { headers: { 'content-type': 'application/json' } });
+      }
+
+      const body = JSON.parse(init.body);
+      const skill = body.params?.message?.parts?.[0]?.data?.skill;
+      if (skill === 'get_adcp_capabilities') {
+        return new Response(JSON.stringify(capabilitiesResponse(body.id)), {
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: body.id,
+          result: {
+            task: {
+              id: 'oversized-success-task',
+              contextId: 'oversized-success-context',
+              status: { state: 'TASK_STATE_COMPLETED' },
+              metadata: { padding: 'x'.repeat(1_100_000) },
+              artifacts: [
+                {
+                  artifactId: 'result',
+                  parts: [
+                    {
+                      data: {
+                        status: 'completed',
+                        creatives: [],
+                        query_summary: 'No creatives matched.',
+                        pagination: { total_count: 0, has_more: false },
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        }),
+        { headers: { 'content-type': 'application/json' } }
+      );
+    };
+
+    const result = await runStoryboard(agentUrl, oversizedStoryboard, {
+      protocol: 'a2a',
+      agentTools: ['list_creatives'],
+      transport: { trustedFetchFn: fetchFn, legacyCompat: { enabled: false } },
+      _profile: { name: 'capture-limit-fixture', tools: ['list_creatives'] },
+    });
+    const step = result.phases[0].steps[0];
+    assert.strictEqual(step.expect_error, true);
+    assert.strictEqual(step.passed, false, JSON.stringify(step));
+    assert.match(step.error, /Raw response capture exceeded maxBodyBytes \(1048576\)/);
+  });
+
   test('dispatches official SendMessage and never MCP tools/call while isolating credentials', async () => {
     const agentUrl = 'https://seller.example';
     const rpcUrl = `${agentUrl}/rpc`;

@@ -4937,6 +4937,10 @@ async function executeStep(
   let a2aEnvelope: A2ATaskEnvelope | undefined;
   let crossResponses: CrossResponseSet | undefined;
   let requestUrl = runState.agentUrl;
+  // Transport/capture infrastructure failures are not agent rejections.
+  // Keep them out of stepResult.error so `expect_error` can never invert an
+  // incomplete wire observation into a passing compliance step.
+  let captureInfrastructureError: string | undefined;
 
   // Parallel-dispatch fan-out: when the storyboard step declares
   // `parallel_dispatch`, the runner fires N concurrent dispatches against
@@ -5068,7 +5072,8 @@ async function executeStep(
               : (stepResult.error ?? taskResult?.error ?? 'A2A auth probe produced no HTTP response');
           requestUrl = rpcCapture?.url ?? runState.agentUrl;
           httpResult = { url: requestUrl, status: 0, headers: {}, body: null, error };
-          stepResult = { ...stepResult, passed: false, error };
+          if (rpcCapture?.bodyTruncated) captureInfrastructureError = error;
+          stepResult = { ...stepResult, passed: false, ...(captureInfrastructureError ? {} : { error }) };
           responseRecord = {
             transport: 'a2a',
             payload: null,
@@ -5212,7 +5217,8 @@ async function executeStep(
           const error =
             skillCapture.bodyCaptureError ??
             'Raw response capture was incomplete; A2A validators cannot grade a partial response body';
-          stepResult = { ...stepResult, passed: false, error };
+          captureInfrastructureError = error;
+          stepResult = { ...stepResult, passed: false };
         } else {
           a2aEnvelope = parseLastA2aMessageSendCapture(a2aCaptures);
         }
@@ -5421,6 +5427,7 @@ async function executeStep(
   } else {
     passed = stepResult.passed && (taskResult?.success ?? false);
   }
+  if (captureInfrastructureError) passed = false;
 
   const schemaValidationError = caughtError instanceof ResponseSchemaValidationError ? caughtError : undefined;
   // The response unwrapper preserves the rejected payload on its typed error.
@@ -5830,8 +5837,11 @@ async function executeStep(
         context_provenance: Object.fromEntries(runState.contextProvenance),
       }),
     ...responseDerivedContextResult(runState),
-    error:
-      step.expect_error || schemaRejectionIsAdvisory ? undefined : truncateError(stepResult.error || taskResult?.error),
+    error: captureInfrastructureError
+      ? truncateError(captureInfrastructureError)
+      : step.expect_error || schemaRejectionIsAdvisory
+        ? undefined
+        : truncateError(stepResult.error || taskResult?.error),
     ...(!step.expect_error && taskResult?.adcp_error && { adcp_error: taskResult.adcp_error }),
     next,
     request: requestRecord,

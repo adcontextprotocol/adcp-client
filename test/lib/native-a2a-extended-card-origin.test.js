@@ -153,3 +153,94 @@ test('same-origin native extended-card discovery preserves configured custom hea
   await makeClient().resolveCanonicalUrl();
   assert.deepStrictEqual(receivedSessions, ['same-origin-session', 'same-origin-session']);
 });
+
+test('native canonical identity uses the selected JSONRPC interface URL including its path', async () => {
+  const rpcUrl = `${AGENT_ORIGIN}/tenant/a/rpc`;
+  const trustedFetchFn = async input => {
+    const url = String(input);
+    assert.match(url, /\.well-known\/agent-(?:card\.)?json/);
+    return new Response(
+      JSON.stringify({
+        protocolVersion: '1.0',
+        name: 'native-canonical-interface',
+        description: 'Canonical interface fixture',
+        version: '1.0.0',
+        capabilities: {},
+        defaultInputModes: ['application/json'],
+        defaultOutputModes: ['application/json'],
+        skills: [],
+        supportedInterfaces: [
+          {
+            url: `${AGENT_ORIGIN}/tenant/a/rest`,
+            protocolBinding: 'HTTP+JSON',
+            protocolVersion: '1.0',
+          },
+          { url: rpcUrl, protocolBinding: 'JSONRPC', protocolVersion: '1.0' },
+        ],
+      }),
+      { headers: { 'content-type': 'application/json' } }
+    );
+  };
+  const client = new AgentClient(
+    {
+      id: 'native-canonical-interface',
+      agent_uri: AGENT_ORIGIN,
+      protocol: 'a2a',
+      name: 'native-canonical-interface',
+    },
+    { transport: { trustedFetchFn, legacyCompat: { enabled: false } } }
+  );
+
+  assert.strictEqual(await client.resolveCanonicalUrl(), rpcUrl);
+  assert.strictEqual(
+    await client.isSameAgentResolved({
+      id: 'native-canonical-rpc',
+      agent_uri: rpcUrl,
+      protocol: 'a2a',
+      name: 'native-canonical-rpc',
+    }),
+    true
+  );
+  assert.strictEqual(
+    await client.isSameAgentResolved({
+      id: 'native-root-only',
+      agent_uri: AGENT_ORIGIN,
+      protocol: 'a2a',
+      name: 'native-root-only',
+    }),
+    false
+  );
+});
+
+test('legacy canonical identity continues to use agent card url', async () => {
+  const legacyUrl = `${AGENT_ORIGIN}/legacy/a2a`;
+  const trustedFetchFn = async input => {
+    const url = String(input);
+    assert.match(url, /\.well-known\/agent-(?:card\.)?json/);
+    return new Response(
+      JSON.stringify({
+        protocolVersion: '0.3.0',
+        name: 'legacy-canonical-url',
+        description: 'Legacy canonical URL fixture',
+        version: '1.0.0',
+        url: legacyUrl,
+        capabilities: {},
+        defaultInputModes: ['application/json'],
+        defaultOutputModes: ['application/json'],
+        skills: [],
+      }),
+      { headers: { 'content-type': 'application/json' } }
+    );
+  };
+  const client = new AgentClient(
+    {
+      id: 'legacy-canonical-url',
+      agent_uri: AGENT_ORIGIN,
+      protocol: 'a2a',
+      name: 'legacy-canonical-url',
+    },
+    { transport: { trustedFetchFn, legacyCompat: { enabled: true } } }
+  );
+
+  assert.strictEqual(await client.resolveCanonicalUrl(), legacyUrl);
+});

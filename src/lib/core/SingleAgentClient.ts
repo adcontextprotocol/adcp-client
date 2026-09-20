@@ -90,6 +90,8 @@ import type {
 } from '../types/core.generated';
 import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 import { A2AClient as A2AClientImpl } from '@a2a-js/sdk/client';
+import type { AgentCard as NativeA2AAgentCard, AgentInterface as NativeA2AAgentInterface } from '@a2a-js/sdk-v1';
+import type { Client as NativeA2AClient } from '@a2a-js/sdk-v1/client';
 // A2A SDK client used untyped — wire shapes are validated at runtime, matching
 // the prior CommonJS `require('@a2a-js/sdk/client')` behaviour.
 const A2AClient: any = A2AClientImpl;
@@ -1922,18 +1924,30 @@ export class SingleAgentClient {
         throw lastError;
       }
       const agentCard = await withResponseSizeLimit(maxResponseBytes, async () => {
+        if (transport?.legacyCompat?.enabled === false) {
+          return (client as NativeA2AClient).getAgentCard();
+        }
         const compatibleClient = client as unknown as {
-          getAgentCard?: () => Promise<any>;
-          agentCardPromise?: Promise<any>;
-          agentCard?: any;
+          getAgentCard?: () => Promise<{ url?: string }>;
+          agentCardPromise?: Promise<{ url?: string }>;
+          agentCard?: { url?: string };
         };
         return typeof compatibleClient.getAgentCard === 'function'
           ? compatibleClient.getAgentCard()
           : (compatibleClient.agentCardPromise ?? compatibleClient.agentCard);
       });
 
-      // Use the canonical URL from the agent card, falling back to computed base URL
-      if (agentCard?.url) {
+      // Native v1 cards declare ordered transport endpoints in
+      // supportedInterfaces. Mirror the official ClientFactory's per-binding
+      // selection for the only transport this path installs (JSONRPC), so
+      // canonical identity uses the same endpoint the SDK dispatches to.
+      if (transport?.legacyCompat?.enabled === false) {
+        const nativeJsonRpc = selectNativeJsonRpcInterface(agentCard as NativeA2AAgentCard);
+        if (nativeJsonRpc) return nativeJsonRpc.url;
+      }
+
+      // Preserve the stable 0.3 card.url behavior.
+      if (agentCard && 'url' in agentCard && typeof agentCard.url === 'string' && agentCard.url.length > 0) {
         return agentCard.url;
       }
 
@@ -5715,7 +5729,7 @@ export class SingleAgentClient {
    * Get the fully resolved agent configuration
    *
    * This async method ensures the agent config has the canonical URL resolved:
-   * - For A2A: Fetches the agent card and uses its 'url' field
+   * - For A2A: Fetches the agent card and uses its selected native interface or legacy `url`
    * - For MCP: Performs endpoint discovery
    *
    * @returns Promise resolving to agent config with canonical URL
@@ -5787,7 +5801,10 @@ export class SingleAgentClient {
     }
 
     if (this.normalizedAgent.protocol === 'a2a') {
-      await this.ensureCanonicalUrlResolved();
+      const resolved = await this.ensureCanonicalUrlResolved();
+      // Scoped transports deliberately avoid populating the shared cache, but
+      // their card-selected endpoint is still the canonical result of this call.
+      return resolved.agent_uri;
     } else if (this.normalizedAgent.protocol === 'mcp') {
       await this.ensureEndpointDiscovered();
     }
@@ -6967,6 +6984,17 @@ export class SingleAgentClient {
 
     return schemaMap[taskType] || null;
   }
+}
+
+function selectNativeJsonRpcInterface(card: NativeA2AAgentCard): NativeA2AAgentInterface | undefined {
+  let selected: NativeA2AAgentInterface | undefined;
+  for (const agentInterface of card.supportedInterfaces ?? []) {
+    if (agentInterface.protocolBinding.toUpperCase() !== 'JSONRPC') continue;
+    // ClientFactory keeps the first interface for a binding, except that a
+    // later native 1.0 interface becomes the preferred interface.
+    if (!selected || agentInterface.protocolVersion === '1.0') selected = agentInterface;
+  }
+  return selected;
 }
 
 function buildA2ADiscoveryHeaders(
