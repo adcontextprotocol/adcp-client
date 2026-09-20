@@ -110,6 +110,31 @@ describe('rawResponseCapture', () => {
     assert.equal(captures[0].body, JSON.stringify({ echo: { hello: 'world' } }));
   });
 
+  test('extracts JSON-RPC metadata when fetch receives a Request body', async () => {
+    const { server, url } = await startServer(async (req, res) => {
+      for await (const _chunk of req) void _chunk;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"jsonrpc":"2.0","id":"response","result":{}}');
+    });
+    servers.push(server);
+
+    const capturingFetch = wrapFetchWithCapture(fetch);
+    const request = new Request(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'request',
+        method: 'SendMessage',
+        params: { message: { parts: [{ data: { skill: 'list_creatives', input: {} } }] } },
+      }),
+    });
+    const { captures } = await withRawResponseCapture(() => capturingFetch(request));
+
+    assert.equal(captures[0].requestJsonRpcMethod, 'SendMessage');
+    assert.equal(captures[0].requestAdcpSkill, 'list_creatives');
+  });
+
   test('truncates body when it exceeds maxBodyBytes', async () => {
     const big = 'A'.repeat(10_000);
     const { server, url } = await startServer((req, res) => {

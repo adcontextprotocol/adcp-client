@@ -100,6 +100,7 @@ import { withTaskDeadline } from './task-deadline';
 import { createMCPRequestHeaders } from '../auth';
 import { isAbortOrTimeoutError } from '../protocols/abort';
 import { normalizeTransportOptions } from '../protocols';
+import { createA2AClientFromCardUrl } from '../protocols/a2a';
 import {
   AuthenticationRequiredError,
   ConfigurationError,
@@ -1906,7 +1907,9 @@ export class SingleAgentClient {
       let lastError: Error = new Error(`A2A agent card not found at ${cardUrls.join(', ')}`);
       for (const cardUrl of cardUrls) {
         try {
-          client = await withResponseSizeLimit(maxResponseBytes, () => A2AClient.fromCardUrl(cardUrl, { fetchImpl }));
+          client = await withResponseSizeLimit(maxResponseBytes, () =>
+            createA2AClientFromCardUrl(cardUrl, fetchImpl, transport?.legacyCompat)
+          );
           break;
         } catch (err: unknown) {
           lastError = err as Error;
@@ -1916,9 +1919,16 @@ export class SingleAgentClient {
       if (!client) {
         throw lastError;
       }
-      const agentCard = await withResponseSizeLimit(maxResponseBytes, async () =>
-        client.agentCardPromise ? client.agentCardPromise : client.agentCard
-      );
+      const agentCard = await withResponseSizeLimit(maxResponseBytes, async () => {
+        const compatibleClient = client as unknown as {
+          getAgentCard?: () => Promise<any>;
+          agentCardPromise?: Promise<any>;
+          agentCard?: any;
+        };
+        return typeof compatibleClient.getAgentCard === 'function'
+          ? compatibleClient.getAgentCard()
+          : (compatibleClient.agentCardPromise ?? compatibleClient.agentCard);
+      });
 
       // Use the canonical URL from the agent card, falling back to computed base URL
       if (agentCard?.url) {
@@ -6238,7 +6248,9 @@ export class SingleAgentClient {
           // Wrap A2A card discovery so `transport.maxResponseBytes` applies
           // to agent-card fetches and the deferred `agentCardPromise` read
           // below — both fire fetches that would otherwise bypass the cap.
-          client = await withResponseSizeLimit(maxResponseBytes, () => A2AClient.fromCardUrl(cardUrl, { fetchImpl }));
+          client = await withResponseSizeLimit(maxResponseBytes, () =>
+            createA2AClientFromCardUrl(cardUrl, fetchImpl, transport?.legacyCompat)
+          );
           break;
         } catch (err: unknown) {
           lastCardError = err as Error;
@@ -6247,9 +6259,16 @@ export class SingleAgentClient {
       if (!client) {
         throw lastCardError;
       }
-      const agentCard = await withResponseSizeLimit(maxResponseBytes, async () =>
-        client.agentCardPromise ? client.agentCardPromise : client.agentCard
-      );
+      const agentCard = await withResponseSizeLimit(maxResponseBytes, async () => {
+        const compatibleClient = client as unknown as {
+          getAgentCard?: () => Promise<any>;
+          agentCardPromise?: Promise<any>;
+          agentCard?: any;
+        };
+        return typeof compatibleClient.getAgentCard === 'function'
+          ? compatibleClient.getAgentCard()
+          : (compatibleClient.agentCardPromise ?? compatibleClient.agentCard);
+      });
 
       const tools = agentCard?.skills
         ? agentCard.skills.map(

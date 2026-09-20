@@ -8,8 +8,8 @@ Older supported protocol lines may also have explicit AdCP compatibility
 dist-tags:
 
 - `adcp-3.0` for the newest SDK runner/schema bundle in the AdCP 3.0 line.
-- `adcp-3.1` only if AdCP 3.1 becomes a maintenance line after a newer stable
-  protocol line opens.
+- `adcp-3.1` for the maintained 13.x SDK runner. Releases from the `13.x`
+  branch publish under this tag.
 
 Compatibility tags are long-lived CI targets. They should move forward within a
 protocol minor line, but should not move across protocol minor lines. For
@@ -21,21 +21,46 @@ names because it parses them as semver ranges.
 
 ## Release Automation
 
-The release workflow publishes with `npm publish --tag latest` via
-`npm run release`. `latest` intentionally tracks the default stable SDK release,
-not a branch name.
+The release workflow sets `ADCP_NPM_TAG=adcp-3.1` only on `13.x`. On `main` it
+leaves the override empty so the release wrapper honors Changesets pre-mode
+(`rc`, `beta`, and so on); outside pre-mode the wrapper's default is `latest`.
+This reflects the current main branch accurately: while main is in rc mode it
+does not publish to `latest`.
+
+After a 13.x publish, automation reads the registry's current `latest` and
+applies one of two guarded policies:
+
+- If `latest` is still major 13 and the optional `NPM_TOKEN` secret is present,
+  automation moves `latest` to the newly published version. Without that
+  credential it reports the exact manual `npm dist-tag add` command.
+- If `latest` is major 14 or newer, leave it there; the maintenance release is
+  intentionally available through `adcp-3.1` and its exact version only.
 
 Set `ADCP_NPM_TAG` only when intentionally publishing a maintenance or alternate
 channel, for example `ADCP_NPM_TAG=adcp-3.0 npm run release`.
 
-This is intentionally a publish-time tag, not a post-publish `npm dist-tag add`.
+`adcp-3.1` is intentionally a publish-time tag, not a post-publish
+`npm dist-tag add`.
 npm trusted publishing via GitHub OIDC authenticates `npm publish`, so the
 chosen tag works without a long-lived npm token. Post-publish dist-tag mutation
-is a separate registry operation and is not covered by OIDC. Emergency retags can
-still be repaired manually with `npm dist-tag add`, but normal releases should
-not need a registry token.
+is a separate registry operation and is not covered by OIDC. The optional
+classic `NPM_TOKEN` is therefore scoped to the guarded `latest` move;
+`adcp-3.1` publishing continues to use trusted publishing.
 
 Changesets pre-mode normally uses the pre-mode tag for both the npm dist-tag and
 the semver prerelease identifier. The release wrapper keeps that pre-mode tag
 unless `ADCP_NPM_TAG` is set. That prevents prereleases from moving `latest`
 accidentally.
+
+## Stable compatibility policy
+
+Compatibility is maintained per AdCP major/minor, not by freezing one SDK for
+every historical patch. `npx @adcp/sdk@adcp-3.1` therefore selects the current
+maintained 13.x runner. Exact inputs such as `--compliance-version 3.1.1` plus
+a matching external `--compliance-dir /path/to/adcp-3.1.1/compliance` and
+`--schema-root /path/to/adcp-3.1.1/schemas` select historical 3.1.1 test data
+while continuing to use that maintained runner. The npm package does not ship
+that historical compliance cache.
+
+Prerelease selection remains exact: a prerelease cache or schema input must
+match the requested prerelease rather than being treated as the whole 3.1 line.

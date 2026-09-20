@@ -1714,11 +1714,15 @@ export class TaskExecutor {
             // can sign the POST when agent.request_signing is configured.
             // signed-requests sellers no longer 401 the cancel.
             const cancelTransport = normalizeTransportOptions(transport ?? this.config.transport);
-            void cancelA2ATask(agent, taskId, cancelTransport?.trustedFetchFn, cancelTransport?.allowPrivateIp).catch(
-              () => {
-                /* see SECURITY note above */
-              }
-            );
+            void cancelA2ATask(
+              agent,
+              taskId,
+              cancelTransport?.trustedFetchFn,
+              cancelTransport?.allowPrivateIp,
+              cancelTransport?.legacyCompat
+            ).catch(() => {
+              /* see SECURITY note above */
+            });
           } catch {
             /* see SECURITY note above */
           }

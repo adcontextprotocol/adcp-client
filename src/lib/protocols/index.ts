@@ -301,6 +301,8 @@ export interface TransportOptions {
    * Set to `0` to disable the SDK-imposed discovery timeout.
    */
   requestTimeoutMs?: number;
+  /** A2A-only compatibility policy. Compliance uses `{ enabled: false }` for native 1.0 grading. */
+  legacyCompat?: import('./a2a').A2ALegacyCompatOptions;
 }
 
 let warnedLegacyTransportFetch = false;
@@ -711,7 +713,8 @@ export class ProtocolClient {
                     signal,
                     transport?.requestTimeoutMs,
                     transport?.trustedFetchFn,
-                    transport?.allowPrivateIp
+                    transport?.allowPrivateIp,
+                    transport?.legacyCompat
                   );
                 } catch (err) {
                   // Same single-retry-on-401 for client-credentials agents as the
@@ -743,7 +746,8 @@ export class ProtocolClient {
                         signal,
                         transport?.requestTimeoutMs,
                         transport?.trustedFetchFn,
-                        transport?.allowPrivateIp
+                        transport?.allowPrivateIp,
+                        transport?.legacyCompat
                       );
                     } catch (retryErr) {
                       await rethrowAsNeedsAuthorization(
@@ -879,8 +883,11 @@ export const createA2AClient = (
           undefined,
           transport?.requestTimeoutMs,
           transport?.trustedFetchFn,
-          transport?.allowPrivateIp
+          transport?.allowPrivateIp,
+          transport?.legacyCompat
         )
       ),
   };
 };
+
+export type { A2ALegacyCompatOptions } from './a2a';

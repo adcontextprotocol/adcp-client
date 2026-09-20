@@ -2,6 +2,7 @@ const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { runStoryboard, runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner');
+const { createTestClient } = require('../../dist/lib/testing/client');
 const { registerAssertion } = require('../../dist/lib/testing/storyboard/assertions');
 const { extractFailures } = require('../../dist/lib/testing/compliance/comply');
 const { mapStoryboardResultsToTrackResult } = require('../../dist/lib/testing/compliance/storyboard-tracks');
@@ -356,26 +357,35 @@ describe('storyboard rate_limit_trip_runner wiring', () => {
 
   test('a2a run records target task transport without synthetic status', async () => {
     const calls = [];
-    const client = {
-      executeTask: async (_taskName, params) => {
-        calls.push(params);
-        if (calls.length === 1) return rateLimited();
-        return { success: true, data: { media_buy_id: 'mb_replay' } };
-      },
+    const client = createTestClient('https://stub.example/mcp', 'a2a', {
+      transport: { legacyCompat: { enabled: false } },
+    });
+    const executeTarget = async (_taskName, params) => {
+      calls.push(params);
+      if (calls.length === 1) return rateLimited();
+      return { success: true, data: { media_buy_id: 'mb_replay' } };
     };
+    client.executeTask = executeTarget;
+    client.createMediaBuy = params => executeTarget('create_media_buy', params);
+    // 13.x grades AdCP 3.1 creative calls through the stable legacy-wire
+    // projection; tag that generated method too so the injected native client
+    // remains the client under test rather than reaching the network.
+    client.createMediaBuyLegacy = params => executeTarget('create_media_buy', params);
 
     const result = await runTripStep(client, makeStoryboard(), { protocol: 'a2a' });
 
-    assert.equal(result.passed, true);
+    assert.equal(result.passed, true, JSON.stringify(result));
     assert.equal(result.request.transport, 'a2a');
     assert.equal(result.request.operation, 'create_media_buy');
-    assert.deepEqual(result.request.payload, calls[1]);
+    assert.equal(calls.length, 2, JSON.stringify({ calls, result }));
+    const withoutStableWireHint = ({ ext: _ext, ...request }) => request;
+    assert.deepEqual(result.request.payload, withoutStableWireHint(calls[1]));
     assert.equal(result.response.status, undefined);
     assert.equal(result.response_record.transport, 'a2a');
     assert.equal(result.response_record.status, undefined);
     assert.equal(result.response_record.payload.target_transport, 'a2a');
-    assert.deepEqual(result.response_record.payload.trip_request, calls[0]);
-    assert.deepEqual(result.response_record.payload.replay_request, calls[1]);
+    assert.deepEqual(result.response_record.payload.trip_request, withoutStableWireHint(calls[0]));
+    assert.deepEqual(result.response_record.payload.replay_request, withoutStableWireHint(calls[1]));
   });
 
   test('cached RATE_LIMITED replay fails replay_not_cached_rate_limit', async () => {

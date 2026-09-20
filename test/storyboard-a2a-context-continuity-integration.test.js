@@ -200,6 +200,7 @@ describe('a2a_context_continuity (runner integration, #962)', () => {
       const sb = buildTwoStepStoryboard();
       const result = await runStoryboard(fixture.url, sb, {
         protocol: 'a2a',
+        transport: { legacyCompat: { enabled: true } },
         allow_http: true,
         invariants: DISABLE_DEFAULT_INVARIANTS,
       });
@@ -229,6 +230,7 @@ describe('a2a_context_continuity (runner integration, #962)', () => {
       const sb = buildTwoStepStoryboard();
       const result = await runStoryboard(fixture.url, sb, {
         protocol: 'a2a',
+        transport: { legacyCompat: { enabled: true } },
         allow_http: true,
         invariants: DISABLE_DEFAULT_INVARIANTS,
         validation: { responses: 'strict' },

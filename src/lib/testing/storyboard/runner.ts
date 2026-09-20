@@ -9,14 +9,16 @@
 import { createHash, createHmac } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { getOrCreateClientResolution, getOrDiscoverProfile, runStep, type TestClient } from '../client';
 import {
-  closeScopedConnections,
-  normalizeTransportOptions,
-  withMCPConnectionScope,
-  type VersionEnvelopeMode,
-} from '../../protocols';
+  createTestClient,
+  getOrCreateClientResolution,
+  getOrDiscoverProfile,
+  runStep,
+  type TestClient,
+} from '../client';
+import { closeScopedConnections, withMCPConnectionScope, type VersionEnvelopeMode } from '../../protocols';
 import { getCapturesFromError, withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
+import { isCredentialHeaderName } from '../../protocols/credential-headers';
 import { defaultStoryboardResponseProjection, executeStoryboardTask } from './task-map';
 import {
   extractContextWithProvenance,
@@ -83,6 +85,7 @@ import { readBrandJsonUrl } from '../../signing/agent-resolver/capabilities-type
 import { resolveDeclaredTestKit, validateTestKit } from './test-kit';
 import { validateStoryboardShape } from './loader';
 import { trustedStoryboardComplianceRoot } from './provenance';
+import { applyNativeA2AComplianceTransportOptions } from './native-a2a-compliance';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
 import { createWebhookReceiver, type WebhookReceiver, type WebhookWaitResult } from './webhook-receiver';
 import { WEBHOOK_ASSERTION_TASKS, armWebhookAssertions, executeWebhookAssertionStep } from './webhook-assertions';
@@ -311,7 +314,7 @@ function selectionForProbeSkip(reason: RunnerDetailedSkipReason, detail: string)
     case 'rate_abuse_opt_out':
       return { reason: 'explicit_scope_excluded', detail };
     case 'not_in_only_vectors':
-    case 'mcp_mode_flattens_url_edges':
+    case 'transport_flattens_url_edges':
     case 'capability_profile_mismatch':
     case 'transport_ungradable':
       return { reason: 'profile_excluded', detail };
@@ -1173,6 +1176,24 @@ function filterResponseHeaders(headers: Record<string, string> | undefined): Rec
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function httpProbeResultFromCapture(capture: RawHttpCapture): HttpProbeResult {
+  const contentType = Object.entries(capture.headers).find(([name]) => name.toLowerCase() === 'content-type')?.[1];
+  let body: unknown = capture.body;
+  if (contentType?.toLowerCase().includes('json') || /^[\s]*[{[]/.test(capture.body)) {
+    try {
+      body = JSON.parse(capture.body);
+    } catch {
+      // Preserve the raw bytes when an agent labels malformed JSON as JSON.
+    }
+  }
+  return {
+    url: capture.url,
+    status: capture.status,
+    headers: Object.fromEntries(Object.entries(capture.headers).map(([name, value]) => [name.toLowerCase(), value])),
+    body,
+  };
+}
+
 // ────────────────────────────────────────────────────────────
 // runStoryboard: execute all phases/steps
 // ────────────────────────────────────────────────────────────
@@ -1201,7 +1222,7 @@ export async function runStoryboard(
       // kits win) so from_test_kit / $test_kit.* references get the
       // credential the storyboard was authored against.
       options = resolveDeclaredTestKit(storyboard, options);
-      options = { ...options, transport: normalizeTransportOptions(options.transport) };
+      options = applyNativeA2AComplianceTransportOptions(options);
       const schemaRoot = getRunSchemaRoot(options);
       if (schemaRoot) {
         return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, () =>
@@ -3528,7 +3549,7 @@ async function executeStoryboardPass(
             // `'not_applicable'` only. Detailed-form skip reasons that
             // canonicalize to not_applicable (`probe_skipped`,
             // `not_in_only_vectors`, `grader_skipped`,
-            // `mcp_mode_flattens_url_edges`) carry the detailed form
+            // `transport_flattens_url_edges`) carry the detailed form
             // on `result.skip_reason` and do NOT enter the deferred
             // path — they preserve the pre-fix behavior of not
             // tripping the cascade. `oauth_not_advertised` is handled
@@ -4252,6 +4273,7 @@ export async function runStoryboardStep(
       // adcp#6735 — same declared-kit resolution as runStoryboard, so the
       // printed fix_command path exercises the step with its real credential.
       options = resolveDeclaredTestKit(storyboard, options);
+      options = applyNativeA2AComplianceTransportOptions(options);
       const schemaRoot = getRunSchemaRoot(options);
       if (schemaRoot) {
         return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, () =>
@@ -4891,6 +4913,7 @@ async function executeStep(
   let responseRecord: RunnerResponseRecord | undefined;
   let a2aEnvelope: A2ATaskEnvelope | undefined;
   let crossResponses: CrossResponseSet | undefined;
+  let requestUrl = runState.agentUrl;
 
   // Parallel-dispatch fan-out: when the storyboard step declares
   // `parallel_dispatch`, the runner fires N concurrent dispatches against
@@ -4981,30 +5004,78 @@ async function executeStep(
   if (useRawProbe) {
     const started = Date.now();
     try {
-      const probe = await rawMcpProbe({
-        agentUrl: runState.agentUrl,
-        toolName: effectiveStep.task,
-        args: request,
-        headers: rawProbeHeaders,
-        allowPrivateIp: options.allow_http === true,
-        fetchFn: options.transport?.trustedFetchFn,
-      });
-      httpResult = probe.httpResult;
-      taskResult = probe.taskResult;
-      const durationMs = Date.now() - started;
-      stepResult = {
-        duration_ms: durationMs,
-        passed: !httpResult.error,
-        error: httpResult.error,
-      };
-      const filteredHeaders = filterResponseHeaders(httpResult.headers);
-      responseRecord = {
-        transport: 'mcp',
-        payload: redactSecrets(httpResult.body),
-        ...(typeof httpResult.status === 'number' ? { status: httpResult.status } : {}),
-        ...(filteredHeaders && { headers: filteredHeaders }),
-        duration_ms: durationMs,
-      };
+      if (options.protocol === 'a2a') {
+        const probeClient = createA2AAuthOverrideClient(runState.agentUrl, options, rawProbeHeaders ?? {});
+        const captured = await withRawResponseCapture(() =>
+          runStep(step.title, effectiveStep.task, () =>
+            executeStoryboardTask(probeClient, effectiveStep.task, request, {
+              skipIdempotencyAutoInject: testsMissingIdempotencyKey,
+              skipAccountValidation: testsMissingAccount,
+              responseProjection:
+                effectiveStep.response_projection ??
+                defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario),
+              signal: options.signal,
+            })
+          )
+        );
+        taskResult = captured.result.result;
+        stepResult = captured.result.step;
+        caughtError = captured.result.caughtError;
+        const rpcCapture = selectLastA2aSkillCapture(captured.captures, effectiveStep.task);
+        const crossOriginRpcCapture =
+          rpcCapture !== undefined && new URL(rpcCapture.url).origin !== new URL(runState.agentUrl).origin;
+        if (rpcCapture && !crossOriginRpcCapture) {
+          httpResult = httpProbeResultFromCapture(rpcCapture);
+          requestUrl = rpcCapture.url;
+          const filteredHeaders = filterResponseHeaders(httpResult.headers);
+          responseRecord = {
+            transport: 'a2a',
+            payload: redactSecrets(httpResult.body),
+            status: httpResult.status,
+            ...(filteredHeaders && { headers: filteredHeaders }),
+            duration_ms: rpcCapture.latencyMs,
+          };
+          a2aEnvelope = parseLastA2aMessageSendCapture([rpcCapture]);
+        } else {
+          const error = crossOriginRpcCapture
+            ? 'A2A auth probe selected a cross-origin RPC endpoint; credential-isolated responses cannot be graded'
+            : (stepResult.error ?? taskResult?.error ?? 'A2A auth probe produced no HTTP response');
+          requestUrl = rpcCapture?.url ?? runState.agentUrl;
+          httpResult = { url: requestUrl, status: 0, headers: {}, body: null, error };
+          stepResult = { ...stepResult, passed: false, error };
+          responseRecord = {
+            transport: 'a2a',
+            payload: null,
+            status: 0,
+            duration_ms: stepResult.duration_ms,
+          };
+        }
+      } else {
+        const probe = await rawMcpProbe({
+          agentUrl: runState.agentUrl,
+          toolName: effectiveStep.task,
+          args: request,
+          headers: rawProbeHeaders,
+          allowPrivateIp: options.allow_http === true,
+          fetchFn: options.transport?.trustedFetchFn,
+        });
+        httpResult = probe.httpResult;
+        taskResult = probe.taskResult;
+        const durationMs = Date.now() - started;
+        stepResult = {
+          duration_ms: durationMs,
+          passed: !httpResult.error,
+          error: httpResult.error,
+        };
+        const filteredHeaders = filterResponseHeaders(httpResult.headers);
+        responseRecord = {
+          transport: 'mcp',
+          payload: redactSecrets(httpResult.body),
+          ...(typeof httpResult.status === 'number' ? { status: httpResult.status } : {}),
+          ...(filteredHeaders && { headers: filteredHeaders }),
+          duration_ms: durationMs,
+        };
+      }
     } catch (err) {
       stepResult = {
         duration_ms: Date.now() - started,
@@ -5131,10 +5202,10 @@ async function executeStep(
   }
 
   const requestRecord: RunnerRequestRecord = {
-    transport: useRawProbe ? 'mcp' : options.protocol === 'a2a' ? 'a2a' : 'mcp',
+    transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
     operation: effectiveStep.task,
     payload: redactSecrets(request),
-    ...(runState.agentUrl ? { url: redactOAuthUrlForOutput(runState.agentUrl) } : {}),
+    ...(requestUrl ? { url: redactOAuthUrlForOutput(requestUrl) } : {}),
   };
   const inputSchemaStripNotices = collectInputSchemaFieldStripNotices(
     (taskResult as { debug_logs?: unknown } | undefined)?.debug_logs,
@@ -7062,12 +7133,11 @@ function findPriorProbe(priorStepResults: Map<string, StoryboardStepResult>): Ht
 /**
  * Reduce the captured fetch traffic for an A2A step into the
  * `A2ATaskEnvelope` validations consume. The A2A SDK fires multiple
- * requests per call (`/.well-known/agent-card.json` discovery on
- * fresh clients, then a `message/send` POST), and a single dispatch
- * may also poll `tasks/get` afterwards. We pick the capture whose
- * REQUEST body declares `method: 'message/send'`; if no capture
- * declares the method we fall back to the last POST with a
- * JSON-RPC-shaped body. GET captures and non-JSON bodies are
+ * requests per call (agent-card discovery on fresh clients, then either
+ * native `SendMessage` or compatibility `message/send`), and a dispatch
+ * may also poll afterwards. We pick the capture whose response returned an
+ * A2A Task; if no capture does, we use the last POST with a JSON-RPC-shaped
+ * body. GET captures and non-JSON bodies are
  * skipped — `undefined` here surfaces as `not_applicable` in the
  * validator, which is more useful than a garbage envelope.
  *
@@ -7082,6 +7152,17 @@ function findPriorProbe(priorStepResults: Map<string, StoryboardStepResult>): Ht
  * keeps that surface consistent with `responseRecord.payload`,
  * which the runner already redacts on the success path.
  */
+export function selectLastA2aSkillCapture(
+  captures: readonly RawHttpCapture[],
+  skill: string
+): RawHttpCapture | undefined {
+  for (let index = captures.length - 1; index >= 0; index--) {
+    const capture = captures[index];
+    if (capture?.method === 'POST' && capture.requestAdcpSkill === skill) return capture;
+  }
+  return undefined;
+}
+
 function parseLastA2aMessageSendCapture(captures: readonly RawHttpCapture[]): A2ATaskEnvelope | undefined {
   let messageSendIdx = -1;
   let lastPostIdx = -1;
@@ -7091,12 +7172,10 @@ function parseLastA2aMessageSendCapture(captures: readonly RawHttpCapture[]): A2
     if (lastPostIdx === -1) lastPostIdx = i;
     // The fetch wrapper doesn't capture the request body, so disambiguate
     // by parsing the response and checking for an A2A `Task` shape on
-    // the result. `tasks/get` and `message/send` both return tasks, but
-    // only `message/send` is the immediate response we want to assert
-    // on for submitted-arm shape checks. When the runner adds polling,
-    // we'd need request-body capture to distinguish reliably; for v0
-    // the last POST is `message/send` because the SDK doesn't poll
-    // synchronously after a Task with terminal state.
+    // the result. Polling and SendMessage can both return tasks, so the
+    // response-only capture cannot distinguish them perfectly. The SDK does
+    // not synchronously poll after a terminal Task, which keeps the immediate
+    // SendMessage response as the relevant last task-shaped POST here.
     if (messageSendIdx === -1) {
       const env = tryParseJsonRpcEnvelope(cap.body);
       if (env && env.result !== undefined && isTaskShape(env.result)) {
@@ -7309,6 +7388,36 @@ function authHeadersForStep(directive: StepAuthDirective, options: StoryboardRun
     throw new Error('test_kit.auth.api_key contains invalid characters (control chars or non-printable ASCII)');
   }
   return { authorization: `Bearer ${value}` };
+}
+
+function createA2AAuthOverrideClient(
+  agentUrl: string,
+  options: StoryboardRunOptions,
+  authHeaders: Record<string, string>
+): TestClient {
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(options.headers ?? {})) {
+    if (!isCredentialHeaderName(name)) headers[name] = value;
+  }
+
+  let auth: StoryboardRunOptions['auth'];
+  for (const [name, value] of Object.entries(authHeaders)) {
+    const lower = name.toLowerCase();
+    if (lower === 'authorization' && /^Bearer\s+/i.test(value)) {
+      auth = { type: 'bearer', token: value.replace(/^Bearer\s+/i, '') };
+    } else {
+      headers[name] = value;
+    }
+  }
+
+  return createTestClient(agentUrl, 'a2a', {
+    ...options,
+    protocol: 'a2a',
+    auth,
+    headers: Object.keys(headers).length > 0 ? headers : undefined,
+    test_kit: undefined,
+    _client: undefined,
+  });
 }
 
 function basicAuthHeadersForStep(

@@ -2,6 +2,7 @@ import { randomBytes } from 'crypto';
 import { buildNegativeRequest, buildPositiveRequest, type BuildOptions, type SignedHttpRequest } from './builder';
 import { initializeMcpSession, probeSignedRequest, type ProbeResult } from './probe';
 import { loadRequestSigningVectors, type LoadVectorsOptions } from './vector-loader';
+import { captureA2aRequest, operationFromVectorUrl, type CapturedA2aRequest } from './a2a-dispatch';
 import { loadSignedRequestsRunnerContract, type SignedRequestsRunnerContract } from './test-kit';
 import {
   InMemoryReplayStore,
@@ -106,7 +107,9 @@ export interface GradeOptions extends LoadVectorsOptions {
    *
    * See adcontextprotocol/adcp-client#612 for the MCP-mode rationale.
    */
-  transport?: 'raw' | 'mcp';
+  transport?: 'raw' | 'mcp' | 'a2a';
+  /** Trusted Agent Card fetch seam for A2A tests and custom runtimes. */
+  cardFetch?: typeof fetch;
   /**
    * MCP session ID to attach as `Mcp-Session-Id` on every probe after
    * signing. When `transport` is `'mcp'` and this field is `undefined`,
@@ -163,6 +166,8 @@ export interface VectorGradeResult {
   /** For negatives: the error code the spec says we should see. */
   expected_error_code?: string;
   http_status: number;
+  /** Actual card-selected A2A endpoint, when applicable. */
+  probe_url?: string;
   diagnostic?: string;
   probe_duration_ms: number;
   /**
@@ -243,7 +248,12 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
     mcpSessionId,
   };
 
-  const buildOpts: BuildOptions = { baseUrl: agentUrl, transport: options.transport ?? 'raw' };
+  const transport = options.transport ?? 'raw';
+  // A grade constructs a fresh official client per vector so each capture has
+  // an isolated fetch interceptor. Cache only the immutable card response for
+  // the duration of this grade to avoid rediscovering it 28 times.
+  const dispatchOptions =
+    transport === 'a2a' ? { ...options, cardFetch: memoizeAgentCardFetch(options.cardFetch ?? fetch) } : options;
 
   const positive: VectorGradeResult[] = [];
   for (const vector of loaded.positive) {
@@ -252,9 +262,10 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
       positive.push(skip);
       continue;
     }
+    const buildOpts = await buildOptionsForVector(vector, agentUrl, transport, dispatchOptions);
     const signed = buildPositiveRequest(vector, loaded.keys, buildOpts);
     const probed = await probeSignedRequest(signed, probeOpts);
-    positive.push(gradePositive(vector, probed));
+    positive.push(withA2aProbeUrl(gradePositive(vector, probed), buildOpts));
   }
 
   const negative: VectorGradeResult[] = [];
@@ -264,7 +275,12 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
       negative.push(skip);
       continue;
     }
-    negative.push(await gradeNegative(vector, loaded, contract, probeOpts, buildOpts, options));
+    const buildOpts = vector.jwks_override
+      ? { baseUrl: agentUrl, transport }
+      : await buildOptionsForVector(vector, agentUrl, transport, dispatchOptions);
+    negative.push(
+      withA2aProbeUrl(await gradeNegative(vector, loaded, contract, probeOpts, buildOpts, options), buildOpts)
+    );
   }
 
   const all = [...positive, ...negative];
@@ -295,7 +311,7 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
 // (per-operation endpoint URLs). Listed explicitly rather than heuristically
 // so a spec author adding a new canonicalization-edge vector has to opt into
 // the skip.
-const MCP_FLATTENED_VECTORS = new Set([
+const TRANSPORT_FLATTENED_VECTORS = new Set([
   '005-default-port-stripped',
   '006-dot-segment-path',
   '007-query-byte-preserved',
@@ -336,6 +352,7 @@ function preflightSkip(
     probe_duration_ms: 0,
     ...(expected_error_code ? { expected_error_code } : {}),
   } as const;
+  const transport = options.transport ?? 'raw';
 
   if (options.onlyVectors && !options.onlyVectors.includes(vector.id)) {
     return { ...base, skipped: true, skip_reason: 'not_in_only_vectors' };
@@ -377,19 +394,19 @@ function preflightSkip(
     return { ...base, skipped: true, skip_reason: 'transport_ungradable', diagnostic: transportReason };
   }
   // Canonicalization-edge positive vectors (005–008) bake their edge case
-  // into the vector URL path, query, or port. MCP mode flattens every vector
-  // to the same baseUrl (JSON-RPC single endpoint), so these vectors become
+  // into the vector URL path, query, or port. RPC transports flatten every
+  // vector to one selected endpoint, so these vectors become
   // indistinguishable from vector 001 — passing under MCP is not evidence
   // the edge was tested. Skip with a distinct reason so the report doesn't
   // claim coverage it didn't deliver.
-  if (kind === 'positive' && options.transport === 'mcp' && MCP_FLATTENED_VECTORS.has(vector.id)) {
+  if (kind === 'positive' && transport !== 'raw' && TRANSPORT_FLATTENED_VECTORS.has(vector.id)) {
     return {
       ...base,
       skipped: true,
-      skip_reason: 'mcp_mode_flattens_url_edges',
+      skip_reason: 'transport_flattens_url_edges',
       diagnostic:
         `Vector ${vector.id} tests a URL-canonicalization edge (port/path/query/encoding) ` +
-        `that MCP mode neutralizes by routing every vector to the MCP endpoint. ` +
+        `that ${transport} mode neutralizes by routing every vector to one endpoint. ` +
         `Grade this edge with \`--transport raw\` against a per-operation AdCP agent.`,
     };
   }
@@ -429,11 +446,97 @@ function preflightSkip(
   return undefined;
 }
 
+function memoizeAgentCardFetch(upstream: typeof fetch): typeof fetch {
+  const responses = new Map<
+    string,
+    Promise<{ status: number; statusText: string; headers: [string, string][]; body: ArrayBuffer }>
+  >();
+  return async (input, init) => {
+    const request = new Request(input as RequestInfo, init);
+    if (request.method !== 'GET') return upstream(input, init);
+    let pending = responses.get(request.url);
+    if (!pending) {
+      pending = upstream(input, init).then(async response => ({
+        status: response.status,
+        statusText: response.statusText,
+        headers: (() => {
+          const entries: [string, string][] = [];
+          response.headers.forEach((value, name) => entries.push([name, value]));
+          return entries;
+        })(),
+        body: await response.arrayBuffer(),
+      }));
+      responses.set(request.url, pending);
+      pending.catch(() => responses.delete(request.url));
+    }
+    const cached = await pending;
+    return new Response(cached.body.slice(0), {
+      status: cached.status,
+      statusText: cached.statusText,
+      headers: cached.headers,
+    });
+  };
+}
+
 /**
  * Grade a single vector. Loads the vectors+keys+contract on every call; for
  * the storyboard-runner dispatch path where the caller runs many vectors in
  * sequence, prefer `gradeRequestSigning` which loads once.
  */
+async function captureA2aRequestForVector(
+  vector: PositiveVector | NegativeVector,
+  agentUrl: string,
+  options: GradeOptions
+): Promise<CapturedA2aRequest> {
+  const body = parseA2aVectorBody(vector.id, vector.request.body);
+  if (body.jsonrpc === '2.0' && typeof body.method === 'string') {
+    if (body.method !== 'tasks/cancel' && body.method !== 'CancelTask') {
+      throw new Error(`vector "${vector.id}" uses unsupported A2A JSON-RPC method "${body.method}"`);
+    }
+    const params = body.params && typeof body.params === 'object' ? (body.params as Record<string, unknown>) : {};
+    const taskId = typeof params.taskId === 'string' ? params.taskId : String(params.id ?? '');
+    return captureA2aRequest(agentUrl, { kind: 'cancelTask', taskId }, a2aDispatchOptions(options));
+  }
+  return captureA2aRequest(
+    agentUrl,
+    { kind: 'sendMessage', operation: operationFromVectorUrl(vector.request.url), args: body },
+    a2aDispatchOptions(options)
+  );
+}
+
+async function buildOptionsForVector(
+  vector: PositiveVector | NegativeVector,
+  agentUrl: string,
+  transport: NonNullable<GradeOptions['transport']>,
+  options: GradeOptions
+): Promise<BuildOptions> {
+  if (transport !== 'a2a') return { baseUrl: agentUrl, transport };
+  return {
+    baseUrl: agentUrl,
+    transport,
+    a2aRequest: await captureA2aRequestForVector(vector, agentUrl, options),
+  };
+}
+
+function a2aDispatchOptions(options: GradeOptions) {
+  return {
+    allowPrivateIp: options.allowPrivateIp === true,
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options.cardFetch ? { cardFetch: options.cardFetch } : {}),
+  };
+}
+
+function parseA2aVectorBody(vectorId: string, body: string | undefined): Record<string, unknown> {
+  if (!body) return {};
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new TypeError('not an object');
+    return parsed as Record<string, unknown>;
+  } catch (cause) {
+    throw new Error(`vector "${vectorId}" body must be a JSON object for A2A dispatch`, { cause });
+  }
+}
+
 export async function gradeOneVector(
   vectorId: string,
   kind: 'positive' | 'negative',
@@ -468,8 +571,6 @@ export async function gradeOneVector(
     timeoutMs: options.timeoutMs,
     mcpSessionId,
   };
-  const buildOpts: BuildOptions = { baseUrl: agentUrl, transport: options.transport ?? 'raw' };
-
   const vector =
     kind === 'positive' ? loaded.positive.find(v => v.id === vectorId) : loaded.negative.find(v => v.id === vectorId);
   if (!vector) throw new Error(`Unknown ${kind} vector "${vectorId}"`);
@@ -477,12 +578,26 @@ export async function gradeOneVector(
   const skip = preflightSkip(vector, kind, contract, options);
   if (skip) return skip;
 
+  const buildOpts =
+    kind === 'negative' && (vector as NegativeVector).jwks_override
+      ? { baseUrl: agentUrl, transport: options.transport ?? 'raw' }
+      : await buildOptionsForVector(vector, agentUrl, options.transport ?? 'raw', options);
+
   if (kind === 'positive') {
     const signed = buildPositiveRequest(vector as PositiveVector, loaded.keys, buildOpts);
     const probe = await probeSignedRequest(signed, probeOpts);
-    return gradePositive(vector as PositiveVector, probe);
+    return withA2aProbeUrl(gradePositive(vector as PositiveVector, probe), buildOpts);
   }
-  return gradeNegative(vector as NegativeVector, loaded, contract, probeOpts, buildOpts, options);
+  return withA2aProbeUrl(
+    await gradeNegative(vector as NegativeVector, loaded, contract, probeOpts, buildOpts, options),
+    buildOpts
+  );
+}
+
+function withA2aProbeUrl(result: VectorGradeResult, buildOpts: BuildOptions): VectorGradeResult {
+  return buildOpts.transport === 'a2a' && buildOpts.a2aRequest
+    ? { ...result, probe_url: buildOpts.a2aRequest.url }
+    : result;
 }
 
 // ── Phase helpers ─────────────────────────────────────────────

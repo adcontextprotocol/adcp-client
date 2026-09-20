@@ -24,6 +24,7 @@ const { readFileSync } = require('node:fs');
 const path = require('node:path');
 
 const { cancelA2ATask } = require('../../dist/lib/protocols/a2a.js');
+const { createNativeCancelTaskRequest } = require('../../dist/lib/protocols/a2a-native-v1.js');
 const { verifyRequestSignature } = require('../../dist/lib/signing/verifier.js');
 const {
   StaticJwksResolver,
@@ -151,6 +152,72 @@ function startStrictSigningSeller() {
 }
 
 describe('cancelA2ATask: Phase 2 signing (#1617)', () => {
+  test('native cancellation refuses credentialed cross-origin card endpoints before POST', async () => {
+    const rpcUrl = 'https://rpc.seller.example/a2a';
+    let rpcHeaders;
+    const fetchFn = async (input, init = {}) => {
+      const url = String(input);
+      if (url.includes('/.well-known/')) {
+        return new Response(
+          JSON.stringify({
+            protocolVersion: '1.0',
+            name: 'Cross-origin cancellation fixture',
+            description: 'Credential isolation regression',
+            version: '1.0.0',
+            capabilities: {},
+            defaultInputModes: ['application/json'],
+            defaultOutputModes: ['application/json'],
+            skills: [],
+            supportedInterfaces: [{ url: rpcUrl, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      rpcHeaders = new Headers(init.headers);
+      const body = JSON.parse(init.body);
+      return new Response(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: body.id,
+          result: {
+            task: {
+              id: 'task-cross-origin',
+              contextId: 'context-cross-origin',
+              status: { state: 'TASK_STATE_CANCELED' },
+              artifacts: [],
+            },
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    };
+
+    await assert.rejects(
+      cancelA2ATask(
+        {
+          id: 'cross-origin',
+          name: 'Cross-origin',
+          agent_uri: 'https://seller.example/a2a',
+          protocol: 'a2a',
+          auth_token: 'must-not-cross-origin',
+        },
+        'task-cross-origin',
+        fetchFn,
+        undefined,
+        { enabled: false }
+      ),
+      /refused credentialed cross-origin dispatch/
+    );
+
+    assert.strictEqual(rpcHeaders, undefined, 'cross-origin RPC endpoint received no request');
+  });
+
+  test('native cancellation uses the official 1.0 request shape', () => {
+    const request = createNativeCancelTaskRequest('task-native-v1');
+    assert.deepStrictEqual(request, { tenant: '', id: 'task-native-v1', metadata: undefined });
+    assert.ok(Object.prototype.hasOwnProperty.call(request, 'metadata'));
+  });
+
   test('signs the cancel POST when agent.request_signing is configured (inline ed25519)', async () => {
     const seller = await startStrictSigningSeller();
     try {

@@ -32,7 +32,7 @@ If all five pass and your skill's specialism-specific checks below pass, you're 
 
 **Working on the agent locally?** Before you reach for the remote-agent commands above, see [`VALIDATE-LOCALLY.md`](./VALIDATE-LOCALLY.md) — the same storyboards, zero tunnel setup, ten lines of code. Point `--local-agent <module>` at your handlers or call `runAgainstLocalAgent` directly from a test file.
 
-**Why `@adcp-3.1` in every `npx` command?** The tag pins the runner to the AdCP 3.1 compatibility line while it is prerelease. `@latest` may point at a different protocol line and will not reliably exercise the 3.1 validation surface. The explicit tag also avoids stale `npx` cache reuse from `~/.npm/_npx/`. If an old cache is causing confusing behavior, `rm -rf ~/.npm/_npx` clears all cached CLI versions.
+**Why `@adcp-3.1` in every `npx` command?** The tag selects the maintained 13.x runner for the AdCP 3.1 compatibility line. `@latest` may point at a different protocol line and will not reliably exercise the 3.1 validation surface. The npm package does not ship the historical 3.1.1 compliance cache, so exact historical testing requires a matching external compliance directory and schema bundle; see the explicit example below. Prerelease inputs remain exact. The explicit tag also avoids stale `npx` cache reuse from `~/.npm/_npx/`.
 
 ---
 
@@ -68,8 +68,12 @@ npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp sales-guaranteed
 # Specific tracks only (faster feedback when iterating)
 npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp --tracks core,products --auth $TOKEN
 
-# Pin a specific compliance cache/spec line
-npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp --compliance-version 3.0.12 --auth $TOKEN
+# Pin exact 3.1.1 data from an external matching compliance + schema bundle
+npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp \
+  --compliance-version 3.1.1 \
+  --compliance-dir /path/to/adcp-3.1.1/compliance \
+  --schema-root /path/to/adcp-3.1.1/schemas \
+  --auth $TOKEN
 
 # Ad-hoc YAML (new storyboards under development)
 npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp --file ./my-wip.yaml --auth $TOKEN
@@ -95,6 +99,8 @@ temporary legacy compatibility harnesses rather than routine compliance runs.
 - `--storyboards <id1,id2>` — limit to specific storyboard IDs
 - `--compliance-version <version>` — select the compliance cache/spec line used for resolution and request version intent; pass the same flag to `storyboard list`, `show`, and `step` when reproducing a pinned run
 - `--compliance-dir <path>` — use a specific compliance cache directory for local protocol/cache development
+- `--schema-root <path>` — use the schema bundle that matches an external exact compliance cache
+- `--a2a-legacy-compat` — grade an A2A 0.3-only agent (including the maintained 13.x server adapter) through the official compatibility client; native A2A conformance otherwise uses the official 1.0 client
 - `--webhook-receiver [loopback|proxy]` — host a webhook sink so async steps grade instead of skip
 - `--webhook-receiver-auto-tunnel` — autodetect `ngrok`/`cloudflared` on `PATH`, spawn and plug into proxy mode
 - `--invariants <mod1,mod2>` — load custom cross-step assertion modules
@@ -242,9 +248,18 @@ npx @adcp/sdk@adcp-3.1 grade request-signing https://sandbox.agent.example/mcp -
 # MCP transport (wraps vectors in JSON-RPC envelopes)
 npx @adcp/sdk@adcp-3.1 grade request-signing https://sandbox.agent.example/mcp --transport mcp
 
+# A2A transport (official client chooses the card endpoint and wire version)
+npx @adcp/sdk@adcp-3.1 grade request-signing https://sandbox.agent.example --transport a2a
+
 # Isolate a single vector
 npx @adcp/sdk@adcp-3.1 grade request-signing https://sandbox.agent.example/mcp --only 016-replayed-nonce
 ```
+
+For A2A, the grader discovers the Agent Card with the official 1.0 SDK (including
+its official 0.3 compatibility mode), requires the selected RPC endpoint to be
+same-origin with the agent URL, and signs the exact method, headers, and body
+bytes emitted by that client. It does not reconstruct an A2A request or follow
+a cross-origin card endpoint.
 
 ### Multi-instance testing
 

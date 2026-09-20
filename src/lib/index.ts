@@ -1391,6 +1391,7 @@ export type {
   TransportActivityContext,
   TransportActivityHandler,
   TransportOptions,
+  A2ALegacyCompatOptions,
 } from './protocols';
 
 // ====== WIRE VERSION HELPERS (NAMESPACE) ======

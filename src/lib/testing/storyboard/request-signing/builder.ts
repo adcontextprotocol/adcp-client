@@ -12,6 +12,7 @@ import {
 } from '../../../signing';
 import { findKey } from './vector-loader';
 import type { NegativeVector, PositiveVector, TestKeyset, TestKeypair } from './types';
+import type { CapturedA2aRequest } from './a2a-dispatch';
 
 export interface BuildOptions {
   /** Override the signer clock (unix seconds). Defaults to `Date.now()/1000`. */
@@ -44,7 +45,9 @@ export interface BuildOptions {
    * 005–008 fold into plain POSTs against the MCP endpoint, but the grader
    * works against any MCP agent that wires a verifier at the HTTP layer.
    */
-  transport?: 'raw' | 'mcp';
+  transport?: 'raw' | 'mcp' | 'a2a';
+  /** Request emitted by the official A2A SDK; required for A2A transport. */
+  a2aRequest?: CapturedA2aRequest;
   /**
    * JSON-RPC `id` for the MCP envelope. Defaults to `crypto.randomUUID()`
    * so concurrent runs never collide. Override for tests that need a stable
@@ -313,6 +316,7 @@ function passthrough(vector: NegativeVector, options: BuildOptions): SignedHttpR
  * the vector's URL verbatim otherwise.
  */
 function protocolMethodPassthrough(vector: NegativeVector, options: BuildOptions): SignedHttpRequest {
+  if (options.transport === 'a2a') return passthrough(vector, options);
   const url = options.baseUrl ?? vector.request.url;
   const headers = { ...vector.request.headers };
   // MCP Streamable HTTP requires this Accept negotiation header on JSON-RPC
@@ -411,6 +415,17 @@ interface TransportShapedRequest {
  */
 function applyTransport(vector: PositiveVector | NegativeVector, options: BuildOptions): TransportShapedRequest {
   const headers = { ...vector.request.headers };
+  if (options.transport === 'a2a') {
+    if (!options.a2aRequest) {
+      throw new Error("transport: 'a2a' requires a request captured from the official @a2a-js/sdk client");
+    }
+    return {
+      method: options.a2aRequest.method,
+      url: options.a2aRequest.url,
+      headers: mergeHeadersCaseInsensitively(options.a2aRequest.headers, headers),
+      body: options.a2aRequest.body,
+    };
+  }
   if (options.transport === 'mcp') {
     if (!options.baseUrl) {
       throw new Error(`transport: 'mcp' requires a baseUrl (the MCP endpoint, e.g. http://agent/mcp)`);
@@ -433,6 +448,17 @@ function applyTransport(vector: PositiveVector | NegativeVector, options: BuildO
     url: retargetUrl(vector.request.url, options.baseUrl),
     headers,
     body: vector.request.body,
+  };
+}
+
+function mergeHeadersCaseInsensitively(
+  base: Record<string, string>,
+  overrides: Record<string, string>
+): Record<string, string> {
+  const overridden = new Set(Object.keys(overrides).map(name => name.toLowerCase()));
+  return {
+    ...Object.fromEntries(Object.entries(base).filter(([name]) => !overridden.has(name.toLowerCase()))),
+    ...overrides,
   };
 }
 

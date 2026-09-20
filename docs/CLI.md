@@ -283,6 +283,7 @@ Useful flags:
 - `--tracks core,products,...`: Restrict the run to specific tracks
 - `--compliance-version VERSION`: Select the compliance cache/spec line, for example `3.0.12` or `3.1.0-beta.7`; use the same flag with `storyboard list`, `show`, and `step` when reproducing a pinned run
 - `--compliance-dir PATH`: Use a specific compliance cache directory, mainly for local protocol/cache development
+- `--a2a-legacy-compat`: Use the official A2A 0.3 compatibility client when grading a 0.3-only agent; native conformance otherwise uses A2A 1.0
 - `--brief TEXT`: Override the default sample discovery brief
 - `--dry-run`: Preview steps without executing
 - `--json`: Emit machine-readable output for automation

@@ -42,7 +42,8 @@ Options:
   --transport <mode>         \`raw\` (default) posts to per-operation AdCP
                              endpoints; \`mcp\` wraps each vector body in a
                              JSON-RPC tools/call envelope and posts to the
-                             agent's MCP mount (see #612).
+                             agent's MCP mount; \`a2a\` signs the request
+                             emitted by the official A2A client.
   --timeout <ms>             Per-probe timeout (default 10000)
   --json                     Emit the full GradeReport as JSON
   -h, --help                 Show this help
@@ -193,8 +194,8 @@ async function runRequestSigningGrader(args) {
         break;
       case '--transport': {
         const mode = args[++i];
-        if (mode !== 'raw' && mode !== 'mcp') {
-          console.error(`ERROR: --transport must be \"raw\" or \"mcp\", got \"${mode}\"\n`);
+        if (mode !== 'raw' && mode !== 'mcp' && mode !== 'a2a') {
+          console.error(`ERROR: --transport must be \"raw\", \"mcp\", or \"a2a\", got \"${mode}\"\n`);
           process.exit(2);
         }
         options.transport = mode;

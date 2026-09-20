@@ -36,6 +36,7 @@ interface TestClientVersionOptions {
   fetchFn?: typeof fetch;
   maxResponseBytes?: number;
   requestTimeoutMs?: number;
+  legacyCompatEnabled?: boolean;
 }
 
 /**
@@ -221,6 +222,9 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
       ...(options.transport?.requestTimeoutMs !== undefined && {
         requestTimeoutMs: options.transport.requestTimeoutMs,
       }),
+      ...(options.transport?.legacyCompat?.enabled !== undefined && {
+        legacyCompatEnabled: options.transport.legacyCompat.enabled,
+      }),
     } satisfies TestClientVersionOptions,
     enumerable: false,
   });
@@ -281,7 +285,8 @@ function testClientMatchesVersionOptions(client: TestClient, options: TestOption
     meta.authMode === expectedAuthMode &&
     meta.fetchFn === effectiveOptions.transport?.trustedFetchFn &&
     meta.maxResponseBytes === effectiveOptions.transport?.maxResponseBytes &&
-    meta.requestTimeoutMs === effectiveOptions.transport?.requestTimeoutMs
+    meta.requestTimeoutMs === effectiveOptions.transport?.requestTimeoutMs &&
+    meta.legacyCompatEnabled === effectiveOptions.transport?.legacyCompat?.enabled
   );
 }
 

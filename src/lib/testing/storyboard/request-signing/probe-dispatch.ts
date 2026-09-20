@@ -13,8 +13,11 @@ import { loadRequestSigningVectors } from './vector-loader';
  * grading a REST-binding agent opt back in with
  * `request_signing.transport: 'raw'`.
  */
-export function resolveVectorTransport(rsOpts: { transport?: 'raw' | 'mcp' }): 'raw' | 'mcp' {
-  return rsOpts.transport ?? 'mcp';
+export function resolveVectorTransport(
+  rsOpts: { transport?: 'raw' | 'mcp' | 'a2a' },
+  protocol?: 'mcp' | 'a2a'
+): 'raw' | 'mcp' | 'a2a' {
+  return rsOpts.transport ?? (protocol === 'a2a' ? 'a2a' : 'mcp');
 }
 
 /**
@@ -64,7 +67,7 @@ export async function probeRequestSigningVector(
       onlyVectors: rsOpts.onlyVectors,
       skipVectors: rsOpts.skipVectors,
       skipRateAbuse: rsOpts.skipRateAbuse,
-      transport: resolveVectorTransport(rsOpts),
+      transport: resolveVectorTransport(rsOpts, options.protocol),
       // The auto-initialize handshake authenticates like any MCP client;
       // agents commonly require auth on `initialize` (the signed vectors
       // themselves stay bearer-less — the signature is their auth).
@@ -72,6 +75,7 @@ export async function probeRequestSigningVector(
         ? { initializeHeaders: { authorization: `Bearer ${options.auth.token}` } }
         : {}),
       mcpSessionId: rsOpts.mcpSessionId,
+      ...(options.transport?.trustedFetchFn ? { cardFetch: options.transport.trustedFetchFn } : {}),
     });
     if (result.skipped) {
       return skipProbe(agentUrl, (result.skip_reason as RunnerDetailedSkipReason | undefined) ?? 'grader_skipped');
@@ -81,7 +85,7 @@ export async function probeRequestSigningVector(
       headers['www-authenticate'] = `Signature error="${result.actual_error_code}"`;
     }
     return {
-      url: agentUrl,
+      url: result.probe_url ?? agentUrl,
       status: result.http_status,
       headers,
       body: result.diagnostic ?? null,

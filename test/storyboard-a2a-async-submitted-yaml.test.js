@@ -202,6 +202,7 @@ describe(
         const sb = withA2aWireShapeCheck(loadScenario());
         const result = await runStoryboardStep(fixture.url, sb, 'create_media_buy', {
           protocol: 'a2a',
+          transport: { legacyCompat: { enabled: true } },
           allow_http: true,
           invariants: DISABLE_DEFAULT_INVARIANTS,
         });
@@ -340,6 +341,7 @@ describe(
         const sb = withA2aWireShapeCheck(loadScenario());
         const result = await runStoryboardStep(baseUrl, sb, 'create_media_buy', {
           protocol: 'a2a',
+          transport: { legacyCompat: { enabled: true } },
           allow_http: true,
           invariants: DISABLE_DEFAULT_INVARIANTS,
           validation: { responses: 'strict' },
