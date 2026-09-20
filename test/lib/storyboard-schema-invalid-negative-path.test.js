@@ -71,14 +71,14 @@ describe('storyboard schema-invalid negative paths', () => {
       protocol: 'mcp',
     };
     const client = new SingleAgentClient(agent, {
-      adcpVersion: '3.2.0-rc.3',
+      adcpVersion: '3.2.0-rc.4',
       validateFeatures: false,
       validation: { requests: 'strict', responses: 'off' },
     });
     client.getCapabilities = async () => ({
       version: 'v3',
       majorVersions: [3],
-      supportedVersions: ['3.2.0-rc.3'],
+      supportedVersions: ['3.2.0-rc.4'],
       protocols: ['media_buy'],
       features: {},
       extensions: [],

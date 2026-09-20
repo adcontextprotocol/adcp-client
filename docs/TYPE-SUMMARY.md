@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
-> Generated at: 2026-09-18
-> @adcp/sdk v14.0.0-rc.39
+> Generated at: 2026-09-20
+> @adcp/sdk v14.0.0-rc.41
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -2884,7 +2884,7 @@ await producer.runWorker();
 const getReportingStatus = createReportingStatusHandler(store);
 const getMediaBuyDelivery = createReportingDeliveryHandler(store); // exact reporting_revision_id reads
 
-// AdCP 3.2.0-rc.3: identity comes from authenticated transport.
+// AdCP 3.2.0-rc.4: identity comes from authenticated transport.
 const syncReportingStatus = createSyncReportingStatusHandler(store, {
   resolveConsumerId: context => context.agent.agent_url,
 });

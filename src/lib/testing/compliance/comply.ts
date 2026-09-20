@@ -12,6 +12,7 @@ import { createTestClient, discoverAgentProfile, seedTestClientSigningCapability
 import type { TestOptions, TestResult, AgentProfile, TestStepResult } from '../types';
 import { collectDetachedAssertionFailures, mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
 import { applyAdcpVersionRunOptions, runStoryboard, storyboardCapabilityPredicates } from '../storyboard/runner';
+import { applyNativeA2AComplianceTransportOptions } from '../storyboard/native-a2a-compliance';
 import { validateTestKit } from '../storyboard/test-kit';
 import { checkAccountDiscoveryGate, isAccountBearingSpecialism } from './spec-conformance';
 
@@ -1629,6 +1630,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       sandbox: testOptions.sandbox !== false,
       test_session_id: testOptions.test_session_id || `comply-${Date.now()}`,
     });
+    effectiveOptions = applyNativeA2AComplianceTransportOptions(effectiveOptions);
     effectiveOptions = applyFunctionalRequestSigning(effectiveOptions, {
       ...(complianceDir !== undefined && { complianceDir }),
       version: complianceIndex.adcp_version,

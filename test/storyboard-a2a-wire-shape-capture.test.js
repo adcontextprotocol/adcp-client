@@ -215,13 +215,16 @@ describe('runStoryboardStep: A2A wire-shape capture (issue #904)', () => {
     port = server.address().port;
     const baseUrl = `http://127.0.0.1:${port}`;
 
-    app.get('/.well-known/agent-card.json', (_req, res) => {
+    app.get('/.well-known/agent.json', (_req, res) => {
       res.json({
         name: 'Regressed Seller',
         description: 'Pre-#899 wire shape',
         url: baseUrl,
         version: '1.0.0',
-        protocolVersion: '0.3.0',
+        // Declare the native contract so the compliance runner grades the
+        // deliberately regressed response shape below.
+        protocolVersion: '1.0.0',
+        supportedInterfaces: [{ url: baseUrl, protocolBinding: 'JSONRPC', protocolVersion: '1.0', tenant: '' }],
         defaultInputModes: ['application/json'],
         defaultOutputModes: ['application/json'],
         capabilities: { streaming: false, pushNotifications: false },
@@ -230,7 +233,7 @@ describe('runStoryboardStep: A2A wire-shape capture (issue #904)', () => {
     });
     app.post('/', (req, res) => {
       const { id, method } = req.body ?? {};
-      if (method !== 'message/send') {
+      if (method !== 'SendMessage') {
         res.json({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' } });
         return;
       }
@@ -282,10 +285,10 @@ describe('runStoryboardStep: A2A wire-shape capture (issue #904)', () => {
         },
       });
       const a2aCheck = result.validations.find(v => v.check === 'a2a_submitted_artifact');
-      assert.ok(a2aCheck, 'a2a_submitted_artifact validation ran');
+      assert.ok(a2aCheck, `a2a_submitted_artifact validation ran: ${JSON.stringify(result)}`);
       assert.strictEqual(a2aCheck.passed, false, 'regression must be caught');
       const pointers = (a2aCheck.actual?.failures ?? []).map(f => f.pointer);
-      assert.ok(pointers.includes('/result/status/state'), 'flags Task.state regression');
+      assert.ok(pointers.includes('/result/status/state'), `flags Task.state regression: ${JSON.stringify(a2aCheck)}`);
       assert.ok(pointers.includes('/result/artifacts/0/metadata/adcp_task_id'), 'flags missing artifact.metadata');
       assert.ok(
         pointers.includes('/result/artifacts/0/parts/0/data/adcp_task_id'),

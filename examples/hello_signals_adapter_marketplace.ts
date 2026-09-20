@@ -286,6 +286,7 @@ const ONBOARDING_LEDGER = new Map<string, BuyerAgent>([
 ]);
 
 const SEEDED_BUYER_AGENT_OVERLAY = new Map<string, BuyerAgent>();
+const SEEDED_ACCOUNTS = new Map<string, Record<string, unknown>>();
 
 const BUYER_AGENT_BILLING_MODES = new Set<BuyerAgentBillingMode>(['operator', 'agent', 'advertiser']);
 const BUYER_AGENT_STATUSES = new Set<BuyerAgentStatus>(['active', 'suspended', 'blocked']);
@@ -529,7 +530,37 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
       // or `{ brand, operator, sandbox? }` on initial discovery. Mock has
       // no account_id index; SWAP: production keeps an account_id →
       // operator_id index populated during list_accounts.
-      if ('account_id' in effectiveRef) return null;
+      let resolvedAccountId: string | undefined;
+      if ('account_id' in effectiveRef) {
+        const fixture = SEEDED_ACCOUNTS.get(effectiveRef.account_id);
+        if (!fixture) return null;
+        const fixtureBrand = fixture['brand'];
+        const brandDomain =
+          fixtureBrand != null && typeof fixtureBrand === 'object'
+            ? (fixtureBrand as { domain?: unknown }).domain
+            : undefined;
+        const operator = fixture['operator'];
+        if (typeof brandDomain !== 'string' || typeof operator !== 'string') return null;
+        resolvedAccountId = effectiveRef.account_id;
+        effectiveRef = {
+          brand: { domain: brandDomain },
+          operator,
+          ...(typeof fixture['sandbox'] === 'boolean' && { sandbox: fixture['sandbox'] }),
+        };
+      }
+      // TEST-ONLY: the storyboard controller client uses test.example as its
+      // synthetic sandbox principal before the fixture accounts exist.
+      if (
+        effectiveRef.sandbox === true &&
+        effectiveRef.operator === 'test.example' &&
+        effectiveRef.brand.domain === 'test.example'
+      ) {
+        effectiveRef = {
+          brand: { domain: 'acmeoutdoor.example' },
+          operator: 'pinnacle-agency.example',
+          sandbox: true,
+        };
+      }
       const adcpOperator = effectiveRef.operator;
       if (!adcpOperator) return null;
       // Optional: gate the operator on the buyer agent's allowed_brands /
@@ -552,11 +583,12 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
       const operatorId = await upstream.lookupOperator(adcpOperator);
       if (!operatorId) return null;
       return {
-        id: operatorId,
+        id: resolvedAccountId ?? operatorId,
         name: adcpOperator,
         status: 'active',
         operator: adcpOperator,
-        mode: 'sandbox',
+        mode: effectiveRef.sandbox === false ? 'live' : 'sandbox',
+        brand: effectiveRef.brand,
         ctx_metadata: { operator_id: operatorId },
         // The upstream here is the AdCP mock-server. Every account it
         // returns is a sandbox account by definition. Production
@@ -566,7 +598,7 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
         // framework's sandbox-only gate composes `agent.sandbox_only
         // && account.sandbox !== true → reject`, so production
         // accounts on a sandbox-only agent fail.
-        sandbox: true, // FIXME(adopter): replace with your real sandbox flag from backing store
+        sandbox: effectiveRef.sandbox !== false, // FIXME(adopter): replace with your real sandbox flag from backing store
       };
     },
   };
@@ -706,6 +738,9 @@ serve(
       // AdCP 6.7+). See `docs/proposals/lifecycle-state-and-sandbox-authority.md`.
       complyTest: {
         seed: {
+          account: ({ account_id, fixture }) => {
+            SEEDED_ACCOUNTS.set(account_id, fixture);
+          },
           // Test-only commercial-state setup for AdCP 3.1 storyboards that
           // declare `fixtures.buyer_agents[]`. This overlays the static
           // onboarding ledger by agent_url, so the existing bearer credential

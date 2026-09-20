@@ -16,12 +16,7 @@ import {
   runStep,
   type TestClient,
 } from '../client';
-import {
-  closeScopedConnections,
-  normalizeTransportOptions,
-  withMCPConnectionScope,
-  type VersionEnvelopeMode,
-} from '../../protocols';
+import { closeScopedConnections, withMCPConnectionScope, type VersionEnvelopeMode } from '../../protocols';
 import { getCapturesFromError, withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
 import { defaultStoryboardResponseProjection, executeStoryboardTask } from './task-map';
 import { applyFunctionalRequestSigning } from './request-signing/functional-dispatch';
@@ -113,6 +108,7 @@ import {
 import { normalizeValidationOnlyTasks, validateStoryboardShape, VALIDATION_ONLY_TASK } from './loader';
 import { evaluatePhaseCondition, phaseConditionUsesContext } from './phase-condition';
 import { trustedStoryboardComplianceRoot } from './provenance';
+import { applyNativeA2AComplianceTransportOptions } from './native-a2a-compliance';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
 import { REQUEST_SIGNING_PROBE_TASK } from './request-signing/synthesize';
 import { createWebhookReceiver, type WebhookReceiver, type WebhookWaitResult } from './webhook-receiver';
@@ -1422,7 +1418,7 @@ export async function runStoryboard(
       // kits win) so from_test_kit / $test_kit.* references get the
       // credential the storyboard was authored against.
       options = resolveDeclaredTestKit(storyboard, options);
-      options = { ...options, transport: normalizeTransportOptions(options.transport) };
+      options = applyNativeA2AComplianceTransportOptions(options);
       const schemaRoot = getRunSchemaRoot(options);
       if (schemaRoot) {
         return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, () =>
@@ -5371,6 +5367,7 @@ export async function runStoryboardStep(
       // adcp#6735 — same declared-kit resolution as runStoryboard, so the
       // printed fix_command path exercises the step with its real credential.
       options = resolveDeclaredTestKit(storyboard, options);
+      options = applyNativeA2AComplianceTransportOptions(options);
       const schemaRoot = getRunSchemaRoot(options);
       if (schemaRoot) {
         return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, () =>

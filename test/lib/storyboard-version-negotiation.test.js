@@ -21,6 +21,35 @@ const DIFFERENT_PRERELEASE_VERSION = ADCP_VERSION.includes('-')
   ? ADCP_VERSION.replace(/\.\d+$/, `.${DIFFERENT_PRERELEASE_NUMBER}`)
   : '3.2.0';
 
+function a2aCapabilitiesStoryboard() {
+  return {
+    id: 'a2a_native_transport',
+    version: '1.0.0',
+    adcp_version: CURRENT_PRERELEASE_VERSION,
+    title: 'A2A native transport',
+    category: 'universal',
+    summary: '',
+    narrative: '',
+    agent: { interaction_model: '*', capabilities: [] },
+    caller: { role: 'buyer_agent' },
+    phases: [
+      {
+        id: 'capabilities',
+        title: 'Capabilities',
+        steps: [
+          {
+            id: 'get_capabilities',
+            title: 'Get capabilities',
+            task: 'get_adcp_capabilities',
+            sample_request: { context: { correlation_id: 'a2a-native-transport' } },
+            validations: [],
+          },
+        ],
+      },
+    ],
+  };
+}
+
 function writeComplianceIndex(complianceDir, version = '3.0.12') {
   fs.mkdirSync(complianceDir, { recursive: true });
   fs.writeFileSync(
@@ -277,6 +306,134 @@ describe('storyboard runner AdCP version negotiation', () => {
       }),
       shared
     );
+  });
+
+  test('A2A compliance transport disables legacy compatibility without changing other protocols', () => {
+    const {
+      applyNativeA2AComplianceTransportOptions,
+    } = require('../../dist/lib/testing/storyboard/native-a2a-compliance.js');
+
+    const a2a = applyNativeA2AComplianceTransportOptions({
+      protocol: 'a2a',
+      transport: { allowPrivateIp: true, legacyCompat: { enabled: true } },
+    });
+    const mcp = applyNativeA2AComplianceTransportOptions({
+      protocol: 'mcp',
+      transport: { legacyCompat: { enabled: true } },
+    });
+
+    assert.deepStrictEqual(a2a.transport, {
+      allowPrivateIp: true,
+      legacyCompat: { enabled: false },
+    });
+    assert.strictEqual(mcp.transport.legacyCompat.enabled, true);
+  });
+
+  test('routed A2A agents use native compatibility mode after their per-entry protocol is resolved', () => {
+    const { routedAgentOptions } = require('../../dist/lib/testing/storyboard/agent-routing.js');
+    const profile = { name: 'Routed A2A seller', tools: ['get_adcp_capabilities'] };
+    const options = routedAgentOptions(
+      { url: 'https://routed.example/a2a', transport: 'a2a' },
+      { protocol: 'mcp', transport: { legacyCompat: { enabled: true } } },
+      profile
+    );
+
+    assert.strictEqual(options.protocol, 'a2a');
+    assert.strictEqual(options.transport.legacyCompat.enabled, false);
+  });
+
+  test('shared A2A clients are reused only when legacy compatibility mode matches', () => {
+    const { createTestClient, getOrCreateClientResolution } = require('../../dist/lib/testing/client.js');
+    const agentUrl = 'https://seller.example/a2a';
+    const nativeOptions = { protocol: 'a2a', transport: { legacyCompat: { enabled: false } } };
+    const nativeClient = createTestClient(agentUrl, 'a2a', nativeOptions);
+
+    assert.strictEqual(
+      getOrCreateClientResolution(agentUrl, { ...nativeOptions, _client: nativeClient }).reusedShared,
+      true
+    );
+    assert.strictEqual(
+      getOrCreateClientResolution(agentUrl, {
+        protocol: 'a2a',
+        transport: { legacyCompat: { enabled: true } },
+        _client: nativeClient,
+      }).reusedShared,
+      false
+    );
+  });
+
+  test('storyboard entrypoints use native A2A while ordinary SDK calls retain the compatibility default', async t => {
+    const shim = require('../../dist/lib/protocols/a2a.js').legacyA2AClientTestShim;
+    const { callA2ATool, closeA2AConnections } = require('../../dist/lib/protocols/a2a.js');
+    const { createTestClient } = require('../../dist/lib/testing/client.js');
+    const { runStoryboard, runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner.js');
+    const originalFromCardUrl = shim.fromCardUrl;
+    const originalNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'test';
+    const compatibilityModes = [];
+    shim.fromCardUrl = async (_cardUrl, options) => {
+      compatibilityModes.push(options.legacyCompat.enabled);
+      return {
+        sendMessage: async () => ({
+          result: {
+            kind: 'task',
+            id: 'capabilities-task',
+            contextId: 'capabilities-context',
+            status: { state: 'completed' },
+            artifacts: [
+              {
+                artifactId: 'capabilities-result',
+                parts: [
+                  {
+                    kind: 'data',
+                    data: {
+                      status: 'completed',
+                      adcp_version: CURRENT_PRERELEASE_RELEASE_PRECISION,
+                      adcp: {
+                        major_versions: [3],
+                        supported_versions: [CURRENT_PRERELEASE_RELEASE_PRECISION],
+                        idempotency: { supported: false },
+                      },
+                      supported_protocols: ['media_buy'],
+                      context: { correlation_id: 'a2a-native-transport' },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      };
+    };
+    t.after(() => {
+      shim.fromCardUrl = originalFromCardUrl;
+      if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = originalNodeEnv;
+      closeA2AConnections();
+    });
+
+    const profile = { name: 'A2A seller', tools: ['get_adcp_capabilities'] };
+    const storyboard = a2aCapabilitiesStoryboard();
+    const fullRunUrl = 'https://full-run.example/a2a';
+    const defaultModeSharedClient = createTestClient(fullRunUrl, 'a2a', {
+      adcpVersion: CURRENT_PRERELEASE_VERSION,
+    });
+    const fullResult = await runStoryboard(fullRunUrl, storyboard, {
+      protocol: 'a2a',
+      profile,
+      agentTools: profile.tools,
+      _client: defaultModeSharedClient,
+    });
+    const stepResult = await runStoryboardStep('https://single-step.example/a2a', storyboard, 'get_capabilities', {
+      protocol: 'a2a',
+      profile,
+      agentTools: profile.tools,
+    });
+    await callA2ATool('https://ordinary-sdk.example/a2a', 'get_adcp_capabilities', {});
+
+    assert.strictEqual(fullResult.overall_passed, true);
+    assert.strictEqual(stepResult.passed, true);
+    assert.deepStrictEqual(compatibilityModes, [false, false, true]);
   });
 
   test('discovery-only _client is not reused for executable storyboard calls', () => {

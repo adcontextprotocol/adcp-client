@@ -63,9 +63,9 @@ function assertCanonicalPackagedFixture({
   assert.equal(loadedVersion, fixtureSetProvenance.protocol_version);
   assert.equal(loadedComplianceDirectory, getComplianceCacheDir({ version: fixtureSetProvenance.protocol_version }));
   assert.equal(Object.isFrozen(fixtureSetProvenance.files[fixtureName]), true);
-  assert.equal(fixtureSetProvenance.protocol_version, '3.2.0-rc.3');
-  assert.equal(fixtureSetProvenance.source_commit, '71f9cd5414454e94ccfef87ce25777ead6fad228');
-  assert.equal(fixtureSetProvenance.bundle_sha256, '1cd940f76516b43327cbfa6c17c0befd4c093ca85b53a81a4062d38bb522d831');
+  assert.equal(fixtureSetProvenance.protocol_version, '3.2.0-rc.4');
+  assert.equal(fixtureSetProvenance.source_commit, '94976657c8456e5ad6de55d9793a883542a4fc5f');
+  assert.equal(fixtureSetProvenance.bundle_sha256, '773bee016d279345d6fae91a0ce684a22ca9b81c2edd2cdb9a71dbfea65954d2');
 }
 
 test('packaged consumers receive the exact canonical universal/principal storyboard', () => {
@@ -84,8 +84,8 @@ test('packaged consumers receive the exact canonical universal/reporting-core st
     fixtureName: 'reporting_core',
     packageSubpath: '@adcp/sdk/compliance-fixtures/reporting-core.yaml',
     cacheFileName: 'reporting-core.yaml',
-    expectedSha256: '795fe58f00903ad0390c50378518895ae45cfe88bbdb3e7ea880a8c12160e1af',
-    expectedShape: { id: 'reporting_core', phase_count: 4, step_count: 22 },
+    expectedSha256: 'fc56c154d40b76a797b62b5470ecb37d72500eeec3aa1800e05d6bb26367688d',
+    expectedShape: { id: 'reporting_core', phase_count: 4, step_count: 23 },
     load: loadCanonicalReportingCoreStoryboard,
   });
 });

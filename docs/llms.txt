@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-09-18
-> Library: @adcp/sdk v14.0.0-rc.39
+> Generated at: 2026-09-20
+> Library: @adcp/sdk v14.0.0-rc.41
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 > Note: the `Library` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.
@@ -1316,7 +1316,7 @@ Flow: `get_adcp_capabilities → create_property_list → list_property_lists �
 ### Media Buy
 
 **Media buy seller agent** — Seller agent that receives briefs, returns products, accepts media buys, and reports delivery.
-Flow: `get_adcp_capabilities → sync_accounts → get_adcp_capabilities → sync_accounts → sync_governance → get_products → create_media_buy → get_media_buys → get_media_buy_delivery → sync_governance → get_products → create_media_buy → get_media_buys → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → sync_accounts → get_adcp_capabilities → sync_accounts → get_products → create_media_buy → get_media_buys → get_media_buy_delivery → get_products → create_media_buy → get_media_buys → get_media_buy_delivery`
 
 **Seller exposes structured acceptance-policy discovery** — Verifies that an advertised acceptance-policy catalog is digest-pinned and that product-specific profiles are discoverable.
 Flow: `get_adcp_capabilities → get_products`
@@ -1483,6 +1483,9 @@ Flow: `get_products → create_media_buy`
 **Seller accepts and reads back a MediaBuy frequency cap** — Verifies participation-gated discovery, incompatible-mix rejection, exact acceptance, and readback of a root cap across a two-product buy.
 Flow: `sync_accounts → get_products → create_media_buy → get_media_buys`
 
+**Seller replaces, clears, and guards a MediaBuy frequency cap after creation** — Verifies update_media_buy_frequency_cap availability, root-cap replacement and null clearing without touching package caps, atomic rejection of new_packages that cannot join the shared counter, the resulting-state rule for clearing a cap while adding packages, and ACTION_NOT_ALLOWED once the package mix can no longer change the root cap.
+Flow: `sync_accounts → get_products → create_media_buy → get_media_buys → control_media_buy → get_media_buys → update_media_buy → get_media_buys → update_media_buy → get_media_buys → control_media_buy`
+
 **Seller solves for budget from a structured outcome target** — Verifies criteria.outcome_target reverse forecasting: a metric or event goal plus desired volume answered with total_budget_guidance on proposals and a forecast whose points carry the goal's key in metrics.
 Flow: `sync_accounts → request_proposals`
 
@@ -1537,6 +1540,9 @@ Flow: `sync_accounts → get_products → create_media_buy → comply_test_contr
 **Seller enforces refine[] finalize-exclusivity and MULTI_FINALIZE_UNSUPPORTED** — Validates that sellers reject mixed-finalize requests (INVALID_REQUEST), structurally-invalid finalize entries, and handle multi-proposal finalize atomically or reject with MULTI_FINALIZE_UNSUPPORTED.
 Flow: `sync_accounts → get_products`
 
+**Seller handles frequency-cap negotiation through proposal refinement** — Verifies that a seller supporting aggregate_frequency_capping and typed proposal negotiation correctly seeds proposals carrying a root frequency cap, replaces the cap through criteria.media_buy_frequency_cap, clears it through remove_media_buy_frequency_cap, and returns unable when the revised product mix cannot share the requested cap.
+Flow: `get_adcp_capabilities → sync_accounts → request_proposals → refine_proposals`
+
 **Seller handles product refinement** — Verifies that a media buy seller supports buying_mode: refine with product-level and request-level changes.
 Flow: `sync_accounts → get_products`
 
@@ -1565,7 +1571,7 @@ Flow: `sync_accounts → get_products → create_media_buy`
 Flow: `get_adcp_capabilities → get_products → sync_creatives → create_media_buy → update_media_buy`
 
 **Generative seller agent** — Seller agent that generates creatives from briefs at buy time — no pre-built assets required.
-Flow: `get_adcp_capabilities → sync_accounts → sync_governance → get_products → create_media_buy → sync_creatives → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → sync_accounts → get_products → create_media_buy → sync_creatives → get_media_buy_delivery`
 
 **Governance-aware seller** — Seller agent that composes with a campaign-governance agent after baseline sync_governance registration — verifies approved intent at execution and blocks denied or invalid execution verdicts. Optional claim for the full governance-check loop.
 Flow: `get_adcp_capabilities`
@@ -1574,10 +1580,10 @@ Flow: `get_adcp_capabilities`
 Flow: `sync_accounts → sync_governance`
 
 **Broadcast linear TV seller agent** — Seller agent for broadcast linear TV inventory — primetime and fringe spots with measurement windows, agency estimate numbers, Ad-ID-based creative sync, and delayed delivery reporting.
-Flow: `get_adcp_capabilities → get_products → sync_governance → create_media_buy → get_media_buys → sync_creatives → expect_webhook → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → get_products → create_media_buy → get_media_buys → sync_creatives → expect_webhook → get_media_buy_delivery`
 
 **Catalog-driven creative and conversion tracking** — Seller that renders dynamic ads from product catalogs, tracks conversions, and optimizes delivery based on performance feedback.
-Flow: `get_adcp_capabilities → sync_accounts → sync_governance → sync_catalogs → build_creative → expect_substitution_safe → get_products → create_media_buy → sync_event_sources → log_event → provide_performance_feedback → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → sync_accounts → sync_catalogs → build_creative → expect_substitution_safe → get_products → create_media_buy → sync_event_sources → log_event → provide_performance_feedback → get_media_buy_delivery`
 
 **Digital out-of-home — non-guaranteed** — DOOH seller for non-guaranteed venue and screen inventory with canonical screen formats and substantive play reporting.
 Flow: `get_adcp_capabilities → list_products → create_media_buy → validate_input → sync_creatives → create_media_buy → comply_test_controller → get_media_buy_delivery`
@@ -1743,8 +1749,8 @@ Flow: `get_adcp_capabilities → create_property_list → list_property_lists`
 **Read-tool idempotency_key envelope tolerance** — Validates that read-only AdCP tasks and the 3.x get_products compatibility facade tolerate an optional idempotency_key without claiming read-response replay.
 Flow: `get_adcp_capabilities → get_products → list_accounts → list_creative_formats → list_creatives → get_adcp_capabilities`
 
-**Reliable Reporting: consumer-status loop** — Validates opt-in buyer-to-seller reporting status, missing-obligation identity, caller-scoped mismatch, and immutable supersession.
-Flow: `comply_test_controller → sync_reporting_status → get_reporting_status → comply_test_controller → sync_reporting_status → comply_test_controller → get_reporting_status → get_media_buy_delivery → sync_reporting_status → get_reporting_status → comply_test_controller → get_reporting_status → comply_test_controller → get_reporting_status → sync_reporting_status → get_reporting_status`
+**Reliable Reporting: consumer-status loop** — Validates opt-in buyer-to-seller reporting status, missing-obligation identity, caller-scoped mismatch, content-mismatch contract facts, counted silence, escalation, and immutable supersession.
+Flow: `get_adcp_capabilities → comply_test_controller → sync_reporting_status → get_reporting_status → comply_test_controller → sync_reporting_status → comply_test_controller → get_reporting_status → get_media_buy_delivery → sync_reporting_status → get_reporting_status → comply_test_controller → get_reporting_status → comply_test_controller → get_reporting_status → comply_test_controller → get_reporting_status → sync_reporting_status → get_reporting_status → comply_test_controller → get_reporting_status → comply_test_controller → get_reporting_status → sync_reporting_status → get_reporting_status → comply_test_controller → get_media_buy_delivery → sync_reporting_status → get_reporting_status`
 
 **Reliable Reporting: Core declaration** — Validates the proper-name Reliable Reporting 1.0 declaration and its required Core tier without requiring optional tiers or a sandbox controller.
 Flow: `get_adcp_capabilities`
