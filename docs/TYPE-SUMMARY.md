@@ -96,6 +96,14 @@ interface CapabilityEvidenceSnapshot {
   toolSchemas?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 }
 
+type CreateTargetingInput = TargetingOverlayInput | undefined; // whole field omitted / dimension null / value
+type UpdateTargetingInput = TargetingOverlayInput | undefined; // overlay field only; keyword deltas are siblings
+
+// Constructs, scopes, and primes one exact instance before first dispatch.
+AgentClient.createWithCapabilityPreflight(agent, async ({ client, scope }) => ({
+  ...(await loadCapabilityEvidence(client, scope)), scope,
+}));
+
 interface TaskResult<T = any> {
   success: boolean;
   status: 'completed' | 'deferred' | 'submitted' | 'input-required'

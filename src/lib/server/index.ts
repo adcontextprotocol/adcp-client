@@ -180,6 +180,7 @@ export { createMediaBuyStore, DEFAULT_MEDIA_BUY_STORE_COLLECTION } from './media
 // command into strict effective targeting before persisting or echoing it.
 export { applyTargetingInput, hasTargetingClears, resolveTargetingInput } from '../media-buy/targeting-input';
 export type { ResolvedTargetingInput, TargetingInputFor } from '../media-buy/targeting-input';
+export type { CreateTargetingInput, UpdateTargetingInput } from '../types';
 export type {
   MediaBuyStore,
   CreateMediaBuyStoreOptions,

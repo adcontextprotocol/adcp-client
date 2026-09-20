@@ -344,10 +344,9 @@ async function validateStatus(
   ) {
     throw new ReportingStatusValidationError('ineligible period');
   }
-  const expectedOffset =
-    configuration.requiredFinality === 'official'
-      ? (configuration.schedule.officialAfterMilliseconds ?? configuration.schedule.deliverySlaMilliseconds)
-      : configuration.schedule.deliverySlaMilliseconds;
+  // Consumer absence is legal only at or after the protocol expected_at,
+  // which is period.end + delivery_sla for every finality.
+  const expectedOffset = configuration.schedule.deliverySlaMilliseconds;
   if (
     (status.consumer_status === 'obligation_missing' || status.consumer_status === 'revision_missing') &&
     compareReportingInstantToOffset(status.status_as_of, status.period.end, expectedOffset) < 0

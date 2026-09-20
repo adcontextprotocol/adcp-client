@@ -9,17 +9,11 @@
 import {
   applyTargetingInput,
   hasTargetingClears,
-  type BuyProductsRequest,
-  type ControlMediaBuyRequest,
+  type CreateTargetingInput,
   type ResolvedTargetingInput,
+  type UpdateTargetingInput,
 } from '@adcp/sdk';
 
-type ProductPurchase = BuyProductsRequest['purchases'][number];
-type PackageControl = NonNullable<ControlMediaBuyRequest['packages']>[number];
-
-/** Canonical request shapes; derive these instead of copying generated types. */
-export type CreateTargetingInput = ProductPurchase['targeting_overlay'];
-export type UpdateTargetingInput = PackageControl['targeting_overlay'];
 export type AcceptedTargeting = ResolvedTargetingInput<NonNullable<CreateTargetingInput>>;
 
 type ProviderTargetingField = 'countryCodes' | 'metroCodes' | 'languageCodes' | 'keywordTargets' | 'negativeKeywords';

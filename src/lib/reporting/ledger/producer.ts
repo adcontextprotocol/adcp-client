@@ -421,10 +421,10 @@ function planObligation(
   const anchor = instant(configuration.schedule.anchor, 'schedule.anchor');
   const start = anchor + periodOrdinal * configuration.schedule.periodMilliseconds;
   const end = start + configuration.schedule.periodMilliseconds;
-  const expectedOffset =
-    configuration.requiredFinality === 'official'
-      ? (configuration.schedule.officialAfterMilliseconds ?? configuration.schedule.deliverySlaMilliseconds)
-      : configuration.schedule.deliverySlaMilliseconds;
+  // `reporting-schedule.json` defines expected_at uniformly as period.end +
+  // delivery_sla. `officialAfterMilliseconds` is a private source-finality
+  // boundary and must not move the public obligation due time.
+  const expectedOffset = configuration.schedule.deliverySlaMilliseconds;
   const expectedAt = end + expectedOffset;
   const recoveryDeadlineAt = expectedAt + configuration.schedule.recoveryWindowMilliseconds;
   const semantic = {
@@ -1177,8 +1177,7 @@ function identityDurationMilliseconds(value: string): number | undefined {
  */
 function assertScheduleIdentityMatchesBoundaries(
   schedule: ReportingLedgerConfigurationV1['schedule'],
-  sourceTimezone: string,
-  requiredFinality: ReportingFinalityV1
+  sourceTimezone: string
 ): void {
   if (schedule.periodDuration !== undefined) {
     if (identityDurationMilliseconds(schedule.periodDuration) !== schedule.periodMilliseconds) {
@@ -1186,15 +1185,8 @@ function assertScheduleIdentityMatchesBoundaries(
     }
   }
   if (schedule.deliverySlaDuration !== undefined) {
-    // `expected_at` is period end plus this duration, and an official
-    // generation expects end + officialAfterMilliseconds. Publishing the
-    // nominal SLA instead would advertise PT2H while every obligation is due
-    // six hours after close.
-    const expectedOffset =
-      requiredFinality === 'official'
-        ? (schedule.officialAfterMilliseconds ?? schedule.deliverySlaMilliseconds)
-        : schedule.deliverySlaMilliseconds;
-    if (identityDurationMilliseconds(schedule.deliverySlaDuration) !== expectedOffset) {
+    // `expected_at` is period end plus this duration for every finality.
+    if (identityDurationMilliseconds(schedule.deliverySlaDuration) !== schedule.deliverySlaMilliseconds) {
       throw new Error('Reporting deliverySlaDuration does not describe the offset its obligations expect');
     }
   }
@@ -1295,11 +1287,7 @@ function validateConfigurationAgainstOffering(
   for (const offset of configuration.schedule.restatementMilliseconds ?? []) {
     nonnegativeInteger(offset, 'restatementMilliseconds');
   }
-  assertScheduleIdentityMatchesBoundaries(
-    configuration.schedule,
-    configuration.sourceTimezone,
-    configuration.requiredFinality
-  );
+  assertScheduleIdentityMatchesBoundaries(configuration.schedule, configuration.sourceTimezone);
   const anchor = instant(configuration.schedule.anchor, 'schedule.anchor');
   if (configuration.supersededAt && instant(configuration.supersededAt, 'supersededAt') <= anchor) {
     throw new Error('Reporting configuration supersession must follow its schedule anchor');

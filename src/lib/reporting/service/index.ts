@@ -1080,11 +1080,10 @@ function validateConfigurationAgainstDeliveryOffering(
   ) {
     throw new TypeError('Reporting configuration schedule does not match its delivery offering');
   }
-  // `expected_at` derives from `officialAfterMilliseconds ?? deliverySlaMilliseconds`,
-  // while discovery only ever publishes the offering's `schedule.delivery_sla`. A
-  // divergent official deadline would therefore advertise an availability promise
-  // the ledger never intends to meet, so the two must name one truthful value: the
-  // offering SLA when the deadline is omitted, and exactly that SLA when it is set.
+  // The public obligation due time always derives from `deliverySlaMilliseconds`.
+  // Keep any private official/finalization cutoff aligned with the advertised
+  // offering too, so source readiness cannot contradict discovery's availability
+  // promise even though it never replaces protocol `expected_at`.
   if (
     configuration.schedule.officialAfterMilliseconds !== undefined &&
     configuration.schedule.officialAfterMilliseconds !== configuration.schedule.deliverySlaMilliseconds

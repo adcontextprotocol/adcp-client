@@ -71,7 +71,9 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // After compact-schema packaging and existing filters, the publish set grows by 10 files.
 // Official-client A2A request-signing dispatch adds one internal dual-format
 // module with both declaration flavours (+4 files).
-const MAX_PACKED_FILE_COUNT = 6_135 + 34 + 4 + 10 + 4;
+// Targeting-overlay conformance adds one public dual-format runtime/declaration
+// module set (+4 files); byte and schema budgets stay unchanged.
+const MAX_PACKED_FILE_COUNT = 6_135 + 34 + 4 + 10 + 4 + 4;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

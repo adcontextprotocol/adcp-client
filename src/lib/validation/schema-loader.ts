@@ -775,11 +775,10 @@ function ensureInit(version: string): LoaderState {
  *     referenced by `signals/activate-signal-*.json`.
  *
  * Walk every directory except `bundled/` (pre-resolved schemas with refs
- * already inlined). Response files that `buildFileIndex` registered as tools
- * are registered with `relaxResponseRoot` applied, matching `getValidator`.
- * Response schemas are matched by both indexed path and canonical `$id`:
- * bundled and modular documents may intentionally share the same root `$id`,
- * even though only the bundled path is selected by `buildFileIndex`.
+ * already inlined). Files that `buildFileIndex` registered as tools use the
+ * selected tool document, not a modular document that happens to share its
+ * canonical `$id`. Responses also receive `relaxResponseRoot`, matching
+ * `getValidator`.
  * These checks are stricter than a filename-suffix match:
  * building-block fragments like `core/pagination-response.json` end in
  * `-response.json` but aren't tools, so suffix-matching would wrongly treat
@@ -801,13 +800,16 @@ function ensureCoreLoaded(s: LoaderState): void {
   // unregistered, so a later compile of `create_media_buy` fails on
   // `MissingRefError: can't resolve /schemas/media-buy/package-request.json`.
   //
+  const selectedToolsById = new Map<string, { file: string; response: boolean }>();
   const responseToolFiles = new Set<string>();
-  const responseToolIds = new Set<string>();
   for (const [key, file] of s.fileIndex) {
-    if (key.endsWith('::request')) continue;
-    responseToolFiles.add(file);
+    const response = !key.endsWith('::request');
+    if (response) responseToolFiles.add(file);
     const schema = loadJson(file);
-    if (typeof schema.$id === 'string') responseToolIds.add(schema.$id);
+    if (typeof schema.$id === 'string') {
+      const previous = selectedToolsById.get(schema.$id);
+      if (!previous || previous.file === file) selectedToolsById.set(schema.$id, { file, response });
+    }
   }
   const registeredIds = getAjvRegisteredIds(s.ajv);
   for (const entry of readdirSync(s.root, { withFileTypes: true })) {
@@ -816,9 +818,15 @@ function ensureCoreLoaded(s: LoaderState): void {
     const abs = path.join(s.root, entry.name);
     for (const file of walkJsonFiles(abs)) {
       const schema = loadJson(file);
-      const isResponseTool =
-        responseToolFiles.has(file) || (typeof schema.$id === 'string' && responseToolIds.has(schema.$id));
-      const schemaToRegister = isResponseTool ? relaxResponseRoot(schema) : schema;
+      const selected = typeof schema.$id === 'string' ? selectedToolsById.get(schema.$id) : undefined;
+      const selectedShadowsModular = selected !== undefined && selected.file !== file;
+      const selectedSchema = selectedShadowsModular ? loadJson(selected.file) : schema;
+      const prepared =
+        selectedShadowsModular && selected.file.includes(`${path.sep}bundled${path.sep}`)
+          ? stripNestedIds(selectedSchema)
+          : selectedSchema;
+      const isResponseTool = selected?.response ?? responseToolFiles.has(file);
+      const schemaToRegister = isResponseTool ? relaxResponseRoot(prepared) : prepared;
       if (typeof schemaToRegister.$id === 'string' && !registeredIds.has(schemaToRegister.$id)) {
         s.ajv.addSchema(schemaToRegister);
         registeredIds.add(schemaToRegister.$id);

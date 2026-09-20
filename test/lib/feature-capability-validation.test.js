@@ -13,6 +13,7 @@ const {
   getClientPreflightAdcpError,
   mapSdkErrorCodeToProtocolErrorCode,
   AgentClient,
+  CapabilityPreflightError,
   SingleAgentClient,
   ProtocolClient,
   TASK_FEATURE_MAP,
@@ -359,6 +360,108 @@ describe('SingleAgentClient feature API exists', () => {
       true
     );
     assert.deepStrictEqual(await client.getCapabilities(), capabilities);
+  });
+
+  test('AgentClient factory primes capability evidence on the exact instance before returning it', async () => {
+    const capabilities = makeCapabilities({ discoveredTools: [] });
+    let callbackClient;
+    const client = await AgentClient.createWithCapabilityPreflight(
+      {
+        id: 'factory-test',
+        name: 'Factory Test',
+        agent_uri: 'https://seller.example.com/mcp',
+        protocol: 'mcp',
+      },
+      ({ client: instance, scope }) => {
+        callbackClient = instance;
+        assert.deepStrictEqual(scope, instance.getCapabilityEvidenceScope());
+        return {
+          scope,
+          capabilities,
+          observedAt: new Date(Date.now() - 1_000).toISOString(),
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        };
+      }
+    );
+
+    assert.strictEqual(client, callbackClient);
+    assert.deepStrictEqual(await client.getCapabilities(), capabilities);
+  });
+
+  test('AgentClient factory rejects evidence created for another instance', async () => {
+    const other = new AgentClient({
+      id: 'other-factory-test',
+      name: 'Other Factory Test',
+      agent_uri: 'https://seller.example.com/mcp',
+      protocol: 'mcp',
+    });
+    await assert.rejects(
+      AgentClient.createWithCapabilityPreflight(
+        {
+          id: 'factory-test',
+          name: 'Factory Test',
+          agent_uri: 'https://seller.example.com/mcp',
+          protocol: 'mcp',
+        },
+        () => ({
+          scope: other.getCapabilityEvidenceScope(),
+          capabilities: makeCapabilities({ discoveredTools: [] }),
+          observedAt: new Date(Date.now() - 1_000).toISOString(),
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        })
+      ),
+      error => error instanceof CapabilityPreflightError && error.code === 'invalid_evidence'
+    );
+  });
+
+  test('AgentClient factory names scoped-transport incompatibility without invoking the loader', async () => {
+    let loaderCalled = false;
+    await assert.rejects(
+      AgentClient.createWithCapabilityPreflight(
+        {
+          id: 'scoped-transport-factory-test',
+          name: 'Scoped Transport Factory Test',
+          agent_uri: 'https://seller.example.com/mcp',
+          protocol: 'mcp',
+        },
+        () => {
+          loaderCalled = true;
+          throw new Error('must not run');
+        },
+        { transport: { trustedFetchFn: async () => new Response('{}') } }
+      ),
+      error =>
+        error instanceof CapabilityPreflightError &&
+        error.code === 'scoped_transport' &&
+        /Keep the scoped transport/.test(error.message)
+    );
+    assert.strictEqual(loaderCalled, false);
+  });
+
+  test('AgentClient factory reports authorization-driven scope rotation', async () => {
+    const headers = { 'x-org-id': 'tenant-a' };
+    await assert.rejects(
+      AgentClient.createWithCapabilityPreflight(
+        {
+          id: 'scope-rotation-factory-test',
+          name: 'Scope Rotation Factory Test',
+          agent_uri: 'https://seller.example.com/mcp',
+          protocol: 'mcp',
+          headers,
+        },
+        ({ client, scope }) => {
+          headers['x-org-id'] = 'tenant-b';
+          client.getCapabilityEvidenceScope();
+          return {
+            scope,
+            capabilities: makeCapabilities({ discoveredTools: [] }),
+            observedAt: new Date(Date.now() - 1_000).toISOString(),
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          };
+        }
+      ),
+      error => error instanceof CapabilityPreflightError && error.code === 'scope_rotated'
+    );
   });
 
   test('refuses stale or differently scoped capability evidence', () => {

@@ -109,7 +109,7 @@ export function assertUpdateMediaBuyAllowed(
     const requested = result.ok ? result.actions : result.mutations;
     const mismatch = requested.find(({ action }) => {
       const entry = findAvailableAction(currentBuy, action, { silent: true })?.entry;
-      return entry && !options.allowedModes!.includes(entry.mode);
+      return entry && !options.allowedModes!.includes(entry.mode as MediaBuyActionMode);
     });
     if (mismatch) throw actionNotAllowed(mismatch.action, 'mode_mismatch', currentlyAvailable, options.adcpVersion);
   }
@@ -180,7 +180,9 @@ function actionNotAllowed(
     currentlyAvailable.every(
       entry =>
         actionFitsErrorDetails(entry.action, version) &&
-        ['self_serve', 'conditional_self_serve', 'seller_managed', 'requires_approval'].includes(entry.mode) &&
+        ['self_serve', 'conditional_self_serve', 'seller_managed', 'requires_approval'].includes(
+          entry.mode as string
+        ) &&
         liveActionFitsVersion(entry, version)
     );
   const details =

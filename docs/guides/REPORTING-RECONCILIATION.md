@@ -121,7 +121,7 @@ resolution order is worth knowing:
 |---|---|---|
 | 1 | `obligation.expected_at` | The seller's own commitment. Normalized, never echoed verbatim. |
 | 1a | — *(present but unreadable)* | **Nothing is derived and rows 2–3 are not consulted.** A present `expected_at` is the seller's real deadline; a locally derived one would disagree with it and the statement would be refused on every run. Only the seller can fix the value. |
-| 2 | `ExpectedReportingPeriod.officialAfterSeconds` when `requiredFinality` is `official`, falling back to `deliverySlaSeconds`; `deliverySlaSeconds` otherwise | Added to the period end. `reporting-schedule.json` defines only `delivery_sla`, with no finality qualifier — `official_after` is an SDK-local extension — so `deliverySlaSeconds` is the spec-defined answer for a seller that does not carry it. |
+| 2 | `ExpectedReportingPeriod.deliverySlaSeconds` | Added to the period end for every finality. `reporting-schedule.json` defines `expected_at` only as period end plus `delivery_sla`; an SDK-local source-finality cutoff never replaces this protocol clock. |
 | 3 | `obligation.schedule.delivery_sla` | Last resort, only when you pinned nothing above **and an obligation exists** — so it is never available for `obligation_missing`, which is what the pins are for. Deliberately last: it is as seller-controlled as `expected_at`, and preferring it would let a seller move its own deadline. |
 
 The deadline is then that instant plus `ExpectedReportingPeriod.automatedRecoveryWindowSeconds`. That

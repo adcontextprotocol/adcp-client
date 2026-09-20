@@ -1271,13 +1271,12 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     assert.deepEqual(result.postedConsumerStatuses, []);
   });
 
-  test('an official generation is told to record officialAfterSeconds, not deliverySlaSeconds', async () => {
+  test('an official generation still requires deliverySlaSeconds for the protocol due time', async () => {
     const seller = await harness();
-    // Naming the wrong pin is expensive: an official generation dated from
-    // delivery_sla is refused by the seller, and because the statement takes no
-    // clock input it is rebuilt identically and refused on every run.
+    // rc.4 defines expected_at as period.end + delivery_sla for every finality.
+    // A private official/finalization cutoff cannot replace that public pin.
     const { deliverySlaSeconds: _pin, ...base } = expectedPeriod(seller.request, seller.anchor);
-    const expected = [{ ...base, requiredFinality: 'official' }];
+    const expected = [{ ...base, requiredFinality: 'official', officialAfterSeconds: 21_600 }];
     await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
     const at = seller.anchor + DAY + 3 * HOUR;
     seller.observeAt(at);
@@ -1296,8 +1295,8 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     const result = await seller.reconcile(at, expected);
     const plan = result.consumerStatuses[0];
     assert.equal(plan.suppressed, 'deadline_unknown');
-    assert.match(plan.reason, /officialAfterSeconds/);
-    assert.doesNotMatch(plan.reason, /deliverySlaSeconds/);
+    assert.match(plan.reason, /deliverySlaSeconds/);
+    assert.doesNotMatch(plan.reason, /officialAfterSeconds/);
   });
 
   test('a forked revision chain suppresses rather than blaming the seller', async () => {
@@ -1807,9 +1806,8 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
 
   test('an official generation falls back to deliverySlaSeconds, the one offset the spec defines', async () => {
     const seller = await harness();
-    // The pin for official finality is absent but the ordinary one is present.
-    // Falling back to it produces a statement the seller refuses on every run,
-    // which the code's own comment calls out as the expensive mistake.
+    // A private official-finality cutoff is absent but the protocol SLA pin is
+    // present. rc.4 requires both buyer and seller to use that same clock.
     const expected = [expectedPeriod(seller.request, seller.anchor, { requiredFinality: 'official' })];
     await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
     const at = seller.anchor + DAY + 3 * HOUR;
@@ -1827,10 +1825,8 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     };
 
     const result = await seller.reconcile(at, expected);
-    // `official_after` appears nowhere in the 3.2.0-rc.4 schemas — it is an
-    // extension this repo's producer and ingest carry — and the seller was
-    // measured to *accept* the `delivery_sla`-derived instant when it is not
-    // configured. Refusing the fallback silenced a conformant period.
+    // `official_after` appears nowhere in the 3.2.0-rc.4 schemas. Refusing the
+    // delivery-SLA fallback would silence a conformant period.
     assert.equal(result.consumerStatuses[0].suppressed, undefined);
     assert.equal(
       result.consumerStatuses[0].deadline,

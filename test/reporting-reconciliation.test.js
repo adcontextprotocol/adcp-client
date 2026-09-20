@@ -322,7 +322,7 @@ test('runtime response validation requires the current reporting evidence overla
   summary.issues = [];
   assert.equal(schema.safeParse(summary).success, true);
   assert.equal(schema.safeParse({ ...summary, periods: [] }).success, false);
-  assert.equal(schema.safeParse({ ...summary, next_expected_at: '2026-09-04T00:00:00Z' }).success, false);
+  assert.equal(schema.safeParse({ ...summary, next_expected_at: '2026-09-04T00:00:00Z' }).success, true);
 
   const snapshotWithOfficialEvidence = response([]);
   snapshotWithOfficialEvidence.revisions[0].finality = 'snapshot';

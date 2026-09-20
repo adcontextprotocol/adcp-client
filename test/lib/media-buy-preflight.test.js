@@ -122,6 +122,39 @@ describe('getAvailableActions compat shim', () => {
     assert.strictEqual(hit.entry.action, 'update_budget');
   });
 
+  test('findAvailableAction retains runtime compatibility with pre-GA requires_proposal entries', () => {
+    const buy = buyWith([{ action: 'extend_flight', mode: 'requires_proposal' }]);
+    const hit = findAvailableAction(buy, 'extend_flight', { silent: true });
+    assert.ok(hit);
+    assert.strictEqual(hit.entry.mode, 'requires_proposal');
+    assert.strictEqual(canExtendFlight(buy), false);
+
+    const result = preflightUpdateMediaBuy(buy, { end_time: '2026-07-01T00:00:00Z' });
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.denials[0].reason, 'mode_mismatch');
+    assert.strictEqual(result.denials[0].recovery.kind, 'createProposal');
+
+    const strict = preflightUpdateMediaBuy(
+      buyWith([{ action: 'extend_flight', mode: 'requires_proposal', change_term_id: 'term-1' }], {
+        accepted_proposal: {
+          commercial_terms: {
+            change_terms: [
+              {
+                term_id: 'term-1',
+                action: 'extend_flight',
+                service_mode: 'self_serve',
+              },
+            ],
+          },
+        },
+      }),
+      { end_time: '2026-07-01T00:00:00Z' }
+    );
+    assert.strictEqual(strict.ok, false);
+    assert.strictEqual(strict.denials[0].reason, 'mode_mismatch');
+    assert.strictEqual(strict.denials[0].recovery.kind, 'createProposal');
+  });
+
   test('getRollupParent maps fine-grained to legacy coarse', () => {
     assert.strictEqual(getRollupParent('increase_budget'), 'update_budget');
     assert.strictEqual(getRollupParent('extend_flight'), 'update_dates');
@@ -369,6 +402,34 @@ describe('preflightUpdateMediaBuy', () => {
     assert.ok(Array.isArray(result.currently_available_actions));
   });
 
+  test('strict assessment preserves condition_unresolved for a negotiated action omitted from the live projection', () => {
+    const buy = buyWith([{ action: 'pause', mode: 'self_serve', change_term_id: 'pause-term' }], {
+      status: 'active',
+      total_budget: 10_000,
+      accepted_proposal: {
+        commercial_terms: {
+          change_terms: [
+            {
+              term_id: 'increase-term',
+              action: 'increase_budget',
+              service_mode: 'seller_managed',
+              allowed_statuses: ['active'],
+              conditions: ['account_in_good_standing'],
+            },
+          ],
+        },
+      },
+    });
+
+    const result = preflightUpdateMediaBuy(buy, {
+      total_budget: { amount: 11_000, currency: 'USD' },
+    });
+
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.denials[0].action, 'increase_budget');
+    assert.strictEqual(result.denials[0].reason, 'condition_unresolved');
+  });
+
   test('multi-action request reports every blocked action', () => {
     // Buy advertises only `increase_budget`. Request touches end_time
     // (extend_flight) AND a second packages[].budget bump that maps to
@@ -426,6 +487,17 @@ describe('recoveryForModeMismatch', () => {
     const r = recoveryForModeMismatch('extend_flight', [{ action: 'extend_flight', mode: 'requires_proposal' }]);
     assert.strictEqual(r.kind, 'createProposal');
     assert.match(r.message, /create_proposal/);
+  });
+
+  test('legacy requires_proposal rollup preserves child-action recovery', () => {
+    const current = buyWith([{ action: 'update_dates', mode: 'requires_proposal' }]);
+    const result = preflightUpdateMediaBuy(current, { end_time: '2026-07-01T00:00:00Z' });
+
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.denials[0].action, 'extend_flight');
+    assert.strictEqual(result.denials[0].reason, 'mode_mismatch');
+    assert.strictEqual(result.denials[0].recovery.kind, 'createProposal');
+    assert.match(result.denials[0].recovery.message, /extend_flight/);
   });
 
   test('requires_approval returns waitForApproval hint', () => {
