@@ -111,6 +111,7 @@ import {
   is401Error,
 } from '../errors';
 import { createAgentTransportFetch, isLikelyPrivateUrl } from '../net';
+import { isCredentialHeaderName } from '../net/credential-headers';
 import {
   discoverAuthorizationRequirements,
   NeedsAuthorizationError,
@@ -1877,14 +1878,8 @@ export class SingleAgentClient {
     let got401 = false;
 
     const fetchImpl = async (url: string | URL | Request, requestInit?: RequestInit) => {
-      const headers: Record<string, string> = {
-        ...(requestInit?.headers as Record<string, string>),
-        ...this.normalizedAgent.headers,
-        ...(authToken && {
-          Authorization: `Bearer ${authToken}`,
-          'x-adcp-auth': authToken,
-        }),
-      };
+      const headers = buildA2ADiscoveryHeaders(requestInit?.headers, this.normalizedAgent.headers, authToken);
+      assertNativeA2ADiscoveryCredentialOrigin(agentUri, url, transport?.legacyCompat?.enabled, headers);
 
       const response = await withAbortSignal<Response>(
         [readOptions?.signal, requestInit?.signal],
@@ -6208,32 +6203,14 @@ export class SingleAgentClient {
       const sizeLimitedFetch = wrapFetchWithSizeLimit((input, init) =>
         transport?.trustedFetchFn ? transport.trustedFetchFn(input, init) : fetch(input as RequestInfo | URL, init)
       );
-      const normalizeHeaders = (headers?: HeadersInit): Record<string, string> => {
-        const normalized: Record<string, string> = {};
-        if (!headers) return normalized;
-        if (headers instanceof Headers) {
-          headers.forEach((value, key) => {
-            normalized[key] = value;
-          });
-        } else if (Array.isArray(headers)) {
-          for (const [key, value] of headers) {
-            normalized[key] = value;
-          }
-        } else {
-          Object.assign(normalized, headers);
-        }
-        return normalized;
-      };
-      const buildHeaders = (requestInit?: RequestInit): Record<string, string> => ({
-        ...normalizeHeaders(requestInit?.headers),
-        ...agentHeaders,
-        ...(authToken && {
-          Authorization: `Bearer ${authToken}`,
-          'x-adcp-auth': authToken,
-        }),
-      });
       const fetchImpl = async (url: string | URL | Request, requestInit?: RequestInit) => {
-        const headers = buildHeaders(requestInit);
+        const headers = buildA2ADiscoveryHeaders(requestInit?.headers, agentHeaders, authToken);
+        assertNativeA2ADiscoveryCredentialOrigin(
+          this.normalizedAgent.agent_uri,
+          url,
+          transport?.legacyCompat?.enabled,
+          headers
+        );
         return withAbortSignal<Response>([options?.signal, requestInit?.signal], requestTimeoutMs, signal =>
           sizeLimitedFetch(url as RequestInfo | URL, { ...requestInit, headers, signal })
         );
@@ -6978,6 +6955,42 @@ export class SingleAgentClient {
 
     return schemaMap[taskType] || null;
   }
+}
+
+function buildA2ADiscoveryHeaders(
+  requestHeaders: HeadersInit | undefined,
+  agentHeaders: Record<string, string> | undefined,
+  authToken: string | undefined
+): Headers {
+  const headers = new Headers(requestHeaders);
+  for (const [name, value] of Object.entries(agentHeaders ?? {})) {
+    headers.set(name, value);
+  }
+  if (authToken) {
+    headers.set('authorization', `Bearer ${authToken}`);
+    headers.set('x-adcp-auth', authToken);
+  }
+  return headers;
+}
+
+function assertNativeA2ADiscoveryCredentialOrigin(
+  agentUrl: string,
+  requestUrl: string | URL | Request,
+  legacyCompatEnabled: boolean | undefined,
+  headers: Headers
+): void {
+  if (legacyCompatEnabled !== false) return;
+  const targetUrl = requestUrl instanceof Request ? requestUrl.url : requestUrl.toString();
+  if (new URL(targetUrl).origin === new URL(agentUrl).origin) return;
+  const credentialHeaders: string[] = [];
+  headers.forEach((_value, name) => {
+    if (isCredentialHeaderName(name)) credentialHeaders.push(name);
+  });
+  if (credentialHeaders.length === 0) return;
+  throw new Error(
+    `A2A native discovery refused credentialed cross-origin dispatch declared by the agent card ` +
+      `(credential headers: ${credentialHeaders.join(', ')})`
+  );
 }
 
 let hasWarnedAboutUnverifiedWebhookReceive = false;
