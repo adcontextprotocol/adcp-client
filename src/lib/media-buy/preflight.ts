@@ -25,6 +25,7 @@ import {
   findAvailableAction,
   getAvailableActions,
   getRollupParent,
+  isLegacyRequiresProposalAction,
   type AvailableActionsResult,
 } from './available-actions';
 import { CANONICAL_ACTION_TASKS } from './action-metadata.generated';
@@ -62,7 +63,8 @@ function tasksForLegacyMutation(action: MediaBuyActionId) {
 }
 
 function isAvailable(buy: MediaBuyActionContext, action: MediaBuyActionId): boolean {
-  return findAvailableAction(buy, action, { silent: true }) !== undefined;
+  const match = findAvailableAction(buy, action, { silent: true });
+  return match !== undefined && !isLegacyRequiresProposalAction(match.entry);
 }
 
 export const canPause = (buy: MediaBuyActionContext): boolean => isAvailable(buy, 'pause');
@@ -219,13 +221,6 @@ export function preflightUpdateMediaBuy(
         }
       }
     }
-    if (strict || options.proposal !== undefined || resolvedAction.action === 'update_name') {
-      const assessment = assessActionAvailability(assessmentBuy, resolvedAction.action, { ...options, request });
-      if (assessment.status === 'currently_unavailable') {
-        denials.push({ action: resolvedAction.action, reason: assessment.reason, assessment });
-        continue;
-      }
-    }
     const lookup = findAvailableAction(currentBuy, resolvedAction.action, { silent: true });
     if (!lookup) {
       // Without product allowed_actions on the buy we can't distinguish
@@ -235,6 +230,21 @@ export function preflightUpdateMediaBuy(
       // this specific buy.
       denials.push({ action: resolvedAction.action, reason: 'not_supported_on_buy' });
       continue;
+    }
+    if (isLegacyRequiresProposalAction(lookup.entry)) {
+      denials.push({
+        action: resolvedAction.action,
+        reason: 'mode_mismatch',
+        recovery: recoveryForModeMismatch(resolvedAction.action, result.actions),
+      });
+      continue;
+    }
+    if (strict || options.proposal !== undefined || resolvedAction.action === 'update_name') {
+      const assessment = assessActionAvailability(assessmentBuy, resolvedAction.action, { ...options, request });
+      if (assessment.status === 'currently_unavailable') {
+        denials.push({ action: resolvedAction.action, reason: assessment.reason, assessment });
+        continue;
+      }
     }
     // Native field bindings must not grant newer wire features to a legacy snapshot.
     if (options.adcpVersion && !liveActionFitsVersion(lookup.entry, options.adcpVersion)) {

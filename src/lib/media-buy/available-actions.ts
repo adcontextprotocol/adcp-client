@@ -28,6 +28,27 @@ export interface AvailableActionsResult {
   deprecationHint?: string;
 }
 
+/** Unpublished pre-GA mode retained only to route persisted data to recovery. */
+export const LEGACY_REQUIRES_PROPOSAL_MODE = 'requires_proposal' as const;
+export type LegacyRequiresProposalAction = Omit<MediaBuyAvailableAction, 'mode'> & {
+  mode: typeof LEGACY_REQUIRES_PROPOSAL_MODE;
+};
+export type RuntimeCompatibleAvailableAction = MediaBuyAvailableAction | LegacyRequiresProposalAction;
+
+const RUNTIME_RECOGNIZED_MODES = new Set<string>([
+  'self_serve',
+  'conditional_self_serve',
+  'seller_managed',
+  'requires_approval',
+  LEGACY_REQUIRES_PROPOSAL_MODE,
+]);
+
+export function isLegacyRequiresProposalAction(
+  entry: RuntimeCompatibleAvailableAction
+): entry is LegacyRequiresProposalAction {
+  return entry.mode === LEGACY_REQUIRES_PROPOSAL_MODE;
+}
+
 const DEPRECATION_HINT =
   'seller emitted `valid_actions[]` only (legacy 3.0). mode and sla unknown; preflight assumes self_serve. ' +
   'sellers SHOULD populate `available_actions[]` during 3.x.';
@@ -97,12 +118,13 @@ export function findAvailableAction(
   buy: MediaBuyActionContext,
   action: MediaBuyActionId,
   options: { silent?: boolean } = {}
-): { entry: MediaBuyAvailableAction; result: AvailableActionsResult } | undefined {
+): { entry: RuntimeCompatibleAvailableAction; result: AvailableActionsResult } | undefined {
   const result = getAvailableActions(buy, options);
   const direct = result.actions.find(a => a.action === action);
-  // Future opaque modes carry no executable authority, including legacy structured projections.
-  const knownMode = (entry: MediaBuyAvailableAction) =>
-    ['self_serve', 'conditional_self_serve', 'seller_managed', 'requires_approval'].includes(entry.mode);
+  // Future opaque modes carry no executable authority. `requires_proposal`
+  // is an unpublished pre-GA value retained for one compatibility cycle so
+  // persisted adopter data can reach the proposal-lifecycle recovery path.
+  const knownMode = (entry: MediaBuyAvailableAction) => RUNTIME_RECOGNIZED_MODES.has(entry.mode as string);
   if (direct) return knownMode(direct) ? { entry: direct, result } : undefined;
 
   const rollupParent = ROLLUP_PARENT_OF[action];

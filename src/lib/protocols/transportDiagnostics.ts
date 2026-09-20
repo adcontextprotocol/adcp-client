@@ -1,5 +1,5 @@
 import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
-import { createHmac } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 
 export type TransportActivityType = 'request_started' | 'response_received' | 'request_failed';
 
@@ -16,6 +16,8 @@ export interface TransportActivityContext {
 
 export interface TransportActivity {
   type: TransportActivityType;
+  /** Correlates one request_started event with its response/failure event. */
+  transportRequestId: string;
   agentId: string;
   protocol: 'mcp' | 'a2a';
   tool?: string;
@@ -136,9 +138,11 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
   const wrapped: typeof fetch = async (input, init) => {
     const slot = transportDiagnosticsStorage.getStore();
     if (!slot?.onTransportActivity) return upstream(input, init);
+    const handler = slot.onTransportActivity;
 
     const startedAtMs = Date.now();
     const startedAt = new Date(startedAtMs).toISOString();
+    const transportRequestId = randomUUID();
     const method = getMethod(input, init);
     const url = sanitizeTransportUrl(getUrl(input));
     const requestHeaders = sanitizeTransportHeaders(mergeRequestHeaders(input, init));
@@ -146,6 +150,7 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
     const baseEvent = {
       agentId: slot.agentId,
       protocol: slot.protocol,
+      transportRequestId,
       ...(slot.tool && { tool: slot.tool, taskType: slot.taskType ?? slot.tool }),
       ...(slot.operationId && { operationId: slot.operationId }),
       ...(slot.taskId && { taskId: slot.taskId }),
@@ -161,7 +166,7 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
       startedAt,
     };
 
-    emitTransportActivity(slot.onTransportActivity, {
+    emitTransportActivity(handler, {
       type: 'request_started',
       ...baseEvent,
       timestamp: startedAt,
@@ -171,8 +176,7 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
       const response = await upstream(input, init);
       const durationMs = Date.now() - startedAtMs;
       const responseHeaders = sanitizeResponseHeaders(response.headers);
-      const responseBody = await responseBodySnippet(response);
-      emitTransportActivity(slot.onTransportActivity, {
+      const responseEvent = {
         type: 'response_received',
         ...baseEvent,
         timestamp: new Date().toISOString(),
@@ -180,14 +184,44 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
         httpStatus: response.status,
         statusText: response.statusText,
         responseHeaders,
-        ...(responseBody && {
-          responseBody: responseBody.body,
-          responseBodyTruncated: responseBody.truncated,
-        }),
-      });
+      } as const;
+      const responseBody = responseBodySnippet(response);
+      if (!responseBody) {
+        // Missing/untrusted lengths, non-text bodies, SSE, and bodies over the
+        // capture limit are never cloned. Emit the canonical response event
+        // immediately and make the absent preview explicit.
+        emitTransportActivity(handler, {
+          ...responseEvent,
+          responseBodyTruncated: true,
+        });
+      } else {
+        // Capture runs on a bounded clone after the operational Response has
+        // already been returned. A slow diagnostics stream can neither delay
+        // nor consume the caller's branch.
+        const captureEvent = responseBody.then(
+          captured => {
+            return emitTransportActivity(handler, {
+              ...responseEvent,
+              ...(captured && { responseBody: captured.body }),
+              responseBodyTruncated: captured?.truncated ?? true,
+            });
+          },
+          () => {
+            return emitTransportActivity(handler, {
+              ...responseEvent,
+              responseBodyTruncated: true,
+            });
+          }
+        );
+        // Register capture immediately so the enclosing diagnostics scope can
+        // flush its one canonical response event before task settlement. This
+        // does not block delivery of the operational Response to the protocol
+        // client; capture and parsing proceed on separate tee branches.
+        slot.pending.push(captureEvent.then(() => {}));
+      }
       return response;
     } catch (error) {
-      emitTransportActivity(slot.onTransportActivity, {
+      emitTransportActivity(handler, {
         type: 'request_failed',
         ...baseEvent,
         timestamp: new Date().toISOString(),
@@ -201,7 +235,7 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
   return wrapped;
 }
 
-function emitTransportActivity(handler: TransportActivityHandler, event: TransportActivity): void {
+function emitTransportActivity(handler: TransportActivityHandler, event: TransportActivity): Promise<void> | undefined {
   try {
     const slot = transportDiagnosticsStorage.getStore();
     const frozen = Object.freeze(structuredClone(event));
@@ -212,8 +246,10 @@ function emitTransportActivity(handler: TransportActivityHandler, event: Transpo
         () => {}
       );
     slot?.pending.push(pending);
+    return pending;
   } catch {
     // Observability hooks must not change protocol behavior.
+    return undefined;
   }
 }
 
@@ -274,22 +310,46 @@ function bodySnippet(body: BodyInit | null | undefined): { body: string; truncat
   return undefined;
 }
 
-async function responseBodySnippet(response: Response): Promise<{ body: string; truncated: boolean } | undefined> {
+function responseBodySnippet(
+  response: Response
+): Promise<{ body: string; truncated: boolean } | undefined> | undefined {
   const contentType = response.headers.get('content-type') ?? '';
   if (!isDiagnosticTextContentType(contentType)) return undefined;
+  const declaredLength = parseDiagnosticContentLength(response.headers.get('content-length'));
+  if (declaredLength === undefined || declaredLength > BODY_SNIPPET_LIMIT) return undefined;
+
+  let diagnosticResponse: Response;
   try {
-    const captureAbort = new AbortController();
-    const captured = await settleWithin(
-      readResponseTextBounded(response.clone(), BODY_SNIPPET_LIMIT, captureAbort.signal),
-      BODY_SNIPPET_TIMEOUT_MS,
-      () => captureAbort.abort()
-    );
-    if (captured === undefined) return undefined;
-    const { text, truncated } = captured;
-    return { body: redactSensitiveJsonOrText(text), truncated };
+    diagnosticResponse = response.clone();
   } catch {
     return undefined;
   }
+
+  return (async () => {
+    try {
+      const captureAbort = new AbortController();
+      const captured = await settleWithin(
+        readResponseTextBounded(diagnosticResponse, BODY_SNIPPET_LIMIT, captureAbort.signal),
+        BODY_SNIPPET_TIMEOUT_MS,
+        () => captureAbort.abort()
+      );
+      if (captured === undefined) return undefined;
+      const { text, truncated } = captured;
+      return { body: redactSensitiveJsonOrText(text), truncated };
+    } catch {
+      return undefined;
+    }
+  })();
+}
+
+/**
+ * Only an explicit finite decimal length is trusted for diagnostics cloning.
+ * The body reader remains independently bounded because servers can lie.
+ */
+function parseDiagnosticContentLength(value: string | null): number | undefined {
+  if (value === null || !/^(0|[1-9][0-9]*)$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
 async function settleWithin<T>(

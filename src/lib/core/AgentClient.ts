@@ -19,6 +19,8 @@ import type {
 import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 import {
   SingleAgentClient,
+  type CapabilityEvidenceScope,
+  type CapabilityEvidenceSnapshot,
   type CanonicalReadTaskOptions,
   type CreativeDeliveryTaskOptions,
   type SingleAgentClientConfig,
@@ -359,6 +361,33 @@ export type InProcessAgentClientConfig = Pick<
   agentId?: string;
 };
 
+/** Context passed to {@link AgentClient.createWithCapabilityPreflight}. */
+export interface CapabilityPreflightContext {
+  /** The exact client instance that will be returned by the factory. */
+  client: AgentClient;
+  /** Opaque authorization/transport scope the returned snapshot must carry. */
+  scope: CapabilityEvidenceScope;
+}
+
+/** Load or perform capability discovery for one newly constructed client. */
+export type CapabilityPreflightLoader = (
+  context: CapabilityPreflightContext
+) => CapabilityEvidenceSnapshot | Promise<CapabilityEvidenceSnapshot>;
+
+export type CapabilityPreflightErrorCode = 'scoped_transport' | 'scope_rotated' | 'invalid_evidence';
+
+/** Actionable factory failure without weakening the same-instance invariant. */
+export class CapabilityPreflightError extends Error {
+  override readonly name = 'CapabilityPreflightError';
+
+  constructor(
+    readonly code: CapabilityPreflightErrorCode,
+    message: string
+  ) {
+    super(message);
+  }
+}
+
 /**
  * Task result states where the server is still holding the task open. While
  * the last response was in one of these states the AgentClient retains the
@@ -414,6 +443,46 @@ export class AgentClient {
   ) {
     this.client = new SingleAgentClient(agent, config);
     this._isInProcess = agent._inProcessMcpClient !== undefined;
+  }
+
+  /**
+   * Construct and prime one client before exposing it for task dispatch.
+   *
+   * Capability evidence is intentionally bound to a client instance. This
+   * factory gives application factories the instance and its opaque scope
+   * before the first task can be sent, then installs the callback's snapshot
+   * on that same instance. Evidence from an otherwise identical client is
+   * rejected rather than silently falling back to redundant discovery.
+   */
+  static async createWithCapabilityPreflight(
+    agent: AgentConfig,
+    loadEvidence: CapabilityPreflightLoader,
+    config: SingleAgentClientConfig = {}
+  ): Promise<AgentClient> {
+    const client = new AgentClient(agent, config);
+    if (config.transport?.trustedFetchFn || config.transport?.fetchFn) {
+      throw new CapabilityPreflightError(
+        'scoped_transport',
+        'AgentClient.createWithCapabilityPreflight cannot prime a client configured with transport.trustedFetchFn. ' +
+          'Keep the scoped transport: construct AgentClient normally so capability discovery runs inside that transport scope.'
+      );
+    }
+    const scope = client.getCapabilityEvidenceScope();
+    const snapshot = await loadEvidence({ client, scope });
+    if (!client.primeCapabilities(snapshot)) {
+      const currentScope = client.getCapabilityEvidenceScope();
+      const scopeRotated =
+        currentScope.scopeKey !== scope.scopeKey && snapshot?.scope?.scopeKey !== currentScope.scopeKey;
+      throw new CapabilityPreflightError(
+        scopeRotated ? 'scope_rotated' : 'invalid_evidence',
+        scopeRotated
+          ? 'AgentClient.createWithCapabilityPreflight: authorization changed while capability evidence was loading. ' +
+              "Repeat preflight with the client's current scope, or construct normally to perform cold discovery."
+          : 'AgentClient.createWithCapabilityPreflight: evidence was stale, malformed, missing tool evidence, or scoped to another client. ' +
+              'Return a fresh snapshot carrying the callback scope; otherwise construct normally to perform cold discovery.'
+      );
+    }
+    return client;
   }
 
   /**

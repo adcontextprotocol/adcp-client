@@ -320,6 +320,7 @@ export {
 export type { DelegatedOperatorAuthorizationContext } from './signing/agent-resolver';
 export {
   AgentClient,
+  CapabilityPreflightError,
   type CanonicalGetProductsResponse,
   type CanonicalProjectionTaskOptions,
   type ProposalRefinementTaskOptions,
@@ -327,6 +328,9 @@ export {
   type TaskRequestTypeMap,
   type TaskRequestFor,
   type AdcpTaskName,
+  type CapabilityPreflightContext,
+  type CapabilityPreflightErrorCode,
+  type CapabilityPreflightLoader,
   type InProcessAgentClientConfig,
 } from './core/AgentClient';
 export {

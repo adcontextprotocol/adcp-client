@@ -9,14 +9,24 @@ const {
   wrapFetchWithTransportDiagnostics,
 } = require('../../dist/lib/protocols/index.js');
 
+async function waitFor(predicate, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('timed out waiting for transport diagnostic event');
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+}
+
 test('transport diagnostics emits sanitized request and response events', async () => {
   const events = [];
+  const responsePayload = JSON.stringify({ ok: true, access_token: 'response-token', id: 'resp-1' });
   const upstream = async () =>
-    new Response(JSON.stringify({ ok: true, access_token: 'response-token', id: 'resp-1' }), {
+    new Response(responsePayload, {
       status: 202,
       statusText: 'Accepted',
       headers: {
         'content-type': 'application/json',
+        'content-length': String(Buffer.byteLength(responsePayload)),
         'set-cookie': 'sid=secret',
         'x-request-id': 'srv-req-1',
       },
@@ -60,12 +70,15 @@ test('transport diagnostics emits sanitized request and response events', async 
   );
 
   assert.equal(response.status, 202);
-  assert.equal(await response.text(), JSON.stringify({ ok: true, access_token: 'response-token', id: 'resp-1' }));
+  assert.equal(await response.text(), responsePayload);
+
+  await waitFor(() => events.length === 2);
 
   assert.equal(events.length, 2);
   const [started, received] = events;
 
   assert.equal(started.type, 'request_started');
+  assert.equal(typeof started.transportRequestId, 'string');
   assert.equal(started.agentId, 'agent-1');
   assert.equal(started.protocol, 'mcp');
   assert.equal(started.tool, 'get_products');
@@ -94,6 +107,7 @@ test('transport diagnostics emits sanitized request and response events', async 
   assert.equal(started.requestBodyTruncated, false);
 
   assert.equal(received.type, 'response_received');
+  assert.equal(received.transportRequestId, started.transportRequestId);
   assert.equal(received.httpStatus, 202);
   assert.equal(received.statusText, 'Accepted');
   assert.equal(received.url, 'https://example.com/mcp');
@@ -166,7 +180,7 @@ test('transport diagnostics waits for async handlers after the request completes
   );
 });
 
-test('transport diagnostics bounds stalled response previews and preserves the original body', async () => {
+test('transport diagnostics does not clone or wait for a never-closing body without Content-Length', async () => {
   const events = [];
   let streamController;
   const stream = new ReadableStream({
@@ -175,8 +189,9 @@ test('transport diagnostics bounds stalled response previews and preserves the o
       controller.enqueue(new TextEncoder().encode('{"ok":true}'));
     },
   });
-  // Missing Content-Type is intentionally treated as previewable text.
-  const instrumentedFetch = wrapFetchWithTransportDiagnostics(async () => new Response(stream));
+  const instrumentedFetch = wrapFetchWithTransportDiagnostics(
+    async () => new Response(stream, { headers: { 'content-type': 'application/json' } })
+  );
 
   const startedAt = Date.now();
   const response = await withTransportDiagnostics(
@@ -189,12 +204,94 @@ test('transport diagnostics bounds stalled response previews and preserves the o
   );
   const elapsed = Date.now() - startedAt;
 
-  assert.equal(elapsed >= BODY_SNIPPET_TIMEOUT_MS, true);
-  assert.equal(elapsed < BODY_SNIPPET_TIMEOUT_MS + 1500, true);
+  assert.equal(elapsed < BODY_SNIPPET_TIMEOUT_MS, true);
   assert.equal(events.length, 2);
   assert.equal(events[1].responseBody, undefined);
+  assert.equal(events[1].responseBodyTruncated, true);
   streamController.close();
   assert.equal(await response.text(), '{"ok":true}');
+});
+
+test('transport diagnostics returns a declared streaming response before asynchronous preview capture completes', async () => {
+  const events = [];
+  let streamController;
+  const body = '{"ok":true}';
+  const stream = new ReadableStream({
+    start(controller) {
+      streamController = controller;
+      controller.enqueue(new TextEncoder().encode(body));
+    },
+  });
+  const instrumentedFetch = wrapFetchWithTransportDiagnostics(
+    async () =>
+      new Response(stream, {
+        headers: { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(body)) },
+      })
+  );
+
+  let response;
+  let consumed;
+  await withTransportDiagnostics(
+    {
+      agentId: 'declared-stream-agent',
+      protocol: 'mcp',
+      onTransportActivity: event => events.push(event),
+    },
+    async () => {
+      const startedAt = Date.now();
+      response = await instrumentedFetch('https://seller.example/mcp');
+      assert.equal(Date.now() - startedAt < BODY_SNIPPET_TIMEOUT_MS, true);
+      assert.equal(events.length, 1, 'capture remains asynchronous after the operational response is delivered');
+      setTimeout(() => streamController.close(), 20);
+      consumed = await response.text();
+    }
+  );
+
+  assert.equal(consumed, body);
+  assert.equal(events.length, 2, 'the enclosing scope flushes the canonical response event');
+  assert.equal(events[1].responseBody, body);
+  assert.equal(events[1].responseBodyTruncated, false);
+});
+
+test('transport diagnostics emits one truncated response event when declared preview capture expires', async () => {
+  const events = [];
+  let streamController;
+  const body = '{"ok":true}';
+  const stream = new ReadableStream({
+    start(controller) {
+      streamController = controller;
+      controller.enqueue(new TextEncoder().encode(body));
+    },
+  });
+  const instrumentedFetch = wrapFetchWithTransportDiagnostics(
+    async () =>
+      new Response(stream, {
+        headers: { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(body)) },
+      })
+  );
+
+  let responseDeliveredAt;
+  const response = await withTransportDiagnostics(
+    {
+      agentId: 'expired-capture-agent',
+      protocol: 'mcp',
+      onTransportActivity: event => events.push(event),
+    },
+    async () => {
+      const startedAt = Date.now();
+      const operational = await instrumentedFetch('https://seller.example/mcp');
+      responseDeliveredAt = Date.now() - startedAt;
+      return operational;
+    }
+  );
+  assert.equal(responseDeliveredAt < BODY_SNIPPET_TIMEOUT_MS, true);
+
+  assert.equal(events.length, 2);
+  assert.equal(events.filter(event => event.type === 'response_received').length, 1);
+  assert.equal(events[1].responseBody, undefined);
+  assert.equal(events[1].responseBodyTruncated, true);
+  streamController.close();
+  assert.equal(await response.text(), body);
 });
 
 test('transport diagnostics bounds a never-settling async observer', async () => {
@@ -233,6 +330,43 @@ test('ESM transport diagnostics entry keeps observer work off the unbounded crit
   assert.equal(Date.now() - startedAt < publicEsm.OBSERVER_FLUSH_TIMEOUT_MS + 1500, true);
 });
 
+test('ESM transport diagnostics skips an unbounded body without cloning it', async () => {
+  const esm = await import('../../dist/lib/protocols/index.mjs');
+  const events = [];
+  let streamController;
+  const response = new Response(
+    new ReadableStream({
+      start(controller) {
+        streamController = controller;
+        controller.enqueue(new TextEncoder().encode('{}'));
+      },
+    }),
+    { headers: { 'content-type': 'application/json' } }
+  );
+  const originalClone = response.clone.bind(response);
+  let cloneCalls = 0;
+  response.clone = () => {
+    cloneCalls += 1;
+    return originalClone();
+  };
+  const instrumentedFetch = esm.wrapFetchWithTransportDiagnostics(async () => response);
+
+  const operational = await esm.withTransportDiagnostics(
+    {
+      agentId: 'esm-unbounded-agent',
+      protocol: 'mcp',
+      onTransportActivity: event => events.push(event),
+    },
+    () => instrumentedFetch('https://seller.example/mcp')
+  );
+
+  assert.equal(cloneCalls, 0);
+  assert.equal(events.length, 2);
+  assert.equal(events[1].responseBodyTruncated, true);
+  streamController.close();
+  assert.equal(await operational.text(), '{}');
+});
+
 test('transport diagnostics skips SSE response previews without disturbing the stream', async () => {
   const events = [];
   const body = 'event: message\ndata: {"ok":true}\n\n';
@@ -249,7 +383,41 @@ test('transport diagnostics skips SSE response previews without disturbing the s
   );
 
   assert.equal(events[1].responseBody, undefined);
+  assert.equal(events[1].responseBodyTruncated, true);
   assert.equal(await response.text(), body);
+});
+
+test('transport diagnostics never clones bodies without a trustworthy finite text declaration', async () => {
+  for (const [name, headers] of [
+    ['non-text', { 'content-type': 'application/octet-stream', 'content-length': '2' }],
+    ['missing-length', { 'content-type': 'application/json' }],
+    ['invalid-length', { 'content-type': 'application/json', 'content-length': 'unknown' }],
+    ['over-limit', { 'content-type': 'application/json', 'content-length': String(64 * 1024 + 1) }],
+  ]) {
+    const events = [];
+    const response = new Response('{}', { headers });
+    const originalClone = response.clone.bind(response);
+    let cloneCalls = 0;
+    response.clone = () => {
+      cloneCalls += 1;
+      return originalClone();
+    };
+    const instrumentedFetch = wrapFetchWithTransportDiagnostics(async () => response);
+
+    const operational = await withTransportDiagnostics(
+      {
+        agentId: `skip-${name}-agent`,
+        protocol: 'mcp',
+        onTransportActivity: event => events.push(event),
+      },
+      () => instrumentedFetch('https://seller.example/mcp')
+    );
+
+    assert.equal(cloneCalls, 0, name);
+    assert.equal(events.length, 2, name);
+    assert.equal(events[1].responseBodyTruncated, true, name);
+    assert.equal(await operational.text(), '{}', name);
+  }
 });
 
 test('transport diagnostics does not deadlock on responses larger than the snippet limit', async () => {
@@ -285,22 +453,25 @@ test('transport diagnostics does not deadlock on responses larger than the snipp
   assert.equal(consumedBody, largeBody);
   assert.equal(events.length, 2);
   assert.equal(events[1].type, 'response_received');
-  assert.equal(events[1].responseBody.length <= 64 * 1024, true);
+  assert.equal(events[1].responseBody, undefined);
   assert.equal(events[1].responseBodyTruncated, true);
 });
 
 test('transport diagnostics redacts camelCase secrets and strips URL-bearing body fields', async () => {
   const events = [];
+  const responsePayload = JSON.stringify({
+    refreshToken: 'response-refresh',
+    nested: [{ privateKey: 'pem-secret' }],
+    callbackUrl: 'https://callback.example/path?token=response-token#frag',
+  });
   const instrumentedFetch = wrapFetchWithTransportDiagnostics(
     async () =>
-      new Response(
-        JSON.stringify({
-          refreshToken: 'response-refresh',
-          nested: [{ privateKey: 'pem-secret' }],
-          callbackUrl: 'https://callback.example/path?token=response-token#frag',
-        }),
-        { headers: { 'content-type': 'application/json' } }
-      )
+      new Response(responsePayload, {
+        headers: {
+          'content-type': 'application/json',
+          'content-length': String(Buffer.byteLength(responsePayload)),
+        },
+      })
   );
 
   await withTransportDiagnostics(
@@ -321,6 +492,8 @@ test('transport diagnostics redacts camelCase secrets and strips URL-bearing bod
         }),
       })
   );
+
+  await waitFor(() => events.length === 2);
 
   assert.deepEqual(JSON.parse(events[0].requestBody), {
     accessToken: '[redacted]',
