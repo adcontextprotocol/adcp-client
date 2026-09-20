@@ -136,9 +136,18 @@ function buildGuardedCardFetch(agentUrl: string, options: A2aDispatchOptions): t
     allowPrivateIp: options.allowPrivateIp === true,
   });
   return ((input: RequestInfo | URL, init: RequestInit = {}) =>
-    withAbortSignal([init.signal], options.timeoutMs ?? DEFAULT_CARD_FETCH_TIMEOUT_MS, signal =>
-      transportFetch(input, { ...init, ...(signal ? { signal } : {}) })
-    )) as typeof fetch;
+    withAbortSignal([init.signal], options.timeoutMs ?? DEFAULT_CARD_FETCH_TIMEOUT_MS, async signal => {
+      const response = await transportFetch(input, { ...init, ...(signal ? { signal } : {}) });
+      // Keep the same discovery deadline active through body consumption. A
+      // peer can otherwise return headers plus one byte and stall grading
+      // forever while the official resolver waits for JSON completion.
+      const body = await readCardBodyBounded(response, MAX_CACHED_AGENT_CARD_BYTES, signal);
+      return new Response(body.byteLength > 0 ? Uint8Array.from(body).buffer : null, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    })) as typeof fetch;
 }
 
 /**
@@ -179,33 +188,39 @@ export function createCachedA2aCardFetch(agentUrl: string, options: A2aDispatchO
   };
 }
 
-async function readCardBodyBounded(response: Response, maxBytes: number): Promise<Uint8Array> {
+async function readCardBodyBounded(response: Response, maxBytes: number, signal?: AbortSignal): Promise<Uint8Array> {
   const declaredLength = Number(response.headers.get('content-length'));
   if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-    await response.body?.cancel();
+    void response.body?.cancel().catch(() => undefined);
     throw new Error(`A2A agent card exceeds the ${maxBytes}-byte discovery limit`);
   }
   if (!response.body) return new Uint8Array();
   const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    length += value.byteLength;
-    if (length > maxBytes) {
-      await reader.cancel();
-      throw new Error(`A2A agent card exceeds the ${maxBytes}-byte discovery limit`);
+  const cancel = () => void reader.cancel(signal?.reason).catch(() => undefined);
+  signal?.addEventListener('abort', cancel, { once: true });
+  try {
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > maxBytes) {
+        void reader.cancel().catch(() => undefined);
+        throw new Error(`A2A agent card exceeds the ${maxBytes}-byte discovery limit`);
+      }
+      chunks.push(value);
     }
-    chunks.push(value);
+    const body = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      body.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return body;
+  } finally {
+    signal?.removeEventListener('abort', cancel);
   }
-  const body = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return body;
 }
 
 export function operationFromVectorUrl(vectorUrl: string): string {

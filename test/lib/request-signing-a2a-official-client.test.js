@@ -195,6 +195,29 @@ test('cached card discovery rejects oversized bodies before retaining them', asy
   );
 });
 
+test('agent-card discovery timeout includes a response body that never closes', async () => {
+  const stalledCardFetch = async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{'));
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+  const startedAt = Date.now();
+
+  await assert.rejects(
+    captureA2aRequest(
+      'https://seller.example',
+      { kind: 'cancelTask', taskId: 'stalled-card' },
+      { timeoutMs: 20, cardFetch: stalledCardFetch }
+    ),
+    /timed out|timeout/i
+  );
+  assert.ok(Date.now() - startedAt < 1_000, 'discovery must not outlive its body-inclusive deadline');
+});
+
 test('official client captures and signs A2A 0.3 message/send bytes', async () => {
   let received;
   const server = http.createServer(async (req, res) => {
