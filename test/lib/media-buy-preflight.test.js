@@ -461,6 +461,17 @@ describe('recoveryForModeMismatch', () => {
     assert.match(r.message, /create_proposal/);
   });
 
+  test('legacy requires_proposal rollup preserves child-action recovery', () => {
+    const current = buyWith([{ action: 'update_dates', mode: 'requires_proposal' }]);
+    const result = preflightUpdateMediaBuy(current, { end_time: '2026-07-01T00:00:00Z' });
+
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.denials[0].action, 'extend_flight');
+    assert.strictEqual(result.denials[0].reason, 'mode_mismatch');
+    assert.strictEqual(result.denials[0].recovery.kind, 'createProposal');
+    assert.match(result.denials[0].recovery.message, /extend_flight/);
+  });
+
   test('requires_approval returns waitForApproval hint', () => {
     const r = recoveryForModeMismatch('cancel', [{ action: 'cancel', mode: 'requires_approval' }]);
     assert.strictEqual(r.kind, 'waitForApproval');

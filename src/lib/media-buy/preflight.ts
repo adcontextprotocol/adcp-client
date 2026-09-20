@@ -329,7 +329,10 @@ export function recoveryForModeMismatch(
   attemptedAction: MediaBuyActionId,
   currentlyAvailable: ReadonlyArray<MediaBuyAvailableAction>
 ): ModeMismatchRecovery | undefined {
-  const entry = currentlyAvailable.find(a => a.action === attemptedAction);
+  const rollup = getRollupParent(attemptedAction);
+  const entry =
+    currentlyAvailable.find(a => a.action === attemptedAction) ??
+    (rollup === undefined ? undefined : currentlyAvailable.find(a => a.action === rollup));
   if (!entry) return undefined;
   // `requires_proposal` was removed from the rc4+ mode enum in favor of
   // REQUOTE_REQUIRED, but older 3.1 prerelease sellers can still emit it.
