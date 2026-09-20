@@ -4,8 +4,20 @@ const { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync,
 const { tmpdir } = require('node:os');
 const { test } = require('node:test');
 const path = require('node:path');
+const YAML = require('yaml');
 
 const ROOT = path.resolve(__dirname, '..');
+
+test('release job serializes package-global npm mutations across branches', () => {
+  const workflow = readFileSync(path.join(ROOT, '.github', 'workflows', 'release.yml'), 'utf8');
+  const parsed = YAML.parse(workflow);
+
+  assert.equal(parsed.concurrency, undefined, 'the interop prerequisite must not hold the npm mutation lock');
+  assert.deepEqual(parsed.jobs.release.concurrency, {
+    group: 'npm-release-dist-tags',
+    'cancel-in-progress': false,
+  });
+});
 
 test('Changesets release versioning regenerates agent docs after the package version changes', () => {
   const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
