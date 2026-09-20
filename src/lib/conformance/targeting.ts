@@ -226,7 +226,7 @@ function normalizeEmptyState(state: Record<string, unknown> | undefined): Record
 function containsNull(value: unknown): boolean {
   if (value === null) return true;
   if (Array.isArray(value)) return value.some(containsNull);
-  return typeof value === 'object' && value !== null && Object.values(value).some(containsNull);
+  return typeof value === 'object' && Object.values(value).some(containsNull);
 }
 
 function withoutKey(state: Record<string, unknown>, key: string): Record<string, unknown> | undefined {

@@ -187,9 +187,9 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
       } as const;
       const responseBody = responseBodySnippet(response);
       if (!responseBody) {
-        // Missing/untrusted lengths, non-text bodies, SSE, and bodies over the
-        // capture limit are never cloned. Emit the canonical response event
-        // immediately and make the absent preview explicit.
+        // Non-text bodies, SSE, and bodies declared over the capture limit are
+        // never cloned. Emit the canonical response event immediately and
+        // make the absent preview explicit.
         emitTransportActivity(handler, {
           ...responseEvent,
           responseBodyTruncated: true,
@@ -316,7 +316,7 @@ function responseBodySnippet(
   const contentType = response.headers.get('content-type') ?? '';
   if (!isDiagnosticTextContentType(contentType)) return undefined;
   const declaredLength = parseDiagnosticContentLength(response.headers.get('content-length'));
-  if (declaredLength === undefined || declaredLength > BODY_SNIPPET_LIMIT) return undefined;
+  if (declaredLength !== undefined && declaredLength > BODY_SNIPPET_LIMIT) return undefined;
 
   let diagnosticResponse: Response;
   try {
@@ -343,8 +343,8 @@ function responseBodySnippet(
 }
 
 /**
- * Only an explicit finite decimal length is trusted for diagnostics cloning.
- * The body reader remains independently bounded because servers can lie.
+ * Parse an explicit finite decimal length when one is available. Missing or
+ * invalid lengths fall through to the independently bounded body reader.
  */
 function parseDiagnosticContentLength(value: string | null): number | undefined {
   if (value === null || !/^(0|[1-9][0-9]*)$/.test(value)) return undefined;
