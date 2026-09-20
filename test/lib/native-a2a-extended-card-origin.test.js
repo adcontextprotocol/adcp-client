@@ -71,3 +71,41 @@ test('getAgentInfo refuses credentials on a native cross-origin extended-card re
 test('canonical URL discovery refuses credentials on a native cross-origin extended-card request', async () => {
   await assertCrossOriginExtendedCardRefused(client => () => client.resolveCanonicalUrl());
 });
+
+test('getAgentInfo refuses credentials before following a native cross-origin redirect', async () => {
+  const seenUrls = [];
+  const trustedFetchFn = async input => {
+    const url = String(input);
+    seenUrls.push(url);
+    if (url.startsWith(AGENT_ORIGIN) && url.includes('/.well-known/')) {
+      return new Response(
+        JSON.stringify({
+          ...nativeExtendedCard(),
+          supportedInterfaces: [{ url: `${AGENT_ORIGIN}/rpc`, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }
+    if (url === `${AGENT_ORIGIN}/rpc`) {
+      return new Response(null, { status: 307, headers: { location: `${EXTENDED_ORIGIN}/rpc` } });
+    }
+    throw new Error(`unexpected cross-origin network call: ${url}`);
+  };
+  const client = new AgentClient(
+    {
+      id: 'native-extended-card-redirect',
+      agent_uri: AGENT_ORIGIN,
+      protocol: 'a2a',
+      name: 'native-extended-card-redirect',
+      headers: { 'x-api-key': 'redirect-sentinel' },
+    },
+    { transport: { trustedFetchFn, legacyCompat: { enabled: false } } }
+  );
+
+  await assert.rejects(() => client.getAgentInfo(), /refused a credentialed cross-origin redirect/);
+  assert.ok(seenUrls.includes(`${AGENT_ORIGIN}/rpc`), 'same-origin extended-card endpoint must be attempted');
+  assert.ok(
+    seenUrls.every(url => !url.startsWith(EXTENDED_ORIGIN)),
+    'cross-origin redirect target must be refused before the network call'
+  );
+});

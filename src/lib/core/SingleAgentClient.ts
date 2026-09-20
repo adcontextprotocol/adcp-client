@@ -6200,8 +6200,11 @@ export class SingleAgentClient {
       const { wrapFetchWithSizeLimit } = await import('../protocols/responseSizeLimit');
       const authToken = await ensureReadAuthToken();
       const agentHeaders = this.normalizedAgent.headers ?? {};
-      const sizeLimitedFetch = wrapFetchWithSizeLimit((input, init) =>
-        transport?.trustedFetchFn ? transport.trustedFetchFn(input, init) : fetch(input as RequestInfo | URL, init)
+      const sizeLimitedFetch = wrapFetchWithSizeLimit(
+        createAgentTransportFetch(this.normalizedAgent.agent_uri, {
+          trustedFetchFn: transport?.trustedFetchFn,
+          allowPrivateIp: transport?.allowPrivateIp,
+        })
       );
       const fetchImpl = async (url: string | URL | Request, requestInit?: RequestInit) => {
         const headers = buildA2ADiscoveryHeaders(requestInit?.headers, agentHeaders, authToken);

@@ -227,6 +227,27 @@ describe('rawResponseCapture', () => {
     assert.equal(captures[0].body, 'A'.repeat(512));
   });
 
+  test('stops reading the capture clone after maxBodyBytes', async () => {
+    let pulls = 0;
+    const response = new Response(
+      new ReadableStream({
+        pull(controller) {
+          pulls += 1;
+          controller.enqueue(new TextEncoder().encode('B'.repeat(128)));
+        },
+      })
+    );
+    const capturingFetch = wrapFetchWithCapture(async () => response);
+    const { captures } = await withRawResponseCapture(() => capturingFetch('https://seller.example/rpc'), {
+      maxBodyBytes: 64,
+    });
+
+    assert.equal(captures[0].body, 'B'.repeat(64));
+    assert.equal(captures[0].bodyTruncated, true);
+    assert.ok(pulls <= 3, `capture should stop streaming promptly, observed ${pulls} pulls`);
+    await response.body.cancel();
+  });
+
   test('records multiple requests in order', async () => {
     const { server, url } = await startServer((req, res) => {
       const id = req.url.slice(1);

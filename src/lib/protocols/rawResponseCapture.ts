@@ -32,8 +32,7 @@ interface CaptureSlot {
   requestMetadataTimeoutMs: number;
 }
 
-// Request bodies are bounded as UTF-8 bytes while streaming. Response bodies
-// retain the historical UTF-16 string cap below.
+// Request and response bodies are bounded as UTF-8 bytes while streaming.
 const DEFAULT_MAX_BODY_BYTES = 1_048_576;
 const DEFAULT_REQUEST_METADATA_TIMEOUT_MS = 1_000;
 
@@ -273,12 +272,37 @@ async function readBodyBounded(
   response: Response,
   maxBodyBytes: number
 ): Promise<{ body: string; bodyTruncated: boolean }> {
-  let text: string;
+  if (!response.body) return { body: '', bodyTruncated: false };
+  const reader = response.body.getReader();
+  const retained = new Uint8Array(maxBodyBytes);
+  let retainedBytes = 0;
   try {
-    text = await response.text();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        return {
+          body: new TextDecoder().decode(retained.subarray(0, retainedBytes)),
+          bodyTruncated: false,
+        };
+      }
+      const available = maxBodyBytes - retainedBytes;
+      const copyBytes = Math.min(available, value.byteLength);
+      if (copyBytes > 0) {
+        retained.set(value.subarray(0, copyBytes), retainedBytes);
+        retainedBytes += copyBytes;
+      }
+      if (copyBytes < value.byteLength) {
+        // This is a clone branch. Awaiting cancellation can wait for the SDK
+        // to consume the original branch, which cannot happen until capture
+        // returns, so cancel without awaiting.
+        void reader.cancel().catch(() => undefined);
+        return {
+          body: new TextDecoder().decode(retained.subarray(0, retainedBytes)),
+          bodyTruncated: true,
+        };
+      }
+    }
   } catch {
     return { body: '', bodyTruncated: false };
   }
-  if (text.length <= maxBodyBytes) return { body: text, bodyTruncated: false };
-  return { body: text.slice(0, maxBodyBytes), bodyTruncated: true };
 }
