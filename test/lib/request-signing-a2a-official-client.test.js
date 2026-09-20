@@ -216,3 +216,31 @@ test("a header the FIXTURE deliberately malforms survives the transport's clean 
   assert.strictEqual(built.headers['a2a-version'], '1.0');
   assert.strictEqual(built.headers['accept'], 'application/json');
 });
+
+const { resolveA2aDispatchTarget: _r } = require('../../dist/lib/testing/storyboard/request-signing/a2a-dispatch.js');
+const { selectAgentByUrl } = require('../../dist/lib/signing/agent-resolver/select-agent.js');
+
+test('brand.json matching uses the PROTOCOL ENDPOINT, not the card base', async () => {
+  // security.mdx @ 3.1.1 :1142 step 1 — "The agent URL is the protocol endpoint, not a
+  // JSON capabilities document"; :1104 step 5 byte-equals agents[].url against that A.
+  // A conformant seller publishes the RPC endpoint, so matching the base finds nothing.
+  const brand = {
+    agents: [
+      {
+        type: 'sales',
+        url: 'https://seller.example:8443/a2a',
+        jwks_uri: 'https://seller.example:8443/.well-known/jwks.json',
+      },
+      {
+        type: 'sales',
+        url: 'https://seller.example:8443/mcp/',
+        jwks_uri: 'https://seller.example:8443/.well-known/jwks.json',
+      },
+    ],
+  };
+  // The base the runner is handed for card discovery matches nothing — this is the bug.
+  assert.throws(() => selectAgentByUrl(brand, 'https://seller.example:8443/'), /byte-equal/i);
+  // The card-resolved protocol endpoint matches exactly one.
+  const agent = selectAgentByUrl(brand, 'https://seller.example:8443/a2a');
+  assert.strictEqual(agent.jwks_uri, 'https://seller.example:8443/.well-known/jwks.json');
+});
