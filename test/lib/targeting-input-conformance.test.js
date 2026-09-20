@@ -125,6 +125,33 @@ test('targeting conformance catches full-replace adapters that clear omitted dim
   assert.match(report.cases[0].failures.join('\n'), /strict state mismatch/);
 });
 
+test('targeting conformance distinguishes rejected create state from atomic update state', async () => {
+  const vectors = buildTargetingInputConformanceVectors({
+    audience_include: {
+      initialValue: ['audience-old'],
+      replacementValue: ['audience-new'],
+      expectedNullOutcome: 'rejected',
+      expectedReplacementOutcome: 'rejected',
+    },
+  }).filter(candidate => !candidate.id.endsWith('/omitted'));
+  const create = async candidate => ({ outcome: 'rejected', state: undefined, dispatchedInput: candidate.input });
+  const update = async candidate => ({
+    outcome: 'rejected',
+    state: structuredClone(candidate.baseline),
+    dispatchedInput: candidate.input,
+  });
+
+  const report = await runTargetingInputConformance(vectors, { create, update });
+
+  assert.equal(report.passed, true, JSON.stringify(report.cases.filter(result => !result.passed)));
+  for (const result of report.cases) {
+    assert.deepEqual(
+      result.vector.expectedState,
+      result.vector.operation === 'create' ? undefined : { audience_include: ['audience-old'] }
+    );
+  }
+});
+
 test('targeting conformance supports canonical readback and rejects nested null state', async () => {
   const [vector] = buildTargetingInputConformanceVectors({
     geo_countries: {

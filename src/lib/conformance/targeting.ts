@@ -41,7 +41,7 @@ export interface TargetingInputConformanceVector {
   /** Present request overlay; `{}` means this dimension was omitted. */
   input?: Record<string, unknown>;
   expectedOutcome: TargetingConformanceOutcome;
-  /** Accepted strict state, or unchanged state after an atomic rejection. */
+  /** Accepted strict state, unchanged update state, or absent state after a rejected create. */
   expectedState: Record<string, unknown> | undefined;
   description: string;
 }
@@ -107,6 +107,7 @@ export function buildTargetingInputConformanceVectors(
       const omittedMeaning = operation === 'create' ? 'inherits configured/product defaults' : 'preserves stored state';
       const nullOutcome = sample.expectedNullOutcome ?? 'accepted';
       const replacementOutcome = sample.expectedReplacementOutcome ?? 'accepted';
+      const rejectedState = operation === 'create' ? undefined : baseline;
       vectors.push(
         {
           id: `${operation}/${dimension}/omitted`,
@@ -125,7 +126,7 @@ export function buildTargetingInputConformanceVectors(
           baseline: clone(baseline),
           input: { [dimension]: null },
           expectedOutcome: nullOutcome,
-          expectedState: clone(nullOutcome === 'accepted' ? clearedState : baseline),
+          expectedState: clone(nullOutcome === 'accepted' ? clearedState : rejectedState),
           description: `${operation}: null ${dimension} clears/suppresses only that effective dimension`,
         },
         {
@@ -135,7 +136,7 @@ export function buildTargetingInputConformanceVectors(
           baseline: clone(baseline),
           input: { [dimension]: clone(sample.replacementValue) },
           expectedOutcome: replacementOutcome,
-          expectedState: clone(replacementOutcome === 'accepted' ? replacementState : baseline),
+          expectedState: clone(replacementOutcome === 'accepted' ? replacementState : rejectedState),
           description: `${operation}: a non-null ${dimension} value replaces only that complete dimension`,
         }
       );
