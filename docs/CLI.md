@@ -320,7 +320,7 @@ Useful flags:
 
 - `--storyboards ID,...`: Run specific storyboard or bundle IDs instead of capability-driven selection
 - `--tracks core,products,...`: Restrict the run to specific tracks
-- `--compliance-version VERSION`: Select a packaged compliance cache/spec line, for example `3.1.18` or `3.2.0-rc.3`; use the same flag with `storyboard list`, `show`, and `step` when reproducing a pinned run
+- `--compliance-version VERSION`: Select a packaged compliance cache/spec line, for example `3.1.18` or `3.2.0-rc.4`; use the same flag with `storyboard list`, `show`, and `step` when reproducing a pinned run
 - `--compliance-dir PATH`: Use a specific compliance cache directory, mainly for local protocol/cache development
 - `--brief TEXT`: Override the default sample discovery brief
 - `--dry-run`: Preview steps without executing

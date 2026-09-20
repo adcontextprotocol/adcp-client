@@ -1827,7 +1827,7 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     };
 
     const result = await seller.reconcile(at, expected);
-    // `official_after` appears nowhere in the 3.2.0-rc.3 schemas — it is an
+    // `official_after` appears nowhere in the 3.2.0-rc.4 schemas — it is an
     // extension this repo's producer and ingest carry — and the seller was
     // measured to *accept* the `delivery_sla`-derived instant when it is not
     // configured. Refusing the fallback silenced a conformant period.

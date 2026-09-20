@@ -32,7 +32,7 @@ test('portable consumer-status vectors retain exact bytes, clocks, principals, r
   assert.deepEqual(publishedFixtureExport, fixture);
   assert.equal(fixtureBytes.byteLength, manifest.files['consumer-status.json'].size_bytes);
   assert.equal(sha256(fixtureBytes), manifest.files['consumer-status.json'].sha256);
-  assert.equal(fixture.protocol_version, '3.2.0-rc.3');
+  assert.equal(fixture.protocol_version, '3.2.0-rc.4');
   assert.deepEqual(
     fixture.frozen.expected_periods.map(period => Date.parse(period.end) - Date.parse(period.start)),
     [82_800_000, 90_000_000, 2_419_200_000]

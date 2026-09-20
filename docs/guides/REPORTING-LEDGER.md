@@ -702,7 +702,7 @@ When `get_reporting_status` omits a period, the operational default horizon is t
 
 ## Consumer status ingest
 
-The SDK is pinned to AdCP 3.2.0-rc.3 and exposes `sync_reporting_status` from the ledger subpath. Its request, response, consumer-status, obligation, issue, delivery-capabilities, and reporting-status types come from the published rc.3 schema bundle.
+The SDK is pinned to AdCP 3.2.0-rc.4 and exposes `sync_reporting_status` from the ledger subpath. Its request, response, consumer-status, obligation, issue, delivery-capabilities, and reporting-status types come from the published rc.4 schema bundle.
 
 ```ts
 const syncReportingStatus = createSyncReportingStatusHandler(store, {

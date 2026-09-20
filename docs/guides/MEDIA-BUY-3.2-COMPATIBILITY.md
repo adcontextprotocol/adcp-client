@@ -5,7 +5,7 @@ routes it can still **call**. A 3.2 seller should make the compact lifecycle the
 obvious path for new buyers without breaking a 3.0 or 3.1 buyer that already
 calls the established names.
 
-The SDK is pinned to the signed `3.2.0-rc.3` bundle. It retains the converged
+The SDK is pinned to the signed `3.2.0-rc.4` bundle. It retains the converged
 RC.0 product-identity, daypart-timezone, and flat-rate loop-position and
 slot-span surface, and adds the Reliable Reporting 1.0 core, managed-delivery,
 and reconciled-billing schema contracts. Beta.5 introduced the normative async identity,
@@ -77,10 +77,10 @@ createAdcpServerFromPlatform(platform, {
   name: 'seller',
   version: '1.0.0',
   // `adcpVersion` is the newest release explicit callers may select.
-  adcpVersion: '3.2.0-rc.3',
+  adcpVersion: '3.2.0-rc.4',
   // Keep callers that omit a version on the established 3.1 contract.
   defaultAdcpVersion: '3.1.18',
-  capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.3'] },
+  capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.4'] },
 });
 ```
 

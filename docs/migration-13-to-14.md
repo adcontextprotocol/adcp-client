@@ -1,6 +1,6 @@
 # Migrating from 13.x to the 14 prerelease
 
-SDK 14 adopts AdCP `3.2.0-rc.3` while preserving the canonical creative boundary introduced in SDK 13. Most SDK 13 applications can install the prerelease and continue using the established 3.x tools unchanged; adopt the compact 3.2 lifecycle only after the remote agent advertises it.
+SDK 14 adopts AdCP `3.2.0-rc.4` while preserving the canonical creative boundary introduced in SDK 13. Most SDK 13 applications can install the prerelease and continue using the established 3.x tools unchanged; adopt the compact 3.2 lifecycle only after the remote agent advertises it.
 
 Legacy signal-discovery adapters may keep supplying `opts.signals.getSignals`
 (or `legacyHandlers.signals.getSignals`) while declaring the truthful
@@ -10,7 +10,7 @@ now satisfies platform validation without requiring adopters to invent an
 
 AdCP 3.2 prereleases are exact protocol pins: beta.6 replaces beta.5 in the
 SDK's compatible-version list rather than extending a rolling 3.2-beta range.
-Likewise, `3.2.0-rc.3` replaces `3.2.0-rc.2`; callers pinned to rc.2 must
+Likewise, `3.2.0-rc.4` replaces `3.2.0-rc.3`; callers pinned to rc.3 must
 upgrade both peers together because the SDK does not advertise superseded 3.2
 prereleases as compatible wire releases and ships only the current
 prerelease's schema bundle. Pinning `adcpVersion: '3.2-rc'` follows whichever
@@ -35,9 +35,9 @@ unversioned callers off 3.1:
 
 ```ts
 const server = createAdcpServer({
-  adcpVersion: '3.2.0-rc.3',
+  adcpVersion: '3.2.0-rc.4',
   defaultAdcpVersion: '3.1.18',
-  capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.3'] },
+  capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.4'] },
   // handlers...
 });
 ```
@@ -1108,7 +1108,7 @@ import { getToolInputSchema, getToolResponseSchema } from '@adcp/sdk/schemas';
 
 const request = getToolInputSchema('create_media_buy', { adcpVersion: '3.0' });
 const response = getToolResponseSchema('create_media_buy', {
-  adcpVersion: '3.2.0-rc.3',
+  adcpVersion: '3.2.0-rc.4',
   variant: 'sync',
 });
 

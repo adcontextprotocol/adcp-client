@@ -9,7 +9,7 @@ type JsonSchema = Record<string, unknown>;
 export interface ConformanceSchemaOptions {
   /** AdCP schema/cache version to load. Defaults to the SDK-pinned version. */
   version?: string;
-  /** External schema-data root, e.g. `dist/schemas/latest` or `dist/lib/schemas-data/3.2.0-rc.3`. */
+  /** External schema-data root, e.g. `dist/schemas/latest` or `dist/lib/schemas-data/3.2.0-rc.4`. */
   schemaRoot?: string;
 }
 

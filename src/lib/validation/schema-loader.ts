@@ -343,6 +343,7 @@ function compareBundleNamesDesc(a: string, b: string): number {
 
 interface LoaderState {
   ajv: Ajv;
+  bundledAjv: Ajv;
   canonicalAjv?: Ajv;
   canonicalValidators: Map<string, ValidateFunction>;
   fileIndex: Map<string, string>;
@@ -733,9 +734,20 @@ function ensureInit(version: string): LoaderState {
     allowUnionTypes: true,
   });
   addFormats(ajv);
+  // Bundled tool roots can intentionally share their canonical `$id` with
+  // modular documents registered in `ajv`. Keep them in a separate registry
+  // so getValidator compiles the file selected by fileIndex rather than
+  // accidentally reusing a modular validator with the same public id.
+  const bundledAjv = new Ajv({
+    strict: false,
+    allErrors: true,
+    allowUnionTypes: true,
+  });
+  addFormats(bundledAjv);
 
   const state: LoaderState = {
     ajv,
+    bundledAjv,
     canonicalValidators: new Map(),
     fileIndex: buildFileIndex(root),
     validators: new Map(),
@@ -839,18 +851,17 @@ export function getValidator(
   const file = s.fileIndex.get(cacheKey);
   if (!file) return undefined;
 
-  // Schemas that $ref into core/ and enums/ need those trees registered
-  // before compile. Async response variants always do; flat-tree domain
-  // schemas (anything outside `bundled/`) do too — their $refs weren't
-  // pre-resolved at spec-publish time.
+  // Flat-tree schemas `$ref` into separately published documents and need
+  // those trees registered before compile. Bundled schemas contain only
+  // root-local refs and compile independently.
   const fromBundled = file.includes(`${path.sep}bundled${path.sep}`);
-  if (direction === 'request' || !fromBundled) ensureCoreLoaded(s);
+  if (!fromBundled) ensureCoreLoaded(s);
 
   const rawSchema = loadJson(file);
   // Bundled files inline every referenced subschema with the original
   // canonical `$id` (e.g. `core/version-envelope.json` appears nested
-  // inside every bundled tool response). Bundled files carry NO
-  // internal `$ref`s — the spec publishes them fully resolved, see
+  // inside every bundled tool response). Bundled files carry no external
+  // `$ref`s — root-local `$defs` refs may remain — see
   // the `note: "This is a bundled schema with all $ref resolved inline"`
   // tag on every bundled file. Once `ensureCoreLoaded` has registered
   // any of those core schemas standalone (which it does for the flat-
@@ -862,8 +873,9 @@ export function getValidator(
   // every other `$id` in the tree was just metadata anyway.
   const prepared = fromBundled ? stripNestedIds(rawSchema) : rawSchema;
   const schema = direction === 'request' ? prepared : relaxResponseRoot(prepared);
-  const existing = typeof schema.$id === 'string' ? s.ajv.getSchema(schema.$id) : undefined;
-  const compiled = existing ?? s.ajv.compile(schema);
+  const ajv = fromBundled ? s.bundledAjv : s.ajv;
+  const existing = typeof schema.$id === 'string' ? ajv.getSchema(schema.$id) : undefined;
+  const compiled = existing ?? ajv.compile(schema);
   s.validators.set(cacheKey, compiled);
   return compiled;
 }
@@ -1199,7 +1211,8 @@ export function getRegisteredSchemaIds(version: string = ADCP_VERSION): readonly
   // Ajv 8 keeps registered schemas at `ajv.schemas` (URI → SchemaEnv). Returning
   // the keys is enough for prefix matching; we don't expose the SchemaEnv values.
   const registry = (s.ajv as unknown as { schemas?: Record<string, unknown> }).schemas;
-  return registry ? Object.keys(registry) : [];
+  const bundledRegistry = (s.bundledAjv as unknown as { schemas?: Record<string, unknown> }).schemas;
+  return [...new Set([...Object.keys(registry ?? {}), ...Object.keys(bundledRegistry ?? {})])];
 }
 
 /** Suffix used in the suffix table — exported for testing. */

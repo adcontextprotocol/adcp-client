@@ -114,12 +114,12 @@ function loadCanonicalStoryboard(
   });
 }
 
-/** Load the exact AdCP 3.2.0-rc.3 `universal/principal` storyboard. */
+/** Load the exact AdCP 3.2.0-rc.4 `universal/principal` storyboard. */
 export function loadCanonicalPrincipalStoryboard(): CanonicalStoryboardFixture {
   return loadCanonicalStoryboard('principal');
 }
 
-/** Load the exact AdCP 3.2.0-rc.3 `universal/reporting-core` storyboard. */
+/** Load the exact AdCP 3.2.0-rc.4 `universal/reporting-core` storyboard. */
 export function loadCanonicalReportingCoreStoryboard(): CanonicalStoryboardFixture {
   return loadCanonicalStoryboard('reporting_core');
 }

@@ -1232,7 +1232,7 @@ test('the protocol-method grammars match the shipped capabilities schemas', () =
   // `RegExp.source` escapes the forward slash the schema writes bare.
   const sourceOf = pattern => pattern.source.replaceAll('\\/', '/');
 
-  const since32 = itemsFor('3.2.0-rc.3');
+  const since32 = itemsFor('3.2.0-rc.4');
   assert.strictEqual(sourceOf(PROTOCOL_METHOD_GRAMMARS.since_3_2.pattern), since32.pattern);
   assert.strictEqual(PROTOCOL_METHOD_GRAMMARS.since_3_2.maxLength, since32.maxLength);
   assert.deepStrictEqual([...PROTOCOL_METHOD_GRAMMARS.since_3_2.forbidden], [since32.not.const]);

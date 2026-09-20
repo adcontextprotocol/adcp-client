@@ -128,6 +128,17 @@ export const AgentEncryptionKey_KtyValues = ["OKP"] as const;
 /** single | AgentEncryptionKey.use */
 export const AgentEncryptionKey_UseValues = ["enc"] as const;
 
+// ====== AgenticAdvertisingOrgVerificationTokenClaims ======
+
+/** single | AgenticAdvertisingOrgVerificationTokenClaims.aud */
+export const AgenticAdvertisingOrgVerificationTokenClaims_AudValues = ["aao-verification"] as const;
+/** single | AgenticAdvertisingOrgVerificationTokenClaims.grading_profile */
+export const AgenticAdvertisingOrgVerificationTokenClaims_GradingProfileValues = ["legacy", "spec"] as const;
+/** single | AgenticAdvertisingOrgVerificationTokenClaims.iss */
+export const AgenticAdvertisingOrgVerificationTokenClaims_IssValues = ["https://aao.org"] as const;
+/** single | AgenticAdvertisingOrgVerificationTokenClaims.role */
+export const AgenticAdvertisingOrgVerificationTokenClaims_RoleValues = ["media-buy", "creative", "signals", "governance", "brand", "sponsored-intelligence"] as const;
+
 // ====== AgentPermissionDeniedDetails ======
 
 /** single | AgentPermissionDeniedDetails.reason */
@@ -2318,9 +2329,6 @@ export const OperationalFailure_StatusValues = CommitmentError_StatusValues;
 // --- PairedRedirect ---
 /** @deprecated use `DisplayTagFormatDeclaration_FormatKindValues` — same literal set, PairedRedirect.asset_type duplicates the canonical export. */
 export const PairedRedirect_AssetTypeValues = DisplayTagFormatDeclaration_FormatKindValues;
-// --- PeriodsView ---
-/** @deprecated use `CommittedMediaBuy_StatusValues` — same literal set, PeriodsView.status duplicates the canonical export. */
-export const PeriodsView_StatusValues = CommittedMediaBuy_StatusValues;
 // --- PlacementPresentationReference ---
 /** @deprecated use `PlacementPresentationDocument_SchemaVersionValues` — same literal set, PlacementPresentationReference.schema_version duplicates the canonical export. */
 export const PlacementPresentationReference_SchemaVersionValues = PlacementPresentationDocument_SchemaVersionValues;
@@ -2430,9 +2438,6 @@ export const ReportPlanAdjustmentResponse_AdjustmentTypeValues = ReportPlanAdjus
 // --- RequestProposalsAsyncSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, RequestProposalsAsyncSubmitted.status duplicates the canonical export. */
 export const RequestProposalsAsyncSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
-// --- RevisionView ---
-/** @deprecated use `CommittedMediaBuy_StatusValues` — same literal set, RevisionView.status duplicates the canonical export. */
-export const RevisionView_StatusValues = CommittedMediaBuy_StatusValues;
 // --- SearchBrandResult ---
 /** @deprecated use `GetBrandIdentitySuccess_KellerTypeValues` — same literal set, SearchBrandResult.keller_type duplicates the canonical export. */
 export const SearchBrandResult_KellerTypeValues = GetBrandIdentitySuccess_KellerTypeValues;
@@ -2465,9 +2470,6 @@ export const SignalSelectionGroupRule_TargetingModeValues = CollectionListApplic
 // --- SignalTargetingRules ---
 /** @deprecated use `SignalSelectionGroupRule_SelectionModeValues` — same literal set, SignalTargetingRules.selection_mode duplicates the canonical export. */
 export const SignalTargetingRules_SelectionModeValues = SignalSelectionGroupRule_SelectionModeValues;
-// --- SummaryView ---
-/** @deprecated use `CommittedMediaBuy_StatusValues` — same literal set, SummaryView.status duplicates the canonical export. */
-export const SummaryView_StatusValues = CommittedMediaBuy_StatusValues;
 // --- SyncAudiencesSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, SyncAudiencesSubmitted.status duplicates the canonical export. */
 export const SyncAudiencesSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
