@@ -391,6 +391,28 @@ test('current reporting-status guard accepts direct-Core obligations without opt
   assert.deepEqual(currentResponseOutcomes([directCore]), [true]);
 });
 
+test('rc.4 permits a frozen future expectation with complete health without weakening complete-scope guards', async () => {
+  const completeWithFutureExpectation = summaryResponse();
+  completeWithFutureExpectation.health = 'complete';
+  completeWithFutureExpectation.next_expected_at = '2026-10-01T00:00:00Z';
+
+  const openScope = structuredClone(completeWithFutureExpectation);
+  openScope.scope.scope_closed = false;
+  const incompleteCoverage = structuredClone(completeWithFutureExpectation);
+  incompleteCoverage.scope.coverage_complete = false;
+  const periodsWithFutureExpectation = response();
+  periodsWithFutureExpectation.health = 'complete';
+  periodsWithFutureExpectation.next_expected_at = completeWithFutureExpectation.next_expected_at;
+
+  const cases = [completeWithFutureExpectation, openScope, incompleteCoverage, periodsWithFutureExpectation];
+  const validate = await authoritativeValidator();
+  const authoritative = cases.map(value => validate(value));
+
+  assert.deepEqual(authoritative, [true, false, false, false]);
+  assert.deepEqual(generatedOutcomes(cases), authoritative);
+  assert.deepEqual(currentResponseOutcomes(cases), authoritative);
+});
+
 test('generated reporting-status Zod matches authoritative required and closed evidence boundaries for every view', async () => {
   const valid = response();
   const missingMaterializations = response();

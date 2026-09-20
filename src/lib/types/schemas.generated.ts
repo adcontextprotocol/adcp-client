@@ -20589,6 +20589,23 @@ export const GetReportingStatusResponseSchema = z.object({
                 }
             }
         }
+        if (response.health === "complete") {
+            const scope = response.scope;
+            if (!scope || typeof scope !== "object" || Array.isArray(scope)) {
+                ctx.addIssue({ code: "custom", path: ["scope"], message: "Complete reporting health requires a closed, complete scope" });
+            } else {
+                const completeScope = scope as Record<string, unknown>;
+                if (completeScope.scope_closed !== true) {
+                    ctx.addIssue({ code: "custom", path: ["scope", "scope_closed"], message: "Complete reporting health requires scope_closed=true" });
+                }
+                if (completeScope.coverage_complete !== true) {
+                    ctx.addIssue({ code: "custom", path: ["scope", "coverage_complete"], message: "Complete reporting health requires coverage_complete=true" });
+                }
+            }
+            if (response.view === "periods" && response.next_expected_at !== undefined) {
+                ctx.addIssue({ code: "custom", path: ["next_expected_at"], message: "Complete periods views cannot carry next_expected_at" });
+            }
+        }
         if (response.obligation_counts !== undefined) {
             addClosedObjectIssues(response.obligation_counts, ["obligation_counts"], closedStructures.obligationCounts);
         }

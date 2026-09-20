@@ -11,6 +11,7 @@ import {
   reportingLedgerConfigurationMatchesScope,
   reportingLedgerEffectivePeriod,
   reportingLedgerScopeClosed,
+  reportingLedgerSuccessor,
 } from './coverage';
 import {
   aggregateReportingHealthV1,
@@ -466,20 +467,21 @@ export function createReportingStatusHandler<TContext = unknown>(
       const healthValues = selected.map(value => value.projection.health);
       const issues = selected.flatMap(value => value.projection.issues);
       if (!ledgerCoverage.complete) issues.push(historyUnavailableIssue(query, page.snapshot.ledgerAsOf));
+      const summaryHealth = aggregateReportingHealthV1(healthValues, {
+        closed: reportingLedgerScopeClosed(query, page.snapshot.ledgerAsOf, ledgerCoverage.complete),
+        coverageComplete: ledgerCoverage.complete,
+      });
       return {
         ...base,
         view: 'summary',
         scope: publicScope(query, page.snapshot.configurations, page.snapshot.ledgerAsOf, ledgerCoverage),
-        health: aggregateReportingHealthV1(healthValues, {
-          closed: reportingLedgerScopeClosed(query, page.snapshot.ledgerAsOf, ledgerCoverage.complete),
-          coverageComplete: ledgerCoverage.complete,
-        }),
+        health: summaryHealth,
         coverage: aggregateReportingCoverageV1(
           selected.map(value => value.obligation.coverage),
           page.snapshot.ledgerAsOf
         ),
         data_through: aggregateDataThrough(selected),
-        ...nextExpectedAt(selected),
+        ...nextExpectedAt(summaryHealth, selected, query, page.snapshot.configurations, page.snapshot.ledgerAsOf),
         obligation_counts: counts(
           healthValues,
           // Required whenever the seller advertises consumer_status_task, which
@@ -1081,13 +1083,87 @@ function aggregateDataThrough(
 }
 
 function nextExpectedAt(
-  selected: Array<{ obligation: ReportingLedgerObligationV1; projection: { satisfied: boolean } }>
+  health: ReportingHealthV1,
+  selected: Array<{ obligation: ReportingLedgerObligationV1; projection: { satisfied: boolean } }>,
+  query: ReportingLedgerSnapshotQueryV1,
+  configurations: ReportingLedgerConfigurationV1[],
+  ledgerAsOf: string
 ) {
-  const values = selected
-    .filter(value => !value.projection.satisfied)
-    .map(value => value.obligation.expectedAt)
-    .sort();
-  return values[0] ? { next_expected_at: values[0] } : {};
+  const scoped = scopedConfigurations(query, configurations, ledgerAsOf);
+  const value =
+    health === 'complete'
+      ? earliestInstant(
+          scoped.flatMap(configuration => nextActivePeriodStart(configuration, configurations, ledgerAsOf))
+        )
+      : earliestInstant([
+          ...selected.filter(value => !value.projection.satisfied).map(value => value.obligation.expectedAt),
+          ...scoped.flatMap(configuration => nextObligationDue(configuration, configurations, query, ledgerAsOf)),
+        ]);
+  return value ? { next_expected_at: value } : {};
+}
+
+function nextActivePeriodStart(
+  configuration: ReportingLedgerConfigurationV1,
+  configurations: ReportingLedgerConfigurationV1[],
+  ledgerAsOf: string
+): string[] {
+  const asOf = Date.parse(ledgerAsOf);
+  const installed = Date.parse(configuration.installedAt);
+  const ownershipEnd = reportingLedgerConfigurationOwnershipEnd(configuration, configurations);
+  if (installed > asOf || ownershipEnd <= asOf) return [];
+  const anchor = Date.parse(configuration.schedule.anchor);
+  const duration = configuration.schedule.periodMilliseconds;
+  const ordinal = Math.max(0, Math.ceil((installed - anchor) / duration), Math.floor((asOf - anchor) / duration) + 1);
+  const start = anchor + ordinal * duration;
+  return start < ownershipEnd ? [new Date(start).toISOString()] : [];
+}
+
+function nextObligationDue(
+  configuration: ReportingLedgerConfigurationV1,
+  configurations: ReportingLedgerConfigurationV1[],
+  query: ReportingLedgerSnapshotQueryV1,
+  ledgerAsOf: string
+): string[] {
+  const anchor = Date.parse(configuration.schedule.anchor);
+  const duration = configuration.schedule.periodMilliseconds;
+  const installed = Date.parse(configuration.installedAt);
+  const ownershipEnd = reportingLedgerConfigurationOwnershipEnd(configuration, configurations);
+  const period = reportingLedgerEffectivePeriod(query, ledgerAsOf);
+  const periodStart = Date.parse(period.start);
+  const periodEnd = Date.parse(period.end);
+  // The protocol due time is always period.end + delivery_sla. A private
+  // official/finalization cutoff may control source readiness, but rc.4
+  // explicitly forbids using it as obligation expected_at.
+  const expectedOffset = configuration.schedule.deliverySlaMilliseconds;
+  const first = Math.max(
+    0,
+    Math.ceil((installed - anchor) / duration),
+    Math.floor((periodStart - anchor) / duration),
+    Math.floor((Date.parse(ledgerAsOf) - anchor - expectedOffset) / duration)
+  );
+  const last = Math.min(
+    Math.ceil((ownershipEnd - anchor) / duration) - 1,
+    Math.ceil((periodEnd - anchor) / duration) - 1
+  );
+  if (first > last) return [];
+  const periodStartAt = anchor + first * duration;
+  if (periodStartAt >= ownershipEnd) return [];
+  return [new Date(periodStartAt + duration + expectedOffset).toISOString()];
+}
+
+function reportingLedgerConfigurationOwnershipEnd(
+  configuration: ReportingLedgerConfigurationV1,
+  configurations: ReportingLedgerConfigurationV1[]
+): number {
+  const successor = reportingLedgerSuccessor(configuration, configurations);
+  return Math.min(
+    successor ? Date.parse(successor.installedAt) : Number.POSITIVE_INFINITY,
+    configuration.supersededAt ? Date.parse(configuration.supersededAt) : Number.POSITIVE_INFINITY
+  );
+}
+
+function earliestInstant(values: string[]): string | undefined {
+  return values.sort((left, right) => Date.parse(left) - Date.parse(right))[0];
 }
 
 function counts(values: ReportingHealthV1[], consumerStatusPending?: number) {
@@ -1112,9 +1188,7 @@ function publicScope(
   coverage: { complete: boolean; retainedFrom: string }
 ) {
   const { start: periodStart, end: periodEnd } = reportingLedgerEffectivePeriod(query, ledgerAsOf);
-  configurations = relevantReportingLedgerConfigurations(configurations, periodStart, periodEnd).filter(configuration =>
-    reportingLedgerConfigurationMatchesScope(query, configuration)
-  );
+  configurations = scopedConfigurations(query, configurations, ledgerAsOf);
   const generations = [
     ...new Map(
       configurations.map(value => [
@@ -1139,6 +1213,17 @@ function publicScope(
     ledger_retained_from: coverage.retainedFrom,
     coverage_complete: coverage.complete,
   };
+}
+
+function scopedConfigurations(
+  query: ReportingLedgerSnapshotQueryV1,
+  configurations: ReportingLedgerConfigurationV1[],
+  ledgerAsOf: string
+): ReportingLedgerConfigurationV1[] {
+  const { start: periodStart, end: periodEnd } = reportingLedgerEffectivePeriod(query, ledgerAsOf);
+  return relevantReportingLedgerConfigurations(configurations, periodStart, periodEnd).filter(configuration =>
+    reportingLedgerConfigurationMatchesScope(query, configuration)
+  );
 }
 
 function wireAdcpVersion(): string {

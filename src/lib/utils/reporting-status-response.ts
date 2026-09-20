@@ -495,10 +495,7 @@ function isSummaryResponse(value: Record<string, unknown>): boolean {
     return false;
   }
   const health = String(value.health);
-  if (
-    health === 'complete' &&
-    (!value.scope.scope_closed || !value.scope.coverage_complete || value.next_expected_at !== undefined)
-  ) {
+  if (health === 'complete' && (!value.scope.scope_closed || !value.scope.coverage_complete)) {
     return false;
   }
   if (['healthy', 'waiting', 'complete'].includes(health) && value.issues.length !== 0) return false;
@@ -574,6 +571,10 @@ function isGetReportingStatusResponse(value: unknown): boolean {
     return (
       hasCompletedCommon(value) &&
       isReportingScope(value.scope) &&
+      (value.health !== 'complete' ||
+        (value.scope.scope_closed === true &&
+          value.scope.coverage_complete === true &&
+          value.next_expected_at === undefined)) &&
       Array.isArray(value.periods) &&
       value.periods.every(isReportingObligation) &&
       Array.isArray(value.revisions) &&

@@ -1089,6 +1089,186 @@ describe('seller reporting ledger', () => {
     assert.equal((await store.listIssues(obligation.reporting_obligation_id)).at(-1).severity, 'action_required');
   });
 
+  test('projects rc.4 summary expectations without leaking them into complete periods', async () => {
+    const store = new MemoryLedgerStore();
+    const request = redactedReportingSourceRequestV1();
+    const source = createInlineReportingSourceExecutor(() => [], redactedReportingSourceOfferingV1);
+    const producer = createReportingProducer({
+      store,
+      source,
+      offerings: [redactedReportingSourceOfferingV1],
+      contact: { name: 'Reporting operations' },
+    });
+    const anchor = Date.parse(request.period.start);
+    const configurationInput = {
+      account: request.account,
+      sourceScope: request.sourceScope,
+      delivery_config_id: request.delivery_config_id,
+      delivery_config_version: request.delivery_config_version,
+      offeringId: request.offeringId,
+      report_definition_id: request.report_definition_id,
+      feedPurpose: 'analytics',
+      requiredFinality: 'snapshot',
+      requestedMetrics: request.requestedMetrics,
+      requestedDimensions: request.requestedDimensions,
+      constituents: request.coverage.constituents,
+      mediaBuyIds: request.coverage.mediaBuyIds,
+      sourceTimezone: 'UTC',
+      schedule: {
+        anchor: request.period.start,
+        periodMilliseconds: 86_400_000,
+        deliverySlaMilliseconds: 3_600_000,
+        recoveryWindowMilliseconds: 3_600_000,
+      },
+      sourceSettings: request.sourceSettings,
+      contract: request.contract,
+    };
+    await producer.installConfiguration(configurationInput);
+    [...store.configurations.values()][0].installedAt = new Date(anchor).toISOString();
+    store.ledgerAsOf = new Date(anchor + 12 * 3_600_000).toISOString();
+
+    const handler = createReportingStatusHandler(store);
+    const context = { account: { account_id: request.account.account_id } };
+    const completeSummary = await handler({ account: request.account, view: 'summary' }, context);
+    assert.equal(completeSummary.health, 'complete');
+    assert.equal(
+      completeSummary.next_expected_at,
+      new Date(anchor + 86_400_000).toISOString(),
+      'a complete rc.4 summary forecasts the nearest future period start'
+    );
+    assert.equal(validateResponse('get_reporting_status', completeSummary, '3.2.0-rc.4').valid, true);
+
+    const openSummary = await handler(
+      {
+        account: request.account,
+        view: 'summary',
+        period: {
+          start: new Date(anchor).toISOString(),
+          end: new Date(anchor + 3 * 86_400_000).toISOString(),
+        },
+      },
+      context
+    );
+    assert.equal(openSummary.health, 'waiting');
+    assert.equal(
+      openSummary.next_expected_at,
+      new Date(anchor + 86_400_000 + 3_600_000).toISOString(),
+      'an open rc.4 summary retains the next obligation due time'
+    );
+    assert.equal(validateResponse('get_reporting_status', openSummary, '3.2.0-rc.4').valid, true);
+
+    const completePeriods = await handler({ account: request.account, view: 'periods' }, context);
+    assert.equal('next_expected_at' in completePeriods, false);
+    assert.equal(validateResponse('get_reporting_status', completePeriods, '3.2.0-rc.4').valid, true);
+
+    await producer.installConfiguration({
+      ...configurationInput,
+      delivery_config_version: configurationInput.delivery_config_version + 1,
+      schedule: { ...configurationInput.schedule, anchor: store.ledgerAsOf },
+    });
+    const generations = [...store.configurations.values()].sort(
+      (left, right) => left.delivery_config_version - right.delivery_config_version
+    );
+    generations[1].installedAt = new Date(anchor + 6 * 3_600_000).toISOString();
+    const boundarySummary = await handler({ account: request.account, view: 'summary' }, context);
+    assert.equal(boundarySummary.health, 'complete');
+    assert.equal(boundarySummary.scope.delivery_config_generations.length, 2);
+    assert.equal(
+      boundarySummary.next_expected_at,
+      new Date(anchor + 36 * 3_600_000).toISOString(),
+      'forecast is strictly after ledger_as_of and comes from the active successor generation'
+    );
+    assert.equal(validateResponse('get_reporting_status', boundarySummary, '3.2.0-rc.4').valid, true);
+  });
+
+  test('keeps official obligation due time on delivery_sla rather than a private finality cutoff', async () => {
+    const store = new MemoryLedgerStore();
+    const { cadence, ...offeringBase } = redactedReportingSourceOfferingV1;
+    const offering = {
+      ...offeringBase,
+      publicationClass: 'AUTHORITATIVE',
+      revisionSemantics: 'official_with_declared_correction_policy',
+      finalization: {
+        schedule: { sourceLocalReadyTime: '00:00', daysAfterPeriodEnd: 0 },
+        expectedAvailabilityLag: 'PT0S',
+        worstCaseAvailabilityLag: 'PT6H',
+        triggerSupport: cadence.triggerSupport,
+        correctionWindow: 'P3D',
+        correctionPolicy: 'immutable_correction',
+      },
+    };
+    const request = redactedReportingSourceRequestV1();
+    const anchor = Date.parse(request.period.start);
+    const producer = createReportingProducer({
+      store,
+      source: createInlineReportingSourceExecutor(() => [], offering),
+      offerings: [offering],
+      contact: { name: 'Reporting operations' },
+    });
+    await producer.installConfiguration({
+      account: request.account,
+      sourceScope: request.sourceScope,
+      delivery_config_id: request.delivery_config_id,
+      delivery_config_version: request.delivery_config_version,
+      offeringId: offering.offeringId,
+      report_definition_id: request.report_definition_id,
+      feedPurpose: 'billing',
+      requiredFinality: 'official',
+      finalityPolicy: {
+        policyId: 'fixture-source-final-v1',
+        basis: 'source_final',
+        sourceSignal: 'get_media_buy_delivery.is_final',
+      },
+      canonicalization: {
+        id: 'fixture-jcs-v1',
+        uri: request.contract.schemaUri,
+        sha256: request.contract.schemaSha256,
+        primaryKeys: ['media_buy_id'],
+      },
+      requestedMetrics: request.requestedMetrics,
+      requestedDimensions: request.requestedDimensions,
+      constituents: request.coverage.constituents,
+      mediaBuyIds: request.coverage.mediaBuyIds,
+      sourceTimezone: 'UTC',
+      schedule: {
+        anchor: request.period.start,
+        periodMilliseconds: 86_400_000,
+        deliverySlaMilliseconds: 3_600_000,
+        officialAfterMilliseconds: 21_600_000,
+        recoveryWindowMilliseconds: 86_400_000,
+      },
+      sourceSettings: request.sourceSettings,
+      contract: request.contract,
+    });
+    [...store.configurations.values()][0].installedAt = new Date(anchor).toISOString();
+
+    store.ledgerAsOf = new Date(anchor + 12 * 3_600_000).toISOString();
+    const openSummary = await createReportingStatusHandler(store)(
+      {
+        account: request.account,
+        view: 'summary',
+        period: {
+          start: new Date(anchor).toISOString(),
+          end: new Date(anchor + 2 * 86_400_000).toISOString(),
+        },
+      },
+      { account: { account_id: request.account.account_id } }
+    );
+    assert.equal(openSummary.health, 'waiting');
+    assert.equal(
+      openSummary.next_expected_at,
+      new Date(anchor + 86_400_000 + 3_600_000).toISOString(),
+      'an open official summary forecasts the protocol delivery-SLA due time'
+    );
+
+    const [obligation] = await producer.planObligations(new Date(anchor + 86_400_000).toISOString());
+    assert.equal(
+      obligation.expectedAt,
+      new Date(anchor + 86_400_000 + 3_600_000).toISOString(),
+      'rc.4 expected_at is period.end plus delivery_sla for official generations too'
+    );
+  });
+
   test('plans, leases, executes, commits, and serves a reporting revision', async () => {
     const store = new MemoryLedgerStore();
     const request = redactedReportingSourceRequestV1();

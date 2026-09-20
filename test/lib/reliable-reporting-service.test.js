@@ -660,8 +660,71 @@ describe('ReliableReportingService', () => {
           version: '1.0.0',
           adcpVersion: '3.1.18',
         }),
-      /requires an AdCP 3\.2\.0-rc\.3/
+      /requires an AdCP 3\.2\.0-rc\.4/
     );
+  });
+
+  test('advertises Reliable Reporting only on the mounted protocol pin', async () => {
+    const { service } = serviceFixture();
+    const platform = service.install({
+      capabilities: {
+        specialisms: [],
+        supported_versions: ['3.1', '3.2-rc.4'],
+        config: {},
+      },
+      accounts: {
+        resolution: 'explicit',
+        resolve: async ref => ({ id: ref?.account_id ?? 'account-a', ctx_metadata: {} }),
+        upsert: async () => [],
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'version-bound-reporting-service',
+      version: '1.0.0',
+      adcpVersion: '3.2.0-rc.4',
+      defaultAdcpVersion: '3.1',
+      validation: { requests: 'strict', responses: 'strict' },
+    });
+
+    const legacyTools = await server.dispatchTestRequest({
+      method: 'tools/list',
+      params: { _meta: { adcp_version: '3.1' } },
+    });
+    const currentTools = await server.dispatchTestRequest({
+      method: 'tools/list',
+      params: { _meta: { adcp_version: '3.2-rc.4' } },
+    });
+    for (const tool of ['get_reporting_status', 'get_media_buy_delivery']) {
+      assert.equal(
+        legacyTools.tools.some(candidate => candidate.name === tool),
+        false,
+        `${tool} leaked into 3.1`
+      );
+      assert.equal(
+        currentTools.tools.some(candidate => candidate.name === tool),
+        true,
+        `${tool} missing from rc.4`
+      );
+    }
+
+    const legacyCapabilities = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_adcp_capabilities',
+        arguments: {},
+      },
+    });
+    const currentCapabilities = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_adcp_capabilities',
+        arguments: { adcp_version: '3.2-rc.4' },
+      },
+    });
+    assert.notEqual(legacyCapabilities.isError, true, JSON.stringify(legacyCapabilities.structuredContent));
+    assert.notEqual(currentCapabilities.isError, true, JSON.stringify(currentCapabilities.structuredContent));
+    assert.equal(legacyCapabilities.structuredContent.media_buy?.reporting_delivery, undefined);
+    assert.deepEqual(currentCapabilities.structuredContent.media_buy?.reporting_delivery, service.capabilities);
   });
 
   test('runs the reusable replay, isolation, currency, lifecycle, and capability conformance helper', async () => {
@@ -2570,10 +2633,9 @@ describe('ReliableReportingService', () => {
     );
   });
 
-  test('refuses an official identity that understates the offset obligations expect', async () => {
-    // expected_at is period end + officialAfterMilliseconds for an official
-    // generation, so publishing the nominal SLA advertises PT2H while every
-    // obligation is due six hours after close.
+  test('refuses an official identity that understates the advertised delivery SLA', async () => {
+    // expected_at is period end + delivery_sla for every finality, so the
+    // echoed duration must describe the same six-hour public contract.
     const authoritative = adapter();
     const { cadence, ...sourceOffering } = authoritative.sourceOffering;
     authoritative.sourceOffering = {
@@ -2625,7 +2687,7 @@ describe('ReliableReportingService', () => {
       'the published SLA must equal the offset obligations are due at'
     );
 
-    // Publishing the official deadline itself is truthful.
+    // Publishing the delivery SLA itself is truthful.
     const consistent = await install({ deliverySlaDuration: 'PT6H' });
     assert.equal(consistent.schedule.deliverySlaDuration, 'PT6H');
   });

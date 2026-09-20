@@ -2821,9 +2821,31 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       `Configured AdCP version '${configuredAdcpVersion}' is not a valid release identifier`
     );
   }
-  if (reportingDelivery && !isAdcpVersionAtLeast(configuredAdcpVersion, '3.2.0-rc.3')) {
-    throw new PlatformConfigError('Reliable Reporting Core requires an AdCP 3.2.0-rc.3 or newer schema pin');
+  if (reportingDelivery && !isAdcpVersionAtLeast(configuredAdcpVersion, '3.2.0-rc.4')) {
+    throw new PlatformConfigError('Reliable Reporting Core requires an AdCP 3.2.0-rc.4 or newer schema pin');
   }
+  // Reliable Reporting renders one frozen protocol contract. A multi-release
+  // server may continue serving older releases for its other tools, but it
+  // must not advertise the mounted reporting composition on those releases:
+  // the reporting handler, capability declaration, and validator all share
+  // `configuredAdcpVersion`. Bind the reporting-only tools to that exact pin.
+  // `get_media_buy_delivery` stays multi-release when a live sales/lifecycle
+  // implementation owns cumulative reads; the reporting ledger then handles
+  // only the exact-revision arm available on its pinned schema.
+  const liveMediaBuyDelivery = platform.mediaBuyLifecycle?.getMediaBuyDelivery ?? platform.sales?.getMediaBuyDelivery;
+  const exactReportingRange = { min: configuredAdcpVersion, max: configuredAdcpVersion } as const;
+  const effectiveToolVersions = reportingDelivery
+    ? {
+        ...runtimeOpts.toolVersions,
+        get_reporting_status: exactReportingRange,
+        ...(platform.reporting?.syncReportingStatus !== undefined && {
+          sync_reporting_status: exactReportingRange,
+        }),
+        ...(liveMediaBuyDelivery === undefined && {
+          get_media_buy_delivery: exactReportingRange,
+        }),
+      }
+    : runtimeOpts.toolVersions;
   for (const advertisedVersion of platform.capabilities.supported_versions ?? []) {
     const advertisedRelease = parseAdcpRelease(advertisedVersion);
     if (!advertisedRelease) {
@@ -3153,6 +3175,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
 
   const config: AdcpServerConfig<Account> = {
     ...runtimeOpts,
+    ...(effectiveToolVersions !== undefined && { toolVersions: effectiveToolVersions }),
     requireCompactMutationAccountScope: true,
     taskRegistry,
     ...(autoSeedStore != null && { testController: makeAutoSeedBridge(autoSeedStore) }),
