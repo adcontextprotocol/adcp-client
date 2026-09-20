@@ -9,6 +9,7 @@
   },
   "changesets": [
     "add-reference-renderers",
+    "adopt-adcp-rc-four",
     "adopt-adcp-rc-three",
     "adopt-adcp-rc-two",
     "amber-otters-parallel-dispatch",
@@ -127,6 +128,7 @@
     "managed-reporting-tiers",
     "mcp-session-auth-probe",
     "merge-structured-only-action-metadata",
+    "native-a2a-compliance",
     "proposal-verifier-schema-contracts",
     "quick-gap-schemas",
     "quick-mice-fuzz-compact",

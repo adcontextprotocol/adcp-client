@@ -1,5 +1,27 @@
 # Changelog
 
+## 14.0.0-rc.41
+
+### Minor Changes
+
+- 8542be7: Adopt the signed AdCP 3.2.0-rc.4 schema and compliance bundles as the default wire release.
+
+  The generated capability types now expose per-product `anonymous_discovery`, and the
+  verification-token schemas expose the new `spec` and `live` token modes. The regenerated
+  media-buy and Reliable Reporting contracts also include rc.4's frequency-cap negotiation
+  and consumer-status refinements.
+
+  Bundled validators now compile in an isolated AJV registry, preserving rich union and
+  discriminator diagnostics when an rc.4 bundle shares its canonical `$id` with the modular schema.
+
+  As with earlier 3.2 prereleases, rc.4 replaces rc.3 in
+  `COMPATIBLE_ADCP_VERSIONS`; consumers can continue to pin `adcpVersion: '3.2-rc'` to
+  follow the release candidate carried by a particular SDK build.
+
+### Patch Changes
+
+- f3d197d: Grade every A2A compliance route in unconditional native 1.0 mode while preserving the SDK's backwards-compatible adopter default. This can expose agents that only publish the legacy v0.3 interface. Also normalize standalone-step transport options and add a trusted scoped-fetch override to `rawA2aProbe`.
+
 ## 14.0.0-rc.40
 
 ### Minor Changes
