@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
+const { generateKeyPairSync } = require('node:crypto');
 
 const {
   captureA2aRequest,
@@ -10,6 +11,7 @@ const { buildPositiveRequest } = require('../../dist/lib/testing/storyboard/requ
 const { probeSignedRequest } = require('../../dist/lib/testing/storyboard/request-signing/probe.js');
 const { loadRequestSigningVectors } = require('../../dist/lib/testing/storyboard/request-signing/vector-loader.js');
 const { gradeRequestSigning } = require('../../dist/lib/testing/storyboard/request-signing/grader.js');
+const { callA2ATool } = require('../../dist/lib/protocols/a2a.js');
 
 async function closeServer(server) {
   await new Promise(resolve => {
@@ -124,6 +126,83 @@ test('refuses a cross-origin card endpoint before signing or dispatch', async ()
   );
 });
 
+test('native SendMessage honors always_sign through the actual official-client path', async () => {
+  const agentUrl = 'https://seller.example';
+  const rpcUrl = `${agentUrl}/rpc`;
+  const rpcCalls = [];
+  const transportFetch = async (input, init = {}) => {
+    const url = String(input);
+    if (url.includes('/.well-known/')) {
+      return new Response(
+        JSON.stringify({
+          protocolVersion: '1.0',
+          name: 'native-signing-fixture',
+          description: 'Actual native signing path fixture',
+          version: '1.0.0',
+          capabilities: {},
+          defaultInputModes: ['application/json'],
+          defaultOutputModes: ['application/json'],
+          skills: [],
+          supportedInterfaces: [{ url: rpcUrl, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }
+    const body = JSON.parse(init.body);
+    rpcCalls.push({ body, headers: Object.fromEntries(new Headers(init.headers)) });
+    return new Response(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: body.id,
+        result: {
+          task: {
+            id: 'native-signed-task',
+            contextId: 'native-signed-context',
+            status: { state: 'TASK_STATE_COMPLETED' },
+            artifacts: [{ artifactId: 'result', parts: [{ data: { status: 'completed' } }] }],
+          },
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+  };
+  const { privateKey } = generateKeyPairSync('ed25519');
+  const signing = {
+    kid: 'native-test-key',
+    alg: 'ed25519',
+    private_key: {
+      ...privateKey.export({ format: 'jwk' }),
+      adcp_use: 'request-signing',
+    },
+    agent_url: 'https://buyer.example',
+    always_sign: ['create_media_buy'],
+  };
+
+  await callA2ATool(
+    agentUrl,
+    'create_media_buy',
+    { plan_id: 'native-plan' },
+    undefined,
+    [],
+    undefined,
+    undefined,
+    { signing, getCapability: () => undefined },
+    undefined,
+    undefined,
+    1_000,
+    transportFetch,
+    undefined,
+    { enabled: false }
+  );
+
+  assert.strictEqual(rpcCalls.length, 1);
+  assert.strictEqual(rpcCalls[0].body.method, 'SendMessage');
+  assert.strictEqual(rpcCalls[0].body.params.message.parts[0].data.skill, 'create_media_buy');
+  assert.ok(rpcCalls[0].headers.signature, 'native always_sign call must carry Signature');
+  assert.ok(rpcCalls[0].headers['signature-input'], 'native always_sign call must carry Signature-Input');
+  assert.ok(rpcCalls[0].headers['content-digest'], 'native always_sign call must bind the official-client body');
+});
+
 test('caches agent-card discovery across A2A signing vectors', async () => {
   let cardFetches = 0;
   const server = http.createServer(async (req, res) => {
@@ -213,9 +292,43 @@ test('agent-card discovery timeout includes a response body that never closes', 
       { kind: 'cancelTask', taskId: 'stalled-card' },
       { timeoutMs: 20, cardFetch: stalledCardFetch }
     ),
-    /timed out|timeout/i
+    error => {
+      assert.equal(error.message, 'A2A agent card discovery failed');
+      assert.match(error.cause?.message ?? '', /timed out|timeout/i);
+      return true;
+    }
   );
   assert.ok(Date.now() - startedAt < 1_000, 'discovery must not outlive its body-inclusive deadline');
+});
+
+test('agent-card discovery exposes a generic error and retains internal detail only as cause', async () => {
+  const internal = new Error('ECONNREFUSED 10.0.0.7:6379');
+  await assert.rejects(
+    captureA2aRequest(
+      'https://seller.example',
+      { kind: 'cancelTask', taskId: 'discovery-error' },
+      { cardFetch: async () => Promise.reject(internal) }
+    ),
+    error => {
+      assert.strictEqual(error.message, 'A2A agent card discovery failed');
+      assert.strictEqual(error.cause, internal);
+      assert.doesNotMatch(error.message, /10\.0\.0\.7|6379/);
+      return true;
+    }
+  );
+});
+
+test('agent-card discovery rejects invalid timeout values before fetching', async () => {
+  for (const timeoutMs of [0, -1, Number.POSITIVE_INFINITY]) {
+    await assert.rejects(
+      captureA2aRequest(
+        'https://seller.example',
+        { kind: 'cancelTask', taskId: 'invalid-timeout' },
+        { timeoutMs, cardFetch: async () => new Response('{}') }
+      ),
+      /timeoutMs must be a finite positive number/
+    );
+  }
 });
 
 test('official client captures and signs A2A 0.3 message/send bytes', async () => {

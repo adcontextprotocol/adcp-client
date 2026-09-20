@@ -4,7 +4,7 @@
  * and proto-JSON encoding; this module only intercepts its fetch seam.
  */
 import { createAgentTransportFetch } from '../../../net/agent-transport-fetch';
-import { withAbortSignal } from '../../../protocols/abort';
+import { MAX_TIMER_DELAY_MS, withAbortSignal } from '../../../protocols/abort';
 import { buildCardUrls } from '../../../utils/a2a-discovery';
 import type { SendMessageRequest } from '@a2a-js/sdk-v1';
 import type { Client } from '@a2a-js/sdk-v1/client';
@@ -127,16 +127,20 @@ async function createCardDrivenClient(
       lastError = error;
     }
   }
-  throw lastError instanceof Error ? lastError : new Error('A2A agent card discovery failed');
+  throw new Error('A2A agent card discovery failed', { cause: lastError });
 }
 
 function buildGuardedCardFetch(agentUrl: string, options: A2aDispatchOptions): typeof fetch {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_CARD_FETCH_TIMEOUT_MS;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_TIMER_DELAY_MS) {
+    throw new RangeError(`A2A card timeoutMs must be a finite positive number <= ${MAX_TIMER_DELAY_MS}`);
+  }
   const transportFetch = createAgentTransportFetch(agentUrl, {
     ...(options.cardFetch ? { trustedFetchFn: options.cardFetch } : {}),
     allowPrivateIp: options.allowPrivateIp === true,
   });
   return ((input: RequestInfo | URL, init: RequestInit = {}) =>
-    withAbortSignal([init.signal], options.timeoutMs ?? DEFAULT_CARD_FETCH_TIMEOUT_MS, async signal => {
+    withAbortSignal([init.signal], timeoutMs, async signal => {
       const response = await transportFetch(input, { ...init, ...(signal ? { signal } : {}) });
       // Keep the same discovery deadline active through body consumption. A
       // peer can otherwise return headers plus one byte and stall grading
