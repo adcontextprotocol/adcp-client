@@ -1879,7 +1879,13 @@ export class SingleAgentClient {
 
     const fetchImpl = async (url: string | URL | Request, requestInit?: RequestInit) => {
       const headers = buildA2ADiscoveryHeaders(requestInit?.headers, this.normalizedAgent.headers, authToken);
-      assertNativeA2ADiscoveryCredentialOrigin(agentUri, url, transport?.legacyCompat?.enabled, headers);
+      assertNativeA2ADiscoveryCredentialOrigin(
+        agentUri,
+        url,
+        transport?.legacyCompat?.enabled,
+        headers,
+        this.normalizedAgent.headers
+      );
 
       const response = await withAbortSignal<Response>(
         [readOptions?.signal, requestInit?.signal],
@@ -6212,7 +6218,8 @@ export class SingleAgentClient {
           this.normalizedAgent.agent_uri,
           url,
           transport?.legacyCompat?.enabled,
-          headers
+          headers,
+          agentHeaders
         );
         return withAbortSignal<Response>([options?.signal, requestInit?.signal], requestTimeoutMs, signal =>
           sizeLimitedFetch(url as RequestInfo | URL, { ...requestInit, headers, signal })
@@ -6980,14 +6987,19 @@ function assertNativeA2ADiscoveryCredentialOrigin(
   agentUrl: string,
   requestUrl: string | URL | Request,
   legacyCompatEnabled: boolean | undefined,
-  headers: Headers
+  headers: Headers,
+  configuredHeaders: Record<string, string> | undefined
 ): void {
   if (legacyCompatEnabled !== false) return;
   const targetUrl = requestUrl instanceof Request ? requestUrl.url : requestUrl.toString();
   if (new URL(targetUrl).origin === new URL(agentUrl).origin) return;
+  // Every caller-configured header is origin-bound. Header-name heuristics
+  // remain useful for SDK/injected credentials, but cannot classify unknown
+  // deployment-specific secrets such as X-Session.
+  const configuredHeaderNames = new Set(Object.keys(configuredHeaders ?? {}).map(name => name.toLowerCase()));
   const credentialHeaders: string[] = [];
   headers.forEach((_value, name) => {
-    if (isCredentialHeaderName(name)) credentialHeaders.push(name);
+    if (configuredHeaderNames.has(name.toLowerCase()) || isCredentialHeaderName(name)) credentialHeaders.push(name);
   });
   if (credentialHeaders.length === 0) return;
   throw new Error(

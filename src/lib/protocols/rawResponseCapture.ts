@@ -10,7 +10,7 @@
 // uses the captures to compare two probes byte-for-byte.
 
 import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
-import { withAbortSignal } from './abort';
+import { MAX_TIMER_DELAY_MS, withAbortSignal } from './abort';
 
 export interface RawHttpCapture {
   url: string;
@@ -30,11 +30,13 @@ interface CaptureSlot {
   captures: RawHttpCapture[];
   maxBodyBytes: number;
   requestMetadataTimeoutMs: number;
+  responseBodyTimeoutMs: number;
 }
 
 // Request and response bodies are bounded as UTF-8 bytes while streaming.
 const DEFAULT_MAX_BODY_BYTES = 1_048_576;
 const DEFAULT_REQUEST_METADATA_TIMEOUT_MS = 1_000;
+const DEFAULT_RESPONSE_BODY_TIMEOUT_MS = 1_000;
 
 export const rawResponseCaptureStorage = globalAsyncLocalStorage<CaptureSlot>('rawResponseCapture');
 
@@ -51,12 +53,21 @@ export const rawResponseCaptureStorage = globalAsyncLocalStorage<CaptureSlot>('r
  */
 export async function withRawResponseCapture<T>(
   fn: () => Promise<T>,
-  options: { maxBodyBytes?: number; requestMetadataTimeoutMs?: number } = {}
+  options: { maxBodyBytes?: number; requestMetadataTimeoutMs?: number; responseBodyTimeoutMs?: number } = {}
 ): Promise<{ result: T; captures: RawHttpCapture[] }> {
+  const responseBodyTimeoutMs = options.responseBodyTimeoutMs ?? DEFAULT_RESPONSE_BODY_TIMEOUT_MS;
+  if (
+    !Number.isFinite(responseBodyTimeoutMs) ||
+    responseBodyTimeoutMs <= 0 ||
+    responseBodyTimeoutMs > MAX_TIMER_DELAY_MS
+  ) {
+    throw new RangeError(`responseBodyTimeoutMs must be a finite positive number <= ${MAX_TIMER_DELAY_MS}`);
+  }
   const slot: CaptureSlot = {
     captures: [],
     maxBodyBytes: options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES,
     requestMetadataTimeoutMs: options.requestMetadataTimeoutMs ?? DEFAULT_REQUEST_METADATA_TIMEOUT_MS,
+    responseBodyTimeoutMs,
   };
   try {
     const result = await rawResponseCaptureStorage.run(slot, fn);
@@ -135,7 +146,7 @@ export function wrapFetchWithCapture(upstream: typeof fetch): typeof fetch {
 
     // Clone before reading so the SDK still gets a consumable body.
     const cloneForRead = response.clone();
-    const { body, bodyTruncated } = await readBodyBounded(cloneForRead, slot.maxBodyBytes);
+    const { body, bodyTruncated } = await readBodyBounded(cloneForRead, slot.maxBodyBytes, slot.responseBodyTimeoutMs);
 
     const headers: Record<string, string> = {};
     response.headers.forEach((value, key) => {
@@ -270,39 +281,46 @@ function redactBearerInBody(body: string): string {
 
 async function readBodyBounded(
   response: Response,
-  maxBodyBytes: number
+  maxBodyBytes: number,
+  timeoutMs: number
 ): Promise<{ body: string; bodyTruncated: boolean }> {
   if (!response.body) return { body: '', bodyTruncated: false };
   const reader = response.body.getReader();
   const retained = new Uint8Array(maxBodyBytes);
   let retainedBytes = 0;
+  const decodeRetained = () => new TextDecoder().decode(retained.subarray(0, retainedBytes));
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        return {
-          body: new TextDecoder().decode(retained.subarray(0, retainedBytes)),
-          bodyTruncated: false,
-        };
+    return await withAbortSignal([], timeoutMs, async signal => {
+      const cancel = () => void reader.cancel(signal?.reason).catch(() => undefined);
+      signal?.addEventListener('abort', cancel, { once: true });
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            return { body: decodeRetained(), bodyTruncated: false };
+          }
+          const available = maxBodyBytes - retainedBytes;
+          const copyBytes = Math.min(available, value.byteLength);
+          if (copyBytes > 0) {
+            retained.set(value.subarray(0, copyBytes), retainedBytes);
+            retainedBytes += copyBytes;
+          }
+          if (copyBytes < value.byteLength) {
+            // This is a clone branch. Awaiting cancellation can wait for the SDK
+            // to consume the original branch, which cannot happen until capture
+            // returns, so cancel without awaiting.
+            void reader.cancel().catch(() => undefined);
+            return { body: decodeRetained(), bodyTruncated: true };
+          }
+        }
+      } finally {
+        signal?.removeEventListener('abort', cancel);
       }
-      const available = maxBodyBytes - retainedBytes;
-      const copyBytes = Math.min(available, value.byteLength);
-      if (copyBytes > 0) {
-        retained.set(value.subarray(0, copyBytes), retainedBytes);
-        retainedBytes += copyBytes;
-      }
-      if (copyBytes < value.byteLength) {
-        // This is a clone branch. Awaiting cancellation can wait for the SDK
-        // to consume the original branch, which cannot happen until capture
-        // returns, so cancel without awaiting.
-        void reader.cancel().catch(() => undefined);
-        return {
-          body: new TextDecoder().decode(retained.subarray(0, retainedBytes)),
-          bodyTruncated: true,
-        };
-      }
-    }
+    });
   } catch {
-    return { body: '', bodyTruncated: false };
+    // Capture is observational: a stalled or broken clone must not prevent
+    // the SDK from consuming the original response. Preserve bytes already
+    // observed and mark the capture incomplete.
+    return { body: decodeRetained(), bodyTruncated: true };
   }
 }

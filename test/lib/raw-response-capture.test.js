@@ -248,6 +248,36 @@ describe('rawResponseCapture', () => {
     await response.body.cancel();
   });
 
+  test('response-body capture has an independent deadline when headers arrive but the body stalls', async () => {
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{'));
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+    const startedAt = Date.now();
+    const { captures } = await withRawResponseCapture(
+      () => wrapFetchWithCapture(async () => response)('https://seller.example/rpc'),
+      { responseBodyTimeoutMs: 20 }
+    );
+
+    assert.ok(Date.now() - startedAt < 500, 'capture deadline must bound a response body that never closes');
+    assert.strictEqual(captures[0].body, '{');
+    assert.strictEqual(captures[0].bodyTruncated, true);
+    await response.body.cancel();
+  });
+
+  test('rejects invalid response-body capture deadlines before dispatch', async () => {
+    for (const responseBodyTimeoutMs of [0, -1, Number.POSITIVE_INFINITY, 2_147_483_648]) {
+      await assert.rejects(
+        withRawResponseCapture(async () => undefined, { responseBodyTimeoutMs }),
+        /responseBodyTimeoutMs must be a finite positive number/
+      );
+    }
+  });
+
   test('records multiple requests in order', async () => {
     const { server, url } = await startServer((req, res) => {
       const id = req.url.slice(1);

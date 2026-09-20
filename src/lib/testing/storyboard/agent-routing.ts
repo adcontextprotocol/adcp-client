@@ -97,7 +97,7 @@ function scrubAuthSecrets(text: string): string {
 }
 
 /** Per-agent options view: per-entry overrides shadow run-level defaults. */
-function buildAgentOptions(entry: AgentEntry, options: StoryboardRunOptions): StoryboardRunOptions {
+export function buildAgentOptions(entry: AgentEntry, options: StoryboardRunOptions): StoryboardRunOptions {
   return applyNativeA2AComplianceTransportOptions({
     ...options,
     auth: entry.auth ?? options.auth,

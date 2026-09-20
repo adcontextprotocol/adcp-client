@@ -96,6 +96,101 @@ function capabilitiesResponse(id) {
   };
 }
 
+function mixedTransportStoryboard(agent) {
+  const value = storyboard();
+  value.id = `mixed_transport_${agent}`;
+  value.phases[0].steps[0].agent = agent;
+  return value;
+}
+
+function mixedTransportFetch(calls) {
+  const a2aOrigin = 'https://a2a.example';
+  const mcpUrl = 'https://mcp.example/mcp';
+  return async (input, init = {}) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.startsWith(a2aOrigin) && url.includes('/.well-known/')) {
+      const agentCard = card(`${a2aOrigin}/rpc`);
+      agentCard.skills = ['get_adcp_capabilities', 'list_creatives'].map(name => ({
+        id: name,
+        name,
+        description: `${name} fixture`,
+        tags: [],
+        examples: [],
+        inputModes: ['application/json'],
+        outputModes: ['application/json'],
+      }));
+      return new Response(JSON.stringify(agentCard), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
+    const rawBody = init.body ?? (input instanceof Request ? await input.clone().text() : '');
+    const body = rawBody ? JSON.parse(rawBody) : {};
+    if (url === `${a2aOrigin}/rpc`) {
+      const skill = body.params?.message?.parts?.[0]?.data?.skill;
+      calls.push({ transport: 'a2a', method: body.method, skill, url });
+      if (skill === 'get_adcp_capabilities') {
+        return new Response(JSON.stringify(capabilitiesResponse(body.id)), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, error: { code: -32001 } }), {
+        status: 401,
+        headers: { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="a2a"' },
+      });
+    }
+
+    assert.strictEqual(url, mcpUrl);
+    calls.push({ transport: 'mcp', method: body.method, skill: body.params?.name, url });
+    if (body.method === 'server/discover') return new Response('not supported', { status: 404 });
+    if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    const result =
+      body.method === 'initialize'
+        ? {
+            protocolVersion: '2025-03-26',
+            serverInfo: { name: 'mixed-routing-mcp', version: '1.0.0' },
+            capabilities: { tools: {} },
+          }
+        : body.method === 'tools/list'
+          ? {
+              tools: ['get_adcp_capabilities', 'list_creatives'].map(name => ({
+                name,
+                description: `${name} fixture`,
+                inputSchema: { type: 'object' },
+              })),
+            }
+          : body.method === 'tools/call' && body.params?.name === 'get_adcp_capabilities'
+            ? {
+                content: [
+                  {
+                    type: 'text',
+                    text: JSON.stringify({
+                      status: 'completed',
+                      adcp_version: '3.1',
+                      adcp: { major_versions: [3], supported_versions: ['3.1.1'] },
+                      supported_protocols: ['creative'],
+                      tools: [{ name: 'list_creatives' }],
+                    }),
+                  },
+                ],
+                isError: false,
+              }
+            : undefined;
+    if (result === undefined) {
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, error: { code: -32001 } }), {
+        status: 401,
+        headers: { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="mcp"' },
+      });
+    }
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }), {
+      status: 200,
+      headers: { 'content-type': 'application/json', 'mcp-session-id': 'mixed-routing-session' },
+    });
+  };
+}
+
 describe('storyboard A2A auth overrides', () => {
   test('normalizes native 1.0 task envelopes for transport-neutral validators', () => {
     const result = normalizeCapturedA2AResult({
@@ -426,4 +521,28 @@ describe('storyboard A2A auth overrides', () => {
     const statusValidation = step.validations.find(validation => validation.check === 'http_status');
     assert.match(statusValidation.error, /refused credentialed cross-origin endpoint/);
   });
+
+  for (const scenario of [
+    { runProtocol: 'a2a', selectedAgent: 'mcp', expectedMethod: 'tools/call' },
+    { runProtocol: 'mcp', selectedAgent: 'a2a', expectedMethod: 'SendMessage' },
+  ]) {
+    test(`auth:none uses routed ${scenario.selectedAgent.toUpperCase()} transport under a ${scenario.runProtocol.toUpperCase()} run default`, async () => {
+      const calls = [];
+      const result = await runStoryboard('', mixedTransportStoryboard(scenario.selectedAgent), {
+        protocol: scenario.runProtocol,
+        agents: {
+          mcp: { url: 'https://mcp.example/mcp', transport: 'mcp' },
+          a2a: { url: 'https://a2a.example', transport: 'a2a' },
+        },
+        transport: { trustedFetchFn: mixedTransportFetch(calls) },
+      });
+
+      const protectedCalls = calls.filter(call => call.skill === 'list_creatives');
+      assert.strictEqual(protectedCalls.length, 1, JSON.stringify(calls));
+      assert.strictEqual(protectedCalls[0].transport, scenario.selectedAgent);
+      assert.strictEqual(protectedCalls[0].method, scenario.expectedMethod);
+      assert.strictEqual(result.phases[0].steps[0].request.transport, scenario.selectedAgent);
+      assert.strictEqual(result.overall_passed, true, JSON.stringify(result));
+    });
+  }
 });

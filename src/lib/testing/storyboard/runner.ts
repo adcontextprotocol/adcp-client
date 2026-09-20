@@ -177,6 +177,7 @@ import type {
 } from './types';
 import {
   buildRoutingContext,
+  buildAgentOptions,
   DiscoveryFailure,
   resolveAgentForStep,
   RoutingError,
@@ -2937,7 +2938,8 @@ async function executeStoryboardPass(
 
   const buildExecutionState = (
     agentUrl = agentUrls[0]!,
-    agentProfile: AgentProfile | undefined = profile
+    agentProfile: AgentProfile | undefined = profile,
+    effectiveOptions: StoryboardRunOptions = options
   ): ExecutionState => ({
     contributions,
     priorStepResults,
@@ -2950,6 +2952,7 @@ async function executeStoryboardPass(
     stepRequestStarts,
     responseDerivedNotApplicableContextKeys,
     agentProfile,
+    effectiveOptions,
     agentLibraryVersion: agentProfile?.library_version,
     storyboardRequiresRequestSigner: allRequires.includes('request_signer'),
     storyboardRequiresPublisherAuthRunner:
@@ -3337,7 +3340,11 @@ async function executeStoryboardPass(
         phasePassed = false;
         continue;
       }
-      const stepExecutionState = buildExecutionState(assignment.agentUrl, assignment.profile);
+      const stepExecutionState = buildExecutionState(
+        assignment.agentUrl,
+        assignment.profile,
+        assignment.effectiveOptions ?? options
+      );
       const rawResult = await executeStep(
         assignment.client,
         step,
@@ -4481,6 +4488,8 @@ interface ExecutionState {
    * must be the selected agent's profile, not the run-level primary profile.
    */
   agentProfile?: AgentProfile;
+  /** Per-agent options after routed transport/auth overrides are applied. */
+  effectiveOptions?: StoryboardRunOptions;
   /**
    * Agent's reported `@adcp/client@X.Y.Z` library version, captured from
    * the `get_adcp_capabilities` discovery probe. Threaded into shape-drift
@@ -4520,6 +4529,7 @@ async function executeStep(
     stepRequestStarts: new Map(),
     responseDerivedNotApplicableContextKeys: new Map(),
   };
+  const effectiveOptions = runState.effectiveOptions ?? options;
 
   // Recognize the dedicated TMP publisher-auth probes before generic auth
   // overrides, missing-tool checks, or MCP/A2A routing.
@@ -4848,7 +4858,7 @@ async function executeStep(
       next,
       ...(isPrerequisiteFailure ? { error: detail } : {}),
       request: {
-        transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
+        transport: effectiveOptions.protocol === 'a2a' ? 'a2a' : 'mcp',
         operation: effectiveStep.task,
         payload: redactSecrets(request),
         ...(runState.agentUrl ? { url: redactOAuthUrlForOutput(runState.agentUrl) } : {}),
@@ -4884,7 +4894,7 @@ async function executeStep(
   // reaches the seller handler.
   let rawProbeHeaders: Record<string, string> | undefined;
   try {
-    rawProbeHeaders = step.auth !== undefined ? authHeadersForStep(step.auth, options) : undefined;
+    rawProbeHeaders = step.auth !== undefined ? authHeadersForStep(step.auth, effectiveOptions) : undefined;
   } catch (err) {
     // adcp#6735 — an unresolvable from_test_kit credential is a step-level
     // configuration failure with an explicit message, never a silent
@@ -5006,8 +5016,8 @@ async function executeStep(
   if (useRawProbe) {
     const started = Date.now();
     try {
-      if (options.protocol === 'a2a') {
-        const probeClient = createA2AAuthOverrideClient(runState.agentUrl, options, rawProbeHeaders ?? {});
+      if (effectiveOptions.protocol === 'a2a') {
+        const probeClient = createA2AAuthOverrideClient(runState.agentUrl, effectiveOptions, rawProbeHeaders ?? {});
         const captured = await withRawResponseCapture(() =>
           runStep(step.title, effectiveStep.task, () =>
             executeStoryboardTask(probeClient, effectiveStep.task, request, {
@@ -5016,7 +5026,7 @@ async function executeStep(
               responseProjection:
                 effectiveStep.response_projection ??
                 defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario),
-              signal: options.signal,
+              signal: effectiveOptions.signal,
             })
           )
         );
@@ -5058,8 +5068,8 @@ async function executeStep(
           toolName: effectiveStep.task,
           args: request,
           headers: rawProbeHeaders,
-          allowPrivateIp: options.allow_http === true,
-          fetchFn: options.transport?.trustedFetchFn,
+          allowPrivateIp: effectiveOptions.allow_http === true,
+          fetchFn: effectiveOptions.transport?.trustedFetchFn,
         });
         httpResult = probe.httpResult;
         taskResult = probe.taskResult;
@@ -5093,12 +5103,9 @@ async function executeStep(
     // MCP path stays unwrapped — the SDK envelope is reconstructed from
     // `taskResult` already and capture would only add overhead.
     //
-    // Selection note: gate on `options.protocol === 'a2a'` because
-    // that's the only signal available at this point — discovery
-    // hasn't run yet in `runStoryboardStep` (the runner branches off
-    // `agentTools` later). If a future "auto-detect protocol" flow
-    // lands, key the capture off the negotiated transport instead.
-    const captureA2a = options.protocol === 'a2a';
+    // In routed runs, use the selected agent's per-entry transport rather
+    // than the run-level default. Standalone runs fall back to `options`.
+    const captureA2a = effectiveOptions.protocol === 'a2a';
     let a2aCaptures: RawHttpCapture[] | undefined;
     if (step.parallel_dispatch) {
       // Fan out N concurrent dispatches via the SDK client. All dispatches
@@ -5142,7 +5149,7 @@ async function executeStep(
       };
       if (taskResult) {
         responseRecord = {
-          transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
+          transport: effectiveOptions.protocol === 'a2a' ? 'a2a' : 'mcp',
           payload: redactSecrets(
             taskResult.data ??
               (taskResult.adcp_error ? { adcp_error: taskResult.adcp_error } : undefined) ??
@@ -5160,7 +5167,7 @@ async function executeStep(
           responseProjection:
             effectiveStep.response_projection ??
             defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario),
-          signal: options.signal,
+          signal: effectiveOptions.signal,
         });
       const run = await runStep(step.title, effectiveStep.task, async () => {
         if (!captureA2a) return dispatch();
@@ -5182,7 +5189,7 @@ async function executeStep(
       taskResult = run.result;
       stepResult = run.step;
       caughtError = run.caughtError;
-      if (caughtError !== undefined && options.signal?.aborted) {
+      if (caughtError !== undefined && effectiveOptions.signal?.aborted) {
         throw caughtError;
       }
       if (captureA2a && a2aCaptures) {
@@ -5190,7 +5197,7 @@ async function executeStep(
       }
       if (taskResult) {
         responseRecord = {
-          transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
+          transport: effectiveOptions.protocol === 'a2a' ? 'a2a' : 'mcp',
           payload: redactSecrets(
             taskResult.data ??
               (taskResult.adcp_error ? { adcp_error: taskResult.adcp_error } : undefined) ??
@@ -5204,7 +5211,7 @@ async function executeStep(
   }
 
   const requestRecord: RunnerRequestRecord = {
-    transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
+    transport: effectiveOptions.protocol === 'a2a' ? 'a2a' : 'mcp',
     operation: effectiveStep.task,
     payload: redactSecrets(request),
     ...(requestUrl ? { url: redactOAuthUrlForOutput(requestUrl) } : {}),
@@ -8085,6 +8092,8 @@ interface StepAssignment {
   instanceIndex: number;
   /** Profile discovered for the agent selected to execute this step. */
   profile?: AgentProfile;
+  /** Per-agent transport/auth view used when the selected step dispatches. */
+  effectiveOptions?: StoryboardRunOptions;
 }
 
 interface Dispatcher {
@@ -8161,6 +8170,7 @@ function createRoutingDispatcher(
         agentUrl: url,
         instanceIndex: keyToIndex.get(key) ?? 0,
         profile,
+        effectiveOptions: buildAgentOptions(agents[key]!, options),
       };
     },
   };

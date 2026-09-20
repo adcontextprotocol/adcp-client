@@ -38,8 +38,7 @@ function credentialedClient(seenUrls) {
       agent_uri: AGENT_ORIGIN,
       protocol: 'a2a',
       name: 'native-extended-card-origin',
-      auth_token: 'bearer-sentinel',
-      headers: { 'x-api-key': 'custom-sentinel' },
+      headers: { 'X-Session': 'custom-sentinel' },
     },
     { transport: { trustedFetchFn, legacyCompat: { enabled: false } } }
   );
@@ -50,8 +49,7 @@ async function assertCrossOriginExtendedCardRefused(invoke) {
   const client = credentialedClient(seenUrls);
   await assert.rejects(invoke(client), error => {
     assert.match(error.message, /native discovery refused credentialed cross-origin dispatch/);
-    assert.match(error.message, /authorization/);
-    assert.match(error.message, /x-api-key/);
+    assert.match(error.message, /x-session/);
     return true;
   });
   assert.ok(
@@ -108,4 +106,43 @@ test('getAgentInfo refuses credentials before following a native cross-origin re
     seenUrls.every(url => !url.startsWith(EXTENDED_ORIGIN)),
     'cross-origin redirect target must be refused before the network call'
   );
+});
+
+test('same-origin native extended-card discovery preserves configured custom headers', async () => {
+  const receivedSessions = [];
+  const rpcUrl = `${AGENT_ORIGIN}/rpc`;
+  const trustedFetchFn = async (input, init = {}) => {
+    const url = String(input);
+    if (url.includes('/.well-known/')) {
+      return new Response(
+        JSON.stringify({
+          ...nativeExtendedCard(),
+          supportedInterfaces: [{ url: rpcUrl, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }
+    assert.strictEqual(url, rpcUrl);
+    receivedSessions.push(new Headers(init.headers).get('x-session'));
+    const body = JSON.parse(init.body);
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: nativeExtendedCard() }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  const makeClient = () =>
+    new AgentClient(
+      {
+        id: 'native-extended-card-same-origin',
+        agent_uri: AGENT_ORIGIN,
+        protocol: 'a2a',
+        name: 'native-extended-card-same-origin',
+        headers: { 'X-Session': 'same-origin-session' },
+      },
+      { transport: { trustedFetchFn, legacyCompat: { enabled: false } } }
+    );
+
+  await makeClient().getAgentInfo();
+  await makeClient().resolveCanonicalUrl();
+  assert.deepStrictEqual(receivedSessions, ['same-origin-session', 'same-origin-session']);
 });
