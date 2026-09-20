@@ -350,7 +350,7 @@ test('a coverage-unavailable single step exits nonzero instead of reporting succ
   assert.strictEqual(result.status, 3, `expected exit 3, got ${result.status}. stdout: ${result.stdout}`);
   assert.match(result.stdout, /Not verified/);
   assert.match(result.stdout, /COVERAGE UNAVAILABLE \(not_applicable \/ signing_transport_unavailable\)/);
-  assert.match(result.stdout, /Remedy: grade the verifier through/);
+  assert.match(result.stdout, /Remedy: verify the A2A SDK peer is installed/);
 });
 
 test('--soft-fail turns the single-step coverage gap into exit 0, as the help promises', async () => {
