@@ -18,7 +18,7 @@ import {
 } from '../client';
 import { closeScopedConnections, withMCPConnectionScope, type VersionEnvelopeMode } from '../../protocols';
 import { getCapturesFromError, withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
-import { isCredentialHeaderName } from '../../protocols/credential-headers';
+import { isCredentialHeaderName } from '../../net/credential-headers';
 import { defaultStoryboardResponseProjection, executeStoryboardTask } from './task-map';
 import {
   extractContextWithProvenance,
@@ -7163,8 +7163,8 @@ export function selectLastA2aSkillCapture(
   return undefined;
 }
 
-function parseLastA2aMessageSendCapture(captures: readonly RawHttpCapture[]): A2ATaskEnvelope | undefined {
-  let messageSendIdx = -1;
+export function parseLastA2aMessageSendCapture(captures: readonly RawHttpCapture[]): A2ATaskEnvelope | undefined {
+  let taskFallbackIdx = -1;
   let lastPostIdx = -1;
   for (let i = captures.length - 1; i >= 0; i--) {
     const cap = captures[i];
@@ -7175,16 +7175,20 @@ function parseLastA2aMessageSendCapture(captures: readonly RawHttpCapture[]): A2
     // As a compatibility fallback for older captures, parse the response and
     // look for either the A2A 0.3 Task result or 1.0 `{ task }` oneof envelope.
     const isMessageSend = cap.requestJsonRpcMethod === 'SendMessage' || cap.requestJsonRpcMethod === 'message/send';
-    if (messageSendIdx === -1) {
+    if (isMessageSend) return parseA2aCapture(cap);
+    if (taskFallbackIdx === -1) {
       const env = tryParseJsonRpcEnvelope(cap.body);
-      if (isMessageSend || (env && env.result !== undefined && isTaskShape(normalizeCapturedA2AResult(env.result)))) {
-        messageSendIdx = i;
+      if (env && env.result !== undefined && isTaskShape(normalizeCapturedA2AResult(env.result))) {
+        taskFallbackIdx = i;
       }
     }
   }
-  const idx = messageSendIdx !== -1 ? messageSendIdx : lastPostIdx;
+  const idx = taskFallbackIdx !== -1 ? taskFallbackIdx : lastPostIdx;
   if (idx === -1) return undefined;
-  const cap = captures[idx]!;
+  return parseA2aCapture(captures[idx]!);
+}
+
+function parseA2aCapture(cap: RawHttpCapture): A2ATaskEnvelope | undefined {
   const envelope = tryParseJsonRpcEnvelope(cap.body);
   if (!envelope) return undefined;
   // `envelope.result` mirrors the JSON-RPC envelope as observed —

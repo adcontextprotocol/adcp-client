@@ -17,7 +17,7 @@ test('agent transport refuses a public hostname that resolves to a private addre
   assert.equal(calls, 0, 'the network fetch must not run after a denied resolution');
 });
 
-test('agent transport revalidates redirects and does not forward credentials to an internal hop', async () => {
+test('agent transport revalidates a public redirect target before dispatch', async () => {
   const calls = [];
   const guarded = createAgentTransportFetch('https://agent.example.com/mcp', {
     lookup: async hostname =>
@@ -30,11 +30,24 @@ test('agent transport revalidates redirects and does not forward credentials to 
     },
   });
 
-  await assert.rejects(
-    () => guarded('https://agent.example.com/mcp', { headers: { authorization: 'Bearer secret' } }),
-    /private or loopback/
-  );
+  await assert.rejects(() => guarded('https://agent.example.com/mcp'), /private or loopback/);
   assert.equal(calls.length, 1, 'the redirect target must be rejected before dispatch');
+});
+
+test('agent transport refuses credentialed cross-origin redirects before the second network call', async () => {
+  const calls = [];
+  const guarded = createAgentTransportFetch('https://seller.example/rpc', {
+    trustedFetchFn: async (url, init) => {
+      calls.push({ url: url.toString(), apiKey: new Headers(init.headers).get('x-api-key') });
+      return new Response('', { status: 307, headers: { location: 'https://other.example/rpc' } });
+    },
+  });
+
+  await assert.rejects(
+    () => guarded('https://seller.example/rpc', { method: 'POST', headers: { 'x-api-key': 'secret' } }),
+    /refused a credentialed cross-origin redirect/
+  );
+  assert.deepEqual(calls, [{ url: 'https://seller.example/rpc', apiKey: 'secret' }]);
 });
 
 test('agent transport preserves caller-requested manual redirect handling', async () => {

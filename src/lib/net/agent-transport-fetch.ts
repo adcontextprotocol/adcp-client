@@ -11,6 +11,7 @@ import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { Agent, fetch as undiciFetch } from 'undici';
 import { isAlwaysBlocked, isLikelyPrivateUrl, isPrivateIp } from './address-guards';
+import { isCredentialHeaderName } from './credential-headers';
 
 type ResolvedAddress = { address: string; family: number };
 
@@ -27,7 +28,6 @@ export interface AgentTransportFetchOptions {
 }
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
-const SENSITIVE_REDIRECT_HEADERS = ['authorization', 'cookie', 'proxy-authorization', 'x-adcp-auth'];
 
 export function createAgentTransportFetch(agentUrl: string, options: AgentTransportFetchOptions = {}): typeof fetch {
   const lookup = options.lookup ?? (hostname => dnsLookup(hostname, { all: true }));
@@ -102,7 +102,13 @@ export function createAgentTransportFetch(agentUrl: string, options: AgentTransp
       const next = new URL(response.headers.get('location')!, url);
       await response.body?.cancel();
       if (next.origin !== url.origin) {
-        for (const header of SENSITIVE_REDIRECT_HEADERS) headers.delete(header);
+        const credentialHeaders: string[] = [];
+        headers.forEach((_value, name) => {
+          if (isCredentialHeaderName(name)) credentialHeaders.push(name);
+        });
+        if (credentialHeaders.length > 0) {
+          throw new TypeError('Agent transport refused a credentialed cross-origin redirect');
+        }
       }
       if (response.status === 303 || ((response.status === 301 || response.status === 302) && method === 'POST')) {
         method = 'GET';

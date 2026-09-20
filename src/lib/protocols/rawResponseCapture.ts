@@ -10,6 +10,7 @@
 // uses the captures to compare two probes byte-for-byte.
 
 import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
+import { withAbortSignal } from './abort';
 
 export interface RawHttpCapture {
   url: string;
@@ -28,11 +29,13 @@ export interface RawHttpCapture {
 interface CaptureSlot {
   captures: RawHttpCapture[];
   maxBodyBytes: number;
+  requestMetadataTimeoutMs: number;
 }
 
 // Request bodies are bounded as UTF-8 bytes while streaming. Response bodies
 // retain the historical UTF-16 string cap below.
 const DEFAULT_MAX_BODY_BYTES = 1_048_576;
+const DEFAULT_REQUEST_METADATA_TIMEOUT_MS = 1_000;
 
 export const rawResponseCaptureStorage = globalAsyncLocalStorage<CaptureSlot>('rawResponseCapture');
 
@@ -49,11 +52,12 @@ export const rawResponseCaptureStorage = globalAsyncLocalStorage<CaptureSlot>('r
  */
 export async function withRawResponseCapture<T>(
   fn: () => Promise<T>,
-  options: { maxBodyBytes?: number } = {}
+  options: { maxBodyBytes?: number; requestMetadataTimeoutMs?: number } = {}
 ): Promise<{ result: T; captures: RawHttpCapture[] }> {
   const slot: CaptureSlot = {
     captures: [],
     maxBodyBytes: options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES,
+    requestMetadataTimeoutMs: options.requestMetadataTimeoutMs ?? DEFAULT_REQUEST_METADATA_TIMEOUT_MS,
   };
   try {
     const result = await rawResponseCaptureStorage.run(slot, fn);
@@ -118,7 +122,12 @@ export function wrapFetchWithCapture(upstream: typeof fetch): typeof fetch {
       init?.body !== undefined
         ? init.body
         : input instanceof Request
-          ? await readRequestBodyFromClone(input, slot.maxBodyBytes)
+          ? await readRequestBodyFromClone(
+              input,
+              slot.maxBodyBytes,
+              init?.signal ?? input.signal,
+              slot.requestMetadataTimeoutMs
+            )
           : undefined;
     const requestMetadata = extractSafeRequestMetadata(requestBody, slot.maxBodyBytes);
     const startedAt = Date.now();
@@ -152,34 +161,47 @@ export function wrapFetchWithCapture(upstream: typeof fetch): typeof fetch {
   return wrapped;
 }
 
-async function readRequestBodyFromClone(request: Request, maxBodyBytes: number): Promise<string | undefined> {
+async function readRequestBodyFromClone(
+  request: Request,
+  maxBodyBytes: number,
+  signal: AbortSignal | null | undefined,
+  timeoutMs: number
+): Promise<string | undefined> {
   if (request.bodyUsed || request.method === 'GET' || request.method === 'HEAD') return undefined;
   try {
     const body = request.clone().body;
     if (!body) return '';
     const reader = body.getReader();
-    const chunks: Uint8Array[] = [];
-    let length = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      length += value.byteLength;
-      if (length > maxBodyBytes) {
-        // This reader belongs to a tee created by Request.clone(). Awaiting
-        // cancellation can deadlock until the original branch is consumed,
-        // which cannot happen until this wrapper calls the upstream fetch.
-        void reader.cancel().catch(() => undefined);
-        return undefined;
+    return await withAbortSignal([signal], timeoutMs, async captureSignal => {
+      const cancel = () => void reader.cancel(captureSignal?.reason).catch(() => undefined);
+      captureSignal?.addEventListener('abort', cancel, { once: true });
+      try {
+        const chunks: Uint8Array[] = [];
+        let length = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          length += value.byteLength;
+          if (length > maxBodyBytes) {
+            // This reader belongs to a tee created by Request.clone(). Awaiting
+            // cancellation can deadlock until the original branch is consumed,
+            // which cannot happen until this wrapper calls the upstream fetch.
+            void reader.cancel().catch(() => undefined);
+            return undefined;
+          }
+          chunks.push(value);
+        }
+        const bytes = new Uint8Array(length);
+        let offset = 0;
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        return new TextDecoder().decode(bytes);
+      } finally {
+        captureSignal?.removeEventListener('abort', cancel);
       }
-      chunks.push(value);
-    }
-    const bytes = new Uint8Array(length);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    return new TextDecoder().decode(bytes);
+    });
   } catch {
     return undefined;
   }

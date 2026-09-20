@@ -3,6 +3,7 @@ const assert = require('node:assert');
 
 const {
   normalizeCapturedA2AResult,
+  parseLastA2aMessageSendCapture,
   runStoryboard,
   selectLastA2aSkillCapture,
 } = require('../../dist/lib/testing/storyboard/runner.js');
@@ -237,6 +238,30 @@ describe('storyboard A2A auth overrides', () => {
     );
     assert.strictEqual(selected.status, 403);
     assert.strictEqual(selected.body, '{"retry":true}');
+  });
+
+  test('keeps the last SendMessage response when later task polling is captured', () => {
+    const base = {
+      url: 'https://seller.example/rpc',
+      method: 'POST',
+      headers: {},
+      status: 200,
+      latencyMs: 1,
+      timestamp: new Date(0).toISOString(),
+      bodyTruncated: false,
+    };
+    const taskBody = id =>
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id,
+        result: { task: { id, contextId: 'context', status: { state: 'TASK_STATE_COMPLETED' } } },
+      });
+    const parsed = parseLastA2aMessageSendCapture([
+      { ...base, requestJsonRpcMethod: 'SendMessage', body: taskBody('send-response') },
+      { ...base, requestJsonRpcMethod: 'GetTask', body: taskBody('poll-response') },
+    ]);
+
+    assert.strictEqual(parsed.result.id, 'send-response');
   });
 
   test('dispatches official SendMessage and never MCP tools/call while isolating credentials', async () => {

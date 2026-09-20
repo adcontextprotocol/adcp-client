@@ -22,7 +22,7 @@ import { DEFAULT_REQUEST_TIMEOUT_MS, resolveRequestTimeoutMs, withAbortSignal } 
 import { getLatestA2ADataPartFromResponse } from '../utils/a2a-artifacts';
 import { createAgentTransportFetch } from '../net/agent-transport-fetch';
 import { isLikelyPrivateUrl } from '../net/address-guards';
-import { isCredentialHeaderName } from './credential-headers';
+import { isCredentialHeaderName } from '../net/credential-headers';
 
 // The A2A SDK client is used untyped: request/response shapes are validated at
 // runtime against the AdCP wire contract, not against the SDK's exported
@@ -259,10 +259,7 @@ export async function cancelA2ATask(
     const requestUrl = new URL(input instanceof Request ? input.url : input.toString());
     const nativeCrossOrigin = legacyCompat.enabled === false && requestUrl.origin !== new URL(agentUrl).origin;
     if (nativeCrossOrigin && (authToken || agent.request_signing)) {
-      throw new Error(
-        `A2A native cancel refused credentialed cross-origin dispatch to ${requestUrl.origin}; ` +
-          `the agent origin is ${new URL(agentUrl).origin}`
-      );
+      throw new Error('A2A native cancel refused credentialed cross-origin dispatch declared by the agent card');
     }
     if (authToken && !nativeCrossOrigin) {
       headers.set('authorization', `Bearer ${authToken}`);
@@ -421,10 +418,7 @@ function buildFetchImpl(authToken: string | undefined, agentUrl: string) {
       context?.legacyCompat?.enabled === false && new URL(urlString).origin !== new URL(agentUrl).origin;
     const suppressedCredentialHeaders = Object.keys(context?.customHeaders ?? {}).filter(isCredentialHeaderName);
     if (nativeCrossOrigin && (authToken || signingContext || suppressedCredentialHeaders.length > 0)) {
-      throw new Error(
-        `A2A native dispatch refused credentialed cross-origin endpoint ${new URL(urlString).origin}; ` +
-          `the agent origin is ${new URL(agentUrl).origin}`
-      );
+      throw new Error('A2A native dispatch refused credentialed cross-origin endpoint declared by the agent card');
     }
     const customHeaders = context?.customHeaders;
     const traceHeaders = isDiscoveryRequest ? {} : injectTraceHeaders();

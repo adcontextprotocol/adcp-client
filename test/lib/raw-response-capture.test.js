@@ -160,6 +160,49 @@ describe('rawResponseCapture', () => {
     assert.equal(captures[0].requestAdcpSkill, undefined);
   });
 
+  test('bounds metadata reads for a Request stream that never closes', async () => {
+    let upstreamCalls = 0;
+    const stream = new ReadableStream({ pull() {} });
+    const request = new Request('https://seller.example/rpc', {
+      method: 'POST',
+      body: stream,
+      duplex: 'half',
+    });
+    const startedAt = Date.now();
+    const { captures } = await withRawResponseCapture(
+      () =>
+        wrapFetchWithCapture(async () => {
+          upstreamCalls += 1;
+          return new Response('{}');
+        })(request),
+      { requestMetadataTimeoutMs: 20 }
+    );
+
+    assert.ok(Date.now() - startedAt < 500, 'metadata capture must not wait indefinitely for a streaming body');
+    assert.equal(upstreamCalls, 1);
+    assert.equal(captures[0].requestJsonRpcMethod, undefined);
+    assert.equal(captures[0].requestAdcpSkill, undefined);
+  });
+
+  test('stops a pending Request metadata read when its signal aborts', async () => {
+    const controller = new AbortController();
+    const request = new Request('https://seller.example/rpc', {
+      method: 'POST',
+      body: new ReadableStream({ pull() {} }),
+      duplex: 'half',
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(new Error('request deadline')), 20);
+    const startedAt = Date.now();
+    const { captures } = await withRawResponseCapture(
+      () => wrapFetchWithCapture(async () => new Response('{}'))(request),
+      { requestMetadataTimeoutMs: 5_000 }
+    );
+
+    assert.ok(Date.now() - startedAt < 500, 'request abort must stop metadata capture before its fallback timeout');
+    assert.equal(captures[0].requestJsonRpcMethod, undefined);
+  });
+
   test('truncates body when it exceeds maxBodyBytes', async () => {
     const big = 'A'.repeat(10_000);
     const { server, url } = await startServer((req, res) => {
