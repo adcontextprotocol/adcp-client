@@ -2095,7 +2095,9 @@ export type RunnerDetailedSkipReason =
   | 'capability_profile_mismatch'
   /** Request-signing vector cannot be graded faithfully by the selected transport. */
   | 'transport_ungradable'
-  /** Request-signing grader's MCP-transport mode collapses URL-edge vectors (#617). */
+  /** Legacy public value: request-signing MCP mode collapses URL-edge vectors (#617). */
+  | 'mcp_mode_flattens_url_edges'
+  /** A non-MCP RPC transport collapses URL-edge vectors (#617). */
   | 'transport_flattens_url_edges'
   /** RFC 9728 protected-resource metadata returned 404 → agent is not advertising OAuth, cascade-skip oauth_discovery (#677). */
   | 'oauth_not_advertised'
@@ -2153,6 +2155,7 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   grader_skipped: 'not_applicable',
   capability_profile_mismatch: 'not_applicable',
   transport_ungradable: 'not_applicable',
+  mcp_mode_flattens_url_edges: 'not_applicable',
   transport_flattens_url_edges: 'not_applicable',
   oauth_not_advertised: 'not_applicable',
   rate_limit_not_triggered: 'not_applicable',

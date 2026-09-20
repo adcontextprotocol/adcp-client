@@ -401,14 +401,16 @@ function preflightSkip(
   // Canonicalization-edge positive vectors (005–008) bake their edge case
   // into the vector URL path, query, or port. RPC transports flatten every
   // vector to one selected endpoint, so these vectors become
-  // indistinguishable from vector 001 — passing under MCP is not evidence
+  // indistinguishable from vector 001 — passing under an RPC transport is not evidence
   // the edge was tested. Skip with a distinct reason so the report doesn't
   // claim coverage it didn't deliver.
   if (kind === 'positive' && transport !== 'raw' && TRANSPORT_FLATTENED_VECTORS.has(vector.id)) {
     return {
       ...base,
       skipped: true,
-      skip_reason: 'transport_flattens_url_edges',
+      // Preserve the existing public MCP report value. A2A uses the new
+      // transport-neutral reason because it is not running in MCP mode.
+      skip_reason: transport === 'mcp' ? 'mcp_mode_flattens_url_edges' : 'transport_flattens_url_edges',
       diagnostic:
         `Vector ${vector.id} tests a URL-canonicalization edge (port/path/query/encoding) ` +
         `that ${transport} mode neutralizes by routing every vector to one endpoint. ` +

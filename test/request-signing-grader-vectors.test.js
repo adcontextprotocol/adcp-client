@@ -228,4 +228,19 @@ describe('preflightSkip — operator-facing skip paths', () => {
     assert.strictEqual(result.skipped, true);
     assert.strictEqual(result.skip_reason, 'rate_abuse_opt_out');
   });
+
+  test('MCP preserves its public URL-edge skip reason while A2A uses the transport-neutral reason', async () => {
+    const mcp = await gradeOneVector('005-default-port-stripped', 'positive', FAKE_URL, {
+      transport: 'mcp',
+      mcpSessionId: 'already-initialized',
+    });
+    const a2a = await gradeOneVector('005-default-port-stripped', 'positive', FAKE_URL, {
+      transport: 'a2a',
+    });
+
+    assert.strictEqual(mcp.skipped, true);
+    assert.strictEqual(mcp.skip_reason, 'mcp_mode_flattens_url_edges');
+    assert.strictEqual(a2a.skipped, true);
+    assert.strictEqual(a2a.skip_reason, 'transport_flattens_url_edges');
+  });
 });

@@ -314,6 +314,7 @@ function selectionForProbeSkip(reason: RunnerDetailedSkipReason, detail: string)
     case 'rate_abuse_opt_out':
       return { reason: 'explicit_scope_excluded', detail };
     case 'not_in_only_vectors':
+    case 'mcp_mode_flattens_url_edges':
     case 'transport_flattens_url_edges':
     case 'capability_profile_mismatch':
     case 'transport_ungradable':
@@ -3549,7 +3550,8 @@ async function executeStoryboardPass(
             // `'not_applicable'` only. Detailed-form skip reasons that
             // canonicalize to not_applicable (`probe_skipped`,
             // `not_in_only_vectors`, `grader_skipped`,
-            // `transport_flattens_url_edges`) carry the detailed form
+            // `mcp_mode_flattens_url_edges`, `transport_flattens_url_edges`)
+            // carry the detailed form
             // on `result.skip_reason` and do NOT enter the deferred
             // path — they preserve the pre-fix behavior of not
             // tripping the cascade. `oauth_not_advertised` is handled

@@ -2011,6 +2011,7 @@ function selectionForDetailedSkip(
         detail: 'Step requires live side effects and this run did not opt into live execution.',
       };
     case 'not_in_only_vectors':
+    case 'mcp_mode_flattens_url_edges':
     case 'transport_flattens_url_edges':
     case 'capability_profile_mismatch':
     case 'transport_ungradable':
