@@ -10,6 +10,8 @@ test('release workflow publishes 13.x under the real adcp-3.1 dist-tag', () => {
   assert.match(workflow, /^\s+- 13\.x$/m);
   assert.match(workflow, /ADCP_NPM_TAG:\s*\$\{\{ github\.ref_name == '13\.x' && 'adcp-3\.1' \|\| '' \}\}/);
   assert.doesNotMatch(workflow, /ADCP_NPM_TAG:.*\|\| 'latest'/);
+  assert.match(workflow, /group:\s*npm-release-dist-tags/);
+  assert.match(workflow, /ADCP_PUBLISHED_PACKAGES:\s*\$\{\{ steps\.changesets\.outputs\.publishedPackages \}\}/);
 });
 
 test('an empty non-13.x override preserves the Changesets prerelease tag', () => {
@@ -32,6 +34,51 @@ test('an empty non-13.x override preserves the Changesets prerelease tag', () =>
     );
     assert.match(output, /npm dist-tag beta/);
     assert.doesNotMatch(output, /npm dist-tag latest/);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('a stable-line override cannot replace the Changesets prerelease tag', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-release-tag-'));
+  fs.mkdirSync(path.join(tempDir, '.changeset'));
+  fs.writeFileSync(
+    path.join(tempDir, '.changeset/pre.json'),
+    `${JSON.stringify({ mode: 'pre', tag: 'rc' }, null, 2)}\n`
+  );
+
+  try {
+    const output = execFileSync(
+      path.join(__dirname, '../../node_modules/.bin/tsx'),
+      [path.join(__dirname, '../../scripts/publish-adcp-release.ts'), '--dry-run'],
+      {
+        cwd: tempDir,
+        encoding: 'utf8',
+        env: { ...process.env, ADCP_NPM_TAG: 'adcp-3.1' },
+      }
+    );
+    assert.match(output, /npm dist-tag rc/);
+    assert.doesNotMatch(output, /npm dist-tag adcp-3\.1/);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('a prerelease SDK cannot publish to a stable tag without Changesets pre-mode', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-release-tag-'));
+  fs.writeFileSync(path.join(tempDir, 'package.json'), JSON.stringify({ name: '@adcp/sdk', version: '13.1.0-rc.1' }));
+  try {
+    const result = require('node:child_process').spawnSync(
+      path.join(__dirname, '../../node_modules/.bin/tsx'),
+      [path.join(__dirname, '../../scripts/publish-adcp-release.ts'), '--dry-run'],
+      {
+        cwd: tempDir,
+        encoding: 'utf8',
+        env: { ...process.env, ADCP_NPM_TAG: 'adcp-3.1' },
+      }
+    );
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stderr, /Refusing to publish prerelease @adcp\/sdk@13\.1\.0-rc\.1/);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -62,6 +109,7 @@ test('post-publish policy promotes latest only while 13 is the current stable ma
       apply: true,
       npmToken: 'present',
       publishedVersion: '13.1.0',
+      readLatestVersion: () => '13.0.4',
       run: (command, args) => calls.push([command, args]),
     }).action,
     'promoted-latest'
@@ -79,6 +127,82 @@ test('post-publish policy promotes latest only while 13 is the current stable ma
     'preserve-latest'
   );
   assert.strictEqual(calls.length, 1, 'latest 14+ must never trigger a dist-tag mutation');
+});
+
+test('post-publish policy refuses prereleases and a just-in-time backward move', async () => {
+  const { applyLatestPolicy, resolveLatestPolicy } = await import('../../scripts/report-dist-tag-policy.mjs');
+  assert.strictEqual(
+    resolveLatestPolicy({ publishedVersion: '13.1.0-rc.1', latestVersion: '13.0.4' }).action,
+    'preserve-prerelease'
+  );
+  assert.strictEqual(
+    resolveLatestPolicy({ publishedVersion: '13.1.0', latestVersion: '13.2.0' }).action,
+    'preserve-newer-latest'
+  );
+
+  const calls = [];
+  const stalePolicy = resolveLatestPolicy({ publishedVersion: '13.1.0', latestVersion: '13.0.4' });
+  const result = applyLatestPolicy(stalePolicy, {
+    apply: true,
+    npmToken: 'present',
+    publishedVersion: '13.1.0',
+    readLatestVersion: () => '14.0.0',
+    run: (...args) => calls.push(args),
+  });
+  assert.strictEqual(result.action, 'preserve-latest');
+  assert.deepStrictEqual(calls, []);
+});
+
+test('dist-tag reconciliation uses the actual Changesets package output', async () => {
+  const { readPublishedSdkVersion } = await import('../../scripts/report-dist-tag-policy.mjs');
+  assert.strictEqual(
+    readPublishedSdkVersion(JSON.stringify([{ name: '@adcp/eslint-plugin', version: '0.1.8' }])),
+    undefined
+  );
+  assert.strictEqual(
+    readPublishedSdkVersion(
+      JSON.stringify([
+        { name: '@adcp/eslint-plugin', version: '0.1.8' },
+        { name: '@adcp/sdk', version: '13.1.0' },
+      ])
+    ),
+    '13.1.0'
+  );
+  const changesetConfig = require('../../.changeset/config.json');
+  assert.ok(changesetConfig.ignore.includes('@adcp/eslint-plugin'));
+});
+
+test('apply mode without NPM_TOKEN reports recovery and exits nonzero', () => {
+  const script = path.join(__dirname, '../../scripts/report-dist-tag-policy.mjs');
+  const result = require('node:child_process').spawnSync(process.execPath, [script, '--apply'], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      ADCP_PUBLISHED_PACKAGES: JSON.stringify([{ name: '@adcp/sdk', version: '13.1.0' }]),
+      ADCP_CURRENT_LATEST: '13.0.4',
+      NPM_TOKEN: '',
+    },
+  });
+  assert.strictEqual(result.status, 1);
+  assert.match(result.stdout, /Credential-only follow-up: `npm dist-tag add @adcp\/sdk@13\.1\.0 latest`/);
+  assert.match(result.stderr, /npm latest promotion blocked/);
+});
+
+test('registry/version failures are actionable and nonzero', () => {
+  const script = path.join(__dirname, '../../scripts/report-dist-tag-policy.mjs');
+  const result = require('node:child_process').spawnSync(process.execPath, [script, '--apply'], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      ADCP_PUBLISHED_PACKAGES: JSON.stringify([{ name: '@adcp/sdk', version: '13.1.0' }]),
+      ADCP_CURRENT_LATEST: 'not-semver',
+      NPM_TOKEN: 'present',
+    },
+  });
+  assert.strictEqual(result.status, 1);
+  assert.match(result.stdout, /npm view @adcp\/sdk dist-tags --json/);
+  assert.match(result.stdout, /npm dist-tag add @adcp\/sdk@13\.1\.0 latest/);
+  assert.match(result.stderr, /npm dist-tag reconciliation failed/);
 });
 
 test('release workflow enables guarded latest promotion without replacing OIDC publish', () => {

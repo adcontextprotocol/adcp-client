@@ -135,6 +135,31 @@ describe('rawResponseCapture', () => {
     assert.equal(captures[0].requestAdcpSkill, 'list_creatives');
   });
 
+  test('does not retain or parse Request metadata beyond the request-body cap', async () => {
+    const { server, url } = await startServer(async (req, res) => {
+      for await (const _chunk of req) void _chunk;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{}');
+    });
+    servers.push(server);
+
+    const request = new Request(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'SendMessage',
+        params: { message: { parts: [{ data: { skill: 'list_creatives', input: { pad: 'x'.repeat(512) } } }] } },
+      }),
+    });
+    const { captures } = await withRawResponseCapture(() => wrapFetchWithCapture(fetch)(request), {
+      maxBodyBytes: 64,
+    });
+
+    assert.equal(captures[0].requestJsonRpcMethod, undefined);
+    assert.equal(captures[0].requestAdcpSkill, undefined);
+  });
+
   test('truncates body when it exceeds maxBodyBytes', async () => {
     const big = 'A'.repeat(10_000);
     const { server, url } = await startServer((req, res) => {

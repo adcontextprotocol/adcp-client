@@ -2,7 +2,10 @@ const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
 
-const { captureA2aRequest } = require('../../dist/lib/testing/storyboard/request-signing/a2a-dispatch.js');
+const {
+  captureA2aRequest,
+  createCachedA2aCardFetch,
+} = require('../../dist/lib/testing/storyboard/request-signing/a2a-dispatch.js');
 const { buildPositiveRequest } = require('../../dist/lib/testing/storyboard/request-signing/builder.js');
 const { probeSignedRequest } = require('../../dist/lib/testing/storyboard/request-signing/probe.js');
 const { loadRequestSigningVectors } = require('../../dist/lib/testing/storyboard/request-signing/vector-loader.js');
@@ -163,6 +166,33 @@ test('caches agent-card discovery across A2A signing vectors', async () => {
   } finally {
     await closeServer(server);
   }
+});
+
+test('cached card discovery rejects a private cross-origin target from a public configured origin', async () => {
+  const originalFetch = globalThis.fetch;
+  let globalFetchCalls = 0;
+  globalThis.fetch = async () => {
+    globalFetchCalls++;
+    return new Response('{}', { status: 200 });
+  };
+  try {
+    const cachedFetch = createCachedA2aCardFetch('https://seller.example');
+    await assert.rejects(cachedFetch('http://127.0.0.1:9/.well-known/agent-card.json'), /private or loopback address/);
+    assert.strictEqual(globalFetchCalls, 0, 'SSRF refusal must happen before any network fetch');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('cached card discovery rejects oversized bodies before retaining them', async () => {
+  const oversized = new Uint8Array(1_048_577);
+  const cachedFetch = createCachedA2aCardFetch('https://seller.example', {
+    cardFetch: async () => new Response(oversized, { status: 200 }),
+  });
+  await assert.rejects(
+    cachedFetch('https://seller.example/.well-known/agent-card.json'),
+    /exceeds the 1048576-byte discovery limit/
+  );
 });
 
 test('official client captures and signs A2A 0.3 message/send bytes', async () => {

@@ -7170,15 +7170,14 @@ function parseLastA2aMessageSendCapture(captures: readonly RawHttpCapture[]): A2
     const cap = captures[i];
     if (!cap || cap.method !== 'POST') continue;
     if (lastPostIdx === -1) lastPostIdx = i;
-    // The fetch wrapper doesn't capture the request body, so disambiguate
-    // by parsing the response and checking for an A2A `Task` shape on
-    // the result. Polling and SendMessage can both return tasks, so the
-    // response-only capture cannot distinguish them perfectly. The SDK does
-    // not synchronously poll after a terminal Task, which keeps the immediate
-    // SendMessage response as the relevant last task-shaped POST here.
+    // Prefer the explicit JSON-RPC method captured from the Request body. This
+    // distinguishes the final SendMessage retry from later tasks/get polling.
+    // As a compatibility fallback for older captures, parse the response and
+    // look for either the A2A 0.3 Task result or 1.0 `{ task }` oneof envelope.
+    const isMessageSend = cap.requestJsonRpcMethod === 'SendMessage' || cap.requestJsonRpcMethod === 'message/send';
     if (messageSendIdx === -1) {
       const env = tryParseJsonRpcEnvelope(cap.body);
-      if (env && env.result !== undefined && isTaskShape(env.result)) {
+      if (isMessageSend || (env && env.result !== undefined && isTaskShape(normalizeCapturedA2AResult(env.result)))) {
         messageSendIdx = i;
       }
     }
@@ -7196,7 +7195,8 @@ function parseLastA2aMessageSendCapture(captures: readonly RawHttpCapture[]): A2
   // `envelope.result` keeps presence-of-key fidelity for validators
   // that need to distinguish "result was null" from "result was
   // omitted". Both paths run through `redactSecrets`.
-  const redactedResult = envelope.result !== undefined ? redactSecrets(envelope.result) : null;
+  const redactedResult =
+    envelope.result !== undefined ? redactSecrets(normalizeCapturedA2AResult(envelope.result)) : null;
   return {
     result: redactedResult,
     envelope: {
@@ -7232,6 +7232,68 @@ function isTaskShape(result: unknown): boolean {
     !Array.isArray(result) &&
     (result as { kind?: unknown }).kind === 'task'
   );
+}
+
+/** Normalize the official A2A 1.0 JSON oneof to the legacy validator shape. */
+export function normalizeCapturedA2AResult(result: unknown): unknown {
+  if (result == null || typeof result !== 'object' || Array.isArray(result)) return result;
+  const record = result as Record<string, unknown>;
+  const task = asRecord(record.task);
+  if (task) return normalizeCapturedTask(task);
+  const message = asRecord(record.message);
+  if (message) return normalizeCapturedMessage(message);
+  return result;
+}
+
+function normalizeCapturedTask(task: Record<string, unknown>): Record<string, unknown> {
+  const status = asRecord(task.status);
+  const artifacts = Array.isArray(task.artifacts)
+    ? task.artifacts.map(artifact => {
+        const record = asRecord(artifact);
+        return record ? { ...record, parts: normalizeCapturedParts(record.parts) } : artifact;
+      })
+    : [];
+  return {
+    ...task,
+    kind: 'task',
+    ...(status
+      ? {
+          status: {
+            ...status,
+            state: normalizeCapturedTaskState(status.state),
+            ...(asRecord(status.message) ? { message: normalizeCapturedMessage(asRecord(status.message)!) } : {}),
+          },
+        }
+      : {}),
+    artifacts,
+  };
+}
+
+function normalizeCapturedMessage(message: Record<string, unknown>): Record<string, unknown> {
+  return { ...message, kind: 'message', parts: normalizeCapturedParts(message.parts) };
+}
+
+function normalizeCapturedParts(parts: unknown): unknown[] {
+  if (!Array.isArray(parts)) return [];
+  return parts.map(part => {
+    const record = asRecord(part);
+    if (!record) return part;
+    if ('data' in record) return { ...record, kind: 'data' };
+    if ('text' in record) return { ...record, kind: 'text' };
+    if ('file' in record) return { ...record, kind: 'file' };
+    return record;
+  });
+}
+
+function normalizeCapturedTaskState(state: unknown): unknown {
+  if (typeof state !== 'string' || !state.startsWith('TASK_STATE_')) return state;
+  return state.slice('TASK_STATE_'.length).toLowerCase().replaceAll('_', '-');
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value != null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 // ────────────────────────────────────────────────────────────

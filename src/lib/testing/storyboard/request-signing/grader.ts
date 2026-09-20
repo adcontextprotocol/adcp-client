@@ -2,7 +2,12 @@ import { randomBytes } from 'crypto';
 import { buildNegativeRequest, buildPositiveRequest, type BuildOptions, type SignedHttpRequest } from './builder';
 import { initializeMcpSession, probeSignedRequest, type ProbeResult } from './probe';
 import { loadRequestSigningVectors, type LoadVectorsOptions } from './vector-loader';
-import { captureA2aRequest, operationFromVectorUrl, type CapturedA2aRequest } from './a2a-dispatch';
+import {
+  captureA2aRequest,
+  createCachedA2aCardFetch,
+  operationFromVectorUrl,
+  type CapturedA2aRequest,
+} from './a2a-dispatch';
 import { loadSignedRequestsRunnerContract, type SignedRequestsRunnerContract } from './test-kit';
 import {
   InMemoryReplayStore,
@@ -253,7 +258,7 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
   // an isolated fetch interceptor. Cache only the immutable card response for
   // the duration of this grade to avoid rediscovering it 28 times.
   const dispatchOptions =
-    transport === 'a2a' ? { ...options, cardFetch: memoizeAgentCardFetch(options.cardFetch ?? fetch) } : options;
+    transport === 'a2a' ? { ...options, cardFetch: createCachedA2aCardFetch(agentUrl, options) } : options;
 
   const positive: VectorGradeResult[] = [];
   for (const vector of loaded.positive) {
@@ -444,38 +449,6 @@ function preflightSkip(
     }
   }
   return undefined;
-}
-
-function memoizeAgentCardFetch(upstream: typeof fetch): typeof fetch {
-  const responses = new Map<
-    string,
-    Promise<{ status: number; statusText: string; headers: [string, string][]; body: ArrayBuffer }>
-  >();
-  return async (input, init) => {
-    const request = new Request(input as RequestInfo, init);
-    if (request.method !== 'GET') return upstream(input, init);
-    let pending = responses.get(request.url);
-    if (!pending) {
-      pending = upstream(input, init).then(async response => ({
-        status: response.status,
-        statusText: response.statusText,
-        headers: (() => {
-          const entries: [string, string][] = [];
-          response.headers.forEach((value, name) => entries.push([name, value]));
-          return entries;
-        })(),
-        body: await response.arrayBuffer(),
-      }));
-      responses.set(request.url, pending);
-      pending.catch(() => responses.delete(request.url));
-    }
-    const cached = await pending;
-    return new Response(cached.body.slice(0), {
-      status: cached.status,
-      statusText: cached.statusText,
-      headers: cached.headers,
-    });
-  };
 }
 
 /**

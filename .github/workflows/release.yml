@@ -6,7 +6,11 @@ on:
       - main
       - 13.x
 
-concurrency: ${{ github.workflow }}-${{ github.ref }}
+concurrency:
+  # Dist-tags are package-global state. Serialize main and maintenance
+  # releases so an older branch cannot race a newer branch's latest update.
+  group: npm-release-dist-tags
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -79,12 +83,18 @@ jobs:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           NPM_CONFIG_PROVENANCE: true
 
-      - name: Report stable-line latest policy
+      - name: Reconcile stable-line latest policy
         if: steps.changesets.outputs.published == 'true' && github.ref_name == '13.x'
         run: node scripts/report-dist-tag-policy.mjs --apply
         env:
+          # Never infer this from the checkout: Changesets may publish a
+          # workspace package without publishing the root SDK package.
+          ADCP_PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.publishedPackages }}
           # OIDC remains authoritative for the adcp-3.1 publish. A classic
-          # token is optional and used only for the guarded second-tag move.
+          # token is used only for the guarded second-tag move. If latest
+          # should move and this secret is absent, the step reports the exact
+          # recovery command and fails instead of silently green-lighting a
+          # partially completed release.
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 

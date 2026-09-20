@@ -10,6 +10,7 @@ type ChangesetPreState = {
 };
 
 const PRE_STATE_PATH = resolve('.changeset/pre.json');
+const PACKAGE_PATH = resolve('package.json');
 const DEFAULT_RELEASE_TAG = 'latest';
 const isDryRun = process.argv.includes('--dry-run');
 
@@ -32,14 +33,28 @@ function runChangesetPublish(): number {
 }
 
 function resolvePublishTag(preState?: ChangesetPreState): string {
-  if (process.env.ADCP_NPM_TAG) return process.env.ADCP_NPM_TAG;
+  // A prerelease must never inherit a stable-line override such as
+  // `adcp-3.1`: doing so would publish an rc/beta under a stable tag.
   if (preState?.mode === 'pre' && preState.tag) return preState.tag;
+  if (process.env.ADCP_NPM_TAG) return process.env.ADCP_NPM_TAG;
   return DEFAULT_RELEASE_TAG;
+}
+
+function assertStableTagHasStableSdkVersion(tag: string): void {
+  if (tag !== 'latest' && tag !== 'adcp-3.1') return;
+  const version = JSON.parse(readFileSync(PACKAGE_PATH, 'utf8')).version;
+  if (typeof version === 'string' && version.includes('-')) {
+    throw new Error(
+      `Refusing to publish prerelease @adcp/sdk@${version} under stable npm dist-tag ${tag}; ` +
+        'restore Changesets pre-mode or choose an explicit prerelease tag.'
+    );
+  }
 }
 
 function main(): void {
   if (!existsSync(PRE_STATE_PATH)) {
     const tag = resolvePublishTag();
+    assertStableTagHasStableSdkVersion(tag);
     const publishArgs = ['publish', '--tag', tag];
     console.log(`Publishing packages under npm dist-tag ${tag}.`);
     if (isDryRun) {
@@ -57,6 +72,7 @@ function main(): void {
   const originalPreStateText = readFileSync(PRE_STATE_PATH, 'utf8');
   const preState = JSON.parse(originalPreStateText) as ChangesetPreState;
   const tag = resolvePublishTag(preState);
+  assertStableTagHasStableSdkVersion(tag);
   const publishArgs = ['publish', '--tag', tag];
 
   if (preState.mode !== 'pre') {

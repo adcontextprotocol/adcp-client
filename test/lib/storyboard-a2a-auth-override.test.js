@@ -1,7 +1,11 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
-const { runStoryboard, selectLastA2aSkillCapture } = require('../../dist/lib/testing/storyboard/runner.js');
+const {
+  normalizeCapturedA2AResult,
+  runStoryboard,
+  selectLastA2aSkillCapture,
+} = require('../../dist/lib/testing/storyboard/runner.js');
 
 function storyboard(auth = 'none') {
   return {
@@ -92,6 +96,125 @@ function capabilitiesResponse(id) {
 }
 
 describe('storyboard A2A auth overrides', () => {
+  test('normalizes native 1.0 task envelopes for transport-neutral validators', () => {
+    const result = normalizeCapturedA2AResult({
+      task: {
+        id: 'native-task',
+        contextId: 'native-context',
+        status: { state: 'TASK_STATE_COMPLETED' },
+        artifacts: [{ artifactId: 'result', parts: [{ data: { status: 'submitted', task_id: 'adcp-task' } }] }],
+      },
+    });
+
+    assert.strictEqual(result.kind, 'task');
+    assert.strictEqual(result.contextId, 'native-context');
+    assert.strictEqual(result.status.state, 'completed');
+    assert.strictEqual(result.artifacts[0].parts[0].kind, 'data');
+    assert.strictEqual(result.artifacts[0].parts[0].data.task_id, 'adcp-task');
+  });
+
+  test('native 1.0 submitted task envelopes reach A2A wire-shape validators', async () => {
+    const agentUrl = 'https://seller.example';
+    const rpcUrl = `${agentUrl}/rpc`;
+    const fetchFn = async (input, init = {}) => {
+      const url = String(input);
+      if (url.includes('/.well-known/')) {
+        const agentCard = card(rpcUrl);
+        agentCard.skills = ['get_adcp_capabilities', 'create_media_buy'].map(name => ({
+          id: name,
+          name,
+          description: `${name} fixture`,
+          tags: [],
+          examples: [],
+          inputModes: ['application/json'],
+          outputModes: ['application/json'],
+        }));
+        return new Response(JSON.stringify(agentCard), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      const body = JSON.parse(init.body);
+      const skill = body.params?.message?.parts?.[0]?.data?.skill;
+      if (skill === 'get_adcp_capabilities') {
+        const response = capabilitiesResponse(body.id);
+        response.result.task.artifacts[0].parts[0].data.tools = [{ name: 'create_media_buy' }];
+        response.result.task.artifacts[0].parts[0].data.supported_protocols = ['media_buy'];
+        return new Response(JSON.stringify(response), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: body.id,
+          result: {
+            task: {
+              id: 'native-a2a-task',
+              contextId: 'native-a2a-context',
+              status: { state: 'TASK_STATE_COMPLETED' },
+              artifacts: [
+                {
+                  artifactId: 'native-result',
+                  metadata: { adcp_task_id: 'adcp-async-task' },
+                  parts: [{ data: { status: 'submitted', task_id: 'adcp-async-task' } }],
+                },
+              ],
+            },
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    };
+    const submittedStoryboard = {
+      id: 'native_submitted',
+      version: '1.0.0',
+      adcp_version: '3.1.1',
+      title: 'Native submitted envelope',
+      category: 'media_buy_seller',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: 'media_buy_seller', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      phases: [
+        {
+          id: 'create',
+          title: 'Create',
+          steps: [
+            {
+              id: 'create_media_buy_async',
+              title: 'Create async',
+              task: 'create_media_buy',
+              stateful: true,
+              sample_request: {
+                brand: { brand_id: 'b1' },
+                account: { account_id: 'a1' },
+                start_time: '2026-05-01T00:00:00Z',
+                end_time: '2026-07-31T23:59:59Z',
+                packages: [{ product_id: 'p1', budget: 1000, pricing_option_id: 'cpm_standard' }],
+              },
+              validations: [{ check: 'a2a_submitted_artifact', description: 'native envelope is normalized' }],
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = await runStoryboard(agentUrl, submittedStoryboard, {
+      protocol: 'a2a',
+      agentTools: ['create_media_buy'],
+      transport: { trustedFetchFn: fetchFn },
+      _profile: { name: 'fixture', tools: ['create_media_buy'] },
+    });
+    const validation = result.phases[0].steps[0].validations.find(
+      candidate => candidate.check === 'a2a_submitted_artifact'
+    );
+    assert.ok(validation, JSON.stringify(result));
+    assert.strictEqual(validation.passed, true, JSON.stringify(validation));
+    assert.strictEqual(validation.observations, undefined, 'native envelope must be captured, not skipped');
+  });
+
   test('selects the last matching POST after an authorization retry', () => {
     const base = {
       url: 'https://seller.example/rpc',

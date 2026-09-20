@@ -218,6 +218,55 @@ describe('cancelA2ATask: Phase 2 signing (#1617)', () => {
     assert.ok(Object.prototype.hasOwnProperty.call(request, 'metadata'));
   });
 
+  test('native cancellation refuses a cross-origin endpoint when request signing is configured', async () => {
+    const rpcUrl = 'https://rpc.seller.example/a2a';
+    let rpcCalls = 0;
+    const fetchFn = async input => {
+      const url = String(input);
+      if (url.includes('/.well-known/')) {
+        return new Response(
+          JSON.stringify({
+            protocolVersion: '1.0',
+            name: 'Cross-origin signed cancellation fixture',
+            description: 'Signing credential isolation regression',
+            version: '1.0.0',
+            capabilities: {},
+            defaultInputModes: ['application/json'],
+            defaultOutputModes: ['application/json'],
+            skills: [],
+            supportedInterfaces: [{ url: rpcUrl, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      rpcCalls++;
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+
+    await assert.rejects(
+      cancelA2ATask(
+        {
+          id: 'cross-origin-signed',
+          name: 'Cross-origin signed',
+          agent_uri: 'https://seller.example/a2a',
+          protocol: 'a2a',
+          request_signing: {
+            kind: 'inline',
+            alg: 'ed25519',
+            kid: edRaw.kid,
+            private_key: edPrivateJwk,
+          },
+        },
+        'task-cross-origin-signed',
+        fetchFn,
+        undefined,
+        { enabled: false }
+      ),
+      /refused credentialed cross-origin dispatch/
+    );
+    assert.strictEqual(rpcCalls, 0, 'signed cross-origin RPC endpoint received no request');
+  });
+
   test('signs the cancel POST when agent.request_signing is configured (inline ed25519)', async () => {
     const seller = await startStrictSigningSeller();
     try {

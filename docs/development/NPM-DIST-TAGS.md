@@ -27,14 +27,23 @@ leaves the override empty so the release wrapper honors Changesets pre-mode
 This reflects the current main branch accurately: while main is in rc mode it
 does not publish to `latest`.
 
-After a 13.x publish, automation reads the registry's current `latest` and
+After Changesets reports that it actually published `@adcp/sdk` from 13.x,
+automation reads the registry's current `latest` and
 applies one of two guarded policies:
 
 - If `latest` is still major 13 and the optional `NPM_TOKEN` secret is present,
-  automation moves `latest` to the newly published version. Without that
-  credential it reports the exact manual `npm dist-tag add` command.
+  and the new version is newer, automation moves `latest` to the newly
+  published version. Without that credential it reports the exact manual
+  `npm dist-tag add` command and fails the release job so the partial release
+  cannot look complete.
 - If `latest` is major 14 or newer, leave it there; the maintenance release is
   intentionally available through `adcp-3.1` and its exact version only.
+
+Main and 13.x release jobs share one concurrency group. The policy re-reads
+`latest` immediately before mutation and refuses to move it backward. Registry
+read/parse failures likewise fail with an inspection and recovery command.
+The 13.x Changesets config ignores `@adcp/eslint-plugin`: this maintenance
+channel and its compatibility tag apply only to the root `@adcp/sdk` package.
 
 Set `ADCP_NPM_TAG` only when intentionally publishing a maintenance or alternate
 channel, for example `ADCP_NPM_TAG=adcp-3.0 npm run release`.
@@ -47,10 +56,10 @@ is a separate registry operation and is not covered by OIDC. The optional
 classic `NPM_TOKEN` is therefore scoped to the guarded `latest` move;
 `adcp-3.1` publishing continues to use trusted publishing.
 
-Changesets pre-mode normally uses the pre-mode tag for both the npm dist-tag and
-the semver prerelease identifier. The release wrapper keeps that pre-mode tag
-unless `ADCP_NPM_TAG` is set. That prevents prereleases from moving `latest`
-accidentally.
+Changesets pre-mode always uses the pre-mode tag for both the npm dist-tag and
+the semver prerelease identifier, even if `ADCP_NPM_TAG` is set. Post-publish
+reconciliation also rejects prerelease versions. Thus a prerelease cannot move
+either `adcp-3.1` or `latest`.
 
 ## Stable compatibility policy
 

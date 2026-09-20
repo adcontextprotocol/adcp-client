@@ -219,7 +219,7 @@ function getRepoRoot(): string {
  * Priority:
  *   1. `options.complianceDir` (explicit override, used by tests)
  *   2. `ADCP_COMPLIANCE_DIR` env var (full path including version dir, for packaged consumers)
- *   3. `{package-root}/compliance/cache/{version}` (default, ships with the npm package)
+ *   3. `{package-root}/compliance/cache/{version}` (development checkout cache)
  */
 export function getComplianceCacheDir(options: ResolveOptions = {}): string {
   const configured = getConfiguredComplianceDir(options);
@@ -238,8 +238,10 @@ function readAdcpVersion(): string {
 function complianceMissingMessage(what: string, path: string): string {
   return (
     `${what} not found at ${path}. ` +
-    `The compliance cache ships with @adcp/sdk — run \`npm i @adcp/sdk@latest\` (or \`npx @adcp/sdk@latest …\`) to pick up the current cache. ` +
-    `If developing locally, run \`npm run sync-schemas\` to populate the cache.`
+    `@adcp/sdk does not bundle historical compliance caches. For an exact version, pass ` +
+    `\`--compliance-dir /path/to/adcp-X.Y.Z/compliance\` and ` +
+    `\`--schema-root /path/to/adcp-X.Y.Z/schemas\` from the same protocol release. ` +
+    `If developing locally, run \`npm run sync-schemas\` to populate the checkout cache.`
   );
 }
 

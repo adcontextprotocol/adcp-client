@@ -257,8 +257,10 @@ adcp storyboard run myagent --storyboards creative-template
 # Limit to a subset of tracks
 adcp storyboard run myagent --tracks core,products,media_buy
 
-# Pin the compliance cache/spec line used for storyboard resolution
-adcp storyboard run myagent --compliance-version 3.0.12
+# Pin exact historical data from a matching external protocol bundle
+adcp storyboard run myagent --compliance-version 3.1.1 \
+  --compliance-dir /path/to/adcp-3.1.1/compliance \
+  --schema-root /path/to/adcp-3.1.1/schemas
 
 # Recommended for CI: --json for machine-readable output + --strict-flags
 # so stale flags fail the build instead of passing advisory warnings.
@@ -281,8 +283,9 @@ Useful flags:
 
 - `--storyboards ID,...`: Run specific storyboard or bundle IDs instead of capability-driven selection
 - `--tracks core,products,...`: Restrict the run to specific tracks
-- `--compliance-version VERSION`: Select the compliance cache/spec line, for example `3.0.12` or `3.1.0-beta.7`; use the same flag with `storyboard list`, `show`, and `step` when reproducing a pinned run
-- `--compliance-dir PATH`: Use a specific compliance cache directory, mainly for local protocol/cache development
+- `--compliance-version VERSION`: Select an exact compliance/spec line; historical versions require matching external `--compliance-dir` and `--schema-root` inputs because the npm package does not ship those caches
+- `--compliance-dir PATH`: Use an external compliance directory from the selected protocol release
+- `--schema-root PATH`: Use the schema bundle from that same external protocol release
 - `--a2a-legacy-compat`: Use the official A2A 0.3 compatibility client when grading a 0.3-only agent; native conformance otherwise uses A2A 1.0
 - `--brief TEXT`: Override the default sample discovery brief
 - `--dry-run`: Preview steps without executing

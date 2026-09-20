@@ -179,9 +179,9 @@ const CANCEL_TIMEOUT_MS = 5000;
 /**
  * Fire-and-forget A2A tasks/cancel for an in-flight task (A2A 0.3.0 §7.4).
  *
- * Sends a raw JSON-RPC 2.0 POST directly to the agent endpoint with the same
- * auth header shape as `callA2AToolImpl` (Bearer + x-adcp-auth). Does NOT
- * enter `callContextStorage` — debug-log capture and 401-cache-eviction are
+ * Uses the official A2A SDK cancel method with the same auth header shape as
+ * `callA2AToolImpl` (Bearer + x-adcp-auth). Does NOT enter
+ * `callContextStorage` — debug-log capture and 401-cache-eviction are
  * intentionally skipped for best-effort cancellation.
  *
  * **Auth-code OAuth gap:** `authToken` is resolved by `getAuthToken(agent)`,
@@ -258,7 +258,7 @@ export async function cancelA2ATask(
     const headers = new Headers(init.headers);
     const requestUrl = new URL(input instanceof Request ? input.url : input.toString());
     const nativeCrossOrigin = legacyCompat.enabled === false && requestUrl.origin !== new URL(agentUrl).origin;
-    if (nativeCrossOrigin && authToken) {
+    if (nativeCrossOrigin && (authToken || agent.request_signing)) {
       throw new Error(
         `A2A native cancel refused credentialed cross-origin dispatch to ${requestUrl.origin}; ` +
           `the agent origin is ${new URL(agentUrl).origin}`
@@ -420,7 +420,7 @@ function buildFetchImpl(authToken: string | undefined, agentUrl: string) {
     const nativeCrossOrigin =
       context?.legacyCompat?.enabled === false && new URL(urlString).origin !== new URL(agentUrl).origin;
     const suppressedCredentialHeaders = Object.keys(context?.customHeaders ?? {}).filter(isCredentialHeaderName);
-    if (nativeCrossOrigin && (authToken || suppressedCredentialHeaders.length > 0)) {
+    if (nativeCrossOrigin && (authToken || signingContext || suppressedCredentialHeaders.length > 0)) {
       throw new Error(
         `A2A native dispatch refused credentialed cross-origin endpoint ${new URL(urlString).origin}; ` +
           `the agent origin is ${new URL(agentUrl).origin}`

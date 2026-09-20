@@ -481,6 +481,25 @@ describe('storyboard runner AdCP version negotiation', () => {
     assert.deepStrictEqual(normalized.result.artifacts, []);
   });
 
+  test('native A2A messages with contextId remain messages and normalize their parts', () => {
+    const { normalizeNativeA2AResult } = require('../../dist/lib/protocols/a2a-native-v1.js');
+    const normalized = normalizeNativeA2AResult({
+      messageId: 'message-1',
+      contextId: 'context-1',
+      taskId: '',
+      role: 2,
+      parts: [{ content: { $case: 'data', value: { status: 'completed' } } }],
+    });
+
+    assert.strictEqual(normalized.result.kind, 'message');
+    assert.strictEqual(normalized.result.messageId, 'message-1');
+    assert.deepStrictEqual(normalized.result.parts[0], {
+      kind: 'data',
+      data: { status: 'completed' },
+      metadata: undefined,
+    });
+  });
+
   test('3.0 storyboards suppress exact adcp_version while preserving legacy major marker', async () => {
     const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
     const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
@@ -647,6 +666,19 @@ describe('storyboard runner AdCP version negotiation', () => {
         err.code === 'unsupported_adcp_version' &&
         /Compliance cache version/.test(err.message) &&
         /supported_versions \[3\.0\]/.test(err.message)
+    );
+  });
+
+  test('missing historical cache diagnostic requires matching external compliance and schema inputs', () => {
+    const { loadComplianceIndex } = require('../../dist/lib/testing/storyboard/compliance.js');
+    const missing = path.join(os.tmpdir(), 'adcp-missing-historical-3.1.1');
+    assert.throws(
+      () => loadComplianceIndex({ complianceDir: missing, version: '3.1.1' }),
+      err =>
+        /does not bundle historical compliance caches/.test(err.message) &&
+        /--compliance-dir/.test(err.message) &&
+        /--schema-root/.test(err.message) &&
+        !/cache ships with @adcp\/sdk/.test(err.message)
     );
   });
 

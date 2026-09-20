@@ -47,9 +47,8 @@ export async function callNativeA2ATool(options: {
     }
   }
   if (!client) {
-    const detail = lastError instanceof Error ? lastError.message : 'A2A agent card discovery failed';
     throw new Error(
-      `${detail}. Native conformance uses the official A2A 1.0 client; ` +
+      'A2A agent card discovery failed. Native conformance uses the official A2A 1.0 client; ' +
         'for a maintained A2A 0.3 server use transport.legacyCompat.enabled=true ' +
         '(CLI: --a2a-legacy-compat).',
       { cause: lastError }
@@ -160,8 +159,25 @@ export function createNativeCancelTaskRequest(id: string): CancelTaskRequest {
 }
 
 export function normalizeNativeA2AResult(result: any): { result: unknown } {
-  if (result && typeof result === 'object' && ('result' in result || 'error' in result)) return result;
-  if (result && typeof result === 'object' && ('status' in result || 'contextId' in result)) {
+  if (result && typeof result === 'object') {
+    const oneof = result.result ?? result;
+    const payload = oneof.task ?? oneof.message ?? (oneof.$case === 'task' ? oneof.task : undefined);
+    if (payload !== undefined) return normalizeNativeA2AResult(payload);
+    if ('error' in result) return result;
+  }
+  // Message.contextId is always materialized by the 1.0 protobuf runtime,
+  // including as an empty string. Check the message-only identifier first so
+  // a Message is never mistaken for a Task merely because it has contextId.
+  if (result && typeof result === 'object' && typeof result.messageId === 'string') {
+    return {
+      result: {
+        ...result,
+        kind: 'message',
+        parts: Array.isArray(result.parts) ? result.parts.map(normalizePart) : [],
+      },
+    };
+  }
+  if (result && typeof result === 'object' && ('status' in result || 'artifacts' in result || 'history' in result)) {
     return {
       result: {
         ...result,
@@ -189,9 +205,6 @@ export function normalizeNativeA2AResult(result: any): { result: unknown } {
           : [],
       },
     };
-  }
-  if (result && Array.isArray(result.parts)) {
-    return { result: { ...result, kind: 'message', parts: result.parts.map(normalizePart) } };
   }
   return { result };
 }

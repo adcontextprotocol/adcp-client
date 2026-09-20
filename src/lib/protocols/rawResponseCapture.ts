@@ -30,9 +30,8 @@ interface CaptureSlot {
   maxBodyBytes: number;
 }
 
-// Counted as UTF-16 code units (string.length), not UTF-8 bytes. Close
-// enough for ASCII-dominant response payloads and fine as a safety cap
-// against accidentally retaining huge responses.
+// Request bodies are bounded as UTF-8 bytes while streaming. Response bodies
+// retain the historical UTF-16 string cap below.
 const DEFAULT_MAX_BODY_BYTES = 1_048_576;
 
 export const rawResponseCaptureStorage = globalAsyncLocalStorage<CaptureSlot>('rawResponseCapture');
@@ -156,8 +155,31 @@ export function wrapFetchWithCapture(upstream: typeof fetch): typeof fetch {
 async function readRequestBodyFromClone(request: Request, maxBodyBytes: number): Promise<string | undefined> {
   if (request.bodyUsed || request.method === 'GET' || request.method === 'HEAD') return undefined;
   try {
-    const body = await request.clone().text();
-    return body.length <= maxBodyBytes ? body : undefined;
+    const body = request.clone().body;
+    if (!body) return '';
+    const reader = body.getReader();
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > maxBodyBytes) {
+        // This reader belongs to a tee created by Request.clone(). Awaiting
+        // cancellation can deadlock until the original branch is consumed,
+        // which cannot happen until this wrapper calls the upstream fetch.
+        void reader.cancel().catch(() => undefined);
+        return undefined;
+      }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return new TextDecoder().decode(bytes);
   } catch {
     return undefined;
   }

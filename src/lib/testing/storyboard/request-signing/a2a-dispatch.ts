@@ -10,6 +10,7 @@ import type { SendMessageRequest } from '@a2a-js/sdk-v1';
 import type { Client } from '@a2a-js/sdk-v1/client';
 
 const DEFAULT_CARD_FETCH_TIMEOUT_MS = 10_000;
+const MAX_CACHED_AGENT_CARD_BYTES = 1_048_576;
 const ADCP_A2A_EXTENSION = 'https://adcontextprotocol.org/extensions/adcp/v3';
 const CARD_DRIVEN_LEGACY_COMPAT = Object.freeze({ enabled: true });
 
@@ -138,6 +139,73 @@ function buildGuardedCardFetch(agentUrl: string, options: A2aDispatchOptions): t
     withAbortSignal([init.signal], options.timeoutMs ?? DEFAULT_CARD_FETCH_TIMEOUT_MS, signal =>
       transportFetch(input, { ...init, ...(signal ? { signal } : {}) })
     )) as typeof fetch;
+}
+
+/**
+ * Cache discovery within one grading run without turning the platform fetch
+ * into a trusted fetch override. The guarded transport performs DNS/private
+ * address enforcement before this wrapper sees a response.
+ */
+export function createCachedA2aCardFetch(agentUrl: string, options: A2aDispatchOptions = {}): typeof fetch {
+  const upstream = buildGuardedCardFetch(agentUrl, options);
+  const responses = new Map<
+    string,
+    Promise<{ status: number; statusText: string; headers: [string, string][]; body: Uint8Array }>
+  >();
+  return async (input, init) => {
+    const request = new Request(input as RequestInfo, init);
+    if (request.method !== 'GET') return upstream(input, init);
+    let pending = responses.get(request.url);
+    if (!pending) {
+      pending = upstream(input, init).then(async response => ({
+        status: response.status,
+        statusText: response.statusText,
+        headers: (() => {
+          const entries: [string, string][] = [];
+          response.headers.forEach((value, name) => entries.push([name, value]));
+          return entries;
+        })(),
+        body: await readCardBodyBounded(response, MAX_CACHED_AGENT_CARD_BYTES),
+      }));
+      responses.set(request.url, pending);
+      pending.catch(() => responses.delete(request.url));
+    }
+    const cached = await pending;
+    return new Response(cached.body.slice(), {
+      status: cached.status,
+      statusText: cached.statusText,
+      headers: cached.headers,
+    });
+  };
+}
+
+async function readCardBodyBounded(response: Response, maxBytes: number): Promise<Uint8Array> {
+  const declaredLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    await response.body?.cancel();
+    throw new Error(`A2A agent card exceeds the ${maxBytes}-byte discovery limit`);
+  }
+  if (!response.body) return new Uint8Array();
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    length += value.byteLength;
+    if (length > maxBytes) {
+      await reader.cancel();
+      throw new Error(`A2A agent card exceeds the ${maxBytes}-byte discovery limit`);
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
 }
 
 export function operationFromVectorUrl(vectorUrl: string): string {
