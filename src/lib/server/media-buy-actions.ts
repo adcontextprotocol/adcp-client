@@ -180,7 +180,7 @@ function actionNotAllowed(
     currentlyAvailable.every(
       entry =>
         actionFitsErrorDetails(entry.action, version) &&
-        ['self_serve', 'conditional_self_serve', 'seller_managed', 'requires_approval', 'requires_proposal'].includes(
+        ['self_serve', 'conditional_self_serve', 'seller_managed', 'requires_approval'].includes(
           entry.mode as string
         ) &&
         liveActionFitsVersion(entry, version)

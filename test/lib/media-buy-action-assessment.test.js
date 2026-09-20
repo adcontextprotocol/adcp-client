@@ -2100,6 +2100,7 @@ test('unknown-direction legacy rollups require a task common to every possible c
 
 test('pre-GA requires_proposal is recognized for recovery but never grants mutation authority', () => {
   const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  const { getSchemaValidatorByRef } = require('../../dist/lib/validation/schema-loader.js');
   const state = {
     status: 'active',
     end_time: '2027-02-01T00:00:00Z',
@@ -2113,9 +2114,13 @@ test('pre-GA requires_proposal is recognized for recovery but never grants mutat
   assert.equal(preflight.denials[0].recovery.kind, 'createProposal');
   assert.throws(
     () => assertUpdateMediaBuyAllowed(state, request),
-    error =>
-      error.code === 'ACTION_NOT_ALLOWED' &&
-      error.details.reason === 'mode_mismatch' &&
-      error.details.currently_available_actions[0].mode === 'requires_proposal'
+    error => {
+      assert.equal(error.code, 'ACTION_NOT_ALLOWED');
+      assert.equal(error.details.reason, 'mode_mismatch');
+      assert.equal(error.details.currently_available_actions, undefined);
+      const validate = getSchemaValidatorByRef('error-details/action-not-allowed.json');
+      assert.equal(validate(error.details), true, JSON.stringify(validate.errors));
+      return true;
+    }
   );
 });
