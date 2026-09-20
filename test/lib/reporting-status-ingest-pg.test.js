@@ -951,7 +951,7 @@ describe('sync_reporting_status ingest', { skip: !DATABASE_URL && 'PostgreSQL UR
     };
     await reference.store.putConfiguration(bounded);
     const context = { account: { account_id: request.account.account_id }, consumer: 'fixture-consumer-bounds' };
-    const statusAsOf = new Date(anchor + 5 * day).toISOString();
+    const statusAsOf = new Date(anchor + 3 * day + bounded.schedule.deliverySlaMilliseconds).toISOString();
     const sync = ledger.createSyncReportingStatusHandler(reference.store, {
       resolveConsumerId: value => value.consumer,
       now: () => new Date(anchor + 6 * day),
@@ -976,13 +976,13 @@ describe('sync_reporting_status ingest', { skip: !DATABASE_URL && 'PostgreSQL UR
         statuses: [
           {
             ...statement(2, 'fixture-status-official-early'),
-            status_as_of: new Date(anchor + 3 * day + 1).toISOString(),
+            status_as_of: new Date(anchor + 3 * day - 1).toISOString(),
           },
         ],
       },
       context
     );
-    assert.equal(premature.results[0].result, 'failed', 'official absence waits for the declared finality time');
+    assert.equal(premature.results[0].result, 'failed', 'official absence still waits for protocol delivery_sla');
     const response = await sync(
       {
         account: request.account,

@@ -275,16 +275,11 @@ interface ExpectedReportingPeriodBase {
    */
   deliverySlaSeconds?: number;
   /**
-   * Offset used instead of `deliverySlaSeconds` when `requiredFinality` is
-   * `official`, if the seller advertises one.
+   * Private source-finality cutoff retained for adopter compatibility.
    *
-   * `reporting-schedule.json` defines only `delivery_sla`, but this repo's own
-   * seller ingest anchors `expected_at` for official-finality generations on a
-   * separate `officialAfterMilliseconds` and rejects a missing-status statement
-   * dated before it. Without a matching pin a buyer on an official generation
-   * posts at `period.end + delivery_sla`, is refused, and — because that
-   * statement takes no clock input — rebuilds the identical body and is refused
-   * again on every run. Leave it unset when the seller does not advertise one.
+   * This value never replaces the protocol due-time pin: rc.4 defines
+   * obligation `expected_at` as `period.end + delivery_sla` for every
+   * finality. It may still describe an adopter's source-readiness policy.
    */
   officialAfterSeconds?: number;
   /**
@@ -2043,22 +2038,10 @@ function reportingExpectedAt(
   // exists precisely to be independent of the seller, is overridden. The pin
   // is the buyer's answer to "when was this due"; the seller's schedule is
   // only a last resort for a buyer that has no answer of its own.
-  // `reporting-schedule.json` defines exactly one offset — `delivery_sla`,
-  // "expected_at equals the resolved period end plus this duration" — with no
-  // finality qualifier, and `official_after` appears nowhere in the 3.2.0-rc.3
-  // schemas. It is an extension this repo's own producer and ingest carry, so
-  // `officialAfterSeconds` is a courtesy for sellers that use it and
-  // `deliverySlaSeconds` stays the spec-defined answer when they do not.
-  //
-  // An earlier revision refused that fallback, on the theory that the seller
-  // would reject the result. Measured false: with no `officialAfterMilliseconds`
-  // configured the seller accepts the `delivery_sla`-derived instant, so
-  // refusing silenced a conformant period. A wrong deadline is at least visible
-  // as an item-local rejection in `failedConsumerStatuses`; silence is not.
-  const slaSeconds =
-    expected.requiredFinality === 'official'
-      ? (expected.officialAfterSeconds ?? expected.deliverySlaSeconds)
-      : expected.deliverySlaSeconds;
+  // `reporting-schedule.json` defines exactly one protocol due-time offset —
+  // `delivery_sla` — with no finality qualifier. A private source-finality
+  // cutoff must not silently move the buyer's obligation clock.
+  const slaSeconds = expected.deliverySlaSeconds;
   const periodEnd = Date.parse(expected.periodEnd);
   if (typeof slaSeconds === 'number' && Number.isFinite(slaSeconds) && slaSeconds >= 0 && Number.isFinite(periodEnd)) {
     const pinned = periodEnd + slaSeconds * 1_000;
@@ -2083,12 +2066,9 @@ function reportingExpectedAt(
  * accepts — and silence a conformant seller, which is the whole failure this
  * fallback exists to prevent.
  */
-/** `period.end` plus whichever offset the buyer recorded, or `undefined`. */
+/** `period.end` plus the protocol delivery-SLA pin, or `undefined`. */
 function pinnedExpectedAt(expected: ExpectedReportingPeriod): string | undefined {
-  const slaSeconds =
-    expected.requiredFinality === 'official'
-      ? (expected.officialAfterSeconds ?? expected.deliverySlaSeconds)
-      : expected.deliverySlaSeconds;
+  const slaSeconds = expected.deliverySlaSeconds;
   const periodEnd = Date.parse(expected.periodEnd);
   if (typeof slaSeconds !== 'number' || !Number.isFinite(slaSeconds) || slaSeconds < 0) return undefined;
   if (!Number.isFinite(periodEnd)) return undefined;
@@ -2096,11 +2076,10 @@ function pinnedExpectedAt(expected: ExpectedReportingPeriod): string | undefined
   return isRepresentableInstant(pinned) ? new Date(pinned).toISOString() : undefined;
 }
 
-function localExpectedAtPin(expected: ExpectedReportingPeriod): string {
-  // Naming the wrong pin is expensive: an official-finality generation dated
-  // from `delivery_sla` is refused by the seller, and because that statement
-  // takes no clock input it is rebuilt identically and refused on every run.
-  return expected.requiredFinality === 'official' ? 'officialAfterSeconds' : 'deliverySlaSeconds';
+function localExpectedAtPin(): string {
+  // rc.4 gives every finality the same public due-time rule. A private source
+  // finalization pin cannot substitute for the protocol delivery SLA.
+  return 'deliverySlaSeconds';
 }
 
 function reportingScheduledExpectedAt(
@@ -2399,7 +2378,7 @@ function consumerStatusSchedule(
       deadlineGap:
         malformedExpectedAt !== undefined
           ? { cause: 'unreadable_expected_at', value: malformedExpectedAt }
-          : { cause: 'missing_pin', pin: localExpectedAtPin(expected) },
+          : { cause: 'missing_pin', pin: localExpectedAtPin() },
     };
   }
   if (typeof windowSeconds !== 'number' || !Number.isFinite(windowSeconds) || windowSeconds < 0) {
