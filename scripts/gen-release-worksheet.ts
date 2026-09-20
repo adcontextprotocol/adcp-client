@@ -83,7 +83,7 @@ ESM example:
 import { getCanonicalToolValidator } from '@adcp/sdk/schemas';
 
 const validate = getCanonicalToolValidator('get_reporting_status', 'sync', {
-  adcpVersion: '3.2.0-rc.3',
+  adcpVersion: '${pkg.adcp_version}',
 });
 if (!validate) throw new Error('Requested protocol schema is unavailable');
 
@@ -106,7 +106,7 @@ CommonJS uses the same packed-artifact export:
 \`\`\`js
 const { getCanonicalToolValidator } = require('@adcp/sdk/schemas');
 const validate = getCanonicalToolValidator('get_reporting_status', 'sync', {
-  adcpVersion: '3.2.0-rc.3',
+  adcpVersion: '${pkg.adcp_version}',
 });
 if (!validate) throw new Error('Requested protocol schema is unavailable');
 if (validate({ status: 'completed', view: 'summary' })) {

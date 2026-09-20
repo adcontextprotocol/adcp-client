@@ -467,7 +467,7 @@ describe('version scoping', { skip: !legacyAvailable }, () => {
     const caps = {
       supported_protocols: ['media_buy'],
       specialisms: ['sales-guaranteed'],
-      supported_versions: ['3.1', '3.2', '3.2.0-rc.3'],
+      supported_versions: ['3.1', '3.2', '3.2.0-rc.4'],
       major_versions: [3],
     };
     for (const version of ['3.1.18', ADCP_VERSION]) {
@@ -1039,8 +1039,8 @@ describe('real AdCP 3.2 bundle aggregates', { skip: !scenariosAvailable }, () =>
     }
   });
 
-  test('the cache census behind the scope claim holds: 170 gated files, 14 compliance_testing', () => {
-    // File-level census, which is what the changeset's "156 of 170" claims.
+  test('the cache census behind the scope claim holds: 174 gated files, 14 compliance_testing', () => {
+    // File-level census, which is what the changeset's "160 of 174" claims.
     // Distinct storyboard ids are fewer, because the same scenario is carried
     // in more than one bundle directory — both numbers are asserted so the
     // claim cannot drift silently in either direction.
@@ -1087,9 +1087,9 @@ describe('real AdCP 3.2 bundle aggregates', { skip: !scenariosAvailable }, () =>
       if (segments.includes('compliance_testing')) controllerGatedFiles.push(file);
     }
 
-    assert.equal(gatedFiles.length, 170, 'root capability-gated file census drifted');
+    assert.equal(gatedFiles.length, 174, 'root capability-gated file census drifted');
     assert.equal(controllerGatedFiles.length, 14, 'compliance_testing-gated file census drifted');
-    assert.equal(gatedFiles.length - controllerGatedFiles.length, 156, 'eligible census drifted');
+    assert.equal(gatedFiles.length - controllerGatedFiles.length, 160, 'eligible census drifted');
 
     // Normalization, not prefix matching: padded case and a nested namespace
     // are both recognised and both keep capping.

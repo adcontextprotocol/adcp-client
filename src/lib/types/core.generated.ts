@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.2.0-rc.3
-// Generated at: 2026-09-15T15:55:21.867Z
+// Generated AdCP core types from official schemas v3.2.0-rc.4
+// Generated at: 2026-09-20T02:35:08.020Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -13510,7 +13510,7 @@ export interface Error {
   details?: {
   };
   /**
-   * Agent recovery classification. transient: retry after delay (rate limit, service unavailable, timeout). correctable: fix the request and resend (invalid field, budget too low, creative rejected). terminal: requires human action (account suspended, payment required, account not found). Senders SHOULD populate `recovery` on every error from 3.1 onward — it is the normative carrier of recovery semantics across version skew. When `buyer_reason` is present, `recovery` is required and MUST classify that buyer-actionable reason. If the enclosing code and buyer reason are both registered, their standard recovery classifications MUST agree with each other and with this field. A receiver that does not recognize `error.code` (a newer code, or a platform-specific code) MUST still be able to classify the error from `recovery`. The `enumMetadata.recovery` block in `enums/error-code.json` is the documentary mirror for known top-level and buyer-reason codes; `error.recovery` on the wire is authoritative.
+   * Agent recovery classification. transient: retry after delay (rate limit, service unavailable, timeout). correctable: fix the request and resend (invalid field, budget too low, creative rejected). terminal: requires human action (account suspended, payment required, account not found). AdCP 3.2 producers MUST populate `recovery` on every error; 3.1 producers SHOULD populate it. The shared 3.x schema intentionally does not add `recovery` to `required` so retained and live errors from earlier 3.x producers remain decodable. When `buyer_reason` is present, `recovery` is required and MUST classify that buyer-actionable reason. If the enclosing code and buyer reason are both registered, their standard recovery classifications MUST agree with each other and with this field. A receiver that does not recognize `error.code` (a newer code, or a platform-specific code) MUST still be able to classify the error from `recovery`. When a legacy error omits `recovery`, receivers use the registered classification for a known code and fall back to `transient` for an unknown code, subject to the bounded retry budget. The `enumMetadata.recovery` block in `enums/error-code.json` is the documentary mirror for known top-level and buyer-reason codes; `error.recovery` on the wire is authoritative when present.
    */
   recovery?: 'transient' | 'correctable' | 'terminal';
   /**
@@ -29391,6 +29391,11 @@ export type CollectionSelection = SelectedCollections | ProductDefaultCollection
  */
 export interface Collection {
   /**
+   * Publisher namespace that owns this collection. Required for supply-path verification when the declaration is read from a cross-origin authoritative document; it must match the publisher whose origin delegated retrieval. A pointer alone cannot claim another publisher's collection. May be omitted for a publisher-origin document, where that origin supplies the namespace.
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+   */
+  publisher_domain?: string;
+  /**
    * Publisher-assigned identifier for this collection. Declared in the publisher's adagents.json collections array. Products reference collections via collection selectors with publisher_domain and collection_ids. Use distribution identifiers for cross-seller matching across publishers.
    */
   collection_id: string;
@@ -34197,6 +34202,10 @@ export type RegistryEvent = {
         role: AdCPProtocol;
         verified_specialisms: string[];
         adcp_version?: string;
+        /**
+         * Grading profile that produced the badge. Historical events emitted before profile selection may omit this field and are Legacy.
+         */
+        grading_profile?: 'legacy' | 'spec';
       };
     }
   | {
@@ -34207,6 +34216,10 @@ export type RegistryEvent = {
         role: AdCPProtocol;
         reason: string;
         adcp_version?: string;
+        /**
+         * Grading profile in force when the badge was lost. Historical events emitted before profile selection may omit this field and are Legacy.
+         */
+        grading_profile?: 'legacy' | 'spec';
       };
     }
   | {
@@ -38111,6 +38124,51 @@ export interface VehicleItem {
   assets?: OfferingAssetGroup[];
   ext?: ExtensionObject;
 }
+
+// core/verification-token-claims.json
+export type VerificationTokenMode = 'spec' | 'live';
+
+/**
+ * Claims carried by an AgenticAdvertising.org EdDSA verification token. The registry API remains authoritative for real-time badge status. Tokens issued before grading-profile selection may omit grading_profile and are interpreted as Legacy.
+ */
+export interface AgenticAdvertisingOrgVerificationTokenClaims {
+  iss: 'https://aao.org';
+  sub: string;
+  aud: 'aao-verification';
+  /**
+   * @minLength 1
+   */
+  jti: string;
+  /**
+   * @minimum 0
+   * @format int
+   */
+  iat: number;
+  /**
+   * @minimum 0
+   * @format int
+   */
+  exp: number;
+  agent_url: string;
+  role: 'media-buy' | 'creative' | 'signals' | 'governance' | 'brand' | 'sponsored-intelligence';
+  verified_specialisms: string[];
+  verification_modes: VerificationTokenMode[];
+  /**
+   * Grading policy that produced the badge. Absence on a historical token means Legacy; verification_modes remains an independent evidence axis.
+   */
+  grading_profile?: 'legacy' | 'spec';
+  /**
+   * Start of the current Strict Spec failure episode. Omitted when no Strict Spec failure clock is active. The registry remains authoritative for real-time status.
+   * @format date-time
+   */
+  first_failing_spec_at?: string;
+  /**
+   * @pattern ^[1-9][0-9]*\.[0-9]+$
+   */
+  adcp_version?: string;
+  protocol_version?: string;
+}
+
 
 // core/webhook-challenge-response.json
 /**

@@ -12,7 +12,7 @@ describe('version-aware tool JSON Schemas (#2678)', () => {
   it('selects distinct 3.0, 3.1, and 3.2 request schemas and reports the resolved release', () => {
     const v30 = getToolInputSchema('create_media_buy', { adcpVersion: '3.0' });
     const v31 = getToolInputSchema('create_media_buy', { adcpVersion: '3.1' });
-    const v32 = getToolInputSchema('create_media_buy', { adcpVersion: '3.2.0-rc.3' });
+    const v32 = getToolInputSchema('create_media_buy', { adcpVersion: '3.2.0-rc.4' });
 
     assert.strictEqual(v30.bundleKey, '3.0');
     assert.strictEqual(v30.resolvedVersion, '3.0.25');
@@ -24,8 +24,8 @@ describe('version-aware tool JSON Schemas (#2678)', () => {
     assert.strictEqual(v31.schema.properties.adcp_major_version, undefined);
     assert.ok(v31.schema.properties.paused);
 
-    assert.strictEqual(v32.bundleKey, '3.2.0-rc.3');
-    assert.strictEqual(v32.resolvedVersion, '3.2.0-rc.3');
+    assert.strictEqual(v32.bundleKey, '3.2.0-rc.4');
+    assert.strictEqual(v32.resolvedVersion, '3.2.0-rc.4');
     assert.strictEqual(v32.schema.deprecated, true);
     assert.deepStrictEqual(v32.schema['x-superseded-by'], ['buy_products', 'accept_proposal']);
   });
@@ -61,7 +61,7 @@ describe('version-aware tool JSON Schemas (#2678)', () => {
 
   it('compiles the complete canonical response graph with all-error diagnostics', () => {
     const validate = getCanonicalToolValidator('get_reporting_status', 'sync', {
-      adcpVersion: '3.2.0-rc.3',
+      adcpVersion: '3.2.0-rc.4',
     });
     assert.ok(validate);
 
@@ -85,10 +85,10 @@ describe('version-aware tool JSON Schemas (#2678)', () => {
 
   it('does not apply live-wire response-root relaxation to canonical validators', () => {
     const canonical = getCanonicalToolValidator('control_media_buy', 'sync', {
-      adcpVersion: '3.2.0-rc.3',
+      adcpVersion: '3.2.0-rc.4',
     });
     const { getValidator } = require('../../dist/lib/validation/schema-loader.js');
-    const runtime = getValidator('control_media_buy', 'sync', '3.2.0-rc.3');
+    const runtime = getValidator('control_media_buy', 'sync', '3.2.0-rc.4');
     const envelopeExtended = {
       status: 'completed',
       media_buy_id: 'media-buy-1',
@@ -103,7 +103,7 @@ describe('version-aware tool JSON Schemas (#2678)', () => {
   });
 
   it('validates mirrored async response roots across archived releases', () => {
-    for (const adcpVersion of ['3.1', '3.2.0-rc.3']) {
+    for (const adcpVersion of ['3.1', '3.2.0-rc.4']) {
       for (const variant of ['submitted', 'working', 'input-required']) {
         const validate = getCanonicalToolValidator('get_products', variant, { adcpVersion });
         assert.ok(validate, `${adcpVersion} ${variant}`);
@@ -112,11 +112,11 @@ describe('version-aware tool JSON Schemas (#2678)', () => {
   });
 
   it('returns undefined for an unknown canonical tool and exposes immutable authored documents', () => {
-    assert.strictEqual(getCanonicalToolValidator('not_a_tool', 'sync', { adcpVersion: '3.2.0-rc.3' }), undefined);
+    assert.strictEqual(getCanonicalToolValidator('not_a_tool', 'sync', { adcpVersion: '3.2.0-rc.4' }), undefined);
 
-    const root = getToolResponseSchema('get_reporting_status', { adcpVersion: '3.2.0-rc.3' });
-    const document = getSchemaDocumentByRef('media-buy/get-reporting-status-response.json', '3.2.0-rc.3');
-    assert.match(root.schema.$id, /\/bundled\/media-buy\/get-reporting-status-response\.json$/);
+    const root = getToolResponseSchema('get_reporting_status', { adcpVersion: '3.2.0-rc.4' });
+    const document = getSchemaDocumentByRef('media-buy/get-reporting-status-response.json', '3.2.0-rc.4');
+    assert.match(root.schema.$id, /\/media-buy\/get-reporting-status-response\.json$/);
     assert.match(document.schema.$id, /\/media-buy\/get-reporting-status-response\.json$/);
     assert.strictEqual(document.schema._bundled, undefined);
     assert.strictEqual(Object.isFrozen(document.schema), true);
@@ -125,7 +125,7 @@ describe('version-aware tool JSON Schemas (#2678)', () => {
   it('exposes the canonical validator from the ESM schema entry point', async () => {
     const esm = await import('../../dist/lib/schemas/index.mjs');
     const validate = esm.getCanonicalToolValidator('get_reporting_status', 'sync', {
-      adcpVersion: '3.2.0-rc.3',
+      adcpVersion: '3.2.0-rc.4',
     });
     assert.ok(validate);
     assert.strictEqual(

@@ -372,25 +372,22 @@ describe('schema-loader per-version state', () => {
     );
   });
 
-  test('ensureCoreLoaded narrowing keeps v3 bundled-path validators intact', () => {
+  test('ensureCoreLoaded narrowing keeps v3 bundled validators intact', () => {
     // Regression guard for the v2.5-schemas branch: when ensureCoreLoaded was
     // narrowed from "skip all fileIndex entries" to "skip only response tool
-    // files" so v2.5 flat-tree fragments register, v3's bundled-path
-    // validators must still resolve through getValidator unchanged. Bundled
-    // and flat-tree request schemas have distinct $ids (bundled has
-    // `/schemas/<v>/bundled/...` vs flat `/schemas/<v>/...`), so no
-    // AJV-side collision; this test pins that invariant. Targets the
-    // currently-shipped bundle (ADCP_VERSION); on 3.0.x it pinned '3.0.1'.
+    // files" so v2.5 flat-tree fragments register, v3's bundled validators
+    // must still resolve through getValidator unchanged. Bundled and flat-tree
+    // request schemas may share a canonical $id, so the loader must isolate
+    // their AJV registries while retaining the public id.
     _resetValidationLoader(ADCP_VERSION);
     const v = getValidator('create_media_buy', 'request', ADCP_VERSION);
     assert.ok(v, 'v3 create_media_buy::request must compile after narrowing');
-    // Schema reference should point at the bundled file (the path the loader
-    // selects when the bundled tree exists).
+    // RC4 publishes the bundled root under the canonical authored schema id.
     const schema = v.schema;
     assert.match(
       schema.$id,
-      /\/bundled\//,
-      `expected bundled $id, got: ${schema.$id} — bundled-path priority must survive ensureCoreLoaded narrowing`
+      /^https:\/\/adcontextprotocol\.org\/schemas\/3\.2\.0-rc\.4\/media-buy\/create-media-buy-request\.json$/,
+      `expected canonical bundled $id, got: ${schema.$id}`
     );
   });
 

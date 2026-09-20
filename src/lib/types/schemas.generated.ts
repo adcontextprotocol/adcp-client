@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-16T00:18:37.656Z
+// Generated at: 2026-09-20T02:37:01.361Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -6730,6 +6730,7 @@ export const CollectionIdentifierSchema = z.object({
 }).passthrough();
 
 export const CollectionSchema = z.object({
+    publisher_domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/).optional(),
     collection_id: z.string(),
     name: z.string(),
     kind: CollectionKindSchema.optional(),
@@ -7631,6 +7632,25 @@ export const TruncationSentinelSchema = z.object({
         preview: z.string().optional(),
         preview_format: z.string().optional()
     }).passthrough()
+}).passthrough();
+
+export const VerificationTokenModeSchema = z.union([z.literal("spec"), z.literal("live")]);
+
+export const AgenticAdvertisingOrgVerificationTokenClaimsSchema = z.object({
+    iss: z.literal("https://aao.org"),
+    sub: z.string(),
+    aud: z.literal("aao-verification"),
+    jti: z.string().min(1),
+    iat: z.int().min(0),
+    exp: z.int().min(0),
+    agent_url: z.string(),
+    role: z.union([z.literal("media-buy"), z.literal("creative"), z.literal("signals"), z.literal("governance"), z.literal("brand"), z.literal("sponsored-intelligence")]),
+    verified_specialisms: z.array(z.string()),
+    verification_modes: z.array(VerificationTokenModeSchema),
+    grading_profile: z.union([z.literal("legacy"), z.literal("spec")]).optional(),
+    first_failing_spec_at: z.iso.datetime().optional(),
+    adcp_version: z.string().regex(/^[1-9][0-9]*\.[0-9]+$/).optional(),
+    protocol_version: z.string().optional()
 }).passthrough();
 
 export const WebhookChallengeResponseSchema = z.object({
@@ -9583,7 +9603,6 @@ export const ReportingMaterializationSchema = z.object({}).strict().merge(z.obje
 }).strict());
 
 export const SummaryViewSchema = z.object({
-    status: z.literal("completed"),
     view: z.literal("summary")
 }).passthrough().superRefine((value, ctx) => {
         // get_reporting_status view required fields
@@ -9595,7 +9614,6 @@ export const SummaryViewSchema = z.object({
     });
 
 export const PeriodsViewSchema = z.object({
-    status: z.literal("completed"),
     view: z.literal("periods"),
     pagination: z.object({}).passthrough()
 }).passthrough().superRefine((value, ctx) => {
@@ -9608,7 +9626,6 @@ export const PeriodsViewSchema = z.object({
     });
 
 export const RevisionViewSchema = z.object({
-    status: z.literal("completed"),
     view: z.literal("revision"),
     pagination: z.object({}).passthrough()
 }).passthrough().superRefine((value, ctx) => {
@@ -14829,7 +14846,8 @@ export const RegistryEventSchema = z.object({
             agent_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
             role: AdCPProtocolSchema,
             verified_specialisms: z.array(z.string()),
-            adcp_version: z.string().optional()
+            adcp_version: z.string().optional(),
+            grading_profile: z.union([z.literal("legacy"), z.literal("spec")]).optional()
         }).passthrough().optional()
     }).passthrough(), z.object({
         event_type: z.literal("agent.verification_lost"),
@@ -14838,7 +14856,8 @@ export const RegistryEventSchema = z.object({
             agent_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
             role: AdCPProtocolSchema,
             reason: z.string(),
-            adcp_version: z.string().optional()
+            adcp_version: z.string().optional(),
+            grading_profile: z.union([z.literal("legacy"), z.literal("spec")]).optional()
         }).passthrough().optional()
     }).passthrough(), z.object({
         event_type: z.literal("publisher.adagents_discovered"),
@@ -18851,6 +18870,7 @@ export const GetAdCPCapabilitiesResponseSchema: z.ZodObject<{ [K in keyof GetAdC
         sandbox: z.boolean().optional()
     }).passthrough().optional(),
     media_buy: z.object({
+        anonymous_discovery: z.boolean().optional(),
         acceptance_policy_discovery: z.object({
             catalog_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(/^https:\/\//),
             catalog_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
@@ -19004,6 +19024,7 @@ export const GetAdCPCapabilitiesResponseSchema: z.ZodObject<{ [K in keyof GetAdC
         }).passthrough().optional()
     }).passthrough().optional(),
     signals: z.object({
+        anonymous_discovery: z.boolean().optional(),
         data_provider_domains: z.array(z.string()).optional(),
         discovery_modes: z.array(z.union([z.literal("brief"), z.literal("wholesale")])).optional(),
         features: z.object({
@@ -19279,8 +19300,9 @@ export const SyncAccountsSuccessSchema = z.object({
     dry_run: z.boolean().optional(),
     accounts: z.array(z.object({
         account_id: z.string().optional(),
-        brand: BrandReferenceSchema,
-        operator: z.string(),
+        account: AccountReferenceSchema.optional(),
+        brand: BrandReferenceSchema.optional(),
+        operator: z.string().optional(),
         operator_unit: OperatorUnitSchema.optional(),
         revision: z.int().min(1).optional(),
         identity_change: AccountIdentityChangeSchema.optional(),
@@ -19289,7 +19311,7 @@ export const SyncAccountsSuccessSchema = z.object({
         timezone: z.string().min(1).optional(),
         name: z.string().optional(),
         action: z.union([z.literal("created"), z.literal("updated"), z.literal("unchanged"), z.literal("failed")]),
-        status: z.union([z.literal("active"), z.literal("pending_approval"), z.literal("rejected"), z.literal("payment_required"), z.literal("suspended"), z.literal("closed")]),
+        status: z.union([z.literal("active"), z.literal("pending_approval"), z.literal("rejected"), z.literal("payment_required"), z.literal("suspended"), z.literal("closed")]).optional(),
         billing: BillingPartySchema.optional(),
         billing_entity: BusinessEntitySchema.optional(),
         destination_billing_entity: z.object({}).passthrough().optional(),
@@ -20775,7 +20797,7 @@ export const ComplyTestControllerRequestSchema: z.ZodObject<Record<string, z.Zod
         plan_id: z.string().optional(),
         rights_id: z.string().optional(),
         fixture: z.object({}).passthrough().optional(),
-        operation: z.union([z.literal("seed_inaccessible_item"), z.literal("query_eligibility"), z.literal("advance_time"), z.literal("recreate_catalog"), z.literal("prepare"), z.literal("expire_proposal"), z.literal("publish_zero_row"), z.literal("publish_nonempty"), z.literal("restate_snapshot"), z.literal("restate_after_received"), z.literal("omit_obligation"), z.literal("publish_official_adjustment"), z.literal("probe_scheduler_dst"), z.literal("suppress_readiness"), z.literal("advance_within_retention"), z.literal("revoke_access"), z.literal("publish_adjustment")]).optional(),
+        operation: z.union([z.literal("seed_inaccessible_item"), z.literal("query_eligibility"), z.literal("advance_time"), z.literal("recreate_catalog"), z.literal("prepare"), z.literal("expire_proposal"), z.literal("publish_zero_row"), z.literal("publish_nonempty"), z.literal("restate_snapshot"), z.literal("restate_after_received"), z.literal("omit_obligation"), z.literal("advance_past_status_deadline"), z.literal("advance_past_escalation"), z.literal("publish_official_adjustment"), z.literal("probe_scheduler_dst"), z.literal("suppress_readiness"), z.literal("advance_within_retention"), z.literal("revoke_access"), z.literal("publish_adjustment")]).optional(),
         target_health: z.union([z.literal("delayed"), z.literal("action_required")]).optional(),
         received_reporting_revision_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/).optional(),
         advance_to: z.union([z.literal("within_grace"), z.literal("past_grace")]).optional(),

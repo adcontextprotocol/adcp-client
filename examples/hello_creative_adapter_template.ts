@@ -76,6 +76,7 @@ const PUBLIC_AGENT_URL = process.env['PUBLIC_AGENT_URL'] ?? `http://127.0.0.1:${
 // platforms expose a global format catalog or the workspace tied to the API
 // key's principal; the mock fixture keys templates per workspace.
 const DEFAULT_LISTING_WORKSPACE = process.env['DEFAULT_LISTING_WORKSPACE'] ?? 'ws_acme_studio';
+const SEEDED_ACCOUNTS = new Map<string, Record<string, unknown>>();
 assertNoExampleTlds(
   { DEFAULT_LISTING_WORKSPACE, PUBLIC_AGENT_URL },
   { allowIn: ['test', 'development'], checklistPath: 'examples/hello_creative_adapter_template.ts' }
@@ -470,6 +471,7 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
       },
     },
     config: {},
+    compliance_testing: {},
   };
 
   accounts: AccountStore<CreativeMeta> = {
@@ -496,6 +498,7 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
           id: DEFAULT_LISTING_WORKSPACE,
           name: DEFAULT_LISTING_WORKSPACE,
           status: 'active',
+          mode: 'sandbox',
           ctx_metadata: { workspace_id: DEFAULT_LISTING_WORKSPACE, advertiser_domain: '' },
         };
       }
@@ -507,19 +510,41 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
       // SWAP: add a `lookupWorkspaceByAccountId(ref.account_id)` upstream
       // call before this branch falls through to brand-domain lookup.
       if ('account_id' in ref) {
-        // Mock has no account_id → workspace_id index. Real adapters look up
-        // by their own seller-assigned account_id and skip the domain
-        // resolver entirely. Until the upstream gains that index, treat as
-        // unknown rather than silently fall through.
-        return null;
+        const fixture = SEEDED_ACCOUNTS.get(ref.account_id);
+        if (!fixture) return null;
+        const fixtureBrand = fixture['brand'];
+        const advertiserDomain =
+          fixtureBrand != null && typeof fixtureBrand === 'object'
+            ? (fixtureBrand as { domain?: unknown }).domain
+            : undefined;
+        if (typeof advertiserDomain !== 'string') return null;
+        const workspaceId = await upstream.lookupWorkspace(advertiserDomain);
+        if (!workspaceId) return null;
+        return {
+          id: ref.account_id,
+          name: advertiserDomain,
+          status: 'active',
+          mode: fixture['sandbox'] === false ? 'live' : 'sandbox',
+          ...(typeof fixture['operator'] === 'string' && { operator: fixture['operator'] }),
+          brand: { domain: advertiserDomain },
+          ctx_metadata: { workspace_id: workspaceId, advertiser_domain: advertiserDomain },
+        };
       }
-      const advertiserDomain = ref.brand.domain;
+      // TEST-ONLY: the runner's controller client supplies its own synthetic
+      // sandbox reference. Resolve that principal to this example's known
+      // workspace so the controller is visible before seed_account creates
+      // the storyboard's account ids.
+      const advertiserDomain =
+        ref.sandbox === true && ref.brand.domain === 'test.example' ? 'acmeoutdoor.example' : ref.brand.domain;
       const workspaceId = await upstream.lookupWorkspace(advertiserDomain);
       if (!workspaceId) return null;
       return {
         id: workspaceId,
         name: advertiserDomain,
         status: 'active',
+        mode: ref.sandbox === true ? 'sandbox' : 'live',
+        ...(ref.operator !== undefined && { operator: ref.operator }),
+        brand: { domain: advertiserDomain },
         ctx_metadata: { workspace_id: workspaceId, advertiser_domain: advertiserDomain },
       };
     },
@@ -786,6 +811,13 @@ serve(
       resolveSessionKey: ctx => {
         const acct = ctx.account as Account<CreativeMeta> | undefined;
         return acct?.id ?? 'anonymous';
+      },
+      complyTest: {
+        seed: {
+          account: ({ account_id, fixture }) => {
+            SEEDED_ACCOUNTS.set(account_id, fixture);
+          },
+        },
       },
     }),
   {

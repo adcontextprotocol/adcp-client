@@ -232,6 +232,7 @@ export const VASTTrackingEventValues = ["impression", "creativeView", "loaded", 
 export const VASTVersionValues = ["2.0", "3.0", "4.0", "4.1", "4.2", "4.3"] as const;
 export const VendorRelationshipValues = ["first_party", "affiliated", "third_party"] as const;
 export const VerificationStatusValues = ["owned", "pending_review", "transferring", "disputed", "not_ours", "archived", "licensed_in", "licensed_out", "unknown"] as const;
+export const VerificationTokenModeValues = ["spec", "live"] as const;
 export const VideoPlacementTypeValues = ["instream", "accompanying_content", "interstitial", "standalone"] as const;
 export const ViewabilityStandardValues = ["mrc", "groupm"] as const;
 export const ViewThresholdBasisValues = ["play_time", "in_view"] as const;

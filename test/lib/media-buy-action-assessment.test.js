@@ -48,7 +48,7 @@ function buy(terms = [term()], extra = {}) {
   state.available_actions ??= mediaBuyActionResolver.resolve({
     buy: state,
     decide: accept,
-    adcpVersion: '3.2.0-rc.3',
+    adcpVersion: '3.2.0-rc.4',
   }).available_actions;
   return state;
 }
@@ -545,7 +545,7 @@ test('rc.3 package-scoped grants cannot authorize siblings or buy-wide changes',
   const state = buy([term('increase_budget')]);
   state.available_actions = mediaBuyActionResolver.resolve({
     buy: state,
-    adcpVersion: '3.2.0-rc.3',
+    adcpVersion: '3.2.0-rc.4',
     decide: () => ({ ...accept(), applicable_package_ids: ['p1'] }),
   }).available_actions;
   for (const request of [
@@ -564,7 +564,7 @@ test('rc.3 package-scoped grants cannot authorize siblings or buy-wide changes',
     mediaBuyActionResolver.resolve({
       buy: state,
       wireVersion: '3.1',
-      adcpVersion: '3.2.0-rc.3',
+      adcpVersion: '3.2.0-rc.4',
       decide: () => ({ ...accept(), applicable_package_ids: ['p1'] }),
     }).available_actions.length,
     0
@@ -785,7 +785,7 @@ test('scoped package pause and resume require known package state and negotiated
   });
   state.available_actions = mediaBuyActionResolver.resolve({
     buy: state,
-    adcpVersion: '3.2.0-rc.3',
+    adcpVersion: '3.2.0-rc.4',
     decide: t => ({ ...accept(), applicable_package_ids: t.action === 'pause' ? ['p1'] : ['p2'] }),
   }).available_actions;
   assert.equal(preflightUpdateMediaBuy(state, { packages: [{ package_id: 'p1', paused: true }] }).ok, true);
@@ -1168,7 +1168,7 @@ test('terminal package state overrides stale pause toggles in preflight and live
       assert.equal(
         mediaBuyActionResolver.resolve({
           buy: state,
-          adcpVersion: '3.2.0-rc.3',
+          adcpVersion: '3.2.0-rc.4',
           decide: () => ({ ...accept(), applicable_package_ids: ['p1'] }),
         }).available_actions.length,
         0
@@ -1188,7 +1188,7 @@ test('seller lifecycle scope respects default unpaused state and excludes explic
   });
   const projection = mediaBuyActionResolver.resolve({
     buy: state,
-    adcpVersion: '3.2.0-rc.3',
+    adcpVersion: '3.2.0-rc.4',
     decide: () => ({ ...accept(), applicable_package_ids: ['p1', 'p2', 'p3', 'p4'] }),
   });
   assert.deepEqual(projection.available_actions.find(a => a.action === 'pause').applicable_package_ids, ['p1', 'p3']);
@@ -1242,7 +1242,7 @@ test('served version is explicit at both seller emission and assertion boundarie
   });
   assert.deepEqual(defaultProjection.available_actions[0].applicable_package_ids, ['p1']);
   assert.equal(assertUpdateMediaBuyAllowed(state, request).ok, true);
-  assert.equal(assertUpdateMediaBuyAllowed(state, request, { adcpVersion: '3.2.0-rc.3' }).ok, true);
+  assert.equal(assertUpdateMediaBuyAllowed(state, request, { adcpVersion: '3.2.0-rc.4' }).ok, true);
   assert.throws(
     () => assertUpdateMediaBuyAllowed(state, request, { adcpVersion: '3.2.0-rc.2' }),
     e => e.code === 'ACTION_NOT_ALLOWED'
@@ -1270,8 +1270,8 @@ test('legacy compatibility enforces served versions for native shared caps and p
         error => error.code === 'ACTION_NOT_ALLOWED'
       );
     }
-    assert.equal(preflightUpdateMediaBuy(state, request, { adcpVersion: '3.2.0-rc.3' }).ok, true);
-    assert.equal(assertUpdateMediaBuyAllowed(state, request, { adcpVersion: '3.2.0-rc.3' }).ok, true);
+    assert.equal(preflightUpdateMediaBuy(state, request, { adcpVersion: '3.2.0-rc.4' }).ok, true);
+    assert.equal(assertUpdateMediaBuyAllowed(state, request, { adcpVersion: '3.2.0-rc.4' }).ok, true);
   }
 });
 
@@ -1797,7 +1797,7 @@ test('served early-beta versions cannot emit or execute later term identities an
         error => error.code === 'ACTION_NOT_ALLOWED'
       );
     }
-    for (const adcpVersion of ['3.2.0-beta.9', '3.2.0-beta.10', '3.2.0-rc.1', '3.2.0-rc.2', '3.2.0-rc.3', '3.2.0']) {
+    for (const adcpVersion of ['3.2.0-beta.9', '3.2.0-beta.10', '3.2.0-rc.1', '3.2.0-rc.2', '3.2.0-rc.4', '3.2.0']) {
       const projection = mediaBuyActionResolver.resolve({ buy: state, decide: accept, adcpVersion });
       assert.equal(projection.available_actions.length, 1);
       assert.equal(projection.available_actions[0].change_term_id, 'right_pause');
@@ -1854,7 +1854,7 @@ test('metadata authority and legacy task fields obey the served version across b
   const { preflightMediaBuyActions } = require('../../dist/lib/media-buy/actions.js');
   const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
   const request = { name: 'Renamed campaign' };
-  for (const adcpVersion of ['3.1.19', '3.2.0-beta.8', '3.2.0-beta.9', '3.2.0-rc.3']) {
+  for (const adcpVersion of ['3.1.19', '3.2.0-beta.8', '3.2.0-beta.9', '3.2.0-rc.4']) {
     for (const mode of ['self_serve', 'seller_managed']) {
       const state = {
         status: 'active',

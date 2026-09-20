@@ -407,7 +407,7 @@ test('rc.3 deliberately supports the revised accepted-snapshot contract without 
   const { getSchemaDocumentByRef } = require('../../dist/lib/validation/schema-loader.js');
   const { commercialTermsSchemaSupportError } = require('../../dist/lib/negotiation/commercial-terms-schema.js');
   const contract = require('../fixtures/proposal-commercial-terms/rc3-product-purchase-validation.json');
-  for (const version of ['3.2.0-rc.2', '3.2.0-rc.3']) {
+  for (const version of ['3.2.0-rc.2', '3.2.0-rc.4']) {
     const load = ref => {
       const source = getSchemaDocumentByRef(ref)?.schema;
       if (!source) return undefined;
@@ -418,7 +418,7 @@ test('rc.3 deliberately supports the revised accepted-snapshot contract without 
       return document;
     };
     const error = commercialTermsSchemaSupportError(load('media-buy/commercial-terms.json'), version, load);
-    if (version === '3.2.0-rc.3') assert.equal(error, undefined);
+    if (version === '3.2.0-rc.4') assert.equal(error, undefined);
     else assert.match(error, /unreviewed commercial-term validation semantics/);
   }
 });
