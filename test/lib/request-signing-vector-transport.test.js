@@ -40,8 +40,8 @@ test('a2a vector dispatch reports missing coverage, not agent inapplicability', 
   });
 
   assert.strictEqual(result.skipped, true);
-  // The reason names the runner's own inability; what keeps the track partial
-  // is that no vector reached the agent — see the aggregate tests below.
+  // The reason names the fail-closed discovery gap; what keeps the track
+  // partial is that no vector reached the agent — see the aggregate tests below.
   assert.strictEqual(result.skip_reason, 'signing_transport_unavailable');
   // Canonical `not_applicable` with the sub-reason token as `skip.detail` is
   // the shape runner-output-contract.yaml defines for a registered
@@ -49,11 +49,11 @@ test('a2a vector dispatch reports missing coverage, not agent inapplicability', 
   // (`signingCoverage`), not on the canonical reason.
   assert.strictEqual(DETAILED_SKIP_TO_CANONICAL[result.skip_reason], 'not_applicable');
   assert.strictEqual(result.status, 0);
-  assert.strictEqual(result.error, SIGNING_VECTORS_UNAVAILABLE_DETAIL);
+  assert.ok(result.error.startsWith(SIGNING_VECTORS_UNAVAILABLE_DETAIL));
   // The operator has to be able to act on the skip: say it is a gap, and
   // name the remedy.
   assert.match(result.error, /Coverage unavailable/);
-  assert.match(result.error, /--signing-transport/);
+  assert.match(result.error, /publish a reachable modern or legacy Agent Card/);
 });
 
 test('an a2a run still grades the in-library vector', async () => {

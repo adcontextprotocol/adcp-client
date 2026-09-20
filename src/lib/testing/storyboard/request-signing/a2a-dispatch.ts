@@ -1,0 +1,316 @@
+/**
+ * A2A dispatch for request-signing vectors, through the OFFICIAL client.
+ *
+ * ## Why this exists, and why it is not a third hand-written binding
+ *
+ * RFC 9421 grading needs two things that pull against each other: the request
+ * must be the one a real buyer's stack emits (or the grade says nothing about
+ * interop), and the signature must cover the EXACT bytes that go on the wire
+ * (or the verifier reconstructs a different signature base and every vector
+ * fails for the wrong reason).
+ *
+ * Hand-building an A2A envelope satisfies the second and forfeits the first:
+ * the method name, the proto-JSON enum spellings, the payload key and the
+ * version header all become this file's guesses about a protocol it does not
+ * own. That is the objection that closed adcp-client#2964, and it was a fair
+ * one.
+ *
+ * So this module does neither. It drives `@a2a-js/sdk`'s own `ClientFactory`
+ * and intercepts at the SDK's own `fetchImpl` seam — the request captured
+ * there is the one the official client built and was about to send, byte for
+ * byte. We sign those bytes and hand them to the existing hardened probe.
+ *
+ * What the SDK decides, and this file therefore never writes down:
+ *
+ * | decision              | who makes it                                  |
+ * |-----------------------|-----------------------------------------------|
+ * | endpoint              | the agent card's `supportedInterfaces[]`      |
+ * | JSON-RPC method name  | the SDK, per the card's `protocolVersion`     |
+ * | `a2a-version` header  | the SDK, from that same version               |
+ * | proto-JSON encoding   | the SDK (`role` → `"ROLE_USER"`, not `1`)     |
+ * | wire version          | the SDK client selected from the card         |
+ *
+ * That table is the whole argument. Observed, not assumed — against a card
+ * declaring `1.0` the client emits `{"method":"SendMessage",...}` with
+ * `a2a-version: 1.0`; against `0.3.0` it emits `{"method":"tasks/cancel",...}`
+ * with `a2a-version: 0.3` for the same `cancelTask` call.
+ *
+ * ## The version header is inside the signature base, not added after it
+ *
+ * Capture happens BEFORE signing. `a2a-version` is therefore part of the
+ * request the signer sees, which is the only ordering that works: the verifier
+ * reconstructs the base from the headers it received, so a header appended
+ * after signing sits outside the base the signer computed.
+ *
+ * ## Peer dependency
+ *
+ * `@a2a-js/sdk` is a peer dependency. The import is dynamic and lives inside
+ * the A2A path, so grading an MCP agent never loads it and an adopter grading
+ * MCP is never required to install it.
+ */
+
+import { createAgentTransportFetch } from '../../../net/agent-transport-fetch';
+import { withAbortSignal } from '../../../protocols/abort';
+import { buildCardUrls } from '../../../utils/a2a-discovery';
+import type { SendMessageRequest } from '@a2a-js/sdk';
+import type { Client } from '@a2a-js/sdk/client';
+
+const DEFAULT_CARD_FETCH_TIMEOUT_MS = 10_000;
+const ADCP_A2A_EXTENSION = 'https://adcontextprotocol.org/extensions/adcp/v3';
+
+/**
+ * A request the official A2A client produced: everything needed to sign it and
+ * put it on the wire, and nothing this module invented.
+ */
+export interface CapturedA2aRequest {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body: string;
+}
+
+/**
+ * What to ask the official client for.
+ *
+ * `sendMessage` carries an AdCP operation invocation — the shape every
+ * tool-targeting vector needs. `cancelTask` is the native task-lifecycle call
+ * that vector 028 (`protocol_methods_required_for`) grades; naming it here
+ * rather than framing a body means the SDK picks the method string for the
+ * card's declared version (`tasks/cancel` on 0.3, `CancelTask` on 1.0), which
+ * is the distinction the seller's `protocol_methods_*` declaration is made
+ * against.
+ */
+export type A2aCall =
+  | { kind: 'sendMessage'; operation: string; args: Record<string, unknown> }
+  | { kind: 'cancelTask'; taskId: string };
+
+/** Thrown by the capturing `fetchImpl` to unwind once the request exists. */
+class RequestCaptured extends Error {
+  constructor(readonly captured: CapturedA2aRequest) {
+    super('a2a request captured');
+  }
+}
+
+export interface A2aDispatchOptions {
+  /** Abort budget for the card fetch, in milliseconds. */
+  timeoutMs?: number;
+  /** Permit private addresses while resolving the agent card. */
+  allowPrivateIp?: boolean;
+  /**
+   * Injected trusted fetch for tests and custom runtimes. Production card
+   * discovery uses the SDK's guarded, DNS-pinned transport fetch.
+   */
+  cardFetch?: typeof fetch;
+}
+
+/**
+ * The `legacyCompat` policy every dispatch in this file uses, named once so the
+ * two call sites cannot drift apart.
+ *
+ * `enabled: true` reads like "prefer the old dialect", and it is worth being
+ * precise that it does not mean that, because the naming invites exactly the
+ * wrong fix. MEASURED against `@a2a-js/sdk`, one `cancelTask`, four
+ * combinations:
+ *
+ * | card    | `enabled` | method emitted | `a2a-version` |
+ * |---------|-----------|----------------|---------------|
+ * | `1.0`   | `true`    | `CancelTask`   | `1.0`         |
+ * | `1.0`   | `false`   | `CancelTask`   | `1.0`         |
+ * | `0.3.0` | `true`    | `tasks/cancel` | `0.3`         |
+ * | `0.3.0` | `false`   | `CancelTask`   | `1.0`         |
+ *
+ * So `true` is the CARD-FOLLOWING setting: a 1.0 card is never downgraded (the
+ * first two rows are byte-identical), and a 0.3 card gets the `tasks/*` family
+ * the AdCP spec names for it (security.mdx @ 3.1.1 :1045 cites "A2A 0.3.0
+ * §7.x"). `false` is the setting that ignores the card — the last row is a
+ * 1.0 frame sent to an agent that published 0.3, silently, which is the class
+ * of defect this whole module exists to remove.
+ *
+ * A conformance runner grades the agent that the card describes, so the policy
+ * that defers to the card is the only correct one here. This is deliberately
+ * NOT operator-configurable at this layer: a flag that let a run select framing
+ * the agent never advertised would produce a verdict about an agent that does
+ * not exist. adcp-client#2973 tracks the separate questions of the library-wide
+ * default and a CLI knob.
+ */
+const CARD_DRIVEN_LEGACY_COMPAT = Object.freeze({ enabled: true });
+
+/**
+ * Drive the official client for *call* and return the request it emitted.
+ *
+ * The client is constructed per call rather than cached: `ClientFactory`
+ * resolves the agent card during construction, and a vector run that reused
+ * one client across vectors would be grading against a card snapshot taken
+ * before the run rather than the agent as it stands. The card fetch is one
+ * request against an endpoint the run is already dialling.
+ */
+export async function captureA2aRequest(
+  agentUrl: string,
+  call: A2aCall,
+  options: A2aDispatchOptions = {}
+): Promise<CapturedA2aRequest> {
+  const { ClientFactory, JsonRpcTransportFactory, ServiceParameters, withA2AExtensions } =
+    await import('@a2a-js/sdk/client');
+  const { Role } = await import('@a2a-js/sdk');
+
+  const capturingFetch: typeof fetch = async (input, init) => {
+    const request = new Request(input as RequestInfo, init);
+    const headers: Record<string, string> = {};
+    request.headers.forEach((value, name) => {
+      headers[name] = value;
+    });
+    throw new RequestCaptured({
+      url: request.url,
+      method: request.method,
+      headers,
+      body: await request.text(),
+    });
+  };
+
+  // The card fetch must NOT go through the capturing fetch — that fetch exists
+  // to intercept the graded request, and swallowing the card fetch with it
+  // would leave the factory with no card at all. Keep discovery on the same
+  // DNS-pinned, redirect-checked transport used by production protocol calls,
+  // with a caller-facing deadline even when an injected fetch ignores abort.
+  const cardFetch = buildGuardedCardFetch(agentUrl, options);
+  const factory = new ClientFactory({
+    transports: [
+      new JsonRpcTransportFactory({
+        fetchImpl: capturingFetch,
+        legacyCompat: CARD_DRIVEN_LEGACY_COMPAT,
+      }),
+    ],
+    cardResolver: await buildCardResolver(cardFetch),
+  });
+
+  const client = await createCardDrivenClient(agentUrl, factory);
+  const legacyWire = client.protocolVersion?.startsWith('0.') ?? false;
+
+  try {
+    if (call.kind === 'cancelTask') {
+      await client.cancelTask({ tenant: '', id: call.taskId, metadata: undefined });
+    } else {
+      const invocation = legacyWire
+        ? { skill: call.operation, parameters: call.args }
+        : { skill: call.operation, input: call.args };
+      const request: SendMessageRequest = {
+        tenant: '',
+        message: {
+          messageId: cryptoRandomId(),
+          contextId: '',
+          taskId: '',
+          role: Role.ROLE_USER,
+          parts: [
+            {
+              content: { $case: 'data', value: invocation },
+              metadata: undefined,
+              filename: '',
+              mediaType: 'application/json',
+            },
+          ],
+          metadata: undefined,
+          extensions: legacyWire ? [] : [ADCP_A2A_EXTENSION],
+          referenceTaskIds: [],
+        },
+        configuration: undefined,
+        metadata: undefined,
+      };
+      await client.sendMessage(request, {
+        ...(legacyWire ? {} : { serviceParameters: ServiceParameters.create(withA2AExtensions(ADCP_A2A_EXTENSION)) }),
+      });
+    }
+  } catch (err) {
+    if (err instanceof RequestCaptured) return err.captured;
+    throw err;
+  }
+
+  throw new Error(`the A2A client returned without issuing a request for ${call.kind}; nothing was captured to sign`);
+}
+
+async function buildCardResolver(cardFetch: typeof fetch) {
+  const { DefaultAgentCardResolver } = await import('@a2a-js/sdk/client');
+  return new DefaultAgentCardResolver({ fetchImpl: cardFetch, legacyCompat: CARD_DRIVEN_LEGACY_COMPAT });
+}
+
+async function createCardDrivenClient(
+  agentUrl: string,
+  factory: { createFromUrl(baseUrl: string, path?: string): Promise<Client> }
+): Promise<Client> {
+  let lastError: unknown;
+  for (const cardUrl of buildCardUrls(agentUrl)) {
+    try {
+      return await factory.createFromUrl(cardUrl, '');
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('A2A agent card discovery failed');
+}
+
+function buildGuardedCardFetch(agentUrl: string, options: A2aDispatchOptions): typeof fetch {
+  const transportFetch = createAgentTransportFetch(agentUrl, {
+    ...(options.cardFetch ? { trustedFetchFn: options.cardFetch } : {}),
+    allowPrivateIp: options.allowPrivateIp === true,
+  });
+  const timeoutMs = options.timeoutMs ?? DEFAULT_CARD_FETCH_TIMEOUT_MS;
+  return ((input: RequestInfo | URL, init: RequestInit = {}) =>
+    withAbortSignal([init.signal], timeoutMs, signal =>
+      transportFetch(input, {
+        ...init,
+        ...(signal ? { signal } : {}),
+      })
+    )) as typeof fetch;
+}
+
+function cryptoRandomId(): string {
+  return globalThis.crypto.randomUUID();
+}
+
+/**
+ * The AdCP operation a vector targets, read off its recorded REST URL.
+ *
+ * Identical derivation to the MCP path's `extractOperationFromVectorUrl`, and
+ * deliberately so: both bindings name the operation, and a vector's operation
+ * is a property of the vector rather than of the transport carrying it.
+ */
+export function operationFromVectorUrl(vectorUrl: string): string {
+  const segments = new URL(vectorUrl).pathname.split('/').filter(Boolean);
+  const last = segments[segments.length - 1];
+  if (!last || !/^[a-z][a-z0-9_]*$/.test(last)) {
+    throw new Error(`Cannot extract an AdCP operation name from vector URL: ${vectorUrl}`);
+  }
+  return last;
+}
+
+/**
+ * Resolve the agent card and confirm the official client can dispatch to it.
+ *
+ * Throws when the card does not resolve or declares no interface the SDK's
+ * JSONRPC transport can drive. Callers treat that as "no A2A dispatch here"
+ * rather than framing a request against a guess.
+ */
+export async function resolveA2aDispatchTarget(
+  agentUrl: string,
+  options: A2aDispatchOptions = {}
+): Promise<{ endpoint: string }> {
+  const { ClientFactory, JsonRpcTransportFactory } = await import('@a2a-js/sdk/client');
+  let endpoint = '';
+  const noteEndpoint: typeof fetch = async (input, init) => {
+    endpoint = new Request(input as RequestInfo, init).url;
+    throw new RequestCaptured({ url: endpoint, method: 'POST', headers: {}, body: '' });
+  };
+  const factory = new ClientFactory({
+    transports: [new JsonRpcTransportFactory({ fetchImpl: noteEndpoint, legacyCompat: CARD_DRIVEN_LEGACY_COMPAT })],
+    cardResolver: await buildCardResolver(buildGuardedCardFetch(agentUrl, options)),
+  });
+  // `createFromUrl` fetches and normalizes the card and selects the interface;
+  // it throws when no transport matches, which IS the availability answer.
+  const client = await createCardDrivenClient(agentUrl, factory);
+  try {
+    await client.cancelTask({ tenant: '', id: 'a2a-dispatch-probe', metadata: undefined });
+  } catch (err) {
+    if (err instanceof RequestCaptured) return { endpoint };
+    throw err;
+  }
+  throw new Error('the A2A client returned without issuing a dispatch probe; no endpoint was resolved');
+}

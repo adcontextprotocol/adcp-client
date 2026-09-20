@@ -13,6 +13,7 @@ import {
 } from '../../../signing';
 import { findKey } from './vector-loader';
 import type { NegativeVector, PositiveVector, TestKeyset, TestKeypair } from './types';
+import type { CapturedA2aRequest } from './a2a-dispatch';
 
 export interface BuildOptions {
   /** Override the signer clock (unix seconds). Defaults to `Date.now()/1000`. */
@@ -55,8 +56,27 @@ export interface BuildOptions {
    * the verifier runs (adcontextprotocol/adcp#6548). REST-binding agents
    * pass `'raw'` explicitly — `adcp storyboard run --signing-transport raw`
    * or `adcp grade request-signing --transport raw`.
+   *
+   * `'a2a'` takes the request the OFFICIAL `@a2a-js/sdk` client emitted and
+   * signs those bytes. Nothing about the A2A wire is framed here: the endpoint,
+   * the JSON-RPC method name, the `a2a-version` header and the proto-JSON
+   * encoding are all the SDK's, captured at its own `fetchImpl` seam
+   * (`a2a-dispatch.ts`) and handed in via {@link BuildOptions.a2aRequest}. It
+   * trades the same canonicalization-edge coverage as MCP mode and for the same
+   * reason: both route every vector to the one endpoint the agent declares.
    */
-  transport?: 'raw' | 'mcp';
+  transport?: 'raw' | 'mcp' | 'a2a';
+  /**
+   * The request the official A2A client produced for this vector. REQUIRED
+   * when `transport` is `'a2a'` and meaningless otherwise.
+   *
+   * Passed in rather than produced here because capturing it is asynchronous
+   * (the SDK resolves the agent card first) while this builder is synchronous
+   * — and because a builder that could reach the network would make signing
+   * depend on a fetch, which is the kind of coupling that turns a signature
+   * mismatch into an unreadable failure.
+   */
+  a2aRequest?: CapturedA2aRequest;
   /**
    * JSON-RPC `id` for the MCP envelope. Defaults to `crypto.randomUUID()`
    * so concurrent runs never collide. Override for tests that need a stable
@@ -332,6 +352,7 @@ function passthrough(vector: NegativeVector, options: BuildOptions): SignedHttpR
  * the vector's URL verbatim otherwise.
  */
 function protocolMethodPassthrough(vector: NegativeVector, options: BuildOptions): SignedHttpRequest {
+  if (options.transport === 'a2a') return passthrough(vector, options);
   const url = options.baseUrl ?? vector.request.url;
   const headers = { ...vector.request.headers };
   // MCP Streamable HTTP requires this Accept negotiation header on JSON-RPC
@@ -429,8 +450,61 @@ interface TransportShapedRequest {
  * Shared call site for `sign`, `signWithParamOverride`, `signWithComponents`
  * so every mutation path produces MCP-shaped requests when requested.
  */
+
+/**
+ * Merge *overrides* onto *base*, treating header names case-insensitively.
+ *
+ * An override replaces any base entry matching case-insensitively and keeps the
+ * OVERRIDE's spelling, so a header the two sides spell differently
+ * (`Content-Type` vs `content-type`) goes on the wire exactly ONCE. A plain
+ * object spread is case-sensitive and sends it twice, which a conformant
+ * verifier refuses at checklist step 1 before grading anything.
+ */
+function mergeHeadersCaseInsensitively(
+  base: Record<string, string>,
+  overrides: Record<string, string>
+): Record<string, string> {
+  const overridden = new Set(Object.keys(overrides).map(name => name.toLowerCase()));
+  const merged: Record<string, string> = {};
+  for (const [name, value] of Object.entries(base)) {
+    if (!overridden.has(name.toLowerCase())) merged[name] = value;
+  }
+  return { ...merged, ...overrides };
+}
+
 function applyTransport(vector: PositiveVector | NegativeVector, options: BuildOptions): TransportShapedRequest {
   const headers = { ...vector.request.headers };
+  if (options.transport === 'a2a') {
+    if (!options.a2aRequest) {
+      throw new Error(
+        `transport: 'a2a' requires a2aRequest — the request captured from the official ` +
+          `@a2a-js/sdk client (see a2a-dispatch.ts). Framing one here would be this repo ` +
+          `inventing an A2A binding, which is the thing that transport exists not to do.`
+      );
+    }
+    // THE FIXTURE WINS; the transport only fills gaps. The client's headers
+    // supply what the wire needs and the fixture does not set (`a2a-version`,
+    // `accept`), but where a vector names a header it is naming it ON PURPOSE —
+    // vector 022 presents a deliberately multi-valued `Content-Type`, and that
+    // header IS the fault under test. Letting the transport's clean
+    // `content-type` overwrite it destroys the vector: the agent then answers
+    // about some other defect, and the run grades a request nobody meant to
+    // send.
+    //
+    // CASE-INSENSITIVELY, because HTTP header names are. A plain object spread
+    // is case-SENSITIVE, so a fixture's `Content-Type` and the client's
+    // `content-type` both survive it and the request goes out carrying the
+    // header twice — which a conformant verifier refuses at checklist step 1 as
+    // `request_signature_header_malformed`, before it evaluates anything the
+    // vector actually grades. Measured against a live agent: 16 of 27 A2A
+    // vector failures were this and nothing else.
+    return {
+      method: options.a2aRequest.method,
+      url: options.a2aRequest.url,
+      headers: mergeHeadersCaseInsensitively(options.a2aRequest.headers, headers),
+      body: options.a2aRequest.body,
+    };
+  }
   if (options.transport === 'mcp') {
     if (!options.baseUrl) {
       throw new Error(`transport: 'mcp' requires a baseUrl (the MCP endpoint, e.g. http://agent/mcp)`);

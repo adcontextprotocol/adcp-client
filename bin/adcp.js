@@ -2180,17 +2180,15 @@ WEBHOOK OPTIONS:
                                   HTTP-on-the-wire — spec-compliant.
 
 REQUEST-SIGNING VECTOR OPTIONS (signed_requests storyboard):
-  --signing-transport raw|mcp     How the RFC 9421 conformance vectors are
+  --signing-transport raw|mcp|a2a How the RFC 9421 conformance vectors are
                                   framed on the wire. NOT the same as
                                   --transport/--protocol, which selects how the
                                   storyboard itself talks to the agent. Default:
                                   inferred from the resolved protocol — an MCP
                                   run wraps each vector in a tools/call envelope
-                                  (mcp); an A2A run reports the vectors
-                                  signing_transport_unavailable (COVERAGE
-                                  UNAVAILABLE; the track cannot pass) because
-                                  the fixtures have no A2A framing. Pass raw for
-                                  agents that
+                                  (mcp); an A2A run signs the exact request the
+                                  official A2A client emits after Agent Card
+                                  discovery. Pass raw for agents that
                                   expose AdCP tools as per-operation HTTP
                                   endpoints. Mirrors
                                   \`adcp grade request-signing --transport\`.

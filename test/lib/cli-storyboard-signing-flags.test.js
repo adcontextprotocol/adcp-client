@@ -38,18 +38,21 @@ function parseFlags(argv, knownVectorIds = null) {
 }
 
 test('--signing-transport rejects an unknown value instead of silently falling back', () => {
-  const parsed = parseFlags(['--signing-transport', 'a2a']);
+  const parsed = parseFlags(['--signing-transport', 'smtp']);
 
   assert.strictEqual(parsed.ok, false);
-  assert.match(parsed.error, /--signing-transport must be one of raw\|mcp/);
+  assert.match(parsed.error, /--signing-transport must be one of raw\|mcp\|a2a/);
 });
 
-test('--signing-transport accepts both framings, in either flag form', () => {
+test('--signing-transport accepts every framing, in either flag form', () => {
   assert.deepStrictEqual(parseFlags(['--signing-transport', 'raw']).options, {
     request_signing: { transport: 'raw' },
   });
   assert.deepStrictEqual(parseFlags(['--signing-transport=mcp']).options, {
     request_signing: { transport: 'mcp' },
+  });
+  assert.deepStrictEqual(parseFlags(['--signing-transport=a2a']).options, {
+    request_signing: { transport: 'a2a' },
   });
 });
 
@@ -108,13 +111,13 @@ test('--signing-skip-vectors rejects an unknown id, with the nearest real ids', 
 });
 
 test('the CLI surfaces a rejected flag as exit 2 with the usage message', () => {
-  const result = spawnSync(process.execPath, [CLI, 'storyboard', 'run', 'test-mcp', '--signing-transport', 'a2a'], {
+  const result = spawnSync(process.execPath, [CLI, 'storyboard', 'run', 'test-mcp', '--signing-transport', 'smtp'], {
     encoding: 'utf8',
     timeout: 30_000,
   });
 
   assert.strictEqual(result.status, 2, `expected exit 2, got ${result.status}. stderr: ${result.stderr}`);
-  assert.match(result.stderr, /--signing-transport must be one of raw\|mcp/);
+  assert.match(result.stderr, /--signing-transport must be one of raw\|mcp\|a2a/);
 });
 
 test('the CLI rejects a valued boolean flag and an unknown vector id at exit 2', () => {
@@ -147,7 +150,7 @@ test('storyboard run --help documents the signing flags and their distinction fr
   assert.match(help, /--signing-skip-vectors IDS/);
   assert.match(help, /--signing-skip-rate-abuse/);
   assert.match(help, /NOT the same as\s+--transport\/--protocol/);
-  assert.match(help, /signing_transport_unavailable/, 'help must use the reason the JSON and guides use');
+  assert.match(help, /official A2A client emits after Agent Card/);
 });
 
 test('a coverage gap renders as COVERAGE UNAVAILABLE with its remedy; an inapplicable step does not', () => {

@@ -7433,7 +7433,10 @@ async function executeProbeStep(
   } else if (step.task === 'request_signing_probe') {
     httpResult = await probeRequestSigningVector(step.id, runState.agentUrl, options);
   } else if (step.task === 'fetch_brand_jwks') {
-    httpResult = await probeBrandJwks(options._profile?.raw_capabilities, runState.agentUrl, probeOpts);
+    httpResult = await probeBrandJwks(options._profile?.raw_capabilities, runState.agentUrl, {
+      ...probeOpts,
+      protocol: options.protocol,
+    });
   } else if (step.task === 'assert_jwks_purpose') {
     // Webhook delivery is signed with the agent's request-signing key; the
     // deprecated webhook-signing purpose is still accepted (adcontextprotocol/adcp#5555).
@@ -8498,10 +8501,34 @@ function rateLimitTripObservationToProbeResult(
   };
 }
 
+/**
+ * The A2A protocol endpoint the agent card names, or *fallback* when it cannot be read.
+ *
+ * Falls back rather than throwing: an unresolvable card is already reported by the A2A
+ * dispatch path with its own reason, and turning it into a brand.json error here would
+ * relabel one failure as another.
+ */
+async function resolveA2aProtocolEndpoint(
+  agentUrl: string,
+  fallback: string,
+  options: { allowPrivateIp?: boolean; fetchFn?: typeof fetch }
+): Promise<string> {
+  try {
+    const { resolveA2aDispatchTarget } = await import('./request-signing/a2a-dispatch');
+    const { endpoint } = await resolveA2aDispatchTarget(agentUrl, {
+      allowPrivateIp: options.allowPrivateIp === true,
+      ...(options.fetchFn ? { cardFetch: options.fetchFn } : {}),
+    });
+    return endpoint || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 async function probeBrandJwks(
   rawCapabilities: unknown,
   agentUrl: string,
-  options: { allowPrivateIp?: boolean; fetchFn?: typeof fetch }
+  options: { allowPrivateIp?: boolean; fetchFn?: typeof fetch; protocol?: 'mcp' | 'a2a' }
 ): Promise<HttpProbeResult> {
   const brandJsonUrl = readBrandJsonUrl(rawCapabilities);
   if (!brandJsonUrl) {
@@ -8522,9 +8549,25 @@ async function probeBrandJwks(
     };
   }
 
+  // `A` FOR THE brand.json WALK IS THE PROTOCOL ENDPOINT, not the URL this runner was
+  // handed. security.mdx @ 3.1.1 :1142 step 1: "invoke `get_adcp_capabilities` via the
+  // agent's declared transport (MCP `tools/call` or A2A skill invocation) ... The agent
+  // URL is the protocol endpoint, not a JSON capabilities document." Step 5 then
+  // byte-equals `agents[].url` against that same `A`.
+  //
+  // On MCP the two are the same string, so this changed nothing there. On A2A they are
+  // NOT: the runner must be given the card's BASE (the card lives at
+  // `<base>/.well-known/agent-card.json`, so passing the RPC endpoint asks for
+  // `/a2a/.well-known/...` and 404s), while the endpoint `A` names is the one the card
+  // resolves to. Matching the base produced zero byte-equal hits against a conformant
+  // brand.json publishing the RPC endpoint — the agent was graded non-conformant for
+  // publishing exactly what the spec asks for.
+  const matchUrl =
+    options.protocol === 'a2a' ? await resolveA2aProtocolEndpoint(agentUrl, agentUrl, options) : agentUrl;
+
   let jwksUri: string | undefined;
   try {
-    const agent = selectAgentByUrl(brand.body, agentUrl);
+    const agent = selectAgentByUrl(brand.body, matchUrl);
     jwksUri = typeof agent.jwks_uri === 'string' && agent.jwks_uri.length > 0 ? agent.jwks_uri : undefined;
   } catch {
     return {

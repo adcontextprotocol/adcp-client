@@ -48,9 +48,9 @@ const signingKnobs: NonNullable<ComplyOptionsFromBarrel['request_signing']> = {
 void signingKnobs;
 void complyOptions.request_signing;
 
-// @ts-expect-error `a2a` is not a vector framing: the fixtures have no A2A shape.
-const invalidSigningTransport: NonNullable<ComplyOptionsFromBarrel['request_signing']>['transport'] = 'a2a';
-void invalidSigningTransport;
+// A2A dispatch signs the bytes emitted by the official client.
+const a2aSigningTransport: NonNullable<ComplyOptionsFromBarrel['request_signing']>['transport'] = 'a2a';
+void a2aSigningTransport;
 
 // `probe_passed` is accepted by the public `StoryboardValidation.check`
 // surface. That field carries a `(string & {})` arm, so this assignment alone

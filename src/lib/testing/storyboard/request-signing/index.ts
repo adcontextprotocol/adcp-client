@@ -81,6 +81,15 @@ export {
 } from './builder';
 
 export {
+  captureA2aRequest,
+  resolveA2aDispatchTarget,
+  operationFromVectorUrl,
+  type A2aCall,
+  type A2aDispatchOptions,
+  type CapturedA2aRequest,
+} from './a2a-dispatch';
+
+export {
   loadSignedRequestsRunnerContract,
   type LoadTestKitOptions,
   type RateAbuseContract,

@@ -5,6 +5,7 @@ import { gradeOneVector, semanticVectorExclusion } from './grader';
 import { parseRequestSigningStepId } from './synthesize';
 import { loadRequestSigningVectors } from './vector-loader';
 import { ADCP_VERSION } from '../../../version';
+import { redactCredentialPatterns } from '../../../utils/redact-credential-patterns';
 
 /**
  * Detail surfaced on each vector step an A2A run cannot frame. Written for
@@ -19,12 +20,10 @@ import { ADCP_VERSION } from '../../../version';
  * instead of letting a sibling storyboard's passes roll it up green.
  */
 export const SIGNING_VECTORS_UNAVAILABLE_DETAIL =
-  'Coverage unavailable: this runner dispatches request-signing vectors two ways — a verbatim replay of ' +
-  "the vector's recorded REST request (`raw`), or the same body re-framed as an MCP `tools/call` envelope " +
-  '(`mcp`) — and it does not yet dispatch them through the official A2A client, so nothing about this ' +
-  "agent's verifier was graded on this run (adcontextprotocol/adcp-client#2954). Remedy: grade the " +
-  "verifier through the agent's MCP or REST binding, or set `request_signing.transport` (CLI " +
-  '`--signing-transport`) when that binding answers at this same URL.';
+  'Coverage unavailable: the official A2A client could not prepare a dispatch, so the runner refused to ' +
+  "invent an endpoint or wire envelope and no request-signing vector reached the agent's verifier. Remedy: " +
+  'verify the A2A SDK peer is installed and publish a reachable modern or legacy Agent Card with a supported ' +
+  'JSON-RPC interface, or grade the verifier through an MCP or REST binding.';
 
 /**
  * Resolve the vector transport for a graded agent.
@@ -45,22 +44,19 @@ export const SIGNING_VECTORS_UNAVAILABLE_DETAIL =
  * hatch for an agent whose MCP or REST binding answers on the same URL as its
  * A2A card.
  *
- * There is no `'a2a'` member yet because the path isn't wired here, not
- * because the official client is incapable: `@a2a-js/sdk` issues the JSON-RPC
- * methods these vectors target, `tasks/cancel` included. Wiring it means
- * signing a request the official client issues — applying each vector's RFC
- * 9421 headers to that client's own request — plus an upstream answer for how
- * a verifier scopes `required_for` over A2A methods. RFC 9421 conformance
- * needs byte-level control of the request, which `builder.ts` has for the two
- * bindings AdCP defines for these fixtures; there is no third binding to
- * write bytes against, and picking one here would be the SDK inventing it.
- * The only vectors that still grade are the ones needing no wire exchange at
- * all — see `gradableWithoutVectorTransport`.
+ * Still `undefined` for an A2A run, and deliberately so: whether A2A vectors
+ * can be dispatched depends on whether the agent's CARD resolves to a JSONRPC
+ * interface, which is a network question this synchronous resolver cannot
+ * answer. The decision moved one level up, into `probeRequestSigningVector`,
+ * which attempts the official-client precondition and only then frames. An
+ * agent whose card does not resolve keeps the `signing_transport_unavailable`
+ * reporting this function was written for — that path is a genuine fallback
+ * now rather than the only outcome.
  */
 export function resolveVectorTransport(
-  rsOpts: { transport?: 'raw' | 'mcp' },
+  rsOpts: { transport?: 'raw' | 'mcp' | 'a2a' },
   protocol?: 'mcp' | 'a2a'
-): 'raw' | 'mcp' | undefined {
+): 'raw' | 'mcp' | 'a2a' | undefined {
   if (rsOpts.transport) return rsOpts.transport;
   if (protocol === 'a2a') return undefined;
   return 'mcp';
@@ -82,6 +78,48 @@ export function resolveVectorTransport(
  * status against them would compare a grade to a status code that no
  * implementation can move (adcp-client#2955).
  */
+
+/**
+ * Whether the official A2A client can dispatch against *agentUrl*.
+ *
+ * Memoized per agent URL: the answer is a property of the agent's published
+ * card, and a 40-vector run must not re-fetch it 40 times. A failure is cached
+ * too — an agent that published no JSONRPC interface will not grow one
+ * mid-run, and retrying would turn one coverage gap into forty timeouts.
+ */
+interface A2aAvailability {
+  available: boolean;
+  error?: string;
+}
+
+const a2aAvailability = new WeakMap<StoryboardRunOptions, Map<string, Promise<A2aAvailability>>>();
+
+function a2aDispatchAvailable(agentUrl: string, options: StoryboardRunOptions): Promise<A2aAvailability> {
+  let availabilityForRun = a2aAvailability.get(options);
+  if (!availabilityForRun) {
+    availabilityForRun = new Map();
+    a2aAvailability.set(options, availabilityForRun);
+  }
+  const cached = availabilityForRun.get(agentUrl);
+  if (cached) return cached;
+  const probe = (async () => {
+    try {
+      const { resolveA2aDispatchTarget } = await import('./a2a-dispatch');
+      await resolveA2aDispatchTarget(agentUrl, {
+        allowPrivateIp: options.allow_http === true,
+        ...(options.transport?.trustedFetchFn ? { cardFetch: options.transport.trustedFetchFn } : {}),
+      });
+      return { available: true };
+    } catch (error) {
+      const raw = error instanceof Error ? error.message : String(error);
+      const redacted = redactCredentialPatterns(raw);
+      return { available: false, error: String(redacted).slice(0, 500) };
+    }
+  })();
+  availabilityForRun.set(agentUrl, probe);
+  return probe;
+}
+
 export async function probeRequestSigningVector(
   stepId: string,
   agentUrl: string,
@@ -98,7 +136,8 @@ export async function probeRequestSigningVector(
     };
   }
   const rsOpts = options.request_signing ?? {};
-  const transport = resolveVectorTransport(rsOpts, options.protocol);
+  let transport = resolveVectorTransport(rsOpts, options.protocol);
+  let transportUnavailableDetail = SIGNING_VECTORS_UNAVAILABLE_DETAIL;
   // Operator selection first, in the grader's own precedence (`onlyVectors`
   // over `skipVectors`, per `preflightSkip`). A vector the operator never
   // selected is out of scope — reporting it as a coverage gap would
@@ -174,8 +213,21 @@ export async function probeRequestSigningVector(
   // override). Skip before any network work and report the gap as missing
   // coverage, not as agent inapplicability — but only for the vectors that
   // actually need a wire exchange.
+  // The A2A decision, made where the network can be reached. `resolveVectorTransport`
+  // cannot answer it: whether these vectors are dispatchable over A2A depends on the
+  // agent's CARD resolving to a JSONRPC interface, and that is a fetch.
+  //
+  // When it resolves, the official `@a2a-js/sdk` client dispatches the vectors and the
+  // coverage gap closes. When it does not, nothing is framed on a guess and the vector
+  // keeps the `signing_transport_unavailable` reporting #2958 built — which is why that
+  // path and its guardrails stay exactly as they are.
+  if (!transport && options.protocol === 'a2a' && !gradableWithoutVectorTransport(parsed.kind, vector)) {
+    const availability = await a2aDispatchAvailable(agentUrl, options);
+    if (availability.available) transport = 'a2a';
+    else if (availability.error) transportUnavailableDetail += ` Discovery error: ${availability.error}`;
+  }
   if (!transport && !gradableWithoutVectorTransport(parsed.kind, vector)) {
-    return skipProbe(agentUrl, 'signing_transport_unavailable', SIGNING_VECTORS_UNAVAILABLE_DETAIL);
+    return skipProbe(agentUrl, 'signing_transport_unavailable', transportUnavailableDetail);
   }
   try {
     const result = await gradeOneVector(parsed.vector_id, parsed.kind, agentUrl, {
@@ -199,6 +251,7 @@ export async function probeRequestSigningVector(
         : {}),
       mcpSessionId: rsOpts.mcpSessionId,
       mcpProtocolVersion: rsOpts.mcpProtocolVersion,
+      ...(options.transport?.trustedFetchFn ? { cardFetch: options.transport.trustedFetchFn } : {}),
     });
     if (result.skipped) {
       return skipProbe(agentUrl, (result.skip_reason as RunnerDetailedSkipReason | undefined) ?? 'grader_skipped');
@@ -208,7 +261,7 @@ export async function probeRequestSigningVector(
       headers['www-authenticate'] = `Signature error="${result.actual_error_code}"`;
     }
     return {
-      url: agentUrl,
+      url: result.probe_url ?? agentUrl,
       status: result.http_status,
       headers,
       body: result.diagnostic ?? null,
