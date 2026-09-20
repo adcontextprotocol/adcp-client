@@ -222,7 +222,26 @@ export function preflightUpdateMediaBuy(
       }
     }
     const lookup = findAvailableAction(currentBuy, resolvedAction.action, { silent: true });
-    if (!lookup) {
+    if (lookup && isLegacyRequiresProposalAction(lookup.entry)) {
+      denials.push({
+        action: resolvedAction.action,
+        reason: 'mode_mismatch',
+        recovery: recoveryForModeMismatch(resolvedAction.action, result.actions),
+      });
+      continue;
+    }
+    // The only runtime-compatible extension beyond LiveMediaBuyAction is the
+    // legacy mode rejected above, so subsequent executable checks can use the
+    // current protocol type.
+    const liveEntry = lookup?.entry as MediaBuyAvailableAction | undefined;
+    if (strict || options.proposal !== undefined || resolvedAction.action === 'update_name') {
+      const assessment = assessActionAvailability(assessmentBuy, resolvedAction.action, { ...options, request });
+      if (assessment.status === 'currently_unavailable') {
+        denials.push({ action: resolvedAction.action, reason: assessment.reason, assessment });
+        continue;
+      }
+    }
+    if (!liveEntry) {
       // Without product allowed_actions on the buy we can't distinguish
       // not_supported_on_product vs not_supported_on_buy. wrong_status
       // is server-side. Default to not_supported_on_buy: the most common
@@ -231,23 +250,8 @@ export function preflightUpdateMediaBuy(
       denials.push({ action: resolvedAction.action, reason: 'not_supported_on_buy' });
       continue;
     }
-    if (isLegacyRequiresProposalAction(lookup.entry)) {
-      denials.push({
-        action: resolvedAction.action,
-        reason: 'mode_mismatch',
-        recovery: recoveryForModeMismatch(resolvedAction.action, result.actions),
-      });
-      continue;
-    }
-    if (strict || options.proposal !== undefined || resolvedAction.action === 'update_name') {
-      const assessment = assessActionAvailability(assessmentBuy, resolvedAction.action, { ...options, request });
-      if (assessment.status === 'currently_unavailable') {
-        denials.push({ action: resolvedAction.action, reason: assessment.reason, assessment });
-        continue;
-      }
-    }
     // Native field bindings must not grant newer wire features to a legacy snapshot.
-    if (options.adcpVersion && !liveActionFitsVersion(lookup.entry, options.adcpVersion)) {
+    if (options.adcpVersion && !liveActionFitsVersion(liveEntry, options.adcpVersion)) {
       denials.push({
         action: resolvedAction.action,
         reason: 'condition_unresolved',
@@ -263,17 +267,17 @@ export function preflightUpdateMediaBuy(
     }
     if (
       !strict &&
-      lookup.entry.task !== undefined &&
-      !tasksForLegacyMutation(resolvedAction.action).includes(lookup.entry.task)
+      liveEntry.task !== undefined &&
+      !tasksForLegacyMutation(resolvedAction.action).includes(liveEntry.task)
     ) {
       denials.push({ action: resolvedAction.action, reason: 'mode_mismatch' });
       continue;
     }
     // Legacy compatibility must still honor explicit current scope and route restrictions.
-    if (!strict && lookup.entry.applicable_package_ids !== undefined) {
+    if (!strict && liveEntry.applicable_package_ids !== undefined) {
       const scoped = decomposition.mutations.filter(m => m.action === resolvedAction.action);
-      const ids = lookup.entry.applicable_package_ids;
-      if (liveActionIssues([lookup.entry]).length || !scoped.length) {
+      const ids = liveEntry.applicable_package_ids;
+      if (liveActionIssues([liveEntry]).length || !scoped.length) {
         denials.push({ action: resolvedAction.action, reason: 'condition_unresolved' });
         continue;
       }
@@ -282,12 +286,12 @@ export function preflightUpdateMediaBuy(
         continue;
       }
     }
-    if (!strict && options.task !== 'update_media_buy' && options.task !== (lookup.entry.task ?? 'update_media_buy')) {
+    if (!strict && options.task !== 'update_media_buy' && options.task !== (liveEntry.task ?? 'update_media_buy')) {
       denials.push({ action: resolvedAction.action, reason: 'mode_mismatch' });
       continue;
     }
-    matched.push(lookup.entry);
-    modes.push(lookup.entry.mode);
+    matched.push(liveEntry);
+    modes.push(liveEntry.mode);
   }
 
   if (
