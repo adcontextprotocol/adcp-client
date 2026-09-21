@@ -78,6 +78,30 @@ npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp --file ./my-wip.
 npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp --json > report.json
 ```
 
+For a publisher split across sales, signals, governance, or creative tenants,
+provide an agents map and omit the storyboard ID to assess the whole topology:
+
+```yaml
+# publisher.yaml
+agents:
+  sales:
+    url: https://sales.example.com/mcp
+  signals:
+    url: https://signals.example.com/mcp
+default_agent: sales
+```
+
+```bash
+adcp storyboard run --agents-map ./publisher.yaml --json > report.json
+adcp storyboard run --agents-map ./publisher.yaml --format junit > report.xml
+```
+
+The runner discovers every tenant, selects the union of storyboards applicable
+to their declared capabilities, and evaluates `required_tools` against the
+whole topology. JSON reports group executed results by tenant, with storyboards
+that touch multiple tenants under `cross-tenant-topology`. JUnit uses the same
+group as the suite package and name prefix.
+
 Storyboard `response_schema` checks use strict JSON Schema validation for
 grading by default, matching the hosted compliance grader. A strict failure
 therefore fails the owning step even when the generated lenient Zod projection

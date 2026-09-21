@@ -1497,6 +1497,19 @@ test('failed discovery retains route identity when credentials share a URL', asy
   }
 });
 
+test('routed CLI without an explicit storyboard enters capability-driven assessment mode', () => {
+  const source = require('node:fs').readFileSync(require.resolve('../../bin/adcp.js'), 'utf8');
+  const start = source.indexOf('async function handleAgentsRoutedStoryboardRun');
+  const end = source.indexOf('// Shared implementation: run all matching storyboards', start);
+  const handler = source.slice(start, end);
+
+  assert.match(handler, /const capabilityDriven = !filePath && !storyboardId/);
+  assert.match(handler, /discoverAgentRouting\(discoveryOptions\)/);
+  assert.match(handler, /resolveRoutedAssessment\(routingProfiles, resolveOptions\)/);
+  assert.match(handler, /assessment_mode: 'capability-driven'/);
+  assert.doesNotMatch(handler, /Capability-driven full assessment is not yet routing-aware/);
+});
+
 test('OAuth presence escalates optional failures only on the agent that served metadata', async () => {
   const present = await startAgent(
     ['get_signals'],
