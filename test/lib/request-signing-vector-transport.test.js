@@ -663,13 +663,14 @@ test('a protocol-method vector the agent DOES require still reports the A2A cove
   assert.match(result.error, /official A2A client/);
 });
 
-test('an advertised capability block cannot shrink the graded vector set beyond protocol methods', async () => {
+test('an advertised capability block cannot shrink the graded vector set beyond narrow profile gates', async () => {
   // Guard against re-deriving the whole capability profile from the agent's
   // advertisement: the vectors' `verifier_capability` describes the profile
   // each vector was authored against, so comparing it to a live
   // advertisement (`covers_content_digest: 'either', required_for: []`)
   // excludes 39 of 40 vectors — an agent could turn the storyboard off by
-  // under-declaring. Only the protocol-method dimension is read.
+  // under-declaring. Only the protocol-method and content-digest dimensions
+  // are read, each by its own narrow mismatch gate.
   const permissive = {
     name: 'permissive-advertiser',
     tools: ['get_adcp_capabilities'],
@@ -678,13 +679,151 @@ test('an advertised capability block cannot shrink the graded vector set beyond 
     },
   };
 
-  const result = await probeRequestSigningVector('negative-002-wrong-tag', 'https://agent.invalid/mcp', {
-    protocol: 'mcp',
-    _profile: permissive,
-    request_signing: { transport: 'mcp' },
-  });
+  for (const vector of [
+    'negative-002-wrong-tag',
+    'positive-002-post-with-content-digest',
+    'negative-010-content-digest-mismatch',
+    'negative-023-multi-valued-content-digest',
+  ]) {
+    const result = await probeRequestSigningVector(vector, 'http://127.0.0.1:1', {
+      protocol: 'mcp',
+      allow_http: true,
+      _profile: permissive,
+      request_signing: { transport: 'raw' },
+    });
 
-  assert.notStrictEqual(result.skip_reason, 'capability_profile_mismatch');
+    assert.strictEqual(result.skipped, undefined, vector);
+    assert.strictEqual(result.probe_error, true, vector);
+    assert.match(result.error, /probe error: fetch failed/, vector);
+  }
+});
+
+test('storyboard dispatch applies the declared content-digest policy before MCP or A2A transport gating', async () => {
+  const profile = {
+    name: 'either-content-digest-policy',
+    tools: ['get_adcp_capabilities'],
+    raw_capabilities: {
+      request_signing: { supported: true, covers_content_digest: 'either', required_for: [] },
+    },
+  };
+
+  for (const protocol of ['mcp', 'a2a']) {
+    for (const vector of ['negative-007-missing-content-digest', 'negative-018-digest-covered-when-forbidden']) {
+      const result = await probeRequestSigningVector(vector, `https://agent.invalid/${protocol}`, {
+        protocol,
+        _profile: profile,
+        ...(protocol === 'mcp' ? { request_signing: { transport: 'raw' } } : {}),
+      });
+
+      assert.strictEqual(result.skipped, true, `${protocol}: ${vector}`);
+      assert.strictEqual(result.skip_reason, 'capability_profile_mismatch', `${protocol}: ${vector}`);
+    }
+  }
+});
+
+test('storyboard dispatch grades matching strict-policy refusal vectors', async t => {
+  const expectedErrors = ['request_signature_components_incomplete', 'request_signature_components_unexpected'];
+  let requestIndex = 0;
+  const server = http.createServer((_req, res) => {
+    res.writeHead(401, {
+      'content-type': 'application/json',
+      'www-authenticate': `Signature error="${expectedErrors[requestIndex++]}"`,
+    });
+    res.end('{}');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const agentUrl = `http://127.0.0.1:${server.address().port}`;
+
+  for (const [vector, policy] of [
+    ['negative-007-missing-content-digest', 'required'],
+    ['negative-018-digest-covered-when-forbidden', 'forbidden'],
+  ]) {
+    const result = await probeRequestSigningVector(vector, agentUrl, {
+      protocol: 'mcp',
+      allow_http: true,
+      _profile: {
+        name: `${policy}-content-digest-policy`,
+        tools: ['get_adcp_capabilities'],
+        raw_capabilities: {
+          request_signing: { supported: true, covers_content_digest: policy, required_for: [] },
+        },
+      },
+      request_signing: { transport: 'raw' },
+    });
+
+    assert.strictEqual(result.skipped, undefined, vector);
+    assert.strictEqual(result.error, undefined, vector);
+  }
+  assert.strictEqual(requestIndex, 2);
+});
+
+test('storyboard dispatch excludes only the incompatible strict-policy refusal vector', async () => {
+  for (const [vector, policy] of [
+    ['negative-007-missing-content-digest', 'forbidden'],
+    ['negative-018-digest-covered-when-forbidden', 'required'],
+  ]) {
+    const result = await probeRequestSigningVector(vector, 'https://agent.invalid/a2a', {
+      protocol: 'a2a',
+      _profile: {
+        name: `${policy}-content-digest-policy`,
+        tools: ['get_adcp_capabilities'],
+        raw_capabilities: {
+          request_signing: { supported: true, covers_content_digest: policy, required_for: [] },
+        },
+      },
+    });
+    assert.strictEqual(result.skip_reason, 'capability_profile_mismatch', vector);
+  }
+});
+
+test('legacy omitted content-digest policy defaults to either before transport gating', async () => {
+  const profile = {
+    name: 'legacy-default-content-digest-policy',
+    tools: ['get_adcp_capabilities'],
+    raw_capabilities: { request_signing: { supported: true, required_for: [] } },
+  };
+  for (const vector of ['negative-007-missing-content-digest', 'negative-018-digest-covered-when-forbidden']) {
+    const result = await probeRequestSigningVector(vector, 'https://agent.invalid/a2a', {
+      protocol: 'a2a',
+      adcpVersion: '3.1.18',
+      _profile: profile,
+    });
+    assert.strictEqual(result.skip_reason, 'capability_profile_mismatch', vector);
+  }
+});
+
+test('malformed or unsupported content-digest declarations cannot suppress vectors', async t => {
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{}');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const agentUrl = `http://127.0.0.1:${server.address().port}`;
+
+  const declarations = [
+    { covers_content_digest: 'either' },
+    { supported: false, covers_content_digest: 'either' },
+    { supported: true },
+    { supported: true, covers_content_digest: 'sometimes' },
+    { supported: true, covers_content_digest: null },
+  ];
+  for (const requestSigning of declarations) {
+    const result = await probeRequestSigningVector('negative-007-missing-content-digest', agentUrl, {
+      protocol: 'mcp',
+      allow_http: true,
+      _profile: {
+        name: 'malformed-content-digest-policy',
+        tools: ['get_adcp_capabilities'],
+        raw_capabilities: { request_signing: requestSigning },
+      },
+      request_signing: { transport: 'raw' },
+    });
+
+    assert.strictEqual(result.skipped, undefined, JSON.stringify(requestSigning));
+    assert.match(result.error, /expected 401/, JSON.stringify(requestSigning));
+  }
 });
 
 test('a broken vector cache surfaces as an error, never as a coverage gap', async () => {

@@ -1,7 +1,7 @@
 import { basename, dirname } from 'path';
 import type { HttpProbeResult, RunnerDetailedSkipReason, StoryboardRunOptions } from '../types';
 import type { NegativeVector, PositiveVector, VerifierCapabilityFixture } from './types';
-import { gradeOneVector, semanticVectorExclusion } from './grader';
+import { advertisedContentDigestPolicyExclusion, gradeOneVector, semanticVectorExclusion } from './grader';
 import { parseRequestSigningStepId } from './synthesize';
 import { loadRequestSigningVectors } from './vector-loader';
 import { ADCP_VERSION } from '../../../version';
@@ -183,6 +183,7 @@ export async function probeRequestSigningVector(
       `request_signing_probe: ${parsed.kind} vector "${parsed.vector_id}" is not in the vector set this run loaded`
     );
   }
+  const agentContentDigestPolicy = declaredContentDigestPolicy(options, loaded.sourceDir);
   // Semantic exclusions next, before anything protocol-specific. A vector the
   // grader refuses on the vector's own terms — outside the agent's declared
   // verifier profile, or ungradable over HTTP on any binding — is refused
@@ -192,7 +193,10 @@ export async function probeRequestSigningVector(
   // track to `partial` over vectors that were never in scope
   // (adcp-client#2954). A vector that *is* in scope still reports the gap at
   // the transport gate below.
-  const semantic = semanticVectorExclusion(vector, declaredProtocolMethodCoverage(options, loaded.sourceDir));
+  const semantic =
+    (agentContentDigestPolicy
+      ? advertisedContentDigestPolicyExclusion(vector, parsed.kind, agentContentDigestPolicy)
+      : undefined) ?? semanticVectorExclusion(vector, declaredProtocolMethodCoverage(options, loaded.sourceDir));
   if (semantic) {
     // Carry the grader's diagnostic. It names the vector's unmet demand (the
     // method, the profile dimension), which is what lets an operator audit an
@@ -278,6 +282,34 @@ export async function probeRequestSigningVector(
     // land here; they are runner-owned, not a verdict about the agent.
     return probeError(agentUrl, `request_signing_probe threw: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+/**
+ * Read the agent's advertised content-digest policy for the grader's narrow
+ * policy-mismatch gate. Omission uses the effective `either` default only on
+ * 3.0/3.1 compliance lines; 3.2+ omissions and malformed or unsupported
+ * declarations cannot suppress vectors from the graded set.
+ */
+function declaredContentDigestPolicy(
+  options: StoryboardRunOptions,
+  sourceDir: string
+): 'required' | 'forbidden' | 'either' | undefined {
+  const raw = options._profile?.raw_capabilities;
+  if (!raw || typeof raw !== 'object') return undefined;
+  const block = (raw as { request_signing?: unknown }).request_signing;
+  if (!block || typeof block !== 'object') return undefined;
+  const declared = block as Record<string, unknown>;
+  if (declared.supported !== true) return undefined;
+  const policy = declared.covers_content_digest;
+  if (policy === undefined) {
+    const version = complianceLineOf(sourceDir) ?? options.adcpVersion ?? ADCP_VERSION;
+    const match = /^(\d+)\.(\d+)/.exec(version);
+    if (!match) return undefined;
+    const major = Number(match[1]);
+    const minor = Number(match[2]);
+    return major < 3 || (major === 3 && minor < 2) ? 'either' : undefined;
+  }
+  return policy === 'required' || policy === 'forbidden' || policy === 'either' ? policy : undefined;
 }
 
 /**
