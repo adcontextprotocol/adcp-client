@@ -22,6 +22,8 @@ export {
 export { reconcileReportingCoreV1 } from './core-reconciliation';
 export type {
   CoreReportingClocksV1,
+  CoreReportingHealthV1,
+  CoreReportingIssueV1,
   CoreReportingObligationResultV1,
   CoreReportingObligationV1,
   CoreReportingRevisionV1,

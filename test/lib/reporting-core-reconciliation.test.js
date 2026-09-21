@@ -27,6 +27,8 @@ function obligation(overrides = {}) {
     },
     expected_at: EXPECTED_AT,
     required_finality: 'snapshot',
+    production_status: 'not_due',
+    revision_count: 0,
     ...overrides,
   };
 }
@@ -55,17 +57,34 @@ function reconcile({
   revisions = [],
   closed = false,
   coverageComplete = true,
+  recordsComplete = true,
   recoverySeconds = RECOVERY_SECONDS,
 } = {}) {
+  const countedObligations = obligations.map(item => ({
+    ...item,
+    revision_count: revisions.filter(candidate => revisionMatches(candidate, item)).length,
+  }));
   return reconcileReportingCoreV1({
-    obligations,
+    obligations: countedObligations,
     revisions,
-    scope: { closed, coverageComplete },
+    scope: { closed, coverageComplete, recordsComplete },
     clocks: {
       ledgerAsOf: ledgerAsOf ?? '2026-08-01T01:59:59.999Z',
       automatedRecoveryWindowSeconds: recoverySeconds,
     },
   });
+}
+
+function revisionMatches(candidate, item) {
+  return (
+    candidate.account_id === item.account_id &&
+    candidate.report_definition_id === item.report_definition_id &&
+    candidate.reporting_profile === item.reporting_profile &&
+    JSON.stringify([...candidate.media_buy_ids].sort()) === JSON.stringify([...item.media_buy_ids].sort()) &&
+    Date.parse(candidate.period.start) === Date.parse(item.period.start) &&
+    Date.parse(candidate.period.end) === Date.parse(item.period.end) &&
+    candidate.period.source_timezone === item.period.source_timezone
+  );
 }
 
 function fixtureStep(storyboard, phaseId, stepId) {
@@ -102,18 +121,35 @@ describe('Core-only buyer reporting reconciliation', () => {
     assert.equal(delayedClock, '2026-08-01T02:05:00.000Z');
     assert.equal(actionClock, '2026-08-01T04:05:00.000Z');
 
-    assert.equal(reconcile().health, 'waiting');
-    assert.equal(reconcile({ ledgerAsOf: EXPECTED_AT }).health, 'delayed', 'expected_at is due');
-    assert.equal(reconcile({ ledgerAsOf: delayedClock }).health, 'delayed');
+    const waitingHealth = fixtureValue(
+      fixtureStep(storyboard, 'obligation_lifecycle', 'read_waiting_obligation'),
+      'periods[0].health'
+    );
+    const delayedHealth = fixtureValue(
+      fixtureStep(storyboard, 'obligation_lifecycle', 'read_delayed_summary'),
+      'health'
+    );
+    const actionHealth = fixtureValue(
+      fixtureStep(storyboard, 'obligation_lifecycle', 'read_action_required'),
+      'health'
+    );
+    const completeHealth = fixtureValue(
+      fixtureStep(storyboard, 'explicit_empty_reporting', 'read_zero_row_revision'),
+      'periods[0].health'
+    );
+
+    assert.equal(reconcile().health, waitingHealth);
+    assert.equal(reconcile({ ledgerAsOf: EXPECTED_AT }).health, delayedHealth, 'expected_at is due');
+    assert.equal(reconcile({ ledgerAsOf: delayedClock }).health, delayedHealth);
     assert.equal(reconcile({ ledgerAsOf: '2026-08-01T03:59:59.999Z' }).health, 'delayed');
     assert.equal(
       reconcile({ ledgerAsOf: '2026-08-01T04:00:00.000Z' }).health,
-      'action_required',
+      actionHealth,
       'the recovery deadline is an inclusive escalation boundary'
     );
-    assert.equal(reconcile({ ledgerAsOf: actionClock }).health, 'action_required');
+    assert.equal(reconcile({ ledgerAsOf: actionClock }).health, actionHealth);
     assert.equal(reconcile({ revisions: [revision()] }).health, 'healthy');
-    assert.equal(reconcile({ revisions: [revision()], closed: true }).health, 'complete');
+    assert.equal(reconcile({ revisions: [revision()], closed: true }).health, completeHealth);
   });
 
   test('treats an explicit zero-row revision as reporting, not a missing report', () => {
@@ -197,11 +233,32 @@ describe('Core-only buyer reporting reconciliation', () => {
     assert.equal(reconcile({ obligations: [], coverageComplete: false }).health, 'action_required');
   });
 
+  test('fails closed for partial cursor history and preserves terminal production failure', () => {
+    assert.throws(() => reconcile({ recordsComplete: false }), /requires every reporting-status cursor page/);
+    assert.throws(
+      () =>
+        reconcileReportingCoreV1({
+          obligations: [obligation({ revision_count: 1 })],
+          revisions: [],
+          scope: { closed: false, coverageComplete: true, recordsComplete: true },
+          clocks: { ledgerAsOf: EXPECTED_AT, automatedRecoveryWindowSeconds: RECOVERY_SECONDS },
+        }),
+      /revision history is incomplete or ambiguous/
+    );
+
+    const terminal = reconcile({
+      ledgerAsOf: EXPECTED_AT,
+      obligations: [obligation({ production_status: 'failed' })],
+    });
+    assert.equal(terminal.health, 'action_required');
+    assert.equal(terminal.obligations[0].productionStatus, 'failed');
+  });
+
   test('never reads managed-delivery, inspection, or receipt fields and exposes no hooks for them', () => {
     const fail = name => () => {
       throw new Error(`Core reconciler read forbidden ${name}`);
     };
-    const coreObligation = obligation();
+    const coreObligation = obligation({ revision_count: 1 });
     for (const name of [
       'destination_ref',
       'materialization_count',
@@ -218,7 +275,7 @@ describe('Core-only buyer reporting reconciliation', () => {
     const input = {
       obligations: [coreObligation],
       revisions: [coreRevision],
-      scope: { closed: true, coverageComplete: true },
+      scope: { closed: true, coverageComplete: true, recordsComplete: true },
       clocks: {
         ledgerAsOf: '2026-08-01T04:05:00.000Z',
         automatedRecoveryWindowSeconds: RECOVERY_SECONDS,
@@ -238,7 +295,7 @@ describe('Core-only buyer reporting reconciliation', () => {
         reconcileReportingCoreV1({
           obligations: [obligation()],
           revisions: [],
-          scope: { closed: false, coverageComplete: true },
+          scope: { closed: false, coverageComplete: true, recordsComplete: true },
           clocks: { ledgerAsOf: EXPECTED_AT, automatedRecoveryWindowSeconds: -1 },
         }),
       /non-negative safe integer/

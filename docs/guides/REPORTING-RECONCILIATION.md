@@ -11,19 +11,53 @@ window recorded from reporting capabilities. It derives `waiting`, `healthy`,
 canonicalization contract, resource reader, materialization, or receipt.
 
 ```ts
-import { reconcileReportingCoreV1 } from '@adcp/sdk';
+import {
+  reconcileReportingCoreV1,
+  type CoreReportingObligationV1,
+  type CoreReportingRevisionV1,
+} from '@adcp/sdk';
+
+const obligations: CoreReportingObligationV1[] = [];
+const revisions: CoreReportingRevisionV1[] = [];
+let cursor: string | undefined;
+let status;
+do {
+  status = await seller.getReportingStatus({
+    account: { account_id: 'account-1' },
+    view: 'periods',
+    ...(cursor ? { pagination: { cursor } } : {}),
+  });
+  obligations.push(...(status.periods ?? []));
+  revisions.push(...(status.revisions ?? []));
+  if (!status.pagination) throw new Error('Seller omitted reporting pagination');
+  if (status.pagination.has_more && !status.pagination.cursor) {
+    throw new Error('Seller reporting cursor did not advance');
+  }
+  cursor = status.pagination.has_more ? status.pagination.cursor : undefined;
+} while (cursor);
+
+const reportingDelivery = capabilities.media_buy?.reporting_delivery;
+if (
+  !status?.scope ||
+  !status.ledger_as_of ||
+  !reportingDelivery ||
+  typeof reportingDelivery.automated_recovery_window_seconds !== 'number'
+) {
+  throw new Error('Seller omitted required reporting Core facts');
+}
 
 const result = reconcileReportingCoreV1({
-  obligations: status.periods,
-  revisions: status.revisions,
+  obligations,
+  revisions,
   scope: {
     closed: status.scope.scope_closed,
     coverageComplete: status.scope.coverage_complete,
+    recordsComplete: true,
   },
   clocks: {
     ledgerAsOf: status.ledger_as_of,
     automatedRecoveryWindowSeconds:
-      capabilities.media_buy.reporting_delivery.automated_recovery_window_seconds,
+      reportingDelivery.automated_recovery_window_seconds,
   },
 });
 ```
@@ -32,6 +66,11 @@ Core revisions join to obligations by their protocol logical-slice identity:
 account, report definition, reporting profile, media-buy denominator, and
 period. A qualifying revision with `row_count: 0` satisfies its obligation;
 zero rows is explicit reporting, while no revision is a missing report.
+
+`scope.coverage_complete` proves retention coverage, not that the seller emitted
+every obligation the buyer independently expected. Buyers that derive an
+expected-period denominator from an accepted schedule must compare that set to
+`obligations` separately; seller scope coverage cannot prove an omitted period.
 
 ## Managed-delivery and receipt reconciliation
 

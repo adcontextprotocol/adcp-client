@@ -1,11 +1,7 @@
 import type { ReportingObligation, ReportingRevision } from '../types';
-import {
-  aggregateReportingHealthV1,
-  projectReportingObligationHealthV1,
-  type ReportingObligationHealthProjectionV1,
-} from './ledger/health';
+import { aggregateReportingHealthV1, projectReportingObligationHealthV1 } from './ledger/health';
 import { canonicalReportingInstant } from './ledger/instant';
-import type { ReportingHealthV1 } from './ledger/types';
+import type { ReportingHealthV1, ReportingLedgerIssueV1 } from './ledger/types';
 
 const MAX_CORE_LEDGER_RECORDS = 100_000;
 
@@ -18,11 +14,12 @@ export type CoreReportingObligationV1 = Pick<
   | 'reporting_profile'
   | 'media_buy_ids'
   | 'scope_resolved_at'
-  | 'coverage'
   | 'period'
   | 'expected_at'
   | 'required_finality'
->;
+  | 'production_status'
+  | 'revision_count'
+> & { coverage: Pick<ReportingObligation['coverage'], 'status'> };
 
 /** Wire revision fields used by Core buyer reconciliation. */
 export type CoreReportingRevisionV1 = Pick<
@@ -34,14 +31,15 @@ export type CoreReportingRevisionV1 = Pick<
   | 'media_buy_ids'
   | 'period'
   | 'finality'
-  | 'row_count'
 >;
 
 export interface CoreReportingScopeV1 {
   /** Whether no more obligations can enter the evaluated scope. */
   closed: boolean;
-  /** Whether the buyer has the complete obligation denominator. */
+  /** Whether the requested horizon is fully inside retained seller coverage. */
   coverageComplete: boolean;
+  /** True only after the buyer has drained every reporting-status cursor page. */
+  recordsComplete: boolean;
 }
 
 export interface CoreReportingClocksV1 {
@@ -63,16 +61,25 @@ export interface ReconcileReportingCoreInputV1 {
   clocks: CoreReportingClocksV1;
 }
 
-export interface CoreReportingObligationResultV1 extends ReportingObligationHealthProjectionV1 {
+export type CoreReportingHealthV1 = ReportingHealthV1;
+export type CoreReportingIssueV1 = Omit<ReportingLedgerIssueV1, 'code'> & {
+  code: 'REPORT_OVERDUE' | 'REPORTING_COVERAGE_INCOMPLETE';
+};
+
+export interface CoreReportingObligationResultV1 {
   reportingObligationId: string;
   /** Every immutable Core revision joined to this logical reporting slice. */
   reportingRevisionIds: string[];
   revisionCount: number;
   qualifyingRevisionCount: number;
+  health: CoreReportingHealthV1;
+  productionStatus: 'not_due' | 'pending' | 'published' | 'failed';
+  issues: CoreReportingIssueV1[];
+  satisfied: boolean;
 }
 
 export interface ReconcileReportingCoreResultV1 {
-  health: ReportingHealthV1;
+  health: CoreReportingHealthV1;
   obligations: CoreReportingObligationResultV1[];
 }
 
@@ -94,6 +101,9 @@ export function reconcileReportingCoreV1(input: ReconcileReportingCoreInputV1): 
   if (input.obligations.length + input.revisions.length > MAX_CORE_LEDGER_RECORDS) {
     throw new TypeError(`Core reporting input exceeds ${MAX_CORE_LEDGER_RECORDS} records`);
   }
+  if (input.scope.recordsComplete !== true) {
+    throw new TypeError('Core reporting reconciliation requires every reporting-status cursor page');
+  }
   assertUnique(input.obligations, item => item.reporting_obligation_id, 'reporting obligation');
   assertUnique(input.revisions, item => item.reporting_revision_id, 'reporting revision');
 
@@ -108,6 +118,9 @@ export function reconcileReportingCoreV1(input: ReconcileReportingCoreInputV1): 
   let associatedRecordCount = 0;
   const obligationScopes = input.obligations.map(obligation => {
     const revisions = revisionsByScope.get(reportingSliceKey(obligation)) ?? [];
+    if (revisions.length !== obligation.revision_count) {
+      throw new TypeError('Core reporting revision history is incomplete or ambiguous');
+    }
     associatedRecordCount += revisions.length;
     if (associatedRecordCount > MAX_CORE_LEDGER_RECORDS) {
       throw new TypeError(`Core reporting associations exceed ${MAX_CORE_LEDGER_RECORDS} records`);
@@ -127,7 +140,7 @@ export function reconcileReportingCoreV1(input: ReconcileReportingCoreInputV1): 
         recoveryWindowMilliseconds,
         requiredFinality: obligation.required_finality,
         coverage: { status: obligation.coverage.status },
-        state: 'pending',
+        state: obligation.production_status === 'failed' ? 'terminal' : 'pending',
       },
       revisions,
       ledgerAsOf,
@@ -139,6 +152,7 @@ export function reconcileReportingCoreV1(input: ReconcileReportingCoreInputV1): 
       revisionCount: revisions.length,
       qualifyingRevisionCount,
       ...projection,
+      issues: coreIssues(projection.issues),
     };
   });
 
@@ -149,6 +163,15 @@ export function reconcileReportingCoreV1(input: ReconcileReportingCoreInputV1): 
     ),
     obligations,
   };
+}
+
+function coreIssues(issues: ReportingLedgerIssueV1[]): CoreReportingIssueV1[] {
+  for (const issue of issues) {
+    if (issue.code !== 'REPORT_OVERDUE' && issue.code !== 'REPORTING_COVERAGE_INCOMPLETE') {
+      throw new TypeError('Core reporting health produced a non-Core issue');
+    }
+  }
+  return issues as CoreReportingIssueV1[];
 }
 
 function reportingSliceKey(value: CoreReportingRevisionV1 | CoreReportingObligationV1): string {
