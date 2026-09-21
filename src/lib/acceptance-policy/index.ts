@@ -13,6 +13,8 @@ import { ADCP_VERSION } from '../version';
 import { isWellFormedUnicodeString } from '../utils/well-formed-unicode';
 import type { ResolvePolicyResponse } from '../registry/types';
 
+export { assessAcceptancePolicy } from './evaluator';
+
 const CATALOG_SCHEMA_REF = 'media-buy/acceptance-policy-catalog.json';
 const PROFILE_SCHEMA_REF = 'media-buy/acceptance-policy-profile.json';
 const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
@@ -43,13 +45,50 @@ export interface AcceptancePolicyReference {
   content_digest: string;
 }
 
+export interface AcceptancePolicyRequirement {
+  kind:
+    | 'category_declaration'
+    | 'advertiser_verification'
+    | 'advertiser_eligibility'
+    | 'funding_restriction'
+    | 'certification'
+    | 'license'
+    | 'prior_authorization'
+    | 'account_setup'
+    | 'sales_assisted'
+    | 'disclosure'
+    | 'targeting_restriction'
+    | 'creative_restriction'
+    | 'destination_restriction'
+    | 'format_restriction'
+    | 'time_restriction'
+    | 'transparency_reporting'
+    | 'custom';
+  [key: string]: unknown;
+}
+
+export type AcceptancePolicySurface =
+  | 'account'
+  | 'media_buy'
+  | 'creative'
+  | 'landing_page'
+  | 'targeting'
+  | 'delivery'
+  | 'format';
+
 export interface AcceptancePolicyRule {
   rule_id: string;
   subject_category: string;
+  subject_facets?: string[];
+  advertiser_roles?: string[];
+  jurisdictions?: string[];
   jurisdiction_groups?: string[];
   applies_to: string[];
   disposition: 'allowed' | 'conditional' | 'prohibited';
+  requirements?: AcceptancePolicyRequirement[];
   policy_ids?: string[];
+  effective_at?: string;
+  expires_at?: string;
   [key: string]: unknown;
 }
 
@@ -60,7 +99,11 @@ export interface AcceptancePolicyProfile {
   policy_refs: AcceptancePolicyReference[];
   coverage: 'partial' | 'complete';
   scope?: {
+    subject_categories?: string[];
+    applies_to?: string[];
+    jurisdictions?: string[];
     jurisdiction_groups?: string[];
+    all_jurisdictions?: true;
     [key: string]: unknown;
   };
   region_aliases?: Record<string, string[]>;

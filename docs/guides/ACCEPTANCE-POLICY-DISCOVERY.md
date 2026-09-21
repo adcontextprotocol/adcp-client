@@ -48,8 +48,8 @@ checks internal integrity but cannot independently attest a catalog obtained
 from an unpinned side channel. A failed registry lookup or pin verification is
 reported in `issues` and leaves that profile `unresolved`; it does not discard
 verified seller-local profiles.
-This discovery slice does not evaluate rule `effective_at` or `expires_at`
-windows; buyers must filter those windows before applying advisory guidance.
+Use the assessment helper below to apply rule `effective_at` and `expires_at`
+windows before acting on advisory guidance.
 
 Registry resolution has one five-second deadline across the selected profiles
 and resolves at most 32 distinct registry profiles per call. Both limits may be
@@ -86,6 +86,83 @@ leaves only that registry profile unresolved and appears in `issues`; its rules
 must not be evaluated. Error messages include schema pointers but never echo
 catalog values.
 
+## Assess likely treatment
+
+Compose the verified seller defaults with product-specific profiles and assess
+one decision surface with structured buyer facts:
+
+```ts
+import {
+  assessAcceptancePolicy,
+  resolveVerifiedAcceptancePolicyProfiles,
+} from '@adcp/sdk';
+
+if (!result.ok) {
+  throw new Error(`Acceptance policy is unknown: ${result.error.code}`);
+}
+const productProfiles = await resolveVerifiedAcceptancePolicyProfiles(
+  result.catalog,
+  product.acceptance_policy_profile_ids ?? [],
+  { registryResolver: registry }
+);
+if (!productProfiles.ok) {
+  throw new Error(`Acceptance policy is unknown: ${productProfiles.error.code}`);
+}
+for (const issue of [...(result.issues ?? []), ...(productProfiles.issues ?? [])]) {
+  console.warn(issue.code, issue.pointer);
+}
+
+const assessment = assessAcceptancePolicy({
+  profiles: [
+    ...result.defaultProfiles,
+    ...productProfiles.profiles,
+  ],
+  acceptanceContext: {
+    subjects: [{
+      subject_category: 'political_advertising',
+      subject_facets: ['candidate_or_party'],
+    }],
+    advertiser_roles: ['political_actor'],
+    delivery_jurisdictions: ['US'],
+  },
+  appliesTo: 'media_buy',
+});
+
+if (assessment.outcome === 'prohibited') {
+  // Do not submit this configuration.
+} else if (assessment.outcome === 'unknown') {
+  // Ask the seller or submit the exact task and handle its authoritative result.
+} else {
+  console.log(assessment.outcome, assessment.matchedRules);
+}
+```
+
+The normalized `outcome` is `allowed`, `prohibited`,
+`requires_disclosure`, `requires_setup`, `requires_review`, or `unknown`.
+An explicit matching prohibition wins. Otherwise, partial coverage,
+unresolved profiles, omitted matching facts, or a complete profile whose scope
+does not cover the full contemplated request produces `unknown`. Conditional
+requirements—and requirements attached to any other matching disposition—are
+returned intact and grouped conservatively. Authorization, funding, unknown,
+or content/targeting restrictions require review; advertiser credentials and
+account prerequisites require setup; only known declaration, disclosure, and
+transparency obligations produce `requires_disclosure`. Each `matchedRules`
+entry retains its profile, rule, policy IDs, disposition, and requirements.
+When the outcome is `unknown`, returned requirements are partial evidence only,
+not a complete remediation plan.
+
+The evaluator independently validates the context and every resolved profile
+against `adcpVersion` (the SDK pin by default). Pass the same version used for
+resolution; invalid profiles produce `invalid_profile` and fail closed.
+
+Rules become active at `effective_at` and inactive at `expires_at`. The helper
+uses the current instant unless `evaluatedAt` is supplied. It interprets only
+typed fields; every free-text `description` remains display-only.
+
+The assessment is always marked `advisory: true`. Even `allowed` means only
+that the verified, published complete profiles allow the contemplated class of
+action. The seller's response to the exact task remains authoritative.
+
 The resolver cache contains only one capability identity. A URL, digest, or
 default-profile change discards the previous entry. Call `invalidate()` when a
 capabilities-changed notification arrives even if the replacement capability
@@ -102,3 +179,20 @@ canonical-profile failures. Registry diagnostics must distinguish fetch,
 timeout, unresolved reference, policy/profile identity, unverifiable content,
 digest, schema/integrity, and resolution-limit failures so compliance output
 has equivalent meaning across languages.
+
+Assessment parity requires the same six outcomes and precedence:
+`prohibited` > `unknown` > `requires_review` > `requires_setup` >
+`requires_disclosure` > `allowed`. Requirement buckets are:
+
+- disclosure: `category_declaration`, `disclosure`, `transparency_reporting`;
+- setup: `advertiser_verification`, `advertiser_eligibility`, `certification`,
+  `license`, `account_setup`;
+- review: `funding_restriction`, `prior_authorization`, `sales_assisted`, every
+  targeting/creative/destination/format/time restriction, `custom`, and any
+  requirement kind the SDK does not recognize.
+
+Assessment diagnostics distinguish unresolved, conflicting, invalid, or
+oversized profile selections; partial coverage; incomplete or invalid context;
+invalid evaluation time; an unavailable schema; and oversized rule,
+context-value, or JSON-complexity inputs. Diagnostics are bounded, and missing
+information never produces `allowed`.
