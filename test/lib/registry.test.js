@@ -1124,6 +1124,27 @@ describe('RegistryClient', () => {
       );
     });
 
+    test('propagates an external abort signal when resolving a policy', async () => {
+      let transportSignal;
+      const client = new RegistryClient({
+        timeoutMs: 1_000,
+        fetch: async (_url, opts) => {
+          transportSignal = opts.signal;
+          if (opts.signal.aborted) throw opts.signal.reason;
+          return new Promise((_, reject) => {
+            opts.signal.addEventListener('abort', () => reject(opts.signal.reason), { once: true });
+          });
+        },
+      });
+      const controller = new AbortController();
+      const pending = client.resolvePolicy({ policy_id: 'policy_a', signal: controller.signal });
+
+      controller.abort(new Error('caller cancelled'));
+
+      await assert.rejects(pending, /caller cancelled/);
+      assert.strictEqual(transportSignal.aborted, true);
+    });
+
     test('times out responses that send headers but stall the body', async () => {
       const stream = new ReadableStream({
         start(controller) {
