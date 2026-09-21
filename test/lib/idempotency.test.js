@@ -15,6 +15,7 @@ const {
   adcpErrorToTypedError,
   isADCPError,
 } = require('../../dist/lib/index.js');
+const { TOOL_REQUEST_SCHEMAS } = require('../../dist/lib/utils/tool-request-schemas.js');
 
 describe('idempotency utilities', () => {
   describe('generateIdempotencyKey', () => {
@@ -120,6 +121,21 @@ describe('idempotency utilities', () => {
       assert.ok(MUTATING_TASKS.has('update_media_buy'));
       assert.ok(MUTATING_TASKS.has('sync_creatives'));
       assert.ok(MUTATING_TASKS.has('activate_signal'));
+    });
+
+    it('matches request schemas that require idempotency_key', () => {
+      const schemaRequiredTasks = Object.entries(TOOL_REQUEST_SCHEMAS)
+        .filter(([, schema]) => {
+          const field = schema?.shape?.idempotency_key;
+          return field && !field.safeParse(undefined).success;
+        })
+        .map(([toolName]) => toolName);
+
+      // refine_proposals is a forward surface available before every schema
+      // bundle used by this branch necessarily carries the required field.
+      schemaRequiredTasks.push('refine_proposals');
+
+      assert.deepEqual([...MUTATING_TASKS].sort(), [...new Set(schemaRequiredTasks)].sort());
     });
   });
 });

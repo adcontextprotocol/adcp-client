@@ -5,9 +5,7 @@ import {
 } from '../supply-path/products';
 // Main ADCP Client - Type-safe conversation-aware client for AdCP agents
 
-import { z } from 'zod';
 import { createHash, randomUUID } from 'node:crypto';
-import * as schemas from '../types/schemas.generated';
 import type { AgentConfig } from '../types';
 import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
 import { parseAdcpMajorVersion, toReleasePrecisionVersion, type AdcpVersion } from '../version';
@@ -9363,14 +9361,10 @@ export class SingleAgentClient {
       return; // No schema available for this task type
     }
 
-    try {
-      schema.parse(params);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        const issues = error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
-        throw new Error(`Request validation failed for ${taskType}: ${issues}`);
-      }
-      throw error;
+    const result = schema.safeParse(params);
+    if (!result.success) {
+      const issues = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
+      throw new Error(`Request validation failed for ${taskType}: ${issues}`);
     }
   }
 
@@ -9389,8 +9383,9 @@ export class SingleAgentClient {
    *
    * @internal
    */
-  private getRequestSchema(taskType: string): z.ZodSchema | null {
-    const schemaMap: Partial<Record<string, z.ZodSchema>> = {
+  private getRequestSchema(taskType: string) {
+    const schemas = loadClientRequestSchemas();
+    const schemaMap = {
       get_products: schemas.GetProductsRequestSchema,
       list_creative_formats: schemas.ListCreativeFormatsRequestSchema,
       create_media_buy: schemas.CreateMediaBuyRequestSchema,
@@ -9404,8 +9399,15 @@ export class SingleAgentClient {
       activate_signal: schemas.ActivateSignalRequestSchema,
     };
 
-    return schemaMap[taskType] || null;
+    return schemaMap[taskType as keyof typeof schemaMap] || null;
   }
+}
+
+let clientRequestSchemasModule: typeof import('../types/schemas.generated') | undefined;
+
+function loadClientRequestSchemas(): typeof import('../types/schemas.generated') {
+  clientRequestSchemasModule ??= require('../types/schemas.generated') as typeof import('../types/schemas.generated');
+  return clientRequestSchemasModule;
 }
 
 let hasWarnedAboutUnverifiedWebhookReceive = false;

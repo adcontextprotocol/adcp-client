@@ -11,6 +11,7 @@ import { SyncCreativesResponseStrictSchema } from '../validation/sync-creatives'
 import { isPre31AdcpVersion } from './adcp-version-config';
 import { GetReportingStatusResponseCurrentSchema } from './reporting-status-response';
 import { toReleasePrecisionVersion } from '../version';
+import { cacheResponseSchemas } from './response-schema-cache';
 
 function declaresLegacy30xPayload(response: Record<string, unknown>): boolean {
   const adcpVersion = response.adcp_version;
@@ -184,3 +185,5 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   verify_brand_claims: schemas.VerifyBrandClaimsResponseBulkSchema,
   search_brands: schemas.SearchBrandsResponseSchema,
 };
+
+cacheResponseSchemas({ prepareResponseForSchemaValidation, TOOL_RESPONSE_SCHEMAS });
