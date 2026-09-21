@@ -42,6 +42,7 @@ const ALLOWED_SCHEMES = new Set(['https:', 'http:']);
 
 export type SsrfRefusedCode =
   | 'invalid_url'
+  | 'url_credentials'
   | 'scheme_not_allowed'
   | 'non_https_without_opt_in'
   | 'dns_lookup_failed'
@@ -180,18 +181,32 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
   } catch {
     throw new SsrfRefusedError('invalid_url', `Invalid URL: ${url}`, { url });
   }
-  const checkedUrl = parsed.href;
-  // From this point onward use the immutable serialization that was checked.
-  // This also prevents stateful string coercion in untyped JavaScript callers
-  // from presenting a different target to diagnostics or result metadata.
-  url = checkedUrl;
-
   // `URL.hostname` wraps IPv6 literals in brackets (`https://[::1]/` →
   // `[::1]`). `dns.lookup` and the address classifier both want the bare
   // form; strip brackets here so IPv6 localhost URLs work under
   // `allowPrivateIp` and so bracketed literals can't slip past classification
   // on a future Node release that tolerates them.
   const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
+
+  // URL credentials can be exfiltrated through redirects, proxy logs, or
+  // diagnostics and have no place in a counterparty-controlled discovery
+  // reference. Reject them before serializing the checked URL. The error
+  // carries a redacted URL so callers cannot accidentally log the secret.
+  if (parsed.username !== '' || parsed.password !== '') {
+    const redacted = new URL(parsed.href);
+    redacted.username = '';
+    redacted.password = '';
+    throw new SsrfRefusedError('url_credentials', 'Refusing URL with embedded credentials', {
+      url: redacted.href,
+      hostname,
+    });
+  }
+
+  const checkedUrl = parsed.href;
+  // From this point onward use the immutable serialization that was checked.
+  // This also prevents stateful string coercion in untyped JavaScript callers
+  // from presenting a different target to diagnostics or result metadata.
+  url = checkedUrl;
 
   if (!ALLOWED_SCHEMES.has(parsed.protocol)) {
     throw new SsrfRefusedError(

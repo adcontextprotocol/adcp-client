@@ -27,6 +27,7 @@ import {
   type ResolveSchemaRefsOptions,
 } from '../v2/format-schema/sandbox-refs';
 import { findUnsafeRegexPattern, unsafeRegexDetails } from '../v2/format-schema/regex-safety';
+import { rejectDuplicateJsonKeys } from '../signing/agent-resolver/strict-json';
 
 export interface CanonicalReference {
   uri: string;
@@ -54,6 +55,7 @@ export type CanonicalReferenceErrorCode =
   | 'network_error'
   | 'body_too_large'
   | 'invalid_json'
+  | 'document_too_deep'
   | 'invalid_json_schema'
   | 'unsupported_schema_draft'
   | 'ref_sandbox_violation'
@@ -188,6 +190,7 @@ const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
 const DEFAULT_MAX_TOTAL_REF_BYTES = 8 * 1024 * 1024;
 const DEFAULT_CACHE_MAX_ENTRIES = 64;
 const DEFAULT_CACHE_MAX_BYTES = 32 * 1024 * 1024;
+const MAX_JSON_DOCUMENT_DEPTH = 256;
 const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 const DRAFT_07_URIS = new Set(['http://json-schema.org/draft-07/schema#', 'https://json-schema.org/draft-07/schema#']);
 const DRAFT_2020_12_URIS = new Set([
@@ -301,6 +304,23 @@ function cloneResolved<TDocument>(
   };
 }
 
+function exceedsJsonDocumentDepth(value: unknown): boolean {
+  const pending: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    if (current.depth > MAX_JSON_DOCUMENT_DEPTH) return true;
+    if (current.value === null || typeof current.value !== 'object') continue;
+    let children: unknown[];
+    try {
+      children = Array.isArray(current.value) ? current.value : Object.values(current.value as Record<string, unknown>);
+    } catch {
+      return true;
+    }
+    for (const child of children) pending.push({ value: child, depth: current.depth + 1 });
+  }
+  return false;
+}
+
 export function createCanonicalReferenceResolver(
   defaults: CanonicalReferenceResolverOptions = {}
 ): CanonicalReferenceResolver {
@@ -385,6 +405,16 @@ async function fetchJsonReference(
   const cacheKey = canonicalReferenceCacheKey(ref, options);
   const cached = cache?.get(cacheKey);
   if (cached) {
+    if (exceedsJsonDocumentDepth(cached.document)) {
+      return fail(
+        kind,
+        ref,
+        cacheKey,
+        'invalid_document',
+        'document_too_deep',
+        `Canonical reference exceeds the maximum JSON depth of ${MAX_JSON_DOCUMENT_DEPTH}`
+      );
+    }
     return { ...cloneResolved(cached), kind, ref, cacheKey, fromCache: true };
   }
 
@@ -487,12 +517,42 @@ async function fetchJsonReference(
     });
   }
 
-  const text = new TextDecoder('utf-8').decode(response.body);
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(response.body);
+  } catch {
+    return fail(
+      kind,
+      ref,
+      cacheKey,
+      'invalid_document',
+      'invalid_json',
+      'Canonical reference body is not valid UTF-8 JSON'
+    );
+  }
   let document: unknown;
   try {
+    rejectDuplicateJsonKeys(text);
     document = JSON.parse(text);
   } catch {
-    return fail(kind, ref, cacheKey, 'invalid_document', 'invalid_json', 'Canonical reference body is not valid JSON');
+    return fail(
+      kind,
+      ref,
+      cacheKey,
+      'invalid_document',
+      'invalid_json',
+      'Canonical reference body is not unambiguous JSON'
+    );
+  }
+  if (exceedsJsonDocumentDepth(document)) {
+    return fail(
+      kind,
+      ref,
+      cacheKey,
+      'invalid_document',
+      'document_too_deep',
+      `Canonical reference exceeds the maximum JSON depth of ${MAX_JSON_DOCUMENT_DEPTH}`
+    );
   }
 
   const result: CanonicalReferenceResolvedResult = {

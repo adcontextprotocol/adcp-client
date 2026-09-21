@@ -56,6 +56,19 @@ describe('ssrfSafeFetch — scheme guard', () => {
       }
     );
   });
+
+  it('refuses URL credentials without retaining them in diagnostics', async () => {
+    await assert.rejects(
+      () => ssrfSafeFetch('https://buyer-secret:password@public.example/'),
+      err => {
+        assert.ok(err instanceof SsrfRefusedError);
+        assert.strictEqual(err.code, 'url_credentials');
+        assert.strictEqual(err.url, 'https://public.example/');
+        assert.doesNotMatch(err.message, /buyer-secret|password/);
+        return true;
+      }
+    );
+  });
 });
 
 describe('ssrfSafeFetch — address guard', () => {

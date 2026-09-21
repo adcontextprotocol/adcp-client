@@ -8,6 +8,7 @@ const path = require('node:path');
 const {
   createCanonicalReferenceCache,
   createCanonicalReferenceResolver,
+  resolveCanonicalReference,
   resolveFormatSchemaReference,
   resolvePlatformExtensionsReference,
 } = require('@adcp/sdk/canonical-references');
@@ -167,6 +168,49 @@ after(() => server.close());
 const unsafeLocal = { allowUnsafeHttp: true, allowPrivateNetwork: true };
 
 describe('canonical reference resolver', () => {
+  test('rejects duplicate JSON object keys', async () => {
+    const body = Buffer.from('{"value":1,"value":2}');
+    routes.set('/duplicate-key.json', (_req, res) => res.writeHead(200).end(body));
+
+    const result = await resolveCanonicalReference(ref(baseUrl, '/duplicate-key.json', body), {
+      allowUnsafeHttp: true,
+      allowPrivateNetwork: true,
+    });
+
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.status, 'invalid_document');
+    assert.strictEqual(result.error.code, 'invalid_json');
+  });
+
+  test('rejects malformed UTF-8 before JSON parsing', async () => {
+    const body = Buffer.concat([Buffer.from('{"value":"'), Buffer.from([0xff]), Buffer.from('"}')]);
+    routes.set('/invalid-utf8.json', (_req, res) => res.writeHead(200).end(body));
+
+    const result = await resolveCanonicalReference(ref(baseUrl, '/invalid-utf8.json', body), {
+      allowUnsafeHttp: true,
+      allowPrivateNetwork: true,
+    });
+
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.status, 'invalid_document');
+    assert.strictEqual(result.error.code, 'invalid_json');
+  });
+
+  test('returns a structured failure instead of cloning an excessively deep JSON document', async () => {
+    const nesting = 3_000;
+    const body = Buffer.from(`${'{"child":'.repeat(nesting)}null${'}'.repeat(nesting)}`);
+    routes.set('/too-deep.json', (_req, res) => res.writeHead(200).end(body));
+
+    const result = await resolveCanonicalReference(ref(baseUrl, '/too-deep.json', body), {
+      allowUnsafeHttp: true,
+      allowPrivateNetwork: true,
+    });
+
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.status, 'invalid_document');
+    assert.strictEqual(result.error.code, 'document_too_deep');
+  });
+
   test('resolves platform_extensions and caches by policy-scoped uri@digest without a singleton cache', async () => {
     const body = jsonBody({ vendor: 'example', feature: true });
     const resolver = createCanonicalReferenceResolver(unsafeLocal);
