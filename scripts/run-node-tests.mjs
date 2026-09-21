@@ -26,6 +26,10 @@ export const SLOW_NODE_TESTS = new Set([
   'test/lib/cli-auth-scheme.test.js',
   'test/lib/cli-removed-flags.test.js',
   'test/lib/cli-soft-fail.test.js',
+  // Spawns the CLI fifteen times while repairing and validating compliance
+  // bundles. It takes ~41s standing alone, leaving too little margin under the
+  // fast suite's 60s per-file ceiling once a cold shard runs concurrently.
+  'test/lib/cli-test-kit-compliance-version.test.js',
   // Each case spawns the CLI against a live mock agent (flag threading through
   // --file, and the runFullAssessment → comply() assessment path). ~25s on an
   // idle machine, which has no margin under the fast suite's 60s per-file
