@@ -528,7 +528,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ['1/3', '2/3', '3/3']
+        include:
+          - shard: '1/3'
+            id: '1-3'
+          - shard: '2/3'
+            id: '2-3'
+          - shard: '3/3'
+            id: '3-3'
 
     steps:
       - name: Checkout code
@@ -571,11 +577,67 @@ jobs:
           rm -rf dist schemas/cache compliance/cache
           tar -xzf "$archive"
 
+      # Pull requests can restore the default branch cache but never save it.
+      # A missing or invalid cache is safe: the runner uses a deterministic
+      # equal-weight fallback until a successful main run refreshes history.
+      - name: Restore trusted test timings
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/node-test-timings.json
+          key: node-test-timings-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            node-test-timings-${{ runner.os }}-
+
       - name: Run fast unit test shard
         run: node scripts/run-test-with-summary.js --title "Unit Tests Fast $TEST_SHARD" -- npm run test:node:fast:shard
         env:
           CI: true
           TEST_SHARD: ${{ matrix.shard }}
+          TEST_SHARD_MANIFEST: ${{ runner.temp }}/manifest-${{ matrix.id }}.json
+          TEST_TIMINGS_FILE: .cache/node-test-timings.json
+          TEST_TIMINGS_OUTPUT: ${{ runner.temp }}/timings-${{ matrix.id }}.json
+
+      - name: Upload test timing diagnostics
+        uses: actions/upload-artifact@v7
+        with:
+          name: node-test-timings-${{ github.run_id }}-${{ matrix.id }}
+          path: |
+            ${{ runner.temp }}/timings-${{ matrix.id }}.json
+            ${{ runner.temp }}/manifest-${{ matrix.id }}.json
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
+
+  node-test-timings:
+    name: Refresh Node Test Timings
+    runs-on: ubuntu-latest
+    needs: unit-tests-fast
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.unit-tests-fast.result == 'success'
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Download successful shard timings
+        uses: actions/download-artifact@v7
+        with:
+          pattern: node-test-timings-${{ github.run_id }}-*
+          path: ${{ runner.temp }}/node-test-timings
+          merge-multiple: true
+
+      - name: Merge test timings
+        run: |
+          mkdir -p .cache
+          node scripts/merge-node-test-timings.mjs \
+            --input "$RUNNER_TEMP/node-test-timings" \
+            --output .cache/node-test-timings.json
+
+      - name: Save trusted test timings
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/node-test-timings.json
+          key: node-test-timings-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   unit-tests-slow:
     name: Unit Tests Slow

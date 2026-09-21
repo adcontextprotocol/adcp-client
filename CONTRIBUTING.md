@@ -109,7 +109,13 @@ The Node test runner otherwise derives concurrency from the machine CPU count. T
 too aggressive on developer workstations because several test files launch their own
 TypeScript compiler or CLI subprocesses. The repository runner therefore caps local
 fast suites at two workers and runs the slow group serially. CI keeps its existing
-machine-derived concurrency and splits the fast suite into three shards.
+machine-derived concurrency and splits the fast suite into three shards. Those CI
+shards use per-file durations recorded by the latest successful `main` run and a
+deterministic longest-first assignment. A new or renamed test uses the median known
+duration; when no history is available, all files use an equal one-second weight.
+Pull requests may restore this history but cannot publish it, so untrusted or failed
+runs cannot poison future shard assignments. Each shard uploads its assignment
+manifest with the timing artifact for debugging.
 
 `npm test` and `npm run test:lib` build the library once before starting their test
 groups, then every test reads that completed `dist/` tree. Set `TEST_CONCURRENCY=1`

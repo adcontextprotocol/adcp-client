@@ -86,7 +86,7 @@ test('artifact identity and digest are bound to the producing job and this workf
 
 test('all consumers verify before use, without rebuilding or waiting for package checks', () => {
   const downloadingJobs = Object.entries(jobs)
-    .filter(([, job]) => job.steps.some(step => step.uses?.startsWith('actions/download-artifact@')))
+    .filter(([, job]) => job.steps.some(step => step.name === 'Download library output'))
     .map(([name]) => name);
   assert.deepEqual(downloadingJobs.sort(), [...consumers].sort(), 'Every artifact consumer must be audited');
   for (const name of consumers) {
@@ -103,7 +103,11 @@ test('all consumers verify before use, without rebuilding or waiting for package
     assert.equal(verify.if, undefined);
     assert.equal(verify['continue-on-error'], undefined);
   }
-  assert.deepEqual(jobs['unit-tests-fast'].strategy.matrix.shard, ['1/3', '2/3', '3/3']);
+  assert.deepEqual(jobs['unit-tests-fast'].strategy.matrix.include, [
+    { shard: '1/3', id: '1-3' },
+    { shard: '2/3', id: '2-3' },
+    { shard: '3/3', id: '3-3' },
+  ]);
   for (const name of [
     'generated-checks',
     'typescript-typecheck',
@@ -116,6 +120,30 @@ test('all consumers verify before use, without rebuilding or waiting for package
   assert.ok(jobs['typecheck-build'].needs.includes('library-checks'));
   assert.ok(jobs.test.needs.includes('node-undici-runtime-matrix'));
   assert.ok(jobs.test.needs.includes('node-undici-network-matrix'));
+});
+
+test('test timing history is restored read-only in shards and saved only after successful main runs', () => {
+  const shard = jobs['unit-tests-fast'];
+  const restore = shard.steps.find(step => step.uses === 'actions/cache/restore@v4');
+  const upload = shard.steps.find(step => step.name === 'Upload test timing diagnostics');
+  const refresh = jobs['node-test-timings'];
+  const save = refresh.steps.find(step => step.uses === 'actions/cache/save@v4');
+
+  assert.ok(restore);
+  assert.equal(
+    shard.steps.some(step => step.uses === 'actions/cache/save@v4'),
+    false
+  );
+  assert.match(restore.with.key, /github\.run_id/);
+  assert.equal(upload.with['if-no-files-found'], 'error');
+  assert.equal(upload.with.overwrite, true);
+  assert.equal(refresh.needs, 'unit-tests-fast');
+  assert.equal(
+    refresh.if,
+    "github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.unit-tests-fast.result == 'success'"
+  );
+  assert.equal(save.with.key, restore.with.key);
+  assert.equal(workflow.permissions.contents, 'read');
 });
 
 test('all package validation gates remain required after leaving the producer', () => {

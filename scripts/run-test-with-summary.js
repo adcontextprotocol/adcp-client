@@ -1,60 +1,81 @@
 #!/usr/bin/env node
 
 const { spawn } = require('node:child_process');
-const { appendFileSync } = require('node:fs');
+const { appendFileSync, writeFileSync } = require('node:fs');
 
 function usage() {
   console.error('Usage: node scripts/run-test-with-summary.js --title <title> -- <command> [args...]');
   process.exit(2);
 }
 
-const separatorIndex = process.argv.indexOf('--');
-const titleIndex = process.argv.indexOf('--title');
+function main() {
+  const separatorIndex = process.argv.indexOf('--');
+  const titleIndex = process.argv.indexOf('--title');
 
-if (separatorIndex === -1 || titleIndex === -1 || titleIndex + 1 >= separatorIndex) {
-  usage();
-}
-
-const title = process.argv[titleIndex + 1];
-const command = process.argv[separatorIndex + 1];
-const commandArgs = process.argv.slice(separatorIndex + 2);
-
-if (!command) {
-  usage();
-}
-
-let output = '';
-const child = spawn(command, commandArgs, {
-  env: process.env,
-  shell: false,
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
-
-child.stdout.on('data', chunk => {
-  process.stdout.write(chunk);
-  output += chunk.toString('utf8');
-});
-
-child.stderr.on('data', chunk => {
-  process.stderr.write(chunk);
-  output += chunk.toString('utf8');
-});
-
-child.on('error', error => {
-  console.error(error.message);
-  process.exit(1);
-});
-
-child.on('close', (code, signal) => {
-  writeSummary(title, output);
-
-  if (signal) {
-    process.kill(process.pid, signal);
-    return;
+  if (separatorIndex === -1 || titleIndex === -1 || titleIndex + 1 >= separatorIndex) {
+    usage();
   }
 
-  process.exit(code ?? 1);
-});
+  const title = process.argv[titleIndex + 1];
+  const command = process.argv[separatorIndex + 1];
+  const commandArgs = process.argv.slice(separatorIndex + 2);
+
+  if (!command) {
+    usage();
+  }
+
+  let output = '';
+  const child = spawn(command, commandArgs, {
+    env: process.env,
+    shell: false,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  child.stdout.on('data', chunk => {
+    process.stdout.write(chunk);
+    output += chunk.toString('utf8');
+  });
+
+  child.stderr.on('data', chunk => {
+    process.stderr.write(chunk);
+    output += chunk.toString('utf8');
+  });
+
+  child.on('error', error => {
+    console.error(error.message);
+    process.exit(1);
+  });
+
+  child.on('close', (code, signal) => {
+    writeSummary(title, output);
+    if (process.env.TEST_TIMINGS_OUTPUT) writeTimingArtifact(process.env.TEST_TIMINGS_OUTPUT, output);
+
+    if (signal) {
+      process.kill(process.pid, signal);
+      return;
+    }
+
+    process.exit(code ?? 1);
+  });
+}
+
+function parseTimingSnapshot(rawOutput) {
+  const matches = [...rawOutput.matchAll(/^# ADCP_TEST_TIMINGS ([A-Za-z0-9+/=]+)$/gm)];
+  if (matches.length === 0) return {};
+  const parsed = JSON.parse(Buffer.from(matches.at(-1)[1], 'base64').toString('utf8'));
+  const tests = {};
+  for (const [testPath, durationMs] of Object.entries(parsed)) {
+    if (testPath.endsWith('.test.js') && Number.isFinite(durationMs) && durationMs > 0) {
+      tests[testPath] = durationMs;
+    }
+  }
+  return tests;
+}
+
+function writeTimingArtifact(file, rawOutput) {
+  const tests = parseTimingSnapshot(rawOutput);
+  writeFileSync(file, `${JSON.stringify({ version: 1, tests }, null, 2)}\n`);
+}
 
 function writeSummary(summaryTitle, rawOutput) {
   const rows = parseDurations(rawOutput)
@@ -139,3 +160,7 @@ function escapeCell(value) {
 function escapeMarkdown(value) {
   return String(value).replace(/\r?\n/g, ' ').trim();
 }
+
+module.exports = { parseDurations, parseTimingSnapshot, writeSummary, writeTimingArtifact };
+
+if (require.main === module) main();

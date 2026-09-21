@@ -98,7 +98,7 @@ test('local discovery runs are deterministically split into fresh Node-process b
   );
 });
 
-test('focused files and shards remain one Node invocation', async () => {
+test('focused files and weighted shards remain one Node invocation', async () => {
   const { buildNodeTestPlan, parseRunnerArgs } = await import(runnerUrl);
 
   const focusedPlan = buildNodeTestPlan(parseRunnerArgs(['test/lib/pagination.test.js']), {});
@@ -106,7 +106,8 @@ test('focused files and shards remain one Node invocation', async () => {
 
   const localShardPlan = buildNodeTestPlan(parseRunnerArgs(['--group', 'fast', '--shard', '2/3']), {});
   assert.equal(localShardPlan.batches.length, 1);
-  assert.equal(localShardPlan.batchArgs[0].includes('--test-shard=2/3'), true);
+  assert.equal(localShardPlan.batchArgs[0].includes('--test-shard=2/3'), false);
+  assert.equal(localShardPlan.assignment.shards.length, 3);
 
   const ciPlan = buildNodeTestPlan(parseRunnerArgs(['--group', 'fast']), { CI: 'true' });
   assert.equal(ciPlan.batches.length, 1);
@@ -114,6 +115,60 @@ test('focused files and shards remain one Node invocation', async () => {
     ciPlan.batchArgs[0].some(arg => arg.startsWith('--test-concurrency=')),
     false
   );
+});
+
+test('duration-weighted sharding is deterministic, complete, and balanced', async () => {
+  const { assignWeightedShards } = await import(runnerUrl);
+  const files = Array.from({ length: 12 }, (_, index) => `test/file-${String(index).padStart(2, '0')}.test.js`);
+  const timings = Object.fromEntries(files.map((file, index) => [file, (index + 1) * 100]));
+  const first = assignWeightedShards(files, 3, timings);
+  const second = assignWeightedShards(files.slice().reverse(), 3, timings);
+
+  assert.deepEqual(first, second);
+  assert.deepEqual(first.shards.flatMap(shard => shard.files).sort(), files);
+  assert.equal(new Set(first.shards.flatMap(shard => shard.files)).size, files.length);
+  assert.equal(
+    first.shards.every(shard => shard.measuredFiles === shard.files.length),
+    true
+  );
+  const estimates = first.shards.map(shard => shard.estimatedDurationMs);
+  assert.ok((Math.max(...estimates) - Math.min(...estimates)) / Math.max(...estimates) <= 0.15);
+});
+
+test('new files use the median known duration and empty history uses equal weights', async () => {
+  const { assignWeightedShards } = await import(runnerUrl);
+  const files = ['test/a.test.js', 'test/b.test.js', 'test/c.test.js', 'test/d.test.js'];
+  const withHistory = assignWeightedShards(files, 2, {
+    'test/a.test.js': 100,
+    'test/b.test.js': 300,
+    'test/c.test.js': 500,
+  });
+  assert.equal(withHistory.fallbackDurationMs, 300);
+  assert.equal(
+    withHistory.shards.reduce((count, shard) => count + shard.fallbackFiles, 0),
+    1
+  );
+
+  const coldStart = assignWeightedShards(files, 2);
+  assert.equal(coldStart.fallbackDurationMs, 1_000);
+  assert.deepEqual(
+    coldStart.shards.map(shard => shard.estimatedDurationMs),
+    [2_000, 2_000]
+  );
+});
+
+test('discovered shards use explicit weighted file lists while focused sharding remains native', async () => {
+  const { buildNodeTestArgs, parseRunnerArgs } = await import(runnerUrl);
+  const discovered = buildNodeTestArgs(parseRunnerArgs(['--group', 'fast', '--shard', '1/3']), {});
+  assert.equal(
+    discovered.args.some(arg => arg.startsWith('--test-shard=')),
+    false
+  );
+  assert.deepEqual(discovered.files, discovered.assignment.shards[0].files);
+
+  const focused = buildNodeTestArgs(parseRunnerArgs(['--shard', '1/3', 'test/lib/pagination.test.js']), {});
+  assert.equal(focused.args.includes('--test-shard=1/3'), true);
+  assert.equal(focused.assignment, undefined);
 });
 
 test('batch execution completes planned coverage and preserves the first failure status', async () => {

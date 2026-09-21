@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
-import { readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +26,10 @@ export const SLOW_NODE_TESTS = new Set([
   'test/lib/cli-auth-scheme.test.js',
   'test/lib/cli-removed-flags.test.js',
   'test/lib/cli-soft-fail.test.js',
+  // Spawns the CLI fifteen times while repairing and validating compliance
+  // bundles. It takes ~41s standing alone, leaving too little margin under the
+  // fast suite's 60s per-file ceiling once a cold shard runs concurrently.
+  'test/lib/cli-test-kit-compliance-version.test.js',
   // Each case spawns the CLI against a live mock agent (flag threading through
   // --file, and the runFullAssessment → comply() assessment path). ~25s on an
   // idle machine, which has no margin under the fast suite's 60s per-file
@@ -59,6 +63,10 @@ export const SLOW_NODE_TESTS = new Set([
 
 function normalizeTestPath(testPath) {
   return testPath.split(path.sep).join('/');
+}
+
+function comparePaths(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function discoverTestsIn(relativeDirectory) {
@@ -177,13 +185,14 @@ export function parseRunnerArgs(argv) {
   return options;
 }
 
-function validateShard(shard) {
-  if (shard === undefined) return;
+function parseShard(shard) {
+  if (shard === undefined) return undefined;
   if (!/^[1-9]\d*\/[1-9]\d*$/.test(shard)) {
     throw new Error(`--shard must use the form N/M; received ${JSON.stringify(shard)}`);
   }
   const [index, total] = shard.split('/').map(Number);
   if (index > total) throw new Error(`--shard index ${index} exceeds shard count ${total}`);
+  return { index, total };
 }
 
 function resolveRequestedFiles(options) {
@@ -200,9 +209,17 @@ export function buildNodeTestArgs(options, env = process.env) {
   if (!['node', 'lib'].includes(options.scope)) {
     throw new Error(`Unknown test scope: ${options.scope}`);
   }
-  validateShard(options.shard);
-  const files = resolveRequestedFiles(options);
-  if (files.length === 0) throw new Error('No test files matched the requested scope and group');
+  const shard = parseShard(options.shard);
+  const requestedFiles = resolveRequestedFiles(options);
+  if (requestedFiles.length === 0) throw new Error('No test files matched the requested scope and group');
+
+  // Explicit/focused file execution retains Node's native sharding semantics.
+  // Only discovered CI suites use recorded-duration balancing.
+  const weightedShard = shard !== undefined && options.files.length === 0;
+  const timingData = weightedShard ? loadTestTimings(env.TEST_TIMINGS_FILE) : { tests: {}, source: 'not used' };
+  const assignment = weightedShard ? assignWeightedShards(requestedFiles, shard.total, timingData.tests) : undefined;
+  const files = assignment ? assignment.shards[shard.index - 1].files : requestedFiles;
+  const nodeShard = weightedShard ? undefined : options.shard;
 
   const containsSlowTest = files.some(file => SLOW_NODE_TESTS.has(normalizeTestPath(file)));
   const timeoutMs = options.group === 'slow' || containsSlowTest ? 180_000 : 60_000;
@@ -211,15 +228,98 @@ export function buildNodeTestArgs(options, env = process.env) {
     env,
     group: options.group,
   });
-  const args = buildNodeTestArgsForFiles({ concurrency, files, shard: options.shard, timeoutMs });
+  const args = buildNodeTestArgsForFiles({
+    concurrency,
+    files,
+    reporter: env.TEST_TIMINGS_OUTPUT ? './scripts/node-test-timing-reporter.mjs' : undefined,
+    shard: nodeShard,
+    timeoutMs,
+  });
 
-  return { args, concurrency, files, timeoutMs };
+  return {
+    args,
+    assignment,
+    concurrency,
+    files,
+    nodeShard,
+    requestedFiles,
+    timeoutMs,
+    timingSource: timingData.source,
+  };
 }
 
-export function buildNodeTestArgsForFiles({ concurrency, files, shard, timeoutMs }) {
+export function loadTestTimings(file) {
+  if (!file) return { tests: {}, source: 'no timing file configured' };
+
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf8'));
+    if (parsed?.version !== 1 || parsed.tests === null || typeof parsed.tests !== 'object') {
+      throw new Error('expected a version 1 object with a tests map');
+    }
+    const tests = {};
+    for (const [testPath, durationMs] of Object.entries(parsed.tests)) {
+      if (typeof testPath === 'string' && Number.isFinite(durationMs) && durationMs > 0) {
+        tests[normalizeTestPath(testPath)] = durationMs;
+      }
+    }
+    return { tests, source: `${file} (${Object.keys(tests).length} recorded files)` };
+  } catch (error) {
+    return { tests: {}, source: `${file} unavailable: ${error.message}` };
+  }
+}
+
+function median(values) {
+  const sorted = values.slice().sort((left, right) => left - right);
+  const midpoint = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[midpoint - 1] + sorted[midpoint]) / 2 : sorted[midpoint];
+}
+
+export function assignWeightedShards(files, shardCount, timings = {}) {
+  const total = parsePositiveInteger(shardCount, 'shard count');
+  const normalizedFiles = [...new Set(files.map(normalizeTestPath))].sort(comparePaths);
+  if (normalizedFiles.length !== files.length) throw new Error('Test file list contains duplicates');
+
+  const measuredDurations = normalizedFiles
+    .map(file => timings[file])
+    .filter(durationMs => Number.isFinite(durationMs) && durationMs > 0);
+  // New or renamed files get the median known cost. With no history at all,
+  // every file gets 1 second and the deterministic tie-breakers distribute
+  // them evenly until the first trusted main-branch timing refresh completes.
+  const fallbackDurationMs = measuredDurations.length > 0 ? median(measuredDurations) : 1_000;
+  const weightedFiles = normalizedFiles
+    .map(file => ({
+      file,
+      durationMs: Number.isFinite(timings[file]) && timings[file] > 0 ? timings[file] : fallbackDurationMs,
+      measured: Number.isFinite(timings[file]) && timings[file] > 0,
+    }))
+    .sort((left, right) => right.durationMs - left.durationMs || comparePaths(left.file, right.file));
+  const shards = Array.from({ length: total }, (_, index) => ({
+    index: index + 1,
+    files: [],
+    estimatedDurationMs: 0,
+    measuredFiles: 0,
+    fallbackFiles: 0,
+  }));
+
+  for (const weightedFile of weightedFiles) {
+    const target = shards.reduce((lightest, candidate) =>
+      candidate.estimatedDurationMs < lightest.estimatedDurationMs ? candidate : lightest
+    );
+    target.files.push(weightedFile.file);
+    target.estimatedDurationMs += weightedFile.durationMs;
+    target.measuredFiles += weightedFile.measured ? 1 : 0;
+    target.fallbackFiles += weightedFile.measured ? 0 : 1;
+  }
+  for (const assignedShard of shards) assignedShard.files.sort(comparePaths);
+
+  return { fallbackDurationMs, shards };
+}
+
+export function buildNodeTestArgsForFiles({ concurrency, files, reporter, shard, timeoutMs }) {
   const args = [`--test-timeout=${timeoutMs}`, '--test-force-exit'];
   if (concurrency !== undefined) args.push(`--test-concurrency=${concurrency}`);
   if (shard !== undefined) args.push(`--test-shard=${shard}`);
+  if (reporter !== undefined) args.push(`--test-reporter=${reporter}`);
   args.push('--test', ...files);
 
   return args;
@@ -249,11 +349,24 @@ export function buildNodeTestPlan(options, env = process.env) {
       buildNodeTestArgsForFiles({
         concurrency: invocation.concurrency,
         files,
-        shard: options.shard,
+        reporter: env.TEST_TIMINGS_OUTPUT ? './scripts/node-test-timing-reporter.mjs' : undefined,
+        shard: invocation.nodeShard,
         timeoutMs: invocation.timeoutMs,
       })
     ),
   };
+}
+
+export function writeShardManifest(file, options, plan) {
+  if (!file || !plan.assignment || !options.shard) return;
+  const manifest = {
+    version: 1,
+    shard: options.shard,
+    timing_source: plan.timingSource,
+    fallback_duration_ms: plan.assignment.fallbackDurationMs,
+    shards: plan.assignment.shards,
+  };
+  writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
 // Run every planned batch even after a test failure, matching Node's normal
@@ -335,6 +448,8 @@ async function run() {
   const options = parseRunnerArgs(process.argv.slice(2));
   const plan = buildNodeTestPlan(options);
 
+  writeShardManifest(process.env.TEST_SHARD_MANIFEST, options, plan);
+
   if (options.list) {
     process.stdout.write(`${plan.files.join('\n')}\n`);
     return;
@@ -347,6 +462,16 @@ async function run() {
     `[node-tests] ${plan.files.length} files; group=${options.group}; ` +
       `concurrency=${concurrencyLabel}; timeout=${plan.timeoutMs}ms${batchingLabel}`
   );
+  if (plan.assignment && options.shard) {
+    const { index } = parseShard(options.shard);
+    const selected = plan.assignment.shards[index - 1];
+    const estimates = plan.assignment.shards.map(shard => `${Math.round(shard.estimatedDurationMs)}ms`).join(', ');
+    console.log(
+      `[node-tests] weighted shard ${options.shard}; estimate=${Math.round(selected.estimatedDurationMs)}ms; ` +
+        `measured=${selected.measuredFiles}; fallback=${selected.fallbackFiles}; all estimates=[${estimates}]; ` +
+        `source=${plan.timingSource}`
+    );
+  }
 
   process.exitCode = await runNodeTestBatches(plan);
 }
