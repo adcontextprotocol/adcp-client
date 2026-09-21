@@ -1,5 +1,40 @@
 # Reporting reconciliation
 
+## Core-only health reconciliation
+
+Use `reconcileReportingCoreV1` when the seller advertises the required Core
+tier without managed delivery or reconciled billing. It is a synchronous pure
+function: pass the obligations and revisions returned by
+`get_reporting_status`, the response's scope closure facts, and the recovery
+window recorded from reporting capabilities. It derives `waiting`, `healthy`,
+`delayed`, `action_required`, or `complete` without a destination, manifest,
+canonicalization contract, resource reader, materialization, or receipt.
+
+```ts
+import { reconcileReportingCoreV1 } from '@adcp/sdk';
+
+const result = reconcileReportingCoreV1({
+  obligations: status.periods,
+  revisions: status.revisions,
+  scope: {
+    closed: status.scope.scope_closed,
+    coverageComplete: status.scope.coverage_complete,
+  },
+  clocks: {
+    ledgerAsOf: status.ledger_as_of,
+    automatedRecoveryWindowSeconds:
+      capabilities.media_buy.reporting_delivery.automated_recovery_window_seconds,
+  },
+});
+```
+
+Core revisions join to obligations by their protocol logical-slice identity:
+account, report definition, reporting profile, media-buy denominator, and
+period. A qualifying revision with `row_count: 0` satisfies its obligation;
+zero rows is explicit reporting, while no revision is a missing report.
+
+## Managed-delivery and receipt reconciliation
+
 `reconcileReporting` turns the reporting ledger into a buyer-verifiable result. It reads one stable ledger snapshot, checks the expected period set, inspects each current destination materialization, submits any required consumer receipts, and then reads the seller's ledger back before returning.
 
 The helper only returns `definitive: true` when all of these conditions hold:

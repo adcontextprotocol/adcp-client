@@ -6,7 +6,9 @@ import type {
   ReportingConsumerMismatchEscalationV1,
   ReportingOperationsContactV1,
   ReportingLedgerConsumerMismatchIssueV1,
+  ReportingFinalityV1,
   ReportingHealthV1,
+  ReportingLedgerCoverageV1,
   ReportingLedgerConsumerStatementV1,
   ReportingLedgerIssueV1,
   ReportingLedgerObligationV1,
@@ -21,8 +23,26 @@ export interface ReportingObligationHealthProjectionV1 {
   satisfied: boolean;
 }
 
+/**
+ * The complete set of facts needed to project Core reporting health.
+ *
+ * Keep this deliberately smaller than `ReportingLedgerObligationV1`: buyers
+ * receive obligations and revisions through `get_reporting_status`, but Core
+ * does not require a destination, materialization, manifest, digest, resource
+ * reader, or receipt.
+ */
+export interface ReportingCoreObligationHealthFactsV1 {
+  reporting_obligation_id: string;
+  scopeResolvedAt: string;
+  expectedAt: string;
+  recoveryDeadlineAt: string;
+  requiredFinality: ReportingFinalityV1;
+  coverage: Pick<ReportingLedgerCoverageV1, 'status'>;
+  state: 'pending' | 'terminal';
+}
+
 export function projectReportingObligationHealthV1(
-  obligation: ReportingLedgerObligationV1,
+  obligation: ReportingCoreObligationHealthFactsV1,
   revisions: readonly Pick<ReportingLedgerRevisionV1, 'finality'>[],
   ledgerAsOf: string,
   scopeClosed = true
@@ -66,7 +86,10 @@ export function projectReportingObligationHealthV1(
   };
 }
 
-function incompleteCoverageIssue(obligation: ReportingLedgerObligationV1, observedAt: string): ReportingLedgerIssueV1 {
+function incompleteCoverageIssue(
+  obligation: ReportingCoreObligationHealthFactsV1,
+  observedAt: string
+): ReportingLedgerIssueV1 {
   const digest = createHash('sha256')
     .update(canonicalJsonV1(['report-coverage-incomplete-v1', obligation.reporting_obligation_id]))
     .digest('base64url')
@@ -96,7 +119,7 @@ export function aggregateReportingHealthV1(
 }
 
 function overdueIssue(
-  obligation: ReportingLedgerObligationV1,
+  obligation: ReportingCoreObligationHealthFactsV1,
   severity: 'delayed' | 'action_required',
   observedAt: string
 ): ReportingLedgerIssueV1 {
