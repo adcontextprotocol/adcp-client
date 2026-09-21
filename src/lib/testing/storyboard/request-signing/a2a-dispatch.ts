@@ -4,8 +4,7 @@
  * and proto-JSON encoding; this module only intercepts its fetch seam.
  */
 import { createAgentTransportFetch } from '../../../net/agent-transport-fetch';
-import { MAX_TIMER_DELAY_MS, withAbortSignal } from '../../../protocols/abort';
-import { isAbortOrTimeoutError } from '../../../protocols/abort';
+import { isAbortOrTimeoutError, MAX_TIMER_DELAY_MS, withAbortSignal } from '../../../protocols/abort';
 import { buildCardUrls } from '../../../utils/a2a-discovery';
 import {
   toA2ATaskPushNotificationConfig,

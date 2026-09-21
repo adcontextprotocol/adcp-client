@@ -4547,12 +4547,12 @@ async function executeStep(
     if (runState.storyboardRequiresPublisherAuthRunner !== true) {
       return invalidTrustedMatchPublisherAuthTask(step, phaseId, context, allSteps, runState);
     }
-    return executeProbeStep(client, step, phaseId, context, allSteps, options, runState);
+    return executeProbeStep(client, step, phaseId, context, allSteps, effectiveOptions, runState);
   }
 
   // HTTP probe tasks bypass the MCP client entirely.
   if (PROBE_TASKS.has(step.task)) {
-    return executeProbeStep(client, step, phaseId, context, allSteps, options, runState);
+    return executeProbeStep(client, step, phaseId, context, allSteps, effectiveOptions, runState);
   }
 
   // Webhook-assertion pseudo-tasks observe the shared receiver instead of
@@ -5031,12 +5031,7 @@ async function executeStep(
     const started = Date.now();
     try {
       if (effectiveOptions.protocol === 'a2a') {
-        const probeClient = createA2AAuthOverrideClient(
-          runState.agentUrl,
-          effectiveOptions,
-          rawProbeHeaders ?? {},
-          step.auth === 'none'
-        );
+        const probeClient = createA2AAuthOverrideClient(runState.agentUrl, effectiveOptions, rawProbeHeaders ?? {});
         const captured = await withRawResponseCapture(() =>
           runStep(step.title, effectiveStep.task, () =>
             executeStoryboardTask(probeClient, effectiveStep.task, request, {
@@ -7520,19 +7515,14 @@ function authHeadersForStep(directive: StepAuthDirective, options: StoryboardRun
 function createA2AAuthOverrideClient(
   agentUrl: string,
   options: StoryboardRunOptions,
-  authHeaders: Record<string, string>,
-  anonymous: boolean
+  authHeaders: Record<string, string>
 ): TestClient {
   const headers: Record<string, string> = {};
-  // An authored `auth: none` probe promises the same anonymous request for
-  // A2A and MCP. Do not guess which caller headers are credentials: session,
-  // HMAC, gateway, and tenant headers can all authenticate in deployments.
-  // Authenticated override probes retain configured routing headers; authors
-  // needing tenant routing for an anonymity test must target an anonymous
-  // tenant endpoint instead of smuggling identity through a custom header.
-  if (!anonymous) {
-    Object.assign(headers, options.headers ?? {});
-  }
+  // Every authored auth override promises the same isolated identity for A2A
+  // and MCP. Caller headers are never inherited: an apparently unrelated
+  // session, HMAC, gateway, or tenant header can authenticate a deployment
+  // and turn a missing/malformed/random-invalid probe into a false pass. Only
+  // headers generated from the step's auth directive may reach the probe.
 
   let auth: StoryboardRunOptions['auth'];
   for (const [name, value] of Object.entries(authHeaders)) {
@@ -7549,8 +7539,8 @@ function createA2AAuthOverrideClient(
     protocol: 'a2a',
     auth,
     headers: Object.keys(headers).length > 0 ? headers : undefined,
-    test_session_id: anonymous ? undefined : options.test_session_id,
-    userAgent: anonymous ? undefined : options.userAgent,
+    test_session_id: undefined,
+    userAgent: undefined,
     test_kit: undefined,
     _client: undefined,
   });

@@ -1,5 +1,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
+const http = require('node:http');
+const { once } = require('node:events');
 
 const {
   normalizeCapturedA2AResult,
@@ -189,6 +191,125 @@ function mixedTransportFetch(calls) {
       headers: { 'content-type': 'application/json', 'mcp-session-id': 'mixed-routing-session' },
     });
   };
+}
+
+function signingStoryboard(agent) {
+  return {
+    id: `routed_signing_${agent}`,
+    version: '1.0.0',
+    adcp_version: '3.1.1',
+    title: 'Routed request signing',
+    category: 'security',
+    summary: '',
+    narrative: '',
+    agent: { interaction_model: '*', capabilities: [] },
+    caller: { role: 'buyer_agent' },
+    phases: [
+      {
+        id: 'signing',
+        title: 'Signing',
+        steps: [
+          {
+            id: 'positive-001-basic-post',
+            title: 'Signed request',
+            task: 'request_signing_probe',
+            agent,
+            validations: [{ check: 'http_status', value: 200, description: 'signed request accepted' }],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+async function startRoutedSigningFixture() {
+  const signedCalls = [];
+  let baseUrl;
+  const server = http.createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const rawBody = Buffer.concat(chunks).toString('utf8');
+    const body = rawBody ? JSON.parse(rawBody) : {};
+
+    if (req.method === 'GET' && req.url.includes('/.well-known/')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(card(`${baseUrl}/rpc`)));
+      return;
+    }
+
+    if (req.url === '/mcp') {
+      if (req.headers.signature || req.headers['signature-input']) {
+        signedCalls.push({ transport: 'mcp', method: body.method, url: req.url });
+      }
+      if (body.method === 'notifications/initialized') {
+        res.writeHead(202).end();
+        return;
+      }
+      const result =
+        body.method === 'initialize'
+          ? {
+              protocolVersion: '2025-03-26',
+              serverInfo: { name: 'routed-signing-mcp', version: '1.0.0' },
+              capabilities: { tools: {} },
+            }
+          : body.method === 'tools/list'
+            ? {
+                tools: ['get_adcp_capabilities', 'create_media_buy'].map(name => ({
+                  name,
+                  description: `${name} fixture`,
+                  inputSchema: { type: 'object' },
+                })),
+              }
+            : body.method === 'tools/call' && body.params?.name === 'get_adcp_capabilities'
+              ? {
+                  content: [
+                    {
+                      type: 'text',
+                      text: JSON.stringify({
+                        status: 'completed',
+                        adcp_version: '3.1',
+                        adcp: { major_versions: [3], supported_versions: ['3.1.1'] },
+                        supported_protocols: ['creative'],
+                        tools: [{ name: 'create_media_buy' }],
+                        request_signing: { supported: true },
+                      }),
+                    },
+                  ],
+                  isError: false,
+                }
+              : { content: [{ type: 'text', text: '{}' }], isError: false };
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        ...(body.method === 'initialize' ? { 'mcp-session-id': 'routed-signing-session' } : {}),
+      });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }));
+      return;
+    }
+
+    if (req.url === '/rpc') {
+      if (req.headers.signature || req.headers['signature-input']) {
+        signedCalls.push({ transport: 'a2a', method: body.method, url: req.url });
+      }
+      const skill = body.params?.message?.parts?.[0]?.data?.skill;
+      if (skill === 'get_adcp_capabilities') {
+        const response = capabilitiesResponse(body.id);
+        response.result.task.artifacts[0].parts[0].data.request_signing = { supported: true };
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(response));
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: {} }));
+      return;
+    }
+
+    res.writeHead(404).end();
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  baseUrl = `http://127.0.0.1:${address.port}`;
+  return { baseUrl, server, signedCalls };
 }
 
 describe('storyboard A2A auth overrides', () => {
@@ -765,6 +886,63 @@ describe('storyboard A2A auth overrides', () => {
     assert.strictEqual(result.phases[0].steps[0].request.url, rpcUrl);
   });
 
+  for (const headerName of ['X-Api-Key', 'X-Session', 'X-HMAC']) {
+    test(`random_invalid override drops caller ${headerName} identity`, async () => {
+      const agentUrl = 'https://isolated.example';
+      let observedHeader;
+      let observedAuthorization;
+      const fetchFn = async (input, init = {}) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (url.includes('/.well-known/')) {
+          return new Response(JSON.stringify(card(`${agentUrl}/rpc`)), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        const body = JSON.parse(init.body);
+        const skill = body.params?.message?.parts?.[0]?.data?.skill;
+        if (skill === 'get_adcp_capabilities') {
+          return new Response(JSON.stringify(capabilitiesResponse(body.id)), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        const headers = new Headers(input instanceof Request ? input.headers : undefined);
+        new Headers(init.headers).forEach((value, name) => headers.set(name, value));
+        if (skill === 'list_creatives') {
+          observedHeader = headers.get(headerName);
+          observedAuthorization = headers.get('authorization') ?? headers.get('x-adcp-auth');
+        }
+        const leakedCallerIdentity = headers.get(headerName) === 'valid-caller-identity';
+        return new Response(
+          JSON.stringify(
+            leakedCallerIdentity
+              ? { jsonrpc: '2.0', id: body.id, result: {} }
+              : { jsonrpc: '2.0', id: body.id, error: { code: -32001 } }
+          ),
+          {
+            status: leakedCallerIdentity ? 200 : 401,
+            headers: { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="agent"' },
+          }
+        );
+      };
+
+      const result = await runStoryboard(agentUrl, storyboard({ type: 'api_key', value_strategy: 'random_invalid' }), {
+        protocol: 'a2a',
+        headers: { [headerName]: 'valid-caller-identity' },
+        agentTools: ['list_creatives'],
+        transport: { trustedFetchFn: fetchFn, legacyCompat: { enabled: false } },
+        _profile: { name: 'isolated-header-fixture', tools: ['list_creatives'] },
+      });
+
+      assert.strictEqual(observedHeader, null);
+      assert.match(observedAuthorization, /^Bearer\s+.+/);
+      assert.notStrictEqual(observedAuthorization, 'Bearer valid-caller-identity');
+      assert.strictEqual(result.overall_passed, true, JSON.stringify(result));
+      assert.strictEqual(result.phases[0].steps[0].response_record.status, 401);
+    });
+  }
+
   test('0.3 compatibility auth override uses official message/send and never MCP tools/call', async () => {
     const agentUrl = 'https://seller.example';
     const rpcUrl = `${agentUrl}/legacy-rpc`;
@@ -968,6 +1146,39 @@ describe('storyboard A2A auth overrides', () => {
       assert.strictEqual(protectedCalls[0].method, scenario.expectedMethod);
       assert.strictEqual(result.phases[0].steps[0].request.transport, scenario.selectedAgent);
       assert.strictEqual(result.overall_passed, true, JSON.stringify(result));
+    });
+  }
+
+  for (const scenario of [
+    { runProtocol: 'mcp', selectedAgent: 'a2a', expectedMethod: 'SendMessage' },
+    { runProtocol: 'a2a', selectedAgent: 'mcp', expectedMethod: 'tools/call' },
+  ]) {
+    test(`request-signing probe uses routed ${scenario.selectedAgent.toUpperCase()} transport under a ${scenario.runProtocol.toUpperCase()} run default`, async () => {
+      const fixture = await startRoutedSigningFixture();
+      try {
+        const result = await runStoryboard('', signingStoryboard(scenario.selectedAgent), {
+          protocol: scenario.runProtocol,
+          allow_http: true,
+          agents: {
+            mcp: { url: `${fixture.baseUrl}/mcp`, transport: 'mcp' },
+            a2a: { url: `${fixture.baseUrl}/a2a`, transport: 'a2a' },
+          },
+          transport: { trustedFetchFn: fetch, legacyCompat: { enabled: false } },
+        });
+
+        assert.deepStrictEqual(fixture.signedCalls, [
+          {
+            transport: scenario.selectedAgent,
+            method: scenario.expectedMethod,
+            url: `/${scenario.selectedAgent === 'a2a' ? 'rpc' : 'mcp'}`,
+          },
+        ]);
+        assert.strictEqual(result.overall_passed, true, JSON.stringify(result));
+        assert.strictEqual(result.phases[0].steps[0].agent_url, `${fixture.baseUrl}/${scenario.selectedAgent}`);
+      } finally {
+        fixture.server.close();
+        await once(fixture.server, 'close');
+      }
     });
   }
 });
