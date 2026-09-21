@@ -45,7 +45,7 @@ export class StrictJsonError extends Error {
  * and we never trust the tokenizer to produce the value (it's only a guard).
  */
 export function parseStrictJson(text: string): unknown {
-  rejectDuplicateKeys(text);
+  rejectDuplicateJsonKeys(text);
   try {
     return sjp.parse(text, null, { protoAction: 'error', constructorAction: 'error' });
   } catch (err) {
@@ -67,7 +67,7 @@ export function parseStrictJson(text: string): unknown {
  *   - whether the next quoted-string at object scope is the key half of
  *     a key-value pair.
  */
-function rejectDuplicateKeys(text: string): void {
+export function rejectDuplicateJsonKeys(text: string): void {
   type Scope = { kind: 'object'; keys: Set<string> } | { kind: 'array' };
   const stack: Scope[] = [];
   /** True when at an object scope and the next string token is a key. */

@@ -573,6 +573,29 @@ export {
   type FormatSchemaReferenceResult,
   type PlatformExtensionsReferenceResult,
 } from './canonical-references';
+
+// ====== ACCEPTANCE-POLICY DISCOVERY ======
+// Advisory buyer guidance from a seller's digest-pinned policy catalog.
+export {
+  createAcceptancePolicyCatalogResolver,
+  resolveAcceptancePolicyCatalog,
+  resolveAcceptancePolicyProfiles,
+  type AcceptancePolicyCatalog,
+  type AcceptancePolicyCatalogErrorCode,
+  type AcceptancePolicyCatalogFailure,
+  type AcceptancePolicyCatalogIssue,
+  type AcceptancePolicyCatalogResolver,
+  type AcceptancePolicyCatalogResult,
+  type AcceptancePolicyCatalogSuccess,
+  type AcceptancePolicyDiscoveryCapability,
+  type AcceptancePolicyProfile,
+  type AcceptancePolicyProfileResolution,
+  type AcceptancePolicyReference,
+  type AcceptancePolicyRule,
+  type RegistryAcceptancePolicyProfileReference,
+  type ResolveAcceptancePolicyCatalogOptions,
+  type ResolvedAcceptancePolicyDefault,
+} from './acceptance-policy';
 export type {
   BuildGovernanceExecutionRequestInput,
   BuildGovernanceIntentRequestInput,
