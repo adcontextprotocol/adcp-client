@@ -708,6 +708,11 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
             buildCreative: async () => ({ creative_manifest: { manifest_id: 'mf-1', assets: [] } }),
           },
           protocol: {
+            resolvePrincipalScope: () => ({
+              tenant_id: 'modern-profile-tenant',
+              principal_id: 'modern-profile-principal',
+              principal_kind: 'buyer_agent',
+            }),
             getPrincipal: async () => ({}),
             syncPrincipal: async () => ({}),
           },

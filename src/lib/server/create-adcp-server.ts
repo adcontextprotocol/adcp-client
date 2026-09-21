@@ -488,6 +488,10 @@ export interface CallerMutationScope {
   principal_id: string;
   /** Optional account boundary when the mutation is account-owned. */
   account_id?: string;
+  /** Optional authenticated classification passed to principal lifecycle handlers after replay resolution. */
+  principal_kind?: string;
+  /** Optional durable principal record identity passed to principal lifecycle handlers. */
+  principal_record_id?: string;
 }
 
 /**
@@ -1168,6 +1172,11 @@ export interface ProtocolHandlers<TAccount = unknown> {
   resolveScope?: (
     ctx: HandlerContext<TAccount>,
     params: AdcpToolMap['sync_agent_notification_configs']['params']
+  ) => CallerMutationScope | Promise<CallerMutationScope>;
+  /** Resolve the authenticated principal namespace used by principal lifecycle handlers. */
+  resolvePrincipalScope?: (
+    ctx: HandlerContext<TAccount>,
+    params: AdcpToolMap['get_principal']['params'] | AdcpToolMap['sync_principal']['params']
   ) => CallerMutationScope | Promise<CallerMutationScope>;
   syncAgentNotificationConfigs?: DomainHandler<'sync_agent_notification_configs', TAccount>;
   getPrincipal?: DomainHandler<'get_principal', TAccount>;
@@ -3262,7 +3271,11 @@ const TOOL_META: Record<string, ToolMeta> = {
   update_rights: { wrap: updateRightsResponse, annotations: MUT },
 };
 
-const CALLER_SCOPED_MUTATION_TOOLS = new Set(['sync_agent_notification_configs', 'report_plan_adjustment']);
+const CALLER_SCOPED_MUTATION_TOOLS = new Set([
+  'sync_agent_notification_configs',
+  'sync_principal',
+  'report_plan_adjustment',
+]);
 
 const COMPACT_MEDIA_BUY_LIFECYCLE_TOOLS = [
   'list_products',
@@ -4977,6 +4990,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       'createAdcpServer: protocol.resolveScope is required to isolate sync_agent_notification_configs by authenticated caller'
     );
   }
+  const principalHandlerConfigured =
+    typeof config.protocol?.getPrincipal === 'function' || typeof config.protocol?.syncPrincipal === 'function';
+  if (principalHandlerConfigured && typeof config.protocol?.resolvePrincipalScope !== 'function') {
+    throw new Error(
+      'createAdcpServer: protocol.resolvePrincipalScope is required to isolate principal state by authenticated caller'
+    );
+  }
   if (
     typeof config.governance?.reportPlanAdjustment === 'function' &&
     typeof config.governance.resolveReportPlanAdjustmentScope !== 'function'
@@ -6006,7 +6026,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
     // Warn on unrecognized handler keys (likely typos)
     const knownKeys = new Set(entries.map(e => e.handlerKey));
-    for (const key of ['capabilities', 'resolveScope', 'resolveReportPlanAdjustmentScope']) knownKeys.add(key);
+    for (const key of ['capabilities', 'resolveScope', 'resolvePrincipalScope', 'resolveReportPlanAdjustmentScope']) {
+      knownKeys.add(key);
+    }
     for (const key of Object.keys(handlers)) {
       if (typeof (handlers as Record<string, unknown>)[key] === 'function' && !knownKeys.has(key)) {
         logger.warn(`Unknown handler key "${key}" — will not be registered. Check for typos.`);
@@ -6805,7 +6827,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             );
           }
         }
-        if (CALLER_SCOPED_MUTATION_TOOLS.has(toolName)) {
+        const callerScopedResolver =
+          toolName === 'sync_agent_notification_configs'
+            ? config.protocol?.resolveScope
+            : toolName === 'get_principal' || toolName === 'sync_principal'
+              ? config.protocol?.resolvePrincipalScope
+              : undefined;
+        if (callerScopedResolver || toolName === 'report_plan_adjustment') {
           if (ctx.authInfo === undefined && ctx.agent === undefined) {
             return finalize(
               adcpError('AUTH_MISSING', {
@@ -6815,9 +6843,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
           try {
             const scope =
-              toolName === 'sync_agent_notification_configs'
-                ? await config.protocol!.resolveScope!(ctx, params)
-                : await config.governance!.resolveReportPlanAdjustmentScope!(ctx, params);
+              toolName === 'report_plan_adjustment'
+                ? await config.governance!.resolveReportPlanAdjustmentScope!(ctx, params)
+                : await callerScopedResolver!(ctx, params as never);
             if (!scope?.tenant_id || !scope.principal_id) {
               throw new Error('scope resolver must return non-empty tenant_id and principal_id');
             }

@@ -14,6 +14,7 @@ import type {
   NotificationAuthenticationMode,
   NotificationEvent,
   NotificationFanoutDelivery,
+  NotificationPreparationResult,
   NotificationRecipientRef,
   NotificationReplacementResult,
   NotificationSubscriptionConfigInput,
@@ -182,7 +183,12 @@ export function createPersistentNotificationRuntime(
         ? { decision: 'suppress', reason: 'subscription_stale' }
         : suppress('subscription_stale');
     }
-    if (!subscription.active || subscription.proofGeneration !== subscription.destinationGeneration) {
+    if (
+      !subscription.active ||
+      subscription.proofGeneration !== subscription.destinationGeneration ||
+      (subscription.deactivationNotificationId !== undefined &&
+        subscription.deactivationNotificationId !== context.notificationId)
+    ) {
       return suppress('subscription_inactive');
     }
     if (
@@ -259,72 +265,77 @@ export function createPersistentNotificationRuntime(
     throw new TypeError('createEmitter must return a RecoverableWebhookEmitter');
   }
 
-  return {
-    store: options.store,
-    emitter,
-    authorizeWebhookAttempt,
-    hasDeliveryAttemptCheckpoint: options.checkpointDeliveryAttempt !== undefined,
-    ...(options.checkpointDeliveryAttempt === undefined
-      ? {}
-      : { deliveryAttemptCheckpoint: options.checkpointDeliveryAttempt }),
-    async replace(scope, configs, replaceOptions = {}): Promise<NotificationReplacementResult> {
-      assertScope(scope);
-      assertUniqueSubscribers(configs);
-      const current = await options.store.get(scope);
-      if (
-        replaceOptions.expectedGeneration !== undefined &&
-        current?.generation !== replaceOptions.expectedGeneration
-      ) {
-        return {
-          outcome: 'conflict',
-          ...(current && { currentGeneration: current.generation }),
-        };
-      }
-      const previous = new Map(current?.subscriptions.map(item => [item.subscriberId, item]));
-      const normalized: StoredNotificationSubscription[] = [];
-      const credentialStages: PreparedCredentialStage[] = [];
-      const discardStages = () =>
-        discardCredentialStages(
-          options.credentialAdapter,
-          credentialStages,
-          adopterCallbackTimeoutMs,
-          options.onCredentialStageError
+  async function prepareReplacement(
+    scope: Readonly<NotificationSubscriptionScope>,
+    configs: readonly NotificationSubscriptionConfigInput[],
+    prepareOptions: { dryRun?: boolean; expectedGeneration?: string | null } = {}
+  ): Promise<NotificationPreparationResult> {
+    assertScope(scope);
+    assertUniqueSubscribers(configs);
+    const current = await options.store.get(scope);
+    if (
+      prepareOptions.expectedGeneration !== undefined &&
+      (current?.generation ?? null) !== prepareOptions.expectedGeneration
+    ) {
+      return {
+        outcome: 'conflict',
+        ...(current?.generation ? { currentGeneration: current.generation } : {}),
+      };
+    }
+    const previous = new Map(current?.subscriptions.map(item => [item.subscriberId, item]));
+    const normalized: StoredNotificationSubscription[] = [];
+    const credentialStages: PreparedCredentialStage[] = [];
+    let settled = false;
+    const discardStages = async () => {
+      if (settled) return;
+      settled = true;
+      await discardCredentialStages(
+        options.credentialAdapter,
+        credentialStages,
+        adopterCallbackTimeoutMs,
+        options.onCredentialStageError
+      );
+    };
+    const commitStages = async () => {
+      if (settled) return;
+      settled = true;
+      await commitCredentialStages(
+        options.credentialAdapter,
+        credentialStages,
+        adopterCallbackTimeoutMs,
+        options.onCredentialStageError
+      );
+    };
+    try {
+      for (let index = 0; index < configs.length; index++) {
+        normalized.push(
+          await normalizeConfig({
+            scope,
+            config: configs[index]!,
+            previous: previous.get(configs[index]!.subscriber_id),
+            index,
+            dryRun: prepareOptions.dryRun === true,
+            accountEventTypes,
+            callerEventTypes,
+            callerOnlyEventTypes,
+            credentialAdapter: options.credentialAdapter,
+            credentialStages,
+            adopterCallbackTimeoutMs,
+            validateDestination,
+          })
         );
-      try {
-        for (let index = 0; index < configs.length; index++) {
-          normalized.push(
-            await normalizeConfig({
-              scope,
-              config: configs[index]!,
-              previous: previous.get(configs[index]!.subscriber_id),
-              index,
-              dryRun: replaceOptions.dryRun === true,
-              accountEventTypes,
-              callerEventTypes,
-              callerOnlyEventTypes,
-              credentialAdapter: options.credentialAdapter,
-              credentialStages,
-              adopterCallbackTimeoutMs,
-              validateDestination,
-            })
-          );
-        }
-      } catch (error) {
-        await discardStages();
-        throw error;
       }
-      normalized.sort((a, b) => a.subscriberId.localeCompare(b.subscriberId));
+    } catch (error) {
+      await discardStages();
+      throw error;
+    }
+    normalized.sort((a, b) => a.subscriberId.localeCompare(b.subscriberId));
 
-      if (replaceOptions.dryRun === true) {
-        return {
-          outcome: 'validated',
-          notificationConfigs: normalized.map(item => projectSubscription(item, false)),
-          wouldChange:
-            canonicalJsonSha256(normalized.map(withoutProofGeneration)) !==
-            canonicalJsonSha256((current?.subscriptions ?? []).map(withoutProofGeneration)),
-        };
-      }
+    const changed =
+      canonicalJsonSha256(normalized.map(withoutProofGeneration)) !==
+      canonicalJsonSha256((current?.subscriptions ?? []).map(withoutProofGeneration));
 
+    if (prepareOptions.dryRun !== true) {
       for (const subscription of normalized) {
         const prior = previous.get(subscription.subscriberId);
         if (!subscription.active) {
@@ -362,29 +373,68 @@ export function createPersistentNotificationRuntime(
         }
         subscription.proofGeneration = subscription.destinationGeneration;
       }
+    }
+
+    return {
+      outcome: 'prepared',
+      plan: {
+        expectedGeneration: current?.generation ?? null,
+        // Always use a fresh proposal generation. Durable stores use this value
+        // to distinguish an applied CAS from their own unchanged projection.
+        nextGeneration: `cfg_${randomUUID()}`,
+        subscriptions: normalized.map(item => structuredClone(item)),
+        notificationConfigs: normalized.map(item => projectSubscription(item, prepareOptions.dryRun !== true)),
+        changed,
+        commitCredentials: commitStages,
+        discardCredentials: discardStages,
+      },
+    };
+  }
+
+  return {
+    store: options.store,
+    emitter,
+    authorizeWebhookAttempt,
+    hasDeliveryAttemptCheckpoint: options.checkpointDeliveryAttempt !== undefined,
+    ...(options.checkpointDeliveryAttempt === undefined
+      ? {}
+      : { deliveryAttemptCheckpoint: options.checkpointDeliveryAttempt }),
+    prepareReplacement,
+    async replace(scope, configs, replaceOptions = {}): Promise<NotificationReplacementResult> {
+      const preparation = await prepareReplacement(scope, configs, {
+        dryRun: replaceOptions.dryRun === true,
+        ...(replaceOptions.expectedGeneration === undefined
+          ? {}
+          : { expectedGeneration: replaceOptions.expectedGeneration }),
+      });
+      if (preparation.outcome !== 'prepared') return preparation;
+      const { plan } = preparation;
+      if (replaceOptions.dryRun === true) {
+        await plan.discardCredentials();
+        return {
+          outcome: 'validated',
+          notificationConfigs: plan.notificationConfigs,
+          wouldChange: plan.changed,
+        };
+      }
 
       let result: Awaited<ReturnType<typeof options.store.replace>>;
       try {
         result = await options.store.replace({
           scope,
-          expectedGeneration: current?.generation ?? null,
-          nextGeneration: `cfg_${randomUUID()}`,
-          subscriptions: normalized,
+          expectedGeneration: plan.expectedGeneration,
+          nextGeneration: plan.nextGeneration,
+          subscriptions: plan.subscriptions,
         });
       } catch (error) {
-        await discardStages();
+        await plan.discardCredentials();
         throw error;
       }
       if (result.outcome === 'conflict') {
-        await discardStages();
+        await plan.discardCredentials();
         return result;
       }
-      await commitCredentialStages(
-        options.credentialAdapter,
-        credentialStages,
-        adopterCallbackTimeoutMs,
-        options.onCredentialStageError
-      );
+      await plan.commitCredentials();
       return {
         outcome:
           result.outcome === 'unchanged' ? 'unchanged' : result.set.subscriptions.length === 0 ? 'cleared' : 'applied',
@@ -424,6 +474,8 @@ export function createPersistentNotificationRuntime(
             subscription =>
               subscription.active &&
               subscription.proofGeneration === subscription.destinationGeneration &&
+              (subscription.deactivationNotificationId === undefined ||
+                subscription.deactivationNotificationId === event.notificationId) &&
               (subscription.eventTypes.includes(event.notificationType) ||
                 (futureCallerInvalidation && subscription.includeFutureEventTypes)) &&
               (set.scope.kind !== 'caller' || event.anchor !== 'account' || subscription.allAuthorizedAccounts)
@@ -744,7 +796,7 @@ function projectSubscription(
     subscriber_id: subscription.subscriberId,
     url: subscription.url,
     event_types: [...subscription.eventTypes],
-    active: subscription.active,
+    active: subscription.active && subscription.deactivationNotificationId === undefined,
     ...(subscription.allAuthorizedAccounts && { all_authorized_accounts: true }),
     ...(subscription.includeFutureEventTypes && { include_future_event_types: true }),
     ...(subscription.productPayloadView === undefined ? {} : { product_payload_view: subscription.productPayloadView }),
@@ -774,6 +826,15 @@ export function projectNotificationSubscriptionReadback(
     ...(view.product_payload_view === undefined ? {} : { product_payload_view: view.product_payload_view }),
     ...(view.authentication === undefined ? {} : { authentication: view.authentication }),
   }));
+}
+
+/** Project stored subscriptions to the public, credential-free principal configuration shape. */
+export function projectStoredNotificationSubscriptionReadback(
+  subscriptions: readonly StoredNotificationSubscription[]
+): NotificationSubscriptionConfigInput[] {
+  return projectNotificationSubscriptionReadback(
+    subscriptions.map(subscription => projectSubscription(subscription, true))
+  );
 }
 
 function notificationPayload(event: Readonly<NotificationEvent>, subscriberId: string): Record<string, unknown> {

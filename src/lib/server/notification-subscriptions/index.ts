@@ -33,6 +33,7 @@ export type {
   NotificationFanoutDelivery,
   NotificationFanoutResult,
   NotificationProofAdapter,
+  NotificationPreparationResult,
   NotificationRecipientRef,
   NotificationReplacementResult,
   NotificationSubscriptionConfigInput,
@@ -45,6 +46,7 @@ export type {
   NotificationSubscriptionView,
   PersistentNotificationRuntime,
   PersistentNotificationRuntimeOptions,
+  PreparedNotificationReplacement,
   StoredNotificationAuthentication,
   StoredNotificationSubscription,
 } from './types';

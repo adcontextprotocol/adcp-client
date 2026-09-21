@@ -48,6 +48,11 @@ export interface StoredNotificationSubscription {
   destinationGeneration: string;
   /** Equal to destinationGeneration only after exact-tuple proof succeeds. */
   proofGeneration?: string;
+  /**
+   * Internal one-event grace used to deliver the invalidation that deactivates
+   * this subscriber. While set, no other notification is authorized.
+   */
+  deactivationNotificationId?: string;
 }
 
 export interface NotificationSubscriptionSet {
@@ -329,6 +334,29 @@ export type NotificationReplacementResult =
   | { outcome: 'conflict'; currentGeneration?: string }
   | { outcome: 'proof_failed'; subscriberId: string };
 
+/**
+ * A validated notification-set replacement that has not been persisted yet.
+ *
+ * Broader transactions such as `sync_principal` use this to include the
+ * notification section in the same durable CAS as their other sections. The
+ * owner MUST call exactly one of `commitCredentials` or `discardCredentials`
+ * after its transaction outcome is known.
+ */
+export interface PreparedNotificationReplacement {
+  expectedGeneration: string | null;
+  nextGeneration: string;
+  subscriptions: StoredNotificationSubscription[];
+  notificationConfigs: NotificationSubscriptionView[];
+  changed: boolean;
+  commitCredentials(): Promise<void>;
+  discardCredentials(): Promise<void>;
+}
+
+export type NotificationPreparationResult =
+  | { outcome: 'prepared'; plan: PreparedNotificationReplacement }
+  | { outcome: 'conflict'; currentGeneration?: string }
+  | { outcome: 'proof_failed'; subscriberId: string };
+
 interface NotificationFanoutDeliveryBase {
   scope: NotificationSubscriptionScope;
   subscriberId: string;
@@ -425,6 +453,16 @@ export interface PersistentNotificationRuntime {
    * checkpoint nothing.
    */
   readonly deliveryAttemptCheckpoint?: NotificationDeliveryAttemptCheckpoint;
+  /**
+   * Validate, normalize, prove, and stage credentials without writing the
+   * subscription store. This is the integration seam for a larger atomic
+   * transaction. Dry runs perform no proof challenge or credential staging.
+   */
+  prepareReplacement?(
+    scope: Readonly<NotificationSubscriptionScope>,
+    configs: readonly NotificationSubscriptionConfigInput[],
+    options?: { dryRun?: boolean; expectedGeneration?: string | null }
+  ): Promise<NotificationPreparationResult>;
   replace(
     scope: Readonly<NotificationSubscriptionScope>,
     configs: readonly NotificationSubscriptionConfigInput[],

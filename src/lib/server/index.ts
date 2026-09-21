@@ -575,6 +575,8 @@ export type {
   NotificationFanoutDelivery,
   NotificationFanoutResult,
   NotificationProofAdapter,
+  NotificationPreparationResult,
+  PreparedNotificationReplacement,
   NotificationRecipientRef,
   NotificationReplacementResult,
   NotificationSubscriptionConfigInput,
@@ -592,6 +594,41 @@ export type {
   StoredNotificationAuthentication,
   StoredNotificationSubscription,
 } from './notification-subscriptions';
+
+export {
+  createPrincipalLifecycle,
+  createPrincipalStateStore,
+  principalNotificationSubscriptionStore,
+  DEFAULT_PRINCIPAL_STORE_COLLECTION,
+} from './principal';
+export type {
+  CreatePrincipalLifecycleOptions,
+  CreatePrincipalStateStoreOptions,
+  PendingPrincipalNotification,
+  PrepareReportingDestination,
+  PrincipalAppliedResult,
+  PrincipalConfiguration,
+  PrincipalConfigurationInput,
+  PrincipalDeclarationSupport,
+  PrincipalDeclarations,
+  PrincipalDeclarationsState,
+  PrincipalDestinationTransition,
+  PrincipalKind,
+  PrincipalLifecycleRuntime,
+  PrincipalNotificationRecoveryResult,
+  PrincipalPendingNotificationPage,
+  PrincipalReportingDestination,
+  PrincipalReportingDestinationInput,
+  PrincipalStateStore,
+  PrincipalStoreReplaceResult,
+  PrincipalStoreScope,
+  ReportingDestinationPreparation,
+  ResolvedReportingDestination,
+  ResolvedPrincipalScope,
+  StoredPrincipalRecord,
+  StoredReportingDestinationGeneration,
+  VersionedPrincipalRecord,
+} from './principal';
 
 export { createPinAndBindFetch, WEBHOOK_SSRF_POLICY, LOOPBACK_OK_WEBHOOK_SSRF_POLICY } from './pin-and-bind-fetch';
 export type { PinAndBindFetchOptions, DnsLookupAll } from './pin-and-bind-fetch';
