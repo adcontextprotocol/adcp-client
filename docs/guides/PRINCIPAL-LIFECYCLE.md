@@ -34,7 +34,7 @@ const result = await syncPrincipalLifecycle(
     reporting_destinations: [destination],
     declarations: {
       async_adcp_versions: ['3.2'],
-      webhook_signing_algorithms: ['http-message-signatures'],
+      webhook_signing_algorithms: ['ed25519'],
     },
   },
   {
@@ -46,7 +46,7 @@ const result = await syncPrincipalLifecycle(
 );
 
 if (!result.destinationsReady) {
-  // At least one destination reached action_required, inactive, or rejected.
+  // At least one active destination is still pending or reached action_required/rejected.
   console.log(result.current.configuration.reporting_destinations);
 }
 
@@ -62,4 +62,10 @@ key. Polling stops when every destination is ready, when any destination reaches
 a terminal setup state, when the timeout expires, or when the caller aborts. It
 also fails closed if the authenticated principal or configuration version changes
 while setup is being observed; seller-driven setup transitions keep the same
-version by protocol contract.
+version by protocol contract. Caller-suspended (`active: false`) destinations
+are excluded from the readiness quorum.
+
+If a protocol task is accepted asynchronously or pauses for input/authentication,
+the helper throws `PrincipalLifecycleError` with the original `taskResult`
+attached. Use its `submitted` or `deferred` continuation when present; do not
+start a second logical replacement with a new idempotency key.

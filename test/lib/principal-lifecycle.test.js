@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   AgentClient,
+  PrincipalLifecycleError,
   PrincipalLifecycleTimeoutError,
   ProtocolClient,
   syncPrincipalLifecycle,
@@ -134,6 +135,31 @@ describe('principal lifecycle', () => {
     );
   });
 
+  test('bootstraps unconfigured and recognized principals with the appropriate fences', async () => {
+    const observed = [];
+    for (const prior of [
+      { status: 'completed', result: { kind: 'unconfigured' } },
+      {
+        status: 'completed',
+        result: { kind: 'recognized', principal_id: 'principal-1', principal_kind: 'buyer_agent' },
+      },
+    ]) {
+      const client = {
+        getPrincipal: async () => completed(prior),
+        syncPrincipal: async request => {
+          observed.push(request);
+          return completed(applied('v1'));
+        },
+      };
+      await syncPrincipalLifecycle(client, { notification_configs: [] });
+    }
+
+    assert.equal(observed[0].expected_configuration_version, undefined);
+    assert.equal(observed[0].expected_principal_kind, undefined);
+    assert.equal(observed[1].expected_configuration_version, undefined);
+    assert.equal(observed[1].expected_principal_kind, 'buyer_agent');
+  });
+
   test('fails closed when authenticated principal identity changes during conflict recovery', async () => {
     const changed = current('v2');
     changed.result.principal_id = 'principal-2';
@@ -158,6 +184,33 @@ describe('principal lifecycle', () => {
       /Authenticated principal changed/
     );
     assert.equal(syncCalls, 1);
+  });
+
+  test('fails closed when the applied response changes principal identity or violates the caller kind assertion', async () => {
+    const changed = applied('v2');
+    changed.result.principal_id = 'principal-2';
+    const changedClient = {
+      getPrincipal: async () => completed(current('v1')),
+      syncPrincipal: async () => completed(changed),
+    };
+    await assert.rejects(
+      syncPrincipalLifecycle(changedClient, { notification_configs: [] }),
+      /Authenticated principal changed/
+    );
+
+    let syncCalls = 0;
+    const wrongKindClient = {
+      getPrincipal: async () => completed(current('v1')),
+      syncPrincipal: async () => {
+        syncCalls += 1;
+        return completed(applied('v2'));
+      },
+    };
+    await assert.rejects(
+      syncPrincipalLifecycle(wrongKindClient, { notification_configs: [] }, { expectedPrincipalKind: 'operator' }),
+      /did not match the caller's operator assertion/
+    );
+    assert.equal(syncCalls, 0);
   });
 
   test('does not retry an unconfigured principal conflict without an identity fence', async () => {
@@ -192,6 +245,88 @@ describe('principal lifecycle', () => {
     const result = await syncPrincipalLifecycle(client, { reporting_destinations: [] });
     assert.equal(result.destinationsReady, false);
     assert.equal(result.current.configuration.reporting_destinations[0].state, 'action_required');
+  });
+
+  test('excludes suspended destinations while continuing to poll active setup', async () => {
+    const destinations = state => [
+      {
+        destination_id: 'live',
+        destination_ref: 'destination-live',
+        state,
+        configuration: { pattern: 'warehouse_materialization', destination_id: 'live', active: true },
+      },
+      {
+        destination_id: 'archive',
+        destination_ref: 'destination-archive',
+        state: 'inactive',
+        configuration: { pattern: 'warehouse_materialization', destination_id: 'archive', active: false },
+      },
+    ];
+    const withDestinations = (version, state) => {
+      const response = current(version, 'ready');
+      response.result.configuration.reporting_destinations = destinations(state);
+      return response;
+    };
+    const reads = [current('v1'), withDestinations('v2', 'ready')];
+    const client = {
+      getPrincipal: async () => completed(reads.shift()),
+      syncPrincipal: async () => {
+        const response = applied('v2', 'ready');
+        response.result.configuration.reporting_destinations = destinations('validating');
+        return completed(response);
+      },
+    };
+
+    const result = await syncPrincipalLifecycle(
+      client,
+      {
+        reporting_destinations: [
+          { destination_id: 'live', active: true },
+          { destination_id: 'archive', active: false },
+        ],
+      },
+      { pollIntervalMs: 1 }
+    );
+
+    assert.equal(result.destinationsReady, true);
+    assert.equal(result.current.configuration.reporting_destinations[1].state, 'inactive');
+  });
+
+  test('surfaces intermediate and non-schema failure task results without accepting their data', async () => {
+    const submitted = {
+      success: true,
+      status: 'submitted',
+      data: { status: 'submitted' },
+      metadata: { status: 'submitted', taskName: 'sync_principal' },
+      conversation: [],
+      debug_logs: [],
+    };
+    const submittedClient = {
+      getPrincipal: async () => completed(current('v1')),
+      syncPrincipal: async () => submitted,
+    };
+    await assert.rejects(
+      syncPrincipalLifecycle(submittedClient, { notification_configs: [] }),
+      error => error instanceof PrincipalLifecycleError && error.taskResult === submitted
+    );
+
+    const invalid = failed({
+      status: 'completed',
+      result: {
+        kind: 'applied',
+        principal_id: 'principal-attacker',
+        principal_kind: 'invalid-kind',
+        configuration: {},
+      },
+    });
+    const invalidClient = {
+      getPrincipal: async () => completed(current('v1')),
+      syncPrincipal: async () => invalid,
+    };
+    await assert.rejects(
+      syncPrincipalLifecycle(invalidClient, { notification_configs: [] }),
+      error => error instanceof PrincipalLifecycleError && error.taskResult === invalid
+    );
   });
 
   test('fails closed when identity or configuration changes during setup polling', async () => {
@@ -328,4 +463,43 @@ describe('principal task transport dispatch', () => {
       );
     });
   }
+
+  test('refuses caller-supplied principal identity before transport dispatch', async () => {
+    const originalCallTool = ProtocolClient.callTool;
+    let dispatches = 0;
+    ProtocolClient.callTool = async () => {
+      dispatches += 1;
+      return { status: 'completed', result: { kind: 'unconfigured' } };
+    };
+    try {
+      const client = new AgentClient(
+        {
+          id: 'principal-safety',
+          name: 'Principal safety',
+          agent_uri: 'https://seller.example/mcp',
+          protocol: 'mcp',
+        },
+        { validateFeatures: false, validation: { requests: 'off', responses: 'off' } }
+      );
+      client.client.normalizedAgent._needsDiscovery = false;
+      client.client.normalizedAgent._needsCanonicalUrl = false;
+      client.client.detectServerVersion = async () => 'v3';
+
+      await assert.rejects(
+        client.getPrincipal({ principal_id: 'self-asserted' }),
+        /refuses caller-supplied principal_id/
+      );
+      await assert.rejects(
+        client.syncPrincipal({
+          idempotency_key: 'principal-operation-0001',
+          configuration: { notification_configs: [] },
+          buyer_agent_url: 'https://attacker.example',
+        }),
+        /refuses caller-supplied buyer_agent_url/
+      );
+      assert.equal(dispatches, 0);
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+    }
+  });
 });

@@ -12,6 +12,7 @@ import type { MutatingRequestInput } from '../utils/idempotency';
 type CurrentPrincipal = Extract<GetPrincipalResponse['result'], { kind: 'current' }>;
 type AppliedPrincipal = Extract<SyncPrincipalResponse['result'], { kind: 'applied' }>;
 type PrincipalConfiguration = SyncPrincipalRequest['configuration'];
+type PrincipalKind = CurrentPrincipal['principal_kind'];
 
 export interface PrincipalLifecycleClient {
   getPrincipal(
@@ -27,12 +28,14 @@ export interface PrincipalLifecycleClient {
 }
 
 export interface PrincipalLifecycleOptions {
-  /** Maximum guarded replacement attempts after a concurrent configuration change. Defaults to 3. */
+  /** Maximum total guarded replacement attempts, including the first write. Defaults to 3; maximum 10. */
   maxAttempts?: number;
-  /** Maximum wall-clock time spent waiting for destination setup. Defaults to 60 seconds. */
+  /** Maximum wall-clock time spent waiting for destination setup. Defaults to 60 seconds; maximum 24 hours. */
   setupTimeoutMs?: number;
-  /** Delay between setup-state reads. Defaults to one second. */
+  /** Delay between setup-state reads. Defaults to one second; maximum 2^31-1 milliseconds. */
   pollIntervalMs?: number;
+  /** Optional caller assertion for the authenticated principal kind. */
+  expectedPrincipalKind?: PrincipalKind;
   /** Caller cancellation for reads, replacement, and polling delays. */
   signal?: AbortSignal;
   /** Handler forwarded to each protocol task. */
@@ -53,9 +56,19 @@ export interface PrincipalLifecycleResult {
 }
 
 export class PrincipalLifecycleError extends Error {
-  constructor(message: string) {
-    super(message);
+  /** Original task result, including a resumable submitted/deferred continuation when one exists. */
+  readonly taskResult?: TaskResult<unknown>;
+  /** Structured tool-level issues returned by the seller. */
+  readonly protocolErrors?: readonly unknown[];
+
+  constructor(
+    message: string,
+    options: { cause?: unknown; taskResult?: TaskResult<unknown>; protocolErrors?: readonly unknown[] } = {}
+  ) {
+    super(message, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = 'PrincipalLifecycleError';
+    this.taskResult = options.taskResult;
+    this.protocolErrors = options.protocolErrors;
   }
 }
 
@@ -76,12 +89,32 @@ function assertAtMost(value: number, maximum: number, name: string): void {
   if (value > maximum) throw new RangeError(`${name} must be at most ${maximum}.`);
 }
 
-function completedData<T>(result: TaskResult<T>, operation: string): T {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isFailedSyncPrincipalResponse(value: unknown): value is SyncPrincipalResponse {
+  if (!isRecord(value) || !isRecord(value.result) || value.result.kind !== 'failed') return false;
+  return (
+    Array.isArray(value.result.errors) &&
+    value.result.errors.length > 0 &&
+    value.result.errors.every(error => isRecord(error) && typeof error.code === 'string')
+  );
+}
+
+function completedData<T>(
+  result: TaskResult<T>,
+  operation: string,
+  acceptFailedData?: (value: unknown) => value is T
+): T {
   if (result.success && result.status === 'completed') return result.data;
-  if (!result.success && result.status === 'failed' && 'data' in result && result.data !== undefined) {
+  if (!result.success && result.status === 'failed' && acceptFailedData?.(result.data)) {
     return result.data;
   }
-  throw new PrincipalLifecycleError(`${operation} did not complete successfully.`);
+  throw new PrincipalLifecycleError(`${operation} did not complete successfully (status: ${result.status}).`, {
+    cause: result.success ? undefined : (result.errorInstance ?? new Error(result.error)),
+    taskResult: result,
+  });
 }
 
 function conflictResponse(response: SyncPrincipalResponse): boolean {
@@ -106,6 +139,30 @@ function assertSamePrincipal(
     refreshed.principal_kind !== previous.principal_kind
   ) {
     throw new PrincipalLifecycleError('Authenticated principal changed during guarded replacement.');
+  }
+}
+
+function assertAppliedToSamePrincipal(previous: GetPrincipalResponse['result'], applied: AppliedPrincipal): void {
+  if (
+    (previous.kind === 'current' || previous.kind === 'recognized') &&
+    (applied.principal_id !== previous.principal_id || applied.principal_kind !== previous.principal_kind)
+  ) {
+    throw new PrincipalLifecycleError('Authenticated principal changed during guarded replacement.');
+  }
+}
+
+function assertExpectedPrincipalKind(
+  principal: GetPrincipalResponse['result'] | AppliedPrincipal,
+  expectedPrincipalKind?: PrincipalKind
+): void {
+  if (
+    expectedPrincipalKind !== undefined &&
+    'principal_kind' in principal &&
+    principal.principal_kind !== expectedPrincipalKind
+  ) {
+    throw new PrincipalLifecycleError(
+      `Authenticated principal kind did not match the caller's ${expectedPrincipalKind} assertion.`
+    );
   }
 }
 
@@ -148,17 +205,32 @@ async function wait(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-function destinationOutcome(current: CurrentPrincipal): 'ready' | 'pending' | 'terminal' {
+function destinationOutcome(
+  current: CurrentPrincipal,
+  expectedActiveDestinationIds?: ReadonlySet<string>
+): 'ready' | 'pending' | 'terminal' {
   const destinations = current.configuration.reporting_destinations ?? [];
   if (
-    destinations.some(
+    expectedActiveDestinationIds &&
+    [...expectedActiveDestinationIds].some(
+      destinationId => !destinations.some(destination => destination.destination_id === destinationId)
+    )
+  ) {
+    return 'pending';
+  }
+  const relevantDestinations = destinations.filter(
+    destination =>
+      destination.state !== 'inactive' || expectedActiveDestinationIds?.has(destination.destination_id) === true
+  );
+  if (
+    relevantDestinations.some(
       destination =>
         destination.state === 'action_required' || destination.state === 'inactive' || destination.state === 'rejected'
     )
   ) {
     return 'terminal';
   }
-  return destinations.every(destination => destination.state === 'ready') ? 'ready' : 'pending';
+  return relevantDestinations.every(destination => destination.state === 'ready') ? 'ready' : 'pending';
 }
 
 async function readCurrent(
@@ -171,7 +243,9 @@ async function readCurrent(
     'get_principal'
   );
   if (response.result.kind === 'failed') {
-    throw new PrincipalLifecycleError('get_principal returned a failed result.');
+    throw new PrincipalLifecycleError('get_principal returned a failed result.', {
+      protocolErrors: response.result.errors,
+    });
   }
   return response.result;
 }
@@ -202,7 +276,16 @@ export async function syncPrincipalLifecycle(
 
   const createIdempotencyKey = options.createIdempotencyKey ?? randomUUID;
   const desiredConfiguration = structuredClone(configuration);
+  const expectedActiveDestinationIds =
+    desiredConfiguration.reporting_destinations === undefined
+      ? undefined
+      : new Set(
+          desiredConfiguration.reporting_destinations
+            .filter(destination => destination.active)
+            .map(destination => destination.destination_id)
+        );
   let prior = await readCurrent(client, options);
+  assertExpectedPrincipalKind(prior, options.expectedPrincipalKind);
   let applied: AppliedPrincipal | undefined;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -210,15 +293,17 @@ export async function syncPrincipalLifecycle(
       idempotency_key: createIdempotencyKey(),
       configuration: desiredConfiguration,
       ...(prior.kind === 'current' ? { expected_configuration_version: prior.configuration_version } : {}),
-      ...(prior.kind === 'current' || prior.kind === 'recognized'
-        ? { expected_principal_kind: prior.principal_kind }
-        : {}),
+      ...(options.expectedPrincipalKind !== undefined
+        ? { expected_principal_kind: options.expectedPrincipalKind }
+        : prior.kind === 'current' || prior.kind === 'recognized'
+          ? { expected_principal_kind: prior.principal_kind }
+          : {}),
     };
-    const response = completedData(
-      await client.syncPrincipal(request, options.inputHandler, taskOptions(options)),
-      'sync_principal'
-    );
+    const taskResult = await client.syncPrincipal(request, options.inputHandler, taskOptions(options));
+    const response = completedData(taskResult, 'sync_principal', isFailedSyncPrincipalResponse);
     if (response.result.kind === 'applied') {
+      assertAppliedToSamePrincipal(prior, response.result);
+      assertExpectedPrincipalKind(response.result, options.expectedPrincipalKind);
       applied = response.result;
       break;
     }
@@ -229,11 +314,13 @@ export async function syncPrincipalLifecycle(
       throw new PrincipalLifecycleError(
         conflictResponse(response)
           ? `Principal configuration changed during all ${maxAttempts} guarded replacement attempts.`
-          : 'sync_principal returned a failed result.'
+          : 'sync_principal returned a failed result.',
+        { taskResult, protocolErrors: response.result.errors }
       );
     }
     const refreshed = await readCurrent(client, options);
     assertSamePrincipal(prior, refreshed);
+    assertExpectedPrincipalKind(refreshed, options.expectedPrincipalKind);
     prior = refreshed;
   }
 
@@ -245,7 +332,7 @@ export async function syncPrincipalLifecycle(
     configuration_version: applied.configuration_version,
     configuration: applied.configuration,
   };
-  let outcome = destinationOutcome(current);
+  let outcome = destinationOutcome(current, expectedActiveDestinationIds);
   if (outcome === 'pending') {
     const deadline = Date.now() + setupTimeoutMs;
     while (outcome === 'pending') {
@@ -268,7 +355,7 @@ export async function syncPrincipalLifecycle(
         throw new PrincipalLifecycleError('Principal configuration changed while destination setup was pending.');
       }
       current = readback;
-      outcome = destinationOutcome(current);
+      outcome = destinationOutcome(current, expectedActiveDestinationIds);
     }
   }
 

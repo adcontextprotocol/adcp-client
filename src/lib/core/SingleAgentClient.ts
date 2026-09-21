@@ -1042,6 +1042,26 @@ const STANDARD_ADCP_TASK_NAMES = new Set<string>([
   'update_rights',
 ]);
 
+const PRINCIPAL_IDENTITY_INPUT_FIELDS = ['buyer_agent_url', 'agent_url', 'principal_id', 'connection_id'] as const;
+
+function assertNoPrincipalIdentityInput(taskType: string, params: unknown): void {
+  if (
+    (taskType !== 'get_principal' && taskType !== 'sync_principal') ||
+    params === null ||
+    typeof params !== 'object' ||
+    Array.isArray(params)
+  ) {
+    return;
+  }
+  for (const field of PRINCIPAL_IDENTITY_INPUT_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(params, field)) {
+      throw new TypeError(
+        `${taskType} refuses caller-supplied ${field}; principal identity must come from authenticated transport state.`
+      );
+    }
+  }
+}
+
 /**
  * Error class for v3 feature compatibility issues
  *
@@ -4547,6 +4567,7 @@ export class SingleAgentClient {
       skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
       skipAccountValidation: options?.skipAccountValidation,
     });
+    if (!options?.skipRequestValidation) assertNoPrincipalIdentityInput(taskType, normalizedParams);
     this.assertRequestSupportedByConfiguredVersion(taskType, normalizedParams, options, canonicalCreativeInvocation);
     this.assertDurablePropertyListCredentialSupported(taskType, normalizedParams);
 
