@@ -90,6 +90,7 @@ import {
   type AdcpServerInternal,
 } from './adcp-server';
 import {
+  isMcpAppToolMeta,
   mcpAppResourceUri,
   normalizeMcpAppResources,
   readMcpAppResource,
@@ -8447,7 +8448,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         ...(annotations != null && { annotations }),
         ...(_meta != null && { _meta }),
       } as Parameters<typeof server.registerTool>[1];
-      if (_meta != null) {
+      if (isMcpAppToolMeta(_meta as Record<string, unknown> | undefined)) {
         registerMcpAppTool(
           server as unknown as Parameters<typeof registerMcpAppTool>[0],
           customName,

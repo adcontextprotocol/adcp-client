@@ -2012,6 +2012,10 @@ describe('createAdcpServer', () => {
             _meta: { 'ui/resourceUri': 'ui://creative/upload' },
             handler,
           },
+          non_app_metadata: {
+            _meta: {},
+            handler,
+          },
         },
       });
 
@@ -2023,6 +2027,7 @@ describe('createAdcpServer', () => {
       };
       assert.deepStrictEqual(tools.nested_app._meta, expected);
       assert.deepStrictEqual(tools.legacy_app._meta, expected);
+      assert.deepStrictEqual(tools.non_app_metadata._meta, {});
     });
 
     it('lists and reads a typed ui:// HTML resource on the legacy MCP path', async () => {

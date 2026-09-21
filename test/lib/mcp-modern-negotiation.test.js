@@ -958,6 +958,10 @@ test('modern serving forwards portable MCP App metadata for custom tools', async
             _meta: { 'ui/resourceUri': 'ui://creative/upload' },
             handler: result('opened-legacy'),
           },
+          non_app_metadata: {
+            _meta: {},
+            handler: result('plain'),
+          },
           prepare_creative_upload: {
             _meta: appOnlyMeta,
             handler: result('prepared'),
@@ -1006,6 +1010,7 @@ test('modern serving forwards portable MCP App metadata for custom tools', async
     ui: { resourceUri: 'ui://creative/upload' },
     'ui/resourceUri': 'ui://creative/upload',
   });
+  assert.deepEqual(tools.non_app_metadata._meta, {});
   assert.deepEqual(tools.prepare_creative_upload._meta, appOnlyMeta);
   assert.deepEqual(tools.finalize_creative_upload._meta, appOnlyMeta);
 
