@@ -97,14 +97,14 @@ test('shared runner routing maps explicit sandbox flags without changing the omi
   const source = require('node:fs').readFileSync(CLI, 'utf8');
   assert.strictEqual(
     source.match(/\.\.\.sandboxRunOptions\(opts\)/g)?.length,
-    6,
+    7,
     'every storyboard run and step option builder must use the shared sandbox routing helper'
   );
 });
 
 test('resolveAccount honors options.sandbox=false (final wire-shape contract)', async () => {
   // The CLI flag plumbing in bin/adcp.js threads `--no-sandbox` to
-  // `options.sandbox = false` for all four runner paths
+  // `options.sandbox = false` for all storyboard runner paths
   // (handleStoryboardRun, handleLocalAgentStoryboardRun,
   // handleMultiInstanceStoryboardRun, runFullAssessment). The load-bearing
   // hop after that is `resolveAccount` in src/lib/testing/client.ts —
