@@ -19,6 +19,8 @@ export type {
   WholesaleFeedSyncConfig,
   WholesaleFeedSyncEvents,
   WholesaleFeedSyncMode,
+  WholesaleFeedSyncPersistedState,
+  WholesaleFeedSyncPersistenceHooks,
   WholesaleFeedSyncState,
   ProductFilter,
   ResolvedCapabilities,

@@ -17,6 +17,7 @@ import type {
   ProductFilter,
   ResolvedCapabilities,
   SignalFilter,
+  WholesaleFeedSyncPersistedState,
 } from './types';
 import { assertLegacyWholesaleFeedRepresentation } from './webhook-notification';
 
@@ -71,6 +72,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   private readonly account: AccountReference | undefined;
   private readonly webhookScope: NonNullable<WholesaleFeedSyncConfig['webhookScope']> | undefined;
   private readonly webhookDedupStore: WholesaleFeedSyncConfig['webhookDedupStore'] | undefined;
+  private readonly persistenceHooks: WholesaleFeedSyncConfig['persistenceHooks'] | undefined;
   private readonly probeIntervalMs: number;
   private readonly capabilityRefreshIntervalMs: number;
   private readonly errorHandler: ((error: Error) => void) | undefined;
@@ -80,6 +82,8 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   private readonly processedWebhookKeys = new Set<string>();
   private readonly processedWebhookEventKeys = new Set<string>();
   private lastWebhookEventId: string | undefined;
+  private persistenceLoaded = false;
+  private persistenceWriteTail: Promise<void> = Promise.resolve();
 
   private _state: WholesaleFeedSyncState = 'idle';
   private _mode: WholesaleFeedSyncMode = 'manual';
@@ -181,6 +185,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     this.account = config.account;
     this.webhookScope = config.webhookScope;
     this.webhookDedupStore = config.webhookDedupStore;
+    this.persistenceHooks = config.persistenceHooks;
     this.probeIntervalMs = config.probeIntervalMs ?? DEFAULT_PROBE_INTERVAL_MS;
     this.capabilityRefreshIntervalMs = config.capabilityRefreshIntervalMs ?? DEFAULT_CAPABILITY_REFRESH_INTERVAL_MS;
     this.errorHandler = config.onError;
@@ -214,6 +219,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   private async startInner(): Promise<void> {
     this.stop();
     const epoch = this.lifecycleEpoch;
+    if (!(await this.restorePersistedState(epoch))) return;
     if (!(await this.resolveMode(epoch))) return;
     if (!(await this.bootstrap({ epoch }))) return;
     if (this._mode === 'auto-poll') {
@@ -250,7 +256,12 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     this.signalCacheScope = 'public';
     this._lastSyncedAt = undefined;
     this._lastEventAt = undefined;
+    this.lastWebhookEventId = undefined;
+    this.processedWebhookKeys.clear();
+    this.processedWebhookEventKeys.clear();
+    this.persistenceLoaded = true;
     this.setState('idle');
+    await this.persistState();
   }
 
   /**
@@ -343,17 +354,19 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       }
       await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
       this.rememberLastWebhookEventId(event.event_id);
+      await this.persistState();
       return;
     }
 
     this.applyEvent(event);
     this.rememberWebhookVersion(webhook);
-    this.emit('event', { event });
-    this.emitTypedEvent(event);
-    await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
     this.rememberLastWebhookEventId(event.event_id);
     this._lastEventAt = new Date();
     this._lastSyncedAt = new Date();
+    await this.persistState();
+    this.emit('event', { event });
+    this.emitTypedEvent(event);
+    await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
     this.emit('sync', { eventsApplied: 1 });
   }
 
@@ -481,12 +494,15 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
         }
       }
 
+      this._lastSyncedAt = new Date();
+      await this.persistState();
+      if (!this.isLifecycleCurrent(epoch)) return false;
+
       if (options.emitDiffs) {
         this.emitDiffs(previousProducts, previousSignals);
       }
 
       this.setState('syncing');
-      this._lastSyncedAt = new Date();
       this.emit('bootstrap', {
         productCount: this.productIndex.size,
         signalCount: this.signalIndex.size,
@@ -1066,6 +1082,68 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     });
   }
 
+  // ====== Private: persistence ======
+
+  private async restorePersistedState(epoch: number): Promise<boolean> {
+    if (this.persistenceLoaded || !this.persistenceHooks) return true;
+
+    const loaded = await this.persistenceHooks.loadState();
+    if (!this.isLifecycleCurrent(epoch)) return false;
+    if (loaded) {
+      const state = normalizePersistedState(loaded);
+      this.productIndex = new Map(state.products.items.map(product => [product.product_id, product]));
+      this.signalIndex = new Map(state.signals.items.map(signal => [signal.signal_agent_segment_id, signal]));
+      this.commitProductMetadata({
+        wholesaleFeedVersion: state.products.wholesaleFeedVersion,
+        pricingVersion: state.products.pricingVersion,
+        cacheScope: state.products.cacheScope,
+      });
+      this.commitSignalMetadata({
+        wholesaleFeedVersion: state.signals.wholesaleFeedVersion,
+        pricingVersion: state.signals.pricingVersion,
+        cacheScope: state.signals.cacheScope,
+      });
+      this._lastSyncedAt = parsePersistedDate(state.lastSyncedAt);
+      this._lastEventAt = parsePersistedDate(state.lastEventAt);
+      this.lastWebhookEventId = state.lastWebhookEventId;
+    }
+    this.persistenceLoaded = true;
+    return true;
+  }
+
+  private persistedState(): WholesaleFeedSyncPersistedState {
+    return structuredClone({
+      version: 1,
+      products: {
+        items: [...this.productIndex.values()],
+        ...(this.productWholesaleFeedVersion && {
+          wholesaleFeedVersion: this.productWholesaleFeedVersion,
+        }),
+        ...(this.productPricingVersion && { pricingVersion: this.productPricingVersion }),
+        cacheScope: this.productCacheScope,
+      },
+      signals: {
+        items: [...this.signalIndex.values()],
+        ...(this.signalWholesaleFeedVersion && {
+          wholesaleFeedVersion: this.signalWholesaleFeedVersion,
+        }),
+        ...(this.signalPricingVersion && { pricingVersion: this.signalPricingVersion }),
+        cacheScope: this.signalCacheScope,
+      },
+      ...(this._lastSyncedAt && { lastSyncedAt: this._lastSyncedAt.toISOString() }),
+      ...(this._lastEventAt && { lastEventAt: this._lastEventAt.toISOString() }),
+      ...(this.lastWebhookEventId && { lastWebhookEventId: this.lastWebhookEventId }),
+    } satisfies WholesaleFeedSyncPersistedState);
+  }
+
+  private async persistState(): Promise<void> {
+    if (!this.persistenceHooks) return;
+    const snapshot = this.persistedState();
+    const write = this.persistenceWriteTail.then(() => this.persistenceHooks!.saveState(snapshot));
+    this.persistenceWriteTail = write.catch(() => undefined);
+    await write;
+  }
+
   // ====== Private: state ======
 
   private setState(next: WholesaleFeedSyncState): void {
@@ -1078,6 +1156,90 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   private isLifecycleCurrent(epoch: number): boolean {
     return epoch === this.lifecycleEpoch;
   }
+}
+
+function normalizePersistedState(value: unknown): WholesaleFeedSyncPersistedState {
+  const invalid = (message: string): never => {
+    throw new Error(`WholesaleFeedSync: invalid persisted state: ${message}`);
+  };
+  if (!isRecord(value)) return invalid('expected an object.');
+  if (value.version !== 1) return invalid(`unsupported version ${String(value.version)}.`);
+  if (!isRecord(value.products) || !Array.isArray(value.products.items)) {
+    return invalid('products.items must be an array.');
+  }
+  if (!isRecord(value.signals) || !Array.isArray(value.signals.items)) {
+    return invalid('signals.items must be an array.');
+  }
+  assertCacheScope(value.products.cacheScope, 'products.cacheScope', invalid);
+  assertCacheScope(value.signals.cacheScope, 'signals.cacheScope', invalid);
+  assertOptionalString(value.products.wholesaleFeedVersion, 'products.wholesaleFeedVersion', invalid);
+  assertOptionalString(value.products.pricingVersion, 'products.pricingVersion', invalid);
+  assertOptionalString(value.signals.wholesaleFeedVersion, 'signals.wholesaleFeedVersion', invalid);
+  assertOptionalString(value.signals.pricingVersion, 'signals.pricingVersion', invalid);
+  assertOptionalDate(value.lastSyncedAt, 'lastSyncedAt', invalid);
+  assertOptionalDate(value.lastEventAt, 'lastEventAt', invalid);
+  assertOptionalString(value.lastWebhookEventId, 'lastWebhookEventId', invalid);
+  if (value.lastWebhookEventId !== undefined && !isUuidV7(value.lastWebhookEventId as string)) {
+    return invalid('lastWebhookEventId must be a UUIDv7.');
+  }
+
+  const productIds = new Set<string>();
+  for (const product of value.products.items) {
+    if (!isRecord(product) || typeof product.product_id !== 'string' || product.product_id.length === 0) {
+      return invalid('each product must have a non-empty product_id.');
+    }
+    if (productIds.has(product.product_id)) return invalid(`duplicate product_id ${product.product_id}.`);
+    productIds.add(product.product_id);
+  }
+  const signalIds = new Set<string>();
+  for (const signal of value.signals.items) {
+    if (
+      !isRecord(signal) ||
+      typeof signal.signal_agent_segment_id !== 'string' ||
+      signal.signal_agent_segment_id.length === 0
+    ) {
+      return invalid('each signal must have a non-empty signal_agent_segment_id.');
+    }
+    if (signalIds.has(signal.signal_agent_segment_id)) {
+      return invalid(`duplicate signal_agent_segment_id ${signal.signal_agent_segment_id}.`);
+    }
+    signalIds.add(signal.signal_agent_segment_id);
+  }
+
+  return structuredClone(value) as unknown as WholesaleFeedSyncPersistedState;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function assertCacheScope(
+  value: unknown,
+  field: string,
+  invalid: (message: string) => never
+): asserts value is 'public' | 'account' {
+  if (value !== 'public' && value !== 'account') invalid(`${field} must be "public" or "account".`);
+}
+
+function assertOptionalString(
+  value: unknown,
+  field: string,
+  invalid: (message: string) => never
+): asserts value is string | undefined {
+  if (value !== undefined && typeof value !== 'string') invalid(`${field} must be a string when present.`);
+}
+
+function assertOptionalDate(
+  value: unknown,
+  field: string,
+  invalid: (message: string) => never
+): asserts value is string | undefined {
+  assertOptionalString(value, field, invalid);
+  if (value !== undefined && Number.isNaN(Date.parse(value))) invalid(`${field} must be a valid ISO-8601 timestamp.`);
+}
+
+function parsePersistedDate(value: string | undefined): Date | undefined {
+  return value === undefined ? undefined : new Date(value);
 }
 
 // ====== Diff helpers ======
