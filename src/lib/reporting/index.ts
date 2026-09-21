@@ -19,6 +19,18 @@ export {
   createHttpsReportingResourceReader,
   createReportingManifestInspector,
 } from './inspection';
+export { reconcileReportingCoreV1 } from './core-reconciliation';
+export type {
+  CoreReportingClocksV1,
+  CoreReportingHealthV1,
+  CoreReportingIssueV1,
+  CoreReportingObligationResultV1,
+  CoreReportingObligationV1,
+  CoreReportingRevisionV1,
+  CoreReportingScopeV1,
+  ReconcileReportingCoreInputV1,
+  ReconcileReportingCoreResultV1,
+} from './core-reconciliation';
 export type {
   ExpectedReportingPeriod,
   ExpectedReportingCoverage,

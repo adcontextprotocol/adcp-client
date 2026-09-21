@@ -1,5 +1,100 @@
 # Reporting reconciliation
 
+## Core-only health reconciliation
+
+Use `reconcileReportingCoreV1` when the seller advertises the required Core
+tier without managed delivery or reconciled billing. It is a synchronous pure
+function: pass the obligations and revisions returned by
+`get_reporting_status`, the response's scope closure facts, and the recovery
+window recorded from reporting capabilities. It derives `waiting`, `healthy`,
+`delayed`, `action_required`, or `complete` without a destination, manifest,
+canonicalization contract, resource reader, materialization, or receipt.
+
+```ts
+import {
+  reconcileReportingCoreV1,
+  type CoreReportingObligationV1,
+  type CoreReportingRevisionV1,
+} from '@adcp/sdk';
+
+const obligations: CoreReportingObligationV1[] = [];
+const revisions: CoreReportingRevisionV1[] = [];
+const seenCursors = new Set<string>();
+let cursor: string | undefined;
+let status;
+let snapshotId: string | undefined;
+let ledgerAsOf: string | undefined;
+let pageCount = 0;
+do {
+  if (++pageCount > 1_000) throw new Error('Seller reporting history exceeds the buyer page budget');
+  status = await seller.getReportingStatus({
+    account: { account_id: 'account-1' },
+    view: 'periods',
+    ...(cursor ? { pagination: { cursor } } : {}),
+  });
+  if (!status.ledger_snapshot_id || !status.ledger_as_of) {
+    throw new Error('Seller omitted reporting snapshot identity');
+  }
+  if (
+    (snapshotId && status.ledger_snapshot_id !== snapshotId) ||
+    (ledgerAsOf && status.ledger_as_of !== ledgerAsOf)
+  ) {
+    throw new Error('Seller reporting snapshot changed during pagination');
+  }
+  snapshotId ??= status.ledger_snapshot_id;
+  ledgerAsOf ??= status.ledger_as_of;
+  obligations.push(...(status.periods ?? []));
+  revisions.push(...(status.revisions ?? []));
+  if (obligations.length + revisions.length > 100_000) {
+    throw new Error('Seller reporting history exceeds the buyer record budget');
+  }
+  if (!status.pagination) throw new Error('Seller omitted reporting pagination');
+  if (status.pagination.has_more && !status.pagination.cursor) {
+    throw new Error('Seller reporting cursor did not advance');
+  }
+  cursor = status.pagination.has_more ? status.pagination.cursor : undefined;
+  if (cursor && seenCursors.has(cursor)) throw new Error('Seller reporting cursor repeated');
+  if (cursor) seenCursors.add(cursor);
+} while (cursor);
+
+const reportingDelivery = capabilities.media_buy?.reporting_delivery;
+if (
+  !status?.scope ||
+  !ledgerAsOf ||
+  !reportingDelivery ||
+  typeof reportingDelivery.automated_recovery_window_seconds !== 'number'
+) {
+  throw new Error('Seller omitted required reporting Core facts');
+}
+
+const result = reconcileReportingCoreV1({
+  obligations,
+  revisions,
+  scope: {
+    closed: status.scope.scope_closed,
+    coverageComplete: status.scope.coverage_complete,
+    recordsComplete: true,
+  },
+  clocks: {
+    ledgerAsOf,
+    automatedRecoveryWindowSeconds:
+      reportingDelivery.automated_recovery_window_seconds,
+  },
+});
+```
+
+Core revisions join to obligations by their protocol logical-slice identity:
+account, report definition, reporting profile, media-buy denominator, and
+period. A qualifying revision with `row_count: 0` satisfies its obligation;
+zero rows is explicit reporting, while no revision is a missing report.
+
+`scope.coverage_complete` proves retention coverage, not that the seller emitted
+every obligation the buyer independently expected. Buyers that derive an
+expected-period denominator from an accepted schedule must compare that set to
+`obligations` separately; seller scope coverage cannot prove an omitted period.
+
+## Managed-delivery and receipt reconciliation
+
 `reconcileReporting` turns the reporting ledger into a buyer-verifiable result. It reads one stable ledger snapshot, checks the expected period set, inspects each current destination materialization, submits any required consumer receipts, and then reads the seller's ledger back before returning.
 
 The helper only returns `definitive: true` when all of these conditions hold:
