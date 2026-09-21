@@ -1991,6 +1991,40 @@ describe('createAdcpServer', () => {
   });
 
   describe('MCP App resources', () => {
+    it('normalizes nested and legacy MCP App tool metadata on the legacy path', async () => {
+      const handler = async () => ({ content: [{ type: 'text', text: 'opened' }] });
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        resources: [
+          {
+            name: 'creative_upload',
+            uri: 'ui://creative/upload',
+            handler: async () => '<!doctype html><html></html>',
+          },
+        ],
+        customTools: {
+          nested_app: {
+            _meta: { ui: { resourceUri: 'ui://creative/upload' } },
+            handler,
+          },
+          legacy_app: {
+            _meta: { 'ui/resourceUri': 'ui://creative/upload' },
+            handler,
+          },
+        },
+      });
+
+      const listed = await server.dispatchTestRequest({ method: 'tools/list' });
+      const tools = Object.fromEntries(listed.tools.map(tool => [tool.name, tool]));
+      const expected = {
+        ui: { resourceUri: 'ui://creative/upload' },
+        'ui/resourceUri': 'ui://creative/upload',
+      };
+      assert.deepStrictEqual(tools.nested_app._meta, expected);
+      assert.deepStrictEqual(tools.legacy_app._meta, expected);
+    });
+
     it('lists and reads a typed ui:// HTML resource on the legacy MCP path', async () => {
       let seen;
       const resourceMeta = {

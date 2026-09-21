@@ -953,6 +953,11 @@ test('modern serving forwards portable MCP App metadata for custom tools', async
             _meta: { ui: { resourceUri: 'ui://creative/upload' } },
             handler: result('opened'),
           },
+          legacy_upload_creative_asset: {
+            description: 'Open the portable creative upload app from legacy metadata',
+            _meta: { 'ui/resourceUri': 'ui://creative/upload' },
+            handler: result('opened-legacy'),
+          },
           prepare_creative_upload: {
             _meta: appOnlyMeta,
             handler: result('prepared'),
@@ -995,6 +1000,11 @@ test('modern serving forwards portable MCP App metadata for custom tools', async
   const tools = Object.fromEntries(listed.tools.map(tool => [tool.name, tool]));
   assert.deepEqual(tools.upload_creative_asset._meta, {
     ui: { resourceUri: 'ui://creative/upload' },
+    'ui/resourceUri': 'ui://creative/upload',
+  });
+  assert.deepEqual(tools.legacy_upload_creative_asset._meta, {
+    ui: { resourceUri: 'ui://creative/upload' },
+    'ui/resourceUri': 'ui://creative/upload',
   });
   assert.deepEqual(tools.prepare_creative_upload._meta, appOnlyMeta);
   assert.deepEqual(tools.finalize_creative_upload._meta, appOnlyMeta);

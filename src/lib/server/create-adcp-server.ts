@@ -90,10 +90,13 @@ import {
   type AdcpServerInternal,
 } from './adcp-server';
 import {
-  mcpAppResourceMetadata,
+  mcpAppResourceUri,
   normalizeMcpAppResources,
   readMcpAppResource,
+  registerMcpAppResource,
+  registerMcpAppTool,
   type AdcpMcpResourceDefinition,
+  type McpAppToolMeta,
 } from './mcp-app';
 import { ADCP_TASK_MESSAGE_QUEUE, createTaskCapableServer, InMemoryTaskStore } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
@@ -1559,17 +1562,10 @@ export type AdcpPreTransport = (
 // ---------------------------------------------------------------------------
 
 /** UI hints for a custom tool backed by an MCP App. */
-export interface McpAppUiMeta {
-  /** URI of the MCP App resource rendered when the tool is invoked. */
-  resourceUri?: string;
-  /** Audiences a compliant host exposes the tool to. Routing metadata, not authorization. */
-  visibility?: Array<'model' | 'app'>;
-}
+export type McpAppUiMeta = NonNullable<McpAppToolMeta['ui']>;
 
-/** Typed MCP App metadata forwarded unchanged in `tools/list`. */
-export interface McpAppMeta {
-  ui?: McpAppUiMeta;
-}
+/** Typed MCP App metadata normalized by the official MCP Apps helper. */
+export type McpAppMeta = McpAppToolMeta;
 
 /**
  * The active AdCP 3.2 media-buy MCP catalog.
@@ -5012,7 +5008,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   const mcpAppResources = normalizeMcpAppResources(config.resources);
   const mcpAppResourceUris = new Set<string>(mcpAppResources.map(resource => resource.uri));
   for (const [toolName, tool] of Object.entries(config.customTools ?? {})) {
-    const resourceUri = tool?._meta?.ui?.resourceUri;
+    const resourceUri = mcpAppResourceUri(tool?._meta as Record<string, unknown> | undefined);
     if (resourceUri === undefined || mcpAppResourceUris.has(resourceUri)) continue;
     const message =
       `[adcp/createAdcpServer] customTools["${toolName}"]._meta.ui.resourceUri references ` +
@@ -5554,15 +5550,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // separately mirrors these validated definitions onto every per-request
   // MCP v2 server reconstruction.
   for (const resource of mcpAppResources) {
-    server.registerResource(
-      resource.name,
-      resource.uri,
-      mcpAppResourceMetadata(resource) as Parameters<typeof server.registerResource>[2],
-      async (uri, extra) =>
-        readMcpAppResource(resource, uri, {
-          signal: extra.signal,
-        })
-    );
+    registerMcpAppResource(server as unknown as Parameters<typeof registerMcpAppResource>[0], resource, (async (
+      uri,
+      extra
+    ) =>
+      readMcpAppResource(resource, uri, {
+        signal: (extra as unknown as { signal: AbortSignal }).signal,
+      })) as Parameters<typeof registerMcpAppResource>[2]);
   }
 
   // Wire async instructions resolution into the MCP `initialize` handler.
@@ -8445,18 +8439,24 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           throw err;
         }
       }) as Parameters<typeof server.registerTool>[2];
-      server.registerTool(
-        customName,
-        {
-          ...(description != null && { description }),
-          ...(title != null && { title }),
-          ...(inputSchema != null && { inputSchema }),
-          ...(outputSchema != null && { outputSchema }),
-          ...(annotations != null && { annotations }),
-          ...(_meta != null && { _meta }),
-        } as Parameters<typeof server.registerTool>[1],
-        wrappedHandler
-      );
+      const customToolConfig = {
+        ...(description != null && { description }),
+        ...(title != null && { title }),
+        ...(inputSchema != null && { inputSchema }),
+        ...(outputSchema != null && { outputSchema }),
+        ...(annotations != null && { annotations }),
+        ...(_meta != null && { _meta }),
+      } as Parameters<typeof server.registerTool>[1];
+      if (_meta != null) {
+        registerMcpAppTool(
+          server as unknown as Parameters<typeof registerMcpAppTool>[0],
+          customName,
+          customToolConfig as Parameters<typeof registerMcpAppTool>[2],
+          wrappedHandler as Parameters<typeof registerMcpAppTool>[3]
+        );
+      } else {
+        server.registerTool(customName, customToolConfig, wrappedHandler);
+      }
       registeredToolNames.add(customName);
     }
   }
