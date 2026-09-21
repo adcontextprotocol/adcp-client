@@ -285,8 +285,7 @@ describe('WholesaleFeedSync legacy-view wholesale feed flow', () => {
     assert.strictEqual(calls.getSignals.length, 2);
     assert.strictEqual(sync.products.get('p1').name, 'Product p1');
     assert.strictEqual(sync.signals.get('s1').name, 'Signal s1');
-    assert.strictEqual(saved.at(-1).version, 1);
-    assert.strictEqual(saved.at(-1).products.cacheScope, 'account');
+    assert.strictEqual(saved.length, 0);
     sync.stop();
   });
 
@@ -351,6 +350,45 @@ describe('WholesaleFeedSync legacy-view wholesale feed flow', () => {
     assert.strictEqual(calls.capabilities, 0);
     assert.strictEqual(calls.getProducts.length, 0);
     assert.strictEqual(calls.getSignals.length, 0);
+  });
+
+  test('bounds persistence loads before making agent calls', async () => {
+    const { client, calls } = makeStubClient();
+    const sync = new WholesaleFeedSync({
+      client,
+      persistenceTimeoutMs: 5,
+      persistenceHooks: {
+        async loadState() {
+          return new Promise(() => {});
+        },
+        async saveState() {},
+      },
+    });
+
+    await assert.rejects(() => sync.start(), /persistence loadState timed out after 5ms/);
+    assert.strictEqual(calls.capabilities, 0);
+  });
+
+  test('bounds persistence saves and surfaces the bootstrap failure', async () => {
+    const { client } = makeStubClient({
+      getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' }),
+    });
+    const sync = new WholesaleFeedSync({
+      client,
+      persistenceTimeoutMs: 5,
+      persistenceHooks: {
+        async loadState() {
+          return null;
+        },
+        async saveState() {
+          return new Promise(() => {});
+        },
+      },
+    });
+    sync.on('error', () => {});
+
+    await assert.rejects(() => sync.start(), /persistence saveState timed out after 5ms/);
+    assert.strictEqual(sync.state, 'error');
   });
 
   test('reset persists an empty snapshot without stale tokens or webhook cursor', async () => {

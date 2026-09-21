@@ -37,6 +37,7 @@ type BootstrapFeedResult<T> = {
 
 const DEFAULT_PROBE_INTERVAL_MS = 600_000;
 const DEFAULT_CAPABILITY_REFRESH_INTERVAL_MS = 86_400_000;
+const DEFAULT_PERSISTENCE_TIMEOUT_MS = 30_000;
 const DEFAULT_BOOTSTRAP_PAGE_LIMIT = 100;
 const VERSION_MISMATCH_RECOVERY_ATTEMPTS = 3;
 const VERSION_MISMATCH_RECOVERY_BACKOFF_MS = 5;
@@ -73,6 +74,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   private readonly webhookScope: NonNullable<WholesaleFeedSyncConfig['webhookScope']> | undefined;
   private readonly webhookDedupStore: WholesaleFeedSyncConfig['webhookDedupStore'] | undefined;
   private readonly persistenceHooks: WholesaleFeedSyncConfig['persistenceHooks'] | undefined;
+  private readonly persistenceTimeoutMs: number;
   private readonly probeIntervalMs: number;
   private readonly capabilityRefreshIntervalMs: number;
   private readonly errorHandler: ((error: Error) => void) | undefined;
@@ -186,6 +188,10 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     this.webhookScope = config.webhookScope;
     this.webhookDedupStore = config.webhookDedupStore;
     this.persistenceHooks = config.persistenceHooks;
+    this.persistenceTimeoutMs = config.persistenceTimeoutMs ?? DEFAULT_PERSISTENCE_TIMEOUT_MS;
+    if (!Number.isFinite(this.persistenceTimeoutMs) || this.persistenceTimeoutMs <= 0) {
+      throw new Error('WholesaleFeedSync: persistenceTimeoutMs must be a finite positive number.');
+    }
     this.probeIntervalMs = config.probeIntervalMs ?? DEFAULT_PROBE_INTERVAL_MS;
     this.capabilityRefreshIntervalMs = config.capabilityRefreshIntervalMs ?? DEFAULT_CAPABILITY_REFRESH_INTERVAL_MS;
     this.errorHandler = config.onError;
@@ -464,6 +470,8 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       // mutated on a successful, fresh fetch.
       const previousProducts = new Map(this.productIndex);
       const previousSignals = new Map(this.signalIndex);
+      const previousProductMetadata = this.currentProductMetadata();
+      const previousSignalMetadata = this.currentSignalMetadata();
       let productResult: BootstrapFeedResult<Product> | undefined;
       let signalResult: BootstrapFeedResult<Signal> | undefined;
       const entities = options.entities ?? 'all';
@@ -495,8 +503,16 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       }
 
       this._lastSyncedAt = new Date();
-      await this.persistState();
-      if (!this.isLifecycleCurrent(epoch)) return false;
+      const productStateChanged =
+        productResult !== undefined &&
+        (!productResult.unchanged || !isDeepStrictEqual(previousProductMetadata, productResult.metadata));
+      const signalStateChanged =
+        signalResult !== undefined &&
+        (!signalResult.unchanged || !isDeepStrictEqual(previousSignalMetadata, signalResult.metadata));
+      if (productStateChanged || signalStateChanged) {
+        await this.persistState();
+        if (!this.isLifecycleCurrent(epoch)) return false;
+      }
 
       if (options.emitDiffs) {
         this.emitDiffs(previousProducts, previousSignals);
@@ -1087,7 +1103,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   private async restorePersistedState(epoch: number): Promise<boolean> {
     if (this.persistenceLoaded || !this.persistenceHooks) return true;
 
-    const loaded = await this.persistenceHooks.loadState();
+    const loaded = await withTimeout(this.persistenceHooks.loadState(), this.persistenceTimeoutMs, 'loadState');
     if (!this.isLifecycleCurrent(epoch)) return false;
     if (loaded) {
       const state = normalizePersistedState(loaded);
@@ -1141,7 +1157,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     const snapshot = this.persistedState();
     const write = this.persistenceWriteTail.then(() => this.persistenceHooks!.saveState(snapshot));
     this.persistenceWriteTail = write.catch(() => undefined);
-    await write;
+    await withTimeout(write, this.persistenceTimeoutMs, 'saveState');
   }
 
   // ====== Private: state ======
@@ -1285,4 +1301,19 @@ function mergeFeedMetadata(
 
 async function sleep(ms: number): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, hookName: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`WholesaleFeedSync: persistence ${hookName} timed out after ${timeoutMs}ms.`)),
+      timeoutMs
+    );
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }

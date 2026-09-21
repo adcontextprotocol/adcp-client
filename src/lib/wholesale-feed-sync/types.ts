@@ -128,6 +128,14 @@ export interface WholesaleFeedSyncConfig {
   persistenceHooks?: WholesaleFeedSyncPersistenceHooks;
 
   /**
+   * Maximum time to await each persistence hook. Default: 30000 (30 seconds).
+   * A timeout rejects the current sync operation. Timed-out saves remain in
+   * the serialized write queue so a late older write cannot overwrite newer
+   * state; storage adapters should also enforce their own cancellation.
+   */
+  persistenceTimeoutMs?: number;
+
+  /**
    * Version-probe interval in `'auto-poll'` mode. Default: 600000 (10
    * minutes). The spec's recommended cadence: cheap conditional fetch is
    * fast enough that polling more often than every few minutes wastes
