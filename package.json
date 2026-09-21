@@ -539,6 +539,7 @@
     "examples/reliable-reporting-service/README.md",
     "examples/seller-3.2-starter.ts",
     "examples/supply-path-verification.ts",
+    "examples/wholesale-feed-sync.ts",
     "examples/comply-controller-seller.ts",
     "examples/seller-test-controller.ts",
     "examples/gcp-kms-signing-provider.ts",
