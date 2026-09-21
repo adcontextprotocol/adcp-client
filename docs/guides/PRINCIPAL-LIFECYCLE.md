@@ -56,10 +56,11 @@ console.log(result.declarations?.exclusions);
 ```
 
 Each conflict retry is a new logical mutation with a fresh idempotency key and
-the latest `configuration_version`. A lost-response transport retry remains the
-responsibility of the normal client task executor, which reuses the request's
-key. Polling stops when every destination is ready, when any destination reaches
-a terminal setup state, when the timeout expires, or when the caller aborts. It
+the latest `configuration_version`. After a lost response, the caller owns replay:
+reuse the idempotency key attached to the thrown task error with the exact same
+request body. Polling stops when every active destination submitted by this call
+is ready, when any such destination reaches a terminal setup state, when the
+timeout expires, or when the caller aborts. It
 also fails closed if the authenticated principal or configuration version changes
 while setup is being observed; seller-driven setup transitions keep the same
 version by protocol contract. Caller-suspended (`active: false`) destinations

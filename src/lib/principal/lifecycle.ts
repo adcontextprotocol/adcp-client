@@ -8,7 +8,7 @@ import type {
   SyncPrincipalRequest,
   SyncPrincipalResponse,
 } from '../types/tools.generated';
-import type { MutatingRequestInput } from '../utils/idempotency';
+import { isValidIdempotencyKey, type MutatingRequestInput } from '../utils/idempotency';
 
 type CurrentPrincipal = Extract<GetPrincipalResponse['result'], { kind: 'current' }>;
 type AppliedPrincipal = Extract<SyncPrincipalResponse['result'], { kind: 'applied' }>;
@@ -50,7 +50,7 @@ export interface PrincipalLifecycleOptions {
 export interface PrincipalLifecycleResult {
   applied: AppliedPrincipal;
   current: CurrentPrincipal;
-  /** True only when every configured reusable destination reached ready. */
+  /** True only when every active destination submitted by this lifecycle call reached ready. */
   destinationsReady: boolean;
   /** Seller-computed declaration intersection and exclusions, when supported. */
   declarations: CurrentPrincipal['configuration']['declarations'];
@@ -61,21 +61,41 @@ export class PrincipalLifecycleError extends Error {
   readonly taskResult?: TaskResult<unknown>;
   /** Structured tool-level issues returned by the seller. */
   readonly protocolErrors?: readonly unknown[];
+  /** Successfully applied mutation, when a later observation step failed. */
+  readonly applied?: AppliedPrincipal;
+  /** Last coherent readback observed after the mutation, when available. */
+  readonly current?: CurrentPrincipal;
 
   constructor(
     message: string,
-    options: { cause?: unknown; taskResult?: TaskResult<unknown>; protocolErrors?: readonly unknown[] } = {}
+    options: {
+      cause?: unknown;
+      taskResult?: TaskResult<unknown>;
+      protocolErrors?: readonly unknown[];
+      applied?: AppliedPrincipal;
+      current?: CurrentPrincipal;
+    } = {}
   ) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = 'PrincipalLifecycleError';
-    this.taskResult = options.taskResult;
+    Object.defineProperty(this, 'taskResult', {
+      value: options.taskResult,
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
     this.protocolErrors = options.protocolErrors;
+    this.applied = options.applied;
+    this.current = options.current;
   }
 }
 
 export class PrincipalLifecycleTimeoutError extends PrincipalLifecycleError {
-  constructor(message = 'Timed out waiting for principal destination setup.') {
-    super(message);
+  constructor(
+    message = 'Timed out waiting for principal destination setup.',
+    options: { applied?: AppliedPrincipal; current?: CurrentPrincipal } = {}
+  ) {
+    super(message, options);
     this.name = 'PrincipalLifecycleTimeoutError';
   }
 }
@@ -95,6 +115,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isFailedSyncPrincipalResponse(value: unknown): value is SyncPrincipalResponse {
+  if (!isRecord(value) || !isRecord(value.result) || value.result.kind !== 'failed') return false;
+  return (
+    Array.isArray(value.result.errors) &&
+    value.result.errors.length > 0 &&
+    value.result.errors.every(error => isRecord(error) && typeof error.code === 'string')
+  );
+}
+
+function isFailedGetPrincipalResponse(value: unknown): value is GetPrincipalResponse {
   if (!isRecord(value) || !isRecord(value.result) || value.result.kind !== 'failed') return false;
   return (
     Array.isArray(value.result.errors) &&
@@ -210,23 +239,25 @@ function destinationOutcome(
   current: CurrentPrincipal,
   expectedActiveDestinationIds?: ReadonlySet<string>
 ): 'ready' | 'pending' | 'terminal' {
+  if (expectedActiveDestinationIds === undefined || expectedActiveDestinationIds.size === 0) return 'ready';
   const destinations = current.configuration.reporting_destinations ?? [];
   if (
-    expectedActiveDestinationIds &&
     [...expectedActiveDestinationIds].some(
       destinationId => !destinations.some(destination => destination.destination_id === destinationId)
     )
   ) {
     return 'pending';
   }
-  const relevantDestinations = destinations.filter(
-    destination =>
-      destination.configuration.active || expectedActiveDestinationIds?.has(destination.destination_id) === true
+  const relevantDestinations = destinations.filter(destination =>
+    expectedActiveDestinationIds.has(destination.destination_id)
   );
   if (
     relevantDestinations.some(
       destination =>
-        destination.state === 'action_required' || destination.state === 'inactive' || destination.state === 'rejected'
+        destination.configuration.active !== true ||
+        destination.state === 'action_required' ||
+        destination.state === 'inactive' ||
+        destination.state === 'rejected'
     )
   ) {
     return 'terminal';
@@ -241,7 +272,8 @@ async function readCurrent(
 ): Promise<GetPrincipalResponse['result']> {
   const response = completedData(
     await client.getPrincipal({}, options.inputHandler, taskOptions(options, remainingMs)),
-    'get_principal'
+    'get_principal',
+    isFailedGetPrincipalResponse
   );
   if (response.result.kind === 'failed') {
     throw new PrincipalLifecycleError('get_principal returned a failed result.', {
@@ -288,10 +320,19 @@ export async function syncPrincipalLifecycle(
   let prior = await readCurrent(client, options);
   assertExpectedPrincipalKind(prior, options.expectedPrincipalKind);
   let applied: AppliedPrincipal | undefined;
+  const attemptedIdempotencyKeys = new Set<string>();
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const idempotencyKey = createIdempotencyKey();
+    if (typeof idempotencyKey !== 'string' || !isValidIdempotencyKey(idempotencyKey)) {
+      throw new TypeError('createIdempotencyKey must return a valid AdCP idempotency key.');
+    }
+    if (attemptedIdempotencyKeys.has(idempotencyKey)) {
+      throw new PrincipalLifecycleError('createIdempotencyKey must return a fresh key for each conflict retry.');
+    }
+    attemptedIdempotencyKeys.add(idempotencyKey);
     const request: MutatingRequestInput<SyncPrincipalRequest> = {
-      idempotency_key: createIdempotencyKey(),
+      idempotency_key: idempotencyKey,
       configuration: desiredConfiguration,
       ...(prior.kind === 'current' ? { expected_configuration_version: prior.configuration_version } : {}),
       ...(options.expectedPrincipalKind !== undefined
@@ -338,12 +379,12 @@ export async function syncPrincipalLifecycle(
     const deadline = Date.now() + setupTimeoutMs;
     while (outcome === 'pending') {
       const remaining = deadline - Date.now();
-      if (remaining <= 0) throw new PrincipalLifecycleTimeoutError();
+      if (remaining <= 0) throw new PrincipalLifecycleTimeoutError(undefined, { applied, current });
       const delay = Math.min(pollIntervalMs, remaining);
       await wait(delay, options.signal);
-      if (delay === remaining) throw new PrincipalLifecycleTimeoutError();
+      if (delay === remaining) throw new PrincipalLifecycleTimeoutError(undefined, { applied, current });
       const remainingAfterWait = deadline - Date.now();
-      if (remainingAfterWait <= 0) throw new PrincipalLifecycleTimeoutError();
+      if (remainingAfterWait <= 0) throw new PrincipalLifecycleTimeoutError(undefined, { applied, current });
       const configuredTaskTimeout = options.taskOptions?.timeout;
       const lifecycleBoundsRead =
         configuredTaskTimeout === undefined ||
@@ -354,19 +395,34 @@ export async function syncPrincipalLifecycle(
         readback = await readCurrent(client, options, remainingAfterWait);
       } catch (error) {
         if (error instanceof TaskTimeoutError && lifecycleBoundsRead) {
-          throw new PrincipalLifecycleTimeoutError();
+          throw new PrincipalLifecycleTimeoutError(undefined, { applied, current });
+        }
+        if (error instanceof PrincipalLifecycleError) {
+          throw new PrincipalLifecycleError(error.message, {
+            cause: error,
+            taskResult: error.taskResult,
+            protocolErrors: error.protocolErrors,
+            applied,
+            current,
+          });
         }
         throw error;
       }
       if (readback.kind !== 'current') {
-        throw new PrincipalLifecycleError('Principal configuration disappeared while destination setup was pending.');
+        throw new PrincipalLifecycleError('Principal configuration disappeared while destination setup was pending.', {
+          applied,
+          current,
+        });
       }
       if (
         readback.principal_id !== applied.principal_id ||
         readback.principal_kind !== applied.principal_kind ||
         readback.configuration_version !== applied.configuration_version
       ) {
-        throw new PrincipalLifecycleError('Principal configuration changed while destination setup was pending.');
+        throw new PrincipalLifecycleError('Principal configuration changed while destination setup was pending.', {
+          applied,
+          current,
+        });
       }
       current = readback;
       outcome = destinationOutcome(current, expectedActiveDestinationIds);

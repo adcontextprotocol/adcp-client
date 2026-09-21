@@ -7543,6 +7543,7 @@ export class SingleAgentClient {
         skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
         skipAccountValidation: options?.skipAccountValidation,
       });
+      if (!options?.skipRequestValidation) assertNoPrincipalIdentityInput(taskName, normalizedParams);
       this.assertRequestSupportedByConfiguredVersion(taskName, normalizedParams, options);
       this.assertDurablePropertyListCredentialSupported(taskName, normalizedParams);
 

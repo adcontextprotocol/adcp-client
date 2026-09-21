@@ -72,6 +72,10 @@ function applied(version, state = 'ready') {
   };
 }
 
+function reportingConfiguration() {
+  return { reporting_destinations: [{ destination_id: 'warehouse', active: true }] };
+}
+
 describe('principal lifecycle', () => {
   test('uses guarded replacement, polls setup, and returns declaration negotiation readback', async () => {
     const declarations = {
@@ -90,11 +94,10 @@ describe('principal lifecycle', () => {
       },
     };
 
-    const result = await syncPrincipalLifecycle(
-      client,
-      { reporting_destinations: [] },
-      { pollIntervalMs: 1, createIdempotencyKey: () => 'principal-operation-0001' }
-    );
+    const result = await syncPrincipalLifecycle(client, reportingConfiguration(), {
+      pollIntervalMs: 1,
+      createIdempotencyKey: () => 'principal-operation-0001',
+    });
 
     assert.equal(syncRequests.length, 1);
     assert.equal(syncRequests[0].expected_configuration_version, 'v1');
@@ -133,6 +136,41 @@ describe('principal lifecycle', () => {
         ['principal-operation-0001', 'v1'],
         ['principal-operation-0002', 'v2'],
       ]
+    );
+  });
+
+  test('requires a fresh valid idempotency key for every conflict retry', async () => {
+    const reads = [current('v1'), current('v2')];
+    let syncCalls = 0;
+    const client = {
+      getPrincipal: async () => completed(reads.shift()),
+      syncPrincipal: async () => {
+        syncCalls += 1;
+        return failed({
+          status: 'rejected',
+          result: {
+            kind: 'failed',
+            errors: [{ code: 'CONFLICT', message: 'stale configuration', recovery: 'correctable' }],
+          },
+        });
+      },
+    };
+
+    await assert.rejects(
+      syncPrincipalLifecycle(client, { notification_configs: [] }, { createIdempotencyKey: () => 'same-key-0000001' }),
+      /fresh key/
+    );
+    assert.equal(syncCalls, 1);
+    await assert.rejects(
+      syncPrincipalLifecycle(
+        {
+          getPrincipal: async () => completed(current('v1')),
+          syncPrincipal: async () => completed(applied('v2')),
+        },
+        { notification_configs: [] },
+        { createIdempotencyKey: () => 'short' }
+      ),
+      /valid AdCP idempotency key/
     );
   });
 
@@ -243,7 +281,7 @@ describe('principal lifecycle', () => {
       syncPrincipal: async () => completed(applied('v2', 'action_required')),
     };
 
-    const result = await syncPrincipalLifecycle(client, { reporting_destinations: [] });
+    const result = await syncPrincipalLifecycle(client, reportingConfiguration());
     assert.equal(result.destinationsReady, false);
     assert.equal(result.current.configuration.reporting_destinations[0].state, 'action_required');
   });
@@ -314,6 +352,31 @@ describe('principal lifecycle', () => {
     assert.equal(rejectedResult.destinationsReady, true);
   });
 
+  test('scopes readiness to submitted active destinations and fails closed on malformed active echoes', async () => {
+    let reads = 0;
+    const sectionOmittedClient = {
+      getPrincipal: async () => {
+        reads += 1;
+        return completed(current('v1'));
+      },
+      syncPrincipal: async () => completed(applied('v2', 'validating')),
+    };
+    const sectionOmitted = await syncPrincipalLifecycle(sectionOmittedClient, { notification_configs: [] });
+    assert.equal(sectionOmitted.destinationsReady, true);
+    assert.equal(reads, 1);
+
+    const malformed = applied('v2', 'validating');
+    delete malformed.result.configuration.reporting_destinations[0].configuration.active;
+    const malformedClient = {
+      getPrincipal: async () => completed(current('v1')),
+      syncPrincipal: async () => completed(malformed),
+    };
+    const malformedResult = await syncPrincipalLifecycle(malformedClient, {
+      reporting_destinations: [{ destination_id: 'warehouse', active: true }],
+    });
+    assert.equal(malformedResult.destinationsReady, false);
+  });
+
   test('surfaces intermediate and non-schema failure task results without accepting their data', async () => {
     const submitted = {
       success: true,
@@ -329,7 +392,10 @@ describe('principal lifecycle', () => {
     };
     await assert.rejects(
       syncPrincipalLifecycle(submittedClient, { notification_configs: [] }),
-      error => error instanceof PrincipalLifecycleError && error.taskResult === submitted
+      error =>
+        error instanceof PrincipalLifecycleError &&
+        error.taskResult === submitted &&
+        !Object.keys(error).includes('taskResult')
     );
 
     const invalid = failed({
@@ -349,6 +415,21 @@ describe('principal lifecycle', () => {
       syncPrincipalLifecycle(invalidClient, { notification_configs: [] }),
       error => error instanceof PrincipalLifecycleError && error.taskResult === invalid
     );
+
+    const readFailure = failed({
+      status: 'rejected',
+      result: {
+        kind: 'failed',
+        errors: [{ code: 'AUTHENTICATION_REQUIRED', message: 'refresh auth', recovery: 'correctable' }],
+      },
+    });
+    await assert.rejects(
+      syncPrincipalLifecycle(
+        { getPrincipal: async () => readFailure, syncPrincipal: async () => completed(applied('v1')) },
+        { notification_configs: [] }
+      ),
+      error => error instanceof PrincipalLifecycleError && error.protocolErrors?.[0]?.code === 'AUTHENTICATION_REQUIRED'
+    );
   });
 
   test('fails closed when identity or configuration changes during setup polling', async () => {
@@ -361,7 +442,7 @@ describe('principal lifecycle', () => {
     };
 
     await assert.rejects(
-      syncPrincipalLifecycle(client, { reporting_destinations: [] }, { pollIntervalMs: 1 }),
+      syncPrincipalLifecycle(client, reportingConfiguration(), { pollIntervalMs: 1 }),
       /configuration changed/
     );
   });
@@ -373,7 +454,7 @@ describe('principal lifecycle', () => {
       syncPrincipal: async () => completed(applied('v2', 'validating')),
     };
     await assert.rejects(
-      syncPrincipalLifecycle(timeoutClient, { reporting_destinations: [] }, { setupTimeoutMs: 5, pollIntervalMs: 1 }),
+      syncPrincipalLifecycle(timeoutClient, reportingConfiguration(), { setupTimeoutMs: 5, pollIntervalMs: 1 }),
       PrincipalLifecycleTimeoutError
     );
 
@@ -385,11 +466,11 @@ describe('principal lifecycle', () => {
     };
     setTimeout(() => controller.abort(new Error('stop polling')), 1);
     await assert.rejects(
-      syncPrincipalLifecycle(
-        abortClient,
-        { reporting_destinations: [] },
-        { signal: controller.signal, setupTimeoutMs: 100, pollIntervalMs: 20 }
-      ),
+      syncPrincipalLifecycle(abortClient, reportingConfiguration(), {
+        signal: controller.signal,
+        setupTimeoutMs: 100,
+        pollIntervalMs: 20,
+      }),
       /stop polling/
     );
 
@@ -413,11 +494,11 @@ describe('principal lifecycle', () => {
       },
     };
 
-    await syncPrincipalLifecycle(
-      client,
-      { reporting_destinations: [] },
-      { taskOptions: { timeout: 0 }, setupTimeoutMs: 100, pollIntervalMs: 1 }
-    );
+    await syncPrincipalLifecycle(client, reportingConfiguration(), {
+      taskOptions: { timeout: 0 },
+      setupTimeoutMs: 100,
+      pollIntervalMs: 1,
+    });
 
     assert.deepEqual(observedTimeouts.slice(0, 2), [0, 0]);
     assert.ok(observedTimeouts[2] > 1 && observedTimeouts[2] <= 100);
@@ -431,7 +512,7 @@ describe('principal lifecycle', () => {
     };
 
     await assert.rejects(
-      syncPrincipalLifecycle(client, { reporting_destinations: [] }, { setupTimeoutMs: 5, pollIntervalMs: 100 }),
+      syncPrincipalLifecycle(client, reportingConfiguration(), { setupTimeoutMs: 5, pollIntervalMs: 100 }),
       PrincipalLifecycleTimeoutError
     );
     assert.equal(reads, 1);
@@ -450,12 +531,11 @@ describe('principal lifecycle', () => {
       read: false,
     };
     await assert.rejects(
-      syncPrincipalLifecycle(
-        lifecycleTimeoutClient,
-        { reporting_destinations: [] },
-        { setupTimeoutMs: 100, pollIntervalMs: 1 }
-      ),
-      PrincipalLifecycleTimeoutError
+      syncPrincipalLifecycle(lifecycleTimeoutClient, reportingConfiguration(), {
+        setupTimeoutMs: 100,
+        pollIntervalMs: 1,
+      }),
+      error => error instanceof PrincipalLifecycleTimeoutError && error.applied?.configuration_version === 'v2'
     );
 
     const taskTimeoutClient = {
@@ -470,11 +550,11 @@ describe('principal lifecycle', () => {
       read: false,
     };
     await assert.rejects(
-      syncPrincipalLifecycle(
-        taskTimeoutClient,
-        { reporting_destinations: [] },
-        { setupTimeoutMs: 100, pollIntervalMs: 1, taskOptions: { timeout: 1 } }
-      ),
+      syncPrincipalLifecycle(taskTimeoutClient, reportingConfiguration(), {
+        setupTimeoutMs: 100,
+        pollIntervalMs: 1,
+        taskOptions: { timeout: 1 },
+      }),
       TaskTimeoutError
     );
   });
@@ -573,6 +653,11 @@ describe('principal task transport dispatch', () => {
         }),
         /refuses caller-supplied agent_url/
       );
+      const legacyResult = await client.client.executeTaskLegacy('get_principal', {
+        principal_id: 'self-asserted',
+      });
+      assert.equal(legacyResult.success, false);
+      assert.match(legacyResult.error, /refuses caller-supplied principal_id/);
       assert.equal(dispatches, 0);
     } finally {
       ProtocolClient.callTool = originalCallTool;
