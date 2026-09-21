@@ -432,6 +432,38 @@ describe('principal lifecycle', () => {
     );
   });
 
+  test('preserves a non-enumerable exact request for lost-response replay', async () => {
+    const client = {
+      getPrincipal: async () => completed(current('v1')),
+      syncPrincipal: async () => {
+        throw new TaskTimeoutError('principal-write', 10);
+      },
+    };
+    await assert.rejects(
+      syncPrincipalLifecycle(
+        client,
+        {
+          notification_configs: [
+            {
+              subscriber_id: 'buyer-events',
+              url: 'https://buyer.example/webhook',
+              event_types: ['principal.changed'],
+              active: true,
+              authentication: { schemes: ['HMAC-SHA256'], credentials: 'secret-value-that-must-not-be-logged' },
+            },
+          ],
+        },
+        { createIdempotencyKey: () => 'principal-operation-0001' }
+      ),
+      error =>
+        error instanceof PrincipalLifecycleError &&
+        error.attemptedRequest?.expected_configuration_version === 'v1' &&
+        error.attemptedRequest?.idempotency_key === 'principal-operation-0001' &&
+        !Object.keys(error).includes('attemptedRequest') &&
+        !JSON.stringify(error).includes('secret-value-that-must-not-be-logged')
+    );
+  });
+
   test('fails closed when identity or configuration changes during setup polling', async () => {
     const changed = current('v3', 'ready');
     changed.result.principal_id = 'principal-2';

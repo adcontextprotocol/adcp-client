@@ -65,6 +65,8 @@ export class PrincipalLifecycleError extends Error {
   readonly applied?: AppliedPrincipal;
   /** Last coherent readback observed after the mutation, when available. */
   readonly current?: CurrentPrincipal;
+  /** Exact helper-built write body for byte-equivalent lost-response replay. Kept non-enumerable because it may contain secrets. */
+  readonly attemptedRequest?: MutatingRequestInput<SyncPrincipalRequest>;
 
   constructor(
     message: string,
@@ -74,6 +76,7 @@ export class PrincipalLifecycleError extends Error {
       protocolErrors?: readonly unknown[];
       applied?: AppliedPrincipal;
       current?: CurrentPrincipal;
+      attemptedRequest?: MutatingRequestInput<SyncPrincipalRequest>;
     } = {}
   ) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
@@ -87,6 +90,12 @@ export class PrincipalLifecycleError extends Error {
     this.protocolErrors = options.protocolErrors;
     this.applied = options.applied;
     this.current = options.current;
+    Object.defineProperty(this, 'attemptedRequest', {
+      value: options.attemptedRequest,
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
   }
 }
 
@@ -135,7 +144,8 @@ function isFailedGetPrincipalResponse(value: unknown): value is GetPrincipalResp
 function completedData<T>(
   result: TaskResult<T>,
   operation: string,
-  acceptFailedData?: (value: unknown) => value is T
+  acceptFailedData?: (value: unknown) => value is T,
+  attemptedRequest?: MutatingRequestInput<SyncPrincipalRequest>
 ): T {
   if (result.success && result.status === 'completed') return result.data;
   if (!result.success && result.status === 'failed' && acceptFailedData?.(result.data)) {
@@ -144,6 +154,7 @@ function completedData<T>(
   throw new PrincipalLifecycleError(`${operation} did not complete successfully (status: ${result.status}).`, {
     cause: result.success ? undefined : (result.errorInstance ?? new Error(result.error)),
     taskResult: result,
+    attemptedRequest,
   });
 }
 
@@ -341,8 +352,16 @@ export async function syncPrincipalLifecycle(
           ? { expected_principal_kind: prior.principal_kind }
           : {}),
     };
-    const taskResult = await client.syncPrincipal(request, options.inputHandler, taskOptions(options));
-    const response = completedData(taskResult, 'sync_principal', isFailedSyncPrincipalResponse);
+    let taskResult: TaskResult<SyncPrincipalResponse>;
+    try {
+      taskResult = await client.syncPrincipal(request, options.inputHandler, taskOptions(options));
+    } catch (error) {
+      throw new PrincipalLifecycleError('sync_principal transport failed; replay attemptedRequest exactly.', {
+        cause: error,
+        attemptedRequest: request,
+      });
+    }
+    const response = completedData(taskResult, 'sync_principal', isFailedSyncPrincipalResponse, request);
     if (response.result.kind === 'applied') {
       assertAppliedToSamePrincipal(prior, response.result);
       assertExpectedPrincipalKind(response.result, options.expectedPrincipalKind);
@@ -357,7 +376,7 @@ export async function syncPrincipalLifecycle(
         conflictResponse(response)
           ? `Principal configuration changed during all ${maxAttempts} guarded replacement attempts.`
           : 'sync_principal returned a failed result.',
-        { taskResult, protocolErrors: response.result.errors }
+        { taskResult, protocolErrors: response.result.errors, attemptedRequest: request }
       );
     }
     const refreshed = await readCurrent(client, options);
