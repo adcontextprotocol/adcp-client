@@ -91,11 +91,11 @@ export interface ReconcileReportingCoreResultV1 {
 export function reconcileReportingCoreV1(input: ReconcileReportingCoreInputV1): ReconcileReportingCoreResultV1 {
   const ledgerAsOf = canonicalReportingInstant(input.clocks.ledgerAsOf);
   const recoveryWindowMilliseconds = recoveryWindow(input.clocks.automatedRecoveryWindowSeconds);
-  assertUnique(input.obligations, item => item.reporting_obligation_id, 'reporting obligation');
-  assertUnique(input.revisions, item => item.reporting_revision_id, 'reporting revision');
   if (input.obligations.length + input.revisions.length > MAX_CORE_LEDGER_RECORDS) {
     throw new TypeError(`Core reporting input exceeds ${MAX_CORE_LEDGER_RECORDS} records`);
   }
+  assertUnique(input.obligations, item => item.reporting_obligation_id, 'reporting obligation');
+  assertUnique(input.revisions, item => item.reporting_revision_id, 'reporting revision');
 
   const revisionsByScope = new Map<string, CoreReportingRevisionV1[]>();
   for (const revision of input.revisions) {
@@ -105,8 +105,17 @@ export function reconcileReportingCoreV1(input: ReconcileReportingCoreInputV1): 
     else revisionsByScope.set(key, [revision]);
   }
 
-  const obligations = input.obligations.map(obligation => {
+  let associatedRecordCount = 0;
+  const obligationScopes = input.obligations.map(obligation => {
     const revisions = revisionsByScope.get(reportingSliceKey(obligation)) ?? [];
+    associatedRecordCount += revisions.length;
+    if (associatedRecordCount > MAX_CORE_LEDGER_RECORDS) {
+      throw new TypeError(`Core reporting associations exceed ${MAX_CORE_LEDGER_RECORDS} records`);
+    }
+    return { obligation, revisions };
+  });
+
+  const obligations = obligationScopes.map(({ obligation, revisions }) => {
     const qualifyingRevisionCount = revisions.filter(
       revision => obligation.required_finality === 'snapshot' || revision.finality === 'official'
     ).length;
