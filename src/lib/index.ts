@@ -333,6 +333,7 @@ export {
   type CapabilityPreflightLoader,
   type InProcessAgentClientConfig,
 } from './core/AgentClient';
+export * from './principal';
 export {
   MediaBuyLifecycleCoordinator,
   MediaBuyLifecycleCompatibilityError,

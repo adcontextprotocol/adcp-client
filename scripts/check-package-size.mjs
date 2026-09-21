@@ -75,7 +75,9 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // module set (+4 files); byte and schema budgets stay unchanged.
 // Core-only buyer reconciliation adds one public dual-format
 // runtime/declaration module set (+4 files); byte budgets stay fixed.
-const MAX_PACKED_FILE_COUNT = 6_135 + 34 + 4 + 10 + 4 + 4 + 4;
+// Principal lifecycle helpers add two dual-format runtime/declaration module
+// sets and one packaged guide (+9 files); byte budgets stay fixed.
+const MAX_PACKED_FILE_COUNT = 6_135 + 34 + 4 + 10 + 4 + 4 + 4 + 9;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

@@ -145,6 +145,10 @@ import type {
   ListTransformersResponse,
   SyncAgentNotificationConfigsRequest,
   SyncAgentNotificationConfigsResponse,
+  GetPrincipalRequest,
+  GetPrincipalResponse,
+  SyncPrincipalRequest,
+  SyncPrincipalResponse,
 } from '../types/tools.generated';
 import type { MutatingRequestInput } from '../utils/idempotency';
 import { MediaBuyLifecycleCoordinator, type MediaBuyLifecycleCoordinatorOptions } from '../media-buy/compatibility';
@@ -257,6 +261,8 @@ export type TaskResponseTypeMap = {
   context_match: ContextMatchResponse;
   identity_match: IdentityMatchResponseRouterPublisher;
   sync_agent_notification_configs: SyncAgentNotificationConfigsResponse;
+  get_principal: GetPrincipalResponse;
+  sync_principal: SyncPrincipalResponse;
 };
 
 /**
@@ -310,6 +316,8 @@ export type TaskRequestTypeMap = {
   context_match: ContextMatchRequest;
   identity_match: IdentityMatchRequest;
   sync_agent_notification_configs: MutatingRequestInput<SyncAgentNotificationConfigsRequest>;
+  get_principal: GetPrincipalRequest;
+  sync_principal: MutatingRequestInput<SyncPrincipalRequest>;
 };
 
 export type TaskRequestFor<K extends AdcpTaskName> = TaskRequestTypeMap[K];
@@ -1009,6 +1017,28 @@ export class AgentClient {
       inputHandler,
       this.withSession('sync_agent_notification_configs', options)
     );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Read the authenticated caller's durable principal configuration. */
+  async getPrincipal(
+    params: GetPrincipalRequest = {},
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<GetPrincipalResponse>> {
+    const result = await this.client.getPrincipal(params, inputHandler, this.withSession('get_principal', options));
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Atomically replace selected sections of the authenticated caller's principal configuration. */
+  async syncPrincipal(
+    params: MutatingRequestInput<SyncPrincipalRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<SyncPrincipalResponse>> {
+    const result = await this.client.syncPrincipal(params, inputHandler, this.withSession('sync_principal', options));
     this.retainSession(result);
     return result;
   }

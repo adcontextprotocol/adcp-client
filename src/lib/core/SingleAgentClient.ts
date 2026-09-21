@@ -95,6 +95,10 @@ import type {
   SyncPlansResponse,
   GetPlanAuditLogsRequest,
   GetPlanAuditLogsResponse,
+  GetPrincipalRequest,
+  GetPrincipalResponse,
+  SyncPrincipalRequest,
+  SyncPrincipalResponse,
   OutcomeType,
 } from '../types/tools.generated';
 import { type MutatingRequestInput, generateIdempotencyKey, requestUsesIdempotency } from '../utils/idempotency';
@@ -1009,6 +1013,8 @@ const PRIMARY_ADCP_TASK_NAMES = {
   report_plan_adjustment: true,
   get_plan_audit_logs: true,
   sync_agent_notification_configs: true,
+  get_principal: true,
+  sync_principal: true,
   context_match: true,
   identity_match: true,
 } satisfies Record<AdcpTaskName, true>;
@@ -7055,6 +7061,36 @@ export class SingleAgentClient {
     return this.executeAndHandle<ListAccountChangesResponse>(
       'list_account_changes',
       'onListAccountChangesStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Read the authenticated caller's durable principal configuration. */
+  async getPrincipal(
+    params: GetPrincipalRequest = {},
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<GetPrincipalResponse>> {
+    return this.executeAndHandle<GetPrincipalResponse>(
+      'get_principal',
+      'onGetPrincipalStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Atomically replace selected sections of the authenticated caller's principal configuration. */
+  async syncPrincipal(
+    params: MutatingRequestInput<SyncPrincipalRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<SyncPrincipalResponse>> {
+    return this.executeAndHandle<SyncPrincipalResponse>(
+      'sync_principal',
+      'onSyncPrincipalStatusChange',
       params,
       inputHandler,
       options
