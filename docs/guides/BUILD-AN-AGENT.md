@@ -756,10 +756,7 @@ MCP connections and every modern per-request server reconstruction; the same
 configuration therefore works in compliant Claude, ChatGPT, and future hosts.
 
 ```typescript
-import {
-  createAdcpServerFromPlatform,
-  MCP_APP_RESOURCE_MIME_TYPE,
-} from '@adcp/sdk/server';
+import { createAdcpServerFromPlatform } from '@adcp/sdk/server';
 
 const server = createAdcpServerFromPlatform(platform, {
   name: 'My Publisher',
@@ -768,7 +765,6 @@ const server = createAdcpServerFromPlatform(platform, {
     {
       name: 'creative_upload',
       uri: 'ui://creative/upload',
-      mimeType: MCP_APP_RESOURCE_MIME_TYPE,
       _meta: {
         ui: {
           csp: {
@@ -807,6 +803,12 @@ MCP App resources always use a `ui://` URI and
 reject other shapes. The resource `_meta.ui` object carries CSP domains,
 permissions, a dedicated host domain, and border preference, and is emitted
 consistently by both `resources/list` and `resources/read`.
+
+Registration delegates to the official MCP Apps v2 server helpers. New code
+should use `_meta.ui.resourceUri`; the helpers also mirror the deprecated
+`_meta['ui/resourceUri']` key for older hosts and accept that key from legacy
+configurations during migration. The resource MIME type defaults to the MCP
+Apps value, so it normally does not need to be specified.
 
 `ui.visibility` is host routing metadata, not an authorization boundary.
 App-only handlers must still authenticate and authorize every request, and
