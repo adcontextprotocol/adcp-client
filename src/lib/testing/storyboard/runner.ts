@@ -132,6 +132,10 @@ import {
   redactOAuthUrlsInText,
   type OAuthMetadataGraphGrade,
 } from './oauth-metadata-graph';
+import {
+  verifyAcceptancePolicyDiscoveryStep,
+  type AcceptancePolicyDiscoveryRunState,
+} from './acceptance-policy-discovery';
 
 const PREPARED_TRUSTED_MATCH_PUBLISHER_AUTH = Symbol('preparedTrustedMatchPublisherAuth');
 type InternalStoryboardRunOptions = StoryboardRunOptions & {
@@ -3314,6 +3318,7 @@ async function executeStoryboardPass(
   const priorA2aEnvelopes = new Map<string, A2ATaskEnvelope>();
   const stepRequestStarts = new Map<string, string>();
   const responseDerivedNotApplicableContextKeys = new Map<string, string>();
+  const acceptancePolicyDiscovery: AcceptancePolicyDiscoveryRunState = {};
   // Unavailable outputs are tracked separately for neutral capability gates
   // and hard routed prerequisites. The per-step execution state
   // receives only keys from phases it actually depends on, preserving the
@@ -3708,6 +3713,7 @@ async function executeStoryboardPass(
     priorStepResults,
     priorProbes,
     agentUrl,
+    acceptancePolicyDiscovery,
     webhookReceiver,
     runnerVars,
     contextProvenance,
@@ -5472,50 +5478,114 @@ async function runStoryboardStepBody(
         })
       : undefined);
   const ownsWebhookReceiver = !injectedReceiver && !!webhookReceiver;
-  const runnerVars = createRunnerVariables({
-    ...(webhookReceiver && { webhookBase: webhookReceiver.base_url }),
-  });
-  if (webhookReceiver) armWebhookAssertions(storyboard, runnerVars, webhookReceiver);
+  try {
+    const runnerVars = createRunnerVariables({
+      ...(webhookReceiver && { webhookBase: webhookReceiver.base_url }),
+    });
+    if (webhookReceiver) armWebhookAssertions(storyboard, runnerVars, webhookReceiver);
 
-  // Seed provenance from the caller-supplied map (threaded through from a
-  // previous step's result). Storyboard-level runs build this internally;
-  // here the caller owns accumulation across stateless invocations.
-  const contextProvenance = new Map<string, ContextProvenanceEntry>(Object.entries(options.context_provenance ?? {}));
-  const responseDerivedNotApplicableContextKeys = new Map<string, string>(
-    Object.entries(options.response_derived_not_applicable_context_keys ?? {})
-  );
-  const contributions = new Set(options.contributions ?? []);
-  const result = await executeStep(client, found.step, storyboard.id, found.phaseId, context, allSteps, options, {
-    contributions,
-    priorStepResults: new Map(),
-    priorProbes: new Map(),
-    agentUrl,
-    webhookReceiver,
-    runnerVars,
-    contextProvenance,
-    priorA2aEnvelopes: new Map(),
-    stepRequestStarts: new Map(),
-    responseDerivedNotApplicableContextKeys,
-    agentProfile: profile,
-    agentLibraryVersion: profile?.library_version,
-    storyboardRequiresRequestSigner: resolveStoryboardRequires(storyboard, options).includes('request_signer'),
-    storyboardRequiresPublisherAuthRunner:
-      storyboard.requires?.includes('trusted_match_publisher_auth_runner') === true,
-  });
+    // Seed provenance from the caller-supplied map (threaded through from a
+    // previous step's result). Storyboard-level runs build this internally;
+    // here the caller owns accumulation across stateless invocations.
+    const contextProvenance = new Map<string, ContextProvenanceEntry>(Object.entries(options.context_provenance ?? {}));
+    const responseDerivedNotApplicableContextKeys = new Map<string, string>(
+      Object.entries(options.response_derived_not_applicable_context_keys ?? {})
+    );
+    const contributions = new Set(options.contributions ?? []);
+    const runState: ExecutionState = {
+      contributions,
+      priorStepResults: new Map(),
+      priorProbes: new Map(),
+      agentUrl,
+      acceptancePolicyDiscovery: {},
+      webhookReceiver,
+      runnerVars,
+      contextProvenance,
+      priorA2aEnvelopes: new Map(),
+      stepRequestStarts: new Map(),
+      responseDerivedNotApplicableContextKeys,
+      agentProfile: profile,
+      agentLibraryVersion: profile?.library_version,
+      storyboardRequiresRequestSigner: resolveStoryboardRequires(storyboard, options).includes('request_signer'),
+      storyboardRequiresPublisherAuthRunner:
+        storyboard.requires?.includes('trusted_match_publisher_auth_runner') === true,
+    };
 
-  if (!result.skipped && result.passed && found.step.contributes_to) {
-    if (evalContributesIf(found.step.contributes_if, new Map())) {
-      contributions.add(found.step.contributes_to);
+    // The product step depends on a remotely verified catalog that is normally
+    // retained by the preceding capability step. Standalone execution performs
+    // that prerequisite in the same ephemeral state instead of falsely grading
+    // every compliant seller as unresolved.
+    let prerequisiteFailure: StoryboardStepResult | undefined;
+    if (
+      storyboard.id === 'media_buy_seller/acceptance_policy_discovery' &&
+      found.step.id === 'get_contextual_products' &&
+      options.acceptancePolicyDiscovery?.enabled !== false
+    ) {
+      const capabilityStep = allSteps.find(value => value.step.id === 'get_acceptance_policy_capability');
+      if (capabilityStep) {
+        const prerequisite = await executeStep(
+          client,
+          capabilityStep.step,
+          storyboard.id,
+          capabilityStep.phaseId,
+          context,
+          allSteps,
+          options,
+          runState
+        );
+        runState.priorStepResults.set(capabilityStep.step.id, prerequisite);
+        if (prerequisite.skipped) {
+          prerequisiteFailure = {
+            storyboard_id: storyboard.id,
+            step_id: found.step.id,
+            phase_id: found.phaseId,
+            title: found.step.title,
+            task: found.step.task,
+            passed: prerequisite.passed,
+            skipped: true,
+            ...(prerequisite.skip_reason !== undefined && { skip_reason: prerequisite.skip_reason }),
+            ...(prerequisite.skip !== undefined && { skip: prerequisite.skip }),
+            duration_ms: prerequisite.duration_ms,
+            validations: prerequisite.validations,
+            context,
+            ...(prerequisite.error !== undefined && { error: prerequisite.error }),
+            extraction: { path: 'none' },
+          };
+        } else if (!prerequisite.passed) {
+          prerequisiteFailure = {
+            storyboard_id: storyboard.id,
+            step_id: found.step.id,
+            phase_id: found.phaseId,
+            title: found.step.title,
+            task: found.step.task,
+            passed: false,
+            duration_ms: prerequisite.duration_ms,
+            validations: prerequisite.validations,
+            context,
+            error: 'The acceptance-policy catalog prerequisite did not pass remote verification.',
+            extraction: { path: 'none' },
+          };
+        }
+      }
     }
+
+    const result =
+      prerequisiteFailure ??
+      (await executeStep(client, found.step, storyboard.id, found.phaseId, context, allSteps, options, runState));
+
+    if (!result.skipped && result.passed && found.step.contributes_to) {
+      if (evalContributesIf(found.step.contributes_if, new Map())) {
+        contributions.add(found.step.contributes_to);
+      }
+    }
+
+    return { ...result, contributions: Array.from(contributions) };
+  } finally {
+    await Promise.all([
+      ...(!clientResolution.reusedShared ? [closeScopedConnections(options.protocol)] : []),
+      ...(ownsWebhookReceiver && webhookReceiver ? [webhookReceiver.close()] : []),
+    ]);
   }
-
-  if (!clientResolution.reusedShared) {
-    await closeScopedConnections(options.protocol);
-  }
-
-  if (ownsWebhookReceiver && webhookReceiver) await webhookReceiver.close();
-
-  return { ...result, contributions: Array.from(contributions) };
 }
 
 // ────────────────────────────────────────────────────────────
@@ -5529,6 +5599,8 @@ interface ExecutionState {
   /** Routed probes cannot borrow evidence from the run-wide step-result fallback. */
   allowPriorProbeFallback?: boolean;
   agentUrl: string;
+  /** Run-scoped verified catalog used by the acceptance-policy discovery storyboard. */
+  acceptancePolicyDiscovery?: AcceptancePolicyDiscoveryRunState;
   /** Run-scoped seller ids selected for authored fixture handles. */
   fixtureBindings?: FixtureBindingRegistry;
   /**
@@ -5699,6 +5771,7 @@ async function executeStep(
     priorStepResults: new Map(),
     priorProbes: new Map(),
     agentUrl: '',
+    acceptancePolicyDiscovery: {},
     contextProvenance: new Map(),
     stepRequestStarts: new Map(),
     responseDerivedNotApplicableContextKeys: new Map(),
@@ -6925,6 +6998,41 @@ async function executeStep(
       // legitimately can't observe their target against an unparsed payload).
       validations = [...schemaResults, ...validations.filter(result => result.check !== 'response_schema')];
     }
+  }
+
+  const responseSchemaFailed = validations.some(
+    result => result.check === 'response_schema' && validationFailsStep(result)
+  );
+  if (taskResult?.success && !responseSchemaFailed) {
+    const discoveryAdcpVersion = options._serverAdcpVersion ?? options.adcpVersion;
+    const discoveryResults = await verifyAcceptancePolicyDiscoveryStep({
+      storyboardId,
+      stepId: step.id,
+      taskResult,
+      state: (runState.acceptancePolicyDiscovery ??= {}),
+      ...(discoveryAdcpVersion !== undefined && { adcpVersion: discoveryAdcpVersion }),
+      ...(options.signal !== undefined && { signal: options.signal }),
+      dependencies: {
+        ...options._acceptancePolicyDiscoveryDependencies,
+        ...(options.acceptancePolicyDiscovery?.enabled !== undefined && {
+          enabled: options.acceptancePolicyDiscovery.enabled,
+        }),
+        ...(options.acceptancePolicyDiscovery?.registryResolver !== undefined && {
+          registryResolver: options.acceptancePolicyDiscovery.registryResolver,
+        }),
+      },
+    });
+    validations.push(
+      ...discoveryResults.map(result =>
+        result.passed
+          ? result
+          : {
+              ...result,
+              request: requestRecord,
+              ...(responseRecord && { response: responseRecord }),
+            }
+      )
+    );
   }
 
   // Persist the captured A2A envelope keyed by step id so cross-step

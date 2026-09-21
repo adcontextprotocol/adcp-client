@@ -138,6 +138,8 @@ export interface CanonicalReferenceResolverOptions {
   cache?: CanonicalReferenceCache;
   /** Default 5_000 ms. */
   timeoutMs?: number;
+  /** Caller-owned cancellation signal, composed with the resolver timeout. */
+  signal?: AbortSignal;
   /** Default 1 MiB. */
   maxBodyBytes?: number;
   /** Test/dev-only escape hatch for loopback fixtures. Production callers should leave false. */
@@ -426,6 +428,7 @@ async function fetchJsonReference(
       timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       maxBodyBytes: options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES,
       allowPrivateIp: options.allowPrivateNetwork === true,
+      signal: options.signal,
     });
   } catch (err) {
     if (err instanceof SsrfRefusedError) {

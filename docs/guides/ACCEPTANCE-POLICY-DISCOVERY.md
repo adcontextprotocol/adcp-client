@@ -86,6 +86,36 @@ leaves only that registry profile unresolved and appears in `issues`; its rules
 must not be evaluated. Error messages include schema pointers but never echo
 catalog values.
 
+## Compliance runner
+
+The `media_buy_seller/acceptance_policy_discovery` storyboard performs the same
+remote verification instead of stopping at the in-band capability fields. Its
+capability step fetches the exact advertised bytes, checks the digest and
+catalog schema, and resolves every seller default through the public registry.
+The product step then resolves every distinct
+`acceptance_policy_profile_ids` value advertised by every returned product—not
+only the fixture product named in the storyboard.
+
+Any unresolved default or product profile is a required failure. The validation
+entry uses `check: "acceptance_policy_discovery"` and reports the resolver's
+stable code in `actual.code`, distinguishing unsafe URL, fetch, digest, schema,
+registry pin, and unresolved-reference failures without echoing remote catalog
+content. Catalog state is retained only for that storyboard run. A seller that
+advertises this capability must therefore publish a publicly reachable HTTPS
+catalog and resolvable immutable registry pins for the compliance run to pass.
+Large seller-default and product selections are verified in bounded batches
+under one five-second registry deadline per step. Runner cancellation aborts
+both catalog and registry I/O. A standalone `runStoryboardStep()` invocation
+of the product step first verifies the capability/catalog prerequisite in the
+same ephemeral run state.
+The default public-registry client deliberately ignores ambient
+`ADCP_REGISTRY_API_KEY` credentials. Programmatic runners can provide a scoped
+or staging resolver through
+`StoryboardRunOptions.acceptancePolicyDiscovery.registryResolver`. Set
+`acceptancePolicyDiscovery.enabled` to `false` for an intentionally
+in-band-only/offline run; the remote check is then reported as advisory and
+not-applicable rather than silently omitted.
+
 ## Assess likely treatment
 
 Compose the verified seller defaults with product-specific profiles and assess

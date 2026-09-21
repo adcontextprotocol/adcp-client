@@ -234,6 +234,8 @@ export interface ResolveVerifiedAcceptancePolicyProfilesOptions {
   timeoutMs?: number;
   /** Maximum distinct registry profiles resolved in one call. Default and maximum 32. */
   maxRegistryProfiles?: number;
+  /** Caller-owned cancellation signal, composed with the registry deadline. */
+  signal?: AbortSignal;
 }
 
 export interface VerifiedAcceptancePolicyProfilesSuccess {
@@ -252,6 +254,8 @@ export interface ResolveAcceptancePolicyCatalogOptions {
   adcpVersion?: string;
   /** Overall DNS/connect/body timeout for the catalog fetch. Default 5 seconds. */
   timeoutMs?: number;
+  /** Caller-owned cancellation signal, composed with fetch and registry deadlines. */
+  signal?: AbortSignal;
   /** Hard response-body cap. Default and maximum 1 MiB; callers may lower it. */
   maxBodyBytes?: number;
   /** Test/dev-only HTTP opt-in; requires allowPrivateNetwork. Production callers must leave false. */
@@ -411,6 +415,16 @@ function validateCapability(
   return undefined;
 }
 
+function isAbortSignal(value: unknown): value is AbortSignal {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as AbortSignal).throwIfAborted === 'function' &&
+    typeof (value as AbortSignal).addEventListener === 'function' &&
+    typeof (value as AbortSignal).removeEventListener === 'function'
+  );
+}
+
 function validateOptions(options: ResolveAcceptancePolicyCatalogOptions): AcceptancePolicyCatalogIssue | undefined {
   if (
     options.registryResolver !== undefined &&
@@ -421,6 +435,9 @@ function validateOptions(options: ResolveAcceptancePolicyCatalogOptions): Accept
       'registryResolver must provide a resolvePolicy function',
       '/options/registryResolver'
     );
+  }
+  if (options.signal !== undefined && !isAbortSignal(options.signal)) {
+    return issue('invalid_options', 'signal must be an AbortSignal', '/options/signal');
   }
   if (options.allowUnsafeHttp === true && options.allowPrivateNetwork !== true) {
     return issue(
@@ -924,10 +941,18 @@ async function waitForRegistryPolicy(
   controller: AbortController
 ): Promise<AcceptancePolicyRegistryPolicy | null | typeof REGISTRY_TIMEOUT> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let removeAbortListener: (() => void) | undefined;
   try {
     return await Promise.race([
       pending,
       new Promise<typeof REGISTRY_TIMEOUT>(resolve => {
+        const onAbort = () => resolve(REGISTRY_TIMEOUT);
+        if (controller.signal.aborted) {
+          resolve(REGISTRY_TIMEOUT);
+          return;
+        }
+        controller.signal.addEventListener('abort', onAbort, { once: true });
+        removeAbortListener = () => controller.signal.removeEventListener('abort', onAbort);
         timer = setTimeout(() => {
           controller.abort();
           resolve(REGISTRY_TIMEOUT);
@@ -936,6 +961,7 @@ async function waitForRegistryPolicy(
     ]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    removeAbortListener?.();
   }
 }
 
@@ -1163,6 +1189,10 @@ async function resolveVerifiedAcceptancePolicyProfilesInternal(
       issue('invalid_options', 'registryResolver must provide a resolvePolicy function', '/options/registryResolver')
     );
   }
+  if (options.signal !== undefined && !isAbortSignal(options.signal)) {
+    return fail(issue('invalid_options', 'signal must be an AbortSignal', '/options/signal'));
+  }
+  options.signal?.throwIfAborted();
   if (
     options.timeoutMs !== undefined &&
     (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0 || options.timeoutMs > MAX_TIMEOUT_MS)
@@ -1279,6 +1309,8 @@ async function resolveVerifiedAcceptancePolicyProfilesInternal(
   const resolutionByProfileId = new Map<string, ResolvedAcceptancePolicyDefault | AcceptancePolicyCatalogFailure>();
   const registryEntries = [...registryValues.entries()];
   const controller = new AbortController();
+  const abortFromCaller = () => controller.abort(options.signal?.reason);
+  options.signal?.addEventListener('abort', abortFromCaller, { once: true });
   const deadlineAt = performance.now() + (options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   let nextRegistryIndex = 0;
 
@@ -1298,9 +1330,14 @@ async function resolveVerifiedAcceptancePolicyProfilesInternal(
     }
   }
 
-  await Promise.all(
-    Array.from({ length: Math.min(MAX_REGISTRY_CONCURRENCY, registryEntries.length) }, async () => resolveWorker())
-  );
+  try {
+    await Promise.all(
+      Array.from({ length: Math.min(MAX_REGISTRY_CONCURRENCY, registryEntries.length) }, async () => resolveWorker())
+    );
+  } finally {
+    options.signal?.removeEventListener('abort', abortFromCaller);
+  }
+  options.signal?.throwIfAborted();
 
   const profiles: AcceptancePolicyProfileResolution[] = [];
   const issues: AcceptancePolicyCatalogIssue[] = [];
@@ -1347,9 +1384,11 @@ async function resolveOnce(
         maxBodyBytes: options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES,
         allowUnsafeHttp: options.allowUnsafeHttp,
         allowPrivateNetwork: options.allowPrivateNetwork,
+        signal: options.signal,
       }
     );
   } catch {
+    options.signal?.throwIfAborted();
     return fail(
       issue(
         'fetch_failed',
@@ -1359,6 +1398,7 @@ async function resolveOnce(
       )
     );
   }
+  options.signal?.throwIfAborted();
   if (!fetched.ok) return translateFetchFailure(fetched);
 
   // Catalog bytes are counterparty-controlled. Fail on the first schema
@@ -1405,6 +1445,7 @@ async function resolveOnce(
         adcpVersion: requestedVersion,
         timeoutMs: options.registryTimeoutMs,
         maxRegistryProfiles: options.maxRegistryProfiles,
+        signal: options.signal,
       },
       true
     );
@@ -1454,6 +1495,9 @@ export function createAcceptancePolicyCatalogResolver(
 
   return {
     async resolve(capability) {
+      const invalidOptions = validateOptions(resolverOptions);
+      if (invalidOptions) return fail(invalidOptions);
+      resolverOptions.signal?.throwIfAborted();
       const snapshot = snapshotCapability(capability);
       const nextKey = JSON.stringify({
         catalog_url: snapshot?.catalog_url,
@@ -1472,6 +1516,7 @@ export function createAcceptancePolicyCatalogResolver(
         try {
           shared = await inFlight.promise;
         } catch {
+          resolverOptions.signal?.throwIfAborted();
           return fail(
             issue(
               'fetch_failed',
@@ -1491,6 +1536,7 @@ export function createAcceptancePolicyCatalogResolver(
       try {
         result = await promise;
       } catch {
+        resolverOptions.signal?.throwIfAborted();
         result = fail(
           issue(
             'fetch_failed',
