@@ -1328,11 +1328,14 @@ export class RegistryClient {
   }
 
   /** Resolve a single policy by ID. Optionally pin to a specific version. */
-  async resolvePolicy(params: ResolvePolicyQuery): Promise<ResolvePolicyResponse | null> {
+  async resolvePolicy(params: ResolvePolicyQuery & { signal?: AbortSignal }): Promise<ResolvePolicyResponse | null> {
     if (!params?.policy_id?.trim()) throw new Error('policy_id is required');
     const qs = new URLSearchParams({ policy_id: params.policy_id });
     if (params.version) qs.set('version', params.version);
-    return this.get(`${this.baseUrl}/api/policies/resolve?${qs}`, { nullOn404: true });
+    return this.get(`${this.baseUrl}/api/policies/resolve?${qs}`, {
+      nullOn404: true,
+      signal: params.signal,
+    });
   }
 
   /** Bulk resolve up to 100 policies by ID in a single request. */
@@ -1382,8 +1385,8 @@ export class RegistryClient {
 
   // ====== Private helpers ======
 
-  private async get<T = any>(url: string, opts?: { nullOn404?: boolean }): Promise<T> {
-    const { res, text } = await this.requestText(url, { headers: this.getHeaders() });
+  private async get<T = any>(url: string, opts?: { nullOn404?: boolean; signal?: AbortSignal }): Promise<T> {
+    const { res, text } = await this.requestText(url, { headers: this.getHeaders(), signal: opts?.signal });
     if (opts?.nullOn404 && res.status === 404) return null as T;
     if (!res.ok) {
       throw this.requestError(res, text, 'GET');
@@ -1563,7 +1566,15 @@ export class RegistryClient {
   private async requestText(url: string, init: RequestInit): Promise<{ res: Response; text: string }> {
     const controller = new AbortController();
     let timedOut = false;
+    let externallyAborted = false;
     let timeout: ReturnType<typeof setTimeout> | undefined;
+    const externalSignal = init.signal;
+    const abortFromExternalSignal = () => {
+      externallyAborted = true;
+      controller.abort(externalSignal?.reason);
+    };
+    if (externalSignal?.aborted) abortFromExternalSignal();
+    else externalSignal?.addEventListener('abort', abortFromExternalSignal, { once: true });
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeout = setTimeout(() => {
         timedOut = true;
@@ -1590,12 +1601,14 @@ export class RegistryClient {
     try {
       return await Promise.race([requestPromise, timeoutPromise]);
     } catch (err) {
-      if (timedOut || controller.signal.aborted) {
+      if (timedOut) {
         throw new Error(`Registry request timed out after ${this.timeoutMs}ms`);
       }
+      if (externallyAborted && !(err instanceof Error)) throw new Error('Registry request aborted');
       throw err;
     } finally {
       if (timeout) clearTimeout(timeout);
+      externalSignal?.removeEventListener('abort', abortFromExternalSignal);
     }
   }
 
