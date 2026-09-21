@@ -577,6 +577,7 @@ export {
 // ====== ACCEPTANCE-POLICY DISCOVERY ======
 // Advisory buyer guidance from a seller's digest-pinned policy catalog.
 export {
+  assessAcceptancePolicy,
   createAcceptancePolicyCatalogResolver,
   resolveAcceptancePolicyCatalog,
   resolveAcceptancePolicyProfiles,
@@ -594,7 +595,9 @@ export {
   type AcceptancePolicyRegistryPolicy,
   type AcceptancePolicyRegistryResolver,
   type AcceptancePolicyReference,
+  type AcceptancePolicyRequirement,
   type AcceptancePolicyRule,
+  type AcceptancePolicySurface,
   type RegistryAcceptancePolicyProfileReference,
   type ResolveAcceptancePolicyCatalogOptions,
   type ResolveVerifiedAcceptancePolicyProfilesOptions,
@@ -602,6 +605,14 @@ export {
   type VerifiedAcceptancePolicyProfilesResult,
   type VerifiedAcceptancePolicyProfilesSuccess,
 } from './acceptance-policy';
+export {
+  type AcceptancePolicyAssessment,
+  type AcceptancePolicyAssessmentDiagnostic,
+  type AcceptancePolicyAssessmentDiagnosticCode,
+  type AcceptancePolicyMatchedRule,
+  type AcceptancePolicyOutcome,
+  type AssessAcceptancePolicyInput,
+} from './acceptance-policy/evaluator';
 export type {
   BuildGovernanceExecutionRequestInput,
   BuildGovernanceIntentRequestInput,
