@@ -88,6 +88,27 @@ function conflictResponse(response: SyncPrincipalResponse): boolean {
   return response.result.kind === 'failed' && response.result.errors.some(error => error.code === 'CONFLICT');
 }
 
+function assertSamePrincipal(
+  previous: GetPrincipalResponse['result'],
+  refreshed: GetPrincipalResponse['result']
+): void {
+  if (previous.kind === 'unconfigured') {
+    throw new PrincipalLifecycleError(
+      'Cannot retry a principal conflict because the initial read did not expose an identity continuity fence.'
+    );
+  }
+  if (previous.kind !== 'current' && previous.kind !== 'recognized') {
+    throw new PrincipalLifecycleError('Cannot retry a failed principal read.');
+  }
+  if (
+    (refreshed.kind !== 'current' && refreshed.kind !== 'recognized') ||
+    refreshed.principal_id !== previous.principal_id ||
+    refreshed.principal_kind !== previous.principal_kind
+  ) {
+    throw new PrincipalLifecycleError('Authenticated principal changed during guarded replacement.');
+  }
+}
+
 function taskOptions(options: PrincipalLifecycleOptions, remainingMs?: number): TaskOptions {
   const configuredTimeout = options.taskOptions?.timeout;
   const boundedConfiguredTimeout = configuredTimeout === 0 ? undefined : configuredTimeout;
@@ -211,7 +232,9 @@ export async function syncPrincipalLifecycle(
           : 'sync_principal returned a failed result.'
       );
     }
-    prior = await readCurrent(client, options);
+    const refreshed = await readCurrent(client, options);
+    assertSamePrincipal(prior, refreshed);
+    prior = refreshed;
   }
 
   if (!applied) throw new PrincipalLifecycleError('Principal configuration was not applied.');

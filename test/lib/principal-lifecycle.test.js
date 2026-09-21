@@ -134,6 +134,55 @@ describe('principal lifecycle', () => {
     );
   });
 
+  test('fails closed when authenticated principal identity changes during conflict recovery', async () => {
+    const changed = current('v2');
+    changed.result.principal_id = 'principal-2';
+    const reads = [current('v1'), changed];
+    let syncCalls = 0;
+    const client = {
+      getPrincipal: async () => completed(reads.shift()),
+      syncPrincipal: async () => {
+        syncCalls += 1;
+        return failed({
+          status: 'rejected',
+          result: {
+            kind: 'failed',
+            errors: [{ code: 'CONFLICT', message: 'stale configuration', recovery: 'correctable' }],
+          },
+        });
+      },
+    };
+
+    await assert.rejects(
+      syncPrincipalLifecycle(client, { notification_configs: [] }),
+      /Authenticated principal changed/
+    );
+    assert.equal(syncCalls, 1);
+  });
+
+  test('does not retry an unconfigured principal conflict without an identity fence', async () => {
+    let syncCalls = 0;
+    const client = {
+      getPrincipal: async () => completed({ status: 'completed', result: { kind: 'unconfigured' } }),
+      syncPrincipal: async () => {
+        syncCalls += 1;
+        return failed({
+          status: 'rejected',
+          result: {
+            kind: 'failed',
+            errors: [{ code: 'CONFLICT', message: 'concurrent setup', recovery: 'correctable' }],
+          },
+        });
+      },
+    };
+
+    await assert.rejects(
+      syncPrincipalLifecycle(client, { notification_configs: [] }),
+      /did not expose an identity continuity fence/
+    );
+    assert.equal(syncCalls, 1);
+  });
+
   test('returns terminal destination setup without claiming readiness', async () => {
     const client = {
       getPrincipal: async () => completed(current('v1')),
