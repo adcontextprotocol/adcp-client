@@ -9,6 +9,13 @@
 // agents.
 
 export { WholesaleFeedSync } from './sync';
+export { registerWholesaleFeedWebhooks, WholesaleFeedWebhookRegistrationError } from './register';
+export type {
+  RegisterWholesaleFeedWebhooksOptions,
+  WholesaleFeedWebhookEventType,
+  WholesaleFeedWebhookRegistrationClient,
+  WholesaleFeedWebhookSubscriber,
+} from './register';
 export {
   normalizeWholesaleFeedWebhookNotification,
   parseWholesaleFeedWebhookNotification,
