@@ -101,6 +101,7 @@ export function reconcileReportingCoreV1(input: ReconcileReportingCoreInputV1): 
   if (input.obligations.length + input.revisions.length > MAX_CORE_LEDGER_RECORDS) {
     throw new TypeError(`Core reporting input exceeds ${MAX_CORE_LEDGER_RECORDS} records`);
   }
+  assertBoundedMediaBuyReferences(input.obligations, input.revisions);
   if (input.scope.recordsComplete !== true) {
     throw new TypeError('Core reporting reconciliation requires every reporting-status cursor page');
   }
@@ -163,6 +164,21 @@ export function reconcileReportingCoreV1(input: ReconcileReportingCoreInputV1): 
     ),
     obligations,
   };
+}
+
+function assertBoundedMediaBuyReferences(
+  obligations: readonly CoreReportingObligationV1[],
+  revisions: readonly CoreReportingRevisionV1[]
+): void {
+  let count = 0;
+  for (const records of [obligations, revisions] as const) {
+    for (const record of records) {
+      count += record.media_buy_ids.length;
+      if (count > MAX_CORE_LEDGER_RECORDS) {
+        throw new TypeError(`Core reporting media-buy references exceed ${MAX_CORE_LEDGER_RECORDS} records`);
+      }
+    }
+  }
 }
 
 function coreIssues(issues: ReportingLedgerIssueV1[]): CoreReportingIssueV1[] {

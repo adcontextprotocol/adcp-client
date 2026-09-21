@@ -19,27 +19,48 @@ import {
 
 const obligations: CoreReportingObligationV1[] = [];
 const revisions: CoreReportingRevisionV1[] = [];
+const seenCursors = new Set<string>();
 let cursor: string | undefined;
 let status;
+let snapshotId: string | undefined;
+let ledgerAsOf: string | undefined;
+let pageCount = 0;
 do {
+  if (++pageCount > 1_000) throw new Error('Seller reporting history exceeds the buyer page budget');
   status = await seller.getReportingStatus({
     account: { account_id: 'account-1' },
     view: 'periods',
     ...(cursor ? { pagination: { cursor } } : {}),
   });
+  if (!status.ledger_snapshot_id || !status.ledger_as_of) {
+    throw new Error('Seller omitted reporting snapshot identity');
+  }
+  if (
+    (snapshotId && status.ledger_snapshot_id !== snapshotId) ||
+    (ledgerAsOf && status.ledger_as_of !== ledgerAsOf)
+  ) {
+    throw new Error('Seller reporting snapshot changed during pagination');
+  }
+  snapshotId ??= status.ledger_snapshot_id;
+  ledgerAsOf ??= status.ledger_as_of;
   obligations.push(...(status.periods ?? []));
   revisions.push(...(status.revisions ?? []));
+  if (obligations.length + revisions.length > 100_000) {
+    throw new Error('Seller reporting history exceeds the buyer record budget');
+  }
   if (!status.pagination) throw new Error('Seller omitted reporting pagination');
   if (status.pagination.has_more && !status.pagination.cursor) {
     throw new Error('Seller reporting cursor did not advance');
   }
   cursor = status.pagination.has_more ? status.pagination.cursor : undefined;
+  if (cursor && seenCursors.has(cursor)) throw new Error('Seller reporting cursor repeated');
+  if (cursor) seenCursors.add(cursor);
 } while (cursor);
 
 const reportingDelivery = capabilities.media_buy?.reporting_delivery;
 if (
   !status?.scope ||
-  !status.ledger_as_of ||
+  !ledgerAsOf ||
   !reportingDelivery ||
   typeof reportingDelivery.automated_recovery_window_seconds !== 'number'
 ) {
@@ -55,7 +76,7 @@ const result = reconcileReportingCoreV1({
     recordsComplete: true,
   },
   clocks: {
-    ledgerAsOf: status.ledger_as_of,
+    ledgerAsOf,
     automatedRecoveryWindowSeconds:
       reportingDelivery.automated_recovery_window_seconds,
   },
