@@ -31,15 +31,20 @@ export interface ReportingObligationHealthProjectionV1 {
  * does not require a destination, materialization, manifest, digest, resource
  * reader, or receipt.
  */
-export interface ReportingCoreObligationHealthFactsV1 {
+interface ReportingCoreObligationHealthFactsBaseV1 {
   reporting_obligation_id: string;
   scopeResolvedAt: string;
   expectedAt: string;
-  recoveryDeadlineAt: string;
   requiredFinality: ReportingFinalityV1;
   coverage: Pick<ReportingLedgerCoverageV1, 'status'>;
   state: 'pending' | 'terminal';
 }
+
+export type ReportingCoreObligationHealthFactsV1 = ReportingCoreObligationHealthFactsBaseV1 &
+  (
+    | { recoveryDeadlineAt: string; recoveryWindowMilliseconds?: never }
+    | { recoveryDeadlineAt?: never; recoveryWindowMilliseconds: number }
+  );
 
 export function projectReportingObligationHealthV1(
   obligation: ReportingCoreObligationHealthFactsV1,
@@ -47,7 +52,6 @@ export function projectReportingObligationHealthV1(
   ledgerAsOf: string,
   scopeClosed = true
 ): ReportingObligationHealthProjectionV1 {
-  const now = instant(ledgerAsOf, 'ledgerAsOf');
   const qualifying = revisions.filter(
     revision => obligation.requiredFinality === 'snapshot' || revision.finality === 'official'
   );
@@ -67,8 +71,7 @@ export function projectReportingObligationHealthV1(
       satisfied: false,
     };
   }
-  const expectedAt = instant(obligation.expectedAt, 'expectedAt');
-  if (now < expectedAt) {
+  if (compareReportingInstants(ledgerAsOf, obligation.expectedAt) < 0) {
     return {
       health: 'waiting',
       productionStatus: revisions.length ? 'published' : 'not_due',
@@ -76,8 +79,11 @@ export function projectReportingObligationHealthV1(
       satisfied: false,
     };
   }
-  const recoveryDeadline = instant(obligation.recoveryDeadlineAt, 'recoveryDeadlineAt');
-  const severity = obligation.state === 'terminal' || now >= recoveryDeadline ? 'action_required' : 'delayed';
+  const recoveryElapsed =
+    obligation.recoveryWindowMilliseconds !== undefined
+      ? compareReportingInstantToOffset(ledgerAsOf, obligation.expectedAt, obligation.recoveryWindowMilliseconds) >= 0
+      : compareReportingInstants(ledgerAsOf, obligation.recoveryDeadlineAt) >= 0;
+  const severity = obligation.state === 'terminal' || recoveryElapsed ? 'action_required' : 'delayed';
   return {
     health: severity,
     productionStatus: revisions.length ? 'published' : obligation.state === 'terminal' ? 'failed' : 'pending',

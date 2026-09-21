@@ -55,6 +55,7 @@ function reconcile({
   revisions = [],
   closed = false,
   coverageComplete = true,
+  recoverySeconds = RECOVERY_SECONDS,
 } = {}) {
   return reconcileReportingCoreV1({
     obligations,
@@ -62,7 +63,7 @@ function reconcile({
     scope: { closed, coverageComplete },
     clocks: {
       ledgerAsOf: ledgerAsOf ?? '2026-08-01T01:59:59.999Z',
-      automatedRecoveryWindowSeconds: RECOVERY_SECONDS,
+      automatedRecoveryWindowSeconds: recoverySeconds,
     },
   });
 }
@@ -153,6 +154,41 @@ describe('Core-only buyer reporting reconciliation', () => {
     assert.equal(satisfied.obligations[0].qualifyingRevisionCount, 1);
   });
 
+  test('normalizes equivalent RFC 3339 period boundaries before joining', () => {
+    const equivalent = revision({
+      period: {
+        start: '2026-08-01T00:00:00Z',
+        end: '2026-08-01T02:00:00+01:00',
+        source_timezone: 'UTC',
+      },
+    });
+
+    const result = reconcile({ revisions: [equivalent] });
+    assert.equal(result.health, 'healthy');
+    assert.equal(result.obligations[0].revisionCount, 1);
+  });
+
+  test('preserves submillisecond precision at due and recovery boundaries', () => {
+    const precise = obligation({ expected_at: '2026-08-01T02:00:00.000500Z' });
+
+    assert.equal(
+      reconcile({ obligations: [precise], ledgerAsOf: '2026-08-01T02:00:00.000499Z', recoverySeconds: 1 }).health,
+      'waiting'
+    );
+    assert.equal(
+      reconcile({ obligations: [precise], ledgerAsOf: '2026-08-01T02:00:00.000500Z', recoverySeconds: 1 }).health,
+      'delayed'
+    );
+    assert.equal(
+      reconcile({ obligations: [precise], ledgerAsOf: '2026-08-01T02:00:01.000499Z', recoverySeconds: 1 }).health,
+      'delayed'
+    );
+    assert.equal(
+      reconcile({ obligations: [precise], ledgerAsOf: '2026-08-01T02:00:01.000500Z', recoverySeconds: 1 }).health,
+      'action_required'
+    );
+  });
+
   test('makes incomplete obligation coverage and incomplete scope coverage action-required', () => {
     assert.equal(
       reconcile({ obligations: [obligation({ coverage: { status: 'partial' } })], revisions: [revision()] }).health,
@@ -206,6 +242,13 @@ describe('Core-only buyer reporting reconciliation', () => {
           clocks: { ledgerAsOf: EXPECTED_AT, automatedRecoveryWindowSeconds: -1 },
         }),
       /non-negative safe integer/
+    );
+    assert.throws(
+      () =>
+        reconcile({
+          revisions: [revision({ media_buy_ids: ['media-buy-core-001', 'media-buy-core-001'] })],
+        }),
+      /media_buy_ids must be unique/
     );
   });
 });

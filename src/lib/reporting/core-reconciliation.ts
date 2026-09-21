@@ -4,7 +4,10 @@ import {
   projectReportingObligationHealthV1,
   type ReportingObligationHealthProjectionV1,
 } from './ledger/health';
+import { canonicalReportingInstant } from './ledger/instant';
 import type { ReportingHealthV1 } from './ledger/types';
+
+const MAX_CORE_LEDGER_RECORDS = 100_000;
 
 /** Wire obligation fields used by Core buyer reconciliation. */
 export type CoreReportingObligationV1 = Pick<
@@ -86,15 +89,24 @@ export interface ReconcileReportingCoreResultV1 {
  * `reconcileReporting` path.
  */
 export function reconcileReportingCoreV1(input: ReconcileReportingCoreInputV1): ReconcileReportingCoreResultV1 {
-  const ledgerAsOf = instant(input.clocks.ledgerAsOf, 'clocks.ledgerAsOf');
+  const ledgerAsOf = canonicalReportingInstant(input.clocks.ledgerAsOf);
   const recoveryWindowMilliseconds = recoveryWindow(input.clocks.automatedRecoveryWindowSeconds);
   assertUnique(input.obligations, item => item.reporting_obligation_id, 'reporting obligation');
   assertUnique(input.revisions, item => item.reporting_revision_id, 'reporting revision');
+  if (input.obligations.length + input.revisions.length > MAX_CORE_LEDGER_RECORDS) {
+    throw new TypeError(`Core reporting input exceeds ${MAX_CORE_LEDGER_RECORDS} records`);
+  }
+
+  const revisionsByScope = new Map<string, CoreReportingRevisionV1[]>();
+  for (const revision of input.revisions) {
+    const key = reportingSliceKey(revision);
+    const revisions = revisionsByScope.get(key);
+    if (revisions) revisions.push(revision);
+    else revisionsByScope.set(key, [revision]);
+  }
 
   const obligations = input.obligations.map(obligation => {
-    const expectedAt = instant(obligation.expected_at, 'obligation.expected_at');
-    const recoveryDeadlineAt = addMilliseconds(expectedAt, recoveryWindowMilliseconds);
-    const revisions = input.revisions.filter(revision => revisionMatchesObligation(revision, obligation));
+    const revisions = revisionsByScope.get(reportingSliceKey(obligation)) ?? [];
     const qualifyingRevisionCount = revisions.filter(
       revision => obligation.required_finality === 'snapshot' || revision.finality === 'official'
     ).length;
@@ -103,13 +115,13 @@ export function reconcileReportingCoreV1(input: ReconcileReportingCoreInputV1): 
         reporting_obligation_id: obligation.reporting_obligation_id,
         scopeResolvedAt: obligation.scope_resolved_at,
         expectedAt: obligation.expected_at,
-        recoveryDeadlineAt,
+        recoveryWindowMilliseconds,
         requiredFinality: obligation.required_finality,
         coverage: { status: obligation.coverage.status },
         state: 'pending',
       },
       revisions,
-      new Date(ledgerAsOf).toISOString(),
+      ledgerAsOf,
       input.scope.closed
     );
     return {
@@ -130,29 +142,27 @@ export function reconcileReportingCoreV1(input: ReconcileReportingCoreInputV1): 
   };
 }
 
-function revisionMatchesObligation(revision: CoreReportingRevisionV1, obligation: CoreReportingObligationV1): boolean {
-  return (
-    revision.account_id === obligation.account_id &&
-    revision.report_definition_id === obligation.report_definition_id &&
-    revision.reporting_profile === obligation.reporting_profile &&
-    sameStringSet(revision.media_buy_ids, obligation.media_buy_ids) &&
-    revision.period.start === obligation.period.start &&
-    revision.period.end === obligation.period.end &&
-    revision.period.source_timezone === obligation.period.source_timezone
-  );
-}
-
-function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
-  if (left.length !== right.length) return false;
-  const rightValues = new Set(right);
-  return rightValues.size === right.length && left.every(value => rightValues.has(value));
+function reportingSliceKey(value: CoreReportingRevisionV1 | CoreReportingObligationV1): string {
+  const mediaBuyIds = [...value.media_buy_ids].sort();
+  if (new Set(mediaBuyIds).size !== mediaBuyIds.length) {
+    throw new TypeError('Core reporting media_buy_ids must be unique');
+  }
+  return JSON.stringify([
+    value.account_id,
+    value.report_definition_id,
+    value.reporting_profile,
+    mediaBuyIds,
+    canonicalReportingInstant(value.period.start),
+    canonicalReportingInstant(value.period.end),
+    value.period.source_timezone,
+  ]);
 }
 
 function assertUnique<T>(values: readonly T[], id: (value: T) => string, label: string): void {
   const seen = new Set<string>();
   for (const value of values) {
     const valueId = id(value);
-    if (seen.has(valueId)) throw new TypeError(`duplicate ${label} id: ${valueId}`);
+    if (seen.has(valueId)) throw new TypeError(`duplicate ${label} id`);
     seen.add(valueId);
   }
 }
@@ -166,22 +176,4 @@ function recoveryWindow(seconds: number): number {
     throw new TypeError('clocks.automatedRecoveryWindowSeconds is outside the supported range');
   }
   return milliseconds;
-}
-
-function instant(value: string, name: string): number {
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) throw new TypeError(`${name} must be an RFC 3339 instant`);
-  return parsed;
-}
-
-function addMilliseconds(value: number, offset: number): string {
-  const result = value + offset;
-  if (!Number.isSafeInteger(result)) {
-    throw new TypeError('obligation recovery deadline is outside the supported range');
-  }
-  try {
-    return new Date(result).toISOString();
-  } catch {
-    throw new TypeError('obligation recovery deadline is outside the supported range');
-  }
 }
