@@ -59,6 +59,19 @@ Large workspaces should keep the generated schema surface out of the default typ
 | Runtime Zod schemas and tool schema maps      | `@adcp/sdk/schemas`                                                                     |
 | Broad generated protocol type barrel          | `@adcp/sdk/types`                                                                       |
 
+### Focused client runtime (`@adcp/sdk/client/core`)
+
+Applications that only call AdCP agents can avoid evaluating the SDK's server,
+compliance, testing, and unrelated protocol surfaces:
+
+```ts
+import { ADCPMultiAgentClient, InMemoryWebhookRegistrationStore } from '@adcp/sdk/client/core';
+```
+
+The existing `@adcp/sdk/client` path remains an alias of the package root for
+compatibility. Use `/client/core` when cold import and test-worker startup time
+matter.
+
 For application monorepos, keep `skipLibCheck: true` unless you are intentionally auditing SDK declarations. If a package only needs request/response types for a few tools, prefer the per-tool slices over importing generated types through the root package or the broad `@adcp/sdk/types` barrel.
 
 ## Quick Start: AdCP 3.2

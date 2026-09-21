@@ -31,6 +31,16 @@
         "default": "./dist/lib/client/index.js"
       }
     },
+    "./client/core": {
+      "import": {
+        "types": "./dist/lib/client/core.d.mts",
+        "default": "./dist/lib/client/core.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/client/core.d.ts",
+        "default": "./dist/lib/client/core.js"
+      }
+    },
     "./compliance": {
       "import": {
         "types": "./dist/lib/compliance/index.d.mts",
@@ -395,6 +405,9 @@
     "*": {
       "client": [
         "dist/lib/client/index.d.ts"
+      ],
+      "client/core": [
+        "dist/lib/client/core.d.ts"
       ],
       "compliance": [
         "dist/lib/compliance/index.d.ts"

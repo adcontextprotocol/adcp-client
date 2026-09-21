@@ -38,7 +38,7 @@ describe('update_rights wiring (#551)', () => {
     assert.ok(!PROTOCOL_TOOLS.includes('creative_approval'));
   });
 
-  it('is registered in TOOL_REQUEST_SCHEMAS so MUTATING_TASKS picks it up', () => {
+  it('is registered in TOOL_REQUEST_SCHEMAS and catalogued as mutating', () => {
     assert.ok(TOOL_REQUEST_SCHEMAS.update_rights, 'update_rights must be in TOOL_REQUEST_SCHEMAS');
     assert.strictEqual(
       TOOL_REQUEST_SCHEMAS.update_rights,
@@ -47,7 +47,7 @@ describe('update_rights wiring (#551)', () => {
     );
   });
 
-  it('is in MUTATING_TASKS (derived from required idempotency_key on the schema)', () => {
+  it('is in MUTATING_TASKS because its schema requires idempotency_key', () => {
     assert.ok(MUTATING_TASKS.has('update_rights'), 'update_rights must be in MUTATING_TASKS');
   });
 

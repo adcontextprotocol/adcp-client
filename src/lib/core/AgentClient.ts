@@ -151,7 +151,7 @@ import type {
   SyncPrincipalResponse,
 } from '../types/tools.generated';
 import type { MutatingRequestInput } from '../utils/idempotency';
-import { MediaBuyLifecycleCoordinator, type MediaBuyLifecycleCoordinatorOptions } from '../media-buy/compatibility';
+import type { MediaBuyLifecycleCoordinator, MediaBuyLifecycleCoordinatorOptions } from '../media-buy/compatibility';
 import { buildRefineProposalsRequest } from '../negotiation/buyer';
 import { assertRefineProposalsResponse } from '../negotiation/verification';
 import type {
@@ -639,6 +639,7 @@ export class AgentClient {
   async negotiateMediaBuyLifecycle(
     options: MediaBuyLifecycleCoordinatorOptions = {}
   ): Promise<MediaBuyLifecycleCoordinator> {
+    const { MediaBuyLifecycleCoordinator } = await import('../media-buy/compatibility');
     return MediaBuyLifecycleCoordinator.negotiate(this, options);
   }
 
