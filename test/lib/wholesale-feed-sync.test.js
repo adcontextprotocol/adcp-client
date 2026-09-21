@@ -219,6 +219,251 @@ describe('WholesaleFeedSync legacy-view wholesale feed flow', () => {
     sync.stop();
   });
 
+  test('restores a persisted mirror before the first conditional bootstrap', async () => {
+    const persisted = {
+      version: 1,
+      products: {
+        items: [makeProduct('p1')],
+        wholesaleFeedVersion: 'products-v1',
+        pricingVersion: 'products-price-v1',
+        cacheScope: 'account',
+      },
+      signals: {
+        items: [makeSignal('s1')],
+        wholesaleFeedVersion: 'signals-v1',
+        pricingVersion: 'signals-price-v1',
+        cacheScope: 'account',
+      },
+      lastSyncedAt: '2026-05-22T11:00:00.000Z',
+    };
+    let loadCount = 0;
+    const saved = [];
+    const { client, calls } = makeStubClient({
+      capabilities: {
+        wholesale_feed_versioning: { supported: true },
+        signals: { discovery_modes: ['wholesale'] },
+      },
+      getProducts: params => {
+        assert.strictEqual(params.if_wholesale_feed_version, 'products-v1');
+        assert.strictEqual(params.if_pricing_version, 'products-price-v1');
+        return makeUnchangedResult({
+          wholesale_feed_version: 'products-v1',
+          pricing_version: 'products-price-v1',
+          cache_scope: 'account',
+        });
+      },
+      getSignals: params => {
+        assert.strictEqual(params.if_wholesale_feed_version, 'signals-v1');
+        assert.strictEqual(params.if_pricing_version, 'signals-price-v1');
+        return makeUnchangedResult({
+          wholesale_feed_version: 'signals-v1',
+          pricing_version: 'signals-price-v1',
+          cache_scope: 'account',
+        });
+      },
+    });
+    const sync = new WholesaleFeedSync({
+      client,
+      account,
+      persistenceHooks: {
+        async loadState() {
+          loadCount++;
+          return persisted;
+        },
+        async saveState(state) {
+          saved.push(structuredClone(state));
+        },
+      },
+      capabilityRefreshIntervalMs: 0,
+    });
+
+    await sync.start();
+    await sync.start();
+
+    assert.strictEqual(loadCount, 1);
+    assert.strictEqual(calls.getProducts.length, 2);
+    assert.strictEqual(calls.getSignals.length, 2);
+    assert.strictEqual(sync.products.get('p1').name, 'Product p1');
+    assert.strictEqual(sync.signals.get('s1').name, 'Signal s1');
+    assert.strictEqual(saved.length, 0);
+    sync.stop();
+  });
+
+  test('persists detached snapshots after bootstrap and webhook mutations', async () => {
+    const saved = [];
+    const { client } = makeStubClient({
+      capabilities: { wholesale_feed_versioning: { supported: true } },
+      getProducts: () =>
+        makeProductsResult([makeProduct('p1')], {
+          wholesale_feed_version: 'v1',
+          pricing_version: 'price-v1',
+        }),
+    });
+    const sync = new WholesaleFeedSync({
+      client,
+      account,
+      persistenceHooks: {
+        async loadState() {
+          return null;
+        },
+        async saveState(state) {
+          saved.push(structuredClone(state));
+          state.products.items[0].name = 'Mutated by storage adapter';
+        },
+      },
+    });
+
+    await sync.start();
+    const event = {
+      ...makeEvent('product.updated', 'product', 'p1', {
+        product_id: 'p1',
+        product: makeProduct('p1', { name: 'Persisted update' }),
+        applies_to: { scope: 'public' },
+      }),
+      event_id: '01997088-9abc-7def-8abc-0123456789ab',
+    };
+    await sync.applyWebhook(makeWebhook(event, { version: 'v2', previous: 'v1' }));
+
+    assert.strictEqual(saved.length, 2);
+    assert.strictEqual(saved[0].products.wholesaleFeedVersion, 'v1');
+    assert.strictEqual(saved.at(-1).products.items[0].name, 'Persisted update');
+    assert.strictEqual(saved.at(-1).products.wholesaleFeedVersion, 'v2');
+    assert.strictEqual(saved.at(-1).lastWebhookEventId, event.event_id);
+    assert.ok(saved.at(-1).lastEventAt);
+    assert.strictEqual(sync.products.get('p1').name, 'Persisted update');
+    sync.stop();
+  });
+
+  test('rejects unsupported persisted-state versions before making agent calls', async () => {
+    const { client, calls } = makeStubClient();
+    const sync = new WholesaleFeedSync({
+      client,
+      persistenceHooks: {
+        async loadState() {
+          return { version: 2, products: { items: [] }, signals: { items: [] } };
+        },
+        async saveState() {},
+      },
+    });
+
+    await assert.rejects(() => sync.start(), /invalid persisted state: unsupported version 2/);
+    assert.strictEqual(calls.capabilities, 0);
+    assert.strictEqual(calls.getProducts.length, 0);
+    assert.strictEqual(calls.getSignals.length, 0);
+  });
+
+  test('bounds persistence loads before making agent calls', async () => {
+    const { client, calls } = makeStubClient();
+    const sync = new WholesaleFeedSync({
+      client,
+      persistenceTimeoutMs: 5,
+      persistenceHooks: {
+        async loadState() {
+          return new Promise(() => {});
+        },
+        async saveState() {},
+      },
+    });
+
+    await assert.rejects(() => sync.start(), /persistence loadState timed out after 5ms/);
+    assert.strictEqual(calls.capabilities, 0);
+  });
+
+  test('bounds persistence saves and surfaces the bootstrap failure', async () => {
+    const { client } = makeStubClient({
+      getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' }),
+    });
+    const sync = new WholesaleFeedSync({
+      client,
+      persistenceTimeoutMs: 5,
+      persistenceHooks: {
+        async loadState() {
+          return null;
+        },
+        async saveState() {
+          return new Promise(() => {});
+        },
+      },
+    });
+    sync.on('error', () => {});
+
+    await assert.rejects(() => sync.start(), /persistence saveState timed out after 5ms/);
+    assert.strictEqual(sync.state, 'error');
+  });
+
+  test('reset persists an empty snapshot without stale tokens or webhook cursor', async () => {
+    const saved = [];
+    const { client } = makeStubClient({
+      capabilities: { wholesale_feed_versioning: { supported: true } },
+      getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' }),
+    });
+    const sync = new WholesaleFeedSync({
+      client,
+      persistenceHooks: {
+        async loadState() {
+          return null;
+        },
+        async saveState(state) {
+          saved.push(structuredClone(state));
+        },
+      },
+    });
+
+    await sync.start();
+    await sync.reset();
+
+    assert.strictEqual(sync.products.count, 0);
+    assert.strictEqual(sync.signals.count, 0);
+    assert.deepStrictEqual(saved.at(-1), {
+      version: 1,
+      products: { items: [], cacheScope: 'public' },
+      signals: { items: [], cacheScope: 'public' },
+    });
+  });
+
+  test('serializes overlapping saves so reset wins over an in-flight bootstrap write', async () => {
+    const firstSaveGate = deferred();
+    const seen = [];
+    let saveCalls = 0;
+    let activeSaves = 0;
+    let maxActiveSaves = 0;
+    const { client } = makeStubClient({
+      getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' }),
+    });
+    const sync = new WholesaleFeedSync({
+      client,
+      persistenceHooks: {
+        async loadState() {
+          return null;
+        },
+        async saveState(state) {
+          saveCalls++;
+          activeSaves++;
+          maxActiveSaves = Math.max(maxActiveSaves, activeSaves);
+          if (saveCalls === 1) await firstSaveGate.promise;
+          seen.push(structuredClone(state));
+          activeSaves--;
+        },
+      },
+    });
+
+    const starting = sync.start();
+    await waitFor(() => saveCalls === 1, 'expected bootstrap persistence to begin');
+    const resetting = sync.reset();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.strictEqual(saveCalls, 1);
+    firstSaveGate.resolve();
+    await Promise.all([starting, resetting]);
+
+    assert.strictEqual(maxActiveSaves, 1);
+    assert.strictEqual(saveCalls, 2);
+    assert.deepStrictEqual(seen.at(-1), {
+      version: 1,
+      products: { items: [], cacheScope: 'public' },
+      signals: { items: [], cacheScope: 'public' },
+    });
+  });
+
   test('stop cancels an in-flight bootstrap before it commits mirror state', async () => {
     const gate = deferred();
     const { client, calls } = makeStubClient({

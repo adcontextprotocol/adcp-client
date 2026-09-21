@@ -1,6 +1,6 @@
 import type { SingleAgentClient } from '../core/SingleAgentClient';
 import type { AccountReference } from '../types';
-import type { LegacyWholesaleFeedEvent } from './protocol-types';
+import type { LegacyWholesaleFeedEvent, LegacyWholesaleProduct, LegacyWholesaleSignal } from './protocol-types';
 
 /**
  * Operating mode for a {@link WholesaleFeedSync} instance, resolved from the
@@ -34,6 +34,41 @@ export interface WholesaleFeedSyncClient {
   getAdcpCapabilities: SingleAgentClient['getAdcpCapabilities'];
   getProducts: SingleAgentClient['getProducts'];
   getSignals: SingleAgentClient['getSignals'];
+}
+
+/** JSON-safe snapshot format used by {@link WholesaleFeedSyncPersistenceHooks}. */
+export interface WholesaleFeedSyncPersistedState {
+  /** Snapshot schema version. Future incompatible shapes use a new value. */
+  version: 1;
+  products: {
+    items: LegacyWholesaleProduct[];
+    wholesaleFeedVersion?: string;
+    pricingVersion?: string;
+    cacheScope: 'public' | 'account';
+  };
+  signals: {
+    items: LegacyWholesaleSignal[];
+    wholesaleFeedVersion?: string;
+    pricingVersion?: string;
+    cacheScope: 'public' | 'account';
+  };
+  /** ISO-8601 timestamps from the last committed sync and webhook mutation. */
+  lastSyncedAt?: string;
+  lastEventAt?: string;
+  /** Highest seller-authored UUIDv7 observed by this mirror, when available. */
+  lastWebhookEventId?: string;
+}
+
+/**
+ * Adopter-owned persistence boundary for a wholesale-feed mirror.
+ *
+ * Each hook instance MUST be scoped to one seller agent and account overlay;
+ * sharing a snapshot across those boundaries can expose the wrong catalog.
+ * `saveState` calls are serialized and receive detached snapshots.
+ */
+export interface WholesaleFeedSyncPersistenceHooks {
+  loadState(): Promise<WholesaleFeedSyncPersistedState | null>;
+  saveState(state: WholesaleFeedSyncPersistedState): Promise<void>;
 }
 
 /**
@@ -80,6 +115,25 @@ export interface WholesaleFeedSyncConfig {
     has(key: string): boolean | Promise<boolean>;
     add(key: string): void | Promise<void>;
   };
+
+  /**
+   * Optional durable mirror snapshot hooks. Restored versions are used for
+   * the first conditional product/signal reads, avoiding a cold bootstrap
+   * after process restart. Scope the backing record to the seller and the
+   * same account overlay supplied above.
+   *
+   * Webhook delivery dedupe remains the responsibility of
+   * `webhookDedupStore`; these hooks persist mirror contents and cursors.
+   */
+  persistenceHooks?: WholesaleFeedSyncPersistenceHooks;
+
+  /**
+   * Maximum time to await each persistence hook. Default: 30000 (30 seconds).
+   * A timeout rejects the current sync operation. Timed-out saves remain in
+   * the serialized write queue so a late older write cannot overwrite newer
+   * state; storage adapters should also enforce their own cancellation.
+   */
+  persistenceTimeoutMs?: number;
 
   /**
    * Version-probe interval in `'auto-poll'` mode. Default: 600000 (10
