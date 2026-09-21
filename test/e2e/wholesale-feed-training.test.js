@@ -57,6 +57,8 @@ test('published wholesale-feed training storyboards pass every required phase', 
         adcpVersion: sdk.ADCP_VERSION,
         wireAdcpVersion,
         transport: { allowPrivateIp: true },
+        webhook_receiver: { mode: 'loopback_mock' },
+        contracts: ['webhook_receiver_runner'],
         sandbox: true,
       });
       const failures = result.phases
