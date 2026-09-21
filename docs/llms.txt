@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-09-02
-> Library: @adcp/sdk v13.0.1
+> Generated at: 2026-09-20
+> Library: @adcp/sdk v13.0.4
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 > Note: the `Library` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.
@@ -1615,4 +1615,6 @@ JSON schemas (source of truth): `schemas/cache/latest/index.json` (local only)
 - Documentation: https://adcontextprotocol.github.io/adcp-client/
 - npm: https://www.npmjs.com/package/@adcp/sdk
 - Spec: https://adcontextprotocol.org
-- CLI: `npx @adcp/sdk@adcp-3.1` for the 8.1 / AdCP 3.1 beta line
+- CLI: `npx @adcp/sdk@adcp-3.1` for the maintained 13.x / AdCP 3.1 line
+- Bundled compliance caches: 3.0.12, 3.1.20, and 3.2.0; for example `--compliance-version 3.1.20` works without external cache paths
+- Historical patches: the npm package does not ship the 3.1.1 compliance cache; use matching external inputs such as `--compliance-version 3.1.1 --compliance-dir /path/to/adcp-3.1.1/compliance --schema-root /path/to/adcp-3.1.1/schemas` with the maintained runner; prerelease inputs remain exact

@@ -6,8 +6,6 @@ on:
       - main
       - 13.x
 
-concurrency: ${{ github.workflow }}-${{ github.ref }}
-
 permissions:
   contents: read
 
@@ -21,9 +19,24 @@ jobs:
   release:
     name: Release
     needs: reference-seller-interop
+    # Defense in depth: only exact protected branch refs may reach publish
+    # credentials, even if this job is reused or its trigger changes later.
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/13.x'
+    concurrency:
+      # Dist-tags are package-global state. Serialize only the main/maintenance
+      # release jobs after interop passes, so long interop jobs do not hold the
+      # lock while publish and reconciliation remain one critical section.
+      # GitHub may replace an older pending job in the same group; after the
+      # active release completes, use "Re-run jobs" on that exact run.
+      group: npm-release-dist-tags
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     env:
       ADCP_REQUIRE_SIGNATURE: '1'
+      # Stable-line releases must create/move their compatibility tag as part
+      # of npm publish. The empty main value is intentional: the publish
+      # wrapper then honors Changesets rc/pre-mode instead of forcing latest.
+      ADCP_NPM_TAG: ${{ github.ref_name == '13.x' && 'adcp-3.1' || '' }}
     permissions:
       contents: write
       pull-requests: write
@@ -74,6 +87,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           NPM_CONFIG_PROVENANCE: true
+
+      - name: Reconcile stable-line latest policy
+        # Run even when Changesets reports published=false: a previous attempt
+        # may have published successfully and failed during tag reconciliation.
+        if: steps.changesets.outcome == 'success' && github.ref_name == '13.x'
+        run: node scripts/report-dist-tag-policy.mjs --apply
+        env:
+          # Never infer this from the checkout: Changesets may publish a
+          # workspace package without publishing the root SDK package.
+          ADCP_PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.publishedPackages }}
+          # OIDC remains authoritative for the adcp-3.1 publish. A classic
+          # token is used only for the guarded second-tag move. If latest
+          # should move and this secret is absent, the step reports the exact
+          # recovery command and fails instead of silently green-lighting a
+          # partially completed release.
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       # `npm deprecate '@adcp/client@…'` is run manually post-release for now.
       # OIDC trusted-publishing tokens are scoped to the publishing package, so

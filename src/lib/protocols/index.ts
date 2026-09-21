@@ -301,6 +301,8 @@ export interface TransportOptions {
    * Set to `0` to disable the SDK-imposed discovery timeout.
    */
   requestTimeoutMs?: number;
+  /** A2A-only compatibility policy. Compliance uses `{ enabled: false }` for native 1.0 grading. */
+  legacyCompat?: import('./a2a').A2ALegacyCompatOptions;
 }
 
 let warnedLegacyTransportFetch = false;
@@ -548,13 +550,16 @@ export class ProtocolClient {
               // omitted block is schema-invalid rather than a mode selection.
               // With no secret there is nothing honest to send a v2 seller, so
               // suppress the registration instead of fabricating a credential.
-              const pushNotificationConfig: PushNotificationConfig | undefined = (():
+              const generatedPushNotificationConfig: PushNotificationConfig | undefined = (():
                 | PushNotificationConfig
                 | undefined => {
                 if (!webhookUrl) return undefined;
                 if (webhookSecret) {
                   return {
                     url: webhookUrl,
+                    ...(transportActivityContext?.operationId && {
+                      operation_id: transportActivityContext.operationId,
+                    }),
                     ...(webhookToken && { token: webhookToken }),
                     authentication: {
                       schemes: ['HMAC-SHA256' as const],
@@ -568,9 +573,20 @@ export class ProtocolClient {
                 }
                 return {
                   url: webhookUrl,
+                  ...(transportActivityContext?.operationId && {
+                    operation_id: transportActivityContext.operationId,
+                  }),
                   ...(webhookToken && { token: webhookToken }),
                 };
               })();
+              const explicitNativePushNotificationConfig =
+                transport?.legacyCompat?.enabled === false &&
+                argsWithVersion.push_notification_config !== null &&
+                typeof argsWithVersion.push_notification_config === 'object' &&
+                !Array.isArray(argsWithVersion.push_notification_config)
+                  ? (argsWithVersion.push_notification_config as PushNotificationConfig)
+                  : undefined;
+              const pushNotificationConfig = generatedPushNotificationConfig ?? explicitNativePushNotificationConfig;
 
               if (agent.protocol === 'mcp') {
                 // For MCP, include push_notification_config in tool arguments (MCP spec)
@@ -696,12 +712,20 @@ export class ProtocolClient {
                   throw err;
                 }
               } else if (agent.protocol === 'a2a') {
-                // For A2A, pass pushNotificationConfig separately (not in skill parameters)
+                // Native A2A has two distinct registration surfaces. The
+                // official protocol configuration gets the representable
+                // transport fields, while the complete AdCP application
+                // object (including operation_id) remains in skill input.
+                // Preserve the stable 0.3 wire shape outside native mode.
+                const a2aParameters =
+                  transport?.legacyCompat?.enabled === false && pushNotificationConfig
+                    ? { ...argsWithVersion, push_notification_config: pushNotificationConfig }
+                    : argsWithVersion;
                 try {
                   return await callA2ATool(
                     agent.agent_uri,
                     toolName,
-                    argsWithVersion,
+                    a2aParameters,
                     authToken,
                     debugLogs,
                     pushNotificationConfig,
@@ -711,7 +735,8 @@ export class ProtocolClient {
                     signal,
                     transport?.requestTimeoutMs,
                     transport?.trustedFetchFn,
-                    transport?.allowPrivateIp
+                    transport?.allowPrivateIp,
+                    transport?.legacyCompat
                   );
                 } catch (err) {
                   // Same single-retry-on-401 for client-credentials agents as the
@@ -733,7 +758,7 @@ export class ProtocolClient {
                       return await callA2ATool(
                         agent.agent_uri,
                         toolName,
-                        argsWithVersion,
+                        a2aParameters,
                         retryAuthToken,
                         debugLogs,
                         pushNotificationConfig,
@@ -743,7 +768,8 @@ export class ProtocolClient {
                         signal,
                         transport?.requestTimeoutMs,
                         transport?.trustedFetchFn,
-                        transport?.allowPrivateIp
+                        transport?.allowPrivateIp,
+                        transport?.legacyCompat
                       );
                     } catch (retryErr) {
                       await rethrowAsNeedsAuthorization(
@@ -879,8 +905,11 @@ export const createA2AClient = (
           undefined,
           transport?.requestTimeoutMs,
           transport?.trustedFetchFn,
-          transport?.allowPrivateIp
+          transport?.allowPrivateIp,
+          transport?.legacyCompat
         )
       ),
   };
 };
+
+export type { A2ALegacyCompatOptions } from './a2a';

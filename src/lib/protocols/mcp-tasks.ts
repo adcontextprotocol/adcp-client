@@ -261,6 +261,7 @@ export async function callMCPToolWithTasks(
             signal: options?.signal,
             requestTimeoutMs: options?.requestTimeoutMs,
             allowPrivateIp: options?.allowPrivateIp,
+            originBoundHeaders: Object.keys(customHeaders ?? {}),
           }
         );
       })

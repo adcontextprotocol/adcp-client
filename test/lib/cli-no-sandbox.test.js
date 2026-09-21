@@ -76,6 +76,28 @@ test('storyboard run --help mentions --no-sandbox', () => {
   assert.match(help, /account\.sandbox=false/, 'help should name the wire field affected');
 });
 
+test('storyboard run documents and accepts the A2A 0.3 compatibility escape hatch', () => {
+  const helpResult = runCli(['storyboard', 'run', '--help']);
+  assert.strictEqual(helpResult.status, 0);
+  assert.match(`${helpResult.stdout}\n${helpResult.stderr}`, /--a2a-legacy-compat/);
+  assert.match(`${helpResult.stdout}\n${helpResult.stderr}`, /official A2A 0\.3 client path/);
+
+  const dryRun = runCli([
+    'storyboard',
+    'run',
+    '--url',
+    'https://example.com/a2a',
+    '--url',
+    'https://example.com/a2a-replica',
+    '--protocol',
+    'a2a',
+    '--a2a-legacy-compat',
+    '--dry-run',
+    'capability_discovery',
+  ]);
+  assert.strictEqual(dryRun.status, 0, dryRun.stderr);
+});
+
 test('resolveAccount honors options.sandbox=false (final wire-shape contract)', async () => {
   // The CLI flag plumbing in bin/adcp.js threads `--no-sandbox` to
   // `options.sandbox = false` for all four runner paths

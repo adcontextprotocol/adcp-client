@@ -20,7 +20,7 @@ const TENANT_B_TOKEN = 'tenant_b_key';
 const A_LIST_ID = 'list_owned_by_a';
 
 /**
- * @param {'compliant' | 'leak_code' | 'echo_id_in_details'} shape
+ * @param {'compliant' | 'leak_code' | 'echo_id_in_details' | 'large_error'} shape
  *   Seller behavior: compliant returns identical errors, leak_code branches
  *   error code by tenant ownership, echo_id_in_details echoes the probe id
  *   in error.details (a per-probe leak even for a single tenant).
@@ -60,6 +60,13 @@ function makeAgent(shape) {
               return adcpError('REFERENCE_NOT_FOUND', {
                 message: 'Property list not found',
                 details: { looked_up: list_id },
+              });
+            }
+
+            if (shape === 'large_error') {
+              return adcpError('REFERENCE_NOT_FOUND', {
+                message: 'Property list not found',
+                details: { padding: 'x'.repeat(4_096) },
               });
             }
 
@@ -203,5 +210,22 @@ describe('conformance: uniform-error-response invariant', () => {
     assert.ok(invariant);
     assert.equal(invariant.mode, 'baseline');
     assert.equal(invariant.verdict, 'pass');
+  });
+
+  test('incomplete response capture is an explicit failure rather than a skipped invariant', async () => {
+    const url = await start('large_error');
+    const report = await runConformance(url, {
+      seed: 6,
+      tools: ['get_property_list'],
+      turnBudget: 1,
+      authToken: TENANT_B_TOKEN,
+      maxFailurePayloadBytes: 1_024,
+    });
+
+    const invariant = report.uniformError.find(r => r.tool === 'get_property_list');
+    assert.ok(invariant);
+    assert.equal(invariant.verdict, 'fail');
+    assert.match(invariant.differences.join('\n'), /raw response capture incomplete.*exceeded maxBodyBytes \(1024\)/);
+    assert.equal(invariant.skipReason, undefined);
   });
 });

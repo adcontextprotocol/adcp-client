@@ -1441,7 +1441,7 @@ export class AgentClient {
   /**
    * Resolve and return the canonical base URL for this agent
    *
-   * For A2A: Fetches the agent card and uses its 'url' field
+   * For A2A: Fetches the agent card and uses its selected native interface or legacy `url`
    * For MCP: Performs endpoint discovery and strips /mcp suffix
    *
    * **Not supported on in-process instances** (created via `fromMCPClient`).

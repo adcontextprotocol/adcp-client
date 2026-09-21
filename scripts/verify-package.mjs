@@ -25,6 +25,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -93,6 +94,23 @@ try {
     cwd: tmpDir,
     stdio: 'inherit',
   });
+
+  const installedSdkRoot = path.join(tmpDir, 'node_modules', '@adcp', 'sdk');
+  const installedManifest = JSON.parse(readFileSync(path.join(installedSdkRoot, 'package.json'), 'utf8'));
+  if (installedManifest.dependencies?.['@a2a-js/sdk-v1'] !== 'npm:@a2a-js/sdk@1.0.1') {
+    throw new Error('packed SDK is missing the pinned runtime @a2a-js/sdk-v1 alias');
+  }
+  const installedRequire = createRequire(path.join(installedSdkRoot, 'package.json'));
+  installedRequire.resolve('@a2a-js/sdk-v1/client');
+  const a2aV1Client = installedRequire('@a2a-js/sdk-v1/client');
+  if (typeof a2aV1Client.ClientFactory !== 'function') {
+    throw new Error('packed SDK could resolve but not load @a2a-js/sdk-v1/client');
+  }
+  console.log('   official A2A 1.x runtime alias resolves and loads from the installed package');
+
+  console.log('🖥️  Packed CLI:');
+  run(path.join(tmpDir, 'node_modules', '.bin', 'adcp'), ['--help'], { cwd: tmpDir, stdio: 'inherit' });
+  console.log('  installed adcp CLI starts successfully');
 
   // Cover the barrel, a zod-free enum entry, and the server subpath — the last
   // adds real ESM/CJS load coverage of the @a2a-js/sdk peer through a dedicated

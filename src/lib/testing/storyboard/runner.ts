@@ -9,13 +9,14 @@
 import { createHash, createHmac } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { getOrCreateClientResolution, getOrDiscoverProfile, runStep, type TestClient } from '../client';
 import {
-  closeScopedConnections,
-  normalizeTransportOptions,
-  withMCPConnectionScope,
-  type VersionEnvelopeMode,
-} from '../../protocols';
+  createTestClient,
+  getOrCreateClientResolution,
+  getOrDiscoverProfile,
+  runStep,
+  type TestClient,
+} from '../client';
+import { closeScopedConnections, withMCPConnectionScope, type VersionEnvelopeMode } from '../../protocols';
 import { getCapturesFromError, withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
 import { defaultStoryboardResponseProjection, executeStoryboardTask } from './task-map';
 import {
@@ -83,6 +84,7 @@ import { readBrandJsonUrl } from '../../signing/agent-resolver/capabilities-type
 import { resolveDeclaredTestKit, validateTestKit } from './test-kit';
 import { validateStoryboardShape } from './loader';
 import { trustedStoryboardComplianceRoot } from './provenance';
+import { applyNativeA2AComplianceTransportOptions } from './native-a2a-compliance';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
 import { createWebhookReceiver, type WebhookReceiver, type WebhookWaitResult } from './webhook-receiver';
 import { WEBHOOK_ASSERTION_TASKS, armWebhookAssertions, executeWebhookAssertionStep } from './webhook-assertions';
@@ -174,6 +176,7 @@ import type {
 } from './types';
 import {
   buildRoutingContext,
+  buildAgentOptions,
   DiscoveryFailure,
   resolveAgentForStep,
   RoutingError,
@@ -312,6 +315,7 @@ function selectionForProbeSkip(reason: RunnerDetailedSkipReason, detail: string)
       return { reason: 'explicit_scope_excluded', detail };
     case 'not_in_only_vectors':
     case 'mcp_mode_flattens_url_edges':
+    case 'transport_flattens_url_edges':
     case 'capability_profile_mismatch':
     case 'transport_ungradable':
       return { reason: 'profile_excluded', detail };
@@ -1173,6 +1177,35 @@ function filterResponseHeaders(headers: Record<string, string> | undefined): Rec
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function httpProbeResultFromCapture(capture: RawHttpCapture): HttpProbeResult {
+  if (capture.bodyTruncated) {
+    return {
+      url: capture.url,
+      status: capture.status,
+      headers: Object.fromEntries(Object.entries(capture.headers).map(([name, value]) => [name.toLowerCase(), value])),
+      body: null,
+      error:
+        capture.bodyCaptureError ??
+        'Raw response capture was incomplete; storyboard validators cannot grade a partial response body',
+    };
+  }
+  const contentType = Object.entries(capture.headers).find(([name]) => name.toLowerCase() === 'content-type')?.[1];
+  let body: unknown = capture.body;
+  if (contentType?.toLowerCase().includes('json') || /^[\s]*[{[]/.test(capture.body)) {
+    try {
+      body = JSON.parse(capture.body);
+    } catch {
+      // Preserve the raw bytes when an agent labels malformed JSON as JSON.
+    }
+  }
+  return {
+    url: capture.url,
+    status: capture.status,
+    headers: Object.fromEntries(Object.entries(capture.headers).map(([name, value]) => [name.toLowerCase(), value])),
+    body,
+  };
+}
+
 // ────────────────────────────────────────────────────────────
 // runStoryboard: execute all phases/steps
 // ────────────────────────────────────────────────────────────
@@ -1201,7 +1234,7 @@ export async function runStoryboard(
       // kits win) so from_test_kit / $test_kit.* references get the
       // credential the storyboard was authored against.
       options = resolveDeclaredTestKit(storyboard, options);
-      options = { ...options, transport: normalizeTransportOptions(options.transport) };
+      options = applyNativeA2AComplianceTransportOptions(options);
       const schemaRoot = getRunSchemaRoot(options);
       if (schemaRoot) {
         return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, () =>
@@ -2915,7 +2948,8 @@ async function executeStoryboardPass(
 
   const buildExecutionState = (
     agentUrl = agentUrls[0]!,
-    agentProfile: AgentProfile | undefined = profile
+    agentProfile: AgentProfile | undefined = profile,
+    effectiveOptions: StoryboardRunOptions = options
   ): ExecutionState => ({
     contributions,
     priorStepResults,
@@ -2928,6 +2962,7 @@ async function executeStoryboardPass(
     stepRequestStarts,
     responseDerivedNotApplicableContextKeys,
     agentProfile,
+    effectiveOptions,
     agentLibraryVersion: agentProfile?.library_version,
     storyboardRequiresRequestSigner: allRequires.includes('request_signer'),
     storyboardRequiresPublisherAuthRunner:
@@ -3315,7 +3350,11 @@ async function executeStoryboardPass(
         phasePassed = false;
         continue;
       }
-      const stepExecutionState = buildExecutionState(assignment.agentUrl, assignment.profile);
+      const stepExecutionState = buildExecutionState(
+        assignment.agentUrl,
+        assignment.profile,
+        assignment.effectiveOptions ?? options
+      );
       const rawResult = await executeStep(
         assignment.client,
         step,
@@ -3528,7 +3567,8 @@ async function executeStoryboardPass(
             // `'not_applicable'` only. Detailed-form skip reasons that
             // canonicalize to not_applicable (`probe_skipped`,
             // `not_in_only_vectors`, `grader_skipped`,
-            // `mcp_mode_flattens_url_edges`) carry the detailed form
+            // `mcp_mode_flattens_url_edges`, `transport_flattens_url_edges`)
+            // carry the detailed form
             // on `result.skip_reason` and do NOT enter the deferred
             // path — they preserve the pre-fix behavior of not
             // tripping the cascade. `oauth_not_advertised` is handled
@@ -4252,6 +4292,7 @@ export async function runStoryboardStep(
       // adcp#6735 — same declared-kit resolution as runStoryboard, so the
       // printed fix_command path exercises the step with its real credential.
       options = resolveDeclaredTestKit(storyboard, options);
+      options = applyNativeA2AComplianceTransportOptions(options);
       const schemaRoot = getRunSchemaRoot(options);
       if (schemaRoot) {
         return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, () =>
@@ -4457,6 +4498,8 @@ interface ExecutionState {
    * must be the selected agent's profile, not the run-level primary profile.
    */
   agentProfile?: AgentProfile;
+  /** Per-agent options after routed transport/auth overrides are applied. */
+  effectiveOptions?: StoryboardRunOptions;
   /**
    * Agent's reported `@adcp/client@X.Y.Z` library version, captured from
    * the `get_adcp_capabilities` discovery probe. Threaded into shape-drift
@@ -4496,6 +4539,21 @@ async function executeStep(
     stepRequestStarts: new Map(),
     responseDerivedNotApplicableContextKeys: new Map(),
   };
+  const effectiveOptions = runState.effectiveOptions ?? options;
+  // Routed options deliberately clear run-scoped discovery fields so one
+  // tenant's cached profile cannot short-circuit another tenant's discovery.
+  // Once routing has selected this step's agent, probes still need that
+  // selected profile for capability-backed inputs (brand JWKS) and tool gates
+  // (rate-limit targets). Rebind only the selected profile while preserving
+  // the routed transport/auth/request-signing options in effectiveOptions.
+  const effectiveProbeOptions = runState.agentProfile
+    ? {
+        ...effectiveOptions,
+        profile: runState.agentProfile,
+        _profile: runState.agentProfile,
+        agentTools: effectiveOptions.agentTools ?? normalizeAgentToolNames(runState.agentProfile.tools),
+      }
+    : effectiveOptions;
 
   // Recognize the dedicated TMP publisher-auth probes before generic auth
   // overrides, missing-tool checks, or MCP/A2A routing.
@@ -4503,12 +4561,12 @@ async function executeStep(
     if (runState.storyboardRequiresPublisherAuthRunner !== true) {
       return invalidTrustedMatchPublisherAuthTask(step, phaseId, context, allSteps, runState);
     }
-    return executeProbeStep(client, step, phaseId, context, allSteps, options, runState);
+    return executeProbeStep(client, step, phaseId, context, allSteps, effectiveProbeOptions, runState);
   }
 
   // HTTP probe tasks bypass the MCP client entirely.
   if (PROBE_TASKS.has(step.task)) {
-    return executeProbeStep(client, step, phaseId, context, allSteps, options, runState);
+    return executeProbeStep(client, step, phaseId, context, allSteps, effectiveProbeOptions, runState);
   }
 
   // Webhook-assertion pseudo-tasks observe the shared receiver instead of
@@ -4824,7 +4882,7 @@ async function executeStep(
       next,
       ...(isPrerequisiteFailure ? { error: detail } : {}),
       request: {
-        transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
+        transport: effectiveOptions.protocol === 'a2a' ? 'a2a' : 'mcp',
         operation: effectiveStep.task,
         payload: redactSecrets(request),
         ...(runState.agentUrl ? { url: redactOAuthUrlForOutput(runState.agentUrl) } : {}),
@@ -4860,7 +4918,7 @@ async function executeStep(
   // reaches the seller handler.
   let rawProbeHeaders: Record<string, string> | undefined;
   try {
-    rawProbeHeaders = step.auth !== undefined ? authHeadersForStep(step.auth, options) : undefined;
+    rawProbeHeaders = step.auth !== undefined ? authHeadersForStep(step.auth, effectiveOptions) : undefined;
   } catch (err) {
     // adcp#6735 — an unresolvable from_test_kit credential is a step-level
     // configuration failure with an explicit message, never a silent
@@ -4891,6 +4949,11 @@ async function executeStep(
   let responseRecord: RunnerResponseRecord | undefined;
   let a2aEnvelope: A2ATaskEnvelope | undefined;
   let crossResponses: CrossResponseSet | undefined;
+  let requestUrl = runState.agentUrl;
+  // Transport/capture infrastructure failures are not agent rejections.
+  // Keep them out of stepResult.error so `expect_error` can never invert an
+  // incomplete wire observation into a passing compliance step.
+  let captureInfrastructureError: string | undefined;
 
   // Parallel-dispatch fan-out: when the storyboard step declares
   // `parallel_dispatch`, the runner fires N concurrent dispatches against
@@ -4981,35 +5044,89 @@ async function executeStep(
   if (useRawProbe) {
     const started = Date.now();
     try {
-      const probe = await rawMcpProbe({
-        agentUrl: runState.agentUrl,
-        toolName: effectiveStep.task,
-        args: request,
-        headers: rawProbeHeaders,
-        allowPrivateIp: options.allow_http === true,
-        fetchFn: options.transport?.trustedFetchFn,
-      });
-      httpResult = probe.httpResult;
-      taskResult = probe.taskResult;
-      const durationMs = Date.now() - started;
-      stepResult = {
-        duration_ms: durationMs,
-        passed: !httpResult.error,
-        error: httpResult.error,
-      };
-      const filteredHeaders = filterResponseHeaders(httpResult.headers);
-      responseRecord = {
-        transport: 'mcp',
-        payload: redactSecrets(httpResult.body),
-        ...(typeof httpResult.status === 'number' ? { status: httpResult.status } : {}),
-        ...(filteredHeaders && { headers: filteredHeaders }),
-        duration_ms: durationMs,
-      };
+      if (effectiveOptions.protocol === 'a2a') {
+        const probeClient = createA2AAuthOverrideClient(runState.agentUrl, effectiveOptions, rawProbeHeaders ?? {});
+        const captured = await withRawResponseCapture(() =>
+          runStep(step.title, effectiveStep.task, () =>
+            executeStoryboardTask(probeClient, effectiveStep.task, request, {
+              skipIdempotencyAutoInject: testsMissingIdempotencyKey,
+              skipAccountValidation: testsMissingAccount,
+              responseProjection:
+                effectiveStep.response_projection ??
+                defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario),
+              signal: effectiveOptions.signal,
+            })
+          )
+        );
+        taskResult = captured.result.result;
+        stepResult = captured.result.step;
+        caughtError = captured.result.caughtError;
+        const rpcCapture = selectLastA2aSkillCapture(captured.captures, effectiveStep.task);
+        const crossOriginRpcCapture =
+          rpcCapture !== undefined && new URL(rpcCapture.url).origin !== new URL(runState.agentUrl).origin;
+        if (rpcCapture && !crossOriginRpcCapture && !rpcCapture.bodyTruncated) {
+          httpResult = httpProbeResultFromCapture(rpcCapture);
+          requestUrl = rpcCapture.url;
+          const filteredHeaders = filterResponseHeaders(httpResult.headers);
+          responseRecord = {
+            transport: 'a2a',
+            payload: redactSecrets(httpResult.body),
+            status: httpResult.status,
+            ...(filteredHeaders && { headers: filteredHeaders }),
+            duration_ms: rpcCapture.latencyMs,
+          };
+          a2aEnvelope = parseLastA2aMessageSendCapture([rpcCapture]);
+        } else {
+          const error = crossOriginRpcCapture
+            ? 'A2A auth probe selected a cross-origin RPC endpoint; credential-isolated responses cannot be graded'
+            : rpcCapture?.bodyTruncated
+              ? (rpcCapture.bodyCaptureError ??
+                'Raw response capture was incomplete; A2A auth validators cannot grade a partial response body')
+              : (stepResult.error ?? taskResult?.error ?? 'A2A auth probe produced no HTTP response');
+          requestUrl = rpcCapture?.url ?? runState.agentUrl;
+          httpResult = { url: requestUrl, status: 0, headers: {}, body: null, error };
+          captureInfrastructureError = error;
+          stepResult = { ...stepResult, passed: false };
+          responseRecord = {
+            transport: 'a2a',
+            payload: null,
+            status: 0,
+            duration_ms: stepResult.duration_ms,
+          };
+        }
+      } else {
+        const probe = await rawMcpProbe({
+          agentUrl: runState.agentUrl,
+          toolName: effectiveStep.task,
+          args: request,
+          headers: rawProbeHeaders,
+          allowPrivateIp: effectiveOptions.allow_http === true,
+          fetchFn: effectiveOptions.transport?.trustedFetchFn,
+        });
+        httpResult = probe.httpResult;
+        taskResult = probe.taskResult;
+        const durationMs = Date.now() - started;
+        stepResult = {
+          duration_ms: durationMs,
+          passed: !httpResult.error,
+          error: httpResult.error,
+        };
+        const filteredHeaders = filterResponseHeaders(httpResult.headers);
+        responseRecord = {
+          transport: 'mcp',
+          payload: redactSecrets(httpResult.body),
+          ...(typeof httpResult.status === 'number' ? { status: httpResult.status } : {}),
+          ...(filteredHeaders && { headers: filteredHeaders }),
+          duration_ms: durationMs,
+        };
+      }
     } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      if (effectiveOptions.protocol === 'a2a') captureInfrastructureError = error;
       stepResult = {
         duration_ms: Date.now() - started,
         passed: false,
-        error: err instanceof Error ? err.message : String(err),
+        ...(captureInfrastructureError ? {} : { error }),
       };
     }
   } else {
@@ -5020,12 +5137,9 @@ async function executeStep(
     // MCP path stays unwrapped — the SDK envelope is reconstructed from
     // `taskResult` already and capture would only add overhead.
     //
-    // Selection note: gate on `options.protocol === 'a2a'` because
-    // that's the only signal available at this point — discovery
-    // hasn't run yet in `runStoryboardStep` (the runner branches off
-    // `agentTools` later). If a future "auto-detect protocol" flow
-    // lands, key the capture off the negotiated transport instead.
-    const captureA2a = options.protocol === 'a2a';
+    // In routed runs, use the selected agent's per-entry transport rather
+    // than the run-level default. Standalone runs fall back to `options`.
+    const captureA2a = effectiveOptions.protocol === 'a2a';
     let a2aCaptures: RawHttpCapture[] | undefined;
     if (step.parallel_dispatch) {
       // Fan out N concurrent dispatches via the SDK client. All dispatches
@@ -5069,7 +5183,7 @@ async function executeStep(
       };
       if (taskResult) {
         responseRecord = {
-          transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
+          transport: effectiveOptions.protocol === 'a2a' ? 'a2a' : 'mcp',
           payload: redactSecrets(
             taskResult.data ??
               (taskResult.adcp_error ? { adcp_error: taskResult.adcp_error } : undefined) ??
@@ -5087,7 +5201,7 @@ async function executeStep(
           responseProjection:
             effectiveStep.response_projection ??
             defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario),
-          signal: options.signal,
+          signal: effectiveOptions.signal,
         });
       const run = await runStep(step.title, effectiveStep.task, async () => {
         if (!captureA2a) return dispatch();
@@ -5109,15 +5223,33 @@ async function executeStep(
       taskResult = run.result;
       stepResult = run.step;
       caughtError = run.caughtError;
-      if (caughtError !== undefined && options.signal?.aborted) {
+      if (caughtError !== undefined && effectiveOptions.signal?.aborted) {
         throw caughtError;
       }
-      if (captureA2a && a2aCaptures) {
-        a2aEnvelope = parseLastA2aMessageSendCapture(a2aCaptures);
+      if (captureA2a) {
+        const skillCapture = a2aCaptures ? selectLastA2aSkillCapture(a2aCaptures, effectiveStep.task) : undefined;
+        const crossOriginSkillCapture =
+          skillCapture !== undefined && new URL(skillCapture.url).origin !== new URL(runState.agentUrl).origin;
+        if (!skillCapture) {
+          captureInfrastructureError = 'A2A tool dispatch produced no matching HTTP response capture';
+        } else if (crossOriginSkillCapture) {
+          captureInfrastructureError =
+            'A2A tool dispatch selected a cross-origin RPC endpoint; credential-isolated responses cannot be graded';
+        } else if (skillCapture.bodyTruncated) {
+          captureInfrastructureError =
+            skillCapture.bodyCaptureError ??
+            'Raw response capture was incomplete; A2A validators cannot grade a partial response body';
+        } else {
+          a2aEnvelope = parseLastA2aMessageSendCapture([skillCapture]);
+          if (!a2aEnvelope) {
+            captureInfrastructureError = 'A2A matching HTTP response capture could not be parsed for grading';
+          }
+        }
+        if (captureInfrastructureError) stepResult = { ...stepResult, passed: false };
       }
       if (taskResult) {
         responseRecord = {
-          transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
+          transport: effectiveOptions.protocol === 'a2a' ? 'a2a' : 'mcp',
           payload: redactSecrets(
             taskResult.data ??
               (taskResult.adcp_error ? { adcp_error: taskResult.adcp_error } : undefined) ??
@@ -5131,10 +5263,10 @@ async function executeStep(
   }
 
   const requestRecord: RunnerRequestRecord = {
-    transport: useRawProbe ? 'mcp' : options.protocol === 'a2a' ? 'a2a' : 'mcp',
+    transport: effectiveOptions.protocol === 'a2a' ? 'a2a' : 'mcp',
     operation: effectiveStep.task,
     payload: redactSecrets(request),
-    ...(runState.agentUrl ? { url: redactOAuthUrlForOutput(runState.agentUrl) } : {}),
+    ...(requestUrl ? { url: redactOAuthUrlForOutput(requestUrl) } : {}),
   };
   const inputSchemaStripNotices = collectInputSchemaFieldStripNotices(
     (taskResult as { debug_logs?: unknown } | undefined)?.debug_logs,
@@ -5272,7 +5404,7 @@ async function executeStep(
     runState,
     allSteps
   );
-  if (responseDerivedSkip && !step.expect_error) {
+  if (responseDerivedSkip && !step.expect_error && !captureInfrastructureError) {
     for (const key of responseDerivedSkip.contextKeys) {
       runState.responseDerivedNotApplicableContextKeys?.set(key, responseDerivedSkip.detail);
     }
@@ -5319,6 +5451,7 @@ async function executeStep(
   } else {
     passed = stepResult.passed && (taskResult?.success ?? false);
   }
+  if (captureInfrastructureError) passed = false;
 
   const schemaValidationError = caughtError instanceof ResponseSchemaValidationError ? caughtError : undefined;
   // The response unwrapper preserves the rejected payload on its typed error.
@@ -5499,12 +5632,16 @@ async function executeStep(
       ? decoratedCandidates
       : [{ ...baseSchemaResult, severity: 'required' } satisfies ValidationResult];
     schemaRejectionIsAdvisory = schemaResults.every(result => !validationFailsStep(result));
-    if (schemaRejectionIsAdvisory && !step.expect_error) passed = true;
+    if (schemaRejectionIsAdvisory && !step.expect_error && !captureInfrastructureError) passed = true;
     // Prepend so extractFailures picks it up before any inline validation
     // entry that may also be failing (e.g. `field_present` checks that
     // legitimately can't observe their target against an unparsed payload).
     validations = [...schemaResults, ...validations.filter(result => result.check !== 'response_schema')];
   }
+  // Advisory schema decoration happens after the initial pass calculation;
+  // preserve the independent capture-integrity failure across every later
+  // grading path, including `expect_error` and advisory schema handling.
+  if (captureInfrastructureError) passed = false;
 
   // Persist the captured A2A envelope keyed by step id so cross-step
   // validators (`a2a_context_continuity`) on subsequent steps can
@@ -5728,8 +5865,11 @@ async function executeStep(
         context_provenance: Object.fromEntries(runState.contextProvenance),
       }),
     ...responseDerivedContextResult(runState),
-    error:
-      step.expect_error || schemaRejectionIsAdvisory ? undefined : truncateError(stepResult.error || taskResult?.error),
+    error: captureInfrastructureError
+      ? truncateError(captureInfrastructureError)
+      : step.expect_error || schemaRejectionIsAdvisory
+        ? undefined
+        : truncateError(stepResult.error || taskResult?.error),
     ...(!step.expect_error && taskResult?.adcp_error && { adcp_error: taskResult.adcp_error }),
     next,
     request: requestRecord,
@@ -7062,12 +7202,11 @@ function findPriorProbe(priorStepResults: Map<string, StoryboardStepResult>): Ht
 /**
  * Reduce the captured fetch traffic for an A2A step into the
  * `A2ATaskEnvelope` validations consume. The A2A SDK fires multiple
- * requests per call (`/.well-known/agent-card.json` discovery on
- * fresh clients, then a `message/send` POST), and a single dispatch
- * may also poll `tasks/get` afterwards. We pick the capture whose
- * REQUEST body declares `method: 'message/send'`; if no capture
- * declares the method we fall back to the last POST with a
- * JSON-RPC-shaped body. GET captures and non-JSON bodies are
+ * requests per call (agent-card discovery on fresh clients, then either
+ * native `SendMessage` or compatibility `message/send`), and a dispatch
+ * may also poll afterwards. We pick the capture whose response returned an
+ * A2A Task; if no capture does, we use the last POST with a JSON-RPC-shaped
+ * body. GET captures and non-JSON bodies are
  * skipped — `undefined` here surfaces as `not_applicable` in the
  * validator, which is more useful than a garbage envelope.
  *
@@ -7082,31 +7221,44 @@ function findPriorProbe(priorStepResults: Map<string, StoryboardStepResult>): Ht
  * keeps that surface consistent with `responseRecord.payload`,
  * which the runner already redacts on the success path.
  */
-function parseLastA2aMessageSendCapture(captures: readonly RawHttpCapture[]): A2ATaskEnvelope | undefined {
-  let messageSendIdx = -1;
+export function selectLastA2aSkillCapture(
+  captures: readonly RawHttpCapture[],
+  skill: string
+): RawHttpCapture | undefined {
+  for (let index = captures.length - 1; index >= 0; index--) {
+    const capture = captures[index];
+    if (capture?.method === 'POST' && capture.requestAdcpSkill === skill) return capture;
+  }
+  return undefined;
+}
+
+export function parseLastA2aMessageSendCapture(captures: readonly RawHttpCapture[]): A2ATaskEnvelope | undefined {
+  let taskFallbackIdx = -1;
   let lastPostIdx = -1;
   for (let i = captures.length - 1; i >= 0; i--) {
     const cap = captures[i];
     if (!cap || cap.method !== 'POST') continue;
     if (lastPostIdx === -1) lastPostIdx = i;
-    // The fetch wrapper doesn't capture the request body, so disambiguate
-    // by parsing the response and checking for an A2A `Task` shape on
-    // the result. `tasks/get` and `message/send` both return tasks, but
-    // only `message/send` is the immediate response we want to assert
-    // on for submitted-arm shape checks. When the runner adds polling,
-    // we'd need request-body capture to distinguish reliably; for v0
-    // the last POST is `message/send` because the SDK doesn't poll
-    // synchronously after a Task with terminal state.
-    if (messageSendIdx === -1) {
+    // Prefer the explicit JSON-RPC method captured from the Request body. This
+    // distinguishes the final SendMessage retry from later tasks/get polling.
+    // As a compatibility fallback for older captures, parse the response and
+    // look for either the A2A 0.3 Task result or 1.0 `{ task }` oneof envelope.
+    const isMessageSend = cap.requestJsonRpcMethod === 'SendMessage' || cap.requestJsonRpcMethod === 'message/send';
+    if (isMessageSend) return cap.bodyTruncated ? undefined : parseA2aCapture(cap);
+    if (taskFallbackIdx === -1) {
       const env = tryParseJsonRpcEnvelope(cap.body);
-      if (env && env.result !== undefined && isTaskShape(env.result)) {
-        messageSendIdx = i;
+      if (env && env.result !== undefined && isTaskShape(normalizeCapturedA2AResult(env.result))) {
+        taskFallbackIdx = i;
       }
     }
   }
-  const idx = messageSendIdx !== -1 ? messageSendIdx : lastPostIdx;
+  const idx = taskFallbackIdx !== -1 ? taskFallbackIdx : lastPostIdx;
   if (idx === -1) return undefined;
-  const cap = captures[idx]!;
+  const capture = captures[idx]!;
+  return capture.bodyTruncated ? undefined : parseA2aCapture(capture);
+}
+
+function parseA2aCapture(cap: RawHttpCapture): A2ATaskEnvelope | undefined {
   const envelope = tryParseJsonRpcEnvelope(cap.body);
   if (!envelope) return undefined;
   // `envelope.result` mirrors the JSON-RPC envelope as observed —
@@ -7117,7 +7269,8 @@ function parseLastA2aMessageSendCapture(captures: readonly RawHttpCapture[]): A2
   // `envelope.result` keeps presence-of-key fidelity for validators
   // that need to distinguish "result was null" from "result was
   // omitted". Both paths run through `redactSecrets`.
-  const redactedResult = envelope.result !== undefined ? redactSecrets(envelope.result) : null;
+  const redactedResult =
+    envelope.result !== undefined ? redactSecrets(normalizeCapturedA2AResult(envelope.result)) : null;
   return {
     result: redactedResult,
     envelope: {
@@ -7153,6 +7306,68 @@ function isTaskShape(result: unknown): boolean {
     !Array.isArray(result) &&
     (result as { kind?: unknown }).kind === 'task'
   );
+}
+
+/** Normalize the official A2A 1.0 JSON oneof to the legacy validator shape. */
+export function normalizeCapturedA2AResult(result: unknown): unknown {
+  if (result == null || typeof result !== 'object' || Array.isArray(result)) return result;
+  const record = result as Record<string, unknown>;
+  const task = asRecord(record.task);
+  if (task) return normalizeCapturedTask(task);
+  const message = asRecord(record.message);
+  if (message) return normalizeCapturedMessage(message);
+  return result;
+}
+
+function normalizeCapturedTask(task: Record<string, unknown>): Record<string, unknown> {
+  const status = asRecord(task.status);
+  const artifacts = Array.isArray(task.artifacts)
+    ? task.artifacts.map(artifact => {
+        const record = asRecord(artifact);
+        return record ? { ...record, parts: normalizeCapturedParts(record.parts) } : artifact;
+      })
+    : [];
+  return {
+    ...task,
+    kind: 'task',
+    ...(status
+      ? {
+          status: {
+            ...status,
+            state: normalizeCapturedTaskState(status.state),
+            ...(asRecord(status.message) ? { message: normalizeCapturedMessage(asRecord(status.message)!) } : {}),
+          },
+        }
+      : {}),
+    artifacts,
+  };
+}
+
+function normalizeCapturedMessage(message: Record<string, unknown>): Record<string, unknown> {
+  return { ...message, kind: 'message', parts: normalizeCapturedParts(message.parts) };
+}
+
+function normalizeCapturedParts(parts: unknown): unknown[] {
+  if (!Array.isArray(parts)) return [];
+  return parts.map(part => {
+    const record = asRecord(part);
+    if (!record) return part;
+    if ('data' in record) return { ...record, kind: 'data' };
+    if ('text' in record) return { ...record, kind: 'text' };
+    if ('file' in record) return { ...record, kind: 'file' };
+    return record;
+  });
+}
+
+function normalizeCapturedTaskState(state: unknown): unknown {
+  if (typeof state !== 'string' || !state.startsWith('TASK_STATE_')) return state;
+  return state.slice('TASK_STATE_'.length).toLowerCase().replaceAll('_', '-');
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value != null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -7309,6 +7524,40 @@ function authHeadersForStep(directive: StepAuthDirective, options: StoryboardRun
     throw new Error('test_kit.auth.api_key contains invalid characters (control chars or non-printable ASCII)');
   }
   return { authorization: `Bearer ${value}` };
+}
+
+function createA2AAuthOverrideClient(
+  agentUrl: string,
+  options: StoryboardRunOptions,
+  authHeaders: Record<string, string>
+): TestClient {
+  const headers: Record<string, string> = {};
+  // Every authored auth override promises the same isolated identity for A2A
+  // and MCP. Caller headers are never inherited: an apparently unrelated
+  // session, HMAC, gateway, or tenant header can authenticate a deployment
+  // and turn a missing/malformed/random-invalid probe into a false pass. Only
+  // headers generated from the step's auth directive may reach the probe.
+
+  let auth: StoryboardRunOptions['auth'];
+  for (const [name, value] of Object.entries(authHeaders)) {
+    const lower = name.toLowerCase();
+    if (lower === 'authorization' && /^Bearer\s+/i.test(value)) {
+      auth = { type: 'bearer', token: value.replace(/^Bearer\s+/i, '') };
+    } else {
+      headers[name] = value;
+    }
+  }
+
+  return createTestClient(agentUrl, 'a2a', {
+    ...options,
+    protocol: 'a2a',
+    auth,
+    headers: Object.keys(headers).length > 0 ? headers : undefined,
+    test_session_id: undefined,
+    userAgent: undefined,
+    test_kit: undefined,
+    _client: undefined,
+  });
 }
 
 function basicAuthHeadersForStep(
@@ -7908,6 +8157,8 @@ interface StepAssignment {
   instanceIndex: number;
   /** Profile discovered for the agent selected to execute this step. */
   profile?: AgentProfile;
+  /** Per-agent transport/auth view used when the selected step dispatches. */
+  effectiveOptions?: StoryboardRunOptions;
 }
 
 interface Dispatcher {
@@ -7984,6 +8235,7 @@ function createRoutingDispatcher(
         agentUrl: url,
         instanceIndex: keyToIndex.get(key) ?? 0,
         profile,
+        effectiveOptions: buildAgentOptions(agents[key]!, options),
       };
     },
   };

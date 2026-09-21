@@ -45,6 +45,7 @@ import { getOrCreateClient, getOrDiscoverProfile } from '../client';
 import type { AgentProfile } from '../types';
 import { TASK_FEATURE_MAP, type AdcpProtocol } from '../../utils/capabilities';
 import type { AgentEntry, Storyboard, StoryboardRunOptions, StoryboardStep } from './types';
+import { applyNativeA2AComplianceTransportOptions } from './native-a2a-compliance';
 
 // `compliance_testing` is on the wire as a top-level capability block, NOT
 // in `supported_protocols`. `parseCapabilitiesResponse`
@@ -96,8 +97,8 @@ function scrubAuthSecrets(text: string): string {
 }
 
 /** Per-agent options view: per-entry overrides shadow run-level defaults. */
-function buildAgentOptions(entry: AgentEntry, options: StoryboardRunOptions): StoryboardRunOptions {
-  return {
+export function buildAgentOptions(entry: AgentEntry, options: StoryboardRunOptions): StoryboardRunOptions {
+  return applyNativeA2AComplianceTransportOptions({
     ...options,
     auth: entry.auth ?? options.auth,
     protocol: entry.transport ?? options.protocol,
@@ -113,7 +114,7 @@ function buildAgentOptions(entry: AgentEntry, options: StoryboardRunOptions): St
     _profile: undefined,
     agents: undefined,
     agentTools: undefined,
-  };
+  });
 }
 
 export interface AgentRoutingContext {

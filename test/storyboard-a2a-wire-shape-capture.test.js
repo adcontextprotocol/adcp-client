@@ -125,6 +125,7 @@ describe('runStoryboardStep: A2A wire-shape capture (issue #904)', () => {
       ]);
       const result = await runStoryboardStep(fixture.url, storyboard, 'create_media_buy_async', {
         protocol: 'a2a',
+        transport: { legacyCompat: { enabled: true } },
         allow_http: true,
         // Disable cross-step assertions — they require a specialism context
         // the smoke test doesn't set up.
@@ -178,6 +179,7 @@ describe('runStoryboardStep: A2A wire-shape capture (issue #904)', () => {
       ]);
       const result = await runStoryboardStep(fixture.url, storyboard, 'create_media_buy_async', {
         protocol: 'a2a',
+        transport: { legacyCompat: { enabled: true } },
         allow_http: true,
         invariants: {
           disable: [
@@ -271,6 +273,7 @@ describe('runStoryboardStep: A2A wire-shape capture (issue #904)', () => {
       ]);
       const result = await runStoryboardStep(baseUrl, storyboard, 'create_media_buy_async', {
         protocol: 'a2a',
+        transport: { legacyCompat: { enabled: true } },
         allow_http: true,
         invariants: {
           disable: [

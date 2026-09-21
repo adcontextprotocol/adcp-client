@@ -300,7 +300,7 @@ async function getOrCreateConnection(
   debugLogs: DebugLogEntry[],
   label: string,
   transportFetch?: typeof fetch,
-  requestOptions: { signal?: AbortSignal; requestTimeoutMs?: number; allowPrivateIp?: boolean } = {}
+  requestOptions: MCPTransportRequestOptions = {}
 ): Promise<MCPClient> {
   const cached = getCachedConnection(cacheKey);
   if (cached) return cached;
@@ -564,7 +564,7 @@ export async function withCachedConnection<T>(
   label: string,
   fn: (client: MCPClient) => Promise<T>,
   transportFetch?: typeof fetch,
-  requestOptions: { signal?: AbortSignal; requestTimeoutMs?: number; allowPrivateIp?: boolean } = {}
+  requestOptions: MCPTransportRequestOptions = {}
 ): Promise<T> {
   const signingContext = signingContextStorage.getStore();
   const baseUrl = new URL(agentUrl);
@@ -724,6 +724,14 @@ export interface MCPConnectionResult {
   transport: StreamableHTTPClientTransport;
 }
 
+interface MCPTransportRequestOptions {
+  signal?: AbortSignal;
+  requestTimeoutMs?: number;
+  allowPrivateIp?: boolean;
+  /** Names of caller-configured headers that must remain at the configured agent origin. */
+  originBoundHeaders?: readonly string[];
+}
+
 /**
  * Connect an MCPClient to the given URL with automatic transport fallback.
  *
@@ -744,7 +752,7 @@ export async function connectMCPWithFallback(
   debugLogs: DebugLogEntry[] = [],
   label = 'connection',
   transportFetch?: typeof fetch,
-  requestOptions: { signal?: AbortSignal; requestTimeoutMs?: number; allowPrivateIp?: boolean } = {}
+  requestOptions: MCPTransportRequestOptions = {}
 ): Promise<MCPClient> {
   return withSpan(
     'adcp.mcp.connect',
@@ -764,7 +772,7 @@ async function connectMCPWithFallbackImpl(
   debugLogs: DebugLogEntry[] = [],
   label = 'connection',
   transportFetch?: typeof fetch,
-  requestOptions: { signal?: AbortSignal; requestTimeoutMs?: number; allowPrivateIp?: boolean } = {}
+  requestOptions: MCPTransportRequestOptions = {}
 ): Promise<MCPClient> {
   const signingContext = signingContextStorage.getStore();
   // Wrap order (innermost → outermost): network → size-limit → signing → capture.
@@ -779,6 +787,8 @@ async function connectMCPWithFallbackImpl(
   const rawNetworkFetch = createAgentTransportFetch(url.toString(), {
     trustedFetchFn: transportFetch,
     allowPrivateIp: requestOptions.allowPrivateIp,
+    originBoundHeaders: requestOptions.originBoundHeaders,
+    crossOriginCredentialPolicy: 'strip',
   });
   const networkFetch = (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     // Keep cancellation linked for the entire response-body lifetime. A
@@ -1050,7 +1060,7 @@ async function callMCPToolImpl(
         ...(resolvedRequestTimeoutMs !== undefined && { timeout: resolvedRequestTimeoutMs }),
       }) as Promise<CallToolResponse>,
     transportFetch,
-    requestOptions
+    { ...requestOptions, originBoundHeaders: Object.keys(customHeaders ?? {}) }
   );
 
   debugLogs.push({
@@ -1084,7 +1094,8 @@ async function callMCPToolRawImpl(
     debugLogs,
     toolName,
     client => client.callTool({ name: toolName, arguments: args }),
-    transportFetch
+    transportFetch,
+    { originBoundHeaders: Object.keys(customHeaders ?? {}) }
   );
 }
 
@@ -1225,7 +1236,12 @@ export async function connectMCP(options: {
     ...(signal && { signal }),
     ...(clientRequestTimeoutMs !== undefined && { timeout: clientRequestTimeoutMs }),
   };
-  const rawNetworkFetch = createAgentTransportFetch(agentUrl, { trustedFetchFn: fetchFn, allowPrivateIp });
+  const rawNetworkFetch = createAgentTransportFetch(agentUrl, {
+    trustedFetchFn: fetchFn,
+    allowPrivateIp,
+    originBoundHeaders: Object.keys(filteredCustomHeaders ?? {}),
+    crossOriginCredentialPolicy: 'strip',
+  });
   const sizeLimited = wrapFetchWithSizeLimit((input, init) =>
     withAbortSignal<Response>([init?.signal], requestTimeoutMs, linkedSignal =>
       rawNetworkFetch(input, { ...init, signal: linkedSignal })

@@ -110,6 +110,99 @@ describe('rawResponseCapture', () => {
     assert.equal(captures[0].body, JSON.stringify({ echo: { hello: 'world' } }));
   });
 
+  test('extracts JSON-RPC metadata when fetch receives a Request body', async () => {
+    const { server, url } = await startServer(async (req, res) => {
+      for await (const _chunk of req) void _chunk;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"jsonrpc":"2.0","id":"response","result":{}}');
+    });
+    servers.push(server);
+
+    const capturingFetch = wrapFetchWithCapture(fetch);
+    const request = new Request(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'request',
+        method: 'SendMessage',
+        params: { message: { parts: [{ data: { skill: 'list_creatives', input: {} } }] } },
+      }),
+    });
+    const { captures } = await withRawResponseCapture(() => capturingFetch(request));
+
+    assert.equal(captures[0].requestJsonRpcMethod, 'SendMessage');
+    assert.equal(captures[0].requestAdcpSkill, 'list_creatives');
+  });
+
+  test('does not retain or parse Request metadata beyond the request-body cap', async () => {
+    const { server, url } = await startServer(async (req, res) => {
+      for await (const _chunk of req) void _chunk;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{}');
+    });
+    servers.push(server);
+
+    const request = new Request(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'SendMessage',
+        params: { message: { parts: [{ data: { skill: 'list_creatives', input: { pad: 'x'.repeat(512) } } }] } },
+      }),
+    });
+    const { captures } = await withRawResponseCapture(() => wrapFetchWithCapture(fetch)(request), {
+      maxBodyBytes: 64,
+    });
+
+    assert.equal(captures[0].requestJsonRpcMethod, undefined);
+    assert.equal(captures[0].requestAdcpSkill, undefined);
+  });
+
+  test('bounds metadata reads for a Request stream that never closes', async () => {
+    let upstreamCalls = 0;
+    const stream = new ReadableStream({ pull() {} });
+    const request = new Request('https://seller.example/rpc', {
+      method: 'POST',
+      body: stream,
+      duplex: 'half',
+    });
+    const startedAt = Date.now();
+    const { captures } = await withRawResponseCapture(
+      () =>
+        wrapFetchWithCapture(async () => {
+          upstreamCalls += 1;
+          return new Response('{}');
+        })(request),
+      { requestMetadataTimeoutMs: 20 }
+    );
+
+    assert.ok(Date.now() - startedAt < 500, 'metadata capture must not wait indefinitely for a streaming body');
+    assert.equal(upstreamCalls, 1);
+    assert.equal(captures[0].requestJsonRpcMethod, undefined);
+    assert.equal(captures[0].requestAdcpSkill, undefined);
+  });
+
+  test('stops a pending Request metadata read when its signal aborts', async () => {
+    const controller = new AbortController();
+    const request = new Request('https://seller.example/rpc', {
+      method: 'POST',
+      body: new ReadableStream({ pull() {} }),
+      duplex: 'half',
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(new Error('request deadline')), 20);
+    const startedAt = Date.now();
+    const { captures } = await withRawResponseCapture(
+      () => wrapFetchWithCapture(async () => new Response('{}'))(request),
+      { requestMetadataTimeoutMs: 5_000 }
+    );
+
+    assert.ok(Date.now() - startedAt < 500, 'request abort must stop metadata capture before its fallback timeout');
+    assert.equal(captures[0].requestJsonRpcMethod, undefined);
+  });
+
   test('truncates body when it exceeds maxBodyBytes', async () => {
     const big = 'A'.repeat(10_000);
     const { server, url } = await startServer((req, res) => {
@@ -132,6 +225,121 @@ describe('rawResponseCapture', () => {
     assert.equal(captures[0].bodyTruncated, true);
     assert.equal(captures[0].body.length, 512);
     assert.equal(captures[0].body, 'A'.repeat(512));
+    assert.match(captures[0].bodyCaptureError, /exceeded maxBodyBytes \(512\)/);
+  });
+
+  test('stops reading the capture clone after maxBodyBytes', async () => {
+    let pulls = 0;
+    const response = new Response(
+      new ReadableStream({
+        pull(controller) {
+          pulls += 1;
+          controller.enqueue(new TextEncoder().encode('B'.repeat(128)));
+        },
+      })
+    );
+    const capturingFetch = wrapFetchWithCapture(async () => response);
+    const { captures } = await withRawResponseCapture(() => capturingFetch('https://seller.example/rpc'), {
+      maxBodyBytes: 64,
+    });
+
+    assert.equal(captures[0].body, 'B'.repeat(64));
+    assert.equal(captures[0].bodyTruncated, true);
+    assert.ok(pulls <= 3, `capture should stop streaming promptly, observed ${pulls} pulls`);
+    await response.body.cancel();
+  });
+
+  test('response-body capture has an independent deadline when headers arrive but the body stalls', async () => {
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{'));
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+    const startedAt = Date.now();
+    const { captures } = await withRawResponseCapture(
+      () => wrapFetchWithCapture(async () => response)('https://seller.example/rpc'),
+      { responseBodyTimeoutMs: 20 }
+    );
+
+    assert.ok(Date.now() - startedAt < 500, 'capture deadline must bound a response body that never closes');
+    assert.strictEqual(captures[0].body, '{');
+    assert.strictEqual(captures[0].bodyTruncated, true);
+    assert.match(captures[0].bodyCaptureError, /timed out after 20 ms/);
+    await response.body.cancel();
+  });
+
+  test('captures a slow but valid response body within the default deadline', async () => {
+    const encoder = new TextEncoder();
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('{"ok":'));
+          setTimeout(() => {
+            controller.enqueue(encoder.encode('true}'));
+            controller.close();
+          }, 1_100);
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+    const { captures } = await withRawResponseCapture(() =>
+      wrapFetchWithCapture(async () => response)('https://seller.example/rpc')
+    );
+
+    assert.equal(captures[0].body, '{"ok":true}');
+    assert.equal(captures[0].bodyTruncated, false);
+    assert.equal(captures[0].bodyCaptureError, undefined);
+  });
+
+  test('rejects invalid response-body capture deadlines before dispatch', async () => {
+    for (const responseBodyTimeoutMs of [0, -1, Number.POSITIVE_INFINITY, 2_147_483_648]) {
+      await assert.rejects(
+        withRawResponseCapture(async () => undefined, { responseBodyTimeoutMs }),
+        /responseBodyTimeoutMs must be a finite positive number/
+      );
+    }
+  });
+
+  test('rejects invalid request-metadata capture deadlines before dispatch', async () => {
+    let dispatched = false;
+    for (const requestMetadataTimeoutMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 2_147_483_648]) {
+      await assert.rejects(
+        withRawResponseCapture(
+          async () => {
+            dispatched = true;
+          },
+          { requestMetadataTimeoutMs }
+        ),
+        /requestMetadataTimeoutMs must be a finite positive number/
+      );
+    }
+    assert.equal(dispatched, false);
+  });
+
+  test('validates maxBodyBytes before dispatch or typed-array allocation', async () => {
+    let dispatched = false;
+    for (const maxBodyBytes of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
+      await assert.rejects(
+        withRawResponseCapture(
+          async () => {
+            dispatched = true;
+          },
+          { maxBodyBytes }
+        ),
+        /maxBodyBytes must be a finite safe positive integer/
+      );
+    }
+    assert.equal(dispatched, false);
+  });
+
+  test('accepts the finite safe positive integer boundaries for maxBodyBytes', async () => {
+    const minimum = await withRawResponseCapture(async () => 'minimum', { maxBodyBytes: 1 });
+    const maximum = await withRawResponseCapture(async () => 'maximum', { maxBodyBytes: Number.MAX_SAFE_INTEGER });
+    assert.equal(minimum.result, 'minimum');
+    assert.equal(maximum.result, 'maximum');
   });
 
   test('records multiple requests in order', async () => {

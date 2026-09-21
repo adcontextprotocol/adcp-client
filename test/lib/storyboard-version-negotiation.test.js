@@ -328,6 +328,178 @@ describe('storyboard runner AdCP version negotiation', () => {
     await server.close();
   });
 
+  test('exact 3.1.1 selection reaches MCP through the official client with the 3.1 wire marker', async () => {
+    const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+    const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+    const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
+    const { ProtocolClient } = require('../../dist/lib/index.js');
+    const z = require('zod');
+
+    let captured;
+    const server = new McpServer({ name: 'exact-3-1-1', version: '1.0.0' });
+    server.registerTool(
+      'get_adcp_capabilities',
+      { inputSchema: { adcp_major_version: z.number(), adcp_version: z.string() } },
+      async args => {
+        captured = args;
+        return {
+          content: [{ type: 'text', text: '{}' }],
+          structuredContent: { status: 'completed', adcp_version: '3.1', supported_protocols: [] },
+        };
+      }
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const mcpClient = new Client({ name: 'exact-3-1-1-client', version: '1.0.0' });
+    await mcpClient.connect(clientTransport);
+    try {
+      await ProtocolClient.callTool(
+        {
+          id: 'exact-3-1-1',
+          protocol: 'mcp',
+          agent_uri: 'in-process://exact-3-1-1',
+          _inProcessMcpClient: mcpClient,
+        },
+        'get_adcp_capabilities',
+        {},
+        { adcpVersion: '3.1.1' }
+      );
+      assert.deepStrictEqual(captured, { adcp_major_version: 3, adcp_version: '3.1' });
+    } finally {
+      await mcpClient.close();
+      await server.close();
+    }
+  });
+
+  test('exact 3.1.1 selection reaches native A2A through the official 1.x client', async () => {
+    const { ProtocolClient } = require('../../dist/lib/index.js');
+    const {
+      applyNativeA2AComplianceTransportOptions,
+    } = require('../../dist/lib/testing/storyboard/native-a2a-compliance.js');
+    let rpcRequest;
+    const trustedFetchFn = async (input, init = {}) => {
+      const url = String(input);
+      if (url.includes('/.well-known/')) {
+        return new Response(
+          JSON.stringify({
+            protocolVersion: '1.0',
+            name: 'exact-3-1-1',
+            description: 'native A2A regression fixture',
+            version: '1.0.0',
+            capabilities: {},
+            defaultInputModes: ['application/json'],
+            defaultOutputModes: ['application/json'],
+            skills: [],
+            supportedInterfaces: [
+              {
+                url: 'https://seller.example/native-rpc',
+                protocolBinding: 'JSONRPC',
+                protocolVersion: '1.0',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      rpcRequest = JSON.parse(init.body);
+      return new Response(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpcRequest.id,
+          result: {
+            task: {
+              id: 'task-3-1-1',
+              contextId: 'context-3-1-1',
+              status: { state: 'TASK_STATE_COMPLETED' },
+              artifacts: [
+                {
+                  artifactId: 'result-3-1-1',
+                  parts: [
+                    {
+                      data: {
+                        status: 'completed',
+                        adcp_version: '3.1',
+                        adcp: { major_versions: [3], supported_versions: ['3.1.1'] },
+                        supported_protocols: [],
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    };
+
+    const selected = applyNativeA2AComplianceTransportOptions({
+      protocol: 'a2a',
+      adcpVersion: '3.1.1',
+      transport: { trustedFetchFn },
+    });
+    await ProtocolClient.callTool(
+      { id: 'exact-3-1-1', name: 'exact-3-1-1', protocol: 'a2a', agent_uri: 'https://seller.example' },
+      'get_adcp_capabilities',
+      {},
+      {
+        adcpVersion: '3.1.1',
+        transport: selected.transport,
+      }
+    );
+
+    assert.strictEqual(selected.transport.legacyCompat.enabled, false);
+    assert.strictEqual(rpcRequest.method, 'SendMessage');
+    assert.deepStrictEqual(rpcRequest.params.message.parts[0].data, {
+      skill: 'get_adcp_capabilities',
+      input: { adcp_major_version: 3, adcp_version: '3.1' },
+    });
+  });
+
+  test('stable 0.3 adapter regressions can explicitly retain compatibility mode', () => {
+    const {
+      applyNativeA2AComplianceTransportOptions,
+    } = require('../../dist/lib/testing/storyboard/native-a2a-compliance.js');
+    const selected = applyNativeA2AComplianceTransportOptions({
+      protocol: 'a2a',
+      transport: { legacyCompat: { enabled: true } },
+    });
+    assert.strictEqual(selected.transport.legacyCompat.enabled, true);
+  });
+
+  test('native A2A tasks normalize even when artifacts and message parts are absent', () => {
+    const { normalizeNativeA2AResult } = require('../../dist/lib/protocols/a2a-native-v1.js');
+    const normalized = normalizeNativeA2AResult({
+      id: 'task-without-artifacts',
+      contextId: 'context-without-artifacts',
+      status: { state: 2, message: { messageId: 'status-message', role: 2 } },
+    });
+
+    assert.strictEqual(normalized.result.kind, 'task');
+    assert.strictEqual(normalized.result.status.state, 'working');
+    assert.deepStrictEqual(normalized.result.status.message.parts, []);
+    assert.deepStrictEqual(normalized.result.artifacts, []);
+  });
+
+  test('native A2A messages with contextId remain messages and normalize their parts', () => {
+    const { normalizeNativeA2AResult } = require('../../dist/lib/protocols/a2a-native-v1.js');
+    const normalized = normalizeNativeA2AResult({
+      messageId: 'message-1',
+      contextId: 'context-1',
+      taskId: '',
+      role: 2,
+      parts: [{ content: { $case: 'data', value: { status: 'completed' } } }],
+    });
+
+    assert.strictEqual(normalized.result.kind, 'message');
+    assert.strictEqual(normalized.result.messageId, 'message-1');
+    assert.deepStrictEqual(normalized.result.parts[0], {
+      kind: 'data',
+      data: { status: 'completed' },
+      metadata: undefined,
+    });
+  });
+
   test('3.0 storyboards suppress exact adcp_version while preserving legacy major marker', async () => {
     const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
     const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
@@ -497,6 +669,26 @@ describe('storyboard runner AdCP version negotiation', () => {
     );
   });
 
+  test('missing unbundled cache diagnostic names bundled versions and matching external inputs', () => {
+    const { loadComplianceIndex } = require('../../dist/lib/testing/storyboard/compliance.js');
+    const missing = path.join(os.tmpdir(), 'adcp-missing-historical-3.1.1');
+    assert.throws(
+      () => loadComplianceIndex({ complianceDir: missing, version: '3.1.1' }),
+      err =>
+        /bundles compliance caches for 3\.0\.12, 3\.1\.20, 3\.2\.0/.test(err.message) &&
+        /not every historical patch/.test(err.message) &&
+        /--compliance-dir/.test(err.message) &&
+        /--schema-root/.test(err.message) &&
+        !/cache ships with @adcp\/sdk/.test(err.message)
+    );
+  });
+
+  test('loads a standalone bundled compliance version without external paths', () => {
+    const { loadComplianceIndex } = require('../../dist/lib/testing/storyboard/compliance.js');
+    const index = loadComplianceIndex({ version: '3.1.20' });
+    assert.strictEqual(index.adcp_version, '3.1.20');
+  });
+
   test('hosted stable-line alias can resolve prerelease-backed compliance cache per call', () => {
     const {
       CapabilityResolutionError,
@@ -582,6 +774,42 @@ describe('storyboard runner AdCP version negotiation', () => {
       assert.strictEqual(installedValidator({ sentinel: 'external' }), false);
     } finally {
       _resetValidationLoader('3.0.12');
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('exact 3.1.1 selection requires and uses an explicit matching external cache and schema bundle', () => {
+    const {
+      getExternalSchemaRootForCompliance,
+      loadComplianceIndex,
+    } = require('../../dist/lib/testing/storyboard/index.js');
+    const { withExternalSchemaRoot } = require('../../dist/lib/testing/index.js');
+    const { getValidator, _resetValidationLoader } = require('../../dist/lib/validation/schema-loader.js');
+
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-exact-3-1-1-external-'));
+    const complianceDir = path.join(tempRoot, 'adcp-3.1.1', 'compliance');
+    const schemaRoot = path.join(tempRoot, 'adcp-3.1.1', 'schemas');
+    try {
+      writeComplianceIndex(complianceDir, '3.1.1');
+      writeSchemaIndex(schemaRoot, '3.1.1');
+      writeGetProductsRequestSchema(schemaRoot, '3.1.1', 'exact-3.1.1-external');
+
+      const index = loadComplianceIndex({ version: '3.1.1', complianceDir, schemaRoot });
+      assert.strictEqual(index.adcp_version, '3.1.1');
+      const resolvedRoot = getExternalSchemaRootForCompliance(
+        { version: '3.1.1', complianceDir, schemaRoot },
+        index.adcp_version
+      );
+      assert.strictEqual(resolvedRoot, schemaRoot);
+
+      withExternalSchemaRoot('3.1.1', resolvedRoot, () => {
+        const validator = getValidator('get_products', 'request', '3.1.1');
+        assert.ok(validator);
+        assert.strictEqual(validator({ sentinel: 'exact-3.1.1-external' }), true);
+        assert.strictEqual(validator({ sentinel: 'installed-sdk-default' }), false);
+      });
+    } finally {
+      _resetValidationLoader('3.1.1');
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
   });

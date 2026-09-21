@@ -9,7 +9,7 @@ We'll build a **signals agent** that serves audience segments via the `get_signa
 ## Prerequisites
 
 - Node.js 20+
-- `@adcp/sdk` installed from the AdCP 3.1 line while validating AdCP 3.1 (`npm install @adcp/sdk@adcp-3.1`)
+- `@adcp/sdk` installed from the maintained AdCP 3.1 line (`npm install @adcp/sdk@adcp-3.1`). Pin historical patch test data with an explicit matching external `--compliance-dir` and `--schema-root`; the package does not ship the 3.1.1 compliance cache. Do not pin an obsolete runner.
 - `@modelcontextprotocol/sdk` (installed as a dependency of `@adcp/sdk`)
 
 ## The server entry point

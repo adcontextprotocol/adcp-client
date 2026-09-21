@@ -209,6 +209,9 @@ function parseCapability(id: string, raw: unknown): PositiveVector['verifier_cap
     protocol_methods_supported_for: Array.isArray(r.protocol_methods_supported_for)
       ? (r.protocol_methods_supported_for as string[])
       : undefined,
+    protocol_methods_warn_for: Array.isArray(r.protocol_methods_warn_for)
+      ? (r.protocol_methods_warn_for as string[])
+      : undefined,
     protocol_methods_required_for: Array.isArray(r.protocol_methods_required_for)
       ? (r.protocol_methods_required_for as string[])
       : undefined,

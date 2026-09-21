@@ -1047,6 +1047,10 @@ function parseAgentOptions(args) {
   const debug = args.includes('--debug') || process.env.ADCP_DEBUG === 'true';
   const dryRun = args.includes('--dry-run');
   const allowHttp = args.includes('--allow-http');
+  // Stable 13.x keeps its public/server adapter on official A2A SDK 0.3.
+  // Compliance defaults to native 1.0; this explicit flag lets the runner
+  // grade maintained 0.3 agents without changing the public peer.
+  const a2aLegacyCompat = args.includes('--a2a-legacy-compat');
   // Migration escape hatch for compatibility harnesses that are testing
   // transport/version behavior against a known schema-invalid legacy seller.
   // Normal local compliance runs remain strict by default.
@@ -1189,6 +1193,7 @@ function parseAgentOptions(args) {
     debug,
     dryRun,
     allowHttp,
+    a2aLegacyCompat,
     strictResponseSchemaValidation,
     noSandbox,
     assertsSeededState,
@@ -1991,6 +1996,9 @@ RUN OPTIONS (full assessment):
   --hosted-stable-line-alias VERSION
                       Hosted badge mode: allow a stable line (e.g. 3.1)
                       to resolve against a prerelease compliance cache.
+  --a2a-legacy-compat Use the maintained official A2A 0.3 client path instead
+                      of native A2A 1.0. Required when grading the 13.x A2A
+                      server adapter or another agent advertising 0.3 only.
   --file PATH         Run an ad-hoc storyboard YAML (spec evolution)
   --test-kit PATH     Load test-kit YAML for either run or step, overriding any
                       cache-declared kit. If an ancestor index.json declares
@@ -2866,6 +2874,7 @@ async function handleStoryboardRun(args) {
     ...(opts.assertsSeededState && { assertsSeededState: true }),
     ...(mergedRunHeaders && { headers: mergedRunHeaders }),
     ...(opts.loadedTestKit !== undefined && { test_kit: opts.loadedTestKit }),
+    ...(opts.a2aLegacyCompat && { transport: { legacyCompat: { enabled: true } } }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -3703,6 +3712,7 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
       !opts.strictResponseSchemaValidation ||
       opts.noSandbox ||
       opts.assertsSeededState ||
+      opts.a2aLegacyCompat ||
       opts.loadedTestKit !== undefined
         ? {
             runStoryboardOptions: {
@@ -3712,6 +3722,7 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
               ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
               ...(opts.assertsSeededState && { assertsSeededState: true }),
               ...(opts.loadedTestKit !== undefined && { test_kit: opts.loadedTestKit }),
+              ...(opts.a2aLegacyCompat && { transport: { legacyCompat: { enabled: true } } }),
             },
           }
         : {}),
@@ -4146,6 +4157,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
     ...(opts.loadedTestKit !== undefined && { test_kit: opts.loadedTestKit }),
+    ...(opts.a2aLegacyCompat && { transport: { legacyCompat: { enabled: true } } }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -4427,6 +4439,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
     ...(opts.loadedTestKit !== undefined && { test_kit: opts.loadedTestKit }),
+    ...(opts.a2aLegacyCompat && { transport: { legacyCompat: { enabled: true } } }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -4638,6 +4651,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     ...(opts.schemaRoot && { schemaRoot: opts.schemaRoot }),
     ...(!opts.strictResponseSchemaValidation && { strictResponseSchemaValidation: false }),
     ...(opts.hostedStableLineAlias && { hostedStableLineAlias: opts.hostedStableLineAlias }),
+    ...(opts.a2aLegacyCompat && { transport: { legacyCompat: { enabled: true } } }),
   };
 
   if (!opts.jsonOutput) {
@@ -4652,6 +4666,9 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
             : 'bearer';
     console.log(`\nRunning storyboard assessment against ${agentUrl}`);
     console.log(`   Protocol: ${protocol.toUpperCase()}`);
+    if (protocol === 'a2a' && opts.a2aLegacyCompat) {
+      console.log('   A2A mode: official 0.3 compatibility (--a2a-legacy-compat)');
+    }
     if (storyboards) console.log(`   Storyboards: ${storyboards.join(', ')}`);
     console.log(`   Timeout: ${timeoutMs / 1000}s`);
     console.log(`   Auth: ${authLabel}`);
@@ -4865,6 +4882,7 @@ async function handleStoryboardStepCmd(args) {
     ...(schemaRoot && { schemaRoot }),
     ...(opts.loadedTestKit !== undefined && { test_kit: opts.loadedTestKit }),
     ...(!strictResponseSchemaValidation && { strictResponseSchemaValidation: false }),
+    ...(opts.a2aLegacyCompat && { transport: { legacyCompat: { enabled: true } } }),
     ...buildResolvedAuthOption({
       resolvedAuth,
       resolvedAuthScheme,

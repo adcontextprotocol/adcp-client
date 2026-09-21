@@ -90,6 +90,8 @@ import type {
 } from '../types/core.generated';
 import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 import { A2AClient as A2AClientImpl } from '@a2a-js/sdk/client';
+import type { AgentCard as NativeA2AAgentCard, AgentInterface as NativeA2AAgentInterface } from '@a2a-js/sdk-v1';
+import type { Client as NativeA2AClient } from '@a2a-js/sdk-v1/client';
 // A2A SDK client used untyped — wire shapes are validated at runtime, matching
 // the prior CommonJS `require('@a2a-js/sdk/client')` behaviour.
 const A2AClient: any = A2AClientImpl;
@@ -100,6 +102,7 @@ import { withTaskDeadline } from './task-deadline';
 import { createMCPRequestHeaders } from '../auth';
 import { isAbortOrTimeoutError } from '../protocols/abort';
 import { normalizeTransportOptions } from '../protocols';
+import { createA2AClientFromCardUrl } from '../protocols/a2a';
 import {
   AuthenticationRequiredError,
   ConfigurationError,
@@ -110,6 +113,7 @@ import {
   is401Error,
 } from '../errors';
 import { createAgentTransportFetch, isLikelyPrivateUrl } from '../net';
+import { isCredentialHeaderName } from '../net/credential-headers';
 import {
   discoverAuthorizationRequirements,
   NeedsAuthorizationError,
@@ -1867,6 +1871,8 @@ export class SingleAgentClient {
       createAgentTransportFetch(agentUri, {
         trustedFetchFn: transport?.trustedFetchFn,
         allowPrivateIp: transport?.allowPrivateIp,
+        originBoundHeaders: Object.keys(this.normalizedAgent.headers ?? {}),
+        crossOriginCredentialPolicy: transport?.legacyCompat?.enabled === false ? 'refuse' : 'strip',
       })
     );
 
@@ -1876,14 +1882,14 @@ export class SingleAgentClient {
     let got401 = false;
 
     const fetchImpl = async (url: string | URL | Request, requestInit?: RequestInit) => {
-      const headers: Record<string, string> = {
-        ...(requestInit?.headers as Record<string, string>),
-        ...this.normalizedAgent.headers,
-        ...(authToken && {
-          Authorization: `Bearer ${authToken}`,
-          'x-adcp-auth': authToken,
-        }),
-      };
+      const headers = buildA2ADiscoveryHeaders(requestInit?.headers, this.normalizedAgent.headers, authToken);
+      assertNativeA2ADiscoveryCredentialOrigin(
+        agentUri,
+        url,
+        transport?.legacyCompat?.enabled,
+        headers,
+        this.normalizedAgent.headers
+      );
 
       const response = await withAbortSignal<Response>(
         [readOptions?.signal, requestInit?.signal],
@@ -1906,7 +1912,9 @@ export class SingleAgentClient {
       let lastError: Error = new Error(`A2A agent card not found at ${cardUrls.join(', ')}`);
       for (const cardUrl of cardUrls) {
         try {
-          client = await withResponseSizeLimit(maxResponseBytes, () => A2AClient.fromCardUrl(cardUrl, { fetchImpl }));
+          client = await withResponseSizeLimit(maxResponseBytes, () =>
+            createA2AClientFromCardUrl(cardUrl, fetchImpl, transport?.legacyCompat)
+          );
           break;
         } catch (err: unknown) {
           lastError = err as Error;
@@ -1916,12 +1924,31 @@ export class SingleAgentClient {
       if (!client) {
         throw lastError;
       }
-      const agentCard = await withResponseSizeLimit(maxResponseBytes, async () =>
-        client.agentCardPromise ? client.agentCardPromise : client.agentCard
-      );
+      const agentCard = await withResponseSizeLimit(maxResponseBytes, async () => {
+        if (transport?.legacyCompat?.enabled === false) {
+          return (client as NativeA2AClient).getAgentCard();
+        }
+        const compatibleClient = client as unknown as {
+          getAgentCard?: () => Promise<{ url?: string }>;
+          agentCardPromise?: Promise<{ url?: string }>;
+          agentCard?: { url?: string };
+        };
+        return typeof compatibleClient.getAgentCard === 'function'
+          ? compatibleClient.getAgentCard()
+          : (compatibleClient.agentCardPromise ?? compatibleClient.agentCard);
+      });
 
-      // Use the canonical URL from the agent card, falling back to computed base URL
-      if (agentCard?.url) {
+      // Native v1 cards declare ordered transport endpoints in
+      // supportedInterfaces. Mirror the official ClientFactory's per-binding
+      // selection for the only transport this path installs (JSONRPC), so
+      // canonical identity uses the same endpoint the SDK dispatches to.
+      if (transport?.legacyCompat?.enabled === false) {
+        const nativeJsonRpc = selectNativeJsonRpcInterface(agentCard as NativeA2AAgentCard);
+        if (nativeJsonRpc) return nativeJsonRpc.url;
+      }
+
+      // Preserve the stable 0.3 card.url behavior.
+      if (agentCard && 'url' in agentCard && typeof agentCard.url === 'string' && agentCard.url.length > 0) {
         return agentCard.url;
       }
 
@@ -5703,7 +5730,7 @@ export class SingleAgentClient {
    * Get the fully resolved agent configuration
    *
    * This async method ensures the agent config has the canonical URL resolved:
-   * - For A2A: Fetches the agent card and uses its 'url' field
+   * - For A2A: Fetches the agent card and uses its selected native interface or legacy `url`
    * - For MCP: Performs endpoint discovery
    *
    * @returns Promise resolving to agent config with canonical URL
@@ -5775,7 +5802,10 @@ export class SingleAgentClient {
     }
 
     if (this.normalizedAgent.protocol === 'a2a') {
-      await this.ensureCanonicalUrlResolved();
+      const resolved = await this.ensureCanonicalUrlResolved();
+      // Scoped transports deliberately avoid populating the shared cache, but
+      // their card-selected endpoint is still the canonical result of this call.
+      return resolved.agent_uri;
     } else if (this.normalizedAgent.protocol === 'mcp') {
       await this.ensureEndpointDiscovered();
     }
@@ -6195,35 +6225,23 @@ export class SingleAgentClient {
       const { wrapFetchWithSizeLimit } = await import('../protocols/responseSizeLimit');
       const authToken = await ensureReadAuthToken();
       const agentHeaders = this.normalizedAgent.headers ?? {};
-      const sizeLimitedFetch = wrapFetchWithSizeLimit((input, init) =>
-        transport?.trustedFetchFn ? transport.trustedFetchFn(input, init) : fetch(input as RequestInfo | URL, init)
+      const sizeLimitedFetch = wrapFetchWithSizeLimit(
+        createAgentTransportFetch(this.normalizedAgent.agent_uri, {
+          trustedFetchFn: transport?.trustedFetchFn,
+          allowPrivateIp: transport?.allowPrivateIp,
+          originBoundHeaders: Object.keys(agentHeaders),
+          crossOriginCredentialPolicy: transport?.legacyCompat?.enabled === false ? 'refuse' : 'strip',
+        })
       );
-      const normalizeHeaders = (headers?: HeadersInit): Record<string, string> => {
-        const normalized: Record<string, string> = {};
-        if (!headers) return normalized;
-        if (headers instanceof Headers) {
-          headers.forEach((value, key) => {
-            normalized[key] = value;
-          });
-        } else if (Array.isArray(headers)) {
-          for (const [key, value] of headers) {
-            normalized[key] = value;
-          }
-        } else {
-          Object.assign(normalized, headers);
-        }
-        return normalized;
-      };
-      const buildHeaders = (requestInit?: RequestInit): Record<string, string> => ({
-        ...normalizeHeaders(requestInit?.headers),
-        ...agentHeaders,
-        ...(authToken && {
-          Authorization: `Bearer ${authToken}`,
-          'x-adcp-auth': authToken,
-        }),
-      });
       const fetchImpl = async (url: string | URL | Request, requestInit?: RequestInit) => {
-        const headers = buildHeaders(requestInit);
+        const headers = buildA2ADiscoveryHeaders(requestInit?.headers, agentHeaders, authToken);
+        assertNativeA2ADiscoveryCredentialOrigin(
+          this.normalizedAgent.agent_uri,
+          url,
+          transport?.legacyCompat?.enabled,
+          headers,
+          agentHeaders
+        );
         return withAbortSignal<Response>([options?.signal, requestInit?.signal], requestTimeoutMs, signal =>
           sizeLimitedFetch(url as RequestInfo | URL, { ...requestInit, headers, signal })
         );
@@ -6238,7 +6256,9 @@ export class SingleAgentClient {
           // Wrap A2A card discovery so `transport.maxResponseBytes` applies
           // to agent-card fetches and the deferred `agentCardPromise` read
           // below — both fire fetches that would otherwise bypass the cap.
-          client = await withResponseSizeLimit(maxResponseBytes, () => A2AClient.fromCardUrl(cardUrl, { fetchImpl }));
+          client = await withResponseSizeLimit(maxResponseBytes, () =>
+            createA2AClientFromCardUrl(cardUrl, fetchImpl, transport?.legacyCompat)
+          );
           break;
         } catch (err: unknown) {
           lastCardError = err as Error;
@@ -6247,9 +6267,16 @@ export class SingleAgentClient {
       if (!client) {
         throw lastCardError;
       }
-      const agentCard = await withResponseSizeLimit(maxResponseBytes, async () =>
-        client.agentCardPromise ? client.agentCardPromise : client.agentCard
-      );
+      const agentCard = await withResponseSizeLimit(maxResponseBytes, async () => {
+        const compatibleClient = client as unknown as {
+          getAgentCard?: () => Promise<any>;
+          agentCardPromise?: Promise<any>;
+          agentCard?: any;
+        };
+        return typeof compatibleClient.getAgentCard === 'function'
+          ? compatibleClient.getAgentCard()
+          : (compatibleClient.agentCardPromise ?? compatibleClient.agentCard);
+      });
 
       const tools = agentCard?.skills
         ? agentCard.skills.map(
@@ -6959,6 +6986,63 @@ export class SingleAgentClient {
 
     return schemaMap[taskType] || null;
   }
+}
+
+function selectNativeJsonRpcInterface(card: NativeA2AAgentCard): NativeA2AAgentInterface | undefined {
+  let selected: NativeA2AAgentInterface | undefined;
+  for (const agentInterface of card.supportedInterfaces ?? []) {
+    if (agentInterface.protocolBinding.toUpperCase() !== 'JSONRPC') continue;
+    // ClientFactory starts with the first interface for a binding and replaces
+    // it for every native 1.0 candidate, so the last matching 1.0 interface
+    // wins when a card lists more than one.
+    if (!selected || agentInterface.protocolVersion === '1.0') selected = agentInterface;
+  }
+  return selected;
+}
+
+function buildA2ADiscoveryHeaders(
+  requestHeaders: HeadersInit | undefined,
+  agentHeaders: Record<string, string> | undefined,
+  authToken: string | undefined
+): Headers {
+  const headers = new Headers(requestHeaders);
+  for (const [name, value] of Object.entries(agentHeaders ?? {})) {
+    headers.set(name, value);
+  }
+  if (authToken) {
+    headers.set('authorization', `Bearer ${authToken}`);
+    headers.set('x-adcp-auth', authToken);
+  }
+  return headers;
+}
+
+function assertNativeA2ADiscoveryCredentialOrigin(
+  agentUrl: string,
+  requestUrl: string | URL | Request,
+  legacyCompatEnabled: boolean | undefined,
+  headers: Headers,
+  configuredHeaders: Record<string, string> | undefined
+): void {
+  if (legacyCompatEnabled !== false) return;
+  const targetUrl = requestUrl instanceof Request ? requestUrl.url : requestUrl.toString();
+  if (new URL(targetUrl).origin === new URL(agentUrl).origin) return;
+  // Every caller-configured header is origin-bound. Header-name heuristics
+  // remain useful for SDK/injected credentials, but cannot classify unknown
+  // deployment-specific secrets such as X-Session.
+  const configuredHeaderNames = new Set(Object.keys(configuredHeaders ?? {}).map(name => name.toLowerCase()));
+  const credentialHeaders: string[] = [];
+  headers.forEach((_value, name) => {
+    if (configuredHeaderNames.has(name.toLowerCase()) || isCredentialHeaderName(name)) credentialHeaders.push(name);
+  });
+  if (credentialHeaders.length === 0) return;
+  const targetOrigin = new URL(targetUrl).origin;
+  throw new Error(
+    `A2A native discovery refused credentialed cross-origin dispatch to ${targetOrigin}; ` +
+      `credential headers: ${credentialHeaders
+        .map(name => name.toLowerCase())
+        .sort()
+        .join(', ')}`
+  );
 }
 
 let hasWarnedAboutUnverifiedWebhookReceive = false;

@@ -13,6 +13,7 @@ import type { TestOptions, TestResult, AgentProfile, TestStepResult } from '../t
 import { collectDetachedAssertionFailures, mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
 import { applyAdcpVersionRunOptions, runStoryboard } from '../storyboard/runner';
 import { validateTestKit } from '../storyboard/test-kit';
+import { applyNativeA2AComplianceTransportOptions } from '../storyboard/native-a2a-compliance';
 import { checkAccountDiscoveryGate } from './spec-conformance';
 
 // Side-effect import: registers default assertion stubs for invariant ids that
@@ -1195,6 +1196,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       sandbox: testOptions.sandbox !== false,
       test_session_id: testOptions.test_session_id || `comply-${Date.now()}`,
     });
+    effectiveOptions = applyNativeA2AComplianceTransportOptions(effectiveOptions);
 
     // Check for abort before starting
     signal?.throwIfAborted();
@@ -2010,6 +2012,7 @@ function selectionForDetailedSkip(
       };
     case 'not_in_only_vectors':
     case 'mcp_mode_flattens_url_edges':
+    case 'transport_flattens_url_edges':
     case 'capability_profile_mismatch':
     case 'transport_ungradable':
       return {

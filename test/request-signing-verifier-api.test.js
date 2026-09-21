@@ -11,6 +11,8 @@ const {
   InMemoryRevocationStore,
   StaticJwksResolver,
 } = require('../dist/lib/signing');
+const { A2A_V1_TO_LEGACY_JSONRPC, protocolMethodListIncludes } = require('../dist/lib/signing/protocol-methods.js');
+const { v1MethodToLegacyJsonRpc } = require('@a2a-js/sdk-v1/compat/v0_3');
 
 const keysPath = path.join(
   __dirname,
@@ -37,6 +39,49 @@ const baseStores = () => ({
 });
 
 describe('verifier API v3: operation optional + VerifyResult discriminated union', () => {
+  it('keeps every enforceable A2A 1.0 method alias aligned with the official SDK mapping', () => {
+    for (const [v1Method, legacyMethod] of Object.entries(A2A_V1_TO_LEGACY_JSONRPC)) {
+      assert.strictEqual(v1MethodToLegacyJsonRpc(v1Method), legacyMethod);
+      assert.strictEqual(protocolMethodListIncludes([legacyMethod], v1Method), true);
+      assert.strictEqual(protocolMethodListIncludes([v1Method], legacyMethod), true);
+    }
+  });
+
+  for (const [wireMethod, declaredMethod] of [
+    ['SendMessage', 'message/send'],
+    ['GetTask', 'tasks/get'],
+    ['CreateTaskPushNotificationConfig', 'tasks/pushNotificationConfig/set'],
+  ]) {
+    it(`enforces legacy ${declaredMethod} policy for official ${wireMethod}`, async () => {
+      await assert.rejects(
+        () =>
+          verifyRequestSignature(
+            {
+              method: 'POST',
+              url: 'https://seller.example.com/a2a',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ jsonrpc: '2.0', method: wireMethod, params: {}, id: 1 }),
+            },
+            {
+              ...baseStores(),
+              capability: {
+                supported: true,
+                covers_content_digest: 'either',
+                required_for: [],
+                protocol_methods_required_for: [declaredMethod],
+              },
+              now: () => 1_776_520_800,
+            }
+          ),
+        error =>
+          error instanceof RequestSignatureError &&
+          error.code === 'request_signature_required' &&
+          error.failedStep === 0 &&
+          error.message.includes(declaredMethod)
+      );
+    });
+  }
+
   it('unsigned request with no operation returns { status: "unsigned" }', async () => {
     const result = await verifyRequestSignature(
       {

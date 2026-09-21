@@ -24,7 +24,7 @@
 
 import { AgentClient } from '../../core/AgentClient';
 import { randomUUID } from 'node:crypto';
-import { withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
+import { getCapturesFromError, withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
 import type { ConformanceFixtures, ConformanceToolName } from '../types';
 import { compareProbes, type ProbeComparisonResult } from './uniformErrorComparator';
 
@@ -192,6 +192,14 @@ export async function runUniformErrorInvariant(
     // the SDK threw an AuthenticationRequiredError). Report the root
     // cause so the operator knows why the invariant skipped.
     const reason = probeA.error ?? probeB.error ?? 'no capture observed';
+    if (probeA.captureIncomplete || probeB.captureIncomplete) {
+      return {
+        tool,
+        mode,
+        verdict: 'fail',
+        differences: [`raw response capture incomplete: ${reason}`],
+      };
+    }
     return {
       tool,
       mode,
@@ -218,6 +226,8 @@ interface ProbeOutcome {
   capture?: RawHttpCapture;
   /** Error message when executeTask threw before producing a capture. */
   error?: string;
+  /** Incomplete wire bytes are a validation failure, never a skipped invariant. */
+  captureIncomplete?: boolean;
 }
 
 /**
@@ -241,8 +251,25 @@ async function capturedProbe(
     if (!toolCallCapture) {
       return { error: 'captured only non-POST traffic' };
     }
+    if (toolCallCapture.bodyTruncated) {
+      return {
+        error:
+          toolCallCapture.bodyCaptureError ??
+          'Raw response capture was incomplete; uniform-error validation cannot compare partial bytes',
+        captureIncomplete: true,
+      };
+    }
     return { capture: toolCallCapture };
   } catch (err) {
+    const toolCallCapture = lastPostCapture(getCapturesFromError(err) ?? []);
+    if (toolCallCapture?.bodyTruncated) {
+      return {
+        error:
+          toolCallCapture.bodyCaptureError ??
+          'Raw response capture was incomplete; uniform-error validation cannot compare partial bytes',
+        captureIncomplete: true,
+      };
+    }
     return { error: err instanceof Error ? err.message : String(err) };
   }
 }

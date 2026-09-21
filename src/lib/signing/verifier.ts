@@ -14,6 +14,7 @@ import type { JwksResolver } from './jwks';
 import type { ReplayStore } from './replay';
 import type { RevocationStore } from './revocation';
 import { containsWebhookAuthentication, WEBHOOK_AUTH_TRAVERSAL_DEPTH } from './webhook-auth-detection';
+import { canonicalA2AProtocolMethod, protocolMethodListIncludes } from './protocol-methods';
 import {
   ALLOWED_ALGS,
   CLOCK_SKEW_TOLERANCE_SECONDS,
@@ -72,12 +73,16 @@ export async function verifyRequestSignature(
       );
     }
     const protocolMethods = jsonRpcProtocolMethods(request.body);
-    const requiredProtocolMethod = protocolMethods.find(method => protocolMethodsRequiredFor.includes(method));
+    const requiredProtocolMethod = protocolMethods.find(wireMethod =>
+      protocolMethodListIncludes(protocolMethodsRequiredFor, wireMethod)
+    );
     if (requiredProtocolMethod) {
+      const declaredMethod = canonicalA2AProtocolMethod(requiredProtocolMethod);
       throw new RequestSignatureError(
         'request_signature_required',
         0,
-        `Protocol method "${requiredProtocolMethod}" requires a signed request`
+        `Protocol method "${declaredMethod}" requires a signed request` +
+          (requiredProtocolMethod === declaredMethod ? '' : ` (wire method "${requiredProtocolMethod}")`)
       );
     }
     // Payload-driven elevation: any request carrying webhook receiver

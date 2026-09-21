@@ -45,7 +45,15 @@ interface A2ACallContext {
   requestTimeoutMs?: number;
   fetchFn?: typeof fetch;
   allowPrivateIp?: boolean;
+  legacyCompat?: A2ALegacyCompatOptions;
 }
+
+/** Controls whether A2A v0.3 compatibility is accepted. */
+export interface A2ALegacyCompatOptions {
+  enabled: boolean;
+}
+
+const DEFAULT_A2A_LEGACY_COMPAT: Readonly<A2ALegacyCompatOptions> = Object.freeze({ enabled: true });
 
 const callContextStorage = new AsyncLocalStorage<A2ACallContext>();
 
@@ -170,9 +178,9 @@ const CANCEL_TIMEOUT_MS = 5000;
 /**
  * Fire-and-forget A2A tasks/cancel for an in-flight task (A2A 0.3.0 §7.4).
  *
- * Sends a raw JSON-RPC 2.0 POST directly to the agent endpoint with the same
- * auth header shape as `callA2AToolImpl` (Bearer + x-adcp-auth). Does NOT
- * enter `callContextStorage` — debug-log capture and 401-cache-eviction are
+ * Uses the official A2A SDK cancel method with the same auth header shape as
+ * `callA2AToolImpl` (Bearer + x-adcp-auth). Does NOT enter
+ * `callContextStorage` — debug-log capture and 401-cache-eviction are
  * intentionally skipped for best-effort cancellation.
  *
  * **Auth-code OAuth gap:** `authToken` is resolved by `getAuthToken(agent)`,
@@ -204,7 +212,8 @@ export async function cancelA2ATask(
   agent: AgentConfig,
   taskId: string,
   fetchFn?: typeof fetch,
-  allowPrivateIp?: boolean
+  allowPrivateIp?: boolean,
+  legacyCompat: A2ALegacyCompatOptions = DEFAULT_A2A_LEGACY_COMPAT
 ): Promise<void> {
   // Defense-in-depth (ad-tech-protocol-expert review of #1640): the cancel
   // POST is JSON-RPC at the bare A2A endpoint. Calling this on an MCP agent
@@ -216,7 +225,13 @@ export async function cancelA2ATask(
     return;
   }
   const agentUrl = agent.agent_uri;
-  const transportFetch = createAgentTransportFetch(agentUrl, { trustedFetchFn: fetchFn, allowPrivateIp });
+  const configuredHeaders = agent.headers ?? {};
+  const transportFetch = createAgentTransportFetch(agentUrl, {
+    trustedFetchFn: fetchFn,
+    allowPrivateIp,
+    originBoundHeaders: Object.keys(configuredHeaders),
+    crossOriginCredentialPolicy: legacyCompat.enabled === false ? 'refuse' : 'strip',
+  });
   const authToken = agent.auth_token;
 
   // adcp-client#1617 Phase 2: sign the cancel POST when the agent has a
@@ -246,9 +261,24 @@ export async function cancelA2ATask(
   const timeoutSignal = AbortSignal.timeout(CANCEL_TIMEOUT_MS);
   const fetchImpl: typeof fetch = (input, init = {}) => {
     const headers = new Headers(init.headers);
-    if (authToken) {
+    const requestUrl = new URL(input instanceof Request ? input.url : input.toString());
+    const nativeCrossOrigin = legacyCompat.enabled === false && requestUrl.origin !== new URL(agentUrl).origin;
+    if (nativeCrossOrigin && (authToken || agent.request_signing)) {
+      const credentialHeaderNames = [
+        ...(authToken ? ['authorization', 'x-adcp-auth'] : []),
+        ...(agent.request_signing ? ['content-digest', 'signature', 'signature-input'] : []),
+      ];
+      throw new Error(
+        `A2A native cancel refused credentialed cross-origin dispatch to ${requestUrl.origin}; ` +
+          `credential headers: ${credentialHeaderNames.join(', ')}`
+      );
+    }
+    if (authToken && !nativeCrossOrigin) {
       headers.set('authorization', `Bearer ${authToken}`);
       headers.set('x-adcp-auth', authToken);
+    }
+    if (!nativeCrossOrigin) {
+      for (const [name, value] of Object.entries(configuredHeaders)) headers.set(name, value);
     }
     const signal = init.signal ? AbortSignal.any([init.signal, timeoutSignal]) : timeoutSignal;
     return requestFetch(input, { ...init, headers, signal }) as Promise<Response>;
@@ -258,14 +288,36 @@ export async function cancelA2ATask(
   let lastError: unknown;
   for (const cardUrl of buildCardUrls(agentUrl)) {
     try {
-      client = await A2AClient.fromCardUrl(cardUrl, { fetchImpl });
+      client = await createA2AClientFromCardUrl(cardUrl, fetchImpl, legacyCompat);
       break;
     } catch (err) {
       lastError = err;
     }
   }
   if (!client) throw lastError instanceof Error ? lastError : new Error('A2A agent card discovery failed');
-  await client.cancelTask({ id: taskId });
+  if (legacyCompat.enabled === false) {
+    const { createNativeCancelTaskRequest } = await import('./a2a-native-v1');
+    await client.cancelTask(createNativeCancelTaskRequest(taskId));
+  } else {
+    await client.cancelTask({ id: taskId });
+  }
+}
+
+/**
+ * Build an official A2A client from a card URL. Ordinary calls retain the
+ * stable SDK's v0.3 client; native-only compliance calls use the separately
+ * pinned official 1.0 client.
+ */
+export async function createA2AClientFromCardUrl(
+  cardUrl: string,
+  fetchImpl: typeof fetch,
+  legacyCompat: A2ALegacyCompatOptions = DEFAULT_A2A_LEGACY_COMPAT
+): Promise<any> {
+  if (legacyCompat.enabled === false) {
+    const { createNativeA2AClientFromCardUrl } = await import('./a2a-native-v1');
+    return createNativeA2AClientFromCardUrl(cardUrl, fetchImpl);
+  }
+  return A2AClient.fromCardUrl(cardUrl, { fetchImpl });
 }
 
 async function getOrCreateA2AClient(
@@ -340,9 +392,20 @@ function buildFetchImpl(authToken: string | undefined, agentUrl: string) {
   // requires a different cache entry, built on a separate call that enters ALS
   // with a different context.
   const signingContext = signingContextStorage.getStore();
+  const creationContext = callContextStorage.getStore();
+  const originBoundCustomHeaderNames = Object.keys(creationContext?.customHeaders ?? {});
   const pinnedFetch = createAgentTransportFetch(agentUrl, {
-    trustedFetchFn: callContextStorage.getStore()?.fetchFn,
-    allowPrivateIp: callContextStorage.getStore()?.allowPrivateIp,
+    trustedFetchFn: creationContext?.fetchFn,
+    allowPrivateIp: creationContext?.allowPrivateIp,
+    originBoundHeaders: originBoundCustomHeaderNames,
+    crossOriginCredentialPolicy: creationContext?.legacyCompat?.enabled === false ? 'refuse' : 'strip',
+    onOriginBoundHeadersStripped: (headerNames, target) => {
+      callContextStorage.getStore()?.debugLogs.push({
+        type: 'warning',
+        message: `A2A: Stripped configured origin-bound headers (${headerNames.join(', ')}) before cross-origin dispatch to ${target.origin}`,
+        timestamp: new Date().toISOString(),
+      });
+    },
   });
 
   // Innermost wrapper: enforce response body size cap from the active
@@ -377,6 +440,27 @@ function buildFetchImpl(authToken: string | undefined, agentUrl: string) {
     // The agent card endpoint is external/untrusted — don't leak trace IDs to it.
     const urlString = typeof url === 'string' ? url : url.toString();
     const isDiscoveryRequest = isAgentCardPath(urlString);
+    const nativeCrossOrigin =
+      context?.legacyCompat?.enabled === false && new URL(urlString).origin !== new URL(agentUrl).origin;
+    if (nativeCrossOrigin && (authToken || signingContext)) {
+      const targetOrigin = new URL(urlString).origin;
+      const credentialHeaderNames = [
+        ...(authToken ? ['authorization', 'x-adcp-auth'] : []),
+        ...(signingContext ? ['content-digest', 'signature', 'signature-input'] : []),
+      ];
+      throw new Error(
+        `A2A native dispatch refused credentialed cross-origin endpoint ${targetOrigin}; ` +
+          `credential headers: ${credentialHeaderNames.join(', ')}`
+      );
+    }
+    const customHeaders = nativeCrossOrigin ? undefined : context?.customHeaders;
+    if (nativeCrossOrigin && Object.keys(context?.customHeaders ?? {}).length > 0) {
+      context?.debugLogs.push({
+        type: 'warning',
+        message: `A2A: Stripped configured origin-bound headers before cross-origin dispatch to ${new URL(urlString).origin}`,
+        timestamp: new Date().toISOString(),
+      });
+    }
     const traceHeaders = isDiscoveryRequest ? {} : injectTraceHeaders();
     const requestTimeoutMs = isDiscoveryRequest
       ? resolveRequestTimeoutMs(context?.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS)
@@ -386,11 +470,12 @@ function buildFetchImpl(authToken: string | undefined, agentUrl: string) {
     const headers: Record<string, string> = {
       ...existingHeaders,
       ...traceHeaders,
-      ...context?.customHeaders,
-      ...(authToken && {
-        Authorization: `Bearer ${authToken}`,
-        'x-adcp-auth': authToken,
-      }),
+      ...customHeaders,
+      ...(authToken &&
+        !nativeCrossOrigin && {
+          Authorization: `Bearer ${authToken}`,
+          'x-adcp-auth': authToken,
+        }),
     };
 
     context?.debugLogs.push({
@@ -487,7 +572,8 @@ export async function callA2ATool(
   signal?: AbortSignal,
   requestTimeoutMs?: number,
   fetchFn?: typeof fetch,
-  allowPrivateIp?: boolean
+  allowPrivateIp?: boolean,
+  legacyCompat?: A2ALegacyCompatOptions
 ): Promise<unknown> {
   return withSpan(
     'adcp.a2a.call_tool',
@@ -504,6 +590,7 @@ export async function callA2ATool(
         requestTimeoutMs,
         fetchFn,
         allowPrivateIp,
+        legacyCompat,
       };
       return signingContextStorage.run(signingContext, () =>
         callContextStorage.run(context, () =>
@@ -534,6 +621,19 @@ async function callA2AToolImpl(
   session: A2ASessionIds | undefined
 ): Promise<unknown> {
   try {
+    if (context.legacyCompat?.enabled === false) {
+      const { callNativeA2ATool } = await import('./a2a-native-v1');
+      return await callNativeA2ATool({
+        cardUrls: buildCardUrls(agentUrl),
+        fetchImpl: buildFetchImpl(authToken, agentUrl),
+        toolName,
+        parameters,
+        pushNotificationConfig,
+        contextId: session?.contextId,
+        taskId: session?.taskId,
+        signal: context.signal,
+      });
+    }
     const client = await getOrCreateA2AClient(
       agentUrl,
       authToken,

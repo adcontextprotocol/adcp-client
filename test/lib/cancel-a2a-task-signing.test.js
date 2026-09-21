@@ -24,6 +24,7 @@ const { readFileSync } = require('node:fs');
 const path = require('node:path');
 
 const { cancelA2ATask } = require('../../dist/lib/protocols/a2a.js');
+const { createNativeCancelTaskRequest } = require('../../dist/lib/protocols/a2a-native-v1.js');
 const { verifyRequestSignature } = require('../../dist/lib/signing/verifier.js');
 const {
   StaticJwksResolver,
@@ -151,6 +152,273 @@ function startStrictSigningSeller() {
 }
 
 describe('cancelA2ATask: Phase 2 signing (#1617)', () => {
+  test('native cancellation refuses credentialed cross-origin card endpoints before POST', async () => {
+    const rpcUrl = 'https://rpc.seller.example/a2a';
+    let rpcHeaders;
+    const fetchFn = async (input, init = {}) => {
+      const url = String(input);
+      if (url.includes('/.well-known/')) {
+        return new Response(
+          JSON.stringify({
+            protocolVersion: '1.0',
+            name: 'Cross-origin cancellation fixture',
+            description: 'Credential isolation regression',
+            version: '1.0.0',
+            capabilities: {},
+            defaultInputModes: ['application/json'],
+            defaultOutputModes: ['application/json'],
+            skills: [],
+            supportedInterfaces: [{ url: rpcUrl, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      rpcHeaders = new Headers(init.headers);
+      const body = JSON.parse(init.body);
+      return new Response(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: body.id,
+          result: {
+            task: {
+              id: 'task-cross-origin',
+              contextId: 'context-cross-origin',
+              status: { state: 'TASK_STATE_CANCELED' },
+              artifacts: [],
+            },
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    };
+
+    await assert.rejects(
+      cancelA2ATask(
+        {
+          id: 'cross-origin',
+          name: 'Cross-origin',
+          agent_uri: 'https://seller.example/a2a',
+          protocol: 'a2a',
+          auth_token: 'must-not-cross-origin',
+        },
+        'task-cross-origin',
+        fetchFn,
+        undefined,
+        { enabled: false }
+      ),
+      /refused credentialed cross-origin dispatch/
+    );
+
+    assert.strictEqual(rpcHeaders, undefined, 'cross-origin RPC endpoint received no request');
+  });
+
+  test('native cancellation uses the official 1.0 request shape', () => {
+    const request = createNativeCancelTaskRequest('task-native-v1');
+    assert.deepStrictEqual(request, { tenant: '', id: 'task-native-v1', metadata: undefined });
+    assert.ok(Object.prototype.hasOwnProperty.call(request, 'metadata'));
+  });
+
+  test('tasks/cancel signing requirement covers the official native CancelTask method alias', async () => {
+    await assert.rejects(
+      verifyRequestSignature(
+        {
+          method: 'POST',
+          url: 'https://seller.example/rpc',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'CancelTask', params: { id: 'task-native-v1' } }),
+        },
+        {
+          capability: {
+            supported: true,
+            covers_content_digest: 'either',
+            required_for: [],
+            protocol_methods_required_for: ['tasks/cancel'],
+          },
+          jwks: new StaticJwksResolver([]),
+          replayStore: new InMemoryReplayStore({ maxEntriesPerKeyid: 10 }),
+          revocationStore: new InMemoryRevocationStore({
+            issuer: 'https://seller.example',
+            updated: new Date(0).toISOString(),
+            next_update: new Date(60_000).toISOString(),
+            revoked_kids: [],
+            revoked_jtis: [],
+          }),
+        }
+      ),
+      error => error?.code === 'request_signature_required' && /tasks\/cancel.*CancelTask/.test(error.message)
+    );
+  });
+
+  test('native cancellation keeps X-Session same-origin and strips it from card-selected cross-origin targets', async () => {
+    for (const crossOrigin of [false, true]) {
+      const agentUrl = 'https://seller.example/a2a';
+      const rpcUrl = crossOrigin ? 'https://rpc.example/a2a' : agentUrl;
+      let receivedSession;
+      const fetchFn = async (input, init = {}) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (url.includes('/.well-known/')) {
+          return new Response(
+            JSON.stringify({
+              protocolVersion: '1.0',
+              name: 'Cancel custom-header fixture',
+              description: 'Configured header origin binding',
+              version: '1.0.0',
+              capabilities: {},
+              defaultInputModes: ['application/json'],
+              defaultOutputModes: ['application/json'],
+              skills: [],
+              supportedInterfaces: [{ url: rpcUrl, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
+            }),
+            { headers: { 'content-type': 'application/json' } }
+          );
+        }
+        receivedSession = new Headers(init.headers).get('x-session');
+        const body = JSON.parse(init.body);
+        return new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: body.id,
+            result: {
+              task: {
+                id: 'task-custom-header',
+                contextId: 'context-custom-header',
+                status: { state: 'TASK_STATE_CANCELED' },
+                artifacts: [],
+              },
+            },
+          }),
+          { headers: { 'content-type': 'application/json' } }
+        );
+      };
+
+      await cancelA2ATask(
+        {
+          id: 'custom-header-cancel',
+          name: 'Custom header cancel',
+          agent_uri: agentUrl,
+          protocol: 'a2a',
+          headers: { 'X-Session': 'cancel-origin-session' },
+        },
+        'task-custom-header',
+        fetchFn,
+        undefined,
+        { enabled: false }
+      );
+      assert.strictEqual(receivedSession, crossOrigin ? null : 'cancel-origin-session');
+    }
+  });
+
+  test('native cancellation strips X-Session from a cross-origin redirect', async () => {
+    const agentUrl = 'https://seller.example/a2a';
+    const calls = [];
+    const fetchFn = async (input, init = {}) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes('/.well-known/')) {
+        return new Response(
+          JSON.stringify({
+            protocolVersion: '1.0',
+            name: 'Cancel redirect fixture',
+            description: 'Configured header redirect origin binding',
+            version: '1.0.0',
+            capabilities: {},
+            defaultInputModes: ['application/json'],
+            defaultOutputModes: ['application/json'],
+            skills: [],
+            supportedInterfaces: [{ url: agentUrl, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
+          }),
+          { headers: { 'content-type': 'application/json' } }
+        );
+      }
+      calls.push({ url, session: new Headers(init.headers).get('x-session') });
+      if (url === agentUrl) {
+        return new Response('', { status: 307, headers: { location: 'https://rpc.example/a2a' } });
+      }
+      const body = JSON.parse(init.body);
+      return new Response(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: body.id,
+          result: {
+            task: {
+              id: 'task-redirect',
+              contextId: 'context-redirect',
+              status: { state: 'TASK_STATE_CANCELED' },
+              artifacts: [],
+            },
+          },
+        }),
+        { headers: { 'content-type': 'application/json' } }
+      );
+    };
+
+    await cancelA2ATask(
+      {
+        id: 'redirect-header-cancel',
+        name: 'Redirect custom header cancel',
+        agent_uri: agentUrl,
+        protocol: 'a2a',
+        headers: { 'X-Session': 'cancel-redirect-session' },
+      },
+      'task-redirect',
+      fetchFn,
+      undefined,
+      { enabled: false }
+    );
+    assert.deepStrictEqual(calls, [
+      { url: agentUrl, session: 'cancel-redirect-session' },
+      { url: 'https://rpc.example/a2a', session: null },
+    ]);
+  });
+
+  test('native cancellation refuses a cross-origin endpoint when request signing is configured', async () => {
+    const rpcUrl = 'https://rpc.seller.example/a2a';
+    let rpcCalls = 0;
+    const fetchFn = async input => {
+      const url = String(input);
+      if (url.includes('/.well-known/')) {
+        return new Response(
+          JSON.stringify({
+            protocolVersion: '1.0',
+            name: 'Cross-origin signed cancellation fixture',
+            description: 'Signing credential isolation regression',
+            version: '1.0.0',
+            capabilities: {},
+            defaultInputModes: ['application/json'],
+            defaultOutputModes: ['application/json'],
+            skills: [],
+            supportedInterfaces: [{ url: rpcUrl, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      rpcCalls++;
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+
+    await assert.rejects(
+      cancelA2ATask(
+        {
+          id: 'cross-origin-signed',
+          name: 'Cross-origin signed',
+          agent_uri: 'https://seller.example/a2a',
+          protocol: 'a2a',
+          request_signing: {
+            kind: 'inline',
+            alg: 'ed25519',
+            kid: edRaw.kid,
+            private_key: edPrivateJwk,
+          },
+        },
+        'task-cross-origin-signed',
+        fetchFn,
+        undefined,
+        { enabled: false }
+      ),
+      /refused credentialed cross-origin dispatch/
+    );
+    assert.strictEqual(rpcCalls, 0, 'signed cross-origin RPC endpoint received no request');
+  });
+
   test('signs the cancel POST when agent.request_signing is configured (inline ed25519)', async () => {
     const seller = await startStrictSigningSeller();
     try {

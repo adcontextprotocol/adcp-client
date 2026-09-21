@@ -63,8 +63,10 @@ function describeBody(body: unknown): string {
  * Extract the AdCP operation name from a JSON-RPC request body, if any.
  *
  * - MCP tool calls: `method === "tools/call"` → `params.name` is the op name.
- * - A2A `message/send` / `message/stream`: the op name lives on the first
+ * - A2A 0.3 `message/send` / `message/stream`: the op name lives on the first
  *   data-kind part as `data.skill`.
+ * - A2A 1.x `SendMessage` / `SendStreamingMessage`: proto-JSON DataParts omit
+ *   the legacy `kind` discriminator and carry the op at `data.skill`.
  * - All other JSON-RPC methods (`initialize`, `tools/list`, notifications)
  *   return `undefined` — those are protocol-layer housekeeping, not AdCP
  *   operations subject to request-signing policy.
@@ -90,14 +92,16 @@ export function extractAdcpOperation(body: unknown): string | undefined {
     return typeof params?.name === 'string' ? params.name : undefined;
   }
 
-  if (rpc.method === 'message/send' || rpc.method === 'message/stream') {
+  const isLegacyA2a = rpc.method === 'message/send' || rpc.method === 'message/stream';
+  const isNativeA2a = rpc.method === 'SendMessage' || rpc.method === 'SendStreamingMessage';
+  if (isLegacyA2a || isNativeA2a) {
     const params = rpc.params as { message?: { parts?: unknown } } | undefined;
     const parts = params?.message?.parts;
     if (!Array.isArray(parts)) return undefined;
     for (const part of parts) {
       if (part && typeof part === 'object') {
         const p = part as { kind?: unknown; data?: { skill?: unknown } };
-        if (p.kind === 'data' && typeof p.data?.skill === 'string') {
+        if ((isNativeA2a || p.kind === 'data') && typeof p.data?.skill === 'string') {
           return p.data.skill;
         }
       }
