@@ -6,6 +6,7 @@ const {
   PrincipalLifecycleError,
   PrincipalLifecycleTimeoutError,
   ProtocolClient,
+  TaskTimeoutError,
   syncPrincipalLifecycle,
 } = require('../../dist/lib/index.js');
 
@@ -435,6 +436,48 @@ describe('principal lifecycle', () => {
     );
     assert.equal(reads, 1);
   });
+
+  test('normalizes lifecycle-bounded read timeouts while preserving shorter task timeouts', async () => {
+    const lifecycleTimeoutClient = {
+      getPrincipal: async () => {
+        if (!lifecycleTimeoutClient.read) {
+          lifecycleTimeoutClient.read = true;
+          return completed(current('v1'));
+        }
+        throw new TaskTimeoutError('principal-read', 99);
+      },
+      syncPrincipal: async () => completed(applied('v2', 'validating')),
+      read: false,
+    };
+    await assert.rejects(
+      syncPrincipalLifecycle(
+        lifecycleTimeoutClient,
+        { reporting_destinations: [] },
+        { setupTimeoutMs: 100, pollIntervalMs: 1 }
+      ),
+      PrincipalLifecycleTimeoutError
+    );
+
+    const taskTimeoutClient = {
+      getPrincipal: async () => {
+        if (!taskTimeoutClient.read) {
+          taskTimeoutClient.read = true;
+          return completed(current('v1'));
+        }
+        throw new TaskTimeoutError('principal-read', 1);
+      },
+      syncPrincipal: async () => completed(applied('v2', 'validating')),
+      read: false,
+    };
+    await assert.rejects(
+      syncPrincipalLifecycle(
+        taskTimeoutClient,
+        { reporting_destinations: [] },
+        { setupTimeoutMs: 100, pollIntervalMs: 1, taskOptions: { timeout: 1 } }
+      ),
+      TaskTimeoutError
+    );
+  });
 });
 
 describe('principal task transport dispatch', () => {
@@ -517,6 +560,18 @@ describe('principal task transport dispatch', () => {
           buyer_agent_url: 'https://attacker.example',
         }),
         /refuses caller-supplied buyer_agent_url/
+      );
+      await assert.rejects(
+        client.executeTask('get_principal', { connection_id: 'self-asserted' }),
+        /refuses caller-supplied connection_id/
+      );
+      await assert.rejects(
+        client.client.executeTask('sync_principal', {
+          idempotency_key: 'principal-operation-0002',
+          configuration: { notification_configs: [] },
+          agent_url: 'https://attacker.example',
+        }),
+        /refuses caller-supplied agent_url/
       );
       assert.equal(dispatches, 0);
     } finally {

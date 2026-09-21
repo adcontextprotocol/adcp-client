@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { InputHandler, TaskOptions, TaskResult } from '../core/ConversationTypes';
+import { TaskTimeoutError } from '../errors';
 import type {
   GetPrincipalRequest,
   GetPrincipalResponse,
@@ -343,7 +344,20 @@ export async function syncPrincipalLifecycle(
       if (delay === remaining) throw new PrincipalLifecycleTimeoutError();
       const remainingAfterWait = deadline - Date.now();
       if (remainingAfterWait <= 0) throw new PrincipalLifecycleTimeoutError();
-      const readback = await readCurrent(client, options, remainingAfterWait);
+      const configuredTaskTimeout = options.taskOptions?.timeout;
+      const lifecycleBoundsRead =
+        configuredTaskTimeout === undefined ||
+        configuredTaskTimeout === 0 ||
+        configuredTaskTimeout >= remainingAfterWait;
+      let readback: GetPrincipalResponse['result'];
+      try {
+        readback = await readCurrent(client, options, remainingAfterWait);
+      } catch (error) {
+        if (error instanceof TaskTimeoutError && lifecycleBoundsRead) {
+          throw new PrincipalLifecycleTimeoutError();
+        }
+        throw error;
+      }
       if (readback.kind !== 'current') {
         throw new PrincipalLifecycleError('Principal configuration disappeared while destination setup was pending.');
       }

@@ -2120,6 +2120,10 @@ export class AgentClient {
         return this.getMediaBuyDelivery(params as GetMediaBuyDeliveryRequest, inputHandler, options);
       case 'get_creative_delivery':
         return this.getCreativeDelivery(params as GetCreativeDeliveryRequest, inputHandler, options);
+      case 'get_principal':
+        return this.getPrincipal(params as GetPrincipalRequest, inputHandler, options);
+      case 'sync_principal':
+        return this.syncPrincipal(params as MutatingRequestInput<SyncPrincipalRequest>, inputHandler, options);
     }
     const result = await this.client.executeTaskLegacy(taskName, params, inputHandler, {
       ...this.withSession(taskName, options),

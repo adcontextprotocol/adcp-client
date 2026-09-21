@@ -7456,6 +7456,10 @@ export class SingleAgentClient {
         return this.getMediaBuyDelivery(params as GetMediaBuyDeliveryRequest, inputHandler, options);
       case 'get_creative_delivery':
         return this.getCreativeDelivery(params as GetCreativeDeliveryRequest, inputHandler, options);
+      case 'get_principal':
+        return this.getPrincipal(params as GetPrincipalRequest, inputHandler, options);
+      case 'sync_principal':
+        return this.syncPrincipal(params as MutatingRequestInput<SyncPrincipalRequest>, inputHandler, options);
       case 'request_proposals':
         return guardNativeRequestProposalsCompletion(
           await this.executeTaskUnprojected(taskName, params, inputHandler, options)
