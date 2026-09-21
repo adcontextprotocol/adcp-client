@@ -230,6 +230,7 @@ export async function cancelA2ATask(
     trustedFetchFn: fetchFn,
     allowPrivateIp,
     originBoundHeaders: Object.keys(configuredHeaders),
+    crossOriginCredentialPolicy: legacyCompat.enabled === false ? 'refuse' : 'strip',
   });
   const authToken = agent.auth_token;
 
@@ -397,6 +398,7 @@ function buildFetchImpl(authToken: string | undefined, agentUrl: string) {
     trustedFetchFn: creationContext?.fetchFn,
     allowPrivateIp: creationContext?.allowPrivateIp,
     originBoundHeaders: originBoundCustomHeaderNames,
+    crossOriginCredentialPolicy: creationContext?.legacyCompat?.enabled === false ? 'refuse' : 'strip',
     onOriginBoundHeadersStripped: (headerNames, target) => {
       callContextStorage.getStore()?.debugLogs.push({
         type: 'warning',

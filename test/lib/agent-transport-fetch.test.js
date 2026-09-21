@@ -77,6 +77,43 @@ test('agent transport identifies but never exposes credentials on direct cross-o
   assert.equal(calls, 0);
 });
 
+test('agent transport can strip credentials for compatibility without leaking on direct or redirected dispatch', async () => {
+  for (const mode of ['direct', 'redirect']) {
+    const calls = [];
+    const guarded = createAgentTransportFetch('https://seller.example/rpc', {
+      crossOriginCredentialPolicy: 'strip',
+      originBoundHeaders: ['X-Session'],
+      trustedFetchFn: async (url, init) => {
+        const headers = new Headers(init.headers);
+        calls.push({
+          url: url.toString(),
+          authorization: headers.get('authorization'),
+          session: headers.get('x-session'),
+        });
+        if (mode === 'redirect' && calls.length === 1) {
+          return new Response('', { status: 307, headers: { location: 'https://rpc.example/rpc' } });
+        }
+        return new Response('{}');
+      },
+    });
+    const start = mode === 'direct' ? 'https://rpc.example/rpc' : 'https://seller.example/rpc';
+    await guarded(start, {
+      headers: { Authorization: 'Bearer origin-only', 'X-Session': 'origin-session' },
+    });
+    const crossOrigin = calls.at(-1);
+    assert.equal(crossOrigin.url, 'https://rpc.example/rpc');
+    assert.equal(crossOrigin.authorization, null);
+    assert.equal(crossOrigin.session, null);
+    if (mode === 'redirect') {
+      assert.deepEqual(calls[0], {
+        url: 'https://seller.example/rpc',
+        authorization: 'Bearer origin-only',
+        session: 'origin-session',
+      });
+    }
+  }
+});
+
 test('agent transport preserves caller-requested manual redirect handling', async () => {
   let lookups = 0;
   const guarded = createAgentTransportFetch('https://virtual.invalid/mcp', {

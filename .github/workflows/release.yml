@@ -20,6 +20,9 @@ jobs:
   release:
     name: Release
     needs: reference-seller-interop
+    # workflow_dispatch is visible on any branch containing this workflow.
+    # Only protected release branches may reach publish credentials.
+    if: github.ref_name == 'main' || github.ref_name == '13.x'
     concurrency:
       # Dist-tags are package-global state. Serialize only the main/maintenance
       # release jobs after interop passes, so long interop jobs do not hold the
@@ -88,7 +91,9 @@ jobs:
           NPM_CONFIG_PROVENANCE: true
 
       - name: Reconcile stable-line latest policy
-        if: steps.changesets.outputs.published == 'true' && github.ref_name == '13.x'
+        # Run even when Changesets reports published=false: a previous attempt
+        # may have published successfully and failed during tag reconciliation.
+        if: steps.changesets.outcome == 'success' && github.ref_name == '13.x'
         run: node scripts/report-dist-tag-policy.mjs --apply
         env:
           # Never infer this from the checkout: Changesets may publish a

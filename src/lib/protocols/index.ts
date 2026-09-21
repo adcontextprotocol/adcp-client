@@ -550,13 +550,16 @@ export class ProtocolClient {
               // omitted block is schema-invalid rather than a mode selection.
               // With no secret there is nothing honest to send a v2 seller, so
               // suppress the registration instead of fabricating a credential.
-              const pushNotificationConfig: PushNotificationConfig | undefined = (():
+              const generatedPushNotificationConfig: PushNotificationConfig | undefined = (():
                 | PushNotificationConfig
                 | undefined => {
                 if (!webhookUrl) return undefined;
                 if (webhookSecret) {
                   return {
                     url: webhookUrl,
+                    ...(transportActivityContext?.operationId && {
+                      operation_id: transportActivityContext.operationId,
+                    }),
                     ...(webhookToken && { token: webhookToken }),
                     authentication: {
                       schemes: ['HMAC-SHA256' as const],
@@ -570,9 +573,20 @@ export class ProtocolClient {
                 }
                 return {
                   url: webhookUrl,
+                  ...(transportActivityContext?.operationId && {
+                    operation_id: transportActivityContext.operationId,
+                  }),
                   ...(webhookToken && { token: webhookToken }),
                 };
               })();
+              const explicitNativePushNotificationConfig =
+                transport?.legacyCompat?.enabled === false &&
+                argsWithVersion.push_notification_config !== null &&
+                typeof argsWithVersion.push_notification_config === 'object' &&
+                !Array.isArray(argsWithVersion.push_notification_config)
+                  ? (argsWithVersion.push_notification_config as PushNotificationConfig)
+                  : undefined;
+              const pushNotificationConfig = generatedPushNotificationConfig ?? explicitNativePushNotificationConfig;
 
               if (agent.protocol === 'mcp') {
                 // For MCP, include push_notification_config in tool arguments (MCP spec)
@@ -698,12 +712,20 @@ export class ProtocolClient {
                   throw err;
                 }
               } else if (agent.protocol === 'a2a') {
-                // For A2A, pass pushNotificationConfig separately (not in skill parameters)
+                // Native A2A has two distinct registration surfaces. The
+                // official protocol configuration gets the representable
+                // transport fields, while the complete AdCP application
+                // object (including operation_id) remains in skill input.
+                // Preserve the stable 0.3 wire shape outside native mode.
+                const a2aParameters =
+                  transport?.legacyCompat?.enabled === false && pushNotificationConfig
+                    ? { ...argsWithVersion, push_notification_config: pushNotificationConfig }
+                    : argsWithVersion;
                 try {
                   return await callA2ATool(
                     agent.agent_uri,
                     toolName,
-                    argsWithVersion,
+                    a2aParameters,
                     authToken,
                     debugLogs,
                     pushNotificationConfig,
@@ -736,7 +758,7 @@ export class ProtocolClient {
                       return await callA2ATool(
                         agent.agent_uri,
                         toolName,
-                        argsWithVersion,
+                        a2aParameters,
                         retryAuthToken,
                         debugLogs,
                         pushNotificationConfig,

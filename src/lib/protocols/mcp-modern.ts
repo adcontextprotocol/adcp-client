@@ -331,6 +331,7 @@ async function createNegotiatedClient(
     trustedFetchFn: options.fetchFn,
     allowPrivateIp: options.allowPrivateIp,
     originBoundHeaders: Object.keys(options.customHeaders ?? {}),
+    crossOriginCredentialPolicy: 'strip',
   });
   const networkFetch: typeof fetch = (input, init) =>
     withAbortSignal<Response>([init?.signal], requestTimeoutMs, signal => rawNetworkFetch(input, { ...init, signal }));

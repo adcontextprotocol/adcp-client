@@ -113,6 +113,27 @@ temporary legacy compatibility harnesses rather than routine compliance runs.
 - `--auth <token>` — bearer token (also accepts `$ADCP_AUTH_TOKEN`)
 - `--oauth` — run the browser OAuth flow inline when the saved alias has no valid tokens (MCP only; equivalent to `adcp --save-auth <alias> <url> --oauth` then re-running)
 
+The programmatic equivalent of the 0.3 escape is request-local and does not
+change the public SDK transport default, so it is safe to keep in a
+maintenance-branch harness configuration:
+
+```ts
+await runStoryboard(agentUrl, storyboard, {
+  protocol: 'a2a',
+  transport: { legacyCompat: { enabled: true } },
+});
+```
+
+Strict native grading refuses credential-bearing cross-origin A2A endpoints.
+The stable legacy A2A and MCP paths preserve 13.x redirect compatibility by
+removing authentication and all caller-configured headers before any
+cross-origin request; those headers remain unchanged on the configured origin.
+
+Request-signing vectors 009–012 exercise URL canonicalization details that an
+MCP JSON-RPC transport flattens into its single endpoint. MCP reports those
+vectors as skipped with `mcp_mode_flattens_url_edges`; A2A uses the neutral
+`transport_flattens_url_edges` reason.
+
 **Authoring webhook assertions.** Webhook storyboard pseudo-steps share the
 receiver URL and filter contract. Use `triggered_by` to scope the observation
 to the earlier step's `{{runner.webhook_url:<step_id>}}`; add `filter.body`

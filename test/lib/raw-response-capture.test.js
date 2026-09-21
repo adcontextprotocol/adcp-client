@@ -303,6 +303,22 @@ describe('rawResponseCapture', () => {
     }
   });
 
+  test('rejects invalid request-metadata capture deadlines before dispatch', async () => {
+    let dispatched = false;
+    for (const requestMetadataTimeoutMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 2_147_483_648]) {
+      await assert.rejects(
+        withRawResponseCapture(
+          async () => {
+            dispatched = true;
+          },
+          { requestMetadataTimeoutMs }
+        ),
+        /requestMetadataTimeoutMs must be a finite positive number/
+      );
+    }
+    assert.equal(dispatched, false);
+  });
+
   test('validates maxBodyBytes before dispatch or typed-array allocation', async () => {
     let dispatched = false;
     for (const maxBodyBytes of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {

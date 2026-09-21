@@ -452,6 +452,263 @@ describe('storyboard A2A auth overrides', () => {
     assert.match(step.error, /Raw response capture exceeded maxBodyBytes \(1048576\)/);
   });
 
+  test('auth:none expect_error cannot pass from an accepted cross-origin native response without validations', async () => {
+    const agentUrl = 'https://capture-origin.example';
+    const rpcUrl = 'https://native-rpc.example/rpc';
+    const noAuthStoryboard = storyboard('none');
+    noAuthStoryboard.phases[0].steps[0].validations = [];
+    let protectedCalls = 0;
+    const fetchFn = async (input, init = {}) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes('/.well-known/')) {
+        const agentCard = card(rpcUrl);
+        agentCard.skills = ['get_adcp_capabilities', 'list_creatives'].map(name => ({
+          id: name,
+          name,
+          description: `${name} fixture`,
+          tags: [],
+          examples: [],
+          inputModes: ['application/json'],
+          outputModes: ['application/json'],
+        }));
+        return new Response(JSON.stringify(agentCard), { headers: { 'content-type': 'application/json' } });
+      }
+      const body = JSON.parse(init.body);
+      const skill = body.params?.message?.parts?.[0]?.data?.skill;
+      if (skill === 'get_adcp_capabilities') {
+        return new Response(JSON.stringify(capabilitiesResponse(body.id)), {
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      protectedCalls += 1;
+      return new Response(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: body.id,
+          result: {
+            task: {
+              id: 'accepted-cross-origin',
+              contextId: 'accepted-cross-origin-context',
+              status: { state: 'TASK_STATE_COMPLETED' },
+              artifacts: [{ artifactId: 'result', parts: [{ data: { status: 'completed', creatives: [] } }] }],
+            },
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    };
+
+    const result = await runStoryboard(agentUrl, noAuthStoryboard, {
+      protocol: 'a2a',
+      agentTools: ['list_creatives'],
+      transport: { trustedFetchFn: fetchFn, legacyCompat: { enabled: false } },
+      _profile: { name: 'cross-origin-fixture', tools: ['list_creatives'] },
+    });
+    const step = result.phases[0].steps[0];
+    assert.strictEqual(protectedCalls, 1);
+    assert.strictEqual(step.expect_error, true);
+    assert.strictEqual(step.passed, false, JSON.stringify(step));
+    assert.match(step.error, /cross-origin RPC endpoint.*cannot be graded/);
+  });
+
+  test('auth:none expect_error cannot pass when native dispatch produces no matching response capture', async () => {
+    const agentUrl = 'https://no-response.example';
+    const rpcUrl = `${agentUrl}/rpc`;
+    const noResponseStoryboard = storyboard('none');
+    noResponseStoryboard.phases[0].steps[0].validations = [];
+    const fetchFn = async (input, init = {}) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes('/.well-known/')) {
+        const agentCard = card(rpcUrl);
+        agentCard.skills = ['get_adcp_capabilities', 'list_creatives'].map(name => ({
+          id: name,
+          name,
+          description: `${name} fixture`,
+          tags: [],
+          examples: [],
+          inputModes: ['application/json'],
+          outputModes: ['application/json'],
+        }));
+        return new Response(JSON.stringify(agentCard), { headers: { 'content-type': 'application/json' } });
+      }
+      const body = JSON.parse(init.body);
+      const skill = body.params?.message?.parts?.[0]?.data?.skill;
+      if (skill === 'get_adcp_capabilities') {
+        return new Response(JSON.stringify(capabilitiesResponse(body.id)), {
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new TypeError('fixture network ended before response headers');
+    };
+
+    const result = await runStoryboard(agentUrl, noResponseStoryboard, {
+      protocol: 'a2a',
+      agentTools: ['list_creatives'],
+      transport: { trustedFetchFn: fetchFn, legacyCompat: { enabled: false } },
+      _profile: { name: 'no-response-fixture', tools: ['list_creatives'] },
+    });
+    const step = result.phases[0].steps[0];
+    assert.strictEqual(step.passed, false, JSON.stringify(step));
+    assert.match(step.error, /fixture network ended before response headers|produced no HTTP response/);
+  });
+
+  test('advisory schema handling cannot overwrite a cross-origin capture infrastructure failure', async () => {
+    const agentUrl = 'https://advisory-origin.example';
+    const rpcUrl = 'https://advisory-rpc.example/rpc';
+    const advisoryStoryboard = storyboard('none');
+    const advisoryStep = advisoryStoryboard.phases[0].steps[0];
+    delete advisoryStep.auth;
+    advisoryStep.expect_error = false;
+    advisoryStep.validations = [
+      {
+        check: 'response_schema',
+        severity: 'advisory',
+        permanent_advisory: { reason: 'exercise advisory grading interaction' },
+        description: 'schema mismatch is advisory',
+      },
+    ];
+    const fetchFn = async (input, init = {}) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes('/.well-known/')) {
+        const agentCard = card(rpcUrl);
+        agentCard.skills = ['get_adcp_capabilities', 'list_creatives'].map(name => ({
+          id: name,
+          name,
+          description: `${name} fixture`,
+          tags: [],
+          examples: [],
+          inputModes: ['application/json'],
+          outputModes: ['application/json'],
+        }));
+        return new Response(JSON.stringify(agentCard), { headers: { 'content-type': 'application/json' } });
+      }
+      const body = JSON.parse(init.body);
+      const skill = body.params?.message?.parts?.[0]?.data?.skill;
+      if (skill === 'get_adcp_capabilities') {
+        return new Response(JSON.stringify(capabilitiesResponse(body.id)), {
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: body.id,
+          result: {
+            task: {
+              id: 'schema-advisory-cross-origin',
+              contextId: 'schema-advisory-context',
+              status: { state: 'TASK_STATE_COMPLETED' },
+              artifacts: [{ artifactId: 'result', parts: [{ data: { status: 'completed' } }] }],
+            },
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    };
+
+    const result = await runStoryboard(agentUrl, advisoryStoryboard, {
+      protocol: 'a2a',
+      agentTools: ['list_creatives'],
+      transport: { trustedFetchFn: fetchFn, legacyCompat: { enabled: false } },
+      _profile: { name: 'advisory-cross-origin-fixture', tools: ['list_creatives'] },
+    });
+    const step = result.phases[0].steps[0];
+    assert.strictEqual(step.passed, false, JSON.stringify(step));
+    assert.match(step.error, /cross-origin RPC endpoint.*cannot be graded/);
+    assert.ok(
+      step.validations.some(validation => validation.severity === 'advisory'),
+      JSON.stringify(step)
+    );
+  });
+
+  test('native storyboard preserves AdCP push operation_id while projecting official transport registration', async () => {
+    const agentUrl = 'https://native-webhook.example';
+    const rpcUrl = `${agentUrl}/rpc`;
+    const webhookConfig = {
+      url: 'https://buyer.example/webhooks/native',
+      operation_id: 'op_native_storyboard_1',
+      token: 'native-storyboard-token-0001',
+    };
+    let protectedBody;
+    const webhookStoryboard = storyboard('none');
+    const webhookStep = webhookStoryboard.phases[0].steps[0];
+    delete webhookStep.auth;
+    webhookStep.expect_error = false;
+    webhookStep.sample_request = { push_notification_config: webhookConfig };
+    webhookStep.validations = [];
+    const fetchFn = async (input, init = {}) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes('/.well-known/')) {
+        const agentCard = card(rpcUrl);
+        agentCard.skills = ['get_adcp_capabilities', 'list_creatives'].map(name => ({
+          id: name,
+          name,
+          description: `${name} fixture`,
+          tags: [],
+          examples: [],
+          inputModes: ['application/json'],
+          outputModes: ['application/json'],
+        }));
+        return new Response(JSON.stringify(agentCard), { headers: { 'content-type': 'application/json' } });
+      }
+      const body = JSON.parse(init.body);
+      const skill = body.params?.message?.parts?.[0]?.data?.skill;
+      if (skill === 'get_adcp_capabilities') {
+        return new Response(JSON.stringify(capabilitiesResponse(body.id)), {
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      protectedBody = body;
+      return new Response(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: body.id,
+          result: {
+            task: {
+              id: 'native-webhook-task',
+              contextId: 'native-webhook-context',
+              status: { state: 'TASK_STATE_COMPLETED' },
+              artifacts: [
+                {
+                  artifactId: 'result',
+                  parts: [
+                    {
+                      data: {
+                        status: 'completed',
+                        creatives: [],
+                        query_summary: { total_matching: 0, returned: 0 },
+                        pagination: { total_count: 0, has_more: false },
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    };
+
+    const result = await runStoryboard(agentUrl, webhookStoryboard, {
+      protocol: 'a2a',
+      agentTools: ['list_creatives'],
+      transport: { trustedFetchFn: fetchFn, legacyCompat: { enabled: false } },
+      _profile: { name: 'native-webhook-fixture', tools: ['list_creatives'] },
+    });
+    assert.strictEqual(result.phases[0].steps[0].passed, true, JSON.stringify(result));
+    assert.deepStrictEqual(protectedBody.params.message.parts[0].data.input.push_notification_config, webhookConfig);
+    assert.deepStrictEqual(protectedBody.params.configuration.taskPushNotificationConfig, {
+      url: webhookConfig.url,
+      token: webhookConfig.token,
+    });
+    assert.strictEqual(
+      protectedBody.params.configuration.taskPushNotificationConfig.operation_id,
+      undefined,
+      'official A2A proto must not receive unsupported AdCP-only fields'
+    );
+  });
+
   test('dispatches official SendMessage and never MCP tools/call while isolating credentials', async () => {
     const agentUrl = 'https://seller.example';
     const rpcUrl = `${agentUrl}/rpc`;

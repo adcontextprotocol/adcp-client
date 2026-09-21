@@ -353,7 +353,13 @@ test('legacy A2A tool dispatch binds X-Session to the configured agent origin', 
           { headers: { 'content-type': 'application/json' } }
         );
       }
-      calls.push({ url, session: new Headers(init.headers).get('x-session') });
+      const headers = new Headers(init.headers);
+      calls.push({
+        url,
+        session: headers.get('x-session'),
+        authorization: headers.get('authorization'),
+        adcpAuth: headers.get('x-adcp-auth'),
+      });
       if (mode === 'redirect' && calls.length === 1) {
         return new Response('', { status: 307, headers: { location: 'https://rpc.example/legacy-a2a' } });
       }
@@ -377,7 +383,7 @@ test('legacy A2A tool dispatch binds X-Session to the configured agent origin', 
       agentUrl,
       'get_products',
       {},
-      undefined,
+      'legacy-origin-auth',
       [],
       undefined,
       { 'X-Session': `${mode}-session` },
@@ -391,13 +397,30 @@ test('legacy A2A tool dispatch binds X-Session to the configured agent origin', 
     );
 
     if (mode === 'same-origin') {
-      assert.deepStrictEqual(calls, [{ url: rpcUrl, session: 'same-origin-session' }]);
+      assert.deepStrictEqual(calls, [
+        {
+          url: rpcUrl,
+          session: 'same-origin-session',
+          authorization: 'Bearer legacy-origin-auth',
+          adcpAuth: 'legacy-origin-auth',
+        },
+      ]);
     } else if (mode === 'cross-origin') {
-      assert.deepStrictEqual(calls, [{ url: rpcUrl, session: null }]);
+      assert.deepStrictEqual(calls, [{ url: rpcUrl, session: null, authorization: null, adcpAuth: null }]);
     } else {
       assert.deepStrictEqual(calls, [
-        { url: rpcUrl, session: 'redirect-session' },
-        { url: 'https://rpc.example/legacy-a2a', session: null },
+        {
+          url: rpcUrl,
+          session: 'redirect-session',
+          authorization: 'Bearer legacy-origin-auth',
+          adcpAuth: 'legacy-origin-auth',
+        },
+        {
+          url: 'https://rpc.example/legacy-a2a',
+          session: null,
+          authorization: null,
+          adcpAuth: null,
+        },
       ]);
     }
   }
@@ -591,7 +614,11 @@ test('vector 027 uses transport push registration on both A2A wire versions', as
   const vector027 = loaded.negative.find(vector => vector.id === '027-webhook-registration-authentication-unsigned');
   assert.ok(vector027, 'expected vector 027 fixture');
   const vectorArgs = JSON.parse(vector027.request.body);
-  const pushNotificationConfig = vectorArgs.push_notification_config;
+  const pushNotificationConfig = {
+    ...vectorArgs.push_notification_config,
+    operation_id: 'op_vector_027',
+  };
+  vectorArgs.push_notification_config = pushNotificationConfig;
   const reportingWebhook = {
     url: 'https://buyer.example/reporting',
     authentication: { schemes: ['HMAC-SHA256'], credentials: 'reporting-secret' },
@@ -645,7 +672,11 @@ test('vector 027 uses transport push registration on both A2A wire versions', as
 
     assert.strictEqual(skillPayload.skill, 'update_media_buy');
     const skillArgs = protocolVersion === '0.3.0' ? skillPayload.parameters : skillPayload.input;
-    assert.strictEqual(skillArgs.push_notification_config, undefined, protocolVersion);
+    if (protocolVersion === '0.3.0') {
+      assert.strictEqual(skillArgs.push_notification_config, undefined, protocolVersion);
+    } else {
+      assert.deepStrictEqual(skillArgs.push_notification_config, pushNotificationConfig, protocolVersion);
+    }
     assert.deepStrictEqual(skillArgs.reporting_webhook, reportingWebhook, protocolVersion);
     if (protocolVersion === '0.3.0') {
       assert.deepStrictEqual(body.params.configuration.pushNotificationConfig, {

@@ -1872,6 +1872,7 @@ export class SingleAgentClient {
         trustedFetchFn: transport?.trustedFetchFn,
         allowPrivateIp: transport?.allowPrivateIp,
         originBoundHeaders: Object.keys(this.normalizedAgent.headers ?? {}),
+        crossOriginCredentialPolicy: transport?.legacyCompat?.enabled === false ? 'refuse' : 'strip',
       })
     );
 
@@ -6229,6 +6230,7 @@ export class SingleAgentClient {
           trustedFetchFn: transport?.trustedFetchFn,
           allowPrivateIp: transport?.allowPrivateIp,
           originBoundHeaders: Object.keys(agentHeaders),
+          crossOriginCredentialPolicy: transport?.legacyCompat?.enabled === false ? 'refuse' : 'strip',
         })
       );
       const fetchImpl = async (url: string | URL | Request, requestInit?: RequestInit) => {
@@ -6990,8 +6992,9 @@ function selectNativeJsonRpcInterface(card: NativeA2AAgentCard): NativeA2AAgentI
   let selected: NativeA2AAgentInterface | undefined;
   for (const agentInterface of card.supportedInterfaces ?? []) {
     if (agentInterface.protocolBinding.toUpperCase() !== 'JSONRPC') continue;
-    // ClientFactory keeps the first interface for a binding, except that a
-    // later native 1.0 interface becomes the preferred interface.
+    // ClientFactory starts with the first interface for a binding and replaces
+    // it for every native 1.0 candidate, so the last matching 1.0 interface
+    // wins when a card lists more than one.
     if (!selected || agentInterface.protocolVersion === '1.0') selected = agentInterface;
   }
   return selected;

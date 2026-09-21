@@ -45,8 +45,14 @@ lock. GitHub allows one running and one pending job in a concurrency group and
 may replace an older pending job even with `cancel-in-progress: false`. If a
 pending release is replaced, wait for the active release to finish, open the
 superseded run, and choose **Re-run jobs** so the exact commit republishes or
-reconciles idempotently. The Release workflow also supports `workflow_dispatch`
-on both `main` and `13.x` as a one-click branch recovery path.
+reconciles idempotently. Reconciliation does not depend on Changesets reporting
+`published=true`: it verifies that the checkout's exact local `@adcp/sdk`
+version exists in npm, then safely reapplies the tag policy. This covers the
+failure window where publish succeeded but the original reconciliation step
+did not. If the exact local version is absent, the run performs no mutation.
+The Release workflow also supports `workflow_dispatch` on `main` and `13.x` as
+a one-click branch recovery path; the release job has an explicit branch guard,
+so dispatching a copy of the workflow from any other branch cannot publish.
 
 The policy re-reads `latest` immediately before mutation and refuses to move it
 backward. Registry read/parse failures likewise fail with an inspection and

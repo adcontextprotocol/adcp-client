@@ -72,12 +72,19 @@ export async function verifyRequestSignature(
       );
     }
     const protocolMethods = jsonRpcProtocolMethods(request.body);
-    const requiredProtocolMethod = protocolMethods.find(method => protocolMethodsRequiredFor.includes(method));
+    const requiredProtocolMethod = protocolMethods
+      .flatMap(wireMethod =>
+        protocolMethodRequirementAliases(wireMethod).map(declaredMethod => ({ wireMethod, declaredMethod }))
+      )
+      .find(candidate => protocolMethodsRequiredFor.includes(candidate.declaredMethod));
     if (requiredProtocolMethod) {
       throw new RequestSignatureError(
         'request_signature_required',
         0,
-        `Protocol method "${requiredProtocolMethod}" requires a signed request`
+        `Protocol method "${requiredProtocolMethod.declaredMethod}" requires a signed request` +
+          (requiredProtocolMethod.wireMethod === requiredProtocolMethod.declaredMethod
+            ? ''
+            : ` (wire method "${requiredProtocolMethod.wireMethod}")`)
       );
     }
     // Payload-driven elevation: any request carrying webhook receiver
@@ -264,6 +271,14 @@ function jsonRpcProtocolMethods(body: string | undefined): string[] {
   } catch {
     return [];
   }
+}
+
+function protocolMethodRequirementAliases(wireMethod: string): string[] {
+  // The official A2A 1.0 JSON-RPC transport emits PascalCase protobuf RPC
+  // method names. AdCP capability declarations retain the stable A2A 0.3
+  // spelling, so a seller requiring `tasks/cancel` must also enforce that
+  // declaration when the official client sends `CancelTask`.
+  return wireMethod === 'CancelTask' ? [wireMethod, 'tasks/cancel'] : [wireMethod];
 }
 
 function requireParams(parsed: ParsedSignatureInput): void {

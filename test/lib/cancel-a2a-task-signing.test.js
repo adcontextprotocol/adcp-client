@@ -218,6 +218,37 @@ describe('cancelA2ATask: Phase 2 signing (#1617)', () => {
     assert.ok(Object.prototype.hasOwnProperty.call(request, 'metadata'));
   });
 
+  test('tasks/cancel signing requirement covers the official native CancelTask method alias', async () => {
+    await assert.rejects(
+      verifyRequestSignature(
+        {
+          method: 'POST',
+          url: 'https://seller.example/rpc',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'CancelTask', params: { id: 'task-native-v1' } }),
+        },
+        {
+          capability: {
+            supported: true,
+            covers_content_digest: 'either',
+            required_for: [],
+            protocol_methods_required_for: ['tasks/cancel'],
+          },
+          jwks: new StaticJwksResolver([]),
+          replayStore: new InMemoryReplayStore({ maxEntriesPerKeyid: 10 }),
+          revocationStore: new InMemoryRevocationStore({
+            issuer: 'https://seller.example',
+            updated: new Date(0).toISOString(),
+            next_update: new Date(60_000).toISOString(),
+            revoked_kids: [],
+            revoked_jtis: [],
+          }),
+        }
+      ),
+      error => error?.code === 'request_signature_required' && /tasks\/cancel.*CancelTask/.test(error.message)
+    );
+  });
+
   test('native cancellation keeps X-Session same-origin and strips it from card-selected cross-origin targets', async () => {
     for (const crossOrigin of [false, true]) {
       const agentUrl = 'https://seller.example/a2a';

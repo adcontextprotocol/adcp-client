@@ -9,6 +9,7 @@ import {
 import { Role, TaskState, type CancelTaskRequest, type SendMessageRequest } from '@a2a-js/sdk-v1';
 import type { PushNotificationConfig } from '../types/tools.generated';
 import { toA2ATaskPushNotificationConfig } from './a2a-push-notification';
+import { isAbortOrTimeoutError } from './abort';
 
 const ADCP_A2A_EXTENSION = 'https://adcontextprotocol.org/extensions/adcp/v3';
 const NATIVE_ONLY = Object.freeze({ enabled: false });
@@ -38,6 +39,10 @@ export async function callNativeA2ATool(options: {
       client = await createNativeA2AClientFromCardUrl(cardUrl, options.fetchImpl);
       break;
     } catch (error) {
+      // Cancellation and deadlines are terminal caller intent, not evidence
+      // that the card URL is incompatible. Preserve their identity and avoid
+      // probing fallback card paths after the request has already ended.
+      if (isAbortOrTimeoutError(error)) throw error;
       lastError = error;
     }
   }

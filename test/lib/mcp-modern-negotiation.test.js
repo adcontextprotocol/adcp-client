@@ -465,8 +465,10 @@ test('modern discovery 5xx fails closed without dispatching through the v1 clien
 test('modern client never forwards credentials across redirects', async t => {
   let redirectedRequests = 0;
   let initialSession;
+  let redirectedHeaders;
   const sink = createServer((req, res) => {
     redirectedRequests++;
+    redirectedHeaders = req.headers;
     res.writeHead(500);
     res.end();
   });
@@ -485,10 +487,25 @@ test('modern client never forwards credentials across redirects', async t => {
   });
 
   await assert.rejects(() =>
-    callMCPTool(redirectUrl, 'echo', {}, 'redirect-secret', [], { 'X-Session': 'same-origin-only' })
+    callMCPTool(
+      redirectUrl,
+      'echo',
+      {},
+      'redirect-secret',
+      [],
+      { 'X-Session': 'same-origin-only' },
+      undefined,
+      undefined,
+      { allowPrivateIp: true }
+    )
   );
   assert.equal(initialSession, 'same-origin-only', 'configured header must reach the configured MCP origin');
-  assert.equal(redirectedRequests, 0, 'redirect target must never receive credential-bearing MCP requests');
+  assert.equal(
+    redirectedRequests,
+    0,
+    'the official MCP transport keeps redirect handling manual, so credentials cannot reach the second origin'
+  );
+  assert.equal(redirectedHeaders, undefined);
 });
 
 test('serve exposes AdCP tools to a client pinned to MCP 2026-07-28', async t => {

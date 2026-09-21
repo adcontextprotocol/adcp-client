@@ -788,6 +788,7 @@ async function connectMCPWithFallbackImpl(
     trustedFetchFn: transportFetch,
     allowPrivateIp: requestOptions.allowPrivateIp,
     originBoundHeaders: requestOptions.originBoundHeaders,
+    crossOriginCredentialPolicy: 'strip',
   });
   const networkFetch = (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     // Keep cancellation linked for the entire response-body lifetime. A
@@ -1239,6 +1240,7 @@ export async function connectMCP(options: {
     trustedFetchFn: fetchFn,
     allowPrivateIp,
     originBoundHeaders: Object.keys(filteredCustomHeaders ?? {}),
+    crossOriginCredentialPolicy: 'strip',
   });
   const sizeLimited = wrapFetchWithSizeLimit((input, init) =>
     withAbortSignal<Response>([init?.signal], requestTimeoutMs, linkedSignal =>

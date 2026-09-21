@@ -5072,8 +5072,8 @@ async function executeStep(
               : (stepResult.error ?? taskResult?.error ?? 'A2A auth probe produced no HTTP response');
           requestUrl = rpcCapture?.url ?? runState.agentUrl;
           httpResult = { url: requestUrl, status: 0, headers: {}, body: null, error };
-          if (rpcCapture?.bodyTruncated) captureInfrastructureError = error;
-          stepResult = { ...stepResult, passed: false, ...(captureInfrastructureError ? {} : { error }) };
+          captureInfrastructureError = error;
+          stepResult = { ...stepResult, passed: false };
           responseRecord = {
             transport: 'a2a',
             payload: null,
@@ -5108,10 +5108,12 @@ async function executeStep(
         };
       }
     } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      if (effectiveOptions.protocol === 'a2a') captureInfrastructureError = error;
       stepResult = {
         duration_ms: Date.now() - started,
         passed: false,
-        error: err instanceof Error ? err.message : String(err),
+        ...(captureInfrastructureError ? {} : { error }),
       };
     }
   } else {
@@ -5211,17 +5213,26 @@ async function executeStep(
       if (caughtError !== undefined && effectiveOptions.signal?.aborted) {
         throw caughtError;
       }
-      if (captureA2a && a2aCaptures) {
-        const skillCapture = selectLastA2aSkillCapture(a2aCaptures, effectiveStep.task);
-        if (skillCapture?.bodyTruncated) {
-          const error =
+      if (captureA2a) {
+        const skillCapture = a2aCaptures ? selectLastA2aSkillCapture(a2aCaptures, effectiveStep.task) : undefined;
+        const crossOriginSkillCapture =
+          skillCapture !== undefined && new URL(skillCapture.url).origin !== new URL(runState.agentUrl).origin;
+        if (!skillCapture) {
+          captureInfrastructureError = 'A2A tool dispatch produced no matching HTTP response capture';
+        } else if (crossOriginSkillCapture) {
+          captureInfrastructureError =
+            'A2A tool dispatch selected a cross-origin RPC endpoint; credential-isolated responses cannot be graded';
+        } else if (skillCapture.bodyTruncated) {
+          captureInfrastructureError =
             skillCapture.bodyCaptureError ??
             'Raw response capture was incomplete; A2A validators cannot grade a partial response body';
-          captureInfrastructureError = error;
-          stepResult = { ...stepResult, passed: false };
         } else {
-          a2aEnvelope = parseLastA2aMessageSendCapture(a2aCaptures);
+          a2aEnvelope = parseLastA2aMessageSendCapture([skillCapture]);
+          if (!a2aEnvelope) {
+            captureInfrastructureError = 'A2A matching HTTP response capture could not be parsed for grading';
+          }
         }
+        if (captureInfrastructureError) stepResult = { ...stepResult, passed: false };
       }
       if (taskResult) {
         responseRecord = {
@@ -5380,7 +5391,7 @@ async function executeStep(
     runState,
     allSteps
   );
-  if (responseDerivedSkip && !step.expect_error) {
+  if (responseDerivedSkip && !step.expect_error && !captureInfrastructureError) {
     for (const key of responseDerivedSkip.contextKeys) {
       runState.responseDerivedNotApplicableContextKeys?.set(key, responseDerivedSkip.detail);
     }
@@ -5608,12 +5619,16 @@ async function executeStep(
       ? decoratedCandidates
       : [{ ...baseSchemaResult, severity: 'required' } satisfies ValidationResult];
     schemaRejectionIsAdvisory = schemaResults.every(result => !validationFailsStep(result));
-    if (schemaRejectionIsAdvisory && !step.expect_error) passed = true;
+    if (schemaRejectionIsAdvisory && !step.expect_error && !captureInfrastructureError) passed = true;
     // Prepend so extractFailures picks it up before any inline validation
     // entry that may also be failing (e.g. `field_present` checks that
     // legitimately can't observe their target against an unparsed payload).
     validations = [...schemaResults, ...validations.filter(result => result.check !== 'response_schema')];
   }
+  // Advisory schema decoration happens after the initial pass calculation;
+  // preserve the independent capture-integrity failure across every later
+  // grading path, including `expect_error` and advisory schema handling.
+  if (captureInfrastructureError) passed = false;
 
   // Persist the captured A2A envelope keyed by step id so cross-step
   // validators (`a2a_context_continuity`) on subsequent steps can

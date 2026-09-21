@@ -83,7 +83,13 @@ export async function captureA2aRequest(
       const { push_notification_config: pushNotificationConfig, ...skillArgs } = call.args;
       const invocation = legacyWire
         ? { skill: call.operation, parameters: skillArgs }
-        : { skill: call.operation, input: skillArgs };
+        : {
+            skill: call.operation,
+            // Native A2A transport registration cannot represent AdCP-only
+            // fields such as operation_id. Keep the complete application
+            // registration in skill input, matching the runtime path.
+            input: call.args,
+          };
       const request: SendMessageRequest = {
         tenant: '',
         message: {

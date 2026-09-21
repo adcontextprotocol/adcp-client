@@ -41,6 +41,16 @@ export function readPublishedSdkVersion(value) {
   return sdk.version;
 }
 
+export function readLocalSdkVersion(packagePath = 'package.json') {
+  const manifest = JSON.parse(readFileSync(packagePath, 'utf8'));
+  if (manifest?.name !== SDK_PACKAGE) {
+    throw new Error(`Local release manifest is not ${SDK_PACKAGE}`);
+  }
+  if (typeof manifest.version !== 'string') throw new Error(`Local ${SDK_PACKAGE} manifest has no version`);
+  parseVersion(manifest.version);
+  return manifest.version;
+}
+
 export function resolvePublishTag(env = process.env, preStatePath = '.changeset/pre.json') {
   if (existsSync(preStatePath)) {
     const preState = JSON.parse(readFileSync(preStatePath, 'utf8'));
@@ -111,6 +121,35 @@ function defaultReadLatestVersion() {
   }
 }
 
+function defaultReadExactVersion(version) {
+  try {
+    return execFileSync('npm', ['view', `${SDK_PACKAGE}@${version}`, 'version', '--json'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+      .trim()
+      .replace(/^"|"$/g, '');
+  } catch (error) {
+    const stderr = error && typeof error === 'object' && 'stderr' in error ? String(error.stderr) : '';
+    if (/E404|not found/i.test(stderr)) return undefined;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Could not verify ${SDK_PACKAGE}@${version} on npm: ${detail}`);
+  }
+}
+
+export function resolveReconciliationTarget({ publishedPackages, localVersion, readExactVersion }) {
+  const changesetsVersion = publishedPackages ? readPublishedSdkVersion(publishedPackages) : undefined;
+  if (changesetsVersion) return { version: changesetsVersion, source: 'changesets' };
+
+  parseVersion(localVersion);
+  const registryVersion = readExactVersion(localVersion);
+  if (registryVersion === undefined) return undefined;
+  if (registryVersion !== localVersion) {
+    throw new Error(`npm returned ${JSON.stringify(registryVersion)} while verifying ${SDK_PACKAGE}@${localVersion}`);
+  }
+  return { version: localVersion, source: 'registry-recovery' };
+}
+
 export function applyLatestPolicy(policy, options = {}) {
   if (policy.action !== 'promote-latest-with-credential') return policy;
   if (!options.apply) {
@@ -149,12 +188,14 @@ export function applyLatestPolicy(policy, options = {}) {
   };
 }
 
-function renderReport({ publishedVersion, publishTag, policy }) {
+function renderReport({ publishedVersion, publishTag, policy, source = 'changesets' }) {
   return [
     '## npm dist-tag policy',
     '',
     publishedVersion
-      ? `Changesets published \`${SDK_PACKAGE}@${publishedVersion}\` under \`${publishTag}\`.`
+      ? source === 'registry-recovery'
+        ? `Changesets reported no new SDK publish; npm confirms local \`${SDK_PACKAGE}@${publishedVersion}\` exists, so recovery reconciliation ran independently for \`${publishTag}\`.`
+        : `Changesets published \`${SDK_PACKAGE}@${publishedVersion}\` under \`${publishTag}\`.`
       : `Changesets did not publish \`${SDK_PACKAGE}\`; no SDK dist-tag action was taken.`,
     '',
     policy.message,
@@ -175,15 +216,36 @@ export function runCli(options = {}) {
   const args = options.args ?? process.argv.slice(2);
   let publishedVersion;
   let publishTag;
+  let source;
   try {
     publishTag = resolvePublishTag(env, options.preStatePath);
-    publishedVersion = readPublishedSdkVersion(env.ADCP_PUBLISHED_PACKAGES);
-    if (!publishedVersion) {
+    const changesetsVersion = readPublishedSdkVersion(env.ADCP_PUBLISHED_PACKAGES);
+    const localVersion =
+      changesetsVersion === undefined
+        ? env.ADCP_LOCAL_SDK_VERSION || readLocalSdkVersion(options.packagePath)
+        : changesetsVersion;
+    const target = changesetsVersion
+      ? { version: changesetsVersion, source: 'changesets' }
+      : resolveReconciliationTarget({
+          publishedPackages: env.ADCP_PUBLISHED_PACKAGES,
+          localVersion,
+          readExactVersion:
+            options.readExactVersion ??
+            (env.ADCP_CURRENT_EXACT_VERSION !== undefined
+              ? version => (env.ADCP_CURRENT_EXACT_VERSION === version ? version : undefined)
+              : defaultReadExactVersion),
+        });
+    publishedVersion = target?.version;
+    source = target?.source;
+    if (!target) {
       appendReport(
         renderReport({
           publishedVersion,
           publishTag,
-          policy: { action: 'sdk-not-published', message: 'Only other workspace packages were published.' },
+          policy: {
+            action: 'sdk-not-published',
+            message: `Local ${SDK_PACKAGE}@${localVersion} is not published on npm; no dist-tag mutation is safe.`,
+          },
         }),
         env
       );
@@ -198,7 +260,7 @@ export function runCli(options = {}) {
       publishTag,
       readLatestVersion: env.ADCP_CURRENT_LATEST ? () => env.ADCP_CURRENT_LATEST : undefined,
     });
-    appendReport(renderReport({ publishedVersion, publishTag, policy }), env);
+    appendReport(renderReport({ publishedVersion, publishTag, policy, source }), env);
     if (policy.action === 'promotion-required-no-token') {
       console.error(`::error title=npm latest promotion blocked::${policy.command}`);
       return 1;

@@ -21,8 +21,11 @@ test('release workflow publishes 13.x under the real adcp-3.1 dist-tag', () => {
     group: 'npm-release-dist-tags',
     'cancel-in-progress': false,
   });
+  assert.strictEqual(parsed.jobs.release.if, "github.ref_name == 'main' || github.ref_name == '13.x'");
   assert.strictEqual(parsed.jobs['reference-seller-interop'].concurrency, undefined);
   assert.match(workflow, /ADCP_PUBLISHED_PACKAGES:\s*\$\{\{ steps\.changesets\.outputs\.publishedPackages \}\}/);
+  assert.match(workflow, /if:\s*steps\.changesets\.outcome == 'success' && github\.ref_name == '13\.x'/);
+  assert.doesNotMatch(workflow, /if:\s*steps\.changesets\.outputs\.published == 'true'/);
 });
 
 test('an empty non-13.x override preserves the Changesets prerelease tag', () => {
@@ -192,7 +195,8 @@ test('post-publish policy refuses prereleases and a just-in-time backward move',
 });
 
 test('dist-tag reconciliation uses the actual Changesets package output', async () => {
-  const { readPublishedSdkVersion } = await import('../../scripts/report-dist-tag-policy.mjs');
+  const { applyLatestPolicy, readPublishedSdkVersion, resolveLatestPolicy, resolveReconciliationTarget } =
+    await import('../../scripts/report-dist-tag-policy.mjs');
   assert.strictEqual(
     readPublishedSdkVersion(JSON.stringify([{ name: '@adcp/eslint-plugin', version: '0.1.8' }])),
     undefined
@@ -208,6 +212,61 @@ test('dist-tag reconciliation uses the actual Changesets package output', async 
   );
   const changesetConfig = require('../../.changeset/config.json');
   assert.ok(changesetConfig.ignore.includes('@adcp/eslint-plugin'));
+
+  const exactReads = [];
+  const recoveryTarget = resolveReconciliationTarget({
+    publishedPackages: JSON.stringify([]),
+    localVersion: '13.1.0',
+    readExactVersion: version => {
+      exactReads.push(version);
+      return version;
+    },
+  });
+  assert.deepStrictEqual(recoveryTarget, { version: '13.1.0', source: 'registry-recovery' });
+  assert.deepStrictEqual(exactReads, ['13.1.0']);
+  const recoveryCalls = [];
+  const recoveryPolicy = resolveLatestPolicy({
+    publishedVersion: recoveryTarget.version,
+    latestVersion: '13.0.4',
+  });
+  assert.strictEqual(
+    applyLatestPolicy(recoveryPolicy, {
+      apply: true,
+      npmToken: 'present',
+      publishedVersion: recoveryTarget.version,
+      readLatestVersion: () => '13.0.4',
+      run: (command, args) => recoveryCalls.push([command, args]),
+    }).action,
+    'promoted-latest'
+  );
+  assert.deepStrictEqual(recoveryCalls, [['npm', ['dist-tag', 'add', '@adcp/sdk@13.1.0', 'latest']]]);
+  assert.strictEqual(
+    resolveReconciliationTarget({
+      publishedPackages: JSON.stringify([]),
+      localVersion: '13.2.0',
+      readExactVersion: () => undefined,
+    }),
+    undefined,
+    'ordinary no-publish runs must not reconcile an unpublished local version'
+  );
+});
+
+test('workflow rerun reconciles an already-published local SDK when Changesets reports false', () => {
+  const script = path.join(__dirname, '../../scripts/report-dist-tag-policy.mjs');
+  const output = execFileSync(process.execPath, [script], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      ADCP_PUBLISHED_PACKAGES: JSON.stringify([]),
+      ADCP_LOCAL_SDK_VERSION: '13.1.0',
+      ADCP_CURRENT_EXACT_VERSION: '13.1.0',
+      ADCP_CURRENT_LATEST: '14.0.0',
+      ADCP_NPM_TAG: 'adcp-3.1',
+    },
+  });
+  assert.match(output, /Changesets reported no new SDK publish/);
+  assert.match(output, /npm confirms local `@adcp\/sdk@13\.1\.0` exists/);
+  assert.match(output, /Keep npm latest at 14\.0\.0/);
 });
 
 test('apply mode without NPM_TOKEN reports recovery and exits nonzero', () => {

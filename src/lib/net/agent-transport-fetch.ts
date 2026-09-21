@@ -33,6 +33,12 @@ export interface AgentTransportFetchOptions {
   originBoundHeaders?: readonly string[];
   /** Called after origin-bound headers are removed, without exposing values. */
   onOriginBoundHeadersStripped?: (headerNames: readonly string[], target: URL) => void;
+  /**
+   * Cross-origin handling for credential-shaped headers added by protocol
+   * clients. Strict native A2A refuses; stable legacy A2A and MCP strip and
+   * continue so redirects/endpoints remain compatible without leaking them.
+   */
+  crossOriginCredentialPolicy?: 'refuse' | 'strip';
 }
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -47,6 +53,7 @@ export function createAgentTransportFetch(agentUrl: string, options: AgentTransp
     process.env.ADCP_ALLOW_PRIVATE_AGENT_URL === '1';
   const allowPrivateInitialOrigin = isLikelyPrivateUrl(initialUrl.toString());
   const originBoundHeaders = new Set((options.originBoundHeaders ?? []).map(name => name.toLowerCase()));
+  const crossOriginCredentialPolicy = options.crossOriginCredentialPolicy ?? 'refuse';
   const dispatchers = new Map<string, Promise<Agent>>();
 
   const dispatcherFor = (url: URL): Promise<Agent> => {
@@ -92,21 +99,24 @@ export function createAgentTransportFetch(agentUrl: string, options: AgentTransp
       return [...new Set(names)].sort();
     };
 
-    const refuseCredentialedCrossOrigin = (target: URL, operation: 'dispatch' | 'redirect'): void => {
+    const handleCredentialedCrossOrigin = (target: URL, operation: 'dispatch' | 'redirect'): void => {
       if (target.origin === initialUrl.origin) return;
       const names = credentialHeaderNames();
-      if (names.length > 0) {
-        throw new TypeError(
-          `Agent transport refused credentialed cross-origin ${operation} to ${target.origin}; ` +
-            `credential headers: ${names.join(', ')}`
-        );
+      if (names.length === 0) return;
+      if (crossOriginCredentialPolicy === 'strip') {
+        for (const name of names) headers.delete(name);
+        return;
       }
+      throw new TypeError(
+        `Agent transport refused credentialed cross-origin ${operation} to ${target.origin}; ` +
+          `credential headers: ${names.join(', ')}`
+      );
     };
 
     for (let redirects = 0; ; redirects++) {
       assertTransportScheme(url);
       stripOriginBoundHeaders(url);
-      refuseCredentialedCrossOrigin(url, 'dispatch');
+      handleCredentialedCrossOrigin(url, 'dispatch');
       const headerRecord: Record<string, string> = {};
       headers.forEach((value, key) => {
         headerRecord[key] = value;
@@ -148,7 +158,7 @@ export function createAgentTransportFetch(agentUrl: string, options: AgentTransp
         // Remove them before the generic credential check so an X-Session-like
         // header is stripped while SDK/auth/signature headers still fail closed.
         stripOriginBoundHeaders(next);
-        refuseCredentialedCrossOrigin(next, 'redirect');
+        handleCredentialedCrossOrigin(next, 'redirect');
       }
       if (response.status === 303 || ((response.status === 301 || response.status === 302) && method === 'POST')) {
         method = 'GET';

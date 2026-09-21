@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const { AgentClient } = require('../../dist/lib/core/AgentClient');
+const { callNativeA2ATool } = require('../../dist/lib/protocols/a2a-native-v1.js');
 
 const AGENT_ORIGIN = 'https://seller.example';
 const EXTENDED_ORIGIN = 'https://card-service.example';
@@ -19,6 +20,43 @@ function nativeExtendedCard() {
     supportedInterfaces: [{ url: `${EXTENDED_ORIGIN}/rpc`, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
   };
 }
+
+test('native card discovery preserves caller AbortError identity and stops fallback probing', async () => {
+  const abortError = new DOMException('caller stopped discovery', 'AbortError');
+  let calls = 0;
+  await assert.rejects(
+    callNativeA2ATool({
+      cardUrls: ['https://seller.example/.well-known/agent-card.json', 'https://seller.example/.well-known/agent.json'],
+      fetchImpl: async () => {
+        calls += 1;
+        throw abortError;
+      },
+      toolName: 'get_products',
+      parameters: {},
+    }),
+    error => error === abortError
+  );
+  assert.strictEqual(calls, 1, 'abort must not probe the fallback card URL');
+});
+
+test('native card discovery preserves timeout errors and stops fallback probing', async () => {
+  const timeoutError = new Error('discovery deadline');
+  timeoutError.name = 'TimeoutError';
+  let calls = 0;
+  await assert.rejects(
+    callNativeA2ATool({
+      cardUrls: ['https://seller.example/.well-known/agent-card.json', 'https://seller.example/.well-known/agent.json'],
+      fetchImpl: async () => {
+        calls += 1;
+        throw timeoutError;
+      },
+      toolName: 'get_products',
+      parameters: {},
+    }),
+    error => error === timeoutError
+  );
+  assert.strictEqual(calls, 1, 'timeout must not probe the fallback card URL');
+});
 
 function credentialedClient(seenUrls) {
   const trustedFetchFn = async input => {
