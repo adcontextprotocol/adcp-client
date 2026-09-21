@@ -59,4 +59,7 @@ Each conflict retry is a new logical mutation with a fresh idempotency key and
 the latest `configuration_version`. A lost-response transport retry remains the
 responsibility of the normal client task executor, which reuses the request's
 key. Polling stops when every destination is ready, when any destination reaches
-a terminal setup state, when the timeout expires, or when the caller aborts.
+a terminal setup state, when the timeout expires, or when the caller aborts. It
+also fails closed if the authenticated principal or configuration version changes
+while setup is being observed; seller-driven setup transitions keep the same
+version by protocol contract.

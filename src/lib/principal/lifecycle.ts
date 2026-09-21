@@ -72,8 +72,15 @@ function assertPositiveInteger(value: number, name: string): void {
   }
 }
 
+function assertAtMost(value: number, maximum: number, name: string): void {
+  if (value > maximum) throw new RangeError(`${name} must be at most ${maximum}.`);
+}
+
 function completedData<T>(result: TaskResult<T>, operation: string): T {
   if (result.success && result.status === 'completed') return result.data;
+  if (!result.success && result.status === 'failed' && 'data' in result && result.data !== undefined) {
+    return result.data;
+  }
   throw new PrincipalLifecycleError(`${operation} did not complete successfully.`);
 }
 
@@ -166,16 +173,20 @@ export async function syncPrincipalLifecycle(
   assertPositiveInteger(maxAttempts, 'maxAttempts');
   assertPositiveInteger(setupTimeoutMs, 'setupTimeoutMs');
   assertPositiveInteger(pollIntervalMs, 'pollIntervalMs');
+  assertAtMost(maxAttempts, 10, 'maxAttempts');
+  assertAtMost(setupTimeoutMs, 24 * 60 * 60 * 1_000, 'setupTimeoutMs');
+  assertAtMost(pollIntervalMs, 2_147_483_647, 'pollIntervalMs');
   throwIfAborted(options.signal);
 
   const createIdempotencyKey = options.createIdempotencyKey ?? randomUUID;
+  const desiredConfiguration = structuredClone(configuration);
   let prior = await readCurrent(client, options);
   let applied: AppliedPrincipal | undefined;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const request: MutatingRequestInput<SyncPrincipalRequest> = {
       idempotency_key: createIdempotencyKey(),
-      configuration,
+      configuration: desiredConfiguration,
       ...(prior.kind === 'current' ? { expected_configuration_version: prior.configuration_version } : {}),
       ...(prior.kind === 'current' || prior.kind === 'recognized'
         ? { expected_principal_kind: prior.principal_kind }
@@ -220,6 +231,13 @@ export async function syncPrincipalLifecycle(
       const readback = await readCurrent(client, options, Math.max(1, deadline - Date.now()));
       if (readback.kind !== 'current') {
         throw new PrincipalLifecycleError('Principal configuration disappeared while destination setup was pending.');
+      }
+      if (
+        readback.principal_id !== applied.principal_id ||
+        readback.principal_kind !== applied.principal_kind ||
+        readback.configuration_version !== applied.configuration_version
+      ) {
+        throw new PrincipalLifecycleError('Principal configuration changed while destination setup was pending.');
       }
       current = readback;
       outcome = destinationOutcome(current);

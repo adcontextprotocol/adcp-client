@@ -19,6 +19,18 @@ function completed(data) {
   };
 }
 
+function failed(data) {
+  return {
+    success: false,
+    status: 'failed',
+    data,
+    error: 'Task rejected',
+    metadata: { status: 'failed', taskName: 'principal-test' },
+    conversation: [],
+    debug_logs: [],
+  };
+}
+
 function current(version, state = 'ready', declarations) {
   return {
     status: 'completed',
@@ -99,7 +111,7 @@ describe('principal lifecycle', () => {
       syncPrincipal: async request => {
         requests.push(request);
         if (requests.length === 1) {
-          return completed({
+          return failed({
             status: 'rejected',
             result: {
               kind: 'failed',
@@ -133,9 +145,25 @@ describe('principal lifecycle', () => {
     assert.equal(result.current.configuration.reporting_destinations[0].state, 'action_required');
   });
 
+  test('fails closed when identity or configuration changes during setup polling', async () => {
+    const changed = current('v3', 'ready');
+    changed.result.principal_id = 'principal-2';
+    const reads = [current('v1'), changed];
+    const client = {
+      getPrincipal: async () => completed(reads.shift()),
+      syncPrincipal: async () => completed(applied('v2', 'validating')),
+    };
+
+    await assert.rejects(
+      syncPrincipalLifecycle(client, { reporting_destinations: [] }, { pollIntervalMs: 1 }),
+      /configuration changed/
+    );
+  });
+
   test('bounds setup polling and honors caller cancellation', async () => {
+    let timeoutReads = 0;
     const timeoutClient = {
-      getPrincipal: async () => completed(current('v1', 'validating')),
+      getPrincipal: async () => completed(current(timeoutReads++ === 0 ? 'v1' : 'v2', 'validating')),
       syncPrincipal: async () => completed(applied('v2', 'validating')),
     };
     await assert.rejects(
@@ -144,8 +172,9 @@ describe('principal lifecycle', () => {
     );
 
     const controller = new AbortController();
+    let abortReads = 0;
     const abortClient = {
-      getPrincipal: async () => completed(current('v1', 'validating')),
+      getPrincipal: async () => completed(current(abortReads++ === 0 ? 'v1' : 'v2', 'validating')),
       syncPrincipal: async () => completed(applied('v2', 'validating')),
     };
     setTimeout(() => controller.abort(new Error('stop polling')), 1);
@@ -156,6 +185,11 @@ describe('principal lifecycle', () => {
         { signal: controller.signal, setupTimeoutMs: 100, pollIntervalMs: 20 }
       ),
       /stop polling/
+    );
+
+    await assert.rejects(
+      syncPrincipalLifecycle(abortClient, { notification_configs: [] }, { maxAttempts: 11 }),
+      /maxAttempts must be at most 10/
     );
   });
 });
