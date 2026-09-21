@@ -192,6 +192,44 @@ describe('principal lifecycle', () => {
       /maxAttempts must be at most 10/
     );
   });
+
+  test('preserves a disabled task timeout while bounding setup reads by the lifecycle deadline', async () => {
+    const observedTimeouts = [];
+    let reads = 0;
+    const client = {
+      getPrincipal: async (_params, _inputHandler, taskOptions) => {
+        observedTimeouts.push(taskOptions.timeout);
+        return completed(current(reads++ === 0 ? 'v1' : 'v2', 'ready'));
+      },
+      syncPrincipal: async (_request, _inputHandler, taskOptions) => {
+        observedTimeouts.push(taskOptions.timeout);
+        return completed(applied('v2', 'validating'));
+      },
+    };
+
+    await syncPrincipalLifecycle(
+      client,
+      { reporting_destinations: [] },
+      { taskOptions: { timeout: 0 }, setupTimeoutMs: 100, pollIntervalMs: 1 }
+    );
+
+    assert.deepEqual(observedTimeouts.slice(0, 2), [0, 0]);
+    assert.ok(observedTimeouts[2] > 1 && observedTimeouts[2] <= 100);
+  });
+
+  test('does not dispatch a setup read after the lifecycle deadline', async () => {
+    let reads = 0;
+    const client = {
+      getPrincipal: async () => completed(current(reads++ === 0 ? 'v1' : 'v2', 'validating')),
+      syncPrincipal: async () => completed(applied('v2', 'validating')),
+    };
+
+    await assert.rejects(
+      syncPrincipalLifecycle(client, { reporting_destinations: [] }, { setupTimeoutMs: 5, pollIntervalMs: 100 }),
+      PrincipalLifecycleTimeoutError
+    );
+    assert.equal(reads, 1);
+  });
 });
 
 describe('principal task transport dispatch', () => {

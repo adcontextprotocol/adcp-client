@@ -90,10 +90,11 @@ function conflictResponse(response: SyncPrincipalResponse): boolean {
 
 function taskOptions(options: PrincipalLifecycleOptions, remainingMs?: number): TaskOptions {
   const configuredTimeout = options.taskOptions?.timeout;
+  const boundedConfiguredTimeout = configuredTimeout === 0 ? undefined : configuredTimeout;
   const timeout =
     remainingMs === undefined
       ? configuredTimeout
-      : Math.max(1, Math.min(remainingMs, configuredTimeout ?? remainingMs));
+      : Math.max(1, Math.min(remainingMs, boundedConfiguredTimeout ?? remainingMs));
   return {
     ...options.taskOptions,
     ...(timeout === undefined ? {} : { timeout }),
@@ -227,8 +228,12 @@ export async function syncPrincipalLifecycle(
     while (outcome === 'pending') {
       const remaining = deadline - Date.now();
       if (remaining <= 0) throw new PrincipalLifecycleTimeoutError();
-      await wait(Math.min(pollIntervalMs, remaining), options.signal);
-      const readback = await readCurrent(client, options, Math.max(1, deadline - Date.now()));
+      const delay = Math.min(pollIntervalMs, remaining);
+      await wait(delay, options.signal);
+      if (delay === remaining) throw new PrincipalLifecycleTimeoutError();
+      const remainingAfterWait = deadline - Date.now();
+      if (remainingAfterWait <= 0) throw new PrincipalLifecycleTimeoutError();
+      const readback = await readCurrent(client, options, remainingAfterWait);
       if (readback.kind !== 'current') {
         throw new PrincipalLifecycleError('Principal configuration disappeared while destination setup was pending.');
       }
