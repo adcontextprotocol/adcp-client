@@ -57,7 +57,10 @@ const {
 } = require('./adcp-storyboard-summary.js');
 
 const { scheduleVersionCheck } = require('./adcp-version-check.js');
-const { formatStoryboardResultsAsJUnit } = require('../dist/lib/testing/storyboard/junit.js');
+const {
+  formatStoryboardResultsAsJUnit,
+  routedStoryboardResultGroup,
+} = require('../dist/lib/testing/storyboard/junit.js');
 const { ADCP_VERSION, LIBRARY_VERSION } = require('../dist/lib/version.js');
 const { isAdcpVersionSupported } = require('../dist/lib/utils/adcp-version-config.js');
 const { appendBuiltInVersionUnsupportedHint } = require('./adcp-version-unsupported-hint.js');
@@ -2917,7 +2920,7 @@ async function handleStoryboardRun(args) {
       'Usage: adcp storyboard run <agent> [storyboard_id|--file path] [options]\n' +
         '  Local agent: adcp storyboard run --local-agent <module> [storyboard_id|bundle_id]\n' +
         '  Multi-instance: adcp storyboard run --url <url1> --url <url2> <storyboard_id|bundle_id>\n' +
-        '  Multi-agent:   adcp storyboard run --agents-map ./agents.yaml <storyboard_id|bundle_id>'
+        '  Multi-agent:   adcp storyboard run --agents-map ./agents.yaml [storyboard_id|bundle_id]'
     );
     process.exit(2);
   }
@@ -4638,9 +4641,8 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
  * `get_adcp_capabilities`; tools without a unique claimant fall through to
  * `--default-agent`, or fail-fast with `unroutable_task`.
  *
- * Capability-driven full assessment is intentionally not supported here —
- * the assessment dispatches via `comply()` which expects a single agent.
- * Storyboard ID, bundle ID, or `--file` is required.
+ * With no storyboard or file, every tenant is discovered first and the
+ * topology runs the union of capability-applicable storyboards.
  */
 async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
   const { authToken, authScheme, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath, format } = opts;
@@ -4669,15 +4671,9 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
   }
 
   const storyboardId = firstPositional;
+  const capabilityDriven = !filePath && !storyboardId;
   if (filePath && storyboardId) {
     console.error('ERROR: Cannot combine a storyboard ID with --file. Use one or the other.');
-    process.exit(2);
-  }
-  if (!filePath && !storyboardId) {
-    console.error(
-      'ERROR: Multi-agent routing requires a storyboard ID, bundle ID, or --file. ' +
-        'Capability-driven full assessment is not yet routing-aware.'
-    );
     process.exit(2);
   }
 
@@ -4692,7 +4688,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
       console.error(`Failed to load storyboard from ${filePath}: ${err.message}`);
       process.exit(2);
     }
-  } else {
+  } else if (storyboardId) {
     const bundle = findBundleById(storyboardId, resolveOptions);
     if (bundle) {
       const bundleStoryboards = loadBundleStoryboards(bundle);
@@ -4748,6 +4744,49 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
 
   await loadInvariantModules(args);
 
+  let routedSelection;
+  let routedSelectionSummary;
+  let routingProfiles;
+  if (capabilityDriven) {
+    const { discoverAgentRouting } = await import('../dist/lib/testing/storyboard/agent-routing.js');
+    const { resolveRoutedAssessment } = await import('../dist/lib/testing/compliance/comply.js');
+    const discoveryOptions = {
+      protocol,
+      ...buildResolvedAuthOption({ resolvedAuth: authToken, resolvedAuthScheme: authScheme || 'bearer' }),
+      ...(opts.allowHttp && { allow_http: true }),
+      agents: routing.agents,
+      ...(routing.default_agent ? { default_agent: routing.default_agent } : {}),
+      ...(runComplianceDir && { complianceDir: runComplianceDir }),
+      ...(runAdcpVersion && { adcpVersion: runAdcpVersion }),
+      ...(runSchemaRoot && { schemaRoot: runSchemaRoot }),
+      ...sandboxRunOptions(opts),
+      ...(requestSigningOpts ?? {}),
+    };
+    const restoreDiscoveryLogs = jsonOutput ? captureStdoutLogs() : null;
+    try {
+      if (!jsonOutput) console.error('Discovering routed agent capabilities...');
+      const routingContext = await discoverAgentRouting(discoveryOptions);
+      routingProfiles = routingContext.profiles;
+      routedSelection = resolveRoutedAssessment(routingProfiles, resolveOptions);
+      routedSelectionSummary = {
+        agents: routedSelection.agents,
+        not_applicable: routedSelection.not_applicable,
+        missing_tools: routedSelection.missing_tools,
+        storyboard_ids: routedSelection.storyboards.map(storyboard => storyboard.id),
+      };
+      storyboards.push(...routedSelection.storyboards);
+    } catch (err) {
+      console.error(`ERROR: Failed to resolve routed assessment: ${err.message}`);
+      process.exit(1);
+    } finally {
+      if (restoreDiscoveryLogs) restoreDiscoveryLogs();
+    }
+    if (storyboards.length === 0) {
+      console.error('ERROR: Routed capability discovery selected no runnable storyboards.');
+      process.exit(1);
+    }
+  }
+
   const totalSteps = storyboards.reduce(
     (sum, sb) => sum + sb.phases.reduce((phaseSum, p) => phaseSum + p.steps.length, 0),
     0
@@ -4777,6 +4816,10 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
         default_agent: routing.default_agent,
         protocol,
         preview: true,
+        ...(capabilityDriven && {
+          assessment_mode: 'capability-driven',
+          selection: routedSelectionSummary,
+        }),
         storyboards: storyboards.map(sb => ({
           storyboard_id: sb.id,
           storyboard_title: sb.title,
@@ -4798,6 +4841,10 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
         }
       }
       console.log(`\n${totalSteps} step(s) would be routed at run time. Use without --dry-run to execute.`);
+    }
+    if (capabilityDriven) {
+      const { closeConnections } = await import('../dist/lib/protocols/index.js');
+      await closeConnections(protocol);
     }
     return;
   }
@@ -4825,6 +4872,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
     }),
     ...(opts.loadedTestKit !== undefined && { test_kit: opts.loadedTestKit }),
     ...(requestSigningOpts ?? {}),
+    ...(routingProfiles && { _routingProfiles: routingProfiles }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -4842,7 +4890,12 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
   }
 
   if (format === 'junit') {
-    process.stdout.write(formatStoryboardResultsAsJUnit(results));
+    const suiteGroups = capabilityDriven
+      ? Object.fromEntries(results.map(result => [result.storyboard_id, routedStoryboardResultGroup(result)]))
+      : undefined;
+    process.stdout.write(
+      formatStoryboardResultsAsJUnit(results, suiteGroups ? { suite_groups: suiteGroups } : undefined)
+    );
     if (opts.softFail && hadFailure) {
       printSoftFailBlock(
         results.filter(r => !r.overall_passed).map(r => r.storyboard_id),
@@ -4853,13 +4906,25 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
   }
 
   if (jsonOutput) {
+    const reports = {};
+    if (capabilityDriven) {
+      for (const result of results) {
+        const group = routedStoryboardResultGroup(result);
+        (reports[group] ??= []).push(result);
+      }
+    }
     await writeJsonOutput(
-      results.length === 1
+      !capabilityDriven && results.length === 1
         ? results[0]
         : {
             agents: routing.agents,
             default_agent: routing.default_agent,
-            storyboards: results,
+            ...(capabilityDriven && {
+              assessment_mode: 'capability-driven',
+              selection: routedSelectionSummary,
+              reports,
+            }),
+            ...(!capabilityDriven && { storyboards: results }),
             overall_passed: !hadFailure,
           }
     );

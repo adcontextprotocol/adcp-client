@@ -780,6 +780,87 @@ function resolveFromCapabilities(
   };
 }
 
+/** @internal CLI selection details; not part of the SDK's public surface. */
+export interface RoutedAssessmentSelection {
+  storyboards: Storyboard[];
+  agents: Record<
+    string,
+    {
+      supported_protocols: string[];
+      specialisms: string[];
+      supported_versions: string[];
+    }
+  >;
+  not_applicable: NotApplicableStoryboard[];
+  missing_tools: NotApplicableStoryboard[];
+}
+
+/**
+ * Resolve a capability-driven assessment for a routed topology.
+ *
+ * Each tenant contributes its applicable bundles to a stable union. Required
+ * tool applicability is then evaluated against the topology-wide tool set,
+ * allowing a cross-specialism storyboard selected by one tenant to be served
+ * by another tenant in the same routing map.
+ *
+ * @internal CLI assessment helper.
+ */
+export function resolveRoutedAssessment(
+  profiles: ReadonlyMap<string, AgentProfile>,
+  resolveOptions: ResolveOptions = {}
+): RoutedAssessmentSelection {
+  const agents: RoutedAssessmentSelection['agents'] = {};
+  const topologyTools = new Set<string>();
+  const supportedProtocols = new Set<string>();
+  const specialisms = new Set<string>();
+  const majorVersions = new Set<number>();
+  const complianceIndex = loadComplianceIndex(resolveOptions);
+
+  for (const [agentKey, profile] of profiles) {
+    if (
+      profile.adcp_supported_versions?.length &&
+      !isComplianceVersionSupported(complianceIndex.adcp_version, profile.adcp_supported_versions, resolveOptions)
+    ) {
+      throw new Error(
+        `Compliance cache version ${complianceIndex.adcp_version} is not supported by routed agent "${agentKey}". ` +
+          `Agent advertises adcp.supported_versions [${profile.adcp_supported_versions.join(', ')}].`
+      );
+    }
+    agents[agentKey] = {
+      supported_protocols: [...(profile.supported_protocols ?? [])],
+      specialisms: [...(profile.specialisms ?? [])],
+      supported_versions: [...(profile.adcp_supported_versions ?? [])],
+    };
+    for (const tool of profile.tools) topologyTools.add(tool);
+    for (const protocol of profile.supported_protocols ?? []) supportedProtocols.add(protocol);
+    for (const specialism of profile.specialisms ?? []) specialisms.add(specialism);
+    for (const version of profile.adcp_major_versions ?? []) majorVersions.add(version);
+  }
+
+  // Resolve once for the topology rather than reparsing the compliance cache
+  // once per tenant. The union is the intended assessment surface; routed
+  // execution still binds every step to the profile of the tenant serving it.
+  const resolved = resolveFromCapabilities(
+    {
+      name: 'routed topology',
+      tools: [...topologyTools],
+      supported_protocols: [...supportedProtocols],
+      specialisms: [...specialisms],
+      adcp_major_versions: [...majorVersions],
+      adcp_supported_versions: [complianceIndex.adcp_version],
+    },
+    resolveOptions
+  );
+  const partition = partitionStoryboardsByRequiredTools(resolved.storyboards, [...topologyTools]);
+
+  return {
+    storyboards: partition.runnable,
+    agents,
+    not_applicable: resolved.not_applicable,
+    missing_tools: partition.missing,
+  };
+}
+
 export interface ComplianceBundleAssessmentOptions {
   /** Storyboards excluded because the seller's declared version predates them. */
   notApplicable?: readonly NotApplicableStoryboard[];

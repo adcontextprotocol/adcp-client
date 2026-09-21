@@ -257,10 +257,7 @@ export class DiscoveryFailure extends Error {
  *     lacks `step.agent` → `RoutingError` (conflict). Independent of
  *     resilient mode.
  */
-export async function buildRoutingContext(
-  storyboard: Storyboard,
-  options: StoryboardRunOptions
-): Promise<AgentRoutingContext> {
+export async function discoverAgentRouting(options: StoryboardRunOptions): Promise<AgentRoutingContext> {
   const agents = options.agents!;
   const entries = Object.entries(agents);
   const resilient = options.discovery_resilient === true;
@@ -276,6 +273,23 @@ export async function buildRoutingContext(
   // Parallel discovery — one tenant's slowness does not block another.
   const profiles = new Map<string, AgentProfile>();
   const discoveryFailures: DiscoveryFailure[] = [];
+  if (options._routingProfiles) {
+    for (const [key] of entries) {
+      const profile = options._routingProfiles.get(key);
+      if (!profile) {
+        throw new Error(`Pre-discovered routing profiles are missing agent "${key}".`);
+      }
+      profiles.set(key, profile);
+    }
+    return {
+      clients,
+      profiles,
+      protocolIndex: buildProtocolIndex(profiles),
+      agentMap,
+      discoveryFailures,
+    };
+  }
+
   const discoveryResults = await Promise.all(
     entries.map(async ([key, entry]) => {
       const perAgentOptions = buildAgentOptions(entry, options);
@@ -323,10 +337,23 @@ export async function buildRoutingContext(
     profiles.set(r.key, r.profile);
   }
 
-  const protocolIndex = buildProtocolIndex(profiles);
-  detectMultiClaimConflicts(storyboard, protocolIndex, options);
+  return {
+    clients,
+    profiles,
+    protocolIndex: buildProtocolIndex(profiles),
+    agentMap,
+    discoveryFailures,
+  };
+}
 
-  return { clients, profiles, protocolIndex, agentMap, discoveryFailures };
+/** Discover the routed topology, then validate conflicts for one storyboard. */
+export async function buildRoutingContext(
+  storyboard: Storyboard,
+  options: StoryboardRunOptions
+): Promise<AgentRoutingContext> {
+  const context = await discoverAgentRouting(options);
+  detectMultiClaimConflicts(storyboard, context.protocolIndex, options);
+  return context;
 }
 
 /**

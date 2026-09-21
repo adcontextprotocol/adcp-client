@@ -53,7 +53,10 @@ const {
 } = require('../../dist/lib/testing/storyboard/agent-routing.js');
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
 const { loadStoryboardFile } = require('../../dist/lib/testing/storyboard/loader.js');
-const { buildComplianceBundleResults } = require('../../dist/lib/testing/compliance/comply.js');
+const {
+  buildComplianceBundleResults,
+  resolveRoutedAssessment,
+} = require('../../dist/lib/testing/compliance/comply.js');
 const { resolveStoryboardsForCapabilities } = require('../../dist/lib/testing/storyboard/compliance.js');
 const { closeConnections } = require('../../dist/lib/protocols/index.js');
 const { ADCP_VERSION } = require('../../dist/lib/version.js');
@@ -1132,6 +1135,67 @@ describe('real AdCP 3.2 bundle aggregates', { skip: !scenariosAvailable }, () =>
       gated.map(sb => capabilityUnsupportedResult(sb.id))
     )[0].status;
     assert.notEqual(status, 'passing', `${bundle.ref.kind}:${bundle.ref.id}`);
+  });
+});
+
+describe('routed capability-driven assessment selection', { skip: !scenariosAvailable }, () => {
+  test('unions tenant surfaces and applies required-tools against the whole topology', () => {
+    const resolveOptions = {
+      complianceVersion: ADCP_VERSION,
+      complianceDir: path.join('compliance', 'cache', ADCP_VERSION),
+    };
+    const base = {
+      specialisms: [],
+      adcp_major_versions: [3],
+      adcp_supported_versions: ['3.1', '3.2', ADCP_VERSION],
+    };
+    const sellerResolved = resolveStoryboardsForCapabilities(
+      {
+        supported_protocols: ['media_buy'],
+        specialisms: [],
+        major_versions: base.adcp_major_versions,
+        supported_versions: base.adcp_supported_versions,
+      },
+      resolveOptions
+    );
+    const signalsResolved = resolveStoryboardsForCapabilities(
+      {
+        supported_protocols: ['signals'],
+        specialisms: [],
+        major_versions: base.adcp_major_versions,
+        supported_versions: base.adcp_supported_versions,
+      },
+      resolveOptions
+    );
+    const topologyTools = [
+      ...new Set(
+        [...sellerResolved.storyboards, ...signalsResolved.storyboards].flatMap(
+          storyboard => storyboard.required_tools ?? []
+        )
+      ),
+    ];
+    const selected = resolveRoutedAssessment(
+      new Map([
+        ['seller', { name: 'seller', ...base, supported_protocols: ['media_buy'], tools: [] }],
+        ['signals', { name: 'signals', ...base, supported_protocols: ['signals'], tools: topologyTools }],
+      ]),
+      resolveOptions
+    );
+    const selectedIds = new Set(selected.storyboards.map(storyboard => storyboard.id));
+    const sellerOnly = sellerResolved.storyboards.find(
+      storyboard => !signalsResolved.storyboards.some(candidate => candidate.id === storyboard.id)
+    );
+    const signalsOnly = signalsResolved.storyboards.find(
+      storyboard => !sellerResolved.storyboards.some(candidate => candidate.id === storyboard.id)
+    );
+
+    assert.ok(sellerOnly, 'media-buy baseline contributes a tenant-specific storyboard');
+    assert.ok(signalsOnly, 'signals baseline contributes a tenant-specific storyboard');
+    assert.ok(selectedIds.has(sellerOnly.id));
+    assert.ok(selectedIds.has(signalsOnly.id));
+    assert.deepEqual(selected.agents.seller.supported_protocols, ['media_buy']);
+    assert.deepEqual(selected.agents.signals.supported_protocols, ['signals']);
+    assert.equal(selected.missing_tools.length, 0, 'tools advertised by a peer satisfy topology applicability');
   });
 });
 

@@ -125,7 +125,30 @@ function stepSkipMessage(step: { skip_reason?: string; skip?: { detail?: string 
   return `${reason}: ${clipped}`;
 }
 
-export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): string {
+/** @internal CLI report options; not part of the SDK's public surface. */
+export interface StoryboardJUnitOptions {
+  /** Storyboard id → routed tenant/topology group. */
+  suite_groups?: Readonly<Record<string, string>>;
+}
+
+/** @internal Attribute a routed result to one tenant, or to the synthetic topology group. */
+export function routedStoryboardResultGroup(result: StoryboardResult): string {
+  const agentKeys = Object.keys(result.agent_map ?? {});
+  const phases = result.passes?.length ? result.passes.flatMap(pass => pass.phases) : result.phases;
+  const touched = new Set<string>();
+  for (const step of phases.flatMap(phase => phase.steps)) {
+    const key = step.agent_index === undefined ? undefined : agentKeys[step.agent_index - 1];
+    if (key) touched.add(key);
+  }
+  if (touched.size === 1) return [...touched][0]!;
+  return 'cross-tenant-topology';
+}
+
+/** @internal CLI report formatter; not part of the SDK's public surface. */
+export function formatStoryboardResultsAsJUnit(
+  results: StoryboardResult[],
+  options: StoryboardJUnitOptions = {}
+): string {
   let totalTests = 0;
   let totalFailures = 0;
   let totalSkipped = 0;
@@ -133,6 +156,8 @@ export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): str
   const suites: string[] = [];
 
   for (const sb of results) {
+    const suiteGroup = options.suite_groups?.[sb.storyboard_id];
+    const suiteClassname = suiteGroup ? `${suiteGroup}.${sb.storyboard_id}` : sb.storyboard_id;
     const suiteCases: string[] = [];
     let suiteFailures = sb.failed_count;
     let representedSkipped = 0;
@@ -149,7 +174,7 @@ export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): str
             representedSkipped += 1;
             totalSkipped += 1;
             suiteCases.push(
-              `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="${xmlEscape(name)}" time="${time}">\n` +
+              `    <testcase classname="${xmlEscape(suiteClassname)}" name="${xmlEscape(name)}" time="${time}">\n` +
                 `      <skipped message="${xmlEscape(stepSkipMessage(step))}"/>\n` +
                 `    </testcase>`
             );
@@ -178,7 +203,7 @@ export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): str
             // under the #883 widened hint gate.
             const message = step.error || firstHintMessage(step) || 'validation failed';
             suiteCases.push(
-              `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="${xmlEscape(name)}" time="${time}">\n` +
+              `    <testcase classname="${xmlEscape(suiteClassname)}" name="${xmlEscape(name)}" time="${time}">\n` +
                 `      <failure message="${xmlEscape(message)}" type="StoryboardFailure">${xmlEscape(failureDetails)}</failure>\n` +
                 `    </testcase>`
             );
@@ -190,10 +215,10 @@ export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): str
             .join('\n');
           suiteCases.push(
             advisoryFindings
-              ? `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="${xmlEscape(name)}" time="${time}">\n` +
+              ? `    <testcase classname="${xmlEscape(suiteClassname)}" name="${xmlEscape(name)}" time="${time}">\n` +
                   `      <system-out>${xmlEscape(advisoryFindings)}</system-out>\n` +
                   `    </testcase>`
-              : `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="${xmlEscape(name)}" time="${time}"/>`
+              : `    <testcase classname="${xmlEscape(suiteClassname)}" name="${xmlEscape(name)}" time="${time}"/>`
           );
         }
       }
@@ -204,7 +229,7 @@ export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): str
       totalTests += 1;
       totalSkipped += 1;
       suiteCases.push(
-        `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="Fixture resolution" time="0.000">\n` +
+        `    <testcase classname="${xmlEscape(suiteClassname)}" name="Fixture resolution" time="0.000">\n` +
           `      <skipped message="${xmlEscape(fixtureGap.detail)}"/>\n` +
           `    </testcase>`
       );
@@ -217,7 +242,7 @@ export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): str
       const message = assertion.error ?? assertion.description;
       const details = `${assertion.assertion_id}: ${assertion.description}${assertion.error ? `\n${assertion.error}` : ''}`;
       suiteCases.push(
-        `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="${xmlEscape(`${passLabel}Assertion › ${assertion.assertion_id}`)}" time="0.000">\n` +
+        `    <testcase classname="${xmlEscape(suiteClassname)}" name="${xmlEscape(`${passLabel}Assertion › ${assertion.assertion_id}`)}" time="0.000">\n` +
           `      <failure message="${xmlEscape(message)}" type="StoryboardAssertionFailure">${xmlEscape(details)}</failure>\n` +
           `    </testcase>`
       );
@@ -225,7 +250,7 @@ export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): str
     totalDuration += sb.total_duration_ms || 0;
     const suiteTests = suiteCases.length;
     suites.push(
-      `  <testsuite name="${xmlEscape(sb.storyboard_title)}" tests="${suiteTests}" failures="${suiteFailures}" skipped="${sb.skipped_count}" time="${((sb.total_duration_ms || 0) / 1000).toFixed(3)}" timestamp="${sb.tested_at || new Date().toISOString()}">\n` +
+      `  <testsuite name="${xmlEscape(suiteGroup ? `${suiteGroup} › ${sb.storyboard_title}` : sb.storyboard_title)}"${suiteGroup ? ` package="${xmlEscape(`adcp.${suiteGroup}`)}"` : ''} tests="${suiteTests}" failures="${suiteFailures}" skipped="${sb.skipped_count}" time="${((sb.total_duration_ms || 0) / 1000).toFixed(3)}" timestamp="${sb.tested_at || new Date().toISOString()}">\n` +
         suiteCases.join('\n') +
         `\n  </testsuite>`
     );

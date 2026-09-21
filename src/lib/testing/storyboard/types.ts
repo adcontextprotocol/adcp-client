@@ -1932,6 +1932,14 @@ export interface StoryboardRunOptions extends TestOptions {
    */
   discovery_resilient?: boolean;
   /**
+   * Pre-discovered routed-agent profiles. Internal CLI seam used by the
+   * capability-driven routed assessment so selection and execution share the
+   * same capability snapshot instead of probing every tenant twice.
+   *
+   * @internal
+   */
+  _routingProfiles?: Map<string, import('../types').AgentProfile>;
+  /**
    * Host an ephemeral webhook receiver during the run so `expect_webhook*`
    * pseudo-steps can observe outbound webhooks from the agent under test.
    * Enables the `webhook_receiver_runner` contract referenced by the

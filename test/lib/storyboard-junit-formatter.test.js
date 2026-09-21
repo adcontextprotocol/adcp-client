@@ -14,7 +14,10 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { formatStoryboardResultsAsJUnit } = require('../../dist/lib/testing/storyboard/junit.js');
+const {
+  formatStoryboardResultsAsJUnit,
+  routedStoryboardResultGroup,
+} = require('../../dist/lib/testing/storyboard/junit.js');
 
 function buildResult({ stepOverrides = {}, storyboardOverrides = {} } = {}) {
   return {
@@ -82,6 +85,44 @@ describe('formatStoryboardResultsAsJUnit: basic shape', () => {
       xml,
       /<testsuites name="adcp-storyboards" tests="0" failures="0" skipped="0" time="0\.000">\s*<\/testsuites>/
     );
+  });
+
+  test('groups routed suites by one tenant or the cross-tenant topology', () => {
+    const tenant = buildResult({
+      stepOverrides: { agent_index: 1 },
+      storyboardOverrides: { agent_map: { seller: 'https://seller.test', signals: 'https://signals.test' } },
+    });
+    const crossTenant = buildResult({
+      storyboardOverrides: {
+        storyboard_id: 'cross',
+        storyboard_title: 'Cross tenant',
+        agent_map: { seller: 'https://seller.test', signals: 'https://signals.test' },
+        phases: [
+          {
+            phase_id: 'p1',
+            phase_title: 'Phase 1',
+            passed: true,
+            duration_ms: 2,
+            steps: [
+              { ...tenant.phases[0].steps[0], step_id: 'seller', agent_index: 1 },
+              { ...tenant.phases[0].steps[0], step_id: 'signals', agent_index: 2 },
+            ],
+          },
+        ],
+      },
+    });
+    assert.equal(routedStoryboardResultGroup(tenant), 'seller');
+    assert.equal(routedStoryboardResultGroup(crossTenant), 'cross-tenant-topology');
+
+    const xml = formatStoryboardResultsAsJUnit([tenant, crossTenant], {
+      suite_groups: {
+        test_sb: routedStoryboardResultGroup(tenant),
+        cross: routedStoryboardResultGroup(crossTenant),
+      },
+    });
+    assert.match(xml, /<testsuite name="seller › Test Storyboard" package="adcp\.seller"/);
+    assert.match(xml, /classname="seller\.test_sb"/);
+    assert.match(xml, /<testsuite name="cross-tenant-topology › Cross tenant"/);
   });
 
   test('aggregates totals across multiple storyboards + multi-phase steps', () => {
