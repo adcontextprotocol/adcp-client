@@ -220,7 +220,7 @@ function destinationOutcome(
   }
   const relevantDestinations = destinations.filter(
     destination =>
-      destination.state !== 'inactive' || expectedActiveDestinationIds?.has(destination.destination_id) === true
+      destination.configuration.active || expectedActiveDestinationIds?.has(destination.destination_id) === true
   );
   if (
     relevantDestinations.some(

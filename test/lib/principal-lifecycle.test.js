@@ -46,7 +46,7 @@ function current(version, state = 'ready', declarations) {
             destination_id: 'warehouse',
             destination_ref: 'destination-1',
             state,
-            configuration: { pattern: 'warehouse_materialization', destination_id: 'warehouse' },
+            configuration: { pattern: 'warehouse_materialization', destination_id: 'warehouse', active: true },
           },
         ],
         ...(declarations === undefined ? {} : { declarations }),
@@ -248,7 +248,7 @@ describe('principal lifecycle', () => {
   });
 
   test('excludes suspended destinations while continuing to poll active setup', async () => {
-    const destinations = state => [
+    const destinations = (state, suspendedState = 'inactive') => [
       {
         destination_id: 'live',
         destination_ref: 'destination-live',
@@ -258,7 +258,7 @@ describe('principal lifecycle', () => {
       {
         destination_id: 'archive',
         destination_ref: 'destination-archive',
-        state: 'inactive',
+        state: suspendedState,
         configuration: { pattern: 'warehouse_materialization', destination_id: 'archive', active: false },
       },
     ];
@@ -290,6 +290,27 @@ describe('principal lifecycle', () => {
 
     assert.equal(result.destinationsReady, true);
     assert.equal(result.current.configuration.reporting_destinations[1].state, 'inactive');
+
+    const rejectedReads = [current('v1'), withDestinations('v2', 'ready')];
+    const rejectedClient = {
+      getPrincipal: async () => completed(rejectedReads.shift()),
+      syncPrincipal: async () => {
+        const response = applied('v2', 'ready');
+        response.result.configuration.reporting_destinations = destinations('validating', 'rejected');
+        return completed(response);
+      },
+    };
+    const rejectedResult = await syncPrincipalLifecycle(
+      rejectedClient,
+      {
+        reporting_destinations: [
+          { destination_id: 'live', active: true },
+          { destination_id: 'archive', active: false },
+        ],
+      },
+      { pollIntervalMs: 1 }
+    );
+    assert.equal(rejectedResult.destinationsReady, true);
   });
 
   test('surfaces intermediate and non-schema failure task results without accepting their data', async () => {
