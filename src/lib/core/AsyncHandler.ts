@@ -770,6 +770,14 @@ export class AsyncHandler {
 
     // Route to specific handler based on task type
     switch (taskType) {
+      case 'get_principal':
+        handler = this.config.onGetPrincipalStatusChange;
+        break;
+
+      case 'sync_principal':
+        handler = this.config.onSyncPrincipalStatusChange;
+        break;
+
       case 'get_products':
         handler = this.config.onGetProductsStatusChange;
         break;
