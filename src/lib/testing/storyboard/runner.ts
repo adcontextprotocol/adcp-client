@@ -4540,6 +4540,20 @@ async function executeStep(
     responseDerivedNotApplicableContextKeys: new Map(),
   };
   const effectiveOptions = runState.effectiveOptions ?? options;
+  // Routed options deliberately clear run-scoped discovery fields so one
+  // tenant's cached profile cannot short-circuit another tenant's discovery.
+  // Once routing has selected this step's agent, probes still need that
+  // selected profile for capability-backed inputs (brand JWKS) and tool gates
+  // (rate-limit targets). Rebind only the selected profile while preserving
+  // the routed transport/auth/request-signing options in effectiveOptions.
+  const effectiveProbeOptions = runState.agentProfile
+    ? {
+        ...effectiveOptions,
+        profile: runState.agentProfile,
+        _profile: runState.agentProfile,
+        agentTools: effectiveOptions.agentTools ?? normalizeAgentToolNames(runState.agentProfile.tools),
+      }
+    : effectiveOptions;
 
   // Recognize the dedicated TMP publisher-auth probes before generic auth
   // overrides, missing-tool checks, or MCP/A2A routing.
@@ -4547,12 +4561,12 @@ async function executeStep(
     if (runState.storyboardRequiresPublisherAuthRunner !== true) {
       return invalidTrustedMatchPublisherAuthTask(step, phaseId, context, allSteps, runState);
     }
-    return executeProbeStep(client, step, phaseId, context, allSteps, effectiveOptions, runState);
+    return executeProbeStep(client, step, phaseId, context, allSteps, effectiveProbeOptions, runState);
   }
 
   // HTTP probe tasks bypass the MCP client entirely.
   if (PROBE_TASKS.has(step.task)) {
-    return executeProbeStep(client, step, phaseId, context, allSteps, effectiveOptions, runState);
+    return executeProbeStep(client, step, phaseId, context, allSteps, effectiveProbeOptions, runState);
   }
 
   // Webhook-assertion pseudo-tasks observe the shared receiver instead of

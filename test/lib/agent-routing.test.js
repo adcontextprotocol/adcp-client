@@ -32,6 +32,74 @@ function makeProfile(specialisms, supportedProtocols, tools = []) {
   };
 }
 
+function routedMcpProbeFetch({ tools, rawCapabilities = {}, onToolCall = () => {} }) {
+  return async (input, init = {}) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url === 'https://brand.example/brand.json') {
+      return new Response(JSON.stringify({ agents: [{ jwks_uri: 'https://brand.example/jwks.json' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (url === 'https://brand.example/jwks.json') {
+      return new Response(JSON.stringify({ keys: [{ kid: 'brand-key', kty: 'EC' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
+    assert.strictEqual(url, 'https://routed.example/mcp');
+    const rawBody = init.body ?? (input instanceof Request ? await input.clone().text() : '');
+    const body = rawBody ? JSON.parse(rawBody) : {};
+    if (body.method === 'server/discover') return new Response('not supported', { status: 404 });
+    if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
+
+    let result;
+    if (body.method === 'initialize') {
+      result = {
+        protocolVersion: '2025-03-26',
+        serverInfo: { name: 'routed-probe-mcp', version: '1.0.0' },
+        capabilities: { tools: {} },
+      };
+    } else if (body.method === 'tools/list') {
+      result = {
+        tools: ['get_adcp_capabilities', ...tools].map(name => ({
+          name,
+          description: `${name} fixture`,
+          inputSchema: { type: 'object' },
+        })),
+      };
+    } else if (body.method === 'tools/call' && body.params?.name === 'get_adcp_capabilities') {
+      result = {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              status: 'completed',
+              adcp_version: '3.1',
+              adcp: { major_versions: [3], supported_versions: ['3.1.1'] },
+              supported_protocols: ['creative'],
+              tools: tools.map(name => ({ name })),
+              ...rawCapabilities,
+            }),
+          },
+        ],
+        isError: false,
+      };
+    } else if (body.method === 'tools/call') {
+      onToolCall(body.params?.name);
+      result = { content: [{ type: 'text', text: '{}' }], isError: false };
+    } else {
+      throw new Error(`Unexpected MCP method: ${body.method}`);
+    }
+
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }), {
+      status: 200,
+      headers: { 'content-type': 'application/json', 'mcp-session-id': 'routed-probe-session' },
+    });
+  };
+}
+
 describe('agent-routing: protocol index + conflict detection', () => {
   test('routes a step to the unique agent that claims its protocol', () => {
     const profiles = new Map([
@@ -171,6 +239,74 @@ describe('agent-routing: per-agent options isolation', () => {
     // each agent's distinct supported_protocols drives the index.
     assert.strictEqual(resolveAgentForStep(storyboard.phases[0].steps[0], options, ctx), 'signals');
     assert.strictEqual(resolveAgentForStep(storyboard.phases[0].steps[1], options, ctx), 'sales');
+  });
+
+  test('default-routed brand JWKS probe uses the selected agent profile', async () => {
+    const storyboard = makeStoryboard([
+      {
+        id: 'fetch_jwks',
+        title: 'Fetch brand JWKS',
+        task: 'fetch_brand_jwks',
+        validations: [{ check: 'http_status', value: 200, description: 'JWKS fetched' }],
+      },
+    ]);
+    const result = await runStoryboard('', storyboard, {
+      protocol: 'a2a',
+      agents: { brand: { url: 'https://routed.example/mcp', transport: 'mcp' } },
+      default_agent: 'brand',
+      transport: {
+        trustedFetchFn: routedMcpProbeFetch({
+          tools: ['get_products'],
+          rawCapabilities: { identity: { brand_json_url: 'https://brand.example/brand.json' } },
+        }),
+      },
+    });
+
+    const step = result.phases[0].steps[0];
+    assert.strictEqual(step.passed, true, JSON.stringify(result));
+    assert.strictEqual(step.response_record.status, 200);
+    assert.strictEqual(step.response.url, 'https://brand.example/jwks.json');
+    assert.strictEqual(step.agent_url, 'https://routed.example/mcp');
+  });
+
+  test('default-routed rate-limit probe gates its target with the selected agent tools', async () => {
+    const dispatchedTools = [];
+    const storyboard = makeStoryboard([
+      {
+        id: 'trip',
+        title: 'Rate limit replay is not cached',
+        task: 'expect_rate_limit_not_replayed',
+        requires_contract: 'rate_limit_trip_runner',
+        rate_limit_trip: {
+          trip_target_task: 'create_media_buy',
+          trip_target_sample_request: {
+            buyer_ref: 'buyer-rate-limit-test',
+            packages: [{ product_id: 'prod-1', budget: 1000 }],
+          },
+          max_attempts: 50,
+          replay_max_wait_seconds: 1,
+        },
+      },
+    ]);
+    const result = await runStoryboard('', storyboard, {
+      protocol: 'a2a',
+      agents: { brand: { url: 'https://routed.example/mcp', transport: 'mcp' } },
+      default_agent: 'brand',
+      contracts: ['rate_limit_trip_runner'],
+      allowLiveSideEffects: true,
+      transport: {
+        trustedFetchFn: routedMcpProbeFetch({
+          tools: ['get_products'],
+          onToolCall: tool => dispatchedTools.push(tool),
+        }),
+      },
+    });
+
+    const step = result.phases[0].steps[0];
+    assert.strictEqual(step.passed, true, JSON.stringify(result));
+    assert.strictEqual(step.skipped, true);
+    assert.strictEqual(step.skip_reason, 'missing_tool');
+    assert.deepStrictEqual(dispatchedTools, []);
   });
 });
 
