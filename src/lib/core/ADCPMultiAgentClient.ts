@@ -47,6 +47,10 @@ import type {
   GetSignalsResponse,
   ActivateSignalRequest,
   ActivateSignalResponse,
+  GetPrincipalRequest,
+  GetPrincipalResponse,
+  SyncPrincipalRequest,
+  SyncPrincipalResponse,
 } from '../types/tools.generated';
 import type { MutatingRequestInput } from '../utils/idempotency';
 import type {
@@ -140,6 +144,24 @@ export class AgentCollection {
     options?: CanonicalProjectionTaskOptions
   ): Promise<TaskResult<CanonicalGetProductsResponse>[]> {
     return this.executeAllSettled(client => client.getProducts(params, inputHandler, options));
+  }
+
+  /** Read each authenticated caller-scoped principal configuration in parallel. */
+  async getPrincipal(
+    params: GetPrincipalRequest = {},
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<GetPrincipalResponse>[]> {
+    return this.executeAllSettled(client => client.getPrincipal(params, inputHandler, options));
+  }
+
+  /** Replace selected principal configuration sections across all selected agents. */
+  async syncPrincipal(
+    params: MutatingRequestInput<SyncPrincipalRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<SyncPrincipalResponse>[]> {
+    return this.executeAllSettled(client => client.syncPrincipal(params, inputHandler, options));
   }
 
   /** Revise/finalize proposals across every selected agent. */

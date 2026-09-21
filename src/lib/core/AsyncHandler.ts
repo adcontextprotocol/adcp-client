@@ -39,6 +39,8 @@ import type {
   GetProductsResponse,
   UpdateMediaBuyResponse,
   SyncCreativesResponse,
+  GetPrincipalResponse,
+  SyncPrincipalResponse,
 } from '../types/tools.generated';
 
 import type {
@@ -318,6 +320,8 @@ export interface AsyncHandlerConfig {
     metadata: WebhookMetadata
   ) => void | Promise<void>;
   onSyncAccountsStatusChange?: (response: SyncAccountsResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  onGetPrincipalStatusChange?: (response: GetPrincipalResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  onSyncPrincipalStatusChange?: (response: SyncPrincipalResponse, metadata: WebhookMetadata) => void | Promise<void>;
   onSyncAudiencesStatusChange?: (response: SyncAudiencesResponse, metadata: WebhookMetadata) => void | Promise<void>;
   onCreatePropertyListStatusChange?: (
     response: CreatePropertyListResponse,
@@ -766,6 +770,14 @@ export class AsyncHandler {
 
     // Route to specific handler based on task type
     switch (taskType) {
+      case 'get_principal':
+        handler = this.config.onGetPrincipalStatusChange;
+        break;
+
+      case 'sync_principal':
+        handler = this.config.onSyncPrincipalStatusChange;
+        break;
+
       case 'get_products':
         handler = this.config.onGetProductsStatusChange;
         break;

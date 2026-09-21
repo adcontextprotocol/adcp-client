@@ -95,6 +95,10 @@ import type {
   SyncPlansResponse,
   GetPlanAuditLogsRequest,
   GetPlanAuditLogsResponse,
+  GetPrincipalRequest,
+  GetPrincipalResponse,
+  SyncPrincipalRequest,
+  SyncPrincipalResponse,
   OutcomeType,
 } from '../types/tools.generated';
 import { type MutatingRequestInput, generateIdempotencyKey, requestUsesIdempotency } from '../utils/idempotency';
@@ -1009,6 +1013,8 @@ const PRIMARY_ADCP_TASK_NAMES = {
   report_plan_adjustment: true,
   get_plan_audit_logs: true,
   sync_agent_notification_configs: true,
+  get_principal: true,
+  sync_principal: true,
   context_match: true,
   identity_match: true,
 } satisfies Record<AdcpTaskName, true>;
@@ -1035,6 +1041,26 @@ const STANDARD_ADCP_TASK_NAMES = new Set<string>([
   'acquire_rights',
   'update_rights',
 ]);
+
+const PRINCIPAL_IDENTITY_INPUT_FIELDS = ['buyer_agent_url', 'agent_url', 'principal_id', 'connection_id'] as const;
+
+function assertNoPrincipalIdentityInput(taskType: string, params: unknown): void {
+  if (
+    (taskType !== 'get_principal' && taskType !== 'sync_principal') ||
+    params === null ||
+    typeof params !== 'object' ||
+    Array.isArray(params)
+  ) {
+    return;
+  }
+  for (const field of PRINCIPAL_IDENTITY_INPUT_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(params, field)) {
+      throw new TypeError(
+        `${taskType} refuses caller-supplied ${field}; principal identity must come from authenticated transport state.`
+      );
+    }
+  }
+}
 
 /**
  * Error class for v3 feature compatibility issues
@@ -4541,6 +4567,7 @@ export class SingleAgentClient {
       skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
       skipAccountValidation: options?.skipAccountValidation,
     });
+    if (!options?.skipRequestValidation) assertNoPrincipalIdentityInput(taskType, normalizedParams);
     this.assertRequestSupportedByConfiguredVersion(taskType, normalizedParams, options, canonicalCreativeInvocation);
     this.assertDurablePropertyListCredentialSupported(taskType, normalizedParams);
 
@@ -7061,6 +7088,36 @@ export class SingleAgentClient {
     );
   }
 
+  /** Read the authenticated caller's durable principal configuration. */
+  async getPrincipal(
+    params: GetPrincipalRequest = {},
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<GetPrincipalResponse>> {
+    return this.executeAndHandle<GetPrincipalResponse>(
+      'get_principal',
+      'onGetPrincipalStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Atomically replace selected sections of the authenticated caller's principal configuration. */
+  async syncPrincipal(
+    params: MutatingRequestInput<SyncPrincipalRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<SyncPrincipalResponse>> {
+    return this.executeAndHandle<SyncPrincipalResponse>(
+      'sync_principal',
+      'onSyncPrincipalStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
   /**
    * List accounts
    */
@@ -7399,6 +7456,10 @@ export class SingleAgentClient {
         return this.getMediaBuyDelivery(params as GetMediaBuyDeliveryRequest, inputHandler, options);
       case 'get_creative_delivery':
         return this.getCreativeDelivery(params as GetCreativeDeliveryRequest, inputHandler, options);
+      case 'get_principal':
+        return this.getPrincipal(params as GetPrincipalRequest, inputHandler, options);
+      case 'sync_principal':
+        return this.syncPrincipal(params as MutatingRequestInput<SyncPrincipalRequest>, inputHandler, options);
       case 'request_proposals':
         return guardNativeRequestProposalsCompletion(
           await this.executeTaskUnprojected(taskName, params, inputHandler, options)
@@ -7482,6 +7543,7 @@ export class SingleAgentClient {
         skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
         skipAccountValidation: options?.skipAccountValidation,
       });
+      if (!options?.skipRequestValidation) assertNoPrincipalIdentityInput(taskName, normalizedParams);
       this.assertRequestSupportedByConfiguredVersion(taskName, normalizedParams, options);
       this.assertDurablePropertyListCredentialSupported(taskName, normalizedParams);
 

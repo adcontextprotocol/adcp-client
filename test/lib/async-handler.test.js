@@ -124,6 +124,35 @@ test('onGetProductsStatusChange called with working status', async () => {
   assert.strictEqual(receivedStatus, 'working', 'Should receive working status');
 });
 
+for (const [taskType, handlerName] of [
+  ['get_principal', 'onGetPrincipalStatusChange'],
+  ['sync_principal', 'onSyncPrincipalStatusChange'],
+]) {
+  test(`${handlerName} receives ${taskType} webhooks`, async () => {
+    let received;
+    const handler = new AsyncHandler({
+      [handlerName]: (response, metadata) => {
+        received = { response, metadata };
+      },
+    });
+
+    await handler.handleWebhook({
+      result: { status: 'completed', result: { kind: 'current' } },
+      metadata: {
+        operation_id: `op_${taskType}`,
+        task_id: `task_${taskType}`,
+        agent_id: 'agent_principal',
+        task_type: taskType,
+        status: 'completed',
+        timestamp: new Date().toISOString(),
+      },
+    });
+
+    assert.deepStrictEqual(received.response, { status: 'completed', result: { kind: 'current' } });
+    assert.strictEqual(received.metadata.task_type, taskType);
+  });
+}
+
 test('onCreateMediaBuyStatusChange called with completed status', async () => {
   let handlerCalled = false;
   let receivedMediaBuyId = null;
