@@ -1,5 +1,34 @@
 # Changelog
 
+## 14.0.0-rc.43
+
+### Minor Changes
+
+- 027377f: Adopt the official MCP Apps v2 server helpers for tool metadata normalization and resource MIME defaults, including legacy `ui/resourceUri` interoperability.
+- 32d570f: Add `registerWholesaleFeedWebhooks` for safely updating account-scoped wholesale feed subscribers without dropping sibling notification configs or unrelated event selections.
+- 7d06862: Add versioned persistence hooks to `WholesaleFeedSync` so mirrors can restore cached entities, feed versions, pricing versions, and webhook cursors across process restarts.
+- fe71201: Add capability-driven full assessments for multi-agent routing maps, including topology-wide storyboard selection and tenant/cross-tenant JSON and JUnit grouping.
+- 3cc7b86: Add a hardened buyer resolver for digest-pinned seller acceptance-policy catalogs, including schema and local reference integrity checks, explicit unresolved registry pins, product-profile classification, and capability-lifetime caching. URL credentials are now rejected by the shared SSRF-safe fetch boundary. Canonical references now reject malformed UTF-8 and duplicate JSON keys, and documents deeper than 256 JSON levels return the new `document_too_deep` error instead of being cloned.
+- 43b949f: Add a Core-only buyer reporting reconciler that derives the five reporting
+  health states from obligations, revisions, scope closure, and clocks without
+  managed-delivery or receipt dependencies.
+- 30ca089: Add a durable server-side principal lifecycle with atomic section replacement, reporting-destination generations, declaration negotiation, and recoverable `principal.changed` delivery.
+
+  Principal handlers now require the dedicated authenticated `protocol.resolvePrincipalScope` resolver. Adopters already exposing `getPrincipal` or `syncPrincipal` must rename their principal resolver from `resolveScope` to `resolvePrincipalScope`; `resolveScope` remains the notification-only resolver for `syncAgentNotificationConfigs`.
+
+- 555c73f: Add `resolveVerifiedAcceptancePolicyProfiles`, registry-resolution options and public resolver/result types. Registry profiles become usable only after exact policy, version, canonical policy digest, embedded profile identity, and profile digest verification; failures remain explicitly unresolved with structured diagnostics.
+
+  Allow `RegistryClient.resolvePolicy()` callers to pass an `AbortSignal`, enabling bounded batch resolution without replacing the client's internal request timeout.
+
+  `ResolvedAcceptancePolicyDefault` now includes a `source: 'registry', resolution: 'resolved'` member, so exhaustive consumers should handle the verified registry case.
+
+- 6902f14: Add typed principal read/sync client methods and a bounded buyer lifecycle helper for guarded replacement, destination setup polling, and declaration negotiation readback.
+
+### Patch Changes
+
+- 0cd041c: Add `@adcp/sdk/client/core`, a focused entrypoint for buyer-side client runtimes that avoids loading the package's server, compliance, testing, and eager generated-schema surfaces. Client schema validation and media-buy compatibility modules now load on demand for both the focused entrypoint and existing root imports.
+- c617404: Add a compile-gated wholesale-feed mirror quickstart covering persistence, webhook registration, RFC 9421 verification, and automatic repair.
+
 ## 14.0.0-rc.42
 
 ### Minor Changes
