@@ -37,6 +37,7 @@ test('agent transport revalidates a public redirect target before dispatch', asy
 test('agent transport refuses credentialed cross-origin redirects before the second network call', async () => {
   const calls = [];
   const guarded = createAgentTransportFetch('https://seller.example/rpc', {
+    crossOriginCredentialPolicy: 'refuse',
     trustedFetchFn: async (url, init) => {
       calls.push({ url: url.toString(), apiKey: new Headers(init.headers).get('x-api-key') });
       return new Response('', { status: 307, headers: { location: 'https://other.example/rpc' } });
@@ -59,6 +60,7 @@ test('agent transport refuses credentialed cross-origin redirects before the sec
 test('agent transport identifies but never exposes credentials on direct cross-origin refusal', async () => {
   let calls = 0;
   const guarded = createAgentTransportFetch('https://seller.example/rpc', {
+    crossOriginCredentialPolicy: 'refuse',
     trustedFetchFn: async () => {
       calls += 1;
       return new Response('{}');
@@ -77,11 +79,10 @@ test('agent transport identifies but never exposes credentials on direct cross-o
   assert.equal(calls, 0);
 });
 
-test('agent transport can strip credentials for compatibility without leaking on direct or redirected dispatch', async () => {
+test('agent transport strips credentials by default without leaking on direct or redirected dispatch', async () => {
   for (const mode of ['direct', 'redirect']) {
     const calls = [];
     const guarded = createAgentTransportFetch('https://seller.example/rpc', {
-      crossOriginCredentialPolicy: 'strip',
       originBoundHeaders: ['X-Session'],
       trustedFetchFn: async (url, init) => {
         const headers = new Headers(init.headers);

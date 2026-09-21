@@ -14,6 +14,7 @@ import type { JwksResolver } from './jwks';
 import type { ReplayStore } from './replay';
 import type { RevocationStore } from './revocation';
 import { containsWebhookAuthentication, WEBHOOK_AUTH_TRAVERSAL_DEPTH } from './webhook-auth-detection';
+import { canonicalA2AProtocolMethod, protocolMethodListIncludes } from './protocol-methods';
 import {
   ALLOWED_ALGS,
   CLOCK_SKEW_TOLERANCE_SECONDS,
@@ -72,19 +73,16 @@ export async function verifyRequestSignature(
       );
     }
     const protocolMethods = jsonRpcProtocolMethods(request.body);
-    const requiredProtocolMethod = protocolMethods
-      .flatMap(wireMethod =>
-        protocolMethodRequirementAliases(wireMethod).map(declaredMethod => ({ wireMethod, declaredMethod }))
-      )
-      .find(candidate => protocolMethodsRequiredFor.includes(candidate.declaredMethod));
+    const requiredProtocolMethod = protocolMethods.find(wireMethod =>
+      protocolMethodListIncludes(protocolMethodsRequiredFor, wireMethod)
+    );
     if (requiredProtocolMethod) {
+      const declaredMethod = canonicalA2AProtocolMethod(requiredProtocolMethod);
       throw new RequestSignatureError(
         'request_signature_required',
         0,
-        `Protocol method "${requiredProtocolMethod.declaredMethod}" requires a signed request` +
-          (requiredProtocolMethod.wireMethod === requiredProtocolMethod.declaredMethod
-            ? ''
-            : ` (wire method "${requiredProtocolMethod.wireMethod}")`)
+        `Protocol method "${declaredMethod}" requires a signed request` +
+          (requiredProtocolMethod === declaredMethod ? '' : ` (wire method "${requiredProtocolMethod}")`)
       );
     }
     // Payload-driven elevation: any request carrying webhook receiver
@@ -271,14 +269,6 @@ function jsonRpcProtocolMethods(body: string | undefined): string[] {
   } catch {
     return [];
   }
-}
-
-function protocolMethodRequirementAliases(wireMethod: string): string[] {
-  // The official A2A 1.0 JSON-RPC transport emits PascalCase protobuf RPC
-  // method names. AdCP capability declarations retain the stable A2A 0.3
-  // spelling, so a seller requiring `tasks/cancel` must also enforce that
-  // declaration when the official client sends `CancelTask`.
-  return wireMethod === 'CancelTask' ? [wireMethod, 'tasks/cancel'] : [wireMethod];
 }
 
 function requireParams(parsed: ParsedSignatureInput): void {

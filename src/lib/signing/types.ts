@@ -19,6 +19,8 @@ export interface VerifierCapability {
    * AdCP tool names such as `create_media_buy`.
    */
   protocol_methods_required_for?: string[];
+  protocol_methods_warn_for?: string[];
+  protocol_methods_supported_for?: string[];
 }
 
 export interface AdcpJsonWebKey {

@@ -128,6 +128,8 @@ Strict native grading refuses credential-bearing cross-origin A2A endpoints.
 The stable legacy A2A and MCP paths preserve 13.x redirect compatibility by
 removing authentication and all caller-configured headers before any
 cross-origin request; those headers remain unchanged on the configured origin.
+An authored `auth: none` step sends no caller-configured headers at all; use an
+anonymous tenant endpoint for that probe instead of relying on a routing header.
 
 Request-signing vectors 009–012 exercise URL canonicalization details that an
 MCP JSON-RPC transport flattens into its single endpoint. MCP reports those

@@ -37,6 +37,7 @@ export interface AgentTransportFetchOptions {
    * Cross-origin handling for credential-shaped headers added by protocol
    * clients. Strict native A2A refuses; stable legacy A2A and MCP strip and
    * continue so redirects/endpoints remain compatible without leaking them.
+   * @default 'strip'
    */
   crossOriginCredentialPolicy?: 'refuse' | 'strip';
 }
@@ -53,7 +54,10 @@ export function createAgentTransportFetch(agentUrl: string, options: AgentTransp
     process.env.ADCP_ALLOW_PRIVATE_AGENT_URL === '1';
   const allowPrivateInitialOrigin = isLikelyPrivateUrl(initialUrl.toString());
   const originBoundHeaders = new Set((options.originBoundHeaders ?? []).map(name => name.toLowerCase()));
-  const crossOriginCredentialPolicy = options.crossOriginCredentialPolicy ?? 'refuse';
+  // Preserve the stable public helper's compatibility behavior: credentials
+  // are origin-bound and removed on cross-origin dispatch. Security-sensitive
+  // native A2A call sites opt into `refuse` explicitly.
+  const crossOriginCredentialPolicy = options.crossOriginCredentialPolicy ?? 'strip';
   const dispatchers = new Map<string, Promise<Agent>>();
 
   const dispatcherFor = (url: URL): Promise<Agent> => {

@@ -5,6 +5,7 @@
  */
 import { createAgentTransportFetch } from '../../../net/agent-transport-fetch';
 import { MAX_TIMER_DELAY_MS, withAbortSignal } from '../../../protocols/abort';
+import { isAbortOrTimeoutError } from '../../../protocols/abort';
 import { buildCardUrls } from '../../../utils/a2a-discovery';
 import {
   toA2ATaskPushNotificationConfig,
@@ -16,6 +17,9 @@ import type { Client } from '@a2a-js/sdk-v1/client';
 const DEFAULT_CARD_FETCH_TIMEOUT_MS = 10_000;
 const MAX_CACHED_AGENT_CARD_BYTES = 1_048_576;
 const ADCP_A2A_EXTENSION = 'https://adcontextprotocol.org/extensions/adcp/v3';
+// Defined by the AdCP A2A profile extension and its canonical test vector:
+// docs/building/by-layer/L0/a2a-profile-extension.mdx
+// static/test-vectors/a2a-profile-extension-v3.json
 const CARD_DRIVEN_LEGACY_COMPAT = Object.freeze({ enabled: true });
 
 export interface CapturedA2aRequest {
@@ -80,9 +84,15 @@ export async function captureA2aRequest(
     if (call.kind === 'cancelTask') {
       await client.cancelTask({ tenant: '', id: call.taskId, metadata: undefined });
     } else {
-      const { push_notification_config: pushNotificationConfig, ...skillArgs } = call.args;
+      const pushNotificationConfig = call.args.push_notification_config;
       const invocation = legacyWire
-        ? { skill: call.operation, parameters: skillArgs }
+        ? {
+            skill: call.operation,
+            // The maintained 0.3 runtime carries the AdCP application-layer
+            // registration in skill parameters. Do not reinterpret it as the
+            // native 1.0 transport facility while capturing signing bytes.
+            parameters: call.args,
+          }
         : {
             skill: call.operation,
             // Native A2A transport registration cannot represent AdCP-only
@@ -110,6 +120,7 @@ export async function captureA2aRequest(
           referenceTaskIds: [],
         },
         configuration:
+          !legacyWire &&
           pushNotificationConfig != null &&
           typeof pushNotificationConfig === 'object' &&
           !Array.isArray(pushNotificationConfig)
@@ -146,6 +157,7 @@ async function createCardDrivenClient(
     try {
       return await factory.createFromUrl(cardUrl, '');
     } catch (error) {
+      if (isAbortOrTimeoutError(error)) throw error;
       lastError = error;
     }
   }

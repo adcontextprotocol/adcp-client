@@ -759,7 +759,7 @@ describe('storyboard A2A auth overrides', () => {
     assert.strictEqual(probe.headers['x-adcp-auth'], undefined);
     assert.strictEqual(probe.headers['x-auth-token'], undefined);
     assert.strictEqual(probe.headers.signature, undefined);
-    assert.strictEqual(probe.headers['x-tenant'], 'buyer-7');
+    assert.strictEqual(probe.headers['x-tenant'], undefined);
     assert.strictEqual(result.overall_passed, true, JSON.stringify(result));
     assert.strictEqual(result.phases[0].steps[0].request.transport, 'a2a');
     assert.strictEqual(result.phases[0].steps[0].request.url, rpcUrl);
@@ -833,7 +833,7 @@ describe('storyboard A2A auth overrides', () => {
     assert.strictEqual(probe.headers.authorization, undefined);
     assert.strictEqual(probe.headers['x-adcp-auth'], undefined);
     assert.strictEqual(probe.headers['x-auth-token'], undefined);
-    assert.strictEqual(probe.headers['x-tenant'], 'buyer-legacy');
+    assert.strictEqual(probe.headers['x-tenant'], undefined);
     assert.strictEqual(result.overall_passed, true, JSON.stringify(result));
   });
 
@@ -871,6 +871,81 @@ describe('storyboard A2A auth overrides', () => {
     const statusValidation = step.validations.find(validation => validation.check === 'http_status');
     assert.match(statusValidation.error, /refused credentialed cross-origin endpoint/);
   });
+
+  for (const headerName of ['X-Session', 'X-HMAC']) {
+    test(`auth:none removes caller ${headerName} before an accepted same-origin native request`, async () => {
+      const agentUrl = 'https://anonymous.example';
+      let observedHeader;
+      const fetchFn = async (input, init = {}) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (url.includes('/.well-known/')) {
+          const agentCard = card(`${agentUrl}/rpc`);
+          agentCard.skills = ['get_adcp_capabilities', 'list_creatives'].map(name => ({
+            id: name,
+            name,
+            description: `${name} fixture`,
+            tags: [],
+            examples: [],
+            inputModes: ['application/json'],
+            outputModes: ['application/json'],
+          }));
+          return new Response(JSON.stringify(agentCard), { headers: { 'content-type': 'application/json' } });
+        }
+        const body = JSON.parse(init.body);
+        const skill = body.params?.message?.parts?.[0]?.data?.skill;
+        if (skill === 'get_adcp_capabilities') {
+          return new Response(JSON.stringify(capabilitiesResponse(body.id)), {
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        observedHeader = new Headers(init.headers).get(headerName);
+        return new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: body.id,
+            result: {
+              task: {
+                id: 'anonymous-accepted-task',
+                contextId: 'anonymous-accepted-context',
+                status: { state: 'TASK_STATE_COMPLETED' },
+                artifacts: [
+                  {
+                    artifactId: 'result',
+                    parts: [
+                      {
+                        data: {
+                          status: 'completed',
+                          query_summary: { total_matching: 0, returned: 0 },
+                          pagination: { has_more: false, total_count: 0 },
+                          creatives: [],
+                        },
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      };
+
+      const result = await runStoryboard(agentUrl, storyboard('none'), {
+        protocol: 'a2a',
+        headers: { [headerName]: 'must-not-authenticate-anonymous-probe' },
+        agentTools: ['list_creatives'],
+        transport: { trustedFetchFn: fetchFn, legacyCompat: { enabled: false } },
+        _profile: { name: 'anonymous-header-fixture', tools: ['list_creatives'] },
+      });
+      assert.strictEqual(observedHeader, null);
+      assert.strictEqual(
+        result.overall_passed,
+        false,
+        'accepted anonymous request must not satisfy expected rejection'
+      );
+      assert.strictEqual(result.phases[0].steps[0].response_record.status, 200);
+    });
+  }
 
   for (const scenario of [
     { runProtocol: 'a2a', selectedAgent: 'mcp', expectedMethod: 'tools/call' },

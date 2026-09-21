@@ -516,12 +516,32 @@ test('agent-card discovery timeout includes a response body that never closes', 
       { timeoutMs: 20, cardFetch: stalledCardFetch }
     ),
     error => {
-      assert.equal(error.message, 'A2A agent card discovery failed');
-      assert.match(error.cause?.message ?? '', /timed out|timeout/i);
+      assert.equal(error.name, 'TimeoutError');
+      assert.match(error.message, /timed out|timeout/i);
       return true;
     }
   );
   assert.ok(Date.now() - startedAt < 1_000, 'discovery must not outlive its body-inclusive deadline');
+});
+
+test('agent-card discovery preserves AbortError identity and stops fallback probing', async () => {
+  const abortError = new Error('caller cancelled signing discovery');
+  abortError.name = 'AbortError';
+  let cardCalls = 0;
+  await assert.rejects(
+    captureA2aRequest(
+      'https://seller.example',
+      { kind: 'cancelTask', taskId: 'aborted-card' },
+      {
+        cardFetch: async () => {
+          cardCalls++;
+          throw abortError;
+        },
+      }
+    ),
+    error => error === abortError
+  );
+  assert.strictEqual(cardCalls, 1);
 });
 
 test('agent-card discovery exposes a generic error and retains internal detail only as cause', async () => {
@@ -609,7 +629,7 @@ test('official client captures and signs A2A 0.3 message/send bytes', async () =
   }
 });
 
-test('vector 027 uses transport push registration on both A2A wire versions', async () => {
+test('vector 027 matches legacy application payload bytes and native transport registration', async () => {
   const loaded = loadRequestSigningVectors();
   const vector027 = loaded.negative.find(vector => vector.id === '027-webhook-registration-authentication-unsigned');
   assert.ok(vector027, 'expected vector 027 fixture');
@@ -673,17 +693,23 @@ test('vector 027 uses transport push registration on both A2A wire versions', as
     assert.strictEqual(skillPayload.skill, 'update_media_buy');
     const skillArgs = protocolVersion === '0.3.0' ? skillPayload.parameters : skillPayload.input;
     if (protocolVersion === '0.3.0') {
-      assert.strictEqual(skillArgs.push_notification_config, undefined, protocolVersion);
+      assert.deepStrictEqual(skillArgs.push_notification_config, pushNotificationConfig, protocolVersion);
+      assert.strictEqual(
+        JSON.stringify(skillPayload),
+        JSON.stringify({
+          skill: 'update_media_buy',
+          parameters: { ...vectorArgs, reporting_webhook: reportingWebhook },
+        }),
+        'legacy official-client capture must preserve the exact application payload bytes'
+      );
+      assert.deepStrictEqual(body.params.configuration, { blocking: true, acceptedOutputModes: [] });
+      assert.strictEqual(body.params.configuration.pushNotificationConfig, undefined);
+      assert.doesNotMatch(captured.body, /taskPushNotificationConfig/);
     } else {
       assert.deepStrictEqual(skillArgs.push_notification_config, pushNotificationConfig, protocolVersion);
     }
     assert.deepStrictEqual(skillArgs.reporting_webhook, reportingWebhook, protocolVersion);
-    if (protocolVersion === '0.3.0') {
-      assert.deepStrictEqual(body.params.configuration.pushNotificationConfig, {
-        url: pushNotificationConfig.url,
-        authentication: { schemes: ['HMAC-SHA256'], credentials: 'shared-secret-placeholder' },
-      });
-    } else {
+    if (protocolVersion === '1.0') {
       assert.deepStrictEqual(body.params.configuration.taskPushNotificationConfig, {
         url: pushNotificationConfig.url,
         authentication: { scheme: 'HMAC-SHA256', credentials: 'shared-secret-placeholder' },

@@ -18,6 +18,7 @@ import {
   type AdcpJsonWebKey,
 } from '../../../signing';
 import { parseSignatureInput } from '../../../signing/parser';
+import { protocolMethodListIncludes } from '../../../signing/protocol-methods';
 import type { NegativeVector, PositiveVector, VerifierCapabilityFixture } from './types';
 
 export interface GradeOptions extends LoadVectorsOptions {
@@ -1030,9 +1031,8 @@ function capabilityMismatch(
   // `tasks/cancel`) auto-skip when the agent doesn't declare the bucket —
   // matching the behavior of `required_for` for AdCP-tool vectors.
   const vectorProtocolMethodsRequiredFor = vectorCap.protocol_methods_required_for ?? [];
-  const agentProtocolMethodsRequiredForSet = new Set(agentCap.protocol_methods_required_for ?? []);
   const missingProtocolMethodsRequiredFor = vectorProtocolMethodsRequiredFor.filter(
-    method => !agentProtocolMethodsRequiredForSet.has(method)
+    method => !protocolMethodListIncludes(agentCap.protocol_methods_required_for ?? [], method)
   );
   if (missingProtocolMethodsRequiredFor.length > 0) {
     return (
@@ -1040,6 +1040,18 @@ function capabilityMismatch(
       `but agent's protocol_methods_required_for does not. Either add the method to the agent's ` +
       `request_signing.protocol_methods_required_for, or accept the skip.`
     );
+  }
+  for (const bucket of ['supported', 'warn'] as const) {
+    const field = `protocol_methods_${bucket}_for` as const;
+    const expected = vectorCap[field] ?? [];
+    const actual = agentCap[field] ?? [];
+    const missing = expected.filter(method => !protocolMethodListIncludes(actual, method));
+    if (missing.length > 0) {
+      return (
+        `Vector asserts ${field} includes [${missing.join(', ')}] but agent's ${field} does not. ` +
+        `Declare the equivalent stable A2A protocol method spelling, or accept the skip.`
+      );
+    }
   }
   return undefined;
 }

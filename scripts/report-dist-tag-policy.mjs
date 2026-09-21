@@ -24,7 +24,7 @@ function compareStableVersions(left, right) {
 }
 
 export function readPublishedSdkVersion(value) {
-  if (!value) throw new Error('Changesets did not provide ADCP_PUBLISHED_PACKAGES');
+  if (value == null || value.trim() === '') return undefined;
   let packages;
   try {
     packages = JSON.parse(value);

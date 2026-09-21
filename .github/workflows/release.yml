@@ -1,7 +1,6 @@
 name: Release
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - main
@@ -20,16 +19,15 @@ jobs:
   release:
     name: Release
     needs: reference-seller-interop
-    # workflow_dispatch is visible on any branch containing this workflow.
-    # Only protected release branches may reach publish credentials.
-    if: github.ref_name == 'main' || github.ref_name == '13.x'
+    # Defense in depth: only exact protected branch refs may reach publish
+    # credentials, even if this job is reused or its trigger changes later.
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/13.x'
     concurrency:
       # Dist-tags are package-global state. Serialize only the main/maintenance
       # release jobs after interop passes, so long interop jobs do not hold the
       # lock while publish and reconciliation remain one critical section.
       # GitHub may replace an older pending job in the same group; after the
-      # active release completes, use "Re-run jobs" on that exact run. Manual
-      # workflow_dispatch is also available on both release branches.
+      # active release completes, use "Re-run jobs" on that exact run.
       group: npm-release-dist-tags
       cancel-in-progress: false
     runs-on: ubuntu-latest

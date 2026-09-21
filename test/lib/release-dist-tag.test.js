@@ -13,15 +13,16 @@ test('release workflow publishes 13.x under the real adcp-3.1 dist-tag', () => {
   assert.doesNotMatch(workflow, /ADCP_NPM_TAG:.*\|\| 'latest'/);
   const parsed = parseYaml(workflow);
   assert.strictEqual(parsed.concurrency, undefined, 'interop must not hold the shared npm release lock');
-  assert.ok(
+  assert.strictEqual(
     Object.prototype.hasOwnProperty.call(parsed.on, 'workflow_dispatch'),
-    'both release branches need a one-click recovery dispatch'
+    false,
+    'release credentials must not be exposed through manual dispatch from arbitrary refs'
   );
   assert.deepStrictEqual(parsed.jobs.release.concurrency, {
     group: 'npm-release-dist-tags',
     'cancel-in-progress': false,
   });
-  assert.strictEqual(parsed.jobs.release.if, "github.ref_name == 'main' || github.ref_name == '13.x'");
+  assert.strictEqual(parsed.jobs.release.if, "github.ref == 'refs/heads/main' || github.ref == 'refs/heads/13.x'");
   assert.strictEqual(parsed.jobs['reference-seller-interop'].concurrency, undefined);
   assert.match(workflow, /ADCP_PUBLISHED_PACKAGES:\s*\$\{\{ steps\.changesets\.outputs\.publishedPackages \}\}/);
   assert.match(workflow, /if:\s*steps\.changesets\.outcome == 'success' && github\.ref_name == '13\.x'/);
@@ -267,6 +268,23 @@ test('workflow rerun reconciles an already-published local SDK when Changesets r
   assert.match(output, /Changesets reported no new SDK publish/);
   assert.match(output, /npm confirms local `@adcp\/sdk@13\.1\.0` exists/);
   assert.match(output, /Keep npm latest at 14\.0\.0/);
+});
+
+test('workflow empty publishedPackages output uses exact-version recovery instead of failing', () => {
+  const script = path.join(__dirname, '../../scripts/report-dist-tag-policy.mjs');
+  const output = execFileSync(process.execPath, [script], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      ADCP_PUBLISHED_PACKAGES: '',
+      ADCP_LOCAL_SDK_VERSION: '13.1.0',
+      ADCP_CURRENT_EXACT_VERSION: '13.1.0',
+      ADCP_CURRENT_LATEST: '14.0.0',
+      ADCP_NPM_TAG: 'adcp-3.1',
+    },
+  });
+  assert.match(output, /Changesets reported no new SDK publish/);
+  assert.match(output, /npm confirms local `@adcp\/sdk@13\.1\.0` exists/);
 });
 
 test('apply mode without NPM_TOKEN reports recovery and exits nonzero', () => {

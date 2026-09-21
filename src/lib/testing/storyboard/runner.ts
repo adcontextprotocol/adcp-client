@@ -18,7 +18,6 @@ import {
 } from '../client';
 import { closeScopedConnections, withMCPConnectionScope, type VersionEnvelopeMode } from '../../protocols';
 import { getCapturesFromError, withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
-import { isCredentialHeaderName } from '../../net/credential-headers';
 import { defaultStoryboardResponseProjection, executeStoryboardTask } from './task-map';
 import {
   extractContextWithProvenance,
@@ -5032,7 +5031,12 @@ async function executeStep(
     const started = Date.now();
     try {
       if (effectiveOptions.protocol === 'a2a') {
-        const probeClient = createA2AAuthOverrideClient(runState.agentUrl, effectiveOptions, rawProbeHeaders ?? {});
+        const probeClient = createA2AAuthOverrideClient(
+          runState.agentUrl,
+          effectiveOptions,
+          rawProbeHeaders ?? {},
+          step.auth === 'none'
+        );
         const captured = await withRawResponseCapture(() =>
           runStep(step.title, effectiveStep.task, () =>
             executeStoryboardTask(probeClient, effectiveStep.task, request, {
@@ -7516,16 +7520,18 @@ function authHeadersForStep(directive: StepAuthDirective, options: StoryboardRun
 function createA2AAuthOverrideClient(
   agentUrl: string,
   options: StoryboardRunOptions,
-  authHeaders: Record<string, string>
+  authHeaders: Record<string, string>,
+  anonymous: boolean
 ): TestClient {
   const headers: Record<string, string> = {};
-  // `auth: none` means remove credentials, not every configured header.
-  // Explicit routing headers such as x-tenant may be required to reach the
-  // intended seller tenant, so preserve non-credential custom headers and
-  // rely on the shared credential predicate for the narrow removal. Every
-  // preserved custom header is still origin-bound by the A2A transport.
-  for (const [name, value] of Object.entries(options.headers ?? {})) {
-    if (!isCredentialHeaderName(name)) headers[name] = value;
+  // An authored `auth: none` probe promises the same anonymous request for
+  // A2A and MCP. Do not guess which caller headers are credentials: session,
+  // HMAC, gateway, and tenant headers can all authenticate in deployments.
+  // Authenticated override probes retain configured routing headers; authors
+  // needing tenant routing for an anonymity test must target an anonymous
+  // tenant endpoint instead of smuggling identity through a custom header.
+  if (!anonymous) {
+    Object.assign(headers, options.headers ?? {});
   }
 
   let auth: StoryboardRunOptions['auth'];
@@ -7543,6 +7549,8 @@ function createA2AAuthOverrideClient(
     protocol: 'a2a',
     auth,
     headers: Object.keys(headers).length > 0 ? headers : undefined,
+    test_session_id: anonymous ? undefined : options.test_session_id,
+    userAgent: anonymous ? undefined : options.userAgent,
     test_kit: undefined,
     _client: undefined,
   });

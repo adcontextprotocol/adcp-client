@@ -25,6 +25,7 @@ export interface VerifierCapabilityFixture {
    * leave them undefined.
    */
   protocol_methods_supported_for?: string[];
+  protocol_methods_warn_for?: string[];
   protocol_methods_required_for?: string[];
 }
 

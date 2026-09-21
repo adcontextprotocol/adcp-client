@@ -50,9 +50,10 @@ reconciles idempotently. Reconciliation does not depend on Changesets reporting
 version exists in npm, then safely reapplies the tag policy. This covers the
 failure window where publish succeeded but the original reconciliation step
 did not. If the exact local version is absent, the run performs no mutation.
-The Release workflow also supports `workflow_dispatch` on `main` and `13.x` as
-a one-click branch recovery path; the release job has an explicit branch guard,
-so dispatching a copy of the workflow from any other branch cannot publish.
+Recovery uses **Re-run jobs** on the original protected-branch run. The release
+workflow deliberately has no `workflow_dispatch` trigger, and the release job
+also requires the exact `refs/heads/main` or `refs/heads/13.x` ref before it can
+reach publishing credentials.
 
 The policy re-reads `latest` immediately before mutation and refuses to move it
 backward. Registry read/parse failures likewise fail with an inspection and
