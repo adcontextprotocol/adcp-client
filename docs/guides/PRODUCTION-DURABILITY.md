@@ -20,6 +20,10 @@ Use this after the compact seller works locally.
   delivery, and outbox migrations from one PostgreSQL pool. The runtime
   re-authorizes every retry; see
   [persistent notification subscriptions](./PERSISTENT-NOTIFICATION-RUNTIME.md).
+- For `get_principal` / `sync_principal`, use a durable CAS-backed
+  `createPrincipalStateStore()` and `createPrincipalLifecycle()`. Schedule
+  bounded `recoverPrincipalNotifications()` passes in addition to webhook
+  outbox recovery; see [principal lifecycle](./PRINCIPAL-LIFECYCLE.md#seller-runtime).
 - Re-derive credentials per request. Never put secrets in `ctx_metadata`; see
   [ctx_metadata safety](./CTX-METADATA-SAFETY.md).
 - Configure RFC 9421 signing and SSRF-safe webhook delivery using the

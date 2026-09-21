@@ -160,6 +160,37 @@ test('caller-scoped full-set replacement is isolated, idempotent, and generation
   assert.equal((await runtime.read(callerB)).notificationConfigs.length, 1);
 });
 
+test('stale generation fences run before proof and credential staging', async () => {
+  let proofCalls = 0;
+  const credentials = createVersionedCredentialAdapter();
+  const { runtime } = makeRuntime({
+    proof: async () => {
+      proofCalls++;
+      return { proved: true };
+    },
+    credentialAdapter: credentials.adapter,
+  });
+  const config = {
+    subscriber_id: 'primary',
+    url: 'https://buyer.example/capabilities',
+    event_types: ['capabilities.changed'],
+    authentication: { schemes: ['Bearer'], credentials: 'first-secret-value-at-least-32-chars' },
+  };
+  const first = await runtime.replace(callerA, [config]);
+  assert.equal(first.outcome, 'applied');
+  const proofsAfterFirst = proofCalls;
+  const stagesAfterFirst = credentials.calls.stages.length;
+
+  const stale = await runtime.replace(
+    callerA,
+    [{ ...config, authentication: { schemes: ['Bearer'], credentials: 'rotated-secret-value-at-least-32-chars' } }],
+    { expectedGeneration: 'cfg_stale' }
+  );
+  assert.deepEqual(stale, { outcome: 'conflict', currentGeneration: first.generation });
+  assert.equal(proofCalls, proofsAfterFirst);
+  assert.equal(credentials.calls.stages.length, stagesAfterFirst);
+});
+
 test('replacement enforces the protocol subscriber cap', async () => {
   const { runtime } = makeRuntime();
   await assert.rejects(

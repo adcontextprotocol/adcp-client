@@ -148,13 +148,13 @@ ordinary task callbacks do not carry subscription authorization context. If
 the server also emits task or media-buy callbacks, configure their webhook
 runtime separately, with a distinct outbox namespace or table set.
 
-This helper cannot atomically update the broader `sync_principal` document or
-advance its shared `configuration_version`. When both surfaces coexist, AdCP
-requires the application-owned `sync_principal` transaction to update all
-principal sections and the shared version together. That transaction should
-call `notifications.replace()` for the caller scope and use the returned
-generation as the notification-section version; do not compose the
-compatibility handler into that transaction.
+This compatibility helper cannot atomically update the broader
+`sync_principal` document or advance its shared `configuration_version`. When
+both surfaces coexist, use `createPrincipalLifecycle()` with
+`principalNotificationSubscriptionStore()`. It prepares notification proof and
+credentials through this runtime, then commits the notification section with
+every other principal section in one CAS record. Do not register the standalone
+compatibility handler alongside that lifecycle.
 Likewise, an account `sync_accounts` handler calls `replace()` with:
 
 ```ts

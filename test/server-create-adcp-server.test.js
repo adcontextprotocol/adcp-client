@@ -1443,7 +1443,7 @@ describe('createAdcpServer', () => {
       },
     };
 
-    it('requires scope resolvers when sensitive mutation handlers are registered', () => {
+    it('requires dedicated scope resolvers for sensitive protocol and governance handlers', () => {
       assert.throws(
         () =>
           createAdcpServer({
@@ -1453,6 +1453,15 @@ describe('createAdcpServer', () => {
             capabilities: { capability_changes: capabilityChanges },
           }),
         /protocol\.resolveScope is required/
+      );
+      assert.throws(
+        () =>
+          createAdcpServer({
+            name: 'Test',
+            version: '1.0.0',
+            protocol: { getPrincipal: async () => ({ result: { kind: 'unconfigured' } }) },
+          }),
+        /protocol\.resolvePrincipalScope is required/
       );
       assert.throws(
         () =>
@@ -1553,6 +1562,133 @@ describe('createAdcpServer', () => {
         assert.strictEqual(response.structuredContent.replayed, undefined);
       }
       assert.strictEqual(executions, 2);
+    });
+
+    it('resolves principal scope before reads and idempotency replay', async () => {
+      let executions = 0;
+      const seen = [];
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        idempotency: createIdempotencyStore({ backend: memoryBackend() }),
+        resolveIdempotencyPrincipal: () => 'intentionally-shared',
+        protocol: {
+          resolvePrincipalScope: ctx => ({
+            tenant_id: 'tenant-principal',
+            principal_id: ctx.authInfo.credential.key_id,
+            principal_kind: 'buyer_agent',
+          }),
+          getPrincipal: async (_params, ctx) => {
+            seen.push(ctx.callerMutationScope);
+            return { result: { kind: 'unconfigured' } };
+          },
+          syncPrincipal: async (_params, ctx) => {
+            executions++;
+            seen.push(ctx.callerMutationScope);
+            return {
+              result: {
+                kind: 'applied',
+                action: 'cleared',
+                dry_run: false,
+                principal_id: `record-${ctx.callerMutationScope.principal_id}`,
+                principal_kind: 'buyer_agent',
+                configuration_version: `version-${executions}`,
+                configuration: {},
+              },
+            };
+          },
+        },
+      });
+
+      for (const toolName of ['get_principal', 'sync_principal']) {
+        const unauthenticated = await callToolRaw(
+          server,
+          toolName,
+          toolName === 'get_principal'
+            ? {}
+            : { idempotency_key: 'principal-scope-key-0001', configuration: { declarations: {} } }
+        );
+        assert.strictEqual(unauthenticated.isError, true);
+        assert.strictEqual(unauthenticated.structuredContent.adcp_error.code, 'AUTH_MISSING');
+      }
+
+      const params = {
+        idempotency_key: 'principal-scope-key-0001',
+        configuration: { declarations: {} },
+      };
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const response = await callToolRaw(server, 'sync_principal', params, {
+          authInfo: { credential: { kind: 'api_key', key_id: 'buyer-a' } },
+        });
+        assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
+        assert.strictEqual(response.structuredContent.replayed, attempt === 0 ? undefined : true);
+      }
+      const other = await callToolRaw(server, 'sync_principal', params, {
+        authInfo: { credential: { kind: 'api_key', key_id: 'buyer-b' } },
+      });
+      assert.notStrictEqual(other.isError, true, JSON.stringify(other.structuredContent));
+      assert.strictEqual(other.structuredContent.replayed, undefined);
+      assert.strictEqual(executions, 2);
+
+      const read = await callToolRaw(
+        server,
+        'get_principal',
+        {},
+        {
+          authInfo: { credential: { kind: 'api_key', key_id: 'buyer-a' } },
+        }
+      );
+      assert.notStrictEqual(read.isError, true, JSON.stringify(read.structuredContent));
+      assert.strictEqual(seen.at(-1).principal_id, 'buyer-a');
+      assert.strictEqual(seen.at(-1).principal_kind, 'buyer_agent');
+    });
+
+    it('resolves exact principal replays before applying the expected kind fence', async () => {
+      let executions = 0;
+      let principalKind = 'buyer_agent';
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        idempotency: createIdempotencyStore({ backend: memoryBackend() }),
+        protocol: {
+          resolvePrincipalScope: () => ({
+            tenant_id: 'tenant-principal',
+            principal_id: 'stable-subject',
+            principal_kind: principalKind,
+            principal_record_id: 'record-stable-subject',
+          }),
+          syncPrincipal: async () => {
+            executions++;
+            return {
+              result: {
+                kind: 'applied',
+                action: 'cleared',
+                dry_run: false,
+                principal_id: 'record-stable-subject',
+                principal_kind: principalKind,
+                configuration_version: `version-${executions}`,
+                configuration: {},
+              },
+            };
+          },
+        },
+      });
+      const params = {
+        idempotency_key: 'principal-reclassification-key',
+        expected_principal_kind: 'buyer_agent',
+        configuration: { declarations: {} },
+      };
+      const first = await callToolRaw(server, 'sync_principal', params, {
+        authInfo: { credential: { kind: 'api_key', key_id: 'buyer-a' } },
+      });
+      assert.notStrictEqual(first.isError, true, JSON.stringify(first.structuredContent));
+      principalKind = 'operator';
+      const second = await callToolRaw(server, 'sync_principal', params, {
+        authInfo: { credential: { kind: 'api_key', key_id: 'buyer-a' } },
+      });
+      assert.strictEqual(second.structuredContent.result.kind, 'applied');
+      assert.strictEqual(second.structuredContent.replayed, true);
+      assert.strictEqual(executions, 1);
     });
   });
 
