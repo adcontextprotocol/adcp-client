@@ -9,6 +9,7 @@
 import type { AgentProfile, TestOptions } from '../types';
 import type { BuyerAgent, BuyerAgentBillingMode, BuyerAgentStatus } from '../../server/decisioning/buyer-agent';
 import type { WebhookConformanceSigningOptions } from '../../conformance/types';
+import type { AcceptancePolicyRegistryResolver } from '../../acceptance-policy';
 
 // ────────────────────────────────────────────────────────────
 // Parsed storyboard structure (mirrors YAML schema)
@@ -1706,6 +1707,24 @@ export interface TrustedMatchPublisherAuthRunner {
 export interface StoryboardRunOptions extends TestOptions {
   /** Compliance cache root for bundle-scoped fixtures and test vectors. */
   complianceDir?: string;
+  /**
+   * Operator controls for the remote integrity checks performed by the
+   * `media_buy_seller/acceptance_policy_discovery` storyboard.
+   *
+   * Resolution is enabled by default and uses the public registry without
+   * ambient credentials. Supply a scoped resolver for a private/staging
+   * registry, or set `enabled: false` for an intentionally in-band-only run.
+   */
+  acceptancePolicyDiscovery?: {
+    enabled?: boolean;
+    registryResolver?: AcceptancePolicyRegistryResolver;
+  };
+  /** @internal Test-only seams for deterministic acceptance-policy runner coverage. */
+  _acceptancePolicyDiscoveryDependencies?: {
+    resolveCatalog?: typeof import('../../acceptance-policy').resolveAcceptancePolicyCatalog;
+    resolveProfiles?: typeof import('../../acceptance-policy').resolveVerifiedAcceptancePolicyProfiles;
+    now?: () => number;
+  };
   /**
    * Pre-discovered agent profile to reuse instead of repeating capability
    * discovery. When `agentTools` is omitted, the runner derives it from

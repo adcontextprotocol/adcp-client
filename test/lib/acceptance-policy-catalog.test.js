@@ -222,6 +222,12 @@ describe('acceptance-policy catalog resolution', () => {
     const invalidTimeout = await resolveAcceptancePolicyCatalog(capability, { timeoutMs: 0 });
     const invalidRegistryTimeout = await resolveAcceptancePolicyCatalog(capability, { registryTimeoutMs: 30_001 });
     const incompleteFixtureOptIn = await resolveAcceptancePolicyCatalog(capability, { allowUnsafeHttp: true });
+    const invalidSignal = await resolveAcceptancePolicyCatalog(capability, { signal: 'not-a-signal' });
+    const invalidProfileSignal = await resolveVerifiedAcceptancePolicyProfiles(catalog(), ['seller_default'], {
+      registryResolver: { resolvePolicy: async () => null },
+      signal: true,
+    });
+    const invalidResolverSignal = await createAcceptancePolicyCatalogResolver({ signal: 42 }).resolve(capability);
 
     assert.strictEqual(unboundedBody.ok, false);
     assert.strictEqual(unboundedBody.error.code, 'invalid_options');
@@ -231,6 +237,12 @@ describe('acceptance-policy catalog resolution', () => {
     assert.strictEqual(invalidRegistryTimeout.error.code, 'invalid_options');
     assert.strictEqual(incompleteFixtureOptIn.ok, false);
     assert.strictEqual(incompleteFixtureOptIn.error.code, 'invalid_options');
+    assert.strictEqual(invalidSignal.ok, false);
+    assert.strictEqual(invalidSignal.error.pointer, '/options/signal');
+    assert.strictEqual(invalidProfileSignal.ok, false);
+    assert.strictEqual(invalidProfileSignal.error.pointer, '/options/signal');
+    assert.strictEqual(invalidResolverSignal.ok, false);
+    assert.strictEqual(invalidResolverSignal.error.pointer, '/options/signal');
   });
 
   it('rejects an explicitly empty default profile list', async () => {
@@ -264,6 +276,20 @@ describe('acceptance-policy catalog resolution', () => {
     assert.strictEqual(timeout.ok, false);
     assert.strictEqual(timeout.error.code, 'fetch_failed');
     assert.strictEqual(timeout.error.retryable, true);
+  });
+
+  it('propagates caller cancellation through catalog fetches', async () => {
+    const body = bytes(catalog());
+    routes.set('/abort.json', () => {});
+    const controller = new AbortController();
+    const reason = new Error('operator cancelled catalog verification');
+    const pending = resolveAcceptancePolicyCatalog(capability('/abort.json', body), {
+      ...unsafeFixtureOptions,
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(reason), 10);
+
+    await assert.rejects(pending, error => error === reason);
   });
 
   it('preserves HTTP status and retryability without exposing response content', async () => {
@@ -494,6 +520,47 @@ describe('acceptance-policy catalog resolution', () => {
     assert.strictEqual(result.profiles[0].resolution, 'unresolved');
     assert.strictEqual(result.issues[0].code, 'registry_timeout');
     assert.strictEqual(result.issues[0].retryable, true);
+    assert.ok(Date.now() - startedAt < 1_000);
+  });
+
+  it('propagates caller cancellation through registry resolution', async () => {
+    const fixture = registryFixture();
+    const controller = new AbortController();
+    const reason = new Error('operator cancelled registry verification');
+    const pending = resolveVerifiedAcceptancePolicyProfiles(
+      catalog({ profiles: undefined, registry_profiles: [fixture.ref] }),
+      ['registry_default'],
+      {
+        registryResolver: {
+          resolvePolicy: ({ signal }) =>
+            new Promise((_, reject) => {
+              signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+            }),
+        },
+        signal: controller.signal,
+      }
+    );
+    setTimeout(() => controller.abort(reason), 10);
+
+    await assert.rejects(pending, error => error === reason);
+  });
+
+  it('propagates caller cancellation when a registry resolver ignores its signal', async () => {
+    const fixture = registryFixture();
+    const controller = new AbortController();
+    const reason = new Error('operator cancelled an uncooperative registry resolver');
+    const startedAt = Date.now();
+    const pending = resolveVerifiedAcceptancePolicyProfiles(
+      catalog({ profiles: undefined, registry_profiles: [fixture.ref] }),
+      ['registry_default'],
+      {
+        registryResolver: { resolvePolicy: () => new Promise(() => {}) },
+        signal: controller.signal,
+      }
+    );
+    setTimeout(() => controller.abort(reason), 10);
+
+    await assert.rejects(pending, error => error === reason);
     assert.ok(Date.now() - startedAt < 1_000);
   });
 
