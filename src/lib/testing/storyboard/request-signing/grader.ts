@@ -1135,6 +1135,39 @@ function contentDigestPolicyMismatch(
 }
 
 /**
+ * Narrow policy gate for an agent's discovered capability advertisement.
+ *
+ * Unlike the operator-selected `agentContentDigestPolicy` path above, an
+ * untrusted advertisement must not suppress unrelated signing coverage. It
+ * may exclude only the two negatives whose expected refusal exists solely
+ * under a strict content-digest policy: 007 (`required`) and 018
+ * (`forbidden`). Matching strict policies remain graded; `either` excludes
+ * both.
+ */
+export function advertisedContentDigestPolicyExclusion(
+  vector: PositiveVector | NegativeVector,
+  kind: 'positive' | 'negative',
+  agentPolicy: 'required' | 'forbidden' | 'either'
+): SemanticVectorExclusion | undefined {
+  if (kind !== 'negative') return undefined;
+  const expectedError = (vector as NegativeVector).expected_error_code;
+  const vectorPolicy = vector.verifier_capability.covers_content_digest;
+  const requiredPolicy =
+    expectedError === 'request_signature_components_incomplete' && vectorPolicy === 'required'
+      ? 'required'
+      : expectedError === 'request_signature_components_unexpected' && vectorPolicy === 'forbidden'
+        ? 'forbidden'
+        : undefined;
+  if (!requiredPolicy || agentPolicy === requiredPolicy) return undefined;
+  return {
+    skip_reason: 'capability_profile_mismatch',
+    diagnostic:
+      `Vector expects ${expectedError} under covers_content_digest='${requiredPolicy}', ` +
+      `but the agent declares '${agentPolicy}'.`,
+  };
+}
+
+/**
  * Compare a vector's `verifier_capability` fixture and actual signed shape
  * against the agent's declared capability profile. Returns a
  * human-readable diagnostic when the vector can't grade against this
