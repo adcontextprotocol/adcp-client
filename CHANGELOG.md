@@ -1,5 +1,51 @@
 # Changelog
 
+## 14.0.0-rc.42
+
+### Minor Changes
+
+- d5b016e: Grade request-signing vectors over A2A by signing the request the official `@a2a-js/sdk` client emits.
+
+  An A2A run previously reported every signed-request vector as
+  `signing_transport_unavailable` — correct as a fail-closed stop-gap (#2958), but it means no
+  A2A agent's verifier is ever graded. This wires the dispatch the stop-gap stood in for.
+
+  The request is not framed here. `ClientFactory` resolves the agent card and builds the call;
+  the request is captured at the SDK's own `fetchImpl` seam and those exact bytes are signed,
+  so the endpoint, the JSON-RPC method name, the `a2a-version` header and the proto-JSON
+  encoding are all the official client's decisions.
+
+  Fail-closed behaviour is preserved rather than replaced: `resolveVectorTransport` still
+  returns no framing for A2A, and the availability decision moved to the async dispatcher.
+  An agent whose card does not resolve to a JSONRPC interface keeps the existing
+  `signing_transport_unavailable` reporting and its guardrails.
+
+  Agent Card discovery uses the runner's DNS-pinned, redirect-checked transport
+  with a deadline, supports modern, path-scoped, and genuine v0.3 cards, and
+  reports the card-selected endpoint as the probe provenance.
+
+- 318bdbf: Add typed, multi-dimension targeting command-state conformance vectors and operation-named input aliases; provide a same-instance capability-preflight factory with typed refusal reasons and cold-discovery guidance; and make bounded response-preview capture asynchronous while skipping SSE, non-text, and explicitly over-limit bodies with `responseBodyTruncated: true`. Text bodies without a usable length are captured through the same size- and time-bounded reader.
+
+  Recognize the unpublished legacy `requires_proposal` action mode without granting mutation authority: local preflight returns `mode_mismatch` with a proposal-lifecycle recovery hint, while seller errors omit the legacy action echo to remain valid against the current wire schema.
+
+### Patch Changes
+
+- d5b016e: Name the A2A dispatch's `legacyCompat` policy once, with the measurement that justifies it.
+
+  `request-signing/a2a-dispatch.ts` set `{ enabled: true }` at two call sites. Measured against `@a2a-js/sdk`, that is the card-following setting: a `1.0` card emits `CancelTask`/`a2a-version: 1.0` whether it is on or off, while a `0.3.0` card emits `tasks/cancel`/`0.3` with it on and `CancelTask`/`1.0` with it off. Turning it off does not refuse a 0.3 card, it speaks 1.0 at one — so a conformance run must leave it on. Folded from adcontextprotocol/adcp-client#2973.
+
+- 3d8c3df: Align Reliable Reporting with the AdCP 3.2.0-rc.4 public timing and view contracts.
+
+  Complete summaries now forecast the nearest future active period start, while
+  open summaries and obligations use `period.end + delivery_sla`. Private source
+  finality cutoffs no longer replace the public due time in production, status
+  ingest, or buyer reconciliation. Complete periods continue to reject
+  `next_expected_at` without weakening complete-scope guards.
+
+  Reporting tool discovery is bound to the mounted protocol pin, and canonical
+  schema loading retains the selected bundled document when modular and bundled
+  schemas share an authored `$id`.
+
 ## 14.0.0-rc.41
 
 ### Minor Changes
