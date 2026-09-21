@@ -586,6 +586,7 @@
     "test:examples": "NODE_ENV=test node --test-timeout=180000 --test-force-exit --test-concurrency=1 --test test/examples/*.test.js",
     "test:e2e": "node --test test/e2e/registry-live.test.js",
     "test:e2e:local-app": "node test/e2e/adcp-e2e.test.js",
+    "test:e2e:wholesale-feed-training": "node --test test/e2e/wholesale-feed-training.test.js",
     "test:protocols": "node test/run-protocol-tests.js",
     "changeset": "changeset",
     "version": "changeset version && npm install --package-lock-only --ignore-scripts && npm run sync-version && npm run generate-agent-docs && npm run generate-release-worksheet",
