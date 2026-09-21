@@ -24,6 +24,19 @@ fresh callback/poll worker, PostgreSQL receiver stores, and host publication
 outbox described in the
 [durable buyer writes guide](../docs/guides/DURABLE-BUYER-WRITES.md).
 
+Maintaining a buyer-side copy of a seller's wholesale products and signals?
+[`wholesale-feed-sync.ts`](./wholesale-feed-sync.ts) shows the complete path:
+durable bootstrap, declarative account-level webhook registration, raw-body
+RFC 9421 verification, notification normalization, `applyWebhook()`, and
+automatic repair on version gaps or bulk changes. Set `ADCP_SELLER_URL`,
+`ADCP_SELLER_AGENT_ID`, `ADCP_SELLER_BRAND_JSON_URL`, `ADCP_ACCOUNT_ID`,
+`ADCP_SUBSCRIBER_ID`, and the externally reachable HTTPS `ADCP_WEBHOOK_URL`,
+then run `npx tsx examples/wholesale-feed-sync.ts`. The example's file-backed
+snapshot and in-memory replay protection are single-process defaults; use
+shared persistence, replay, and webhook-dedupe stores for multiple replicas.
+See [Verifying inbound webhooks](../docs/recipes/verifying-inbound-webhooks.md)
+for the full deployment hardening checklist.
+
 Migrating a seller adapter to AdCP 3.2 targeting? The focused
 [`targeting-input-existing-platform.ts`](./targeting-input-existing-platform.ts)
 example carries nullable omit/clear/set commands through provider translation,
