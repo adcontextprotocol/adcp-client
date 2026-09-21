@@ -17,6 +17,56 @@ async function waitFor(predicate, timeoutMs = 2000) {
   }
 }
 
+async function assertOpenDeclaredBodyDoesNotDelayScope(api) {
+  const events = [];
+  let streamController;
+  const body = '{"ok":true}';
+  const response = new Response(
+    new ReadableStream({
+      start(controller) {
+        streamController = controller;
+        controller.enqueue(new TextEncoder().encode(body));
+      },
+    }),
+    {
+      headers: { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(body)) },
+    }
+  );
+  const instrumentedFetch = api.wrapFetchWithTransportDiagnostics(async () => response);
+  const deadlineMs = BODY_SNIPPET_TIMEOUT_MS / 2;
+  let deadline;
+
+  const operational = await Promise.race([
+    api.withTransportDiagnostics(
+      {
+        agentId: 'open-declared-body-agent',
+        protocol: 'mcp',
+        onTransportActivity: event => events.push(event),
+      },
+      () => instrumentedFetch('https://seller.example/mcp')
+    ),
+    new Promise((_, reject) => {
+      deadline = setTimeout(
+        () => reject(new Error(`diagnostics scope waited more than ${deadlineMs}ms for response body capture`)),
+        deadlineMs
+      );
+    }),
+  ]).finally(() => clearTimeout(deadline));
+
+  assert.deepEqual(
+    events.map(event => event.type),
+    ['request_started'],
+    'response capture remains pending when the diagnostics scope exits'
+  );
+
+  streamController.close();
+  await waitFor(() => events.some(event => event.type === 'response_received'));
+  assert.equal(events.filter(event => event.type === 'response_received').length, 1);
+  assert.equal(events[1].responseBody, body);
+  assert.equal(events[1].responseBodyTruncated, false);
+  assert.equal(await operational.text(), body);
+}
+
 test('transport diagnostics emits sanitized request and response events', async () => {
   const events = [];
   const responsePayload = JSON.stringify({ ok: true, access_token: 'response-token', id: 'resp-1' });
@@ -157,8 +207,9 @@ test('transport diagnostics emits request_failed without swallowing the error', 
   assert.equal(events[1].durationMs >= 0, true);
 });
 
-test('transport diagnostics waits for async handlers after the request completes', async () => {
+test('transport diagnostics waits for immediate async handlers after the request completes', async () => {
   const events = [];
+  let requestStartedHandled = false;
   const instrumentedFetch = wrapFetchWithTransportDiagnostics(async () => new Response('{}'));
 
   await withTransportDiagnostics(
@@ -169,11 +220,14 @@ test('transport diagnostics waits for async handlers after the request completes
       onTransportActivity: async event => {
         await new Promise(resolve => setTimeout(resolve, 5));
         events.push(event);
+        if (event.type === 'request_started') requestStartedHandled = true;
       },
     },
     () => instrumentedFetch('https://seller.example/mcp', { method: 'POST' })
   );
 
+  assert.equal(requestStartedHandled, true);
+  await waitFor(() => events.some(event => event.type === 'response_received'));
   assert.deepEqual(
     events.map(event => event.type),
     ['request_started', 'response_received']
@@ -208,9 +262,13 @@ test('transport diagnostics bounds capture of a never-closing body without Conte
       return operational;
     }
   );
-  const captureElapsed = Date.now() - captureStartedAt;
+  const scopeElapsed = Date.now() - captureStartedAt;
 
   assert.equal(responseDeliveredAt < BODY_SNIPPET_TIMEOUT_MS, true);
+  assert.equal(scopeElapsed < BODY_SNIPPET_TIMEOUT_MS, true);
+  assert.equal(events.length, 1);
+  await waitFor(() => events.some(event => event.type === 'response_received'));
+  const captureElapsed = Date.now() - captureStartedAt;
   assert.equal(captureElapsed < BODY_SNIPPET_TIMEOUT_MS + 1500, true);
   assert.equal(events.length, 2);
   assert.equal(events[1].responseBody, undefined);
@@ -255,9 +313,16 @@ test('transport diagnostics returns a declared streaming response before asynchr
   );
 
   assert.equal(consumed, body);
-  assert.equal(events.length, 2, 'the enclosing scope flushes the canonical response event');
+  assert.equal(events.length, 2, 'capture completes while the operational body is consumed');
   assert.equal(events[1].responseBody, body);
   assert.equal(events[1].responseBodyTruncated, false);
+});
+
+test('transport diagnostics scope does not wait for an open declared response body', async () => {
+  await assertOpenDeclaredBodyDoesNotDelayScope({
+    withTransportDiagnostics,
+    wrapFetchWithTransportDiagnostics,
+  });
 });
 
 test('transport diagnostics emits one truncated response event when declared preview capture expires', async () => {
@@ -293,6 +358,8 @@ test('transport diagnostics emits one truncated response event when declared pre
   );
   assert.equal(responseDeliveredAt < BODY_SNIPPET_TIMEOUT_MS, true);
 
+  assert.equal(events.length, 1);
+  await waitFor(() => events.some(event => event.type === 'response_received'));
   assert.equal(events.length, 2);
   assert.equal(events.filter(event => event.type === 'response_received').length, 1);
   assert.equal(events[1].responseBody, undefined);
@@ -358,6 +425,7 @@ test('ESM transport diagnostics bounds an unbounded body preview', async () => {
   };
   const instrumentedFetch = esm.wrapFetchWithTransportDiagnostics(async () => response);
 
+  const startedAt = Date.now();
   const operational = await esm.withTransportDiagnostics(
     {
       agentId: 'esm-unbounded-agent',
@@ -368,10 +436,18 @@ test('ESM transport diagnostics bounds an unbounded body preview', async () => {
   );
 
   assert.equal(cloneCalls, 1);
+  assert.equal(Date.now() - startedAt < BODY_SNIPPET_TIMEOUT_MS, true);
+  assert.equal(events.length, 1);
+  await waitFor(() => events.some(event => event.type === 'response_received'));
   assert.equal(events.length, 2);
   assert.equal(events[1].responseBodyTruncated, true);
   streamController.close();
   assert.equal(await operational.text(), '{}');
+});
+
+test('ESM transport diagnostics scope does not wait for an open declared response body', async () => {
+  const esm = await import('../../dist/lib/protocols/index.mjs');
+  await assertOpenDeclaredBodyDoesNotDelayScope(esm);
 });
 
 test('transport diagnostics skips SSE response previews without disturbing the stream', async () => {
@@ -450,6 +526,7 @@ test('transport diagnostics captures text bodies without a finite Content-Length
     );
 
     assert.equal(cloneCalls, 1, name);
+    await waitFor(() => events.some(event => event.type === 'response_received'));
     assert.equal(events.length, 2, name);
     assert.equal(events[1].responseBody, '{"ok":true}', name);
     assert.equal(events[1].responseBodyTruncated, false, name);

@@ -195,10 +195,9 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
           responseBodyTruncated: true,
         });
       } else {
-        // Capture runs on a bounded clone after the operational Response has
-        // already been returned. A slow diagnostics stream can neither delay
-        // nor consume the caller's branch.
-        const captureEvent = responseBody.then(
+        // Body capture is fire-and-forget. The response_received event fires
+        // when capture completes, which may be after the diagnostics scope exits.
+        void responseBody.then(
           captured => {
             return emitTransportActivity(handler, {
               ...responseEvent,
@@ -213,11 +212,6 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
             });
           }
         );
-        // Register capture immediately so the enclosing diagnostics scope can
-        // flush its one canonical response event before task settlement. This
-        // does not block delivery of the operational Response to the protocol
-        // client; capture and parsing proceed on separate tee branches.
-        slot.pending.push(captureEvent.then(() => {}));
       }
       return response;
     } catch (error) {
