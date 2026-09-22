@@ -9,6 +9,7 @@ export {
   SSRF_TRANSIENT_CODES,
   SsrfRefusedError,
   type SsrfRefusedCode,
+  type SsrfDnsLookup,
   type SsrfFetchOptions,
   type SsrfFetchResult,
 } from './ssrf-fetch';

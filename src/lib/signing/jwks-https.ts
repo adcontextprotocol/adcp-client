@@ -1,4 +1,4 @@
-import { ssrfSafeFetch } from '../net';
+import { ssrfSafeFetch, type SsrfDnsLookup } from '../net';
 import type { AdcpJsonWebKey } from './types';
 import type { JwksResolver } from './jwks';
 
@@ -18,6 +18,8 @@ export interface HttpsJwksResolverOptions {
   maxAgeSeconds?: number;
   /** Allow `http://` / private-IP JWKS URLs (dev loops only). Default false. */
   allowPrivateIp?: boolean;
+  /** DNS resolver forwarded to the SSRF-safe fetch path. Defaults to `dns/promises.lookup`. */
+  lookup?: SsrfDnsLookup;
   /** Clock override for deterministic tests. Returns epoch seconds. */
   now?: () => number;
 }
@@ -57,6 +59,7 @@ export class HttpsJwksResolver implements JwksResolver {
   private readonly minCooldown: number;
   private readonly maxAge: number;
   private readonly allowPrivateIp: boolean;
+  private readonly lookup: SsrfDnsLookup | undefined;
   private readonly now: () => number;
   private cache: CacheSnapshot | undefined;
   private inFlight: Promise<void> | undefined;
@@ -66,6 +69,7 @@ export class HttpsJwksResolver implements JwksResolver {
     this.minCooldown = options.minCooldownSeconds ?? DEFAULT_MIN_COOLDOWN_SECONDS;
     this.maxAge = options.maxAgeSeconds ?? DEFAULT_MAX_AGE_SECONDS;
     this.allowPrivateIp = options.allowPrivateIp ?? false;
+    this.lookup = options.lookup;
     this.now = options.now ?? (() => Math.floor(Date.now() / 1000));
   }
 
@@ -130,6 +134,7 @@ export class HttpsJwksResolver implements JwksResolver {
       method: 'GET',
       headers,
       allowPrivateIp: this.allowPrivateIp,
+      lookup: this.lookup,
     });
 
     if (res.status === 304 && this.cache) {

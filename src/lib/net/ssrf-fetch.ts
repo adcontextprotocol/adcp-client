@@ -30,7 +30,7 @@
  * Returns a fully-buffered result. Callers that need streaming or large bodies
  * should extend this primitive rather than bypass it.
  */
-import { type LookupAddress, type LookupOptions } from 'dns';
+import { type LookupAddress, type LookupAllOptions, type LookupOptions } from 'dns';
 import { lookup as dnsLookupAsync } from 'dns/promises';
 import { isIP } from 'node:net';
 import { Agent, fetch as undiciFetch } from 'undici';
@@ -109,6 +109,9 @@ export class SsrfRefusedError extends Error {
   }
 }
 
+/** Async DNS lookup used by the guarded fetch path. */
+export type SsrfDnsLookup = (hostname: string, options: LookupAllOptions) => Promise<LookupAddress[]>;
+
 export interface SsrfFetchOptions {
   method?: string;
   /** Lowercased keys preferred; values preserved verbatim. */
@@ -122,6 +125,12 @@ export interface SsrfFetchOptions {
   maxBodyBytes?: number;
   /** Caller-provided abort signal, composed with the internal timeout. */
   signal?: AbortSignal;
+  /**
+   * DNS resolver override for dependency injection. Every returned address is
+   * still classified by the SSRF policy, and the selected address is still
+   * pinned into the undici dispatcher. Defaults to `dns/promises.lookup`.
+   */
+  lookup?: SsrfDnsLookup;
   /**
    * Declarative client-authentication material for a runner-owned HTTPS
    * connection. Certificate verification remains enabled and SNI is always
@@ -263,7 +272,8 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
     if (!options.trustedFetchFn) {
       let addresses: { address: string; family: number }[];
       try {
-        addresses = await raceWithAbort(dnsLookupAsync(hostname, { all: true }), ac.signal);
+        const lookup: SsrfDnsLookup = options.lookup ?? dnsLookupAsync;
+        addresses = await raceWithAbort(lookup(hostname, { all: true }), ac.signal);
       } catch (err) {
         throwIfSignalAborted(ac.signal);
         throw new SsrfRefusedError(

@@ -92,6 +92,26 @@ describe('ssrfSafeFetch — address guard', () => {
       err => err instanceof SsrfRefusedError && err.code === 'invalid_url'
     );
   });
+
+  it('classifies every address returned by a caller-supplied lookup', async () => {
+    let lookupCalls = 0;
+    await assert.rejects(
+      () =>
+        ssrfSafeFetch('https://public-looking.example/', {
+          lookup: async (hostname, options) => {
+            lookupCalls += 1;
+            assert.strictEqual(hostname, 'public-looking.example');
+            assert.strictEqual(options.all, true);
+            return [
+              { address: '8.8.8.8', family: 4 },
+              { address: '127.0.0.1', family: 4 },
+            ];
+          },
+        }),
+      err => err instanceof SsrfRefusedError && err.code === 'private_address' && err.address === '127.0.0.1'
+    );
+    assert.strictEqual(lookupCalls, 1);
+  });
 });
 
 describe('ssrfSafeFetch — DNS deadline and cancellation', () => {
@@ -134,6 +154,27 @@ describe('ssrfSafeFetch — DNS deadline and cancellation', () => {
 });
 
 describe('ssrfSafeFetch — happy path (allowPrivateIp for localhost)', () => {
+  it('pins the address selected from a caller-supplied lookup', async () => {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(204);
+      res.end();
+    });
+    await new Promise(r => server.listen(0, '127.0.0.1', r));
+    const port = server.address().port;
+    try {
+      const result = await ssrfSafeFetch(`http://public-looking.example:${port}/`, {
+        allowPrivateIp: true,
+        lookup: async () => [{ address: '127.0.0.1', family: 4 }],
+      });
+      assert.strictEqual(result.status, 204);
+      assert.strictEqual(result.pinnedAddress, '127.0.0.1');
+      assert.strictEqual(result.pinnedFamily, 4);
+      assert.strictEqual(result.connectionPinned, true);
+    } finally {
+      server.close();
+    }
+  });
+
   it('performs a GET, returns headers + body, pins to resolved IP', async () => {
     const server = http.createServer((req, res) => {
       res.writeHead(200, { 'content-type': 'application/json', 'x-pin-check': 'ok' });

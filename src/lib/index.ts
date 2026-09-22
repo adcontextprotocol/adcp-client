@@ -541,6 +541,7 @@ export {
   isAlwaysBlocked,
   isLikelyPrivateUrl,
   type SsrfRefusedCode,
+  type SsrfDnsLookup,
   type SsrfFetchOptions,
   type SsrfFetchResult,
 } from './net';

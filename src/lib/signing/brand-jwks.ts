@@ -23,7 +23,7 @@
  * JWKS still doesn't have the kid and the brand.json cooldown has elapsed) to
  * brand.json itself, in case the sender rotated `jwks_uri`.
  */
-import { ssrfSafeFetch } from '../net';
+import { ssrfSafeFetch, type SsrfDnsLookup } from '../net';
 import type { JwksResolver } from './jwks';
 import { HttpsJwksResolver, type HttpsJwksResolverOptions } from './jwks-https';
 import type { AdcpJsonWebKey } from './types';
@@ -115,11 +115,16 @@ export interface BrandJsonJwksResolverOptions {
    */
   allowPrivateIp?: boolean;
   /**
-   * Forwarded to the inner {@link HttpsJwksResolver} constructor.
-   * `allowPrivateIp` and `now` are set from the outer options and should not
-   * be passed here.
+   * DNS resolver used for both brand.json and JWKS fetches. Every returned
+   * address remains subject to SSRF classification and connection pinning.
    */
-  jwksOptions?: Omit<HttpsJwksResolverOptions, 'allowPrivateIp' | 'now'>;
+  lookup?: SsrfDnsLookup;
+  /**
+   * Forwarded to the inner {@link HttpsJwksResolver} constructor.
+   * `allowPrivateIp`, `lookup`, and `now` are set from the outer options and
+   * should not be passed here.
+   */
+  jwksOptions?: Omit<HttpsJwksResolverOptions, 'allowPrivateIp' | 'lookup' | 'now'>;
   /** Clock override for deterministic tests. Returns epoch seconds. */
   now?: () => number;
 }
@@ -164,7 +169,8 @@ export class BrandJsonJwksResolver implements JwksResolver {
   private readonly maxAge: number;
   private readonly maxRedirects: number;
   private readonly allowPrivateIp: boolean;
-  private readonly jwksOptions: Omit<HttpsJwksResolverOptions, 'allowPrivateIp' | 'now'>;
+  private readonly lookup: SsrfDnsLookup | undefined;
+  private readonly jwksOptions: Omit<HttpsJwksResolverOptions, 'allowPrivateIp' | 'lookup' | 'now'>;
   private readonly now: () => number;
   private snapshot: BrandSnapshot | undefined;
   private inner: HttpsJwksResolver | undefined;
@@ -181,6 +187,7 @@ export class BrandJsonJwksResolver implements JwksResolver {
     this.maxAge = options.maxAgeSeconds ?? DEFAULT_MAX_AGE_SECONDS;
     this.maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
     this.allowPrivateIp = options.allowPrivateIp ?? false;
+    this.lookup = options.lookup;
     this.jwksOptions = options.jwksOptions ?? {};
     this.now = options.now ?? (() => Math.floor(Date.now() / 1000));
   }
@@ -247,6 +254,7 @@ export class BrandJsonJwksResolver implements JwksResolver {
       currentEtag: this.snapshot?.etag,
       maxRedirects: this.maxRedirects,
       allowPrivateIp: this.allowPrivateIp,
+      lookup: this.lookup,
     });
 
     // 304 on the entry URL: extend the lifetime, keep the inner resolver.
@@ -266,6 +274,7 @@ export class BrandJsonJwksResolver implements JwksResolver {
       this.inner = new HttpsJwksResolver(agent.jwksUri, {
         ...this.jwksOptions,
         allowPrivateIp: this.allowPrivateIp,
+        lookup: this.lookup,
         now: this.now,
       });
     }
@@ -296,6 +305,8 @@ export interface FetchBrandJsonOptions {
   maxRedirects?: number;
   /** Permit HTTP and private addresses for controlled development environments. */
   allowPrivateIp?: boolean;
+  /** DNS resolver forwarded to every SSRF-safe fetch in the redirect chain. */
+  lookup?: SsrfDnsLookup;
   /** Whole-request deadline per hop. Default and hard maximum 10 seconds. */
   timeoutMs?: number;
   /** Response-body cap per hop. Default and hard maximum 256 KiB. */
@@ -358,6 +369,7 @@ export async function fetchBrandJson(args: FetchBrandJsonOptions): Promise<Fetch
         method: 'GET',
         headers,
         allowPrivateIp,
+        lookup: args.lookup,
         timeoutMs,
         maxBodyBytes,
       });

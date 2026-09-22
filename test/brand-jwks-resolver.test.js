@@ -96,6 +96,70 @@ async function startServer(routes) {
 }
 
 describe('BrandJsonJwksResolver', () => {
+  it('rejects a public-looking brand host when injected DNS resolves it to loopback', async () => {
+    let lookupCalls = 0;
+    const resolver = new BrandJsonJwksResolver('https://brand.public.example/.well-known/brand.json', {
+      agentType: 'sales',
+      lookup: async () => {
+        lookupCalls += 1;
+        return [{ address: '127.0.0.1', family: 4 }];
+      },
+    });
+
+    await assert.rejects(
+      () => resolver.resolve('any'),
+      err => {
+        assert.ok(err instanceof BrandJsonResolverError);
+        assert.strictEqual(err.code, 'fetch_failed');
+        assert.ok(err.cause instanceof SsrfRefusedError);
+        assert.strictEqual(err.cause.code, 'private_address');
+        return true;
+      }
+    );
+    assert.strictEqual(lookupCalls, 1);
+  });
+
+  it('uses the same injected DNS lookup for brand.json and the selected JWKS URL', async () => {
+    const server = await startServer({
+      '/.well-known/brand.json': {
+        body: {
+          agents: [
+            {
+              type: 'sales',
+              url: 'PLACEHOLDER',
+              id: 'sales_1',
+              jwks_uri: 'PLACEHOLDER',
+            },
+          ],
+        },
+      },
+      '/jwks.json': { body: { keys: [primaryPublic] } },
+    });
+    try {
+      const port = server.origin.split(':').pop();
+      const brandOrigin = `http://brand.public.example:${port}`;
+      const jwksOrigin = `http://keys.public.example:${port}`;
+      const agent = server.state.routes['/.well-known/brand.json'].body.agents[0];
+      agent.url = `${brandOrigin}/`;
+      agent.jwks_uri = `${jwksOrigin}/jwks.json`;
+      const lookedUp = [];
+      const resolver = new BrandJsonJwksResolver(`${brandOrigin}/.well-known/brand.json`, {
+        agentType: 'sales',
+        allowPrivateIp: true,
+        lookup: async hostname => {
+          lookedUp.push(hostname);
+          return [{ address: '127.0.0.1', family: 4 }];
+        },
+      });
+
+      const jwk = await resolver.resolve('test-ed25519-2026');
+      assert.ok(jwk);
+      assert.deepStrictEqual(lookedUp, ['brand.public.example', 'keys.public.example']);
+    } finally {
+      await server.stop();
+    }
+  });
+
   it('resolves a JWK by following agents[].jwks_uri on a flat brand.json', async () => {
     const server = await startServer({
       '/.well-known/brand.json': {
