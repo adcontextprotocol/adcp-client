@@ -90,8 +90,8 @@ export interface ValidateAdAgentsOptions {
    * is used for every direct, authoritative-location, ads.txt, and manager
    * request, so `AbortSignal.timeout(...)` is an absolute operation deadline
    * rather than a fresh budget per hop. `timeoutMs` remains the ceiling for
-   * each individual request. Once aborted, discovery throws the abort reason
-   * and does not start a later fallback request.
+   * each individual request. Once aborted, discovery returns an invalid
+   * structured result and does not start a later fallback request.
    */
   signal?: AbortSignal;
   /** Maximum response body bytes for adagents.json and ads.txt fetches (default 256 KiB). */
@@ -509,9 +509,6 @@ async function rawFetch(url: string, opts: InternalFetchOptions): Promise<RawFet
     const text = typeof decoded === 'string' ? decoded : JSON.stringify(decoded);
     return { kind: 'ok-text', text, url: result.url };
   } catch (err) {
-    if (opts.signal?.aborted || (err instanceof Error && err.name === 'AbortError')) {
-      throw err;
-    }
     if (err instanceof AdAgentsRedirectRefusedError) {
       return { kind: 'redirect_refused', message: err.message };
     }

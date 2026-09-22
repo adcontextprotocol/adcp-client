@@ -187,13 +187,18 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
       } as const;
       const responseBody = responseBodySnippet(response);
       if (!responseBody) {
-        // Non-text bodies, SSE, and bodies declared over the capture limit are
-        // never cloned. Emit the canonical response event immediately and
-        // make the absent preview explicit.
-        emitTransportActivity(handler, {
-          ...responseEvent,
-          responseBodyTruncated: true,
-        });
+        // Non-text bodies, SSE, bodies without a finite declared size, and
+        // bodies declared over the capture limit are never cloned. An absent
+        // body is complete; a present but uncaptured body is truncated.
+        emitTransportActivity(
+          handler,
+          response.body
+            ? {
+                ...responseEvent,
+                responseBodyTruncated: true,
+              }
+            : responseEvent
+        );
       } else {
         // Body capture is fire-and-forget. The response_received event fires
         // when capture completes, which may be after the diagnostics scope exits.
@@ -310,7 +315,7 @@ function responseBodySnippet(
   const contentType = response.headers.get('content-type') ?? '';
   if (!isDiagnosticTextContentType(contentType)) return undefined;
   const declaredLength = parseDiagnosticContentLength(response.headers.get('content-length'));
-  if (declaredLength !== undefined && declaredLength > BODY_SNIPPET_LIMIT) return undefined;
+  if (declaredLength === undefined || declaredLength > BODY_SNIPPET_LIMIT) return undefined;
 
   let diagnosticResponse: Response;
   try {
@@ -338,7 +343,7 @@ function responseBodySnippet(
 
 /**
  * Parse an explicit finite decimal length when one is available. Missing or
- * invalid lengths fall through to the independently bounded body reader.
+ * invalid lengths disable response-body capture.
  */
 function parseDiagnosticContentLength(value: string | null): number | undefined {
   if (value === null || !/^(0|[1-9][0-9]*)$/.test(value)) return undefined;

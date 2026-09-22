@@ -234,7 +234,7 @@ test('transport diagnostics waits for immediate async handlers after the request
   );
 });
 
-test('transport diagnostics bounds capture of a never-closing body without Content-Length', async () => {
+test('transport diagnostics does not clone a never-closing body without Content-Length', async () => {
   const events = [];
   let streamController;
   const stream = new ReadableStream({
@@ -243,12 +243,16 @@ test('transport diagnostics bounds capture of a never-closing body without Conte
       controller.enqueue(new TextEncoder().encode('{"ok":true}'));
     },
   });
-  const instrumentedFetch = wrapFetchWithTransportDiagnostics(
-    async () => new Response(stream, { headers: { 'content-type': 'application/json' } })
-  );
+  const upstreamResponse = new Response(stream, { headers: { 'content-type': 'application/json' } });
+  const originalClone = upstreamResponse.clone.bind(upstreamResponse);
+  let cloneCalls = 0;
+  upstreamResponse.clone = () => {
+    cloneCalls += 1;
+    return originalClone();
+  };
+  const instrumentedFetch = wrapFetchWithTransportDiagnostics(async () => upstreamResponse);
 
   let responseDeliveredAt;
-  const captureStartedAt = Date.now();
   const response = await withTransportDiagnostics(
     {
       agentId: 'stalled-body-agent',
@@ -262,14 +266,8 @@ test('transport diagnostics bounds capture of a never-closing body without Conte
       return operational;
     }
   );
-  const scopeElapsed = Date.now() - captureStartedAt;
-
   assert.equal(responseDeliveredAt < BODY_SNIPPET_TIMEOUT_MS, true);
-  assert.equal(scopeElapsed < BODY_SNIPPET_TIMEOUT_MS, true);
-  assert.equal(events.length, 1);
-  await waitFor(() => events.some(event => event.type === 'response_received'));
-  const captureElapsed = Date.now() - captureStartedAt;
-  assert.equal(captureElapsed < BODY_SNIPPET_TIMEOUT_MS + 1500, true);
+  assert.equal(cloneCalls, 0);
   assert.equal(events.length, 2);
   assert.equal(events[1].responseBody, undefined);
   assert.equal(events[1].responseBodyTruncated, true);
@@ -404,7 +402,7 @@ test('ESM transport diagnostics entry keeps observer work off the unbounded crit
   assert.equal(Date.now() - startedAt < publicEsm.OBSERVER_FLUSH_TIMEOUT_MS + 1500, true);
 });
 
-test('ESM transport diagnostics bounds an unbounded body preview', async () => {
+test('ESM transport diagnostics skips an unbounded body preview', async () => {
   const esm = await import('../../dist/lib/protocols/index.mjs');
   const events = [];
   let streamController;
@@ -435,10 +433,8 @@ test('ESM transport diagnostics bounds an unbounded body preview', async () => {
     () => instrumentedFetch('https://seller.example/mcp')
   );
 
-  assert.equal(cloneCalls, 1);
+  assert.equal(cloneCalls, 0);
   assert.equal(Date.now() - startedAt < BODY_SNIPPET_TIMEOUT_MS, true);
-  assert.equal(events.length, 1);
-  await waitFor(() => events.some(event => event.type === 'response_received'));
   assert.equal(events.length, 2);
   assert.equal(events[1].responseBodyTruncated, true);
   streamController.close();
@@ -501,7 +497,7 @@ test('transport diagnostics skips non-text and declared oversized bodies', async
   }
 });
 
-test('transport diagnostics captures text bodies without a finite Content-Length', async () => {
+test('transport diagnostics skips text bodies without a finite Content-Length', async () => {
   for (const [name, headers] of [
     ['missing-length', { 'content-type': 'application/json' }],
     ['invalid-length', { 'content-type': 'application/json', 'content-length': 'unknown' }],
@@ -525,11 +521,10 @@ test('transport diagnostics captures text bodies without a finite Content-Length
       () => instrumentedFetch('https://seller.example/mcp')
     );
 
-    assert.equal(cloneCalls, 1, name);
-    await waitFor(() => events.some(event => event.type === 'response_received'));
+    assert.equal(cloneCalls, 0, name);
     assert.equal(events.length, 2, name);
-    assert.equal(events[1].responseBody, '{"ok":true}', name);
-    assert.equal(events[1].responseBodyTruncated, false, name);
+    assert.equal(events[1].responseBody, undefined, name);
+    assert.equal(events[1].responseBodyTruncated, true, name);
     assert.equal(await operational.text(), '{"ok":true}', name);
   }
 });
@@ -567,8 +562,26 @@ test('transport diagnostics does not deadlock on responses larger than the snipp
   assert.equal(consumedBody, largeBody);
   assert.equal(events.length, 2);
   assert.equal(events[1].type, 'response_received');
-  assert.equal(events[1].responseBody.length, 64 * 1024);
+  assert.equal(events[1].responseBody, undefined);
   assert.equal(events[1].responseBodyTruncated, true);
+});
+
+test('transport diagnostics does not mark an absent response body as truncated', async () => {
+  const events = [];
+  const instrumentedFetch = wrapFetchWithTransportDiagnostics(async () => new Response(null, { status: 204 }));
+
+  await withTransportDiagnostics(
+    {
+      agentId: 'no-body-agent',
+      protocol: 'mcp',
+      onTransportActivity: event => events.push(event),
+    },
+    () => instrumentedFetch('https://seller.example/mcp')
+  );
+
+  assert.equal(events.length, 2);
+  assert.equal(events[1].responseBody, undefined);
+  assert.equal(events[1].responseBodyTruncated, undefined);
 });
 
 test('transport diagnostics redacts camelCase secrets and strips URL-bearing body fields', async () => {
