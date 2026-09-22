@@ -1,5 +1,17 @@
 # Changelog
 
+## 14.0.0-rc.45
+
+### Patch Changes
+
+- b1be4c6: Select the unique official reporting revision ahead of retained snapshots, even when it has no supersession link or its managed materialization is still pending. Join revisions by their owned logical slice as well as artifact references, preserve all retained history, and reject forks, cycles, multiple officials, and attempts to supersede a terminal official. Reconciliation still requires the selected official's own finality evidence, materialization, and any required consumer receipt.
+- 5d2cc73: Match a creative pinned to a `format_option_ref` against the legacy ref its option was minted from, and use a single narrowed legacy candidate.
+
+  A pinned creative facing a legacy-only container (bare `format_ids`, no `format_options`) lost every candidate in `selectLegacyRef`, because candidates derived from `format_ids` carry no option ref to compare against; the fallthrough then discarded the single candidate left after narrowing and threw `did not provide one unambiguous legacy format reference`. The pin is now matched exactly by re-deriving the synthetic option id from each legacy ref (`migratedFormatOptionId`, exported from `v1-to-v2`), a single remaining candidate is returned for an unpinned creative, and a pin that names none of the product's legacy refs still fails closed with a reason that names the pin.
+
+- 9f93091: Keep `validateAdAgents` cancellation in its structured-result contract, and avoid cloning diagnostic response bodies without a finite declared size.
+- 9952a00: Refresh registry types to include the exchange, retail media, and streaming TV sales specialisms.
+
 ## 14.0.0-rc.44
 
 ### Minor Changes
