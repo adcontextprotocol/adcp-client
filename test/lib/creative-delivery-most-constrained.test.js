@@ -5,6 +5,7 @@ const {
   CreativeFormatProjectionError,
   projectMediaBuyCreativesForDelivery,
 } = require('../../dist/lib/v2/projection/index.js');
+const { migratedFormatOptionId } = require('../../dist/lib/v2/projection/v1-to-v2.js');
 
 const AGENT_URL = 'https://creative.adcontextprotocol.org';
 
@@ -93,6 +94,60 @@ describe('creative delivery picks the most constrained legacy ref', () => {
           ],
         }),
       CreativeFormatProjectionError
+    );
+  });
+
+  test('matches a creative pinned to a synthetic option id against the legacy ref it was minted from', () => {
+    const sizedRef = sized('display_300x250_html', 300, 250);
+    const sizes = [
+      [160, 600],
+      [300, 250],
+      [300, 600],
+      [320, 50],
+      [728, 90],
+      [970, 250],
+    ];
+    const creative = {
+      ...html5Creative(300, 250),
+      creative_id: 'pinned_300x250',
+      format_option_ref: { scope: 'product', format_option_id: migratedFormatOptionId(sizedRef) },
+    };
+    const projected = projectLegacy({
+      packages: [
+        {
+          product_id: 'legacy-only-with-pin',
+          format_ids: [
+            { agent_url: AGENT_URL, id: 'display_html' },
+            ...sizes.map(([w, h]) => sized(`display_${w}x${h}_html`, w, h)),
+          ],
+          creatives: [creative],
+        },
+      ],
+    });
+
+    const out = projected.packages[0].creatives[0];
+    assert.deepEqual(out.format_id, sizedRef);
+    assert.equal(out.format_option_ref, undefined);
+  });
+
+  test('fails closed when a pinned creative names no legacy ref the product advertises', () => {
+    const creative = {
+      ...html5Creative(300, 250),
+      creative_id: 'pinned_elsewhere',
+      format_option_ref: { scope: 'product', format_option_id: 'seller_authored_option' },
+    };
+    assert.throws(
+      () =>
+        projectLegacy({
+          packages: [
+            {
+              product_id: 'legacy-only',
+              format_ids: [sized('display_html', 300, 250), sized('display_300x250_html', 300, 250)],
+              creatives: [creative],
+            },
+          ],
+        }),
+      err => err instanceof CreativeFormatProjectionError && /pinned to a format option/.test(err.message)
     );
   });
 
