@@ -1,5 +1,23 @@
 # Changelog
 
+## 14.0.0-rc.44
+
+### Minor Changes
+
+- 913711b: Add `assessAcceptancePolicy()` for conservative buyer preflight across verified seller-default and product profiles. The advisory assessment matches typed context, scope, region aliases, and rule time windows; composes prohibitions and requirements restrictively with per-rule provenance; and preserves `unknown` for partial coverage, unresolved or conflicting profiles, and omitted buyer facts.
+- 16ad91d: Allow callers to inject DNS lookup into SSRF-safe fetches and signing resolvers while preserving address validation and connection pinning.
+- 2db30b4: Make the acceptance-policy discovery storyboard verify the advertised catalog bytes, digest, schema, seller defaults, and every product profile. Compliance failures now retain distinct safe resolver codes for unsafe URLs, fetches, digest or schema mismatches, registry pin failures, and unresolved references. Registry verification is cancellable, batches large selections under one deadline, and bootstraps the catalog prerequisite for standalone product-step runs.
+
+### Patch Changes
+
+- 20d0971: Stop transport diagnostics scopes from waiting for asynchronous response-body capture. The `response_received` activity still fires when capture completes, but may now arrive after `withTransportDiagnostics()` resolves.
+- deaaf82: Use an agent's discovered `covers_content_digest` policy to exclude only the mutually exclusive request-signing refusal vectors 007 and 018 when they do not apply. When running the 3.0 or 3.1 compliance line, capability blocks that omit the field now use the protocol's effective `either` default.
+- 636abe2: Pick the most constrained legacy format ref when a legacy-format seller lists more than one for a canonical creative's kind.
+
+  `projectCreativeForDelivery` used to throw `the seller advertised N legacy refs for canonical kind ...` whenever several legacy refs of the creative's kind survived the package-level filters, even when the creative's own `format_parameters` named exactly one size. Sellers that list two spellings of one slot (`display_html` carrying width and height next to `display_300x250_html`) therefore rejected every create_media_buy that carried a canonical creative. Candidates are now narrowed by the creative's `format_parameters`, refs that pin those dimensions win over refs that leave them open, and among refs imposing identical constraints the legacy id whose own registry declaration pins that size wins over a generic parametrized id. Refs that still differ in their constraints for a creative that declares none keep failing closed.
+
+- f235280: Refresh registry client types with public and owner-scoped compliance eligibility fields.
+
 ## 14.0.0-rc.43
 
 ### Minor Changes
