@@ -109,6 +109,8 @@ The helper only returns `definitive: true` when all of these conditions hold:
 
 An omitted expected-period denominator can still diagnose delivery, but can never prove completeness. Pass `[]` only when the buyer independently knows that no periods are expected in the requested scope.
 
+A unique official revision takes precedence over a retained snapshot even without an explicit supersession link. The logical-slice join includes owned revisions whose destination materialization is still pending. In that case the result names the official revision, remains nondefinitive with `MISSING_VERIFIED_MATERIALIZATION`, and does not inspect or receipt the older snapshot. Forks, cycles, multiple official revisions, incomplete history, and mismatched ownership still prevent definitive reconciliation; the seller's retained records are preserved.
+
 ```ts
 import {
   createHttpsReportingResourceReader,

@@ -1169,34 +1169,21 @@ function assertReportingLedgerGraph(
     }
     referencedRevisions.add(materialization.reporting_revision_id);
   }
-  const materializedObligations = new Set(
-    [...materializations.values()].map(materialization => materialization.reporting_obligation_id)
-  );
-  const directCoreScopeCounts = new Map<string, number>();
+  const obligationScopes = new Set<string>();
   for (const obligation of obligations.values()) {
-    if (
-      !isDirectCoreObligation(obligation) ||
-      !Array.isArray(obligation.media_buy_ids) ||
-      materializedObligations.has(obligation.reporting_obligation_id)
-    ) {
-      continue;
+    if (Array.isArray(obligation.media_buy_ids)) {
+      obligationScopes.add(reportingRevisionScopeKey(obligation));
     }
-    const scopeKey = reportingRevisionScopeKey(obligation);
-    directCoreScopeCounts.set(scopeKey, (directCoreScopeCounts.get(scopeKey) ?? 0) + 1);
   }
   for (const revision of revisions.values()) {
     const referenced = referencedRevisions.has(revision.reporting_revision_id);
-    const directCoreScopeCount = Array.isArray(revision.media_buy_ids)
-      ? (directCoreScopeCounts.get(reportingRevisionScopeKey(revision)) ?? 0)
-      : 0;
-    // A Core revision intentionally excludes feed purpose, destination, and
-    // obligation identity. Obligations that share one logical reporting slice
-    // therefore share the same canonical revision, including mixed direct-Core
-    // and managed-materialization consumers.
-    const directlyScopedCoreRevision = directCoreScopeCount > 0;
+    // Revisions identify a logical slice, independently of its destinations.
+    // A managed obligation can own a revision before its artifact is ready,
+    // including an official close whose retained snapshot has been delivered.
+    const scoped = Array.isArray(revision.media_buy_ids) && obligationScopes.has(reportingRevisionScopeKey(revision));
     if (
       revision.account_id !== accountId ||
-      (!referenced && !directlyScopedCoreRevision) ||
+      (!referenced && !scoped) ||
       !isReportingControlTotals(revision.control_totals)
     ) {
       fail();
@@ -1217,10 +1204,6 @@ function assertReportingLedgerGraph(
       fail();
     }
   }
-}
-
-function isDirectCoreObligation(obligation: ManagedReportingObligation): boolean {
-  return obligation.reconciliation_mode === 'delivery_only' && obligation.destination_ref === undefined;
 }
 
 function revisionMatchesObligationScope(
@@ -1277,14 +1260,12 @@ function selectCurrent(
     item => item.reporting_obligation_id === obligation.reporting_obligation_id
   );
   const revisionIds = new Set(attempts.map(item => item.reporting_revision_id));
-  // Core sellers can expose immutable revision rows directly through
-  // get_media_buy_delivery without creating a managed destination
-  // materialization. In that case the protocol-authored revision scope is the
-  // join key. Once materializations exist, keep using their explicit IDs.
-  const candidates = ledger.revisions.filter(item => {
-    if (attempts.length > 0) return revisionIds.has(item.reporting_revision_id);
-    return isDirectCoreObligation(obligation) && revisionMatchesObligationScope(item, obligation);
-  });
+  // Include owned revisions even before this destination has an artifact.
+  // Keep explicit artifact joins too, so an off-scope reference is diagnosed
+  // below instead of being hidden by the logical-slice join.
+  const candidates = ledger.revisions.filter(
+    item => revisionIds.has(item.reporting_revision_id) || revisionMatchesObligationScope(item, obligation)
+  );
   const receipts = ledger.receipts.filter(item => item.reporting_obligation_id === obligation.reporting_obligation_id);
   const successfulAttempts = attempts.filter(item => item.status === 'available' || item.status === 'delivered');
   const acceptedReceipts = receipts.filter(item => item.status === 'accepted');
@@ -1305,13 +1286,38 @@ function selectCurrent(
   ) {
     reasons.push('ASSOCIATED_HISTORY_INCOMPLETE');
   }
-  const superseded = new Set(
-    candidates.map(item => item.supersedes_reporting_revision_id).filter((id): id is string => Boolean(id))
-  );
-  const candidateIds = new Set(candidates.map(item => item.reporting_revision_id));
+  const candidateById = new Map(candidates.map(item => [item.reporting_revision_id, item]));
+  const superseded = new Set<string>();
+  let invalidTopology = false;
+  for (const candidate of candidates) {
+    const predecessorId = candidate.supersedes_reporting_revision_id;
+    if (!predecessorId) continue;
+    // Two successors are a fork, and an official revision is terminal.
+    if (superseded.has(predecessorId) || candidateById.get(predecessorId)?.finality === 'official') {
+      invalidTopology = true;
+    }
+    superseded.add(predecessorId);
+  }
+  // Check every component: a retained snapshot cycle must not disappear when
+  // an unrelated official head takes precedence. Walk iteratively so long
+  // histories do not exhaust the call stack.
+  const checked = new Set<string>();
+  for (const candidate of candidates) {
+    const path = new Set<string>();
+    let cursor: ManagedReportingRevision | undefined = candidate;
+    while (cursor && !checked.has(cursor.reporting_revision_id)) {
+      if (path.has(cursor.reporting_revision_id)) {
+        invalidTopology = true;
+        break;
+      }
+      path.add(cursor.reporting_revision_id);
+      cursor = candidateById.get(cursor.supersedes_reporting_revision_id ?? '');
+    }
+    for (const id of path) checked.add(id);
+  }
   if (
     candidates.some(
-      item => item.supersedes_reporting_revision_id && !candidateIds.has(item.supersedes_reporting_revision_id)
+      item => item.supersedes_reporting_revision_id && !candidateById.has(item.supersedes_reporting_revision_id)
     )
   ) {
     reasons.push('REVISION_PREDECESSOR_MISSING');
@@ -1331,11 +1337,24 @@ function selectCurrent(
     reasons.push('REVISION_CHAIN_SCOPE_MISMATCH');
   }
   const current = candidates.filter(item => !superseded.has(item.reporting_revision_id));
-  if (current.length !== 1) {
-    reasons.push(current.length === 0 ? 'MISSING_CURRENT_REVISION' : 'AMBIGUOUS_REVISION_CHAIN');
+  const officials = candidates.filter(item => item.finality === 'official');
+  if (
+    invalidTopology ||
+    officials.length > 1 ||
+    current.length > 2 ||
+    (current.length === 2 && officials.length !== 1)
+  ) {
+    reasons.push('AMBIGUOUS_REVISION_CHAIN');
     return { reasons };
   }
-  const revision = current[0]!;
+  // An official close need not explicitly supersede the retained snapshot.
+  // Its own artifact and finality evidence are still required below; never
+  // fall back to a snapshot just because its delivery completed first.
+  const revision = officials[0] ?? current[0];
+  if (!revision) {
+    reasons.push('MISSING_CURRENT_REVISION');
+    return { reasons };
+  }
   const revisionControlTotalsValid = isReportingControlTotals(revision.control_totals);
   if (!revisionControlTotalsValid) reasons.push('REVISION_CONTROL_TOTALS_INVALID');
   if (!revision.report_definition_uri || !revision.report_definition_sha256) {
