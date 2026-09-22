@@ -152,7 +152,7 @@ describe('parseManagerDomain', () => {
 });
 
 describe('validateAdAgents — discovery_method', () => {
-  test('pre-aborted discovery performs no network I/O', async () => {
+  test('pre-aborted discovery returns a structured failure without network I/O', async () => {
     let requests = 0;
     const server = http.createServer((_req, res) => {
       requests++;
@@ -163,14 +163,13 @@ describe('validateAdAgents — discovery_method', () => {
     const controller = new AbortController();
     controller.abort();
     try {
-      await assert.rejects(
-        () =>
-          validateAdAgents(`127.0.0.1:${port}`, {
-            signal: controller.signal,
-            urlForDomain: (domain, path) => `http://${domain}${path}`,
-          }),
-        error => error?.name === 'AbortError'
-      );
+      const result = await validateAdAgents(`127.0.0.1:${port}`, {
+        signal: controller.signal,
+        urlForDomain: (domain, path) => `http://${domain}${path}`,
+      });
+      assert.strictEqual(result.valid, false);
+      assert.strictEqual(result.discovery_method, 'direct');
+      assert.match(result.errors[0], /abort/i);
       assert.strictEqual(requests, 0);
     } finally {
       await new Promise(resolve => server.close(resolve));
@@ -198,7 +197,9 @@ describe('validateAdAgents — discovery_method', () => {
       });
       await started;
       controller.abort();
-      await assert.rejects(discovery, error => error?.name === 'AbortError');
+      const result = await discovery;
+      assert.strictEqual(result.valid, false);
+      assert.match(result.errors[0], /abort/i);
       assert.deepStrictEqual(paths, ['/.well-known/adagents.json']);
     } finally {
       server.closeAllConnections();
@@ -219,7 +220,9 @@ describe('validateAdAgents — discovery_method', () => {
           });
           await fixture.phaseStarted;
           controller.abort();
-          await assert.rejects(discovery, error => error?.name === 'AbortError');
+          const result = await discovery;
+          assert.strictEqual(result.valid, false);
+          assert.match(result.errors[0], /abort/i);
         } finally {
           await fixture.close();
         }
@@ -325,7 +328,9 @@ describe('validateAdAgents — discovery_method', () => {
         urlForDomain: (domain, path) => `http://${domain}${path}`,
       });
       await managerRequest;
-      await assert.rejects(discovery, error => error?.name === 'TimeoutError');
+      const result = await discovery;
+      assert.strictEqual(result.valid, false);
+      assert.match(result.errors[0], /timed out|timeout|abort/i);
       assert.strictEqual(Date.now() - startedAt < 1_000, true);
     } finally {
       manager.closeAllConnections();
