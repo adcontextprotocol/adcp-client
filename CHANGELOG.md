@@ -1,5 +1,12 @@
 # Changelog
 
+## 14.0.0-rc.46
+
+### Patch Changes
+
+- 3e0425e: Preserve sanitized transport response headers when fetch implementations use a different Undici `Headers` constructor than Node's global fetch.
+- ec56a9b: Resolve specialism scenario dependencies from one compliance-cache index instead of reparsing the entire cache for every required scenario.
+
 ## 14.0.0-rc.45
 
 ### Patch Changes
