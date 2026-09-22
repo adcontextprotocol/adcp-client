@@ -276,12 +276,25 @@ function sanitizeResponseHeaders(headers: Headers): Record<string, string> {
 
 function headerEntries(headers: HeadersInit | undefined): Array<[string, string]> {
   if (!headers) return [];
-  if (headers instanceof Headers) {
+  if (Array.isArray(headers)) return headers.map(([key, value]) => [key, String(value)]);
+
+  // Headers objects are not required to share the global constructor. In
+  // particular, callers can return an undici Response whose Headers instance
+  // comes from a different package version than Node's built-in fetch. Use the
+  // web-platform iteration surface instead of a realm-sensitive instanceof
+  // check so diagnostics retain correlation metadata across those boundaries.
+  const forEach = (headers as { forEach?: unknown }).forEach;
+  if (typeof forEach === 'function') {
     const entries: Array<[string, string]> = [];
-    headers.forEach((value, key) => entries.push([key, value]));
-    return entries;
+    try {
+      forEach.call(headers, (value: unknown, key: unknown) => entries.push([String(key), String(value)]));
+      return entries;
+    } catch {
+      // Diagnostics must not change request behavior when a non-standard
+      // Headers-like object exposes a throwing iterator. Fall through to the
+      // record representation, which is also how plain HeadersInit is handled.
+    }
   }
-  if (Array.isArray(headers)) return headers.map(([key, value]) => [key, value]);
   return Object.entries(headers).map(([key, value]) => [key, String(value)]);
 }
 
