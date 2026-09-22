@@ -91,7 +91,7 @@ function formatIdentityDisambiguator(identity: string): string {
  * `format_ids` array could otherwise make a persisted canonical selection
  * resolve to a different legacy format on the next discovery refresh.
  */
-function migratedFormatOptionId(fid: V1FormatId): string {
+export function migratedFormatOptionId(fid: V1FormatId): string {
   const identity = JSON.stringify([
     fid.agent_url,
     fid.id,

@@ -23,7 +23,12 @@ import type {
   UpdateMediaBuyRequest,
   UpdateMediaBuyResponse,
 } from '../../types/tools.generated';
-import { canonicalDeclarationFromBareId, projectV1ProductToV2, resolveCanonicalFormatKind } from './v1-to-v2';
+import {
+  canonicalDeclarationFromBareId,
+  migratedFormatOptionId,
+  projectV1ProductToV2,
+  resolveCanonicalFormatKind,
+} from './v1-to-v2';
 import type { LegacyFormatConverter } from './v1-to-v2';
 import { CanonicalFormatLegacyResolutionError, resolveCanonicalFormatLegacyRefs } from './v2-to-v1';
 import type { CanonicalFormatLegacyResolver } from './v2-to-v1';
@@ -978,8 +983,13 @@ function selectLegacyRef(
     if (selectedOptionRefs.length > 0 && !selectedOptionRefs.some(ref => sameOptionReference(ref, creativeOptionRef))) {
       return undefined;
     }
-    candidates = candidates.filter(
-      candidate => candidate.formatOptionRef && sameOptionReference(candidate.formatOptionRef, creativeOptionRef)
+    // A legacy-only container carries bare legacy refs whose synthetic option
+    // ids were minted from the same tuple at discovery time, so a pin can still
+    // be matched exactly by re-deriving that id.
+    candidates = candidates.filter(candidate =>
+      candidate.formatOptionRef
+        ? sameOptionReference(candidate.formatOptionRef, creativeOptionRef)
+        : migratedFormatOptionId(candidate.ref) === creativeOptionRef.format_option_id
     );
   } else if (selectedOptionRefs.length > 0) {
     candidates = candidates.filter(
@@ -1377,6 +1387,10 @@ export function projectCreativeForDelivery<T extends CreativeAsset>(
       );
     }
     if (resolved) return projectCreative(creativeRecord, resolved[0]!) as unknown as LegacyProjectedCreative<T>;
+    const pinned = optionReference(creativeRecord.format_option_ref) !== undefined;
+    if (candidates.length === 1 && !pinned) {
+      return projectCreative(creativeRecord, candidates[0]!.ref) as unknown as LegacyProjectedCreative<T>;
+    }
     if (candidates.length > 1) {
       throw new CreativeFormatProjectionError(
         operation,
@@ -1384,7 +1398,9 @@ export function projectCreativeForDelivery<T extends CreativeAsset>(
         `the seller advertised ${candidates.length} legacy refs for canonical kind ${creativeRecord.format_kind}`
       );
     }
-    const reason = 'the selected seller product did not provide one unambiguous legacy format reference';
+    const reason = pinned
+      ? 'the creative is pinned to a format option that names none of the selected seller product legacy format references'
+      : 'the selected seller product did not provide one unambiguous legacy format reference';
     throw new CreativeFormatProjectionError(operation, creativeId, reason);
   }
   return creative as unknown as LegacyProjectedCreative<T>;
