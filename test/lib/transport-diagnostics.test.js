@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const { Headers: UndiciHeaders } = require('undici');
 
 const { BODY_SNIPPET_TIMEOUT_MS, OBSERVER_FLUSH_TIMEOUT_MS } = require('../../dist/lib/index.js');
 const {
@@ -675,4 +676,21 @@ test('transport diagnostics helpers sanitize URLs and headers', () => {
       'x-scope3-debug-id': 'debug',
     }
   );
+});
+
+test('transport diagnostics preserves safe headers from a foreign Undici Headers instance', () => {
+  assert.notStrictEqual(UndiciHeaders, Headers, 'regression requires distinct Headers constructors');
+
+  const headers = new UndiciHeaders({
+    'content-type': 'application/json',
+    'set-cookie': 'sid=secret',
+    'x-correlation-id': 'foreign-correlation',
+    'x-custom-routing': 'tenant-a',
+  });
+
+  assert.deepEqual(sanitizeTransportHeaders(headers), {
+    'content-type': 'application/json',
+    'set-cookie': '[redacted]',
+    'x-correlation-id': 'foreign-correlation',
+  });
 });
