@@ -456,7 +456,7 @@ describe('packageRefsForFormatOptions (canonical surface with private downgrade 
             return { agent_url: 'https://legacy.example/formats', id: 'forbidden_override' };
           }
         ),
-      /did not provide one unambiguous legacy format reference/
+      /pinned to a format option that names none of the selected seller product legacy format references/
     );
     assert.strictEqual(resolverCalls, 0);
   });
