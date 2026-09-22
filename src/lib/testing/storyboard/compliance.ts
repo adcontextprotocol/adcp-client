@@ -736,13 +736,18 @@ export function loadSpecialismDetail(slug: string, options: ResolveOptions = {})
 
   const required: Storyboard[] = [];
   const unresolved: string[] = [];
+  // Build the cache-wide lookup once for this resolution. Calling
+  // getComplianceStoryboardById for every reference would rescan and reparse
+  // the complete compliance tree each time; larger specialisms currently
+  // carry more than a dozen required scenarios.
+  const storyboardsById = new Map(listAllComplianceStoryboards(options).map(sb => [sb.id, sb] as const));
   for (const ref of storyboard.requires_scenarios ?? []) {
     // Scenario YAMLs declare `id: <category>/<scenario_id>` — the slash
     // form is the storyboard's own id and the only safe lookup. Bare-id
     // fallbacks would silently match across categories once future caches
     // ship scenarios with colliding tail segments — better to surface drift
     // through `unresolved_scenarios` than mask it with a wrong-category hit.
-    const sb = getComplianceStoryboardById(ref, options);
+    const sb = storyboardsById.get(ref);
     if (sb) required.push(sb);
     else unresolved.push(ref);
   }
