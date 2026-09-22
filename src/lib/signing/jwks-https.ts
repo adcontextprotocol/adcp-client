@@ -18,7 +18,7 @@ export interface HttpsJwksResolverOptions {
   maxAgeSeconds?: number;
   /** Allow `http://` / private-IP JWKS URLs (dev loops only). Default false. */
   allowPrivateIp?: boolean;
-  /** DNS resolver forwarded to the SSRF-safe fetch path. Defaults to `dns.lookup`. */
+  /** DNS resolver forwarded to the SSRF-safe fetch path. Defaults to `dns/promises.lookup`. */
   lookup?: SsrfDnsLookup;
   /** Clock override for deterministic tests. Returns epoch seconds. */
   now?: () => number;

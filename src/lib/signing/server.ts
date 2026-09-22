@@ -8,6 +8,7 @@
  * capability cache). The aggregate `@adcp/sdk/signing` barrel re-exports
  * both for back-compat.
  */
+export type { SsrfDnsLookup } from '../net';
 export {
   buildResponseSignatureBase,
   buildSignatureBase,
