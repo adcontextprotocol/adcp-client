@@ -18,6 +18,15 @@ import {
 } from '../source';
 import { reportingLedgerSuccessor } from './coverage';
 import {
+  assertReportingCalendarDaySource,
+  assertReportingCalendarDayPeriod,
+  isReportingCalendarDay,
+  reportingCalendarDayFingerprint,
+  reportingCalendarDayNeedsNewIdentity,
+  reportingCalendarDaySchedule,
+  reportingPeriodSchedule,
+} from './schedule';
+import {
   reconcileReportingStatusDeadlinesV1,
   reconcileReportingStatusLifecycleV1,
   retryReportingStatusNotificationsV1,
@@ -80,7 +89,11 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
       // no way to express the row that already exists.
       const replay = existing.find(value => value.delivery_config_version === normalizedInput.delivery_config_version);
       if (replay) {
-        if (![semanticFingerprint, predecessorFingerprint].includes(replay.semanticFingerprint)) {
+        const replayFingerprints = [semanticFingerprint, predecessorFingerprint];
+        if (isReportingCalendarDay(normalizedInput.schedule, normalizedInput.sourceTimezone)) {
+          replayFingerprints.push(reportingCalendarDayFingerprint(normalizedInput));
+        }
+        if (!replayFingerprints.includes(replay.semanticFingerprint)) {
           throw new Error('Reporting configuration generation is immutable');
         }
         return replay;
@@ -101,7 +114,9 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
           normalizedInput.delivery_config_version,
         ]).slice(0, 32)}`,
         installedAt,
-        semanticFingerprint,
+        semanticFingerprint: reportingCalendarDayNeedsNewIdentity(normalizedInput, Date.parse(installedAt))
+          ? reportingCalendarDayFingerprint(normalizedInput)
+          : semanticFingerprint,
       };
       return (await options.store.putConfiguration(configuration)).value;
     },
@@ -116,6 +131,7 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
       const obligationsByAccount = new Map<string, ReportingLedgerObligationV1[]>();
       for (const configuration of configurations) {
         const anchor = instant(configuration.schedule.anchor, 'schedule.anchor');
+        const schedule = reportingPeriodSchedule(configuration);
         const effectiveFrom = Math.max(anchor, instant(configuration.installedAt, 'installedAt'));
         const successor = reportingLedgerSuccessor(configuration, configurations);
         const generationEndValue = Math.min(
@@ -124,11 +140,13 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
         );
         const generationEnd = Number.isFinite(generationEndValue) ? generationEndValue : undefined;
         const effectiveUntil = Math.min(nowMs, generationEnd ?? nowMs);
-        const first = Math.max(0, Math.ceil((effectiveFrom - anchor) / configuration.schedule.periodMilliseconds));
-        const ownershipLast = generationEnd
-          ? Math.ceil((effectiveUntil - anchor) / configuration.schedule.periodMilliseconds) - 1
-          : Number.POSITIVE_INFINITY;
-        const latestClosed = Math.floor((nowMs - anchor) / configuration.schedule.periodMilliseconds) - 1;
+        const first = Math.max(0, schedule.ceil(effectiveFrom));
+        const ownershipLast = generationEnd ? schedule.ceil(effectiveUntil) - 1 : Number.POSITIVE_INFINITY;
+        if (ownershipLast < first) continue;
+        const latestClosed =
+          schedule.floor(
+            Number.isFinite(ownershipLast) ? Math.min(nowMs, schedule.boundary(ownershipLast + 1)) : nowMs
+          ) - 1;
         const last = Math.min(ownershipLast, latestClosed);
         let accountObligations = obligationsByAccount.get(configuration.account.account_id);
         if (!accountObligations) {
@@ -141,7 +159,7 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
         const candidates = missingOrdinals(first, last, existingOrdinals, maxObligations - attempted);
         for (const ordinal of candidates) {
           attempted += 1;
-          const obligation = planObligation(configuration, ordinal, now);
+          const obligation = planObligation(configuration, ordinal, now, offeringById.get(configuration.offeringId));
           const written = await options.store.putObligation(obligation);
           if (written.inserted) {
             created.push(written.value);
@@ -416,11 +434,15 @@ function sourceExecutionIssueId(obligation: ReportingLedgerObligationV1): string
 function planObligation(
   configuration: ReportingLedgerConfigurationV1,
   periodOrdinal: number,
-  createdAt: string
+  createdAt: string,
+  offering: ReportingSourceOfferingV1 | undefined
 ): ReportingLedgerObligationV1 {
-  const anchor = instant(configuration.schedule.anchor, 'schedule.anchor');
-  const start = anchor + periodOrdinal * configuration.schedule.periodMilliseconds;
-  const end = start + configuration.schedule.periodMilliseconds;
+  const schedule = reportingPeriodSchedule(configuration);
+  const start = schedule.boundary(periodOrdinal);
+  const end = schedule.boundary(periodOrdinal + 1);
+  if (isReportingCalendarDay(configuration.schedule, configuration.sourceTimezone) && offering) {
+    assertReportingCalendarDayPeriod(configuration.schedule, configuration.sourceTimezone, offering, start, end);
+  }
   // `reporting-schedule.json` defines expected_at uniformly as period.end +
   // delivery_sla. `officialAfterMilliseconds` is a private source-finality
   // boundary and must not move the public obligation due time.
@@ -1217,6 +1239,10 @@ function assertScheduleIdentityMatchesBoundaries(
   if (schedule.alignment === 'account_timezone') {
     throw new Error('Reporting account_timezone alignment is not schedulable by this ledger');
   }
+  if (isReportingCalendarDay(schedule, sourceTimezone)) {
+    reportingCalendarDaySchedule(schedule, sourceTimezone);
+    return;
+  }
   const anchorMs = instant(schedule.anchor, 'schedule.anchor');
   const originMs = reportingScheduleOriginV1(schedule.alignment, sourceTimezone);
   const offset = anchorMs - originMs;
@@ -1288,6 +1314,9 @@ function validateConfigurationAgainstOffering(
     nonnegativeInteger(offset, 'restatementMilliseconds');
   }
   assertScheduleIdentityMatchesBoundaries(configuration.schedule, configuration.sourceTimezone);
+  if (isReportingCalendarDay(configuration.schedule, configuration.sourceTimezone)) {
+    assertReportingCalendarDaySource(configuration.schedule, configuration.sourceTimezone, offering, Date.now());
+  }
   const anchor = instant(configuration.schedule.anchor, 'schedule.anchor');
   if (configuration.supersededAt && instant(configuration.supersededAt, 'supersededAt') <= anchor) {
     throw new Error('Reporting configuration supersession must follow its schedule anchor');

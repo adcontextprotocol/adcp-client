@@ -13,6 +13,7 @@ import {
   reportingLedgerSuccessor,
 } from './coverage';
 import { acquireAccountReadSlot, ReportingReadCapacityError } from './handler';
+import { isReportingCalendarDay, reportingPeriodSchedule } from './schedule';
 import {
   canonicalReportingInstant,
   compareReportingInstantToOffset,
@@ -463,21 +464,43 @@ function isExactPeriod(
   period: ReportingConsumerStatusV1['period']
 ): boolean {
   if (period.source_timezone !== configuration.sourceTimezone) return false;
-  const duration = configuration.schedule.periodMilliseconds;
-  const scheduleAnchor = new Date(Date.parse(configuration.schedule.anchor)).toISOString();
-  const ordinal = reportingPeriodOrdinal(period.start, scheduleAnchor, duration);
-  if (ordinal === null || !reportingInstantHasDuration(period.start, period.end, duration)) return false;
-  const effectiveFrom =
-    compareReportingInstants(scheduleAnchor, configuration.installedAt) >= 0
-      ? scheduleAnchor
-      : configuration.installedAt;
-  const firstOwnedOrdinal = reportingDurationCeilOrdinal(scheduleAnchor, effectiveFrom, duration);
   const successor = reportingLedgerSuccessor(configuration, configurations);
   const generationEnds = [successor?.installedAt, configuration.supersededAt].filter((value): value is string =>
     Boolean(value)
   );
   const generationEnd = generationEnds.sort(compareReportingInstants)[0];
-  return ordinal >= firstOwnedOrdinal && (!generationEnd || compareReportingInstants(period.start, generationEnd) < 0);
+  if (generationEnd && compareReportingInstants(period.start, generationEnd) >= 0) return false;
+  const duration = configuration.schedule.periodMilliseconds;
+  const scheduleAnchor = new Date(Date.parse(configuration.schedule.anchor)).toISOString();
+  let ordinal: bigint;
+  let firstOwnedOrdinal: bigint;
+  const effectiveFrom =
+    compareReportingInstants(scheduleAnchor, configuration.installedAt) >= 0
+      ? scheduleAnchor
+      : configuration.installedAt;
+  if (compareReportingInstants(period.start, effectiveFrom) < 0) return false;
+  if (isReportingCalendarDay(configuration.schedule, configuration.sourceTimezone)) {
+    const schedule = reportingPeriodSchedule(configuration);
+    const selected = schedule.floor(Date.parse(period.start));
+    if (
+      compareReportingInstants(period.start, new Date(schedule.boundary(selected)).toISOString()) !== 0 ||
+      compareReportingInstants(period.end, new Date(schedule.boundary(selected + 1)).toISOString()) !== 0
+    )
+      return false;
+    ordinal = BigInt(selected);
+    const first = schedule.floor(Date.parse(effectiveFrom));
+    // Keep sub-millisecond status and ownership checks exact; Date.parse is
+    // only a candidate lookup, never the equality/eligibility decision.
+    firstOwnedOrdinal = BigInt(
+      first + (compareReportingInstants(effectiveFrom, new Date(schedule.boundary(first)).toISOString()) > 0 ? 1 : 0)
+    );
+  } else {
+    const selected = reportingPeriodOrdinal(period.start, scheduleAnchor, duration);
+    if (selected === null || !reportingInstantHasDuration(period.start, period.end, duration)) return false;
+    ordinal = selected;
+    firstOwnedOrdinal = reportingDurationCeilOrdinal(scheduleAnchor, effectiveFrom, duration);
+  }
+  return ordinal >= firstOwnedOrdinal;
 }
 
 function resolvedAccountId(context: unknown): string {

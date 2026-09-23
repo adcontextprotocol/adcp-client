@@ -15,8 +15,8 @@ const {
   evaluateReportingLedgerCoverageV1,
   projectReportingObligationHealthV1,
   reportingLedgerScopeClosed,
-} = require('../../dist/lib/reporting/ledger/index.js');
-const { canonicalJsonV1 } = require('../../dist/lib/reporting/source/index.js');
+} = require('@adcp/sdk/reporting/ledger');
+const { canonicalJsonV1 } = require('@adcp/sdk/reporting/source');
 
 function sha(value) {
   return createHash('sha256').update(canonicalJsonV1(value)).digest('hex');

@@ -93,6 +93,7 @@ export interface ReportingLedgerConfigurationV1 {
   sourceTimezone: string;
   schedule: {
     anchor: string;
+    /** Fixed width for legacy schedules; nominal 86,400,000 for explicit P1D source-calendar days. */
     periodMilliseconds: number;
     deliverySlaMilliseconds: number;
     recoveryWindowMilliseconds: number;

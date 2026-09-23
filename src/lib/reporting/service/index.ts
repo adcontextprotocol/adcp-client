@@ -26,6 +26,7 @@ import {
   type ReportingSourceWithReaderV1,
 } from '../ledger';
 import type { InlineReportingReplayRetentionV1 } from '../source';
+import { assertReportingCalendarDaySource, reportingCalendarDayOrigin } from '../ledger/schedule';
 import {
   ReportingCoverageConstituentIdentityV1Schema,
   SOURCE_BATCH_MANIFEST_MAX_METRIC_AVAILABILITY_V1,
@@ -437,7 +438,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       ) {
         throw new TypeError('Trusted reporting timezone conflicts with the configuration timezone assertion');
       }
-      assertSupportedScheduleSemantics(frozenInput.schedule, deliveryOffering, normalizedTimezone);
+      assertSupportedScheduleSemantics(frozenInput.schedule, deliveryOffering, normalizedTimezone, offering);
       const { constituents, mediaBuyIds } = trustedCoverage(coverage, frozenInput.requestedMetrics);
       if (
         configuration.expectedMediaBuyIds !== undefined &&
@@ -931,6 +932,10 @@ function validateDeliveryOffering(source: ReportingSourceOfferingV1, delivery: R
   // every install, because only the official branch parsed the SLA.
   const advertisedSla = parseAdvertisedDuration(delivery.schedule.delivery_sla, 'delivery_sla');
   parseAdvertisedDuration(delivery.schedule.period_duration, 'period_duration');
+  const calendarDay =
+    delivery.schedule.period_duration === 'P1D' &&
+    delivery.schedule.alignment === 'source_timezone' &&
+    /^PT/.test(delivery.schedule.delivery_sla);
   if (delivery.supported_finality.includes('official') && source.publicationClass !== 'AUTHORITATIVE') {
     throw new TypeError('Official delivery finality requires an authoritative source offering');
   }
@@ -974,14 +979,29 @@ function validateDeliveryOffering(source: ReportingSourceOfferingV1, delivery: R
       );
     }
   }
-  // When the zone is pinned by either offering, its feasibility is decidable
-  // here. Publishing a fixed America/New_York schedule, or `utc` alignment over
-  // a nonzero-offset zone, advertises a schedule every installation refuses.
+  // Decide pinned-zone feasibility before advertising the offering. Civil
+  // P1D uses the shared resolver; elapsed grids still require a stable offset.
   const pinnedTimezone =
     delivery.schedule.period_timezone_policy === 'fixed'
       ? delivery.schedule.period_timezone
       : source.sourceTimezone.ianaTimezone;
-  if (pinnedTimezone) {
+  if (pinnedTimezone && calendarDay) {
+    assertReportingCalendarDaySource(
+      {
+        anchor: new Date(reportingCalendarDayOrigin(pinnedTimezone)).toISOString(),
+        periodMilliseconds: DAY_MILLISECONDS,
+        deliverySlaMilliseconds: advertisedSla,
+        recoveryWindowMilliseconds: DAY_MILLISECONDS,
+        periodDuration: 'P1D',
+        alignment: 'source_timezone',
+        periodTimezone: pinnedTimezone,
+        deliverySlaDuration: delivery.schedule.delivery_sla,
+      },
+      pinnedTimezone,
+      source,
+      Date.now()
+    );
+  } else if (pinnedTimezone) {
     const now = Date.now();
     if (delivery.schedule.alignment === 'utc' && reportingUtcOffsetMinutesV1(pinnedTimezone, now) !== 0) {
       throw new TypeError('UTC-aligned reporting requires a source timezone whose UTC offset is zero');
@@ -1183,10 +1203,9 @@ const OFFSET_FORWARD_HORIZON_DAYS = 400;
 /**
  * Refuse a schedule the installed executor could never satisfy.
  *
- * `createInlineReportingSourceExecutor` requires both period boundaries to land
- * exactly on source-local midnight, and the ledger generates boundaries as
- * `anchor + n * periodMilliseconds`. Two things therefore have to hold, and the
- * spec decides both:
+ * The explicit P1D source-calendar path resolves each civil boundary and checks
+ * source feasibility. Other supported schedules retain the elapsed grid
+ * `anchor + n * periodMilliseconds` and its two existing constraints:
  *
  *  - **Phase.** `core/reporting-schedule.json` fixes interval zero: `utc` uses
  *    1970-01-01T00:00:00Z, `source_timezone` uses local midnight on that date
@@ -1206,7 +1225,8 @@ const OFFSET_FORWARD_HORIZON_DAYS = 400;
 function assertSupportedScheduleSemantics(
   schedule: ReliableReportingConfigurationInputV1['schedule'],
   offering: ReportingDeliveryOffering,
-  sourceTimezone: string
+  sourceTimezone: string,
+  sourceOffering: ReportingSourceOfferingV1
 ): void {
   const { alignment } = offering.schedule;
   if (alignment !== 'utc' && alignment !== 'source_timezone') {
@@ -1225,6 +1245,26 @@ function assertSupportedScheduleSemantics(
   }
   const anchorMs = Date.parse(schedule.anchor);
   if (!Number.isFinite(anchorMs)) throw new TypeError('Reporting configuration anchor must be a valid instant');
+
+  if (
+    alignment === 'source_timezone' &&
+    offering.schedule.period_duration === 'P1D' &&
+    /^PT/.test(offering.schedule.delivery_sla)
+  ) {
+    assertReportingCalendarDaySource(
+      {
+        ...schedule,
+        periodDuration: 'P1D',
+        alignment,
+        periodTimezone: sourceTimezone,
+        deliverySlaDuration: offering.schedule.delivery_sla,
+      },
+      sourceTimezone,
+      sourceOffering,
+      Date.now()
+    );
+    return;
+  }
 
   // A property of the alignment/zone pairing rather than of this anchor, so it
   // is reported before any phase or boundary arithmetic derived from it.

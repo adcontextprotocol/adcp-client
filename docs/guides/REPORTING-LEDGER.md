@@ -141,7 +141,41 @@ await sweepExpiredReportingLedgerState(pool);
 
 Pass `getReportingStatus` and `getMediaBuyDelivery` directly to the matching `createAdcpServer` slots. The delivery helper serves only exact `reporting_revision_id` reads and returns the row payload bound by the ledger revision. Advertise `media_buy.reporting_delivery` in `experimental_features` together with a `media_buy.reporting_delivery` capability whose Reliable Reporting version is `1.0` only after both handlers are wired. Configure account resolution on the server: both handlers require the framework-resolved, caller-scoped account identity and never trust a request-body identity as an authorization boundary. If two callers can name the same upstream account, the resolver must issue distinct internal account IDs for their ledger namespaces. Install immutable delivery-configuration generations through `producer.installConfiguration`, call `planObligations()` after period close, and run `runWorker()` from a durable scheduler. Multiple workers are safe: PostgreSQL claims use `SKIP LOCKED`, expiring leases, and fencing generations.
 
-The planner uses fixed millisecond periods and an explicitly frozen IANA source timezone. Calendar or billing-cycle schedules should be expanded by the seller into immutable period boundaries before installation; the SDK intentionally has no Temporal dependency. At period end, the obligation freezes the constituent denominator and coverage. A zero-row source object commits like any other revision. Absence remains an empty revision association. A deployment with per-tenant workers should pass the resolved `account_id` to both `planObligations()` and `runWorker()`; omitting it intentionally runs a deployment-wide worker.
+The planner supports fixed millisecond schedules and an explicit source-calendar
+day schedule. For the latter, set the existing schedule identity fields to
+`periodDuration: 'P1D'`, `alignment: 'source_timezone'`, and
+`periodTimezone: sourceTimezone`, with an IANA timezone and a source-local
+midnight `anchor`. Keep `periodMilliseconds: 86_400_000` as the nominal day;
+it does not determine the elapsed width on this path. Boundaries are resolved
+independently from local 1970-01-01 and their civil-day ordinal, so New York's
+spring and fall days span 23 and 25 hours. The service fills these identity
+fields from its delivery offering; callers of the producer directly must supply
+them explicitly. `PT24H` continues to mean an elapsed 24 hours.
+
+The new calendar path supports a fixed-time SLA, for example
+`deliverySlaDuration: 'PT4H'` with `deliverySlaMilliseconds: 14_400_000`.
+The deadline is the resolved period end plus that elapsed duration. Source
+window bounds, local-midnight representability and authoritative finalization
+must remain feasible; installation checks the operational 400-day horizon,
+and planning checks each actual period against its available source offering.
+An elapsed `PT24H` source window cannot stand in for a calendar `P1D` window
+across DST. Other calendar durations, calendar SLAs and billing-cycle expansion
+remain seller responsibilities; this adds no Temporal dependency.
+
+Existing numeric schedules, immutable generation replays, and identities for
+unchanged boundaries are preserved. A new generation that needs variable
+boundaries has a distinct semantic fingerprint using the existing opaque
+fingerprint field. The SDK refuses to reinterpret an old fixed-period
+generation whose optional labels would now imply different civil boundaries;
+install an explicit new configuration version before the boundaries diverge.
+The same guard applies if a later timezone database changes a previously fixed
+grid. Authored obligations are never rewritten to migrate a schedule.
+
+At period end, the obligation freezes the constituent denominator and coverage.
+A zero-row source object commits like any other revision. Absence remains an
+empty revision association. A deployment with per-tenant workers should pass
+the resolved `account_id` to both `planObligations()` and `runWorker()`;
+omitting it intentionally runs a deployment-wide worker.
 
 ### Migrating an existing manual lifecycle
 

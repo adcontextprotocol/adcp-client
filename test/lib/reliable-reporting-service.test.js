@@ -1070,14 +1070,14 @@ describe('ReliableReportingService', () => {
     );
 
     assert.throws(
-      () => zonedFixture('America/New_York'),
+      () => zonedFixture('America/New_York', { periodDuration: 'PT24H' }),
       /UTC offset|schedule-origin offset/,
-      'a pinned DST zone cannot hold local midnight and must not be advertised'
+      'an elapsed PT24H grid cannot hold local midnight in a DST zone'
     );
 
     // The same zone behind an account_resolved policy is unknown until install,
     // so install-time validation is what has to catch it.
-    const lateDst = zonedFixture('America/New_York', { accountResolved: true });
+    const lateDst = zonedFixture('America/New_York', { accountResolved: true, periodDuration: 'PT24H' });
     await assert.rejects(
       lateDst.service.installConfiguration(
         configuration({
@@ -1107,7 +1107,7 @@ describe('ReliableReportingService', () => {
     // periods being generated now. Asia/Almaty held UTC+6 through 2023 and
     // moved to UTC+5 on 2024-03-01, so a 2022 generation looks stable for its
     // first year and every currently generated boundary sits at 23:00 local.
-    const almaty = zonedFixture('Asia/Almaty', { accountResolved: true });
+    const almaty = zonedFixture('Asia/Almaty', { accountResolved: true, periodDuration: 'PT24H' });
     await assert.rejects(
       almaty.service.installConfiguration(
         configuration({
@@ -1442,7 +1442,7 @@ describe('ReliableReportingService', () => {
     // "now + horizon" would put the span end before its start, so the loop body
     // would never run and a DST zone would install.
     for (const timezone of ['America/Santiago', 'Australia/Sydney']) {
-      const zone = zonedFixture(timezone, { accountResolved: true });
+      const zone = zonedFixture(timezone, { accountResolved: true, periodDuration: 'PT24H' });
       await assert.rejects(
         zone.service.installConfiguration(
           configuration({
@@ -2149,7 +2149,7 @@ describe('ReliableReportingService', () => {
     assert.equal(installed.sourceTimezone, 'Asia/Tehran', 'history the planner never reaches must not refuse');
 
     // A zone whose offset moves inside the operational window is still refused.
-    const dst = zonedFixture('America/New_York', { accountResolved: true });
+    const dst = zonedFixture('America/New_York', { accountResolved: true, periodDuration: 'PT24H' });
     const nyOrigin = reportingScheduleOriginV1('source_timezone', 'America/New_York');
     const recent = nyOrigin + Math.ceil((Date.now() - nyOrigin) / 86_400_000) * 86_400_000;
     await assert.rejects(
@@ -2219,13 +2219,13 @@ describe('ReliableReportingService', () => {
     }
   });
 
-  test('never advertises a zone whose protocol grid has no installable anchor', async () => {
+  test('never advertises an elapsed grid with no source-midnight anchor', async () => {
     // Stable today, but their offset moved after the 1970 origin, so every
     // boundary derived from that origin misses local midnight by 30 or 15
-    // minutes and no P1D anchor can ever install.
+    // minutes and no PT24H anchor can ever install. P1D now resolves civil dates.
     for (const timezone of ['Asia/Singapore', 'Asia/Kathmandu']) {
       assert.throws(
-        () => zonedFixture(timezone),
+        () => zonedFixture(timezone, { periodDuration: 'PT24H' }),
         /no longer observes its schedule-origin offset/,
         `${timezone} has no installable protocol anchor and must not be advertised`
       );

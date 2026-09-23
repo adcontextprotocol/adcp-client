@@ -1,4 +1,5 @@
 import type { ReportingLedgerConfigurationV1, ReportingLedgerSnapshotQueryV1 } from './types';
+import { reportingPeriodSchedule } from './schedule';
 
 export function reportingLedgerEffectivePeriod(query: ReportingLedgerSnapshotQueryV1, ledgerAsOf: string) {
   return {
@@ -100,31 +101,29 @@ export function evaluateReportingLedgerCoverageV1(
   let complete = true;
   let retainedFrom: string | undefined;
   for (const configuration of configurations.filter(value => reportingLedgerConfigurationMatchesScope(query, value))) {
-    const anchor = Date.parse(configuration.schedule.anchor);
-    const duration = configuration.schedule.periodMilliseconds;
+    const schedule = reportingPeriodSchedule(configuration);
     const installedAt = Date.parse(configuration.installedAt);
     const successor = reportingLedgerSuccessor(configuration, configurations);
-    const first = Math.max(
-      0,
-      Math.ceil((installedAt - anchor) / duration),
-      Math.floor((Date.parse(period.start) - anchor) / duration)
-    );
+    const firstOwned = Math.max(0, schedule.ceil(installedAt));
     const ownershipEnd = Math.min(
       successor ? Date.parse(successor.installedAt) : Number.POSITIVE_INFINITY,
       configuration.supersededAt ? Date.parse(configuration.supersededAt) : Number.POSITIVE_INFINITY
     );
-    const ownershipLast = Number.isFinite(ownershipEnd)
-      ? Math.ceil((ownershipEnd - anchor) / duration) - 1
-      : Number.POSITIVE_INFINITY;
-    const queryLast = Math.ceil((Date.parse(period.end) - anchor) / duration) - 1;
-    const closedLast = Math.floor((Date.parse(ledgerAsOf) - anchor) / duration) - 1;
+    const ownershipLast = Number.isFinite(ownershipEnd) ? schedule.ceil(ownershipEnd) - 1 : Number.POSITIVE_INFINITY;
+    if (ownershipLast < firstOwned) continue;
+    const end = Number.isFinite(ownershipLast) ? schedule.boundary(ownershipLast + 1) : Number.POSITIVE_INFINITY;
+    const start = schedule.boundary(firstOwned);
+    if (Date.parse(period.start) >= end || Date.parse(period.end) <= start) continue;
+    const first = schedule.floor(Math.max(start, Date.parse(period.start)));
+    const queryLast = schedule.ceil(Math.min(Date.parse(period.end), end)) - 1;
+    const closedLast = schedule.floor(Math.min(Date.parse(ledgerAsOf), end)) - 1;
     const last = Math.min(ownershipLast, queryLast, closedLast);
     const ordinals = stored.get(configuration.configurationId) ?? new Set<number>();
     const matching = [...ordinals].filter(ordinal => ordinal >= first && ordinal <= last).sort((a, b) => a - b);
     if (matching.length !== Math.max(0, last - first + 1)) complete = false;
     const earliest = matching[0];
     if (earliest !== undefined) {
-      const boundary = new Date(anchor + earliest * duration).toISOString();
+      const boundary = new Date(schedule.boundary(earliest)).toISOString();
       if (!retainedFrom || Date.parse(boundary) < Date.parse(retainedFrom)) retainedFrom = boundary;
     }
     if (!complete) break;
