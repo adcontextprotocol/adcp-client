@@ -708,24 +708,24 @@ describe('field_contains (adcp#3803 item 2)', () => {
   });
 
   it('canonicalizes a directly selected agent_url field and fails malformed identities closed', () => {
-    const validation = [{
-      check: 'field_value',
-      path: 'format_id.agent_url',
-      value: 'https://formats.example/',
-      description: 'direct URL field uses canonical identity comparison',
-    }];
-    const [canonical] = runOne(
-      validation,
-      'list_creative_formats',
-      { success: true, data: { format_id: { agent_url: 'HTTPS://FORMATS.EXAMPLE:443', id: 'display' } } }
-    );
+    const validation = [
+      {
+        check: 'field_value',
+        path: 'format_id.agent_url',
+        value: 'https://formats.example/',
+        description: 'direct URL field uses canonical identity comparison',
+      },
+    ];
+    const [canonical] = runOne(validation, 'list_creative_formats', {
+      success: true,
+      data: { format_id: { agent_url: 'HTTPS://FORMATS.EXAMPLE:443', id: 'display' } },
+    });
     assert.strictEqual(canonical.passed, true, canonical.error);
 
-    const [malformed] = runOne(
-      [{ ...validation[0], value: 'not-a-url' }],
-      'list_creative_formats',
-      { success: true, data: { format_id: { agent_url: 'not-a-url', id: 'display' } } }
-    );
+    const [malformed] = runOne([{ ...validation[0], value: 'not-a-url' }], 'list_creative_formats', {
+      success: true,
+      data: { format_id: { agent_url: 'not-a-url', id: 'display' } },
+    });
     assert.strictEqual(malformed.passed, false);
   });
 

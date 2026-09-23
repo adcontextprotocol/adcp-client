@@ -161,12 +161,14 @@ describe('cross_response_count_distinct', () => {
       ],
     };
     const [r] = runValidations(
-      [{
-        check: 'cross_response_count_distinct',
-        path: 'seller_agent_url',
-        allowed_values: [1],
-        description: 'one canonical seller identity',
-      }],
+      [
+        {
+          check: 'cross_response_count_distinct',
+          path: 'seller_agent_url',
+          allowed_values: [1],
+          description: 'one canonical seller identity',
+        },
+      ],
       { ...baseCtx, crossResponses }
     );
     assert.strictEqual(r.passed, true, r.error);
@@ -182,12 +184,14 @@ describe('cross_response_count_distinct', () => {
       ],
     };
     const [r] = runValidations(
-      [{
-        check: 'cross_response_count_distinct',
-        path: 'agent_url',
-        allowed_values: [1],
-        description: 'one canonical agent identity',
-      }],
+      [
+        {
+          check: 'cross_response_count_distinct',
+          path: 'agent_url',
+          allowed_values: [1],
+          description: 'one canonical agent identity',
+        },
+      ],
       { ...baseCtx, crossResponses }
     );
     assert.strictEqual(r.passed, false);
