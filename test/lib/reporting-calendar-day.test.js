@@ -806,3 +806,394 @@ test('MCP calendar controller runs the installed official scheduler and reads pe
   }
   assert.ok(requests >= 7, 'MCP initialization and every tool action traverse HTTP');
 });
+
+// Resolver-only checks deliberately use the internal module. Public producer,
+// coverage and status checks below exercise the same rules without exposing it.
+const {
+  reportingCalendarDayOrigin,
+  reportingCalendarDaySchedule,
+  reportingPeriodSchedule,
+} = require('../../dist/lib/reporting/ledger/schedule.js');
+
+function retainedConfiguration(input, installedAt, legacy = false) {
+  const { createHash } = require('node:crypto');
+  const { canonicalJsonV1 } = require('@adcp/sdk/reporting/source');
+  return {
+    ...structuredClone(input),
+    configurationId: 'retained-calendar-generation',
+    installedAt,
+    semanticFingerprint: `sha256:${createHash('sha256')
+      .update(canonicalJsonV1(legacy ? input : ['reporting-source-calendar-day-v1', input]))
+      .digest('hex')}`,
+  };
+}
+
+const skippedDates = [
+  {
+    zone: 'Pacific/Apia',
+    origin: '1970-01-01T11:00:00.000Z',
+    missing: 15338,
+    before: '2011-12-29T10:00:00.000Z',
+    after: '2011-12-30T10:00:00.000Z',
+    following: '2011-12-31T10:00:00.000Z',
+  },
+  {
+    zone: 'Pacific/Fakaofo',
+    origin: '1970-01-01T11:00:00.000Z',
+    missing: 15338,
+    before: '2011-12-29T11:00:00.000Z',
+    after: '2011-12-30T11:00:00.000Z',
+    following: '2011-12-31T11:00:00.000Z',
+  },
+  {
+    zone: 'Pacific/Kiritimati',
+    origin: '1970-01-01T10:40:00.000Z',
+    missing: 9130,
+    before: '1994-12-30T10:00:00.000Z',
+    after: '1994-12-31T10:00:00.000Z',
+    following: '1995-01-01T10:00:00.000Z',
+  },
+  {
+    zone: 'Pacific/Kanton',
+    origin: '1970-01-01T12:00:00.000Z',
+    missing: 9130,
+    before: '1994-12-30T11:00:00.000Z',
+    after: '1994-12-31T11:00:00.000Z',
+    following: '1995-01-01T11:00:00.000Z',
+  },
+];
+
+for (const { zone, origin, missing, before, after, following } of skippedDates) {
+  test(`calendar regression: skipped date in ${zone}`, async t => {
+    const { input } = fixture({ zone, boundaries: [origin] });
+    const schedule = reportingCalendarDaySchedule(input.schedule, zone);
+    await t.test('valid neighboring point identities are unchanged', () => {
+      assert.equal(reportingCalendarDayOrigin(zone), Date.parse(origin));
+      for (const [ordinal, instant] of [
+        [missing - 1, before],
+        [missing + 1, after],
+        [missing + 2, following],
+      ]) {
+        assert.equal(schedule.boundary(ordinal), Date.parse(instant));
+        assert.equal(schedule.floor(Date.parse(instant)), ordinal);
+        assert.equal(schedule.ceil(Date.parse(instant)), ordinal);
+        assert.equal(schedule.floor(Date.parse(instant) + 1), ordinal);
+      }
+      assert.equal(schedule.ceil(Date.parse(after) + 1), missing + 2);
+      assert.ok(schedule.boundary(missing + 2) > schedule.boundary(missing + 1));
+    });
+    await t.test('the missing ordinal and both affected periods explicitly refuse', () => {
+      for (const ordinal of [missing - 1, missing]) {
+        assert.throws(
+          () => [schedule.boundary(ordinal), schedule.boundary(ordinal + 1)],
+          /unrepresentable|lossless source-local/,
+          `period ${ordinal} cannot alias its missing endpoint`
+        );
+      }
+      assert.throws(() => schedule.boundary(missing), /unrepresentable|lossless source-local/);
+    });
+    await t.test('ceil inside the preceding day refuses instead of jumping over the missing ordinal', () => {
+      assert.equal(schedule.floor(Date.parse(before) + 1), missing - 1);
+      assert.throws(() => schedule.ceil(Date.parse(before) + 1), /unrepresentable|lossless source-local/);
+    });
+  });
+}
+
+test('calendar regression: ordinary midnight gaps, folds and half-hour changes keep point inverses', () => {
+  for (const [zone, anchor, days] of [
+    ['America/Santiago', '2026-09-01T04:00:00.000Z', 900],
+    ['Australia/Lord_Howe', '2026-10-02T13:30:00.000Z', 800],
+    ['America/New_York', '1970-01-01T05:00:00.000Z', 400],
+    ['Europe/Berlin', '1969-12-31T23:00:00.000Z', 400],
+  ]) {
+    const { input } = fixture({ zone, boundaries: [anchor] });
+    const schedule = reportingCalendarDaySchedule(input.schedule, zone);
+    for (let ordinal = 0; ordinal < days; ordinal += 1) {
+      const start = schedule.boundary(ordinal);
+      assert.ok(schedule.boundary(ordinal + 1) > start, `${zone}: positive period ${ordinal}`);
+      assert.equal(schedule.floor(start), ordinal, `${zone}: floor at ${ordinal}`);
+      assert.equal(schedule.ceil(start), ordinal, `${zone}: ceil at ${ordinal}`);
+    }
+  }
+});
+
+test('calendar regression: coverage and status refuse missing civil endpoints without banning their neighbors', async t => {
+  const f = fixture({ zone: 'Pacific/Apia', boundaries: ['1970-01-01T11:00:00.000Z'] });
+  const configuration = retainedConfiguration(f.input, '2011-12-28T10:00:00.000Z');
+  await f.store.putConfiguration(configuration);
+  const before = structuredClone(await f.store.listConfigurations());
+  const query = {
+    account_id: f.input.account.account_id,
+    view: 'periods',
+    period: { start: '2011-12-29T10:00:00.000Z', end: '2011-12-30T10:00:00.000Z' },
+  };
+  await t.test('coverage cannot certify a retained count across an unrepresentable period', () => {
+    assert.throws(
+      () =>
+        evaluateReportingLedgerCoverageV1(
+          query,
+          [configuration],
+          [15337, 15338].map(periodOrdinal => ({ configurationId: configuration.configurationId, periodOrdinal })),
+          '2011-12-31T10:00:00.000Z'
+        ),
+      /unrepresentable|lossless source-local/
+    );
+    assert.equal(
+      evaluateReportingLedgerCoverageV1(
+        { ...query, period: { start: '2011-12-30T10:00:00.000Z', end: '2011-12-31T10:00:00.000Z' } },
+        [configuration],
+        [{ configurationId: configuration.configurationId, periodOrdinal: 15339 }],
+        '2011-12-31T10:00:00.000Z'
+      ).complete,
+      true
+    );
+    assert.throws(
+      () =>
+        evaluateReportingLedgerCoverageV1(
+          { ...query, period: { start: '2011-12-28T10:00:00.000Z', end: '2011-12-31T10:00:00.000Z' } },
+          [configuration],
+          [15336, 15337, 15338, 15339].map(periodOrdinal => ({
+            configurationId: configuration.configurationId,
+            periodOrdinal,
+          })),
+          '2011-12-31T10:00:00.000Z'
+        ),
+      /unrepresentable|lossless source-local/,
+      'valid outer endpoints cannot hide a missing interior date'
+    );
+  });
+  await t.test('summary cannot advertise the next start as a usable period with a missing end', async () => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2011-12-28T11:00:00.000Z') });
+    await assert.rejects(
+      createReportingStatusHandler(f.store)(
+        {
+          account: f.input.account,
+          view: 'summary',
+          period: { start: '2011-12-28T10:00:00.000Z', end: '2011-12-28T11:00:00.000Z' },
+        },
+        f.context
+      ),
+      /unrepresentable|lossless source-local/
+    );
+  });
+  await t.test('consumer status cannot accept an aliased period endpoint', async () => {
+    const now = new Date('2011-12-31T12:00:00.000Z');
+    const sync = createSyncReportingStatusHandler(f.store, { resolveConsumerId: ctx => ctx.consumer, now: () => now });
+    await assert.rejects(
+      sync(
+        {
+          account: f.input.account,
+          idempotency_key: 'calendar-missing-date-status',
+          statuses: [
+            {
+              reporting_status_id: 'calendar-missing-date-status-0001',
+              delivery_config_id: f.input.delivery_config_id,
+              delivery_config_version: 1,
+              report_definition_id: f.input.report_definition_id,
+              period: { ...query.period, source_timezone: 'Pacific/Apia' },
+              consumer_status: 'obligation_missing',
+              status_as_of: now.toISOString(),
+            },
+          ],
+        },
+        f.context
+      ),
+      /unrepresentable|lossless source-local/
+    );
+  });
+  await t.test('planning refuses the affected period before writing even when the offering is absent', async () => {
+    const store = new MemoryLedgerStore();
+    await store.putConfiguration(retainedConfiguration(f.input, '2011-12-29T10:00:00.000Z'));
+    let writes = 0;
+    const put = store.putObligation.bind(store);
+    store.putObligation = async value => {
+      writes += 1;
+      return put(value);
+    };
+    const source = createInlineReportingSourceExecutor(() => {
+      throw new Error('unexpected source fetch');
+    }, f.sourceOffering);
+    const producer = createReportingProducer({
+      store,
+      source,
+      offerings: [],
+      contact: { name: 'Calendar test', email: 'calendar@example.invalid' },
+    });
+    await assert.rejects(producer.planObligations('2011-12-30T10:00:00.000Z'), /unrepresentable|lossless source-local/);
+    assert.equal(writes, 0);
+    assert.deepEqual(await store.listObligations(), []);
+  });
+  assert.deepEqual(await f.store.listConfigurations(), before);
+  assert.deepEqual(await f.store.listObligations(), []);
+  assert.deepEqual(f.sourceCalls, []);
+});
+
+test('calendar regression: legacy finite lookups preserve numeric ordinals and enclosing boundaries on both sides of installation', () => {
+  const { input } = fixture({ zone: 'America/New_York', boundaries: ['1970-01-01T05:00:00.000Z'] });
+  const configuration = retainedConfiguration(input, '1971-02-05T05:00:00.000Z', true);
+  const original = structuredClone(configuration);
+  const schedule = reportingPeriodSchedule(configuration);
+  // Fixed literal windows: the fall ceil used to return 298, whose boundary
+  // happens to match the numeric grid, although the numeric ceil here is 297.
+  for (const instant of [
+    '1970-04-27T04:00:00.000Z',
+    '1970-04-27T04:30:00.000Z',
+    '1970-04-27T05:00:00.000Z',
+    '1970-10-25T04:00:00.000Z',
+    '1970-10-25T04:30:00.000Z',
+    '1970-10-25T05:00:00.000Z',
+    '1971-04-26T04:30:00.000Z',
+    '1971-10-31T04:30:00.000Z',
+  ]) {
+    for (const operation of ['floor', 'ceil']) {
+      assert.throws(
+        () => schedule[operation](Date.parse(instant)),
+        /install a new configuration generation/,
+        `${operation}: ${instant}`
+      );
+    }
+  }
+  assert.throws(() => schedule.boundary(116), /install a new configuration generation/);
+  for (const [instant, floor, ceil] of [
+    ['1969-12-31T04:59:59.999Z', -2, -1],
+    ['1969-12-31T05:00:00.000Z', -1, -1],
+    ['1970-01-01T05:00:00.000Z', 0, 0],
+    ['1971-02-05T04:59:59.999Z', 399, 400],
+    ['1971-02-05T05:00:00.000Z', 400, 400],
+    ['1971-02-05T05:00:00.001Z', 400, 401],
+    ['1970-10-26T05:00:00.000Z', 298, 298],
+  ]) {
+    assert.equal(schedule.floor(Date.parse(instant)), floor, instant);
+    assert.equal(schedule.ceil(Date.parse(instant)), ceil, instant);
+  }
+  const laterAnchor = retainedConfiguration(
+    { ...input, schedule: { ...input.schedule, anchor: '1971-01-01T05:00:00.000Z' } },
+    configuration.installedAt,
+    true
+  );
+  for (const operation of ['floor', 'ceil']) {
+    assert.throws(
+      () => reportingPeriodSchedule(laterAnchor)[operation](Date.parse('1970-04-27T04:30:00.000Z')),
+      /install a new configuration generation/
+    );
+    for (const sentinel of [-Infinity, Infinity, NaN]) assert.equal(schedule[operation](sentinel), sentinel);
+  }
+  assert.deepEqual(configuration, original);
+});
+
+test('calendar regression: public coverage rejects a legacy fall ceil with the wrong ordinal', () => {
+  const { input } = fixture({ zone: 'America/New_York', boundaries: ['1970-01-01T05:00:00.000Z'] });
+  const configuration = retainedConfiguration(input, input.schedule.anchor, true);
+  assert.throws(
+    () =>
+      evaluateReportingLedgerCoverageV1(
+        {
+          account_id: input.account.account_id,
+          view: 'periods',
+          period: { start: '1970-01-01T05:00:00.000Z', end: '1970-10-25T04:30:00.000Z' },
+        },
+        [configuration],
+        [],
+        '1970-10-26T05:00:00.000Z'
+      ),
+    /install a new configuration generation/
+  );
+});
+
+test('calendar regression: a withdrawn offering cannot bypass calendar planning validation', async t => {
+  const calendar = calendars[0];
+  t.mock.timers.enable({ apis: ['Date'], now: new Date(calendar.boundaries[0]) });
+  const f = fixture(calendar);
+  const installed = await f.producer.installConfiguration(f.input);
+  let writes = 0;
+  const put = f.store.putObligation.bind(f.store);
+  f.store.putObligation = async value => {
+    writes += 1;
+    return put(value);
+  };
+  const source = createInlineReportingSourceExecutor(() => {
+    throw new Error('unexpected source fetch');
+  }, f.sourceOffering);
+  const withdrawn = createReportingProducer({
+    store: f.store,
+    source,
+    offerings: [],
+    contact: { name: 'Calendar test', email: 'calendar@example.invalid' },
+  });
+  assert.deepEqual(
+    await withdrawn.installConfiguration(f.input),
+    installed,
+    'withdrawal does not invalidate immutable replay'
+  );
+  await assert.rejects(withdrawn.planObligations(calendar.boundaries[2]), /calendar.*source offering.*unavailable/i);
+  assert.equal(writes, 0);
+  assert.deepEqual(await f.store.listObligations(), []);
+  assert.deepEqual(f.sourceCalls, []);
+  const valid = await f.producer.planObligations(calendar.boundaries[2]);
+  assert.deepEqual(
+    valid.map(value => [value.period.start, value.period.end]),
+    [
+      ['2026-03-07T05:00:00.000Z', '2026-03-08T05:00:00.000Z'],
+      ['2026-03-08T05:00:00.000Z', '2026-03-09T04:00:00.000Z'],
+    ]
+  );
+  assert.equal(writes, 2);
+  assert.deepEqual(await f.producer.planObligations(calendar.boundaries[2]), []);
+  assert.equal(writes, 2);
+  assert.deepEqual(await f.store.listConfigurations(), [installed]);
+});
+
+test('calendar regression: intrinsic lossless periods are required even without a source offering', async () => {
+  const f = fixture({ zone: 'America/Santiago', boundaries: ['2026-09-01T04:00:00.000Z'] });
+  // A retained host-authored generation can outlive its offering and install
+  // horizon. The September 6 midnight gap starts at local 01:00, so the source
+  // date-only request cannot express this interval losslessly.
+  await f.store.putConfiguration(retainedConfiguration(f.input, '2026-09-06T04:00:00.000Z'));
+  let writes = 0;
+  let fetches = 0;
+  const put = f.store.putObligation.bind(f.store);
+  f.store.putObligation = async value => {
+    writes += 1;
+    return put(value);
+  };
+  const source = createInlineReportingSourceExecutor(() => {
+    fetches += 1;
+    throw new Error('unexpected source fetch');
+  }, f.sourceOffering);
+  const producer = createReportingProducer({
+    store: f.store,
+    source,
+    offerings: [],
+    contact: { name: 'Calendar test', email: 'calendar@example.invalid' },
+  });
+  await assert.rejects(
+    producer.planObligations('2026-09-07T03:00:00.000Z'),
+    /lossless source-local midnight boundaries/
+  );
+  assert.equal(writes, 0);
+  assert.equal(fetches, 0);
+  assert.deepEqual(await f.store.listObligations(), []);
+});
+
+test('calendar regression: numeric planning retains its behavior after offering withdrawal', async t => {
+  const f = fixture({ zone: 'UTC', boundaries: ['2026-03-07T00:00:00.000Z'] });
+  for (const key of ['periodDuration', 'alignment', 'periodTimezone', 'deliverySlaDuration'])
+    delete f.input.schedule[key];
+  t.mock.timers.enable({ apis: ['Date'], now: new Date(f.input.schedule.anchor) });
+  const installed = await f.producer.installConfiguration(f.input);
+  const source = createInlineReportingSourceExecutor(() => {
+    throw new Error('unexpected source fetch');
+  }, f.sourceOffering);
+  const producer = createReportingProducer({
+    store: f.store,
+    source,
+    offerings: [],
+    contact: { name: 'Calendar test', email: 'calendar@example.invalid' },
+  });
+  assert.deepEqual(await producer.installConfiguration(f.input), installed);
+  const planned = await producer.planObligations('2026-03-08T00:00:00.000Z');
+  assert.deepEqual(
+    planned.map(value => value.period),
+    [{ start: '2026-03-07T00:00:00.000Z', end: '2026-03-08T00:00:00.000Z', sourceTimezone: 'UTC' }]
+  );
+});

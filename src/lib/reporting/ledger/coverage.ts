@@ -120,6 +120,15 @@ export function evaluateReportingLedgerCoverageV1(
     const last = Math.min(ownershipLast, queryLast, closedLast);
     const ordinals = stored.get(configuration.configurationId) ?? new Set<number>();
     const matching = [...ordinals].filter(ordinal => ordinal >= first && ordinal <= last).sort((a, b) => a - b);
+    if (first <= last) {
+      schedule.period(first);
+      schedule.period(last);
+    }
+    // Counts alone cannot certify coverage over an unrepresentable civil
+    // interval, including a missing interior date between valid outer bounds.
+    // Validate every retained interval counted here, without walking absent
+    // history (which already makes the count incomplete).
+    for (const ordinal of matching) schedule.period(ordinal);
     if (matching.length !== Math.max(0, last - first + 1)) complete = false;
     const earliest = matching[0];
     if (earliest !== undefined) {

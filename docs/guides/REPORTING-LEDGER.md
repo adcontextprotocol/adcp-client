@@ -162,6 +162,19 @@ An elapsed `PT24H` source window cannot stand in for a calendar `P1D` window
 across DST. Other calendar durations, calendar SLAs and billing-cycle expansion
 remain seller responsibilities; this adds no Temporal dependency.
 
+Whole skipped civil dates, such as Apia's 2011-12-30, have no representable
+boundary. Requesting that ordinal refuses instead of aliasing the next date or
+renumbering later ordinals. Valid neighboring boundary lookups keep their
+identities. A floor lookup identifies a representable start; it does not certify
+the next endpoint. Ceil inside the preceding day refuses its missing endpoint,
+and every interval used for planning, coverage, status eligibility or deadline
+projection must have both representable boundaries and a positive, lossless
+source-local day. Ordinary midnight gap/fold point resolution is unchanged;
+the separate lossless-midnight source requirement still applies to periods.
+Calendar planning also requires the retained configuration's source offering
+to remain available. Withdrawing it preserves exact configuration replay but
+refuses new obligation creation until source feasibility can be checked.
+
 Existing numeric schedules, immutable generation replays, and identities for
 unchanged boundaries are preserved. A new generation that needs variable
 boundaries has a distinct semantic fingerprint using the existing opaque
@@ -169,7 +182,10 @@ fingerprint field. The SDK refuses to reinterpret an old fixed-period
 generation whose optional labels would now imply different civil boundaries;
 install an explicit new configuration version before the boundaries diverge.
 The same guard applies if a later timezone database changes a previously fixed
-grid. Authored obligations are never rewritten to migrate a schedule.
+grid. Every finite legacy floor/ceil lookup, including instants before
+installation or the anchor, must retain its numeric ordinal and enclosing
+period boundaries or require a new generation. Authored obligations are never
+rewritten to migrate a schedule.
 
 At period end, the obligation freezes the constituent denominator and coverage.
 A zero-row source object commits like any other revision. Absence remains an

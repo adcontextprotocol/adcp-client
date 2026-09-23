@@ -438,9 +438,9 @@ function planObligation(
   offering: ReportingSourceOfferingV1 | undefined
 ): ReportingLedgerObligationV1 {
   const schedule = reportingPeriodSchedule(configuration);
-  const start = schedule.boundary(periodOrdinal);
-  const end = schedule.boundary(periodOrdinal + 1);
-  if (isReportingCalendarDay(configuration.schedule, configuration.sourceTimezone) && offering) {
+  const { start, end } = schedule.period(periodOrdinal);
+  if (isReportingCalendarDay(configuration.schedule, configuration.sourceTimezone)) {
+    if (!offering) throw new TypeError('Reporting calendar configuration source offering is unavailable');
     assertReportingCalendarDayPeriod(configuration.schedule, configuration.sourceTimezone, offering, start, end);
   }
   // `reporting-schedule.json` defines expected_at uniformly as period.end +

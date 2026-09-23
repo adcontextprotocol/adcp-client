@@ -482,9 +482,10 @@ function isExactPeriod(
   if (isReportingCalendarDay(configuration.schedule, configuration.sourceTimezone)) {
     const schedule = reportingPeriodSchedule(configuration);
     const selected = schedule.floor(Date.parse(period.start));
+    const resolved = schedule.period(selected);
     if (
-      compareReportingInstants(period.start, new Date(schedule.boundary(selected)).toISOString()) !== 0 ||
-      compareReportingInstants(period.end, new Date(schedule.boundary(selected + 1)).toISOString()) !== 0
+      compareReportingInstants(period.start, new Date(resolved.start).toISOString()) !== 0 ||
+      compareReportingInstants(period.end, new Date(resolved.end).toISOString()) !== 0
     )
       return false;
     ordinal = BigInt(selected);

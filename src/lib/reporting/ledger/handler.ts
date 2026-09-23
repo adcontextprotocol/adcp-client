@@ -1115,7 +1115,9 @@ function nextActivePeriodStart(
   const schedule = reportingPeriodSchedule(configuration);
   const ordinal = Math.max(0, schedule.ceil(installed), schedule.floor(asOf) + 1);
   const start = schedule.boundary(ordinal);
-  return start < ownershipEnd ? [new Date(start).toISOString()] : [];
+  if (start >= ownershipEnd) return [];
+  schedule.period(ordinal);
+  return [new Date(start).toISOString()];
 }
 
 function nextObligationDue(
@@ -1149,7 +1151,7 @@ function nextObligationDue(
   if (first > last) return [];
   const periodStartAt = schedule.boundary(first);
   if (periodStartAt >= ownershipEnd) return [];
-  return [new Date(schedule.boundary(first + 1) + expectedOffset).toISOString()];
+  return [new Date(schedule.period(first).end + expectedOffset).toISOString()];
 }
 
 function reportingLedgerConfigurationOwnershipEnd(
