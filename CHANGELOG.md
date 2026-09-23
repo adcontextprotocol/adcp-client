@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.1.1
+
+### Patch Changes
+
+- 18bbe95: Canonicalize agent URL identity fields before storyboard runner comparisons so schema-conformant URL forms grade equivalently without changing resource URL assertions.
+
 ## 13.1.0
 
 ### Minor Changes
