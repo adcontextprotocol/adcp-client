@@ -92,7 +92,9 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // runtime/declaration module set (+4 files); byte and schema budgets stay fixed.
 // AdCP 3.2.0-rc.6 replaces the rc.4 schema/compliance bundle and adds eleven
 // publishable schema, storyboard, and packaged-skill artifacts in aggregate.
-const MAX_PACKED_FILE_COUNT = 6_135 + 34 + 4 + 10 + 4 + 4 + 4 + 9 + 16 + 4 + 1 + 5 + 8 + 4 + 4 + 11;
+// Calendar-day source boundaries add the internal reporting/ledger/schedule module:
+// schedule.js, schedule.mjs, schedule.d.ts, and schedule.d.mts (+4 files).
+const MAX_PACKED_FILE_COUNT = 6_135 + 34 + 4 + 10 + 4 + 4 + 4 + 9 + 16 + 4 + 1 + 5 + 8 + 4 + 4 + 11 + 4;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
