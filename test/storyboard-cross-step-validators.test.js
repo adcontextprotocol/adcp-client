@@ -377,6 +377,17 @@ describe('field_equals_context', () => {
     );
     assert.strictEqual(result.passed, true);
   });
+
+  it('canonicalizes agent_url values from context', () => {
+    const [result] = runValidations(
+      [{ check: 'field_equals_context', path: 'agent_url', context_key: 'agent_url', description: 'agent matches' }],
+      makeCtx({
+        data: { agent_url: 'https://formats.example/' },
+        storyboardContext: { agent_url: 'https://formats.example' },
+      })
+    );
+    assert.strictEqual(result.passed, true, result.error);
+  });
 });
 
 // ──────────────────────────────────────────────────────────────
@@ -397,6 +408,24 @@ describe('field_in_context_array', () => {
       makeCtx({ data: { billing: 'operator' }, storyboardContext: { supported_billing: ['operator', 'agent'] } })
     );
     assert.strictEqual(result.passed, true);
+  });
+
+  it('canonicalizes agent_url membership', () => {
+    const [result] = runValidations(
+      [
+        {
+          check: 'field_in_context_array',
+          path: 'agent_url',
+          context_key: 'agent_urls',
+          description: 'agent is in captured roster',
+        },
+      ],
+      makeCtx({
+        data: { agent_url: 'https://formats.example/' },
+        storyboardContext: { agent_urls: ['https://formats.example'] },
+      })
+    );
+    assert.strictEqual(result.passed, true, result.error);
   });
 
   it('fails when the response field is outside the captured array', () => {

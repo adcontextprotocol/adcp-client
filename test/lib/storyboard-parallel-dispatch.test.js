@@ -75,6 +75,21 @@ describe('cross_response_field_equal', () => {
     assert.strictEqual(r.actual, 'mb_1');
   });
 
+  it('canonicalizes agent_url identity values across dispatches', () => {
+    const crossResponses = {
+      dispatches: [{ correlation_id: 'a' }, { correlation_id: 'b' }],
+      resolved: [
+        { success: true, data: { agent_url: 'https://seller.example' } },
+        { success: true, data: { agent_url: 'HTTPS://SELLER.EXAMPLE:443/' } },
+      ],
+    };
+    const [r] = runValidations(
+      [{ check: 'cross_response_field_equal', path: 'agent_url', description: 'same seller identity' }],
+      { ...baseCtx, crossResponses }
+    );
+    assert.strictEqual(r.passed, true, r.error);
+  });
+
   it('fails when resolved dispatches disagree', () => {
     const crossResponses = {
       dispatches: [
@@ -135,6 +150,52 @@ describe('cross_response_count_distinct', () => {
     const [r] = runValidations([check([1])], { ...baseCtx, crossResponses });
     assert.strictEqual(r.passed, true);
     assert.strictEqual(r.actual, 1);
+  });
+
+  it('counts canonical agent_url identity values as one distinct value', () => {
+    const crossResponses = {
+      dispatches: [{ correlation_id: 'a' }, { correlation_id: 'b' }],
+      resolved: [
+        { success: true, data: { seller_agent_url: 'https://seller.example' } },
+        { success: true, data: { seller_agent_url: 'HTTPS://SELLER.EXAMPLE:443/' } },
+      ],
+    };
+    const [r] = runValidations(
+      [
+        {
+          check: 'cross_response_count_distinct',
+          path: 'seller_agent_url',
+          allowed_values: [1],
+          description: 'one canonical seller identity',
+        },
+      ],
+      { ...baseCtx, crossResponses }
+    );
+    assert.strictEqual(r.passed, true, r.error);
+    assert.strictEqual(r.actual, 1);
+  });
+
+  it('fails closed on malformed agent_url identity values', () => {
+    const crossResponses = {
+      dispatches: [{ correlation_id: 'a' }, { correlation_id: 'b' }],
+      resolved: [
+        { success: true, data: { agent_url: 'not-a-url' } },
+        { success: true, data: { agent_url: 'not-a-url' } },
+      ],
+    };
+    const [r] = runValidations(
+      [
+        {
+          check: 'cross_response_count_distinct',
+          path: 'agent_url',
+          allowed_values: [1],
+          description: 'one canonical agent identity',
+        },
+      ],
+      { ...baseCtx, crossResponses }
+    );
+    assert.strictEqual(r.passed, false);
+    assert.match(String(r.expected), /valid URI/);
   });
 
   it('fails when two resources were created (race not resolved)', () => {
