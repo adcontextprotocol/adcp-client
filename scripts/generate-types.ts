@@ -3512,6 +3512,8 @@ const JSTS_UNDER_RESOLUTION_ALIASES: Array<{ numbered: string; base: string }> =
   { numbered: 'TargetingOverlaySupport1', base: 'TargetingOverlaySupport' },
   { numbered: 'DeliveryForecast2', base: 'DeliveryForecast' },
   { numbered: 'ExistingBinding1', base: 'ExistingBinding' },
+  { numbered: 'SignalTargeting1', base: 'SignalTargeting' },
+  { numbered: 'FileTransfer1', base: 'ReportingFileTransfer' },
   // tasks-list-request.json in rc.6 carries a lagging inline copy of the
   // canonical task-type enum that omits get_creative_features. Keep the
   // public filter type aligned with the authoritative enum document.
@@ -3652,7 +3654,9 @@ export function renameKnownNumberedSemanticTypes(typeDefinitions: string): strin
 
 function buildKnownJstsAliases(typeDefinitions: string): Array<{ numbered: string; base: string }> {
   const exportedTypes = collectExportedTypeNames(typeDefinitions);
-  const aliases = new Map(JSTS_UNDER_RESOLUTION_ALIASES.map(alias => [alias.numbered, alias]));
+  const aliases = new Map(
+    JSTS_UNDER_RESOLUTION_ALIASES.filter(alias => exportedTypes.has(alias.base)).map(alias => [alias.numbered, alias])
+  );
 
   for (const base of JSTS_REPEATED_UNDER_RESOLUTION_BASES) {
     if (!exportedTypes.has(base)) continue;
@@ -4664,8 +4668,8 @@ async function generateTypes() {
   // residual jsts under-resolution artifacts (*Asset1, AssetVariant1, CreativeAsset1) —
   // see applyKnownJstsAliases for the rationale. Finally, restore the asset_type
   // discriminator on Individual*Asset slot aliases that jsts collapses (#1498).
-  const processedCoreTypes = alignCommittedMediaBuyName(
-    alignTargetingInputArrayCardinality(
+  const processedCoreTypes = alignTargetingInputArrayCardinality(
+    alignCommittedMediaBuyName(
       relaxArrayCardinalityTypes(
         normalizeTransformerParamJsonValueTypes(
           relaxZodCompatibilityArrayTypes(

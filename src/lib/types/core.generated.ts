@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.2.0-rc.6
-// Generated at: 2026-09-24T08:38:08.458Z
+// Generated at: 2026-09-24T09:26:54.133Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -21886,10 +21886,17 @@ export type PreviewRender =
       renderer?: PreviewRendererMetadata;
     };
 /**
- * Targeting constraint for a specific signal. Uses value_type as discriminator to determine the targeting expression format.
+ * Re-export of `SignalTargeting` under the legacy codegen artifact name.
+ *
+ * `SignalTargeting1` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `SignalTargeting` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `SignalTargeting`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `SignalTargeting` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type SignalTargeting1 = {
-};
+export type SignalTargeting1 = SignalTargeting;
 /**
  * Terminal response for completed preview_creative
  */
@@ -23727,22 +23734,18 @@ export interface CreateMediaBuySuccess {
  * @deprecated Use `BrandReference` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
 export type BrandReference12 = BrandReference;
-export interface FileTransfer1 {
-  /**
-   * Immutable file/object publication with a manifest-last commit boundary.
-   */
-  pattern: 'file_transfer';
-  /**
-   * Storage transport such as s3, gcs, azure_blob, or sftp.
-   */
-  transport: string;
-  orchestration: ReportingOrchestration;
-  destination: ReportingWriteDestination;
-  /**
-   * Physical file format.
-   */
-  format: 'jsonl' | 'csv' | 'parquet' | 'avro' | 'orc';
-}
+/**
+ * Re-export of `ReportingFileTransfer` under the legacy codegen artifact name.
+ *
+ * `FileTransfer1` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `ReportingFileTransfer` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `ReportingFileTransfer`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `ReportingFileTransfer` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type FileTransfer1 = ReportingFileTransfer;
 /**
  * Re-export of `BusinessEntity` under the legacy codegen artifact name.
  *

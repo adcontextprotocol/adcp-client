@@ -23,7 +23,7 @@
     },
     "consumer-status.json": {
       "size_bytes": 59976,
-      "sha256": "af2f4a2cae4c368bc8f8f5bb64a937efb1736721613fcffd2727120295ba1793"
+      "sha256": "43e3c0fa7b763f77b48f1832bd286904bdaf3feee14e0dc6bdbc947e6341605b"
     }
   },
   "expected": {

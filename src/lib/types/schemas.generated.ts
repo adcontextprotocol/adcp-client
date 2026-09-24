@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-24T08:42:39.918Z
+// Generated at: 2026-09-24T09:31:34.255Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -4726,7 +4726,7 @@ export const PreviewRendererMetadataSchema = z.object({
     tracking_suppressed: z.boolean()
 }).passthrough();
 
-export const SignalTargeting1Schema = z.object({}).passthrough();
+export const SignalTargeting1Schema = SignalTargetingSchema;
 
 export const AdCPVersionEnvelopeSchema = z.object({
     adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
@@ -4959,6 +4959,14 @@ export const BrandReference12Schema = BrandReferenceSchema;
 export const FileTransfer1Schema = z.object({
     pattern: z.literal("file_transfer"),
     transport: z.string(),
+    orchestration: ReportingOrchestrationSchema,
+    destination: ReportingWriteDestinationSchema,
+    format: z.union([z.literal("jsonl"), z.literal("csv"), z.literal("parquet"), z.literal("avro"), z.literal("orc")])
+}).passthrough();
+
+export const ReportingFileTransferSchema = z.object({
+    pattern: z.literal("file_transfer"),
+    transport: z.string().min(1).max(64).regex(/^[a-z][a-z0-9_.-]*$/),
     orchestration: ReportingOrchestrationSchema,
     destination: ReportingWriteDestinationSchema,
     format: z.union([z.literal("jsonl"), z.literal("csv"), z.literal("parquet"), z.literal("avro"), z.literal("orc")])
@@ -13236,13 +13244,7 @@ export const ProductAllowedActionSchema = z.object({
     terms_ref: z.string().optional()
 }).passthrough();
 
-export const ReportingFileTransferSchema = z.object({
-    pattern: z.literal("file_transfer"),
-    transport: z.string().min(1).max(64).regex(/^[a-z][a-z0-9_.-]*$/),
-    orchestration: ReportingOrchestrationSchema,
-    destination: ReportingWriteDestinationSchema,
-    format: z.union([z.literal("jsonl"), z.literal("csv"), z.literal("parquet"), z.literal("avro"), z.literal("orc")])
-}).passthrough();
+export const ReportingDeliveryMethodSchema = z.union([ReportingFileTransferSchema, DatasetShareSchema, WarehouseMaterializationSchema]);
 
 export const SelectedPlacementsSchema = z.object({
     mode: z.literal("selected"),
@@ -13281,7 +13283,26 @@ export const ValidationResultSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const ReportingDeliveryMethodSchema = z.union([ReportingFileTransferSchema, DatasetShareSchema, WarehouseMaterializationSchema]);
+export const ReportingDeliveryConfigurationSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
+    delivery_config_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
+    delivery_config_version: z.number().int().gte(1),
+    offering_id: z.string().min(1).max(128).regex(new RegExp("^[A-Za-z0-9_.:-]{1,128}$")),
+    active: z.boolean(),
+    feed_purpose: ReportingFeedPurposeSchema,
+    report_definition_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    reporting_profile: z.string().min(1).max(128).regex(new RegExp("^[A-Za-z0-9_.:-]{1,128}$")),
+    scope: z.object({
+        all_media_buys: z.literal(true).optional(),
+        media_buy_ids: z.array(ReportingMediaBuyIDSchema).optional()
+    }).passthrough(),
+    coverage_requirement: z.union([z.literal("full"), z.literal("allow_partial")]),
+    required_finality: ReportingFinalitySchema,
+    reconciliation_mode: ReportingReconciliationModeSchema,
+    authoritative_party: z.union([z.literal("seller"), z.literal("consumer")]).optional(),
+    schedule: ReportingScheduleSchema,
+    method: ReportingDeliveryMethodSchema.optional(),
+    revocation_effective_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+}).passthrough());
 
 export const AttestationReferenceSchema = z.object({
     issuer: AttestationIssuerSchema,
@@ -13345,6 +13366,280 @@ export const ProductFormatDeclarationSchema: z.ZodObject<{ [K in keyof ProductFo
     v1_format_ref: z.array(FormatReferenceStructuredObjectSchema).optional(),
     format_schema: PlatformExtensionReferenceSchema.optional()
 }).passthrough()).and(z.union([ImageFormatDeclarationSchema, HTML5FormatDeclarationSchema, DisplayTagFormatDeclarationSchema, ImageCarouselFormatDeclarationSchema, HostedVideoFormatDeclarationSchema, VASTVideoFormatDeclarationSchema, HostedAudioFormatDeclarationSchema, VASTAudioFormatDeclarationSchema, DAASTAudioFormatDeclarationSchema, SponsoredPlacementFormatDeclarationSchema, NativeInFeedFormatDeclarationSchema, ResponsiveCreativeFormatDeclarationSchema, AgentPlacementFormatDeclarationSchema, SellerRenderedStatefulDisplayFormatDeclarationSchema, CoordinatedPlacementsFormatDeclarationSchema, CustomFormatDeclarationSchema]));
+
+export const ReportingDeliveryConfigurationStateSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough());
 
 export const AudienceEvidenceSchema: z.ZodType = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
     evidence_id: z.string().min(1),
@@ -14535,6 +14830,54 @@ export const CanonicalForecastPointSchema = z.object({
     vendor_metric_values: z.array(CanonicalForecastVendorMetricValueSchema).optional()
 }).passthrough();
 
+export const AccountSchema = z.object({
+    account_id: z.string(),
+    name: z.string(),
+    advertiser: z.string().optional(),
+    billing_proxy: z.string().optional(),
+    status: AccountStatusSchema,
+    brand: BrandReferenceSchema.optional(),
+    operator: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).optional(),
+    operator_unit: OperatorUnitSchema.optional(),
+    revision: z.number().int().gte(1).optional(),
+    identity_change: AccountIdentityChangeSchema.optional(),
+    currency: z.string().regex(new RegExp("^[A-Z]{3}$")).optional(),
+    timezone: z.string().min(1).optional(),
+    billing: BillingPartySchema.optional(),
+    billing_entity: BusinessEntitySchema.optional(),
+    destination_billing_entity: z.object({}).passthrough().optional(),
+    rate_card: z.string().optional(),
+    payment_terms: PaymentTermsSchema.optional(),
+    credit_limit: z.object({
+        amount: z.number().gte(0),
+        currency: z.string().regex(new RegExp("^[A-Z]{3}$"))
+    }).passthrough().optional(),
+    setup: z.object({
+        url: z.string().optional(),
+        message: z.string(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    account_scope: AccountScopeSchema.optional(),
+    governance_agents: z.tuple([z.object({
+            url: z.string()
+        }).passthrough()]).optional(),
+    reporting_bucket: z.object({
+        protocol: CloudStorageProtocolSchema,
+        bucket: z.string().min(3).max(63).regex(new RegExp("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")),
+        prefix: z.string().max(512).regex(new RegExp("^[a-zA-Z0-9/_.-]+$")).optional(),
+        region: z.string().max(64).regex(new RegExp("^[a-z0-9-]+$")).optional(),
+        format: z.union([z.literal("jsonl"), z.literal("csv"), z.literal("parquet"), z.literal("avro"), z.literal("orc")]).optional(),
+        compression: z.union([z.literal("gzip"), z.literal("none")]).optional(),
+        file_retention_days: z.number().int().gte(1),
+        setup_instructions: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional()
+    }).passthrough().optional(),
+    sandbox: z.boolean().optional(),
+    notification_configs: z.array(NotificationConfigSchema).max(16).optional(),
+    reporting_delivery_configs: z.array(ReportingDeliveryConfigurationStateSchema).max(16).optional(),
+    webhook_activity: z.array(WebhookActivityRecordSchema).max(200).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
 const CreativeAssetValueSchema: z.ZodType = z.unknown().superRefine((value, ctx) => {
     const variants = Array.isArray(value) ? value : [value];
     if (variants.length === 0 || variants.some(variant => !AssetVariantSchema.safeParse(variant).success)) {
@@ -14851,6 +15194,10 @@ export const ContentStandardsSchema = z.object({
     pricing_options: z.array(VendorPricingOptionSchema).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
+
+export const AccountWithAuthorizationSchema = AccountSchema.merge(z.object({
+    authorization: AccountAuthorizationSchema.optional()
+}).passthrough());
 
 export const AppItemSchema = z.object({
     app_id: z.string(),
@@ -17568,27 +17915,6 @@ export const CreativeAssetSchema = z.object({}).passthrough().merge(z.object({
     }
 });
 
-export const ReportingDeliveryConfigurationSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
-    delivery_config_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
-    delivery_config_version: z.number().int().gte(1),
-    offering_id: z.string().min(1).max(128).regex(new RegExp("^[A-Za-z0-9_.:-]{1,128}$")),
-    active: z.boolean(),
-    feed_purpose: ReportingFeedPurposeSchema,
-    report_definition_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
-    reporting_profile: z.string().min(1).max(128).regex(new RegExp("^[A-Za-z0-9_.:-]{1,128}$")),
-    scope: z.object({
-        all_media_buys: z.literal(true).optional(),
-        media_buy_ids: z.array(ReportingMediaBuyIDSchema).optional()
-    }).passthrough(),
-    coverage_requirement: z.union([z.literal("full"), z.literal("allow_partial")]),
-    required_finality: ReportingFinalitySchema,
-    reconciliation_mode: ReportingReconciliationModeSchema,
-    authoritative_party: z.union([z.literal("seller"), z.literal("consumer")]).optional(),
-    schedule: ReportingScheduleSchema,
-    method: ReportingDeliveryMethodSchema.optional(),
-    revocation_effective_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-}).passthrough());
-
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
 export const PackageSchema: z.ZodObject<{ [K in keyof Package]-?: undefined extends Package[K] ? z.ZodOptional<z.ZodType<Exclude<Package[K], undefined>, Exclude<Package[K], undefined>>> : z.ZodType<Package[K], Package[K]> }, z.core.$loose> & z.ZodType<Package & Record<string, unknown>, Package & Record<string, unknown>> = z.object({}).passthrough().merge(z.object({
     package_id: z.string(),
@@ -17635,279 +17961,33 @@ export const PackageSchema: z.ZodObject<{ [K in keyof Package]-?: undefined exte
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
 
-export const ReportingDeliveryConfigurationStateSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
-    configuration: ReportingDeliveryConfigurationSchema,
-    state: ReportingDeliveryConfigurationLifecycleStateSchema,
-    destination_ref: z.string().min(1).max(255).optional(),
-    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    current_coverage: ReportingCoverageSchema.optional(),
-    setup: z.object({
-        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
-        message: z.string().min(1).max(2000),
-        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    issues: z.array(ReportingStatusIssueSchema).optional()
-}).passthrough()).merge(z.object({
-    configuration: ReportingDeliveryConfigurationSchema,
-    state: ReportingDeliveryConfigurationLifecycleStateSchema,
-    destination_ref: z.string().min(1).max(255).optional(),
-    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    current_coverage: ReportingCoverageSchema.optional(),
-    setup: z.object({
-        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
-        message: z.string().min(1).max(2000),
-        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    issues: z.array(ReportingStatusIssueSchema).optional()
-}).passthrough()).merge(z.object({
-    configuration: ReportingDeliveryConfigurationSchema,
-    state: ReportingDeliveryConfigurationLifecycleStateSchema,
-    destination_ref: z.string().min(1).max(255).optional(),
-    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    current_coverage: ReportingCoverageSchema.optional(),
-    setup: z.object({
-        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
-        message: z.string().min(1).max(2000),
-        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    issues: z.array(ReportingStatusIssueSchema).optional()
-}).passthrough()).merge(z.object({
-    configuration: ReportingDeliveryConfigurationSchema,
-    state: ReportingDeliveryConfigurationLifecycleStateSchema,
-    destination_ref: z.string().min(1).max(255).optional(),
-    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    current_coverage: ReportingCoverageSchema.optional(),
-    setup: z.object({
-        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
-        message: z.string().min(1).max(2000),
-        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    issues: z.array(ReportingStatusIssueSchema).optional()
-}).passthrough()).merge(z.object({
-    configuration: ReportingDeliveryConfigurationSchema,
-    state: ReportingDeliveryConfigurationLifecycleStateSchema,
-    destination_ref: z.string().min(1).max(255).optional(),
-    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    current_coverage: ReportingCoverageSchema.optional(),
-    setup: z.object({
-        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
-        message: z.string().min(1).max(2000),
-        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    issues: z.array(ReportingStatusIssueSchema).optional()
-}).passthrough()).merge(z.object({
-    configuration: ReportingDeliveryConfigurationSchema,
-    state: ReportingDeliveryConfigurationLifecycleStateSchema,
-    destination_ref: z.string().min(1).max(255).optional(),
-    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    current_coverage: ReportingCoverageSchema.optional(),
-    setup: z.object({
-        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
-        message: z.string().min(1).max(2000),
-        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    issues: z.array(ReportingStatusIssueSchema).optional()
-}).passthrough()).merge(z.object({
-    configuration: ReportingDeliveryConfigurationSchema,
-    state: ReportingDeliveryConfigurationLifecycleStateSchema,
-    destination_ref: z.string().min(1).max(255).optional(),
-    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    current_coverage: ReportingCoverageSchema.optional(),
-    setup: z.object({
-        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
-        message: z.string().min(1).max(2000),
-        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    issues: z.array(ReportingStatusIssueSchema).optional()
-}).passthrough()).merge(z.object({
-    configuration: ReportingDeliveryConfigurationSchema,
-    state: ReportingDeliveryConfigurationLifecycleStateSchema,
-    destination_ref: z.string().min(1).max(255).optional(),
-    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    current_coverage: ReportingCoverageSchema.optional(),
-    setup: z.object({
-        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
-        message: z.string().min(1).max(2000),
-        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    issues: z.array(ReportingStatusIssueSchema).optional()
-}).passthrough()).merge(z.object({
-    configuration: ReportingDeliveryConfigurationSchema,
-    state: ReportingDeliveryConfigurationLifecycleStateSchema,
-    destination_ref: z.string().min(1).max(255).optional(),
-    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    current_coverage: ReportingCoverageSchema.optional(),
-    setup: z.object({
-        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
-        message: z.string().min(1).max(2000),
-        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    issues: z.array(ReportingStatusIssueSchema).optional()
-}).passthrough()).merge(z.object({
-    configuration: ReportingDeliveryConfigurationSchema,
-    state: ReportingDeliveryConfigurationLifecycleStateSchema,
-    destination_ref: z.string().min(1).max(255).optional(),
-    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    current_coverage: ReportingCoverageSchema.optional(),
-    setup: z.object({
-        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
-        message: z.string().min(1).max(2000),
-        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    issues: z.array(ReportingStatusIssueSchema).optional()
-}).passthrough()).merge(z.object({
-    configuration: ReportingDeliveryConfigurationSchema,
-    state: ReportingDeliveryConfigurationLifecycleStateSchema,
-    destination_ref: z.string().min(1).max(255).optional(),
-    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    current_coverage: ReportingCoverageSchema.optional(),
-    setup: z.object({
-        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
-        message: z.string().min(1).max(2000),
-        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    issues: z.array(ReportingStatusIssueSchema).optional()
-}).passthrough()).merge(z.object({
-    configuration: ReportingDeliveryConfigurationSchema,
-    state: ReportingDeliveryConfigurationLifecycleStateSchema,
-    destination_ref: z.string().min(1).max(255).optional(),
-    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    current_coverage: ReportingCoverageSchema.optional(),
-    setup: z.object({
-        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
-        message: z.string().min(1).max(2000),
-        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    issues: z.array(ReportingStatusIssueSchema).optional()
-}).passthrough()).merge(z.object({
-    configuration: ReportingDeliveryConfigurationSchema,
-    state: ReportingDeliveryConfigurationLifecycleStateSchema,
-    destination_ref: z.string().min(1).max(255).optional(),
-    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    current_coverage: ReportingCoverageSchema.optional(),
-    setup: z.object({
-        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
-        message: z.string().min(1).max(2000),
-        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    issues: z.array(ReportingStatusIssueSchema).optional()
-}).passthrough()).merge(z.object({
-    configuration: ReportingDeliveryConfigurationSchema,
-    state: ReportingDeliveryConfigurationLifecycleStateSchema,
-    destination_ref: z.string().min(1).max(255).optional(),
-    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    current_coverage: ReportingCoverageSchema.optional(),
-    setup: z.object({
-        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
-        message: z.string().min(1).max(2000),
-        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    issues: z.array(ReportingStatusIssueSchema).optional()
-}).passthrough()).merge(z.object({
-    configuration: ReportingDeliveryConfigurationSchema,
-    state: ReportingDeliveryConfigurationLifecycleStateSchema,
-    destination_ref: z.string().min(1).max(255).optional(),
-    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    current_coverage: ReportingCoverageSchema.optional(),
-    setup: z.object({
-        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
-        message: z.string().min(1).max(2000),
-        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    issues: z.array(ReportingStatusIssueSchema).optional()
-}).passthrough()).merge(z.object({
-    configuration: ReportingDeliveryConfigurationSchema,
-    state: ReportingDeliveryConfigurationLifecycleStateSchema,
-    destination_ref: z.string().min(1).max(255).optional(),
-    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    current_coverage: ReportingCoverageSchema.optional(),
-    setup: z.object({
-        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
-        message: z.string().min(1).max(2000),
-        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    issues: z.array(ReportingStatusIssueSchema).optional()
-}).passthrough());
+export const CreateMediaBuySuccessSchema: z.ZodType = z.object({
+    proposal_id: z.string().min(1).optional(),
+    media_buy_id: z.string(),
+    name: z.string().min(1).max(255).regex(/\S/).optional(),
+    account: AccountSchema.optional(),
+    invoice_recipient: BusinessEntitySchema.optional(),
+    media_buy_status: MediaBuyStatusSchema.optional(),
+    confirmed_at: z.iso.datetime().optional().nullable(),
+    creative_deadline: z.iso.datetime().optional(),
+    revision: z.int().min(1).optional(),
+    currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+    total_budget: z.number().min(0).optional(),
+    daily_budget_cap: z.number().min(0).optional(),
+    frequency_cap: MediaBuyFrequencyCapSchema.optional(),
+    budget_cap_timezone: z.string().optional(),
+    budget_allocation: BudgetAllocationSchema.optional(),
+    pacing: PacingSchema.optional(),
+    bidding: BiddingPolicySchema.optional(),
+    valid_actions: z.array(MediaBuyValidActionSchema).optional(),
+    available_actions: z.array(MediaBuyAvailableActionSchema).optional(),
+    packages: z.array(PackageSchema),
+    planned_delivery: PlannedDeliverySchema.optional(),
+    warnings: z.array(WarningSchema).optional(),
+    sandbox: z.boolean().optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
 export const PackageUpdateSchema: z.ZodObject<{ [K in keyof PackageUpdate]-?: undefined extends PackageUpdate[K] ? z.ZodOptional<z.ZodType<Exclude<PackageUpdate[K], undefined>, Exclude<PackageUpdate[K], undefined>>> : z.ZodType<PackageUpdate[K], PackageUpdate[K]> }, z.core.$loose> & z.ZodType<PackageUpdate & Record<string, unknown>, PackageUpdate & Record<string, unknown>> = z.object({
@@ -18028,54 +18108,6 @@ export const UpdateMediaBuySuccessSchema: z.ZodType = z.object({
     warnings: z.array(WarningSchema).optional(),
     sandbox: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
-export const AccountSchema = z.object({
-    account_id: z.string(),
-    name: z.string(),
-    advertiser: z.string().optional(),
-    billing_proxy: z.string().optional(),
-    status: AccountStatusSchema,
-    brand: BrandReferenceSchema.optional(),
-    operator: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).optional(),
-    operator_unit: OperatorUnitSchema.optional(),
-    revision: z.number().int().gte(1).optional(),
-    identity_change: AccountIdentityChangeSchema.optional(),
-    currency: z.string().regex(new RegExp("^[A-Z]{3}$")).optional(),
-    timezone: z.string().min(1).optional(),
-    billing: BillingPartySchema.optional(),
-    billing_entity: BusinessEntitySchema.optional(),
-    destination_billing_entity: z.object({}).passthrough().optional(),
-    rate_card: z.string().optional(),
-    payment_terms: PaymentTermsSchema.optional(),
-    credit_limit: z.object({
-        amount: z.number().gte(0),
-        currency: z.string().regex(new RegExp("^[A-Z]{3}$"))
-    }).passthrough().optional(),
-    setup: z.object({
-        url: z.string().optional(),
-        message: z.string(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    account_scope: AccountScopeSchema.optional(),
-    governance_agents: z.tuple([z.object({
-            url: z.string()
-        }).passthrough()]).optional(),
-    reporting_bucket: z.object({
-        protocol: CloudStorageProtocolSchema,
-        bucket: z.string().min(3).max(63).regex(new RegExp("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")),
-        prefix: z.string().max(512).regex(new RegExp("^[a-zA-Z0-9/_.-]+$")).optional(),
-        region: z.string().max(64).regex(new RegExp("^[a-z0-9-]+$")).optional(),
-        format: z.union([z.literal("jsonl"), z.literal("csv"), z.literal("parquet"), z.literal("avro"), z.literal("orc")]).optional(),
-        compression: z.union([z.literal("gzip"), z.literal("none")]).optional(),
-        file_retention_days: z.number().int().gte(1),
-        setup_instructions: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional()
-    }).passthrough().optional(),
-    sandbox: z.boolean().optional(),
-    notification_configs: z.array(NotificationConfigSchema).max(16).optional(),
-    reporting_delivery_configs: z.array(ReportingDeliveryConfigurationStateSchema).max(16).optional(),
-    webhook_activity: z.array(WebhookActivityRecordSchema).max(200).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
@@ -19833,10 +19865,6 @@ export const GetPrincipalResponseSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const AccountWithAuthorizationSchema = AccountSchema.merge(z.object({
-    authorization: AccountAuthorizationSchema.optional()
-}).passthrough());
-
 export const ListAccountsResponseSchema = z.object({
     context_id: z.string().optional(),
     context: ContextObjectSchema.optional(),
@@ -20579,6 +20607,22 @@ export const RefineProposalsResponseSchema = z.union([z.object({
     });
 });
 
+export const CreateMediaBuyResponseSchema: z.ZodType = z.object({
+    context_id: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    task_id: z.string().optional(),
+    status: TaskStatusSchema,
+    message: z.string().optional(),
+    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    replayed: z.boolean().optional(),
+    adcp_error: ErrorSchema.optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
+    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    payload: z.object({}).passthrough().optional(),
+    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
+    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+}).passthrough().and(z.union([CreateMediaBuySuccessSchema, CreateMediaBuyErrorSchema, CreateMediaBuySubmittedSchema]));
+
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
 export const UpdateMediaBuyResponseSchema: z.ZodType<UpdateMediaBuyResponse & Record<string, unknown>, UpdateMediaBuyResponse & Record<string, unknown>> = z.object({
     context_id: z.string().optional(),
@@ -20629,33 +20673,7 @@ export const SyncCreativesResponseSchema: z.ZodType = z.object({
     adcp_major_version: z.number().int().gte(1).lte(99).optional()
 }).passthrough().and(z.union([SyncCreativesSuccessSchema, SyncCreativesErrorSchema, SyncCreativesSubmittedSchema]));
 
-export const CreateMediaBuySuccessSchema: z.ZodType = z.object({
-    proposal_id: z.string().min(1).optional(),
-    media_buy_id: z.string(),
-    name: z.string().min(1).max(255).regex(/\S/).optional(),
-    account: AccountSchema.optional(),
-    invoice_recipient: BusinessEntitySchema.optional(),
-    media_buy_status: MediaBuyStatusSchema.optional(),
-    confirmed_at: z.iso.datetime().optional().nullable(),
-    creative_deadline: z.iso.datetime().optional(),
-    revision: z.int().min(1).optional(),
-    currency: z.string().regex(/^[A-Z]{3}$/).optional(),
-    total_budget: z.number().min(0).optional(),
-    daily_budget_cap: z.number().min(0).optional(),
-    frequency_cap: MediaBuyFrequencyCapSchema.optional(),
-    budget_cap_timezone: z.string().optional(),
-    budget_allocation: BudgetAllocationSchema.optional(),
-    pacing: PacingSchema.optional(),
-    bidding: BiddingPolicySchema.optional(),
-    valid_actions: z.array(MediaBuyValidActionSchema).optional(),
-    available_actions: z.array(MediaBuyAvailableActionSchema).optional(),
-    packages: z.array(PackageSchema),
-    planned_delivery: PlannedDeliverySchema.optional(),
-    warnings: z.array(WarningSchema).optional(),
-    sandbox: z.boolean().optional(),
-    context: ContextObjectSchema.optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
+export const AdCPAsyncResponseDataSchema: z.ZodType = z.union([GetProductsResponseSchema, GetProductsRejectedSchema, GetProductsAsyncWorkingSchema, GetProductsAsyncInputRequiredSchema, GetProductsAsyncSubmittedSchema, RequestProposalsResponseSchema, RequestProposalsAsyncSubmittedSchema, RefineProposalsResponseSchema, RefineProposalsAsyncSubmittedSchema, DeclineProposalsResponseSchema, MediaBuyCommitmentResponseSchema, ControlMediaBuyResponseSchema, CompactTaskSubmittedSchema, CompactTaskWorkingSchema, CompactTaskInputRequiredSchema, GetSignalsResponseSchema, GetSignalsAsyncWorkingSchema, GetSignalsAsyncSubmittedSchema, CreateMediaBuyResponseSchema, CreateMediaBuyAsyncWorkingSchema, CreateMediaBuyAsyncInputRequiredSchema, CreateMediaBuyAsyncSubmittedSchema, UpdateMediaBuyResponseSchema, UpdateMediaBuyAsyncWorkingSchema, UpdateMediaBuyAsyncInputRequiredSchema, UpdateMediaBuyAsyncSubmittedSchema, MediaBuyDeliveryWebhookResultSchema, BuildCreativeResponseSchema, PreviewCreativeResponseSchema, BuildCreativeAsyncWorkingSchema, BuildCreativeAsyncInputRequiredSchema, BuildCreativeAsyncSubmittedSchema, GetCreativeFeaturesResponseSchema, GetCreativeFeaturesAsyncSubmittedSchema, SyncCreativesResponseSchema, SyncCreativesAsyncWorkingSchema, SyncCreativesAsyncInputRequiredSchema, SyncCreativesAsyncSubmittedSchema, SyncCatalogsResponseSchema, SyncCatalogsAsyncWorkingSchema, SyncCatalogsAsyncInputRequiredSchema, SyncCatalogsAsyncSubmittedSchema]);
 
 export const AcquireRightsResponseSchema = z.object({
     context_id: z.string().optional(),
@@ -21014,22 +21032,6 @@ export const ExplicitPackagesWithFixedAllocationSchema: z.ZodType = z.object({
     }).passthrough().optional(),
     packages: z.array(PackageRequestSchema.merge(z.object({}).passthrough()))
 }).passthrough();
-
-export const CreateMediaBuyResponseSchema: z.ZodType = z.object({
-    context_id: z.string().optional(),
-    context: ContextObjectSchema.optional(),
-    task_id: z.string().optional(),
-    status: TaskStatusSchema,
-    message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    replayed: z.boolean().optional(),
-    adcp_error: ErrorSchema.optional(),
-    push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
-    payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
-}).passthrough().and(z.union([CreateMediaBuySuccessSchema, CreateMediaBuyErrorSchema, CreateMediaBuySubmittedSchema]));
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
 export const UpdateMediaBuyRequestSchema: z.ZodObject<{ [K in keyof UpdateMediaBuyRequest]-?: undefined extends UpdateMediaBuyRequest[K] ? z.ZodOptional<z.ZodType<Exclude<UpdateMediaBuyRequest[K], undefined>, Exclude<UpdateMediaBuyRequest[K], undefined>>> : z.ZodType<UpdateMediaBuyRequest[K], UpdateMediaBuyRequest[K]> }, z.core.$loose> & z.ZodType<UpdateMediaBuyRequest & Record<string, unknown>, UpdateMediaBuyRequest & Record<string, unknown>> = z.object({
@@ -21483,8 +21485,6 @@ export const ComplyTestControllerResponseSchema = z.object({
     adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
     adcp_major_version: z.number().int().gte(1).lte(99).optional()
 }).passthrough().and(z.union([ListScenariosSuccessSchema, StateTransitionSuccessSchema, SimulationSuccessSchema, ForcedDirectiveSuccessSchema, SeedSuccessSchema, ProvenanceAuditObservationsSuccessSchema, UpstreamTrafficSuccessSchema, ControllerErrorSchema]));
-
-export const AdCPAsyncResponseDataSchema: z.ZodType = z.union([GetProductsResponseSchema, GetProductsRejectedSchema, GetProductsAsyncWorkingSchema, GetProductsAsyncInputRequiredSchema, GetProductsAsyncSubmittedSchema, RequestProposalsResponseSchema, RequestProposalsAsyncSubmittedSchema, RefineProposalsResponseSchema, RefineProposalsAsyncSubmittedSchema, DeclineProposalsResponseSchema, MediaBuyCommitmentResponseSchema, ControlMediaBuyResponseSchema, CompactTaskSubmittedSchema, CompactTaskWorkingSchema, CompactTaskInputRequiredSchema, GetSignalsResponseSchema, GetSignalsAsyncWorkingSchema, GetSignalsAsyncSubmittedSchema, CreateMediaBuyResponseSchema, CreateMediaBuyAsyncWorkingSchema, CreateMediaBuyAsyncInputRequiredSchema, CreateMediaBuyAsyncSubmittedSchema, UpdateMediaBuyResponseSchema, UpdateMediaBuyAsyncWorkingSchema, UpdateMediaBuyAsyncInputRequiredSchema, UpdateMediaBuyAsyncSubmittedSchema, MediaBuyDeliveryWebhookResultSchema, BuildCreativeResponseSchema, PreviewCreativeResponseSchema, BuildCreativeAsyncWorkingSchema, BuildCreativeAsyncInputRequiredSchema, BuildCreativeAsyncSubmittedSchema, GetCreativeFeaturesResponseSchema, GetCreativeFeaturesAsyncSubmittedSchema, SyncCreativesResponseSchema, SyncCreativesAsyncWorkingSchema, SyncCreativesAsyncInputRequiredSchema, SyncCreativesAsyncSubmittedSchema, SyncCatalogsResponseSchema, SyncCatalogsAsyncWorkingSchema, SyncCatalogsAsyncInputRequiredSchema, SyncCatalogsAsyncSubmittedSchema]);
 
 export const MCPWebhookPayloadSchema: z.ZodType = z.object({
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
