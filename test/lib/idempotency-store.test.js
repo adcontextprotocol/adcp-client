@@ -827,44 +827,22 @@ describe('request claim ownership fencing', () => {
     }
   });
 
-  it('a stale expiry read cannot reclaim a claim renewed before atomic expired-owner replacement', async () => {
-    const delegate = memoryBackend({ sweepIntervalMs: 0 });
+  it('an expired unresolved claim remains fenced until its owner publishes an outcome', async () => {
+    const backend = memoryBackend({ sweepIntervalMs: 0 });
     const key = 'renewal_aba_abcdefghij';
     const scopedKey = `p\u001f${key}`;
-    const owner = '__adcp_in_flight__:owner';
-    await delegate.put(scopedKey, {
-      payloadHash: owner,
+    const payload = { x: 1 };
+    const hash = hashPayload(payload);
+    await backend.put(scopedKey, {
+      payloadHash: `__adcp_in_flight__:${hash}:owner`,
       response: null,
       expiresAt: Math.floor(Date.now() / 1000) - 1,
+      retainUntil: 253402300799,
     });
-
-    let releaseReplacement;
-    let markReplacementReached;
-    const replacementReached = new Promise(resolve => {
-      markReplacementReached = resolve;
-    });
-    const replacementGate = new Promise(resolve => {
-      releaseReplacement = resolve;
-    });
-    const backend = {
-      ...delegate,
-      replaceIfPayloadHashAndExpired: async (...args) => {
-        markReplacementReached();
-        await replacementGate;
-        return delegate.replaceIfPayloadHashAndExpired(...args);
-      },
-    };
     const store = createIdempotencyStore({ backend, ttlSeconds: 3600, clockSkewSeconds: 0 });
-    const attempt = store.check({ principal: 'p', key, payload: { x: 1 } });
-    await replacementReached;
-    await delegate.replaceIfPayloadHash(scopedKey, owner, {
-      payloadHash: owner,
-      response: null,
-      expiresAt: Math.floor(Date.now() / 1000) + 120,
-    });
-    releaseReplacement();
 
-    assert.equal((await attempt).kind, 'in-flight');
+    assert.equal((await store.check({ principal: 'p', key, payload })).kind, 'in-flight');
+    assert.equal((await backend.get(scopedKey)).retainUntil, 253402300799);
   });
 
   it('a stale absent read cannot replace a newly expired request generation', async () => {
@@ -927,7 +905,7 @@ describe('request claim ownership fencing', () => {
     }
   });
 
-  it('a stale owner cannot save over or release a reclaimed request', async () => {
+  it('an unresolved owner retains exclusive publication rights after lease expiry', async () => {
     const backend = memoryBackend({ sweepIntervalMs: 0 });
     const store = createIdempotencyStore({ backend, ttlSeconds: 3600, clockSkewSeconds: 0 });
     const key = 'stale_owner_abcdefghij';
@@ -941,36 +919,18 @@ describe('request claim ownership fencing', () => {
     await backend.put(scopedKey, { ...staleEntry, expiresAt: Math.floor(Date.now() / 1000) - 1 });
 
     const current = await store.check({ principal: 'p', key, payload });
-    assert.equal(current.kind, 'miss');
-    await assert.rejects(
-      store.save({
-        principal: 'p',
-        key,
-        payloadHash: stale.payloadHash,
-        claimToken: stale.claimToken,
-        response: 'stale',
-      }),
-      /claim is no longer owned/
-    );
-    await assert.rejects(
-      store.release({ principal: 'p', key, claimToken: stale.claimToken }),
-      /claim is no longer owned/
-    );
-    await assert.rejects(
-      store.renew({ principal: 'p', key, claimToken: stale.claimToken }),
-      /claim is no longer owned/
-    );
-
+    assert.equal(current.kind, 'in-flight');
+    await store.renew({ principal: 'p', key, claimToken: stale.claimToken });
     await store.save({
       principal: 'p',
       key,
-      payloadHash: current.payloadHash,
-      claimToken: current.claimToken,
-      response: 'current',
+      payloadHash: stale.payloadHash,
+      claimToken: stale.claimToken,
+      response: 'resolved',
     });
     const replay = await store.check({ principal: 'p', key, payload });
     assert.equal(replay.kind, 'replay');
-    assert.equal(replay.response, 'current');
+    assert.equal(replay.response, 'resolved');
   });
 });
 

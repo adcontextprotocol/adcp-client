@@ -2751,6 +2751,28 @@ function addBackwardCompatTypeAliases(typeDefinitions: string): string {
   return output;
 }
 
+/** Align the aggregate copy with rc.6's authoritative commitment response. */
+function alignCommittedMediaBuyName(typeDefinitions: string): string {
+  const start = typeDefinitions.indexOf('export interface CommittedMediaBuy {');
+  if (start === -1) return typeDefinitions;
+  const end = typeDefinitions.indexOf('\nexport ', start + 1);
+  const blockEnd = end === -1 ? typeDefinitions.length : end;
+  const block = typeDefinitions.slice(start, blockEnd);
+  if (/^  name\?: string;$/m.test(block)) return typeDefinitions;
+  const anchor = '  media_buy_id: string;\n';
+  if (!block.includes(anchor)) {
+    throw new Error('alignCommittedMediaBuyName: CommittedMediaBuy.media_buy_id anchor not found');
+  }
+  const addition = `${anchor}  /**
+   * Persisted human-readable MediaBuy name for trafficking UI display and operational communication.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern \\S
+   */
+  name?: string;\n`;
+  return typeDefinitions.slice(0, start) + block.replace(anchor, addition) + typeDefinitions.slice(blockEnd);
+}
+
 function hardenTrustedMatchGeneratedTypes(typeDefinitions: string): string {
   let output = typeDefinitions;
 
@@ -3490,6 +3512,12 @@ const JSTS_UNDER_RESOLUTION_ALIASES: Array<{ numbered: string; base: string }> =
   { numbered: 'TargetingOverlaySupport1', base: 'TargetingOverlaySupport' },
   { numbered: 'DeliveryForecast2', base: 'DeliveryForecast' },
   { numbered: 'ExistingBinding1', base: 'ExistingBinding' },
+  { numbered: 'SignalTargeting1', base: 'SignalTargeting' },
+  { numbered: 'FileTransfer1', base: 'ReportingFileTransfer' },
+  // tasks-list-request.json in rc.6 carries a lagging inline copy of the
+  // canonical task-type enum that omits get_creative_features. Keep the
+  // public filter type aligned with the authoritative enum document.
+  { numbered: 'TaskType1', base: 'TaskType' },
 ];
 
 const JSTS_REPEATED_UNDER_RESOLUTION_BASES = [
@@ -3626,7 +3654,9 @@ export function renameKnownNumberedSemanticTypes(typeDefinitions: string): strin
 
 function buildKnownJstsAliases(typeDefinitions: string): Array<{ numbered: string; base: string }> {
   const exportedTypes = collectExportedTypeNames(typeDefinitions);
-  const aliases = new Map(JSTS_UNDER_RESOLUTION_ALIASES.map(alias => [alias.numbered, alias]));
+  const aliases = new Map(
+    JSTS_UNDER_RESOLUTION_ALIASES.filter(alias => exportedTypes.has(alias.base)).map(alias => [alias.numbered, alias])
+  );
 
   for (const base of JSTS_REPEATED_UNDER_RESOLUTION_BASES) {
     if (!exportedTypes.has(base)) continue;
@@ -4639,23 +4669,25 @@ async function generateTypes() {
   // see applyKnownJstsAliases for the rationale. Finally, restore the asset_type
   // discriminator on Individual*Asset slot aliases that jsts collapses (#1498).
   const processedCoreTypes = alignTargetingInputArrayCardinality(
-    relaxArrayCardinalityTypes(
-      normalizeTransformerParamJsonValueTypes(
-        relaxZodCompatibilityArrayTypes(
-          hardenTrustedMatchGeneratedTypes(
-            applyIndividualAssetDiscriminators(
-              addBackwardCompatTypeAliases(
-                simplifyForecastRange(
-                  simplifyPriceBreakdown(
-                    widenMediaBuyFeaturesIndexSignature(
-                      widenPostalAreaSupportIndexSignature(
-                        widenReportedOutcomeErrorIndexSignature(
-                          fixTypedIndexSignatures(
-                            removeResidualInlineIndexSignatureArms(
-                              applyKnownJstsAliases(
-                                namePostalAreaCountryBranch(
-                                  renameKnownNumberedSemanticTypes(
-                                    removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))
+    alignCommittedMediaBuyName(
+      relaxArrayCardinalityTypes(
+        normalizeTransformerParamJsonValueTypes(
+          relaxZodCompatibilityArrayTypes(
+            hardenTrustedMatchGeneratedTypes(
+              applyIndividualAssetDiscriminators(
+                addBackwardCompatTypeAliases(
+                  simplifyForecastRange(
+                    simplifyPriceBreakdown(
+                      widenMediaBuyFeaturesIndexSignature(
+                        widenPostalAreaSupportIndexSignature(
+                          widenReportedOutcomeErrorIndexSignature(
+                            fixTypedIndexSignatures(
+                              removeResidualInlineIndexSignatureArms(
+                                applyKnownJstsAliases(
+                                  namePostalAreaCountryBranch(
+                                    renameKnownNumberedSemanticTypes(
+                                      removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))
+                                    )
                                   )
                                 )
                               )
@@ -4669,21 +4701,26 @@ async function generateTypes() {
               )
             )
           )
-        )
-      ),
-      { maxItemsOnly: true }
+        ),
+        { maxItemsOnly: true }
+      )
     )
   );
   const coreChanged = writeFileIfChanged(coreTypesPath, processedCoreTypes);
 
   const toolTypesPath = path.join(libOutputDir, 'tools.generated.ts');
-  const processedToolTypes = relaxArrayCardinalityTypes(
-    normalizeTransformerParamJsonValueTypes(
-      relaxZodCompatibilityArrayTypes(
-        addCanonicalToolTypeAliases(applyIndividualAssetDiscriminators(addBackwardCompatTypeAliases(toolTypes)), tools)
-      )
-    ),
-    { maxItemsOnly: true }
+  const processedToolTypes = alignCommittedMediaBuyName(
+    relaxArrayCardinalityTypes(
+      normalizeTransformerParamJsonValueTypes(
+        relaxZodCompatibilityArrayTypes(
+          addCanonicalToolTypeAliases(
+            applyIndividualAssetDiscriminators(addBackwardCompatTypeAliases(toolTypes)),
+            tools
+          )
+        )
+      ),
+      { maxItemsOnly: true }
+    )
   );
   const toolsChanged = writeFileIfChanged(toolTypesPath, processedToolTypes);
 

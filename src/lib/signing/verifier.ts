@@ -13,6 +13,8 @@ import {
   type SfBinaryEncoding,
 } from './content-digest';
 import { RequestSignatureError } from './errors';
+import { AgentResolverError } from './agent-resolver/errors';
+import { parseStrictJson, StrictJsonError } from './agent-resolver/strict-json';
 import { parseSignature, parseSignatureInput, type ParsedSignatureInput } from './parser';
 import { jwkToPublicKey, verifySignature } from './crypto';
 import type { JwksResolver } from './jwks';
@@ -176,7 +178,15 @@ export async function verifyRequestSignature(
   validateCoveredComponents(parsedInput.components, effectiveCapability, request);
 
   // Step 7: resolve keyid.
-  const jwk = await options.jwks.resolve(parsedInput.params.keyid);
+  let jwk;
+  try {
+    jwk = await options.jwks.resolve(parsedInput.params.keyid);
+  } catch (err) {
+    if (err instanceof AgentResolverError) {
+      throw new RequestSignatureError(err.code, 7, err.message, err.detail);
+    }
+    throw err;
+  }
   if (!jwk) {
     throw new RequestSignatureError(
       'request_signature_key_unknown',
@@ -277,6 +287,23 @@ export async function verifyRequestSignature(
         11,
         'Content-Digest header does not match recomputed body hash'
       );
+    }
+  }
+
+  // A valid digest authenticates bytes, not their interpretation. Reject
+  // duplicate keys and other strict-JSON failures before committing the
+  // nonce so different parsers cannot assign different meaning to one signed
+  // body.
+  if (request.body !== undefined && request.body.trim() !== '') {
+    try {
+      parseStrictJson(request.body);
+    } catch (err) {
+      if (err instanceof StrictJsonError) {
+        throw new RequestSignatureError('request_body_malformed', 11, 'Signed request body is not strict JSON', {
+          reason: err.code,
+        });
+      }
+      throw err;
     }
   }
 

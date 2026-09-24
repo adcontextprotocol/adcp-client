@@ -13,12 +13,13 @@
 import { randomUUID } from 'crypto';
 
 /**
- * Tools whose request schema requires `idempotency_key`.
+ * Tools that can mutate provider state or record economically consequential
+ * work and therefore need retry/signing safeguards.
  *
  * Kept as a static runtime set so importing the client does not construct the
- * SDK's entire generated Zod schema graph. The idempotency test suite derives
- * the same set from `TOOL_REQUEST_SCHEMAS` and fails if this list drifts from
- * the upstream AdCP schema.
+ * SDK's entire generated Zod schema graph. Most entries require
+ * `idempotency_key`; `get_creative_features` keeps it optional in 3.x for wire
+ * compatibility while clients SHOULD still send one.
  *
  * `si_terminate_session` is intentionally excluded even though it's a
  * mutating operation: the spec documents it as naturally idempotent via
@@ -39,6 +40,7 @@ export const MUTATING_TASKS: ReadonlySet<string> = new Set([
   'decline_proposals',
   'delete_collection_list',
   'delete_property_list',
+  'get_creative_features',
   'log_event',
   'provide_performance_feedback',
   'refine_proposals',
@@ -67,7 +69,8 @@ export const MUTATING_TASKS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Whether a tool's request schema requires `idempotency_key`.
+ * Whether a tool can mutate provider state or record economically
+ * consequential work.
  *
  * Callers use this to decide whether to auto-generate a key when one isn't
  * provided. Unknown tool names return `false` — we don't guess.
@@ -81,7 +84,11 @@ export function isMutatingTask(toolName: string): boolean {
  * carry an idempotency key. Most mutations are classified by their tool's
  * required request field. AdCP 3.2's legacy-compatible proposal finalization
  * is the exception: it is a state-changing variant of otherwise read-only
- * `get_products`, whose compatibility schema keeps the key optional.
+ * `get_products`, whose compatibility schema keeps the key optional. Creative
+ * feature evaluation is also economically consequential in AdCP 3.2 even
+ * though its 3.x compatibility schema keeps the key optional; classifying it
+ * here makes SDK callers mint a key while servers can still admit legacy
+ * keyless requests.
  */
 export function requestUsesIdempotency(toolName: string, params: unknown): boolean {
   if (isMutatingTask(toolName)) return true;

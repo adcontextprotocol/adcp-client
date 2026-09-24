@@ -1401,8 +1401,8 @@ describe('Zod Schema Validation', () => {
     }
 
     const url = 'https://tracker.example/pixel?cb=%%CACHEBUSTER%%';
-    const aliases = Object.entries(schemas).filter(([name]) => /^MacroBearingURL\d+Schema$/.test(name));
-    assert.ok(aliases.length > 0, 'expected generated macro-bearing URL aliases');
+    const aliases = Object.entries(schemas).filter(([name]) => /^MacroBearingURL(?:\d+)?Schema$/.test(name));
+    assert.ok(aliases.length > 0, 'expected a generated macro-bearing URL schema');
 
     for (const [name, schema] of aliases) {
       assert.strictEqual(schema.safeParse(url).success, true, `${name} must accept macro-bearing URL strings`);

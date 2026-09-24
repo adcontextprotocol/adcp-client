@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "protocol_version": "3.2.0-rc.4",
+  "protocol_version": "3.2.0-rc.6",
   "source_repository": "adcontextprotocol/adcp",
-  "source_tag": "v3.2.0-rc.4",
-  "source_commit": "94976657c8456e5ad6de55d9793a883542a4fc5f",
-  "bundle_sha256": "773bee016d279345d6fae91a0ce684a22ca9b81c2edd2cdb9a71dbfea65954d2",
+  "source_tag": "v3.2.0-rc.6",
+  "source_commit": "f7932355a52f81c64f4c8ff8cc0a36f57677d711",
+  "bundle_sha256": "2837bcd4ee2d74b326ffff573ee0cdeb87b3920967fb99bc02671c51718834dd",
   "files": {
     "principal": {
       "source_path": "static/compliance/source/universal/principal.yaml",

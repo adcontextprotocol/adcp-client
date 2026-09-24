@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "protocol_version": "3.2.0-rc.4",
+  "protocol_version": "3.2.0-rc.6",
   "description": "Portable sync_reporting_status acceptance vectors. Consumer status is an operational acknowledgement, never a managed-delivery or billing-receipt oracle.",
   "frozen": {
     "clocks": {

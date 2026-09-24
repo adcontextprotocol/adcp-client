@@ -35,6 +35,7 @@ export const TOOL_PROTOCOL_MAP: Readonly<Record<string, AdcpProtocol>> = {
 
   // governance
   check_governance: 'governance',
+  get_creative_features: 'governance',
   sync_plans: 'governance',
   report_plan_outcome: 'governance',
   get_plan_audit_logs: 'governance',

@@ -470,7 +470,7 @@ describe('version scoping', { skip: !legacyAvailable }, () => {
     const caps = {
       supported_protocols: ['media_buy'],
       specialisms: ['sales-guaranteed'],
-      supported_versions: ['3.1', '3.2', '3.2.0-rc.4'],
+      supported_versions: ['3.1', '3.2', '3.2.0-rc.6'],
       major_versions: [3],
     };
     for (const version of ['3.1.18', ADCP_VERSION]) {

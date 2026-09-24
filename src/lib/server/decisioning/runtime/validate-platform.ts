@@ -22,10 +22,8 @@ import type { AdCPSpecialism } from '../../../types/tools.generated';
 // (hence the fields are optional on DecisioningCapabilities), but a media-buy
 // platform serving an empty or absent channels list is a mis-configured agent.
 // Derived from the `sales-` prefix on `AdCPSpecialism` rather than a hand-
-// maintained allowlist: when preview specialisms (`sales-streaming-tv`,
-// `sales-exchange`, `sales-retail-media`) graduate into the generated enum,
-// they automatically inherit the channels + pricingModels gate. A hand-list
-// would silently let mis-configured streaming/exchange platforms through.
+// maintained allowlist, so future sales specialisms automatically inherit the
+// channels + pricingModels gate.
 function isSalesSpecialism(s: AdCPSpecialism): boolean {
   return s.startsWith('sales-');
 }
@@ -52,14 +50,16 @@ const SPECIALISM_REQUIREMENTS: Partial<Record<AdCPSpecialism, ReadonlyArray<keyo
   // All sales-* specialisms share the SalesPlatform interface. Adopters
   // implement `sales` once; the specialism enum picks which buyer-side
   // storyboard the agent is validated against. Wired here per the AdCP 3.0
-  // GA enum; preview specialisms (sales-streaming-tv, sales-exchange,
-  // sales-retail-media) get added when they land in `AdCPSpecialism`.
+  // GA enum.
   'sales-non-guaranteed': [],
   'sales-guaranteed': [],
   'sales-broadcast-tv': [],
   'sales-dooh': [],
+  'sales-streaming-tv': [],
+  'sales-exchange': [],
   'sales-social': ['sales'],
   'sales-catalog-driven': ['sales'],
+  'sales-retail-media': ['sales'],
   'sales-proposal-mode': [],
   // Creative specialisms share the CreativeXxxPlatform field name; adopters
   // pick the right archetype (template / generative / ad-server) at
@@ -126,6 +126,8 @@ export function validatePlatform(
       specialism === 'sales-guaranteed' ||
       specialism === 'sales-broadcast-tv' ||
       specialism === 'sales-dooh' ||
+      specialism === 'sales-streaming-tv' ||
+      specialism === 'sales-exchange' ||
       specialism === 'sales-proposal-mode';
     if (acceptsCompactLifecycle && platform.sales == null && platform.mediaBuyLifecycle == null) {
       errors.push(`${specialism} requires platform.sales or platform.mediaBuyLifecycle`);

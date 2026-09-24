@@ -159,13 +159,13 @@ describe('acceptance-policy discovery compliance verifier', () => {
       stepId: 'get_acceptance_policy_capability',
       taskResult: capabilityResult(),
       state,
-      adcpVersion: '3.2.0-rc.4',
+      adcpVersion: '3.2.0-rc.6',
       dependencies: {
         registryResolver,
         resolveCatalog: async (capability, options) => {
           observedCapability = capability;
           assert.equal(options.registryResolver, undefined);
-          assert.equal(options.adcpVersion, '3.2.0-rc.4');
+          assert.equal(options.adcpVersion, '3.2.0-rc.6');
           return {
             ok: true,
             fromCache: false,

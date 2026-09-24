@@ -12,7 +12,7 @@
  *     that came from the wire so downstream renderers can detect them.
  *   - Internal network topology (resolved IPs, DNS state) MUST NOT be
  *     copied onto detail fields. If `ssrfSafeFetch` throws, the resolver
- *     translates the `SsrfRefusedError` into a `request_signature_*_unreachable`
+ *     translates the `SsrfRefusedError` into `request_signature_jwks_untrusted`
  *     code with `dns_error` set to the error class name only — never the
  *     `address` or `hostname` fields the underlying error carries.
  */
@@ -29,17 +29,9 @@ export type AgentResolverErrorCode =
   | 'request_signature_brand_json_ambiguous'
   | 'request_signature_key_origin_mismatch'
   | 'request_signature_key_origin_missing'
-  /**
-   * SDK-side codes — not in the spec's `request_signature_*` rejection
-   * table but distinct conditions a verifier needs to surface separately.
-   * The spec hands JWKS-fetch failures off to the verifier checklist
-   * (`request_signature_key_unknown`), but that code only applies once a
-   * `kid` lookup has been attempted; the bootstrap chain needs a code
-   * before we have a kid in hand. Likewise, an alg-allowlist rejection at
-   * import time is a distinct trust failure, not a fetch failure.
-   */
-  | 'request_signature_jwks_unreachable'
-  | 'request_signature_jwks_alg_disallowed';
+  | 'request_signature_jwks_unavailable'
+  | 'request_signature_jwks_untrusted'
+  | 'request_signature_key_purpose_invalid';
 
 export interface AgentResolverErrorDetail {
   agent_url?: string;

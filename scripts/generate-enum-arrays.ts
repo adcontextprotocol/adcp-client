@@ -20,6 +20,7 @@ import path from 'path';
 const CORE_SOURCE_FILE = path.join(__dirname, '../src/lib/types/core.generated.ts');
 const TOOLS_SOURCE_FILE = path.join(__dirname, '../src/lib/types/tools.generated.ts');
 const OUTPUT_FILE = path.join(__dirname, '../src/lib/types/enums.generated.ts');
+const ADCP_VERSION_FILE = path.join(__dirname, '../ADCP_VERSION');
 
 const BACKWARD_COMPAT_ENUM_VALUE_ALIASES: Array<{
   oldName: string;
@@ -81,7 +82,38 @@ function extractFromSource(source: string, label: 'core' | 'tools'): ExtractedEn
   return result;
 }
 
-function renderOutput(enums: ExtractedEnum[]): string {
+interface RequestSigningErrorMetadata {
+  recovery: 'transient' | 'correctable' | 'terminal';
+  suggestion: string;
+}
+
+function loadRequestSigningErrorMetadata(): Record<string, RequestSigningErrorMetadata> {
+  const version = readFileSync(ADCP_VERSION_FILE, 'utf8').trim();
+  const schemaPath = path.join(__dirname, `../schemas/cache/${version}/enums/request-signing-error-code.json`);
+  const schema = JSON.parse(readFileSync(schemaPath, 'utf8')) as {
+    enum?: string[];
+    enumMetadata?: Record<string, unknown>;
+  };
+  const metadata = schema.enumMetadata ?? {};
+  return Object.fromEntries(
+    (schema.enum ?? []).map(code => {
+      const entry = metadata[code] as Partial<RequestSigningErrorMetadata> | undefined;
+      if (
+        !entry ||
+        !['transient', 'correctable', 'terminal'].includes(entry.recovery ?? '') ||
+        typeof entry.suggestion !== 'string'
+      ) {
+        throw new Error(`request-signing-error-code enumMetadata is missing recovery/suggestion for ${code}`);
+      }
+      return [code, { recovery: entry.recovery!, suggestion: entry.suggestion }];
+    })
+  );
+}
+
+function renderOutput(
+  enums: ExtractedEnum[],
+  requestSigningMetadata: Record<string, RequestSigningErrorMetadata>
+): string {
   // Intentionally no `// Generated at:` timestamp in the file body. Other
   // generated files in this repo carry one, but those predate this script
   // and pay diff noise on every regeneration. Git log + the
@@ -133,6 +165,11 @@ function renderOutput(enums: ExtractedEnum[]): string {
       body += `export const ${alias.oldName}Values = ${alias.newName}Values;\n`;
     }
   }
+
+  body += `\n/** Normative recovery metadata from request-signing-error-code.json. */\n`;
+  body += `const requestSigningErrorCodeMetadata = ${JSON.stringify(requestSigningMetadata, null, 2)} as const satisfies Record<(typeof RequestSigningErrorCodeValues)[number], { recovery: 'transient' | 'correctable' | 'terminal'; suggestion: string }>;\n`;
+  body += `for (const metadata of Object.values(requestSigningErrorCodeMetadata)) Object.freeze(metadata);\n`;
+  body += `export const RequestSigningErrorCodeMetadata = Object.freeze(requestSigningErrorCodeMetadata);\n`;
 
   return header + body;
 }
@@ -194,7 +231,7 @@ function main(): void {
     );
   }
 
-  const output = renderOutput(enums);
+  const output = renderOutput(enums, loadRequestSigningErrorMetadata());
   const changed = writeFileIfChanged(OUTPUT_FILE, output);
 
   if (changed) {

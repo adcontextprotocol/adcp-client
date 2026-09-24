@@ -2,7 +2,7 @@
 
 This recipe preserves one outbound AdCP 3.2 mutation when the HTTP caller,
 callback receiver, poller, and publisher are different processes. It is
-validated against the SDK 14 prerelease carrying the pinned `3.2.0-rc.4`
+validated against the SDK 14 prerelease carrying the pinned `3.2.0-rc.6`
 protocol bundle. Earlier SDK 14 prereleases are not the supported baseline for
 this recipe.
 
@@ -320,7 +320,7 @@ resolution, and the actual mutation retain those responsibilities.
 
 ## Adoption checklist
 
-- [ ] Pin and test the SDK 14 prerelease carrying AdCP `3.2.0-rc.4`; reassess this guide when upgrading either pin.
+- [ ] Pin and test the SDK 14 prerelease carrying AdCP `3.2.0-rc.6`; reassess this guide when upgrading either pin.
 - [ ] Apply every current migration helper and the host operation/outbox migration before traffic; configure unique tables/prefixes and readiness probes.
 - [ ] Persist one logical operation, natural key, request key, and canonical request before dispatch; refuse same-operation payload drift.
 - [ ] Keep every SDK attempt route through the matching callback-registration retention window; retries add routes but preserve the request key.

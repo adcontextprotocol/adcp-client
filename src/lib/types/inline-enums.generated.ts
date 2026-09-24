@@ -17,18 +17,6 @@
 // from `enums.generated.ts` instead.
 
 
-// ====== AcceptancePolicyProfile ======
-
-/** single | AcceptancePolicyProfile.coverage */
-export const AcceptancePolicyProfile_CoverageValues = ["partial", "complete"] as const;
-
-// ====== AcceptancePolicyRule ======
-
-/** array of | AcceptancePolicyRule.applies_to */
-export const AcceptancePolicyRule_AppliesToValues = ["account", "media_buy", "creative", "landing_page", "targeting", "delivery", "format"] as const;
-/** single | AcceptancePolicyRule.disposition */
-export const AcceptancePolicyRule_DispositionValues = ["allowed", "conditional", "prohibited"] as const;
-
 // ====== AccountChangeFeedSupported ======
 
 /** single | AccountChangeFeedSupported.event_type */
@@ -47,11 +35,6 @@ export const AccountIdentityChangeBlocked_OutcomeValues = ["blocked"] as const;
 
 /** single | AccountIdentityChangePending.status */
 export const AccountIdentityChangePending_StatusValues = ["pending_approval"] as const;
-
-// ====== AccountIdentityChangeRejected ======
-
-/** single | AccountIdentityChangeRejected.status */
-export const AccountIdentityChangeRejected_StatusValues = ["rejected"] as const;
 
 // ====== AccountIdentityChangeWouldApply ======
 
@@ -298,6 +281,11 @@ export const BoxDecoration_KindValues = ["box"] as const;
 export const BriefAsset_AssetTypeValues = ["brief"] as const;
 /** single | BriefAsset.objective */
 export const BriefAsset_ObjectiveValues = ["awareness", "consideration", "conversion", "retention", "engagement"] as const;
+
+// ====== BudgetChangeConstraints ======
+
+/** single | BudgetChangeConstraints.kind */
+export const BudgetChangeConstraints_KindValues = ["budget"] as const;
 
 // ====== BuildCreativeAsyncInputRequired ======
 
@@ -781,6 +769,11 @@ export const EducationItem_LevelValues = ["beginner", "intermediate", "advanced"
 /** single | EducationItem.modality */
 export const EducationItem_ModalityValues = ["online", "in_person", "hybrid"] as const;
 
+// ====== EffectiveTimingConstraints ======
+
+/** single | EffectiveTimingConstraints.kind */
+export const EffectiveTimingConstraints_KindValues = ["effective_timing"] as const;
+
 // ====== EmptyReportGoldenVector ======
 
 /** single | EmptyReportGoldenVector.canonical_utf8_base64 */
@@ -807,10 +800,10 @@ export const FileTransfer_DirectionsValues = ["buyer_to_seller", "seller_to_buye
 /** single | FileTransfer.pattern */
 export const FileTransfer_PatternValues = ["file_transfer"] as const;
 
-// ====== FileTransferDestination ======
+// ====== FileTransfer1 ======
 
-/** array of | FileTransferDestination.accepted_formats */
-export const FileTransferDestination_AcceptedFormatsValues = ["jsonl", "csv", "parquet", "avro", "orc"] as const;
+/** single | FileTransfer1.format */
+export const FileTransfer1_FormatValues = ["jsonl", "csv", "parquet", "avro", "orc"] as const;
 
 // ====== FlatFeePricing ======
 
@@ -823,6 +816,11 @@ export const FlatFeePricing_PeriodValues = ["monthly", "quarterly", "annual", "c
 
 /** single | FlatRatePricingOption.pricing_model */
 export const FlatRatePricingOption_PricingModelValues = ["flat_rate"] as const;
+
+// ====== FlightChangeConstraints ======
+
+/** single | FlightChangeConstraints.kind */
+export const FlightChangeConstraints_KindValues = ["flight"] as const;
 
 // ====== GeoForecastDimension ======
 
@@ -1141,6 +1139,11 @@ export const OpportunityContext_PhaseValues = ["exploratory", "planning", "activ
 
 /** single | OrderingEncodingGoldenVector.purpose */
 export const OrderingEncodingGoldenVector_PurposeValues = ["ordering_encoding"] as const;
+
+// ====== PackageCountConstraints ======
+
+/** single | PackageCountConstraints.kind */
+export const PackageCountConstraints_KindValues = ["package_count"] as const;
 
 // ====== PackageSignalTargetingGroup ======
 
@@ -1667,6 +1670,8 @@ export const SIComponentCatalog_ComponentsValues = ["Text", "Button", "Link", "I
 
 // ====== SignalCoverageForecast ======
 
+/** single | SignalCoverageForecast.bucket_completeness */
+export const SignalCoverageForecast_BucketCompletenessValues = ["complete", "partial"] as const;
 /** single | SignalCoverageForecast.bucket_semantics */
 export const SignalCoverageForecast_BucketSemanticsValues = ["exclusive", "overlapping"] as const;
 /** single | SignalCoverageForecast.forecast_range_unit */
@@ -1954,9 +1959,6 @@ export const AccountStatusChangedWebhook_NotificationTypeValues = AccountNotific
 // --- AcquireRightsPendingApproval ---
 /** @deprecated use `AccountIdentityChangePending_StatusValues` — same literal set, AcquireRightsPendingApproval.rights_status duplicates the canonical export. */
 export const AcquireRightsPendingApproval_RightsStatusValues = AccountIdentityChangePending_StatusValues;
-// --- AcquireRightsRejected ---
-/** @deprecated use `AccountIdentityChangeRejected_StatusValues` — same literal set, AcquireRightsRejected.rights_status duplicates the canonical export. */
-export const AcquireRightsRejected_RightsStatusValues = AccountIdentityChangeRejected_StatusValues;
 // --- AgentWebhookChallenge ---
 /** @deprecated use `AgentPermissionDeniedDetails_ScopeValues` — same literal set, AgentWebhookChallenge.scope duplicates the canonical export. */
 export const AgentWebhookChallenge_ScopeValues = AgentPermissionDeniedDetails_ScopeValues;
@@ -2125,9 +2127,6 @@ export const CreativeLocalizationReadback_UnmatchedLocaleActionValues = Creative
 // --- CreativeOperationFormatDeclaration ---
 /** @deprecated use `CanonicalFormatOption_SellerPreferenceValues` — same literal set, CreativeOperationFormatDeclaration.seller_preference duplicates the canonical export. */
 export const CreativeOperationFormatDeclaration_SellerPreferenceValues = CanonicalFormatOption_SellerPreferenceValues;
-// --- CreativeRejected ---
-/** @deprecated use `AccountIdentityChangeRejected_StatusValues` — same literal set, CreativeRejected.approval_status duplicates the canonical export. */
-export const CreativeRejected_ApprovalStatusValues = AccountIdentityChangeRejected_StatusValues;
 // --- CreativeStatusChangedWebhook ---
 /** @deprecated use `CreativePurgedWebhook_InitiatorValues` — same literal set, CreativeStatusChangedWebhook.initiator duplicates the canonical export. */
 export const CreativeStatusChangedWebhook_InitiatorValues = CreativePurgedWebhook_InitiatorValues;
@@ -2163,12 +2162,29 @@ export const FailedReportingReceipt_ResultValues = CommitmentError_StatusValues;
 // --- FeatureRequirement ---
 /** @deprecated use `CollectionListApplication_EffectValues` — same literal set, FeatureRequirement.if_not_covered duplicates the canonical export. */
 export const FeatureRequirement_IfNotCoveredValues = CollectionListApplication_EffectValues;
+// --- FileTransfer1 ---
+/** @deprecated use `FileTransfer_PatternValues` — same literal set, FileTransfer1.pattern duplicates the canonical export. */
+export const FileTransfer1_PatternValues = FileTransfer_PatternValues;
 // --- FileTransferDestination ---
+/** @deprecated use `FileTransfer1_FormatValues` — same literal set, FileTransferDestination.accepted_formats duplicates the canonical export. */
+export const FileTransferDestination_AcceptedFormatsValues = FileTransfer1_FormatValues;
 /** @deprecated use `FileTransfer_PatternValues` — same literal set, FileTransferDestination.pattern duplicates the canonical export. */
 export const FileTransferDestination_PatternValues = FileTransfer_PatternValues;
 // --- GetBrandIdentitySuccess ---
 /** @deprecated use `GetBrandIdentityRequest_FieldsValues` — same literal set, GetBrandIdentitySuccess.available_fields duplicates the canonical export. */
 export const GetBrandIdentitySuccess_AvailableFieldsValues = GetBrandIdentityRequest_FieldsValues;
+// --- GetCreativeFeaturesAsyncSubmitted ---
+/** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, GetCreativeFeaturesAsyncSubmitted.status duplicates the canonical export. */
+export const GetCreativeFeaturesAsyncSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
+// --- GetCreativeFeaturesCompletion ---
+/** @deprecated use `CommittedMediaBuy_StatusValues` — same literal set, GetCreativeFeaturesCompletion.status duplicates the canonical export. */
+export const GetCreativeFeaturesCompletion_StatusValues = CommittedMediaBuy_StatusValues;
+// --- GetCreativeFeaturesComplianceCompletion ---
+/** @deprecated use `CommittedMediaBuy_StatusValues` — same literal set, GetCreativeFeaturesComplianceCompletion.status duplicates the canonical export. */
+export const GetCreativeFeaturesComplianceCompletion_StatusValues = CommittedMediaBuy_StatusValues;
+// --- GetCreativeFeaturesSubmitted ---
+/** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, GetCreativeFeaturesSubmitted.status duplicates the canonical export. */
+export const GetCreativeFeaturesSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
 // --- GetProductsAsyncSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, GetProductsAsyncSubmitted.status duplicates the canonical export. */
 export const GetProductsAsyncSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
@@ -2411,13 +2427,13 @@ export const ReportingDeliveryCapabilities_ReliableReportingVersionValues = Plac
 /** @deprecated use `ReportingDeliveryCapabilities_ReadinessNotificationValues` — same literal set, ReportingDeliveryReadyWebhook.notification_type duplicates the canonical export. */
 export const ReportingDeliveryReadyWebhook_NotificationTypeValues = ReportingDeliveryCapabilities_ReadinessNotificationValues;
 // --- ReportingFileManifest ---
-/** @deprecated use `FileTransferDestination_AcceptedFormatsValues` — same literal set, ReportingFileManifest.format duplicates the canonical export. */
-export const ReportingFileManifest_FormatValues = FileTransferDestination_AcceptedFormatsValues;
+/** @deprecated use `FileTransfer1_FormatValues` — same literal set, ReportingFileManifest.format duplicates the canonical export. */
+export const ReportingFileManifest_FormatValues = FileTransfer1_FormatValues;
 /** @deprecated use `PlacementPresentationDocument_SchemaVersionValues` — same literal set, ReportingFileManifest.manifest_version duplicates the canonical export. */
 export const ReportingFileManifest_ManifestVersionValues = PlacementPresentationDocument_SchemaVersionValues;
 // --- ReportingFileTransfer ---
-/** @deprecated use `FileTransferDestination_AcceptedFormatsValues` — same literal set, ReportingFileTransfer.format duplicates the canonical export. */
-export const ReportingFileTransfer_FormatValues = FileTransferDestination_AcceptedFormatsValues;
+/** @deprecated use `FileTransfer1_FormatValues` — same literal set, ReportingFileTransfer.format duplicates the canonical export. */
+export const ReportingFileTransfer_FormatValues = FileTransfer1_FormatValues;
 /** @deprecated use `FileTransfer_PatternValues` — same literal set, ReportingFileTransfer.pattern duplicates the canonical export. */
 export const ReportingFileTransfer_PatternValues = FileTransfer_PatternValues;
 // --- ReportingLedgerChangedWebhook ---
@@ -2447,9 +2463,6 @@ export const SelectedPlacements_ModeValues = SelectedCollections_ModeValues;
 // --- SHA256PhysicalChecksum ---
 /** @deprecated use `ReportingCanonicalContentDigest_AlgorithmValues` — same literal set, SHA256PhysicalChecksum.algorithm duplicates the canonical export. */
 export const SHA256PhysicalChecksum_AlgorithmValues = ReportingCanonicalContentDigest_AlgorithmValues;
-// --- SignalCoverageForecast ---
-/** @deprecated use `AcceptancePolicyProfile_CoverageValues` — same literal set, SignalCoverageForecast.bucket_completeness duplicates the canonical export. */
-export const SignalCoverageForecast_BucketCompletenessValues = AcceptancePolicyProfile_CoverageValues;
 // --- SignalDefinition ---
 /** @deprecated use `SignalDefinition_LookbackWindowValues` — same literal set, SignalDefinition.refresh_cadence duplicates the canonical export. */
 export const SignalDefinition_RefreshCadenceValues = SignalDefinition_LookbackWindowValues;
@@ -2521,9 +2534,6 @@ export const UpdateMediaBuySubmitted_StatusValues = BuildCreativeAsyncSubmitted_
 // --- URLAsset ---
 /** @deprecated use `GroupUrlAsset_AssetTypeValues` — same literal set, URLAsset.asset_type duplicates the canonical export. */
 export const URLAsset_AssetTypeValues = GroupUrlAsset_AssetTypeValues;
-// --- URLAsset1 ---
-/** @deprecated use `GroupUrlAsset_AssetTypeValues` — same literal set, URLAsset1.asset_type duplicates the canonical export. */
-export const URLAsset1_AssetTypeValues = GroupUrlAsset_AssetTypeValues;
 // --- VASTTrackerConstraints ---
 /** @deprecated use `VASTTrackerAsset_TargetValues` — same literal set, VASTTrackerConstraints.target duplicates the canonical export. */
 export const VASTTrackerConstraints_TargetValues = VASTTrackerAsset_TargetValues;

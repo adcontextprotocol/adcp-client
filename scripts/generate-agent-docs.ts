@@ -209,7 +209,16 @@ function summarizeResponseFields(schema: any): { required: string[]; optional: s
     return prohibited;
   };
 
-  const summarizeBranch = (branch: any) => {
+  const dereferenceBranch = (branch: any): any => {
+    if (!branch?.$ref) return branch;
+    const resolved = branch.$ref.startsWith('#') ? resolveSchemaFragment(schema, branch.$ref) : loadSchema(branch.$ref);
+    if (!resolved) return branch;
+    const { $ref: _ref, ...overrides } = branch;
+    return { ...resolved, ...overrides };
+  };
+
+  const summarizeBranch = (rawBranch: any) => {
+    const branch = dereferenceBranch(rawBranch);
     const prohibited = new Set([...prohibitedFields(schema.not), ...prohibitedFields(branch.not)]);
     const properties = Object.fromEntries(
       Object.entries({ ...(schema.properties || {}), ...(branch.properties || {}) }).filter(

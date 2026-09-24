@@ -587,7 +587,7 @@ describe('resolveAgent — rejection codes', () => {
     );
   });
 
-  it('request_signature_jwks_unreachable when JWKS endpoint 404s with detail.jwks_uri', async () => {
+  it('request_signature_jwks_unavailable when JWKS endpoint 404s with detail.jwks_uri', async () => {
     const agentUrl = `${baseUrl}/mcp`;
     routes['/.well-known/brand.json'] = {
       body: { agents: [{ type: 'sales', url: agentUrl, jwks_uri: `${baseUrl}/jwks.json` }] },
@@ -605,13 +605,13 @@ describe('resolveAgent — rejection codes', () => {
       caught = err;
     }
     assert.ok(caught instanceof AgentResolverError);
-    assert.equal(caught.code, 'request_signature_jwks_unreachable');
+    assert.equal(caught.code, 'request_signature_jwks_unavailable');
     assert.equal(caught.detail.jwks_uri, `${baseUrl}/jwks.json`);
     assert.equal(caught.detail.brand_json_url, undefined);
     assert.ok(attackerInfluencedFields(caught).includes('jwks_uri'));
   });
 
-  it('request_signature_jwks_unreachable when JWKS body has no keys[] array', async () => {
+  it('request_signature_jwks_unavailable when JWKS body has no keys[] array', async () => {
     const agentUrl = `${baseUrl}/mcp`;
     routes['/.well-known/brand.json'] = {
       body: { agents: [{ type: 'sales', url: agentUrl, jwks_uri: `${baseUrl}/jwks.json` }] },
@@ -625,7 +625,7 @@ describe('resolveAgent — rejection codes', () => {
             identity: { brand_json_url: `${baseUrl}/.well-known/brand.json` },
           }),
         }),
-      'request_signature_jwks_unreachable'
+      'request_signature_jwks_unavailable'
     );
   });
 
@@ -726,7 +726,7 @@ describe('createAgentJwksSet — JOSE adapter', () => {
     );
   });
 
-  it('rejects JWKS keys whose alg is outside allowedAlgs with request_signature_jwks_alg_disallowed', async () => {
+  it('rejects JWKS keys whose alg is outside allowedAlgs with request_signature_key_purpose_invalid', async () => {
     const agentUrl = `${baseUrl}/mcp`;
     routes['/.well-known/brand.json'] = {
       body: { agents: [{ type: 'sales', url: agentUrl, jwks_uri: `${baseUrl}/jwks.json` }] },
@@ -746,7 +746,7 @@ describe('createAgentJwksSet — JOSE adapter', () => {
       caught = err;
     }
     assert.ok(caught instanceof AgentResolverError);
-    assert.equal(caught.code, 'request_signature_jwks_alg_disallowed');
+    assert.equal(caught.code, 'request_signature_key_purpose_invalid');
   });
 
   it('does not cache a delegated JWKS past valid_until', async () => {

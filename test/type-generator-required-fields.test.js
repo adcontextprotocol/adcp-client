@@ -9,6 +9,22 @@ const ts = require('typescript');
 const REPO_ROOT = path.resolve(__dirname, '..');
 const CORE_SCHEMA_DIR = path.join(REPO_ROOT, 'schemas/cache/latest/core');
 const CORE_TYPES_PATH = path.join(REPO_ROOT, 'src/lib/types/core.generated.ts');
+const TOOL_TYPES_PATH = path.join(REPO_ROOT, 'src/lib/types/tools.generated.ts');
+
+test('CommittedMediaBuy keeps rc.6 name metadata in aggregate TS and Zod output', () => {
+  const coreTypes = fs.readFileSync(CORE_TYPES_PATH, 'utf8');
+  const toolsTypes = fs.readFileSync(TOOL_TYPES_PATH, 'utf8');
+  for (const generated of [coreTypes, toolsTypes]) {
+    const declaration = generated.match(/export interface CommittedMediaBuy \{[\s\S]*?\n\}/)?.[0];
+    assert.ok(declaration, 'CommittedMediaBuy declaration is generated');
+    assert.match(declaration, /\n  name\?: string;/);
+  }
+
+  const { CommittedMediaBuySchema } = require('../dist/lib/types/schemas.generated.js');
+  assert.equal(CommittedMediaBuySchema.shape.name.safeParse('Campaign display name').success, true);
+  assert.equal(CommittedMediaBuySchema.shape.name.safeParse('   ').success, false);
+  assert.equal(CommittedMediaBuySchema.shape.name.safeParse('x'.repeat(256)).success, false);
+});
 
 function runGeneratorHarness(source) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-required-fields-'));
@@ -725,19 +741,28 @@ test('every unconditional canonical core required property is required in genera
     if (fields.size > 0) requiredByType.set(typeName, fields);
   }
 
-  const source = ts.createSourceFile(
-    CORE_TYPES_PATH,
-    fs.readFileSync(CORE_TYPES_PATH, 'utf8'),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS
-  );
   const declarations = new Map();
   const declarationsByCaseFoldedName = new Map();
-  for (const statement of source.statements) {
-    if (ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)) {
-      declarations.set(statement.name.text, statement);
-      declarationsByCaseFoldedName.set(statement.name.text.toLowerCase(), statement);
+  // Async response variants live under core/ in the canonical bundle, but
+  // tool generation owns declarations that are already part of a tool's
+  // response union. Inspect both generated surfaces so required-field drift
+  // is checked at the declaration's actual ownership boundary.
+  for (const generatedTypesPath of [CORE_TYPES_PATH, TOOL_TYPES_PATH]) {
+    const source = ts.createSourceFile(
+      generatedTypesPath,
+      fs.readFileSync(generatedTypesPath, 'utf8'),
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS
+    );
+    for (const statement of source.statements) {
+      if (ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)) {
+        if (!declarations.has(statement.name.text)) declarations.set(statement.name.text, statement);
+        const caseFoldedName = statement.name.text.toLowerCase();
+        if (!declarationsByCaseFoldedName.has(caseFoldedName)) {
+          declarationsByCaseFoldedName.set(caseFoldedName, statement);
+        }
+      }
     }
   }
 
