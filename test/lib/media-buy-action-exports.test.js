@@ -65,6 +65,8 @@ const control: MediaBuyTask = 'control_media_buy';
 // @ts-expect-error arbitrary AdCP tasks cannot route a MediaBuy action
 const invalid: MediaBuyTask = 'get_products';
 const bound: ChangeTermConstraints = { kind: 'budget', max_delta_percent: 10 };
+// @ts-expect-error every canonical constraint requires at least one portable bound
+const unbounded: ChangeTermConstraints = { kind: 'budget' };
 // @ts-expect-error closed constraint vocabulary
 const opaque: ChangeTermConstraints = { kind: 'script' };
 const promised: ProposalChangeTerm = { term_id: 'right_budget', action: 'increase_budget', service_mode: 'self_serve', constraints: bound };

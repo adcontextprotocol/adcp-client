@@ -14,16 +14,44 @@ const TOOL_TYPES_PATH = path.join(REPO_ROOT, 'src/lib/types/tools.generated.ts')
 test('CommittedMediaBuy keeps rc.6 name metadata in aggregate TS and Zod output', () => {
   const coreTypes = fs.readFileSync(CORE_TYPES_PATH, 'utf8');
   const toolsTypes = fs.readFileSync(TOOL_TYPES_PATH, 'utf8');
-  for (const generated of [coreTypes, toolsTypes]) {
-    const declaration = generated.match(/export interface CommittedMediaBuy \{[\s\S]*?\n\}/)?.[0];
-    assert.ok(declaration, 'CommittedMediaBuy declaration is generated');
-    assert.match(declaration, /\n  name\?: string;/);
-  }
+  const declaration = coreTypes.match(/export interface CommittedMediaBuy \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(declaration, 'CommittedMediaBuy declaration is generated');
+  assert.match(declaration, /@minLength 1[\s\S]*media_buy_id: string;/);
+  assert.match(declaration, /@minLength 1[\s\S]*@maxLength 255[\s\S]*@pattern \\S[\s\S]*name\?: string;/);
+  assert.match(declaration, /@minimum 1[\s\S]*revision: number;/);
+  assert.match(declaration, /@format date-time[\s\S]*confirmed_at\?: string \| null;/);
+  assert.match(toolsTypes, /import type \{[\s\S]*?\bCommittedMediaBuy,/);
+  assert.match(toolsTypes, /export type \{[^\n]*\bCommittedMediaBuy,/);
 
-  const { CommittedMediaBuySchema } = require('../dist/lib/types/schemas.generated.js');
+  const changeTerms = coreTypes.match(/export type BudgetChangeConstraints = \{[\s\S]*?\n\);/)?.[0];
+  assert.ok(changeTerms, 'authoritative change-term constraints are generated');
+  assert.match(changeTerms, /kind: 'budget';/);
+  assert.match(changeTerms, /max_delta_percent\?: number;/);
+  assert.match(changeTerms, /\| \{ max_delta_amount: Money \}/);
+  assert.match(changeTerms, /\| \{ max_delta_percent: number \}/);
+
+  const {
+    CommittedMediaBuySchema,
+    MediaBuyChangeTermConstraintsSchema,
+  } = require('../dist/lib/types/schemas.generated.js');
+  assert.equal(CommittedMediaBuySchema.shape.media_buy_id.safeParse('').success, false);
   assert.equal(CommittedMediaBuySchema.shape.name.safeParse('Campaign display name').success, true);
   assert.equal(CommittedMediaBuySchema.shape.name.safeParse('   ').success, false);
   assert.equal(CommittedMediaBuySchema.shape.name.safeParse('x'.repeat(256)).success, false);
+  assert.equal(CommittedMediaBuySchema.shape.revision.safeParse(0).success, false);
+  assert.equal(CommittedMediaBuySchema.shape.confirmed_at.safeParse('not-a-date').success, false);
+
+  for (const kind of ['budget', 'flight', 'package_count', 'effective_timing']) {
+    assert.equal(MediaBuyChangeTermConstraintsSchema.safeParse({ kind }).success, false, `${kind} requires a bound`);
+  }
+  for (const value of [
+    { kind: 'budget', max_delta_percent: 0 },
+    { kind: 'flight', earliest_result: '2026-09-24T00:00:00Z' },
+    { kind: 'package_count', max_additions: 0 },
+    { kind: 'effective_timing', earliest_effective_at: '2026-09-24T00:00:00Z' },
+  ]) {
+    assert.equal(MediaBuyChangeTermConstraintsSchema.safeParse(value).success, true);
+  }
 });
 
 function runGeneratorHarness(source) {
@@ -46,6 +74,62 @@ function runGeneratorHarness(source) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
+
+test('canonical primitive reconciliation follows titled nested schemas into their generated blocks', () => {
+  const result = runGeneratorHarness(`
+import { writeFileSync } from 'node:fs';
+import { postProcessCanonicalPrimitiveConstraints } from __ZOD_GENERATOR__;
+
+const input = \`export const CommitmentSubmittedSchema = z.object({
+    status: z.literal("submitted"),
+    task_id: z.string(),
+    message: z.string().optional()
+}).passthrough();
+
+export const ProductPurchaseImpressionsSchema = z.number();
+
+export const CommittedMediaBuySchema = z.object({
+    status: z.literal("completed"),
+    media_buy_id: z.string(),
+    name: z.string().optional(),
+    revision: z.number(),
+    confirmed_at: z.string().optional().nullable()
+}).passthrough();
+
+export const MediaBuyCommitmentResponseSchema = z.union([
+    CommittedMediaBuySchema,
+    CommitmentSubmittedSchema
+]);
+
+export const GetProductsRequestSchema = z.object({
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
+}).passthrough();
+
+export const GetProductsResponseSchema = z.object({
+    timestamp: z.string().optional(),
+    governance_context: z.string().optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
+}).passthrough();\`;
+const once = postProcessCanonicalPrimitiveConstraints(input);
+const twice = postProcessCanonicalPrimitiveConstraints(once);
+writeFileSync(__OUTPUT__, JSON.stringify({ once, twice }));
+`);
+
+  assert.equal(result.twice, result.once, 'canonical constraint reconciliation is idempotent');
+  assert.match(result.once, /task_id: z\.string\(\)\.min\(1\)/);
+  assert.match(result.once, /message: z\.string\(\)\.max\(2000\)\.optional\(\)/);
+  assert.match(result.once, /ProductPurchaseImpressionsSchema = z\.number\(\)\.gte\(0\)/);
+  assert.match(result.once, /media_buy_id: z\.string\(\)\.min\(1\)/);
+  assert.match(result.once, /name: z\.string\(\)\.min\(1\)\.max\(255\)\.regex\(new RegExp\("\\\\S"\)\)\.optional\(\)/);
+  assert.match(result.once, /revision: z\.number\(\)\.int\(\)\.gte\(1\)/);
+  assert.match(result.once, /confirmed_at: z\.string\(\)\.refine\(adcpJsonSchemaDateTime/);
+  assert.match(result.once, /adcp_version: z\.string\(\)\.regex\(new RegExp/);
+  assert.match(result.once, /adcp_major_version: z\.number\(\)\.int\(\)\.gte\(1\)\.lte\(99\)/);
+  assert.match(result.once, /timestamp: z\.string\(\)\.refine\(adcpJsonSchemaDateTime/);
+  assert.match(result.once, /governance_context: z\.string\(\)\.min\(1\)\.max\(4096\)\.regex\(new RegExp/);
+});
 
 test('issue #2674 array fields match their relaxed public Zod types', () => {
   const result = runGeneratorHarness(`

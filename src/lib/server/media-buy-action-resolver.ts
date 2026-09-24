@@ -254,15 +254,18 @@ export const mediaBuyActionResolver = {
         constraint?.kind === 'effective_timing' &&
         (typeof constraint.earliest_effective_at === 'string' || typeof constraint.latest_effective_at === 'string');
       if (!hasTimingGate) delete evaluatedTerm.constraints;
-      else
+      else if (typeof constraint.earliest_effective_at === 'string')
         evaluatedTerm.constraints = {
           kind: 'effective_timing',
-          ...(typeof constraint.earliest_effective_at === 'string' && {
-            earliest_effective_at: constraint.earliest_effective_at,
-          }),
+          earliest_effective_at: constraint.earliest_effective_at,
           ...(typeof constraint.latest_effective_at === 'string' && {
             latest_effective_at: constraint.latest_effective_at,
           }),
+        };
+      else if (typeof constraint.latest_effective_at === 'string')
+        evaluatedTerm.constraints = {
+          kind: 'effective_timing',
+          latest_effective_at: constraint.latest_effective_at,
         };
       const packageLifecycleRequest =
         ['pause', 'resume'].includes(term.action) && entry.applicable_package_ids

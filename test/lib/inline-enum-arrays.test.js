@@ -21,6 +21,14 @@ describe('Inline-union value arrays (inline-enums.generated)', () => {
     assert.ok(inlineEnums.AudioAssetRequirements_FormatsValues, 'AudioAssetRequirements_FormatsValues exported');
   });
 
+  it('preserves change-term kind exports when their validators are intersections', async () => {
+    if (!inlineEnums) inlineEnums = await import('../../dist/lib/types/inline-enums.generated.js');
+    assert.deepEqual([...inlineEnums.BudgetChangeConstraints_KindValues], ['budget']);
+    assert.deepEqual([...inlineEnums.FlightChangeConstraints_KindValues], ['flight']);
+    assert.deepEqual([...inlineEnums.PackageCountConstraints_KindValues], ['package_count']);
+    assert.deepEqual([...inlineEnums.EffectiveTimingConstraints_KindValues], ['effective_timing']);
+  });
+
   it('user-flagged values match the AdCP spec (image-asset-requirements.json formats enum)', async () => {
     if (!inlineEnums) inlineEnums = await import('../../dist/lib/types/inline-enums.generated.js');
     // Pinned to the spec's `properties.formats.items.enum` in

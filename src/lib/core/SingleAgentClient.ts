@@ -265,6 +265,7 @@ import {
   projectSyncCreativesForDelivery,
   resolveCreativeFormatWireMode,
   stripLegacyCreativeIdentity,
+  type CanonicalCreateMediaBuyInput,
   type CanonicalCreateMediaBuyRequest,
   type CanonicalCreativeResponse,
   type CanonicalGetProductsRequest,
@@ -417,6 +418,12 @@ function hasMediaBuyCreativeFormatData(request: unknown): boolean {
       })
     );
   });
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 function legacyCreativeIdentityPath(value: unknown, path = '$', seen = new WeakSet<object>()): string | undefined {
@@ -6278,7 +6285,7 @@ export class SingleAgentClient {
    * @param options - Task execution options
    */
   async createMediaBuy(
-    params: MutatingRequestInput<CanonicalCreateMediaBuyRequest>,
+    params: MutatingRequestInput<CanonicalCreateMediaBuyInput>,
     inputHandler?: InputHandler,
     options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<CreateMediaBuyResponse>>> {
@@ -6295,7 +6302,7 @@ export class SingleAgentClient {
   }
 
   private async createMediaBuyWithinDeadline(
-    params: MutatingRequestInput<CanonicalCreateMediaBuyRequest>,
+    params: MutatingRequestInput<CanonicalCreateMediaBuyInput>,
     inputHandler: InputHandler | undefined,
     options: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<CreateMediaBuyResponse>>> {
@@ -6309,12 +6316,6 @@ export class SingleAgentClient {
       params.account
     );
     const hasCreativeFormatData = hasMediaBuyCreativeFormatData(params);
-    if (hasCreativeFormatData) {
-      this.validateBeforeCreativeCapabilityProbe('create_media_buy', params, taskOptions);
-    }
-    const wireMode = hasCreativeFormatData
-      ? this.resolveCreativeFormatWireMode('create_media_buy', await this.getCapabilities(taskOptions))
-      : 'canonical';
     // Merge library defaults with consumer-provided reporting_webhook config
     // Library provides url/auth/frequency defaults, consumer can override any field
     // Generates a media_buy_delivery webhook URL using operation_id pattern: delivery_report_{agent_id}_{YYYY-MM}
@@ -6332,64 +6333,96 @@ export class SingleAgentClient {
       );
 
       if (deliveryWebhookUrl) {
-        const consumerAuth = params.reporting_webhook?.authentication;
-        const defaultAuth = this.config.webhookSecret
-          ? { schemes: ['HMAC-SHA256'] as const, credentials: this.config.webhookSecret }
-          : undefined;
+        const reportingWebhook: unknown = params.reporting_webhook;
+        const canCompleteReportingWebhook = reportingWebhook === undefined || isPlainRecord(reportingWebhook);
 
-        // `reporting-webhook.json` requires `authentication` throughout AdCP 3.x
-        // (the requirement lifts in 4.0 when RFC 9421 becomes the only path), so
-        // unlike `push_notification_config` the block cannot simply be omitted.
-        // With no configured secret and no caller-supplied credential there is
-        // nothing real to put there — registering a placeholder would tell the
-        // seller its delivery reports are authenticated by a constant that ships
-        // in this file. Skip the auto-injection instead and say why.
-        if (!consumerAuth && !defaultAuth) {
-          // A caller who asked for a `reporting_webhook` explicitly gets an
-          // error, not a silent edit: the request cannot be made spec-valid
-          // without a credential, and quietly dropping a field the caller wrote
-          // would make the SDK a translator of intent rather than a witness to
-          // it. Only the library's OWN auto-injection is skipped silently.
-          if (params.reporting_webhook) {
-            throw new Error(
-              'reporting_webhook requires an `authentication` block for all of AdCP 3.x, and no credential ' +
-                'is available: set `webhookSecret` on the client, or pass `reporting_webhook.authentication` ' +
-                'explicitly. Remove `reporting_webhook` from the request if you do not need automated ' +
-                'delivery reports — the media buy itself does not require it.'
-            );
+        // Preserve malformed JavaScript input for strict validation instead of
+        // laundering it into a valid registration through object spread.
+        if (canCompleteReportingWebhook) {
+          const consumerReportingWebhook = reportingWebhook as
+            | CanonicalCreateMediaBuyInput['reporting_webhook']
+            | undefined;
+          const consumerAuth = consumerReportingWebhook?.authentication;
+          const consumerUrl = consumerReportingWebhook?.url;
+          const consumerFrequency = consumerReportingWebhook?.reporting_frequency;
+          const defaultAuth = this.config.webhookSecret
+            ? { schemes: ['HMAC-SHA256'] as const, credentials: this.config.webhookSecret }
+            : undefined;
+          // The client secret is bound to the client-generated callback URL.
+          // A caller-controlled endpoint must bring its own complete auth block
+          // so the SDK never pairs a shared client credential with another host.
+          const resolvedAuth =
+            consumerAuth !== undefined ? consumerAuth : consumerUrl === undefined ? defaultAuth : undefined;
+
+          // `reporting-webhook.json` requires `authentication` throughout AdCP 3.x
+          // (the requirement lifts in 4.0 when RFC 9421 becomes the only path), so
+          // unlike `push_notification_config` the block cannot simply be omitted.
+          // With no configured secret and no caller-supplied credential there is
+          // nothing real to put there — registering a placeholder would tell the
+          // seller its delivery reports are authenticated by a constant that ships
+          // in this file. Skip the auto-injection instead and say why.
+          if (resolvedAuth === undefined || resolvedAuth === null) {
+            // A caller who asked for a `reporting_webhook` explicitly gets an
+            // error, not a silent edit: the request cannot be made spec-valid
+            // without a credential, and quietly dropping a field the caller wrote
+            // would make the SDK a translator of intent rather than a witness to
+            // it. Only the library's OWN auto-injection is skipped silently.
+            if (consumerReportingWebhook) {
+              throw new Error(
+                'reporting_webhook requires an `authentication` block for all of AdCP 3.x, and no credential ' +
+                  'is available: set `webhookSecret` on the client, or pass `reporting_webhook.authentication` ' +
+                  'explicitly. Remove `reporting_webhook` from the request if you do not need automated ' +
+                  'delivery reports — the media buy itself does not require it.'
+              );
+            }
+            warnReportingWebhookNeedsSecret();
+          } else {
+            // Library defaults
+            const libraryDefaults = {
+              url: deliveryWebhookUrl,
+              reporting_frequency: (this.config.reportingWebhookFrequency || 'daily') as 'hourly' | 'daily' | 'monthly',
+            };
+
+            // Merge the envelope, but treat `authentication` as ATOMIC. A
+            // field-level merge would cross `schemes` from the caller with
+            // `credentials` from `webhookSecret` — a caller passing
+            // `schemes: ['Bearer']` with no credential would have the HMAC shared
+            // secret registered as a Bearer token, which the seller then sends in
+            // cleartext on every delivery. `schemes` determines how `credentials`
+            // travels, so the two must come from the same source.
+            params = {
+              ...params,
+              reporting_webhook: {
+                ...libraryDefaults,
+                ...consumerReportingWebhook,
+                url: consumerUrl !== undefined ? consumerUrl : deliveryWebhookUrl,
+                reporting_frequency:
+                  consumerFrequency !== undefined ? consumerFrequency : libraryDefaults.reporting_frequency,
+                authentication: resolvedAuth,
+              },
+            } as CanonicalCreateMediaBuyInput;
           }
-          warnReportingWebhookNeedsSecret();
-        } else {
-          // Library defaults
-          const libraryDefaults = {
-            url: deliveryWebhookUrl,
-            reporting_frequency: (this.config.reportingWebhookFrequency || 'daily') as 'hourly' | 'daily' | 'monthly',
-          };
-
-          // Merge the envelope, but treat `authentication` as ATOMIC. A
-          // field-level merge would cross `schemes` from the caller with
-          // `credentials` from `webhookSecret` — a caller passing
-          // `schemes: ['Bearer']` with no credential would have the HMAC shared
-          // secret registered as a Bearer token, which the seller then sends in
-          // cleartext on every delivery. `schemes` determines how `credentials`
-          // travels, so the two must come from the same source.
-          params = {
-            ...params,
-            reporting_webhook: {
-              ...libraryDefaults,
-              ...params.reporting_webhook,
-              authentication: consumerAuth ?? defaultAuth,
-            },
-          } as CanonicalCreateMediaBuyRequest;
         }
       }
     }
+
+    // Validate the complete wire request after library-owned webhook defaults
+    // have been resolved, but before capability discovery can make an outbound
+    // call. Callers may provide reporting preferences while the client supplies
+    // its own callback URL and authentication.
+    if (hasCreativeFormatData) {
+      this.validateBeforeCreativeCapabilityProbe('create_media_buy', params, taskOptions);
+    }
+    const wireMode = hasCreativeFormatData
+      ? this.resolveCreativeFormatWireMode('create_media_buy', await this.getCapabilities(taskOptions))
+      : 'canonical';
+    const wireParams = params as MutatingRequestInput<CanonicalCreateMediaBuyRequest>;
 
     const result = await this.executeAndHandle<CreateMediaBuyResponse>(
       'create_media_buy',
       'onCreateMediaBuyStatusChange',
       projectMediaBuyCreativesForDelivery(
-        params,
+        wireParams,
         wireMode,
         'create_media_buy',
         effectiveLegacyFormatConverter,
@@ -6399,10 +6432,10 @@ export class SingleAgentClient {
       taskOptions,
       undefined,
       effectiveLegacyFormatConverter,
-      params,
+      wireParams,
       projectionCatalogs
     );
-    if (result.data !== undefined) this.rememberCanonicalPackageRoutes(result.data, params);
+    if (result.data !== undefined) this.rememberCanonicalPackageRoutes(result.data, wireParams);
     return result;
   }
 

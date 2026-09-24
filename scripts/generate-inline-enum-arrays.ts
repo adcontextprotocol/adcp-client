@@ -54,6 +54,34 @@ interface ExtractedInlineEnum {
 // becomes an unrelated generated-API break.
 const COMPOUND_SCHEMA_INLINE_ENUMS: ExtractedInlineEnum[] = [
   {
+    name: 'BudgetChangeConstraints_KindValues',
+    parentSchema: 'BudgetChangeConstraints',
+    property: 'kind',
+    isArray: false,
+    values: ['budget'],
+  },
+  {
+    name: 'FlightChangeConstraints_KindValues',
+    parentSchema: 'FlightChangeConstraints',
+    property: 'kind',
+    isArray: false,
+    values: ['flight'],
+  },
+  {
+    name: 'PackageCountConstraints_KindValues',
+    parentSchema: 'PackageCountConstraints',
+    property: 'kind',
+    isArray: false,
+    values: ['package_count'],
+  },
+  {
+    name: 'EffectiveTimingConstraints_KindValues',
+    parentSchema: 'EffectiveTimingConstraints',
+    property: 'kind',
+    isArray: false,
+    values: ['effective_timing'],
+  },
+  {
     name: 'CanonicalProposal_ProposalKindValues',
     parentSchema: 'CanonicalProposal',
     property: 'proposal_kind',
