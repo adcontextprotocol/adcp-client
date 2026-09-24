@@ -21,6 +21,7 @@ import {
   projectReportingObligationHealthV1,
 } from './health';
 import { compareReportingInstants } from './instant';
+import { reportingPeriodSchedule } from './schedule';
 import { ReportingLedgerSnapshotUnavailableError } from './types';
 import type {
   ReportingConsumerMismatchEscalationV1,
@@ -1111,11 +1112,12 @@ function nextActivePeriodStart(
   const installed = Date.parse(configuration.installedAt);
   const ownershipEnd = reportingLedgerConfigurationOwnershipEnd(configuration, configurations);
   if (installed > asOf || ownershipEnd <= asOf) return [];
-  const anchor = Date.parse(configuration.schedule.anchor);
-  const duration = configuration.schedule.periodMilliseconds;
-  const ordinal = Math.max(0, Math.ceil((installed - anchor) / duration), Math.floor((asOf - anchor) / duration) + 1);
-  const start = anchor + ordinal * duration;
-  return start < ownershipEnd ? [new Date(start).toISOString()] : [];
+  const schedule = reportingPeriodSchedule(configuration);
+  const ordinal = Math.max(0, schedule.ceil(installed), schedule.floor(asOf) + 1);
+  const start = schedule.boundary(ordinal);
+  if (start >= ownershipEnd) return [];
+  schedule.period(ordinal);
+  return [new Date(start).toISOString()];
 }
 
 function nextObligationDue(
@@ -1124,8 +1126,7 @@ function nextObligationDue(
   query: ReportingLedgerSnapshotQueryV1,
   ledgerAsOf: string
 ): string[] {
-  const anchor = Date.parse(configuration.schedule.anchor);
-  const duration = configuration.schedule.periodMilliseconds;
+  const schedule = reportingPeriodSchedule(configuration);
   const installed = Date.parse(configuration.installedAt);
   const ownershipEnd = reportingLedgerConfigurationOwnershipEnd(configuration, configurations);
   const period = reportingLedgerEffectivePeriod(query, ledgerAsOf);
@@ -1135,20 +1136,22 @@ function nextObligationDue(
   // official/finalization cutoff may control source readiness, but rc.4
   // explicitly forbids using it as obligation expected_at.
   const expectedOffset = configuration.schedule.deliverySlaMilliseconds;
+  const firstOwned = Math.max(0, schedule.ceil(installed));
+  const lastOwned = schedule.ceil(ownershipEnd) - 1;
+  if (lastOwned < firstOwned) return [];
+  const end = Number.isFinite(lastOwned) ? schedule.boundary(lastOwned + 1) : Number.POSITIVE_INFINITY;
+  const start = schedule.boundary(firstOwned);
+  if (periodStart >= end || periodEnd <= start) return [];
   const first = Math.max(
-    0,
-    Math.ceil((installed - anchor) / duration),
-    Math.floor((periodStart - anchor) / duration),
-    Math.floor((Date.parse(ledgerAsOf) - anchor - expectedOffset) / duration)
+    firstOwned,
+    schedule.floor(Math.max(periodStart, start)),
+    schedule.floor(Math.max(start, Math.min(Date.parse(ledgerAsOf) - expectedOffset, end)))
   );
-  const last = Math.min(
-    Math.ceil((ownershipEnd - anchor) / duration) - 1,
-    Math.ceil((periodEnd - anchor) / duration) - 1
-  );
+  const last = Math.min(lastOwned, schedule.ceil(Math.min(periodEnd, end)) - 1);
   if (first > last) return [];
-  const periodStartAt = anchor + first * duration;
+  const periodStartAt = schedule.boundary(first);
   if (periodStartAt >= ownershipEnd) return [];
-  return [new Date(periodStartAt + duration + expectedOffset).toISOString()];
+  return [new Date(schedule.period(first).end + expectedOffset).toISOString()];
 }
 
 function reportingLedgerConfigurationOwnershipEnd(

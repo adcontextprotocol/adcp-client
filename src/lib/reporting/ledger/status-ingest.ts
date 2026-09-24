@@ -13,6 +13,7 @@ import {
   reportingLedgerSuccessor,
 } from './coverage';
 import { acquireAccountReadSlot, ReportingReadCapacityError } from './handler';
+import { isReportingCalendarDay, reportingPeriodSchedule } from './schedule';
 import {
   canonicalReportingInstant,
   compareReportingInstantToOffset,
@@ -33,6 +34,7 @@ import {
   type ReportingConsumerStatusBatchResultV1,
   type ReportingLedgerConfigurationV1,
   type ReportingLedgerConsumerStatementV1,
+  type ReportingLedgerObligationV1,
 } from './types';
 
 const statusId = z
@@ -337,11 +339,25 @@ async function validateStatus(
       value.delivery_config_version === status.delivery_config_version &&
       value.report_definition_id === status.report_definition_id
   );
-  if (
-    !configuration ||
-    configuration.account.account_id !== accountId ||
-    !isExactPeriod(configuration, configurations, status.period)
-  ) {
+  if (!configuration || configuration.account.account_id !== accountId) {
+    throw new ReportingStatusValidationError('ineligible period');
+  }
+  let obligation: ReportingLedgerObligationV1 | null = null;
+  if (status.reporting_obligation_id) {
+    obligation = await store.getObligation(status.reporting_obligation_id, accountId);
+    if (
+      !obligation ||
+      obligation.configurationId !== configuration.configurationId ||
+      obligation.account.account_id !== accountId ||
+      obligation.delivery_config_id !== status.delivery_config_id ||
+      obligation.delivery_config_version !== status.delivery_config_version ||
+      obligation.report_definition_id !== status.report_definition_id ||
+      compareReportingInstants(obligation.period.start, status.period.start) !== 0 ||
+      compareReportingInstants(obligation.period.end, status.period.end) !== 0 ||
+      obligation.period.sourceTimezone !== status.period.source_timezone
+    )
+      throw new ReportingStatusValidationError('obligation mismatch');
+  } else if (!isExactPeriod(configuration, configurations, status.period)) {
     throw new ReportingStatusValidationError('ineligible period');
   }
   // Consumer absence is legal only at or after the protocol expected_at,
@@ -352,20 +368,6 @@ async function validateStatus(
     compareReportingInstantToOffset(status.status_as_of, status.period.end, expectedOffset) < 0
   ) {
     throw new ReportingStatusValidationError('missing status precedes expected_at');
-  }
-  if (status.reporting_obligation_id) {
-    const obligation = await store.getObligation(status.reporting_obligation_id, accountId);
-    if (
-      !obligation ||
-      obligation.account.account_id !== accountId ||
-      obligation.delivery_config_id !== status.delivery_config_id ||
-      obligation.delivery_config_version !== status.delivery_config_version ||
-      obligation.report_definition_id !== status.report_definition_id ||
-      compareReportingInstants(obligation.period.start, status.period.start) !== 0 ||
-      compareReportingInstants(obligation.period.end, status.period.end) !== 0 ||
-      obligation.period.sourceTimezone !== status.period.source_timezone
-    )
-      throw new ReportingStatusValidationError('obligation mismatch');
   }
   if (status.reporting_revision_id) {
     const revision = await store.getRevisionMetadata(status.reporting_revision_id, accountId);
@@ -463,21 +465,44 @@ function isExactPeriod(
   period: ReportingConsumerStatusV1['period']
 ): boolean {
   if (period.source_timezone !== configuration.sourceTimezone) return false;
-  const duration = configuration.schedule.periodMilliseconds;
-  const scheduleAnchor = new Date(Date.parse(configuration.schedule.anchor)).toISOString();
-  const ordinal = reportingPeriodOrdinal(period.start, scheduleAnchor, duration);
-  if (ordinal === null || !reportingInstantHasDuration(period.start, period.end, duration)) return false;
-  const effectiveFrom =
-    compareReportingInstants(scheduleAnchor, configuration.installedAt) >= 0
-      ? scheduleAnchor
-      : configuration.installedAt;
-  const firstOwnedOrdinal = reportingDurationCeilOrdinal(scheduleAnchor, effectiveFrom, duration);
   const successor = reportingLedgerSuccessor(configuration, configurations);
   const generationEnds = [successor?.installedAt, configuration.supersededAt].filter((value): value is string =>
     Boolean(value)
   );
   const generationEnd = generationEnds.sort(compareReportingInstants)[0];
-  return ordinal >= firstOwnedOrdinal && (!generationEnd || compareReportingInstants(period.start, generationEnd) < 0);
+  if (generationEnd && compareReportingInstants(period.start, generationEnd) >= 0) return false;
+  const duration = configuration.schedule.periodMilliseconds;
+  const scheduleAnchor = new Date(Date.parse(configuration.schedule.anchor)).toISOString();
+  let ordinal: bigint;
+  let firstOwnedOrdinal: bigint;
+  const effectiveFrom =
+    compareReportingInstants(scheduleAnchor, configuration.installedAt) >= 0
+      ? scheduleAnchor
+      : configuration.installedAt;
+  if (compareReportingInstants(period.start, effectiveFrom) < 0) return false;
+  if (isReportingCalendarDay(configuration.schedule, configuration.sourceTimezone)) {
+    const schedule = reportingPeriodSchedule(configuration);
+    const selected = schedule.floor(Date.parse(period.start));
+    const resolved = schedule.period(selected);
+    if (
+      compareReportingInstants(period.start, new Date(resolved.start).toISOString()) !== 0 ||
+      compareReportingInstants(period.end, new Date(resolved.end).toISOString()) !== 0
+    )
+      return false;
+    ordinal = BigInt(selected);
+    const first = schedule.floor(Date.parse(effectiveFrom));
+    // Keep sub-millisecond status and ownership checks exact; Date.parse is
+    // only a candidate lookup, never the equality/eligibility decision.
+    firstOwnedOrdinal = BigInt(
+      first + (compareReportingInstants(effectiveFrom, new Date(schedule.boundary(first)).toISOString()) > 0 ? 1 : 0)
+    );
+  } else {
+    const selected = reportingPeriodOrdinal(period.start, scheduleAnchor, duration);
+    if (selected === null || !reportingInstantHasDuration(period.start, period.end, duration)) return false;
+    ordinal = selected;
+    firstOwnedOrdinal = reportingDurationCeilOrdinal(scheduleAnchor, effectiveFrom, duration);
+  }
+  return ordinal >= firstOwnedOrdinal;
 }
 
 function resolvedAccountId(context: unknown): string {

@@ -141,7 +141,76 @@ await sweepExpiredReportingLedgerState(pool);
 
 Pass `getReportingStatus` and `getMediaBuyDelivery` directly to the matching `createAdcpServer` slots. The delivery helper serves only exact `reporting_revision_id` reads and returns the row payload bound by the ledger revision. Advertise `media_buy.reporting_delivery` in `experimental_features` together with a `media_buy.reporting_delivery` capability whose Reliable Reporting version is `1.0` only after both handlers are wired. Configure account resolution on the server: both handlers require the framework-resolved, caller-scoped account identity and never trust a request-body identity as an authorization boundary. If two callers can name the same upstream account, the resolver must issue distinct internal account IDs for their ledger namespaces. Install immutable delivery-configuration generations through `producer.installConfiguration`, call `planObligations()` after period close, and run `runWorker()` from a durable scheduler. Multiple workers are safe: PostgreSQL claims use `SKIP LOCKED`, expiring leases, and fencing generations.
 
-The planner uses fixed millisecond periods and an explicitly frozen IANA source timezone. Calendar or billing-cycle schedules should be expanded by the seller into immutable period boundaries before installation; the SDK intentionally has no Temporal dependency. At period end, the obligation freezes the constituent denominator and coverage. A zero-row source object commits like any other revision. Absence remains an empty revision association. A deployment with per-tenant workers should pass the resolved `account_id` to both `planObligations()` and `runWorker()`; omitting it intentionally runs a deployment-wide worker.
+The planner supports fixed millisecond schedules and an explicit source-calendar
+day schedule. For the latter, set the existing schedule identity fields to
+`periodDuration: 'P1D'`, `alignment: 'source_timezone'`, and
+`periodTimezone: sourceTimezone`, with an IANA timezone and a source-local
+midnight `anchor`. Keep `periodMilliseconds: 86_400_000` as the nominal day;
+it does not determine the elapsed width on this path. Boundaries are resolved
+independently from local 1970-01-01 and their civil-day ordinal, so New York's
+spring and fall days span 23 and 25 hours. The service fills these identity
+fields from its delivery offering; callers of the producer directly must supply
+them explicitly. `PT24H` continues to mean an elapsed 24 hours.
+
+The new calendar path supports a fixed-time SLA, for example
+`deliverySlaDuration: 'PT4H'` with `deliverySlaMilliseconds: 14_400_000`.
+The deadline is the resolved period end plus that elapsed duration. Source
+window bounds, local-midnight representability and authoritative finalization
+must remain feasible; installation checks the operational 400-day horizon,
+and planning checks each actual period's intrinsic calendar boundaries.
+An elapsed `PT24H` source window cannot stand in for a calendar `P1D` window
+across DST. Other calendar durations, calendar SLAs and billing-cycle expansion
+remain seller responsibilities; this adds no Temporal dependency.
+
+Whole skipped civil dates, such as Apia's 2011-12-30, have no representable
+boundary. Requesting that ordinal refuses instead of aliasing the next date or
+renumbering later ordinals. Valid neighboring boundary lookups keep their
+identities. A floor lookup identifies a representable start; it does not certify
+the next endpoint. Ceil inside the preceding day refuses its missing endpoint,
+and every interval used for planning, coverage, status eligibility or deadline
+projection must have both representable boundaries and a positive, lossless
+source-local day. Ordinary midnight gap/fold point resolution is unchanged;
+the separate lossless-midnight source requirement still applies to periods.
+Source feasibility is an acceptance-time fact. Withdrawing or changing the
+process-local offering later does not suppress an elapsed obligation: the
+planner commits it independently, and an unavailable source proceeds through
+the normal seller-responsible production issue and `action_required` path.
+
+Existing numeric schedules and immutable generation replays are preserved. A
+calendar generation has a distinct semantic fingerprint even when its current
+boundaries equal an elapsed grid. The fingerprint binds the runtime's canonical
+IANA timezone, tzdb version and ICU version; every resolver fails closed if the
+host no longer matches those frozen rules. Use a mixed-replica handoff for a
+runtime/tzdata upgrade: keep an old-runtime replica active, upgrade another
+replica, and install the successor from the new replica so it freezes the new
+rules. The new replica fails closed on planning until every period the
+predecessor owns is frozen. Meanwhile the old replica continues to resolve the
+predecessor and skips the foreign-rule successor. A mid-period cutover belongs
+to the predecessor, so the old replica must plan its straddling period after
+that period closes; an exact-boundary cutover has no straddler. Once that drain
+completes, retire the old replica and let the new one plan the successor. The
+generation persists its old-rules first-owned ordinal and boundary. Planning
+seals a mismatched predecessor only when contiguous durable obligations from
+that boundary reach the handoff, or when the handoff precedes the boundary and
+the generation owns no periods. The new host never recomputes the ownership
+range as proof, and a missing edge or interior ordinal still fails closed. This keeps
+historical reads and the successor usable without letting mixed replicas derive
+different periods. The PostgreSQL store also fences one obligation per
+configuration and civil ordinal, independently of its resolved timestamps.
+The SDK refuses to reinterpret an old fixed-period
+generation whose optional labels would now imply different civil boundaries;
+install an explicit new configuration version before the boundaries diverge.
+The same guard applies if a later timezone database changes a previously fixed
+grid. Every finite legacy floor/ceil lookup, including instants before
+installation or the anchor, must retain its numeric ordinal and enclosing
+period boundaries or require a new generation. Authored obligations are never
+rewritten to migrate a schedule.
+
+At period end, the obligation freezes the constituent denominator and coverage.
+A zero-row source object commits like any other revision. Absence remains an
+empty revision association. A deployment with per-tenant workers should pass
+the resolved `account_id` to both `planObligations()` and `runWorker()`;
+omitting it intentionally runs a deployment-wide worker.
 
 ### Migrating an existing manual lifecycle
 
@@ -903,9 +972,10 @@ recipient identity. Obligations sharing the same account, report definition,
 period, media-buy scope, and canonical content therefore reuse one revision,
 including fan-out across direct-Core and managed-materialization consumers.
 
-For account-local calendar periods, expand each boundary externally into an
-immutable configuration generation. Do not model a local day as a constant
-86,400,000 ms across daylight-saving changes. For example, the New York daily
+For account-local calendar periods outside the stock `P1D` +
+`source_timezone` path, expand each boundary externally into an immutable
+configuration generation. Do not model a local day as a constant 86,400,000 ms
+across daylight-saving changes. For example, the New York daily
 periods `2026-03-08T05:00:00Z` → `2026-03-09T04:00:00Z` and
 `2026-11-01T04:00:00Z` → `2026-11-02T05:00:00Z` use 82,800,000 and 90,000,000
 milliseconds respectively. Give each generated boundary its own delivery

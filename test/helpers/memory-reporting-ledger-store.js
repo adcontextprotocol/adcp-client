@@ -15,8 +15,8 @@ const {
   evaluateReportingLedgerCoverageV1,
   projectReportingObligationHealthV1,
   reportingLedgerScopeClosed,
-} = require('../../dist/lib/reporting/ledger/index.js');
-const { canonicalJsonV1 } = require('../../dist/lib/reporting/source/index.js');
+} = require('@adcp/sdk/reporting/ledger');
+const { canonicalJsonV1 } = require('@adcp/sdk/reporting/source');
 
 function sha(value) {
   return createHash('sha256').update(canonicalJsonV1(value)).digest('hex');
@@ -51,7 +51,7 @@ class MemoryLedgerStore {
   }
   async putObligation(value) {
     const existing = [...this.obligations.values()].find(
-      item => item.configurationId === value.configurationId && item.period.start === value.period.start
+      item => item.configurationId === value.configurationId && item.periodOrdinal === value.periodOrdinal
     );
     if (existing && existing.semanticFingerprint !== value.semanticFingerprint) throw new Error('immutable conflict');
     if (!existing) this.obligations.set(value.reporting_obligation_id, structuredClone(value));
@@ -260,7 +260,7 @@ class MemoryLedgerStore {
   async createSnapshot(query) {
     let obligations = (await this.listObligations(query.account_id)).filter(
       value =>
-        Date.parse(value.period.end) < Date.parse(this.ledgerAsOf ?? new Date().toISOString()) &&
+        Date.parse(value.period.end) <= Date.parse(this.ledgerAsOf ?? new Date().toISOString()) &&
         (!query.delivery_config_ids || query.delivery_config_ids.includes(value.delivery_config_id))
     );
     let revisions = (await Promise.all(obligations.map(value => this.listRevisions(value.reporting_obligation_id))))
@@ -275,6 +275,7 @@ class MemoryLedgerStore {
     const coverageOrdinals = (await this.listObligations(query.account_id)).map(value => ({
       configurationId: value.configurationId,
       periodOrdinal: value.periodOrdinal,
+      period: { start: value.period.start, end: value.period.end },
     }));
     const ledgerCoverage = evaluateReportingLedgerCoverageV1(query, configurations, coverageOrdinals, ledgerAsOf);
     if (query.view !== 'revision' && !ledgerCoverage.complete) {

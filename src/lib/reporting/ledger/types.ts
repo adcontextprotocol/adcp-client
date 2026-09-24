@@ -47,6 +47,17 @@ export interface ReportingLedgerCoverageV1 {
   unknownMediaBuyIds: string[];
 }
 
+/** Runtime timezone rules frozen into a source-calendar configuration generation. */
+export interface ReportingCalendarRulesV1 {
+  canonicalTimezone: string;
+  tzdbVersion: string;
+  icuVersion: string;
+  /** First ordinal owned by this generation, resolved under the frozen rules at installation. */
+  firstOwnedOrdinal?: number;
+  /** Boundary for firstOwnedOrdinal, resolved under the same frozen rules. */
+  firstOwnedBoundary?: string;
+}
+
 export interface ReportingLedgerConfigurationV1 {
   configurationId: string;
   account: ReportingLedgerAccountV1;
@@ -91,8 +102,15 @@ export interface ReportingLedgerConfigurationV1 {
   constituents: ReportingSourceSliceRequestV1['coverage']['constituents'];
   mediaBuyIds: string[];
   sourceTimezone: string;
+  /**
+   * Host rule-set identity used to resolve calendar boundaries. Calendar
+   * generations fail closed on a host with different rules instead of being
+   * silently reinterpreted during a rolling runtime/tzdata upgrade.
+   */
+  calendarRules?: ReportingCalendarRulesV1;
   schedule: {
     anchor: string;
+    /** Fixed width for legacy schedules; nominal 86,400,000 for explicit P1D source-calendar days. */
     periodMilliseconds: number;
     deliverySlaMilliseconds: number;
     recoveryWindowMilliseconds: number;
@@ -502,7 +520,11 @@ export interface ReportingLedgerSnapshotV1 {
   /** Configuration lineage used to prove that every closed-period obligation is present. */
   configurations: ReportingLedgerConfigurationV1[];
   /** Full scoped ordinal set; retained when changes_after returns only changed obligations. */
-  coverageOrdinals: Array<{ configurationId: string; periodOrdinal: number }>;
+  coverageOrdinals: Array<{
+    configurationId: string;
+    periodOrdinal: number;
+    period?: { start: string; end: string };
+  }>;
   obligations: ReportingLedgerObligationV1[];
   revisions: ReportingLedgerRevisionSnapshotV1[];
   adjustments: ReportingLedgerAdjustmentSnapshotV1[];
@@ -972,7 +994,10 @@ export interface ReportingProducerContactV1 {
 
 export interface ReportingProducerV1 {
   installConfiguration(
-    input: Omit<ReportingLedgerConfigurationV1, 'configurationId' | 'installedAt' | 'semanticFingerprint'>
+    input: Omit<
+      ReportingLedgerConfigurationV1,
+      'configurationId' | 'installedAt' | 'semanticFingerprint' | 'calendarRules'
+    >
   ): Promise<ReportingLedgerConfigurationV1>;
   planObligations(
     now?: string,
