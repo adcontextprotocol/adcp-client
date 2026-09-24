@@ -6309,12 +6309,6 @@ export class SingleAgentClient {
       params.account
     );
     const hasCreativeFormatData = hasMediaBuyCreativeFormatData(params);
-    if (hasCreativeFormatData) {
-      this.validateBeforeCreativeCapabilityProbe('create_media_buy', params, taskOptions);
-    }
-    const wireMode = hasCreativeFormatData
-      ? this.resolveCreativeFormatWireMode('create_media_buy', await this.getCapabilities(taskOptions))
-      : 'canonical';
     // Merge library defaults with consumer-provided reporting_webhook config
     // Library provides url/auth/frequency defaults, consumer can override any field
     // Generates a media_buy_delivery webhook URL using operation_id pattern: delivery_report_{agent_id}_{YYYY-MM}
@@ -6384,6 +6378,17 @@ export class SingleAgentClient {
         }
       }
     }
+
+    // Validate the complete wire request after library-owned webhook defaults
+    // have been resolved, but before capability discovery can make an outbound
+    // call. Callers may provide reporting preferences while the client supplies
+    // its own callback URL and authentication.
+    if (hasCreativeFormatData) {
+      this.validateBeforeCreativeCapabilityProbe('create_media_buy', params, taskOptions);
+    }
+    const wireMode = hasCreativeFormatData
+      ? this.resolveCreativeFormatWireMode('create_media_buy', await this.getCapabilities(taskOptions))
+      : 'canonical';
 
     const result = await this.executeAndHandle<CreateMediaBuyResponse>(
       'create_media_buy',

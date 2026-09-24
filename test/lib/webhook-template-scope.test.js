@@ -191,6 +191,56 @@ describe('webhook template scoping', () => {
     });
   });
 
+  it('completes caller reporting preferences before canonical creative preflight validation', async () => {
+    const calls = [];
+    const client = new SingleAgentClient(agent, {
+      webhookUrlTemplate: {
+        template: 'https://buyer.example/webhook/{task_type}/{agent_id}/{operation_id}',
+        tools: ['media_buy_delivery'],
+      },
+      webhookSecret: 'a-real-secret-of-at-least-32-characters',
+      validateFeatures: false,
+      validation: { requests: 'strict', responses: 'off' },
+    });
+    client.getCapabilities = async () => ({ features: { canonicalCreatives: true } });
+    client.executeAndHandle = async (taskName, _handler, params) => {
+      calls.push({ taskName, params });
+      return { success: true, status: 'completed', data: { media_buy_id: 'mb_1' } };
+    };
+
+    await client.createMediaBuy({
+      account: { account_id: 'acc_1' },
+      brand: { domain: 'brand.example' },
+      start_time: 'asap',
+      end_time: '2026-12-31T00:00:00Z',
+      packages: [
+        {
+          product_id: 'prod_1',
+          budget: 1000,
+          pricing_option_id: 'po_1',
+          format_kind: 'image',
+          params: {},
+        },
+      ],
+      reporting_webhook: {
+        reporting_frequency: 'daily',
+        requested_metrics: ['impressions', 'spend'],
+      },
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].taskName, 'create_media_buy');
+    assert.match(
+      calls[0].params.reporting_webhook.url,
+      /^https:\/\/buyer\.example\/webhook\/media_buy_delivery\/agent_1\/delivery_report_agent_1_/
+    );
+    assert.deepEqual(calls[0].params.reporting_webhook.authentication, {
+      schemes: ['HMAC-SHA256'],
+      credentials: 'a-real-secret-of-at-least-32-characters',
+    });
+    assert.deepEqual(calls[0].params.reporting_webhook.requested_metrics, ['impressions', 'spend']);
+  });
+
   it('does not inject reporting_webhook when media_buy_delivery is out of scope', async () => {
     const calls = [];
     ProtocolClient.callTool = async (_agent, taskName, params, options) => {

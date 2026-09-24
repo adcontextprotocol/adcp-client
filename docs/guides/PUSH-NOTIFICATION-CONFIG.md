@@ -105,7 +105,7 @@ Setting `webhookSecret` opts into the legacy shape:
 | Purpose | Task status updates (submitted, complete, failed) | Ongoing campaign delivery metrics |
 | Operations | All async operations | `create_media_buy` only |
 | Frequency | Per task lifecycle event | Hourly / daily / monthly |
-| Set by | Client auto-injects | Caller supplies in task parameters |
+| Set by | Client auto-injects | Client can inject URL/authentication defaults; caller can supply reporting preferences or override the complete registration |
 
 On A2A, this AdCP registration stays in the skill parameters as
 `push_notification_config`. It is distinct from A2A's native
