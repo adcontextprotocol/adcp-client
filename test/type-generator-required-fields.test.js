@@ -99,7 +99,19 @@ export const CommittedMediaBuySchema = z.object({
 export const MediaBuyCommitmentResponseSchema = z.union([
     CommittedMediaBuySchema,
     CommitmentSubmittedSchema
-]);\`;
+]);
+
+export const GetProductsRequestSchema = z.object({
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
+}).passthrough();
+
+export const GetProductsResponseSchema = z.object({
+    timestamp: z.string().optional(),
+    governance_context: z.string().optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
+}).passthrough();\`;
 const once = postProcessCanonicalPrimitiveConstraints(input);
 const twice = postProcessCanonicalPrimitiveConstraints(once);
 writeFileSync(__OUTPUT__, JSON.stringify({ once, twice }));
@@ -113,6 +125,10 @@ writeFileSync(__OUTPUT__, JSON.stringify({ once, twice }));
   assert.match(result.once, /name: z\.string\(\)\.min\(1\)\.max\(255\)\.regex\(new RegExp\("\\\\S"\)\)\.optional\(\)/);
   assert.match(result.once, /revision: z\.number\(\)\.int\(\)\.gte\(1\)/);
   assert.match(result.once, /confirmed_at: z\.string\(\)\.refine\(adcpJsonSchemaDateTime/);
+  assert.match(result.once, /adcp_version: z\.string\(\)\.regex\(new RegExp/);
+  assert.match(result.once, /adcp_major_version: z\.number\(\)\.int\(\)\.gte\(1\)\.lte\(99\)/);
+  assert.match(result.once, /timestamp: z\.string\(\)\.refine\(adcpJsonSchemaDateTime/);
+  assert.match(result.once, /governance_context: z\.string\(\)\.min\(1\)\.max\(4096\)\.regex\(new RegExp/);
 });
 
 test('issue #2674 array fields match their relaxed public Zod types', () => {
