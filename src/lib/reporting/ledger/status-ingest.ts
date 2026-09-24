@@ -34,6 +34,7 @@ import {
   type ReportingConsumerStatusBatchResultV1,
   type ReportingLedgerConfigurationV1,
   type ReportingLedgerConsumerStatementV1,
+  type ReportingLedgerObligationV1,
 } from './types';
 
 const statusId = z
@@ -338,11 +339,25 @@ async function validateStatus(
       value.delivery_config_version === status.delivery_config_version &&
       value.report_definition_id === status.report_definition_id
   );
-  if (
-    !configuration ||
-    configuration.account.account_id !== accountId ||
-    !isExactPeriod(configuration, configurations, status.period)
-  ) {
+  if (!configuration || configuration.account.account_id !== accountId) {
+    throw new ReportingStatusValidationError('ineligible period');
+  }
+  let obligation: ReportingLedgerObligationV1 | null = null;
+  if (status.reporting_obligation_id) {
+    obligation = await store.getObligation(status.reporting_obligation_id, accountId);
+    if (
+      !obligation ||
+      obligation.configurationId !== configuration.configurationId ||
+      obligation.account.account_id !== accountId ||
+      obligation.delivery_config_id !== status.delivery_config_id ||
+      obligation.delivery_config_version !== status.delivery_config_version ||
+      obligation.report_definition_id !== status.report_definition_id ||
+      compareReportingInstants(obligation.period.start, status.period.start) !== 0 ||
+      compareReportingInstants(obligation.period.end, status.period.end) !== 0 ||
+      obligation.period.sourceTimezone !== status.period.source_timezone
+    )
+      throw new ReportingStatusValidationError('obligation mismatch');
+  } else if (!isExactPeriod(configuration, configurations, status.period)) {
     throw new ReportingStatusValidationError('ineligible period');
   }
   // Consumer absence is legal only at or after the protocol expected_at,
@@ -353,20 +368,6 @@ async function validateStatus(
     compareReportingInstantToOffset(status.status_as_of, status.period.end, expectedOffset) < 0
   ) {
     throw new ReportingStatusValidationError('missing status precedes expected_at');
-  }
-  if (status.reporting_obligation_id) {
-    const obligation = await store.getObligation(status.reporting_obligation_id, accountId);
-    if (
-      !obligation ||
-      obligation.account.account_id !== accountId ||
-      obligation.delivery_config_id !== status.delivery_config_id ||
-      obligation.delivery_config_version !== status.delivery_config_version ||
-      obligation.report_definition_id !== status.report_definition_id ||
-      compareReportingInstants(obligation.period.start, status.period.start) !== 0 ||
-      compareReportingInstants(obligation.period.end, status.period.end) !== 0 ||
-      obligation.period.sourceTimezone !== status.period.source_timezone
-    )
-      throw new ReportingStatusValidationError('obligation mismatch');
   }
   if (status.reporting_revision_id) {
     const revision = await store.getRevisionMetadata(status.reporting_revision_id, accountId);

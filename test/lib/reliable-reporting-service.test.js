@@ -2603,7 +2603,7 @@ describe('ReliableReportingService', () => {
     // calendar days through local civil time. A P1D America/New_York
     // generation anchored at 05:00Z keeps computing 05:00Z after the spring
     // transition, where civil time says 04:00Z.
-    const { service } = serviceFixture();
+    const { service } = zonedFixture('America/New_York');
     const input = configuration();
     const { expectedCurrency, expectedSourceTimezone, sourceSettings, ...ledgerInput } = input;
     const install = (schedule, overrides = {}) =>

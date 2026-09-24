@@ -55,6 +55,7 @@ import { ReportingConsumerStatusConflictError } from './types';
 import type { ReportingConsumerMismatchEscalationV1 } from './types';
 import { moreSevereReportingHealthV1, projectManagedDelivery } from './handler';
 import { reportingCanonicalAdjustmentSha256V1 } from './producer';
+import { isFrozenCalendarRulesMismatch, reportingPeriodSchedule } from './schedule';
 import {
   normalizeReportingConsumerStatusIdsV1,
   reportingConsumerStatusChainKeyFromIdentityV1,
@@ -92,6 +93,7 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_obligations (
   obligation_id TEXT PRIMARY KEY,
   configuration_id TEXT NOT NULL REFERENCES adcp_reporting_configurations(configuration_id),
   account_id TEXT NOT NULL,
+  period_ordinal BIGINT NOT NULL,
   period_start TIMESTAMPTZ NOT NULL,
   period_end TIMESTAMPTZ NOT NULL,
   next_attempt_at TIMESTAMPTZ NOT NULL,
@@ -103,10 +105,18 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_obligations (
   lease_owner TEXT,
   lease_generation BIGINT NOT NULL DEFAULT 0,
   lease_expires_at TIMESTAMPTZ,
-  UNIQUE (configuration_id, period_start, period_end),
+  UNIQUE (configuration_id, period_ordinal),
   CHECK (period_start < period_end),
   CHECK (state IN ('pending', 'terminal'))
 );
+
+ALTER TABLE adcp_reporting_obligations ADD COLUMN IF NOT EXISTS period_ordinal BIGINT;
+UPDATE adcp_reporting_obligations
+  SET period_ordinal = (data->>'periodOrdinal')::bigint
+  WHERE period_ordinal IS NULL AND data->>'periodOrdinal' ~ '^-?[0-9]+$';
+ALTER TABLE adcp_reporting_obligations ALTER COLUMN period_ordinal SET NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS adcp_reporting_obligations_configuration_ordinal
+  ON adcp_reporting_obligations (configuration_id, period_ordinal);
 
 CREATE INDEX IF NOT EXISTS adcp_reporting_obligations_due
   ON adcp_reporting_obligations (next_attempt_at, obligation_id)
@@ -579,14 +589,15 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
   async putObligation(obligation: ReportingLedgerObligationV1) {
     return this.putImmutable(
       `INSERT INTO adcp_reporting_obligations
-         (obligation_id, configuration_id, account_id, period_start, period_end,
+         (obligation_id, configuration_id, account_id, period_ordinal, period_start, period_end,
           next_attempt_at, state, semantic_fingerprint, data, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, clock_timestamp())
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, clock_timestamp())
        ON CONFLICT DO NOTHING RETURNING data`,
       [
         obligation.reporting_obligation_id,
         obligation.configurationId,
         obligation.account.account_id,
+        obligation.periodOrdinal,
         obligation.period.start,
         obligation.period.end,
         obligation.nextAttemptAt,
@@ -595,8 +606,8 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         JSON.stringify(obligation),
       ],
       `SELECT data FROM adcp_reporting_obligations
-        WHERE configuration_id = $1 AND period_start = $2 AND period_end = $3`,
-      [obligation.configurationId, obligation.period.start, obligation.period.end],
+        WHERE configuration_id = $1 AND period_ordinal = $2`,
+      [obligation.configurationId, obligation.periodOrdinal],
       obligation,
       value => value.semanticFingerprint,
       accountLock(obligation.account.account_id)
@@ -1744,13 +1755,41 @@ ${managedDueArm}       )
         if (obligations.length > MAX_SNAPSHOT_ITEMS) {
           throw new Error('Reporting ledger snapshot exceeds the item limit');
         }
-        const coverageObligations = changesAfter
-          ? await this.listSnapshotObligations(
-              client,
-              { ...query, changes_after: undefined, health: undefined, finality: undefined },
-              ledgerAsOf
-            )
-          : obligations;
+        const frozenCalendarProofRequired = configurations.some(configuration => {
+          try {
+            reportingPeriodSchedule(configuration);
+            return false;
+          } catch (error) {
+            if (isFrozenCalendarRulesMismatch(error)) return true;
+            throw error;
+          }
+        });
+        const coverageObligations =
+          changesAfter || frozenCalendarProofRequired
+            ? await this.listSnapshotObligations(
+                client,
+                {
+                  ...query,
+                  changes_after: undefined,
+                  health: undefined,
+                  finality: undefined,
+                  ...(frozenCalendarProofRequired
+                    ? {
+                        // The current host cannot derive the predecessor's edge
+                        // ordinals. Fetch its full closed range so coverage can
+                        // prove the handoff exclusively from frozen obligations.
+                        period: {
+                          start: configurations
+                            .map(configuration => configuration.installedAt)
+                            .sort(compareReportingInstants)[0],
+                          end: ledgerAsOf,
+                        },
+                      }
+                    : {}),
+                },
+                ledgerAsOf
+              )
+            : obligations;
         if (coverageObligations.length > MAX_SNAPSHOT_ITEMS) {
           throw new Error('Reporting ledger snapshot exceeds the coverage item limit');
         }
@@ -1760,6 +1799,7 @@ ${managedDueArm}       )
           coverageObligations.map(value => ({
             configurationId: value.configurationId,
             periodOrdinal: value.periodOrdinal,
+            period: { start: value.period.start, end: value.period.end },
           })),
           ledgerAsOf
         );
@@ -1981,6 +2021,7 @@ ${managedDueArm}       )
           coverageOrdinals: coverageObligations.map(value => ({
             configurationId: value.configurationId,
             periodOrdinal: value.periodOrdinal,
+            period: { start: value.period.start, end: value.period.end },
           })),
           obligations,
           revisions,

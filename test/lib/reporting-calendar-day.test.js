@@ -13,6 +13,7 @@ const {
   redactedReportingSourceRequestV1,
 } = require('@adcp/sdk/reporting/source');
 const { TOOL_RESPONSE_SCHEMAS, getCanonicalToolValidator } = require('@adcp/sdk/schemas');
+const { ADCP_VERSION } = require('../../dist/lib/version.js');
 const { MemoryLedgerStore } = require('../helpers/memory-reporting-ledger-store.js');
 
 // Independent civil-date expectations, including the six literal instants in
@@ -224,7 +225,7 @@ function serviceInput(input) {
 }
 
 function validateStatus(response) {
-  const validate = getCanonicalToolValidator('get_reporting_status', 'sync', { adcpVersion: '3.2.0-rc.4' });
+  const validate = getCanonicalToolValidator('get_reporting_status', 'sync', { adcpVersion: ADCP_VERSION });
   assert.equal(typeof validate, 'function');
   assert.equal(TOOL_RESPONSE_SCHEMAS.get_reporting_status.safeParse(response).success, true);
   assert.equal(validate(response), true, JSON.stringify(validate.errors));
@@ -459,19 +460,26 @@ test('calendar generation ownership uses civil boundaries and trusted accounts',
   assert.ok(result.results[0].errors[0].field.includes('period'));
 });
 
-test('keeps numeric schedules and unchanged UTC generation/obligation identities', async t => {
+test('binds calendar generations to timezone rules while preserving numeric obligation identities', async t => {
   const { createHash } = require('node:crypto');
   const { canonicalJsonV1 } = require('@adcp/sdk/reporting/source');
   const calendar = { zone: 'UTC', boundaries: ['2026-03-08T00:00:00.000Z'] };
   t.mock.timers.enable({ apis: ['Date'], now: new Date(calendar.boundaries[0]) });
   const explicit = fixture(calendar);
   const installed = await explicit.producer.installConfiguration(explicit.input);
-  // The existing generation fingerprint contract is unchanged for equal
-  // boundaries. No version marker may perturb a previously supported UTC day.
-  assert.equal(
+  const legacyFingerprint = `sha256:${createHash('sha256').update(canonicalJsonV1(explicit.input)).digest('hex')}`;
+  assert.notEqual(
     installed.semanticFingerprint,
-    `sha256:${createHash('sha256').update(canonicalJsonV1(explicit.input)).digest('hex')}`
+    legacyFingerprint,
+    'calendar identity binds the rule set even when UTC boundaries equal elapsed boundaries'
   );
+  assert.deepEqual(installed.calendarRules, {
+    canonicalTimezone: 'UTC',
+    tzdbVersion: process.versions.tz,
+    icuVersion: process.versions.icu,
+    firstOwnedOrdinal: 0,
+    firstOwnedBoundary: calendar.boundaries[0],
+  });
   const numeric = fixture(calendar);
   for (const key of ['periodDuration', 'alignment', 'periodTimezone', 'deliverySlaDuration'])
     delete numeric.input.schedule[key];
@@ -811,21 +819,349 @@ test('MCP calendar controller runs the installed official scheduler and reads pe
 // coverage and status checks below exercise the same rules without exposing it.
 const {
   reportingCalendarDayOrigin,
+  reportingCalendarDayFingerprint,
   reportingCalendarDaySchedule,
+  reportingCalendarDayRules,
   reportingPeriodSchedule,
 } = require('../../dist/lib/reporting/ledger/schedule.js');
+
+test('calendar generation refuses a host with different frozen timezone rules', async t => {
+  const calendar = { zone: 'UTC', boundaries: ['2026-03-08T00:00:00.000Z'] };
+  t.mock.timers.enable({ apis: ['Date'], now: new Date(calendar.boundaries[0]) });
+  const f = fixture(calendar);
+  const installed = await f.producer.installConfiguration(f.input);
+  const changed = structuredClone(installed);
+  changed.calendarRules.tzdbVersion = `${changed.calendarRules.tzdbVersion}-different`;
+  const {
+    configurationId: _configurationId,
+    installedAt: _installedAt,
+    semanticFingerprint: _semanticFingerprint,
+    calendarRules,
+    ...logicalInput
+  } = changed;
+  changed.semanticFingerprint = reportingCalendarDayFingerprint(logicalInput, calendarRules);
+  assert.throws(() => reportingPeriodSchedule(changed), /timezone rules differ.*new configuration generation/);
+});
+
+test('a fully planned frozen generation does not poison its roll-forward after timezone rules change', async t => {
+  const calendar = {
+    zone: 'UTC',
+    boundaries: [
+      '2026-03-08T00:00:00.000Z',
+      '2026-03-09T00:00:00.000Z',
+      '2026-03-10T00:00:00.000Z',
+      '2026-03-11T00:00:00.000Z',
+    ],
+  };
+  t.mock.timers.enable({ apis: ['Date'], now: new Date(calendar.boundaries[0]) });
+  const f = fixture(calendar);
+  const first = await f.producer.installConfiguration(f.input);
+  const frozen = await f.producer.planObligations(calendar.boundaries[2]);
+  assert.deepEqual(
+    frozen.map(value => value.periodOrdinal),
+    [0, 1]
+  );
+
+  const changed = structuredClone(first);
+  changed.calendarRules.tzdbVersion = `${changed.calendarRules.tzdbVersion}-different`;
+  const {
+    configurationId: _configurationId,
+    installedAt: _installedAt,
+    semanticFingerprint: _semanticFingerprint,
+    calendarRules,
+    ...logicalInput
+  } = changed;
+  changed.semanticFingerprint = reportingCalendarDayFingerprint(logicalInput, calendarRules);
+  f.store.configurations.set(changed.configurationId, changed);
+
+  t.mock.timers.setTime(Date.parse(calendar.boundaries[2]));
+  const successorInput = { ...structuredClone(f.input), delivery_config_version: 2 };
+  const successor = await f.producer.installConfiguration(successorInput);
+  assert.equal(successor.installedAt, calendar.boundaries[2]);
+  const rolled = await f.producer.planObligations(calendar.boundaries[3]);
+  assert.deepEqual(
+    rolled.map(value => ({
+      version: value.delivery_config_version,
+      ordinal: value.periodOrdinal,
+      period: value.period,
+    })),
+    [
+      {
+        version: 2,
+        ordinal: 2,
+        period: {
+          start: calendar.boundaries[2],
+          end: calendar.boundaries[3],
+          sourceTimezone: 'UTC',
+        },
+      },
+    ]
+  );
+  assert.deepEqual(
+    (await f.store.listObligations()).filter(value => value.configurationId === changed.configurationId),
+    frozen
+  );
+  const historical = await createReportingStatusHandler(f.store)(
+    {
+      account_id: f.input.account.account_id,
+      view: 'periods',
+      period: { start: calendar.boundaries[0], end: calendar.boundaries[2] },
+    },
+    f.context
+  );
+  assert.notEqual(historical.status, 'failed');
+  assert.equal(historical.scope.coverage_complete, true);
+  assert.deepEqual(
+    historical.periods.map(value => value.period),
+    frozen.map(value => ({
+      start: value.period.start,
+      end: value.period.end,
+      source_timezone: value.period.sourceTimezone,
+    }))
+  );
+});
+
+test('a mid-period roll fails closed until the predecessor straddling obligation is frozen', async t => {
+  const calendar = {
+    zone: 'UTC',
+    boundaries: [
+      '2026-03-08T00:00:00.000Z',
+      '2026-03-09T00:00:00.000Z',
+      '2026-03-10T00:00:00.000Z',
+      '2026-03-11T00:00:00.000Z',
+      '2026-03-12T00:00:00.000Z',
+    ],
+  };
+  t.mock.timers.enable({ apis: ['Date'], now: new Date(calendar.boundaries[0]) });
+  const f = fixture(calendar);
+  const first = await f.producer.installConfiguration(f.input);
+  await f.producer.planObligations(calendar.boundaries[2]);
+  const cutover = '2026-03-10T12:00:00.000Z';
+  t.mock.timers.setTime(Date.parse(cutover));
+  const second = await f.producer.installConfiguration({ ...structuredClone(f.input), delivery_config_version: 2 });
+
+  const changed = structuredClone(first);
+  changed.calendarRules.tzdbVersion = `${changed.calendarRules.tzdbVersion}-different`;
+  const {
+    configurationId: _configurationId,
+    installedAt: _installedAt,
+    semanticFingerprint: _semanticFingerprint,
+    calendarRules,
+    ...logicalInput
+  } = changed;
+  changed.semanticFingerprint = reportingCalendarDayFingerprint(logicalInput, calendarRules);
+  f.store.configurations.set(changed.configurationId, changed);
+  const listConfigurations = f.store.listConfigurations.bind(f.store);
+  f.store.listConfigurations = async (...args) => (await listConfigurations(...args)).reverse();
+  await assert.rejects(
+    f.producer.planObligations(calendar.boundaries[3]),
+    /timezone rules differ/,
+    'the new-runtime replica cannot plan v2 while v1 still owns an unfrozen straddling period'
+  );
+  assert.deepEqual(
+    (await f.store.listObligations()).filter(value => value.delivery_config_version === 2),
+    [],
+    'reverse-ordered custom stores cannot write v2 before validating v1'
+  );
+
+  const foreignSecond = structuredClone(second);
+  foreignSecond.calendarRules.tzdbVersion = `${foreignSecond.calendarRules.tzdbVersion}-new-runtime`;
+  const {
+    configurationId: _secondConfigurationId,
+    installedAt: _secondInstalledAt,
+    semanticFingerprint: _secondSemanticFingerprint,
+    calendarRules: secondCalendarRules,
+    ...secondLogicalInput
+  } = foreignSecond;
+  foreignSecond.semanticFingerprint = reportingCalendarDayFingerprint(secondLogicalInput, secondCalendarRules);
+  f.store.configurations.set(first.configurationId, first);
+  f.store.configurations.set(foreignSecond.configurationId, foreignSecond);
+  const [straddling] = await f.producer.planObligations(calendar.boundaries[3]);
+  assert.equal(straddling.delivery_config_version, 1);
+  assert.equal(straddling.periodOrdinal, 2);
+  assert.deepEqual([straddling.period.start, straddling.period.end], [calendar.boundaries[2], calendar.boundaries[3]]);
+  f.store.configurations.set(changed.configurationId, changed);
+  f.store.configurations.set(second.configurationId, second);
+  const [successor] = await f.producer.planObligations(calendar.boundaries[4]);
+  assert.equal(successor.delivery_config_version, 2);
+  assert.equal(successor.periodOrdinal, 3);
+});
+
+test('a generation superseded before its first frozen boundary seals with zero obligations', async t => {
+  const calendar = {
+    zone: 'UTC',
+    boundaries: ['2026-03-08T00:00:00.000Z', '2026-03-09T00:00:00.000Z', '2026-03-10T00:00:00.000Z'],
+  };
+  const installedAt = '2026-03-08T01:00:00.000Z';
+  const cutover = '2026-03-08T02:00:00.000Z';
+  t.mock.timers.enable({ apis: ['Date'], now: new Date(installedAt) });
+  const f = fixture(calendar);
+  const first = await f.producer.installConfiguration(f.input);
+  assert.equal(first.calendarRules.firstOwnedOrdinal, 1);
+  assert.equal(first.calendarRules.firstOwnedBoundary, calendar.boundaries[1]);
+  t.mock.timers.setTime(Date.parse(cutover));
+  await f.producer.installConfiguration({ ...structuredClone(f.input), delivery_config_version: 2 });
+
+  const changed = structuredClone(first);
+  changed.calendarRules.tzdbVersion = `${changed.calendarRules.tzdbVersion}-different`;
+  const {
+    configurationId: _configurationId,
+    installedAt: _installedAt,
+    semanticFingerprint: _semanticFingerprint,
+    calendarRules,
+    ...logicalInput
+  } = changed;
+  changed.semanticFingerprint = reportingCalendarDayFingerprint(logicalInput, calendarRules);
+  f.store.configurations.set(changed.configurationId, changed);
+
+  t.mock.timers.setTime(Date.parse(calendar.boundaries[2]));
+  const [successor] = await f.producer.planObligations(calendar.boundaries[2]);
+  assert.equal(successor.delivery_config_version, 2);
+  assert.equal(successor.periodOrdinal, 1);
+  const historical = await createReportingStatusHandler(f.store)(
+    {
+      account_id: f.input.account.account_id,
+      view: 'periods',
+      period: { start: installedAt, end: cutover },
+    },
+    f.context
+  );
+  assert.notEqual(historical.status, 'failed');
+  assert.equal(historical.scope.coverage_complete, true);
+  assert.ok(historical.periods.every(period => period.delivery_config_version !== 1));
+});
+
+test('a repeating runtime identity cannot skip an incomplete middle generation', async t => {
+  const calendar = {
+    zone: 'UTC',
+    boundaries: [
+      '2026-03-08T00:00:00.000Z',
+      '2026-03-09T00:00:00.000Z',
+      '2026-03-10T00:00:00.000Z',
+      '2026-03-11T00:00:00.000Z',
+    ],
+  };
+  t.mock.timers.enable({ apis: ['Date'], now: new Date(calendar.boundaries[0]) });
+  const f = fixture(calendar);
+  const first = await f.producer.installConfiguration(f.input);
+  await f.producer.planObligations(calendar.boundaries[1]);
+  t.mock.timers.setTime(Date.parse(calendar.boundaries[1]));
+  const second = await f.producer.installConfiguration({ ...structuredClone(f.input), delivery_config_version: 2 });
+  t.mock.timers.setTime(Date.parse(calendar.boundaries[2]));
+  const third = await f.producer.installConfiguration({ ...structuredClone(f.input), delivery_config_version: 3 });
+
+  const foreign = (configuration, suffix) => {
+    const changed = structuredClone(configuration);
+    changed.calendarRules.tzdbVersion = `${changed.calendarRules.tzdbVersion}-${suffix}`;
+    const {
+      configurationId: _configurationId,
+      installedAt: _installedAt,
+      semanticFingerprint: _semanticFingerprint,
+      calendarRules,
+      ...logicalInput
+    } = changed;
+    changed.semanticFingerprint = reportingCalendarDayFingerprint(logicalInput, calendarRules);
+    return changed;
+  };
+  const foreignFirst = foreign(first, 'runtime-b');
+  const foreignSecond = foreign(second, 'runtime-b');
+  const foreignThird = foreign(third, 'runtime-b');
+
+  f.store.configurations.set(foreignSecond.configurationId, foreignSecond);
+  await assert.rejects(f.producer.planObligations(calendar.boundaries[3]), /timezone rules differ/);
+  assert.deepEqual(
+    (await f.store.listObligations()).filter(value => value.delivery_config_version === 3),
+    [],
+    'runtime A cannot cross an incomplete runtime-B generation'
+  );
+
+  f.store.configurations.set(foreignFirst.configurationId, foreignFirst);
+  f.store.configurations.set(second.configurationId, second);
+  f.store.configurations.set(foreignThird.configurationId, foreignThird);
+  const [middle] = await f.producer.planObligations(calendar.boundaries[2]);
+  assert.equal(middle.delivery_config_version, 2);
+  assert.equal(middle.periodOrdinal, 1);
+
+  f.store.configurations.set(first.configurationId, first);
+  f.store.configurations.set(foreignSecond.configurationId, foreignSecond);
+  f.store.configurations.set(third.configurationId, third);
+  const [latest] = await f.producer.planObligations(calendar.boundaries[3]);
+  assert.equal(latest.delivery_config_version, 3);
+  assert.equal(latest.periodOrdinal, 2);
+});
+
+test('identified consumer status validates against the frozen obligation before ambient calendar rules', async t => {
+  const calendar = calendars[0];
+  t.mock.timers.enable({ apis: ['Date'], now: new Date(calendar.boundaries[0]) });
+  const f = fixture(calendar);
+  const installed = await f.producer.installConfiguration(f.input);
+  const [obligation] = await f.producer.planObligations(calendar.boundaries[1]);
+  const changed = structuredClone(installed);
+  changed.calendarRules.tzdbVersion = `${changed.calendarRules.tzdbVersion}-different`;
+  const {
+    configurationId: _configurationId,
+    installedAt: _installedAt,
+    semanticFingerprint: _semanticFingerprint,
+    calendarRules,
+    ...logicalInput
+  } = changed;
+  changed.semanticFingerprint = reportingCalendarDayFingerprint(logicalInput, calendarRules);
+  f.store.configurations.set(changed.configurationId, changed);
+
+  const now = new Date(Date.parse(obligation.expectedAt) + 1_000);
+  const sync = createSyncReportingStatusHandler(f.store, { resolveConsumerId: ctx => ctx.consumer, now: () => now });
+  const result = await sync(
+    {
+      account: f.input.account,
+      idempotency_key: 'calendar-frozen-obligation-status',
+      statuses: [
+        {
+          reporting_status_id: 'calendar-frozen-obligation-status-0001',
+          reporting_obligation_id: obligation.reporting_obligation_id,
+          delivery_config_id: obligation.delivery_config_id,
+          delivery_config_version: obligation.delivery_config_version,
+          report_definition_id: obligation.report_definition_id,
+          period: {
+            start: obligation.period.start,
+            end: obligation.period.end,
+            source_timezone: obligation.period.sourceTimezone,
+          },
+          consumer_status: 'revision_missing',
+          status_as_of: now.toISOString(),
+        },
+      ],
+    },
+    f.context
+  );
+  assert.equal(result.results[0].result, 'recorded', JSON.stringify(result));
+});
 
 function retainedConfiguration(input, installedAt, legacy = false) {
   const { createHash } = require('node:crypto');
   const { canonicalJsonV1 } = require('@adcp/sdk/reporting/source');
-  return {
+  let calendarRules;
+  if (!legacy) {
+    const schedule = reportingCalendarDaySchedule(input.schedule, input.sourceTimezone);
+    const firstOwnedOrdinal = Math.max(
+      0,
+      schedule.ceil(Math.max(Date.parse(input.schedule.anchor), Date.parse(installedAt)))
+    );
+    calendarRules = {
+      ...reportingCalendarDayRules(input.sourceTimezone),
+      firstOwnedOrdinal,
+      firstOwnedBoundary: new Date(schedule.boundary(firstOwnedOrdinal)).toISOString(),
+    };
+  }
+  const configuration = {
     ...structuredClone(input),
     configurationId: 'retained-calendar-generation',
     installedAt,
-    semanticFingerprint: `sha256:${createHash('sha256')
-      .update(canonicalJsonV1(legacy ? input : ['reporting-source-calendar-day-v1', input]))
-      .digest('hex')}`,
+    ...(calendarRules ? { calendarRules } : {}),
+    semanticFingerprint: legacy
+      ? `sha256:${createHash('sha256').update(canonicalJsonV1(input)).digest('hex')}`
+      : reportingCalendarDayFingerprint(input, calendarRules),
   };
+  return configuration;
 }
 
 const skippedDates = [
@@ -1100,7 +1436,7 @@ test('calendar regression: public coverage rejects a legacy fall ceil with the w
   );
 });
 
-test('calendar regression: a withdrawn offering cannot bypass calendar planning validation', async t => {
+test('calendar regression: offering withdrawal does not suppress accepted obligations', async t => {
   const calendar = calendars[0];
   t.mock.timers.enable({ apis: ['Date'], now: new Date(calendar.boundaries[0]) });
   const f = fixture(calendar);
@@ -1125,25 +1461,49 @@ test('calendar regression: a withdrawn offering cannot bypass calendar planning 
     installed,
     'withdrawal does not invalidate immutable replay'
   );
-  await assert.rejects(withdrawn.planObligations(calendar.boundaries[2]), /calendar.*source offering.*unavailable/i);
-  assert.equal(writes, 0);
-  assert.deepEqual(await f.store.listObligations(), []);
-  assert.deepEqual(f.sourceCalls, []);
-  const valid = await f.producer.planObligations(calendar.boundaries[2]);
+  const planned = await withdrawn.planObligations(calendar.boundaries[2]);
   assert.deepEqual(
-    valid.map(value => [value.period.start, value.period.end]),
+    planned.map(value => [value.period.start, value.period.end]),
     [
       ['2026-03-07T05:00:00.000Z', '2026-03-08T05:00:00.000Z'],
       ['2026-03-08T05:00:00.000Z', '2026-03-09T04:00:00.000Z'],
     ]
   );
   assert.equal(writes, 2);
+  assert.deepEqual(f.sourceCalls, []);
+  const [withdrawnObligation] = planned;
+  await withdrawn.runWorker({
+    now: () => new Date(Date.parse(withdrawnObligation.expectedAt) + 1_000),
+    maxIterations: 1,
+  });
+  assert.deepEqual(
+    (await f.store.listIssues(withdrawnObligation.reporting_obligation_id))
+      .filter(issue => issue.code === 'CONFIGURATION_REQUIRED')
+      .map(issue => ({
+        code: issue.code,
+        severity: issue.severity,
+        responsibleParty: issue.responsibleParty,
+        recommendedAction: issue.recommendedAction,
+      })),
+    [
+      {
+        code: 'CONFIGURATION_REQUIRED',
+        severity: 'action_required',
+        responsibleParty: 'seller',
+        recommendedAction: 'contact_seller',
+      },
+    ]
+  );
+  assert.deepEqual(f.sourceCalls, [], 'withdrawn source is never fetched');
+  const valid = await f.producer.planObligations(calendar.boundaries[2]);
+  assert.deepEqual(valid, []);
+  assert.equal(writes, 2);
   assert.deepEqual(await f.producer.planObligations(calendar.boundaries[2]), []);
   assert.equal(writes, 2);
   assert.deepEqual(await f.store.listConfigurations(), [installed]);
 });
 
-test('calendar regression: intrinsic lossless periods are required even without a source offering', async () => {
+test('calendar regression: a later midnight gap creates an obligation before source incompatibility', async () => {
   const f = fixture({ zone: 'America/Santiago', boundaries: ['2026-09-01T04:00:00.000Z'] });
   // A retained host-authored generation can outlive its offering and install
   // horizon. The September 6 midnight gap starts at local 01:00, so the source
@@ -1163,16 +1523,30 @@ test('calendar regression: intrinsic lossless periods are required even without 
   const producer = createReportingProducer({
     store: f.store,
     source,
-    offerings: [],
+    offerings: [f.sourceOffering],
     contact: { name: 'Calendar test', email: 'calendar@example.invalid' },
   });
-  await assert.rejects(
-    producer.planObligations('2026-09-07T03:00:00.000Z'),
-    /lossless source-local midnight boundaries/
+  const planned = await producer.planObligations('2026-09-07T03:00:00.000Z');
+  assert.deepEqual(
+    planned.map(value => [value.period.start, value.period.end]),
+    [['2026-09-06T04:00:00.000Z', '2026-09-07T03:00:00.000Z']]
   );
-  assert.equal(writes, 0);
+  assert.equal(writes, 1);
+  await producer.runWorker({
+    now: () => new Date(Date.parse(planned[0].expectedAt) + 1_000),
+    maxIterations: 1,
+  });
   assert.equal(fetches, 0);
-  assert.deepEqual(await f.store.listObligations(), []);
+  assert.deepEqual(
+    (await f.store.listIssues(planned[0].reporting_obligation_id))
+      .filter(issue => issue.code === 'CONFIGURATION_REQUIRED')
+      .map(issue => ({
+        code: issue.code,
+        severity: issue.severity,
+        responsibleParty: issue.responsibleParty,
+      })),
+    [{ code: 'CONFIGURATION_REQUIRED', severity: 'action_required', responsibleParty: 'seller' }]
+  );
 });
 
 test('calendar regression: numeric planning retains its behavior after offering withdrawal', async t => {

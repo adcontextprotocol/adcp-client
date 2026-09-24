@@ -2,14 +2,14 @@ import { createHash } from 'node:crypto';
 
 import { canonicalize } from '../../utils/jcs';
 import { reportingIsoDurationMillisecondsV1, type ReportingSourceOfferingV1 } from '../source';
-import type { ReportingLedgerConfigurationV1 } from './types';
+import type { ReportingCalendarRulesV1, ReportingLedgerConfigurationV1 } from './types';
 
 const DAY = 86_400_000;
 const HORIZON = 400 * DAY;
 type Schedule = ReportingLedgerConfigurationV1['schedule'];
 type ConfigurationInput = Omit<
   ReportingLedgerConfigurationV1,
-  'configurationId' | 'installedAt' | 'semanticFingerprint'
+  'configurationId' | 'installedAt' | 'semanticFingerprint' | 'calendarRules'
 >;
 
 interface PeriodSchedule {
@@ -31,28 +31,104 @@ export function isReportingCalendarDay(schedule: Schedule, sourceTimezone: strin
   );
 }
 
+const MAX_FORMATTERS = 64;
 const formatters = new Map<string, Intl.DateTimeFormat>();
 
-function wallTime(instant: number, timeZone: string): number {
-  let formatter = formatters.get(timeZone);
-  if (!formatter) {
-    // Intl also accepts numeric offsets in newer runtimes; the contract requires IANA.
-    if (/^[+-]/.test(timeZone)) throw new TypeError('Reporting calendar days require an IANA timezone');
-    formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone,
-      calendar: 'gregory',
-      numberingSystem: 'latn',
-      hourCycle: 'h23',
-      era: 'short',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    });
-    formatters.set(timeZone, formatter);
+function formatterFor(timeZone: string): Intl.DateTimeFormat {
+  const cached = formatters.get(timeZone);
+  if (cached) {
+    formatters.delete(timeZone);
+    formatters.set(timeZone, cached);
+    return cached;
   }
+  // Construct before caching so aliases and case variants collapse onto the
+  // runtime's canonical IANA name rather than becoming attacker-amplified keys.
+  if (/^[+-]/.test(timeZone)) throw new TypeError('Reporting calendar days require an IANA timezone');
+  const candidate = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    calendar: 'gregory',
+    numberingSystem: 'latn',
+    hourCycle: 'h23',
+    era: 'short',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  const canonical = candidate.resolvedOptions().timeZone;
+  const canonicalCached = formatters.get(canonical);
+  if (canonicalCached) return canonicalCached;
+  if (formatters.size >= MAX_FORMATTERS) formatters.delete(formatters.keys().next().value!);
+  formatters.set(canonical, candidate);
+  return candidate;
+}
+
+export function reportingCalendarDayRules(timeZone: string): ReportingCalendarRulesV1 {
+  const formatter = formatterFor(timeZone);
+  const tzdbVersion = process.versions.tz;
+  const icuVersion = process.versions.icu;
+  if (!tzdbVersion || !icuVersion) {
+    throw new Error('Reporting calendar days require runtime ICU and timezone database version provenance');
+  }
+  return { canonicalTimezone: formatter.resolvedOptions().timeZone, tzdbVersion, icuVersion };
+}
+
+export function isFrozenCalendarRulesMismatch(error: unknown): boolean {
+  return error instanceof Error && /calendar timezone rules differ from this stored generation/.test(error.message);
+}
+
+/** Prove a sealed ownership range using only facts resolved under its frozen rules. */
+export function frozenCalendarObligationsCoverOwnership(
+  configuration: ReportingLedgerConfigurationV1,
+  ownershipEnd: number,
+  obligations: ReadonlyArray<
+    Pick<ReportingLedgerConfigurationV1, 'configurationId'> & {
+      periodOrdinal: number;
+      period: { start: string; end: string };
+    }
+  >
+): boolean {
+  const first = configuration.calendarRules?.firstOwnedOrdinal;
+  const firstBoundary = configuration.calendarRules?.firstOwnedBoundary;
+  const firstBoundaryMs = firstBoundary ? Date.parse(firstBoundary) : Number.NaN;
+  if (
+    !Number.isSafeInteger(first) ||
+    first! < 0 ||
+    !Number.isFinite(firstBoundaryMs) ||
+    !Number.isFinite(ownershipEnd)
+  ) {
+    return false;
+  }
+  const owned = obligations
+    .filter(value => value.configurationId === configuration.configurationId)
+    .sort((left, right) => left.periodOrdinal - right.periodOrdinal);
+  if (!owned.length) return ownershipEnd <= firstBoundaryMs;
+  if (owned[0]!.periodOrdinal !== first || owned[0]!.period.start !== firstBoundary) return false;
+  for (let index = 0; index < owned.length; index += 1) {
+    const obligation = owned[index]!;
+    const start = Date.parse(obligation.period.start);
+    const end = Date.parse(obligation.period.end);
+    if (
+      obligation.periodOrdinal !== first! + index ||
+      !Number.isFinite(start) ||
+      !Number.isFinite(end) ||
+      end <= start ||
+      start >= ownershipEnd
+    ) {
+      return false;
+    }
+    if (index > 0 && owned[index - 1]!.period.end !== obligation.period.start) return false;
+  }
+  // A mid-period cutover belongs to the predecessor. Its final frozen
+  // obligation therefore ends after the handoff; an absent straddling period
+  // cannot be mistaken for a complete prefix.
+  return Date.parse(owned.at(-1)!.period.end) >= ownershipEnd;
+}
+
+function wallTime(instant: number, timeZone: string): number {
+  const formatter = formatterFor(timeZone);
   const parts = formatter.formatToParts(instant);
   const field = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find(part => part.type === type)?.value);
   if (parts.find(part => part.type === 'era')?.value !== 'AD') {
@@ -122,14 +198,22 @@ export function reportingCalendarDaySchedule(schedule: Schedule, sourceTimezone:
       boundary(ordinal + 1); // The next declared endpoint must exist; do not skip it.
       return ordinal + 1;
     },
-    period: ordinal => calendarPeriod(sourceTimezone, boundary(ordinal), boundary(ordinal + 1)),
+    period: ordinal => canonicalCalendarPeriod(boundary(ordinal), boundary(ordinal + 1)),
   };
 }
 
-function calendarPeriod(sourceTimezone: string, start: number, end: number) {
+function canonicalCalendarPeriod(start: number, end: number) {
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    throw new TypeError('Reporting calendar day must have positive finite boundaries');
+  }
+  return { start, end };
+}
+
+function sourceCompatibleCalendarPeriod(sourceTimezone: string, start: number, end: number) {
+  canonicalCalendarPeriod(start, end);
   const localStart = wallTime(start, sourceTimezone);
   const localEnd = wallTime(end, sourceTimezone);
-  if (end <= start || localStart % DAY !== 0 || localEnd % DAY !== 0 || localEnd - localStart !== DAY) {
+  if (localStart % DAY !== 0 || localEnd % DAY !== 0 || localEnd - localStart !== DAY) {
     throw new TypeError('Reporting calendar day cannot be expressed as lossless source-local midnight boundaries');
   }
   return { start, end };
@@ -141,9 +225,13 @@ function calendarPeriod(sourceTimezone: string, start: number, end: number) {
  * This domain separator uses the existing opaque fingerprint, not a new wire
  * field. Exact replays continue to return the original fingerprint unchanged.
  */
-export function reportingCalendarDayFingerprint(input: ConfigurationInput): string {
+export function reportingCalendarDayFingerprint(input: ConfigurationInput, rules?: ReportingCalendarRulesV1): string {
   return `sha256:${createHash('sha256')
-    .update(canonicalize(['reporting-source-calendar-day-v1', input]))
+    .update(
+      canonicalize(
+        rules ? ['reporting-source-calendar-day-v2', input, rules] : ['reporting-source-calendar-day-v1', input]
+      )
+    )
     .digest('hex')}`;
 }
 
@@ -177,8 +265,26 @@ export function reportingPeriodSchedule(configuration: ReportingLedgerConfigurat
     };
   }
   const calendar = reportingCalendarDaySchedule(schedule, sourceTimezone);
-  const { configurationId: _id, installedAt: _installedAt, semanticFingerprint, ...input } = configuration;
-  if (semanticFingerprint === reportingCalendarDayFingerprint(input)) return calendar;
+  const {
+    configurationId: _id,
+    installedAt: _installedAt,
+    semanticFingerprint,
+    calendarRules,
+    ...input
+  } = configuration;
+  if (calendarRules && semanticFingerprint === reportingCalendarDayFingerprint(input, calendarRules)) {
+    const runtimeRules = reportingCalendarDayRules(sourceTimezone);
+    if (
+      runtimeRules.canonicalTimezone !== calendarRules.canonicalTimezone ||
+      runtimeRules.tzdbVersion !== calendarRules.tzdbVersion ||
+      runtimeRules.icuVersion !== calendarRules.icuVersion
+    ) {
+      throw new Error(
+        'Reporting calendar timezone rules differ from this stored generation; install a new configuration generation'
+      );
+    }
+    return calendar;
+  }
   // Legacy P1D labels are safe only where civil and stored numeric arithmetic
   // agree. Never reinterpret an existing generation across an offset change,
   // including one introduced by a later timezone database update.
@@ -207,7 +313,7 @@ export function reportingPeriodSchedule(configuration: ReportingLedgerConfigurat
     boundary: assertUnchanged,
     floor: instant => guard(instant, calendar.floor(instant), Math.floor((instant - anchor) / duration)),
     ceil: instant => guard(instant, calendar.ceil(instant), Math.ceil((instant - anchor) / duration)),
-    period: ordinal => calendarPeriod(sourceTimezone, assertUnchanged(ordinal), assertUnchanged(ordinal + 1)),
+    period: ordinal => canonicalCalendarPeriod(assertUnchanged(ordinal), assertUnchanged(ordinal + 1)),
   };
 }
 
@@ -238,7 +344,7 @@ export function assertReportingCalendarDayPeriod(
   start: number,
   end: number
 ): void {
-  calendarPeriod(sourceTimezone, start, end);
+  sourceCompatibleCalendarPeriod(sourceTimezone, start, end);
   const minimum = reportingIsoDurationMillisecondsV1(source.windowing.minimumWindow);
   const maximum = reportingIsoDurationMillisecondsV1(source.windowing.maximumWindow);
   const hasDays = (duration: string) => Number(/^P(?:(\d+)D)?/.exec(duration)?.[1] ?? 0) > 0;

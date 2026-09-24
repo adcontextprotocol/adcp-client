@@ -1,5 +1,9 @@
 import type { ReportingLedgerConfigurationV1, ReportingLedgerSnapshotQueryV1 } from './types';
-import { reportingPeriodSchedule } from './schedule';
+import {
+  frozenCalendarObligationsCoverOwnership,
+  isFrozenCalendarRulesMismatch,
+  reportingPeriodSchedule,
+} from './schedule';
 
 export function reportingLedgerEffectivePeriod(query: ReportingLedgerSnapshotQueryV1, ledgerAsOf: string) {
   return {
@@ -87,7 +91,11 @@ export function matchingReportingLedgerConfigurations(
 export function evaluateReportingLedgerCoverageV1(
   query: ReportingLedgerSnapshotQueryV1,
   configurations: ReportingLedgerConfigurationV1[],
-  obligations: ReadonlyArray<{ configurationId: string; periodOrdinal: number }>,
+  obligations: ReadonlyArray<{
+    configurationId: string;
+    periodOrdinal: number;
+    period?: { start: string; end: string };
+  }>,
   ledgerAsOf: string
 ): { complete: boolean; retainedFrom: string } {
   const period = reportingLedgerEffectivePeriod(query, ledgerAsOf);
@@ -101,14 +109,38 @@ export function evaluateReportingLedgerCoverageV1(
   let complete = true;
   let retainedFrom: string | undefined;
   for (const configuration of configurations.filter(value => reportingLedgerConfigurationMatchesScope(query, value))) {
-    const schedule = reportingPeriodSchedule(configuration);
     const installedAt = Date.parse(configuration.installedAt);
     const successor = reportingLedgerSuccessor(configuration, configurations);
-    const firstOwned = Math.max(0, schedule.ceil(installedAt));
     const ownershipEnd = Math.min(
       successor ? Date.parse(successor.installedAt) : Number.POSITIVE_INFINITY,
       configuration.supersededAt ? Date.parse(configuration.supersededAt) : Number.POSITIVE_INFINITY
     );
+    let schedule: ReturnType<typeof reportingPeriodSchedule>;
+    try {
+      schedule = reportingPeriodSchedule(configuration);
+    } catch (error) {
+      const frozen = obligations.filter(
+        (value): value is { configurationId: string; periodOrdinal: number; period: { start: string; end: string } } =>
+          value.period !== undefined
+      );
+      if (
+        !isFrozenCalendarRulesMismatch(error) ||
+        !frozenCalendarObligationsCoverOwnership(configuration, ownershipEnd, frozen)
+      ) {
+        throw error;
+      }
+      const owned = frozen
+        .filter(value => value.configurationId === configuration.configurationId)
+        .sort((left, right) => left.periodOrdinal - right.periodOrdinal);
+      if (!owned.length) continue;
+      const start = owned[0]!.period.start;
+      const end = owned.at(-1)!.period.end;
+      if (Date.parse(period.start) < Date.parse(end) && Date.parse(period.end) > Date.parse(start)) {
+        if (!retainedFrom || Date.parse(start) < Date.parse(retainedFrom)) retainedFrom = start;
+      }
+      continue;
+    }
+    const firstOwned = Math.max(0, schedule.ceil(installedAt));
     const ownershipLast = Number.isFinite(ownershipEnd) ? schedule.ceil(ownershipEnd) - 1 : Number.POSITIVE_INFINITY;
     if (ownershipLast < firstOwned) continue;
     const end = Number.isFinite(ownershipLast) ? schedule.boundary(ownershipLast + 1) : Number.POSITIVE_INFINITY;

@@ -18,11 +18,13 @@ import {
 } from '../source';
 import { reportingLedgerSuccessor } from './coverage';
 import {
-  assertReportingCalendarDaySource,
   assertReportingCalendarDayPeriod,
+  assertReportingCalendarDaySource,
+  frozenCalendarObligationsCoverOwnership,
+  isFrozenCalendarRulesMismatch,
   isReportingCalendarDay,
   reportingCalendarDayFingerprint,
-  reportingCalendarDayNeedsNewIdentity,
+  reportingCalendarDayRules,
   reportingCalendarDaySchedule,
   reportingPeriodSchedule,
 } from './schedule';
@@ -38,6 +40,7 @@ import type {
   ReportingLedgerConfigurationV1,
   ReportingLedgerObligationV1,
   ReportingLedgerRevisionV1,
+  ReportingLedgerStore,
   ReportingProducerV1,
 } from './types';
 
@@ -48,6 +51,8 @@ const MAX_SETTLEMENT_GRACE_MS = 30_000;
 const MAX_REVISION_OBJECTS = 10_000;
 const MAX_REVISION_BYTES = 64 * 1024 * 1024;
 const MAX_REVISION_ROWS = 1_000_000;
+
+class ReportingSourceConfigurationError extends Error {}
 
 export function createReportingProducer(options: CreateReportingProducerOptionsV1): ReportingProducerV1 {
   const offeringById = new Map(options.offerings.map(offering => [offering.offeringId, offering]));
@@ -92,6 +97,9 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
         const replayFingerprints = [semanticFingerprint, predecessorFingerprint];
         if (isReportingCalendarDay(normalizedInput.schedule, normalizedInput.sourceTimezone)) {
           replayFingerprints.push(reportingCalendarDayFingerprint(normalizedInput));
+          if (replay.calendarRules) {
+            replayFingerprints.push(reportingCalendarDayFingerprint(normalizedInput, replay.calendarRules));
+          }
         }
         if (!replayFingerprints.includes(replay.semanticFingerprint)) {
           throw new Error('Reporting configuration generation is immutable');
@@ -105,17 +113,31 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
         throw new Error('Reporting configuration version cannot regress');
       }
       const installedAt = new Date().toISOString();
+      let calendarRules: ReportingLedgerConfigurationV1['calendarRules'];
+      if (isReportingCalendarDay(normalizedInput.schedule, normalizedInput.sourceTimezone)) {
+        const schedule = reportingCalendarDaySchedule(normalizedInput.schedule, normalizedInput.sourceTimezone);
+        const firstOwnedOrdinal = Math.max(
+          0,
+          schedule.ceil(Math.max(Date.parse(normalizedInput.schedule.anchor), Date.parse(installedAt)))
+        );
+        calendarRules = {
+          ...reportingCalendarDayRules(normalizedInput.sourceTimezone),
+          firstOwnedOrdinal,
+          firstOwnedBoundary: new Date(schedule.boundary(firstOwnedOrdinal)).toISOString(),
+        };
+      }
       const configuration: ReportingLedgerConfigurationV1 = {
         ...normalizedInput,
         sourceTimezone: normalizedInput.sourceTimezone,
+        ...(calendarRules ? { calendarRules } : {}),
         configurationId: `rcfg_${digest([
           normalizedInput.account.account_id,
           normalizedInput.delivery_config_id,
           normalizedInput.delivery_config_version,
         ]).slice(0, 32)}`,
         installedAt,
-        semanticFingerprint: reportingCalendarDayNeedsNewIdentity(normalizedInput, Date.parse(installedAt))
-          ? reportingCalendarDayFingerprint(normalizedInput)
+        semanticFingerprint: calendarRules
+          ? reportingCalendarDayFingerprint(normalizedInput, calendarRules)
           : semanticFingerprint,
       };
       return (await options.store.putConfiguration(configuration)).value;
@@ -127,13 +149,48 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
       positiveInteger(maxObligations, 'maxObligations');
       const created: ReportingLedgerObligationV1[] = [];
       let attempted = 0;
-      const configurations = await options.store.listConfigurations(planOptions.account_id);
+      const configurations = (await options.store.listConfigurations(planOptions.account_id)).sort(
+        (left, right) =>
+          instant(left.installedAt, 'installedAt') - instant(right.installedAt, 'installedAt') ||
+          left.delivery_config_version - right.delivery_config_version ||
+          left.configurationId.localeCompare(right.configurationId)
+      );
       const obligationsByAccount = new Map<string, ReportingLedgerObligationV1[]>();
       for (const configuration of configurations) {
-        const anchor = instant(configuration.schedule.anchor, 'schedule.anchor');
-        const schedule = reportingPeriodSchedule(configuration);
-        const effectiveFrom = Math.max(anchor, instant(configuration.installedAt, 'installedAt'));
         const successor = reportingLedgerSuccessor(configuration, configurations);
+        const anchor = instant(configuration.schedule.anchor, 'schedule.anchor');
+        const effectiveFrom = Math.max(anchor, instant(configuration.installedAt, 'installedAt'));
+        let schedule: ReturnType<typeof reportingPeriodSchedule>;
+        try {
+          schedule = reportingPeriodSchedule(configuration);
+        } catch (error) {
+          const predecessor = configurations.find(
+            candidate =>
+              reportingLedgerSuccessor(candidate, configurations)?.configurationId === configuration.configurationId
+          );
+          if (
+            isFrozenCalendarRulesMismatch(error) &&
+            !successor &&
+            predecessor &&
+            runtimeCanResolveCalendarGeneration(predecessor)
+          ) {
+            // During a timezone-data rollout an old replica must finish the
+            // predecessor's final owned period without trying to author the
+            // successor installed by a new-runtime replica.
+            continue;
+          }
+          if (
+            !isFrozenCalendarRulesMismatch(error) ||
+            !(await supersededCalendarGenerationIsDurablyCovered(options.store, configuration, successor))
+          ) {
+            throw error;
+          }
+          // The host can no longer reproduce this generation's calendar, but
+          // its contiguous frozen obligations prove every closed period it
+          // owned before the successor was installed is durable. Do not let a
+          // safely sealed predecessor poison planning for the new generation.
+          continue;
+        }
         const generationEndValue = Math.min(
           successor ? instant(successor.installedAt, 'successor.installedAt') : Number.POSITIVE_INFINITY,
           configuration.supersededAt ? instant(configuration.supersededAt, 'supersededAt') : Number.POSITIVE_INFINITY
@@ -159,7 +216,7 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
         const candidates = missingOrdinals(first, last, existingOrdinals, maxObligations - attempted);
         for (const ordinal of candidates) {
           attempted += 1;
-          const obligation = planObligation(configuration, ordinal, now, offeringById.get(configuration.offeringId));
+          const obligation = planObligation(configuration, ordinal, now);
           const written = await options.store.putObligation(obligation);
           if (written.inserted) {
             created.push(written.value);
@@ -260,6 +317,22 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
         try {
           const obligation = lease.obligation;
           const offering = requiredOffering(offeringById, obligation.offeringId);
+          if (isReportingCalendarDay(obligation.schedule, obligation.period.sourceTimezone)) {
+            try {
+              assertReportingCalendarDayPeriod(
+                obligation.schedule,
+                obligation.period.sourceTimezone,
+                offering,
+                instant(obligation.period.start, 'period.start'),
+                instant(obligation.period.end, 'period.end')
+              );
+            } catch (error) {
+              throw new ReportingSourceConfigurationError(
+                'Frozen reporting period is incompatible with its source offering',
+                { cause: error }
+              );
+            }
+          }
           const previous = await options.store.listRevisions(obligation.reporting_obligation_id);
           const adjustments = await options.store.listAdjustments(obligation.reporting_obligation_id);
           const publicationCount = previous.length + adjustments.length;
@@ -378,7 +451,11 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
             await options.store.updateObligation(
               obligation,
               lease,
-              sourceExecutionIssue(obligation, nowValue.toISOString())
+              sourceExecutionIssue(
+                obligation,
+                nowValue.toISOString(),
+                error instanceof ReportingSourceConfigurationError
+              )
             );
             await reconcileQuietly(obligation.reporting_obligation_id, nowValue);
           } catch (recoveryError) {
@@ -412,16 +489,22 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
 
 function sourceExecutionIssue(
   obligation: ReportingLedgerObligationV1,
-  observedAt: string
+  observedAt: string,
+  configurationRequired = false
 ): import('./types').ReportingLedgerIssueV1 {
   return {
     issueId: sourceExecutionIssueId(obligation),
     reporting_obligation_id: obligation.reporting_obligation_id,
-    code: 'PRODUCTION_FAILED',
-    severity: Date.parse(observedAt) < Date.parse(obligation.recoveryDeadlineAt) ? 'delayed' : 'action_required',
+    code: configurationRequired ? 'CONFIGURATION_REQUIRED' : 'PRODUCTION_FAILED',
+    severity:
+      configurationRequired || Date.parse(observedAt) >= Date.parse(obligation.recoveryDeadlineAt)
+        ? 'action_required'
+        : 'delayed',
     responsibleParty: 'seller',
     recommendedAction:
-      Date.parse(observedAt) < Date.parse(obligation.recoveryDeadlineAt) ? 'wait_for_retry' : 'contact_seller',
+      configurationRequired || Date.parse(observedAt) >= Date.parse(obligation.recoveryDeadlineAt)
+        ? 'contact_seller'
+        : 'wait_for_retry',
     openedAt: observedAt,
     observedAt,
   };
@@ -431,18 +514,46 @@ function sourceExecutionIssueId(obligation: ReportingLedgerObligationV1): string
   return `rpti_${digest(['source-execution-failed-v1', obligation.reporting_obligation_id]).slice(0, 32)}`;
 }
 
+function runtimeCanResolveCalendarGeneration(configuration: ReportingLedgerConfigurationV1): boolean {
+  try {
+    reportingPeriodSchedule(configuration);
+    return true;
+  } catch (error) {
+    if (isFrozenCalendarRulesMismatch(error)) return false;
+    throw error;
+  }
+}
+
+/**
+ * A changed host may stop resolving a predecessor solely because its frozen
+ * tzdb/ICU identity differs. It is safe to seal that predecessor only when the
+ * current resolver reproduces every owned, closed ordinal byte-for-byte from
+ * durable obligations. The successor then owns all later periods.
+ */
+async function supersededCalendarGenerationIsDurablyCovered(
+  store: ReportingLedgerStore,
+  configuration: ReportingLedgerConfigurationV1,
+  successor: ReportingLedgerConfigurationV1 | undefined
+): Promise<boolean> {
+  if (!isReportingCalendarDay(configuration.schedule, configuration.sourceTimezone)) return false;
+  const ownershipEnd = Math.min(
+    successor ? instant(successor.installedAt, 'successor.installedAt') : Number.POSITIVE_INFINITY,
+    configuration.supersededAt ? instant(configuration.supersededAt, 'supersededAt') : Number.POSITIVE_INFINITY
+  );
+  return frozenCalendarObligationsCoverOwnership(
+    configuration,
+    ownershipEnd,
+    await store.listObligations(configuration.account.account_id)
+  );
+}
+
 function planObligation(
   configuration: ReportingLedgerConfigurationV1,
   periodOrdinal: number,
-  createdAt: string,
-  offering: ReportingSourceOfferingV1 | undefined
+  createdAt: string
 ): ReportingLedgerObligationV1 {
   const schedule = reportingPeriodSchedule(configuration);
   const { start, end } = schedule.period(periodOrdinal);
-  if (isReportingCalendarDay(configuration.schedule, configuration.sourceTimezone)) {
-    if (!offering) throw new TypeError('Reporting calendar configuration source offering is unavailable');
-    assertReportingCalendarDayPeriod(configuration.schedule, configuration.sourceTimezone, offering, start, end);
-  }
   // `reporting-schedule.json` defines expected_at uniformly as period.end +
   // delivery_sla. `officialAfterMilliseconds` is a private source-finality
   // boundary and must not move the public obligation due time.
@@ -1089,7 +1200,7 @@ function requiredOffering(
   offeringId: string
 ): ReportingSourceOfferingV1 {
   const offering = offerings.get(offeringId);
-  if (!offering) throw new Error(`Unknown reporting source offering: ${offeringId}`);
+  if (!offering) throw new ReportingSourceConfigurationError(`Unknown reporting source offering: ${offeringId}`);
   return offering;
 }
 
@@ -1287,6 +1398,23 @@ function validateConfigurationAgainstOffering(
   // gets UNSUPPORTED_FEATURE rather than an incidental complaint about a
   // field it would have had to change anyway.
   assertSupportedReportingAuthoritativeParty(configuration);
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: configuration.sourceTimezone }).format();
+  } catch {
+    throw new Error('Reporting configuration requires a valid IANA source timezone');
+  }
+  if (offering.sourceTimezone.ianaTimezone && offering.sourceTimezone.ianaTimezone !== configuration.sourceTimezone) {
+    throw new Error('Reporting configuration source timezone does not match its offering');
+  }
+  if (canonicalize(configuration.contract) !== canonicalize(offering.contract)) {
+    throw new Error('Reporting configuration contract does not match its offering');
+  }
+  if (configuration.requiredFinality === 'official' && offering.publicationClass !== 'AUTHORITATIVE') {
+    throw new Error('Official reporting requires an authoritative offering');
+  }
+  if (offering.publicationClass === 'AUTHORITATIVE' && configuration.requiredFinality !== 'official') {
+    throw new Error('Authoritative source offerings require official ledger finality');
+  }
   positiveInteger(configuration.schedule.periodMilliseconds, 'periodMilliseconds');
   if (configuration.schedule.periodMilliseconds % 1_000 !== 0) {
     throw new Error('Reporting period must be representable as whole ISO 8601 seconds');
@@ -1321,20 +1449,6 @@ function validateConfigurationAgainstOffering(
   if (configuration.supersededAt && instant(configuration.supersededAt, 'supersededAt') <= anchor) {
     throw new Error('Reporting configuration supersession must follow its schedule anchor');
   }
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: configuration.sourceTimezone }).format();
-  } catch {
-    throw new Error('Reporting configuration requires a valid IANA source timezone');
-  }
-  if (offering.sourceTimezone.ianaTimezone && offering.sourceTimezone.ianaTimezone !== configuration.sourceTimezone) {
-    throw new Error('Reporting configuration source timezone does not match its offering');
-  }
-  if (canonicalize(configuration.contract) !== canonicalize(offering.contract)) {
-    throw new Error('Reporting configuration contract does not match its offering');
-  }
-  if (configuration.requiredFinality === 'official' && offering.publicationClass !== 'AUTHORITATIVE') {
-    throw new Error('Official reporting requires an authoritative offering');
-  }
   if (configuration.requiredFinality === 'official') {
     if (!configuration.finalityPolicy || !/^[A-Za-z0-9_.:-]{1,255}$/.test(configuration.finalityPolicy.policyId)) {
       throw new Error('Official reporting requires a pinned finality policy');
@@ -1360,9 +1474,6 @@ function validateConfigurationAgainstOffering(
     throw new Error('Snapshot reporting cannot declare an official finality policy');
   }
   positiveInteger(configuration.delivery_config_version, 'delivery_config_version');
-  if (offering.publicationClass === 'AUTHORITATIVE' && configuration.requiredFinality !== 'official') {
-    throw new Error('Authoritative source offerings require official ledger finality');
-  }
   if (configuration.feedPurpose === 'billing') {
     // RC3 states this unconditionally in `core/reporting-delivery-config`:
     // "feed_purpose billing still requires required_finality official". It was

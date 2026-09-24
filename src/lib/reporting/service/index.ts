@@ -93,6 +93,7 @@ type LedgerInstallInput = Omit<
   | 'configurationId'
   | 'installedAt'
   | 'semanticFingerprint'
+  | 'calendarRules'
   | 'account'
   | 'sourceScope'
   | 'sourceTimezone'
