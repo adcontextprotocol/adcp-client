@@ -313,10 +313,16 @@ export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string
 //
 // Wired per the AdCP enum. `sales-dooh` (AdCP 3.1.19, adcp#6619) is a
 // non-guaranteed channel profile over the ordinary media-buy lifecycle, so it
-// shares the core requirement. Preview specialisms (sales-streaming-tv,
-// sales-exchange, sales-retail-media) get added when they land in spec.
-type SalesCoreSpecialism = 'sales-non-guaranteed' | 'sales-guaranteed' | 'sales-broadcast-tv' | 'sales-dooh';
-type SalesCatalogSpecialism = 'sales-catalog-driven';
+// shares the core requirement. Streaming TV and exchange use the same core
+// lifecycle; retail media additionally owns the ingestion surface.
+type SalesCoreSpecialism =
+  | 'sales-non-guaranteed'
+  | 'sales-guaranteed'
+  | 'sales-broadcast-tv'
+  | 'sales-dooh'
+  | 'sales-streaming-tv'
+  | 'sales-exchange';
+type SalesCatalogSpecialism = 'sales-catalog-driven' | 'sales-retail-media';
 type SalesIngestionSpecialism = 'sales-social';
 type SalesProposalSpecialism = 'sales-proposal-mode';
 

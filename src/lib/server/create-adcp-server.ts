@@ -2578,7 +2578,20 @@ function hasUncacheableSyncAccountRejection(response: McpToolResponse): boolean 
 }
 
 function shouldCacheIdempotencyResponse(response: McpToolResponse): boolean {
-  return !isErrorResponse(response) && !hasUncacheableSyncAccountRejection(response);
+  // COMMITTED_RESOURCE_PURGED is an error envelope but also a durable
+  // committed-outcome tombstone. Releasing its claim would let an exact retry
+  // execute a financial mutation that already committed.
+  return (
+    isAdcpErrorCode(response, 'COMMITTED_RESOURCE_PURGED') ||
+    (!isErrorResponse(response) && !hasUncacheableSyncAccountRejection(response))
+  );
+}
+
+function isAdcpErrorCode(response: McpToolResponse, code: string): boolean {
+  const sc = response.structuredContent;
+  if (!sc || typeof sc !== 'object') return false;
+  const error = (sc as Record<string, unknown>).adcp_error;
+  return error !== null && typeof error === 'object' && (error as Record<string, unknown>).code === code;
 }
 
 /**
@@ -3248,7 +3261,7 @@ const TOOL_META: Record<string, ToolMeta> = {
   get_media_buy_artifacts: { wrap: null, annotations: RO },
 
   // Governance - Campaign
-  get_creative_features: { wrap: null, annotations: RO },
+  get_creative_features: { wrap: null, annotations: MUT },
   sync_plans: { wrap: null, annotations: IDEMP },
   check_governance: { wrap: null, annotations: RO },
   report_plan_outcome: { wrap: null, annotations: MUT },
@@ -6255,12 +6268,17 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         const toolIsMutating = isMutatingTask(toolName);
         const requestIsStateChanging = requestUsesIdempotency(toolName, params);
         const hasIdempotencyKeyField = Object.prototype.hasOwnProperty.call(params, 'idempotency_key');
-        const requestUsesOptionalIdempotency = toolName === 'get_products' && hasIdempotencyKeyField;
+        const requestUsesOptionalIdempotency =
+          (toolName === 'get_products' || toolName === 'get_creative_features') && hasIdempotencyKeyField;
+        const allowsLegacyKeylessEvaluation = toolName === 'get_creative_features' && !hasIdempotencyKeyField;
         let suppliedIdempotencyKey = typeof params.idempotency_key === 'string' ? params.idempotency_key : undefined;
         // The 3.2 compatibility schema deliberately leaves the finalize key
         // optional. Replay a supplied key, but do not reject older callers
         // that omit it. SDK 14 buyers auto-inject one on this path.
-        const requestUsesReplay = toolIsMutating || requestIsStateChanging || requestUsesOptionalIdempotency;
+        const requestUsesReplay =
+          (toolIsMutating && !allowsLegacyKeylessEvaluation) ||
+          (requestIsStateChanging && !allowsLegacyKeylessEvaluation) ||
+          requestUsesOptionalIdempotency;
         if (hasInvalidGetProductsFinalizeIntent(toolName, params)) {
           return finalize(
             adcpError('INVALID_REQUEST', {
@@ -6270,7 +6288,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             })
           );
         }
-        if (requestIsStateChanging && !toolIsMutating && !idempotency && !idempotencyDisabled) {
+        if (
+          requestIsStateChanging &&
+          !toolIsMutating &&
+          !allowsLegacyKeylessEvaluation &&
+          !idempotency &&
+          !idempotencyDisabled
+        ) {
           if (!warnedAboutOptionalReplayWithoutIdempotency) {
             warnedAboutOptionalReplayWithoutIdempotency = true;
             logger.error(
@@ -6283,7 +6307,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             })
           );
         }
-        if (requestIsStateChanging && !toolIsMutating && idempotency && suppliedIdempotencyKey === undefined) {
+        if (
+          toolName === 'get_products' &&
+          requestIsStateChanging &&
+          !toolIsMutating &&
+          idempotency &&
+          suppliedIdempotencyKey === undefined
+        ) {
           // The 3.2 compatibility schema leaves this key optional for older
           // callers. Derive a stable server-side key from the canonical
           // finalize request so the compatibility path remains replay-safe
@@ -6304,7 +6334,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         ) {
           warnedAboutOptionalReplayWithoutIdempotency = true;
           logger.error(
-            'createAdcpServer: get_products was called with idempotency_key but no idempotency store is configured. ' +
+            `createAdcpServer: ${toolName} was called with idempotency_key but no idempotency store is configured. ` +
               'Replay protection is unavailable; configure idempotency or explicitly disable it.'
           );
         }
@@ -7015,7 +7045,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               // field is defined for successful replays, and transient
               // error cache entries (VALIDATION_ERROR from strict-mode
               // drift) are retry-storm guards, not spec replays.
-              if (!isErrorResponse(cachedFormatted)) {
+              if (!isErrorResponse(cachedFormatted) || isAdcpErrorCode(cachedFormatted, 'COMMITTED_RESOURCE_PURGED')) {
                 stampReplayed(cachedFormatted);
               }
               // The cached envelope has already passed through the adopter's
@@ -7780,12 +7810,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                   // retain the short transient-error behavior.
                   try {
                     if (toolIsMutating || requestIsStateChanging) {
-                      await idempotency.save({
+                      // The handler may already have committed; response
+                      // drift leaves its outcome ambiguous. Keep the owner
+                      // claim unresolved instead of publishing an expiring
+                      // error record that could later permit re-execution.
+                      await idempotency.renew({
                         principal: idempotencyCheck.principal,
                         key: idempotencyCheck.key,
-                        payloadHash: idempotencyCheck.payloadHash,
                         claimToken: idempotencyCheck.claimToken,
-                        response: stripEnvelopeEcho(errEnvelope),
                         extraScope: idempotencyCheck.extraScope,
                       });
                     } else if (idempotency.saveTransientError) {
@@ -7942,14 +7974,16 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             }
 
             const thrownRecovery = thrownTypedEnvelope ? thrownAdcpErrorRecovery(thrownTypedEnvelope) : undefined;
+            let stableTypedOutcome =
+              !mutationHandlerCompleted && !!thrownTypedEnvelope && thrownRecovery !== 'transient';
             let replayEnvelope: McpToolResponse;
-            if (!mutationHandlerCompleted && thrownTypedEnvelope && thrownRecovery !== 'transient') {
+            if (stableTypedOutcome) {
               // A terminal typed rejection thrown directly by the handler is
               // a stable outcome. Cache it so exact retry cannot re-enter the
               // mutation. Transient typed errors are intentionally not
               // replayed as retryable for the full window: after handler
               // admission they are indistinguishable from commit-then-throw.
-              replayEnvelope = thrownTypedEnvelope;
+              replayEnvelope = thrownTypedEnvelope!;
             } else {
               const reason = err instanceof Error ? err.message : String(err);
               logger.error('Mutating handler outcome is uncertain and requires reconciliation', {
@@ -7967,6 +8001,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             try {
               replayEnvelope = finalize(replayEnvelope);
             } catch (finalizeErr) {
+              stableTypedOutcome = false;
               const finalizeReason = finalizeErr instanceof Error ? finalizeErr.message : String(finalizeErr);
               logger.error('Response processing failed while formatting a fenced mutation outcome', {
                 tool: toolName,
@@ -7979,17 +8014,26 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             }
 
             try {
-              await idempotency.save({
-                principal: idempotencyCheck.principal,
-                key: idempotencyCheck.key,
-                payloadHash: idempotencyCheck.payloadHash,
-                claimToken: idempotencyCheck.claimToken,
-                response: stripEnvelopeEcho(replayEnvelope),
-                extraScope: idempotencyCheck.extraScope,
-              });
+              if (stableTypedOutcome) {
+                await idempotency.save({
+                  principal: idempotencyCheck.principal,
+                  key: idempotencyCheck.key,
+                  payloadHash: idempotencyCheck.payloadHash,
+                  claimToken: idempotencyCheck.claimToken,
+                  response: stripEnvelopeEcho(replayEnvelope),
+                  extraScope: idempotencyCheck.extraScope,
+                });
+              } else {
+                await idempotency.renew({
+                  principal: idempotencyCheck.principal,
+                  key: idempotencyCheck.key,
+                  claimToken: idempotencyCheck.claimToken,
+                  extraScope: idempotencyCheck.extraScope,
+                });
+              }
             } catch (saveErr) {
               const saveReason = saveErr instanceof Error ? saveErr.message : String(saveErr);
-              logger.error('Idempotency mutation-outcome publication failed; retaining the live owner claim', {
+              logger.error('Idempotency mutation-outcome fencing failed; retaining the live owner claim', {
                 tool: toolName,
                 error: saveReason,
               });
@@ -8477,6 +8521,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // its acknowledgement gate. The advertised capability remains
   // `supported: false`; only a wired store can declare replay safety.
   const registeredMutatingTools = [...registeredToolNames].filter(t => MUTATING_TASKS.has(t));
+  if (registeredToolNames.has('get_creative_features') && idempotency && idempotency.ttlSeconds < 86400) {
+    throw new TypeError(
+      'createAdcpServer: get_creative_features requires idempotency.ttlSeconds >= 86400 so keyed evaluation replays remain available for at least 24 hours.'
+    );
+  }
   if (registeredMutatingTools.length > 0 && !idempotency && !idempotencyDisabled) {
     const message =
       `createAdcpServer: ${registeredMutatingTools.length} mutating tools registered ` +

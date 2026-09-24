@@ -153,7 +153,7 @@ the explicit `wireVersion: '3.1'` seller projection remains available.
 The rc.3 shared-frequency-cap action comes from the pinned canonical metadata;
 `applicable_package_ids` provides an exact live package scope. Seller emission
 defaults to the SDK pin. Set `adcpVersion` to the version actually served at both
-emission and assertion boundaries (for example, `adcpVersion: '3.2.0-rc.4'`);
+emission and assertion boundaries (for example, `adcpVersion: '3.2.0-rc.6'`);
 older targets receive an unavailable diagnostic. Package scope requires every
 requested package to belong to the emitted set; it never authorizes a buy-wide
 mutation. Without the requested packages, assessment remains unknown.

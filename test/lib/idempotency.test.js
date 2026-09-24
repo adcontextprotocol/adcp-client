@@ -134,6 +134,9 @@ describe('idempotency utilities', () => {
       // refine_proposals is a forward surface available before every schema
       // bundle used by this branch necessarily carries the required field.
       schemaRequiredTasks.push('refine_proposals');
+      // rc.6 makes feature extraction economically mutating while preserving
+      // keyless 3.x compatibility, so the key remains schema-optional.
+      schemaRequiredTasks.push('get_creative_features');
 
       assert.deepEqual([...MUTATING_TASKS].sort(), [...new Set(schemaRequiredTasks)].sort());
     });

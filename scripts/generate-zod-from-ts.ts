@@ -3161,7 +3161,25 @@ function postProcessPricingOptionConstraints(content: string): string {
     const endCandidate = content.indexOf('\n\nexport const ', start + 1);
     const end = endCandidate < 0 ? content.length : endCandidate;
     const block = content.slice(start, end);
+    const alreadyConstrained = block.indexOf(after);
+    if (alreadyConstrained >= 0) {
+      if (block.indexOf(after, alreadyConstrained + after.length) >= 0) {
+        throw new Error(
+          `postProcessPricingOptionConstraints: expected exactly one ${JSON.stringify(after)} in ${schemaName}Schema.`
+        );
+      }
+      return;
+    }
     const first = block.indexOf(before);
+    if (first < 0) {
+      // zod-from-ts may already project a canonical numeric constraint with
+      // a different fluent spelling/order (for example `.min(1).int()`).
+      // The canonical guard above remains authoritative; accept one native
+      // projection instead of coupling this compatibility pass to its text.
+      const property = before.slice(0, before.indexOf(':') + 1);
+      const propertyMatches = block.split(property).length - 1;
+      if (propertyMatches === 1) return;
+    }
     if (first < 0 || block.indexOf(before, first + before.length) >= 0) {
       throw new Error(
         `postProcessPricingOptionConstraints: expected exactly one ${JSON.stringify(before)} in ${schemaName}Schema.`

@@ -11,7 +11,7 @@ const {
 const { validateResponse } = require('../../dist/lib/validation/schema-validator.js');
 
 function assertSchemaValid(toolName, response) {
-  const outcome = validateResponse(toolName, response, '3.2.0-rc.4');
+  const outcome = validateResponse(toolName, response, '3.2.0-rc.6');
   assert.equal(outcome.valid, true, JSON.stringify(outcome.issues));
 }
 

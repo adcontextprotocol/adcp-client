@@ -194,6 +194,7 @@ import {
   canonicalTargetUri,
 } from '../signing/server';
 import { AgentResolverError } from '../signing/agent-resolver/errors';
+import { RequestSigningErrorCodeMetadata } from '../types/enums.generated';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
 import { getLatestA2ADataPartFromTask } from '../utils/a2a-artifacts';
 import { extractAdcpTaskStatusFromPayload, isAdcpStatus } from './task-status';
@@ -3522,7 +3523,10 @@ export class SingleAgentClient {
         if (cause instanceof WebhookSignatureError) {
           return { ok: false, code: cause.code, message: cause.message, cause };
         }
-        if (cause instanceof AgentResolverError && !cause.code.endsWith('_unreachable')) {
+        if (
+          cause instanceof AgentResolverError &&
+          RequestSigningErrorCodeMetadata[cause.code].recovery !== 'transient'
+        ) {
           return {
             ok: false,
             code: 'webhook_signature_key_unknown',

@@ -1153,7 +1153,7 @@ describe('storyboard runner: auth-override dispatch', () => {
                       {
                         kind: 'data',
                         data: {
-                          adcp_version: '3.2-rc.4',
+                          adcp_version: '3.2-rc.6',
                           supported_protocols: ['creative'],
                           tools: [{ name: 'list_creatives' }],
                         },

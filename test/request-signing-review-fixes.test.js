@@ -24,6 +24,7 @@ const {
   StaticJwksResolver,
   verifyRequestSignature,
 } = require('../dist/lib/signing/index.js');
+const { RequestSigningErrorCodeMetadata } = require('../dist/lib/types/enums.generated.js');
 
 const KEYS_PATH = path.join(
   __dirname,
@@ -206,6 +207,16 @@ describe('content-digest SF dictionary support (protocol finding)', () => {
 });
 
 describe('AdCP 3.2 RFC 8941 binary profile', () => {
+  test('normative signing recovery metadata is runtime-immutable', () => {
+    assert.strictEqual(Object.isFrozen(RequestSigningErrorCodeMetadata), true);
+    assert.strictEqual(Object.isFrozen(RequestSigningErrorCodeMetadata.request_signature_jwks_untrusted), true);
+    assert.strictEqual(
+      Reflect.set(RequestSigningErrorCodeMetadata.request_signature_jwks_untrusted, 'recovery', 'transient'),
+      false
+    );
+    assert.strictEqual(RequestSigningErrorCodeMetadata.request_signature_jwks_untrusted.recovery, 'terminal');
+  });
+
   test('version selection keeps 3.0/3.1 legacy and makes 3.2 standards-compliant', () => {
     assert.strictEqual(requestSigningEncodingForVersion('3.0.25'), 'legacy-base64url');
     assert.strictEqual(requestSigningEncodingForVersion('3.1.18'), 'legacy-base64url');
@@ -243,6 +254,43 @@ describe('AdCP 3.2 RFC 8941 binary profile', () => {
         operation: 'create_media_buy',
         adcpVersion: '3.2-beta.1',
       }
+    );
+    assert.strictEqual(result.keyid, 'test-ed25519-2026');
+  });
+
+  test('strict signed JSON rejects duplicate keys without committing the nonce', async () => {
+    const now = 1776520800;
+    const url = 'https://seller.example.com/adcp/create_media_buy';
+    const nonce = 'duplicate-json-key-nonce';
+    const replayStore = new InMemoryReplayStore();
+    const options = {
+      capability: { supported: true, covers_content_digest: 'required', required_for: [] },
+      jwks: new StaticJwksResolver([publicJwk]),
+      replayStore,
+      revocationStore: new InMemoryRevocationStore(),
+      now: () => now,
+      operation: 'create_media_buy',
+      adcpVersion: '3.2.0-rc.6',
+    };
+    const signBody = body =>
+      signRequest(
+        { method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body },
+        { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: privateJwk },
+        { now: () => now, windowSeconds: 300, nonce, binaryEncoding: 'rfc8941-base64' }
+      );
+
+    const duplicateBody = '{"plan_id":"first","plan_id":"second"}';
+    const duplicate = signBody(duplicateBody);
+    await assert.rejects(
+      () => verifyRequestSignature({ method: 'POST', url, headers: duplicate.headers, body: duplicateBody }, options),
+      err => err instanceof RequestSignatureError && err.code === 'request_body_malformed'
+    );
+
+    const validBody = '{"plan_id":"valid"}';
+    const valid = signBody(validBody);
+    const result = await verifyRequestSignature(
+      { method: 'POST', url, headers: valid.headers, body: validBody },
+      options
     );
     assert.strictEqual(result.keyid, 'test-ed25519-2026');
   });

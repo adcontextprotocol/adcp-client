@@ -598,7 +598,7 @@ describe('executeStoryboardTask creative wire selection', () => {
 
       await executeStoryboardTask(
         {
-          getAdcpVersion: () => '3.2.0-rc.4',
+          getAdcpVersion: () => '3.2.0-rc.6',
           createMediaBuy: async () => {
             throw new Error('canonical projection must not drop an authored legacy route');
           },
@@ -630,7 +630,7 @@ describe('executeStoryboardTask creative wire selection', () => {
 
     await executeStoryboardTask(
       {
-        getAdcpVersion: () => '3.2.0-rc.4',
+        getAdcpVersion: () => '3.2.0-rc.6',
         updateMediaBuy: async () => {
           throw new Error('canonical projection must not drop new_packages format_ids');
         },

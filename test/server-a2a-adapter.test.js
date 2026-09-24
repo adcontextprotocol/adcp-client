@@ -409,9 +409,9 @@ describe('createA2AAdapter', () => {
       const adcp = createAdcpServer({
         name: 'dual-version A2A seller',
         version: '1.0.0',
-        adcpVersion: '3.2.0-rc.4',
+        adcpVersion: '3.2.0-rc.6',
         defaultAdcpVersion: '3.1.18',
-        capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.4'] },
+        capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.6'] },
         mediaBuy: {
           getProducts: async () => ({ products: [] }),
           listProducts: async () => ({ outcome: 'listed', products: [], feed_version: 'feed-1' }),
@@ -428,8 +428,8 @@ describe('createA2AAdapter', () => {
       const adcp = createAdcpServer({
         name: '3.2 A2A task seller',
         version: '1.0.0',
-        adcpVersion: '3.2.0-rc.4',
-        capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.4'] },
+        adcpVersion: '3.2.0-rc.6',
+        capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.6'] },
         toolVersions: { tasks_get: { max: '3.1' } },
         customTools: {
           tasks_get: {

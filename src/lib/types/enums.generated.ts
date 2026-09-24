@@ -20,7 +20,7 @@ export const AccountStatusValues = ["active", "pending_approval", "rejected", "p
 export const ActionNotAllowedReasonValues = ["wrong_status", "not_supported_on_product", "not_supported_on_buy", "mode_mismatch", "condition_unresolved"] as const;
 export const ActionSourceValues = ["website", "app", "offline", "phone_call", "chat", "email", "in_store", "system_generated", "other"] as const;
 export const AdCPProtocolValues = ["media-buy", "signals", "governance", "creative", "brand", "sponsored-intelligence", "measurement"] as const;
-export const AdCPSpecialismValues = ["audience-sync", "brand-rights", "buyer-activation", "buyer-discovery", "buyer-monitoring", "buyer-negotiation", "buyer-recovery", "collection-lists", "content-standards", "creative-ad-server", "creative-generative", "creative-template", "creative-transformers", "governance-aware-seller", "governance-delivery-monitor", "governance-spend-authority", "property-lists", "sales-broadcast-tv", "sales-catalog-driven", "sales-dooh", "sales-guaranteed", "sales-non-guaranteed", "sales-proposal-mode", "sales-social", "signal-marketplace", "orchestrator-multi-agent", "signal-owned", "signed-requests", "sponsored-intelligence"] as const;
+export const AdCPSpecialismValues = ["audience-sync", "brand-rights", "buyer-activation", "buyer-discovery", "buyer-monitoring", "buyer-negotiation", "buyer-recovery", "collection-lists", "content-standards", "creative-ad-server", "creative-generative", "creative-template", "creative-transformers", "governance-aware-seller", "governance-delivery-monitor", "governance-spend-authority", "property-lists", "sales-broadcast-tv", "sales-catalog-driven", "sales-dooh", "sales-exchange", "sales-guaranteed", "sales-non-guaranteed", "sales-proposal-mode", "sales-retail-media", "sales-streaming-tv", "sales-social", "signal-marketplace", "orchestrator-multi-agent", "signal-owned", "signed-requests", "sponsored-intelligence"] as const;
 export const AdvertiserIndustryValues = ["automotive", "automotive.electric_vehicles", "automotive.parts_accessories", "automotive.luxury", "beauty_cosmetics", "beauty_cosmetics.skincare", "beauty_cosmetics.fragrance", "beauty_cosmetics.haircare", "cannabis", "cpg", "cpg.personal_care", "cpg.household", "dating", "education", "education.higher_education", "education.online_learning", "education.k12", "energy_utilities", "energy_utilities.renewable", "fashion_apparel", "fashion_apparel.luxury", "fashion_apparel.sportswear", "finance", "finance.banking", "finance.insurance", "finance.investment", "finance.cryptocurrency", "food_beverage", "food_beverage.alcohol", "food_beverage.restaurants", "food_beverage.packaged_goods", "gambling_betting", "gambling_betting.sports_betting", "gambling_betting.casino", "gaming", "gaming.mobile", "gaming.console_pc", "gaming.esports", "government_nonprofit", "government_nonprofit.political", "government_nonprofit.charity", "healthcare", "healthcare.pharmaceutical", "healthcare.medical_devices", "healthcare.wellness", "home_garden", "home_garden.furniture", "home_garden.home_improvement", "media_entertainment", "media_entertainment.podcasts", "media_entertainment.music", "media_entertainment.film_tv", "media_entertainment.publishing", "media_entertainment.live_events", "pets", "professional_services", "professional_services.legal", "professional_services.consulting", "real_estate", "real_estate.residential", "real_estate.commercial", "recruitment_hr", "retail", "retail.ecommerce", "retail.department_stores", "sports_fitness", "sports_fitness.equipment", "sports_fitness.teams_leagues", "technology", "technology.software", "technology.hardware", "technology.ai_ml", "telecom", "telecom.mobile_carriers", "telecom.internet_providers", "transportation_logistics", "travel_hospitality", "travel_hospitality.airlines", "travel_hospitality.hotels", "travel_hospitality.cruise", "travel_hospitality.tourism"] as const;
 export const AgeDeterminationBasisValues = ["verified", "declared", "inferred"] as const;
 export const AgeVerificationMethodValues = ["facial_age_estimation", "id_document", "digital_id", "credit_card", "world_id"] as const;
@@ -96,7 +96,7 @@ export const DistanceUnitValues = ["km", "mi", "m"] as const;
 export const DistributionIdentifierTypeValues = ["apple_podcast_id", "spotify_collection_id", "rss_url", "podcast_guid", "amazon_music_id", "iheart_id", "podcast_index_id", "youtube_channel_id", "youtube_channel_handle", "youtube_channel_url", "youtube_playlist_id", "amazon_title_id", "platform_channel_id", "roku_channel_id", "pluto_channel_id", "tubi_id", "peacock_id", "tiktok_id", "twitch_channel", "imdb_id", "gracenote_id", "eidr_id", "domain", "substack_id"] as const;
 export const DOOHMotionTypeValues = ["full_motion", "partial_motion", "static"] as const;
 export const EmbeddedProvenanceMethodValues = ["manifest_wrapper", "provenance_markers"] as const;
-export const ErrorCodeValues = ["INVALID_REQUEST", "AUTH_REQUIRED", "AUTH_MISSING", "AUTH_INVALID", "AUTHORIZATION_REQUIRED", "RATE_LIMITED", "SERVICE_UNAVAILABLE", "CONFIGURATION_ERROR", "POLICY_VIOLATION", "PRODUCT_NOT_FOUND", "PRODUCT_UNAVAILABLE", "PROPOSAL_EXPIRED", "BUDGET_TOO_LOW", "CREATIVE_REJECTED", "CREATIVE_SIZE_MISMATCH", "CREATIVE_MISSING_CLICK_URL", "CREATIVE_VALIDATION_FAILED_GENERIC", "CREATIVE_LOCALE_NOT_ACCEPTED", "CREATIVE_VALUE_NOT_ALLOWED", "CREATIVE_REVISION_CONTENT_MISMATCH", "UNSUPPORTED_FEATURE", "UNPRICEABLE_OUTPUT", "UNSUPPORTED_GRANULARITY", "UNSUPPORTED_PROVISIONING", "AUDIENCE_TOO_SMALL", "ACCOUNT_REQUIRED", "ACCOUNT_NOT_FOUND", "ACCOUNT_MOVED", "ACCOUNT_IDENTITY_CONFLICT", "ACCOUNT_SETUP_REQUIRED", "ACCOUNT_AMBIGUOUS", "ACCOUNT_PAYMENT_REQUIRED", "ACCOUNT_SUSPENDED", "COMPLIANCE_UNSATISFIED", "GOVERNANCE_DENIED", "BUDGET_EXHAUSTED", "BUDGET_EXCEEDED", "BUDGET_CAP_REACHED", "CONFLICT", "IDEMPOTENCY_CONFLICT", "IDEMPOTENCY_EXPIRED", "IDEMPOTENCY_IN_FLIGHT", "CURSOR_EXPIRED", "CREATIVE_DEADLINE_EXCEEDED", "CREATIVE_INACCESSIBLE", "INVALID_STATE", "MEDIA_BUY_NOT_FOUND", "NOT_CANCELLABLE", "PACKAGE_NOT_FOUND", "PLACE_TARGET_UNAVAILABLE", "CREATIVE_NOT_FOUND", "SIGNAL_NOT_FOUND", "SIGNAL_TARGETING_INCOMPATIBLE", "SESSION_NOT_FOUND", "PLAN_NOT_FOUND", "REFERENCE_NOT_FOUND", "SESSION_TERMINATED", "VALIDATION_ERROR", "PRODUCT_EXPIRED", "PROPOSAL_NOT_COMMITTED", "PROPOSAL_NOT_FOUND", "MULTI_FINALIZE_UNSUPPORTED", "IO_REQUIRED", "TERMS_REJECTED", "BIDDING_PLACEMENT_CONFLICT", "AMBIGUOUS_BIDDING_POLICY", "CONFLICTING_SELECTORS", "REQUOTE_REQUIRED", "VERSION_UNSUPPORTED", "CAMPAIGN_SUSPENDED", "GOVERNANCE_UNAVAILABLE", "GOVERNANCE_AGENT_NOT_ACCEPTED", "PERMISSION_DENIED", "SCOPE_INSUFFICIENT", "READ_ONLY_SCOPE", "FIELD_NOT_PERMITTED", "PROVENANCE_REQUIRED", "PROVENANCE_DIGITAL_SOURCE_TYPE_MISSING", "PROVENANCE_SYNTHETIC_DEPICTION_MISSING", "PROVENANCE_DISCLOSURE_MISSING", "PROVENANCE_EMBEDDED_MISSING", "PROVENANCE_VERIFIER_NOT_ACCEPTED", "PROVENANCE_CLAIM_CONTRADICTED", "EVALUATOR_AGENT_NOT_ACCEPTED", "BILLING_NOT_SUPPORTED", "BILLING_NOT_PERMITTED_FOR_AGENT", "BILLING_OUT_OF_BAND", "PAYMENT_TERMS_NOT_SUPPORTED", "BRAND_REQUIRED", "AGENT_SUSPENDED", "AGENT_BLOCKED", "CREDENTIAL_IN_ARGS", "ACTION_NOT_ALLOWED", "PRIVATE_FIELD_IN_PUBLIC_PLACEMENT", "FORMAT_PROJECTION_FAILED", "FORMAT_DECLARATION_DIVERGENT", "FORMAT_SHAPE_PROMOTED", "FORMAT_DECLARATION_V1_AMBIGUOUS", "FORMAT_OPTION_UNRESOLVED", "FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE", "FORMAT_NOT_SUPPORTED", "PIXEL_TRACKER_LOSSY_DOWNGRADE", "PIXEL_TRACKER_UPGRADE_INFERRED", "STALE_RESPONSE", "FEED_FETCH_FAILED", "SOURCE_ACCESS_FAILED", "INVALID_FEED_FORMAT", "ITEM_VALIDATION_FAILED", "CATALOG_LIMIT_EXCEEDED", "INVALID_PRICING_OPTION", "INVALID_USAGE_DATA", "SIGNED_RESPONSE_ENVELOPE_EXPIRED", "SIGNED_RESPONSE_REQUEST_HASH_MISMATCH", "SIGNED_RESPONSE_TENANT_MISMATCH", "VAST_PARSE_FAILED", "VAST_VERSION_MISMATCH", "VAST_WRAPPER_DEPTH_EXCEEDED", "CREATIVE_REPRESENTATION_UNRESOLVED", "MACRO_RESOLUTION_FAILED"] as const;
+export const ErrorCodeValues = ["INVALID_REQUEST", "AUTH_REQUIRED", "AUTH_MISSING", "AUTH_INVALID", "AUTHORIZATION_REQUIRED", "RATE_LIMITED", "SERVICE_UNAVAILABLE", "CONFIGURATION_ERROR", "POLICY_VIOLATION", "PRODUCT_NOT_FOUND", "PRODUCT_UNAVAILABLE", "PROPOSAL_EXPIRED", "BUDGET_TOO_LOW", "CREATIVE_REJECTED", "CREATIVE_SIZE_MISMATCH", "CREATIVE_MISSING_CLICK_URL", "CREATIVE_VALIDATION_FAILED_GENERIC", "CREATIVE_LOCALE_NOT_ACCEPTED", "CREATIVE_VALUE_NOT_ALLOWED", "CREATIVE_REVISION_CONTENT_MISMATCH", "UNSUPPORTED_FEATURE", "UNPRICEABLE_OUTPUT", "UNSUPPORTED_GRANULARITY", "UNSUPPORTED_PROVISIONING", "AUDIENCE_TOO_SMALL", "ACCOUNT_REQUIRED", "ACCOUNT_NOT_FOUND", "ACCOUNT_MOVED", "ACCOUNT_IDENTITY_CONFLICT", "ACCOUNT_SETUP_REQUIRED", "ACCOUNT_AMBIGUOUS", "ACCOUNT_PAYMENT_REQUIRED", "ACCOUNT_SUSPENDED", "COMPLIANCE_UNSATISFIED", "GOVERNANCE_DENIED", "BUDGET_EXHAUSTED", "BUDGET_EXCEEDED", "BUDGET_CAP_REACHED", "CONFLICT", "COMMITTED_RESOURCE_PURGED", "IDEMPOTENCY_CONFLICT", "IDEMPOTENCY_EXPIRED", "IDEMPOTENCY_IN_FLIGHT", "CURSOR_EXPIRED", "CREATIVE_DEADLINE_EXCEEDED", "CREATIVE_INACCESSIBLE", "INVALID_STATE", "MEDIA_BUY_NOT_FOUND", "NOT_CANCELLABLE", "PACKAGE_NOT_FOUND", "PLACE_TARGET_UNAVAILABLE", "CREATIVE_NOT_FOUND", "SIGNAL_NOT_FOUND", "SIGNAL_TARGETING_INCOMPATIBLE", "SESSION_NOT_FOUND", "PLAN_NOT_FOUND", "REFERENCE_NOT_FOUND", "SESSION_TERMINATED", "VALIDATION_ERROR", "PRODUCT_EXPIRED", "PROPOSAL_NOT_COMMITTED", "PROPOSAL_NOT_FOUND", "MULTI_FINALIZE_UNSUPPORTED", "IO_REQUIRED", "TERMS_REJECTED", "BIDDING_PLACEMENT_CONFLICT", "AMBIGUOUS_BIDDING_POLICY", "CONFLICTING_SELECTORS", "REQUOTE_REQUIRED", "VERSION_UNSUPPORTED", "CAMPAIGN_SUSPENDED", "GOVERNANCE_UNAVAILABLE", "GOVERNANCE_AGENT_NOT_ACCEPTED", "PERMISSION_DENIED", "SCOPE_INSUFFICIENT", "READ_ONLY_SCOPE", "FIELD_NOT_PERMITTED", "PROVENANCE_REQUIRED", "PROVENANCE_DIGITAL_SOURCE_TYPE_MISSING", "PROVENANCE_SYNTHETIC_DEPICTION_MISSING", "PROVENANCE_DISCLOSURE_MISSING", "PROVENANCE_EMBEDDED_MISSING", "PROVENANCE_VERIFIER_NOT_ACCEPTED", "PROVENANCE_CLAIM_CONTRADICTED", "EVALUATOR_AGENT_NOT_ACCEPTED", "BILLING_NOT_SUPPORTED", "BILLING_NOT_PERMITTED_FOR_AGENT", "BILLING_OUT_OF_BAND", "PAYMENT_TERMS_NOT_SUPPORTED", "BRAND_REQUIRED", "AGENT_SUSPENDED", "AGENT_BLOCKED", "CREDENTIAL_IN_ARGS", "ACTION_NOT_ALLOWED", "PRIVATE_FIELD_IN_PUBLIC_PLACEMENT", "FORMAT_PROJECTION_FAILED", "FORMAT_DECLARATION_DIVERGENT", "FORMAT_SHAPE_PROMOTED", "FORMAT_DECLARATION_V1_AMBIGUOUS", "FORMAT_OPTION_UNRESOLVED", "FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE", "FORMAT_NOT_SUPPORTED", "PIXEL_TRACKER_LOSSY_DOWNGRADE", "PIXEL_TRACKER_UPGRADE_INFERRED", "STALE_RESPONSE", "FEED_FETCH_FAILED", "SOURCE_ACCESS_FAILED", "INVALID_FEED_FORMAT", "ITEM_VALIDATION_FAILED", "CATALOG_LIMIT_EXCEEDED", "INVALID_PRICING_OPTION", "INVALID_USAGE_DATA", "SIGNED_RESPONSE_ENVELOPE_EXPIRED", "SIGNED_RESPONSE_REQUEST_HASH_MISMATCH", "SIGNED_RESPONSE_TENANT_MISMATCH", "VAST_PARSE_FAILED", "VAST_VERSION_MISMATCH", "VAST_WRAPPER_DEPTH_EXCEEDED", "CREATIVE_REPRESENTATION_UNRESOLVED", "MACRO_RESOLUTION_FAILED"] as const;
 export const ErrorScopeValues = ["capability", "account", "agent"] as const;
 export const EscalationSeverityValues = ["info", "warning", "critical"] as const;
 export const EventTypeValues = ["page_view", "view_content", "select_content", "select_item", "search", "share", "add_to_cart", "remove_from_cart", "viewed_cart", "add_to_wishlist", "initiate_checkout", "add_payment_info", "purchase", "refund", "lead", "qualify_lead", "close_convert_lead", "disqualify_lead", "complete_registration", "subscribe", "follow", "content_view", "watch_milestone", "start_trial", "app_install", "app_launch", "contact", "schedule", "donate", "submit_application", "custom"] as const;
@@ -115,6 +115,7 @@ export const FrequencyCapMutableFieldValues = ["max_impressions", "per", "window
 export const FrequencyCapScopeValues = ["package"] as const;
 export const GenreTaxonomyValues = ["iab_content_3.0", "iab_content_2.2", "gracenote", "eidr", "apple_genres", "google_genres", "roku", "amazon_genres", "custom"] as const;
 export const GeographicTargetingLevelValues = ["country", "region", "metro", "postal_area"] as const;
+export const GetProductsRejectedStatusValues = ["rejected"] as const;
 export const GOPTypeValues = ["closed", "open"] as const;
 export const GovernanceDecisionValues = ["approved", "denied", "conditions"] as const;
 export const GovernanceDomainValues = ["campaign", "property", "creative", "content_standards"] as const;
@@ -194,11 +195,13 @@ export const ReportingScheduleAlignmentValues = ["utc", "account_timezone", "sou
 export const ReportingStatusSeverityValues = ["delayed", "action_required"] as const;
 export const ReportingVerificationProfileValues = ["native_commit", "manifest_checksums", "canonical_digest"] as const;
 export const RepresentationSelectionStrategyValues = ["representation_order", "highest_compatible_vast"] as const;
+export const RequestSigningErrorCodeValues = ["request_signature_brand_json_url_missing", "request_signature_capabilities_unreachable", "request_signature_brand_json_unreachable", "request_signature_brand_json_malformed", "request_signature_brand_origin_mismatch", "request_signature_agent_not_in_brand_json", "request_signature_brand_json_ambiguous", "request_signature_key_origin_mismatch", "request_signature_key_origin_missing", "request_signature_required", "request_target_uri_malformed", "request_signature_header_malformed", "request_signature_params_incomplete", "request_signature_tag_invalid", "request_signature_alg_not_allowed", "request_signature_window_invalid", "request_signature_components_incomplete", "request_signature_components_unexpected", "request_signature_key_unknown", "request_signature_key_purpose_invalid", "request_signature_key_revoked", "request_signature_revocation_stale", "request_signature_invalid", "request_signature_digest_mismatch", "request_body_malformed", "request_signature_replayed", "request_signature_rate_abuse", "request_signature_jwks_unavailable", "request_signature_jwks_untrusted"] as const;
 export const RestrictedAttributeValues = ["racial_ethnic_origin", "political_opinions", "religious_beliefs", "trade_union_membership", "health_data", "sex_life_sexual_orientation", "genetic_data", "biometric_data", "age", "familial_status"] as const;
 export const RightsBillingPeriodValues = ["daily", "weekly", "monthly", "quarterly", "annual", "one_time"] as const;
 export const RightTypeValues = ["talent", "character", "brand_ip", "music", "stock_media"] as const;
 export const RightUseValues = ["likeness", "voice", "name", "endorsement", "motion_capture", "signature", "catchphrase", "sync", "background_music", "editorial", "commercial", "ai_generated_image"] as const;
 export const ScanTypeValues = ["progressive", "interlaced"] as const;
+export const SellerPolicyDeclineReasonValues = ["inventory", "share_of_voice", "minimum_commitment", "notice_period", "contract_terms", "frequency_cap", "other"] as const;
 export const SIContextUseValues = ["presentation_only", "comparison_set", "reasoning_context"] as const;
 export const SignalAvailabilityTypeValues = ["marketplace", "custom", "owned"] as const;
 /** @deprecated AdCP 3.1 renamed SignalCatalogType to SignalAvailabilityType. */
@@ -216,7 +219,7 @@ export const StandardScopeValues = ["attestation_verifier"] as const;
 export const StoryboardStatusValues = ["passing", "failing", "partial", "untested", "skipped", "not_selected", "unknown"] as const;
 export const TalentRoleValues = ["host", "guest", "creator", "cast", "narrator", "producer", "correspondent", "commentator", "analyst"] as const;
 export const TaskStatusValues = ["submitted", "working", "input-required", "completed", "canceled", "failed", "rejected", "auth-required", "unknown"] as const;
-export const TaskTypeValues = ["create_media_buy", "update_media_buy", "buy_products", "accept_proposal", "control_media_buy", "media_buy_delivery", "sync_creatives", "build_creative", "preview_creative", "activate_signal", "get_products", "request_proposals", "refine_proposals", "decline_proposals", "get_signals", "create_property_list", "update_property_list", "get_property_list", "list_property_lists", "delete_property_list", "sync_accounts", "get_account_financials", "get_creative_delivery", "sync_event_sources", "sync_audiences", "sync_catalogs", "log_event", "get_brand_identity", "search_brands", "get_rights", "acquire_rights", "update_rights", "sync_agent_notification_configs", "sync_principal", "get_principal", "sync_reporting_status", "sync_reporting_receipts"] as const;
+export const TaskTypeValues = ["create_media_buy", "update_media_buy", "buy_products", "accept_proposal", "control_media_buy", "media_buy_delivery", "sync_creatives", "build_creative", "preview_creative", "get_creative_features", "activate_signal", "get_products", "request_proposals", "refine_proposals", "decline_proposals", "get_signals", "create_property_list", "update_property_list", "get_property_list", "list_property_lists", "delete_property_list", "sync_accounts", "get_account_financials", "get_creative_delivery", "sync_event_sources", "sync_audiences", "sync_catalogs", "log_event", "get_brand_identity", "search_brands", "get_rights", "acquire_rights", "update_rights", "sync_agent_notification_configs", "sync_principal", "get_principal", "sync_reporting_status", "sync_reporting_receipts"] as const;
 export const TMPResponseTypeValues = ["activation", "catalog_items", "creative", "deal"] as const;
 export const TrackerExecutionActorValues = ["seller", "request_executor"] as const;
 export const TrackerFiringPathValues = ["client", "server"] as const;
@@ -241,9 +244,131 @@ export const WatermarkMediaTypeValues = ["audio", "image", "video", "text"] as c
 export const WCAGLevelValues = ["A", "AA", "AAA"] as const;
 export const WebhookResponseTypeValues = ["html", "json", "xml", "javascript"] as const;
 export const WebhookSecurityMethodValues = ["hmac_sha256", "api_key", "none"] as const;
-export const XEntityTypesValues = ["advertiser_brand", "rights_holder_brand", "rights_grant", "account", "operator", "operator_unit", "media_buy", "package", "product", "proposal", "opportunity", "placement", "product_pricing_option", "vendor_pricing_option", "creative", "creative_revision", "creative_representation", "macro_declaration", "tracker_execution_selector", "creative_locale_variant", "creative_format", "transformer", "evaluator", "build_variant", "served_variant", "audience", "audience_evidence", "audience_evidence_snapshot", "signal", "signal_activation_id", "demographic_interval_id", "spot_airing", "event_source", "impairment", "collection", "installment", "collection_list", "property_list", "catalog", "catalog_generation", "catalog_item", "property", "media_plan", "governance_plan", "governance_registry_policy", "governance_policy_category", "governance_policy_category_facet", "acceptance_policy_profile", "acceptance_policy_rule", "media_buy_change_term", "governance_inline_policy", "governance_check", "governance_delivery_statement", "governance_delivery_observation", "governance_outcome", "governance_adjustment", "governance_adjustment_evidence", "seller_adjustment", "content_standards", "task", "attestation_credential", "si_session", "offering", "vendor_metric", "reporting_destination", "reporting_offering", "reporting_delivery_config", "reporting_definition", "reporting_obligation", "reporting_revision", "reporting_adjustment", "reporting_materialization", "reporting_receipt", "reporting_consumer_status", "reporting_resource", "identity_relying_party"] as const;
+export const XEntityTypesValues = ["advertiser_brand", "rights_holder_brand", "rights_grant", "account", "operator", "operator_unit", "media_buy", "package", "product", "proposal", "opportunity", "placement", "product_pricing_option", "vendor_pricing_option", "creative", "creative_revision", "creative_representation", "macro_declaration", "tracker_execution_selector", "creative_locale_variant", "creative_format", "transformer", "evaluator", "creative_evaluation", "build_variant", "served_variant", "audience", "audience_evidence", "audience_evidence_snapshot", "signal", "signal_activation_id", "demographic_interval_id", "spot_airing", "event_source", "impairment", "collection", "installment", "collection_list", "property_list", "catalog", "catalog_generation", "catalog_item", "property", "media_plan", "governance_plan", "governance_registry_policy", "governance_policy_category", "governance_policy_category_facet", "acceptance_policy_profile", "acceptance_policy_rule", "media_buy_change_term", "governance_inline_policy", "governance_check", "governance_delivery_statement", "governance_delivery_observation", "governance_outcome", "governance_adjustment", "governance_adjustment_evidence", "seller_adjustment", "content_standards", "task", "attestation_credential", "si_session", "offering", "vendor_metric", "reporting_destination", "reporting_offering", "reporting_delivery_config", "reporting_definition", "reporting_obligation", "reporting_revision", "reporting_adjustment", "reporting_materialization", "reporting_receipt", "reporting_consumer_status", "reporting_resource", "identity_relying_party"] as const;
 // ====== TOOLS ENUMS ======
 
 export const BudgetCappingTimezoneBasisValues = ["account", "fixed"] as const;
 export const CapabilityReportingDeliveryMethodValues = ["webhook", "offline"] as const;
 export const ReportingStatusViewValues = ["summary", "periods", "revision"] as const;
+
+/** Normative recovery metadata from request-signing-error-code.json. */
+const requestSigningErrorCodeMetadata = {
+  "request_signature_brand_json_url_missing": {
+    "recovery": "terminal",
+    "suggestion": "surface to the signer operator to publish a valid HTTPS identity.brand_json_url; do not auto-retry"
+  },
+  "request_signature_capabilities_unreachable": {
+    "recovery": "transient",
+    "suggestion": "retry once after 1–5 seconds of jittered backoff; do not negative-cache for more than 60 seconds"
+  },
+  "request_signature_brand_json_unreachable": {
+    "recovery": "transient",
+    "suggestion": "retry once after 1–5 seconds of jittered backoff; do not negative-cache for more than 60 seconds"
+  },
+  "request_signature_brand_json_malformed": {
+    "recovery": "terminal",
+    "suggestion": "surface to the signer operator to repair strict JSON parsing or body-size failures; do not auto-retry"
+  },
+  "request_signature_brand_origin_mismatch": {
+    "recovery": "terminal",
+    "suggestion": "surface to the signer operator to correct the Agent origin or authorized_operators delegation"
+  },
+  "request_signature_agent_not_in_brand_json": {
+    "recovery": "terminal",
+    "suggestion": "surface to the signer operator to add or correct the canonical Agent URL in brand.json"
+  },
+  "request_signature_brand_json_ambiguous": {
+    "recovery": "terminal",
+    "suggestion": "surface to the signer operator to deduplicate canonical Agent URL entries in brand.json"
+  },
+  "request_signature_key_origin_mismatch": {
+    "recovery": "terminal",
+    "suggestion": "surface to the signer operator to align identity.key_origins with the resolved JWKS origin"
+  },
+  "request_signature_key_origin_missing": {
+    "recovery": "terminal",
+    "suggestion": "surface to the signer operator to publish the missing identity.key_origins purpose"
+  },
+  "request_signature_required": {
+    "recovery": "correctable",
+    "suggestion": "sign the request with an accepted key or use an independently valid advertised fallback credential"
+  },
+  "request_target_uri_malformed": {
+    "recovery": "correctable",
+    "suggestion": "construct a canonical target URI whose authority matches the signed request authority, then re-sign"
+  },
+  "request_signature_header_malformed": {
+    "recovery": "correctable",
+    "suggestion": "rebuild Signature and Signature-Input as one valid RFC 9421/RFC 8941 pair"
+  },
+  "request_signature_params_incomplete": {
+    "recovery": "correctable",
+    "suggestion": "include created, expires, nonce, keyid, alg, and tag, then re-sign"
+  },
+  "request_signature_tag_invalid": {
+    "recovery": "correctable",
+    "suggestion": "use the negotiated adcp/request-signing/v1 tag and re-sign"
+  },
+  "request_signature_alg_not_allowed": {
+    "recovery": "correctable",
+    "suggestion": "use ed25519 or ecdsa-p256-sha256 with matching JWK metadata"
+  },
+  "request_signature_window_invalid": {
+    "recovery": "correctable",
+    "suggestion": "generate a fresh signature with valid created and expires parameters and at most a five-minute window"
+  },
+  "request_signature_components_incomplete": {
+    "recovery": "correctable",
+    "suggestion": "cover every component required by the negotiated profile, including content-digest for a 3.2 body"
+  },
+  "request_signature_components_unexpected": {
+    "recovery": "correctable",
+    "suggestion": "follow the negotiated legacy component policy or select the 3.2 request-signing profile"
+  },
+  "request_signature_key_unknown": {
+    "recovery": "correctable",
+    "suggestion": "sign with a currently published keyid or publish the intended key before retrying"
+  },
+  "request_signature_key_purpose_invalid": {
+    "recovery": "correctable",
+    "suggestion": "select or publish a JWK with valid use, key_ops, adcp_use, algorithm, key type, and curve metadata"
+  },
+  "request_signature_key_revoked": {
+    "recovery": "correctable",
+    "suggestion": "rotate to a non-revoked published request-signing key; never retry with the revoked key"
+  },
+  "request_signature_revocation_stale": {
+    "recovery": "terminal",
+    "suggestion": "stop autonomous retries and surface to the verifier operator until revocation state is refreshed"
+  },
+  "request_signature_invalid": {
+    "recovery": "correctable",
+    "suggestion": "recompute the canonical signature base and sign with the private key matching the published JWK"
+  },
+  "request_signature_digest_mismatch": {
+    "recovery": "correctable",
+    "suggestion": "recompute content-digest over the exact transmitted body bytes and re-sign"
+  },
+  "request_body_malformed": {
+    "recovery": "correctable",
+    "suggestion": "emit strict unambiguous JSON without duplicate keys and re-sign the body"
+  },
+  "request_signature_replayed": {
+    "recovery": "correctable",
+    "suggestion": "reconcile the prior attempt and use a fresh nonce only when a new request is required"
+  },
+  "request_signature_rate_abuse": {
+    "recovery": "terminal",
+    "suggestion": "stop automated requests and alert operators; investigate a compromised key or abusive signer"
+  },
+  "request_signature_jwks_unavailable": {
+    "recovery": "transient",
+    "suggestion": "retry with bounded exponential backoff"
+  },
+  "request_signature_jwks_untrusted": {
+    "recovery": "terminal",
+    "suggestion": "surface to the signer operator to publish a trusted HTTPS JWKS location that passes SSRF validation"
+  }
+} as const satisfies Record<(typeof RequestSigningErrorCodeValues)[number], { recovery: 'transient' | 'correctable' | 'terminal'; suggestion: string }>;
+for (const metadata of Object.values(requestSigningErrorCodeMetadata)) Object.freeze(metadata);
+export const RequestSigningErrorCodeMetadata = Object.freeze(requestSigningErrorCodeMetadata);

@@ -36,6 +36,7 @@ export {
 export { jwkToPublicKey, verifySignature } from './crypto';
 export {
   RequestSignatureError,
+  RequestSigningErrorCodeMetadata,
   type RequestSignatureErrorCode,
   ResponseSignatureError,
   type ResponseSignatureErrorCode,

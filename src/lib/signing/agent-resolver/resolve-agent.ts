@@ -472,13 +472,9 @@ export async function resolveAgent(agentUrl: string, options: ResolveAgentOption
       ...(err instanceof SafeFetchError && err.httpStatus !== undefined && { http_status: err.httpStatus }),
     };
     pushTrace(trace, { step: 8, name: 'fetch_jwks', ok: false, url: jwksUri, detail });
-    // The spec hands step 8 off to the verifier checklist, where the
-    // canonical "JWKS unreachable" code (`request_signature_key_unknown`)
-    // only applies once a kid lookup has been attempted. The bootstrap
-    // chain needs a code before we have a kid, so we emit the SDK-side
-    // `request_signature_jwks_unreachable`. Operators triaging the
-    // rejection see `detail.jwks_uri`, not `detail.brand_json_url`.
-    throw new AgentResolverError('request_signature_jwks_unreachable', `JWKS fetch failed`, detail, ['jwks_uri']);
+    const code =
+      transport === 'ssrf_refused' ? 'request_signature_jwks_untrusted' : 'request_signature_jwks_unavailable';
+    throw new AgentResolverError(code, `JWKS fetch failed`, detail, ['jwks_uri']);
   }
 
   // A delegation can expire while brand.json/JWKS discovery is in flight.

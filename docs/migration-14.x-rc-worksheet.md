@@ -14,8 +14,8 @@ below as the publication/deployment gate.
 | Exact npm package | `@adcp/sdk@14.0.0-rc.46` |
 | npm integrity | registry-derived after publication; run `npm view @adcp/sdk@14.0.0-rc.46 dist.integrity` |
 | Node.js runtime | `^20.19.0 || >=22.12.0` |
-| Default AdCP wire release | `3.2.0-rc.4` |
-| Maintained wire releases | `v2.5`, `v2.6`, `v3`, `3.0.0`, `3.0`, `3.0.1`, `3.0.2`, `3.0.3`, `3.0.4`, `3.0.5`, `3.0.6`, `3.0.7`, `3.0.8`, `3.0.9`, `3.0.10`, `3.0.11`, `3.0.12`, `3.0.13`, `3.0.14`, `3.0.15`, `3.0.16`, `3.0.17`, `3.0.18`, `3.0.19`, `3.0.20`, `3.0.21`, `3.0.22`, `3.0.23`, `3.0.24`, `3.0.25`, `3.1.0`, `3.1`, `3.1.1`, `3.1.2`, `3.1.3`, `3.1.4`, `3.1.5`, `3.1.6`, `3.1.7`, `3.1.8`, `3.1.9`, `3.1.10`, `3.1.11`, `3.1.12`, `3.1.13`, `3.1.14`, `3.1.15`, `3.1.16`, `3.1.17`, `3.1.18`, `3.2.0-rc.4`, `3.2-rc.4` |
+| Default AdCP wire release | `3.2.0-rc.6` |
+| Maintained wire releases | `v2.5`, `v2.6`, `v3`, `3.0.0`, `3.0`, `3.0.1`, `3.0.2`, `3.0.3`, `3.0.4`, `3.0.5`, `3.0.6`, `3.0.7`, `3.0.8`, `3.0.9`, `3.0.10`, `3.0.11`, `3.0.12`, `3.0.13`, `3.0.14`, `3.0.15`, `3.0.16`, `3.0.17`, `3.0.18`, `3.0.19`, `3.0.20`, `3.0.21`, `3.0.22`, `3.0.23`, `3.0.24`, `3.0.25`, `3.1.0`, `3.1`, `3.1.1`, `3.1.2`, `3.1.3`, `3.1.4`, `3.1.5`, `3.1.6`, `3.1.7`, `3.1.8`, `3.1.9`, `3.1.10`, `3.1.11`, `3.1.12`, `3.1.13`, `3.1.14`, `3.1.15`, `3.1.16`, `3.1.17`, `3.1.18`, `3.2.0-rc.6`, `3.2-rc.6` |
 | Canonical migration notes | [13.x → 14](./migration-13-to-14.md) |
 
 Install exact production inputs rather than a moving prerelease range:
@@ -60,7 +60,7 @@ ESM example:
 import { getCanonicalToolValidator } from '@adcp/sdk/schemas';
 
 const validate = getCanonicalToolValidator('get_reporting_status', 'sync', {
-  adcpVersion: '3.2.0-rc.4',
+  adcpVersion: '3.2.0-rc.6',
 });
 if (!validate) throw new Error('Requested protocol schema is unavailable');
 
@@ -83,7 +83,7 @@ CommonJS uses the same packed-artifact export:
 ```js
 const { getCanonicalToolValidator } = require('@adcp/sdk/schemas');
 const validate = getCanonicalToolValidator('get_reporting_status', 'sync', {
-  adcpVersion: '3.2.0-rc.4',
+  adcpVersion: '3.2.0-rc.6',
 });
 if (!validate) throw new Error('Requested protocol schema is unavailable');
 if (validate({ status: 'completed', view: 'summary' })) {

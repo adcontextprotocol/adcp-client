@@ -241,7 +241,7 @@ nightly job to broaden coverage.
 ## Canonical principal and reporting-core storyboards
 
 `@adcp/sdk/compliance-fixtures` ships the protocol-authored AdCP
-3.2.0-rc.4 `universal/principal` and `universal/reporting-core`
+3.2.0-rc.6 `universal/principal` and `universal/reporting-core`
 storyboards as stable, runner-ready fixtures:
 
 ```ts

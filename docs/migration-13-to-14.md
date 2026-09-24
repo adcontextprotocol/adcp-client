@@ -1,6 +1,6 @@
 # Migrating from 13.x to the 14 prerelease
 
-SDK 14 adopts AdCP `3.2.0-rc.4` while preserving the canonical creative boundary introduced in SDK 13. Most SDK 13 applications can install the prerelease and continue using the established 3.x tools unchanged; adopt the compact 3.2 lifecycle only after the remote agent advertises it.
+SDK 14 adopts AdCP `3.2.0-rc.6` while preserving the canonical creative boundary introduced in SDK 13. Most SDK 13 applications can install the prerelease and continue using the established 3.x tools unchanged; adopt the compact 3.2 lifecycle only after the remote agent advertises it.
 
 Legacy signal-discovery adapters may keep supplying `opts.signals.getSignals`
 (or `legacyHandlers.signals.getSignals`) while declaring the truthful
@@ -10,11 +10,11 @@ now satisfies platform validation without requiring adopters to invent an
 
 AdCP 3.2 prereleases are exact protocol pins: beta.6 replaces beta.5 in the
 SDK's compatible-version list rather than extending a rolling 3.2-beta range.
-Likewise, `3.2.0-rc.4` replaces `3.2.0-rc.3`; callers pinned to rc.3 must
+Likewise, `3.2.0-rc.6` replaces `3.2.0-rc.4`; callers pinned to rc.4 must
 upgrade both peers together because the SDK does not advertise superseded 3.2
 prereleases as compatible wire releases and ships only the current
-prerelease's schema bundle. Pinning `adcpVersion: '3.2-rc'` follows whichever
-3.2 release candidate this SDK build carries; pinning a superseded exact
+prerelease's schema bundle. Pin `adcpVersion: '3.2-rc.6'`; the moving family
+alias `'3.2-rc'` is intentionally rejected. Pinning a superseded exact
 prerelease such as `'3.2.0-rc.2'` raises a configuration error at schema load
 rather than silently validating against a different contract.
 Beta.1 restored `adcp_major_version` on `buy_products`,
@@ -28,6 +28,49 @@ convergence, webhook retry horizons, and crash-safe continuation generation
 replacement. Beta.6 adds coordinated placements, seller-rendered stateful
 display, creative component assets, and A2A 1.0 request-signing method names.
 
+### Configure replay safety for creative-feature evaluation
+
+AdCP `3.2.0-rc.6` classifies `get_creative_features` as a mutating evaluation.
+SDK clients now generate an `idempotency_key` when callers omit one and include
+that key in request signing. Servers that register `getCreativeFeatures` must
+therefore configure an idempotency store whose replay TTL is at least 86,400
+seconds:
+
+```ts
+import {
+  createAdcpServer,
+  createIdempotencyStore,
+  pgBackend,
+} from '@adcp/sdk/server';
+
+const idempotency = createIdempotencyStore({
+  backend: pgBackend(pool),
+  ttlSeconds: 86_400,
+});
+
+const server = createAdcpServer({
+  name: 'Creative governance agent',
+  version: '1.0.0',
+  idempotency,
+  governance: {
+    getCreativeFeatures: evaluateCreativeFeatures,
+  },
+});
+```
+
+Use `memoryBackend()` only for single-process development or tests; production
+replicas need a shared durable backend such as `pgBackend()` or
+`redisBackend()`. Outside development and test, registering this handler
+without a store fails server startup. A configured TTL below 86,400 seconds
+fails startup in every environment.
+
+For wire compatibility, an older peer may still send a keyless
+`get_creative_features` request; the server accepts and evaluates it without
+replay protection. Because such calls can execute more than once, the MCP tool
+metadata does not advertise unconditional `idempotentHint`. New callers should
+let the SDK inject a key or supply a stable UUID v4 when retrying the same
+logical evaluation.
+
 ### Separate the server default from its supported ceiling
 
 An SDK 14 server can advertise and serve 3.2 without silently moving
@@ -35,9 +78,9 @@ unversioned callers off 3.1:
 
 ```ts
 const server = createAdcpServer({
-  adcpVersion: '3.2.0-rc.4',
+  adcpVersion: '3.2.0-rc.6',
   defaultAdcpVersion: '3.1.18',
-  capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.4'] },
+  capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.6'] },
   // handlers...
 });
 ```
@@ -1108,7 +1151,7 @@ import { getToolInputSchema, getToolResponseSchema } from '@adcp/sdk/schemas';
 
 const request = getToolInputSchema('create_media_buy', { adcpVersion: '3.0' });
 const response = getToolResponseSchema('create_media_buy', {
-  adcpVersion: '3.2.0-rc.4',
+  adcpVersion: '3.2.0-rc.6',
   variant: 'sync',
 });
 

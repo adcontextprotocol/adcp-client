@@ -218,7 +218,7 @@ function assertAllJwksAllowed(
     const declared = jwk.alg;
     if (typeof declared === 'string' && !allowedAlgs.has(declared)) {
       throw new AgentResolverError(
-        'request_signature_jwks_alg_disallowed',
+        'request_signature_key_purpose_invalid',
         `Agent JWKS contains key with alg=${declared} not in allowedAlgs`,
         { agent_url: agentUrl },
         ['agent_url']

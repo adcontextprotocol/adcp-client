@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-09-22
+> Generated at: 2026-09-24
 > @adcp/sdk v14.0.0-rc.46
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -1008,6 +1008,7 @@ _Request:_
   start_time: Start Timing  // required
   end_time: string  // required
   adcp_version: string
+  name: string
   brand: Brand Key
   advertiser_industry: Advertiser Industry
   pricing_version: string
@@ -1043,6 +1044,7 @@ _Request:_
   proposal_id: string  // required
   proposal_terms_digest: string  // required
   adcp_version: string
+  name: string
   total_budget: object
   daily_budget_cap: number
   budget_cap_timezone: string
@@ -2430,8 +2432,10 @@ _Request:_
 ```
 {
   creative_manifest: Creative Manifest  // required
+  idempotency_key: string
   feature_ids: string[]
   account: Account Ref
+  push_notification_config: Push Notification Config
   context: Context
 }
 ```
@@ -2440,6 +2444,7 @@ _Response (success branch):_
 ```
 {
   results: Creative Feature Result[]  // required
+  evaluation_id: string
   detail_url: string
   audit_observations: Audit Observation[]
   pricing_option_id: string
