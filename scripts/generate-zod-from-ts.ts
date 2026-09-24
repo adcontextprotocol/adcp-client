@@ -2831,8 +2831,10 @@ type CanonicalPrimitiveConstraints = {
  * after every structural Zod rewrite has run. The TypeScript intermediary can
  * lose JSDoc when a transitive occurrence wins first-definition ownership;
  * this pass makes the canonical document authoritative without relying on a
- * growing allowlist of field names. Array cardinality is reconciled separately
- * by `postProcessArrayMaxItems`.
+ * growing allowlist of field names. Titled nested schemas are reconciled
+ * against their own generated blocks rather than only against the root
+ * document's block. Array cardinality is reconciled separately by
+ * `postProcessArrayMaxItems`.
  *
  * Constraints are applied by property name only when every occurrence of that
  * name inside the canonical document has the same constraint set. Ambiguous
@@ -2840,12 +2842,17 @@ type CanonicalPrimitiveConstraints = {
  * in the wrong context. Defaults are not materialized, and array cardinality
  * is handled by the dedicated source-aware pass.
  */
-function postProcessCanonicalPrimitiveConstraints(content: string): string {
+export function postProcessCanonicalPrimitiveConstraints(content: string): string {
   const cacheRoot = path.join(__dirname, '../schemas/cache/latest');
   const schemaFiles: string[] = [];
+  const excludedSchemaDirectories = new Set(['bundled', 'mcp', 'tmp']);
   const visitDirectory = (directory: string): void => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      if (entry.name === 'bundled') continue;
+      // Bundled documents and transport projections repeat canonical titles
+      // after dereferencing or adapting them. Treating those copies as
+      // additional authorities can add transport-only constraints to the
+      // modular public schema that owns the generated Zod block.
+      if (entry.isDirectory() && excludedSchemaDirectories.has(entry.name)) continue;
       const absolute = path.join(directory, entry.name);
       if (entry.isDirectory()) visitDirectory(absolute);
       else if (entry.isFile() && entry.name.endsWith('.json')) schemaFiles.push(absolute);
@@ -2930,15 +2937,34 @@ function postProcessCanonicalPrimitiveConstraints(content: string): string {
     return result;
   };
 
-  for (const schemaFile of schemaFiles.sort()) {
-    const schema = JSON.parse(readFileSync(schemaFile, 'utf8')) as Record<string, unknown>;
+  const generatedSchemaNames = new Set([...content.matchAll(/^export const (\w+)Schema\b/gm)].map(match => match[1]));
+  const generatedSchemaName = (schema: Record<string, unknown>): string | undefined => {
     const rawSchemaName = typeof schema.title === 'string' ? schema.title.replace(/[^A-Za-z0-9]/g, '') : '';
-    const schemaName = [rawSchemaName, rawSchemaName && rawSchemaName[0].toUpperCase() + rawSchemaName.slice(1)].find(
-      candidate => candidate && content.includes(`export const ${candidate}Schema`)
+    return [rawSchemaName, rawSchemaName && rawSchemaName[0].toUpperCase() + rawSchemaName.slice(1)].find(
+      candidate => candidate && generatedSchemaNames.has(candidate)
     );
-    if (!schemaName) continue;
+  };
+
+  const titledSchemas = (value: unknown): Array<{ schemaName: string; schema: Record<string, unknown> }> => {
+    const result: Array<{ schemaName: string; schema: Record<string, unknown> }> = [];
+    const visit = (candidate: unknown): void => {
+      if (Array.isArray(candidate)) {
+        for (const member of candidate) visit(member);
+        return;
+      }
+      if (!candidate || typeof candidate !== 'object') return;
+      const schema = candidate as Record<string, unknown>;
+      const schemaName = generatedSchemaName(schema);
+      if (schemaName) result.push({ schemaName, schema });
+      for (const child of Object.values(schema)) visit(child);
+    };
+    visit(value);
+    return result;
+  };
+
+  const reconcileSchema = (schemaName: string, schema: Record<string, unknown>): void => {
     const exportStart = content.indexOf(`export const ${schemaName}Schema`);
-    if (exportStart < 0) continue;
+    if (exportStart < 0) return;
     const exportEndCandidate = content.indexOf('\n\nexport const ', exportStart + 1);
     const exportEnd = exportEndCandidate < 0 ? content.length : exportEndCandidate;
     let block = content.slice(exportStart, exportEnd);
@@ -2953,7 +2979,11 @@ function postProcessCanonicalPrimitiveConstraints(content: string): string {
 
     const occurrences = new Map<string, Map<string, CanonicalPrimitiveConstraints>>();
     const visitSchema = (value: unknown): void => {
-      if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+      if (Array.isArray(value)) {
+        for (const member of value) visitSchema(member);
+        return;
+      }
+      if (!value || typeof value !== 'object') return;
       const node = value as Record<string, unknown>;
       if (node.properties && typeof node.properties === 'object' && !Array.isArray(node.properties)) {
         for (const [propertyName, propertySchema] of Object.entries(node.properties)) {
@@ -2984,6 +3014,11 @@ function postProcessCanonicalPrimitiveConstraints(content: string): string {
     }
 
     content = content.slice(0, exportStart) + block + content.slice(exportEnd);
+  };
+
+  for (const schemaFile of schemaFiles.sort()) {
+    const schema = JSON.parse(readFileSync(schemaFile, 'utf8')) as Record<string, unknown>;
+    for (const titled of titledSchemas(schema)) reconcileSchema(titled.schemaName, titled.schema);
   }
   return content;
 }

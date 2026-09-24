@@ -299,6 +299,11 @@ export const BriefAsset_AssetTypeValues = ["brief"] as const;
 /** single | BriefAsset.objective */
 export const BriefAsset_ObjectiveValues = ["awareness", "consideration", "conversion", "retention", "engagement"] as const;
 
+// ====== BudgetChangeConstraints ======
+
+/** single | BudgetChangeConstraints.kind */
+export const BudgetChangeConstraints_KindValues = ["budget"] as const;
+
 // ====== BuildCreativeAsyncInputRequired ======
 
 /** single | BuildCreativeAsyncInputRequired.reason */
@@ -781,6 +786,11 @@ export const EducationItem_LevelValues = ["beginner", "intermediate", "advanced"
 /** single | EducationItem.modality */
 export const EducationItem_ModalityValues = ["online", "in_person", "hybrid"] as const;
 
+// ====== EffectiveTimingConstraints ======
+
+/** single | EffectiveTimingConstraints.kind */
+export const EffectiveTimingConstraints_KindValues = ["effective_timing"] as const;
+
 // ====== EmptyReportGoldenVector ======
 
 /** single | EmptyReportGoldenVector.canonical_utf8_base64 */
@@ -823,6 +833,11 @@ export const FlatFeePricing_PeriodValues = ["monthly", "quarterly", "annual", "c
 
 /** single | FlatRatePricingOption.pricing_model */
 export const FlatRatePricingOption_PricingModelValues = ["flat_rate"] as const;
+
+// ====== FlightChangeConstraints ======
+
+/** single | FlightChangeConstraints.kind */
+export const FlightChangeConstraints_KindValues = ["flight"] as const;
 
 // ====== GeoForecastDimension ======
 
@@ -1141,6 +1156,11 @@ export const OpportunityContext_PhaseValues = ["exploratory", "planning", "activ
 
 /** single | OrderingEncodingGoldenVector.purpose */
 export const OrderingEncodingGoldenVector_PurposeValues = ["ordering_encoding"] as const;
+
+// ====== PackageCountConstraints ======
+
+/** single | PackageCountConstraints.kind */
+export const PackageCountConstraints_KindValues = ["package_count"] as const;
 
 // ====== PackageSignalTargetingGroup ======
 

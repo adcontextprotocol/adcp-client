@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.2.0-rc.6
-// Generated at: 2026-09-24T11:03:22.047Z
+// Generated at: 2026-09-24T11:37:45.494Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -5242,7 +5242,106 @@ export interface CancellationPolicy {
         amount?: number;
       };
 }
-// MEDIABUYAVAILABLEACTION PRIORITY CANONICAL SCHEMA
+// MEDIABUYCHANGETERMCONSTRAINTS PRIORITY CANONICAL SCHEMA
+/**
+ * Optional machine-readable bounds on a proposal-bound change right. These constraints narrow the action named by the containing change term; they never grant an additional action or expand the accepted commercial envelope. Sellers omit this object when no portable bound is available, and buyers then treat any opaque conditions as unevaluated rather than assuming the change will be accepted.
+ */
+export type MediaBuyChangeTermConstraints =
+  | BudgetChangeConstraints
+  | FlightChangeConstraints
+  | PackageCountConstraints
+  | EffectiveTimingConstraints;
+
+export type BudgetChangeConstraints = {
+  kind: 'budget';
+  max_delta_amount?: Money;
+  /**
+   * Maximum percentage change relative to the current committed value. Values above 100 are valid for increases greater than the current value.
+   * @minimum 0
+   */
+  max_delta_percent?: number;
+  min_result_amount?: Money;
+  max_result_amount?: Money;
+} & (
+  | { max_delta_amount: Money }
+  | { max_delta_percent: number }
+  | { min_result_amount: Money }
+  | { max_result_amount: Money }
+);
+/**
+ * Maximum absolute amount by which the affected budget may change in the direction named by the action.
+ */
+export interface Money {
+  /**
+   * @minimum 0
+   */
+  amount: number;
+  /**
+   * @pattern ^[A-Z]{3}$
+   */
+  currency: string;
+}
+export type FlightChangeConstraints = {
+  kind: 'flight';
+  max_change?: Duration;
+  /**
+   * Earliest resulting start or end timestamp accepted for this action.
+   * @format date-time
+   */
+  earliest_result?: string;
+  /**
+   * Latest resulting start or end timestamp accepted for this action.
+   * @format date-time
+   */
+  latest_result?: string;
+  minimum_notice?: Duration;
+} & (
+  | { max_change: Duration }
+  | { earliest_result: string }
+  | { latest_result: string }
+  | { minimum_notice: Duration }
+);
+export type PackageCountConstraints = {
+  kind: 'package_count';
+  /**
+   * Maximum packages that may be added by one exercise of the right.
+   * @minimum 0
+   * @format int
+   */
+  max_additions?: number;
+  /**
+   * Maximum packages that may be removed by one exercise of the right.
+   * @minimum 0
+   * @format int
+   */
+  max_removals?: number;
+  /**
+   * Maximum active package count after the change.
+   * @minimum 0
+   * @format int
+   */
+  max_result_count?: number;
+} & (
+  | { max_additions: number }
+  | { max_removals: number }
+  | { max_result_count: number }
+);
+export type EffectiveTimingConstraints = {
+  kind: 'effective_timing';
+  minimum_notice?: Duration;
+  /**
+   * @format date-time
+   */
+  earliest_effective_at?: string;
+  /**
+   * @format date-time
+   */
+  latest_effective_at?: string;
+} & (
+  | { minimum_notice: Duration }
+  | { earliest_effective_at: string }
+  | { latest_effective_at: string }
+);
 /**
  * The action identifier.
  */
@@ -5293,23 +5392,6 @@ export interface SLAWindow {
 }
 
 // PRODUCTALLOWEDACTION PRIORITY CANONICAL SCHEMA
-/**
- * Optional advisory machine-readable bounds buyers can use during product selection. The proposal must restate any binding bounds in commercial_terms.change_terms[].constraints.
- */
-export type MediaBuyChangeTermConstraints =
-  | BudgetChangeConstraints
-  | FlightChangeConstraints
-  | PackageCountConstraints
-  | EffectiveTimingConstraints;
-export type BudgetChangeConstraints = {
-};
-export type FlightChangeConstraints = {
-};
-export type PackageCountConstraints = {
-};
-export type EffectiveTimingConstraints = {
-};
-
 /**
  * An action a seller declares as allowed on buys created against this product, scoped to the buy statuses where the action is permitted and the modes available. Advisory template only — the authoritative per-buy resolution lives in `available_actions[]` on the buy response (which may diverge from the product template based on negotiated terms, account tier, or buy-level overrides). The containing `allowed_actions[]` array is uniquely keyed by `action`; sellers MUST NOT emit two entries with the same `action` value. JSON Schema `uniqueItems` only catches structurally identical objects, so validators MUST enforce action-uniqueness separately.
  */
@@ -14282,6 +14364,66 @@ export interface SyncCreativesSuccess {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
+// COMMITTEDMEDIABUY PRIORITY EXTRACTED TYPE
+export interface CommittedMediaBuy {
+  status: 'completed';
+  /**
+   * @minLength 1
+   */
+  media_buy_id: string;
+  /**
+   * Persisted human-readable MediaBuy name for trafficking UI display and operational communication. The seller MUST echo a buyer-supplied request name unchanged; when the seller seeded a new MediaBuy name from an already-valid proposal.name, it MUST return that value unchanged here. Existing named MediaBuys return the stored value on amendment or cancellation commitments. This operational metadata is outside accepted_proposal and is not covered by terms_digest. This display label is not an identifier or financial reference.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern \S
+   */
+  name?: string;
+  /**
+   * @minimum 1
+   * @format int
+   */
+  revision: number;
+  media_buy_status?: MediaBuyStatus;
+  /**
+   * @format date-time
+   */
+  confirmed_at?: string | null;
+  accepted_proposal: CanonicalProposal & {
+    proposal_status: 'accepted';
+    /**
+     * @minLength 1
+     */
+    media_buy_id: string;
+  };
+  /**
+   * Execution identities assigned to the immutable purchases. purchase_index is the zero-based position in accepted_proposal.commercial_terms.purchases and disambiguates repeated product IDs.
+   */
+  purchase_bindings: {
+    /**
+     * @minimum 0
+     * @format int
+     */
+    purchase_index: number;
+    /**
+     * @minLength 1
+     */
+    product_id: string;
+    /**
+     * @minLength 1
+     */
+    package_id: string;
+  }[];
+  available_actions: CanonicalMediaBuyAction[];
+  /**
+   * Non-blocking observations about this completed commitment. The MediaBuy was still created or amended exactly as represented. Continuing conditions also appear as indicators on get_media_buys.
+   */
+  warnings?: (Warning & {
+    code?: 'inventory_shortfall_forecast' | 'flight_change_creates_pacing_risk';
+  })[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+  replayed?: true;
+}
 // MEDIA-BUY SCHEMA
 /**
  * Pending or rejected operator-identity transition. While present, the top-level operator and operator_unit remain the current canonical identity. Re-read list_accounts until the request is applied (canonical fields change and this object disappears) or rejected.
@@ -22729,55 +22871,6 @@ export interface CanonicalProductAction {
    * Optional advisory pointer to published commercial terms. It is not a proposal change-term identity.
    */
   terms_ref?: string;
-}
-export interface CommittedMediaBuy {
-  status: 'completed';
-  media_buy_id: string;
-  /**
-   * Persisted human-readable MediaBuy name for trafficking UI display and operational communication. The seller MUST echo a buyer-supplied request name unchanged; when the seller seeded a new MediaBuy name from an already-valid proposal.name, it MUST return that value unchanged here. Existing named MediaBuys return the stored value on amendment or cancellation commitments. This operational metadata is outside accepted_proposal and is not covered by terms_digest. This display label is not an identifier or financial reference.
-   */
-  name?: string;
-  revision: number;
-  media_buy_status?: MediaBuyStatus;
-  confirmed_at?: string | null;
-  accepted_proposal: CanonicalProposal & {
-    proposal_status: 'accepted';
-    media_buy_id: string;
-  };
-  /**
-   * Execution identities assigned to the immutable purchases. purchase_index is the zero-based position in accepted_proposal.commercial_terms.purchases and disambiguates repeated product IDs.
-   *
-   * @minItems 1
-   */
-  purchase_bindings: [
-    {
-      purchase_index: number;
-      product_id: string;
-      package_id: string;
-    },
-    ...{
-      purchase_index: number;
-      product_id: string;
-      package_id: string;
-    }[]
-  ];
-  available_actions: CanonicalMediaBuyAction[];
-  /**
-   * Non-blocking observations about this completed commitment. The MediaBuy was still created or amended exactly as represented. Continuing conditions also appear as indicators on get_media_buys.
-   *
-   * @minItems 1
-   */
-  warnings?: [
-    Warning & {
-      code?: 'inventory_shortfall_forecast' | 'flight_change_creates_pacing_risk';
-    },
-    ...(Warning & {
-      code?: 'inventory_shortfall_forecast' | 'flight_change_creates_pacing_risk';
-    })[]
-  ];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-  replayed?: true;
 }
 /**
  * Shared closed field set for task-discriminated canonical MediaBuy actions.

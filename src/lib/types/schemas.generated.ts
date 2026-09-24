@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-24T11:05:00.986Z
+// Generated at: 2026-09-24T11:39:12.694Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -861,16 +861,16 @@ export const DaastVersionsSchema = z.array(DAASTVersionSchema);
 
 export const MacroEncodingSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
     kind: z.union([z.literal("none"), z.literal("rfc3986"), z.literal("iab_vast_uri")]),
-    depth: z.number().int().gte(0)
+    depth: z.number()
 }).passthrough()).merge(z.object({
     kind: z.union([z.literal("none"), z.literal("rfc3986"), z.literal("iab_vast_uri")]),
-    depth: z.number().int().gte(0)
+    depth: z.number()
 }).passthrough()).merge(z.object({
     kind: z.union([z.literal("none"), z.literal("rfc3986"), z.literal("iab_vast_uri")]),
-    depth: z.number().int().gte(0)
+    depth: z.number()
 }).passthrough()).merge(z.object({
     kind: z.union([z.literal("none"), z.literal("rfc3986"), z.literal("iab_vast_uri")]),
-    depth: z.number().int().gte(0)
+    depth: z.number()
 }).passthrough());
 
 export const MacroTranslationTargetSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
@@ -878,7 +878,7 @@ export const MacroTranslationTargetSchema = z.object({}).passthrough().merge(z.o
     dialect: MacroDialectFamilySchema,
     dialect_namespace: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
     dialect_revision: z.string().min(1).optional(),
-    dialect_semantic: z.string().min(1),
+    dialect_semantic: z.string(),
     mapping_status: MacroMappingStatusSchema,
     universal_semantic: UniversalMacroSchema.optional(),
     next_operation: z.literal("resolve_value"),
@@ -892,7 +892,7 @@ export const MacroProcessingCapabilitySchema = z.object({}).passthrough().merge(
     dialect: MacroDialectFamilySchema,
     dialect_namespace: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
     dialect_revision: z.string().min(1).optional(),
-    dialect_semantic: z.string().min(1),
+    dialect_semantic: z.string(),
     mapping_status: z.union([z.literal("verified_universal"), z.literal("dialect_defined")]),
     universal_semantic: UniversalMacroSchema.optional(),
     operation: z.union([z.literal("translate_to_native"), z.literal("resolve_value")]),
@@ -904,7 +904,7 @@ export const MacroProcessingCapabilitySchema = z.object({}).passthrough().merge(
     dialect: MacroDialectFamilySchema,
     dialect_namespace: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
     dialect_revision: z.string().min(1).optional(),
-    dialect_semantic: z.string().min(1),
+    dialect_semantic: z.string(),
     mapping_status: z.union([z.literal("verified_universal"), z.literal("dialect_defined")]),
     universal_semantic: UniversalMacroSchema.optional(),
     operation: z.union([z.literal("translate_to_native"), z.literal("resolve_value")]),
@@ -939,6 +939,53 @@ export const CancellationPolicySchema = z.object({
         }).passthrough()])
 }).passthrough();
 
+export const FlightChangeConstraintsSchema = z.object({
+    kind: z.literal("flight"),
+    max_change: DurationSchema.optional(),
+    earliest_result: z.iso.datetime().optional(),
+    latest_result: z.iso.datetime().optional(),
+    minimum_notice: DurationSchema.optional()
+}).passthrough().and(z.union([z.object({
+        max_change: DurationSchema
+    }).passthrough(), z.object({
+        earliest_result: z.string()
+    }).passthrough(), z.object({
+        latest_result: z.string()
+    }).passthrough(), z.object({
+        minimum_notice: DurationSchema
+    }).passthrough()]));
+
+export const PackageCountConstraintsSchema = z.object({
+    kind: z.literal("package_count"),
+    max_additions: z.int().min(0).optional(),
+    max_removals: z.int().min(0).optional(),
+    max_result_count: z.int().min(0).optional()
+}).passthrough().and(z.union([z.object({
+        max_additions: z.number()
+    }).passthrough(), z.object({
+        max_removals: z.number()
+    }).passthrough(), z.object({
+        max_result_count: z.number()
+    }).passthrough()]));
+
+export const EffectiveTimingConstraintsSchema = z.object({
+    kind: z.literal("effective_timing"),
+    minimum_notice: DurationSchema.optional(),
+    earliest_effective_at: z.iso.datetime().optional(),
+    latest_effective_at: z.iso.datetime().optional()
+}).passthrough().and(z.union([z.object({
+        minimum_notice: DurationSchema
+    }).passthrough(), z.object({
+        earliest_effective_at: z.string()
+    }).passthrough(), z.object({
+        latest_effective_at: z.string()
+    }).passthrough()]));
+
+export const MoneySchema = z.object({
+    amount: z.number().min(0),
+    currency: z.string().regex(/^[A-Z]{3}$/)
+}).passthrough();
+
 export const MediaBuyAvailableActionIDSchema = z.union([MediaBuyValidActionSchema, z.literal("update_media_buy_frequency_cap")]);
 
 export const MediaBuyChangeTermIDSchema = z.string().regex(new RegExp("^[A-Za-z0-9_.:-]+$"));
@@ -951,16 +998,6 @@ export const SLAWindowSchema = z.object({
     response_max: z.string().regex(new RegExp("^P(?!$)(\\d+Y)?(\\d+M)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$")).optional(),
     completion_max: z.string().regex(new RegExp("^P(?!$)(\\d+Y)?(\\d+M)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$")).optional()
 }).passthrough();
-
-export const BudgetChangeConstraintsSchema = z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]);
-
-export const FlightChangeConstraintsSchema = z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]);
-
-export const PackageCountConstraintsSchema = z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]);
-
-export const EffectiveTimingConstraintsSchema = z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]);
-
-export const MediaBuyChangeTermConstraintsSchema = z.union([BudgetChangeConstraintsSchema, FlightChangeConstraintsSchema, PackageCountConstraintsSchema, EffectiveTimingConstraintsSchema]);
 
 export const AdCPAudienceSyncSchema = z.object({
     pattern: z.literal("sync_audiences")
@@ -1188,10 +1225,10 @@ export const PostalCountrySystemSchema = z.union([z.object({
         country: z.literal("ZA").optional(),
         system: z.literal("postal_code").optional()
     }).passthrough(), z.object({
-        country: z.string().regex(new RegExp("^[A-Z]{2}$")).refine(country => !["US","GB","CA","DE","CH","AT","FR","AU","BR","IN","ZA"].includes(country)).optional(),
+        country: z.string().refine(country => !["US","GB","CA","DE","CH","AT","FR","AU","BR","IN","ZA"].includes(country)).optional(),
         system: z.union([z.literal("postal_code"), z.literal("custom")]).optional()
     }).passthrough()]).and(z.object({
-    country: z.string().regex(new RegExp("^[A-Z]{2}$")),
+    country: z.string(),
     system: PostalCodeSystemSchema
 }).passthrough());
 
@@ -1305,7 +1342,7 @@ export const V2CreativeCanonicalFormatKindSchema = z.object({}).passthrough();
 
 export const PublisherCatalogFormatOptionReferenceSchema = z.object({
     scope: z.literal("publisher"),
-    publisher_domain: z.string(),
+    publisher_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
     format_option_id: z.string()
 }).passthrough();
 
@@ -1501,7 +1538,7 @@ export const MacroDeclarationSchema = z.object({}).passthrough().merge(z.object(
     dialect: MacroDialectFamilySchema,
     dialect_namespace: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
     dialect_revision: z.string().min(1).optional(),
-    dialect_semantic: z.string().min(1),
+    dialect_semantic: z.string(),
     mapping_status: MacroMappingStatusSchema,
     universal_semantic: UniversalMacroSchema.optional(),
     operation: MacroProcessingOperationSchema,
@@ -1579,41 +1616,41 @@ export const CatalogSchema = z.object({
 
 export const AttestationCredentialUriLocatorSchema = z.object({
     type: z.literal("credential_uri"),
-    credential_uri: z.string(),
+    credential_uri: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI"),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const AttestationIssuerCredentialIdLocatorSchema = z.object({
     type: z.literal("issuer_credential_id"),
-    credential_id: z.string(),
-    resolver_id: z.string(),
+    credential_id: z.string().min(1).max(1024),
+    resolver_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9._:-]+$")),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const AttestationAgentIssuerSchema = z.object({
     type: z.literal("agent"),
-    agent_url: z.string(),
+    agent_url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI"),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const AttestationOriginIssuerSchema = z.object({
     type: z.literal("origin"),
-    origin: z.string(),
+    origin: z.string().regex(new RegExp("^https://[^/?#@]+$")).refine(adcpJsonSchemaUri, "Invalid URI"),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const AttestationAgentSubjectSchema = z.object({
     type: z.literal("agent"),
-    agent_url: z.string(),
+    agent_url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI"),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const AttestationResourceSubjectSchema = z.object({
     type: z.literal("resource"),
-    resource_type: z.string(),
-    namespace: z.string(),
-    id: z.string(),
-    content_digest: z.string().optional(),
+    resource_type: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
+    namespace: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
+    id: z.string().min(1).max(1024),
+    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
@@ -2538,10 +2575,10 @@ export const AccountReferenceSchema = z.union([z.object({
         account_id: z.string()
     }).passthrough(), z.object({
         brand: BrandReferenceSchema,
-        operator: z.string(),
+        operator: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
         operator_unit: OperatorUnitSchema.optional(),
-        currency: z.string().optional(),
-        timezone: z.string().optional(),
+        currency: z.string().regex(new RegExp("^[A-Z]{3}$")).optional(),
+        timezone: z.string().min(1).optional(),
         sandbox: z.boolean().optional()
     }).passthrough()]);
 
@@ -2654,7 +2691,7 @@ export const MacroResolutionResultSchema = z.object({}).passthrough().merge(z.ob
     dialect: MacroDialectFamilySchema,
     dialect_namespace: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
     dialect_revision: z.string().min(1).optional(),
-    dialect_semantic: z.string().min(1),
+    dialect_semantic: z.string(),
     mapping_status: MacroMappingStatusSchema,
     universal_semantic: UniversalMacroSchema.optional(),
     operation: MacroProcessingOperationSchema,
@@ -2666,6 +2703,14 @@ export const MacroResolutionResultSchema = z.object({}).passthrough().merge(z.ob
     reason: MacroResolutionReasonSchema,
     matched_encodings: z.array(MacroEncodingSchema).optional(),
     message: z.string().min(1).optional()
+}).passthrough());
+
+export const WarningSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({
+    code: WarningCodeSchema,
+    message: z.string().min(1).max(2000),
+    affected_resource: WarningAffectedResourceSchema,
+    details: z.object({}).passthrough().optional(),
+    ext: ExtensionObjectSchema.optional()
 }).passthrough());
 
 export const NotificationConfigSchema = z.object({}).passthrough().merge(z.object({
@@ -2850,13 +2895,13 @@ export const ReportingDeliveryConfigurationLifecycleStateSchema = z.union([z.lit
 
 export const ReportingFeedPurposeSchema = z.union([z.literal("pacing"), z.literal("analytics"), z.literal("billing")]);
 
-export const ReportingMediaBuyIDSchema = z.string();
+export const ReportingMediaBuyIDSchema = z.string().min(1);
 
 export const ReportingReconciliationModeSchema = z.union([z.literal("delivery_only"), z.literal("consumer_receipt")]);
 
 export const ReportingScheduleAlignmentSchema = z.union([z.literal("utc"), z.literal("account_timezone"), z.literal("source_timezone"), z.literal("billing_cycle")]);
 
-export const ReportingPackageIDSchema = z.string();
+export const ReportingPackageIDSchema = z.string().min(1);
 
 export const ReportingStatusSeveritySchema = z.union([z.literal("delayed"), z.literal("action_required")]);
 
@@ -2873,19 +2918,19 @@ export const OptimizationGoalSchema = z.union([z.object({
         metric: z.union([z.literal("clicks"), z.literal("views"), z.literal("completed_views"), z.literal("viewed_seconds"), z.literal("attention_seconds"), z.literal("attention_score"), z.literal("engagements"), z.literal("follows"), z.literal("saves"), z.literal("profile_visits"), z.literal("reach")]),
         reach_unit: ReachUnitSchema.optional(),
         target_frequency: z.union([z.object({}).passthrough(), z.object({}).passthrough()]).optional(),
-        view_duration_seconds: z.number().optional(),
+        view_duration_seconds: z.number().gt(0).optional(),
         target: z.union([z.object({
                 kind: z.literal("cost_per"),
-                value: z.number()
+                value: z.number().gt(0)
             }).passthrough(), z.object({
                 kind: z.literal("threshold_rate"),
-                value: z.number()
+                value: z.number().gt(0)
             }).passthrough()]).optional(),
-        priority: z.number().optional()
+        priority: z.number().int().gte(1).optional()
     }).passthrough(), z.object({
         kind: z.literal("event"),
         event_sources: z.array(z.object({
-            event_source_id: z.string(),
+            event_source_id: z.string().min(1),
             event_type: EventTypeSchema,
             custom_event_name: z.string().optional(),
             value_field: z.string().optional(),
@@ -2893,27 +2938,27 @@ export const OptimizationGoalSchema = z.union([z.object({
         }).passthrough()),
         target: z.union([z.object({
                 kind: z.literal("cost_per"),
-                value: z.number()
+                value: z.number().gt(0)
             }).passthrough(), z.object({
                 kind: z.literal("per_ad_spend"),
-                value: z.number()
+                value: z.number().gt(0)
             }).passthrough(), z.object({
                 kind: z.literal("maximize_value")
             }).passthrough()]).optional(),
         attribution_window: AttributionWindowSchema.optional(),
-        priority: z.number().optional()
+        priority: z.number().int().gte(1).optional()
     }).passthrough(), z.object({
         kind: z.literal("vendor_metric"),
         vendor: BrandReferenceSchema,
         metric_id: VendorMetricIDSchema,
         target: z.union([z.object({
                 kind: z.literal("cost_per"),
-                value: z.number()
+                value: z.number().gt(0)
             }).passthrough(), z.object({
                 kind: z.literal("threshold_rate"),
-                value: z.number()
+                value: z.number().gt(0)
             }).passthrough()]).optional(),
-        priority: z.number().optional()
+        priority: z.number().int().gte(1).optional()
     }).passthrough()]);
 
 export const FormatOptionReferenceSchema = z.union([PublisherCatalogFormatOptionReferenceSchema, ProductLocalFormatOptionReferenceSchema]);
@@ -2947,7 +2992,7 @@ export const CommittedMetricSchema = z.union([z.object({
             attribution_window: DurationSchema.optional(),
             lift_dimension: LiftDimensionSchema.optional()
         }).passthrough().optional(),
-        committed_at: z.string()
+        committed_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")
     }).passthrough(), z.object({
         scope: z.literal("vendor"),
         vendor: BrandReferenceSchema,
@@ -2960,7 +3005,7 @@ export const CommittedMetricSchema = z.union([z.object({
             attribution_window: DurationSchema.optional(),
             lift_dimension: LiftDimensionSchema.optional()
         }).passthrough().optional(),
-        committed_at: z.string()
+        committed_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")
     }).passthrough()]);
 
 export const AudienceCharacteristicSchema = z.object({
@@ -3019,9 +3064,9 @@ export const TargetingGeoMetrosSchema = z.array(GeoMetroSchema);
 export const TargetingLanguagesSchema = z.array(LanguageTagSchema);
 
 export const TargetingKeywordsSchema = z.array(z.object({
-    keyword: z.string(),
+    keyword: z.string().min(1),
     match_type: MatchTypeSchema,
-    bid_price: z.number().optional()
+    bid_price: z.number().gte(0).optional()
 }).passthrough());
 
 export const TargetingNegativeKeywordsSchema = z.array(NegativeKeywordSchema);
@@ -3159,8 +3204,8 @@ export const OperatorIdentitySchema = z.object({
 export const AccountIdentityChangeRejectedSchema = z.object({
     status: z.literal("rejected"),
     requested_operator_identity: OperatorIdentitySchema,
-    requested_at: z.string().optional(),
-    reason: z.string()
+    requested_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    reason: z.string().min(1).max(1000)
 }).passthrough();
 
 export const ReportingCoverageSchema = z.object({
@@ -3330,15 +3375,6 @@ export const OutcomeMeasurementSchema = z.object({
 
 export const BrandReference1Schema = BrandReferenceSchema;
 
-export const ProductAllowedActionSchema = z.object({
-    action: MediaBuyAvailableActionIDSchema,
-    modes: z.array(MediaBuyActionModeSchema),
-    allowed_statuses: z.array(MediaBuyStatusSchema).optional(),
-    sla: SLAWindowSchema.optional(),
-    constraints: MediaBuyChangeTermConstraintsSchema.optional(),
-    terms_ref: z.string().optional()
-}).passthrough();
-
 export const CreativePolicySchema = z.object({
     co_branding: CoBrandingRequirementSchema,
     landing_page: LandingPageRequirementSchema,
@@ -3358,14 +3394,14 @@ export const CreativePolicySchema = z.object({
 }).passthrough();
 
 export const DataProviderSignalSelectorSchema = z.union([z.object({
-        data_provider_domain: z.string(),
+        data_provider_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
         selection_type: z.literal("all")
     }).passthrough(), z.object({
-        data_provider_domain: z.string(),
+        data_provider_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
         selection_type: z.literal("by_id"),
         signal_ids: z.array(z.string())
     }).passthrough(), z.object({
-        data_provider_domain: z.string(),
+        data_provider_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
         selection_type: z.literal("by_tag"),
         signal_tags: z.array(z.string())
     }).passthrough()]);
@@ -3420,12 +3456,12 @@ export const DemographicReportingCapabilitySchema = z.object({}).passthrough().m
 
 export const SignalIDSchema = z.union([z.object({
         source: z.literal("catalog"),
-        data_provider_domain: z.string(),
-        id: z.string()
+        data_provider_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
+        id: z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$"))
     }).passthrough(), z.object({
         source: z.literal("agent"),
-        agent_url: z.string(),
-        id: z.string()
+        agent_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
+        id: z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$"))
     }).passthrough()]);
 
 export const SignalListingSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).and(z.union([z.object({}).passthrough(), z.object({}).passthrough()])).and(z.object({
@@ -3477,42 +3513,42 @@ export const SignalListingSchema = z.object({}).passthrough().merge(z.object({})
 
 export const CpmPricingSchema = z.object({
     model: z.literal("cpm"),
-    cpm: z.number(),
-    currency: z.string(),
+    cpm: z.number().gte(0),
+    currency: z.string().regex(new RegExp("^[A-Z]{3}$")),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const PercentOfMediaPricingSchema = z.object({
     model: z.literal("percent_of_media"),
-    percent: z.number(),
-    max_cpm: z.number().optional(),
-    currency: z.string(),
+    percent: z.number().gte(0).lte(100),
+    max_cpm: z.number().gte(0).optional(),
+    currency: z.string().regex(new RegExp("^[A-Z]{3}$")),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const FlatFeePricingSchema = z.object({
     model: z.literal("flat_fee"),
-    amount: z.number(),
+    amount: z.number().gte(0),
     period: z.union([z.literal("monthly"), z.literal("quarterly"), z.literal("annual"), z.literal("campaign")]),
-    currency: z.string(),
+    currency: z.string().regex(new RegExp("^[A-Z]{3}$")),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const PerUnitPricingSchema = z.object({
     model: z.literal("per_unit"),
     unit: z.string(),
-    unit_price: z.number(),
-    currency: z.string(),
+    unit_price: z.number().gte(0),
+    currency: z.string().regex(new RegExp("^[A-Z]{3}$")),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const CustomPricingSchema = z.object({
     model: z.literal("custom"),
-    description: z.string(),
+    description: z.string().min(1),
     metadata: z.object({
-        summary_for_operator: z.string().optional()
+        summary_for_operator: z.string().min(1).optional()
     }).passthrough(),
-    currency: z.string().optional(),
+    currency: z.string().regex(new RegExp("^[A-Z]{3}$")).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
@@ -3557,8 +3593,8 @@ export const NamedFormatProductSchema = z.object({}).passthrough();
 export const CanonicalFormatProductSchema = z.object({}).passthrough();
 
 export const ProductDOOHScreenResolutionSchema = z.object({
-    width: z.number(),
-    height: z.number()
+    width: z.number().int().gte(1),
+    height: z.number().int().gte(1)
 }).passthrough();
 
 export const PriceGuidanceSchema = z.object({
@@ -3645,8 +3681,8 @@ export const CPPPricingOptionSchema = z.object({
 export const DoohParametersSchema = z.object({
     type: z.literal("dooh"),
     sov_percentage: z.number().gte(0).lte(100).optional(),
-    slot_span: z.number().optional(),
-    loop_position: z.string().optional(),
+    slot_span: z.number().int().gte(1).optional(),
+    loop_position: z.string().min(1).optional(),
     loop_duration_seconds: z.number().int().gte(1).optional(),
     min_plays_per_hour: z.number().int().gte(1).optional(),
     venue_package: z.string().optional(),
@@ -4012,7 +4048,7 @@ export const CanonicalPricingOptionSchema = z.object({}).passthrough().merge(z.o
     commission_basis_description: z.string().min(1).max(1000).optional()
 }).passthrough());
 
-export const ProductPurchaseImpressionsSchema = z.number();
+export const ProductPurchaseImpressionsSchema = z.number().gte(0);
 
 export const BrandKeySchema = z.object({
     domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
@@ -4060,35 +4096,35 @@ export const CanonicalOptimizationGoalSchema = z.union([z.object({
         metric: z.union([z.literal("clicks"), z.literal("views"), z.literal("completed_views"), z.literal("viewed_seconds"), z.literal("engagements"), z.literal("follows"), z.literal("saves"), z.literal("profile_visits"), z.literal("reach")]),
         reach_unit: ReachUnitSchema.optional(),
         target_frequency: z.union([z.object({}).passthrough(), z.object({}).passthrough()]).optional(),
-        view_duration_seconds: z.number().optional(),
+        view_duration_seconds: z.number().gt(0).optional(),
         target: z.object({
             kind: z.literal("threshold_rate"),
-            value: z.number()
+            value: z.number().gt(0)
         }).passthrough().optional(),
-        priority: z.number().optional()
+        priority: z.number().int().gte(1).optional()
     }).passthrough(), z.object({
         kind: z.literal("event"),
         event_sources: z.array(z.object({
-            event_source_id: z.string(),
+            event_source_id: z.string().min(1),
             event_type: EventTypeSchema,
-            custom_event_name: z.string().optional(),
-            value_field: z.string().optional(),
+            custom_event_name: z.string().min(1).optional(),
+            value_field: z.string().min(1).optional(),
             value_factor: z.number().optional()
         }).passthrough()),
         target: z.object({
             kind: z.literal("maximize_value")
         }).passthrough().optional(),
         attribution_window: AttributionWindowSchema.optional(),
-        priority: z.number().optional()
+        priority: z.number().int().gte(1).optional()
     }).passthrough(), z.object({
         kind: z.literal("vendor_metric"),
         vendor: BrandKeySchema,
         metric_id: VendorMetricIDSchema,
         target: z.object({
             kind: z.literal("threshold_rate"),
-            value: z.number()
+            value: z.number().gt(0)
         }).passthrough().optional(),
-        priority: z.number().optional()
+        priority: z.number().int().gte(1).optional()
     }).passthrough()]);
 
 export const CanonicalMetricQualifierSchema = z.object({
@@ -4176,7 +4212,7 @@ export const CanonicalAudienceEvidenceSchema = z.object({}).passthrough().merge(
     content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")),
     audience: AudienceCharacteristicSchema,
     relationship: z.union([z.literal("composition"), z.literal("index"), z.literal("reach_estimate")]),
-    value: z.number().gte(0),
+    value: z.number(),
     unit: z.union([z.literal("fraction"), z.literal("ratio"), z.literal("count")]),
     baseline: z.object({
         system: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI"),
@@ -4203,7 +4239,7 @@ export const CanonicalAudienceEvidenceSchema = z.object({}).passthrough().merge(
     content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")),
     audience: AudienceCharacteristicSchema,
     relationship: z.union([z.literal("composition"), z.literal("index"), z.literal("reach_estimate")]),
-    value: z.number().gte(0),
+    value: z.number(),
     unit: z.union([z.literal("fraction"), z.literal("ratio"), z.literal("count")]),
     baseline: z.object({
         system: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI"),
@@ -4230,7 +4266,7 @@ export const CanonicalAudienceEvidenceSchema = z.object({}).passthrough().merge(
     content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")),
     audience: AudienceCharacteristicSchema,
     relationship: z.union([z.literal("composition"), z.literal("index"), z.literal("reach_estimate")]),
-    value: z.number().gte(0),
+    value: z.number(),
     unit: z.union([z.literal("fraction"), z.literal("ratio"), z.literal("count")]),
     baseline: z.object({
         system: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI"),
@@ -4265,15 +4301,6 @@ export const CanonicalAudienceEvidenceSelectionSchema = z.object({
 
 export const InventoryListApplicationSchema = z.union([PropertyListApplicationSchema, CollectionListApplicationSchema]);
 
-export const CanonicalProductActionSchema = z.object({
-    action: CanonicalMediaBuyActionNameSchema,
-    modes: z.array(CanonicalMediaBuyActionModeSchema),
-    allowed_statuses: z.array(MediaBuyStatusSchema).optional(),
-    sla: SLAWindowSchema.optional(),
-    constraints: MediaBuyChangeTermConstraintsSchema.optional(),
-    terms_ref: z.string().optional()
-}).passthrough();
-
 export const RequestProposalsAsyncSubmittedSchema = CompactTaskSubmittedSchema;
 
 export const RefineProposalsAsyncSubmittedSchema = CompactTaskSubmittedSchema;
@@ -4288,8 +4315,8 @@ export const CommitmentErrorSchema = z.object({
 
 export const CommitmentSubmittedSchema = z.object({
     status: z.literal("submitted"),
-    task_id: z.string(),
-    message: z.string().optional(),
+    task_id: z.string().min(1),
+    message: z.string().max(2000).optional(),
     errors: z.array(ErrorSchema).optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional(),
@@ -4305,14 +4332,6 @@ export const CanonicalMediaBuyActionFieldsSchema = z.object({
     terms_ref: MediaBuyTermsReferenceSchema.optional(),
     applicable_package_ids: z.array(ApplicablePackageIDSchema).optional()
 }).passthrough();
-
-export const WarningSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({
-    code: WarningCodeSchema,
-    message: z.string().min(1).max(2000),
-    affected_resource: WarningAffectedResourceSchema,
-    details: z.object({}).passthrough().optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough());
 
 export const ControlErrorSchema = z.object({
     status: z.literal("failed"),
@@ -4488,27 +4507,14 @@ export const CanonicalReportingCommitmentSchema = z.union([z.object({
         scope: z.literal("standard"),
         metric_id: AvailableMetricSchema,
         qualifier: CanonicalMetricQualifierSchema.optional(),
-        effective_at: z.string().optional()
+        effective_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
     }).passthrough(), z.object({
         scope: z.literal("vendor"),
         vendor: BrandKeySchema,
         metric_id: VendorMetricIDSchema,
         qualifier: CanonicalMetricQualifierSchema.optional(),
-        effective_at: z.string().optional()
+        effective_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
     }).passthrough()]);
-
-export const MediaBuyChangeTermSchema = z.object({
-    term_id: z.string().regex(new RegExp("^[A-Za-z0-9_.:-]+$")),
-    action: CanonicalMediaBuyActionNameSchema,
-    service_mode: CanonicalMediaBuyActionModeSchema,
-    allowed_statuses: z.array(z.union([z.literal("pending_creatives"), z.literal("pending_start"), z.literal("active"), z.literal("paused")])).optional(),
-    processing_sla: SLAWindowSchema.optional(),
-    conditions: z.array(z.string()).optional(),
-    constraints: MediaBuyChangeTermConstraintsSchema.optional(),
-    terms_ref: z.string().min(1).max(1000).optional(),
-    description: z.string().min(1).max(1000).optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
 
 export const AudienceEvidencePinSchema = z.object({
     evidence_id: z.string().min(1),
@@ -4540,27 +4546,11 @@ export const CanonicalForecastVendorMetricValueSchema = z.object({
 }).passthrough();
 
 export const CanonicalDOOHScreenResolutionSchema = z.object({
-    width: z.number(),
-    height: z.number()
+    width: z.number().int().gte(1),
+    height: z.number().int().gte(1)
 }).passthrough();
 
 export const CanonicalMediaBuyActionSchema = CanonicalMediaBuyActionFieldsSchema;
-
-export const ControlAppliedSchema = z.object({
-    status: z.literal("completed"),
-    media_buy_id: z.string().min(1),
-    revision: z.int().min(1),
-    media_buy_status: MediaBuyStatusSchema.optional(),
-    implementation_date: z.iso.datetime().optional().nullable(),
-    affected_package_ids: z.array(z.string()).optional(),
-    available_actions: z.array(CanonicalMediaBuyActionSchema).optional(),
-    warnings: z.array(WarningSchema.and(z.object({
-        code: z.literal("inventory_shortfall_forecast").optional()
-    }).passthrough())).optional(),
-    context: ContextObjectSchema.optional(),
-    ext: ExtensionObjectSchema.optional(),
-    replayed: z.literal(true).optional()
-}).passthrough();
 
 export const CreateMediaBuyAsyncSubmittedSchema = CreateMediaBuySubmittedSchema;
 
@@ -4583,11 +4573,11 @@ export const UpdateMediaBuyAsyncSubmittedSchema = UpdateMediaBuySubmittedSchema;
 export const PreviewRenderSchema = z.union([z.object({
         render_id: z.string(),
         output_format: z.literal("url"),
-        preview_url: z.string(),
+        preview_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
         role: z.string(),
         dimensions: z.object({
-            width: z.number(),
-            height: z.number()
+            width: z.number().gte(0),
+            height: z.number().gte(0)
         }).passthrough().optional(),
         embedding: z.object({
             recommended_sandbox: z.literal("").optional(),
@@ -4602,8 +4592,8 @@ export const PreviewRenderSchema = z.union([z.object({
         preview_html: z.string(),
         role: z.string(),
         dimensions: z.object({
-            width: z.number(),
-            height: z.number()
+            width: z.number().gte(0),
+            height: z.number().gte(0)
         }).passthrough().optional(),
         embedding: z.object({
             recommended_sandbox: z.literal("").optional(),
@@ -4615,12 +4605,12 @@ export const PreviewRenderSchema = z.union([z.object({
     }).passthrough(), z.object({
         render_id: z.string(),
         output_format: z.literal("both"),
-        preview_url: z.string(),
+        preview_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
         preview_html: z.string(),
         role: z.string(),
         dimensions: z.object({
-            width: z.number(),
-            height: z.number()
+            width: z.number().gte(0),
+            height: z.number().gte(0)
         }).passthrough().optional(),
         embedding: z.object({
             recommended_sandbox: z.literal("").optional(),
@@ -4679,7 +4669,7 @@ export const PreviewCreativeSingleResponseSchema = z.object({
         }).passthrough()
     }).passthrough()),
     quality_used: CreativeQualitySchema.optional(),
-    interactive_url: z.string().optional(),
+    interactive_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
     expires_at: z.iso.datetime().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
@@ -4802,8 +4792,8 @@ export const PublisherEntrySchema = z.object({
 }).passthrough();
 
 export const AcquireRightsRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     governance_context: z.string().min(1).max(4096).regex(/^[\x20-\x7E]+$/).optional(),
     rights_id: z.string(),
     pricing_option_id: z.string(),
@@ -4896,7 +4886,7 @@ export const CreativeApprovedSchema = z.object({
     approval_status: z.literal("approved"),
     rights_id: z.string(),
     creative_id: z.string().optional(),
-    creative_url: z.string().optional(),
+    creative_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
     approved_at: z.iso.datetime().optional(),
     conditions: z.array(z.string()).optional(),
     context: ContextObjectSchema.optional(),
@@ -4907,7 +4897,7 @@ export const CreativeRejectedSchema = z.object({
     approval_status: z.literal("rejected"),
     rights_id: z.string(),
     creative_id: z.string().optional(),
-    creative_url: z.string().optional(),
+    creative_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
     reason: z.string(),
     suggestions: z.array(z.string()).optional(),
     context: ContextObjectSchema.optional(),
@@ -4918,9 +4908,9 @@ export const CreativePendingReviewSchema = z.object({
     approval_status: z.literal("pending_review"),
     rights_id: z.string(),
     creative_id: z.string().optional(),
-    creative_url: z.string().optional(),
+    creative_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
     estimated_response_time: z.string().optional(),
-    status_url: z.string().optional(),
+    status_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -4932,8 +4922,8 @@ export const CreativeApprovalErrorSchema = z.object({
 }).passthrough();
 
 export const GetBrandIdentityRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     brand_id: z.string(),
     fields: z.array(z.union([z.literal("description"), z.literal("industries"), z.literal("keller_type"), z.literal("logos"), z.literal("colors"), z.literal("fonts"), z.literal("visual_guidelines"), z.literal("tone"), z.literal("tagline"), z.literal("voice_synthesis"), z.literal("assets"), z.literal("rights")])).optional(),
     use_case: z.string().optional(),
@@ -5048,8 +5038,8 @@ export const GetBrandIdentityErrorSchema = z.object({
 }).passthrough();
 
 export const GetRightsRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     query: z.string().max(2000),
     uses: z.array(RightUseSchema),
     buyer_brand: BrandReferenceSchema.optional(),
@@ -5136,8 +5126,8 @@ export const SearchBrandResultSchema = z.object({
 }).passthrough();
 
 export const UpdateRightsRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     governance_context: z.string().min(1).max(4096).regex(/^[\x20-\x7E]+$/).optional(),
     rights_id: z.string(),
     account: AccountReferenceSchema.optional(),
@@ -5230,8 +5220,8 @@ export const ResponsePayloadSchema = z.object({
 export const ClaimEntrySchema = z.union([VerifySubsidiaryClaimSchema, VerifyParentClaimSchema, VerifyPropertyClaimSchema, VerifyTrademarkClaimSchema]);
 
 export const VerifyBrandClaimsRequestBulkSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     claims: z.array(ClaimEntrySchema).max(100)
 }).passthrough();
 
@@ -5270,13 +5260,13 @@ export const DistributionIDsSourceSchema = z.object({
 
 export const PublisherCollectionsSourceSchema = z.object({
     selection_type: z.literal("publisher_collections"),
-    publisher_domain: z.string(),
+    publisher_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
     collection_ids: z.array(z.string())
 }).passthrough();
 
 export const PublisherGenresSourceSchema = z.object({
     selection_type: z.literal("publisher_genres"),
-    publisher_domain: z.string(),
+    publisher_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
     genres: z.array(z.string()),
     genre_taxonomy: GenreTaxonomySchema
 }).passthrough();
@@ -5417,10 +5407,10 @@ export const ArtifactSchema = z.object({
     assets: z.array(z.union([z.object({
             type: z.literal("text"),
             role: z.union([z.literal("title"), z.literal("paragraph"), z.literal("heading"), z.literal("caption"), z.literal("quote"), z.literal("list_item"), z.literal("description")]).optional(),
-            content: z.string(),
+            content: z.string().max(100000),
             content_format: z.union([z.literal("text/plain"), z.literal("text/markdown"), z.literal("text/html"), z.literal("application/json")]).optional(),
             language: z.string().optional(),
-            heading_level: z.number().optional(),
+            heading_level: z.number().int().gte(1).lte(6).optional(),
             provenance: ProvenanceSchema.optional()
         }).passthrough(), z.object({
             type: z.literal("image"),
@@ -5428,25 +5418,25 @@ export const ArtifactSchema = z.object({
             access: AssetAccessSchema.optional(),
             alt_text: z.string().optional(),
             caption: z.string().optional(),
-            width: z.number().optional(),
-            height: z.number().optional(),
+            width: z.number().int().optional(),
+            height: z.number().int().optional(),
             provenance: ProvenanceSchema.optional()
         }).passthrough(), z.object({
             type: z.literal("video"),
             url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
             access: AssetAccessSchema.optional(),
-            duration_ms: z.number().optional(),
-            transcript: z.string().optional(),
+            duration_ms: z.number().int().optional(),
+            transcript: z.string().max(200000).optional(),
             transcript_format: z.union([z.literal("text/plain"), z.literal("text/markdown"), z.literal("application/json")]).optional(),
             transcript_source: z.union([z.literal("original_script"), z.literal("subtitles"), z.literal("closed_captions"), z.literal("dub"), z.literal("generated")]).optional(),
-            thumbnail_url: z.string().optional(),
+            thumbnail_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
             provenance: ProvenanceSchema.optional()
         }).passthrough(), z.object({
             type: z.literal("audio"),
             url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
             access: AssetAccessSchema.optional(),
-            duration_ms: z.number().optional(),
-            transcript: z.string().optional(),
+            duration_ms: z.number().int().optional(),
+            transcript: z.string().max(200000).optional(),
             transcript_format: z.union([z.literal("text/plain"), z.literal("text/markdown"), z.literal("application/json")]).optional(),
             transcript_source: z.union([z.literal("original_script"), z.literal("closed_captions"), z.literal("generated")]).optional(),
             provenance: ProvenanceSchema.optional()
@@ -5471,68 +5461,68 @@ export const ArtifactSchema = z.object({
 
 export const AcceptancePolicyRequirementSchema = z.union([z.object({
         kind: z.literal("category_declaration"),
-        declaration: z.string().optional(),
-        description: z.string().optional()
+        declaration: z.string().min(1).optional(),
+        description: z.string().min(1).optional()
     }).passthrough(), z.object({
         kind: z.literal("advertiser_verification"),
-        verification_scheme: z.string().optional(),
-        description: z.string().optional()
+        verification_scheme: z.string().min(1).optional(),
+        description: z.string().min(1).optional()
     }).passthrough(), z.object({
         kind: z.literal("advertiser_eligibility"),
         criteria: z.array(z.string()),
-        description: z.string().optional()
+        description: z.string().min(1).optional()
     }).passthrough(), z.object({
         kind: z.literal("funding_restriction"),
         criteria: z.array(z.string()),
-        description: z.string().optional()
+        description: z.string().min(1).optional()
     }).passthrough(), z.object({
         kind: z.literal("certification"),
-        credential: z.string().optional(),
-        description: z.string().optional()
+        credential: z.string().min(1).optional(),
+        description: z.string().min(1).optional()
     }).passthrough(), z.object({
         kind: z.literal("license"),
-        credential: z.string().optional(),
-        description: z.string().optional()
+        credential: z.string().min(1).optional(),
+        description: z.string().min(1).optional()
     }).passthrough(), z.object({
         kind: z.literal("prior_authorization"),
-        description: z.string().optional()
+        description: z.string().min(1).optional()
     }).passthrough(), z.object({
         kind: z.literal("account_setup"),
-        description: z.string().optional()
+        description: z.string().min(1).optional()
     }).passthrough(), z.object({
         kind: z.literal("sales_assisted"),
-        description: z.string().optional()
+        description: z.string().min(1).optional()
     }).passthrough(), z.object({
         kind: z.literal("disclosure"),
-        format: z.string().optional(),
-        placement: z.string().optional(),
-        description: z.string().optional()
+        format: z.string().min(1).optional(),
+        placement: z.string().min(1).optional(),
+        description: z.string().min(1).optional()
     }).passthrough(), z.object({
         kind: z.literal("targeting_restriction"),
         restricted_attributes: z.array(RestrictedAttributeSchema).optional(),
-        description: z.string().optional()
+        description: z.string().min(1).optional()
     }).passthrough(), z.object({
         kind: z.literal("creative_restriction"),
-        description: z.string()
+        description: z.string().min(1)
     }).passthrough(), z.object({
         kind: z.literal("destination_restriction"),
-        description: z.string()
+        description: z.string().min(1)
     }).passthrough(), z.object({
         kind: z.literal("format_restriction"),
         format_ids: z.array(z.string()).optional(),
-        description: z.string().optional()
+        description: z.string().min(1).optional()
     }).passthrough(), z.object({
         kind: z.literal("time_restriction"),
-        starts_at: z.string().optional(),
-        ends_at: z.string().optional(),
-        description: z.string().optional()
+        starts_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+        ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+        description: z.string().min(1).optional()
     }).passthrough(), z.object({
         kind: z.literal("transparency_reporting"),
-        description: z.string().optional()
+        description: z.string().min(1).optional()
     }).passthrough(), z.object({
         kind: z.literal("custom"),
-        id: z.string(),
-        description: z.string(),
+        id: z.string().regex(new RegExp("^[a-z][a-z0-9_.:-]*$")),
+        description: z.string().min(1),
         ext: ExtensionObjectSchema.optional()
     }).passthrough()]);
 
@@ -5543,7 +5533,7 @@ export const ExemplarSchema = z.object({
 
 export const StandardScopeSchema = z.literal("attestation_verifier");
 
-export const CustomScopeSchema = z.string();
+export const CustomScopeSchema = z.string().regex(new RegExp("^custom:[a-z][a-z0-9_]*$"));
 
 export const AccountAuthorizationSchema = z.object({
     allowed_tasks: z.array(z.string()),
@@ -5787,7 +5777,7 @@ export const AudienceMemberSchema = z.object({}).passthrough().merge(z.object({
 
 export const AudienceSelectorSchema = z.union([z.union([z.object({}).passthrough(), z.object({}).passthrough()]), z.union([z.object({}).passthrough(), z.object({}).passthrough()]), z.union([z.object({}).passthrough(), z.object({}).passthrough()]), z.object({
         type: z.literal("description"),
-        description: z.string(),
+        description: z.string().min(1).max(2000),
         category: z.string().optional()
     }).passthrough()]);
 
@@ -5832,13 +5822,13 @@ export const BudgetRangeSchema = z.object({}).passthrough().merge(z.object({
 }).passthrough());
 
 export const CanonicalAccountReferenceSchema = z.union([z.object({
-        account_id: z.string()
+        account_id: z.string().min(1)
     }).passthrough(), z.object({
         brand: BrandKeySchema,
-        operator: z.string(),
+        operator: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
         operator_unit: OperatorUnitSchema.optional(),
-        currency: z.string().optional(),
-        timezone: z.string().optional(),
+        currency: z.string().regex(new RegExp("^[A-Z]{3}$")).optional(),
+        timezone: z.string().min(1).optional(),
         sandbox: z.boolean().optional()
     }).passthrough()]);
 
@@ -6015,7 +6005,7 @@ export const CreativeItemSchema = z.union([z.object({
         asset_kind: z.literal("media"),
         asset_type: z.string(),
         asset_id: z.string(),
-        content_uri: z.string()
+        content_uri: z.string().refine(adcpJsonSchemaUri, "Invalid URI")
     }).passthrough(), z.object({
         asset_kind: z.literal("text"),
         asset_type: z.string(),
@@ -6067,16 +6057,16 @@ export const DeploymentSchema = z.union([z.object({
         account: z.string().optional(),
         is_live: z.boolean(),
         activation_key: ActivationKeySchema.optional(),
-        estimated_activation_duration_minutes: z.number().optional(),
-        deployed_at: z.string().optional()
+        estimated_activation_duration_minutes: z.number().gte(0).optional(),
+        deployed_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
     }).passthrough(), z.object({
         type: z.literal("agent"),
-        agent_url: z.string(),
+        agent_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
         account: z.string().optional(),
         is_live: z.boolean(),
         activation_key: ActivationKeySchema.optional(),
-        estimated_activation_duration_minutes: z.number().optional(),
-        deployed_at: z.string().optional()
+        estimated_activation_duration_minutes: z.number().gte(0).optional(),
+        deployed_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
     }).passthrough()]);
 
 export const DestinationSchema = z.union([z.object({
@@ -6085,7 +6075,7 @@ export const DestinationSchema = z.union([z.object({
         account: z.string().optional()
     }).passthrough(), z.object({
         type: z.literal("agent"),
-        agent_url: z.string(),
+        agent_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
         account: z.string().optional()
     }).passthrough()]);
 
@@ -6184,12 +6174,12 @@ export const ImageAssetRequirementsSchema = z.object({
     formats: z.array(z.union([z.literal("jpg"), z.literal("jpeg"), z.literal("png"), z.literal("gif"), z.literal("webp"), z.literal("svg"), z.literal("avif"), z.literal("tiff"), z.literal("pdf"), z.literal("eps")])).optional(),
     min_dpi: z.number().int().gte(1).optional(),
     bleed: z.union([z.object({
-            uniform: z.number()
+            uniform: z.number().gte(0)
         }).passthrough(), z.object({
-            top: z.number(),
-            right: z.number(),
-            bottom: z.number(),
-            left: z.number()
+            top: z.number().gte(0),
+            right: z.number().gte(0),
+            bottom: z.number().gte(0),
+            left: z.number().gte(0)
         }).passthrough()]).optional(),
     color_space: z.union([z.literal("rgb"), z.literal("cmyk"), z.literal("grayscale")]).optional(),
     max_file_size_kb: z.number().int().gte(1).optional(),
@@ -6733,11 +6723,11 @@ export const ProductAudienceEvidenceRequirementsSchema = z.object({}).passthroug
             ext: ExtensionObjectSchema.optional()
         }).passthrough(), z.object({
             type: z.literal("agent"),
-            agent_url: z.string(),
+            agent_url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI"),
             ext: ExtensionObjectSchema.optional()
         }).passthrough(), z.object({
             type: z.literal("origin"),
-            origin: z.string(),
+            origin: z.string().regex(new RegExp("^https://[^/?#@]+$")).refine(adcpJsonSchemaUri, "Invalid URI"),
             ext: ExtensionObjectSchema.optional()
         }).passthrough()])).optional(),
     accepted_attestation_claim_types: z.array(z.string()).optional(),
@@ -6889,17 +6879,17 @@ export const ReportingAdjustmentReceiptSchema = z.object({}).passthrough().merge
 }).passthrough());
 
 export const IntegerReportingControlTotalSchema = z.object({
-    name: z.string(),
-    value: z.string(),
+    name: z.string().min(1).max(128).regex(new RegExp("^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")),
+    value: z.string().regex(new RegExp("^-?(?:0|[1-9][0-9]*)$")),
     value_type: z.literal("integer"),
-    unit: z.string().optional()
+    unit: z.string().min(1).max(32).optional()
 }).strict();
 
 export const DecimalReportingControlTotalSchema = z.object({
-    name: z.string(),
-    value: z.string(),
+    name: z.string().min(1).max(128).regex(new RegExp("^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")),
+    value: z.string().regex(new RegExp("^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$")),
     value_type: z.literal("decimal"),
-    unit: z.string().optional()
+    unit: z.string().min(1).max(32).optional()
 }).strict();
 
 export const ReportingControlTotalSchema = z.union([IntegerReportingControlTotalSchema, DecimalReportingControlTotalSchema]);
@@ -6912,7 +6902,7 @@ export const ReportingCanonicalContentDigestSchema = z.object({
     canonicalization_sha256: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$"))
 }).strict();
 
-export const ReportingPrimaryKeySchema = z.string();
+export const ReportingPrimaryKeySchema = z.string().min(1).max(128);
 
 export const EmptyReportGoldenVectorSchema = z.object({
     name: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]{1,128}$/),
@@ -7087,7 +7077,7 @@ export const ReportingReliabilityStatisticsSchema = z.object({}).passthrough().m
     obligations_due: z.number().int().gte(1),
     obligations_on_time: z.number().int().gte(0),
     official_revisions_published: z.number().int().gte(0),
-    official_revisions_adjusted: z.number().int().gte(0),
+    official_revisions_adjusted: z.number(),
     publication_latency_seconds: LatencyPercentilesSchema,
     adjustment_latency_seconds: LatencyPercentilesSchema.optional(),
     adjustment_magnitude: z.array(z.object({
@@ -7168,7 +7158,7 @@ export const ReportingLedgerChangedWebhookSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const ReportingReaderCompatibilityItemSchema = z.string();
+export const ReportingReaderCompatibilityItemSchema = z.string().min(1).max(128);
 
 export const ReportingVerificationProfileSchema = z.union([z.literal("native_commit"), z.literal("manifest_checksums"), z.literal("canonical_digest")]);
 
@@ -7352,7 +7342,7 @@ export const ReportingRevisionSchema = z.object({}).strict().merge(z.object({
     finality_policy_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")).optional(),
     finalized_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
     observed_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
-    data_through: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").nullable(),
+    data_through: z.string().nullable(),
     data_through_precision: z.union([z.literal("exact"), z.literal("lower_bound"), z.literal("unknown")]),
     supersedes_reporting_revision_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")).optional(),
     row_count: z.number().int().gte(0),
@@ -7929,14 +7919,14 @@ export const CreativeRevisionContentMismatchDetailsSchema = z.object({
 export const AcceptedGovernanceAgentsSchema = z.object({
     any_of: z.array(z.union([z.object({
             kind: z.literal("agent_url"),
-            agent_url: z.string()
+            agent_url: z.string().max(2048).regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI")
         }).passthrough(), z.object({
             kind: z.literal("verification"),
-            registry: z.string(),
-            role: z.string(),
-            adcp_version: z.string(),
+            registry: z.string().max(2048).regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI"),
+            role: z.string().regex(new RegExp("^[a-z][a-z0-9_-]*$")),
+            adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)$")),
             verification_modes: z.array(z.union([z.literal("spec"), z.literal("live")])),
-            max_age_seconds: z.number()
+            max_age_seconds: z.number().int().gte(0)
         }).passthrough()]))
 }).passthrough();
 
@@ -8232,13 +8222,13 @@ export const ProposalDeclineSchema = z.object({}).passthrough().merge(z.object({
 
 export const PublisherTagsSourceSchema = z.object({
     selection_type: z.literal("publisher_tags"),
-    publisher_domain: z.string(),
+    publisher_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
     tags: z.array(PropertyTagSchema)
 }).passthrough();
 
 export const PublisherPropertyIDsSourceSchema = z.object({
     selection_type: z.literal("publisher_ids"),
-    publisher_domain: z.string(),
+    publisher_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
     property_ids: z.array(PropertyIDSchema)
 }).passthrough();
 
@@ -8355,7 +8345,7 @@ export const SICapabilitiesSchema = z.object({
             }).passthrough()]).optional(),
         video: z.union([z.boolean(), z.object({
                 formats: z.array(z.string()).optional(),
-                max_duration_seconds: z.number().optional()
+                max_duration_seconds: z.number().int().optional()
             }).passthrough()]).optional(),
         avatar: z.union([z.boolean(), z.object({
                 provider: z.string().optional(),
@@ -8837,8 +8827,8 @@ export const DAASTTrackerConstraintsSchema = z.object({}).passthrough().merge(z.
 }).passthrough());
 
 export const ProductDOOHPlacementAttributesSchema = z.object({
-    slot_duration_seconds: z.number().optional(),
-    loop_duration_seconds: z.number().optional(),
+    slot_duration_seconds: z.number().int().gte(1).optional(),
+    loop_duration_seconds: z.number().int().gte(1).optional(),
     screen_resolution: ProductDOOHScreenResolutionSchema.optional(),
     motion: DOOHMotionTypeSchema.optional()
 }).passthrough();
@@ -9087,8 +9077,8 @@ export const ProductMediaBuySupportSchema = z.object({
 }).passthrough();
 
 export const CanonicalDOOHPlacementAttributesSchema = z.object({
-    slot_duration_seconds: z.number().optional(),
-    loop_duration_seconds: z.number().optional(),
+    slot_duration_seconds: z.number().int().gte(1).optional(),
+    loop_duration_seconds: z.number().int().gte(1).optional(),
     screen_resolution: CanonicalDOOHScreenResolutionSchema.optional(),
     motion: DOOHMotionTypeSchema.optional()
 }).passthrough();
@@ -9152,11 +9142,25 @@ export const AcceptProposalRequestSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const ControlMediaBuyResponseSchema = z.union([ControlAppliedSchema, ControlErrorSchema, ControlSubmittedSchema]);
+export const ControlAppliedSchema = z.object({
+    status: z.literal("completed"),
+    media_buy_id: z.string().min(1),
+    revision: z.int().min(1),
+    media_buy_status: MediaBuyStatusSchema.optional(),
+    implementation_date: z.iso.datetime().optional().nullable(),
+    affected_package_ids: z.array(z.string()).optional(),
+    available_actions: z.array(CanonicalMediaBuyActionSchema).optional(),
+    warnings: z.array(WarningSchema.and(z.object({
+        code: z.literal("inventory_shortfall_forecast").optional()
+    }).passthrough())).optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional(),
+    replayed: z.literal(true).optional()
+}).passthrough();
 
 export const ListCreativeFormatsRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     format_ids: z.array(FormatReferenceStructuredObjectSchema).optional(),
     asset_types: z.array(AssetContentTypeSchema).optional(),
     max_width: z.int().optional(),
@@ -9378,7 +9382,7 @@ export const URLAsset1Schema = z.object({
 export const AccountIdentityChangePendingSchema = z.object({
     status: z.literal("pending_approval"),
     requested_operator_identity: OperatorIdentitySchema,
-    requested_at: z.string().optional()
+    requested_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
 }).passthrough();
 
 export const ReportingDatasetShareDestinationSchema = z.union([ExistingBinding1Schema, ProvisionRecipientSchema]);
@@ -9398,8 +9402,8 @@ export const DatasetShareSchema = z.object({
 }).passthrough();
 
 export const GetMediaBuysRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     account: AccountReferenceSchema.optional(),
     media_buy_ids: z.array(z.string()).optional(),
     status_filter: z.union([MediaBuyStatusSchema, z.array(MediaBuyStatusSchema)]).optional(),
@@ -9420,8 +9424,8 @@ export const ScopedCreativeApprovalSchema = z.object({
 }).passthrough();
 
 export const GetMediaBuyDeliveryRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     account: AccountReferenceSchema.optional(),
     media_buy_ids: z.array(z.string()).optional(),
     reporting_revision_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/).optional(),
@@ -9565,8 +9569,8 @@ export const VendorMetricValueSchema = z.object({
 export const ReportingStatusViewSchema = z.union([z.literal("summary"), z.literal("periods"), z.literal("revision")]);
 
 export const GetReportingStatusRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     account: CanonicalAccountReferenceSchema,
     view: ReportingStatusViewSchema,
     media_buy_ids: z.array(ReportingMediaBuyIDSchema).max(100).optional(),
@@ -9609,17 +9613,17 @@ export const ReportingObligationSchema = z.object({}).strict().merge(z.object({
     reconciliation_status: z.union([z.literal("not_required"), z.literal("pending"), z.literal("accepted"), z.literal("rejected")]),
     health: ReportingHealthSchema,
     production_status: z.union([z.literal("not_due"), z.literal("pending"), z.literal("published"), z.literal("failed")]),
-    revision_count: z.number().int().gte(0),
-    consumer_status_count: z.number().int().gte(0).optional(),
+    revision_count: z.number(),
+    consumer_status_count: z.number().optional(),
     current_consumer_status_id: z.string().min(16).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{16,255}$")).optional(),
     adjustment_count: z.number().int().gte(0).optional(),
-    materialization_count: z.number().int().gte(0).optional(),
-    successful_materialization_count: z.number().int().gte(0).optional(),
-    receipt_count: z.number().int().gte(0).optional(),
-    accepted_receipt_count: z.number().int().gte(0).optional(),
+    materialization_count: z.number().optional(),
+    successful_materialization_count: z.number().optional(),
+    receipt_count: z.number().optional(),
+    accepted_receipt_count: z.number().optional(),
     adjustment_receipt_count: z.number().int().gte(0).optional(),
     accepted_adjustment_receipt_count: z.number().int().gte(0).optional(),
-    pending_adjustment_count: z.number().int().gte(0).optional(),
+    pending_adjustment_count: z.number().optional(),
     issues: z.array(ReportingStatusIssueSchema),
     resource_retained_until: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
 }).strict());
@@ -9818,34 +9822,34 @@ export const FailedReportingReceiptSchema = z.object({
 }).passthrough();
 
 export const ProvidePerformanceFeedbackRequestSchema = z.object({
-    media_buy_id: z.string().min(1),
-    package_id: z.string().min(1).optional(),
-    creative_id: z.string().min(1).optional(),
+    media_buy_id: z.string(),
+    package_id: z.string().optional(),
+    creative_id: z.string().optional(),
     measurement_period: DatetimeRangeSchema,
-    performance_index: z.number().gte(0),
+    performance_index: z.number(),
     baseline: PerformanceBaselineSchema.optional(),
     metric: PerformanceFeedbackMetricSchema.optional(),
     metric_type: MetricTypeSchema.optional(),
     producer: BrandReferenceSchema.optional(),
     vendor: BrandReferenceSchema.optional(),
     feedback_source: FeedbackSourceSchema.optional(),
-    methodology: z.string().min(1).max(100).optional(),
-    methodology_version: z.string().min(1).max(100).optional(),
-    study_ref: z.string().min(1).max(255).optional(),
+    methodology: z.string().optional(),
+    methodology_version: z.string().optional(),
+    study_ref: z.string().optional(),
     evidence: z.object({
-        sample_size: z.number().int().gte(1).optional(),
+        sample_size: z.number().optional(),
         confidence_interval: z.object({
             lower: z.number(),
             upper: z.number(),
-            level: z.number().gt(0).lt(1)
+            level: z.number()
         }).passthrough().optional()
     }).passthrough().optional(),
-    evidence_ref: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-    as_of: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    evidence_ref: z.string().optional(),
+    as_of: z.string().optional(),
     final: z.boolean().optional(),
-    supersedes_feedback_id: z.string().min(1).optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    supersedes_feedback_id: z.string().optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
@@ -9870,8 +9874,8 @@ export const ProvidePerformanceFeedbackErrorSchema = z.object({
 }).passthrough();
 
 export const SyncEventSourcesRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
     account: AccountReferenceSchema,
     event_sources: z.array(z.object({
@@ -9920,8 +9924,8 @@ export const SyncEventSourcesErrorSchema = z.object({
 }).passthrough();
 
 export const LogEventRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     event_source_id: z.string(),
     test_event_code: z.string().optional(),
     events: z.array(EventSchema).max(10000),
@@ -9952,8 +9956,8 @@ export const LogEventErrorSchema = z.object({
 }).passthrough();
 
 export const SyncAudiencesRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
     account: AccountReferenceSchema,
     audiences: z.array(z.object({
@@ -9976,8 +9980,8 @@ export const SyncAudiencesRequestSchema = z.object({
 export const DatasetSchema = z.object({
     kind: z.literal("dataset"),
     vendor: BrandReferenceSchema,
-    locator: z.string(),
-    access_expires_at: z.string().optional()
+    locator: z.string().min(1).max(512),
+    access_expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
 }).passthrough();
 
 export const PlatformSegmentSchema = z.object({
@@ -10036,8 +10040,8 @@ export const SyncAudiencesSubmittedSchema = z.object({
 }).passthrough();
 
 export const SyncCatalogsRequestSchema = z.object({}).passthrough().merge(z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
     account: AccountReferenceSchema,
     catalogs: z.array(CatalogSchema).max(50).optional(),
@@ -10126,8 +10130,8 @@ export const PreviewCreativeBatchResponseSchema = z.object({
 }).passthrough();
 
 export const ListTransformersRequestCreativeAgentSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     transformer_ids: z.array(z.string()).optional(),
     input_format_ids: z.array(FormatReferenceStructuredObjectSchema).optional(),
     output_format_ids: z.array(FormatReferenceStructuredObjectSchema).optional(),
@@ -10149,8 +10153,8 @@ export const ListTransformersRequestCreativeAgentSchema = z.object({
 }).passthrough();
 
 export const GetCreativeDeliveryRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     account: AccountReferenceSchema.optional(),
     media_buy_ids: z.array(z.string()).optional(),
     creative_ids: z.array(z.string()).optional(),
@@ -10290,8 +10294,8 @@ export const DeliveryMetricsSchema = z.object({
 }).passthrough();
 
 export const ListCreativesRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     filters: CreativeFiltersSchema.optional(),
     sort: z.object({
         field: CreativeSortFieldSchema.optional(),
@@ -10349,7 +10353,7 @@ export const ProductTargetSchema = z.object({
 
 export const ThirdPartyFormatTargetSchema = z.object({
     kind: z.literal("third_party_format"),
-    id: z.string()
+    id: z.string().refine(adcpJsonSchemaUri, "Invalid URI")
 }).passthrough();
 
 export const CreativeCapabilityTargetSchema = z.object({
@@ -10363,20 +10367,20 @@ export const ValidateInputResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     results: z.array(ValidateInputResultSchema)
 }).passthrough();
 
 export const GetSignalsRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     discovery_mode: z.union([z.literal("brief"), z.literal("wholesale")]).optional(),
     account: AccountReferenceSchema.optional(),
     signal_spec: z.string().optional(),
@@ -10462,8 +10466,8 @@ export const SignalCoverageForecastSchema = z.object({}).passthrough().merge(z.o
 }).passthrough());
 
 export const ActivateSignalRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     action: z.union([z.literal("activate"), z.literal("deactivate")]).optional(),
     signal_agent_segment_id: z.string(),
     destinations: z.array(DestinationSchema),
@@ -10489,8 +10493,8 @@ export const ActivateSignalErrorSchema = z.object({
 }).passthrough();
 
 export const CreatePropertyListRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     account: AccountReferenceSchema.optional(),
     name: z.string(),
     description: z.string().optional(),
@@ -10519,8 +10523,8 @@ export const PropertyListSchema = z.object({
 }).passthrough();
 
 export const UpdatePropertyListRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     list_id: z.string(),
     account: AccountReferenceSchema.optional(),
     name: z.string().optional(),
@@ -10540,21 +10544,21 @@ export const UpdatePropertyListResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     list: PropertyListSchema,
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const GetPropertyListRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     list_id: z.string(),
     account: AccountReferenceSchema.optional(),
     resolve: z.boolean().optional(),
@@ -10572,14 +10576,14 @@ export const GetPropertyListResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     list: PropertyListSchema,
     identifiers: z.array(IdentifierSchema).optional(),
     pagination: PaginationResponseSchema.optional(),
@@ -10590,8 +10594,8 @@ export const GetPropertyListResponseSchema = z.object({
 }).passthrough();
 
 export const ListPropertyListsRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     account: AccountReferenceSchema.optional(),
     name_contains: z.string().optional(),
     pagination: PaginationRequestSchema.optional(),
@@ -10605,22 +10609,22 @@ export const ListPropertyListsResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     lists: z.array(PropertyListSchema),
     pagination: PaginationResponseSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const DeletePropertyListRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     list_id: z.string(),
     account: AccountReferenceSchema.optional(),
     context: ContextObjectSchema.optional(),
@@ -10634,22 +10638,22 @@ export const DeletePropertyListResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     deleted: z.boolean(),
     list_id: z.string(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const CreateCollectionListRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     account: AccountReferenceSchema.optional(),
     name: z.string(),
     description: z.string().optional(),
@@ -10677,8 +10681,8 @@ export const CollectionListSchema = z.object({
 }).passthrough();
 
 export const UpdateCollectionListRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     list_id: z.string(),
     account: AccountReferenceSchema.optional(),
     name: z.string().optional(),
@@ -10698,21 +10702,21 @@ export const UpdateCollectionListResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     list: CollectionListSchema,
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const GetCollectionListRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     list_id: z.string(),
     account: AccountReferenceSchema.optional(),
     resolve: z.boolean().optional(),
@@ -10730,14 +10734,14 @@ export const GetCollectionListResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     list: CollectionListSchema,
     collections: z.array(z.object({
         collection_rid: z.string().optional(),
@@ -10764,8 +10768,8 @@ export const GetCollectionListResponseSchema = z.object({
 }).passthrough();
 
 export const ListCollectionListsRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     account: AccountReferenceSchema.optional(),
     name_contains: z.string().optional(),
     pagination: PaginationRequestSchema.optional(),
@@ -10779,22 +10783,22 @@ export const ListCollectionListsResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     lists: z.array(CollectionListSchema),
     pagination: PaginationResponseSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const DeleteCollectionListRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     list_id: z.string(),
     account: AccountReferenceSchema.optional(),
     context: ContextObjectSchema.optional(),
@@ -10808,22 +10812,22 @@ export const DeleteCollectionListResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     deleted: z.boolean(),
     list_id: z.string(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const ListContentStandardsRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     channels: z.array(MediaChannelSchema).optional(),
     languages: z.array(z.string()).optional(),
     countries: z.array(z.string()).optional(),
@@ -10882,8 +10886,8 @@ export const AcceptancePolicyProfileSchema = z.object({}).passthrough().merge(z.
 }).passthrough());
 
 export const GetContentStandardsRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     standards_id: z.string(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
@@ -10991,14 +10995,14 @@ export const CreateContentStandardsResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([z.object({
         standards_id: z.string(),
         context: ContextObjectSchema.optional(),
@@ -11011,8 +11015,8 @@ export const CreateContentStandardsResponseSchema = z.object({
     }).passthrough()]));
 
 export const UpdateContentStandardsRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     standards_id: z.string(),
     scope: z.object({
         countries_all: z.array(z.string()).optional(),
@@ -11025,12 +11029,12 @@ export const UpdateContentStandardsRequestSchema = z.object({
     calibration_exemplars: z.object({
         pass: z.array(z.union([z.object({
                 type: z.literal("url"),
-                value: z.string(),
+                value: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
                 language: z.string().optional()
             }).passthrough(), ArtifactSchema])).optional(),
         fail: z.array(z.union([z.object({
                 type: z.literal("url"),
-                value: z.string(),
+                value: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
                 language: z.string().optional()
             }).passthrough(), Artifact1Schema])).optional()
     }).passthrough().optional(),
@@ -11055,8 +11059,8 @@ export const UpdateContentStandardsErrorSchema = z.object({
 }).passthrough();
 
 export const CalibrateContentRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     standards_id: z.string(),
     artifact: ArtifactSchema,
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
@@ -11070,14 +11074,14 @@ export const CalibrateContentResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([z.object({
         verdict: BinaryVerdictSchema,
         confidence: z.number().min(0).max(1).optional(),
@@ -11098,8 +11102,8 @@ export const CalibrateContentResponseSchema = z.object({
     }).passthrough()]));
 
 export const ValidateContentDeliveryRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     standards_id: z.string(),
     records: z.array(z.object({
         record_id: z.string(),
@@ -11125,14 +11129,14 @@ export const ValidateContentDeliveryResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([z.object({
         summary: z.object({
             total_records: z.int(),
@@ -11159,8 +11163,8 @@ export const ValidateContentDeliveryResponseSchema = z.object({
     }).passthrough()]));
 
 export const GetMediaBuyArtifactsRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     account: AccountReferenceSchema.optional(),
     media_buy_id: z.string(),
     package_ids: z.array(z.string()).optional(),
@@ -11187,10 +11191,10 @@ export const GetMediaBuyArtifactsResponseSchema = z.object({
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([z.object({
         media_buy_id: z.string(),
         artifacts: z.array(z.object({
@@ -11235,8 +11239,8 @@ export const GetCreativeFeaturesSuccessSchema = z.object({
 }).passthrough();
 
 export const SyncPlansRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
     plans: z.array(z.object({
         plan_id: z.string(),
@@ -11317,14 +11321,14 @@ export const SyncPlansResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     plans: z.array(z.object({
         plan_id: z.string(),
         status: z.union([z.literal("active"), z.literal("error")]),
@@ -11355,8 +11359,8 @@ export const ReportedOutcomeErrorSchema = z.object({
 }).passthrough().catchall(z.union([z.union([z.union([z.boolean(), z.number(), z.string()]).nullable(), z.array(z.union([z.union([z.boolean(), z.number(), z.string()]).nullable(), z.array(z.union([z.union([z.boolean(), z.number(), z.string()]).nullable(), z.array(z.union([z.boolean(), z.number(), z.string()]).nullable()), z.record(z.string(), z.union([z.boolean(), z.number(), z.string()]).nullable())])), z.record(z.string(), z.union([z.union([z.boolean(), z.number(), z.string()]).nullable(), z.array(z.union([z.boolean(), z.number(), z.string()]).nullable()), z.record(z.string(), z.union([z.boolean(), z.number(), z.string()]).nullable())]))])), z.record(z.string(), z.union([z.union([z.boolean(), z.number(), z.string()]).nullable(), z.array(z.union([z.union([z.boolean(), z.number(), z.string()]).nullable(), z.array(z.union([z.boolean(), z.number(), z.string()]).nullable()), z.record(z.string(), z.union([z.boolean(), z.number(), z.string()]).nullable())])), z.record(z.string(), z.union([z.union([z.boolean(), z.number(), z.string()]).nullable(), z.array(z.union([z.boolean(), z.number(), z.string()]).nullable()), z.record(z.string(), z.union([z.boolean(), z.number(), z.string()]).nullable())]))]))]), BoundedObjectSchema]));
 
 export const ReportPlanOutcomeResponseSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     outcome_id: z.string(),
     outcome_state: z.union([z.literal("accepted"), z.literal("findings")]),
     committed_budget: z.number().optional(),
@@ -11378,8 +11382,8 @@ export const ReportPlanOutcomeResponseSchema = z.object({
 }).passthrough();
 
 export const ReportPlanAdjustmentRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     action: z.union([z.literal("report"), z.literal("review")]),
     plan_id: z.string().min(1),
     outcome_id: z.string().min(1).optional(),
@@ -11406,8 +11410,8 @@ export const ReportPlanAdjustmentRequestSchema = z.object({
 }).passthrough();
 
 export const ReportPlanAdjustmentResponseSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     adjustment_id: z.string(),
     adjustment_state: z.union([z.literal("reported"), z.literal("verified"), z.literal("disputed")]),
     adjustment_type: z.union([z.literal("decommitment"), z.literal("refund"), z.literal("credit"), z.literal("makegood")]),
@@ -11433,8 +11437,8 @@ export const ReportPlanAdjustmentResponseSchema = z.object({
 }).passthrough();
 
 export const GetPlanAuditLogsRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     plan_ids: z.array(z.string()).optional(),
     portfolio_plan_ids: z.array(z.string()).optional(),
     governance_contexts: z.array(z.string()).optional(),
@@ -11445,8 +11449,8 @@ export const GetPlanAuditLogsRequestSchema = z.object({
 }).passthrough();
 
 export const CheckGovernanceResponseSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     check_id: z.string(),
     verdict: GovernanceDecisionSchema,
     check_type: z.union([z.literal("intent"), z.literal("execution")]).optional(),
@@ -11503,8 +11507,8 @@ export const CheckGovernanceResponseSchema = z.object({
 }).passthrough();
 
 export const SIGetOfferingRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     offering_id: z.string(),
     intent: z.string().optional(),
     context: ContextObjectSchema.optional(),
@@ -11519,14 +11523,14 @@ export const SIGetOfferingResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     available: z.boolean(),
     offering_token: z.string().optional(),
     ttl_seconds: z.int().min(0).optional(),
@@ -11567,8 +11571,8 @@ export const SISponsoredContextReceiptSchema = z.object({}).passthrough().merge(
 }).passthrough());
 
 export const SIInitiateSessionRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     intent: z.string(),
     context: ContextObjectSchema.optional(),
     identity: SIIdentitySchema,
@@ -11588,14 +11592,14 @@ export const SIInitiateSessionResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     session_id: z.string(),
     response: z.object({
         message: z.string().optional(),
@@ -11610,8 +11614,8 @@ export const SIInitiateSessionResponseSchema = z.object({
 }).passthrough();
 
 export const SISendMessageRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
     session_id: z.string(),
     message: z.string().optional(),
@@ -11630,14 +11634,14 @@ export const SISendMessageResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     session_id: z.string(),
     response: z.object({
         message: z.string().optional(),
@@ -11667,8 +11671,8 @@ export const SISendMessageResponseSchema = z.object({
 }).passthrough();
 
 export const SITerminateSessionRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     session_id: z.string(),
     reason: z.union([z.literal("handoff_transaction"), z.literal("handoff_complete"), z.literal("user_exit"), z.literal("session_timeout"), z.literal("host_terminated")]),
     termination_context: z.object({
@@ -11689,14 +11693,14 @@ export const SITerminateSessionResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     session_id: z.string(),
     terminated: z.boolean(),
     session_status: SISessionStatusSchema.optional(),
@@ -11715,8 +11719,8 @@ export const SITerminateSessionResponseSchema = z.object({
 }).passthrough();
 
 export const GetAdCPCapabilitiesRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     protocols: z.array(z.union([z.literal("media_buy"), z.literal("signals"), z.literal("governance"), z.literal("sponsored_intelligence"), z.literal("creative")])).optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
@@ -11857,8 +11861,8 @@ export const GeographicPlaceSystemSupportSchema = z.object({
 export const AudienceActivationMethodSchema = z.union([AdCPAudienceSyncSchema, TMPIdentityMatchSchema, FileTransferSchema, DatasetQuerySchema, CleanRoomSchema, PlatformDistributionSchema]);
 
 export const GetTaskStatusRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     task_id: z.string(),
     account: AccountReferenceSchema.optional(),
     include_history: z.boolean().optional(),
@@ -11877,10 +11881,10 @@ export const GetTaskStatusResponseSchema = z.object({
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     task_type: TaskTypeSchema,
     protocol: AdCPProtocolSchema,
     created_at: z.iso.datetime(),
@@ -11912,8 +11916,8 @@ export const GetTaskStatusResponseSchema = z.object({
 }).passthrough();
 
 export const ListTasksRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     account: AccountReferenceSchema.optional(),
     filters: z.object({
         protocol: AdCPProtocolSchema.optional(),
@@ -11946,14 +11950,14 @@ export const ListTasksResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     query_summary: z.object({
         total_matching: z.int().min(0).optional(),
         returned: z.int().min(0).optional(),
@@ -11984,8 +11988,8 @@ export const ListTasksResponseSchema = z.object({
 }).passthrough();
 
 export const SyncAgentNotificationConfigsRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
     notification_configs: z.array(AgentNotificationConfigSchema).max(16),
     dry_run: z.boolean().optional(),
@@ -11999,14 +12003,14 @@ export const SyncAgentNotificationConfigsResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     dry_run: z.boolean().optional(),
     action: z.union([z.literal("updated"), z.literal("unchanged"), z.literal("cleared"), z.literal("failed")]),
     notification_configs: z.array(AgentNotificationConfigSchema).max(16).optional(),
@@ -12078,8 +12082,8 @@ export const PrincipalStateSchema = z.object({
 }).passthrough();
 
 export const GetPrincipalRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -12125,14 +12129,14 @@ export const ListAccountChangesResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     changes: z.array(AccountChangeSchema).max(100).optional(),
     cursor: z.string().min(1).max(4096).optional(),
     has_more: z.boolean().optional(),
@@ -12193,8 +12197,8 @@ export const ListAccountChangesResponseSchema = z.object({
     }).passthrough()]));
 
 export const ListAccountsRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     account: AccountReferenceSchema.optional(),
     status: z.union([z.literal("active"), z.literal("pending_approval"), z.literal("rejected"), z.literal("payment_required"), z.literal("suspended"), z.literal("closed")]).optional(),
     pagination: PaginationRequestSchema.optional(),
@@ -12220,8 +12224,8 @@ export const AccountIdentityChangeWouldApplySchema = z.object({
 export const AccountIdentityChangePreviewSchema = z.union([AccountIdentityChangeWouldApplySchema, AccountIdentityChangeWouldRequireApprovalSchema, AccountIdentityChangeBlockedSchema]);
 
 export const SyncGovernanceRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
     accounts: z.array(z.object({
         account: AccountReferenceSchema,
@@ -12242,7 +12246,7 @@ export const SyncGovernanceSuccessSchema = z.object({
         account: AccountReferenceSchema,
         status: z.union([z.literal("synced"), z.literal("failed")]),
         governance_agents: z.array(z.object({
-            url: z.string().regex(/^https:\/\//)
+            url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(/^https:\/\//)
         }).passthrough()).max(1).optional(),
         errors: z.array(ErrorSchema).optional()
     }).passthrough()),
@@ -12257,8 +12261,8 @@ export const SyncGovernanceErrorSchema = z.object({
 }).passthrough();
 
 export const ReportUsageRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     idempotency_key: z.string(),
     reporting_period: DatetimeRangeSchema,
     usage: z.array(z.object({
@@ -12292,14 +12296,14 @@ export const ReportUsageResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     accepted: z.int().min(0),
     errors: z.array(ErrorSchema).optional(),
     sandbox: z.boolean().optional(),
@@ -12307,8 +12311,8 @@ export const ReportUsageResponseSchema = z.object({
 }).passthrough();
 
 export const GetAccountFinancialsRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     account: AccountReferenceSchema,
     period: DateRangeSchema.optional(),
     context: ContextObjectSchema.optional(),
@@ -12527,8 +12531,8 @@ export const RepeatableGroupAssetSchema = z.object({
     item_type: z.literal("repeatable_group"),
     asset_group_id: z.string(),
     required: z.boolean(),
-    min_count: z.number(),
-    max_count: z.number(),
+    min_count: z.number().int().gte(0),
+    max_count: z.number().int().gte(1),
     selection_mode: z.union([z.literal("sequential"), z.literal("optimize")]).optional(),
     assets: z.array(GroupAssetSlotSchema)
 }).passthrough();
@@ -12553,6 +12557,24 @@ export const TrackerExecutionContractSchema = z.object({
     complete: z.boolean(),
     honored: z.array(TrackerExecutionSelectorSchema)
 }).passthrough();
+
+export const BudgetChangeConstraintsSchema = z.object({
+    kind: z.literal("budget"),
+    max_delta_amount: MoneySchema.optional(),
+    max_delta_percent: z.number().min(0).optional(),
+    min_result_amount: MoneySchema.optional(),
+    max_result_amount: MoneySchema.optional()
+}).passthrough().and(z.union([z.object({
+        max_delta_amount: MoneySchema
+    }).passthrough(), z.object({
+        max_delta_percent: z.number()
+    }).passthrough(), z.object({
+        min_result_amount: MoneySchema
+    }).passthrough(), z.object({
+        max_result_amount: MoneySchema
+    }).passthrough()]));
+
+export const MediaBuyChangeTermConstraintsSchema = z.union([BudgetChangeConstraintsSchema, FlightChangeConstraintsSchema, PackageCountConstraintsSchema, EffectiveTimingConstraintsSchema]);
 
 export const ReportingFileTransferSchema = z.object({
     pattern: z.literal("file_transfer"),
@@ -12758,7 +12780,7 @@ export const AudienceEvidenceSchema: z.ZodType = z.object({}).passthrough().merg
     content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")),
     audience: AudienceCharacteristicSchema,
     relationship: z.union([z.literal("composition"), z.literal("index"), z.literal("reach_estimate")]),
-    value: z.number().gte(0),
+    value: z.number(),
     unit: z.union([z.literal("fraction"), z.literal("ratio"), z.literal("count")]),
     baseline: z.object({
         system: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI"),
@@ -12791,7 +12813,7 @@ export const AudienceEvidenceSchema: z.ZodType = z.object({}).passthrough().merg
     content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")),
     audience: AudienceCharacteristicSchema,
     relationship: z.union([z.literal("composition"), z.literal("index"), z.literal("reach_estimate")]),
-    value: z.number().gte(0),
+    value: z.number(),
     unit: z.union([z.literal("fraction"), z.literal("ratio"), z.literal("count")]),
     baseline: z.object({
         system: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI"),
@@ -12844,6 +12866,15 @@ export const PlacementSchema: z.ZodType<Placement & Record<string, unknown>, Pla
 
 export const PricingOptionSchema = z.union([CPMPricingOptionSchema, VCPMPricingOptionSchema, CPCPricingOptionSchema, CPCVPricingOptionSchema, CPVPricingOptionSchema, CPPPricingOptionSchema, CPAPricingOptionSchema, RevenueSharePricingOptionSchema, FlatRatePricingOptionSchema, TimeBasedPricingOptionSchema]);
 
+export const ProductAllowedActionSchema = z.object({
+    action: MediaBuyAvailableActionIDSchema,
+    modes: z.array(MediaBuyActionModeSchema),
+    allowed_statuses: z.array(MediaBuyStatusSchema).optional(),
+    sla: SLAWindowSchema.optional(),
+    constraints: MediaBuyChangeTermConstraintsSchema.optional(),
+    terms_ref: z.string().optional()
+}).passthrough();
+
 export const AudienceEvidenceSelectionSchema: z.ZodType = z.object({
     evidence_id: z.string().min(1),
     snapshot_id: z.string().min(1),
@@ -12856,8 +12887,8 @@ export const AudienceEvidenceSelectionSchema: z.ZodType = z.object({
         evaluation: AttestationEvaluationSchema.and(z.object({
             action_binding: z.object({
                 action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                action_id: z.string(),
-                action_digest: z.string()
+                action_id: z.string().min(1).max(1024),
+                action_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
             }).passthrough()
         }).passthrough())
     }).passthrough()).max(10).optional(),
@@ -12889,28 +12920,30 @@ export const InstallmentSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const ControlMediaBuyResponseSchema = z.union([ControlAppliedSchema, ControlErrorSchema, ControlSubmittedSchema]);
+
 export const GetSignalsResponseSchema = z.object({
     context_id: z.string().optional(),
     context: ContextObjectSchema.optional(),
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     signals: z.array(z.object({
         restricted_attributes: z.array(RestrictedAttributeSchema).optional(),
         demographic_predicate: DemographicPredicateSchema.optional(),
         policy_categories: z.array(z.string()).optional(),
         taxonomy: z.object({
-            ref: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
+            ref: z.string(),
             version: z.string().optional(),
-            segtax: z.number().int().gte(1).optional(),
+            segtax: z.number().optional(),
             etag: z.string().optional(),
             values: z.array(z.object({
                 id: z.string(),
@@ -12925,8 +12958,8 @@ export const GetSignalsResponseSchema = z.object({
             }).passthrough()).optional(),
             parent_match_behavior: z.union([z.literal("exact_only"), z.literal("descendants_supported"), z.literal("unknown")]).optional()
         }).passthrough().optional(),
-        segmentation_criteria: z.string().max(500).optional(),
-        criteria_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        segmentation_criteria: z.string().optional(),
+        criteria_url: z.string().optional(),
         data_sources: z.array(z.union([z.literal("app_behavior"), z.literal("app_usage"), z.literal("web_usage"), z.literal("geo_location"), z.literal("email"), z.literal("tv_ott_or_stb_device"), z.literal("panel"), z.literal("online_ecommerce"), z.literal("credit_data"), z.literal("loyalty_card"), z.literal("transaction"), z.literal("online_survey"), z.literal("offline_survey"), z.literal("public_record_census"), z.literal("public_record_voter_file"), z.literal("public_record_other"), z.literal("offline_transaction")])).optional(),
         methodology: z.union([z.literal("observed"), z.literal("declared"), z.literal("derived"), z.literal("inferred"), z.literal("modeled")]).optional(),
         audience_expansion: z.boolean().optional(),
@@ -12953,7 +12986,7 @@ export const GetSignalsResponseSchema = z.object({
             disclosure: SignalModelingDisclosureSchema.optional()
         }).passthrough().optional(),
         data_subject_rights: z.object({
-            upstream_source_domain: z.string().max(253).optional(),
+            upstream_source_domain: z.string().optional(),
             channels: z.array(z.object({
                 rights: z.array(z.union([z.literal("access"), z.literal("rectification"), z.literal("erasure"), z.literal("portability"), z.literal("objection")])),
                 url: z.string().optional(),
@@ -12961,16 +12994,16 @@ export const GetSignalsResponseSchema = z.object({
                 languages: z.array(z.string()).optional(),
                 countries: z.array(z.string()).optional()
             }).passthrough()),
-            response_sla_days: z.number().int().gte(1).lte(90).optional(),
-            ccpa_opt_out_url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional()
+            response_sla_days: z.number().optional(),
+            ccpa_opt_out_url: z.string().optional()
         }).passthrough().optional(),
-        last_updated: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+        last_updated: z.string().optional(),
         dts_compliant_version: z.string().optional(),
         signal_ref: SignalRefSchema.optional(),
         signal_id: SignalIDSchema.optional(),
         name: z.string(),
         description: z.string(),
-        methodology_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        methodology_url: z.string().optional(),
         value_type: SignalValueTypeSchema.optional(),
         categories: z.array(z.string()).optional(),
         range: z.object({
@@ -13003,17 +13036,17 @@ export const GetSignalsResponseSchema = z.object({
 export const GetCreativeFeaturesResponseSchema = z.object({
     context_id: z.string().optional(),
     context: ContextObjectSchema.optional(),
-    task_id: z.string().optional(),
+    task_id: z.string().min(1).optional(),
     status: TaskStatusSchema,
-    message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    message: z.string().max(2000).optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([GetCreativeFeaturesSuccessSchema, GetCreativeFeaturesErrorSchema, GetCreativeFeaturesSubmittedSchema]));
 
 export const SyncCatalogsResponseSchema = z.object({
@@ -13022,14 +13055,14 @@ export const SyncCatalogsResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([SyncCatalogsSuccessSchema, SyncCatalogsErrorSchema, SyncCatalogsSubmittedSchema]));
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
@@ -13216,6 +13249,15 @@ export const CanonicalProductPlacementSchema = z.object({
     }).passthrough()]));
 
 export const TargetingOverlaySupport1Schema = TargetingOverlaySupportSchema;
+
+export const CanonicalProductActionSchema = z.object({
+    action: CanonicalMediaBuyActionNameSchema,
+    modes: z.array(CanonicalMediaBuyActionModeSchema),
+    allowed_statuses: z.array(MediaBuyStatusSchema).optional(),
+    sla: SLAWindowSchema.optional(),
+    constraints: MediaBuyChangeTermConstraintsSchema.optional(),
+    terms_ref: z.string().optional()
+}).passthrough();
 
 export const AssetVariantSchema = z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, DisplayTagAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, ZipAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema, MarkdownAssetSchema, BriefAssetSchema, CatalogAssetSchema, PublishedPostAssetSchema, CardAssetSchema, PixelTrackerAssetSchema, VASTTrackerAssetSchema, DAASTTrackerAssetSchema]);
 
@@ -13852,6 +13894,19 @@ export const ProductPurchaseSchema = z.object({
     performance_standards: z.array(CanonicalPerformanceStandardSchema).optional()
 }).passthrough();
 
+export const MediaBuyChangeTermSchema = z.object({
+    term_id: z.string().regex(new RegExp("^[A-Za-z0-9_.:-]+$")),
+    action: CanonicalMediaBuyActionNameSchema,
+    service_mode: CanonicalMediaBuyActionModeSchema,
+    allowed_statuses: z.array(z.union([z.literal("pending_creatives"), z.literal("pending_start"), z.literal("active"), z.literal("paused")])).optional(),
+    processing_sla: SLAWindowSchema.optional(),
+    conditions: z.array(z.string()).optional(),
+    constraints: MediaBuyChangeTermConstraintsSchema.optional(),
+    terms_ref: z.string().min(1).max(1000).optional(),
+    description: z.string().min(1).max(1000).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
 export const CanonicalForecastPointSchema = z.object({
     label: z.string().max(128).optional(),
     budget: z.number().gte(0).optional(),
@@ -13934,7 +13989,7 @@ export const BuildCreativeMultiSuccessSchema = z.object({
                 context_description: z.string().optional()
             }).passthrough()
         }).passthrough()),
-        interactive_url: z.string().optional(),
+        interactive_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
         expires_at: z.iso.datetime()
     }).passthrough().optional(),
     preview_error: ErrorSchema.optional(),
@@ -14025,7 +14080,7 @@ export const AcquireRightsAcquiredSchema = z.object({
         text: z.string().optional()
     }).passthrough().optional(),
     approval_webhook: PushNotificationConfigSchema.optional(),
-    usage_reporting_url: z.string().optional(),
+    usage_reporting_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
     rights_constraint: RightsConstraintSchema.and(z.object({}).passthrough()),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
@@ -14053,14 +14108,14 @@ export const GetBrandIdentityResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([GetBrandIdentitySuccessSchema, GetBrandIdentityErrorSchema]));
 
 export const GetRightsSuccessSchema = z.object({
@@ -14082,7 +14137,7 @@ export const GetRightsSuccessSchema = z.object({
         pricing_options: z.array(RightsPricingOptionSchema),
         content_restrictions: z.array(z.string()).optional(),
         preview_assets: z.array(z.object({
-            url: z.string(),
+            url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
             usage: z.string().optional()
         }).passthrough()).optional()
     }).passthrough()),
@@ -14232,7 +14287,7 @@ export const CollectionDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.obj
 export const CollectionPropertyDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.object({
     collection_ref: CollectionReferenceSchema,
     collection_name: z.string().optional(),
-    publisher_domain: z.string(),
+    publisher_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
     identifier: IdentifierSchema,
     property_ref: PropertyReferenceSchema.optional(),
     property_name: z.string().optional()
@@ -14243,7 +14298,7 @@ export const CollectionSelectionSchema = z.union([SelectedCollectionsSchema, Pro
 export const CreativeDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.object({
     creative_id: z.string(),
     creative_name: z.string().optional(),
-    weight: z.number().optional()
+    weight: z.number().gte(0).lte(100).optional()
 }).passthrough());
 
 export const LocalizedCreativeAssetSchema = AssetVariantSchema.and(z.object({}).passthrough());
@@ -14251,7 +14306,7 @@ export const LocalizedCreativeAssetSchema = AssetVariantSchema.and(z.object({}).
 export const ResolvedAssetsSchema = z.record(z.string(), z.union([LocalizedCreativeAssetSchema, z.array(LocalizedCreativeAssetSchema)]));
 
 export const TargetLocalizationReadbackSchema = z.object({
-    locale_variant_id: z.string(),
+    locale_variant_id: z.string().min(1).max(255),
     locale: LanguageTagSchema,
     role: z.literal("target"),
     assets: ResolvedAssetsSchema
@@ -14303,7 +14358,7 @@ export const CreativeRepresentationSetSchema = z.object({
 export const CreativeVariantSchema = DeliveryMetricsSchema.merge(z.object({
     variant_id: z.string(),
     revision_id: CreativeRevisionIDSchema.optional(),
-    locale_variant_id: z.string().optional(),
+    locale_variant_id: z.string().min(1).max(255).optional(),
     manifest: CreativeManifestSchema.optional(),
     generation_context: z.object({
         context_type: z.string().optional(),
@@ -14482,14 +14537,14 @@ export const IndicatorBearingResourceStateSchema = z.object({
 export const InstallmentDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.object({
     installment_ref: InstallmentReferenceSchema,
     installment_name: z.string().optional(),
-    scheduled_at: z.string().optional()
+    scheduled_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
 }).passthrough());
 
 export const InstallmentPropertyDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.object({
     installment_ref: InstallmentReferenceSchema,
     installment_name: z.string().optional(),
-    scheduled_at: z.string().optional(),
-    publisher_domain: z.string(),
+    scheduled_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publisher_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
     identifier: IdentifierSchema,
     property_ref: PropertyReferenceSchema.optional(),
     property_name: z.string().optional()
@@ -14596,7 +14651,7 @@ export const PlacementPropertyDeliveryMetricsSchema = DeliveryMetricsSchema.merg
     placement_id: z.string(),
     placement_identity: PlacementIdentitySchema,
     placement_name: z.string().optional(),
-    publisher_domain: z.string(),
+    publisher_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
     identifier: IdentifierSchema,
     property_ref: PropertyReferenceSchema.optional(),
     property_name: z.string().optional()
@@ -14731,7 +14786,7 @@ export const ProductOfferFiltersSchema = z.object({}).passthrough().merge(z.obje
 });
 
 export const PropertyDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.object({
-    publisher_domain: z.string(),
+    publisher_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
     identifier: IdentifierSchema,
     property_ref: PropertyReferenceSchema.optional(),
     property_name: z.string().optional()
@@ -15091,7 +15146,7 @@ export const WholesaleSignalObjectSchema = z.object({
 
 export const GovernanceAgentNotAcceptedDetailsSchema = z.union([z.object({
         disclosure: z.literal("disclosed"),
-        attempted_agent_origin: z.string().max(2048).regex(/^https:\/\/[^\/?#@]+$/),
+        attempted_agent_origin: z.string().refine(adcpJsonSchemaUri, "Invalid URI").max(2048).regex(/^https:\/\/[^\/?#@]+$/),
         accepted_governance_agents: AcceptedGovernanceAgentsSchema
     }).passthrough(), z.object({
         disclosure: z.literal("opaque"),
@@ -15801,8 +15856,8 @@ export const FormatAssetSlotSchema = z.union([IndividualAssetSlotSchema, Repeata
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
 export const GetProductsRequestSchema: z.ZodObject<{ [K in keyof GetProductsRequest]-?: undefined extends GetProductsRequest[K] ? z.ZodOptional<z.ZodType<Exclude<GetProductsRequest[K], undefined>, Exclude<GetProductsRequest[K], undefined>>> : z.ZodType<GetProductsRequest[K], GetProductsRequest[K]> }, z.core.$loose> & z.ZodType<GetProductsRequest & Record<string, unknown>, GetProductsRequest & Record<string, unknown>> = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/).optional(),
     buying_mode: z.union([z.literal("brief"), z.literal("wholesale"), z.literal("refine")]),
     brief: z.string().optional(),
@@ -15849,14 +15904,14 @@ export const GetProductsResponseSchema: z.ZodObject<{ [K in keyof GetProductsRes
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     products: z.array(ProductSchema).optional(),
     targeting_resolution: ProductDiscoveryTargetingResolutionSchema.optional(),
     extensions: z.record(z.string(), z.object({
@@ -15882,7 +15937,7 @@ export const GetProductsResponseSchema: z.ZodObject<{ [K in keyof GetProductsRes
             notes: z.string().optional()
         }).passthrough(), z.object({
             scope: z.literal("proposal"),
-            proposal_id: z.string().max(255),
+            proposal_id: z.string(),
             status: z.union([z.literal("applied"), z.literal("partial"), z.literal("unable")]),
             notes: z.string().optional()
         }).passthrough()])).optional(),
@@ -16969,19 +17024,19 @@ export const BuyProductsRequestSchema = z.object({
 
 export const CommittedMediaBuySchema = z.object({
     status: z.literal("completed"),
-    media_buy_id: z.string(),
-    name: z.string().optional(),
-    revision: z.number(),
+    media_buy_id: z.string().min(1),
+    name: z.string().min(1).max(255).regex(/\S/).optional(),
+    revision: z.int().min(1),
     media_buy_status: MediaBuyStatusSchema.optional(),
-    confirmed_at: z.string().optional().nullable(),
+    confirmed_at: z.iso.datetime().optional().nullable(),
     accepted_proposal: CanonicalProposalSchema.and(z.object({
         proposal_status: z.literal("accepted"),
-        media_buy_id: z.string()
+        media_buy_id: z.string().min(1)
     }).passthrough()),
     purchase_bindings: z.array(z.object({
-        purchase_index: z.number(),
-        product_id: z.string(),
-        package_id: z.string()
+        purchase_index: z.int().min(0),
+        product_id: z.string().min(1),
+        package_id: z.string().min(1)
     }).passthrough()),
     available_actions: z.array(CanonicalMediaBuyActionSchema),
     warnings: z.array(WarningSchema.and(z.object({
@@ -17050,14 +17105,14 @@ export const ListCreativeFormatsResponseSchema: z.ZodObject<{ [K in keyof ListCr
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     formats: z.array(FormatSchema),
     source: z.union([z.literal("publisher"), z.literal("aao_mirror"), z.literal("agent_derived")]).optional(),
     creative_agents: z.array(z.object({
@@ -17731,14 +17786,14 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     notification_type: z.union([z.literal("scheduled"), z.literal("final"), z.literal("delayed"), z.literal("adjusted"), z.literal("window_update")]).optional(),
     partial_data: z.boolean().optional(),
     unavailable_count: z.int().min(0).optional(),
@@ -17942,14 +17997,14 @@ export const SyncReportingStatusResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     results: z.array(z.union([RecordedReportingConsumerStatusSchema, UnchangedReportingConsumerStatusSchema, FailedReportingConsumerStatusSchema])).max(100),
     ext: ExtensionObjectSchema.optional()
 }).passthrough().superRefine((value, ctx) => {
@@ -17976,14 +18031,14 @@ export const SyncReportingReceiptsResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     results: z.array(z.union([RecordedReportingReceiptSchema, UnchangedReportingReceiptSchema, RecordedReportingAdjustmentReceiptSchema, UnchangedReportingAdjustmentReceiptSchema, FailedReportingReceiptSchema])).max(100),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -17994,14 +18049,14 @@ export const ProvidePerformanceFeedbackResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([ProvidePerformanceFeedbackSuccessSchema, ProvidePerformanceFeedbackErrorSchema]));
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
@@ -18011,14 +18066,14 @@ export const SyncEventSourcesResponseSchema: z.ZodType<SyncEventSourcesResponse 
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([SyncEventSourcesSuccessSchema, SyncEventSourcesErrorSchema]));
 
 export const LogEventResponseSchema = z.object({
@@ -18027,14 +18082,14 @@ export const LogEventResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([LogEventSuccessSchema, LogEventErrorSchema]));
 
 export const SyncAudiencesResponseSchema = z.object({
@@ -18042,20 +18097,20 @@ export const SyncAudiencesResponseSchema = z.object({
     context: ContextObjectSchema.optional(),
     task_id: z.string().optional(),
     status: TaskStatusSchema,
-    message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    message: z.string().max(2000).optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([SyncAudiencesSuccessSchema, SyncAudiencesErrorSchema, SyncAudiencesSubmittedSchema]));
 
 export const BuildCreativeRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     governance_context: z.string().min(1).max(4096).regex(/^[\x20-\x7E]+$/).optional(),
     message: z.string().optional(),
     creative_manifest: CreativeManifestSchema.optional(),
@@ -18127,7 +18182,7 @@ export const BuildCreativeSuccessSchema = z.object({
                 context_description: z.string().optional()
             }).passthrough()
         }).passthrough()),
-        interactive_url: z.string().optional(),
+        interactive_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
         expires_at: z.iso.datetime()
     }).passthrough().optional(),
     preview_error: ErrorSchema.optional(),
@@ -18141,8 +18196,8 @@ export const BuildCreativeSuccessSchema = z.object({
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
 export const PreviewCreativeRequestSchema: z.ZodObject<{ request_type: z.ZodType<PreviewCreativeRequest['request_type'], PreviewCreativeRequest['request_type']> } & Record<string, z.ZodType>, z.core.$loose> & z.ZodType<PreviewCreativeRequest & Record<string, unknown>, PreviewCreativeRequest & Record<string, unknown>> = z.object({}).passthrough().merge(z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     request_type: z.union([z.literal("single"), z.literal("batch"), z.literal("variant")]),
     creative_manifest: CreativeManifestSchema.optional(),
     target_capability_id: z.string().regex(/^[a-zA-Z0-9_-]+$/).optional(),
@@ -18223,15 +18278,15 @@ export const PreviewCreativeResponseSchema = z.object({
     context: ContextObjectSchema.optional(),
     task_id: z.string().optional(),
     status: TaskStatusSchema,
-    message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    message: z.string().max(2000).optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([PreviewCreativeSingleResponseSchema, PreviewCreativeBatchResponseSchema, PreviewCreativeVariantResponseSchema, PreviewCreativeSubmittedSchema]));
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
@@ -18241,14 +18296,14 @@ export const ListTransformersResponseCreativeAgentSchema: z.ZodObject<{ [K in ke
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     transformers: z.array(TransformerSchema),
     errors: z.array(ErrorSchema).optional(),
     pagination: PaginationResponseSchema.optional(),
@@ -18261,14 +18316,14 @@ export const GetCreativeDeliveryResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     account_id: z.string().optional(),
     media_buy_id: z.string().optional(),
     currency: z.string().regex(/^[A-Z]{3}$/),
@@ -18299,7 +18354,7 @@ export const GetCreativeDeliveryResponseSchema = z.object({
 }).passthrough();
 
 export const SourceLocalizationReadbackSchema = z.object({
-    locale_variant_id: z.string(),
+    locale_variant_id: z.string().min(1).max(255),
     locale: LanguageTagSchema,
     role: z.literal("source"),
     assets: ResolvedAssetsSchema
@@ -18318,8 +18373,8 @@ export const CreativeLocalizationReadbackSchema: z.ZodType = z.object({
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
 export const SyncCreativesRequestSchema: z.ZodObject<{ [K in keyof SyncCreativesRequest]-?: undefined extends SyncCreativesRequest[K] ? z.ZodOptional<z.ZodType<Exclude<SyncCreativesRequest[K], undefined>, Exclude<SyncCreativesRequest[K], undefined>>> : z.ZodType<SyncCreativesRequest[K], SyncCreativesRequest[K]> }, z.core.$loose> & z.ZodType<SyncCreativesRequest & Record<string, unknown>, SyncCreativesRequest & Record<string, unknown>> = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     account: AccountReferenceSchema,
     creatives: z.array(CreativeAssetSchema.and(z.object({
         revision_id: CreativeRevisionIDSchema.optional(),
@@ -18356,7 +18411,7 @@ export const SyncCreativesSuccessSchema: z.ZodType = z.object({
         errors: z.array(ErrorSchema).optional(),
         warnings: z.array(z.string()).optional(),
         macro_resolution_results: z.array(MacroResolutionResultSchema).optional(),
-        preview_url: z.string().optional(),
+        preview_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
         expires_at: z.iso.datetime().optional(),
         assigned_to: z.array(z.string()).optional(),
         assignment_errors: z.record(z.string(), z.string()).optional()
@@ -18379,14 +18434,14 @@ export const ActivateSignalResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([ActivateSignalSuccessSchema, ActivateSignalErrorSchema]));
 
 export const CreatePropertyListResponseSchema = z.object({
@@ -18395,14 +18450,14 @@ export const CreatePropertyListResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     list: PropertyListSchema,
     auth_token: z.string(),
     ext: ExtensionObjectSchema.optional()
@@ -18414,14 +18469,14 @@ export const CreateCollectionListResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     list: CollectionListSchema,
     auth_token: z.string(),
     ext: ExtensionObjectSchema.optional()
@@ -18433,14 +18488,14 @@ export const ListContentStandardsResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([z.object({
         standards: z.array(ContentStandardsSchema),
         pagination: PaginationResponseSchema.optional(),
@@ -18458,14 +18513,14 @@ export const GetContentStandardsResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([z.object({
         standards_id: z.string(),
         name: z.string().optional(),
@@ -18487,8 +18542,8 @@ export const GetContentStandardsResponseSchema = z.object({
     }).passthrough()]));
 
 export const CreateContentStandardsRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     scope: z.object({
         countries_all: z.array(z.string()).optional(),
         channels_any: z.array(MediaChannelSchema).optional(),
@@ -18500,12 +18555,12 @@ export const CreateContentStandardsRequestSchema = z.object({
     calibration_exemplars: z.object({
         pass: z.array(z.union([z.object({
                 type: z.literal("url"),
-                value: z.string(),
+                value: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
                 language: z.string().optional()
             }).passthrough(), ArtifactSchema])).optional(),
         fail: z.array(z.union([z.object({
                 type: z.literal("url"),
-                value: z.string(),
+                value: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
                 language: z.string().optional()
             }).passthrough(), Artifact1Schema])).optional()
     }).passthrough().optional(),
@@ -18520,19 +18575,19 @@ export const UpdateContentStandardsResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([UpdateContentStandardsSuccessSchema, UpdateContentStandardsErrorSchema]));
 
 export const GetCreativeFeaturesRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/).optional(),
     creative_manifest: CreativeManifestSchema,
     feature_ids: z.array(z.string()).optional(),
@@ -18543,8 +18598,8 @@ export const GetCreativeFeaturesRequestSchema = z.object({
 }).passthrough();
 
 export const ReportPlanOutcomeRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     plan_id: z.string(),
     check_id: z.string().optional(),
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
@@ -18606,8 +18661,8 @@ export const GetPlanAuditLogsResponseSchema = z.object({
     push_notification_config: PushNotificationConfigSchema.optional(),
     governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     plans: z.array(z.object({
         plan_id: z.string(),
         plan_version: z.int(),
@@ -18783,8 +18838,8 @@ export const GetPlanAuditLogsResponseSchema = z.object({
 }).passthrough();
 
 export const CheckGovernanceRequestSchema = z.object({}).passthrough().merge(z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     plan_id: z.string().optional(),
     caller: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
     purchase_type: PurchaseTypeSchema.optional(),
@@ -18847,14 +18902,14 @@ export const GetAdCPCapabilitiesResponseSchema: z.ZodObject<{ [K in keyof GetAdC
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().regex(new RegExp("^(?:3\\.(?:[2-9]|[1-9][0-9]+)|(?:[4-9]|[1-9][0-9]+)\\.\\d+)(?:-[a-zA-Z0-9.-]+)?$")).optional(),
+    adcp_major_version: z.number().optional(),
     adcp: z.object({
         major_versions: z.array(z.number()),
         supported_versions: z.array(z.string()).optional(),
@@ -19261,8 +19316,8 @@ export const GetAdCPCapabilitiesResponseSchema: z.ZodObject<{ [K in keyof GetAdC
 }).passthrough();
 
 export const SyncPrincipalRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
     expected_configuration_version: z.string().min(1).max(255).optional(),
     expected_principal_kind: PrincipalKindSchema.optional(),
@@ -19293,14 +19348,14 @@ export const GetPrincipalResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     result: z.union([CurrentPrincipalConfigurationSchema, RecognizedPrincipalWithoutStandingConfigurationSchema, UnconfiguredPrincipalSchema, FailedPrincipalReadSchema]),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -19315,14 +19370,14 @@ export const ListAccountsResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     accounts: z.array(AccountWithAuthorizationSchema),
     errors: z.array(ErrorSchema).optional(),
     pagination: PaginationResponseSchema.optional(),
@@ -19378,7 +19433,7 @@ export const SyncAccountsSuccessSchema = z.object({
         destination_billing_entity: z.object({}).passthrough().optional(),
         account_scope: AccountScopeSchema.optional(),
         setup: z.object({
-            url: z.string().optional(),
+            url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
             message: z.string(),
             expires_at: z.iso.datetime().optional()
         }).passthrough().optional(),
@@ -19405,14 +19460,14 @@ export const SyncGovernanceResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([SyncGovernanceSuccessSchema, SyncGovernanceErrorSchema]));
 
 export const GetAccountFinancialsResponseSchema = z.object({
@@ -19421,14 +19476,14 @@ export const GetAccountFinancialsResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([GetAccountFinancialsSuccessSchema, GetAccountFinancialsErrorSchema]));
 
 export const GetProductsCompletionSchema: z.ZodType = AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).merge(z.object({}).passthrough()).merge(z.object({
@@ -19496,8 +19551,8 @@ export const UpstreamTrafficSuccessSchema = z.object({
 export const ListTransformersResponseSchema: z.ZodObject<{ [K in keyof ListTransformersResponse]-?: undefined extends ListTransformersResponse[K] ? z.ZodOptional<z.ZodType<Exclude<ListTransformersResponse[K], undefined>, Exclude<ListTransformersResponse[K], undefined>>> : z.ZodType<ListTransformersResponse[K], ListTransformersResponse[K]> }, z.core.$loose> & z.ZodType<ListTransformersResponse & Record<string, unknown>, ListTransformersResponse & Record<string, unknown>> = ListTransformersResponseCreativeAgentSchema;
 
 export const ValidatePropertyDeliveryRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     list_id: z.string(),
     account: AccountReferenceSchema.optional(),
     records: z.array(DeliveryRecordSchema).max(10000),
@@ -19512,14 +19567,14 @@ export const ValidatePropertyDeliveryResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     compliant: z.boolean().optional(),
     list_id: z.string(),
     summary: z.object({
@@ -19821,7 +19876,7 @@ export const RefineProposalsResponseSchema = z.union([z.object({
                 source_proposal_id: z.string().min(1),
                 outcome: z.literal("revised"),
                 proposals: z.array(CanonicalProposalSchema.and(z.object({
-                    parent_proposal_id: z.string().min(1).max(255),
+                    parent_proposal_id: z.string(),
                     proposal_status: z.literal("draft")
                 }).passthrough())).min(1),
                 suggestions: z.array(z.string()).min(1).optional(),
@@ -19830,7 +19885,7 @@ export const RefineProposalsResponseSchema = z.union([z.object({
                 source_proposal_id: z.string().min(1),
                 outcome: z.literal("partial"),
                 proposals: z.array(CanonicalProposalSchema.and(z.object({
-                    parent_proposal_id: z.string().min(1).max(255),
+                    parent_proposal_id: z.string(),
                     proposal_status: z.literal("draft")
                 }).passthrough())).min(1),
                 reason_code: ProposalRefinementReasonSchema,
@@ -19862,7 +19917,7 @@ export const RefineProposalsResponseSchema = z.union([z.object({
             source_proposal_id: z.string().min(1),
             outcome: z.literal("finalized"),
             proposal: CanonicalProposalSchema.and(z.object({
-                parent_proposal_id: z.string().min(1).max(255),
+                parent_proposal_id: z.string(),
                 proposal_status: z.literal("committed"),
                 expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")
             }).passthrough()),
@@ -19882,7 +19937,7 @@ export const RefineProposalsResponseSchema = z.union([z.object({
                 source_proposal_id: z.string().min(1),
                 outcome: z.literal("revised"),
                 proposals: z.array(CanonicalProposalSchema.and(z.object({
-                    parent_proposal_id: z.string().min(1).max(255),
+                    parent_proposal_id: z.string(),
                     proposal_status: z.literal("draft")
                 }).passthrough())).min(1),
                 suggestions: z.array(z.string()).min(1).optional(),
@@ -19891,7 +19946,7 @@ export const RefineProposalsResponseSchema = z.union([z.object({
                 source_proposal_id: z.string().min(1),
                 outcome: z.literal("partial"),
                 proposals: z.array(CanonicalProposalSchema.and(z.object({
-                    parent_proposal_id: z.string().min(1).max(255),
+                    parent_proposal_id: z.string(),
                     proposal_status: z.literal("draft")
                 }).passthrough())).min(1),
                 reason_code: ProposalRefinementReasonSchema,
@@ -19924,7 +19979,7 @@ export const RefineProposalsResponseSchema = z.union([z.object({
             source_proposal_id: z.string().min(1),
             outcome: z.literal("finalized"),
             proposal: CanonicalProposalSchema.and(z.object({
-                parent_proposal_id: z.string().min(1).max(255),
+                parent_proposal_id: z.string(),
                 proposal_status: z.literal("committed"),
                 expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")
             }).passthrough()),
@@ -20012,15 +20067,15 @@ export const UpdateMediaBuyResponseSchema: z.ZodType<UpdateMediaBuyResponse & Re
     context: ContextObjectSchema.optional(),
     task_id: z.string().optional(),
     status: TaskStatusSchema,
-    message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    message: z.string().max(2000).optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([UpdateMediaBuySuccessSchema, UpdateMediaBuyErrorSchema, UpdateMediaBuySubmittedSchema]));
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
@@ -20029,15 +20084,15 @@ export const BuildCreativeResponseSchema: z.ZodType<BuildCreativeResponse & Reco
     context: ContextObjectSchema.optional(),
     task_id: z.string().optional(),
     status: TaskStatusSchema,
-    message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    message: z.string().max(2000).optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([BuildCreativeSuccessSchema, BuildCreativeMultiSuccessSchema, BuildCreativeVariantSuccessSchema, BuildCreativeEstimateSchema, BuildCreativeErrorSchema, BuildCreativeSubmittedSchema]));
 
 export const SyncCreativesResponseSchema: z.ZodType = z.object({
@@ -20045,15 +20100,15 @@ export const SyncCreativesResponseSchema: z.ZodType = z.object({
     context: ContextObjectSchema.optional(),
     task_id: z.string().optional(),
     status: TaskStatusSchema,
-    message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    message: z.string().max(2000).optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([SyncCreativesSuccessSchema, SyncCreativesErrorSchema, SyncCreativesSubmittedSchema]));
 
 export const CreateMediaBuySuccessSchema: z.ZodType = z.object({
@@ -20090,14 +20145,14 @@ export const AcquireRightsResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([AcquireRightsAcquiredSchema, AcquireRightsPendingApprovalSchema, AcquireRightsRejectedSchema, AcquireRightsErrorSchema]));
 
 export const GetRightsResponseSchema = z.object({
@@ -20106,14 +20161,14 @@ export const GetRightsResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([GetRightsSuccessSchema, GetRightsErrorSchema]));
 
 export const SearchBrandsResponseSchema = AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).and(z.union([SearchBrandsSuccessSchema, SearchBrandsErrorSchema]));
@@ -20124,14 +20179,14 @@ export const UpdateRightsResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([UpdateRightsSuccessSchema, UpdateRightsErrorSchema]));
 
 export const VerifyBrandClaimResponseSchema = z.object({
@@ -20140,14 +20195,14 @@ export const VerifyBrandClaimResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([VerifyBrandClaimSuccessSchema, VerifyBrandClaimErrorSchema]));
 
 export const VerifyBrandClaimsResponseBulkSchema = z.object({
@@ -20156,14 +20211,14 @@ export const VerifyBrandClaimsResponseBulkSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([VerifyBrandClaimsSuccessSchema, VerifyBrandClaimsErrorSchema]));
 
 export const AppItemSchema = z.object({
@@ -20304,7 +20359,7 @@ export const WholesaleFeedEventSchema: z.ZodType = z.object({
         event_type: z.literal("signal.created"),
         entity_type: z.literal("signal").optional(),
         payload: z.object({
-            signal_agent_segment_id: z.string().min(1),
+            signal_agent_segment_id: z.string(),
             signal_ref: SignalRefSchema.optional(),
             applies_to: CacheLayerScopeSchema,
             signal: WholesaleSignalObjectSchema
@@ -20313,7 +20368,7 @@ export const WholesaleFeedEventSchema: z.ZodType = z.object({
         event_type: z.literal("signal.updated"),
         entity_type: z.literal("signal").optional(),
         payload: z.object({
-            signal_agent_segment_id: z.string().min(1),
+            signal_agent_segment_id: z.string(),
             signal_ref: SignalRefSchema.optional(),
             changed_fields: z.array(z.string()).optional(),
             applies_to: CacheLayerScopeSchema,
@@ -20323,7 +20378,7 @@ export const WholesaleFeedEventSchema: z.ZodType = z.object({
         event_type: z.literal("signal.priced"),
         entity_type: z.literal("signal").optional(),
         payload: z.object({
-            signal_agent_segment_id: z.string().min(1),
+            signal_agent_segment_id: z.string(),
             signal_ref: SignalRefSchema.optional(),
             pricing_options: z.array(VendorPricingOptionSchema),
             previous_pricing_option_ids: z.array(z.string()).optional(),
@@ -20335,7 +20390,7 @@ export const WholesaleFeedEventSchema: z.ZodType = z.object({
         event_type: z.literal("signal.removed"),
         entity_type: z.literal("signal").optional(),
         payload: z.object({
-            signal_agent_segment_id: z.string().min(1),
+            signal_agent_segment_id: z.string(),
             signal_ref: SignalRefSchema.optional(),
             removal_reason: RemovalReasonSchema.optional(),
             applies_to: CacheLayerScopeSchema
@@ -20441,21 +20496,21 @@ export const CreateMediaBuyResponseSchema: z.ZodType = z.object({
     context: ContextObjectSchema.optional(),
     task_id: z.string().optional(),
     status: TaskStatusSchema,
-    message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    message: z.string().max(2000).optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([CreateMediaBuySuccessSchema, CreateMediaBuyErrorSchema, CreateMediaBuySubmittedSchema]));
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
 export const UpdateMediaBuyRequestSchema: z.ZodObject<{ [K in keyof UpdateMediaBuyRequest]-?: undefined extends UpdateMediaBuyRequest[K] ? z.ZodOptional<z.ZodType<Exclude<UpdateMediaBuyRequest[K], undefined>, Exclude<UpdateMediaBuyRequest[K], undefined>>> : z.ZodType<UpdateMediaBuyRequest[K], UpdateMediaBuyRequest[K]> }, z.core.$loose> & z.ZodType<UpdateMediaBuyRequest & Record<string, unknown>, UpdateMediaBuyRequest & Record<string, unknown>> = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     governance_context: z.string().min(1).max(4096).regex(/^[\x20-\x7E]+$/).optional(),
     account: AccountReferenceSchema,
     media_buy_id: z.string(),
@@ -20553,10 +20608,10 @@ export const GetReportingStatusResponseSchema = z.object({
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().int().optional(),
     view: ReportingStatusViewSchema.optional(),
     ledger_snapshot_id: z.string().min(1).max(255).optional(),
     ledger_as_of: z.iso.datetime().optional(),
@@ -20820,21 +20875,21 @@ export const SyncPrincipalResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     result: z.union([AppliedPrincipalConfigurationSchema, ValidatedPrincipalDryRunSchema, FailedPrincipalSyncSchema]),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const SyncAccountsRequestSchema = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
     accounts: z.array(z.union([ProvisioningModeSchema, SettingsUpdateModeSchema])).max(1000),
     delete_missing: z.boolean().optional(),
@@ -20850,19 +20905,19 @@ export const SyncAccountsResponseSchema = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([SyncAccountsSuccessSchema, SyncAccountsErrorSchema]));
 
 export const ComplyTestControllerRequestSchema: z.ZodObject<Record<string, z.ZodType>, any> = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     scenario: z.string(),
     params: z.object({
         creative_id: z.string().optional(),
@@ -20953,17 +21008,17 @@ export const ComplyTestControllerRequestSchema: z.ZodObject<Record<string, z.Zod
 export const ComplyTestControllerResponseSchema = z.object({
     context_id: z.string().optional(),
     context: ContextObjectSchema.optional(),
-    task_id: z.string().optional(),
+    task_id: z.string().max(128).optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
     timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional()
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([ListScenariosSuccessSchema, StateTransitionSuccessSchema, SimulationSuccessSchema, ForcedDirectiveSuccessSchema, SeedSuccessSchema, ProvenanceAuditObservationsSuccessSchema, UpstreamTrafficSuccessSchema, ControllerErrorSchema]));
 
 export const AdCPAsyncResponseDataSchema: z.ZodType = z.union([GetProductsResponseSchema, GetProductsRejectedSchema, GetProductsAsyncWorkingSchema, GetProductsAsyncInputRequiredSchema, GetProductsAsyncSubmittedSchema, RequestProposalsResponseSchema, RequestProposalsAsyncSubmittedSchema, RefineProposalsResponseSchema, RefineProposalsAsyncSubmittedSchema, DeclineProposalsResponseSchema, MediaBuyCommitmentResponseSchema, ControlMediaBuyResponseSchema, CompactTaskSubmittedSchema, CompactTaskWorkingSchema, CompactTaskInputRequiredSchema, GetSignalsResponseSchema, GetSignalsAsyncWorkingSchema, GetSignalsAsyncSubmittedSchema, CreateMediaBuyResponseSchema, CreateMediaBuyAsyncWorkingSchema, CreateMediaBuyAsyncInputRequiredSchema, CreateMediaBuyAsyncSubmittedSchema, UpdateMediaBuyResponseSchema, UpdateMediaBuyAsyncWorkingSchema, UpdateMediaBuyAsyncInputRequiredSchema, UpdateMediaBuyAsyncSubmittedSchema, MediaBuyDeliveryWebhookResultSchema, BuildCreativeResponseSchema, PreviewCreativeResponseSchema, BuildCreativeAsyncWorkingSchema, BuildCreativeAsyncInputRequiredSchema, BuildCreativeAsyncSubmittedSchema, GetCreativeFeaturesResponseSchema, GetCreativeFeaturesAsyncSubmittedSchema, SyncCreativesResponseSchema, SyncCreativesAsyncWorkingSchema, SyncCreativesAsyncInputRequiredSchema, SyncCreativesAsyncSubmittedSchema, SyncCatalogsResponseSchema, SyncCatalogsAsyncWorkingSchema, SyncCatalogsAsyncInputRequiredSchema, SyncCatalogsAsyncSubmittedSchema]);
@@ -20985,8 +21040,8 @@ export const MCPWebhookPayloadSchema: z.ZodType = z.object({
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
 export const CreateMediaBuyRequestSchema: z.ZodObject<{ [K in keyof CreateMediaBuyRequest]-?: undefined extends CreateMediaBuyRequest[K] ? z.ZodOptional<z.ZodType<Exclude<CreateMediaBuyRequest[K], undefined>, Exclude<CreateMediaBuyRequest[K], undefined>>> : z.ZodType<CreateMediaBuyRequest[K], CreateMediaBuyRequest[K]> }, z.core.$loose> & z.ZodType<CreateMediaBuyRequest & Record<string, unknown>, CreateMediaBuyRequest & Record<string, unknown>> = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     governance_context: z.string().min(1).max(4096).regex(/^[\x20-\x7E]+$/).optional(),
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
     plan_id: z.string().optional(),
@@ -21055,10 +21110,10 @@ export const GetMediaBuysResponseSchema: z.ZodType = z.object({
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     media_buys: z.array(GetMediaBuysResponseMediaBuySchema),
     errors: z.array(ErrorSchema).optional(),
     pagination: PaginationResponseSchema.optional(),
@@ -21072,14 +21127,14 @@ export const ListCreativesResponseSchema: z.ZodType = z.object({
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    timestamp: z.string().optional(),
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    governance_context: z.string().optional(),
     payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
     query_summary: z.object({
         total_matching: z.int().min(0),
         returned: z.int().min(0),

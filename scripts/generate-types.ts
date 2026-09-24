@@ -144,6 +144,10 @@ const PRIORITY_CANONICAL_SCHEMAS = [
   'core/canonical-format-option.json',
   'core/delivery-metric-aggregate.json',
   'core/cancellation-policy.json',
+  // The aggregate media-buy root can encounter validation-only copies of
+  // these branches first and reduce every constraint variant to `{}`. Own the
+  // authoritative discriminated union before compiling aggregate roots.
+  'media-buy/change-term-constraints.json',
   // `action` on both of these is `$ref core/media-buy-available-action-id.json`
   // (AdCP 3.2, adcp#7449): an `anyOf` of the legacy `MediaBuyValidAction` enum
   // plus structured-only consts. json-schema-to-typescript emits that alias
@@ -221,6 +225,13 @@ const PRIORITY_EXTRACTED_TYPES = [
     reason: 'the async-response-data webhook union can collapse the conditional creatives[] item to an empty object',
     numberedReferenceAliases: [],
   },
+  {
+    ref: 'media-buy/media-buy-commitment-response.json',
+    typeName: 'CommittedMediaBuy',
+    reason:
+      'aggregate lifecycle roots can retain the field names while dropping the canonical string, integer, and timestamp constraints',
+    numberedReferenceAliases: [],
+  },
 ] as const;
 
 const PRIORITY_CANONICAL_TYPE_NAMES = new Set([
@@ -239,6 +250,12 @@ const PRIORITY_CANONICAL_TYPE_NAMES = new Set([
   'CanonicalFormatOption',
   'DeliveryMetricAggregate',
   'CancellationPolicy',
+  'MediaBuyChangeTermConstraints',
+  'BudgetChangeConstraints',
+  'FlightChangeConstraints',
+  'PackageCountConstraints',
+  'EffectiveTimingConstraints',
+  'CommittedMediaBuy',
   'MediaBuyAvailableAction',
   'ProductAllowedAction',
   'PackageUpdate',
@@ -2773,6 +2790,56 @@ function alignCommittedMediaBuyName(typeDefinitions: string): string {
   return typeDefinitions.slice(0, start) + block.replace(anchor, addition) + typeDefinitions.slice(blockEnd);
 }
 
+/** Preserve each change-term branch's canonical "at least one bound" anyOf. */
+function requireMediaBuyChangeTermConstraintBounds(typeDefinitions: string): string {
+  const schema = loadCachedSchema('media-buy/change-term-constraints.json') as {
+    oneOf?: Array<{ title?: unknown; anyOf?: Array<{ required?: unknown }> }>;
+  } | null;
+  if (!schema || !Array.isArray(schema.oneOf)) {
+    throw new Error('requireMediaBuyChangeTermConstraintBounds: canonical oneOf is missing');
+  }
+
+  const escapePattern = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  let output = typeDefinitions;
+  for (const branch of schema.oneOf) {
+    if (typeof branch.title !== 'string' || !Array.isArray(branch.anyOf)) {
+      throw new Error('requireMediaBuyChangeTermConstraintBounds: canonical branch metadata is missing');
+    }
+    const typeName = branch.title
+      .split(/[^A-Za-z0-9]+/)
+      .filter(Boolean)
+      .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+      .join('');
+    const requiredFields = branch.anyOf.map(option => {
+      if (!Array.isArray(option.required) || option.required.length !== 1 || typeof option.required[0] !== 'string') {
+        throw new Error(`requireMediaBuyChangeTermConstraintBounds: ${typeName} has an unsupported anyOf branch`);
+      }
+      return option.required[0];
+    });
+    if (requiredFields.length === 0 || new Set(requiredFields).size !== requiredFields.length) {
+      throw new Error(`requireMediaBuyChangeTermConstraintBounds: ${typeName} required fields are invalid`);
+    }
+
+    const interfacePattern = new RegExp(`export interface ${typeName} \\{[\\s\\S]*?\\n\\}`);
+    const match = output.match(interfacePattern);
+    if (!match) continue;
+    const interfaceBlock = match[0];
+    const requiredArms = requiredFields.map(fieldName => {
+      const fieldPattern = new RegExp(`^  ${escapePattern(fieldName)}\\?: ([^;]+);$`, 'm');
+      const fieldMatch = interfaceBlock.match(fieldPattern);
+      if (!fieldMatch) {
+        throw new Error(`requireMediaBuyChangeTermConstraintBounds: ${typeName}.${fieldName} field is missing`);
+      }
+      return `  | { ${fieldName}: ${fieldMatch[1]} }`;
+    });
+    const hardened =
+      interfaceBlock.replace(`export interface ${typeName} {`, `export type ${typeName} = {`) +
+      ` & (\n${requiredArms.join('\n')}\n);`;
+    output = output.replace(interfaceBlock, hardened);
+  }
+  return output;
+}
+
 function hardenTrustedMatchGeneratedTypes(typeDefinitions: string): string {
   let output = typeDefinitions;
 
@@ -4669,24 +4736,26 @@ async function generateTypes() {
   // see applyKnownJstsAliases for the rationale. Finally, restore the asset_type
   // discriminator on Individual*Asset slot aliases that jsts collapses (#1498).
   const processedCoreTypes = alignTargetingInputArrayCardinality(
-    alignCommittedMediaBuyName(
-      relaxArrayCardinalityTypes(
-        normalizeTransformerParamJsonValueTypes(
-          relaxZodCompatibilityArrayTypes(
-            hardenTrustedMatchGeneratedTypes(
-              applyIndividualAssetDiscriminators(
-                addBackwardCompatTypeAliases(
-                  simplifyForecastRange(
-                    simplifyPriceBreakdown(
-                      widenMediaBuyFeaturesIndexSignature(
-                        widenPostalAreaSupportIndexSignature(
-                          widenReportedOutcomeErrorIndexSignature(
-                            fixTypedIndexSignatures(
-                              removeResidualInlineIndexSignatureArms(
-                                applyKnownJstsAliases(
-                                  namePostalAreaCountryBranch(
-                                    renameKnownNumberedSemanticTypes(
-                                      removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))
+    requireMediaBuyChangeTermConstraintBounds(
+      alignCommittedMediaBuyName(
+        relaxArrayCardinalityTypes(
+          normalizeTransformerParamJsonValueTypes(
+            relaxZodCompatibilityArrayTypes(
+              hardenTrustedMatchGeneratedTypes(
+                applyIndividualAssetDiscriminators(
+                  addBackwardCompatTypeAliases(
+                    simplifyForecastRange(
+                      simplifyPriceBreakdown(
+                        widenMediaBuyFeaturesIndexSignature(
+                          widenPostalAreaSupportIndexSignature(
+                            widenReportedOutcomeErrorIndexSignature(
+                              fixTypedIndexSignatures(
+                                removeResidualInlineIndexSignatureArms(
+                                  applyKnownJstsAliases(
+                                    namePostalAreaCountryBranch(
+                                      renameKnownNumberedSemanticTypes(
+                                        removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))
+                                      )
                                     )
                                   )
                                 )
@@ -4700,9 +4769,9 @@ async function generateTypes() {
                 )
               )
             )
-          )
-        ),
-        { maxItemsOnly: true }
+          ),
+          { maxItemsOnly: true }
+        )
       )
     )
   );

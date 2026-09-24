@@ -1,4 +1,9 @@
-import type { CanonicalProductAction, MediaBuyChangeTerm, MediaBuyStatus } from '../types/core.generated';
+import type {
+  CanonicalProductAction,
+  MediaBuyChangeTerm,
+  MediaBuyChangeTermConstraints,
+  MediaBuyStatus,
+} from '../types/core.generated';
 import type { MediaBuyActionContext, MediaBuyActionId, MediaBuyActionMode, SLAWindow } from './types';
 
 /** Explicit task vocabulary; update_media_buy is the established 3.1 default. */
@@ -21,29 +26,8 @@ export type ProposalChangeTerm = Pick<
   | 'description'
   | 'ext'
 > & { action: MediaBuyAction };
-/** Portable ergonomic view of the schema's anyOf constraint variants. */
-export type ChangeTermConstraints =
-  | {
-      kind: 'budget';
-      max_delta_amount?: ChangeMoney;
-      max_delta_percent?: number;
-      min_result_amount?: ChangeMoney;
-      max_result_amount?: ChangeMoney;
-    }
-  | {
-      kind: 'flight';
-      max_change?: ChangeDuration;
-      earliest_result?: string;
-      latest_result?: string;
-      minimum_notice?: ChangeDuration;
-    }
-  | { kind: 'package_count'; max_additions?: number; max_removals?: number; max_result_count?: number }
-  | {
-      kind: 'effective_timing';
-      minimum_notice?: ChangeDuration;
-      earliest_effective_at?: string;
-      latest_effective_at?: string;
-    };
+/** Portable view of the canonical constraint variants, including their required bound. */
+export type ChangeTermConstraints = MediaBuyChangeTermConstraints;
 export interface ChangeMoney {
   amount: number;
   currency: string;
