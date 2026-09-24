@@ -123,6 +123,27 @@ export type CanonicalPackage = CanonicalCreativeResponse<Package>;
 export type CanonicalCreateMediaBuyRequest = Omit<CanonicalCreativeResponse<CreateMediaBuyRequest>, 'packages'> & {
   packages?: CanonicalPackageRequest[];
 };
+type CanonicalReportingWebhook = NonNullable<CanonicalCreateMediaBuyRequest['reporting_webhook']>;
+type ReportingWebhookPreferences = Omit<CanonicalReportingWebhook, 'url' | 'authentication' | 'reporting_frequency'> & {
+  reporting_frequency?: CanonicalReportingWebhook['reporting_frequency'];
+};
+type ClientReportingWebhookInput =
+  | (ReportingWebhookPreferences & {
+      url?: never;
+      authentication?: CanonicalReportingWebhook['authentication'];
+    })
+  | (ReportingWebhookPreferences & {
+      url: CanonicalReportingWebhook['url'];
+      authentication: CanonicalReportingWebhook['authentication'];
+    });
+/**
+ * Client-facing create request. The SDK may supply the reporting callback URL
+ * and its complete authentication block from client configuration; the wire
+ * request remains a strict {@link CanonicalCreateMediaBuyRequest}.
+ */
+export type CanonicalCreateMediaBuyInput = Omit<CanonicalCreateMediaBuyRequest, 'reporting_webhook'> & {
+  reporting_webhook?: ClientReportingWebhookInput;
+};
 export type CanonicalUpdateMediaBuyRequest = Omit<
   CanonicalCreativeResponse<UpdateMediaBuyRequest>,
   'packages' | 'new_packages'

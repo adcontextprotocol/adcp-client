@@ -163,7 +163,7 @@ import type { V1Product } from '../v2/projection/types';
 import type { LegacyFormatConverter } from '../v2/projection/v1-to-v2';
 import type { ProjectionCatalogSnapshot } from '../v2/projection/catalog-snapshot';
 import type {
-  CanonicalCreateMediaBuyRequest,
+  CanonicalCreateMediaBuyInput,
   CanonicalCreativeResponse,
   CanonicalGetProductsRequest,
   CanonicalGetProductsResponse,
@@ -280,7 +280,7 @@ export type TaskRequestTypeMap = {
   buy_products: MutatingRequestInput<BuyProductsRequest>;
   accept_proposal: MutatingRequestInput<AcceptProposalRequest>;
   control_media_buy: MutatingRequestInput<ControlMediaBuyRequest>;
-  create_media_buy: MutatingRequestInput<CanonicalCreateMediaBuyRequest>;
+  create_media_buy: MutatingRequestInput<CanonicalCreateMediaBuyInput>;
   update_media_buy: MutatingRequestInput<CanonicalUpdateMediaBuyRequest>;
   sync_creatives: MutatingRequestInput<CanonicalSyncCreativesRequest>;
   list_creatives: CanonicalListCreativesRequest;
@@ -1182,7 +1182,7 @@ export class AgentClient {
    * into `createMediaBuyLegacy()` explicitly.
    */
   async createMediaBuy(
-    params: MutatingRequestInput<CanonicalCreateMediaBuyRequest>,
+    params: MutatingRequestInput<CanonicalCreateMediaBuyInput>,
     inputHandler?: InputHandler,
     options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<CreateMediaBuyResponse>>> {
@@ -2097,7 +2097,7 @@ export class AgentClient {
         )) as TaskResult<unknown>;
       case 'create_media_buy':
         return (await this.createMediaBuy(
-          params as MutatingRequestInput<CanonicalCreateMediaBuyRequest>,
+          params as MutatingRequestInput<CanonicalCreateMediaBuyInput>,
           inputHandler,
           options
         )) as TaskResult<unknown>;

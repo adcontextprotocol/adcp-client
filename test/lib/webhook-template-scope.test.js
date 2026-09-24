@@ -12,6 +12,25 @@ const agent = {
   protocol: 'mcp',
 };
 
+function canonicalCreateMediaBuyParams(reportingWebhook) {
+  return {
+    account: { account_id: 'acc_1' },
+    brand: { domain: 'brand.example' },
+    start_time: 'asap',
+    end_time: '2026-12-31T00:00:00Z',
+    packages: [
+      {
+        product_id: 'prod_1',
+        budget: 1000,
+        pricing_option_id: 'po_1',
+        format_kind: 'image',
+        params: {},
+      },
+    ],
+    reporting_webhook: reportingWebhook,
+  };
+}
+
 describe('webhook template scoping', () => {
   afterEach(() => {
     ProtocolClient.callTool = originalCallTool;
@@ -208,25 +227,13 @@ describe('webhook template scoping', () => {
       return { success: true, status: 'completed', data: { media_buy_id: 'mb_1' } };
     };
 
-    await client.createMediaBuy({
-      account: { account_id: 'acc_1' },
-      brand: { domain: 'brand.example' },
-      start_time: 'asap',
-      end_time: '2026-12-31T00:00:00Z',
-      packages: [
-        {
-          product_id: 'prod_1',
-          budget: 1000,
-          pricing_option_id: 'po_1',
-          format_kind: 'image',
-          params: {},
-        },
-      ],
-      reporting_webhook: {
+    await client.createMediaBuy(
+      canonicalCreateMediaBuyParams({
+        url: undefined,
         reporting_frequency: 'daily',
         requested_metrics: ['impressions', 'spend'],
-      },
-    });
+      })
+    );
 
     assert.equal(calls.length, 1);
     assert.equal(calls[0].taskName, 'create_media_buy');
@@ -239,6 +246,120 @@ describe('webhook template scoping', () => {
       credentials: 'a-real-secret-of-at-least-32-characters',
     });
     assert.deepEqual(calls[0].params.reporting_webhook.requested_metrics, ['impressions', 'spend']);
+
+    await client.createMediaBuy(
+      canonicalCreateMediaBuyParams({
+        reporting_frequency: undefined,
+        requested_metrics: ['impressions'],
+      })
+    );
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].params.reporting_webhook.reporting_frequency, 'daily');
+  });
+
+  it('rejects malformed reporting webhook input before capability discovery', async () => {
+    let capabilityCalls = 0;
+    let dispatchCalls = 0;
+    const client = new SingleAgentClient(agent, {
+      webhookUrlTemplate: {
+        template: 'https://buyer.example/webhook/{task_type}/{agent_id}/{operation_id}',
+        tools: ['media_buy_delivery'],
+      },
+      webhookSecret: 'a-real-secret-of-at-least-32-characters',
+      validateFeatures: false,
+      validation: { requests: 'strict', responses: 'off' },
+    });
+    client.getCapabilities = async () => {
+      capabilityCalls += 1;
+      return { features: { canonicalCreatives: true } };
+    };
+    client.executeAndHandle = async () => {
+      dispatchCalls += 1;
+      return { success: true, status: 'completed', data: { media_buy_id: 'mb_1' } };
+    };
+
+    for (const malformedWebhook of [
+      null,
+      new Date('2026-01-01T00:00:00Z'),
+      new Map([['reporting_frequency', 'daily']]),
+    ]) {
+      await assert.rejects(
+        () => client.createMediaBuy(canonicalCreateMediaBuyParams(malformedWebhook)),
+        /reporting_webhook/
+      );
+    }
+    assert.equal(capabilityCalls, 0);
+    assert.equal(dispatchCalls, 0);
+  });
+
+  it('never binds the client secret to a caller-controlled reporting URL', async () => {
+    let capabilityCalls = 0;
+    let dispatchCalls = 0;
+    const client = new SingleAgentClient(agent, {
+      webhookUrlTemplate: {
+        template: 'https://buyer.example/webhook/{task_type}/{agent_id}/{operation_id}',
+        tools: ['media_buy_delivery'],
+      },
+      webhookSecret: 'a-real-secret-of-at-least-32-characters',
+      validateFeatures: false,
+      validation: { requests: 'strict', responses: 'off' },
+    });
+    client.getCapabilities = async () => {
+      capabilityCalls += 1;
+      return { features: { canonicalCreatives: true } };
+    };
+    client.executeAndHandle = async () => {
+      dispatchCalls += 1;
+      return { success: true, status: 'completed', data: { media_buy_id: 'mb_1' } };
+    };
+
+    await assert.rejects(
+      () =>
+        client.createMediaBuy(
+          canonicalCreateMediaBuyParams({
+            url: 'https://tenant-controlled.example/capture',
+            reporting_frequency: 'daily',
+          })
+        ),
+      /reporting_webhook requires an `authentication` block/
+    );
+    assert.equal(capabilityCalls, 0);
+    assert.equal(dispatchCalls, 0);
+  });
+
+  it('rejects null reporting authentication instead of replacing it with the client secret', async () => {
+    let capabilityCalls = 0;
+    let dispatchCalls = 0;
+    const client = new SingleAgentClient(agent, {
+      webhookUrlTemplate: {
+        template: 'https://buyer.example/webhook/{task_type}/{agent_id}/{operation_id}',
+        tools: ['media_buy_delivery'],
+      },
+      webhookSecret: 'a-real-secret-of-at-least-32-characters',
+      validateFeatures: false,
+      validation: { requests: 'strict', responses: 'off' },
+    });
+    client.getCapabilities = async () => {
+      capabilityCalls += 1;
+      return { features: { canonicalCreatives: true } };
+    };
+    client.executeAndHandle = async () => {
+      dispatchCalls += 1;
+      return { success: true, status: 'completed', data: { media_buy_id: 'mb_1' } };
+    };
+
+    await assert.rejects(
+      () =>
+        client.createMediaBuy(
+          canonicalCreateMediaBuyParams({
+            reporting_frequency: 'daily',
+            authentication: null,
+          })
+        ),
+      /reporting_webhook requires an `authentication` block/
+    );
+    assert.equal(capabilityCalls, 0);
+    assert.equal(dispatchCalls, 0);
   });
 
   it('does not inject reporting_webhook when media_buy_delivery is out of scope', async () => {

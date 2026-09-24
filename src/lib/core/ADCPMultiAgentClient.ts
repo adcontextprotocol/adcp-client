@@ -54,7 +54,7 @@ import type {
 } from '../types/tools.generated';
 import type { MutatingRequestInput } from '../utils/idempotency';
 import type {
-  CanonicalCreateMediaBuyRequest,
+  CanonicalCreateMediaBuyInput,
   CanonicalCreativeResponse,
   CanonicalGetProductsRequest,
   CanonicalListCreativesRequest,
@@ -196,7 +196,7 @@ export class AgentCollection {
    * Note: This might not make sense for all use cases, but provided for completeness
    */
   async createMediaBuy(
-    params: MutatingRequestInput<CanonicalCreateMediaBuyRequest>,
+    params: MutatingRequestInput<CanonicalCreateMediaBuyInput>,
     inputHandler?: InputHandler,
     options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<CreateMediaBuyResponse>>[]> {
