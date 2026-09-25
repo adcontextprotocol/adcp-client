@@ -44,6 +44,7 @@ import {
 } from '../ledger';
 import {
   composeNotificationDeliveryAttemptCheckpoints,
+  composeWebhookAttemptResultObservers,
   createPostgresReportingWebhookActivityV1,
   projectListAccountsReportingWebhookActivityV1,
   type PostgresReportingWebhookActivityV1,
@@ -150,6 +151,12 @@ interface ReliableReportingSchedulerBaseOptionsV1 {
   intervalMilliseconds: number;
   maxObligationsPerAccount?: number;
   maxWorkerIterationsPerAccount?: number;
+  /** Bounded transactional notification claims per auxiliary pass. Defaults to 25. */
+  notificationRecoveryLimit?: number;
+  /** Independent notification recovery workers. Defaults to 4. */
+  notificationRecoveryConcurrency?: number;
+  /** Bounded webhook-outbox claims per auxiliary pass. Defaults to 10. */
+  webhookRecoveryLimit?: number;
   retryDelayMilliseconds?: number;
   executionDeadlineMilliseconds?: number;
   settlementGraceMilliseconds?: number;
@@ -686,25 +693,26 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
   const recipientCheckpoint = createPostgresReportingNotificationAttemptCheckpoint({
     db: options.db,
     namespace: options.namespace,
-    ...(options.activity?.tableName ? { tableName: options.activity.tableName } : {}),
+    ...(options.activity?.tableName !== undefined ? { tableName: options.activity.tableName } : {}),
   });
   const webhookActivity = createPostgresReportingWebhookActivityV1({
     db: options.db,
     namespace: options.namespace,
-    ...(options.webhookActivity?.tableName ? { tableName: options.webhookActivity.tableName } : {}),
-    ...(options.webhookActivity?.retentionDays ? { retentionDays: options.webhookActivity.retentionDays } : {}),
+    ...(options.webhookActivity?.tableName !== undefined ? { tableName: options.webhookActivity.tableName } : {}),
+    ...(options.webhookActivity?.retentionDays !== undefined
+      ? { retentionDays: options.webhookActivity.retentionDays }
+      : {}),
   });
   const composedAttemptCheckpoint = composeNotificationDeliveryAttemptCheckpoints(
     recipientCheckpoint,
     webhookActivity.checkpointDeliveryAttempt
   );
   const attemptCheckpoint = Object.assign(
-    async (input: Parameters<typeof recipientCheckpoint>[0]): Promise<void> => {
-      await composedAttemptCheckpoint(input);
-    },
+    async (input: Parameters<typeof recipientCheckpoint>[0]) => composedAttemptCheckpoint(input),
     { activityStore: recipientCheckpoint.activityStore }
   );
   const adopterAttemptResult = options.notifications.webhooks.onAttemptResult;
+  const adopterAttemptObserverError = options.notifications.webhooks.onAttemptObserverError;
   const notifications = createPostgresPersistentNotificationRuntime({
     ...options.notifications,
     db: options.db,
@@ -713,17 +721,23 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
     supportedAccountEventTypes: ['reporting.ledger_changed', 'reporting.status_changed', 'reporting.delivery_ready'],
     webhooks: {
       ...options.notifications.webhooks,
-      async onAttemptResult(result) {
-        const failures: unknown[] = [];
-        for (const observer of [webhookActivity.emitterObservers.onAttemptResult, adopterAttemptResult]) {
-          if (!observer) continue;
+      onAttemptResult: composeWebhookAttemptResultObservers(
+        webhookActivity.emitterObservers.onAttemptResult,
+        adopterAttemptResult
+      ),
+      onAttemptObserverError(error, phase) {
+        if (adopterAttemptObserverError) {
           try {
-            await observer(result);
-          } catch (error) {
-            failures.push(error);
+            adopterAttemptObserverError(error, phase);
+            return;
+          } catch (observerError) {
+            console.warn(
+              `[adcp/reporting] webhook observer-error hook failed: ${safeMessage(observerError)}; original: ${safeMessage(error)}`
+            );
+            return;
           }
         }
-        if (failures.length) throw new AggregateError(failures, 'Webhook attempt-result observers failed');
+        console.warn(`[adcp/reporting] webhook ${phase} observer failed: ${safeMessage(error)}`);
       },
     },
   });
@@ -807,14 +821,31 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
         }
       : {}),
     async projectListAccounts(request, response, context) {
-      const scope = await options.resolveWebhookActivityScope(context);
-      return projectListAccountsReportingWebhookActivityV1({
-        request,
-        response,
-        tenantId: scope.tenantId,
-        principalId: scope.principalId,
-        activity: webhookActivity,
-      });
+      const withoutDiagnostics = () =>
+        projectListAccountsReportingWebhookActivityV1({
+          request: { ...request, include_webhook_activity: false },
+          response,
+          tenantId: 'diagnostics-not-requested',
+          principalId: 'diagnostics-not-requested',
+          activity: webhookActivity,
+        });
+      if (request.include_webhook_activity !== true) return withoutDiagnostics();
+      try {
+        const scope = await options.resolveWebhookActivityScope(context);
+        return await projectListAccountsReportingWebhookActivityV1({
+          request,
+          response,
+          tenantId: scope.tenantId,
+          principalId: scope.principalId,
+          activity: webhookActivity,
+        });
+      } catch (error) {
+        // Transport diagnostics are a debug aid. A logging-store outage must
+        // not take down the authoritative account roster or leak stale
+        // adopter-supplied activity fields.
+        defaultSchedulerWarn(`[adcp/reporting] webhook activity projection unavailable: ${safeMessage(error)}`);
+        return withoutDiagnostics();
+      }
     },
   };
 
@@ -830,18 +861,48 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
         await scheduler.onError(error);
         return;
       } catch (observerError) {
-        scheduler.logger?.warn(
-          `[adcp/reporting] production onError failed: ${safeMessage(observerError)}; original: ${safeMessage(error)}`
-        );
+        warnSchedulerFailure(scheduler, { phase: 'cycle' }, error, observerError);
         return;
       }
     }
-    (scheduler.logger ?? console).warn(`[adcp/reporting] production worker pass failed: ${safeMessage(error)}`);
+    warnSchedulerFailure(scheduler, { phase: 'cycle' }, error);
   };
   const runAuxiliaryPass = async (
     scheduler: ReliableReportingSchedulerOptionsV1,
     signal: AbortSignal
   ): Promise<void> => {
+    signal.throwIfAborted();
+    try {
+      const totalLimit = scheduler.notificationRecoveryLimit ?? 25;
+      const concurrency = Math.min(scheduler.notificationRecoveryConcurrency ?? 4, totalLimit);
+      const baseLimit = Math.floor(totalLimit / concurrency);
+      const remainder = totalLimit % concurrency;
+      await Promise.all(
+        Array.from({ length: concurrency }, (_, index) =>
+          notificationActivity.recoverOnce({
+            limit: baseLimit + (index < remainder ? 1 : 0),
+            signal,
+            onError: error => reportAuxiliaryError(scheduler, error),
+          })
+        )
+      );
+    } catch (error) {
+      if (!signal.aborted) await reportAuxiliaryError(scheduler, error);
+    }
+    signal.throwIfAborted();
+    try {
+      await notifications.recoverOnce({ limit: scheduler.webhookRecoveryLimit ?? 10 });
+    } catch (error) {
+      if (!signal.aborted) await reportAuxiliaryError(scheduler, error);
+    }
+    signal.throwIfAborted();
+    const pruneResults = await Promise.allSettled([
+      notificationActivity.pruneProjected({ limit: 1_000 }),
+      webhookActivity.pruneCompleted({ limit: 1_000 }),
+    ]);
+    for (const result of pruneResults) {
+      if (result.status === 'rejected' && !signal.aborted) await reportAuxiliaryError(scheduler, result.reason);
+    }
     const accountIds = scheduler.deploymentWide
       ? rotate(await deploymentWideAccountIds(coreStore), auxiliaryRotation)
       : rotate(
@@ -866,13 +927,6 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
         if (!signal.aborted) await reportAuxiliaryError(scheduler, error);
       }
     }
-    signal.throwIfAborted();
-    await notificationActivity.recoverOnce();
-    await notifications.recoverOnce();
-    await Promise.all([
-      notificationActivity.pruneProjected({ limit: 1_000 }),
-      webhookActivity.pruneCompleted({ limit: 1_000 }),
-    ]);
   };
 
   const service: PostgresReliableReportingProductionServiceV1<TCtxMeta> = {
@@ -892,6 +946,11 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
     install<TPlatform extends DecisioningPlatform<unknown, TCtxMeta>>(target: TPlatform) {
       if (typeof target.accounts.upsert !== 'function') {
         throw new TypeError('Reliable reporting requires accounts.upsert');
+      }
+      if (typeof target.accounts.list !== 'function') {
+        throw new TypeError(
+          'Reliable reporting production webhook activity requires accounts.list so list_accounts can serve the advertised diagnostics'
+        );
       }
       if (target.reporting && target.reporting !== platform) {
         throw new TypeError('DecisioningPlatform already has a reporting lifecycle installed');
@@ -922,6 +981,30 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
     },
     start(scheduler) {
       if (auxiliaryPromise) throw new Error('Reliable Reporting production scheduler is already running');
+      if (
+        scheduler.notificationRecoveryLimit !== undefined &&
+        (!Number.isSafeInteger(scheduler.notificationRecoveryLimit) ||
+          scheduler.notificationRecoveryLimit < 1 ||
+          scheduler.notificationRecoveryLimit > 1_000)
+      ) {
+        throw new TypeError('notificationRecoveryLimit must be an integer from 1 through 1000');
+      }
+      if (
+        scheduler.notificationRecoveryConcurrency !== undefined &&
+        (!Number.isSafeInteger(scheduler.notificationRecoveryConcurrency) ||
+          scheduler.notificationRecoveryConcurrency < 1 ||
+          scheduler.notificationRecoveryConcurrency > 64)
+      ) {
+        throw new TypeError('notificationRecoveryConcurrency must be an integer from 1 through 64');
+      }
+      if (
+        scheduler.webhookRecoveryLimit !== undefined &&
+        (!Number.isSafeInteger(scheduler.webhookRecoveryLimit) ||
+          scheduler.webhookRecoveryLimit < 1 ||
+          scheduler.webhookRecoveryLimit > 1_000)
+      ) {
+        throw new TypeError('webhookRecoveryLimit must be an integer from 1 through 1000');
+      }
       core.start(scheduler);
       auxiliaryAbort = new AbortController();
       const signal = auxiliaryAbort.signal;
@@ -1307,7 +1390,9 @@ function validateDeliveryOffering(
       delivery.reconciliation_mode !== 'delivery_only' ||
       delivery.feed_purpose === 'billing')
   ) {
-    throw new TypeError('ReliableReportingService currently installs Core API delivery only');
+    throw new TypeError(
+      'Managed Delivery and Reconciled Billing require createPostgresReliableReportingProductionService from @adcp/sdk/reporting/service'
+    );
   }
   // Refused here rather than at install: capabilities are built from these
   // offerings, so accepting one whose alignment can never be installed would

@@ -72,6 +72,45 @@ function suppressingEmitter({ retries, released }) {
   });
 }
 
+test('uses the next durable activity-attempt ordinal after recovery', async () => {
+  const { signerKey } = makeSignerKey();
+  const observed = [];
+  const emitter = createWebhookEmitter({
+    signerKey,
+    publisherScope: 'publisher-recovery-attempts',
+    tenantScope: 'tenant-recovery-attempts',
+    fetch: async () => ({ status: 204, headers: { get: () => undefined } }),
+    resolveAttemptOrdinal: () => 4,
+    onAttempt: attempt => observed.push(attempt.attempt),
+  });
+  const result = await emitter.emitRecovered({
+    key: {
+      publisherScope: 'publisher-recovery-attempts',
+      tenantScope: 'tenant-recovery-attempts',
+      deliveryId: 'delivery-recovery-attempts',
+    },
+    snapshot: {
+      url: 'https://buyer.example/webhook',
+      payload: { notification_type: 'reporting.status_changed' },
+      authentication: null,
+      retries: { maxAttempts: 3, initialDelayMs: 1, maxDelayMs: 1, jitter: 0 },
+    },
+    attemptCount: 2,
+    leaseExpiresAtMs: Date.now() + 60_000,
+    async renew() {
+      return true;
+    },
+    async release() {
+      return true;
+    },
+    async settle() {
+      return true;
+    },
+  });
+  assert.equal(result.delivered, true);
+  assert.deepEqual(observed, [4], 'a recovered run must continue after attempts 1-3 from the first run');
+});
+
 test('releases a retryable suppression when the configured backoff is fractional', async () => {
   // The recovery contract requires an integer retryAfterMs, but the configured
   // delays were only clamped for sign, never coerced. A fractional

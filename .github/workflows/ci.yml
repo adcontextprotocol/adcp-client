@@ -791,6 +791,9 @@ jobs:
           test/lib/reporting-managed-delivery-pg.test.js
           test/lib/reporting-ledger-writer-fence-pg.test.js
           test/lib/reporting-notification-activity-pg.test.js
+          test/lib/reporting-consumer-postgres.test.js
+          test/lib/reporting-webhook-activity-pg.test.js
+          test/lib/reliable-reporting-production-pg.test.js
           test/lib/reporting-status-ingest-pg.test.js
           test/reliable-reporting-lifecycle-pg.test.js
 

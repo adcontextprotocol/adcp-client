@@ -1206,6 +1206,59 @@ describe('createAdcpServer', () => {
       assert.strictEqual(handled, 1, 'the same consumer repeating its own key replays');
     });
 
+    it('scopes sync_reporting_receipts replay by authenticated consumer identity', async () => {
+      const { createIdempotencyStore: createStore, memoryBackend: backend } = require('../dist/lib/server/idempotency');
+      const callers = [];
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        idempotency: createStore({ backend: backend({ sweepIntervalMs: 0 }) }),
+        resolveIdempotencyPrincipal: () => 'shared-platform-principal',
+        resolveSessionKey: ctx => ctx.authInfo?.credential?.key_id,
+        resolveReportingConsumerId: ctx => ctx.authInfo?.credential?.key_id,
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingReceipts: async (params, ctx) => {
+            callers.push(ctx.authInfo.credential.key_id);
+            return {
+              status: 'completed',
+              results: params.adjustment_receipts.map(receipt => ({
+                result: 'recorded',
+                adjustment_receipt: { ...receipt, received_at: '2026-09-02T01:01:00Z' },
+              })),
+            };
+          },
+        },
+      });
+      const params = {
+        account: { account_id: 'account-receipts' },
+        idempotency_key: 'reporting-receipts-scope-key-0001',
+        adjustment_receipts: [
+          {
+            reporting_receipt_id: 'adjustment-receipt-scope-0001',
+            reporting_adjustment_id: 'adjustment-scope-1',
+            adjusts_reporting_revision_id: 'revision-scope-1',
+            status: 'accepted',
+            observed_adjustment_sha256: 'a'.repeat(64),
+            observed_at: '2026-09-02T01:00:00Z',
+          },
+        ],
+      };
+      const caller = key_id => ({ authInfo: { credential: { kind: 'api_key', key_id } } });
+
+      for (const key of ['consumer-a', 'consumer-b']) {
+        const response = await callToolRaw(server, 'sync_reporting_receipts', params, caller(key));
+        assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
+      }
+      await callToolRaw(server, 'sync_reporting_receipts', params, caller('consumer-a'));
+      assert.deepStrictEqual(callers, ['consumer-a', 'consumer-b']);
+
+      const anonymous = await callToolRaw(server, 'sync_reporting_receipts', params);
+      assert.strictEqual(anonymous.isError, true);
+      assert.strictEqual(anonymous.structuredContent.adcp_error.code, 'AUTH_MISSING');
+    });
+
     it('scopes replay by the resolved reporting consumer, not the credential', async () => {
       // Two operator seats inside one buyer agent present the same OAuth
       // client_id and resolve to the same account, but the deployment maps

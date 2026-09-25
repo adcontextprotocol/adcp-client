@@ -288,7 +288,7 @@ export interface NotificationDeliveryAttemptCheckpointInput {
  */
 export type NotificationDeliveryAttemptCheckpoint = (
   input: Readonly<NotificationDeliveryAttemptCheckpointInput>
-) => MaybePromise<void>;
+) => MaybePromise<void | number>;
 
 /**
  * Whether a live-authority suppression is a deliberate decision not to deliver

@@ -1,10 +1,17 @@
 # Reliable Reporting Python/TypeScript parity
 
 This is the release gate for cross-SDK Reliable Reporting parity. It compares
-the TypeScript SDK to `adcp-client-python` at `c28907bb` (audited 2026-09-25).
+the TypeScript SDK to `adcp-client-python` at `5fd54334` (audited 2026-09-25).
 The implementations intentionally use language-native API shapes; parity means
 the same wire behavior, durability guarantees, failure semantics, and
 production capability truth, not identical class names.
+
+At that audited Python commit, the TypeScript SDK is a safe superset on the
+buyer side: Python implements the seller adjustment ledger, while TypeScript
+also independently verifies post-official adjustments and persists adjustment
+receipt checkpoints. Exact buyer-adjustment parity remains a Python-side
+follow-up; the rows below distinguish shared proof from TypeScript-only proof
+instead of treating an unimplemented peer capability as verified.
 
 | Contract | Python implementation | TypeScript implementation | Shared proof |
 | --- | --- | --- | --- |
@@ -18,10 +25,10 @@ production capability truth, not identical class names.
 | Managed Delivery | production/materializer stores and workers | managed store/runtime and destination adapter | real-PostgreSQL authorization, verification, revocation, and retention tests |
 | Reconciled Billing receipts | receipt capture/handler/store | transactional receipt batches and `sync_reporting_receipts` | idempotency, evidence, conflict, and replay tests |
 | Ledger/status/readiness notifications | notification outboxes and workers | transactional activity outbox plus persistent signed webhook runtime | all three schema-valid event tests and retry recovery tests |
-| Webhook activity | scoped activity stores and account projection | reserved-before-I/O activity store and `list_accounts` projection | principal isolation, sanitization, retention, and projection tests |
+| Webhook activity | scoped activity stores and account projection | reserved-before-I/O activity store and batched `list_accounts` projection | principal isolation, sanitization, bounded reads, retention, and projection tests |
 | Production composition | `ReliableReportingService.postgres` and extensions | `createPostgresReliableReportingProductionService` | migration/probe/policy barrier test |
-| Buyer reconciliation | consumer and reconcile helpers | Core and Managed/Reconciled inspection/reconciliation | manifest, rows, digest, receipt, and snapshot-change tests |
-| Durable buyer loop | consumer checkpoints/change cursors | PostgreSQL checkpoints, pending status, notification dedupe, leases | restart, CAS, lease fencing, and duplicate/conflict tests |
+| Buyer reconciliation | consumer and reconcile helpers for revision receipts; seller adjustment ledger primitives | Core and Managed/Reconciled inspection/reconciliation, including post-official adjustments | shared manifest, rows, digest, revision-receipt, and snapshot-change proof; TypeScript adjustment-receipt tests pending Python adoption |
+| Durable buyer loop | revision checkpoints/change cursors | PostgreSQL revision and adjustment checkpoints, pending status, notification dedupe, leases | shared restart, CAS, lease-fencing, and revision duplicate/conflict proof; TypeScript adjustment-checkpoint tests pending Python adoption |
 | Authenticated notification hints | scoped consumer notification handling | seller/principal scoped durable dedupe and reconcile trigger | ambiguous-account and replay tests |
 
 ## Capability-publication invariant

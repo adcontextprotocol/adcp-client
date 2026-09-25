@@ -21,6 +21,19 @@ awaiting `stop()` during shutdown. Buyer processes should construct
 then start the runtime only after their authenticated seller registry and
 reconciliation dependencies are ready.
 
+The seller scheduler services notification recovery before account production
+on every pass. `notificationRecoveryLimit` defaults to 25 and
+`webhookRecoveryLimit` defaults to 10. Size the former to at least
+`ceil(peak committed events per interval / active replicas × 2)` and verify the
+oldest pending age falls under sustained peak load. Keep both bounded because
+shutdown waits for transport-timeout-bounded claims.
+
+The pending notification cap is a correctness barrier: reaching it refuses the
+ledger mutation instead of committing a fact whose advertised webhook could
+never be recovered. Alert well before 70% of `maxPendingPerTenant`; raise the
+cap only with measured PostgreSQL headroom, and increase recovery throughput
+before increasing producer volume.
+
 Never put bearer tokens, signing secrets, provider credentials, or destination
 credentials in namespaces, account metadata, source scope, cursors, ledger
 records, logs, or receipt evidence. Resolve them just in time from a secret
@@ -31,11 +44,17 @@ manager and bind authorization to authenticated transport context.
 1. Back up the database and record the current application and schema versions.
 2. Stop old writers when the release notes declare a writer fence. Additive,
    idempotent migrations may otherwise be applied before rolling processes.
-3. Execute every SQL string in `service.setup.migrations` with the deployment's
-   migration owner. Prefer one migration transaction where the platform permits
-   it. Set explicit lock and statement timeouts and retry only after diagnosing
-   a rollback.
-4. Construct the service. Treat a migration, probe, policy-adoption, or
+3. On first deploy, construct the service with `applyMigrations`. The callback is
+   optional only for deployments whose migration system has already applied
+   `service.setup.migrations`; without either path the constructor fails its
+   probes. The
+   constructor passes the complete ordered SQL list to that callback before it
+   probes any table, so run each statement there with the deployment's migration
+   owner. Prefer one migration transaction where the platform permits it. Set
+   explicit lock and statement timeouts and retry only after diagnosing a
+   rollback. `service.setup.migrations` is the same list for auditing after a
+   successful construction; it is not the first-deploy entry point.
+4. Treat a migration, probe, policy-adoption, or
    capability-validation failure as a failed deployment; do not serve a reduced
    hand-authored capability document.
 5. Start one canary, verify reads and worker progress for representative
@@ -73,22 +92,31 @@ authorization failures.
 Logs must include a request/trace ID, account ID, obligation/revision or event
 ID, attempt number, result class, and latency. They must not include request
 authorization, webhook query strings, response bodies, source rows, or raw
-provider errors. Error observers are isolated; page on observer failure because
+provider errors. Error observers are isolated; configure
+`webhooks.onAttemptObserverError` and page on observer failure because
 it can otherwise hide degraded telemetry.
 
 ## Capacity planning
 
 Size from measured rows, not account count alone. Forecast daily growth as:
 
-`obligations + revisions + materializations + receipts + event attempts + buyer checkpoints`
+`obligations + revisions + adjustments + materializations + revision/adjustment receipts + event attempts + buyer checkpoints`
 
-multiplied by average row/index/WAL bytes and retention days. Include failed
+multiplied by average row/index/WAL bytes and retention days. Attempt-ordinal
+counters share the webhook-activity retention window and are pruned only after
+their last activity row disappears. Include failed
 attempts and revision churn in peak estimates. Keep database storage below 70%
 and provision IOPS for the larger of peak source settlement and webhook retry
 recovery. Load-test at least twice forecast peak accounts, periods, notification
 fan-out, and row/object sizes. Confirm that one hot tenant cannot starve the
 next tenant; planning and notification recovery use durable rotating cursors,
 but provider quotas still need per-adapter limits.
+
+Buyer receipt checkpoints and unconfirmed pending consumer statuses are not
+time-pruned by the SDK. Forecast them as retained evidence, not as
+retention-days churn. Archive rows only after the authenticated seller ledger
+confirms the corresponding receipt/status and your evidence-retention window
+has elapsed; pending status is cleared automatically when confirmation is read.
 
 Keep the worker interval well below the smallest delivery SLA. Set per-account
 planning and worker iteration limits so a turn completes inside one interval.
@@ -108,7 +136,7 @@ to verify those objects.
 Quarterly, restore into an isolated environment and verify:
 
 - migrations and every `probe()` succeed;
-- stable snapshots, exact revisions, materializations, and receipts remain readable;
+- stable snapshots, exact revisions, adjustments, materializations, and both receipt kinds remain readable;
 - notification recovery resumes without duplicate logical events;
 - buyer cursors/checkpoints resume and duplicate notification keys remain deduped;
 - a new lease fences an expired owner;

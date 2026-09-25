@@ -8,6 +8,7 @@ export type {
 } from './content-mismatch';
 export {
   ReportingReconciliationError,
+  buildReportingAdjustmentReceipt,
   buildReportingReceipt,
   evaluateReportingLedger,
   isReportingCoverageEvidence,
@@ -31,6 +32,7 @@ export {
   REPORTING_WEBHOOK_ACTIVITY_POSTGRES_MIGRATION,
   ReportingWebhookActivityConflictError,
   composeNotificationDeliveryAttemptCheckpoints,
+  composeWebhookAttemptResultObservers,
   createPostgresReportingWebhookActivityV1,
   getReportingWebhookActivityMigration,
   projectListAccountsReportingWebhookActivityV1,
@@ -80,6 +82,8 @@ export type {
   ExpectedReportingCoverage,
   ObligationReconciliation,
   ReconcileReportingOptions,
+  ReportingAdjustmentCheckpoint,
+  ReportingAdjustmentCheckpointKey,
   ReportingCheckpoint,
   ReportingCheckpointKey,
   ReportingCheckpointStore,

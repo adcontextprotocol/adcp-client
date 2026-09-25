@@ -29,6 +29,7 @@ const DEFAULT_TABLE = 'adcp_reporting_notification_activity';
 const REPORTING_STATUS_EVENT_TYPE = 'reporting.status_changed';
 const REPORTING_LEDGER_EVENT_TYPE = 'reporting.ledger_changed';
 const REPORTING_DELIVERY_EVENT_TYPE = 'reporting.delivery_ready';
+const REPORTING_EVENT_STORAGE_PREFIX = 'reporting-event:';
 const DEFAULT_NAMESPACE = 'adcp-reporting';
 const DEFAULT_RETENTION_MS = 90 * 24 * 60 * 60 * 1_000;
 const DEFAULT_MAX_PENDING_PER_TENANT = 100_000;
@@ -86,20 +87,35 @@ export interface ReportingDeliveryReadyActivityV1 extends ReportingAccountActivi
   data_through: string | null;
 }
 
-export type ReportingAccountActivityV1 =
+export type ReportingNotificationActivityV1 =
   | ReportingLifecycleActivityV1
   | ReportingLedgerChangedActivityV1
   | ReportingDeliveryReadyActivityV1;
 
-export type ReportingAccountActivityRecordV1 = ReportingAccountActivityV1 & {
+/** Backwards-compatible lifecycle activity surface returned by listActivity(). */
+export interface ReportingAccountActivityV1 extends ReportingLifecycleActivityV1 {}
+
+export interface ReportingAccountActivityRecordV1 extends ReportingAccountActivityV1 {
   recordedAt: string;
   notificationProjectedAt?: string;
   /** Set when the claim was bounded out of the pending set without delivering. */
+  notificationAbandonedAt?: string;
+}
+
+export type ReportingNotificationActivityRecordV1 = ReportingNotificationActivityV1 & {
+  recordedAt: string;
+  notificationProjectedAt?: string;
   notificationAbandonedAt?: string;
 };
 
 export interface ReportingAccountActivityPageV1 {
   activities: ReportingAccountActivityRecordV1[];
+  hasMore: boolean;
+  nextCursor?: string;
+}
+
+export interface ReportingNotificationActivityPageV1 {
+  activities: ReportingNotificationActivityRecordV1[];
   hasMore: boolean;
   nextCursor?: string;
 }
@@ -225,6 +241,8 @@ export interface PostgresReportingNotificationActivityRuntime {
     leaseMs?: number;
     limit?: number;
     retryAfterMs?: number;
+    /** Cancels new claims and propagates shutdown between deliveries. */
+    signal?: AbortSignal;
     /** Operational observer; hook failures never change durable lease semantics. */
     onError?: (error: unknown, claim: Readonly<ReportingNotificationProjectionErrorV1>) => void | Promise<void>;
   }): Promise<ReportingNotificationRecoveryMetricsV1>;
@@ -235,6 +253,13 @@ export interface PostgresReportingNotificationActivityRuntime {
     cursor?: string;
     limit?: number;
   }): Promise<ReportingAccountActivityPageV1>;
+  /** All reporting notification activity, including ledger and delivery-ready events. */
+  listNotificationActivity(input: {
+    tenantId: string;
+    accountId: string;
+    cursor?: string;
+    limit?: number;
+  }): Promise<ReportingNotificationActivityPageV1>;
   pruneProjected(options?: { limit?: number }): Promise<number>;
 }
 
@@ -353,7 +378,8 @@ BEGIN
   ) THEN
     ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${raw}_valid_state;
     ALTER TABLE ${table} ADD CONSTRAINT ${raw}_valid_state
-      CHECK (state IN ('pending', 'projected', 'abandoned'));
+      CHECK (state IN ('pending', 'projected', 'abandoned')) NOT VALID;
+    ALTER TABLE ${table} VALIDATE CONSTRAINT ${raw}_valid_state;
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
@@ -365,7 +391,8 @@ BEGIN
       (state = 'pending' AND notification_required AND projected_at IS NULL AND retain_until IS NULL) OR
       (state = 'projected' AND projected_at IS NOT NULL AND retain_until IS NOT NULL) OR
       (state = 'abandoned' AND projected_at IS NULL AND retain_until IS NOT NULL AND abandoned_at IS NOT NULL)
-    );
+    ) NOT VALID;
+    ALTER TABLE ${table} VALIDATE CONSTRAINT ${raw}_valid_projection;
   END IF;
   SELECT index_class.oid INTO stale_index
     FROM pg_index
@@ -488,6 +515,15 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_index
      JOIN pg_class index_class ON index_class.oid = pg_index.indexrelid
+    WHERE pg_index.indrelid = activity_table AND index_class.relname = 'idx_${raw}_pending_tenant_due'
+  ) THEN
+    CREATE INDEX idx_${raw}_pending_tenant_due
+      ON ${table}(namespace, tenant_scope, next_attempt_at, lease_expires_at)
+      WHERE state = 'pending';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_index
+     JOIN pg_class index_class ON index_class.oid = pg_index.indexrelid
     WHERE pg_index.indrelid = activity_table AND index_class.relname = 'idx_${raw}_account_activity'
   ) THEN
     CREATE INDEX idx_${raw}_account_activity
@@ -521,7 +557,7 @@ export const REPORTING_NOTIFICATION_ACTIVITY_MIGRATION = getReportingNotificatio
  */
 /** Durable store a checkpoint is bound to, so a mismatched pairing cannot be silent. */
 export interface ReportingNotificationAttemptCheckpointV1 {
-  (input: Readonly<NotificationDeliveryAttemptCheckpointInput>): Promise<void>;
+  (input: Readonly<NotificationDeliveryAttemptCheckpointInput>): Promise<void | number>;
   /**
    * Exact `(queryable, namespace, table)` this checkpoint writes to. Present on
    * anything this module builds; absent on an adopter's own forwarder, which is
@@ -705,11 +741,23 @@ export function createPostgresReportingNotificationActivityRuntime(
     input: {
       eventId: string;
       obligation: Readonly<ReportingLedgerObligationV1>;
-      activity: ReportingAccountActivityV1;
+      activity: ReportingNotificationActivityV1;
       notificationRequired: boolean;
     }
   ): Promise<void> => {
     const { activity, eventId, notificationRequired, obligation } = input;
+    const persistenceEventId =
+      activity.activityType === 'reporting.lifecycle_changed'
+        ? eventId.startsWith(REPORTING_EVENT_STORAGE_PREFIX) ||
+          Buffer.byteLength(eventId, 'utf8') > 255 ||
+          !/^[A-Za-z0-9_.:-]+$/.test(eventId)
+          ? `${REPORTING_EVENT_STORAGE_PREFIX}${canonicalJsonSha256({ kind: 'lifecycle', eventId })}`
+          : eventId
+        : `${REPORTING_EVENT_STORAGE_PREFIX}${canonicalJsonSha256({
+            kind: activity.activityType,
+            changeKind: activity.activityType === 'reporting.ledger_changed' ? activity.changeKind : 'ready',
+            eventId,
+          })}`;
     const accountId = obligation.account.account_id;
     const tenantId = activity.tenantId;
     if (Buffer.byteLength(JSON.stringify(activity), 'utf8') > MAX_ACTIVITY_BYTES) {
@@ -730,7 +778,7 @@ export function createPostgresReportingNotificationActivityRuntime(
           `SELECT intent_fingerprint, tenant_scope, account_id, obligation_id
              FROM ${table}
             WHERE namespace = $1 AND transition_id = $2`,
-          [namespace, eventId]
+          [namespace, persistenceEventId]
         );
         const existingIntent = existing.rows[0];
         if (existingIntent) {
@@ -745,9 +793,13 @@ export function createPostgresReportingNotificationActivityRuntime(
           return;
         }
         const pending = await transaction.query<{ count: number }>(
-          `SELECT COUNT(*)::integer AS count FROM ${table}
-            WHERE namespace = $1 AND tenant_scope = $2 AND state = 'pending'`,
-          [namespace, tenantId]
+          `SELECT COUNT(*)::integer AS count
+             FROM (
+               SELECT 1 FROM ${table}
+                WHERE namespace = $1 AND tenant_scope = $2 AND state = 'pending'
+                LIMIT $3
+             ) bounded_pending`,
+          [namespace, tenantId, maxPendingPerTenant]
         );
         if ((pending.rows[0]?.count ?? 0) >= maxPendingPerTenant) {
           throw new Error('Reporting notification activity pending capacity reached; recovery must catch up');
@@ -774,7 +826,7 @@ export function createPostgresReportingNotificationActivityRuntime(
        RETURNING transition_id`,
         [
           namespace,
-          eventId,
+          persistenceEventId,
           tenantId,
           accountId,
           obligation.reporting_obligation_id,
@@ -878,6 +930,59 @@ export function createPostgresReportingNotificationActivityRuntime(
     },
   };
 
+  const readActivity = async (
+    input: { tenantId: string; accountId: string; cursor?: string; limit?: number },
+    lifecycleOnly: boolean
+  ): Promise<ReportingNotificationActivityPageV1> => {
+    assertIdentifier(input.tenantId, 'tenantId', 512);
+    assertIdentifier(input.accountId, 'accountId', 512);
+    const expectedTenantId = options.tenantScopeForAccount(input.accountId);
+    if (isPromiseLike(expectedTenantId)) {
+      throw new TypeError('tenantScopeForAccount must be synchronous and side-effect free');
+    }
+    assertIdentifier(expectedTenantId, 'tenantId', 512);
+    if (expectedTenantId !== input.tenantId) {
+      throw new TypeError('Reporting account activity scope does not match the trusted account directory');
+    }
+    const limit = input.limit ?? 100;
+    boundedInteger(limit, 'limit', 1, 200);
+    const before = decodeCursor(input.cursor, namespace, input.tenantId, input.accountId);
+    const result = await reportingActivityDatabaseOperation('Reporting account activity read failed', () =>
+      options.db.query<ActivityRow>(
+        `SELECT activity, state, created_at, projected_at, abandoned_at, activity_sequence
+           FROM ${table}
+          WHERE namespace = $1 AND tenant_scope = $2 AND account_id = $3
+            AND ($4::bigint IS NULL OR activity_sequence < $4)
+            AND ($6::boolean = false OR activity->>'activityType' = 'reporting.lifecycle_changed')
+          ORDER BY activity_sequence DESC
+          LIMIT $5`,
+        [namespace, input.tenantId, input.accountId, before ?? null, limit + 1, lifecycleOnly]
+      )
+    );
+    const selected = result.rows.slice(0, limit);
+    const activities = selected.map(row => ({
+      ...structuredClone(row.activity),
+      recordedAt: asIso(row.created_at),
+      ...(row.projected_at ? { notificationProjectedAt: asIso(row.projected_at) } : {}),
+      ...(row.abandoned_at ? { notificationAbandonedAt: asIso(row.abandoned_at) } : {}),
+    }));
+    const hasMore = result.rows.length > limit;
+    return {
+      activities,
+      hasMore,
+      ...(hasMore && selected.length > 0
+        ? {
+            nextCursor: encodeCursor(
+              namespace,
+              input.tenantId,
+              input.accountId,
+              String(selected[selected.length - 1]!.activity_sequence)
+            ),
+          }
+        : {}),
+    };
+  };
+
   return {
     port,
     migrations: {
@@ -936,9 +1041,18 @@ export function createPostgresReportingNotificationActivityRuntime(
       };
       // Claim one row at a time. Pre-claiming a batch would let later leases
       // expire while an earlier subscriber fanout is still running.
-      for (let index = 0; index < limit; index += 1) {
+      let emptyTenantClaims = 0;
+      while (metrics.claimed < limit && emptyTenantClaims < 8) {
+        recoveryOptions.signal?.throwIfAborted();
         const [claim] = await claimPending(options.db, table, cursorTable, namespace, ownerToken, leaseMs, 1);
-        if (!claim) break;
+        if (!claim) {
+          // The cursor tenant may be wholly peer-locked. Advancing the cursor
+          // and trying a bounded number of peers preserves cross-process
+          // fairness without a full-backlog expression sort.
+          emptyTenantClaims += 1;
+          continue;
+        }
+        emptyTenantClaims = 0;
         metrics.claimed += 1;
         let leaseLost = false;
         let renewing = false;
@@ -967,7 +1081,7 @@ export function createPostgresReportingNotificationActivityRuntime(
           let froze = false;
           const result = await options.notifications.emit({
             emissionId: claim.activity.activityId,
-            notificationId: claim.activity.transitionId,
+            notificationId: claim.transitionId,
             notificationType,
             anchor: 'account',
             tenantId: claim.tenantId,
@@ -991,6 +1105,9 @@ export function createPostgresReportingNotificationActivityRuntime(
               return frozen;
             },
           });
+          // Once emit returns, an external POST may already have succeeded.
+          // Finish durable recipient settlement and projection even when
+          // shutdown was requested; retrying here would duplicate the send.
           // Declaring checkpoint support is not enough: a port that never calls
           // freezeRecipients leaves no frozen recipient, so the checkpoint
           // suppresses every delivery and settlement would then see nothing
@@ -1047,52 +1164,10 @@ export function createPostgresReportingNotificationActivityRuntime(
       return metrics;
     },
     async listActivity(input) {
-      assertIdentifier(input.tenantId, 'tenantId', 512);
-      assertIdentifier(input.accountId, 'accountId', 512);
-      const expectedTenantId = options.tenantScopeForAccount(input.accountId);
-      if (isPromiseLike(expectedTenantId)) {
-        throw new TypeError('tenantScopeForAccount must be synchronous and side-effect free');
-      }
-      assertIdentifier(expectedTenantId, 'tenantId', 512);
-      if (expectedTenantId !== input.tenantId) {
-        throw new TypeError('Reporting account activity scope does not match the trusted account directory');
-      }
-      const limit = input.limit ?? 100;
-      boundedInteger(limit, 'limit', 1, 200);
-      const before = decodeCursor(input.cursor, namespace, input.tenantId, input.accountId);
-      const result = await reportingActivityDatabaseOperation('Reporting account activity read failed', () =>
-        options.db.query<ActivityRow>(
-          `SELECT activity, state, created_at, projected_at, abandoned_at, activity_sequence
-           FROM ${table}
-          WHERE namespace = $1 AND tenant_scope = $2 AND account_id = $3
-            AND ($4::bigint IS NULL OR activity_sequence < $4)
-          ORDER BY activity_sequence DESC
-          LIMIT $5`,
-          [namespace, input.tenantId, input.accountId, before ?? null, limit + 1]
-        )
-      );
-      const selected = result.rows.slice(0, limit);
-      const activities = selected.map(row => ({
-        ...structuredClone(row.activity),
-        recordedAt: asIso(row.created_at),
-        ...(row.projected_at ? { notificationProjectedAt: asIso(row.projected_at) } : {}),
-        ...(row.abandoned_at ? { notificationAbandonedAt: asIso(row.abandoned_at) } : {}),
-      }));
-      const hasMore = result.rows.length > limit;
-      return {
-        activities,
-        hasMore,
-        ...(hasMore && selected.length > 0
-          ? {
-              nextCursor: encodeCursor(
-                namespace,
-                input.tenantId,
-                input.accountId,
-                String(selected[selected.length - 1]!.activity_sequence)
-              ),
-            }
-          : {}),
-      };
+      return (await readActivity(input, true)) as ReportingAccountActivityPageV1;
+    },
+    async listNotificationActivity(input) {
+      return readActivity(input, false);
     },
     async pruneProjected(pruneOptions = {}) {
       const limit = pruneOptions.limit ?? 1_000;
@@ -1117,7 +1192,7 @@ export function createPostgresReportingNotificationActivityRuntime(
 }
 
 interface ActivityRow extends Record<string, unknown> {
-  activity: ReportingAccountActivityV1;
+  activity: ReportingNotificationActivityV1;
   state: 'pending' | 'projected' | 'abandoned';
   created_at: Date | string;
   projected_at: Date | string | null;
@@ -1129,7 +1204,7 @@ interface ClaimedActivity {
   transitionId: string;
   tenantId: string;
   accountId: string;
-  activity: ReportingAccountActivityV1;
+  activity: ReportingNotificationActivityV1;
   leaseOwner: string;
   leaseVersion: string;
   attemptCount: number;
@@ -1201,7 +1276,13 @@ function buildLedgerChangedActivity(
   if ('revision' in input) {
     const eventId = input.revision.reporting_revision_id;
     return {
-      activityId: activityIdentity(namespace, tenantId, accountId, eventId, REPORTING_LEDGER_EVENT_TYPE),
+      activityId: activityIdentity(
+        namespace,
+        tenantId,
+        accountId,
+        eventId,
+        `${REPORTING_LEDGER_EVENT_TYPE}:revision_published`
+      ),
       transitionId: eventId,
       activityType: REPORTING_LEDGER_EVENT_TYPE,
       notificationType: REPORTING_LEDGER_EVENT_TYPE,
@@ -1219,7 +1300,13 @@ function buildLedgerChangedActivity(
   }
   const eventId = input.adjustment.reporting_adjustment_id;
   return {
-    activityId: activityIdentity(namespace, tenantId, accountId, eventId, REPORTING_LEDGER_EVENT_TYPE),
+    activityId: activityIdentity(
+      namespace,
+      tenantId,
+      accountId,
+      eventId,
+      `${REPORTING_LEDGER_EVENT_TYPE}:adjustment_published`
+    ),
     transitionId: eventId,
     activityType: REPORTING_LEDGER_EVENT_TYPE,
     notificationType: REPORTING_LEDGER_EVENT_TYPE,
@@ -1285,7 +1372,7 @@ type ReportingDeliveryReadyPayload = Omit<
 >;
 
 function notificationPayload(
-  activity: Readonly<ReportingAccountActivityV1>
+  activity: Readonly<ReportingNotificationActivityV1>
 ): ReportingStatusChangedPayload | ReportingLedgerChangedPayload | ReportingDeliveryReadyPayload {
   if (activity.activityType === 'reporting.lifecycle_changed') {
     return {
@@ -1342,7 +1429,7 @@ async function claimPending(
         transition_id: string;
         tenant_scope: string;
         account_id: string;
-        activity: ReportingAccountActivityV1;
+        activity: ReportingNotificationActivityV1;
         lease_version: string;
         attempt_count: number;
       }
@@ -1371,8 +1458,9 @@ async function claimPending(
        RETURNING tenant_scope
      ), candidates AS (
        SELECT activity.namespace, activity.transition_id FROM ${table} activity
-       JOIN selected_tenant selected ON selected.tenant_scope = activity.tenant_scope
+       CROSS JOIN selected_tenant selected
         WHERE activity.namespace = $1 AND activity.state = 'pending'
+          AND activity.tenant_scope = selected.tenant_scope
           AND activity.next_attempt_at <= clock_timestamp()
           AND (activity.lease_expires_at IS NULL OR activity.lease_expires_at < clock_timestamp())
         ORDER BY activity.next_attempt_at, activity.activity_sequence

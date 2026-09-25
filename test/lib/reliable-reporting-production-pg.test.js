@@ -13,6 +13,7 @@ describe(
     let bootstrap;
     let pool;
     let service;
+    let webhookActivityScopeCalls = 0;
 
     before(async () => {
       const { Pool } = require('pg');
@@ -111,10 +112,13 @@ describe(
           validateDestination: async () => ({ allowed: true }),
         },
         activity: { tenantScopeForAccount: accountId => `tenant:${accountId}` },
-        resolveWebhookActivityScope: () => ({
-          tenantId: 'tenant:account-1',
-          principalId: 'buyer-principal-1',
-        }),
+        resolveWebhookActivityScope: () => {
+          webhookActivityScopeCalls += 1;
+          return {
+            tenantId: 'tenant:account-1',
+            principalId: 'buyer-principal-1',
+          };
+        },
         managedDelivery: {
           resourceRetentionDays: 90,
           authorizationRevocationSeconds: 60,
@@ -169,6 +173,7 @@ describe(
       };
       const omitted = await service.platform.projectListAccounts({ include_webhook_activity: false }, response, {});
       assert.equal('webhook_activity' in omitted.accounts[0], false);
+      assert.equal(webhookActivityScopeCalls, 0, 'ordinary account reads do not depend on diagnostics scope');
       assert.equal(response.accounts[0].webhook_activity[0].url, 'https://must-not-leak.example/secret');
 
       const included = await service.platform.projectListAccounts(
@@ -177,6 +182,7 @@ describe(
         {}
       );
       assert.deepEqual(included.accounts[0].webhook_activity, []);
+      assert.equal(webhookActivityScopeCalls, 1);
     });
 
     test('mounts webhook activity on the real list_accounts dispatch path', async () => {
@@ -218,6 +224,21 @@ describe(
       );
       assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
       assert.deepEqual(result.structuredContent.accounts[0].webhook_activity, []);
+    });
+
+    test('refuses to advertise webhook activity without a list_accounts implementation', () => {
+      assert.throws(
+        () =>
+          service.install({
+            capabilities: { specialisms: [], config: {} },
+            accounts: {
+              resolution: 'explicit',
+              resolve: async ref => ({ id: ref?.account_id ?? 'account-1', ctx_metadata: {} }),
+              upsert: async () => [],
+            },
+          }),
+        /requires accounts\.list/
+      );
     });
   }
 );

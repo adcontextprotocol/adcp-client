@@ -351,6 +351,47 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     );
   });
 
+  test('skips a peer-locked tenant without wasting the recovery pass', async () => {
+    const recovery = isolatedActivity('skip-locked-tenant');
+    const [obligationA, obligationB] = await Promise.all([
+      putObligation('skip-locked-a', 'account-a', recovery.store),
+      putObligation('skip-locked-b', 'account-b', recovery.store),
+    ]);
+    const [transitionA, transitionB] = await Promise.all([
+      ledger.reconcileReportingStatusLifecycleV1({
+        store: recovery.store,
+        reporting_obligation_id: obligationA.reporting_obligation_id,
+        ledgerAsOf: '2026-09-02T01:30:00.000Z',
+      }),
+      ledger.reconcileReportingStatusLifecycleV1({
+        store: recovery.store,
+        reporting_obligation_id: obligationB.reporting_obligation_id,
+        ledgerAsOf: '2026-09-02T01:30:00.000Z',
+      }),
+    ]);
+    assert.ok(transitionA && transitionB);
+    const peer = await pool.connect();
+    try {
+      await peer.query('BEGIN');
+      await peer.query(
+        `SELECT transition_id FROM adcp_reporting_notification_activity
+          WHERE namespace = $1 AND transition_id = $2 FOR UPDATE`,
+        [recovery.namespace, transitionA.transitionId]
+      );
+      const result = await recovery.activity.recoverOnce({ ownerToken: 'skip-locked-worker', limit: 1 });
+      assert.equal(result.claimed, 1);
+      const projected = await pool.query(
+        `SELECT state FROM adcp_reporting_notification_activity
+          WHERE namespace = $1 AND transition_id = $2`,
+        [recovery.namespace, transitionB.transitionId]
+      );
+      assert.equal(projected.rows[0].state, 'projected');
+    } finally {
+      await peer.query('ROLLBACK');
+      peer.release();
+    }
+  });
+
   test('resolves replacement and revocation through the existing subscription runtime', async () => {
     const replacementObligation = await putObligation('replacement', 'account-a');
     const replacementTransition = await ledger.reconcileReportingStatusLifecycleV1({
@@ -433,6 +474,66 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       abandoned: 0,
     });
     assert.equal(fetchCalls.length, before);
+  });
+
+  test('settles a successful send before honoring shutdown cancellation', async () => {
+    const controller = new AbortController();
+    const successfulNotifications = {
+      hasDeliveryAttemptCheckpoint: true,
+      deliveryAttemptCheckpoint: attemptCheckpoint,
+      async emit(event) {
+        const [recipient] = await event.freezeRecipients([
+          {
+            scope: {
+              kind: 'account',
+              tenantId: event.tenantId,
+              principalId: 'principal-a',
+              accountId: event.accountId,
+            },
+            subscriberId: 'shutdown-success-subscriber',
+            destinationGeneration: 'shutdown-success-generation',
+          },
+        ]);
+        controller.abort();
+        return {
+          notificationId: event.notificationId,
+          emissionId: event.emissionId,
+          matched: 1,
+          deliveries: [
+            {
+              scope: recipient.scope,
+              subscriberId: recipient.subscriberId,
+              destinationGeneration: recipient.destinationGeneration,
+              result: {
+                delivery_id: 'shutdown-success-delivery',
+                idempotency_key: 'shutdown-success-idempotency',
+                attempts: 1,
+                delivered: true,
+                errors: [],
+              },
+            },
+          ],
+        };
+      },
+    };
+    const isolated = isolatedActivity('shutdown-after-success', { notifications: successfulNotifications });
+    const obligation = await putObligation('shutdown-after-success', 'account-a', isolated.store);
+    const transition = await ledger.reconcileReportingStatusLifecycleV1({
+      store: isolated.store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T02:10:00.000Z',
+    });
+    assert.ok(transition);
+    const result = await isolated.activity.recoverOnce({
+      ownerToken: 'shutdown-success-worker',
+      limit: 1,
+      signal: controller.signal,
+    });
+    assert.equal(result.projected, 1);
+    assert.equal(result.retried, 0);
+    const intent = await readIntent(transition.transitionId, isolated.namespace);
+    assert.equal(intent.state, 'projected');
+    assert.equal(intent.unsettled, 0);
   });
 
   test('replays the committed recipient set so a replacement cannot add a second delivery', async () => {
@@ -3608,7 +3709,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     assert.notEqual(ledgerDelivery.body.fired_at, revision.createdAt, 'the authoritative database clock is used');
 
     const adjustment = {
-      reporting_adjustment_id: 'radj_all_event_types',
+      reporting_adjustment_id: reportingRevisionId,
       reporting_obligation_id: obligation.reporting_obligation_id,
       adjusts_reporting_revision_id: reportingRevisionId,
     };
@@ -3635,7 +3736,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     assert.equal(adjustmentDelivery.body.adjusts_reporting_revision_id, reportingRevisionId);
 
     const materialization = {
-      reporting_materialization_id: 'rmat_all_event_types',
+      reporting_materialization_id: reportingRevisionId,
       reporting_revision_id: reportingRevisionId,
       status: 'available',
     };
@@ -3659,6 +3760,24 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     assert.equal(readyDelivery.body.notification_type, 'reporting.delivery_ready');
     assert.equal(readyDelivery.body.readiness, 'available');
     assert.equal(readyDelivery.body.data_through, revision.dataThrough);
+    const notificationIds = fetchCalls
+      .filter(call => ['reporting.ledger_changed', 'reporting.delivery_ready'].includes(call.body.notification_type))
+      .map(call => call.body.notification_id);
+    assert.equal(new Set(notificationIds).size, 3, 'each event class has a distinct transport identity');
+    assert.equal(
+      notificationIds.every(value => Buffer.byteLength(value, 'utf8') <= 255),
+      true
+    );
+    assert.deepEqual(
+      (await isolated.activity.listActivity({ tenantId: 'tenant-a', accountId })).activities,
+      [],
+      'the backwards-compatible activity reader remains lifecycle-only'
+    );
+    const allActivity = await isolated.activity.listNotificationActivity({ tenantId: 'tenant-a', accountId });
+    assert.deepEqual(
+      new Set(allActivity.activities.map(value => value.activityType)),
+      new Set(['reporting.ledger_changed', 'reporting.delivery_ready'])
+    );
   });
 
   test('durably rotates notification recovery across tenants', async () => {

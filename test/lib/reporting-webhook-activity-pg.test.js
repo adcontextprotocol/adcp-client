@@ -131,21 +131,137 @@ describe('Postgres reporting webhook activity', { skip: !DATABASE_URL && 'Postgr
       attempt: 1,
       url: 'https://buyer.example/reporting/callback',
       payload_size_bytes: 100,
+      attemptAuthorizationContext: {
+        kind: 'adcp_notification_subscription',
+        version: 1,
+        scope: base.scope,
+        accountId: base.accountId,
+        subscriberId: base.subscriberId,
+        eventType: base.eventType,
+        notificationId: base.notificationId,
+      },
     };
-    await activity.checkpointDeliveryAttempt({ ...base, attempt });
-    await activity.checkpointDeliveryAttempt({ ...base, attempt });
-    await assert.rejects(
-      () => activity.checkpointDeliveryAttempt({ ...base, attempt: { ...attempt, payload_size_bytes: 101 } }),
-      /already bound to different facts/
+    const firstOrdinal = await activity.checkpointDeliveryAttempt({ ...base, attempt });
+    assert.equal(firstOrdinal, 1);
+    const secondOrdinal = await activity.checkpointDeliveryAttempt({ ...base, attempt });
+    assert.equal(secondOrdinal, 2);
+
+    const concurrent = { ...attempt, delivery_id: 'delivery-concurrent', idempotency_key: 'idempotency-concurrent' };
+    const ordinals = await Promise.all(
+      Array.from({ length: 16 }, () => activity.checkpointDeliveryAttempt({ ...base, attempt: concurrent }))
+    );
+    assert.deepEqual(
+      ordinals.sort((left, right) => left - right),
+      Array.from({ length: 16 }, (_value, index) => index + 1),
+      'concurrent replicas receive distinct dense ordinals'
     );
   });
 
-  test('composes the delivery freeze checkpoint before the activity reservation', async () => {
+  test('fails loudly when an attempt result has no durable reservation', async () => {
+    await assert.rejects(
+      () =>
+        activity.emitterObservers.onAttemptResult({
+          delivery_id: 'missing-delivery',
+          idempotency_key: 'missing-idempotency-key',
+          attempt: 1,
+          url: 'https://buyer.example/webhooks',
+          payload_size_bytes: 42,
+          durationMs: 10,
+          status: 204,
+          willRetry: false,
+          attemptAuthorizationContext: {
+            kind: 'adcp_notification_subscription',
+            version: 1,
+            scope: { kind: 'caller', tenantId: 'tenant-missing', principalId: 'principal-missing' },
+            accountId: 'account-missing',
+            subscriberId: 'subscriber-missing',
+            eventType: 'reporting.status_changed',
+            notificationId: 'notification-missing',
+          },
+        }),
+      /no matching durable reservation/
+    );
+  });
+
+  test('passes caller-anchored non-reporting notifications without requiring an account ID', async () => {
+    await activity.checkpointDeliveryAttempt({
+      scope: { kind: 'caller', tenantId: 'tenant-caller', principalId: 'principal-caller' },
+      eventAnchor: 'caller',
+      subscriberId: 'caller-subscriber',
+      destinationGeneration: 'caller-generation',
+      eventType: 'capabilities.changed',
+      notificationId: 'caller-notification',
+      attempt: {
+        delivery_id: 'caller-delivery',
+        idempotency_key: 'caller-idempotency-key',
+        attempt: 1,
+        url: 'https://buyer.example/webhooks',
+        payload_size_bytes: 42,
+      },
+      signal: new AbortController().signal,
+    });
+    const stored = await pool.query(
+      `SELECT count(*)::integer AS count FROM adcp_reporting_webhook_attempts
+        WHERE notification_id = 'caller-notification'`
+    );
+    assert.equal(stored.rows[0].count, 0);
+  });
+
+  test('prunes orphaned reservations after preserving their truthful pending window', async () => {
+    const base = {
+      scope: { kind: 'caller', tenantId: 'tenant-orphan', principalId: 'buyer-orphan' },
+      eventAnchor: 'account',
+      accountId: 'account-orphan',
+      subscriberId: 'orphan-audit',
+      destinationGeneration: 'destination-generation-orphan',
+      eventType: 'reporting.delivery_ready',
+      notificationId: 'delivery-orphan',
+      signal: new AbortController().signal,
+    };
+    await activity.checkpointDeliveryAttempt({
+      ...base,
+      attempt: {
+        delivery_id: 'delivery-orphan',
+        idempotency_key: 'idempotency-key-orphan-0001',
+        attempt: 1,
+        url: 'https://buyer.example/reporting/callback',
+        payload_size_bytes: 100,
+      },
+    });
+    await pool.query(
+      `UPDATE adcp_reporting_webhook_attempts
+          SET fired_at = clock_timestamp() - INTERVAL '31 days'
+        WHERE account_id = 'account-orphan'`
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_webhook_attempts_ordinals
+          SET changed_at = clock_timestamp() - INTERVAL '31 days'
+        WHERE account_id = 'account-orphan'`
+    );
+    await activity.pruneCompleted({ limit: 10 });
+    const rows = await activity.listActivity({
+      tenantId: 'tenant-orphan',
+      principalId: 'buyer-orphan',
+      accountId: 'account-orphan',
+    });
+    assert.equal(rows.length, 0);
+    const ordinals = await pool.query(
+      `SELECT count(*)::integer AS count FROM adcp_reporting_webhook_attempts_ordinals
+        WHERE account_id = 'account-orphan'`
+    );
+    assert.equal(ordinals.rows[0].count, 0);
+  });
+
+  test('composes checkpoints in caller order', async () => {
     const reporting = require('../../dist/lib/reporting/index.js');
     const calls = [];
     const composed = reporting.composeNotificationDeliveryAttemptCheckpoints(
-      async () => calls.push('recipient-frozen'),
-      async () => calls.push('activity-reserved')
+      async () => {
+        calls.push('recipient-frozen');
+      },
+      async () => {
+        calls.push('activity-reserved');
+      }
     );
     await composed({});
     assert.deepEqual(calls, ['recipient-frozen', 'activity-reserved']);
@@ -155,14 +271,20 @@ describe('Postgres reporting webhook activity', { skip: !DATABASE_URL && 'Postgr
     const reporting = require('../../dist/lib/reporting/index.js');
     const source = {
       status: 'completed',
-      accounts: [{ account_id: 'account-1', name: 'Visible', webhook_activity: [{ url: 'ADOPTER_SECRET' }] }],
+      accounts: [
+        { account_id: 'account-1', name: 'Visible', webhook_activity: [{ url: 'ADOPTER_SECRET' }] },
+        { account_id: 'account-2', name: 'Also visible' },
+      ],
       pagination: { has_more: false },
     };
     let reads = 0;
     const reader = {
-      async listActivity(input) {
+      async listActivity() {
+        throw new Error('projection should use the bounded batch reader');
+      },
+      async listActivityBatch(input) {
         reads += 1;
-        return activity.listActivity(input);
+        return activity.listActivityBatch(input);
       },
     };
     const omitted = await reporting.projectListAccountsReportingWebhookActivityV1({
@@ -186,6 +308,7 @@ describe('Postgres reporting webhook activity', { skip: !DATABASE_URL && 'Postgr
     assert.equal(reads, 1);
     assert.equal(included.accounts[0].webhook_activity.length, 1);
     assert.equal(included.accounts[0].webhook_activity[0].idempotency_key, 'idempotency-key-0001');
+    assert.deepEqual(included.accounts[1].webhook_activity, []);
     assert.equal(included.pagination.has_more, false);
   });
 });

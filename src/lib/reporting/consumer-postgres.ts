@@ -1,11 +1,14 @@
 import { canonicalJsonSha256 } from '../utils/jcs';
 import type {
+  ReportingAdjustmentCheckpoint,
+  ReportingAdjustmentCheckpointKey,
   ReportingCheckpoint,
   ReportingCheckpointKey,
   ReportingCheckpointStore,
   ReportingPendingConsumerStatus,
   ReportingPendingConsumerStatusKey,
   ReportingPendingConsumerStatusStore,
+  ReportingPersistenceLeaseFenceV1,
 } from './reconciliation';
 
 const DEFAULT_PREFIX = 'adcp_reporting_consumer';
@@ -20,8 +23,9 @@ export interface ReportingConsumerPostgresQueryable {
 }
 
 export interface ReportingChangesCheckpointKeyV1 {
-  /** Stable, non-secret seller and authenticated-principal identity. Stored only as a SHA-256 digest. */
+  /** Stable, non-secret seller and authenticated-principal identity. Stored as a SHA-256 digest. */
   consumerScope: string;
+  /** Protocol account identifier. Stored verbatim to support indexed operational lookup. */
   accountId: string;
 }
 
@@ -30,20 +34,23 @@ export interface ReportingChangesCheckpointV1 {
   generation: number;
 }
 
+export interface ReportingConsumerWorkLeaseV1 extends ReportingPersistenceLeaseFenceV1 {}
+
 export interface ReportingChangesCheckpointStoreV1 {
   get(key: ReportingChangesCheckpointKeyV1): Promise<ReportingChangesCheckpointV1 | undefined>;
   compareAndSet(
     key: ReportingChangesCheckpointKeyV1,
     expected: string | null,
-    checkpoint: string
+    checkpoint: string,
+    /** When supplied, PostgreSQL applies the cursor write only while this exact fenced lease is current. */
+    lease?: ReportingConsumerWorkLeaseV1
   ): Promise<'applied' | 'unchanged' | 'conflict'>;
-}
-
-export interface ReportingConsumerWorkLeaseV1 {
-  scopeKey: string;
-  ownerToken: string;
-  generation: number;
-  expiresAt: string;
+  /** Retire an opaque cursor the seller no longer recognizes or returns. */
+  clear?(
+    key: ReportingChangesCheckpointKeyV1,
+    expected?: string,
+    lease?: ReportingConsumerWorkLeaseV1
+  ): Promise<boolean>;
 }
 
 export interface ReportingConsumerWorkLeaseStoreV1 {
@@ -217,6 +224,34 @@ export function createPostgresReportingConsumerRuntimeV1(
         );
       }
     },
+    async getAdjustment(key) {
+      const keySha = adjustmentCheckpointKey(key);
+      const result = await query<{ value: ReportingAdjustmentCheckpoint }>(
+        'read adjustment receipt checkpoint',
+        `SELECT value FROM ${checkpoints} WHERE namespace = $1 AND key_sha256 = $2`,
+        [namespace, keySha]
+      );
+      return result.rows[0] ? structuredClone(result.rows[0].value) : undefined;
+    },
+    async putAdjustment(key, checkpoint) {
+      const keySha = adjustmentCheckpointKey(key);
+      const value = jsonObject(checkpoint, 'reporting adjustment checkpoint');
+      const valueSha = canonicalJsonSha256(value);
+      const result = await query<{ value_sha256: string }>(
+        'write adjustment receipt checkpoint',
+        `INSERT INTO ${checkpoints} (namespace, key_sha256, value_sha256, value)
+         VALUES ($1,$2,$3,$4::jsonb)
+         ON CONFLICT (namespace, key_sha256) DO UPDATE SET
+           value_sha256 = ${checkpoints}.value_sha256
+         RETURNING value_sha256`,
+        [namespace, keySha, valueSha, JSON.stringify(value)]
+      );
+      if (result.rows[0]?.value_sha256 !== valueSha) {
+        throw new ReportingConsumerPersistenceConflictError(
+          'A different adjustment checkpoint already owns this immutable reporting correction'
+        );
+      }
+    },
   };
 
   const pendingConsumerStatusStore: ReportingPendingConsumerStatusStore = {
@@ -229,26 +264,73 @@ export function createPostgresReportingConsumerRuntimeV1(
       );
       return result.rows[0] ? structuredClone(result.rows[0].value) : undefined;
     },
-    async put(key, pending) {
+    async put(key, pending, lease) {
       const keySha = pendingStatusKey(key);
+      const scopeKey = consumerScopeKey(key.consumerScope);
+      const accountId = accountKey(key.accountId);
+      const fence = lease ? leaseFence(lease, scopeKey, accountId) : undefined;
       const value = jsonObject(pending, 'pending consumer status');
       const valueSha = canonicalJsonSha256(value);
-      await query(
+      const result = await query(
         'write pending consumer status',
-        `INSERT INTO ${statuses} (namespace, key_sha256, value_sha256, value)
-         VALUES ($1,$2,$3,$4::jsonb)
+        `WITH current_lease AS MATERIALIZED (
+           SELECT 1 FROM ${leases}
+            WHERE $5::text IS NOT NULL
+              AND namespace = $1 AND scope_key = $7 AND account_id = $8
+              AND owner_token = $5 AND generation = $6 AND expires_at > clock_timestamp()
+            FOR UPDATE
+         )
+         INSERT INTO ${statuses} (namespace, key_sha256, value_sha256, value)
+         SELECT $1,$2,$3,$4::jsonb
+          WHERE $5::text IS NULL OR EXISTS (SELECT 1 FROM current_lease)
          ON CONFLICT (namespace, key_sha256) DO UPDATE SET
            value_sha256 = EXCLUDED.value_sha256,
            value = EXCLUDED.value,
-           changed_at = clock_timestamp()`,
-        [namespace, keySha, valueSha, JSON.stringify(value)]
+           changed_at = clock_timestamp()
+         RETURNING key_sha256`,
+        [
+          namespace,
+          keySha,
+          valueSha,
+          JSON.stringify(value),
+          fence?.ownerToken ?? null,
+          fence?.generation ?? null,
+          scopeKey,
+          accountId,
+        ]
       );
+      if (result.rowCount !== 1) {
+        throw new ReportingConsumerPersistenceConflictError('The pending consumer status lease is no longer current');
+      }
     },
-    async clear(key) {
-      await query('clear pending consumer status', `DELETE FROM ${statuses} WHERE namespace = $1 AND key_sha256 = $2`, [
-        namespace,
-        pendingStatusKey(key),
-      ]);
+    async clear(key, expected, lease) {
+      const scopeKey = consumerScopeKey(key.consumerScope);
+      const accountId = accountKey(key.accountId);
+      const fence = lease ? leaseFence(lease, scopeKey, accountId) : undefined;
+      const valueSha = expected ? canonicalJsonSha256(jsonObject(expected, 'pending consumer status')) : null;
+      await query(
+        'clear pending consumer status',
+        `WITH current_lease AS MATERIALIZED (
+           SELECT 1 FROM ${leases}
+            WHERE $4::text IS NOT NULL
+              AND namespace = $1 AND scope_key = $6 AND account_id = $7
+              AND owner_token = $4 AND generation = $5 AND expires_at > clock_timestamp()
+            FOR UPDATE
+         )
+         DELETE FROM ${statuses}
+          WHERE namespace = $1 AND key_sha256 = $2
+            AND ($3::text IS NULL OR value_sha256 = $3)
+            AND ($4::text IS NULL OR EXISTS (SELECT 1 FROM current_lease))`,
+        [
+          namespace,
+          pendingStatusKey(key),
+          valueSha,
+          fence?.ownerToken ?? null,
+          fence?.generation ?? null,
+          scopeKey,
+          accountId,
+        ]
+      );
     },
   };
 
@@ -265,27 +347,71 @@ export function createPostgresReportingConsumerRuntimeV1(
       const row = result.rows[0];
       return row ? { checkpoint: row.checkpoint, generation: safeGeneration(row.generation) } : undefined;
     },
-    async compareAndSet(key, expected, checkpoint) {
+    async compareAndSet(key, expected, checkpoint, lease) {
       const scopeKey = consumerScopeKey(key.consumerScope);
       const accountId = accountKey(key.accountId);
+      const fence = lease ? leaseFence(lease, scopeKey, accountId) : undefined;
       assertCheckpoint(checkpoint);
       if (expected !== null) assertCheckpoint(expected);
-      const result = await query<{ generation: string }>(
-        'advance changes checkpoint',
-        `INSERT INTO ${cursors} (namespace, scope_key, account_id, checkpoint)
-         VALUES ($1,$2,$3,$4)
-         ON CONFLICT (namespace, scope_key, account_id) DO UPDATE SET
-           checkpoint = EXCLUDED.checkpoint,
-           generation = CASE WHEN ${cursors}.checkpoint = EXCLUDED.checkpoint
-             THEN ${cursors}.generation ELSE ${cursors}.generation + 1 END,
-           changed_at = CASE WHEN ${cursors}.checkpoint = EXCLUDED.checkpoint
-             THEN ${cursors}.changed_at ELSE clock_timestamp() END
-         WHERE ${cursors}.checkpoint = $5
-         RETURNING generation::text AS generation`,
-        [namespace, scopeKey, accountId, checkpoint, expected]
-      );
+      const result =
+        expected === null
+          ? await query<{ generation: string }>(
+              'initialize changes checkpoint',
+              `INSERT INTO ${cursors} (namespace, scope_key, account_id, checkpoint)
+               SELECT $1,$2,$3,$4
+                WHERE $5::text IS NULL OR EXISTS (
+                  SELECT 1 FROM ${leases}
+                   WHERE namespace = $1 AND scope_key = $2 AND account_id = $3
+                     AND owner_token = $5 AND generation = $6 AND expires_at > clock_timestamp()
+                )
+               ON CONFLICT (namespace, scope_key, account_id) DO NOTHING
+               RETURNING generation::text AS generation`,
+              [namespace, scopeKey, accountId, checkpoint, fence?.ownerToken ?? null, fence?.generation ?? null]
+            )
+          : await query<{ generation: string }>(
+              'advance changes checkpoint',
+              `UPDATE ${cursors} SET
+                 checkpoint = $4,
+                 generation = CASE WHEN checkpoint = $4 THEN generation ELSE generation + 1 END,
+                 changed_at = CASE WHEN checkpoint = $4 THEN changed_at ELSE clock_timestamp() END
+               WHERE namespace = $1 AND scope_key = $2 AND account_id = $3 AND checkpoint = $5
+                 AND ($6::text IS NULL OR EXISTS (
+                   SELECT 1 FROM ${leases}
+                    WHERE namespace = $1 AND scope_key = $2 AND account_id = $3
+                      AND owner_token = $6 AND generation = $7 AND expires_at > clock_timestamp()
+                 ))
+               RETURNING generation::text AS generation`,
+              [
+                namespace,
+                scopeKey,
+                accountId,
+                checkpoint,
+                expected,
+                fence?.ownerToken ?? null,
+                fence?.generation ?? null,
+              ]
+            );
       if (result.rowCount !== 1) return 'conflict';
       return expected === checkpoint ? 'unchanged' : 'applied';
+    },
+    async clear(key, expected, lease) {
+      const scopeKey = consumerScopeKey(key.consumerScope);
+      const accountId = accountKey(key.accountId);
+      const fence = lease ? leaseFence(lease, scopeKey, accountId) : undefined;
+      if (expected !== undefined) assertCheckpoint(expected);
+      const result = await query(
+        'clear changes checkpoint',
+        `DELETE FROM ${cursors}
+          WHERE namespace = $1 AND scope_key = $2 AND account_id = $3
+            AND ($4::text IS NULL OR checkpoint = $4)
+            AND ($5::text IS NULL OR EXISTS (
+              SELECT 1 FROM ${leases}
+               WHERE namespace = $1 AND scope_key = $2 AND account_id = $3
+                 AND owner_token = $5 AND generation = $6 AND expires_at > clock_timestamp()
+            ))`,
+        [namespace, scopeKey, accountId, expected ?? null, fence?.ownerToken ?? null, fence?.generation ?? null]
+      );
+      return (result.rowCount ?? 0) > 0;
     },
   };
 
@@ -304,7 +430,7 @@ export function createPostgresReportingConsumerRuntimeV1(
            generation = ${leases}.generation + 1,
            expires_at = clock_timestamp() + ($5::bigint * INTERVAL '1 millisecond'),
            changed_at = clock_timestamp()
-         WHERE ${leases}.expires_at <= clock_timestamp() OR ${leases}.owner_token = EXCLUDED.owner_token
+         WHERE ${leases}.expires_at <= clock_timestamp()
          RETURNING generation::text AS generation, expires_at`,
         [namespace, scopeKey, accountId, input.ownerToken, input.leaseMilliseconds]
       );
@@ -341,9 +467,11 @@ export function createPostgresReportingConsumerRuntimeV1(
       safeGeneration(lease.generation);
       const result = await query(
         'release consumer work lease',
-        `DELETE FROM ${leases}
+        `UPDATE ${leases}
+            SET expires_at = clock_timestamp(), changed_at = clock_timestamp()
           WHERE namespace = $1 AND scope_key = $2 AND account_id = $3
-            AND owner_token = $4 AND generation = $5`,
+            AND owner_token = $4 AND generation = $5
+            AND expires_at > clock_timestamp()`,
         [namespace, scopeKey, accountId, lease.ownerToken, lease.generation]
       );
       return result.rowCount === 1;
@@ -400,7 +528,7 @@ export function createPostgresReportingConsumerRuntimeV1(
            SELECT ctid FROM ${notifications}
             WHERE namespace = $1
               AND processed_at < clock_timestamp() - ($2::integer * INTERVAL '1 day')
-            ORDER BY processed_at LIMIT $3
+            ORDER BY processed_at FOR UPDATE SKIP LOCKED LIMIT $3
          )
          DELETE FROM ${notifications} target USING expired WHERE target.ctid = expired.ctid`,
         [namespace, retentionDays, limit]
@@ -478,10 +606,28 @@ function checkpointKey(key: ReportingCheckpointKey): string {
   assertBoundedString(key.reportingRevisionId, 'reportingRevisionId', 512);
   assertBoundedString(key.reportingMaterializationId, 'reportingMaterializationId', 512);
   assertBoundedString(key.destinationRef, 'destinationRef', 2_048);
+  if (key.contextFingerprint !== undefined) {
+    assertBoundedString(key.contextFingerprint, 'contextFingerprint', 128);
+  }
+  return canonicalJsonSha256(key);
+}
+
+function adjustmentCheckpointKey(key: ReportingAdjustmentCheckpointKey): string {
+  assertBoundedString(key.consumerScope, 'consumerScope', 4_096);
+  assertBoundedString(key.accountId, 'accountId', 512);
+  assertBoundedString(key.reportingAdjustmentId, 'reportingAdjustmentId', 512);
+  assertBoundedString(key.adjustsReportingRevisionId, 'adjustsReportingRevisionId', 512);
+  if (key.supersedesReportingReceiptId !== undefined) {
+    assertBoundedString(key.supersedesReportingReceiptId, 'supersedesReportingReceiptId', 512);
+  }
+  if (key.contextFingerprint !== undefined) {
+    assertBoundedString(key.contextFingerprint, 'contextFingerprint', 128);
+  }
   return canonicalJsonSha256(key);
 }
 
 function pendingStatusKey(key: ReportingPendingConsumerStatusKey): string {
+  assertBoundedString(key.consumerScope, 'consumerScope', 4_096);
   assertBoundedString(key.accountId, 'accountId', 512);
   assertBoundedString(key.deliveryConfigId, 'deliveryConfigId', 512);
   safeGeneration(key.deliveryConfigVersion);
@@ -548,6 +694,20 @@ function splitLeaseScope(value: string): { scopeKey: string; accountId: string }
   }
   accountKey(accountId);
   return { scopeKey, accountId };
+}
+
+function leaseFence(
+  lease: ReportingConsumerWorkLeaseV1,
+  expectedScopeKey: string,
+  expectedAccountId: string
+): { ownerToken: string; generation: number } {
+  const { scopeKey, accountId } = splitLeaseScope(lease.scopeKey);
+  assertOwner(lease.ownerToken);
+  const generation = safeGeneration(lease.generation);
+  if (scopeKey !== expectedScopeKey || accountId !== expectedAccountId) {
+    throw new TypeError('Reporting consumer work lease does not match the checkpoint partition');
+  }
+  return { ownerToken: lease.ownerToken, generation };
 }
 
 function tablePrefix(value: string | undefined): string {

@@ -499,6 +499,11 @@ This is an SDK/adopter API only: AdCP defines the complete health-notification
 wire payload but no public account-activity read task, so do not expose `listActivity()`
 as an invented wire extension.
 
+`listActivity()` preserves the lifecycle-only compatibility surface. Use
+`listNotificationActivity()` for the complete internal revision, adjustment,
+and delivery-ready event stream. It remains an SDK/admin API, not an AdCP wire
+task.
+
 That lifecycle activity is distinct from the protocol's webhook transport
 diagnostics. To support `list_accounts({ include_webhook_activity: true })`,
 wire the principal-scoped attempt log into the same notification runtime:
@@ -506,6 +511,7 @@ wire the principal-scoped attempt log into the same notification runtime:
 ```ts
 import {
   composeNotificationDeliveryAttemptCheckpoints,
+  composeWebhookAttemptResultObservers,
   createPostgresReportingWebhookActivityV1,
   projectListAccountsReportingWebhookActivityV1,
 } from '@adcp/sdk';
@@ -520,12 +526,18 @@ const notifications = createPostgresPersistentNotificationRuntime({
   db: pool,
   publisherScope: 'seller-production',
   checkpointDeliveryAttempt: composeNotificationDeliveryAttemptCheckpoints(
-    attemptCheckpoint, // freezes the recipient generation first
-    webhookActivity.checkpointDeliveryAttempt, // then reserves the activity row
+    attemptCheckpoint, // pin the recipient before publishing buyer-visible evidence
+    webhookActivity.checkpointDeliveryAttempt, // diagnostics are the final pre-POST write
   ),
   webhooks: {
     ...webhookOptions,
-    ...webhookActivity.emitterObservers,
+    onAttemptResult: composeWebhookAttemptResultObservers(
+      webhookActivity.emitterObservers.onAttemptResult,
+      webhookOptions.onAttemptResult,
+    ),
+    onAttemptObserverError(error, phase) {
+      webhookMetrics.recordObserverFailure(error, phase);
+    },
   },
   ...notificationOptions,
 });

@@ -95,7 +95,7 @@ expected-period denominator from an accepted schedule must compare that set to
 
 ## Managed-delivery and receipt reconciliation
 
-`reconcileReporting` turns the reporting ledger into a buyer-verifiable result. It reads one stable ledger snapshot, checks the expected period set, inspects each current destination materialization, submits any required consumer receipts, and then reads the seller's ledger back before returning.
+`reconcileReporting` turns the reporting ledger into a buyer-verifiable result. It reads one stable ledger snapshot, checks the expected period set, inspects each current destination materialization, independently verifies post-official adjustment digests and semantics, submits any required revision or adjustment receipts, and then reads the seller's ledger back before returning.
 
 The helper only returns `definitive: true` when all of these conditions hold:
 
@@ -105,7 +105,8 @@ The helper only returns `definitive: true` when all of these conditions hold:
 - every obligation's history counts match the returned immutable records;
 - the current revision has the required finality;
 - a verified, unexpired materialization matches the obligation;
-- every consumer-receipt obligation has an accepted receipt for the same revision, materialization, row count, control totals, and required verification evidence.
+- every consumer-receipt obligation has an accepted receipt for the same revision, materialization, row count, control totals, and required verification evidence;
+- every post-official adjustment on that revision has an accepted adjustment receipt whose observed digest was recomputed locally. Digest, target-revision, timing, and control-total metadata disagreements produce a rejected receipt and keep the result nondefinitive.
 
 An omitted expected-period denominator can still diagnose delivery, but can never prove completeness. Pass `[]` only when the buyer independently knows that no periods are expected in the requested scope.
 
@@ -199,7 +200,7 @@ When `inspect` is omitted, `resourceReader` enables the built-in manifest path. 
 
 The HTTPS reader applies the SDK's DNS-pinned SSRF controls, refuses redirects and cross-origin `object_ref` values, and accepts short-lived headers only through the credential provider. `allowedOrigins` must come from the consumer's saved destination configuration; the reader refuses to send credentials to an origin named only by the seller's resource descriptor. For S3, GCS, or Azure, implement `ReportingResourceReader`; it receives the destination-bound context and opaque credentials without placing either in the ledger or receipt. Complex control totals can supply `controlTotalCalculator`; the default handles only report-definition metrics whose declared aggregation is `sum` and whose `source_expression` resolves to numeric row values.
 
-Keep `inspect` as the advanced override for native snapshots. A BigQuery adapter can inspect a table version, while Snowflake or Databricks adapters can verify a shared relation. `ReportingInspectionError.retryable` distinguishes transport/readiness failures from permanent digest, schema, or integrity failures, so permanent failures are never retried. Store receipts in a durable `checkpointStore` so a process restart does not repeat destination work. Set `checkpointScope` to a stable, non-secret seller-and-authenticated-principal identifier; checkpoint keys also include account, obligation, revision, materialization, and destination. The checkpoint preserves the receipt-write idempotency key across uncertain retries.
+Keep `inspect` as the advanced override for native snapshots. A BigQuery adapter can inspect a table version, while Snowflake or Databricks adapters can verify a shared relation. `ReportingInspectionError.retryable` distinguishes transport/readiness failures from permanent digest, schema, or integrity failures, so permanent failures are never retried. Store receipts in a durable `checkpointStore` so a process restart does not repeat destination work. Set `checkpointScope` to a stable, non-secret seller-and-authenticated-principal identifier; revision checkpoint keys include account, obligation, revision, materialization, and destination. Adjustment checkpoint keys include account, adjustment, target revision, and any rejected receipt being superseded. Both preserve the receipt-write idempotency key and exact receipt body across uncertain retries.
 
 For a replicated production buyer, use the PostgreSQL persistence bundle instead of
 process memory:
@@ -220,6 +221,7 @@ const result = await reconcileReporting({
   checkpointStore: persistence.checkpointStore,
   checkpointScope: 'seller-42:buyer-principal-7',
   pendingConsumerStatusStore: persistence.pendingConsumerStatusStore,
+  pendingConsumerStatusScope: 'seller-42:buyer-principal-7',
 });
 ```
 
@@ -233,14 +235,18 @@ reconciliation in multiple replicas. A stale generation cannot renew or
 release its successor's lease. The scope is stored only as a SHA-256 digest;
 never put credentials, bearer tokens, or connection strings in it.
 
-Receipt checkpoints are immutable first-writer-wins records. Replaying the
+Revision and adjustment receipt checkpoints are immutable first-writer-wins records. Replaying the
 same checkpoint is accepted, while different bytes for the same reporting
 revision and destination fail closed with
 `ReportingConsumerPersistenceConflictError`. Pending consumer-status statements
 remain replaceable until the seller confirms them, preserving the exact
-`status_as_of` and request body across lost responses. Run migrations during a
-controlled deployment before admitting traffic, and make `probe()` part of
-readiness rather than liveness.
+`status_as_of` and request body across lost responses. The durable consumer
+runtime passes its lease fence into pending writes and exact-value clears; the
+PostgreSQL store verifies that fence with database time, so a stalled former
+owner cannot erase its successor's retry statement. Custom stores should honor
+the optional lease argument for the same cross-replica guarantee. Run
+migrations during a controlled deployment before admitting traffic, and make
+`probe()` part of readiness rather than liveness.
 
 ### Production consumer loop
 
@@ -285,6 +291,10 @@ const consumer = createReliableReportingConsumerV1({
 
 consumer.start();
 
+// Refresh onboarding/offboarding atomically; in-flight work finishes on its
+// original immutable account configuration.
+consumer.replaceAccounts(nextAuthenticatedAccountRoster);
+
 // The HTTP route must verify the advertised AdCP webhook signature first.
 await consumer.handleAuthenticatedNotification(verifiedWebhookBody, {
   // Derived from the authenticated sender/signing key, never from the body.
@@ -304,10 +314,10 @@ protocol calls and prevents checkpoint advancement. A failed or expired change
 cursor falls back to a complete snapshot and is observable through `onError`
 and `cursorRecovered`.
 
-The authenticated `consumerScope` is optional only when an account ID is unique
-inside this runtime. If two sellers use the same account ID, omitting the scope
-fails closed; the runtime permits both configurations and selects only the one
-bound to the verified sender. Completed notifications are durably deduplicated
+The authenticated `consumerScope` is required on every webhook path, including
+when an account ID is currently unique. Derive it from the verified sender or
+signing key; the notification body is never an authority for tenant routing.
+Completed notifications are durably deduplicated
 for at least 30 days. Call `persistence.notifications.pruneProcessed()` from
 bounded maintenance after choosing your retention horizon.
 
@@ -356,7 +366,7 @@ must carry a digest the buyer recomputed from rows it actually read.
 | `consumption_unavailable` | No exact-revision reader is wired. | Supply `client.getMediaBuyDelivery`. |
 | `posting_unavailable` | No poster is wired, so there is nothing to append to. | Supply `client.syncReportingStatus`. |
 | `period_identity_unknown` | The seller's `period.source_timezone` is not a recognized IANA zone, and that value is part of the chain's logical key. | Record `ExpectedReportingPeriod.periodSourceTimezone`, or have the seller correct it. Substituting a zone would produce a statement it refuses on every run. |
-| `local_budget_exhausted` | Your own `ledgerLimits` ran out mid-read, the revision exceeded the SDK's size ceiling, or a row was too *wide* for the SDK to walk. | Raise `maxRevisionRows`, `maxPages` or `maxLoadMs`; the size and breadth ceilings are not tunable. Never reported as a seller failure — a row nested deeper than the reader walks is `unreadable` / `reader_incompatible` instead, because no conformant tabular row has that shape. |
+| `local_budget_exhausted` | Your own `ledgerLimits` ran out mid-read, the revision exceeded the SDK's size ceiling, or a row was too *wide* for the SDK to walk. | Raise `maxRevisionRows`, `maxRevisionBytes`, `maxPages` or `maxLoadMs`. Never reported as a seller failure — a row nested deeper than the reader walks is `unreadable` / `reader_incompatible` instead, because no conformant tabular row has that shape. |
 | `leaf_undisclosed` | Your chain has more than one unsuperseded leaf, or the seller named a current leaf it did not return. | A seller-side defect either way; the buyer declines to guess which leaf to supersede. |
 | `chain_indeterminate` | The revision chain forked, or a head names a predecessor you never saw. | A seller-side defect. The buyer stays silent rather than blaming the seller for what it could not read. |
 

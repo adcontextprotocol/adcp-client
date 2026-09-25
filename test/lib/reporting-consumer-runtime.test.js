@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, test } = require('node:test');
 
 const ACCOUNT_ID = 'buyer-account-1';
+const AUTHENTICATION = { consumerScope: 'seller.example|buyer-principal-1' };
 
 function page({ checkpoint, total = 0, cursor, hasMore = false, snapshot = checkpoint }) {
   return {
@@ -131,6 +132,65 @@ describe('Reliable Reporting buyer runtime', () => {
     assert.equal(calls[1].changes_after, 'checkpoint-1');
   });
 
+  test('enforces the change-walk deadline when a client ignores cancellation', async () => {
+    const { drainReportingChangesV1 } = require('../../dist/lib/reporting/index.js');
+    await assert.rejects(
+      () =>
+        drainReportingChangesV1({
+          client: {
+            async getReportingStatus() {
+              await new Promise(resolve => setTimeout(resolve, 50));
+              return page({ checkpoint: 'checkpoint-too-late' });
+            },
+          },
+          request: { account: { account_id: ACCOUNT_ID } },
+          changesAfter: 'checkpoint-before-timeout',
+          limits: { maxLoadMs: 5 },
+        }),
+      error => error?.code === 'CHANGE_LIMIT_EXCEEDED'
+    );
+  });
+
+  test('drains conformant change pages that omit optional total_count', async () => {
+    const { drainReportingChangesV1 } = require('../../dist/lib/reporting/index.js');
+    const response = page({ checkpoint: 'checkpoint-without-total' });
+    delete response.pagination.total_count;
+    response.periods = [{ reporting_obligation_id: 'changed-obligation' }];
+    const result = await drainReportingChangesV1({
+      client: {
+        async getReportingStatus() {
+          return response;
+        },
+      },
+      request: { account: { account_id: ACCOUNT_ID } },
+      changesAfter: 'checkpoint-before-change',
+    });
+    assert.equal(result.changed, true);
+    assert.equal(result.recordCount, 1);
+    assert.equal(result.changesCheckpoint, 'checkpoint-without-total');
+  });
+
+  test('does not skip adjustment-receipt-only changes when total_count is absent or stale', async () => {
+    const { drainReportingChangesV1 } = require('../../dist/lib/reporting/index.js');
+    for (const declaredTotal of [undefined, 0]) {
+      const response = page({ checkpoint: `checkpoint-adjustment-${declaredTotal ?? 'absent'}` });
+      if (declaredTotal === undefined) delete response.pagination.total_count;
+      else response.pagination.total_count = declaredTotal;
+      response.adjustment_receipts = [{ reporting_adjustment_receipt_id: 'adjustment-receipt-1' }];
+      const result = await drainReportingChangesV1({
+        client: {
+          async getReportingStatus() {
+            return response;
+          },
+        },
+        request: { account: { account_id: ACCOUNT_ID } },
+        changesAfter: 'checkpoint-before-adjustment',
+      });
+      assert.equal(result.changed, true);
+      assert.equal(result.recordCount, 1);
+    }
+  });
+
   test('bootstraps durably, repairs ledger notifications, and skips duplicate doorbells', async () => {
     const { createReliableReportingConsumerV1 } = require('../../dist/lib/reporting/index.js');
     const persistence = memoryPersistence();
@@ -159,11 +219,14 @@ describe('Reliable Reporting buyer runtime', () => {
     assert.equal(bootstrap.changesCheckpoint, 'checkpoint-1');
 
     fullCheckpoint = 'checkpoint-2';
-    const repaired = await consumer.handleAuthenticatedNotification({
-      notification_type: 'reporting.ledger_changed',
-      account_id: ACCOUNT_ID,
-      idempotency_key: 'ledger-notification-0001',
-    });
+    const repaired = await consumer.handleAuthenticatedNotification(
+      {
+        notification_type: 'reporting.ledger_changed',
+        account_id: ACCOUNT_ID,
+        idempotency_key: 'ledger-notification-0001',
+      },
+      AUTHENTICATION
+    );
     assert.equal(repaired.state, 'reconciled');
     assert.equal(repaired.changesCheckpoint, 'checkpoint-2');
     assert.equal(calls.at(-2).changes_after, 'checkpoint-1', 'the doorbell is repaired from durable state');
@@ -171,27 +234,36 @@ describe('Reliable Reporting buyer runtime', () => {
 
     deltaCount = 0;
     const beforeDuplicate = calls.length;
-    const duplicate = await consumer.handleAuthenticatedNotification({
-      notification_type: 'reporting.delivery_ready',
-      account_id: ACCOUNT_ID,
-      idempotency_key: 'delivery-notification-0001',
-    });
+    const duplicate = await consumer.handleAuthenticatedNotification(
+      {
+        notification_type: 'reporting.delivery_ready',
+        account_id: ACCOUNT_ID,
+        idempotency_key: 'delivery-notification-0001',
+      },
+      AUTHENTICATION
+    );
     assert.equal(duplicate.state, 'unchanged');
     assert.equal(calls.length, beforeDuplicate + 1, 'an empty delta avoids redundant destination work');
 
     const beforeStatus = calls.length;
-    const status = await consumer.handleAuthenticatedNotification({
-      notification_type: 'reporting.status_changed',
-      account_id: ACCOUNT_ID,
-      idempotency_key: 'status-notification-0001',
-    });
+    const status = await consumer.handleAuthenticatedNotification(
+      {
+        notification_type: 'reporting.status_changed',
+        account_id: ACCOUNT_ID,
+        idempotency_key: 'status-notification-0001',
+      },
+      AUTHENTICATION
+    );
     assert.equal(status.state, 'reconciled');
     assert.equal(calls.length, beforeStatus + 1, 'clock-driven health always performs a non-incremental read');
-    const repeated = await consumer.handleAuthenticatedNotification({
-      notification_type: 'reporting.status_changed',
-      account_id: ACCOUNT_ID,
-      idempotency_key: 'status-notification-0001',
-    });
+    const repeated = await consumer.handleAuthenticatedNotification(
+      {
+        notification_type: 'reporting.status_changed',
+        account_id: ACCOUNT_ID,
+        idempotency_key: 'status-notification-0001',
+      },
+      AUTHENTICATION
+    );
     assert.equal(repeated.state, 'duplicate');
     assert.equal(calls.length, beforeStatus + 1, 'a processed transport retry performs no ledger read');
     assert.equal(await consumer.handleAuthenticatedNotification({ notification_type: 'unrelated' }), null);
@@ -242,6 +314,185 @@ describe('Reliable Reporting buyer runtime', () => {
     await consumer.stop();
   });
 
+  test('requires authenticated scope even when an account ID is globally unique', async () => {
+    const { createReliableReportingConsumerV1 } = require('../../dist/lib/reporting/index.js');
+    const consumer = createReliableReportingConsumerV1({
+      accounts: [
+        account({
+          async getReportingStatus() {
+            return page({ checkpoint: 'checkpoint-auth-required' });
+          },
+          async syncReportingReceipts() {
+            return { status: 'completed', results: [] };
+          },
+        }),
+      ],
+      persistence: memoryPersistence(),
+      ownerToken: 'buyer-worker-auth',
+      runOnStart: false,
+    });
+    await assert.rejects(
+      () =>
+        consumer.handleAuthenticatedNotification({
+          notification_type: 'reporting.ledger_changed',
+          account_id: ACCOUNT_ID,
+          idempotency_key: 'auth-required-notification-0001',
+        }),
+      /consumerScope is required/
+    );
+    await consumer.stop();
+  });
+
+  test('returns a completed reconciliation when the seller omits optional change checkpoints', async () => {
+    const { createReliableReportingConsumerV1 } = require('../../dist/lib/reporting/index.js');
+    const persistence = memoryPersistence();
+    const consumer = createReliableReportingConsumerV1({
+      accounts: [
+        account({
+          async getReportingStatus() {
+            const response = page({ checkpoint: 'unused' });
+            delete response.changes_checkpoint;
+            delete response.pagination.total_count;
+            return response;
+          },
+          async syncReportingReceipts() {
+            return { status: 'completed', results: [] };
+          },
+        }),
+      ],
+      persistence,
+      ownerToken: 'buyer-worker-without-changes',
+      runOnStart: false,
+    });
+    const result = await consumer.runAccount(ACCOUNT_ID);
+    assert.equal(result.state, 'reconciled');
+    assert.equal('changesCheckpoint' in result, false);
+    assert.equal(persistence.cursors.size, 0);
+    await consumer.stop();
+  });
+
+  test('rejects a natural-key response outside the leased account before reconciliation side effects', async () => {
+    const { createReliableReportingConsumerV1 } = require('../../dist/lib/reporting/index.js');
+    const persistence = memoryPersistence();
+    let receiptSubmissions = 0;
+    const consumer = createReliableReportingConsumerV1({
+      accounts: [
+        {
+          consumerScope: AUTHENTICATION.consumerScope,
+          accountId: ACCOUNT_ID,
+          reconciliation: {
+            client: {
+              async getReportingStatus() {
+                return { ...page({ checkpoint: 'wrong-account-checkpoint' }), account_id: 'other-account' };
+              },
+              async syncReportingReceipts() {
+                receiptSubmissions += 1;
+                return { status: 'completed', results: [] };
+              },
+            },
+            request: { account: { property_id: 'publisher.example' } },
+            expectedPeriods: [],
+            inspect: async () => ({ rowCount: 0, controlTotals: [] }),
+          },
+        },
+      ],
+      persistence,
+      ownerToken: 'buyer-worker-natural-key',
+      runOnStart: false,
+    });
+    await assert.rejects(
+      () => consumer.runAccount(ACCOUNT_ID),
+      error => error?.code === 'ACCOUNT_SCOPE_MISMATCH'
+    );
+    assert.equal(receiptSubmissions, 0);
+    assert.equal(persistence.cursors.size, 0);
+    await consumer.stop();
+  });
+
+  test('atomically refreshes the buyer account roster without restarting', async () => {
+    const { createReliableReportingConsumerV1 } = require('../../dist/lib/reporting/index.js');
+    const consumer = createReliableReportingConsumerV1({
+      accounts: [],
+      persistence: memoryPersistence(),
+      ownerToken: 'buyer-worker-dynamic-roster',
+      runOnStart: false,
+    });
+    await assert.rejects(() => consumer.runAccount(ACCOUNT_ID), /unknown reporting consumer account/);
+    consumer.replaceAccounts([
+      account({
+        async getReportingStatus() {
+          return page({ checkpoint: 'checkpoint-dynamic' });
+        },
+        async syncReportingReceipts() {
+          return { status: 'completed', results: [] };
+        },
+      }),
+    ]);
+    assert.equal((await consumer.runAccount(ACCOUNT_ID)).state, 'reconciled');
+    consumer.replaceAccounts([]);
+    await assert.rejects(() => consumer.runAccount(ACCOUNT_ID), /unknown reporting consumer account/);
+    await consumer.stop();
+  });
+
+  test('runs a follow-up reconciliation for a notification received during older work', async () => {
+    const { createReliableReportingConsumerV1 } = require('../../dist/lib/reporting/index.js');
+    const persistence = memoryPersistence();
+    let releaseFirst;
+    const firstBlocked = new Promise(resolve => {
+      releaseFirst = resolve;
+    });
+    let calls = 0;
+    const consumer = createReliableReportingConsumerV1({
+      accounts: [
+        account({
+          async getReportingStatus() {
+            calls += 1;
+            if (calls === 1) await firstBlocked;
+            return page({
+              checkpoint: calls === 1 ? 'checkpoint-before-notification' : 'checkpoint-after-notification',
+            });
+          },
+          async syncReportingReceipts() {
+            return { status: 'completed', results: [] };
+          },
+        }),
+      ],
+      persistence,
+      ownerToken: 'buyer-worker-followup',
+      runOnStart: false,
+    });
+    const older = consumer.runAccount(ACCOUNT_ID);
+    await new Promise(resolve => setImmediate(resolve));
+    const notified = consumer.handleAuthenticatedNotification(
+      {
+        notification_type: 'reporting.status_changed',
+        account_id: ACCOUNT_ID,
+        idempotency_key: 'overlap-notification-0001',
+      },
+      AUTHENTICATION
+    );
+    releaseFirst();
+    assert.equal((await older).changesCheckpoint, 'checkpoint-before-notification');
+    const result = await notified;
+    assert.equal(result.state, 'reconciled');
+    assert.equal(result.changesCheckpoint, 'checkpoint-after-notification');
+    assert.equal(calls, 2);
+    assert.equal(
+      (
+        await consumer.handleAuthenticatedNotification(
+          {
+            notification_type: 'reporting.status_changed',
+            account_id: ACCOUNT_ID,
+            idempotency_key: 'overlap-notification-0001',
+          },
+          AUTHENTICATION
+        )
+      ).state,
+      'duplicate'
+    );
+    await consumer.stop();
+  });
+
   test('coalesces overlapping work and waits for it during graceful shutdown', async () => {
     const { createReliableReportingConsumerV1 } = require('../../dist/lib/reporting/index.js');
     const persistence = memoryPersistence();
@@ -281,5 +532,39 @@ describe('Reliable Reporting buyer runtime', () => {
     await stopping;
     assert.equal(calls, 1);
     assert.equal((await consumer.runAccount(ACCOUNT_ID)).state, 'stopping');
+  });
+
+  test('fences checkpoint writes when lease renewal stalls past expiry', async () => {
+    const { createReliableReportingConsumerV1 } = require('../../dist/lib/reporting/index.js');
+    const persistence = memoryPersistence();
+    persistence.workLeases.claim = async ({ key, ownerToken }) => ({
+      scopeKey: `${key.consumerScope}|${key.accountId}`,
+      ownerToken,
+      generation: 1,
+      expiresAt: new Date(Date.now() + 1_000).toISOString(),
+    });
+    persistence.workLeases.renew = async () => new Promise(() => {});
+    persistence.workLeases.release = async () => false;
+    const consumer = createReliableReportingConsumerV1({
+      accounts: [
+        account({
+          async getReportingStatus() {
+            await new Promise(resolve => setTimeout(resolve, 1_100));
+            return page({ checkpoint: 'checkpoint-after-expired-lease' });
+          },
+          async syncReportingReceipts() {
+            return { status: 'completed', results: [] };
+          },
+        }),
+      ],
+      persistence,
+      ownerToken: 'buyer-worker-stalled-renewal',
+      leaseMilliseconds: 1_000,
+      runOnStart: false,
+    });
+    const result = await consumer.runAccount(ACCOUNT_ID);
+    assert.equal(result.state, 'lease_lost');
+    assert.equal(persistence.cursors.size, 0, 'expired ownership cannot advance the durable cursor');
+    await consumer.stop();
   });
 });
