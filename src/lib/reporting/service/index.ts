@@ -1,4 +1,4 @@
-import type { Account } from '../../server/decisioning/account';
+import type { Account, ResolveContext } from '../../server/decisioning/account';
 import type { RequestContext } from '../../server/decisioning/context';
 import type { DecisioningPlatform } from '../../server/decisioning/platform';
 import type { ReliableReportingPlatform } from '../../server/decisioning/specialisms/reporting';
@@ -45,6 +45,7 @@ import {
 import {
   composeNotificationDeliveryAttemptCheckpoints,
   createPostgresReportingWebhookActivityV1,
+  projectListAccountsReportingWebhookActivityV1,
   type PostgresReportingWebhookActivityV1,
 } from '../webhook-activity';
 import type { InlineReportingReplayRetentionV1 } from '../source';
@@ -620,6 +621,10 @@ export type CreatePostgresReliableReportingProductionServiceOptionsV1<TCtxMeta =
     tenantScopeForAccount(accountId: string): string;
   };
   webhookActivity?: { tableName?: string; retentionDays?: number };
+  /** Resolve activity visibility from verified auth/registry state, never request fields. */
+  resolveWebhookActivityScope(
+    context: ResolveContext
+  ): { tenantId: string; principalId: string } | Promise<{ tenantId: string; principalId: string }>;
   /** Optional migration-system bridge. Called before any capability probe. */
   applyMigrations?: (migrations: readonly string[]) => Promise<void>;
 };
@@ -673,6 +678,9 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
   }
   if (!/^[A-Za-z0-9_.:-]{1,255}$/.test(options.publisherScope)) {
     throw new TypeError('Reliable Reporting publisherScope must be a bounded non-secret identifier');
+  }
+  if (typeof options.resolveWebhookActivityScope !== 'function') {
+    throw new TypeError('Reliable Reporting production service requires resolveWebhookActivityScope');
   }
 
   const recipientCheckpoint = createPostgresReportingNotificationAttemptCheckpoint({
@@ -798,6 +806,16 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
           syncReportingReceipts: (request, context) => managed.syncReportingReceipts!(request, context),
         }
       : {}),
+    async projectListAccounts(request, response, context) {
+      const scope = await options.resolveWebhookActivityScope(context);
+      return projectListAccountsReportingWebhookActivityV1({
+        request,
+        response,
+        tenantId: scope.tenantId,
+        principalId: scope.principalId,
+        activity: webhookActivity,
+      });
+    },
   };
 
   let auxiliaryAbort: AbortController | undefined;

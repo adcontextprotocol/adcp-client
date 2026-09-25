@@ -1,7 +1,11 @@
-import type { Account } from '../account';
+import type { Account, ResolveContext } from '../account';
 import type { RequestContext } from '../context';
 import type { AdcpToolMap } from '../../create-adcp-server';
-import type { ReportingDeliveryCapabilities } from '../../../types/tools.generated';
+import type {
+  ListAccountsRequest,
+  ListAccountsResponse,
+  ReportingDeliveryCapabilities,
+} from '../../../types/tools.generated';
 
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
@@ -55,4 +59,11 @@ export interface ReliableReportingPlatform<TCtxMeta = Record<string, unknown>> {
    * be served the first's cached response and deposit nothing.
    */
   readonly resolveConsumerId?: (context: Ctx<TCtxMeta>) => string | Promise<string>;
+
+  /** Trusted post-projection hook used by the production reporting activity runtime. */
+  projectListAccounts?(
+    request: ListAccountsRequest,
+    response: ListAccountsResponse,
+    context: ResolveContext
+  ): Promise<ListAccountsResponse>;
 }

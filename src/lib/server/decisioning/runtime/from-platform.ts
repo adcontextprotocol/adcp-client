@@ -9004,16 +9004,22 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       // assertions for every adopter, regardless of `CursorPage` output.
       // See adcontextprotocol/adcp#5723 for the reproduction from a 3.1 seller.
       return projectSync(
-        () => accounts.list!(filter, resolveCtx),
-        page => ({
-          status: 'completed' as const,
-          accounts: page.items.map(toWireAccount),
-          pagination: {
-            has_more: page.nextCursor != null,
-            ...(page.nextCursor != null && { cursor: page.nextCursor }),
-            ...(page.totalCount !== undefined && { total_count: page.totalCount }),
-          },
-        })
+        async () => {
+          const page = await accounts.list!(filter, resolveCtx);
+          const response = {
+            status: 'completed' as const,
+            accounts: page.items.map(toWireAccount),
+            pagination: {
+              has_more: page.nextCursor != null,
+              ...(page.nextCursor != null && { cursor: page.nextCursor }),
+              ...(page.totalCount !== undefined && { total_count: page.totalCount }),
+            },
+          };
+          return platform.reporting?.projectListAccounts
+            ? platform.reporting.projectListAccounts(filter, response, resolveCtx)
+            : response;
+        },
+        response => response
       );
     };
   }

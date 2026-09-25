@@ -111,6 +111,10 @@ describe(
           validateDestination: async () => ({ allowed: true }),
         },
         activity: { tenantScopeForAccount: accountId => `tenant:${accountId}` },
+        resolveWebhookActivityScope: () => ({
+          tenantId: 'tenant:account-1',
+          principalId: 'buyer-principal-1',
+        }),
         managedDelivery: {
           resourceRetentionDays: 90,
           authorizationRevocationSeconds: 60,
@@ -149,6 +153,71 @@ describe(
       assert.equal(service.capabilities.supports_webhook_activity, true);
       assert.equal(service.platform.capabilities, service.capabilities);
       await service.recoverOnce();
+    });
+
+    test('projects webhook activity only through the trusted production hook', async () => {
+      const response = {
+        status: 'completed',
+        accounts: [
+          {
+            account_id: 'account-1',
+            name: 'Visible account',
+            webhook_activity: [{ url: 'https://must-not-leak.example/secret' }],
+          },
+        ],
+        pagination: { has_more: false },
+      };
+      const omitted = await service.platform.projectListAccounts({ include_webhook_activity: false }, response, {});
+      assert.equal('webhook_activity' in omitted.accounts[0], false);
+      assert.equal(response.accounts[0].webhook_activity[0].url, 'https://must-not-leak.example/secret');
+
+      const included = await service.platform.projectListAccounts(
+        { include_webhook_activity: true, webhook_activity_limit: 10 },
+        response,
+        {}
+      );
+      assert.deepEqual(included.accounts[0].webhook_activity, []);
+    });
+
+    test('mounts webhook activity on the real list_accounts dispatch path', async () => {
+      const { createAdcpServerFromPlatform } = require('../../dist/lib/server/decisioning/runtime/from-platform.js');
+      const platform = service.install({
+        capabilities: { specialisms: [], config: {} },
+        accounts: {
+          resolution: 'explicit',
+          resolve: async ref => ({ id: ref?.account_id ?? 'account-1', ctx_metadata: {} }),
+          upsert: async () => [],
+          list: async () => ({
+            items: [
+              {
+                id: 'account-1',
+                name: 'Visible account',
+                status: 'active',
+                ctx_metadata: {},
+                webhook_activity: [{ url: 'https://must-not-leak.example/secret' }],
+              },
+            ],
+          }),
+        },
+      });
+      const server = createAdcpServerFromPlatform(platform, {
+        name: 'reporting-production-activity-test',
+        version: '1.0.0',
+        adcpVersion: '3.2.0-rc.6',
+        validation: { requests: 'strict', responses: 'strict' },
+      });
+      const result = await server.dispatchTestRequest(
+        {
+          method: 'tools/call',
+          params: {
+            name: 'list_accounts',
+            arguments: { include_webhook_activity: true, webhook_activity_limit: 10 },
+          },
+        },
+        { authInfo: { clientId: 'buyer-principal-1' } }
+      );
+      assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
+      assert.deepEqual(result.structuredContent.accounts[0].webhook_activity, []);
     });
   }
 );
