@@ -26,10 +26,21 @@ jobs:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.force_update == 'true')
 
     steps:
+      # Use the existing AAO IPR Bot installation identity so the branch push
+      # and pull-request events created below trigger the normal downstream
+      # workflows. GitHub suppresses those events when they are authored by
+      # the default GITHUB_TOKEN.
+      - name: Mint schema sync bot token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.IPR_APP_ID }}
+          private-key: ${{ secrets.IPR_APP_PRIVATE_KEY }}
+
       - name: Checkout code
         uses: actions/checkout@v5
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -73,6 +84,18 @@ jobs:
         run: |
           npm run sync-version --auto-update
 
+      - name: Add schema sync changeset
+        if: steps.sync.outputs.changes_detected == 'true'
+        run: |
+          mkdir -p .changeset
+          cat > .changeset/sync-generated-schemas.md <<'EOF'
+          ---
+          '@adcp/sdk': patch
+          ---
+
+          Synchronize generated AdCP and registry types with the latest signed schema bundle.
+          EOF
+
       - name: Run tests with updated schemas
         if: steps.sync.outputs.changes_detected == 'true'
         run: |
@@ -83,7 +106,7 @@ jobs:
         if: steps.sync.outputs.changes_detected == 'true'
         uses: peter-evans/create-pull-request@v8
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           commit-message: |
             chore: sync with AdCP schemas v${{ steps.sync.outputs.adcp_version }}
 
