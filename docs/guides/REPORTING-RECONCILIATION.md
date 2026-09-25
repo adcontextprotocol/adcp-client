@@ -201,6 +201,44 @@ The HTTPS reader applies the SDK's DNS-pinned SSRF controls, refuses redirects a
 
 Keep `inspect` as the advanced override for native snapshots. A BigQuery adapter can inspect a table version, while Snowflake or Databricks adapters can verify a shared relation. `ReportingInspectionError.retryable` distinguishes transport/readiness failures from permanent digest, schema, or integrity failures, so permanent failures are never retried. Store receipts in a durable `checkpointStore` so a process restart does not repeat destination work. Set `checkpointScope` to a stable, non-secret seller-and-authenticated-principal identifier; checkpoint keys also include account, obligation, revision, materialization, and destination. The checkpoint preserves the receipt-write idempotency key across uncertain retries.
 
+For a replicated production buyer, use the PostgreSQL persistence bundle instead of
+process memory:
+
+```ts
+import { createPostgresReportingConsumerRuntimeV1 } from '@adcp/sdk';
+
+const persistence = createPostgresReportingConsumerRuntimeV1({
+  db: pool,
+  namespace: 'billing-reporting-v1',
+});
+
+for (const migration of persistence.migrations.all) await pool.query(migration);
+await persistence.probe();
+
+const result = await reconcileReporting({
+  // ...client, request, expectations, and inspector configuration...
+  checkpointStore: persistence.checkpointStore,
+  checkpointScope: 'seller-42:buyer-principal-7',
+  pendingConsumerStatusStore: persistence.pendingConsumerStatusStore,
+});
+```
+
+The bundle also exposes a compare-and-set `changesCheckpointStore` for the
+opaque `changes_after` recovery cursor and a database-clock, generation-fenced
+`workLeases` store. Claim one lease per seller/principal/account before running
+reconciliation in multiple replicas. A stale generation cannot renew or
+release its successor's lease. The scope is stored only as a SHA-256 digest;
+never put credentials, bearer tokens, or connection strings in it.
+
+Receipt checkpoints are immutable first-writer-wins records. Replaying the
+same checkpoint is accepted, while different bytes for the same reporting
+revision and destination fail closed with
+`ReportingConsumerPersistenceConflictError`. Pending consumer-status statements
+remain replaceable until the seller confirms them, preserving the exact
+`status_as_of` and request body across lost responses. Run migrations during a
+controlled deployment before admitting traffic, and make `probe()` part of
+readiness rather than liveness.
+
 Totals are returned once per canonical reporting revision. Each entry includes its coverage status and covered/package denominators, so partial evidence cannot be mistaken for full billing totals. Delivering the same revision to a buyer, governance agent, and archive destination does not multiply its rows or financial control totals. Each consumer still authenticates independently and submits its own receipt; one consumer's acceptance never implies another's.
 
 ## Consumer status and posting deadlines

@@ -20,6 +20,22 @@ export {
   createReportingManifestInspector,
 } from './inspection';
 export { reconcileReportingCoreV1 } from './core-reconciliation';
+export {
+  REPORTING_CONSUMER_POSTGRES_MIGRATION,
+  ReportingConsumerPersistenceConflictError,
+  createPostgresReportingConsumerRuntimeV1,
+  getReportingConsumerPostgresMigration,
+} from './consumer-postgres';
+export type {
+  CreatePostgresReportingConsumerRuntimeOptionsV1,
+  PostgresReportingConsumerRuntimeV1,
+  ReportingChangesCheckpointKeyV1,
+  ReportingChangesCheckpointStoreV1,
+  ReportingChangesCheckpointV1,
+  ReportingConsumerPostgresQueryable,
+  ReportingConsumerWorkLeaseStoreV1,
+  ReportingConsumerWorkLeaseV1,
+} from './consumer-postgres';
 export type {
   CoreReportingClocksV1,
   CoreReportingHealthV1,
