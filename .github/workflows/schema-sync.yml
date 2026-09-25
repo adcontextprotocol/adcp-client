@@ -20,16 +20,16 @@ jobs:
   auto-update-schemas:
     name: Auto-update Schemas (Scheduled)
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.force_update == 'true')
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -48,17 +48,41 @@ jobs:
         env:
           ADCP_REQUIRE_SIGNATURE: '1'
         run: |
-          npm run sync-schemas
-          npm run generate-types
+          npm run sync-schemas:all
+          npm run generate-types:all
           npm run generate-wellknown-schemas
           npm run generate-registry-types -- --sync
+          npm run generate-agent-docs
+          npm run generate-release-worksheet
+          npm run sync-version -- --force
+          npx tsx scripts/generate-wire-spec-fields.ts
 
-          if git diff --exit-code src/lib/types/ src/lib/agents/ src/lib/registry/types.generated.ts schemas/registry/registry.yaml package.json; then
+          generated_paths=(
+            schemas/codegen-provenance.json
+            ':(glob)src/lib/types/*.generated.ts'
+            src/lib/types/v2-5/tools.generated.ts
+            src/lib/agents/index.generated.ts
+            src/lib/media-buy/update-fields.generated.ts
+            src/lib/media-buy/action-metadata.generated.ts
+            src/lib/server/decisioning/runtime/entity-hydration.generated.ts
+            src/lib/server/wire-spec-fields.generated.ts
+            src/lib/registry/types.generated.ts
+            src/lib/version.ts
+            schemas/registry/registry.yaml
+            docs/llms.txt
+            docs/TYPE-SUMMARY.md
+            docs/migration-14.x-rc-worksheet.md
+            package.json
+          )
+
+          changes=$(git status --porcelain -- "${generated_paths[@]}")
+          if [[ -z "$changes" ]]; then
             echo "changes_detected=false" >> $GITHUB_OUTPUT
             echo "✅ No schema changes detected"
           else
             echo "changes_detected=true" >> $GITHUB_OUTPUT
             echo "📋 Schema or registry OpenAPI changes detected"
+            echo "$changes"
 
             ADCP_VERSION=$(node -e "
               const fs = require('fs');
@@ -68,10 +92,17 @@ jobs:
             echo "adcp_version=$ADCP_VERSION" >> $GITHUB_OUTPUT
           fi
 
-      - name: Sync version if schemas changed
+      - name: Add schema sync changeset
         if: steps.sync.outputs.changes_detected == 'true'
         run: |
-          npm run sync-version --auto-update
+          mkdir -p .changeset
+          printf '%s\n' \
+            '---' \
+            "'@adcp/sdk': patch" \
+            '---' \
+            '' \
+            'Synchronize generated AdCP schema and registry types with their configured upstream sources.' \
+            > .changeset/sync-generated-schemas-${{ github.run_id }}.md
 
       - name: Run tests with updated schemas
         if: steps.sync.outputs.changes_detected == 'true'
@@ -79,33 +110,50 @@ jobs:
           npm run typecheck
           npm test
 
+      # Use the existing AAO IPR Bot installation identity so the branch push
+      # and pull-request events created below trigger the normal downstream
+      # workflows. GitHub suppresses those events when they are authored by
+      # the default GITHUB_TOKEN. Mint it only after generation and validation
+      # so untrusted build steps never receive the installation token.
+      - name: Mint schema sync bot token
+        if: steps.sync.outputs.changes_detected == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ secrets.IPR_APP_ID }}
+          private-key: ${{ secrets.IPR_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Create Pull Request
         if: steps.sync.outputs.changes_detected == 'true'
         uses: peter-evans/create-pull-request@v8
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           commit-message: |
-            chore: sync with AdCP schemas v${{ steps.sync.outputs.adcp_version }}
+            chore: sync generated schemas and registry types
 
-            - Updated schemas from AdCP specification v${{ steps.sync.outputs.adcp_version }}
-            - Updated registry OpenAPI types from the bundled upstream schema
-            - Regenerated TypeScript types and fluent API
-            - Auto-bumped library version to maintain compatibility
+            - Refreshed the configured AdCP schema bundles (primary v${{ steps.sync.outputs.adcp_version }})
+            - Updated registry OpenAPI types from the configured upstream source
+            - Regenerated TypeScript types, fluent API, and reference docs
+            - Synchronized AdCP version metadata without bypassing Changesets
 
             🤖 Generated with [Claude Code](https://claude.ai/code)
           branch: automated/schema-sync-${{ steps.sync.outputs.adcp_version }}
-          title: 'chore: sync with AdCP schemas v${{ steps.sync.outputs.adcp_version }}'
+          delete-branch: true
+          title: 'chore: sync generated schemas and registry types'
           body: |
             ## 🔄 Automated Schema Synchronization
 
-            This PR updates the library to sync with AdCP specification v${{ steps.sync.outputs.adcp_version }} and the bundled upstream registry OpenAPI.
+            This PR synchronizes generated SDK artifacts with the configured AdCP schema bundles (primary v${{ steps.sync.outputs.adcp_version }}) and registry OpenAPI source.
 
             ### Changes
-            - ✅ Downloaded latest schemas from `adcontextprotocol.org`
-            - ✅ Extracted the latest registry OpenAPI from the upstream schema bundle
+            - ✅ Refreshed configured signed schemas from `adcontextprotocol.org`
+            - ✅ Refreshed the registry OpenAPI from its configured upstream source
             - ✅ Regenerated TypeScript types from official schemas
             - ✅ Updated fluent API with any new tools
-            - ✅ Synchronized library version with AdCP version
+            - ✅ Synchronized AdCP compatibility metadata without bypassing Changesets
+            - ✅ Regenerated protocol reference docs
 
             ### Validation
             - ✅ All TypeScript types compile successfully
