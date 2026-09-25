@@ -239,6 +239,71 @@ remain replaceable until the seller confirms them, preserving the exact
 controlled deployment before admitting traffic, and make `probe()` part of
 readiness rather than liveness.
 
+### Production consumer loop
+
+`createReliableReportingConsumerV1` assembles those stores into a bounded,
+replica-safe worker. Polling remains authoritative for clock-driven status
+changes. `reporting.delivery_ready` and `reporting.ledger_changed` doorbells
+first drain every `changes_after` page from the durable checkpoint, then run a
+full reconciliation only when the delta contains records.
+
+```ts
+import {
+  createPostgresReportingConsumerRuntimeV1,
+  createReliableReportingConsumerV1,
+} from '@adcp/sdk';
+
+const persistence = createPostgresReportingConsumerRuntimeV1({
+  db: pool,
+  namespace: 'billing-reporting-v1',
+});
+
+const consumer = createReliableReportingConsumerV1({
+  persistence,
+  ownerToken: processInstanceId, // unique per process; never a credential
+  pollIntervalMs: 60_000,
+  leaseMilliseconds: 30_000,
+  maxConcurrentAccounts: 8,
+  accounts: [{
+    consumerScope: 'seller-42:buyer-principal-7',
+    accountId: 'account-1',
+    reconciliation: {
+      client: seller,
+      request: { account: { account_id: 'account-1' } },
+      expectedPeriods,
+      resourceReader,
+      credentialProvider,
+      manifestInspectorOptions,
+    },
+  }],
+  onResult: result => reportingMetrics.observe(result),
+  onError: (error, accountId) => reportingAlerts.capture(error, { accountId }),
+});
+
+consumer.start();
+
+// The HTTP route must verify the advertised AdCP webhook signature first.
+await consumer.handleAuthenticatedNotification(verifiedWebhookBody);
+
+// Stop accepting work and wait for in-flight reconciliation before closing DB/network clients.
+await consumer.stop();
+```
+
+Webhook bodies are routing hints, never reporting evidence. The runtime accepts
+them only through the deliberately named `handleAuthenticatedNotification`
+entry point; signature verification belongs at the HTTP boundary. Unknown
+accounts and unrelated notification types are ignored. Work for one account is
+coalesced in-process and fenced across replicas. Lease loss aborts subsequent
+protocol calls and prevents checkpoint advancement. A failed or expired change
+cursor falls back to a complete snapshot and is observable through `onError`
+and `cursorRecovered`.
+
+Run `reporting.status_changed` through a full read: health can cross a deadline
+without committing a new immutable record. Periodic polling is required for the
+same reason even when every webhook arrives. Persist a checkpoint only after
+the entire snapshot or delta has been consumed; the runtime enforces this and
+uses compare-and-set advancement to fail closed on unexpected concurrency.
+
 Totals are returned once per canonical reporting revision. Each entry includes its coverage status and covered/package denominators, so partial evidence cannot be mistaken for full billing totals. Delivering the same revision to a buyer, governance agent, and archive destination does not multiply its rows or financial control totals. Each consumer still authenticates independently and submits its own receipt; one consumer's acceptance never implies another's.
 
 ## Consumer status and posting deadlines

@@ -182,6 +182,8 @@ export interface ReportingReconciliationClient {
 export interface ReportingLedger {
   ledgerSnapshotId: string;
   ledgerAsOf: string;
+  /** Persist only after every page in this snapshot has been consumed. */
+  changesCheckpoint?: string;
   accountId: string;
   scope: NonNullable<GetReportingStatusResponse['scope']>;
   obligations: ManagedReportingObligation[];
@@ -974,6 +976,8 @@ export async function loadReportingLedger(
       let cursor: string | undefined;
       let snapshotId: string | undefined;
       let ledgerAsOf: string | undefined;
+      let changesCheckpoint: string | undefined;
+      let checkpointPresence: boolean | undefined;
       let accountId: string | undefined;
       let scope: NonNullable<GetReportingStatusResponse['scope']> | undefined;
       let totalCount: number | undefined;
@@ -1047,6 +1051,19 @@ export async function loadReportingLedger(
             'ledger observation boundary changed during pagination'
           );
         }
+        const pageHasCheckpoint = typeof response.changes_checkpoint === 'string';
+        if (checkpointPresence !== undefined && checkpointPresence !== pageHasCheckpoint) {
+          throw new ReportingReconciliationError(
+            'SNAPSHOT_CHANGED',
+            'reporting changes checkpoint presence changed during pagination'
+          );
+        }
+        if (changesCheckpoint && changesCheckpoint !== response.changes_checkpoint) {
+          throw new ReportingReconciliationError(
+            'SNAPSHOT_CHANGED',
+            'reporting changes checkpoint changed during pagination'
+          );
+        }
         if (accountId && accountId !== response.account_id) {
           throw new ReportingReconciliationError('SNAPSHOT_CHANGED', 'account changed during pagination');
         }
@@ -1059,6 +1076,8 @@ export async function loadReportingLedger(
 
         snapshotId = response.ledger_snapshot_id;
         ledgerAsOf = response.ledger_as_of;
+        checkpointPresence = pageHasCheckpoint;
+        changesCheckpoint = response.changes_checkpoint;
         accountId = response.account_id;
         scope = response.scope;
         totalCount = response.pagination.total_count;
@@ -1113,6 +1132,7 @@ export async function loadReportingLedger(
       return {
         ledgerSnapshotId: snapshotId,
         ledgerAsOf,
+        ...(changesCheckpoint ? { changesCheckpoint } : {}),
         accountId,
         scope,
         consumerStatuses: [...consumerStatuses.values()],

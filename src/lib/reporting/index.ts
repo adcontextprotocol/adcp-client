@@ -26,6 +26,7 @@ export {
   createPostgresReportingConsumerRuntimeV1,
   getReportingConsumerPostgresMigration,
 } from './consumer-postgres';
+export { createReliableReportingConsumerV1, drainReportingChangesV1 } from './consumer-runtime';
 export type {
   CreatePostgresReportingConsumerRuntimeOptionsV1,
   PostgresReportingConsumerRuntimeV1,
@@ -36,6 +37,16 @@ export type {
   ReportingConsumerWorkLeaseStoreV1,
   ReportingConsumerWorkLeaseV1,
 } from './consumer-postgres';
+export type {
+  CreateReliableReportingConsumerOptionsV1,
+  DrainReportingChangesOptionsV1,
+  DrainReportingChangesResultV1,
+  ReliableReportingConsumerAccountV1,
+  ReliableReportingConsumerPersistenceV1,
+  ReliableReportingConsumerRunReasonV1,
+  ReliableReportingConsumerRunResultV1,
+  ReliableReportingConsumerV1,
+} from './consumer-runtime';
 export type {
   CoreReportingClocksV1,
   CoreReportingHealthV1,
