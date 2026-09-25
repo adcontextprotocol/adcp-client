@@ -1,6 +1,7 @@
 import type { MaybePromise } from '../create-adcp-server';
 import type {
   RecoverableWebhookEmitter,
+  WebhookEmitAttempt,
   WebhookAttemptAuthorizer,
   WebhookAuthentication,
   WebhookEmitResult,
@@ -262,6 +263,10 @@ export interface NotificationDeliveryAttemptCheckpointInput {
   destinationGeneration: string;
   eventType: string;
   notificationId: string;
+  /** Present for runtime-driven attempts; optional for older custom callers. */
+  attempt?: Readonly<
+    Pick<WebhookEmitAttempt, 'delivery_id' | 'idempotency_key' | 'attempt' | 'url' | 'payload_size_bytes' | 'recovered'>
+  >;
   signal: AbortSignal;
 }
 

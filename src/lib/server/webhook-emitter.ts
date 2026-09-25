@@ -339,9 +339,11 @@ export interface WebhookEmitterOptions {
   /** Signing tag override. Defaults to `adcp/webhook-signing/v1`. */
   tag?: string;
   /** Observability hook called BEFORE each attempt. */
-  onAttempt?: (info: WebhookEmitAttempt) => void;
+  onAttempt?: (info: WebhookEmitAttempt) => void | Promise<void>;
   /** Observability hook called AFTER each attempt completes. */
-  onAttemptResult?: (info: WebhookEmitAttemptResult) => void;
+  onAttemptResult?: (info: WebhookEmitAttemptResult) => void | Promise<void>;
+  /** Observer failures are isolated from delivery and reported here. */
+  onAttemptObserverError?: (error: unknown, phase: 'attempt' | 'result') => void;
   /**
    * Fail-closed authorization hook invoked immediately before every external
    * POST, including each in-process retry and every recovered attempt. A
@@ -403,6 +405,8 @@ export interface WebhookEmitAttempt {
   idempotency_key: string;
   attempt: number;
   url: string;
+  /** Exact UTF-8 byte length of the serialized request body. */
+  payload_size_bytes: number;
   /** Durable non-secret context supplied by the emission owner. */
   attemptAuthorizationContext?: Record<string, unknown>;
   /**
@@ -637,6 +641,7 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
             idempotency_key,
             attempt,
             url,
+            payload_size_bytes: Buffer.byteLength(bodyBytes, 'utf8'),
             ...(attemptAuthorizationContext === undefined
               ? {}
               : { attemptAuthorizationContext: structuredClone(attemptAuthorizationContext) }),
@@ -685,7 +690,7 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
             }
           }
           attempts = attempt;
-          options.onAttempt?.(attemptInfo);
+          await observeAttempt(options, 'attempt', attemptInfo);
 
           const started = Date.now();
           let status: number | undefined;
@@ -709,7 +714,7 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
 
             if (status >= 200 && status < 300) {
               const durationMs = Date.now() - started;
-              options.onAttemptResult?.({ ...attemptInfo, status, durationMs, willRetry: false });
+              await observeAttempt(options, 'result', { ...attemptInfo, status, durationMs, willRetry: false });
               await recoveryHeartbeat?.stop();
               const heartbeatError = recoveryHeartbeat?.lossMessage();
               if (heartbeatError) errors.push(heartbeatError);
@@ -756,7 +761,7 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
 
           const willRetry = !terminal && attempt < retries.maxAttempts;
           finalTerminal = terminal;
-          options.onAttemptResult?.({
+          await observeAttempt(options, 'result', {
             ...attemptInfo,
             ...(status !== undefined && { status }),
             durationMs: Date.now() - started,
@@ -797,6 +802,23 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
     },
   });
   return makeEmitter(tenantScope);
+}
+
+async function observeAttempt(
+  options: WebhookEmitterOptions,
+  phase: 'attempt' | 'result',
+  value: WebhookEmitAttempt | WebhookEmitAttemptResult
+): Promise<void> {
+  try {
+    if (phase === 'attempt') await options.onAttempt?.(value as WebhookEmitAttempt);
+    else await options.onAttemptResult?.(value as WebhookEmitAttemptResult);
+  } catch (error) {
+    try {
+      options.onAttemptObserverError?.(error, phase);
+    } catch {
+      // Delivery observability is deliberately isolated from transport.
+    }
+  }
 }
 
 function assertAttemptAuthorizationDecision(value: unknown): asserts value is WebhookAttemptAuthorizationDecision {

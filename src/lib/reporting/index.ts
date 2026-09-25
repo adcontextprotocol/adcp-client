@@ -27,6 +27,15 @@ export {
   getReportingConsumerPostgresMigration,
 } from './consumer-postgres';
 export { createReliableReportingConsumerV1, drainReportingChangesV1 } from './consumer-runtime';
+export {
+  REPORTING_WEBHOOK_ACTIVITY_POSTGRES_MIGRATION,
+  ReportingWebhookActivityConflictError,
+  composeNotificationDeliveryAttemptCheckpoints,
+  createPostgresReportingWebhookActivityV1,
+  getReportingWebhookActivityMigration,
+  projectListAccountsReportingWebhookActivityV1,
+  sanitizeReportingWebhookActivityUrl,
+} from './webhook-activity';
 export type {
   CreatePostgresReportingConsumerRuntimeOptionsV1,
   PostgresReportingConsumerRuntimeV1,
@@ -47,6 +56,13 @@ export type {
   ReliableReportingConsumerRunResultV1,
   ReliableReportingConsumerV1,
 } from './consumer-runtime';
+export type {
+  CreatePostgresReportingWebhookActivityOptionsV1,
+  PostgresReportingWebhookActivityV1,
+  ProjectListAccountsReportingWebhookActivityOptionsV1,
+  ReportingWebhookActivityReaderV1,
+  ReportingWebhookActivityScopeV1,
+} from './webhook-activity';
 export type {
   CoreReportingClocksV1,
   CoreReportingHealthV1,

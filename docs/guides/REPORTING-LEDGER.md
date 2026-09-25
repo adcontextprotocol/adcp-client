@@ -479,6 +479,68 @@ This is an SDK/adopter API only: AdCP defines the complete health-notification
 wire payload but no public account-activity read task, so do not expose `listActivity()`
 as an invented wire extension.
 
+That lifecycle activity is distinct from the protocol's webhook transport
+diagnostics. To support `list_accounts({ include_webhook_activity: true })`,
+wire the principal-scoped attempt log into the same notification runtime:
+
+```ts
+import {
+  composeNotificationDeliveryAttemptCheckpoints,
+  createPostgresReportingWebhookActivityV1,
+  projectListAccountsReportingWebhookActivityV1,
+} from '@adcp/sdk';
+
+const webhookActivity = createPostgresReportingWebhookActivityV1({
+  db: pool,
+  namespace: 'seller-production',
+  retentionDays: 30, // protocol minimum
+});
+
+const notifications = createPostgresPersistentNotificationRuntime({
+  db: pool,
+  publisherScope: 'seller-production',
+  checkpointDeliveryAttempt: composeNotificationDeliveryAttemptCheckpoints(
+    attemptCheckpoint, // freezes the recipient generation first
+    webhookActivity.checkpointDeliveryAttempt, // then reserves the activity row
+  ),
+  webhooks: {
+    ...webhookOptions,
+    ...webhookActivity.emitterObservers,
+  },
+  ...notificationOptions,
+});
+
+for (const sql of webhookActivity.migrations.all) await pool.query(sql);
+await webhookActivity.probe();
+
+const response = await authoritativeListAccounts(params, ctx);
+return projectListAccountsReportingWebhookActivityV1({
+  response,
+  request: params,
+  tenantId: ctx.tenant.id,
+  principalId: ctx.agent.agent_url,
+  activity: webhookActivity,
+});
+```
+
+Both scope values must come from authenticated context. The projector can only
+decorate accounts already returned by the authoritative handler; it never
+resolves additional accounts. It strips adopter-supplied `webhook_activity`
+even when the buyer did not request the field, preventing permissive response
+shapes from leaking arbitrary diagnostics. Rows are isolated by tenant,
+principal, and account and ordered newest first.
+
+The pre-POST reservation records `pending` before network I/O. The emitter's
+awaited result observer completes it as `success`, `failed`, `timeout`, or
+`connection_error`; observer failures never turn a successful remote POST into
+a retry. A completion outage therefore leaves the honest `pending` record
+rather than risking a duplicate send. Query strings, fragments, userinfo, and
+all non-allowlisted path segments are removed before storage. Error text is a
+fixed classification and never includes headers, bodies, exception prose, or
+credentials. Schedule bounded `pruneCompleted()` calls; pending attempts are
+retained for investigation. Advertise `supports_webhook_activity: true` only
+after migrations and both notification/activity probes succeed.
+
 Projected activity defaults to 90-day retention measured from projection (or
 from commit for finality-only records that require no wire projection).
 Abandoned activity is retained on the same schedule, measured from

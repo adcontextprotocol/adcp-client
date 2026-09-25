@@ -976,6 +976,38 @@ describe('createWebhookEmitter: observability', () => {
     assert.strictEqual(results[0].willRetry, true);
     assert.strictEqual(results[1].willRetry, false);
     assert.strictEqual(results[1].status, 204);
+    assert.ok(attempts.every(info => Number.isSafeInteger(info.payload_size_bytes)));
+  });
+
+  test('awaits async observers but isolates their failures from delivery', async () => {
+    const { signerKey } = makeSignerKey();
+    const fetch = stubFetch([{ status: 204 }]);
+    const observerErrors = [];
+    let resultObserved = false;
+    const emitter = createWebhookEmitter({
+      signerKey,
+      fetch,
+      sleep: noSleep,
+      async onAttempt() {
+        await Promise.resolve();
+        throw new Error('telemetry unavailable');
+      },
+      async onAttemptResult() {
+        await Promise.resolve();
+        resultObserved = true;
+        throw new Error('activity completion unavailable');
+      },
+      onAttemptObserverError(error, phase) {
+        observerErrors.push([phase, error.message]);
+      },
+    });
+    const result = await emitter.emit({ url: 'http://x/h', payload: {}, delivery_id: 'delivery.obs-failure' });
+    assert.strictEqual(result.delivered, true);
+    assert.strictEqual(resultObserved, true);
+    assert.deepStrictEqual(observerErrors, [
+      ['attempt', 'telemetry unavailable'],
+      ['result', 'activity completion unavailable'],
+    ]);
   });
 });
 

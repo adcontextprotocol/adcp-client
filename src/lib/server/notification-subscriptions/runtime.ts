@@ -130,7 +130,10 @@ export function createPersistentNotificationRuntime(
    * not bounded by `adopterCallbackTimeoutMs`: abandoning a write that may still
    * commit would be indistinguishable from never having attempted.
    */
-  const checkpointAttempt = async (context: NotificationAttemptContext): Promise<boolean> => {
+  const checkpointAttempt = async (
+    context: NotificationAttemptContext,
+    attempt: Readonly<WebhookEmitAttempt>
+  ): Promise<boolean> => {
     if (!options.checkpointDeliveryAttempt) return true;
     const controller = new AbortController();
     try {
@@ -142,6 +145,14 @@ export function createPersistentNotificationRuntime(
         destinationGeneration: context.destinationGeneration,
         eventType: context.eventType,
         notificationId: context.notificationId,
+        attempt: {
+          delivery_id: attempt.delivery_id,
+          idempotency_key: attempt.idempotency_key,
+          attempt: attempt.attempt,
+          url: attempt.url,
+          payload_size_bytes: attempt.payload_size_bytes,
+          ...(attempt.recovered ? { recovered: true } : {}),
+        },
         signal: controller.signal,
       });
       return true;
@@ -232,7 +243,7 @@ export function createPersistentNotificationRuntime(
 
     const authenticationMode = subscription.authentication.mode;
     if (authenticationMode === 'rfc9421') {
-      if (!(await checkpointAttempt(context))) return suppress('attempt_checkpoint_unavailable');
+      if (!(await checkpointAttempt(context, attempt))) return suppress('attempt_checkpoint_unavailable');
       return { decision: 'allow', authentication: null };
     }
     const bindingId = subscription.authentication.bindingId;
@@ -253,7 +264,7 @@ export function createPersistentNotificationRuntime(
       if (!resolvedAuthenticationMatches(authenticationMode, authentication)) {
         return suppress('credential_unavailable');
       }
-      if (!(await checkpointAttempt(context))) return suppress('attempt_checkpoint_unavailable');
+      if (!(await checkpointAttempt(context, attempt))) return suppress('attempt_checkpoint_unavailable');
       return { decision: 'allow', authentication };
     } catch {
       return suppress('credential_unavailable');
