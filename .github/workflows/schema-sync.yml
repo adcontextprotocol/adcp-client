@@ -32,7 +32,7 @@ jobs:
       # the default GITHUB_TOKEN.
       - name: Mint schema sync bot token
         id: app-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
         with:
           app-id: ${{ secrets.IPR_APP_ID }}
           private-key: ${{ secrets.IPR_APP_PRIVATE_KEY }}
@@ -56,10 +56,6 @@ jobs:
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-
-      - name: Record current library version
-        id: library-version
-        run: echo "before=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: Sync schemas and check for updates
         id: sync
@@ -86,34 +82,22 @@ jobs:
             echo "adcp_version=$ADCP_VERSION" >> $GITHUB_OUTPUT
           fi
 
-      - name: Sync version if schemas changed
+      - name: Sync AdCP version metadata if schemas changed
         if: steps.sync.outputs.changes_detected == 'true'
         run: |
-          npm run sync-version --auto-update
+          npm run sync-version --force
 
       - name: Add schema sync changeset
         if: steps.sync.outputs.changes_detected == 'true'
-        env:
-          PREVIOUS_LIBRARY_VERSION: ${{ steps.library-version.outputs.before }}
         run: |
           mkdir -p .changeset
-          current_library_version=$(node -p "require('./package.json').version")
-          if [ "$current_library_version" = "$PREVIOUS_LIBRARY_VERSION" ]; then
-            printf '%s\n' \
-              '---' \
-              "'@adcp/sdk': patch" \
-              '---' \
-              '' \
-              'Synchronize generated AdCP and registry types with the latest signed schema bundle.' \
-              > .changeset/sync-generated-schemas.md
-          else
-            printf '%s\n' \
-              '---' \
-              '---' \
-              '' \
-              'Synchronize generated AdCP and registry types with the latest signed schema bundle.' \
-              > .changeset/sync-generated-schemas.md
-          fi
+          printf '%s\n' \
+            '---' \
+            "'@adcp/sdk': patch" \
+            '---' \
+            '' \
+            'Synchronize generated AdCP and registry types with the latest signed schema bundle.' \
+            > .changeset/sync-generated-schemas.md
 
       - name: Run tests with updated schemas
         if: steps.sync.outputs.changes_detected == 'true'
@@ -132,7 +116,7 @@ jobs:
             - Updated schemas from AdCP specification v${{ steps.sync.outputs.adcp_version }}
             - Updated registry OpenAPI types from the bundled upstream schema
             - Regenerated TypeScript types and fluent API
-            - Auto-bumped library version to maintain compatibility
+            - Synchronized AdCP version metadata without bypassing Changesets
 
             🤖 Generated with [Claude Code](https://claude.ai/code)
           branch: automated/schema-sync-${{ steps.sync.outputs.adcp_version }}
