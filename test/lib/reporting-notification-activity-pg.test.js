@@ -3661,6 +3661,40 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     assert.equal(readyDelivery.body.data_through, revision.dataThrough);
   });
 
+  test('durably rotates notification recovery across tenants', async () => {
+    const isolated = isolatedActivity('tenant-fairness');
+    const obligationA = await putObligation('fair-a', 'account-a', isolated.store);
+    const obligationB = await putObligation('fair-b', 'account-b', isolated.store);
+    for (const suffix of ['one', 'two', 'three']) {
+      await recordActivityIntent(isolated.activity, obligationA, {
+        transitionId: `rst_fair_a_${suffix}`,
+        reporting_obligation_id: obligationA.reporting_obligation_id,
+        previousHealth: 'waiting',
+        health: 'delayed',
+        issueIds: [`issue-${suffix}`],
+        occurredAt: '2026-09-02T02:00:00.000Z',
+      });
+    }
+    await recordActivityIntent(isolated.activity, obligationB, {
+      transitionId: 'rst_fair_b_one',
+      reporting_obligation_id: obligationB.reporting_obligation_id,
+      previousHealth: 'waiting',
+      health: 'delayed',
+      issueIds: ['issue-b'],
+      occurredAt: '2026-09-02T02:00:00.000Z',
+    });
+
+    const pass = await isolated.activity.recoverOnce({ ownerToken: 'tenant-fairness-worker', limit: 2 });
+    assert.equal(pass.projected, 2);
+    const projectedA = (
+      await isolated.activity.listActivity({ tenantId: 'tenant-a', accountId: 'account-a', limit: 10 })
+    ).activities.filter(value => value.notificationProjectedAt).length;
+    const projectedB = (
+      await isolated.activity.listActivity({ tenantId: 'tenant-b', accountId: 'account-b', limit: 10 })
+    ).activities.filter(value => value.notificationProjectedAt).length;
+    assert.deepEqual([projectedA, projectedB], [1, 1]);
+  });
+
   async function installSubscription(tenantId, principalId, accountId, url, extra = {}) {
     const result = await notifications.replace({ kind: 'account', tenantId, principalId, accountId }, [
       { subscriber_id: `${accountId}-subscriber`, url, event_types: ['reporting.status_changed'], ...extra },

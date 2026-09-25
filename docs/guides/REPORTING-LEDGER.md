@@ -4,7 +4,7 @@
 
 ## Recommended: install the lifecycle service
 
-`createReliableReportingService` is the adapter-first production path. A
+`createReliableReportingService` is the adapter-first Core path. A
 provider adapter supplies one bounded slice fetch and two immutable offering
 descriptions; the service reuses the PostgreSQL ledger, source executor,
 producer, handlers, and decisioning-platform account resolver.
@@ -59,12 +59,23 @@ reporting.start({ intervalMilliseconds: 60_000, deploymentWide: true });
 process.once('SIGTERM', () => void reporting.stop());
 ```
 
-The service advertises Reliable Reporting Core only. An inline adapter cannot
-turn on Managed Delivery, Reconciled Billing, receipts, webhook activity, or
-reporting notifications. `sync_reporting_status` is advertised only when
+The service advertises Reliable Reporting Core only. `sync_reporting_status` is advertised only when
 `resolveConsumerId` is installed and the supplied ledger implements its
-atomic consumer-status methods. Follow-up work adds those higher tiers; do not
-place them in a manual capability override.
+atomic consumer-status methods. Do not place higher tiers in a manual
+capability override.
+
+For the complete seller deployment, use the async
+`createPostgresReliableReportingProductionService`. It assembles Core, Managed
+Delivery, reconciled receipts when the offering requests them, all three
+reporting notification types, durable webhook retries, principal-scoped
+webhook activity, fair per-account delivery work, and coordinated shutdown.
+Pass `applyMigrations` to bridge the returned ordered SQL into your migration
+runner; the constructor publishes no capability object until every table and
+worker dependency probes successfully and the advertised managed policy is
+durably adopted. Its `platform` mounts `sync_reporting_receipts` through
+`createAdcpServerFromPlatform`, and its scheduler drives production, managed
+delivery, notification recovery, retry recovery, and bounded retention cleanup
+together. `stop()` aborts and awaits both worker loops.
 
 Install a buyer declaration after the account and its media-buy scope have
 been authorized and resolved. `installConfiguration` intentionally accepts no

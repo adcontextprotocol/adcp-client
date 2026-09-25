@@ -272,6 +272,7 @@ export function getReportingNotificationActivityMigration(options: { tableName?:
   const table = quoteIdentifier(raw);
   const rawRecipients = recipientTableName(raw);
   const recipientTable = quoteIdentifier(rawRecipients, MAX_RECIPIENT_TABLE_BYTES);
+  const cursorTable = quoteIdentifier(`${raw}_cursor`, MAX_RECIPIENT_TABLE_BYTES);
   return `
 CREATE TABLE IF NOT EXISTS ${table} (
   namespace              TEXT NOT NULL,
@@ -305,6 +306,12 @@ CREATE TABLE IF NOT EXISTS ${table} (
     -- delivered, so it stops consuming tenant capacity but stays auditable.
     (state = 'abandoned' AND projected_at IS NULL AND retain_until IS NOT NULL AND abandoned_at IS NOT NULL)
   )
+);
+
+CREATE TABLE IF NOT EXISTS ${cursorTable} (
+  namespace     TEXT PRIMARY KEY,
+  tenant_scope TEXT,
+  changed_at   TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
 -- Upgrade in place, once, and touch nothing on a rerun.
@@ -677,6 +684,7 @@ export function createPostgresReportingNotificationActivityRuntime(
   boundedInteger(maxAttempts, 'maxAttempts', 1, 100_000);
   const recipientRawTable = recipientTableName(rawTable);
   const recipientTable = quoteIdentifier(recipientRawTable, MAX_RECIPIENT_TABLE_BYTES);
+  const cursorTable = quoteIdentifier(`${rawTable}_cursor`, MAX_RECIPIENT_TABLE_BYTES);
   // Reject an unstorable configuration at construction instead of discovering it
   // as a poisoned claim under load. Only the recipient primary key is indexed,
   // and everything in it except namespace and transition id is fixed width.
@@ -900,6 +908,7 @@ export function createPostgresReportingNotificationActivityRuntime(
                   attempt_at, settled_at, disposition
              FROM ${recipientTable} LIMIT 0`
         );
+        await options.db.query(`SELECT namespace, tenant_scope, changed_at FROM ${cursorTable} LIMIT 0`);
       } catch (cause) {
         throw new Error(
           'Reporting notification/activity probe failed: run getReportingNotificationActivityMigration() before serving',
@@ -928,7 +937,7 @@ export function createPostgresReportingNotificationActivityRuntime(
       // Claim one row at a time. Pre-claiming a batch would let later leases
       // expire while an earlier subscriber fanout is still running.
       for (let index = 0; index < limit; index += 1) {
-        const [claim] = await claimPending(options.db, table, namespace, ownerToken, leaseMs, 1);
+        const [claim] = await claimPending(options.db, table, cursorTable, namespace, ownerToken, leaseMs, 1);
         if (!claim) break;
         metrics.claimed += 1;
         let leaseLost = false;
@@ -1321,6 +1330,7 @@ function notificationPayload(
 async function claimPending(
   db: ReportingLedgerTransactionV1,
   table: string,
+  cursorTable: string,
   namespace: string,
   ownerToken: string,
   leaseMs: number,
@@ -1337,12 +1347,36 @@ async function claimPending(
         attempt_count: number;
       }
     >(
-      `WITH candidates AS (
-       SELECT namespace, transition_id FROM ${table}
-        WHERE namespace = $1 AND state = 'pending' AND next_attempt_at <= clock_timestamp()
-          AND (lease_expires_at IS NULL OR lease_expires_at < clock_timestamp())
-        ORDER BY next_attempt_at, activity_sequence
-        FOR UPDATE SKIP LOCKED LIMIT $4
+      `WITH selected_tenant AS (
+       INSERT INTO ${cursorTable} (namespace, tenant_scope)
+       VALUES (
+         $1,
+         (SELECT MIN(tenant_scope) FROM ${table}
+           WHERE namespace = $1 AND state = 'pending' AND next_attempt_at <= clock_timestamp()
+             AND (lease_expires_at IS NULL OR lease_expires_at < clock_timestamp()))
+       )
+       ON CONFLICT (namespace) DO UPDATE SET
+         tenant_scope = COALESCE(
+           (SELECT MIN(candidate.tenant_scope) FROM ${table} candidate
+             WHERE candidate.namespace = $1 AND candidate.state = 'pending'
+               AND candidate.next_attempt_at <= clock_timestamp()
+               AND (candidate.lease_expires_at IS NULL OR candidate.lease_expires_at < clock_timestamp())
+               AND candidate.tenant_scope > ${cursorTable}.tenant_scope),
+           (SELECT MIN(candidate.tenant_scope) FROM ${table} candidate
+             WHERE candidate.namespace = $1 AND candidate.state = 'pending'
+               AND candidate.next_attempt_at <= clock_timestamp()
+               AND (candidate.lease_expires_at IS NULL OR candidate.lease_expires_at < clock_timestamp()))
+         ),
+         changed_at = clock_timestamp()
+       RETURNING tenant_scope
+     ), candidates AS (
+       SELECT activity.namespace, activity.transition_id FROM ${table} activity
+       JOIN selected_tenant selected ON selected.tenant_scope = activity.tenant_scope
+        WHERE activity.namespace = $1 AND activity.state = 'pending'
+          AND activity.next_attempt_at <= clock_timestamp()
+          AND (activity.lease_expires_at IS NULL OR activity.lease_expires_at < clock_timestamp())
+        ORDER BY activity.next_attempt_at, activity.activity_sequence
+        FOR UPDATE OF activity SKIP LOCKED LIMIT $4
      )
      UPDATE ${table} target SET
        lease_owner = $2,

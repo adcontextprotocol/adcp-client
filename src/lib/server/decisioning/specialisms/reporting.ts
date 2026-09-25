@@ -38,6 +38,12 @@ export interface ReliableReportingPlatform<TCtxMeta = Record<string, unknown>> {
     context: Ctx<TCtxMeta>
   ): Promise<AdcpToolMap['sync_reporting_status']['result']>;
 
+  /** Present only for reconciled-billing offerings with authenticated consumer identity. */
+  syncReportingReceipts?(
+    request: AdcpToolMap['sync_reporting_receipts']['params'],
+    context: Ctx<TCtxMeta>
+  ): Promise<AdcpToolMap['sync_reporting_receipts']['result']>;
+
   /**
    * The identity `syncReportingStatus` deposits a receipt for, exposed so the
    * framework can scope `sync_reporting_status` replay by the same value the
