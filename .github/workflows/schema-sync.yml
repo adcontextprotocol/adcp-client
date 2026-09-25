@@ -22,8 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.force_update == 'true')
 
     steps:
@@ -56,6 +55,7 @@ jobs:
           npm run generate-agent-docs
           npm run generate-release-worksheet
           npm run sync-version -- --force
+          npx tsx scripts/generate-wire-spec-fields.ts
 
           generated_paths=(
             schemas/codegen-provenance.json
@@ -65,6 +65,7 @@ jobs:
             src/lib/media-buy/update-fields.generated.ts
             src/lib/media-buy/action-metadata.generated.ts
             src/lib/server/decisioning/runtime/entity-hydration.generated.ts
+            src/lib/server/wire-spec-fields.generated.ts
             src/lib/registry/types.generated.ts
             src/lib/version.ts
             schemas/registry/registry.yaml
@@ -74,12 +75,14 @@ jobs:
             package.json
           )
 
-          if git diff --exit-code -I '// Generated at:' -I '> Generated at:' -- "${generated_paths[@]}"; then
+          changes=$(git status --porcelain -- "${generated_paths[@]}")
+          if [[ -z "$changes" ]]; then
             echo "changes_detected=false" >> $GITHUB_OUTPUT
             echo "✅ No schema changes detected"
           else
             echo "changes_detected=true" >> $GITHUB_OUTPUT
             echo "📋 Schema or registry OpenAPI changes detected"
+            echo "$changes"
 
             ADCP_VERSION=$(node -e "
               const fs = require('fs');
