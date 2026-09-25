@@ -13,6 +13,8 @@ import type {
   ReportingLedgerAdjustmentV1,
   ReportingLedgerObligationV1,
   ReportingLedgerRevisionV1,
+  ReportingLedgerNotificationActivityPortV1,
+  ReportingLedgerTransactionV1,
   ReportingManagedDeliveryBindingV1,
   ReportingLedgerStore,
 } from './types';
@@ -306,6 +308,8 @@ type ManagedPolicyColumn =
 type ManagedPolicyRow = Record<ManagedPolicyColumn, number | null>;
 
 export interface PostgresReportingManagedDeliveryStoreOptions {
+  /** Transactional reporting outbox used for successful delivery-ready events. */
+  notificationActivityPort?: ReportingLedgerNotificationActivityPortV1<ReportingLedgerTransactionV1>;
   /**
    * The `automated_recovery_window_seconds` this deployment advertises.
    *
@@ -353,6 +357,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
   private readonly statusRetentionDays: number | undefined;
   private readonly pendingRecoveryWindowSeconds: number | undefined;
   private policyRegistered = false;
+  private readonly notificationActivityPort?: ReportingLedgerNotificationActivityPortV1<ReportingLedgerTransactionV1>;
   /**
    * Durably records the agent-wide advertised recovery window.
    *
@@ -614,6 +619,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     this.pendingRecoveryWindowSeconds = options.advertisedRecoveryWindowSeconds;
     this.statusRetentionDays = options.statusRetentionDays;
     this.evidenceRetentionDays = options.evidenceRetentionDays;
+    this.notificationActivityPort = options.notificationActivityPort;
   }
 
   /** SQL fragment scoping a count to the active retention window, if one is set. */
@@ -1624,6 +1630,21 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
           minimumRetentionDays,
         ]
       );
+      if (
+        updated.rowCount === 1 &&
+        authorized.rowCount === 1 &&
+        outcome.status !== 'failed' &&
+        this.notificationActivityPort?.recordDeliveryReady
+      ) {
+        await this.notificationActivityPort.recordDeliveryReady(
+          {
+            obligation: lease.obligation,
+            revision: lease.revision,
+            materialization,
+          },
+          client
+        );
+      }
       // A settle refused purely because the database considers the resource
       // under-retained must not leave the row pending forever: nothing else
       // ever revisits it, the planner cannot see it, and the attempt cap

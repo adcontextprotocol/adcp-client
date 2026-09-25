@@ -338,7 +338,16 @@ Managed-only changes are lifecycle candidates in their own right. A settlement, 
 
 The managed tables are additive and do not alter the Core tables. This is the schema boundary coordinated with #2943: that work owns transactional reporting notification/activity intent and the existing webhook delivery/credential plane. Managed Delivery does not create a second webhook sender, outbox, credential store, or subscriber model. Apply both feature migrations after the Core migration in either order; each owns separate tables and both reuse the Core authority.
 
-## Transactional status notifications and account activity
+## Transactional reporting notifications and account activity
+
+The activity outbox covers the complete Reliable Reporting event surface. A
+newly committed revision or adjustment records `reporting.ledger_changed` in
+the same transaction as the immutable ledger row; a successfully settled
+managed materialization records `reporting.delivery_ready` in the same
+transaction as its terminal state; and health transitions record
+`reporting.status_changed`. Network I/O always happens later through recovery.
+Event `fired_at` values come from the database clock, and replaying an already
+committed ledger record does not create another event.
 
 Production deployments can join every health or observed-finality transition to
 a compact account-operator activity record. Health transitions additionally

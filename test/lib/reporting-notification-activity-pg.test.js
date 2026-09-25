@@ -5,7 +5,7 @@
  *   node --test test/lib/reporting-notification-activity-pg.test.js
  */
 const assert = require('node:assert/strict');
-const { generateKeyPairSync } = require('node:crypto');
+const { createHash, generateKeyPairSync } = require('node:crypto');
 const { after, before, describe, test } = require('node:test');
 
 const DATABASE_URL = process.env.REPORTING_LEDGER_PG_URL;
@@ -21,6 +21,8 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
   let store;
   let fetchCalls;
   let validateStatusWebhook;
+  let validateLedgerWebhook;
+  let validateDeliveryWebhook;
   // Fail-once injection points for the operational suppression paths.
   let authorizeDeliveryHook;
   let resolveCredentialHook;
@@ -78,6 +80,12 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     validateStatusWebhook = require('../../dist/lib/validation/schema-loader.js').getSchemaValidatorByRef(
       'core/reporting-status-changed-webhook.json'
     );
+    validateLedgerWebhook = require('../../dist/lib/validation/schema-loader.js').getSchemaValidatorByRef(
+      'core/reporting-ledger-changed-webhook.json'
+    );
+    validateDeliveryWebhook = require('../../dist/lib/validation/schema-loader.js').getSchemaValidatorByRef(
+      'core/reporting-delivery-ready-webhook.json'
+    );
     bootstrap = new Pool({ connectionString: DATABASE_URL });
     await bootstrap.query(`CREATE SCHEMA "${schema}"`);
     pool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${schema}"` });
@@ -106,6 +114,12 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
           const body = JSON.parse(init.body);
           if (body.notification_type === 'reporting.status_changed') {
             assert.equal(validateStatusWebhook(body), true, JSON.stringify(validateStatusWebhook.errors));
+          }
+          if (body.notification_type === 'reporting.ledger_changed') {
+            assert.equal(validateLedgerWebhook(body), true, JSON.stringify(validateLedgerWebhook.errors));
+          }
+          if (body.notification_type === 'reporting.delivery_ready') {
+            assert.equal(validateDeliveryWebhook(body), true, JSON.stringify(validateDeliveryWebhook.errors));
           }
           if (failNextFetch) {
             failNextFetch = false;
@@ -3530,6 +3544,121 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     assert.ok(afterFirstBatch.rows.some(row => row.transition_id === 'rst_prune_other_namespace'));
     assert.equal(await pruneActivity.pruneProjected({ limit: 2 }), 1);
     assert.equal(await otherActivity.pruneProjected({ limit: 2 }), 1);
+  });
+
+  test('transactionally emits schema-valid ledger-change and delivery-ready events', async () => {
+    const isolated = isolatedActivity('all-event-types');
+    const accountId = 'account-events';
+    await installSubscription('tenant-a', 'principal-events', accountId, 'https://buyer.example/events', {
+      event_types: ['reporting.ledger_changed', 'reporting.delivery_ready'],
+    });
+    const obligation = await putObligation('all-event-types', accountId, isolated.store);
+    const lease = await isolated.store.claimObligation({
+      owner: 'all-events-producer',
+      now: new Date().toISOString(),
+      leaseMilliseconds: 60_000,
+      account_id: accountId,
+    });
+    assert.ok(lease);
+
+    const canonicalize = require('../../dist/lib/utils/jcs.js').canonicalize;
+    const rows = [{ media_buy_id: 'media-buy-all-event-types', impressions: 7 }];
+    const reportingRevisionId = 'rrev_all_event_types';
+    const bytes = Buffer.from(
+      canonicalize({
+        reporting_revision_id: reportingRevisionId,
+        row_count: rows.length,
+        control_totals: [],
+        reporting_rows: rows,
+      })
+    );
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const revision = {
+      reporting_revision_id: reportingRevisionId,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      revisionNumber: 1,
+      finality: 'snapshot',
+      kind: 'snapshot',
+      manifest: { level: 'basic', objectRef: 'manifest', sha256: 'a'.repeat(64), byteCount: 1 },
+      sourcePublicationId: 'publication-all-event-types',
+      binding: { algorithm: 'rfc8785_jcs_v1', sha256, byteCount: bytes.byteLength, rowCount: rows.length },
+      rows,
+      observedAt: '2000-01-01T00:00:00.000Z',
+      dataThrough: '1999-12-31T23:59:59.000Z',
+      sourceReadCutoffAt: '2000-01-01T00:00:00.000Z',
+      createdAt: '2000-01-01T00:00:00.000Z',
+      wireRevision: {
+        reporting_revision_id: reportingRevisionId,
+        revision_content_sha256: sha256,
+        control_totals: [],
+      },
+    };
+    assert.equal((await isolated.store.commitRevision(revision, lease)).inserted, true);
+    assert.equal(
+      fetchCalls.some(call => call.body.reporting_revision_id === reportingRevisionId),
+      false
+    );
+
+    const ledgerPass = await isolated.activity.recoverOnce({ ownerToken: 'all-events-ledger-worker', limit: 1 });
+    assert.equal(ledgerPass.projected, 1);
+    const ledgerDelivery = fetchCalls.find(call => call.body.reporting_revision_id === reportingRevisionId);
+    assert.ok(ledgerDelivery);
+    assert.equal(ledgerDelivery.body.notification_type, 'reporting.ledger_changed');
+    assert.equal(ledgerDelivery.body.change_kind, 'revision_published');
+    assert.notEqual(ledgerDelivery.body.fired_at, revision.createdAt, 'the authoritative database clock is used');
+
+    const adjustment = {
+      reporting_adjustment_id: 'radj_all_event_types',
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      adjusts_reporting_revision_id: reportingRevisionId,
+    };
+    const adjustmentClient = await pool.connect();
+    try {
+      await adjustmentClient.query('BEGIN');
+      await isolated.activity.port.recordLedgerChanged({ obligation, adjustment }, adjustmentClient);
+      await adjustmentClient.query('COMMIT');
+    } catch (error) {
+      await adjustmentClient.query('ROLLBACK');
+      throw error;
+    } finally {
+      adjustmentClient.release();
+    }
+    assert.equal(
+      (await isolated.activity.recoverOnce({ ownerToken: 'all-events-adjustment-worker', limit: 1 })).projected,
+      1
+    );
+    const adjustmentDelivery = fetchCalls.find(
+      call => call.body.reporting_adjustment_id === adjustment.reporting_adjustment_id
+    );
+    assert.ok(adjustmentDelivery);
+    assert.equal(adjustmentDelivery.body.change_kind, 'adjustment_published');
+    assert.equal(adjustmentDelivery.body.adjusts_reporting_revision_id, reportingRevisionId);
+
+    const materialization = {
+      reporting_materialization_id: 'rmat_all_event_types',
+      reporting_revision_id: reportingRevisionId,
+      status: 'available',
+    };
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await isolated.activity.port.recordDeliveryReady({ obligation, revision, materialization }, client);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+    const deliveryPass = await isolated.activity.recoverOnce({ ownerToken: 'all-events-delivery-worker', limit: 1 });
+    assert.equal(deliveryPass.projected, 1);
+    const readyDelivery = fetchCalls.find(
+      call => call.body.reporting_materialization_id === materialization.reporting_materialization_id
+    );
+    assert.ok(readyDelivery);
+    assert.equal(readyDelivery.body.notification_type, 'reporting.delivery_ready');
+    assert.equal(readyDelivery.body.readiness, 'available');
+    assert.equal(readyDelivery.body.data_through, revision.dataThrough);
   });
 
   async function installSubscription(tenantId, principalId, accountId, url, extra = {}) {
