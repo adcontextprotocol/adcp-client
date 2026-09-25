@@ -225,7 +225,10 @@ const result = await reconcileReporting({
 
 The bundle also exposes a compare-and-set `changesCheckpointStore` for the
 opaque `changes_after` recovery cursor and a database-clock, generation-fenced
-`workLeases` store. Claim one lease per seller/principal/account before running
+`workLeases` store. Its `notifications` store records processed webhook
+idempotency keys with immutable payload hashes, so transport retries remain
+deduplicated after a restart and reusing a key for different content fails
+closed. Claim one lease per seller/principal/account before running
 reconciliation in multiple replicas. A stale generation cannot renew or
 release its successor's lease. The scope is stored only as a SHA-256 digest;
 never put credentials, bearer tokens, or connection strings in it.
@@ -283,7 +286,10 @@ const consumer = createReliableReportingConsumerV1({
 consumer.start();
 
 // The HTTP route must verify the advertised AdCP webhook signature first.
-await consumer.handleAuthenticatedNotification(verifiedWebhookBody);
+await consumer.handleAuthenticatedNotification(verifiedWebhookBody, {
+  // Derived from the authenticated sender/signing key, never from the body.
+  consumerScope: 'seller-42:buyer-principal-7',
+});
 
 // Stop accepting work and wait for in-flight reconciliation before closing DB/network clients.
 await consumer.stop();
@@ -297,6 +303,13 @@ coalesced in-process and fenced across replicas. Lease loss aborts subsequent
 protocol calls and prevents checkpoint advancement. A failed or expired change
 cursor falls back to a complete snapshot and is observable through `onError`
 and `cursorRecovered`.
+
+The authenticated `consumerScope` is optional only when an account ID is unique
+inside this runtime. If two sellers use the same account ID, omitting the scope
+fails closed; the runtime permits both configurations and selects only the one
+bound to the verified sender. Completed notifications are durably deduplicated
+for at least 30 days. Call `persistence.notifications.pruneProcessed()` from
+bounded maintenance after choosing your retention horizon.
 
 Run `reporting.status_changed` through a full read: health can cross a deadline
 without committing a new immutable record. Periodic polling is required for the

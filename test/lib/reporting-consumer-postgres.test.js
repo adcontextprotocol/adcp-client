@@ -152,4 +152,28 @@ describe('Postgres reporting consumer runtime', { skip: !DATABASE_URL && 'Postgr
       })
     );
   });
+
+  test('deduplicates processed notifications within authenticated scope', async () => {
+    const identity = {
+      consumerScope: 'seller.example|buyer-agent.example',
+      accountId: 'account-notification',
+      idempotencyKey: 'notification-key-0001',
+      payloadSha256: 'd'.repeat(64),
+    };
+    assert.equal(await runtime.notifications.isProcessed(identity), false);
+    await runtime.notifications.markProcessed(identity);
+    await runtime.notifications.markProcessed(structuredClone(identity));
+    assert.equal(await runtime.notifications.isProcessed(identity), true);
+    assert.equal(
+      await runtime.notifications.isProcessed({
+        ...identity,
+        consumerScope: 'other-seller.example|buyer-agent.example',
+      }),
+      false
+    );
+    await assert.rejects(
+      () => runtime.notifications.isProcessed({ ...identity, payloadSha256: 'e'.repeat(64) }),
+      error => error?.name === 'ReportingConsumerPersistenceConflictError'
+    );
+  });
 });

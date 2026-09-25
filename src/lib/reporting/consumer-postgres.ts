@@ -56,6 +56,22 @@ export interface ReportingConsumerWorkLeaseStoreV1 {
   release(lease: ReportingConsumerWorkLeaseV1): Promise<boolean>;
 }
 
+export interface ReportingConsumerNotificationStoreV1 {
+  isProcessed(input: {
+    consumerScope: string;
+    accountId: string;
+    idempotencyKey: string;
+    payloadSha256: string;
+  }): Promise<boolean>;
+  markProcessed(input: {
+    consumerScope: string;
+    accountId: string;
+    idempotencyKey: string;
+    payloadSha256: string;
+  }): Promise<void>;
+  pruneProcessed(options?: { retentionDays?: number; limit?: number }): Promise<number>;
+}
+
 export interface CreatePostgresReportingConsumerRuntimeOptionsV1 {
   db: ReportingConsumerPostgresQueryable;
   /** Stable deployment namespace. Never use a credential, bearer, or connection string. */
@@ -69,6 +85,7 @@ export interface PostgresReportingConsumerRuntimeV1 {
   readonly pendingConsumerStatusStore: ReportingPendingConsumerStatusStore;
   readonly changesCheckpointStore: ReportingChangesCheckpointStoreV1;
   readonly workLeases: ReportingConsumerWorkLeaseStoreV1;
+  readonly notifications: ReportingConsumerNotificationStoreV1;
   readonly migrations: { persistence: string; all: readonly [string] };
   probe(): Promise<void>;
 }
@@ -83,6 +100,7 @@ export function getReportingConsumerPostgresMigration(options: { tablePrefix?: s
   const statuses = quoteIdentifier(`${prefix}_statuses`);
   const cursors = quoteIdentifier(`${prefix}_cursors`);
   const leases = quoteIdentifier(`${prefix}_leases`);
+  const notifications = quoteIdentifier(`${prefix}_notifications`);
   return `
 CREATE TABLE IF NOT EXISTS ${checkpoints} (
   namespace         TEXT NOT NULL,
@@ -136,6 +154,20 @@ CREATE TABLE IF NOT EXISTS ${leases} (
 );
 CREATE INDEX IF NOT EXISTS ${prefix}_leases_expiry
   ON ${leases}(namespace, expires_at);
+
+CREATE TABLE IF NOT EXISTS ${notifications} (
+  namespace         TEXT NOT NULL,
+  scope_key         TEXT NOT NULL,
+  account_id        TEXT NOT NULL,
+  idempotency_key   TEXT NOT NULL,
+  payload_sha256    TEXT NOT NULL,
+  processed_at      TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (namespace, scope_key, account_id, idempotency_key),
+  CHECK (scope_key ~ '^[a-f0-9]{64}$'),
+  CHECK (payload_sha256 ~ '^[a-f0-9]{64}$')
+);
+CREATE INDEX IF NOT EXISTS ${prefix}_notifications_retention
+  ON ${notifications}(namespace, processed_at);
 `.trim();
 }
 
@@ -153,6 +185,7 @@ export function createPostgresReportingConsumerRuntimeV1(
   const statuses = quoteIdentifier(`${prefix}_statuses`);
   const cursors = quoteIdentifier(`${prefix}_cursors`);
   const leases = quoteIdentifier(`${prefix}_leases`);
+  const notifications = quoteIdentifier(`${prefix}_notifications`);
   const namespace = options.namespace;
 
   const checkpointStore: ReportingCheckpointStore = {
@@ -317,6 +350,65 @@ export function createPostgresReportingConsumerRuntimeV1(
     },
   };
 
+  const notificationStore: ReportingConsumerNotificationStoreV1 = {
+    async isProcessed(input) {
+      const values = notificationIdentity(input);
+      const result = await query<{ payload_sha256: string }>(
+        'read processed notification',
+        `SELECT payload_sha256 FROM ${notifications}
+          WHERE namespace = $1 AND scope_key = $2 AND account_id = $3 AND idempotency_key = $4`,
+        [namespace, values.scopeKey, values.accountId, values.idempotencyKey]
+      );
+      const existing = result.rows[0]?.payload_sha256;
+      if (existing !== undefined && existing !== values.payloadSha256) {
+        throw new ReportingConsumerPersistenceConflictError(
+          'Reporting notification idempotency identity names different content'
+        );
+      }
+      return existing !== undefined;
+    },
+    async markProcessed(input) {
+      const values = notificationIdentity(input);
+      const result = await query<{ payload_sha256: string }>(
+        'mark processed notification',
+        `INSERT INTO ${notifications}
+           (namespace, scope_key, account_id, idempotency_key, payload_sha256)
+         VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT (namespace, scope_key, account_id, idempotency_key) DO UPDATE SET
+           payload_sha256 = ${notifications}.payload_sha256
+         RETURNING payload_sha256`,
+        [namespace, values.scopeKey, values.accountId, values.idempotencyKey, values.payloadSha256]
+      );
+      if (result.rows[0]?.payload_sha256 !== values.payloadSha256) {
+        throw new ReportingConsumerPersistenceConflictError(
+          'Reporting notification idempotency identity names different content'
+        );
+      }
+    },
+    async pruneProcessed(pruneOptions = {}) {
+      const retentionDays = pruneOptions.retentionDays ?? 90;
+      const limit = pruneOptions.limit ?? 1_000;
+      if (!Number.isSafeInteger(retentionDays) || retentionDays < 30 || retentionDays > 3_650) {
+        throw new TypeError('retentionDays must be an integer from 30 through 3650');
+      }
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) {
+        throw new TypeError('limit must be an integer from 1 through 10000');
+      }
+      const result = await query(
+        'prune processed notifications',
+        `WITH expired AS (
+           SELECT ctid FROM ${notifications}
+            WHERE namespace = $1
+              AND processed_at < clock_timestamp() - ($2::integer * INTERVAL '1 day')
+            ORDER BY processed_at LIMIT $3
+         )
+         DELETE FROM ${notifications} target USING expired WHERE target.ctid = expired.ctid`,
+        [namespace, retentionDays, limit]
+      );
+      return result.rowCount ?? 0;
+    },
+  };
+
   async function query<Row extends Record<string, unknown> = Record<string, unknown>>(
     operation: string,
     text: string,
@@ -335,6 +427,7 @@ export function createPostgresReportingConsumerRuntimeV1(
     pendingConsumerStatusStore,
     changesCheckpointStore,
     workLeases,
+    notifications: notificationStore,
     migrations: { persistence: migration, all: [migration] },
     async probe() {
       await query('persistence probe', `SELECT namespace, key_sha256, value_sha256, value FROM ${checkpoints} LIMIT 0`);
@@ -347,8 +440,35 @@ export function createPostgresReportingConsumerRuntimeV1(
         'lease probe',
         `SELECT namespace, scope_key, account_id, owner_token, generation FROM ${leases} LIMIT 0`
       );
+      await query(
+        'notification probe',
+        `SELECT namespace, scope_key, account_id, idempotency_key, payload_sha256 FROM ${notifications} LIMIT 0`
+      );
     },
   };
+}
+
+function notificationIdentity(input: {
+  consumerScope: string;
+  accountId: string;
+  idempotencyKey: string;
+  payloadSha256: string;
+}): {
+  scopeKey: string;
+  accountId: string;
+  idempotencyKey: string;
+  payloadSha256: string;
+} {
+  const scopeKey = consumerScopeKey(input.consumerScope);
+  const accountId = accountKey(input.accountId);
+  assertBoundedString(input.idempotencyKey, 'notification idempotencyKey', 255);
+  if (input.idempotencyKey.length < 16 || !/^[A-Za-z0-9_.:-]+$/.test(input.idempotencyKey)) {
+    throw new TypeError('notification idempotencyKey is invalid');
+  }
+  if (!/^[a-f0-9]{64}$/.test(input.payloadSha256)) {
+    throw new TypeError('notification payloadSha256 is invalid');
+  }
+  return { scopeKey, accountId, idempotencyKey: input.idempotencyKey, payloadSha256: input.payloadSha256 };
 }
 
 function checkpointKey(key: ReportingCheckpointKey): string {

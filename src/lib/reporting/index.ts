@@ -43,6 +43,7 @@ export type {
   ReportingChangesCheckpointStoreV1,
   ReportingChangesCheckpointV1,
   ReportingConsumerPostgresQueryable,
+  ReportingConsumerNotificationStoreV1,
   ReportingConsumerWorkLeaseStoreV1,
   ReportingConsumerWorkLeaseV1,
 } from './consumer-postgres';

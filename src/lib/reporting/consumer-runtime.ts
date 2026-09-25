@@ -6,9 +6,11 @@ import type {
 } from '../types/core.generated';
 import type {
   ReportingChangesCheckpointStoreV1,
+  ReportingConsumerNotificationStoreV1,
   ReportingConsumerWorkLeaseStoreV1,
   ReportingConsumerWorkLeaseV1,
 } from './consumer-postgres';
+import { canonicalJsonSha256 } from '../utils/jcs';
 import {
   ReportingReconciliationError,
   reconcileReporting,
@@ -45,6 +47,8 @@ export interface ReliableReportingConsumerPersistenceV1 {
   pendingConsumerStatusStore: ReportingPendingConsumerStatusStore;
   changesCheckpointStore: ReportingChangesCheckpointStoreV1;
   workLeases: ReportingConsumerWorkLeaseStoreV1;
+  /** Enables durable at-least-once notification deduplication across restarts. */
+  notifications?: ReportingConsumerNotificationStoreV1;
 }
 
 export interface CreateReliableReportingConsumerOptionsV1<TCredential = unknown> {
@@ -67,7 +71,7 @@ export type ReliableReportingConsumerRunReasonV1 =
   | ReportingNotificationV1['notification_type'];
 
 export type ReliableReportingConsumerRunResultV1 =
-  | { accountId: string; reason: ReliableReportingConsumerRunReasonV1; state: 'busy' | 'stopping' }
+  | { accountId: string; reason: ReliableReportingConsumerRunReasonV1; state: 'busy' | 'stopping' | 'duplicate' }
   | {
       accountId: string;
       reason: ReliableReportingConsumerRunReasonV1;
@@ -89,10 +93,15 @@ export interface ReliableReportingConsumerV1 {
   stop(): Promise<void>;
   runAccount(
     accountId: string,
-    reason?: ReliableReportingConsumerRunReasonV1
+    reason?: ReliableReportingConsumerRunReasonV1,
+    /** Required when the same account ID is configured under multiple authenticated sellers/principals. */
+    consumerScope?: string
   ): Promise<ReliableReportingConsumerRunResultV1>;
   /** Call only after authenticating and verifying the webhook signature. */
-  handleAuthenticatedNotification(payload: unknown): Promise<ReliableReportingConsumerRunResultV1 | null>;
+  handleAuthenticatedNotification(
+    payload: unknown,
+    authentication?: { consumerScope: string }
+  ): Promise<ReliableReportingConsumerRunResultV1 | null>;
 }
 
 export interface DrainReportingChangesOptionsV1 {
@@ -213,15 +222,19 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
   boundedInteger(maxConcurrentAccounts, 'maxConcurrentAccounts', 1, 256);
 
   const accounts = new Map<string, ReliableReportingConsumerAccountV1<TCredential>>();
+  const accountsById = new Map<string, ReliableReportingConsumerAccountV1<TCredential>[]>();
   for (const account of options.accounts) {
     boundedString(account.consumerScope, 'consumerScope', 4_096);
     boundedString(account.accountId, 'accountId', 512);
     if (accountIdFromRequest(account.reconciliation.request) !== account.accountId) {
       throw new TypeError(`reporting consumer account ${account.accountId} does not match its request account`);
     }
-    if (accounts.has(account.accountId))
-      throw new TypeError(`duplicate reporting consumer account ${account.accountId}`);
-    accounts.set(account.accountId, account);
+    const key = runtimeAccountKey(account.consumerScope, account.accountId);
+    if (accounts.has(key)) throw new TypeError(`duplicate reporting consumer account ${account.accountId}`);
+    accounts.set(key, account);
+    const sameId = accountsById.get(account.accountId) ?? [];
+    sameId.push(account);
+    accountsById.set(account.accountId, sameId);
   }
 
   let stopped = false;
@@ -259,7 +272,7 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
   };
 
   const runAll = async (reason: 'startup' | 'poll'): Promise<void> => {
-    const queue = [...accounts.keys()];
+    const queue = [...accounts.values()];
     let next = 0;
     await Promise.all(
       Array.from({ length: Math.min(maxConcurrentAccounts, queue.length) }, async () => {
@@ -267,9 +280,9 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
           const index = next++;
           if (index >= queue.length) return;
           try {
-            await runAccount(queue[index]!, reason);
+            await runSelectedAccount(queue[index]!, reason);
           } catch (error) {
-            await reportError(error, queue[index]!);
+            await reportError(error, queue[index]!.accountId);
           }
         }
       })
@@ -393,18 +406,37 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
     }
   };
 
+  const runSelectedAccount = (
+    account: ReliableReportingConsumerAccountV1<TCredential>,
+    reason: ReliableReportingConsumerRunReasonV1
+  ): Promise<ReliableReportingConsumerRunResultV1> => {
+    const key = runtimeAccountKey(account.consumerScope, account.accountId);
+    if (stopped) return Promise.resolve({ accountId: account.accountId, reason, state: 'stopping' });
+    const existing = active.get(key);
+    if (existing) return existing;
+    const work = execute(account, reason).finally(() => active.delete(key));
+    active.set(key, work);
+    return work;
+  };
+
   const runAccount = (
     accountId: string,
-    reason: ReliableReportingConsumerRunReasonV1 = 'manual'
+    reason: ReliableReportingConsumerRunReasonV1 = 'manual',
+    consumerScope?: string
   ): Promise<ReliableReportingConsumerRunResultV1> => {
-    const account = accounts.get(accountId);
+    const candidates = accountsById.get(accountId) ?? [];
+    const account = consumerScope
+      ? candidates.find(candidate => candidate.consumerScope === consumerScope)
+      : candidates.length === 1
+        ? candidates[0]
+        : undefined;
+    if (candidates.length > 1 && consumerScope === undefined) {
+      return Promise.reject(
+        new TypeError(`reporting consumer account ${accountId} is ambiguous; consumerScope is required`)
+      );
+    }
     if (!account) return Promise.reject(new TypeError(`unknown reporting consumer account ${accountId}`));
-    if (stopped) return Promise.resolve({ accountId, reason, state: 'stopping' });
-    const existing = active.get(accountId);
-    if (existing) return existing;
-    const work = execute(account, reason).finally(() => active.delete(accountId));
-    active.set(accountId, work);
-    return work;
+    return runSelectedAccount(account, reason);
   };
 
   return {
@@ -428,11 +460,36 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
       await Promise.allSettled([...active.values()]);
     },
     runAccount,
-    async handleAuthenticatedNotification(payload) {
+    async handleAuthenticatedNotification(payload, authentication) {
       const notification = reportingNotification(payload);
       if (!notification) return null;
-      if (!accounts.has(notification.account_id)) return null;
-      return runAccount(notification.account_id, notification.notification_type);
+      const candidates = accountsById.get(notification.account_id) ?? [];
+      const account = authentication
+        ? candidates.find(candidate => candidate.consumerScope === authentication.consumerScope)
+        : candidates.length === 1
+          ? candidates[0]
+          : undefined;
+      if (!account) {
+        if (candidates.length > 1 && !authentication) {
+          throw new TypeError('consumerScope is required for an ambiguous reporting notification account');
+        }
+        return null;
+      }
+      const payloadSha256 = canonicalJsonSha256(payload);
+      const notificationIdentity = {
+        consumerScope: account.consumerScope,
+        accountId: account.accountId,
+        idempotencyKey: notification.idempotency_key,
+        payloadSha256,
+      };
+      if (await options.persistence.notifications?.isProcessed(notificationIdentity)) {
+        return { accountId: account.accountId, reason: notification.notification_type, state: 'duplicate' };
+      }
+      const result = await runSelectedAccount(account, notification.notification_type);
+      if (result.state === 'reconciled' || result.state === 'unchanged') {
+        await options.persistence.notifications?.markProcessed(notificationIdentity);
+      }
+      return result;
     },
   };
 }
@@ -520,7 +577,16 @@ function reportingNotification(value: unknown): ReportingNotificationV1 | null {
     return null;
   }
   boundedString(candidate.account_id, 'notification.account_id', 512);
+  const idempotencyKey = (value as { idempotency_key?: unknown }).idempotency_key;
+  boundedString(idempotencyKey, 'notification.idempotency_key', 255);
+  if (idempotencyKey.length < 16 || !/^[A-Za-z0-9_.:-]+$/.test(idempotencyKey)) {
+    throw new TypeError('notification.idempotency_key is invalid');
+  }
   return value as ReportingNotificationV1;
+}
+
+function runtimeAccountKey(consumerScope: string, accountId: string): string {
+  return canonicalJsonSha256({ consumerScope, accountId });
 }
 
 function consumerError(code: string, message: string): ReportingReconciliationError {

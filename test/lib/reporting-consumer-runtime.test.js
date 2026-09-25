@@ -34,6 +34,7 @@ function page({ checkpoint, total = 0, cursor, hasMore = false, snapshot = check
 function memoryPersistence() {
   const cursors = new Map();
   const leases = new Map();
+  const notifications = new Map();
   const id = key => `${key.consumerScope}|${key.accountId}`;
   return {
     checkpointStore: { async get() {}, async put() {} },
@@ -65,6 +66,23 @@ function memoryPersistence() {
         if (leases.get(lease.scopeKey) !== lease) return false;
         leases.delete(lease.scopeKey);
         return true;
+      },
+    },
+    notifications: {
+      async isProcessed(input) {
+        const key = `${id(input)}|${input.idempotencyKey}`;
+        const existing = notifications.get(key);
+        if (existing && existing !== input.payloadSha256) throw new Error('notification identity conflict');
+        return existing !== undefined;
+      },
+      async markProcessed(input) {
+        const key = `${id(input)}|${input.idempotencyKey}`;
+        const existing = notifications.get(key);
+        if (existing && existing !== input.payloadSha256) throw new Error('notification identity conflict');
+        notifications.set(key, input.payloadSha256);
+      },
+      async pruneProcessed() {
+        return 0;
       },
     },
     cursors,
@@ -144,6 +162,7 @@ describe('Reliable Reporting buyer runtime', () => {
     const repaired = await consumer.handleAuthenticatedNotification({
       notification_type: 'reporting.ledger_changed',
       account_id: ACCOUNT_ID,
+      idempotency_key: 'ledger-notification-0001',
     });
     assert.equal(repaired.state, 'reconciled');
     assert.equal(repaired.changesCheckpoint, 'checkpoint-2');
@@ -155,6 +174,7 @@ describe('Reliable Reporting buyer runtime', () => {
     const duplicate = await consumer.handleAuthenticatedNotification({
       notification_type: 'reporting.delivery_ready',
       account_id: ACCOUNT_ID,
+      idempotency_key: 'delivery-notification-0001',
     });
     assert.equal(duplicate.state, 'unchanged');
     assert.equal(calls.length, beforeDuplicate + 1, 'an empty delta avoids redundant destination work');
@@ -163,10 +183,62 @@ describe('Reliable Reporting buyer runtime', () => {
     const status = await consumer.handleAuthenticatedNotification({
       notification_type: 'reporting.status_changed',
       account_id: ACCOUNT_ID,
+      idempotency_key: 'status-notification-0001',
     });
     assert.equal(status.state, 'reconciled');
     assert.equal(calls.length, beforeStatus + 1, 'clock-driven health always performs a non-incremental read');
+    const repeated = await consumer.handleAuthenticatedNotification({
+      notification_type: 'reporting.status_changed',
+      account_id: ACCOUNT_ID,
+      idempotency_key: 'status-notification-0001',
+    });
+    assert.equal(repeated.state, 'duplicate');
+    assert.equal(calls.length, beforeStatus + 1, 'a processed transport retry performs no ledger read');
     assert.equal(await consumer.handleAuthenticatedNotification({ notification_type: 'unrelated' }), null);
+    await consumer.stop();
+  });
+
+  test('binds duplicate account IDs to the authenticated seller/principal scope', async () => {
+    const { createReliableReportingConsumerV1 } = require('../../dist/lib/reporting/index.js');
+    const persistence = memoryPersistence();
+    const calls = [];
+    const client = scope => ({
+      async getReportingStatus() {
+        calls.push(scope);
+        return page({ checkpoint: `checkpoint-${scope}` });
+      },
+      async syncReportingReceipts() {
+        return { status: 'completed', results: [] };
+      },
+    });
+    const left = account(client('left'));
+    const right = { ...account(client('right')), consumerScope: 'other-seller.example|buyer-principal-1' };
+    const consumer = createReliableReportingConsumerV1({
+      accounts: [left, right],
+      persistence,
+      ownerToken: 'buyer-worker-scoped',
+      runOnStart: false,
+    });
+    await assert.rejects(() => consumer.runAccount(ACCOUNT_ID), /consumerScope is required/);
+    await assert.rejects(
+      () =>
+        consumer.handleAuthenticatedNotification({
+          notification_type: 'reporting.ledger_changed',
+          account_id: ACCOUNT_ID,
+          idempotency_key: 'scope-notification-0001',
+        }),
+      /consumerScope is required/
+    );
+    const result = await consumer.handleAuthenticatedNotification(
+      {
+        notification_type: 'reporting.ledger_changed',
+        account_id: ACCOUNT_ID,
+        idempotency_key: 'scope-notification-0001',
+      },
+      { consumerScope: right.consumerScope }
+    );
+    assert.equal(result.state, 'reconciled');
+    assert.deepEqual(calls, ['right']);
     await consumer.stop();
   });
 
