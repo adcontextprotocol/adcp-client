@@ -171,6 +171,7 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_managed_policy (
   advertised_status_retention_days BIGINT,
   advertised_resource_retention_days BIGINT,
   advertised_authorization_revocation_seconds BIGINT,
+  materialization_planning_cursor TEXT,
   recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   changed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
@@ -179,6 +180,12 @@ ALTER TABLE adcp_reporting_managed_policy
   ADD COLUMN IF NOT EXISTS advertised_resource_retention_days BIGINT;
 ALTER TABLE adcp_reporting_managed_policy
   ADD COLUMN IF NOT EXISTS advertised_authorization_revocation_seconds BIGINT;
+-- Durable round-robin position for deployment-wide materialization planning.
+-- A process-local cursor restarts at the lexically first tenant after every
+-- deploy; without a durable position a continuously busy first account can
+-- consume every bounded planning page and a later account never progresses.
+ALTER TABLE adcp_reporting_managed_policy
+  ADD COLUMN IF NOT EXISTS materialization_planning_cursor TEXT;
 -- Every policy read or adoption locks this durable row. Creating it in the
 -- migration avoids a missing-row predicate gap on a fresh registry.
 INSERT INTO adcp_reporting_managed_policy (policy_key)
@@ -1177,13 +1184,28 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     positiveInteger(limit, 'limit');
     if (limit > MAX_PLAN) throw new RangeError(`limit must not exceed ${MAX_PLAN}`);
     if (!input.account_id) {
-      const accounts = await this.query<QueryRow & { account_id: string }>(
-        'SELECT DISTINCT account_id FROM adcp_reporting_managed_bindings ORDER BY account_id'
-      );
+      const accounts = await this.claimMaterializationPlanningAccounts(limit);
       let planned = 0;
-      for (const { account_id } of accounts.rows) {
-        if (planned >= limit) break;
-        planned += await this.planMaterializations({ account_id, limit: limit - planned });
+      let firstPass = true;
+      while (planned < limit) {
+        let progressed = 0;
+        for (let index = 0; index < accounts.length && planned < limit; index += 1) {
+          // Every selected account receives one bounded share before spare
+          // capacity returns to a hot tenant. The old `limit - planned` call
+          // let the first account consume the whole page.
+          const accountsRemaining = accounts.length - index;
+          const accountLimit = firstPass
+            ? Math.max(1, Math.floor((limit - planned) / accountsRemaining))
+            : limit - planned;
+          const accountPlanned = await this.planMaterializations({
+            account_id: accounts[index],
+            limit: accountLimit,
+          });
+          planned += accountPlanned;
+          progressed += accountPlanned;
+        }
+        if (progressed === 0) break;
+        firstPass = false;
       }
       return planned;
     }
@@ -1288,6 +1310,86 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
         if (inserted.rowCount) remainingByAccount.set(binding.account_id, remaining - 1);
       }
       return planned;
+    });
+  }
+
+  /**
+   * Claims a bounded, durable round-robin page of accounts that currently
+   * have at least one materialization candidate.
+   *
+   * The policy row is the serialization point for deployment-wide planners.
+   * It is locked before account work is selected, matching this store's
+   * policy -> account lock order. The cursor advances before provider work;
+   * a crash may defer a selected account until the ring wraps, but can never
+   * pin every future sweep behind it.
+   */
+  private async claimMaterializationPlanningAccounts(limit: number): Promise<string[]> {
+    return this.transaction(async client => {
+      const policy = await client.query<QueryRow & { materialization_planning_cursor: string | null }>(
+        `SELECT materialization_planning_cursor
+           FROM adcp_reporting_managed_policy
+          WHERE policy_key = 'agent'
+          FOR UPDATE`
+      );
+      if (!policy.rows[0]) {
+        throw new Error(
+          'Managed reporting policy sentinel is missing; apply REPORTING_MANAGED_DELIVERY_MIGRATION before use'
+        );
+      }
+      const eligible = await client.query<QueryRow & { account_id: string }>(
+        `SELECT DISTINCT binding.account_id
+           FROM adcp_reporting_managed_bindings binding
+           JOIN adcp_reporting_destination_authorizations authz
+             ON authz.account_id = binding.account_id
+            AND authz.destination_ref = binding.destination_ref
+            AND authz.generation = binding.authorization_generation
+            AND authz.revoked_at IS NULL
+           JOIN adcp_reporting_obligations obligation
+             ON obligation.configuration_id = binding.configuration_id
+           JOIN adcp_reporting_revisions revision
+             ON revision.obligation_id = obligation.obligation_id
+          WHERE NOT EXISTS (
+                  SELECT 1 FROM adcp_reporting_materializations existing
+                   WHERE existing.configuration_id = binding.configuration_id
+                     AND existing.revision_id = revision.revision_id
+                     AND existing.status IN ('pending', 'available', 'delivered')
+                )
+            AND NOT EXISTS (
+                  SELECT 1 FROM adcp_reporting_materialization_tombstones tomb
+                   WHERE tomb.configuration_id = binding.configuration_id
+                     AND tomb.revision_id = revision.revision_id
+                     AND tomb.reached_success
+                )
+            AND GREATEST(
+                  COALESCE((
+                    SELECT MAX(existing.attempt)
+                      FROM adcp_reporting_materializations existing
+                     WHERE existing.configuration_id = binding.configuration_id
+                       AND existing.revision_id = revision.revision_id
+                  ), 0),
+                  COALESCE((
+                    SELECT tomb.highest_attempt
+                      FROM adcp_reporting_materialization_tombstones tomb
+                     WHERE tomb.configuration_id = binding.configuration_id
+                       AND tomb.revision_id = revision.revision_id
+                  ), 0)
+                ) < ${MAX_MATERIALIZATION_ATTEMPTS}
+          ORDER BY binding.account_id`
+      );
+      if (eligible.rows.length === 0) return [];
+      const accountIds = eligible.rows.map(row => row.account_id);
+      const cursor = policy.rows[0].materialization_planning_cursor;
+      let start = cursor === null ? 0 : accountIds.findIndex(accountId => accountId > cursor);
+      if (start < 0) start = 0;
+      const count = Math.min(limit, accountIds.length);
+      const selected = Array.from({ length: count }, (_, offset) => accountIds[(start + offset) % accountIds.length]!);
+      await client.query(
+        `UPDATE adcp_reporting_managed_policy
+            SET materialization_planning_cursor = $1, changed_at = clock_timestamp()
+          WHERE policy_key = 'agent'`,
+        [selected[selected.length - 1]]
+      );
+      return selected;
     });
   }
 
