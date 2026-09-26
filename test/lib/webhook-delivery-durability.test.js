@@ -386,6 +386,7 @@ test('heartbeat diagnostics do not inflate the delivery attempt count', async ()
   const { privateKey } = generateKeyPairSync('ed25519');
   const privateJwk = privateKey.export({ format: 'jwk' });
   let renewals = 0;
+  let posts = 0;
   const emitter = createWebhookEmitter({
     signerKey: {
       keyid: 'attempt-count-key',
@@ -408,7 +409,9 @@ test('heartbeat diagnostics do not inflate the delivery attempt count', async ()
           heartbeatIntervalMs: 250,
           async renew() {
             renewals++;
-            return renewals === 1;
+            // The emitter renews again immediately before POST. Lose the
+            // lease on the timed heartbeat while the POST is in flight.
+            return renewals <= 2;
           },
           async release() {
             return false;
@@ -422,6 +425,7 @@ test('heartbeat diagnostics do not inflate the delivery attempt count', async ()
     },
     retries: { maxAttempts: 1 },
     fetch: async () => {
+      posts++;
       await new Promise(resolve => setTimeout(resolve, 400));
       return { status: 503, headers: { get: () => undefined } };
     },
@@ -431,6 +435,7 @@ test('heartbeat diagnostics do not inflate the delivery attempt count', async ()
     payload: {},
     delivery_id: 'attempt-count-delivery',
   });
+  assert.equal(posts, 1);
   assert.equal(result.attempts, 1);
   assert.equal(result.errors.length, 2);
   assert.match(result.errors[1], /recovery lease was lost/);

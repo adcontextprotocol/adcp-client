@@ -210,6 +210,77 @@ test('replacement enforces the protocol subscriber cap', async () => {
   );
 });
 
+test('replacement enforces the webhook subscriber_id wire contract', async () => {
+  const { runtime } = makeRuntime();
+  for (const subscriberId of ['reporting health/prod', 'x'.repeat(65)]) {
+    await assert.rejects(
+      () =>
+        runtime.replace(callerA, [
+          {
+            subscriber_id: subscriberId,
+            url: 'https://buyer.example/reporting',
+            event_types: ['capabilities.changed'],
+          },
+        ]),
+      error =>
+        error instanceof NotificationSubscriptionValidationError &&
+        error.field === 'notification_configs[0].subscriber_id'
+    );
+  }
+});
+
+test('allocates a durable attempt ordinal only after retryable authority checks pass', async () => {
+  let authorizationCalls = 0;
+  let durableOrdinal = 0;
+  const attempts = [];
+  const fetch = scriptedFetch([204]);
+  const { runtime } = makeRuntime({
+    authorize: async () => {
+      authorizationCalls += 1;
+      if (authorizationCalls === 1) throw new Error('transient authorization store outage');
+      return { authorized: true };
+    },
+    runtimeOptions: {
+      checkpointDeliveryAttempt: async () => {
+        durableOrdinal += 1;
+        return durableOrdinal;
+      },
+    },
+    emitterFactory: authorizeAttempt =>
+      createWebhookEmitter({
+        signerKey: signerKey(),
+        fetch,
+        retries: { maxAttempts: 1, initialDelayMs: 0, maxDelayMs: 0, jitter: 0 },
+        sleep: async () => {},
+        authorizeAttempt,
+        onAttempt: attempt => attempts.push(attempt),
+      }),
+  });
+  await runtime.replace(callerA, [
+    {
+      subscriber_id: 'reporting-attempts',
+      url: 'https://buyer.example/reporting',
+      event_types: ['capabilities.changed'],
+    },
+  ]);
+  const event = {
+    emissionId: 'attempt-ordinal-emission',
+    notificationId: 'attempt-ordinal-notification',
+    notificationType: 'capabilities.changed',
+    anchor: 'caller',
+    tenantId: callerA.tenantId,
+    principalId: callerA.principalId,
+    payload: { repair: '/capabilities' },
+  };
+  const suppressed = await runtime.emit(event);
+  assert.equal(suppressed.deliveries[0].result.suppression.reason, 'authorization_error');
+  assert.equal(durableOrdinal, 0);
+  const delivered = await runtime.emit(event);
+  assert.equal(delivered.deliveries[0].result.delivered, true);
+  assert.equal(durableOrdinal, 1);
+  assert.equal(attempts[0].attempt, 1);
+});
+
 test('fanout delivery cap fails closed before sending any partial set', async () => {
   const { runtime, fetch } = makeRuntime({ runtimeOptions: { maxFanoutCandidates: 1 } });
   await runtime.replace(callerA, [

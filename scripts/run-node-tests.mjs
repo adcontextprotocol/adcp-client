@@ -46,7 +46,15 @@ export const SLOW_NODE_TESTS = new Set([
   // reason; this one was simply missed.
   'test/lib/conformance-integration.test.js',
   'test/lib/conformance-seeder.test.js',
+  // Loads the complete handler/schema surface across several live agent flows.
+  // It can exceed the default 4 GiB heap when co-hosted with another schema-
+  // heavy file, while remaining stable in the single-concurrency slow lane.
+  'test/lib/handler-controlled-flow.test.js',
   'test/lib/media-buy-lifecycle-release-gate.test.js',
+  // Exercises 54 real-PostgreSQL activity/recovery cases. The expanded
+  // reserved-before-I/O and retry coverage is intentionally comprehensive and
+  // now exceeds the fast lane's exact 60-second per-file ceiling on a cold DB.
+  'test/lib/reporting-notification-activity-pg.test.js',
   'test/lib/storyboard-notices.test.js',
   'test/lib/storyboard-requires-gate.test.js',
   // Boots live MCP agents and loads two real compliance bundles; ~25s standing
@@ -119,10 +127,10 @@ export function resolveTestConcurrency({
     return parsePositiveInteger(env.TEST_CONCURRENCY, 'TEST_CONCURRENCY');
   }
 
-  // Preserve CI's existing machine-derived behavior. Local runs are deliberately
-  // conservative because many test files spawn their own tsc or CLI processes.
-  if (isCiEnvironment(env)) return undefined;
   if (group === 'slow') return 1;
+  // Preserve CI's existing machine-derived behavior for the fast lane. Slow
+  // tests are always serialized because several carry an extended heap limit.
+  if (isCiEnvironment(env)) return undefined;
   return Math.max(1, Math.min(2, parallelism));
 }
 
@@ -223,6 +231,10 @@ export function buildNodeTestArgs(options, env = process.env) {
 
   const containsSlowTest = files.some(file => SLOW_NODE_TESTS.has(normalizeTestPath(file)));
   const timeoutMs = options.group === 'slow' || containsSlowTest ? 180_000 : 60_000;
+  // Slow/schema-heavy files run alone, so grant that one child the
+  // same bounded heap used by the declaration build. This avoids a hard V8
+  // abort while keeping concurrent fast-lane children at Node's lower default.
+  const maxOldSpaceSizeMb = options.group === 'slow' || containsSlowTest ? 8_192 : undefined;
   const concurrency = resolveTestConcurrency({
     cliValue: options.concurrency,
     env,
@@ -231,6 +243,7 @@ export function buildNodeTestArgs(options, env = process.env) {
   const args = buildNodeTestArgsForFiles({
     concurrency,
     files,
+    maxOldSpaceSizeMb,
     reporter: env.TEST_TIMINGS_OUTPUT ? './scripts/node-test-timing-reporter.mjs' : undefined,
     shard: nodeShard,
     timeoutMs,
@@ -241,6 +254,7 @@ export function buildNodeTestArgs(options, env = process.env) {
     assignment,
     concurrency,
     files,
+    maxOldSpaceSizeMb,
     nodeShard,
     requestedFiles,
     timeoutMs,
@@ -315,8 +329,10 @@ export function assignWeightedShards(files, shardCount, timings = {}) {
   return { fallbackDurationMs, shards };
 }
 
-export function buildNodeTestArgsForFiles({ concurrency, files, reporter, shard, timeoutMs }) {
-  const args = [`--test-timeout=${timeoutMs}`, '--test-force-exit'];
+export function buildNodeTestArgsForFiles({ concurrency, files, maxOldSpaceSizeMb, reporter, shard, timeoutMs }) {
+  const args = [];
+  if (maxOldSpaceSizeMb !== undefined) args.push(`--max-old-space-size=${maxOldSpaceSizeMb}`);
+  args.push(`--test-timeout=${timeoutMs}`, '--test-force-exit');
   if (concurrency !== undefined) args.push(`--test-concurrency=${concurrency}`);
   if (shard !== undefined) args.push(`--test-shard=${shard}`);
   if (reporter !== undefined) args.push(`--test-reporter=${reporter}`);
@@ -349,6 +365,7 @@ export function buildNodeTestPlan(options, env = process.env) {
       buildNodeTestArgsForFiles({
         concurrency: invocation.concurrency,
         files,
+        maxOldSpaceSizeMb: invocation.maxOldSpaceSizeMb,
         reporter: env.TEST_TIMINGS_OUTPUT ? './scripts/node-test-timing-reporter.mjs' : undefined,
         shard: invocation.nodeShard,
         timeoutMs: invocation.timeoutMs,

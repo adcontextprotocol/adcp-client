@@ -2841,6 +2841,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         ...(platform.reporting?.syncReportingStatus !== undefined && {
           sync_reporting_status: exactReportingRange,
         }),
+        ...(platform.reporting?.syncReportingReceipts !== undefined && {
+          sync_reporting_receipts: exactReportingRange,
+        }),
         ...(liveMediaBuyDelivery === undefined && {
           get_media_buy_delivery: exactReportingRange,
         }),
@@ -6589,7 +6592,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   };
 
   const reportingContext = (
-    tool: 'get_media_buy_delivery' | 'get_reporting_status' | 'sync_reporting_status',
+    tool: 'get_media_buy_delivery' | 'get_reporting_status' | 'sync_reporting_status' | 'sync_reporting_receipts',
     params: Readonly<Record<string, unknown>>,
     ctx: HandlerContext<Account>
   ): RequestContext<Account> => {
@@ -7288,6 +7291,16 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       ) =>
         projectSync(
           () => reporting.syncReportingStatus!(params, reportingContext('sync_reporting_status', params, ctx)),
+          value => value
+        ),
+    }),
+
+    ...(reporting?.syncReportingReceipts && {
+      syncReportingReceipts: async (
+        ...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['syncReportingReceipts']>>
+      ) =>
+        projectSync(
+          () => reporting.syncReportingReceipts!(params, reportingContext('sync_reporting_receipts', params, ctx)),
           value => value
         ),
     }),
@@ -8991,16 +9004,22 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       // assertions for every adopter, regardless of `CursorPage` output.
       // See adcontextprotocol/adcp#5723 for the reproduction from a 3.1 seller.
       return projectSync(
-        () => accounts.list!(filter, resolveCtx),
-        page => ({
-          status: 'completed' as const,
-          accounts: page.items.map(toWireAccount),
-          pagination: {
-            has_more: page.nextCursor != null,
-            ...(page.nextCursor != null && { cursor: page.nextCursor }),
-            ...(page.totalCount !== undefined && { total_count: page.totalCount }),
-          },
-        })
+        async () => {
+          const page = await accounts.list!(filter, resolveCtx);
+          const response = {
+            status: 'completed' as const,
+            accounts: page.items.map(toWireAccount),
+            pagination: {
+              has_more: page.nextCursor != null,
+              ...(page.nextCursor != null && { cursor: page.nextCursor }),
+              ...(page.totalCount !== undefined && { total_count: page.totalCount }),
+            },
+          };
+          return platform.reporting?.projectListAccounts
+            ? platform.reporting.projectListAccounts(filter, response, resolveCtx)
+            : response;
+        },
+        response => response
       );
     };
   }

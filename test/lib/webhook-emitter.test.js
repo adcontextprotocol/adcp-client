@@ -72,6 +72,77 @@ function suppressingEmitter({ retries, released }) {
   });
 }
 
+test('uses the next durable activity-attempt ordinal after recovery', async () => {
+  const { signerKey } = makeSignerKey();
+  const observed = [];
+  const emitter = createWebhookEmitter({
+    signerKey,
+    publisherScope: 'publisher-recovery-attempts',
+    tenantScope: 'tenant-recovery-attempts',
+    fetch: async () => ({ status: 204, headers: { get: () => undefined } }),
+    resolveAttemptOrdinal: () => 4,
+    onAttempt: attempt => observed.push(attempt.attempt),
+  });
+  const result = await emitter.emitRecovered({
+    key: {
+      publisherScope: 'publisher-recovery-attempts',
+      tenantScope: 'tenant-recovery-attempts',
+      deliveryId: 'delivery-recovery-attempts',
+    },
+    snapshot: {
+      url: 'https://buyer.example/webhook',
+      payload: { notification_type: 'reporting.status_changed' },
+      authentication: null,
+      retries: { maxAttempts: 3, initialDelayMs: 1, maxDelayMs: 1, jitter: 0 },
+    },
+    attemptCount: 2,
+    leaseExpiresAtMs: Date.now() + 60_000,
+    async renew() {
+      return true;
+    },
+    async release() {
+      return true;
+    },
+    async settle() {
+      return true;
+    },
+  });
+  assert.equal(result.delivered, true);
+  assert.deepEqual(observed, [4], 'a recovered run must continue after attempts 1-3 from the first run');
+});
+
+test('does not POST after an awaited observer loses the recovery lease', async () => {
+  const { signerKey } = makeSignerKey();
+  const fetch = stubFetch([{ status: 204 }]);
+  let ownsLease = true;
+  const claim = {
+    ...recordingRecoveryClaim([]),
+    async renew() {
+      return ownsLease;
+    },
+  };
+  const emitter = createWebhookEmitter({
+    signerKey,
+    fetch,
+    publisherScope: 'publisher-observer-fence',
+    tenantScope: 'tenant-observer-fence',
+    deliveryRecovery: {
+      durability: 'durable',
+      checkpoint: () => claim,
+      settle() {},
+    },
+    async onAttempt() {
+      await Promise.resolve();
+      ownsLease = false;
+    },
+  });
+  await assert.rejects(
+    () => emitter.emit({ url: 'https://buyer.example/webhook', payload: {}, delivery_id: 'delivery-observer-fence' }),
+    /recovery lease was lost/
+  );
+  assert.equal(fetch.calls.length, 0);
+});
+
 test('releases a retryable suppression when the configured backoff is fractional', async () => {
   // The recovery contract requires an integer retryAfterMs, but the configured
   // delays were only clamped for sign, never coerced. A fractional
@@ -976,6 +1047,38 @@ describe('createWebhookEmitter: observability', () => {
     assert.strictEqual(results[0].willRetry, true);
     assert.strictEqual(results[1].willRetry, false);
     assert.strictEqual(results[1].status, 204);
+    assert.ok(attempts.every(info => Number.isSafeInteger(info.payload_size_bytes)));
+  });
+
+  test('awaits async observers but isolates their failures from delivery', async () => {
+    const { signerKey } = makeSignerKey();
+    const fetch = stubFetch([{ status: 204 }]);
+    const observerErrors = [];
+    let resultObserved = false;
+    const emitter = createWebhookEmitter({
+      signerKey,
+      fetch,
+      sleep: noSleep,
+      async onAttempt() {
+        await Promise.resolve();
+        throw new Error('telemetry unavailable');
+      },
+      async onAttemptResult() {
+        await Promise.resolve();
+        resultObserved = true;
+        throw new Error('activity completion unavailable');
+      },
+      onAttemptObserverError(error, phase) {
+        observerErrors.push([phase, error.message]);
+      },
+    });
+    const result = await emitter.emit({ url: 'http://x/h', payload: {}, delivery_id: 'delivery.obs-failure' });
+    assert.strictEqual(result.delivered, true);
+    assert.strictEqual(resultObserved, true);
+    assert.deepStrictEqual(observerErrors, [
+      ['attempt', 'telemetry unavailable'],
+      ['result', 'activity completion unavailable'],
+    ]);
   });
 });
 

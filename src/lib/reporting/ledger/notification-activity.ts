@@ -7,12 +7,19 @@ import type {
 } from '../../server/notification-subscriptions';
 import { notificationSuppressionDisposition } from '../../server/notification-subscriptions';
 import type { WebhookAttemptSuppressionReason } from '../../server/webhook-emitter';
-import type { ReportingStatusChangedWebhook } from '../../types/core.generated';
+import type {
+  ReportingDeliveryReadyWebhook,
+  ReportingLedgerChangedWebhook,
+  ReportingStatusChangedWebhook,
+} from '../../types/core.generated';
+import type { ReportingMaterialization } from '../../types';
 import { canonicalJsonSha256 } from '../../utils/jcs';
 import type {
   ReportingHealthV1,
+  ReportingLedgerAdjustmentV1,
   ReportingLedgerNotificationActivityPortV1,
   ReportingLedgerObligationV1,
+  ReportingLedgerRevisionV1,
   ReportingLedgerStatusTransitionV1,
   ReportingLedgerTransactionV1,
   ReportingObservedFinalityV1,
@@ -20,6 +27,9 @@ import type {
 
 const DEFAULT_TABLE = 'adcp_reporting_notification_activity';
 const REPORTING_STATUS_EVENT_TYPE = 'reporting.status_changed';
+const REPORTING_LEDGER_EVENT_TYPE = 'reporting.ledger_changed';
+const REPORTING_DELIVERY_EVENT_TYPE = 'reporting.delivery_ready';
+const REPORTING_EVENT_STORAGE_PREFIX = 'reporting-event:';
 const DEFAULT_NAMESPACE = 'adcp-reporting';
 const DEFAULT_RETENTION_MS = 90 * 24 * 60 * 60 * 1_000;
 const DEFAULT_MAX_PENDING_PER_TENANT = 100_000;
@@ -27,20 +37,23 @@ const DEFAULT_MAX_ATTEMPTS = 100;
 const MAX_ACTIVITY_BYTES = 64 * 1024;
 const MAX_CURSOR_BYTES = 16 * 1024;
 
-export interface ReportingAccountActivityV1 {
+interface ReportingAccountActivityBaseV1 {
   activityId: string;
   transitionId: string;
-  activityType: 'reporting.lifecycle_changed';
-  notificationType?: 'reporting.status_changed';
   tenantId: string;
   accountId: string;
   reporting_obligation_id: string;
+  occurredAt: string;
+}
+
+export interface ReportingLifecycleActivityV1 extends ReportingAccountActivityBaseV1 {
+  activityType: 'reporting.lifecycle_changed';
+  notificationType?: 'reporting.status_changed';
   previousHealth: ReportingHealthV1;
   health: ReportingHealthV1;
   previousFinality: ReportingObservedFinalityV1;
   finality: ReportingObservedFinalityV1;
   issueIds: string[];
-  occurredAt: string;
   correlation: {
     delivery_config_id: string;
     delivery_config_version: number;
@@ -50,6 +63,38 @@ export interface ReportingAccountActivityV1 {
   };
 }
 
+export interface ReportingLedgerChangedActivityV1 extends ReportingAccountActivityBaseV1 {
+  activityType: 'reporting.ledger_changed';
+  notificationType: 'reporting.ledger_changed';
+  changeKind: 'revision_published' | 'adjustment_published';
+  reporting_revision_id?: string;
+  supersedes_reporting_revision_id?: string;
+  finality?: ReportingLedgerRevisionV1['finality'];
+  reporting_adjustment_id?: string;
+  adjusts_reporting_revision_id?: string;
+}
+
+export interface ReportingDeliveryReadyActivityV1 extends ReportingAccountActivityBaseV1 {
+  activityType: 'reporting.delivery_ready';
+  notificationType: 'reporting.delivery_ready';
+  delivery_config_id: string;
+  delivery_config_version: number;
+  feed_purpose: ReportingLedgerObligationV1['feedPurpose'];
+  reporting_revision_id: string;
+  reporting_materialization_id: string;
+  readiness: 'available' | 'delivered';
+  finality: ReportingLedgerRevisionV1['finality'];
+  data_through: string | null;
+}
+
+export type ReportingNotificationActivityV1 =
+  | ReportingLifecycleActivityV1
+  | ReportingLedgerChangedActivityV1
+  | ReportingDeliveryReadyActivityV1;
+
+/** Backwards-compatible lifecycle activity surface returned by listActivity(). */
+export interface ReportingAccountActivityV1 extends ReportingLifecycleActivityV1 {}
+
 export interface ReportingAccountActivityRecordV1 extends ReportingAccountActivityV1 {
   recordedAt: string;
   notificationProjectedAt?: string;
@@ -57,8 +102,20 @@ export interface ReportingAccountActivityRecordV1 extends ReportingAccountActivi
   notificationAbandonedAt?: string;
 }
 
+export type ReportingNotificationActivityRecordV1 = ReportingNotificationActivityV1 & {
+  recordedAt: string;
+  notificationProjectedAt?: string;
+  notificationAbandonedAt?: string;
+};
+
 export interface ReportingAccountActivityPageV1 {
   activities: ReportingAccountActivityRecordV1[];
+  hasMore: boolean;
+  nextCursor?: string;
+}
+
+export interface ReportingNotificationActivityPageV1 {
+  activities: ReportingNotificationActivityRecordV1[];
   hasMore: boolean;
   nextCursor?: string;
 }
@@ -184,6 +241,8 @@ export interface PostgresReportingNotificationActivityRuntime {
     leaseMs?: number;
     limit?: number;
     retryAfterMs?: number;
+    /** Cancels new claims and propagates shutdown between deliveries. */
+    signal?: AbortSignal;
     /** Operational observer; hook failures never change durable lease semantics. */
     onError?: (error: unknown, claim: Readonly<ReportingNotificationProjectionErrorV1>) => void | Promise<void>;
   }): Promise<ReportingNotificationRecoveryMetricsV1>;
@@ -194,6 +253,13 @@ export interface PostgresReportingNotificationActivityRuntime {
     cursor?: string;
     limit?: number;
   }): Promise<ReportingAccountActivityPageV1>;
+  /** All reporting notification activity, including ledger and delivery-ready events. */
+  listNotificationActivity(input: {
+    tenantId: string;
+    accountId: string;
+    cursor?: string;
+    limit?: number;
+  }): Promise<ReportingNotificationActivityPageV1>;
   pruneProjected(options?: { limit?: number }): Promise<number>;
 }
 
@@ -231,6 +297,7 @@ export function getReportingNotificationActivityMigration(options: { tableName?:
   const table = quoteIdentifier(raw);
   const rawRecipients = recipientTableName(raw);
   const recipientTable = quoteIdentifier(rawRecipients, MAX_RECIPIENT_TABLE_BYTES);
+  const cursorTable = quoteIdentifier(`${raw}_cursor`, MAX_RECIPIENT_TABLE_BYTES);
   return `
 CREATE TABLE IF NOT EXISTS ${table} (
   namespace              TEXT NOT NULL,
@@ -264,6 +331,12 @@ CREATE TABLE IF NOT EXISTS ${table} (
     -- delivered, so it stops consuming tenant capacity but stays auditable.
     (state = 'abandoned' AND projected_at IS NULL AND retain_until IS NOT NULL AND abandoned_at IS NOT NULL)
   )
+);
+
+CREATE TABLE IF NOT EXISTS ${cursorTable} (
+  namespace     TEXT PRIMARY KEY,
+  tenant_scope TEXT,
+  changed_at   TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
 -- Upgrade in place, once, and touch nothing on a rerun.
@@ -305,7 +378,8 @@ BEGIN
   ) THEN
     ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${raw}_valid_state;
     ALTER TABLE ${table} ADD CONSTRAINT ${raw}_valid_state
-      CHECK (state IN ('pending', 'projected', 'abandoned'));
+      CHECK (state IN ('pending', 'projected', 'abandoned')) NOT VALID;
+    ALTER TABLE ${table} VALIDATE CONSTRAINT ${raw}_valid_state;
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
@@ -317,7 +391,8 @@ BEGIN
       (state = 'pending' AND notification_required AND projected_at IS NULL AND retain_until IS NULL) OR
       (state = 'projected' AND projected_at IS NOT NULL AND retain_until IS NOT NULL) OR
       (state = 'abandoned' AND projected_at IS NULL AND retain_until IS NOT NULL AND abandoned_at IS NOT NULL)
-    );
+    ) NOT VALID;
+    ALTER TABLE ${table} VALIDATE CONSTRAINT ${raw}_valid_projection;
   END IF;
   SELECT index_class.oid INTO stale_index
     FROM pg_index
@@ -440,6 +515,15 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_index
      JOIN pg_class index_class ON index_class.oid = pg_index.indexrelid
+    WHERE pg_index.indrelid = activity_table AND index_class.relname = 'idx_${raw}_pending_tenant_due'
+  ) THEN
+    CREATE INDEX idx_${raw}_pending_tenant_due
+      ON ${table}(namespace, tenant_scope, next_attempt_at, lease_expires_at)
+      WHERE state = 'pending';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_index
+     JOIN pg_class index_class ON index_class.oid = pg_index.indexrelid
     WHERE pg_index.indrelid = activity_table AND index_class.relname = 'idx_${raw}_account_activity'
   ) THEN
     CREATE INDEX idx_${raw}_account_activity
@@ -473,7 +557,7 @@ export const REPORTING_NOTIFICATION_ACTIVITY_MIGRATION = getReportingNotificatio
  */
 /** Durable store a checkpoint is bound to, so a mismatched pairing cannot be silent. */
 export interface ReportingNotificationAttemptCheckpointV1 {
-  (input: Readonly<NotificationDeliveryAttemptCheckpointInput>): Promise<void>;
+  (input: Readonly<NotificationDeliveryAttemptCheckpointInput>): Promise<void | number>;
   /**
    * Exact `(queryable, namespace, table)` this checkpoint writes to. Present on
    * anything this module builds; absent on an adopter's own forwarder, which is
@@ -488,8 +572,8 @@ export function createPostgresReportingNotificationAttemptCheckpoint(options: {
   namespace?: string;
   tableName?: string;
   /**
-   * Additional event types this checkpoint owns, on top of the mandatory
-   * `reporting.status_changed`. Anything it does not own is another
+   * Additional event types this checkpoint owns, on top of all three Reliable
+   * Reporting events. Anything it does not own is another
    * subsystem's notification and is passed through untouched — the runtime hook
    * is global, and failing closed on an event that was never frozen here would
    * suppress every attempt of that event until its retry horizon expired. This
@@ -504,11 +588,15 @@ export function createPostgresReportingNotificationAttemptCheckpoint(options: {
   assertIdentifier(namespace, 'namespace', 255);
   const rawTable = options.tableName ?? DEFAULT_TABLE;
   const recipientTable = quoteIdentifier(recipientTableName(rawTable), MAX_RECIPIENT_TABLE_BYTES);
-  // Always owns the reporting event. Letting configuration replace the set
-  // would silently stop checkpointing reporting deliveries while the runtime
-  // still advertises checkpoint support, which is the exact shape of the bug
-  // the checkpoint exists to prevent.
-  const owned = new Set([REPORTING_STATUS_EVENT_TYPE, ...(options.eventTypes ?? [])]);
+  // Always owns all Reliable Reporting events. Letting configuration replace
+  // the set would silently stop checkpointing one delivery family while the
+  // runtime still advertises checkpoint support.
+  const owned = new Set([
+    REPORTING_STATUS_EVENT_TYPE,
+    REPORTING_LEDGER_EVENT_TYPE,
+    REPORTING_DELIVERY_EVENT_TYPE,
+    ...(options.eventTypes ?? []),
+  ]);
   const checkpoint = async (input: Readonly<NotificationDeliveryAttemptCheckpointInput>): Promise<void> => {
     if (!owned.has(input.eventType)) return;
     const fingerprint = recipientFingerprint({
@@ -632,6 +720,7 @@ export function createPostgresReportingNotificationActivityRuntime(
   boundedInteger(maxAttempts, 'maxAttempts', 1, 100_000);
   const recipientRawTable = recipientTableName(rawTable);
   const recipientTable = quoteIdentifier(recipientRawTable, MAX_RECIPIENT_TABLE_BYTES);
+  const cursorTable = quoteIdentifier(`${rawTable}_cursor`, MAX_RECIPIENT_TABLE_BYTES);
   // Reject an unstorable configuration at construction instead of discovering it
   // as a poisoned claim under load. Only the recipient primary key is indexed,
   // and everything in it except namespace and transition id is fixed width.
@@ -647,109 +736,251 @@ export function createPostgresReportingNotificationActivityRuntime(
     );
   }
 
+  const persistActivity = async (
+    transaction: ReportingLedgerTransactionV1,
+    input: {
+      eventId: string;
+      obligation: Readonly<ReportingLedgerObligationV1>;
+      activity: ReportingNotificationActivityV1;
+      notificationRequired: boolean;
+    }
+  ): Promise<void> => {
+    const { activity, eventId, notificationRequired, obligation } = input;
+    const persistenceEventId =
+      activity.activityType === 'reporting.lifecycle_changed'
+        ? eventId.startsWith(REPORTING_EVENT_STORAGE_PREFIX) ||
+          Buffer.byteLength(eventId, 'utf8') > 255 ||
+          !/^[A-Za-z0-9_.:-]+$/.test(eventId)
+          ? `${REPORTING_EVENT_STORAGE_PREFIX}${canonicalJsonSha256({ kind: 'lifecycle', eventId })}`
+          : eventId
+        : `${REPORTING_EVENT_STORAGE_PREFIX}${canonicalJsonSha256({
+            kind: activity.activityType,
+            changeKind: activity.activityType === 'reporting.ledger_changed' ? activity.changeKind : 'ready',
+            eventId,
+          })}`;
+    const accountId = obligation.account.account_id;
+    const tenantId = activity.tenantId;
+    if (Buffer.byteLength(JSON.stringify(activity), 'utf8') > MAX_ACTIVITY_BYTES) {
+      throw new RangeError('Reporting notification/activity intent exceeds 64 KiB');
+    }
+    const fingerprint = canonicalJsonSha256(activity);
+    if (notificationRequired) {
+      await reportingActivityDatabaseOperation('Reporting notification/activity capacity check failed', async () => {
+        await transaction.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+          `adcp-reporting-activity-cap:${namespace}:${tenantId}`,
+        ]);
+        const existing = await transaction.query<{
+          intent_fingerprint: string;
+          tenant_scope: string;
+          account_id: string;
+          obligation_id: string;
+        }>(
+          `SELECT intent_fingerprint, tenant_scope, account_id, obligation_id
+             FROM ${table}
+            WHERE namespace = $1 AND transition_id = $2`,
+          [namespace, persistenceEventId]
+        );
+        const existingIntent = existing.rows[0];
+        if (existingIntent) {
+          if (
+            existingIntent.intent_fingerprint !== fingerprint ||
+            existingIntent.tenant_scope !== tenantId ||
+            existingIntent.account_id !== accountId ||
+            existingIntent.obligation_id !== obligation.reporting_obligation_id
+          ) {
+            throw new Error('Reporting event identity conflicts with existing notification/activity intent');
+          }
+          return;
+        }
+        const pending = await transaction.query<{ count: number }>(
+          `SELECT COUNT(*)::integer AS count
+             FROM (
+               SELECT 1 FROM ${table}
+                WHERE namespace = $1 AND tenant_scope = $2 AND state = 'pending'
+                LIMIT $3
+             ) bounded_pending`,
+          [namespace, tenantId, maxPendingPerTenant]
+        );
+        if ((pending.rows[0]?.count ?? 0) >= maxPendingPerTenant) {
+          throw new Error('Reporting notification activity pending capacity reached; recovery must catch up');
+        }
+      });
+    }
+    let write: { rowCount: number | null };
+    try {
+      write = await transaction.query(
+        `INSERT INTO ${table} (
+         namespace, transition_id, tenant_scope, account_id, obligation_id,
+         activity, intent_fingerprint, notification_required, state,
+         projected_at, retain_until
+       ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8,
+                 CASE WHEN $8 THEN 'pending' ELSE 'projected' END,
+                 CASE WHEN $8 THEN NULL ELSE clock_timestamp() END,
+                 CASE WHEN $8 THEN NULL ELSE clock_timestamp() + ($9::bigint * INTERVAL '1 millisecond') END)
+       ON CONFLICT (namespace, transition_id) DO UPDATE SET
+         transition_id = EXCLUDED.transition_id
+       WHERE ${table}.intent_fingerprint = EXCLUDED.intent_fingerprint
+         AND ${table}.tenant_scope = EXCLUDED.tenant_scope
+         AND ${table}.account_id = EXCLUDED.account_id
+         AND ${table}.obligation_id = EXCLUDED.obligation_id
+       RETURNING transition_id`,
+        [
+          namespace,
+          persistenceEventId,
+          tenantId,
+          accountId,
+          obligation.reporting_obligation_id,
+          JSON.stringify(activity),
+          fingerprint,
+          notificationRequired,
+          retentionMs,
+        ]
+      );
+    } catch (cause) {
+      if (isPostgresUndefinedTable(cause)) {
+        throw new Error(
+          'Reporting notification/activity persistence failed: run getReportingNotificationActivityMigration() before serving',
+          { cause }
+        );
+      }
+      throw new Error('Reporting notification/activity persistence failed', { cause });
+    }
+    if (write.rowCount !== 1) {
+      throw new Error('Reporting event identity conflicts with existing notification/activity intent');
+    }
+  };
+
+  const activityScope = (
+    transaction: ReportingLedgerTransactionV1,
+    obligation: Readonly<ReportingLedgerObligationV1>,
+    eventId: string
+  ): { accountId: string; tenantId: string } => {
+    if (!transaction || typeof transaction.query !== 'function') {
+      throw new TypeError('Reporting notification/activity persistence requires the active ledger transaction');
+    }
+    const accountId = obligation.account.account_id;
+    assertIdentifier(accountId, 'accountId', 512);
+    assertIdentifier(eventId, 'eventId', MAX_TRANSITION_ID_BYTES);
+    const tenantId = options.tenantScopeForAccount(accountId);
+    if (isPromiseLike(tenantId)) {
+      throw new TypeError('tenantScopeForAccount must be synchronous and side-effect free');
+    }
+    assertIdentifier(tenantId, 'tenantId', 512);
+    return { accountId, tenantId };
+  };
+
+  const databaseNow = async (transaction: ReportingLedgerTransactionV1): Promise<string> => {
+    const result = await transaction.query<{ now: Date | string }>('SELECT clock_timestamp() AS now');
+    if (!result.rows[0]) throw new Error('Reporting notification/activity database clock is unavailable');
+    return asIso(result.rows[0].now);
+  };
+
   const port: ReportingLedgerNotificationActivityPortV1<ReportingLedgerTransactionV1> = {
     async recordTransition(input, transaction) {
-      if (!transaction || typeof transaction.query !== 'function') {
-        throw new TypeError('Reporting notification/activity persistence requires the active ledger transaction');
-      }
-      const accountId = input.obligation.account.account_id;
-      assertIdentifier(accountId, 'accountId', 512);
-      assertIdentifier(input.transition.transitionId, 'transitionId', MAX_TRANSITION_ID_BYTES);
-      const tenantId = options.tenantScopeForAccount(accountId);
-      if (isPromiseLike(tenantId)) {
-        throw new TypeError('tenantScopeForAccount must be synchronous and side-effect free');
-      }
-      assertIdentifier(tenantId, 'tenantId', 512);
+      const { tenantId } = activityScope(transaction, input.obligation, input.transition.transitionId);
       if (input.transition.reporting_obligation_id !== input.obligation.reporting_obligation_id) {
         throw new Error('Reporting transition and authoritative obligation identities disagree');
       }
       const activity = buildActivity(namespace, tenantId, input.transition, input.obligation);
       const notificationRequired = input.transition.previousHealth !== input.transition.health;
-      if (Buffer.byteLength(JSON.stringify(activity), 'utf8') > MAX_ACTIVITY_BYTES) {
-        throw new RangeError('Reporting notification/activity intent exceeds 64 KiB');
-      }
-      const fingerprint = canonicalJsonSha256(activity);
-      if (notificationRequired) {
-        await reportingActivityDatabaseOperation('Reporting notification/activity capacity check failed', async () => {
-          await transaction.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
-            `adcp-reporting-activity-cap:${namespace}:${tenantId}`,
-          ]);
-          const existing = await transaction.query<{
-            intent_fingerprint: string;
-            tenant_scope: string;
-            account_id: string;
-            obligation_id: string;
-          }>(
-            `SELECT intent_fingerprint, tenant_scope, account_id, obligation_id
-               FROM ${table}
-              WHERE namespace = $1 AND transition_id = $2`,
-            [namespace, input.transition.transitionId]
-          );
-          const existingIntent = existing.rows[0];
-          if (existingIntent) {
-            if (
-              existingIntent.intent_fingerprint !== fingerprint ||
-              existingIntent.tenant_scope !== tenantId ||
-              existingIntent.account_id !== accountId ||
-              existingIntent.obligation_id !== input.obligation.reporting_obligation_id
-            ) {
-              throw new Error('Reporting transition identity conflicts with existing notification/activity intent');
-            }
-            return;
-          }
-          const pending = await transaction.query<{ count: number }>(
-            `SELECT COUNT(*)::integer AS count FROM ${table}
-              WHERE namespace = $1 AND tenant_scope = $2 AND state = 'pending'`,
-            [namespace, tenantId]
-          );
-          if ((pending.rows[0]?.count ?? 0) >= maxPendingPerTenant) {
-            throw new Error('Reporting notification activity pending capacity reached; recovery must catch up');
-          }
-        });
-      }
-      let write: { rowCount: number | null };
-      try {
-        write = await transaction.query(
-          `INSERT INTO ${table} (
-           namespace, transition_id, tenant_scope, account_id, obligation_id,
-           activity, intent_fingerprint, notification_required, state,
-           projected_at, retain_until
-         ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8,
-                   CASE WHEN $8 THEN 'pending' ELSE 'projected' END,
-                   CASE WHEN $8 THEN NULL ELSE clock_timestamp() END,
-                   CASE WHEN $8 THEN NULL ELSE clock_timestamp() + ($9::bigint * INTERVAL '1 millisecond') END)
-         ON CONFLICT (namespace, transition_id) DO UPDATE SET
-           transition_id = EXCLUDED.transition_id
-         WHERE ${table}.intent_fingerprint = EXCLUDED.intent_fingerprint
-           AND ${table}.tenant_scope = EXCLUDED.tenant_scope
-           AND ${table}.account_id = EXCLUDED.account_id
-           AND ${table}.obligation_id = EXCLUDED.obligation_id
-         RETURNING transition_id`,
-          [
-            namespace,
-            input.transition.transitionId,
-            tenantId,
-            accountId,
-            input.obligation.reporting_obligation_id,
-            JSON.stringify(activity),
-            fingerprint,
-            notificationRequired,
-            retentionMs,
-          ]
-        );
-      } catch (cause) {
-        if (isPostgresUndefinedTable(cause)) {
-          throw new Error(
-            'Reporting notification/activity persistence failed: run getReportingNotificationActivityMigration() before serving',
-            { cause }
-          );
-        }
-        throw new Error('Reporting notification/activity persistence failed', { cause });
-      }
-      if (write.rowCount !== 1) {
-        throw new Error('Reporting transition identity conflicts with existing notification/activity intent');
-      }
+      await persistActivity(transaction, {
+        eventId: input.transition.transitionId,
+        obligation: input.obligation,
+        activity,
+        notificationRequired,
+      });
     },
+    async recordLedgerChanged(input, transaction) {
+      const record = 'revision' in input ? input.revision : input.adjustment;
+      const eventId =
+        'revision' in input ? input.revision.reporting_revision_id : input.adjustment.reporting_adjustment_id;
+      const { tenantId } = activityScope(transaction, input.obligation, eventId);
+      if (record.reporting_obligation_id !== input.obligation.reporting_obligation_id) {
+        throw new Error('Reporting ledger record and authoritative obligation identities disagree');
+      }
+      const occurredAt = await databaseNow(transaction);
+      const activity = buildLedgerChangedActivity(namespace, tenantId, occurredAt, input);
+      await persistActivity(transaction, {
+        eventId,
+        obligation: input.obligation,
+        activity,
+        notificationRequired: true,
+      });
+    },
+    async recordDeliveryReady(input, transaction) {
+      const eventId = input.materialization.reporting_materialization_id;
+      const { tenantId } = activityScope(transaction, input.obligation, eventId);
+      if (
+        input.revision.reporting_obligation_id !== input.obligation.reporting_obligation_id ||
+        input.materialization.reporting_revision_id !== input.revision.reporting_revision_id
+      ) {
+        throw new Error('Reporting delivery-ready records do not share one authoritative ledger identity');
+      }
+      if (input.materialization.status !== 'available' && input.materialization.status !== 'delivered') {
+        throw new Error('Reporting delivery-ready activity requires a successful materialization');
+      }
+      const occurredAt = await databaseNow(transaction);
+      const activity = buildDeliveryReadyActivity(namespace, tenantId, occurredAt, input);
+      await persistActivity(transaction, {
+        eventId,
+        obligation: input.obligation,
+        activity,
+        notificationRequired: true,
+      });
+    },
+  };
+
+  const readActivity = async (
+    input: { tenantId: string; accountId: string; cursor?: string; limit?: number },
+    lifecycleOnly: boolean
+  ): Promise<ReportingNotificationActivityPageV1> => {
+    assertIdentifier(input.tenantId, 'tenantId', 512);
+    assertIdentifier(input.accountId, 'accountId', 512);
+    const expectedTenantId = options.tenantScopeForAccount(input.accountId);
+    if (isPromiseLike(expectedTenantId)) {
+      throw new TypeError('tenantScopeForAccount must be synchronous and side-effect free');
+    }
+    assertIdentifier(expectedTenantId, 'tenantId', 512);
+    if (expectedTenantId !== input.tenantId) {
+      throw new TypeError('Reporting account activity scope does not match the trusted account directory');
+    }
+    const limit = input.limit ?? 100;
+    boundedInteger(limit, 'limit', 1, 200);
+    const before = decodeCursor(input.cursor, namespace, input.tenantId, input.accountId);
+    const result = await reportingActivityDatabaseOperation('Reporting account activity read failed', () =>
+      options.db.query<ActivityRow>(
+        `SELECT activity, state, created_at, projected_at, abandoned_at, activity_sequence
+           FROM ${table}
+          WHERE namespace = $1 AND tenant_scope = $2 AND account_id = $3
+            AND ($4::bigint IS NULL OR activity_sequence < $4)
+            AND ($6::boolean = false OR activity->>'activityType' = 'reporting.lifecycle_changed')
+          ORDER BY activity_sequence DESC
+          LIMIT $5`,
+        [namespace, input.tenantId, input.accountId, before ?? null, limit + 1, lifecycleOnly]
+      )
+    );
+    const selected = result.rows.slice(0, limit);
+    const activities = selected.map(row => ({
+      ...structuredClone(row.activity),
+      recordedAt: asIso(row.created_at),
+      ...(row.projected_at ? { notificationProjectedAt: asIso(row.projected_at) } : {}),
+      ...(row.abandoned_at ? { notificationAbandonedAt: asIso(row.abandoned_at) } : {}),
+    }));
+    const hasMore = result.rows.length > limit;
+    return {
+      activities,
+      hasMore,
+      ...(hasMore && selected.length > 0
+        ? {
+            nextCursor: encodeCursor(
+              namespace,
+              input.tenantId,
+              input.accountId,
+              String(selected[selected.length - 1]!.activity_sequence)
+            ),
+          }
+        : {}),
+    };
   };
 
   return {
@@ -782,6 +1013,7 @@ export function createPostgresReportingNotificationActivityRuntime(
                   attempt_at, settled_at, disposition
              FROM ${recipientTable} LIMIT 0`
         );
+        await options.db.query(`SELECT namespace, tenant_scope, changed_at FROM ${cursorTable} LIMIT 0`);
       } catch (cause) {
         throw new Error(
           'Reporting notification/activity probe failed: run getReportingNotificationActivityMigration() before serving',
@@ -809,9 +1041,18 @@ export function createPostgresReportingNotificationActivityRuntime(
       };
       // Claim one row at a time. Pre-claiming a batch would let later leases
       // expire while an earlier subscriber fanout is still running.
-      for (let index = 0; index < limit; index += 1) {
-        const [claim] = await claimPending(options.db, table, namespace, ownerToken, leaseMs, 1);
-        if (!claim) break;
+      let emptyTenantClaims = 0;
+      while (metrics.claimed < limit && emptyTenantClaims < 8) {
+        recoveryOptions.signal?.throwIfAborted();
+        const [claim] = await claimPending(options.db, table, cursorTable, namespace, ownerToken, leaseMs, 1);
+        if (!claim) {
+          // The cursor tenant may be wholly peer-locked. Advancing the cursor
+          // and trying a bounded number of peers preserves cross-process
+          // fairness without a full-backlog expression sort.
+          emptyTenantClaims += 1;
+          continue;
+        }
+        emptyTenantClaims = 0;
         metrics.claimed += 1;
         let leaseLost = false;
         let renewing = false;
@@ -834,15 +1075,14 @@ export function createPostgresReportingNotificationActivityRuntime(
         );
         heartbeat.unref?.();
         try {
-          if (claim.activity.notificationType !== 'reporting.status_changed') {
-            throw new Error('Pending reporting activity is not a health-transition notification');
-          }
+          const notificationType = claim.activity.notificationType;
+          if (!notificationType) throw new Error('Pending reporting activity has no notification type');
           let frozen: readonly NotificationRecipientRef[] = [];
           let froze = false;
           const result = await options.notifications.emit({
             emissionId: claim.activity.activityId,
-            notificationId: claim.activity.transitionId,
-            notificationType: 'reporting.status_changed',
+            notificationId: claim.transitionId,
+            notificationType,
             anchor: 'account',
             tenantId: claim.tenantId,
             accountId: claim.accountId,
@@ -865,6 +1105,9 @@ export function createPostgresReportingNotificationActivityRuntime(
               return frozen;
             },
           });
+          // Once emit returns, an external POST may already have succeeded.
+          // Finish durable recipient settlement and projection even when
+          // shutdown was requested; retrying here would duplicate the send.
           // Declaring checkpoint support is not enough: a port that never calls
           // freezeRecipients leaves no frozen recipient, so the checkpoint
           // suppresses every delivery and settlement would then see nothing
@@ -921,52 +1164,10 @@ export function createPostgresReportingNotificationActivityRuntime(
       return metrics;
     },
     async listActivity(input) {
-      assertIdentifier(input.tenantId, 'tenantId', 512);
-      assertIdentifier(input.accountId, 'accountId', 512);
-      const expectedTenantId = options.tenantScopeForAccount(input.accountId);
-      if (isPromiseLike(expectedTenantId)) {
-        throw new TypeError('tenantScopeForAccount must be synchronous and side-effect free');
-      }
-      assertIdentifier(expectedTenantId, 'tenantId', 512);
-      if (expectedTenantId !== input.tenantId) {
-        throw new TypeError('Reporting account activity scope does not match the trusted account directory');
-      }
-      const limit = input.limit ?? 100;
-      boundedInteger(limit, 'limit', 1, 200);
-      const before = decodeCursor(input.cursor, namespace, input.tenantId, input.accountId);
-      const result = await reportingActivityDatabaseOperation('Reporting account activity read failed', () =>
-        options.db.query<ActivityRow>(
-          `SELECT activity, state, created_at, projected_at, abandoned_at, activity_sequence
-           FROM ${table}
-          WHERE namespace = $1 AND tenant_scope = $2 AND account_id = $3
-            AND ($4::bigint IS NULL OR activity_sequence < $4)
-          ORDER BY activity_sequence DESC
-          LIMIT $5`,
-          [namespace, input.tenantId, input.accountId, before ?? null, limit + 1]
-        )
-      );
-      const selected = result.rows.slice(0, limit);
-      const activities = selected.map(row => ({
-        ...structuredClone(row.activity),
-        recordedAt: asIso(row.created_at),
-        ...(row.projected_at ? { notificationProjectedAt: asIso(row.projected_at) } : {}),
-        ...(row.abandoned_at ? { notificationAbandonedAt: asIso(row.abandoned_at) } : {}),
-      }));
-      const hasMore = result.rows.length > limit;
-      return {
-        activities,
-        hasMore,
-        ...(hasMore && selected.length > 0
-          ? {
-              nextCursor: encodeCursor(
-                namespace,
-                input.tenantId,
-                input.accountId,
-                String(selected[selected.length - 1]!.activity_sequence)
-              ),
-            }
-          : {}),
-      };
+      return (await readActivity(input, true)) as ReportingAccountActivityPageV1;
+    },
+    async listNotificationActivity(input) {
+      return readActivity(input, false);
     },
     async pruneProjected(pruneOptions = {}) {
       const limit = pruneOptions.limit ?? 1_000;
@@ -991,7 +1192,7 @@ export function createPostgresReportingNotificationActivityRuntime(
 }
 
 interface ActivityRow extends Record<string, unknown> {
-  activity: ReportingAccountActivityV1;
+  activity: ReportingNotificationActivityV1;
   state: 'pending' | 'projected' | 'abandoned';
   created_at: Date | string;
   projected_at: Date | string | null;
@@ -1003,7 +1204,7 @@ interface ClaimedActivity {
   transitionId: string;
   tenantId: string;
   accountId: string;
-  activity: ReportingAccountActivityV1;
+  activity: ReportingNotificationActivityV1;
   leaseOwner: string;
   leaseVersion: string;
   attemptCount: number;
@@ -1047,27 +1248,176 @@ function buildActivity(
   };
 }
 
+function activityIdentity(
+  namespace: string,
+  tenantId: string,
+  accountId: string,
+  eventId: string,
+  eventType: string
+): string {
+  return `ract_${canonicalJsonSha256({ namespace, tenantId, accountId, eventId, eventType }).slice(0, 32)}`;
+}
+
+function buildLedgerChangedActivity(
+  namespace: string,
+  tenantId: string,
+  occurredAt: string,
+  input:
+    | {
+        obligation: Readonly<ReportingLedgerObligationV1>;
+        revision: Readonly<ReportingLedgerRevisionV1>;
+      }
+    | {
+        obligation: Readonly<ReportingLedgerObligationV1>;
+        adjustment: Readonly<ReportingLedgerAdjustmentV1>;
+      }
+): ReportingLedgerChangedActivityV1 {
+  const accountId = input.obligation.account.account_id;
+  if ('revision' in input) {
+    const eventId = input.revision.reporting_revision_id;
+    return {
+      activityId: activityIdentity(
+        namespace,
+        tenantId,
+        accountId,
+        eventId,
+        `${REPORTING_LEDGER_EVENT_TYPE}:revision_published`
+      ),
+      transitionId: eventId,
+      activityType: REPORTING_LEDGER_EVENT_TYPE,
+      notificationType: REPORTING_LEDGER_EVENT_TYPE,
+      tenantId,
+      accountId,
+      reporting_obligation_id: input.obligation.reporting_obligation_id,
+      occurredAt,
+      changeKind: 'revision_published',
+      reporting_revision_id: eventId,
+      ...(input.revision.supersedes_reporting_revision_id
+        ? { supersedes_reporting_revision_id: input.revision.supersedes_reporting_revision_id }
+        : {}),
+      finality: input.revision.finality,
+    };
+  }
+  const eventId = input.adjustment.reporting_adjustment_id;
+  return {
+    activityId: activityIdentity(
+      namespace,
+      tenantId,
+      accountId,
+      eventId,
+      `${REPORTING_LEDGER_EVENT_TYPE}:adjustment_published`
+    ),
+    transitionId: eventId,
+    activityType: REPORTING_LEDGER_EVENT_TYPE,
+    notificationType: REPORTING_LEDGER_EVENT_TYPE,
+    tenantId,
+    accountId,
+    reporting_obligation_id: input.obligation.reporting_obligation_id,
+    occurredAt,
+    changeKind: 'adjustment_published',
+    reporting_adjustment_id: eventId,
+    adjusts_reporting_revision_id: input.adjustment.adjusts_reporting_revision_id,
+  };
+}
+
+function buildDeliveryReadyActivity(
+  namespace: string,
+  tenantId: string,
+  occurredAt: string,
+  input: {
+    obligation: Readonly<ReportingLedgerObligationV1>;
+    revision: Readonly<ReportingLedgerRevisionV1>;
+    materialization: Readonly<ReportingMaterialization>;
+  }
+): ReportingDeliveryReadyActivityV1 {
+  const accountId = input.obligation.account.account_id;
+  const eventId = input.materialization.reporting_materialization_id;
+  const readiness = input.materialization.status;
+  if (readiness !== 'available' && readiness !== 'delivered') {
+    throw new Error('Reporting delivery-ready activity requires a successful materialization');
+  }
+  return {
+    activityId: activityIdentity(namespace, tenantId, accountId, eventId, REPORTING_DELIVERY_EVENT_TYPE),
+    transitionId: eventId,
+    activityType: REPORTING_DELIVERY_EVENT_TYPE,
+    notificationType: REPORTING_DELIVERY_EVENT_TYPE,
+    tenantId,
+    accountId,
+    reporting_obligation_id: input.obligation.reporting_obligation_id,
+    occurredAt,
+    delivery_config_id: input.obligation.delivery_config_id,
+    delivery_config_version: input.obligation.delivery_config_version,
+    feed_purpose: input.obligation.feedPurpose,
+    reporting_revision_id: input.revision.reporting_revision_id,
+    reporting_materialization_id: eventId,
+    readiness,
+    finality: input.revision.finality,
+    data_through: input.revision.dataThrough,
+  };
+}
+
 type ReportingStatusChangedPayload = Omit<
   ReportingStatusChangedWebhook,
   'idempotency_key' | 'notification_id' | 'notification_type' | 'subscriber_id' | 'account_id'
 >;
 
-function notificationPayload(activity: Readonly<ReportingAccountActivityV1>): ReportingStatusChangedPayload {
+type ReportingLedgerChangedPayload = Omit<
+  ReportingLedgerChangedWebhook,
+  'idempotency_key' | 'notification_id' | 'notification_type' | 'subscriber_id' | 'account_id'
+>;
+
+type ReportingDeliveryReadyPayload = Omit<
+  ReportingDeliveryReadyWebhook,
+  'idempotency_key' | 'notification_id' | 'notification_type' | 'subscriber_id' | 'account_id'
+>;
+
+function notificationPayload(
+  activity: Readonly<ReportingNotificationActivityV1>
+): ReportingStatusChangedPayload | ReportingLedgerChangedPayload | ReportingDeliveryReadyPayload {
+  if (activity.activityType === 'reporting.lifecycle_changed') {
+    return {
+      reporting_obligation_id: activity.reporting_obligation_id,
+      previous_health: activity.previousHealth,
+      health: activity.health,
+      issue_ids: [...activity.issueIds],
+      fired_at: activity.occurredAt,
+      delivery_config_id: activity.correlation.delivery_config_id,
+      delivery_config_version: activity.correlation.delivery_config_version,
+      feed_purpose: activity.correlation.feed_purpose,
+    };
+  }
+  if (activity.activityType === REPORTING_LEDGER_EVENT_TYPE) {
+    return {
+      fired_at: activity.occurredAt,
+      change_kind: activity.changeKind,
+      ...(activity.reporting_revision_id ? { reporting_revision_id: activity.reporting_revision_id } : {}),
+      ...(activity.supersedes_reporting_revision_id
+        ? { supersedes_reporting_revision_id: activity.supersedes_reporting_revision_id }
+        : {}),
+      ...(activity.finality ? { finality: activity.finality } : {}),
+      ...(activity.reporting_adjustment_id ? { reporting_adjustment_id: activity.reporting_adjustment_id } : {}),
+      ...(activity.adjusts_reporting_revision_id
+        ? { adjusts_reporting_revision_id: activity.adjusts_reporting_revision_id }
+        : {}),
+    };
+  }
   return {
-    reporting_obligation_id: activity.reporting_obligation_id,
-    previous_health: activity.previousHealth,
-    health: activity.health,
-    issue_ids: [...activity.issueIds],
     fired_at: activity.occurredAt,
-    delivery_config_id: activity.correlation.delivery_config_id,
-    delivery_config_version: activity.correlation.delivery_config_version,
-    feed_purpose: activity.correlation.feed_purpose,
+    delivery_config_id: activity.delivery_config_id,
+    delivery_config_version: activity.delivery_config_version,
+    feed_purpose: activity.feed_purpose,
+    reporting_revision_id: activity.reporting_revision_id,
+    reporting_materialization_id: activity.reporting_materialization_id,
+    readiness: activity.readiness,
+    finality: activity.finality,
+    data_through: activity.data_through,
   };
 }
 
 async function claimPending(
   db: ReportingLedgerTransactionV1,
   table: string,
+  cursorTable: string,
   namespace: string,
   ownerToken: string,
   leaseMs: number,
@@ -1079,17 +1429,42 @@ async function claimPending(
         transition_id: string;
         tenant_scope: string;
         account_id: string;
-        activity: ReportingAccountActivityV1;
+        activity: ReportingNotificationActivityV1;
         lease_version: string;
         attempt_count: number;
       }
     >(
-      `WITH candidates AS (
-       SELECT namespace, transition_id FROM ${table}
-        WHERE namespace = $1 AND state = 'pending' AND next_attempt_at <= clock_timestamp()
-          AND (lease_expires_at IS NULL OR lease_expires_at < clock_timestamp())
-        ORDER BY next_attempt_at, activity_sequence
-        FOR UPDATE SKIP LOCKED LIMIT $4
+      `WITH selected_tenant AS (
+       INSERT INTO ${cursorTable} (namespace, tenant_scope)
+       VALUES (
+         $1,
+         (SELECT MIN(tenant_scope) FROM ${table}
+           WHERE namespace = $1 AND state = 'pending' AND next_attempt_at <= clock_timestamp()
+             AND (lease_expires_at IS NULL OR lease_expires_at < clock_timestamp()))
+       )
+       ON CONFLICT (namespace) DO UPDATE SET
+         tenant_scope = COALESCE(
+           (SELECT MIN(candidate.tenant_scope) FROM ${table} candidate
+             WHERE candidate.namespace = $1 AND candidate.state = 'pending'
+               AND candidate.next_attempt_at <= clock_timestamp()
+               AND (candidate.lease_expires_at IS NULL OR candidate.lease_expires_at < clock_timestamp())
+               AND candidate.tenant_scope > ${cursorTable}.tenant_scope),
+           (SELECT MIN(candidate.tenant_scope) FROM ${table} candidate
+             WHERE candidate.namespace = $1 AND candidate.state = 'pending'
+               AND candidate.next_attempt_at <= clock_timestamp()
+               AND (candidate.lease_expires_at IS NULL OR candidate.lease_expires_at < clock_timestamp()))
+         ),
+         changed_at = clock_timestamp()
+       RETURNING tenant_scope
+     ), candidates AS (
+       SELECT activity.namespace, activity.transition_id FROM ${table} activity
+       CROSS JOIN selected_tenant selected
+        WHERE activity.namespace = $1 AND activity.state = 'pending'
+          AND activity.tenant_scope = selected.tenant_scope
+          AND activity.next_attempt_at <= clock_timestamp()
+          AND (activity.lease_expires_at IS NULL OR activity.lease_expires_at < clock_timestamp())
+        ORDER BY activity.next_attempt_at, activity.activity_sequence
+        FOR UPDATE OF activity SKIP LOCKED LIMIT $4
      )
      UPDATE ${table} target SET
        lease_owner = $2,

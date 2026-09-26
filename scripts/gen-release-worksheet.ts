@@ -127,6 +127,51 @@ the rc.2 wire pin; it does not change when a later SDK candidate is released.
 5. Run mixed-version integration coverage for every release your deployment still advertises, then deploy all rc.2-speaking peers before sending rc.2-only payloads.
 
 The complete behavioral inventory, including server-default separation and A2A 1.0 peer requirements, is in the [13.x → 14 migration guide](./migration-13-to-14.md).
+
+## Reliable Reporting durable-state upgrade
+
+- Pending consumer-status keys now include a stable, non-secret seller and
+  authenticated-principal \`consumerScope\`; custom stores must migrate or retire
+  unscoped pending rows before enabling the worker.
+- Configure \`pendingConsumerStatusScope\` whenever a custom
+  \`pendingConsumerStatusStore\` is supplied. This prevents one seller/principal
+  from replaying another caller's exact status body.
+- Receipt checkpoint keys now include a versioned immutable-context
+  fingerprint. Existing PostgreSQL rows are not reused under the new key and
+  are retained until an operator archives them; the SDK does not time-prune
+  receipt checkpoints or unconfirmed pending statuses. Delete old-key rows
+  only after the seller's authoritative ledger confirms the receipt/status and
+  the deployment's evidence-retention window has elapsed. Custom checkpoint
+  stores must include optional key fields when deriving storage identity.
+- Exact-revision consumption now defaults to a 32 MiB decoded-byte ceiling.
+  Set \`ledgerLimits.maxRevisionBytes\` to \`268435456\` to preserve the pre-14
+  256 MiB ceiling while measuring and migrating large reporting periods.
+- \`ledgerLimits.maxRecords\` is now one aggregate safety budget across ledger
+  records and consumer-status history. Deployments that previously sized those
+  histories independently should measure their combined peak and set an
+  explicit bounded value before upgrading.
+- Webhook signing plus each external POST now has a 30 second default deadline.
+  Set \`webhooks.deliveryTimeoutMs\` explicitly if an existing receiver has a
+  different bounded acknowledgement SLO.
+- Webhook attempt observers are awaited before each POST and after its result,
+  with a 5 second default observer deadline. Set
+  \`webhooks.attemptObserverTimeoutMs\` for a different bounded telemetry SLO;
+  a slow observer adds delivery latency.
+- Notification \`subscriber_id\` now always enforces the protocol grammar
+  \`^[A-Za-z0-9_.:-]{1,64}$\`, including when server request validation is off.
+  Rename non-conforming retained subscriber IDs. The activity log keeps
+  delivering older 65–255 character IDs during migration, but replacement
+  registrations must use the new grammar.
+- Reconciled Billing production composition now requires a trusted
+  \`obligatedConsumers\` roster; a missing roster cannot establish complete
+  billing health. The production recovery worker requires explicit
+  \`deploymentWide: true\` because it scans the whole namespace.
+- Buyer reconciliation defers integrity-valid post-official adjustments until
+  the adopter supplies \`evaluateAdjustment\`; wire the buyer's financial policy
+  before expecting accepted adjustment receipts.
+- Buyer change-cursor stores should implement \`clear(key, expected)\` so a seller
+  that retires or rotates its opaque checkpoint cannot leave the worker in a
+  permanent failed-drain loop.
 `;
 
 writeFileSync(path.join(root, 'docs/migration-14.x-rc-worksheet.md'), document);

@@ -2,6 +2,8 @@ import { createHash } from 'crypto';
 import type {
   GetReportingStatusRequest,
   GetReportingStatusResponse,
+  ReportingAdjustment,
+  ReportingAdjustmentReceipt,
   ReportingCanonicalContentDigest,
   ReportingControlTotal,
   ReportingMaterialization,
@@ -39,7 +41,7 @@ const CONSUMER_STATUS_BATCH_MAX = 100;
  * dimension a seller actually controls. Exceeding it is a buyer-side budget,
  * so it suppresses rather than accusing.
  */
-const MAX_CONSUMED_REVISION_BYTES = 256 * 1024 * 1024;
+const MAX_CONSUMED_REVISION_BYTES = 32 * 1024 * 1024;
 
 /**
  * Containers the estimator will walk into for one row.
@@ -182,12 +184,18 @@ export interface ReportingReconciliationClient {
 export interface ReportingLedger {
   ledgerSnapshotId: string;
   ledgerAsOf: string;
+  /** Persist only after every page in this snapshot has been consumed. */
+  changesCheckpoint?: string;
   accountId: string;
   scope: NonNullable<GetReportingStatusResponse['scope']>;
   obligations: ManagedReportingObligation[];
   revisions: ManagedReportingRevision[];
   materializations: ReportingMaterialization[];
   receipts: ReportingReceipt[];
+  /** Immutable post-official billing corrections visible in this snapshot. */
+  adjustments?: ReportingAdjustment[];
+  /** This authenticated consumer's append-only acknowledgement history for corrections. */
+  adjustmentReceipts?: ReportingAdjustmentReceipt[];
   /**
    * The authenticated caller's own append-only status history for this scope.
    * Sellers disclose no other consumer's statements, so this is the only way to
@@ -216,6 +224,11 @@ export interface ReportingLedgerLimits {
    * rather than accusing the seller.
    */
   maxRevisionRows?: number;
+  /**
+   * Approximate decoded bytes accumulated for one exact revision. Defaults to
+   * 32 MiB; set 256 MiB during migration to retain the pre-14 ceiling.
+   */
+  maxRevisionBytes?: number;
 }
 
 interface ExpectedReportingPeriodBase {
@@ -331,22 +344,49 @@ export interface ReportingCheckpointKey {
   reportingRevisionId: string;
   reportingMaterializationId: string;
   destinationRef: string;
+  /** Versioned immutable-context identity; absent only for legacy custom-store callers. */
+  contextFingerprint?: string;
 }
 
 export interface ReportingCheckpoint {
   receipt: ReportingReceipt;
   receiptSyncIdempotencyKey: string;
-  /** SHA-256 of the exact obligation, revision, materialization, and consumer expectation inspected. */
+  /** SHA-256 of immutable inspection identity, excluding mutable seller health/counters. */
   contextFingerprint: string;
 }
 
 export interface ReportingCheckpointStore {
   get(key: ReportingCheckpointKey): Promise<ReportingCheckpoint | undefined>;
   put(key: ReportingCheckpointKey, checkpoint: ReportingCheckpoint): Promise<void>;
+  /** Optional for backwards compatibility; required to make adjustment retries crash-safe. */
+  getAdjustment?(key: ReportingAdjustmentCheckpointKey): Promise<ReportingAdjustmentCheckpoint | undefined>;
+  /** Optional for backwards compatibility; required to make adjustment retries crash-safe. */
+  putAdjustment?(key: ReportingAdjustmentCheckpointKey, checkpoint: ReportingAdjustmentCheckpoint): Promise<void>;
+}
+
+export interface ReportingAdjustmentCheckpointKey {
+  /** Caller-defined stable seller + authenticated-principal scope. */
+  consumerScope: string;
+  accountId: string;
+  reportingAdjustmentId: string;
+  adjustsReportingRevisionId: string;
+  /** Rejected leaf this acknowledgement replaces, absent for the first leaf. */
+  supersedesReportingReceiptId?: string;
+  /** Versioned immutable-context identity; prevents a changed correction from wedging the prior checkpoint. */
+  contextFingerprint?: string;
+}
+
+export interface ReportingAdjustmentCheckpoint {
+  adjustmentReceipt: ReportingAdjustmentReceipt;
+  receiptSyncIdempotencyKey: string;
+  /** SHA-256 of the immutable adjustment body. */
+  contextFingerprint: string;
 }
 
 /** One consumer-status supersession chain: the logical key the spec defines. */
 export interface ReportingPendingConsumerStatusKey {
+  /** Stable, non-secret seller + authenticated-principal identity. */
+  consumerScope: string;
   accountId: string;
   deliveryConfigId: string;
   deliveryConfigVersion: number;
@@ -380,8 +420,24 @@ export interface ReportingPendingConsumerStatus {
  */
 export interface ReportingPendingConsumerStatusStore {
   get(key: ReportingPendingConsumerStatusKey): Promise<ReportingPendingConsumerStatus | undefined>;
-  put(key: ReportingPendingConsumerStatusKey, pending: ReportingPendingConsumerStatus): Promise<void>;
-  clear(key: ReportingPendingConsumerStatusKey): Promise<void>;
+  put(
+    key: ReportingPendingConsumerStatusKey,
+    pending: ReportingPendingConsumerStatus,
+    lease?: ReportingPersistenceLeaseFenceV1
+  ): Promise<void>;
+  clear(
+    key: ReportingPendingConsumerStatusKey,
+    expected?: ReportingPendingConsumerStatus,
+    lease?: ReportingPersistenceLeaseFenceV1
+  ): Promise<void>;
+}
+
+/** Structural lease fence shared by durable consumer persistence roles. */
+export interface ReportingPersistenceLeaseFenceV1 {
+  scopeKey: string;
+  ownerToken: string;
+  generation: number;
+  expiresAt: string;
 }
 
 export interface ReportingInspectionContext {
@@ -546,6 +602,8 @@ export interface ReportingReconciliationResult {
   obligations: ObligationReconciliation[];
   missingExpectedPeriods: ExpectedReportingPeriod[];
   submittedReceipts: ReportingReceipt[];
+  /** Adjustment acknowledgements submitted during this run. */
+  submittedAdjustmentReceipts: ReportingAdjustmentReceipt[];
   /** Every status the buyer owes for the reconciled scope, overdue flagged. */
   consumerStatuses: ReportingConsumerStatusPlanV1[];
   /** The subset actually posted through `syncReportingStatus` this run. */
@@ -598,11 +656,17 @@ interface ReconcileReportingBaseOptions {
    */
   operationsContact?: { url?: string; email?: string };
   /**
-   * Durable memory for statements built but not yet confirmed, so a retry
-   * after a lost response is the same statement rather than a new one. Optional;
-   * see `ReportingPendingConsumerStatusStore` for what changes without it.
+   * Buyer-owned commercial decision for an integrity-valid post-official
+   * adjustment. Without this callback, the SDK defers and sends no acceptance.
+   * A rejection sends a receipt with ADJUSTMENT_POLICY_REJECTED.
    */
-  pendingConsumerStatusStore?: ReportingPendingConsumerStatusStore;
+  evaluateAdjustment?: (input: {
+    adjustment: ReportingAdjustment;
+    revision: ReportingRevision;
+    signal: AbortSignal;
+  }) => 'accept' | 'reject' | 'defer' | Promise<'accept' | 'reject' | 'defer'>;
+  /** Deadline for one policy decision. Defaults to 5 seconds. */
+  adjustmentPolicyTimeoutMs?: number;
 }
 
 type ReportingCheckpointOptions =
@@ -613,8 +677,18 @@ type ReportingCheckpointOptions =
       checkpointScope: string;
     };
 
+type ReportingPendingConsumerStatusOptions =
+  | { pendingConsumerStatusStore?: never; pendingConsumerStatusScope?: never }
+  | {
+      /** Durable exact-retry memory for consumer status statements. */
+      pendingConsumerStatusStore: ReportingPendingConsumerStatusStore;
+      /** Stable, non-secret seller + authenticated-principal identity. */
+      pendingConsumerStatusScope: string;
+    };
+
 export type ReconcileReportingOptions<TCredential = unknown> = ReconcileReportingBaseOptions &
   ReportingCheckpointOptions &
+  ReportingPendingConsumerStatusOptions &
   (
     | {
         /** Advanced inspection override. */
@@ -667,15 +741,14 @@ async function callBeforeDeadline<T>(
 }
 
 function canonical(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([, child]) => child !== undefined)
-    .sort(([left], [right]) => left.localeCompare(right));
-  return `{${entries.map(([key, child]) => `${JSON.stringify(key)}:${canonical(child)}`).join(',')}}`;
+  return canonicalize(value);
 }
 
 function same(left: unknown, right: unknown): boolean {
+  // Optional protocol fields legitimately arrive as `undefined`. RFC 8785
+  // intentionally rejects undefined because it has no JSON representation,
+  // so handle absence before canonicalizing the values that do.
+  if (left === undefined || right === undefined) return left === right;
   return canonical(left) === canonical(right);
 }
 
@@ -920,6 +993,72 @@ function receiptMatches(
   );
 }
 
+function adjustmentDigest(adjustment: ReportingAdjustment): string {
+  const { canonical_adjustment_sha256: _declaredDigest, ...unsigned } = adjustment;
+  return createHash('sha256').update(canonicalize(unsigned)).digest('hex');
+}
+
+function adjustmentReceiptMatches(
+  receipt: ReportingAdjustmentReceipt,
+  adjustment: ReportingAdjustment,
+  revision: ReportingRevision | undefined
+): boolean {
+  return (
+    revision !== undefined &&
+    adjustmentValidationCodes(adjustment, revision).length === 0 &&
+    receipt.status === 'accepted' &&
+    receipt.reporting_adjustment_id === adjustment.reporting_adjustment_id &&
+    receipt.adjusts_reporting_revision_id === adjustment.adjusts_reporting_revision_id &&
+    sameSha256(receipt.observed_adjustment_sha256, adjustment.canonical_adjustment_sha256) &&
+    sameSha256(receipt.observed_adjustment_sha256, adjustmentDigest(adjustment))
+  );
+}
+
+function adjustmentValidationCodes(adjustment: ReportingAdjustment, revision: ReportingRevision): string[] {
+  const rejectionCodes: string[] = [];
+  const observedDigest = adjustmentDigest(adjustment);
+  if (!adjustment.canonical_adjustment_sha256) {
+    rejectionCodes.push('CANONICAL_ADJUSTMENT_DIGEST_MISSING');
+  } else if (!sameSha256(observedDigest, adjustment.canonical_adjustment_sha256)) {
+    rejectionCodes.push('CANONICAL_ADJUSTMENT_DIGEST_MISMATCH');
+  }
+
+  if (
+    !isReportingControlTotals(adjustment.control_total_deltas) ||
+    !isReportingControlTotals(revision.control_totals)
+  ) {
+    rejectionCodes.push('CONTROL_TOTAL_DELTA_MISMATCH');
+  } else {
+    const revisionTotals = new Map(revision.control_totals.map(total => [total.name, total]));
+    for (const delta of adjustment.control_total_deltas) {
+      const expected = revisionTotals.get(delta.name);
+      if (!expected || expected.value_type !== delta.value_type || expected.unit !== delta.unit) {
+        rejectionCodes.push('CONTROL_TOTAL_DELTA_MISMATCH');
+        break;
+      }
+    }
+  }
+
+  const periodStart = Date.parse(adjustment.accounting_period.start);
+  const periodEnd = Date.parse(adjustment.accounting_period.end);
+  const correctionObservedAt = Date.parse(adjustment.correction_observed_at);
+  const createdAt = Date.parse(adjustment.created_at);
+  const finalizedAt = Date.parse(revision.finalized_at ?? '');
+  if (
+    !Number.isFinite(periodStart) ||
+    !Number.isFinite(periodEnd) ||
+    periodEnd <= periodStart ||
+    !Number.isFinite(correctionObservedAt) ||
+    !Number.isFinite(createdAt) ||
+    !Number.isFinite(finalizedAt) ||
+    correctionObservedAt < finalizedAt ||
+    correctionObservedAt > createdAt
+  ) {
+    rejectionCodes.push('ADJUSTMENT_TIME_INVALID');
+  }
+  return [...new Set(rejectionCodes)];
+}
+
 function addImmutable<T>(map: Map<string, T>, id: string, value: T, kind: string): void {
   const previous = map.get(id);
   if (previous && !same(previous, value)) {
@@ -969,14 +1108,19 @@ export async function loadReportingLedger(
       const revisions = new Map<string, ManagedReportingRevision>();
       const materializations = new Map<string, ReportingMaterialization>();
       const receipts = new Map<string, ReportingReceipt>();
+      const adjustments = new Map<string, ReportingAdjustment>();
+      const adjustmentReceipts = new Map<string, ReportingAdjustmentReceipt>();
       const consumerStatuses = new Map<string, ReportingConsumerStatus>();
       const seenCursors = new Set<string>();
       let cursor: string | undefined;
       let snapshotId: string | undefined;
       let ledgerAsOf: string | undefined;
+      let changesCheckpoint: string | undefined;
+      let checkpointPresence: boolean | undefined;
       let accountId: string | undefined;
       let scope: NonNullable<GetReportingStatusResponse['scope']> | undefined;
       let totalCount: number | undefined;
+      let totalCountPresence: boolean | undefined;
       let pageCount = 0;
 
       do {
@@ -1004,18 +1148,13 @@ export async function loadReportingLedger(
             'get_reporting_status did not return a completed periods view'
           );
         }
-        if (
-          !response.ledger_snapshot_id ||
-          !response.ledger_as_of ||
-          !response.account_id ||
-          !response.scope ||
-          !response.pagination
-        ) {
+        if (!response.ledger_snapshot_id || !response.ledger_as_of || !response.account_id || !response.scope) {
           throw new ReportingReconciliationError(
             'INCOMPLETE_LEDGER_PAGE',
             'get_reporting_status omitted required ledger metadata'
           );
         }
+        const pagination = response.pagination ?? { has_more: false };
         if (typeof requestedAccountId === 'string' && response.account_id !== requestedAccountId) {
           throw new ReportingReconciliationError(
             'ACCOUNT_SCOPE_MISMATCH',
@@ -1029,9 +1168,10 @@ export async function loadReportingLedger(
           );
         }
         if (
-          typeof response.pagination.total_count !== 'number' ||
-          !Number.isSafeInteger(response.pagination.total_count) ||
-          response.pagination.total_count < 0
+          pagination.total_count !== undefined &&
+          (typeof pagination.total_count !== 'number' ||
+            !Number.isSafeInteger(pagination.total_count) ||
+            pagination.total_count < 0)
         ) {
           throw new ReportingReconciliationError(
             'INCOMPLETE_LEDGER_PAGE',
@@ -1047,22 +1187,45 @@ export async function loadReportingLedger(
             'ledger observation boundary changed during pagination'
           );
         }
+        const pageHasCheckpoint = typeof response.changes_checkpoint === 'string';
+        const pageHasTotalCount = pagination.total_count !== undefined;
+        if (checkpointPresence !== undefined && checkpointPresence !== pageHasCheckpoint) {
+          throw new ReportingReconciliationError(
+            'SNAPSHOT_CHANGED',
+            'reporting changes checkpoint presence changed during pagination'
+          );
+        }
+        if (changesCheckpoint && changesCheckpoint !== response.changes_checkpoint) {
+          throw new ReportingReconciliationError(
+            'SNAPSHOT_CHANGED',
+            'reporting changes checkpoint changed during pagination'
+          );
+        }
+        if (totalCountPresence !== undefined && totalCountPresence !== pageHasTotalCount) {
+          throw new ReportingReconciliationError(
+            'SNAPSHOT_CHANGED',
+            'reporting total_count presence changed during pagination'
+          );
+        }
         if (accountId && accountId !== response.account_id) {
           throw new ReportingReconciliationError('SNAPSHOT_CHANGED', 'account changed during pagination');
         }
         if (scope && !same(scope, response.scope)) {
           throw new ReportingReconciliationError('SNAPSHOT_CHANGED', 'reporting denominator changed during pagination');
         }
-        if (totalCount !== undefined && response.pagination.total_count !== totalCount) {
+        if (totalCount !== undefined && pagination.total_count !== undefined && pagination.total_count !== totalCount) {
           throw new ReportingReconciliationError('SNAPSHOT_CHANGED', 'ledger total changed during pagination');
         }
 
         snapshotId = response.ledger_snapshot_id;
         ledgerAsOf = response.ledger_as_of;
+        checkpointPresence = pageHasCheckpoint;
+        totalCountPresence = pageHasTotalCount;
+        changesCheckpoint = response.changes_checkpoint;
         accountId = response.account_id;
         scope = response.scope;
-        totalCount = response.pagination.total_count;
-        if (totalCount > maxRecords) {
+        if (pagination.total_count !== undefined) totalCount = pagination.total_count;
+        if (totalCount !== undefined && totalCount > maxRecords) {
           throw new ReportingReconciliationError('LEDGER_LIMIT_EXCEEDED', 'reporting ledger exceeds record limit');
         }
         for (const item of response.periods ?? [])
@@ -1072,47 +1235,58 @@ export async function loadReportingLedger(
         for (const item of response.materializations ?? [])
           addImmutable(materializations, item.reporting_materialization_id, item, 'materialization');
         for (const item of response.receipts ?? []) addImmutable(receipts, item.reporting_receipt_id, item, 'receipt');
-        // Counted separately: `total_count` is the obligation/revision/adjustment
-        // denominator, and consumer statements are the caller's own append-only
-        // history rather than ledger records, so folding them into the record
-        // reconciliation below would make every page appear to overrun.
+        for (const item of response.adjustments ?? [])
+          addImmutable(adjustments, item.reporting_adjustment_id, item, 'adjustment');
+        for (const item of response.adjustment_receipts ?? [])
+          addImmutable(adjustmentReceipts, item.reporting_receipt_id, item, 'adjustment receipt');
         for (const item of response.consumer_statuses ?? [])
           addImmutable(consumerStatuses, item.reporting_status_id, item, 'consumer status');
-        if (consumerStatuses.size > maxRecords) {
-          throw new ReportingReconciliationError(
-            'LEDGER_LIMIT_EXCEEDED',
-            'reporting consumer status history exceeds record limit'
-          );
-        }
-        if (obligations.size + revisions.size + materializations.size + receipts.size > maxRecords) {
+        if (
+          obligations.size +
+            revisions.size +
+            materializations.size +
+            receipts.size +
+            adjustments.size +
+            adjustmentReceipts.size +
+            consumerStatuses.size >
+          maxRecords
+        ) {
           throw new ReportingReconciliationError('LEDGER_LIMIT_EXCEEDED', 'reporting ledger exceeds record limit');
         }
 
-        if (response.pagination.has_more) {
-          if (!response.pagination.cursor || seenCursors.has(response.pagination.cursor)) {
+        if (pagination.has_more) {
+          if (!pagination.cursor || seenCursors.has(pagination.cursor)) {
             throw new ReportingReconciliationError('CURSOR_LOOP', 'ledger pagination did not advance');
           }
-          seenCursors.add(response.pagination.cursor);
-          cursor = response.pagination.cursor;
+          seenCursors.add(pagination.cursor);
+          cursor = pagination.cursor;
         } else {
           cursor = undefined;
         }
       } while (cursor);
 
-      const observedCount = obligations.size + revisions.size + materializations.size + receipts.size;
-      if (totalCount !== undefined && totalCount !== observedCount) {
-        throw new ReportingReconciliationError(
-          'LEDGER_COUNT_MISMATCH',
-          `ledger declared ${totalCount} records but returned ${observedCount}`
-        );
-      }
+      // `total_count` is an advisory pagination denominator. Protocol sellers
+      // differ on whether contextual evidence repeated beside a page item
+      // (consumer statuses, materializations, and receipts) participates in
+      // that count. Bound both the declared value and the independently
+      // deduplicated records above, but do not reject a complete graph merely
+      // because those two legitimate denominators differ.
       if (!snapshotId || !ledgerAsOf || !accountId || !scope) {
         throw new ReportingReconciliationError('EMPTY_LEDGER_RESPONSE', 'get_reporting_status returned no ledger page');
       }
-      assertReportingLedgerGraph(accountId, obligations, revisions, materializations, receipts);
+      assertReportingLedgerGraph(
+        accountId,
+        obligations,
+        revisions,
+        materializations,
+        receipts,
+        adjustments,
+        adjustmentReceipts
+      );
       return {
         ledgerSnapshotId: snapshotId,
         ledgerAsOf,
+        ...(changesCheckpoint ? { changesCheckpoint } : {}),
         accountId,
         scope,
         consumerStatuses: [...consumerStatuses.values()],
@@ -1120,6 +1294,8 @@ export async function loadReportingLedger(
         revisions: [...revisions.values()],
         materializations: [...materializations.values()],
         receipts: [...receipts.values()],
+        adjustments: [...adjustments.values()],
+        adjustmentReceipts: [...adjustmentReceipts.values()],
       };
     } catch (error) {
       if (
@@ -1139,7 +1315,9 @@ function assertReportingLedgerGraph(
   obligations: Map<string, ManagedReportingObligation>,
   revisions: Map<string, ManagedReportingRevision>,
   materializations: Map<string, ReportingMaterialization>,
-  receipts: Map<string, ReportingReceipt>
+  receipts: Map<string, ReportingReceipt>,
+  adjustments: Map<string, ReportingAdjustment>,
+  adjustmentReceipts: Map<string, ReportingAdjustmentReceipt>
 ): void {
   const fail = (): never => {
     throw new ReportingReconciliationError(
@@ -1204,6 +1382,74 @@ function assertReportingLedgerGraph(
       fail();
     }
   }
+  for (const adjustment of adjustments.values()) {
+    const revision = revisions.get(adjustment.adjusts_reporting_revision_id);
+    if (!revision || revision.finality !== 'official') fail();
+  }
+  for (const receipt of adjustmentReceipts.values()) {
+    const adjustment = adjustments.get(receipt.reporting_adjustment_id);
+    if (!adjustment || adjustment.adjusts_reporting_revision_id !== receipt.adjusts_reporting_revision_id) fail();
+    if (receipt.supersedes_reporting_receipt_id) {
+      const predecessor = adjustmentReceipts.get(receipt.supersedes_reporting_receipt_id);
+      if (
+        !predecessor ||
+        predecessor.reporting_adjustment_id !== receipt.reporting_adjustment_id ||
+        predecessor.status !== 'rejected'
+      ) {
+        fail();
+      }
+    }
+  }
+  const histories = indexAdjustmentReceipts(adjustmentReceipts.values());
+  for (const adjustment of adjustments.values()) {
+    const history = histories.get(adjustment.reporting_adjustment_id) ?? [];
+    const superseded = new Set(
+      history.map(receipt => receipt.supersedes_reporting_receipt_id).filter((id): id is string => Boolean(id))
+    );
+    if (history.filter(receipt => !superseded.has(receipt.reporting_receipt_id)).length > 1) fail();
+  }
+  // Each receipt has at most one predecessor. Walk the whole forest once,
+  // rather than re-walking an increasingly long chain from every receipt.
+  const visitState = new Map<string, 'visiting' | 'done'>();
+  for (const receipt of adjustmentReceipts.values()) {
+    if (visitState.get(receipt.reporting_receipt_id) === 'done') continue;
+    const path: string[] = [];
+    let cursor: ReportingAdjustmentReceipt | undefined = receipt;
+    while (cursor) {
+      const state = visitState.get(cursor.reporting_receipt_id);
+      if (state === 'visiting') fail();
+      if (state === 'done') break;
+      visitState.set(cursor.reporting_receipt_id, 'visiting');
+      path.push(cursor.reporting_receipt_id);
+      cursor = cursor.supersedes_reporting_receipt_id
+        ? adjustmentReceipts.get(cursor.supersedes_reporting_receipt_id)
+        : undefined;
+    }
+    for (const receiptId of path) visitState.set(receiptId, 'done');
+  }
+}
+
+function indexAdjustmentReceipts(
+  receipts: Iterable<ReportingAdjustmentReceipt>
+): Map<string, ReportingAdjustmentReceipt[]> {
+  const histories = new Map<string, ReportingAdjustmentReceipt[]>();
+  for (const receipt of receipts) {
+    const history = histories.get(receipt.reporting_adjustment_id);
+    if (history) history.push(receipt);
+    else histories.set(receipt.reporting_adjustment_id, [receipt]);
+  }
+  return histories;
+}
+
+function currentAdjustmentReceipt(
+  adjustment: ReportingAdjustment,
+  histories: ReadonlyMap<string, readonly ReportingAdjustmentReceipt[]>
+): ReportingAdjustmentReceipt | undefined {
+  const history = histories.get(adjustment.reporting_adjustment_id) ?? [];
+  const superseded = new Set(
+    history.map(receipt => receipt.supersedes_reporting_receipt_id).filter((id): id is string => Boolean(id))
+  );
+  return history.find(receipt => !superseded.has(receipt.reporting_receipt_id));
 }
 
 function revisionMatchesObligationScope(
@@ -1236,18 +1482,32 @@ function assertDirectReportingLedgerGraph(ledger: ReportingLedger): void {
   const revisions = new Map(ledger.revisions.map(item => [item.reporting_revision_id, item]));
   const materializations = new Map(ledger.materializations.map(item => [item.reporting_materialization_id, item]));
   const receipts = new Map(ledger.receipts.map(item => [item.reporting_receipt_id, item]));
+  const ledgerAdjustments = ledger.adjustments ?? [];
+  const ledgerAdjustmentReceipts = ledger.adjustmentReceipts ?? [];
+  const adjustments = new Map(ledgerAdjustments.map(item => [item.reporting_adjustment_id, item]));
+  const adjustmentReceipts = new Map(ledgerAdjustmentReceipts.map(item => [item.reporting_receipt_id, item]));
   if (
     obligations.size !== ledger.obligations.length ||
     revisions.size !== ledger.revisions.length ||
     materializations.size !== ledger.materializations.length ||
-    receipts.size !== ledger.receipts.length
+    receipts.size !== ledger.receipts.length ||
+    adjustments.size !== ledgerAdjustments.length ||
+    adjustmentReceipts.size !== ledgerAdjustmentReceipts.length
   ) {
     throw new ReportingReconciliationError(
       'LEDGER_GRAPH_INTEGRITY_FAILED',
       'reporting ledger contains duplicate record identifiers'
     );
   }
-  assertReportingLedgerGraph(ledger.accountId, obligations, revisions, materializations, receipts);
+  assertReportingLedgerGraph(
+    ledger.accountId,
+    obligations,
+    revisions,
+    materializations,
+    receipts,
+    adjustments,
+    adjustmentReceipts
+  );
 }
 
 function selectCurrent(
@@ -2699,14 +2959,50 @@ export function evaluateReportingLedger(
    * response, so it cannot be derived here.
    */
   operationsContact?: { url?: string; email?: string }
-): Omit<ReportingReconciliationResult, 'submittedReceipts'> {
+): Omit<ReportingReconciliationResult, 'submittedReceipts' | 'submittedAdjustmentReceipts'> {
   assertDirectReportingLedgerGraph(ledger);
   const obligationResults: ObligationReconciliation[] = [];
   const uniqueRevisions = new Map<string, ManagedReportingRevision>();
+  const revisionsById = new Map(ledger.revisions.map(item => [item.reporting_revision_id, item]));
   const { expectedByIdentity, obligationCounts } = buildExpectedIdentityIndex(
     ledger.obligations,
     expectedPeriods ?? []
   );
+  const adjustmentsByRevision = new Map<string, ReportingAdjustment[]>();
+  for (const adjustment of ledger.adjustments ?? []) {
+    const adjustments = adjustmentsByRevision.get(adjustment.adjusts_reporting_revision_id);
+    if (adjustments) adjustments.push(adjustment);
+    else adjustmentsByRevision.set(adjustment.adjusts_reporting_revision_id, [adjustment]);
+  }
+  const adjustmentReceiptHistories = indexAdjustmentReceipts(ledger.adjustmentReceipts ?? []);
+  const adjustmentSummaries = new Map<
+    string,
+    {
+      adjustments: ReportingAdjustment[];
+      receiptCount: number;
+      acceptedReceiptCount: number;
+      hasMissingMatchingReceipt: boolean;
+    }
+  >();
+  for (const [revisionId, adjustments] of adjustmentsByRevision) {
+    let receiptCount = 0;
+    let acceptedReceiptCount = 0;
+    let hasMissingMatchingReceipt = false;
+    for (const adjustment of adjustments) {
+      const receipts = adjustmentReceiptHistories.get(adjustment.reporting_adjustment_id) ?? [];
+      receiptCount += receipts.length;
+      acceptedReceiptCount += receipts.filter(receipt => receipt.status === 'accepted').length;
+      if (!receipts.some(receipt => adjustmentReceiptMatches(receipt, adjustment, revisionsById.get(revisionId)))) {
+        hasMissingMatchingReceipt = true;
+      }
+    }
+    adjustmentSummaries.set(revisionId, {
+      adjustments,
+      receiptCount,
+      acceptedReceiptCount,
+      hasMissingMatchingReceipt,
+    });
+  }
 
   for (const obligation of ledger.obligations) {
     const identity = expectedIdentityKey(obligation);
@@ -2738,6 +3034,39 @@ export function evaluateReportingLedger(
         receiptMatches(receipt, selected.revision!, selected.materialization!)
       );
       if (!accepted) reasons.push('MISSING_MATCHING_CONSUMER_RECEIPT');
+
+      const adjustmentSummary = adjustmentSummaries.get(selected.revision.reporting_revision_id);
+      const adjustments = adjustmentSummary?.adjustments ?? [];
+      if ((obligation.pending_adjustment_count ?? 0) > 0) {
+        reasons.push('ASSOCIATED_HISTORY_INCOMPLETE');
+      }
+      const adjustmentCountsAdvertised =
+        obligation.adjustment_count !== undefined ||
+        obligation.adjustment_receipt_count !== undefined ||
+        obligation.accepted_adjustment_receipt_count !== undefined ||
+        adjustments.length > 0;
+      if (
+        countMismatch(
+          obligation.adjustment_count,
+          adjustments.length,
+          obligation.health === 'complete' && adjustmentCountsAdvertised
+        ) ||
+        countMismatch(
+          obligation.adjustment_receipt_count,
+          adjustmentSummary?.receiptCount ?? 0,
+          obligation.health === 'complete' && adjustmentCountsAdvertised
+        ) ||
+        countMismatch(
+          obligation.accepted_adjustment_receipt_count,
+          adjustmentSummary?.acceptedReceiptCount ?? 0,
+          obligation.health === 'complete' && adjustmentCountsAdvertised
+        )
+      ) {
+        if (!reasons.includes('ASSOCIATED_HISTORY_INCOMPLETE')) reasons.push('ASSOCIATED_HISTORY_INCOMPLETE');
+      }
+      if (adjustmentSummary?.hasMissingMatchingReceipt) {
+        reasons.push('MISSING_MATCHING_ADJUSTMENT_RECEIPT');
+      }
     }
     obligationResults.push({
       reportingObligationId: obligation.reporting_obligation_id,
@@ -2831,6 +3160,41 @@ export function buildReportingReceipt(
   };
 }
 
+/** Independently verify and acknowledge one immutable post-official correction. */
+export function buildReportingAdjustmentReceipt(
+  adjustment: ReportingAdjustment,
+  revision: ReportingRevision,
+  options: {
+    reportingReceiptId?: string;
+    observedAt?: string;
+    supersedesReportingReceiptId?: string;
+  } = {}
+): ReportingAdjustmentReceipt {
+  if (adjustment.adjusts_reporting_revision_id !== revision.reporting_revision_id || revision.finality !== 'official') {
+    throw new ReportingReconciliationError(
+      'ADJUSTMENT_REVISION_MISMATCH',
+      'reporting adjustment does not target the supplied official revision'
+    );
+  }
+
+  const observedDigest = adjustmentDigest(adjustment);
+  const rejectionCodes = adjustmentValidationCodes(adjustment, revision);
+  const [firstRejectionCode, ...remainingRejectionCodes] = rejectionCodes;
+
+  return {
+    reporting_receipt_id: options.reportingReceiptId ?? `reporting-adjustment-receipt:${generateIdempotencyKey()}`,
+    reporting_adjustment_id: adjustment.reporting_adjustment_id,
+    adjusts_reporting_revision_id: adjustment.adjusts_reporting_revision_id,
+    ...(options.supersedesReportingReceiptId
+      ? { supersedes_reporting_receipt_id: options.supersedesReportingReceiptId }
+      : {}),
+    status: rejectionCodes.length === 0 ? 'accepted' : 'rejected',
+    observed_adjustment_sha256: observedDigest,
+    ...(firstRejectionCode ? { rejection_codes: [firstRejectionCode, ...remainingRejectionCodes] } : {}),
+    observed_at: options.observedAt ?? new Date().toISOString(),
+  };
+}
+
 async function inspectWithRetry(
   inspect: NonNullable<ReconcileReportingOptions['inspect']>,
   context: ReportingInspectionContext,
@@ -2862,6 +3226,7 @@ function buildCheckpointKey(
   accountId: string,
   context: ReportingInspectionContext
 ): ReportingCheckpointKey {
+  const contextFingerprint = checkpointContextFingerprint(context);
   return {
     consumerScope,
     accountId,
@@ -2869,6 +3234,7 @@ function buildCheckpointKey(
     reportingRevisionId: context.revision.reporting_revision_id,
     reportingMaterializationId: context.materialization.reporting_materialization_id,
     destinationRef: context.materialization.destination_ref,
+    contextFingerprint: `v2:${contextFingerprint}`,
   };
 }
 
@@ -2886,7 +3252,60 @@ function checkpointMatchesContext(checkpoint: ReportingCheckpoint, context: Repo
 }
 
 function checkpointContextFingerprint(context: ReportingInspectionContext): string {
-  return createHash('sha256').update(canonical(context)).digest('hex');
+  // The obligation envelope contains mutable operational projections (health,
+  // issue and receipt counters). They can advance after a lost receipt-sync
+  // response and must not poison the immutable first-writer checkpoint. The
+  // selected revision/materialization and consumer expectation are the inputs
+  // that determine what resource is inspected and what evidence is accepted.
+  return createHash('sha256')
+    .update(
+      canonical({
+        reportingObligationId: context.obligation.reporting_obligation_id,
+        revision: context.revision,
+        materialization: context.materialization,
+        expected: context.expected,
+      })
+    )
+    .digest('hex');
+}
+
+function buildAdjustmentCheckpointKey(
+  consumerScope: string,
+  accountId: string,
+  adjustment: ReportingAdjustment,
+  supersedesReportingReceiptId?: string
+): ReportingAdjustmentCheckpointKey {
+  const contextFingerprint = adjustmentCheckpointFingerprint(adjustment, supersedesReportingReceiptId);
+  return {
+    consumerScope,
+    accountId,
+    reportingAdjustmentId: adjustment.reporting_adjustment_id,
+    adjustsReportingRevisionId: adjustment.adjusts_reporting_revision_id,
+    ...(supersedesReportingReceiptId ? { supersedesReportingReceiptId } : {}),
+    contextFingerprint: `v1:${contextFingerprint}`,
+  };
+}
+
+function adjustmentCheckpointFingerprint(
+  adjustment: ReportingAdjustment,
+  supersedesReportingReceiptId?: string
+): string {
+  return createHash('sha256')
+    .update(canonicalize({ adjustment, supersedesReportingReceiptId: supersedesReportingReceiptId ?? null }))
+    .digest('hex');
+}
+
+function adjustmentCheckpointMatches(
+  checkpoint: ReportingAdjustmentCheckpoint,
+  adjustment: ReportingAdjustment,
+  supersedesReportingReceiptId?: string
+): boolean {
+  return (
+    Boolean(checkpoint.receiptSyncIdempotencyKey) &&
+    checkpoint.contextFingerprint === adjustmentCheckpointFingerprint(adjustment, supersedesReportingReceiptId) &&
+    checkpoint.adjustmentReceipt.reporting_adjustment_id === adjustment.reporting_adjustment_id &&
+    checkpoint.adjustmentReceipt.adjusts_reporting_revision_id === adjustment.adjusts_reporting_revision_id
+  );
 }
 
 export async function reconcileReporting<TCredential = unknown>(
@@ -2907,8 +3326,31 @@ export async function reconcileReporting<TCredential = unknown>(
       'checkpointStore requires a stable seller and authenticated-principal scope'
     );
   }
+  if (
+    options.pendingConsumerStatusStore &&
+    (typeof options.pendingConsumerStatusScope !== 'string' ||
+      options.pendingConsumerStatusScope.length === 0 ||
+      Buffer.byteLength(options.pendingConsumerStatusScope, 'utf8') > 4_096)
+  ) {
+    throw new ReportingReconciliationError(
+      'PENDING_CONSUMER_STATUS_SCOPE_REQUIRED',
+      'pendingConsumerStatusStore requires a stable seller and authenticated-principal scope'
+    );
+  }
+  const pendingConsumerStatusScope = options.pendingConsumerStatusScope ?? 'unscoped';
   const maxInspectionAttempts = options.maxInspectionAttempts ?? 3;
   const inspectionRetryBaseDelayMs = options.inspectionRetryBaseDelayMs ?? 100;
+  const adjustmentPolicyTimeoutMs = options.adjustmentPolicyTimeoutMs ?? 5_000;
+  if (
+    !Number.isSafeInteger(adjustmentPolicyTimeoutMs) ||
+    adjustmentPolicyTimeoutMs < 1 ||
+    adjustmentPolicyTimeoutMs > 60_000
+  ) {
+    throw new ReportingReconciliationError(
+      'INVALID_ADJUSTMENT_POLICY_TIMEOUT',
+      'adjustmentPolicyTimeoutMs must be an integer from 1 through 60000'
+    );
+  }
   if (!Number.isSafeInteger(maxInspectionAttempts) || maxInspectionAttempts < 1 || maxInspectionAttempts > 10) {
     throw new ReportingReconciliationError(
       'INVALID_INSPECTION_RETRY_POLICY',
@@ -2932,7 +3374,12 @@ export async function reconcileReporting<TCredential = unknown>(
     options.ledgerLimits
   );
   const newReceipts: ReportingReceipt[] = [];
+  const newAdjustmentReceipts: ReportingAdjustmentReceipt[] = [];
   const pendingSubmissions: Array<{ receipt: ReportingReceipt; idempotencyKey: string }> = [];
+  const pendingAdjustmentSubmissions: Array<{
+    receipt: ReportingAdjustmentReceipt;
+    idempotencyKey: string;
+  }> = [];
   const inspect =
     options.inspect ??
     (options.resourceReader
@@ -2993,6 +3440,82 @@ export async function reconcileReporting<TCredential = unknown>(
     pendingSubmissions.push({ receipt: checkpoint.receipt, idempotencyKey: checkpoint.receiptSyncIdempotencyKey });
   }
 
+  const eligibleRevisions = new Map<string, ReportingRevision>();
+  for (const obligation of ledger.obligations) {
+    if (obligation.reconciliation_mode !== 'consumer_receipt') continue;
+    const identity = expectedIdentityKey(obligation);
+    const matches = expectedByIdentity.get(identity) ?? [];
+    if (matches.length !== 1 || obligationCounts.get(identity) !== 1) continue;
+    const selected = selectCurrent(obligation, ledger, matches[0]);
+    if (selected.revision?.finality === 'official' && selected.reasons.length === 0) {
+      eligibleRevisions.set(selected.revision.reporting_revision_id, selected.revision);
+    }
+  }
+  const adjustmentReceiptHistories = indexAdjustmentReceipts(ledger.adjustmentReceipts ?? []);
+  for (const adjustment of ledger.adjustments ?? []) {
+    const revision = eligibleRevisions.get(adjustment.adjusts_reporting_revision_id);
+    if (!revision) continue;
+    const current = currentAdjustmentReceipt(adjustment, adjustmentReceiptHistories);
+    if (current && adjustmentReceiptMatches(current, adjustment, revision)) continue;
+    // Accepted is a terminal leaf. If the seller's accepted evidence does not
+    // match the independently recomputed adjustment, report the ledger as
+    // non-definitive but never fork the receipt chain with a second root.
+    if (current?.status === 'accepted') continue;
+
+    let candidate = buildReportingAdjustmentReceipt(adjustment, revision, {
+      ...(current?.status === 'rejected' ? { supersedesReportingReceiptId: current.reporting_receipt_id } : {}),
+    });
+    if (candidate.status === 'accepted') {
+      const decision = options.evaluateAdjustment
+        ? await callBeforeDeadline(
+            signal => Promise.resolve(options.evaluateAdjustment!({ adjustment, revision, signal })),
+            Date.now() + adjustmentPolicyTimeoutMs,
+            'ADJUSTMENT_POLICY_TIMEOUT',
+            'reporting adjustment policy decision timed out'
+          )
+        : 'defer';
+      if (decision === 'defer') continue;
+      if (decision === 'reject') {
+        candidate = { ...candidate, status: 'rejected', rejection_codes: ['ADJUSTMENT_POLICY_REJECTED'] };
+      } else if (decision !== 'accept') {
+        throw new ReportingReconciliationError(
+          'ADJUSTMENT_POLICY_INVALID',
+          'reporting adjustment policy decision is invalid'
+        );
+      }
+    }
+    if (
+      current?.status === 'rejected' &&
+      candidate.status === 'rejected' &&
+      sameSha256(current.observed_adjustment_sha256, candidate.observed_adjustment_sha256) &&
+      same(current.rejection_codes, candidate.rejection_codes)
+    ) {
+      continue;
+    }
+
+    const supersedes = current?.status === 'rejected' ? current.reporting_receipt_id : undefined;
+    const checkpointKey = buildAdjustmentCheckpointKey(
+      options.checkpointScope ?? 'ephemeral',
+      ledger.accountId,
+      adjustment,
+      supersedes
+    );
+    let checkpoint = await options.checkpointStore?.getAdjustment?.(checkpointKey);
+    if (!checkpoint || !adjustmentCheckpointMatches(checkpoint, adjustment, supersedes)) {
+      checkpoint = {
+        adjustmentReceipt: candidate,
+        receiptSyncIdempotencyKey: generateIdempotencyKey(),
+        contextFingerprint: adjustmentCheckpointFingerprint(adjustment, supersedes),
+      };
+      await options.checkpointStore?.putAdjustment?.(checkpointKey, checkpoint);
+    }
+    newAdjustmentReceipts.push(checkpoint.adjustmentReceipt);
+    pendingAdjustmentSubmissions.push({
+      receipt: checkpoint.adjustmentReceipt,
+      idempotencyKey: checkpoint.receiptSyncIdempotencyKey,
+    });
+  }
+
   for (const submission of pendingSubmissions) {
     const receiptDeadline = Date.now() + (options.ledgerLimits?.maxLoadMs ?? 60_000);
     const response = await callBeforeDeadline(
@@ -3028,7 +3551,45 @@ export async function reconcileReporting<TCredential = unknown>(
         'seller did not return one matching successful receipt acknowledgement'
       );
   }
-  if (pendingSubmissions.length) {
+  for (const submission of pendingAdjustmentSubmissions) {
+    const receiptDeadline = Date.now() + (options.ledgerLimits?.maxLoadMs ?? 60_000);
+    const response = await callBeforeDeadline(
+      signal =>
+        options.client.syncReportingReceipts(
+          {
+            account: options.request.account,
+            idempotency_key: submission.idempotencyKey,
+            adjustment_receipts: [submission.receipt],
+          },
+          { signal }
+        ),
+      receiptDeadline,
+      'RECEIPT_WRITE_FAILED',
+      'sync_reporting_receipts exceeded the reporting adjustment receipt deadline'
+    );
+    const results = response.status === 'completed' && Array.isArray(response.results) ? response.results : [];
+    const result = results[0] as { result?: string; adjustment_receipt?: ReportingAdjustmentReceipt } | undefined;
+    const acknowledgedReceipt = result?.adjustment_receipt;
+    const withoutReceivedAt = (
+      receipt: ReportingAdjustmentReceipt
+    ): Omit<ReportingAdjustmentReceipt, 'received_at'> => {
+      const { received_at: _receivedAt, ...immutable } = receipt;
+      return immutable;
+    };
+    if (
+      results.length !== 1 ||
+      !result ||
+      !['recorded', 'unchanged'].includes(result.result ?? '') ||
+      !acknowledgedReceipt ||
+      !same(withoutReceivedAt(acknowledgedReceipt), withoutReceivedAt(submission.receipt))
+    ) {
+      throw new ReportingReconciliationError(
+        'RECEIPT_WRITE_FAILED',
+        'seller did not return one matching successful adjustment receipt acknowledgement'
+      );
+    }
+  }
+  if (pendingSubmissions.length || pendingAdjustmentSubmissions.length) {
     ledger = await loadReportingLedger(
       options.client,
       options.request,
@@ -3089,7 +3650,10 @@ export async function reconcileReporting<TCredential = unknown>(
   const consumerStatuses = attested;
   const postedConsumerStatuses: ReportingConsumerStatusPlanV1[] = [];
   const failedConsumerStatuses: ReportingReconciliationResult['failedConsumerStatuses'] = [];
-  const confirmed: ReportingPendingConsumerStatusKey[] = [];
+  const confirmed: Array<{
+    key: ReportingPendingConsumerStatusKey;
+    pending: ReportingPendingConsumerStatus;
+  }> = [];
   // `batch_identity`: "A batch MUST contain at most one statement for each
   // logical chain ... sellers reject every duplicate-chain entry in that batch
   // without evaluating their supersession order." Two expected periods can
@@ -3113,7 +3677,7 @@ export async function reconcileReporting<TCredential = unknown>(
   const claimedChains = new Set<string>();
   for (const plan of consumerStatuses) {
     if (!plan.overdue || plan.suppressed !== undefined) continue;
-    const chain = canonical(pendingConsumerStatusKey(ledger.accountId, plan));
+    const chain = canonical(pendingConsumerStatusKey(pendingConsumerStatusScope, ledger.accountId, plan));
     if (claimedChains.has(chain)) {
       failedConsumerStatuses.push({
         plan,
@@ -3143,11 +3707,12 @@ export async function reconcileReporting<TCredential = unknown>(
       // and a body that changed under a stable claim is what turns a retry into
       // an idempotency conflict.
       const wireStatuses: Record<string, unknown>[] = [];
+      const postedPending: ReportingPendingConsumerStatus[] = [];
       // Parallel to `wireStatuses`: the plan each one actually carries, which
       // is not always the freshly re-planned object.
       const posted: ReportingConsumerStatusPlanV1[] = [];
       for (const plan of batch) {
-        const key = pendingConsumerStatusKey(ledger.accountId, plan);
+        const key = pendingConsumerStatusKey(pendingConsumerStatusScope, ledger.accountId, plan);
         const fingerprint = consumerStatusClaimFingerprint(plan);
         const pending = await options.pendingConsumerStatusStore?.get(key);
         // A stored blob is durable state from an earlier process. Replaying it
@@ -3158,6 +3723,7 @@ export async function reconcileReporting<TCredential = unknown>(
         // rather than the instant this run happened to re-derive.
         if (pending && pending.claimFingerprint === fingerprint && replayMatchesPlan(pending.statement, plan, now)) {
           wireStatuses.push(pending.statement);
+          postedPending.push(pending);
           // The replayed values, not the freshly re-planned ones: reporting the
           // recomputed digest while the wire carried the stored one made the
           // result lie about what it posted.
@@ -3171,8 +3737,10 @@ export async function reconcileReporting<TCredential = unknown>(
           continue;
         }
         const statement = wireConsumerStatus(plan);
-        await options.pendingConsumerStatusStore?.put(key, { statement, claimFingerprint: fingerprint });
+        const pendingValue = { statement, claimFingerprint: fingerprint };
+        await options.pendingConsumerStatusStore?.put(key, pendingValue);
         wireStatuses.push(statement);
+        postedPending.push(pendingValue);
         posted.push(plan);
       }
       // A batch that fails is recorded and ends the loop rather than thrown.
@@ -3225,7 +3793,10 @@ export async function reconcileReporting<TCredential = unknown>(
           // Confirmed durable at the seller, so it is no longer pending. A
           // failure deliberately leaves it, because the next run must retry
           // that exact statement rather than mint a competing one.
-          confirmed.push(pendingConsumerStatusKey(ledger.accountId, plan));
+          confirmed.push({
+            key: pendingConsumerStatusKey(pendingConsumerStatusScope, ledger.accountId, plan),
+            pending: postedPending[index]!,
+          });
           return;
         }
         failedConsumerStatuses.push({
@@ -3239,7 +3810,7 @@ export async function reconcileReporting<TCredential = unknown>(
     }
   }
 
-  for (const key of confirmed) await options.pendingConsumerStatusStore?.clear(key);
+  for (const { key, pending } of confirmed) await options.pendingConsumerStatusStore?.clear(key, pending);
 
   const consumerStatusPending = await readReportingConsumerStatusPending(options);
 
@@ -3247,6 +3818,7 @@ export async function reconcileReporting<TCredential = unknown>(
     ...evaluated,
     consumerStatuses,
     submittedReceipts: newReceipts,
+    submittedAdjustmentReceipts: newAdjustmentReceipts,
     postedConsumerStatuses,
     failedConsumerStatuses,
     ...(consumerStatusPending !== undefined ? { consumerStatusPending } : {}),
@@ -3433,6 +4005,10 @@ async function consumeReportingRevision(
   const read = options.client.getMediaBuyDelivery!;
   const maxPages = options.ledgerLimits?.maxPages ?? 1_000;
   const maxRows = options.ledgerLimits?.maxRevisionRows ?? 100_000;
+  const maxBytes = options.ledgerLimits?.maxRevisionBytes ?? MAX_CONSUMED_REVISION_BYTES;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1_048_576 || maxBytes > 256 * 1024 * 1024) {
+    throw new TypeError('maxRevisionBytes must be an integer from 1048576 through 268435456');
+  }
   const rows: unknown[] = [];
   let bytes = 0;
   let totalCount: number | undefined;
@@ -3508,13 +4084,18 @@ async function consumeReportingRevision(
           return { budgetExhausted: 'revision' };
         }
         bytes += sized;
-        if (rows.length > maxRows || bytes > MAX_CONSUMED_REVISION_BYTES) {
+        if (rows.length > maxRows || bytes > maxBytes) {
           return { budgetExhausted: 'revision' };
         }
       }
       if (response.pagination?.has_more) {
         const next = response.pagination.cursor;
-        if (!next || seenCursors.has(next)) {
+        if (
+          typeof next !== 'string' ||
+          next.length === 0 ||
+          Buffer.byteLength(next, 'utf8') > 16 * 1024 ||
+          seenCursors.has(next)
+        ) {
           return { failureCode: 'transport_failed', detail: 'revision row pagination did not advance' };
         }
         seenCursors.add(next);
@@ -3826,10 +4407,12 @@ function consumerStatusClaimFingerprint(plan: ReportingConsumerStatusPlanV1): st
 }
 
 function pendingConsumerStatusKey(
+  consumerScope: string,
   accountId: string,
   plan: ReportingConsumerStatusPlanV1
 ): ReportingPendingConsumerStatusKey {
   return {
+    consumerScope,
     accountId,
     deliveryConfigId: plan.deliveryConfigId,
     deliveryConfigVersion: plan.deliveryConfigVersion,

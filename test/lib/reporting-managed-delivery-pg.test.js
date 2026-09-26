@@ -194,6 +194,98 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     assert.equal(Buffer.from(bytes).toString(), 'exact retained bytes');
   });
 
+  test('plans materializations fairly and advances a durable cursor to late accounts', async () => {
+    const { Pool } = require('pg');
+    const fairSchema = `${schema}_planning_fairness`;
+    await bootstrap.query(`CREATE SCHEMA "${fairSchema}"`);
+    const fairPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${fairSchema}"` });
+    try {
+      await fairPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await fairPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
+      const fairCore = new ledger.PostgresReportingLedgerStore(fairPool, {
+        acknowledgeIsolatedDatabase: true,
+        managedDelivery: true,
+      });
+      const fairManaged = new ledger.PostgresReportingManagedDeliveryStore(fairPool);
+      const hot = await seedSkewLedgerInto(fairCore, fairManaged, 'fair-a');
+      const peer = await seedSkewLedgerInto(fairCore, fairManaged, 'fair-m');
+
+      // Give the lexically first account two candidates. The old global loop
+      // handed it the whole remaining limit and never reached the peer.
+      const secondObligation = structuredClone(hot.obligation);
+      secondObligation.reporting_obligation_id = 'obligation-managed-fair-a-2';
+      secondObligation.periodOrdinal = 1;
+      secondObligation.semanticFingerprint = 'obligation-managed-fair-a-2-fingerprint';
+      const secondRevision = structuredClone(hot.revision);
+      secondRevision.reporting_revision_id = 'revision-managed-fair-a-2';
+      secondRevision.reporting_obligation_id = secondObligation.reporting_obligation_id;
+      secondRevision.sourcePublicationId = 'publication-managed-fair-a-2';
+      secondRevision.wireRevision.reporting_revision_id = secondRevision.reporting_revision_id;
+      await fairPool.query(
+        `INSERT INTO adcp_reporting_obligations
+           (obligation_id, configuration_id, account_id, period_ordinal, period_start, period_end,
+            next_attempt_at, state, semantic_fingerprint, data, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11)`,
+        [
+          secondObligation.reporting_obligation_id,
+          secondObligation.configurationId,
+          secondObligation.account.account_id,
+          secondObligation.periodOrdinal,
+          secondObligation.period.start,
+          secondObligation.period.end,
+          secondObligation.nextAttemptAt,
+          secondObligation.state,
+          secondObligation.semanticFingerprint,
+          JSON.stringify(secondObligation),
+          secondObligation.createdAt,
+        ]
+      );
+      await fairPool.query(
+        `INSERT INTO adcp_reporting_revisions
+           (revision_id, obligation_id, revision_number, finality, kind, content_sha256, data, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8)`,
+        [
+          secondRevision.reporting_revision_id,
+          secondRevision.reporting_obligation_id,
+          secondRevision.revisionNumber,
+          secondRevision.finality,
+          secondRevision.kind,
+          secondRevision.binding.sha256,
+          JSON.stringify(secondRevision),
+          secondRevision.createdAt,
+        ]
+      );
+
+      assert.equal(await fairManaged.planMaterializations({ limit: 2 }), 2);
+      const firstPage = await fairPool.query(
+        `SELECT account_id, COUNT(*)::int AS count
+           FROM adcp_reporting_materializations
+          GROUP BY account_id ORDER BY account_id`
+      );
+      assert.deepEqual(
+        firstPage.rows,
+        [
+          { account_id: hot.accountId, count: 1 },
+          { account_id: peer.accountId, count: 1 },
+        ],
+        'every selected account receives a share before the hot account takes spare capacity'
+      );
+
+      // A new account sorts after the persisted cursor. Even though the hot
+      // account still has work, a one-item page starts with the newcomer.
+      const late = await seedSkewLedgerInto(fairCore, fairManaged, 'fair-z');
+      assert.equal(await fairManaged.planMaterializations({ limit: 1 }), 1);
+      const lateRows = await fairPool.query(
+        `SELECT COUNT(*)::int AS count FROM adcp_reporting_materializations WHERE account_id = $1`,
+        [late.accountId]
+      );
+      assert.equal(lateRows.rows[0].count, 1, 'the durable cursor gives the late account bounded progress');
+    } finally {
+      await fairPool.end();
+      await bootstrap.query(`DROP SCHEMA IF EXISTS "${fairSchema}" CASCADE`);
+    }
+  });
+
   test('projects RC3 receipt-required state, append-only repair, and exact replay', async () => {
     const getStatus = ledger.createReportingStatusHandler(core, {
       resolveConsumerId: context => context.agent.agent_url,

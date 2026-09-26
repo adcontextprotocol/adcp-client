@@ -1598,19 +1598,21 @@ describe('createInlineReportingSourceExecutor', () => {
     let calls = 0;
     const source = createInlineReportingSourceExecutor(() => {
       calls += 1;
-      const until = Date.now() + 30;
+      // Leave enough admission headroom for this test to remain meaningful
+      // when Node runs the reporting files concurrently under heavy CI load.
+      const until = Date.now() + 300;
       while (Date.now() < until) {
         // Deliberately block so the deadline timer cannot run.
       }
       return [];
     }, redactedReportingSourceOfferingV1);
     const slice = request('fixture-inline-sync-deadline-overrun');
-    slice.deadline.deadlineAt = new Date(Date.now() + 10).toISOString();
+    slice.deadline.deadlineAt = new Date(Date.now() + 250).toISOString();
     const result = await source.execute(slice, context());
     assert.equal(validateReportingSourceFailureV1(result, 'DEADLINE_EXCEEDED').code, 'DEADLINE_EXCEEDED');
     assert.equal(calls, 1);
     const retry = structuredClone(slice);
-    retry.deadline.deadlineAt = new Date(Date.now() + 100).toISOString();
+    retry.deadline.deadlineAt = new Date(Date.now() + 500).toISOString();
     assert.equal((await source.execute(retry, context())).ok, true, 'failed work is not sealed for replay');
     assert.equal(calls, 2);
   });

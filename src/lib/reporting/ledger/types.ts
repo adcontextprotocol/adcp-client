@@ -487,6 +487,28 @@ export interface ReportingLedgerNotificationActivityPortV1<TTransaction = unknow
     },
     transaction: TTransaction
   ): Promise<void>;
+  /** Records a committed revision or adjustment in the same transaction as the immutable ledger row. */
+  recordLedgerChanged?(
+    input:
+      | {
+          obligation: Readonly<ReportingLedgerObligationV1>;
+          revision: Readonly<ReportingLedgerRevisionV1>;
+        }
+      | {
+          obligation: Readonly<ReportingLedgerObligationV1>;
+          adjustment: Readonly<ReportingLedgerAdjustmentV1>;
+        },
+    transaction: TTransaction
+  ): Promise<void>;
+  /** Records a successful managed materialization in the same transaction as its terminal state. */
+  recordDeliveryReady?(
+    input: {
+      obligation: Readonly<ReportingLedgerObligationV1>;
+      revision: Readonly<ReportingLedgerRevisionV1>;
+      materialization: Readonly<ReportingMaterialization>;
+    },
+    transaction: TTransaction
+  ): Promise<void>;
 }
 
 export interface ReportingLedgerSubscriberV1 {

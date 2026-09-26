@@ -4,7 +4,7 @@
 
 ## Recommended: install the lifecycle service
 
-`createReliableReportingService` is the adapter-first production path. A
+`createReliableReportingService` is the adapter-first Core path. A
 provider adapter supplies one bounded slice fetch and two immutable offering
 descriptions; the service reuses the PostgreSQL ledger, source executor,
 producer, handlers, and decisioning-platform account resolver.
@@ -59,12 +59,33 @@ reporting.start({ intervalMilliseconds: 60_000, deploymentWide: true });
 process.once('SIGTERM', () => void reporting.stop());
 ```
 
-The service advertises Reliable Reporting Core only. An inline adapter cannot
-turn on Managed Delivery, Reconciled Billing, receipts, webhook activity, or
-reporting notifications. `sync_reporting_status` is advertised only when
+The service advertises Reliable Reporting Core only. `sync_reporting_status` is advertised only when
 `resolveConsumerId` is installed and the supplied ledger implements its
-atomic consumer-status methods. Follow-up work adds those higher tiers; do not
-place them in a manual capability override.
+atomic consumer-status methods. Do not place higher tiers in a manual
+capability override.
+
+For the complete seller deployment, use the async
+`createPostgresReliableReportingProductionService`. It assembles Core, Managed
+Delivery, reconciled receipts when the offering requests them, all three
+reporting notification types, durable webhook retries, principal-scoped
+webhook activity, fair per-account delivery work, and coordinated shutdown.
+Pass `applyMigrations` to bridge the returned ordered SQL into your migration
+runner; the constructor publishes no capability object until every table and
+worker dependency probes successfully and the advertised managed policy is
+durably adopted. Its `platform` mounts `sync_reporting_receipts` through
+`createAdcpServerFromPlatform`, and its scheduler drives production, managed
+delivery, notification recovery, retry recovery, and bounded retention cleanup
+together. `stop()` aborts and awaits both worker loops.
+The production scheduler and `recoverOnce()` require the explicit
+`deploymentWide: true` option because notification and webhook recovery scan
+the entire configured namespace. Use an isolated namespace and publisher scope
+for each independently operated tenant partition. The Core-only scheduler may
+still use an `accountIds` roster. Production setup requires
+`activity.tenantScopeForAccount`; when an offering uses `consumer_receipt`, it
+also requires a trusted `obligatedConsumers` callback so lifecycle health can
+become reconciled only after every obligated consumer has accepted.
+See the [integrated seller example](../../examples/reliable-reporting-service/README.md#integrated-seller-production-service)
+for the full option shape.
 
 Install a buyer declaration after the account and its media-buy scope have
 been authorized and resolved. `installConfiguration` intentionally accepts no
@@ -311,6 +332,15 @@ const reportingDelivery = managed.reportingDeliveryCapabilities;
 await managed.runWorker({ maxIterations: 100 });
 ```
 
+Deployment-wide materialization planning is durably round-robin. The PostgreSQL
+store advances an agent-wide cursor before processing its bounded account page
+and gives every selected account a first-pass share before unused capacity
+returns to a hot tenant. A crash can defer a selected account until the ring
+wraps, but a lexically early account cannot consume every page, and an account
+added after the cursor receives bounded progress on the next eligible sweep.
+Apply `REPORTING_MANAGED_DELIVERY_MIGRATION` on upgrade so the cursor column is
+available before any unscoped `planMaterializations()` call.
+
 `automated_recovery_window_seconds` is published once per agent, in one capability document, while Core `schedule.recoveryWindowMilliseconds` is per configuration. The advertised value is a **maximum** — the longest a due obligation may stay `delayed` while automated recovery continues before it becomes `action_required` — so one agent-wide number is truthful exactly when it is at least every installed window. `createReportingManagedDeliveryRuntime` enforces that bound and nothing more: advertising less than the widest installed window is refused with the offending value named, advertising more is conservative and allowed, sub-second Core windows are rounded up to the whole second the capability is expressed in, and a deployment with no managed binding — a fresh install, or one that has just offboarded its last managed tenant — starts normally. Heterogeneous tenants behind one agent therefore need no separate endpoint per cohort: advertise the widest window they run. The bound is enforced on the write path as well as at startup — `adoptAdvertisedPolicies` validates existing bindings while exclusively locking the same durable policy sentinel as `installBinding`, and `installBinding` refuses a later Core configuration whose recovery window exceeds the durable bound. `listInstalledRecoveryWindowSeconds` is optional direct-store introspection, not an authoritative publication check: an install can otherwise land between a list and a later adoption.
 
 All four capability promises are durable and database-wide. The atomic hook adopts recovery and authorization-revocation maximums in the stronger, decreasing direction, and status and resource-retention minimums in the stronger, increasing direction. It returns those effective values so a weaker replica still runs its worker to the strongest policy already registered; PostgreSQL also enforces resource retention at settlement and authorization revocation at claim time for direct callers. A rejected binding check or policy write leaves all four columns unchanged, and a later replica can never weaken an adopted promise. Custom stores used by `createReportingManagedDeliveryRuntime` must provide the same atomic, binding-fenced contract; the optional separate recovery/status hooks remain only for compatible direct-store use and are not sufficient for capability publication. Apply `REPORTING_MANAGED_DELIVERY_MIGRATION` on upgrade as well as first install: it adds the resource-retention and revocation columns to an existing two-column registry without replacing prior promises.
@@ -329,7 +359,16 @@ Managed-only changes are lifecycle candidates in their own right. A settlement, 
 
 The managed tables are additive and do not alter the Core tables. This is the schema boundary coordinated with #2943: that work owns transactional reporting notification/activity intent and the existing webhook delivery/credential plane. Managed Delivery does not create a second webhook sender, outbox, credential store, or subscriber model. Apply both feature migrations after the Core migration in either order; each owns separate tables and both reuse the Core authority.
 
-## Transactional status notifications and account activity
+## Transactional reporting notifications and account activity
+
+The activity outbox covers the complete Reliable Reporting event surface. A
+newly committed revision or adjustment records `reporting.ledger_changed` in
+the same transaction as the immutable ledger row; a successfully settled
+managed materialization records `reporting.delivery_ready` in the same
+transaction as its terminal state; and health transitions record
+`reporting.status_changed`. Network I/O always happens later through recovery.
+Event `fired_at` values come from the database clock, and replaying an already
+committed ledger record does not create another event.
 
 Production deployments can join every health or observed-finality transition to
 a compact account-operator activity record. Health transitions additionally
@@ -469,6 +508,84 @@ capacity and alert on the operational error instead of dropping durable intent.
 This is an SDK/adopter API only: AdCP defines the complete health-notification
 wire payload but no public account-activity read task, so do not expose `listActivity()`
 as an invented wire extension.
+
+`listActivity()` preserves the lifecycle-only compatibility surface. Use
+`listNotificationActivity()` for the complete internal revision, adjustment,
+and delivery-ready event stream. It remains an SDK/admin API, not an AdCP wire
+task.
+
+That lifecycle activity is distinct from the protocol's webhook transport
+diagnostics. To support `list_accounts({ include_webhook_activity: true })`,
+wire the principal-scoped attempt log into the same notification runtime:
+
+This manual composition replaces the earlier `const notifications` block; it
+reuses that block's `attemptCheckpoint` and installs exactly one notification
+runtime. Prefer the production composer for new deployments.
+
+```ts
+import {
+  composeNotificationDeliveryAttemptCheckpoints,
+  composeWebhookAttemptResultObservers,
+  createPostgresReportingWebhookActivityV1,
+  projectListAccountsReportingWebhookActivityV1,
+} from '@adcp/sdk';
+
+const webhookActivity = createPostgresReportingWebhookActivityV1({
+  db: pool,
+  namespace: 'seller-production',
+  retentionDays: 30, // protocol minimum
+});
+
+const notifications = createPostgresPersistentNotificationRuntime({
+  db: pool,
+  publisherScope: 'seller-production',
+  checkpointDeliveryAttempt: composeNotificationDeliveryAttemptCheckpoints(
+    attemptCheckpoint, // pin the recipient before publishing buyer-visible evidence
+    webhookActivity.checkpointDeliveryAttempt, // diagnostics are the final pre-POST write
+  ),
+  webhooks: {
+    ...webhookOptions,
+    onAttemptResult: composeWebhookAttemptResultObservers(
+      webhookActivity.emitterObservers.onAttemptResult,
+      webhookOptions.onAttemptResult,
+    ),
+    onAttemptObserverError(error, phase) {
+      webhookMetrics.recordObserverFailure(error, phase);
+    },
+  },
+  ...notificationOptions,
+});
+
+for (const sql of webhookActivity.migrations.all) await pool.query(sql);
+await webhookActivity.probe();
+
+const response = await authoritativeListAccounts(params, ctx);
+return projectListAccountsReportingWebhookActivityV1({
+  response,
+  request: params,
+  tenantId: ctx.tenant.id,
+  principalId: ctx.agent.agent_url,
+  activity: webhookActivity,
+});
+```
+
+Both scope values must come from authenticated context. The projector can only
+decorate accounts already returned by the authoritative handler; it never
+resolves additional accounts. It strips adopter-supplied `webhook_activity`
+even when the buyer did not request the field, preventing permissive response
+shapes from leaking arbitrary diagnostics. Rows are isolated by tenant,
+principal, and account and ordered newest first.
+
+The pre-POST reservation records `pending` before network I/O. The emitter's
+awaited result observer completes it as `success`, `failed`, `timeout`, or
+`connection_error`; observer failures never turn a successful remote POST into
+a retry. A completion outage therefore leaves the honest `pending` record
+rather than risking a duplicate send. Query strings, fragments, userinfo, and
+all non-allowlisted path segments are removed before storage. Error text is a
+fixed classification and never includes headers, bodies, exception prose, or
+credentials. Schedule bounded `pruneCompleted()` calls; pending attempts are
+retained for investigation. Advertise `supports_webhook_activity: true` only
+after migrations and both notification/activity probes succeed.
 
 Projected activity defaults to 90-day retention measured from projection (or
 from commit for finality-only records that require no wire projection).

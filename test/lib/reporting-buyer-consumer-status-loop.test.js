@@ -102,6 +102,9 @@ async function harness({ rows = [{ media_buy_id: 'fixture-media-buy', impression
         expectedPeriods,
         now: new Date(now),
         inspect: async () => ({ rowCount: 0, controlTotals: [] }),
+        ...(overrides.pendingConsumerStatusStore
+          ? { pendingConsumerStatusScope: 'seller.example|session:buyer-1' }
+          : {}),
         ...overrides,
       });
     },

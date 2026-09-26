@@ -845,7 +845,14 @@ ${managedDueArm}       )
         owner: lease.owner,
         generation: lease.generation,
       },
-      revisionLegacyCanonicalDigestReplay
+      revisionLegacyCanonicalDigestReplay,
+      this.notificationActivityPort?.recordLedgerChanged
+        ? (client, committed) =>
+            this.notificationActivityPort!.recordLedgerChanged!(
+              { obligation: lease.obligation, revision: committed },
+              client
+            )
+        : undefined
     );
   }
 
@@ -924,7 +931,14 @@ ${managedDueArm}       )
         owner: lease.owner,
         generation: lease.generation,
       },
-      adjustmentLegacyCanonicalDigestReplay
+      adjustmentLegacyCanonicalDigestReplay,
+      this.notificationActivityPort?.recordLedgerChanged
+        ? (client, committed) =>
+            this.notificationActivityPort!.recordLedgerChanged!(
+              { obligation: lease.obligation, adjustment: committed },
+              client
+            )
+        : undefined
     );
   }
 
@@ -3191,7 +3205,8 @@ ${managedDueArm}       )
      * exact additive difference and nothing else; the stored row is still the
      * value returned, so a tolerated replay never rewrites history.
      */
-    legacyReplayEquivalent?: (stored: T, proposed: T) => boolean
+    legacyReplayEquivalent?: (stored: T, proposed: T) => boolean,
+    onInserted?: (transaction: ReportingLedgerTransactionV1, value: T) => Promise<void>
   ): Promise<{ inserted: boolean; value: T }> {
     return this.transaction(
       async client => {
@@ -3213,6 +3228,7 @@ ${managedDueArm}       )
         if (fingerprint(value) !== fingerprint(proposed) && !legacyReplayEquivalent?.(value, proposed)) {
           throw new Error('Immutable reporting ledger identity names different content');
         }
+        if (inserted.rowCount === 1) await onInserted?.(client, clone(value));
         return { inserted: inserted.rowCount === 1, value: clone(value) };
       },
       { preBeginAdvisoryLock: advisoryLock }

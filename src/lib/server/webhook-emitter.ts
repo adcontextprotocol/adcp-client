@@ -128,6 +128,8 @@ export interface WebhookDeliveryRecovery {
 /** Fenced ownership returned by SDK durable recovery implementations. */
 export interface WebhookDeliveryRecoveryClaim {
   readonly leaseExpiresAtMs: number;
+  /** Monotone durable recovery-run ordinal when the backend exposes one. */
+  readonly attemptCount?: number;
   /** Backend-independent renewal cadence. SDK claims set this from the configured lease duration. */
   readonly heartbeatIntervalMs?: number;
   renew(): Promise<boolean>;
@@ -339,9 +341,24 @@ export interface WebhookEmitterOptions {
   /** Signing tag override. Defaults to `adcp/webhook-signing/v1`. */
   tag?: string;
   /** Observability hook called BEFORE each attempt. */
-  onAttempt?: (info: WebhookEmitAttempt) => void;
+  onAttempt?: (info: WebhookEmitAttempt) => void | Promise<void>;
   /** Observability hook called AFTER each attempt completes. */
-  onAttemptResult?: (info: WebhookEmitAttemptResult) => void;
+  onAttemptResult?: (info: WebhookEmitAttemptResult) => void | Promise<void>;
+  /** Observer failures are isolated from delivery and reported here. */
+  onAttemptObserverError?: (error: unknown, phase: 'attempt' | 'result') => void;
+  /** Maximum time allowed for each non-authoritative observability hook. Defaults to 5 seconds. */
+  attemptObserverTimeoutMs?: number;
+  /** Maximum time allowed for signing plus one external POST. Defaults to 30 seconds. */
+  deliveryTimeoutMs?: number;
+  /**
+   * Resolve a retry ordinal before authorization. A successful authorization
+   * may replace it with the ordinal returned by its final durable pre-POST
+   * checkpoint; reporting activity uses that later seam so suppressions do
+   * not consume transport attempts. Do not back both seams with the same
+   * counter: use this option for pre-authorization allocation or return an
+   * ordinal from the authorizer checkpoint, never both.
+   */
+  resolveAttemptOrdinal?: (candidate: Readonly<WebhookEmitAttempt>) => number | Promise<number>;
   /**
    * Fail-closed authorization hook invoked immediately before every external
    * POST, including each in-process retry and every recovered attempt. A
@@ -403,6 +420,8 @@ export interface WebhookEmitAttempt {
   idempotency_key: string;
   attempt: number;
   url: string;
+  /** Exact UTF-8 byte length of the serialized request body. */
+  payload_size_bytes: number;
   /** Durable non-secret context supplied by the emission owner. */
   attemptAuthorizationContext?: Record<string, unknown>;
   /**
@@ -429,6 +448,8 @@ export type WebhookAttemptAuthorizationDecision =
       decision: 'allow';
       /** Optional just-in-time override; `null` explicitly selects RFC 9421. */
       authentication?: WebhookAuthentication;
+      /** Durable transport ordinal allocated by the pre-POST checkpoint. */
+      attemptOrdinal?: number;
     }
   | {
       decision: 'suppress';
@@ -532,6 +553,10 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
   const fetchImpl = options.fetch ?? createPinAndBindFetch();
   const sleep = options.sleep ?? defaultSleep;
   const now = options.now ?? Date.now;
+  const observerTimeoutMs = options.attemptObserverTimeoutMs ?? 5_000;
+  const deliveryTimeoutMs = options.deliveryTimeoutMs ?? 30_000;
+  assertPositiveInteger(observerTimeoutMs, 'attemptObserverTimeoutMs', 300_000);
+  assertPositiveInteger(deliveryTimeoutMs, 'deliveryTimeoutMs', 300_000);
 
   const makeEmitter = (boundTenantScope: string | undefined): RecoverableWebhookEmitter => ({
     forTenantScope(nextTenantScope: string): RecoverableWebhookEmitter {
@@ -632,16 +657,26 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
             binding = await refreshDeliveryBinding(store, deliveryKey, binding, retryHorizonSeconds);
           }
           assertWithinRetryHorizon(binding, deliveryId, now(), retryHorizonSeconds);
-          const attemptInfo: WebhookEmitAttempt = {
+          const candidate: WebhookEmitAttempt = {
             delivery_id: deliveryId,
             idempotency_key,
             attempt,
             url,
+            payload_size_bytes: Buffer.byteLength(bodyBytes, 'utf8'),
             ...(attemptAuthorizationContext === undefined
               ? {}
               : { attemptAuthorizationContext: structuredClone(attemptAuthorizationContext) }),
             ...(recoveredClaim ? { recovered: true } : {}),
           };
+          const resolvedAttempt = options.resolveAttemptOrdinal
+            ? await promiseBeforeDeadline(
+                Promise.resolve(options.resolveAttemptOrdinal(candidate)),
+                deliveryTimeoutMs,
+                'webhook attempt ordinal resolution timed out'
+              )
+            : attempt;
+          assertPositiveInteger(resolvedAttempt, 'resolved webhook attempt ordinal', 1_000_000);
+          let attemptInfo: WebhookEmitAttempt = { ...candidate, attempt: resolvedAttempt };
 
           let attemptAuthentication = authentication;
           if (options.authorizeAttempt) {
@@ -679,13 +714,20 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
                 suppression: { reason: authorization.reason, ...(retryableSuppression ? { retryable: true } : {}) },
               };
             }
+            if (authorization.attemptOrdinal !== undefined) {
+              assertPositiveInteger(authorization.attemptOrdinal, 'authorized webhook attempt ordinal', 1_000_000);
+              attemptInfo = { ...attemptInfo, attempt: authorization.attemptOrdinal };
+            }
             if ('authentication' in authorization) {
               attemptAuthentication =
                 authorization.authentication == null ? null : structuredClone(authorization.authentication);
             }
           }
           attempts = attempt;
-          options.onAttempt?.(attemptInfo);
+          await observeAttempt(options, 'attempt', attemptInfo);
+          // Observers are awaited and may outlive a recovery lease. Fence the
+          // final transport boundary after they finish, before any POST.
+          await recoveryHeartbeat?.renewNow();
 
           const started = Date.now();
           let status: number | undefined;
@@ -693,23 +735,30 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
           let terminal = false;
 
           try {
-            const response = await deliverOnce({
-              url,
-              bodyBytes,
-              signerKey: options.signerKey,
-              signerProvider: options.signerProvider,
-              authentication: attemptAuthentication,
-              tag: options.tag,
-              userAgent: options.userAgent,
-              fetch: fetchImpl,
-              suppressLegacyWarnings: options.suppressLegacyWarnings,
-            });
+            const controller = new AbortController();
+            const response = await promiseBeforeDeadline(
+              deliverOnce({
+                url,
+                bodyBytes,
+                signerKey: options.signerKey,
+                signerProvider: options.signerProvider,
+                authentication: attemptAuthentication,
+                tag: options.tag,
+                userAgent: options.userAgent,
+                fetch: fetchImpl,
+                signal: controller.signal,
+                suppressLegacyWarnings: options.suppressLegacyWarnings,
+              }),
+              deliveryTimeoutMs,
+              'webhook delivery timed out',
+              () => controller.abort()
+            );
             status = response.status;
             lastStatus = status;
 
             if (status >= 200 && status < 300) {
               const durationMs = Date.now() - started;
-              options.onAttemptResult?.({ ...attemptInfo, status, durationMs, willRetry: false });
+              await observeAttempt(options, 'result', { ...attemptInfo, status, durationMs, willRetry: false });
               await recoveryHeartbeat?.stop();
               const heartbeatError = recoveryHeartbeat?.lossMessage();
               if (heartbeatError) errors.push(heartbeatError);
@@ -756,7 +805,7 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
 
           const willRetry = !terminal && attempt < retries.maxAttempts;
           finalTerminal = terminal;
-          options.onAttemptResult?.({
+          await observeAttempt(options, 'result', {
             ...attemptInfo,
             ...(status !== undefined && { status }),
             durationMs: Date.now() - started,
@@ -797,6 +846,38 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
     },
   });
   return makeEmitter(tenantScope);
+}
+
+async function observeAttempt(
+  options: WebhookEmitterOptions,
+  phase: 'attempt' | 'result',
+  value: WebhookEmitAttempt | WebhookEmitAttemptResult
+): Promise<void> {
+  try {
+    const observer =
+      phase === 'attempt'
+        ? options.onAttempt?.(value as WebhookEmitAttempt)
+        : options.onAttemptResult?.(value as WebhookEmitAttemptResult);
+    if (observer !== undefined) {
+      await promiseBeforeDeadline(
+        Promise.resolve(observer),
+        options.attemptObserverTimeoutMs ?? 5_000,
+        `webhook ${phase} observer timed out`
+      );
+    }
+  } catch (error) {
+    try {
+      if (options.onAttemptObserverError) options.onAttemptObserverError(error, phase);
+      else console.warn(`[adcp/webhook] ${phase} observer failed`);
+    } catch {
+      // Delivery observability is deliberately isolated from transport.
+      try {
+        console.warn(`[adcp/webhook] ${phase} observer-error hook failed`);
+      } catch {
+        // A broken logger must not prevent delivery.
+      }
+    }
+  }
 }
 
 function assertAttemptAuthorizationDecision(value: unknown): asserts value is WebhookAttemptAuthorizationDecision {
@@ -927,6 +1008,35 @@ interface DeliveryResponse {
   location?: string;
 }
 
+function assertPositiveInteger(value: number, name: string, maximum: number): void {
+  if (!Number.isSafeInteger(value) || value < 1 || value > maximum) {
+    throw new TypeError(`${name} must be an integer from 1 through ${maximum}`);
+  }
+}
+
+async function promiseBeforeDeadline<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  message: string,
+  onTimeout?: () => void
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      onTimeout?.();
+      const error = new Error(message);
+      Object.assign(error, { code: 'ETIMEDOUT' });
+      reject(error);
+    }, timeoutMs);
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([operation, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function deliverOnce(args: {
   url: string;
   bodyBytes: string;
@@ -936,6 +1046,7 @@ async function deliverOnce(args: {
   tag?: string;
   userAgent?: string;
   fetch: typeof fetch;
+  signal: AbortSignal;
   suppressLegacyWarnings?: boolean;
 }): Promise<DeliveryResponse> {
   const headers = await buildHeaders(args);
@@ -943,6 +1054,7 @@ async function deliverOnce(args: {
     method: 'POST',
     headers,
     body: args.bodyBytes,
+    signal: args.signal,
   });
   return {
     status: response.status,

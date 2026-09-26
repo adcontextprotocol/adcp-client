@@ -98,3 +98,72 @@ name another buyer's media buys on a shared upstream network. The service derive
 See [the ledger guide](../../docs/guides/REPORTING-LEDGER.md) for the complete
 input shape, per-account scheduling, migration from manual wiring, and the
 conformance helper.
+
+## Integrated seller production service
+
+For Managed Delivery and Reconciled Billing, compose the real provider,
+authorization, notification, and migration adapters in one probed service.
+The host-owned dependencies below must use live systems and bounded network
+timeouts; `applyMigrations` runs before any capability is published.
+
+```ts
+import { createPostgresReliableReportingProductionService } from '@adcp/sdk/reporting/service';
+
+const production = await createPostgresReliableReportingProductionService({
+  db: pool,
+  namespace: 'reporting-prod',
+  publisherScope: 'seller-prod',
+  acknowledgeIsolatedDatabase: true,
+  adapters: { provider: providerAdapter },
+  contact: { name: 'Reporting operations', email: 'reporting@example.com' },
+  automatedRecoveryWindowSeconds: 86_400,
+  statusRetentionDays: 90,
+  resolveSource: account => ({
+    adapterId: 'provider',
+    sourceScope: { network_id: account.ctx_metadata.provider.networkId },
+    sourceTimezone: account.ctx_metadata.provider.timezone,
+  }),
+  resolveCurrency: account => account.ctx_metadata.provider.currency,
+  resolveCoverage: async account => ({
+    constituents: await bookings.authorizedReportingConstituents(account.id),
+  }),
+  resolveConsumerId: ctx => buyerRegistry.requireAuthenticatedConsumerId(ctx),
+  obligatedConsumers: ({ reporting_obligation_id, account_id }) =>
+    billingRoster.obligatedConsumers(reporting_obligation_id, account_id),
+  notifications: {
+    subscriptions: { acknowledgeIsolatedDatabase: true },
+    webhooks: {
+      signerProvider: keyManager.reportingWebhookSigner(),
+      fetch: safeWebhookFetch, // enforce the SDK's pinned SSRF policy
+    },
+    proofAdapter: notificationAuthority.proofAdapter,
+    authorizeDelivery: notificationAuthority.authorizeDelivery,
+    validateDestination: notificationAuthority.validateDestination,
+  },
+  managedDelivery: {
+    adapter: provider.managedDeliveryAdapter,
+    resourceRetentionDays: 90,
+    authorizationRevocationSeconds: 3_600,
+  },
+  activity: { tenantScopeForAccount: accountId => accountDirectory.tenantFor(accountId) },
+  resolveWebhookActivityScope: ctx => accountDirectory.webhookActivityScope(ctx),
+  applyMigrations: statements => migrations.applyInOrder(statements),
+});
+
+const installedPlatform = production.install(platform); // accounts.upsert and accounts.list required
+const server = createAdcpServerFromPlatform(installedPlatform, serverOptions);
+production.start({ intervalMilliseconds: 60_000, deploymentWide: true });
+
+process.once('SIGTERM', async () => {
+  await production.stop();
+  await pool.end();
+});
+```
+
+Use one isolated namespace and publisher scope per independently operated
+tenant partition. The production worker's recovery passes scan that entire
+namespace, so `start()` and `recoverOnce()` require `deploymentWide: true`.
+The trusted `obligatedConsumers` roster is required when an offering uses
+`consumer_receipt`; an incomplete roster keeps billing health conservative.
+See the [production operations guide](../../docs/guides/REPORTING-OPERATIONS.md)
+for migration, readiness, and recovery procedures.

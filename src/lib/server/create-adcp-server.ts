@@ -1719,6 +1719,8 @@ export type WebhooksConfig = Pick<
   onAttempt?: WebhookEmitterOptions['onAttempt'];
   /** Observability: emitter-wide onAttemptResult hook. */
   onAttemptResult?: WebhookEmitterOptions['onAttemptResult'];
+  /** Observability: receives failures isolated from attempt observers. */
+  onAttemptObserverError?: WebhookEmitterOptions['onAttemptObserverError'];
 };
 
 export interface AdcpServerConfig<TAccount = unknown> {
@@ -1970,8 +1972,9 @@ export interface AdcpServerConfig<TAccount = unknown> {
     toolName: AdcpServerToolName
   ) => string | undefined;
   /**
-   * Resolve the reporting consumer identity a `sync_reporting_status` receipt
-   * is deposited for — the same identity the receipt handler records under.
+   * Resolve the reporting consumer identity that `sync_reporting_status` and
+   * `sync_reporting_receipts` evidence is deposited for — the same identity
+   * the reporting handlers record under.
    *
    * When present it is the replay namespace for that tool. The credential is
    * not a safe substitute: an adopter may map two operator seats sharing one
@@ -1983,8 +1986,8 @@ export interface AdcpServerConfig<TAccount = unknown> {
    *
    * `createAdcpServerFromPlatform` wires this from the reporting platform's
    * own `resolveConsumerId`, so a service-installed deployment gets it for
-   * free. Called once per dispatched `sync_reporting_status`, in addition to
-   * the receipt handler's own call.
+   * free. Called once per dispatched reporting evidence mutation, in addition
+   * to the handler's own call.
    */
   resolveReportingConsumerId?: (
     ctx: HandlerContext<TAccount>,
@@ -2697,7 +2700,7 @@ function resolveExtraScope(
       callerMutationScope.account_id ?? null,
     ]);
   }
-  // `sync_reporting_status` deposits a receipt for the calling consumer, and a
+  // Reporting status and receipt writes deposit evidence for the calling consumer, and a
   // registry resolves several callers onto one account. Sharing an account-only
   // namespace let the second caller's identical request replay the first's
   // cached response before its own consumer was resolved, so its receipt was
@@ -2705,7 +2708,7 @@ function resolveExtraScope(
   // already authenticated here — so it is namespaced directly rather than
   // joining CALLER_SCOPED_MUTATION_TOOLS, whose resolution path is specific to
   // the two tools that declare one.
-  if (toolName === 'sync_reporting_status') {
+  if (toolName === 'sync_reporting_status' || toolName === 'sync_reporting_receipts') {
     // Dispatch refuses the call before this point when no canonical principal
     // is derivable, so the namespace can never collapse to a shared null.
     if (callerPrincipal === undefined) return undefined;
@@ -6815,7 +6818,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // identity rejected exactly the deployments that had told the framework
         // how to name the consumer. Without that resolver the canonical
         // credential identity is the namespace, so it is required.
-        if (toolName === 'sync_reporting_status' && idempotency !== undefined) {
+        if (
+          (toolName === 'sync_reporting_status' || toolName === 'sync_reporting_receipts') &&
+          idempotency !== undefined
+        ) {
           const namedByResolver = resolveReportingConsumerId !== undefined;
           const unidentified = namedByResolver
             ? ctx.authInfo === undefined && ctx.agent === undefined
@@ -6823,7 +6829,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           if (unidentified) {
             return finalize(
               adcpError('AUTH_MISSING', {
-                message: 'sync_reporting_status requires an authenticated caller principal',
+                message: `${toolName} requires an authenticated caller principal`,
               })
             );
           }
@@ -6833,7 +6839,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // only a proxy for it: two operator seats can share one OAuth
         // client_id and still be distinct consumers.
         let reportingConsumerIdentity: string | undefined;
-        if (toolName === 'sync_reporting_status' && idempotency !== undefined && resolveReportingConsumerId) {
+        if (
+          (toolName === 'sync_reporting_status' || toolName === 'sync_reporting_receipts') &&
+          idempotency !== undefined &&
+          resolveReportingConsumerId
+        ) {
           try {
             const resolved = await resolveReportingConsumerId(ctx, params);
             if (typeof resolved !== 'string' || resolved.length === 0 || resolved.length > 255) {

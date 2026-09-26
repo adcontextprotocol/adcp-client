@@ -608,6 +608,78 @@ describe('ReliableReportingService', () => {
     assert.deepEqual(seen, ['seat-a', 'seat-b'], 'each resolved consumer must deposit its own receipt');
   });
 
+  test('scopes reconciled-billing receipt replay by the resolved consumer', async () => {
+    const { service } = serviceFixture({ resolveConsumerId: context => `consumer-${context.authInfo.operator}` });
+    const seen = [];
+    const platform = service.install({
+      capabilities: { specialisms: [], config: {} },
+      accounts: {
+        resolution: 'explicit',
+        resolve: async ref => ({ id: ref?.account_id ?? 'account-a', ctx_metadata: {} }),
+        upsert: async () => [],
+      },
+    });
+    const observed = {
+      ...platform,
+      reporting: {
+        ...platform.reporting,
+        syncReportingReceipts: async (request, context) => {
+          seen.push(context.authInfo.operator);
+          return {
+            status: 'completed',
+            results: request.receipts.map(receipt => ({
+              result: 'accepted',
+              reporting_receipt_id: receipt.reporting_receipt_id,
+            })),
+          };
+        },
+      },
+    };
+    const { createIdempotencyStore, memoryBackend } = require('../../dist/lib/server/idempotency/index.js');
+    const server = createAdcpServerFromPlatform(observed, {
+      name: 'reporting-receipt-consumer-scope-test',
+      version: '1.0.0',
+      adcpVersion: '3.2.0-rc.6',
+      validation: { requests: 'off', responses: 'off' },
+      idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
+      resolveSessionKey: () => 'shared-oauth-client',
+    });
+    const call = operator =>
+      server.dispatchTestRequest(
+        {
+          method: 'tools/call',
+          params: {
+            name: 'sync_reporting_receipts',
+            arguments: {
+              account: { account_id: 'account-a' },
+              idempotency_key: 'reporting-receipts-e2e-operator-0001',
+              receipts: [
+                {
+                  reporting_receipt_id: 'reporting-receipt-e2e-0001',
+                  reporting_obligation_id: 'obligation-e2e-0001',
+                  reporting_revision_id: 'revision-e2e-0001',
+                  reporting_materialization_id: 'materialization-e2e-0001',
+                  status: 'accepted',
+                },
+              ],
+            },
+          },
+        },
+        {
+          authInfo: {
+            operator,
+            credential: { kind: 'oauth', client_id: 'shared-oauth-client', scopes: [], expires_at: null },
+          },
+        }
+      );
+
+    for (const operator of ['seat-a', 'seat-b']) {
+      const result = await call(operator);
+      assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    }
+    assert.deepEqual(seen, ['seat-a', 'seat-b'], 'each resolved consumer must deposit its own receipt');
+  });
+
   test('rejects adapter declarations for uninstalled reporting tiers', () => {
     for (const mutate of [
       offering => {
@@ -634,7 +706,7 @@ describe('ReliableReportingService', () => {
             resolveCurrency: () => 'USD',
             resolveCoverage: account => ({ constituents: [authorizedConstituent(account.id)] }),
           }),
-        /Core API delivery only/
+        /createPostgresReliableReportingProductionService/
       );
     }
 

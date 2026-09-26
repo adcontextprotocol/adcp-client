@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-09-24
+> Generated at: 2026-09-26
 > Library: @adcp/sdk v14.0.0-rc.47
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -2127,6 +2127,8 @@ These docs are available locally in the repo and hosted at https://adcontextprot
 | Conformance (property-based fuzzing) | docs/guides/CONFORMANCE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/CONFORMANCE.md) |
 | Reporting source executor (seller adapters) | docs/guides/REPORTING-SOURCE-EXECUTOR.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/REPORTING-SOURCE-EXECUTOR.md) |
 | Seller reporting ledger | docs/guides/REPORTING-LEDGER.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/REPORTING-LEDGER.md) |
+| Buyer reporting reconciliation | docs/guides/REPORTING-RECONCILIATION.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/REPORTING-RECONCILIATION.md) |
+| Reliable Reporting production operations | docs/guides/REPORTING-OPERATIONS.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/REPORTING-OPERATIONS.md) |
 | Validate your agent (5-command checklist) | docs/guides/VALIDATE-YOUR-AGENT.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/VALIDATE-YOUR-AGENT.md) |
 | Async patterns (polling, webhooks, deferred) | docs/guides/ASYNC-DEVELOPER-GUIDE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/ASYNC-DEVELOPER-GUIDE.md) |
 | Async API reference | docs/guides/ASYNC-API-REFERENCE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/ASYNC-API-REFERENCE.md) |

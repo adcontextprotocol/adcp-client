@@ -8,6 +8,7 @@ export type {
 } from './content-mismatch';
 export {
   ReportingReconciliationError,
+  buildReportingAdjustmentReceipt,
   buildReportingReceipt,
   evaluateReportingLedger,
   isReportingCoverageEvidence,
@@ -20,6 +21,51 @@ export {
   createReportingManifestInspector,
 } from './inspection';
 export { reconcileReportingCoreV1 } from './core-reconciliation';
+export {
+  REPORTING_CONSUMER_POSTGRES_MIGRATION,
+  ReportingConsumerPersistenceConflictError,
+  createPostgresReportingConsumerRuntimeV1,
+  getReportingConsumerPostgresMigration,
+} from './consumer-postgres';
+export { createReliableReportingConsumerV1, drainReportingChangesV1 } from './consumer-runtime';
+export {
+  REPORTING_WEBHOOK_ACTIVITY_POSTGRES_MIGRATION,
+  ReportingWebhookActivityConflictError,
+  composeNotificationDeliveryAttemptCheckpoints,
+  composeWebhookAttemptResultObservers,
+  createPostgresReportingWebhookActivityV1,
+  getReportingWebhookActivityMigration,
+  projectListAccountsReportingWebhookActivityV1,
+  sanitizeReportingWebhookActivityUrl,
+} from './webhook-activity';
+export type {
+  CreatePostgresReportingConsumerRuntimeOptionsV1,
+  PostgresReportingConsumerRuntimeV1,
+  ReportingChangesCheckpointKeyV1,
+  ReportingChangesCheckpointStoreV1,
+  ReportingChangesCheckpointV1,
+  ReportingConsumerPostgresQueryable,
+  ReportingConsumerNotificationStoreV1,
+  ReportingConsumerWorkLeaseStoreV1,
+  ReportingConsumerWorkLeaseV1,
+} from './consumer-postgres';
+export type {
+  CreateReliableReportingConsumerOptionsV1,
+  DrainReportingChangesOptionsV1,
+  DrainReportingChangesResultV1,
+  ReliableReportingConsumerAccountV1,
+  ReliableReportingConsumerPersistenceV1,
+  ReliableReportingConsumerRunReasonV1,
+  ReliableReportingConsumerRunResultV1,
+  ReliableReportingConsumerV1,
+} from './consumer-runtime';
+export type {
+  CreatePostgresReportingWebhookActivityOptionsV1,
+  PostgresReportingWebhookActivityV1,
+  ProjectListAccountsReportingWebhookActivityOptionsV1,
+  ReportingWebhookActivityReaderV1,
+  ReportingWebhookActivityScopeV1,
+} from './webhook-activity';
 export type {
   CoreReportingClocksV1,
   CoreReportingHealthV1,
@@ -36,12 +82,15 @@ export type {
   ExpectedReportingCoverage,
   ObligationReconciliation,
   ReconcileReportingOptions,
+  ReportingAdjustmentCheckpoint,
+  ReportingAdjustmentCheckpointKey,
   ReportingCheckpoint,
   ReportingCheckpointKey,
   ReportingCheckpointStore,
   ReportingPendingConsumerStatus,
   ReportingPendingConsumerStatusKey,
   ReportingPendingConsumerStatusStore,
+  ReportingPersistenceLeaseFenceV1,
   ReportingCanonicalDigestEvidence,
   ReportingCoverageEvidence,
   ReportingCoverageLimitation,

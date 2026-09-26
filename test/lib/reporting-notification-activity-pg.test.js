@@ -5,7 +5,7 @@
  *   node --test test/lib/reporting-notification-activity-pg.test.js
  */
 const assert = require('node:assert/strict');
-const { generateKeyPairSync } = require('node:crypto');
+const { createHash, generateKeyPairSync } = require('node:crypto');
 const { after, before, describe, test } = require('node:test');
 
 const DATABASE_URL = process.env.REPORTING_LEDGER_PG_URL;
@@ -21,6 +21,8 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
   let store;
   let fetchCalls;
   let validateStatusWebhook;
+  let validateLedgerWebhook;
+  let validateDeliveryWebhook;
   // Fail-once injection points for the operational suppression paths.
   let authorizeDeliveryHook;
   let resolveCredentialHook;
@@ -78,6 +80,12 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     validateStatusWebhook = require('../../dist/lib/validation/schema-loader.js').getSchemaValidatorByRef(
       'core/reporting-status-changed-webhook.json'
     );
+    validateLedgerWebhook = require('../../dist/lib/validation/schema-loader.js').getSchemaValidatorByRef(
+      'core/reporting-ledger-changed-webhook.json'
+    );
+    validateDeliveryWebhook = require('../../dist/lib/validation/schema-loader.js').getSchemaValidatorByRef(
+      'core/reporting-delivery-ready-webhook.json'
+    );
     bootstrap = new Pool({ connectionString: DATABASE_URL });
     await bootstrap.query(`CREATE SCHEMA "${schema}"`);
     pool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${schema}"` });
@@ -106,6 +114,12 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
           const body = JSON.parse(init.body);
           if (body.notification_type === 'reporting.status_changed') {
             assert.equal(validateStatusWebhook(body), true, JSON.stringify(validateStatusWebhook.errors));
+          }
+          if (body.notification_type === 'reporting.ledger_changed') {
+            assert.equal(validateLedgerWebhook(body), true, JSON.stringify(validateLedgerWebhook.errors));
+          }
+          if (body.notification_type === 'reporting.delivery_ready') {
+            assert.equal(validateDeliveryWebhook(body), true, JSON.stringify(validateDeliveryWebhook.errors));
           }
           if (failNextFetch) {
             failNextFetch = false;
@@ -337,6 +351,47 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     );
   });
 
+  test('skips a peer-locked tenant without wasting the recovery pass', async () => {
+    const recovery = isolatedActivity('skip-locked-tenant');
+    const [obligationA, obligationB] = await Promise.all([
+      putObligation('skip-locked-a', 'account-a', recovery.store),
+      putObligation('skip-locked-b', 'account-b', recovery.store),
+    ]);
+    const [transitionA, transitionB] = await Promise.all([
+      ledger.reconcileReportingStatusLifecycleV1({
+        store: recovery.store,
+        reporting_obligation_id: obligationA.reporting_obligation_id,
+        ledgerAsOf: '2026-09-02T01:30:00.000Z',
+      }),
+      ledger.reconcileReportingStatusLifecycleV1({
+        store: recovery.store,
+        reporting_obligation_id: obligationB.reporting_obligation_id,
+        ledgerAsOf: '2026-09-02T01:30:00.000Z',
+      }),
+    ]);
+    assert.ok(transitionA && transitionB);
+    const peer = await pool.connect();
+    try {
+      await peer.query('BEGIN');
+      await peer.query(
+        `SELECT transition_id FROM adcp_reporting_notification_activity
+          WHERE namespace = $1 AND transition_id = $2 FOR UPDATE`,
+        [recovery.namespace, transitionA.transitionId]
+      );
+      const result = await recovery.activity.recoverOnce({ ownerToken: 'skip-locked-worker', limit: 1 });
+      assert.equal(result.claimed, 1);
+      const projected = await pool.query(
+        `SELECT state FROM adcp_reporting_notification_activity
+          WHERE namespace = $1 AND transition_id = $2`,
+        [recovery.namespace, transitionB.transitionId]
+      );
+      assert.equal(projected.rows[0].state, 'projected');
+    } finally {
+      await peer.query('ROLLBACK');
+      peer.release();
+    }
+  });
+
   test('resolves replacement and revocation through the existing subscription runtime', async () => {
     const replacementObligation = await putObligation('replacement', 'account-a');
     const replacementTransition = await ledger.reconcileReportingStatusLifecycleV1({
@@ -419,6 +474,66 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       abandoned: 0,
     });
     assert.equal(fetchCalls.length, before);
+  });
+
+  test('settles a successful send before honoring shutdown cancellation', async () => {
+    const controller = new AbortController();
+    const successfulNotifications = {
+      hasDeliveryAttemptCheckpoint: true,
+      deliveryAttemptCheckpoint: attemptCheckpoint,
+      async emit(event) {
+        const [recipient] = await event.freezeRecipients([
+          {
+            scope: {
+              kind: 'account',
+              tenantId: event.tenantId,
+              principalId: 'principal-a',
+              accountId: event.accountId,
+            },
+            subscriberId: 'shutdown-success-subscriber',
+            destinationGeneration: 'shutdown-success-generation',
+          },
+        ]);
+        controller.abort();
+        return {
+          notificationId: event.notificationId,
+          emissionId: event.emissionId,
+          matched: 1,
+          deliveries: [
+            {
+              scope: recipient.scope,
+              subscriberId: recipient.subscriberId,
+              destinationGeneration: recipient.destinationGeneration,
+              result: {
+                delivery_id: 'shutdown-success-delivery',
+                idempotency_key: 'shutdown-success-idempotency',
+                attempts: 1,
+                delivered: true,
+                errors: [],
+              },
+            },
+          ],
+        };
+      },
+    };
+    const isolated = isolatedActivity('shutdown-after-success', { notifications: successfulNotifications });
+    const obligation = await putObligation('shutdown-after-success', 'account-a', isolated.store);
+    const transition = await ledger.reconcileReportingStatusLifecycleV1({
+      store: isolated.store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T02:10:00.000Z',
+    });
+    assert.ok(transition);
+    const result = await isolated.activity.recoverOnce({
+      ownerToken: 'shutdown-success-worker',
+      limit: 1,
+      signal: controller.signal,
+    });
+    assert.equal(result.projected, 1);
+    assert.equal(result.retried, 0);
+    const intent = await readIntent(transition.transitionId, isolated.namespace);
+    assert.equal(intent.state, 'projected');
+    assert.equal(intent.unsettled, 0);
   });
 
   test('replays the committed recipient set so a replacement cannot add a second delivery', async () => {
@@ -3530,6 +3645,173 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     assert.ok(afterFirstBatch.rows.some(row => row.transition_id === 'rst_prune_other_namespace'));
     assert.equal(await pruneActivity.pruneProjected({ limit: 2 }), 1);
     assert.equal(await otherActivity.pruneProjected({ limit: 2 }), 1);
+  });
+
+  test('transactionally emits schema-valid ledger-change and delivery-ready events', async () => {
+    const isolated = isolatedActivity('all-event-types');
+    const accountId = 'account-events';
+    await installSubscription('tenant-a', 'principal-events', accountId, 'https://buyer.example/events', {
+      event_types: ['reporting.ledger_changed', 'reporting.delivery_ready'],
+    });
+    const obligation = await putObligation('all-event-types', accountId, isolated.store);
+    const lease = await isolated.store.claimObligation({
+      owner: 'all-events-producer',
+      now: new Date().toISOString(),
+      leaseMilliseconds: 60_000,
+      account_id: accountId,
+    });
+    assert.ok(lease);
+
+    const canonicalize = require('../../dist/lib/utils/jcs.js').canonicalize;
+    const rows = [{ media_buy_id: 'media-buy-all-event-types', impressions: 7 }];
+    const reportingRevisionId = 'rrev_all_event_types';
+    const bytes = Buffer.from(
+      canonicalize({
+        reporting_revision_id: reportingRevisionId,
+        row_count: rows.length,
+        control_totals: [],
+        reporting_rows: rows,
+      })
+    );
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const revision = {
+      reporting_revision_id: reportingRevisionId,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      revisionNumber: 1,
+      finality: 'snapshot',
+      kind: 'snapshot',
+      manifest: { level: 'basic', objectRef: 'manifest', sha256: 'a'.repeat(64), byteCount: 1 },
+      sourcePublicationId: 'publication-all-event-types',
+      binding: { algorithm: 'rfc8785_jcs_v1', sha256, byteCount: bytes.byteLength, rowCount: rows.length },
+      rows,
+      observedAt: '2000-01-01T00:00:00.000Z',
+      dataThrough: '1999-12-31T23:59:59.000Z',
+      sourceReadCutoffAt: '2000-01-01T00:00:00.000Z',
+      createdAt: '2000-01-01T00:00:00.000Z',
+      wireRevision: {
+        reporting_revision_id: reportingRevisionId,
+        revision_content_sha256: sha256,
+        control_totals: [],
+      },
+    };
+    assert.equal((await isolated.store.commitRevision(revision, lease)).inserted, true);
+    assert.equal(
+      fetchCalls.some(call => call.body.reporting_revision_id === reportingRevisionId),
+      false
+    );
+
+    const ledgerPass = await isolated.activity.recoverOnce({ ownerToken: 'all-events-ledger-worker', limit: 1 });
+    assert.equal(ledgerPass.projected, 1);
+    const ledgerDelivery = fetchCalls.find(call => call.body.reporting_revision_id === reportingRevisionId);
+    assert.ok(ledgerDelivery);
+    assert.equal(ledgerDelivery.body.notification_type, 'reporting.ledger_changed');
+    assert.equal(ledgerDelivery.body.change_kind, 'revision_published');
+    assert.notEqual(ledgerDelivery.body.fired_at, revision.createdAt, 'the authoritative database clock is used');
+
+    const adjustment = {
+      reporting_adjustment_id: reportingRevisionId,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      adjusts_reporting_revision_id: reportingRevisionId,
+    };
+    const adjustmentClient = await pool.connect();
+    try {
+      await adjustmentClient.query('BEGIN');
+      await isolated.activity.port.recordLedgerChanged({ obligation, adjustment }, adjustmentClient);
+      await adjustmentClient.query('COMMIT');
+    } catch (error) {
+      await adjustmentClient.query('ROLLBACK');
+      throw error;
+    } finally {
+      adjustmentClient.release();
+    }
+    assert.equal(
+      (await isolated.activity.recoverOnce({ ownerToken: 'all-events-adjustment-worker', limit: 1 })).projected,
+      1
+    );
+    const adjustmentDelivery = fetchCalls.find(
+      call => call.body.reporting_adjustment_id === adjustment.reporting_adjustment_id
+    );
+    assert.ok(adjustmentDelivery);
+    assert.equal(adjustmentDelivery.body.change_kind, 'adjustment_published');
+    assert.equal(adjustmentDelivery.body.adjusts_reporting_revision_id, reportingRevisionId);
+
+    const materialization = {
+      reporting_materialization_id: reportingRevisionId,
+      reporting_revision_id: reportingRevisionId,
+      status: 'available',
+    };
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await isolated.activity.port.recordDeliveryReady({ obligation, revision, materialization }, client);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+    const deliveryPass = await isolated.activity.recoverOnce({ ownerToken: 'all-events-delivery-worker', limit: 1 });
+    assert.equal(deliveryPass.projected, 1);
+    const readyDelivery = fetchCalls.find(
+      call => call.body.reporting_materialization_id === materialization.reporting_materialization_id
+    );
+    assert.ok(readyDelivery);
+    assert.equal(readyDelivery.body.notification_type, 'reporting.delivery_ready');
+    assert.equal(readyDelivery.body.readiness, 'available');
+    assert.equal(readyDelivery.body.data_through, revision.dataThrough);
+    const notificationIds = fetchCalls
+      .filter(call => ['reporting.ledger_changed', 'reporting.delivery_ready'].includes(call.body.notification_type))
+      .map(call => call.body.notification_id);
+    assert.equal(new Set(notificationIds).size, 3, 'each event class has a distinct transport identity');
+    assert.equal(
+      notificationIds.every(value => Buffer.byteLength(value, 'utf8') <= 255),
+      true
+    );
+    assert.deepEqual(
+      (await isolated.activity.listActivity({ tenantId: 'tenant-a', accountId })).activities,
+      [],
+      'the backwards-compatible activity reader remains lifecycle-only'
+    );
+    const allActivity = await isolated.activity.listNotificationActivity({ tenantId: 'tenant-a', accountId });
+    assert.deepEqual(
+      new Set(allActivity.activities.map(value => value.activityType)),
+      new Set(['reporting.ledger_changed', 'reporting.delivery_ready'])
+    );
+  });
+
+  test('durably rotates notification recovery across tenants', async () => {
+    const isolated = isolatedActivity('tenant-fairness');
+    const obligationA = await putObligation('fair-a', 'account-a', isolated.store);
+    const obligationB = await putObligation('fair-b', 'account-b', isolated.store);
+    for (const suffix of ['one', 'two', 'three']) {
+      await recordActivityIntent(isolated.activity, obligationA, {
+        transitionId: `rst_fair_a_${suffix}`,
+        reporting_obligation_id: obligationA.reporting_obligation_id,
+        previousHealth: 'waiting',
+        health: 'delayed',
+        issueIds: [`issue-${suffix}`],
+        occurredAt: '2026-09-02T02:00:00.000Z',
+      });
+    }
+    await recordActivityIntent(isolated.activity, obligationB, {
+      transitionId: 'rst_fair_b_one',
+      reporting_obligation_id: obligationB.reporting_obligation_id,
+      previousHealth: 'waiting',
+      health: 'delayed',
+      issueIds: ['issue-b'],
+      occurredAt: '2026-09-02T02:00:00.000Z',
+    });
+
+    const pass = await isolated.activity.recoverOnce({ ownerToken: 'tenant-fairness-worker', limit: 2 });
+    assert.equal(pass.projected, 2);
+    const projectedA = (
+      await isolated.activity.listActivity({ tenantId: 'tenant-a', accountId: 'account-a', limit: 10 })
+    ).activities.filter(value => value.notificationProjectedAt).length;
+    const projectedB = (
+      await isolated.activity.listActivity({ tenantId: 'tenant-b', accountId: 'account-b', limit: 10 })
+    ).activities.filter(value => value.notificationProjectedAt).length;
+    assert.deepEqual([projectedA, projectedB], [1, 1]);
   });
 
   async function installSubscription(tenantId, principalId, accountId, url, extra = {}) {

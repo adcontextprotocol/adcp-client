@@ -676,6 +676,9 @@ function liveClaim(
       return record.leaseExpiresAtMs;
     },
     heartbeatIntervalMs: Math.max(250, Math.min(10_000, Math.floor(leaseMs / 3))),
+    get attemptCount() {
+      return record.attemptCount;
+    },
     set leaseExpiresAtMs(value: number) {
       record.leaseExpiresAtMs = value;
     },

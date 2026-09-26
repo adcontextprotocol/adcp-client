@@ -130,11 +130,14 @@ export function createPersistentNotificationRuntime(
    * not bounded by `adopterCallbackTimeoutMs`: abandoning a write that may still
    * commit would be indistinguishable from never having attempted.
    */
-  const checkpointAttempt = async (context: NotificationAttemptContext): Promise<boolean> => {
-    if (!options.checkpointDeliveryAttempt) return true;
+  const checkpointAttempt = async (
+    context: NotificationAttemptContext,
+    attempt: Readonly<WebhookEmitAttempt>
+  ): Promise<{ allowed: boolean; attemptOrdinal?: number }> => {
+    if (!options.checkpointDeliveryAttempt) return { allowed: true };
     const controller = new AbortController();
     try {
-      await options.checkpointDeliveryAttempt({
+      const attemptOrdinal = await options.checkpointDeliveryAttempt({
         scope: structuredClone(context.scope),
         eventAnchor: context.eventAnchor,
         ...(context.accountId === undefined ? {} : { accountId: context.accountId }),
@@ -142,11 +145,22 @@ export function createPersistentNotificationRuntime(
         destinationGeneration: context.destinationGeneration,
         eventType: context.eventType,
         notificationId: context.notificationId,
+        attempt: {
+          delivery_id: attempt.delivery_id,
+          idempotency_key: attempt.idempotency_key,
+          attempt: attempt.attempt,
+          url: attempt.url,
+          payload_size_bytes: attempt.payload_size_bytes,
+          ...(attempt.recovered ? { recovered: true } : {}),
+        },
         signal: controller.signal,
       });
-      return true;
+      return {
+        allowed: true,
+        ...(attemptOrdinal === undefined ? {} : { attemptOrdinal }),
+      };
     } catch {
-      return false;
+      return { allowed: false };
     }
   };
 
@@ -232,8 +246,13 @@ export function createPersistentNotificationRuntime(
 
     const authenticationMode = subscription.authentication.mode;
     if (authenticationMode === 'rfc9421') {
-      if (!(await checkpointAttempt(context))) return suppress('attempt_checkpoint_unavailable');
-      return { decision: 'allow', authentication: null };
+      const checkpoint = await checkpointAttempt(context, attempt);
+      if (!checkpoint.allowed) return suppress('attempt_checkpoint_unavailable');
+      return {
+        decision: 'allow',
+        authentication: null,
+        ...(checkpoint.attemptOrdinal === undefined ? {} : { attemptOrdinal: checkpoint.attemptOrdinal }),
+      };
     }
     const bindingId = subscription.authentication.bindingId;
     if (!bindingId || !options.credentialAdapter) {
@@ -253,8 +272,13 @@ export function createPersistentNotificationRuntime(
       if (!resolvedAuthenticationMatches(authenticationMode, authentication)) {
         return suppress('credential_unavailable');
       }
-      if (!(await checkpointAttempt(context))) return suppress('attempt_checkpoint_unavailable');
-      return { decision: 'allow', authentication };
+      const checkpoint = await checkpointAttempt(context, attempt);
+      if (!checkpoint.allowed) return suppress('attempt_checkpoint_unavailable');
+      return {
+        decision: 'allow',
+        authentication,
+        ...(checkpoint.attemptOrdinal === undefined ? {} : { attemptOrdinal: checkpoint.attemptOrdinal }),
+      };
     } catch {
       return suppress('credential_unavailable');
     }
@@ -572,7 +596,9 @@ interface NormalizeConfigInput {
 
 async function normalizeConfig(input: NormalizeConfigInput): Promise<StoredNotificationSubscription> {
   const { config, scope } = input;
-  assertIdentifier(config.subscriber_id, `notification_configs[${input.index}].subscriber_id`, 255);
+  if (typeof config.subscriber_id !== 'string' || !/^[A-Za-z0-9_.:-]{1,64}$/.test(config.subscriber_id)) {
+    throw validation('subscriber_id must match ^[A-Za-z0-9_.:-]{1,64}$', input.index, 'subscriber_id');
+  }
   const url = normalizeWebhookUrl(config.url, `notification_configs[${input.index}].url`);
   let destinationValidation: { allowed: true } | { allowed: false };
   try {

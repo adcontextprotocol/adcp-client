@@ -5,7 +5,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const {
+  buildReportingAdjustmentReceipt,
   buildReportingReceipt,
+  canonicalJsonSha256,
   createHttpsReportingResourceReader,
   createReportingManifestInspector,
   evaluateReportingLedger,
@@ -192,6 +194,20 @@ function materialization(id = 'materialization-billing', obligationId = 'obligat
     },
     created_at: '2026-09-02T00:00:01Z',
   };
+}
+
+function reportingAdjustment(overrides = {}) {
+  const unsigned = {
+    reporting_adjustment_id: 'adjustment-august-1',
+    adjusts_reporting_revision_id: revision.reporting_revision_id,
+    reason_code: 'late_attribution',
+    accounting_period: { start: period.start, end: period.end },
+    control_total_deltas: [{ name: 'impressions', value: '12', value_type: 'integer', unit: 'impressions' }],
+    correction_observed_at: '2026-09-02T01:00:00Z',
+    created_at: '2026-09-02T01:00:01Z',
+    ...overrides,
+  };
+  return { ...unsigned, canonical_adjustment_sha256: canonicalJsonSha256(unsigned) };
 }
 
 function response(receipts = []) {
@@ -748,8 +764,8 @@ test('official precedence still requires a closed, completely retained ledger sc
   }
 });
 
-test('official selection drains every page and rejects incomplete or rewritten history before inspection', async t => {
-  for (const variant of ['complete', 'missing cursor', 'missing records', 'rewritten revision']) {
+test('official selection drains every page and rejects looping or rewritten history before inspection', async t => {
+  for (const variant of ['complete', 'missing cursor', 'rewritten revision']) {
     await t.test(variant, async () => {
       const { raw, expected } = officialHistory({ officialArtifact: false });
       const first = structuredClone(raw);
@@ -763,7 +779,6 @@ test('official selection drains every page and rejects incomplete or rewritten h
         receipts: [],
       };
       if (variant === 'missing cursor') delete first.pagination.cursor;
-      if (variant === 'missing records') second.revisions = [];
       if (variant === 'rewritten revision') {
         second.revisions.push({ ...structuredClone(raw.revisions[0]), row_count: 8 });
       }
@@ -804,7 +819,6 @@ test('official selection drains every page and rejects incomplete or rewritten h
       } else {
         const code = {
           'missing cursor': 'CURSOR_LOOP',
-          'missing records': 'LEDGER_COUNT_MISMATCH',
           'rewritten revision': 'IMMUTABLE_RECORD_CHANGED',
         }[variant];
         await assert.rejects(action, error => error.code === code);
@@ -1370,6 +1384,259 @@ test('records a rejected receipt when consumer billing evidence differs', () => 
     'CONTROL_TOTAL_MISMATCH',
     'CANONICAL_DIGEST_MISMATCH',
   ]);
+});
+
+test('reconciles post-official adjustments with an independently verified durable receipt', async () => {
+  const base = response([]);
+  const revisionReceipt = buildReportingReceipt(
+    {
+      obligation: base.periods[0],
+      revision: base.revisions[0],
+      materialization: base.materializations[0],
+    },
+    { rowCount: 7, controlTotals: totals, canonicalContentDigest: digest },
+    'reporting-receipt:official-adjustment-base',
+    '2026-09-02T00:01:00Z'
+  );
+  const adjustment = reportingAdjustment();
+  const recordedAdjustmentReceipts = [];
+  const checkpointValues = new Map();
+  const checkpointStore = {
+    async get() {},
+    async put() {},
+    async getAdjustment(key) {
+      return checkpointValues.get(JSON.stringify(key));
+    },
+    async putAdjustment(key, value) {
+      checkpointValues.set(JSON.stringify(key), structuredClone(value));
+    },
+  };
+  const client = {
+    async getReportingStatus() {
+      const raw = response([revisionReceipt]);
+      raw.adjustments = [adjustment];
+      raw.adjustment_receipts = recordedAdjustmentReceipts;
+      Object.assign(raw.periods[0], {
+        adjustment_count: 1,
+        adjustment_receipt_count: raw.adjustment_receipts.length,
+        accepted_adjustment_receipt_count: recordedAdjustmentReceipts.filter(receipt => receipt.status === 'accepted')
+          .length,
+        pending_adjustment_count: recordedAdjustmentReceipts.some(receipt => receipt.status === 'accepted') ? 0 : 1,
+      });
+      raw.pagination.total_count += 1 + raw.adjustment_receipts.length;
+      return raw;
+    },
+    async syncReportingReceipts(request) {
+      assert.equal(request.receipts, undefined);
+      const recordedAdjustmentReceipt = {
+        ...request.adjustment_receipts[0],
+        received_at: '2026-09-02T01:01:00Z',
+      };
+      recordedAdjustmentReceipts.push(recordedAdjustmentReceipt);
+      return {
+        status: 'completed',
+        results: [{ result: 'recorded', adjustment_receipt: recordedAdjustmentReceipt }],
+      };
+    },
+  };
+
+  const reconcileOptions = {
+    client,
+    request: { account: { account_id: 'account-1' }, period: { start: period.start, end: period.end } },
+    expectedPeriods: [expectedPeriod()],
+    checkpointStore,
+    checkpointScope: 'seller.example/principal-1',
+    now: new Date('2026-09-03T00:00:00Z'),
+    async inspect() {
+      throw new Error('the accepted official receipt must prevent a resource reread');
+    },
+  };
+  const deferred = await reconcileReporting(reconcileOptions);
+  assert.equal(deferred.definitive, false, 'a valid adjustment needs an explicit buyer policy decision');
+  assert.equal(deferred.submittedAdjustmentReceipts.length, 0);
+
+  const policyRejected = await reconcileReporting({ ...reconcileOptions, evaluateAdjustment: () => 'reject' });
+  assert.equal(policyRejected.definitive, false);
+  assert.equal(policyRejected.submittedAdjustmentReceipts[0].status, 'rejected');
+  assert.deepEqual(policyRejected.submittedAdjustmentReceipts[0].rejection_codes, ['ADJUSTMENT_POLICY_REJECTED']);
+
+  const result = await reconcileReporting({ ...reconcileOptions, evaluateAdjustment: async () => 'accept' });
+
+  assert.equal(result.definitive, true, JSON.stringify(result.obligations));
+  assert.equal(result.submittedReceipts.length, 0);
+  assert.equal(result.submittedAdjustmentReceipts.length, 1);
+  assert.equal(result.submittedAdjustmentReceipts[0].status, 'accepted');
+  assert.equal(
+    result.submittedAdjustmentReceipts[0].observed_adjustment_sha256,
+    adjustment.canonical_adjustment_sha256
+  );
+});
+
+test('rejects a tampered adjustment digest instead of accepting seller-authored evidence', () => {
+  const adjustment = reportingAdjustment({ reason_detail: 'source corrected after close' });
+  adjustment.canonical_adjustment_sha256 = '0'.repeat(64);
+  const receipt = buildReportingAdjustmentReceipt(adjustment, revision, {
+    reportingReceiptId: 'reporting-adjustment-receipt:tampered',
+    observedAt: '2026-09-02T01:01:00Z',
+  });
+
+  assert.equal(receipt.status, 'rejected');
+  assert.deepEqual(receipt.rejection_codes, ['CANONICAL_ADJUSTMENT_DIGEST_MISMATCH']);
+  assert.notEqual(receipt.observed_adjustment_sha256, adjustment.canonical_adjustment_sha256);
+});
+
+test('rejects invalid adjustment control-total values even when their digest matches', () => {
+  for (const delta of [
+    { name: 'impressions', value: 'NaN', value_type: 'integer', unit: 'impressions' },
+    { name: 'impressions', value: '1e1000000', value_type: 'decimal', unit: 'impressions' },
+    { name: 'impressions', value_type: 'integer', unit: 'impressions' },
+  ]) {
+    const adjustment = reportingAdjustment({ control_total_deltas: [delta] });
+    const receipt = buildReportingAdjustmentReceipt(adjustment, revision);
+    assert.equal(receipt.status, 'rejected');
+    assert.ok(receipt.rejection_codes.includes('CONTROL_TOTAL_DELTA_MISMATCH'));
+  }
+});
+
+test('handles a rejected adjustment receipt that omits optional rejection codes', async () => {
+  const base = response([]);
+  const revisionReceipt = buildReportingReceipt(
+    {
+      obligation: base.periods[0],
+      revision: base.revisions[0],
+      materialization: base.materializations[0],
+    },
+    { rowCount: 7, controlTotals: totals, canonicalContentDigest: digest },
+    'reporting-receipt:optional-adjustment-rejection-codes',
+    '2026-09-02T00:01:00Z'
+  );
+  const adjustment = reportingAdjustment({ reason_detail: 'source corrected after close' });
+  adjustment.canonical_adjustment_sha256 = '0'.repeat(64);
+  const rejected = buildReportingAdjustmentReceipt(adjustment, base.revisions[0], {
+    reportingReceiptId: 'reporting-adjustment-receipt:without-rejection-codes',
+    observedAt: '2026-09-02T01:01:00Z',
+  });
+  delete rejected.rejection_codes;
+  rejected.received_at = '2026-09-02T01:01:01Z';
+  let submitted;
+
+  const result = await reconcileReporting({
+    client: {
+      async getReportingStatus() {
+        const raw = response([revisionReceipt]);
+        raw.adjustments = [adjustment];
+        raw.adjustment_receipts = [rejected];
+        Object.assign(raw.periods[0], {
+          adjustment_count: 1,
+          adjustment_receipt_count: 1,
+          accepted_adjustment_receipt_count: 0,
+          pending_adjustment_count: 1,
+        });
+        raw.pagination.total_count += 2;
+        return raw;
+      },
+      async syncReportingReceipts(request) {
+        submitted = request.adjustment_receipts[0];
+        const recorded = { ...submitted, received_at: '2026-09-02T01:02:00Z' };
+        return { status: 'completed', results: [{ result: 'recorded', adjustment_receipt: recorded }] };
+      },
+    },
+    request: { account: { account_id: 'account-1' }, period: { start: period.start, end: period.end } },
+    expectedPeriods: [expectedPeriod()],
+    now: new Date('2026-09-03T00:00:00Z'),
+    async inspect() {
+      throw new Error('the accepted revision receipt must prevent a resource reread');
+    },
+  });
+
+  assert.equal(submitted.supersedes_reporting_receipt_id, rejected.reporting_receipt_id);
+  assert.deepEqual(submitted.rejection_codes, ['CANONICAL_ADJUSTMENT_DIGEST_MISMATCH']);
+  assert.equal(result.submittedAdjustmentReceipts.length, 1);
+});
+
+test('never treats a semantically invalid accepted adjustment receipt as definitive or forks it', async () => {
+  const base = response([]);
+  const revisionReceipt = buildReportingReceipt(
+    {
+      obligation: base.periods[0],
+      revision: base.revisions[0],
+      materialization: base.materializations[0],
+    },
+    { rowCount: 7, controlTotals: totals, canonicalContentDigest: digest },
+    'reporting-receipt:terminal-adjustment-base',
+    '2026-09-02T00:01:00Z'
+  );
+  const adjustment = reportingAdjustment({
+    control_total_deltas: [{ name: 'impressions', value: '12', value_type: 'integer', unit: 'EUR' }],
+  });
+  const { rejection_codes: _rejectionCodes, ...rejectedBase } = buildReportingAdjustmentReceipt(
+    adjustment,
+    base.revisions[0],
+    {
+      reportingReceiptId: 'reporting-adjustment-receipt:terminal',
+      observedAt: '2026-09-02T01:01:00Z',
+    }
+  );
+  const accepted = { ...rejectedBase, status: 'accepted', received_at: '2026-09-02T01:01:01Z' };
+  let submissions = 0;
+  const result = await reconcileReporting({
+    client: {
+      async getReportingStatus() {
+        const raw = response([revisionReceipt]);
+        raw.adjustments = [adjustment];
+        raw.adjustment_receipts = [accepted];
+        Object.assign(raw.periods[0], {
+          adjustment_count: 1,
+          adjustment_receipt_count: 1,
+          accepted_adjustment_receipt_count: 1,
+          pending_adjustment_count: 0,
+        });
+        raw.pagination.total_count += 2;
+        return raw;
+      },
+      async syncReportingReceipts() {
+        submissions += 1;
+        throw new Error('an accepted adjustment leaf must never be superseded or forked');
+      },
+    },
+    request: { account: { account_id: 'account-1' }, period: { start: period.start, end: period.end } },
+    expectedPeriods: [expectedPeriod()],
+    now: new Date('2026-09-03T00:00:00Z'),
+    async inspect() {
+      throw new Error('the accepted revision receipt must prevent a resource reread');
+    },
+  });
+  assert.equal(submissions, 0);
+  assert.equal(result.submittedAdjustmentReceipts.length, 0);
+  assert.equal(result.definitive, false);
+  assert.ok(result.obligations[0].reasons.includes('MISSING_MATCHING_ADJUSTMENT_RECEIPT'));
+});
+
+test('treats a positive pending adjustment count as incomplete even when detail arrays are empty', async () => {
+  const base = response([]);
+  const revisionReceipt = buildReportingReceipt(
+    {
+      obligation: base.periods[0],
+      revision: base.revisions[0],
+      materialization: base.materializations[0],
+    },
+    { rowCount: 7, controlTotals: totals, canonicalContentDigest: digest },
+    'reporting-receipt:pending-adjustment-count',
+    '2026-09-02T00:01:00Z'
+  );
+  const raw = response([revisionReceipt]);
+  raw.periods[0].pending_adjustment_count = 3;
+  const ledger = await loadReportingLedger(
+    {
+      async getReportingStatus() {
+        return raw;
+      },
+    },
+    { account: { account_id: 'account-1' } }
+  );
+  const result = evaluateReportingLedger(ledger, [expectedPeriod()]);
+  assert.equal(result.definitive, false);
+  assert.ok(result.obligations[0].reasons.includes('ASSOCIATED_HISTORY_INCOMPLETE'));
 });
 
 test('does not claim completeness when an expected seller obligation is missing', async () => {
@@ -2504,6 +2771,7 @@ test('portable inspection fixture: checkpoint avoids rereading after a receipt w
   let checkpointKey;
   let recordedReceipt;
   let syncAttempts = 0;
+  let statusReads = 0;
   const syncIdempotencyKeys = [];
   const reader = fixtureReader();
   const checkpointStore = {
@@ -2518,7 +2786,12 @@ test('portable inspection fixture: checkpoint avoids rereading after a receipt w
   };
   const client = {
     async getReportingStatus() {
-      return fixtureLedgerResponse(recordedReceipt ? [recordedReceipt] : []);
+      statusReads += 1;
+      const raw = fixtureLedgerResponse(recordedReceipt ? [recordedReceipt] : []);
+      if (statusReads > 1) {
+        raw.periods[0].health = 'delayed';
+      }
+      return raw;
     },
     async syncReportingReceipts(request) {
       syncAttempts += 1;

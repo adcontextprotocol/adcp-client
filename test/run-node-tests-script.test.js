@@ -5,12 +5,13 @@ const { pathToFileURL } = require('node:url');
 
 const runnerUrl = pathToFileURL(path.resolve(__dirname, '../scripts/run-node-tests.mjs')).href;
 
-test('local test concurrency is bounded while CI keeps the Node default', async () => {
+test('test concurrency keeps the slow lane serial while CI fast tests use the Node default', async () => {
   const { resolveTestConcurrency } = await import(runnerUrl);
 
   assert.equal(resolveTestConcurrency({ env: {}, group: 'fast', parallelism: 16 }), 2);
   assert.equal(resolveTestConcurrency({ env: {}, group: 'slow', parallelism: 16 }), 1);
   assert.equal(resolveTestConcurrency({ env: { CI: 'true' }, group: 'fast', parallelism: 16 }), undefined);
+  assert.equal(resolveTestConcurrency({ env: { CI: 'true' }, group: 'slow', parallelism: 16 }), 1);
   assert.equal(resolveTestConcurrency({ env: { CI: 'false' }, group: 'fast', parallelism: 16 }), 2);
   assert.equal(resolveTestConcurrency({ env: { TEST_CONCURRENCY: '3' }, group: 'fast', parallelism: 16 }), 3);
 });
@@ -222,6 +223,8 @@ test('focused slow tests retain the extended timeout', async () => {
   const invocation = buildNodeTestArgs(options, {});
 
   assert.equal(invocation.timeoutMs, 180_000);
+  assert.equal(invocation.maxOldSpaceSizeMb, 8_192);
+  assert.equal(invocation.args.includes('--max-old-space-size=8192'), true);
 });
 
 test('invalid groups, scopes, and shards fail even for focused files', async () => {
