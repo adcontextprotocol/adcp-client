@@ -358,6 +358,58 @@ describe('Postgres reporting consumer runtime', { skip: !DATABASE_URL && 'Postgr
     }
   });
 
+  test('serializes a blocked cursor write before lease takeover', async () => {
+    const key = {
+      consumerScope: 'seller.example|buyer-agent.example',
+      accountId: 'account-cursor-lock-order',
+    };
+    const firstLease = await runtime.workLeases.claim({
+      key,
+      ownerToken: 'buyer-cursor-worker-one',
+      leaseMilliseconds: 1_000,
+    });
+    assert.ok(firstLease);
+    assert.equal(await runtime.changesCheckpointStore.compareAndSet(key, null, 'cursor-base', firstLease), 'applied');
+
+    const blocker = await pool.connect();
+    let blockerOpen = false;
+    try {
+      await blocker.query('BEGIN');
+      blockerOpen = true;
+      await blocker.query(
+        `SELECT 1 FROM adcp_reporting_consumer_cursors
+          WHERE namespace = $1 AND account_id = $2 FOR UPDATE`,
+        ['buyer-production-v1', key.accountId]
+      );
+      const staleWrite = runtime.changesCheckpointStore.compareAndSet(key, 'cursor-base', 'cursor-old', firstLease);
+      await new Promise(resolve => setTimeout(resolve, 1_100));
+      const successorClaim = runtime.workLeases.claim({
+        key,
+        ownerToken: 'buyer-cursor-worker-two',
+        leaseMilliseconds: 30_000,
+      });
+      const claimState = await Promise.race([
+        successorClaim.then(() => 'claimed'),
+        new Promise(resolve => setTimeout(() => resolve('blocked'), 100)),
+      ]);
+      assert.equal(claimState, 'blocked', 'cursor writes must hold the lease row before waiting on the cursor');
+      await blocker.query('COMMIT');
+      blockerOpen = false;
+      assert.equal(await staleWrite, 'applied');
+      const successorLease = await successorClaim;
+      assert.ok(successorLease);
+      assert.equal(
+        await runtime.changesCheckpointStore.compareAndSet(key, 'cursor-old', 'cursor-new', successorLease),
+        'applied'
+      );
+      assert.equal((await runtime.changesCheckpointStore.get(key)).checkpoint, 'cursor-new');
+      assert.equal(await runtime.changesCheckpointStore.clear(key, 'cursor-new', firstLease), false);
+    } finally {
+      if (blockerOpen) await blocker.query('ROLLBACK');
+      blocker.release();
+    }
+  });
+
   test('deduplicates processed notifications within authenticated scope', async () => {
     const identity = {
       consumerScope: 'seller.example|buyer-agent.example',

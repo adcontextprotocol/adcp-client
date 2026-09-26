@@ -270,6 +270,78 @@ describe('Reliable Reporting buyer runtime', () => {
     await consumer.stop();
   });
 
+  test('shares the account concurrency limit across manual runs and authenticated notifications', async () => {
+    const { createReliableReportingConsumerV1 } = require('../../dist/lib/reporting/index.js');
+    let inFlight = 0;
+    let peak = 0;
+    const accounts = Array.from({ length: 8 }, (_, index) => {
+      const accountId = `buyer-account-concurrency-${index}`;
+      return {
+        consumerScope: AUTHENTICATION.consumerScope,
+        accountId,
+        reconciliation: {
+          request: { account: { account_id: accountId } },
+          expectedPeriods: [],
+          inspect: async () => ({ rowCount: 0, controlTotals: [] }),
+          client: {
+            async getReportingStatus() {
+              inFlight += 1;
+              peak = Math.max(peak, inFlight);
+              await new Promise(resolve => setTimeout(resolve, 10));
+              inFlight -= 1;
+              return { ...page({ checkpoint: `cursor-${index}` }), account_id: accountId };
+            },
+            async syncReportingReceipts() {
+              return { status: 'completed', results: [] };
+            },
+          },
+        },
+      };
+    });
+    const consumer = createReliableReportingConsumerV1({
+      accounts,
+      persistence: memoryPersistence(),
+      ownerToken: 'buyer-concurrency-worker',
+      maxConcurrentAccounts: 1,
+      runOnStart: false,
+    });
+    const results = await Promise.all(
+      accounts.map((account, index) =>
+        index % 2 === 0
+          ? consumer.runAccount(account.accountId)
+          : consumer.handleAuthenticatedNotification(
+              {
+                notification_type: 'reporting.status_changed',
+                account_id: account.accountId,
+                idempotency_key: `notification-concurrency-${index}`,
+              },
+              AUTHENTICATION
+            )
+      )
+    );
+    assert.equal(peak, 1);
+    assert.ok(results.every(result => result.state === 'reconciled'));
+    await consumer.stop();
+  });
+
+  test('classifies malformed reporting notifications as non-retryable input errors', async () => {
+    const { createReliableReportingConsumerV1 } = require('../../dist/lib/reporting/index.js');
+    const consumer = createReliableReportingConsumerV1({
+      accounts: [],
+      persistence: memoryPersistence(),
+      ownerToken: 'buyer-malformed-notification-worker',
+      runOnStart: false,
+    });
+    await assert.rejects(
+      () =>
+        consumer.handleAuthenticatedNotification(
+          { notification_type: 'reporting.status_changed', account_id: ACCOUNT_ID, idempotency_key: 'bad' },
+          AUTHENTICATION
+        ),
+      error => error?.code === 'INVALID_NOTIFICATION'
+    );
+  });
+
   test('binds duplicate account IDs to the authenticated seller/principal scope', async () => {
     const { createReliableReportingConsumerV1 } = require('../../dist/lib/reporting/index.js');
     const persistence = memoryPersistence();
@@ -532,6 +604,33 @@ describe('Reliable Reporting buyer runtime', () => {
     await stopping;
     assert.equal(calls, 1);
     assert.equal((await consumer.runAccount(ACCOUNT_ID)).state, 'stopping');
+  });
+
+  test('aborts an in-flight seller read during graceful shutdown', async () => {
+    const { createReliableReportingConsumerV1 } = require('../../dist/lib/reporting/index.js');
+    let readStarted;
+    const started = new Promise(resolve => {
+      readStarted = resolve;
+    });
+    const consumer = createReliableReportingConsumerV1({
+      accounts: [
+        account({
+          async getReportingStatus(_request, { signal }) {
+            readStarted();
+            return new Promise((_resolve, reject) => {
+              signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+            });
+          },
+        }),
+      ],
+      persistence: memoryPersistence(),
+      ownerToken: 'buyer-worker-stop-abort',
+      runOnStart: false,
+    });
+    const running = consumer.runAccount(ACCOUNT_ID);
+    await started;
+    await consumer.stop();
+    assert.equal((await running).state, 'stopping');
   });
 
   test('fences checkpoint writes when lease renewal stalls past expiry', async () => {

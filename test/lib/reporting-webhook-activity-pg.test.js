@@ -310,5 +310,40 @@ describe('Postgres reporting webhook activity', { skip: !DATABASE_URL && 'Postgr
     assert.equal(included.accounts[0].webhook_activity[0].idempotency_key, 'idempotency-key-0001');
     assert.deepEqual(included.accounts[1].webhook_activity, []);
     assert.equal(included.pagination.has_more, false);
+
+    const [stored] = await activity.listActivity({
+      tenantId: 'tenant-1',
+      principalId: 'buyer-1',
+      accountId: 'account-1',
+    });
+    const withNonReportingActivity = await reporting.projectListAccountsReportingWebhookActivityV1({
+      response: {
+        accounts: [
+          {
+            account_id: 'account-1',
+            webhook_activity: [
+              {
+                ...stored,
+                idempotency_key: 'account-event-0001',
+                notification_type: 'account.change_recorded',
+                url: 'https://buyer.example/private/token?secret=1',
+              },
+            ],
+          },
+        ],
+      },
+      request: { include_webhook_activity: true, webhook_activity_limit: 2 },
+      tenantId: 'tenant-1',
+      principalId: 'buyer-1',
+      activity: reader,
+    });
+    assert.deepEqual(
+      withNonReportingActivity.accounts[0].webhook_activity.map(record => record.notification_type),
+      ['reporting.ledger_changed', 'account.change_recorded']
+    );
+    assert.equal(
+      withNonReportingActivity.accounts[0].webhook_activity[1].url,
+      'https://buyer.example/redacted/redacted'
+    );
   });
 });

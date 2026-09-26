@@ -111,6 +111,38 @@ test('uses the next durable activity-attempt ordinal after recovery', async () =
   assert.deepEqual(observed, [4], 'a recovered run must continue after attempts 1-3 from the first run');
 });
 
+test('does not POST after an awaited observer loses the recovery lease', async () => {
+  const { signerKey } = makeSignerKey();
+  const fetch = stubFetch([{ status: 204 }]);
+  let ownsLease = true;
+  const claim = {
+    ...recordingRecoveryClaim([]),
+    async renew() {
+      return ownsLease;
+    },
+  };
+  const emitter = createWebhookEmitter({
+    signerKey,
+    fetch,
+    publisherScope: 'publisher-observer-fence',
+    tenantScope: 'tenant-observer-fence',
+    deliveryRecovery: {
+      durability: 'durable',
+      checkpoint: () => claim,
+      settle() {},
+    },
+    async onAttempt() {
+      await Promise.resolve();
+      ownsLease = false;
+    },
+  });
+  await assert.rejects(
+    () => emitter.emit({ url: 'https://buyer.example/webhook', payload: {}, delivery_id: 'delivery-observer-fence' }),
+    /recovery lease was lost/
+  );
+  assert.equal(fetch.calls.length, 0);
+});
+
 test('releases a retryable suppression when the configured backoff is fractional', async () => {
   // The recovery contract requires an integer retryAfterMs, but the configured
   // delays were only clamped for sign, never coerced. A fractional

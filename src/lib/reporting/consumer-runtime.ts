@@ -307,9 +307,26 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
 
   let stopped = false;
   let started = false;
+  const shutdownAbort = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let tickPromise: Promise<void> | undefined;
   const active = new Map<string, Promise<ReliableReportingConsumerRunResultV1>>();
+  let activeSlots = 0;
+  const slotWaiters: Array<() => void> = [];
+  const withAccountSlot = async <T>(work: () => Promise<T>): Promise<T> => {
+    if (activeSlots < maxConcurrentAccounts) {
+      activeSlots += 1;
+    } else {
+      await new Promise<void>(resolve => slotWaiters.push(resolve));
+    }
+    try {
+      return await work();
+    } finally {
+      const next = slotWaiters.shift();
+      if (next) next();
+      else activeSlots -= 1;
+    }
+  };
 
   const invokeHook = async (result: ReliableReportingConsumerRunResultV1): Promise<void> => {
     try {
@@ -373,6 +390,7 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
     let lease: ReportingConsumerWorkLeaseV1 = claimedLease;
 
     const leaseAbort = new AbortController();
+    const runSignal = AbortSignal.any([leaseAbort.signal, shutdownAbort.signal]);
     let leaseLost = false;
     let renewing = false;
     let leaseFinished = false;
@@ -403,6 +421,9 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
       expiryTimer.unref?.();
     };
     const assertLeaseCurrent = (): void => {
+      if (shutdownAbort.signal.aborted) {
+        throw consumerError('WORK_STOPPING', 'reporting consumer is stopping');
+      }
       if (leaseLost || Date.now() >= Date.parse(lease.expiresAt)) {
         markLeaseLost(consumerError('WORK_LEASE_LOST', 'reporting consumer work lease expired'));
         throw consumerError('WORK_LEASE_LOST', 'reporting consumer work lease was lost');
@@ -440,7 +461,7 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
         try {
           const delta = await drainReportingChanges(
             {
-              client: abortableClient(account.reconciliation.client, leaseAbort.signal, account.accountId),
+              client: abortableClient(account.reconciliation.client, runSignal, account.accountId),
               request: withoutChangesAfter(account.reconciliation.request),
               changesAfter: previous.checkpoint,
               limits: account.reconciliation.ledgerLimits,
@@ -476,7 +497,7 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
 
       const reconciliation = await reconcileReporting({
         ...account.reconciliation,
-        client: abortableClient(account.reconciliation.client, leaseAbort.signal, account.accountId),
+        client: abortableClient(account.reconciliation.client, runSignal, account.accountId),
         request: withoutChangesAfter(account.reconciliation.request),
         checkpointStore: leaseGuardedCheckpointStore(options.persistence.checkpointStore, assertLeaseCurrent),
         checkpointScope: account.consumerScope,
@@ -487,6 +508,7 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
         ),
         pendingConsumerStatusScope: account.consumerScope,
       } as ReconcileReportingOptions<TCredential>);
+      if (shutdownAbort.signal.aborted) return { accountId: account.accountId, reason, state: 'stopping' };
       if (leaseLost) return { accountId: account.accountId, reason, state: 'lease_lost' };
       if (reconciliation.ledger.accountId !== account.accountId) {
         throw consumerError(
@@ -529,6 +551,9 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
       await invokeHook(completed);
       return completed;
     } catch (error) {
+      if (shutdownAbort.signal.aborted) {
+        return { accountId: account.accountId, reason, state: 'stopping' };
+      }
       if (leaseLost || leaseAbort.signal.aborted) {
         return { accountId: account.accountId, reason, state: 'lease_lost' };
       }
@@ -549,7 +574,11 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
     if (stopped) return Promise.resolve({ accountId: account.accountId, reason, state: 'stopping' });
     const existing = active.get(key);
     if (existing) return existing;
-    const work = execute(account, reason).finally(() => active.delete(key));
+    const work = withAccountSlot(() =>
+      stopped
+        ? Promise.resolve({ accountId: account.accountId, reason, state: 'stopping' as const })
+        : execute(account, reason)
+    ).finally(() => active.delete(key));
     active.set(key, work);
     return work;
   };
@@ -595,6 +624,7 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
     async stop() {
       if (stopped) return;
       stopped = true;
+      shutdownAbort.abort(consumerError('WORK_STOPPING', 'reporting consumer is stopping'));
       if (timer) clearTimeout(timer);
       await tickPromise;
       await Promise.allSettled([...active.values()]);
@@ -808,11 +838,15 @@ function reportingNotification(value: unknown): ReportingNotificationV1 | null {
   ) {
     return null;
   }
-  boundedString(candidate.account_id, 'notification.account_id', 512);
   const idempotencyKey = (value as { idempotency_key?: unknown }).idempotency_key;
-  boundedString(idempotencyKey, 'notification.idempotency_key', 255);
+  try {
+    boundedString(candidate.account_id, 'notification.account_id', 512);
+    boundedString(idempotencyKey, 'notification.idempotency_key', 255);
+  } catch {
+    throw consumerError('INVALID_NOTIFICATION', 'reporting notification has invalid identity fields');
+  }
   if (idempotencyKey.length < 16 || !/^[A-Za-z0-9_.:-]+$/.test(idempotencyKey)) {
-    throw new TypeError('notification.idempotency_key is invalid');
+    throw consumerError('INVALID_NOTIFICATION', 'reporting notification has an invalid idempotency key');
   }
   return value as ReportingNotificationV1;
 }

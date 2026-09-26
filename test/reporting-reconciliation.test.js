@@ -1399,7 +1399,7 @@ test('reconciles post-official adjustments with an independently verified durabl
     '2026-09-02T00:01:00Z'
   );
   const adjustment = reportingAdjustment();
-  let recordedAdjustmentReceipt;
+  const recordedAdjustmentReceipts = [];
   const checkpointValues = new Map();
   const checkpointStore = {
     async get() {},
@@ -1415,22 +1415,24 @@ test('reconciles post-official adjustments with an independently verified durabl
     async getReportingStatus() {
       const raw = response([revisionReceipt]);
       raw.adjustments = [adjustment];
-      raw.adjustment_receipts = recordedAdjustmentReceipt ? [recordedAdjustmentReceipt] : [];
+      raw.adjustment_receipts = recordedAdjustmentReceipts;
       Object.assign(raw.periods[0], {
         adjustment_count: 1,
         adjustment_receipt_count: raw.adjustment_receipts.length,
-        accepted_adjustment_receipt_count: recordedAdjustmentReceipt?.status === 'accepted' ? 1 : 0,
-        pending_adjustment_count: recordedAdjustmentReceipt?.status === 'accepted' ? 0 : 1,
+        accepted_adjustment_receipt_count: recordedAdjustmentReceipts.filter(receipt => receipt.status === 'accepted')
+          .length,
+        pending_adjustment_count: recordedAdjustmentReceipts.some(receipt => receipt.status === 'accepted') ? 0 : 1,
       });
       raw.pagination.total_count += 1 + raw.adjustment_receipts.length;
       return raw;
     },
     async syncReportingReceipts(request) {
       assert.equal(request.receipts, undefined);
-      recordedAdjustmentReceipt = {
+      const recordedAdjustmentReceipt = {
         ...request.adjustment_receipts[0],
         received_at: '2026-09-02T01:01:00Z',
       };
+      recordedAdjustmentReceipts.push(recordedAdjustmentReceipt);
       return {
         status: 'completed',
         results: [{ result: 'recorded', adjustment_receipt: recordedAdjustmentReceipt }],
@@ -1438,7 +1440,7 @@ test('reconciles post-official adjustments with an independently verified durabl
     },
   };
 
-  const result = await reconcileReporting({
+  const reconcileOptions = {
     client,
     request: { account: { account_id: 'account-1' }, period: { start: period.start, end: period.end } },
     expectedPeriods: [expectedPeriod()],
@@ -1448,7 +1450,17 @@ test('reconciles post-official adjustments with an independently verified durabl
     async inspect() {
       throw new Error('the accepted official receipt must prevent a resource reread');
     },
-  });
+  };
+  const deferred = await reconcileReporting(reconcileOptions);
+  assert.equal(deferred.definitive, false, 'a valid adjustment needs an explicit buyer policy decision');
+  assert.equal(deferred.submittedAdjustmentReceipts.length, 0);
+
+  const policyRejected = await reconcileReporting({ ...reconcileOptions, evaluateAdjustment: () => 'reject' });
+  assert.equal(policyRejected.definitive, false);
+  assert.equal(policyRejected.submittedAdjustmentReceipts[0].status, 'rejected');
+  assert.deepEqual(policyRejected.submittedAdjustmentReceipts[0].rejection_codes, ['ADJUSTMENT_POLICY_REJECTED']);
+
+  const result = await reconcileReporting({ ...reconcileOptions, evaluateAdjustment: async () => 'accept' });
 
   assert.equal(result.definitive, true, JSON.stringify(result.obligations));
   assert.equal(result.submittedReceipts.length, 0);
@@ -1471,6 +1483,19 @@ test('rejects a tampered adjustment digest instead of accepting seller-authored 
   assert.equal(receipt.status, 'rejected');
   assert.deepEqual(receipt.rejection_codes, ['CANONICAL_ADJUSTMENT_DIGEST_MISMATCH']);
   assert.notEqual(receipt.observed_adjustment_sha256, adjustment.canonical_adjustment_sha256);
+});
+
+test('rejects invalid adjustment control-total values even when their digest matches', () => {
+  for (const delta of [
+    { name: 'impressions', value: 'NaN', value_type: 'integer', unit: 'impressions' },
+    { name: 'impressions', value: '1e1000000', value_type: 'decimal', unit: 'impressions' },
+    { name: 'impressions', value_type: 'integer', unit: 'impressions' },
+  ]) {
+    const adjustment = reportingAdjustment({ control_total_deltas: [delta] });
+    const receipt = buildReportingAdjustmentReceipt(adjustment, revision);
+    assert.equal(receipt.status, 'rejected');
+    assert.ok(receipt.rejection_codes.includes('CONTROL_TOTAL_DELTA_MISMATCH'));
+  }
 });
 
 test('handles a rejected adjustment receipt that omits optional rejection codes', async () => {
@@ -1529,7 +1554,7 @@ test('handles a rejected adjustment receipt that omits optional rejection codes'
   assert.equal(result.submittedAdjustmentReceipts.length, 1);
 });
 
-test('never forks a terminal accepted adjustment receipt when its evidence mismatches', async () => {
+test('never treats a semantically invalid accepted adjustment receipt as definitive or forks it', async () => {
   const base = response([]);
   const revisionReceipt = buildReportingReceipt(
     {
@@ -1541,15 +1566,18 @@ test('never forks a terminal accepted adjustment receipt when its evidence misma
     'reporting-receipt:terminal-adjustment-base',
     '2026-09-02T00:01:00Z'
   );
-  const adjustment = reportingAdjustment();
-  const accepted = {
-    ...buildReportingAdjustmentReceipt(adjustment, base.revisions[0], {
+  const adjustment = reportingAdjustment({
+    control_total_deltas: [{ name: 'impressions', value: '12', value_type: 'integer', unit: 'EUR' }],
+  });
+  const { rejection_codes: _rejectionCodes, ...rejectedBase } = buildReportingAdjustmentReceipt(
+    adjustment,
+    base.revisions[0],
+    {
       reportingReceiptId: 'reporting-adjustment-receipt:terminal',
       observedAt: '2026-09-02T01:01:00Z',
-    }),
-    observed_adjustment_sha256: '0'.repeat(64),
-    received_at: '2026-09-02T01:01:01Z',
-  };
+    }
+  );
+  const accepted = { ...rejectedBase, status: 'accepted', received_at: '2026-09-02T01:01:01Z' };
   let submissions = 0;
   const result = await reconcileReporting({
     client: {

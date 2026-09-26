@@ -357,29 +357,35 @@ export function createPostgresReportingConsumerRuntimeV1(
         expected === null
           ? await query<{ generation: string }>(
               'initialize changes checkpoint',
-              `INSERT INTO ${cursors} (namespace, scope_key, account_id, checkpoint)
+              `WITH current_lease AS MATERIALIZED (
+                 SELECT 1 FROM ${leases}
+                  WHERE $5::text IS NOT NULL
+                    AND namespace = $1 AND scope_key = $2 AND account_id = $3
+                    AND owner_token = $5 AND generation = $6 AND expires_at > clock_timestamp()
+                  FOR UPDATE
+               )
+               INSERT INTO ${cursors} (namespace, scope_key, account_id, checkpoint)
                SELECT $1,$2,$3,$4
-                WHERE $5::text IS NULL OR EXISTS (
-                  SELECT 1 FROM ${leases}
-                   WHERE namespace = $1 AND scope_key = $2 AND account_id = $3
-                     AND owner_token = $5 AND generation = $6 AND expires_at > clock_timestamp()
-                )
+                WHERE $5::text IS NULL OR EXISTS (SELECT 1 FROM current_lease)
                ON CONFLICT (namespace, scope_key, account_id) DO NOTHING
                RETURNING generation::text AS generation`,
               [namespace, scopeKey, accountId, checkpoint, fence?.ownerToken ?? null, fence?.generation ?? null]
             )
           : await query<{ generation: string }>(
               'advance changes checkpoint',
-              `UPDATE ${cursors} SET
+              `WITH current_lease AS MATERIALIZED (
+                 SELECT 1 FROM ${leases}
+                  WHERE $6::text IS NOT NULL
+                    AND namespace = $1 AND scope_key = $2 AND account_id = $3
+                    AND owner_token = $6 AND generation = $7 AND expires_at > clock_timestamp()
+                  FOR UPDATE
+               )
+               UPDATE ${cursors} SET
                  checkpoint = $4,
                  generation = CASE WHEN checkpoint = $4 THEN generation ELSE generation + 1 END,
                  changed_at = CASE WHEN checkpoint = $4 THEN changed_at ELSE clock_timestamp() END
                WHERE namespace = $1 AND scope_key = $2 AND account_id = $3 AND checkpoint = $5
-                 AND ($6::text IS NULL OR EXISTS (
-                   SELECT 1 FROM ${leases}
-                    WHERE namespace = $1 AND scope_key = $2 AND account_id = $3
-                      AND owner_token = $6 AND generation = $7 AND expires_at > clock_timestamp()
-                 ))
+                 AND ($6::text IS NULL OR EXISTS (SELECT 1 FROM current_lease))
                RETURNING generation::text AS generation`,
               [
                 namespace,
@@ -401,14 +407,17 @@ export function createPostgresReportingConsumerRuntimeV1(
       if (expected !== undefined) assertCheckpoint(expected);
       const result = await query(
         'clear changes checkpoint',
-        `DELETE FROM ${cursors}
+        `WITH current_lease AS MATERIALIZED (
+           SELECT 1 FROM ${leases}
+            WHERE $5::text IS NOT NULL
+              AND namespace = $1 AND scope_key = $2 AND account_id = $3
+              AND owner_token = $5 AND generation = $6 AND expires_at > clock_timestamp()
+            FOR UPDATE
+         )
+         DELETE FROM ${cursors}
           WHERE namespace = $1 AND scope_key = $2 AND account_id = $3
             AND ($4::text IS NULL OR checkpoint = $4)
-            AND ($5::text IS NULL OR EXISTS (
-              SELECT 1 FROM ${leases}
-               WHERE namespace = $1 AND scope_key = $2 AND account_id = $3
-                 AND owner_token = $5 AND generation = $6 AND expires_at > clock_timestamp()
-            ))`,
+            AND ($5::text IS NULL OR EXISTS (SELECT 1 FROM current_lease))`,
         [namespace, scopeKey, accountId, expected ?? null, fence?.ownerToken ?? null, fence?.generation ?? null]
       );
       return (result.rowCount ?? 0) > 0;

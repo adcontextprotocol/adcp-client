@@ -90,6 +90,7 @@ export type {
   ReportingPendingConsumerStatus,
   ReportingPendingConsumerStatusKey,
   ReportingPendingConsumerStatusStore,
+  ReportingPersistenceLeaseFenceV1,
   ReportingCanonicalDigestEvidence,
   ReportingCoverageEvidence,
   ReportingCoverageLimitation,

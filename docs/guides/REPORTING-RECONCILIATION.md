@@ -106,7 +106,18 @@ The helper only returns `definitive: true` when all of these conditions hold:
 - the current revision has the required finality;
 - a verified, unexpired materialization matches the obligation;
 - every consumer-receipt obligation has an accepted receipt for the same revision, materialization, row count, control totals, and required verification evidence;
-- every post-official adjustment on that revision has an accepted adjustment receipt whose observed digest was recomputed locally. Digest, target-revision, timing, and control-total metadata disagreements produce a rejected receipt and keep the result nondefinitive.
+- every post-official adjustment on that revision has an accepted adjustment receipt whose observed digest and control-total values were independently validated. Digest, target-revision, timing, and control-total disagreements produce a rejected receipt and keep the result nondefinitive.
+
+An integrity-valid adjustment is **deferred by default**. Configure
+`evaluateAdjustment({ adjustment, revision, signal })` to return `accept`,
+`reject`, or `defer` after applying the buyer's financial policy. `reject`
+submits a receipt with `ADJUSTMENT_POLICY_REJECTED`; `defer` sends no receipt
+and keeps billing nondefinitive. Set `adjustmentPolicyTimeoutMs` if the default
+five-second policy deadline is unsuitable. Route large or unusual corrections
+to human review; a matching digest proves the seller's record is unchanged,
+not that the buyer agrees with its commercial effect. Direct callers of
+`buildReportingAdjustmentReceipt` must apply the same policy before submitting
+an integrity-valid accepted receipt.
 
 An omitted expected-period denominator can still diagnose delivery, but can never prove completeness. Pass `[]` only when the buyer independently knows that no periods are expected in the requested scope.
 
@@ -295,8 +306,9 @@ consumer.start();
 // original immutable account configuration.
 consumer.replaceAccounts(nextAuthenticatedAccountRoster);
 
-// The HTTP route must verify the advertised AdCP webhook signature first.
-await consumer.handleAuthenticatedNotification(verifiedWebhookBody, {
+// Verify RFC 9421 with verifyWebhookSignature from @adcp/sdk/signing/server,
+// then map the verified keyid/agent_url through your trusted seller registry.
+const result = await consumer.handleAuthenticatedNotification(verifiedWebhookBody, {
   // Derived from the authenticated sender/signing key, never from the body.
   consumerScope: 'seller-42:buyer-principal-7',
 });
@@ -304,6 +316,15 @@ await consumer.handleAuthenticatedNotification(verifiedWebhookBody, {
 // Stop accepting work and wait for in-flight reconciliation before closing DB/network clients.
 await consumer.stop();
 ```
+
+The HTTP route should acknowledge `reconciled`, `unchanged`, `duplicate`, and
+`null` with 2xx. Return 503 with `Retry-After` for `busy`, `lease_lost`, or
+`stopping` so the seller retries its durable notification. Map
+`ReportingReconciliationError` code `INVALID_NOTIFICATION` to 400; reject an
+unverified signature before calling the runtime. Other failures should be
+logged and returned as retryable 5xx. This response mapping keeps a doorbell
+from being lost when another replica owns the account lease. Polling remains
+the authoritative repair path.
 
 Webhook bodies are routing hints, never reporting evidence. The runtime accepts
 them only through the deliberately named `handleAuthenticatedNotification`

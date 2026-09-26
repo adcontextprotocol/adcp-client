@@ -621,7 +621,7 @@ export type CreatePostgresReliableReportingProductionServiceOptionsV1<TCtxMeta =
     authorizationRevocationSeconds: number;
     store?: Omit<PostgresReportingManagedDeliveryStoreOptions, 'notificationActivityPort'>;
   };
-  activity?: Omit<
+  activity: Omit<
     PostgresReportingNotificationActivityOptions,
     'db' | 'notifications' | 'namespace' | 'attemptCheckpoint' | 'tenantScopeForAccount'
   > & {
@@ -632,6 +632,11 @@ export type CreatePostgresReliableReportingProductionServiceOptionsV1<TCtxMeta =
   resolveWebhookActivityScope(
     context: ResolveContext
   ): { tenantId: string; principalId: string } | Promise<{ tenantId: string; principalId: string }>;
+  /** Trusted complete roster of consumers that owe receipts for an obligation. */
+  obligatedConsumers?: (input: {
+    reporting_obligation_id: string;
+    account_id: string;
+  }) => Promise<{ ids: readonly string[]; complete: boolean; version?: string }>;
   /** Optional migration-system bridge. Called before any capability probe. */
   applyMigrations?: (migrations: readonly string[]) => Promise<void>;
 };
@@ -661,11 +666,11 @@ export interface PostgresReliableReportingProductionServiceV1<TCtxMeta = Record<
     core: Awaited<ReturnType<ReliableReportingServiceV1<TCtxMeta>['runCycle']>>;
     managed: Awaited<ReturnType<ReportingManagedDeliveryRuntimeV1['runWorker']>>;
   }>;
-  recoverOnce(): Promise<{
+  recoverOnce(options: { deploymentWide: true }): Promise<{
     activity: Awaited<ReturnType<PostgresReportingNotificationActivityRuntime['recoverOnce']>>;
     webhookOutbox: Awaited<ReturnType<PostgresPersistentNotificationRuntime['recoverOnce']>>;
   }>;
-  start(options: ReliableReportingSchedulerOptionsV1): void;
+  start(options: ReliableReportingSchedulerOptionsV1 & { deploymentWide: true }): void;
   stop(): Promise<void>;
 }
 
@@ -688,6 +693,17 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
   }
   if (typeof options.resolveWebhookActivityScope !== 'function') {
     throw new TypeError('Reliable Reporting production service requires resolveWebhookActivityScope');
+  }
+  if (typeof options.activity?.tenantScopeForAccount !== 'function') {
+    throw new TypeError('Reliable Reporting production service requires activity.tenantScopeForAccount');
+  }
+  if (
+    Object.values(options.adapters).some(
+      adapter => adapter.deliveryOffering.reconciliation_mode === 'consumer_receipt'
+    ) &&
+    typeof options.obligatedConsumers !== 'function'
+  ) {
+    throw new TypeError('Reconciled Billing production offerings require a trusted obligatedConsumers roster');
   }
 
   const recipientCheckpoint = createPostgresReportingNotificationAttemptCheckpoint({
@@ -741,21 +757,18 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
       },
     },
   });
-  const tenantScopeForAccount = options.activity?.tenantScopeForAccount;
-  if (!tenantScopeForAccount) {
-    throw new TypeError('Reliable Reporting production service requires activity.tenantScopeForAccount');
-  }
   const notificationActivity = createPostgresReportingNotificationActivityRuntime({
     ...options.activity,
     db: options.db,
     notifications,
     namespace: options.namespace,
     attemptCheckpoint,
-    tenantScopeForAccount,
+    tenantScopeForAccount: options.activity.tenantScopeForAccount,
   });
   const coreStore = new PostgresReportingLedgerStore(options.db, {
     acknowledgeIsolatedDatabase: options.acknowledgeIsolatedDatabase,
     managedDelivery: true,
+    ...(options.obligatedConsumers ? { obligatedConsumers: options.obligatedConsumers } : {}),
     ...(options.consumerMismatchEscalation ? { consumerMismatchEscalation: options.consumerMismatchEscalation } : {}),
     notificationActivityPort: notificationActivity.port,
   });
@@ -903,14 +916,7 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
     for (const result of pruneResults) {
       if (result.status === 'rejected' && !signal.aborted) await reportAuxiliaryError(scheduler, result.reason);
     }
-    const accountIds = scheduler.deploymentWide
-      ? rotate(await deploymentWideAccountIds(coreStore), auxiliaryRotation)
-      : rotate(
-          validateAccountIds(
-            typeof scheduler.accountIds === 'function' ? await scheduler.accountIds() : scheduler.accountIds
-          ),
-          auxiliaryRotation
-        );
+    const accountIds = rotate(await deploymentWideAccountIds(coreStore), auxiliaryRotation);
     auxiliaryRotation += 1;
     for (const accountId of accountIds) {
       signal.throwIfAborted();
@@ -974,13 +980,19 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
       });
       return { core: coreResult, managed: managedResult };
     },
-    async recoverOnce() {
+    async recoverOnce(recoveryOptions) {
+      if (recoveryOptions?.deploymentWide !== true) {
+        throw new TypeError('Reliable Reporting production recovery requires deploymentWide: true');
+      }
       const activityResult = await notificationActivity.recoverOnce();
       const webhookOutbox = await notifications.recoverOnce();
       return { activity: activityResult, webhookOutbox };
     },
     start(scheduler) {
       if (auxiliaryPromise) throw new Error('Reliable Reporting production scheduler is already running');
+      if (scheduler.deploymentWide !== true) {
+        throw new TypeError('Reliable Reporting production scheduler requires deploymentWide: true');
+      }
       if (
         scheduler.notificationRecoveryLimit !== undefined &&
         (!Number.isSafeInteger(scheduler.notificationRecoveryLimit) ||

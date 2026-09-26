@@ -130,9 +130,22 @@ The complete behavioral inventory, including server-default separation and A2A 1
 - Webhook signing plus each external POST now has a 30 second default deadline.
   Set `webhooks.deliveryTimeoutMs` explicitly if an existing receiver has a
   different bounded acknowledgement SLO.
+- Webhook attempt observers are awaited before each POST and after its result,
+  with a 5 second default observer deadline. Set
+  `webhooks.attemptObserverTimeoutMs` for a different bounded telemetry SLO;
+  a slow observer adds delivery latency.
 - Notification `subscriber_id` now always enforces the protocol grammar
   `^[A-Za-z0-9_.:-]{1,64}$`, including when server request validation is off.
-  Rename non-conforming retained subscriber IDs before enabling delivery.
+  Rename non-conforming retained subscriber IDs. The activity log keeps
+  delivering older 65–255 character IDs during migration, but replacement
+  registrations must use the new grammar.
+- Reconciled Billing production composition now requires a trusted
+  `obligatedConsumers` roster; a missing roster cannot establish complete
+  billing health. The production recovery worker requires explicit
+  `deploymentWide: true` because it scans the whole namespace.
+- Buyer reconciliation defers integrity-valid post-official adjustments until
+  the adopter supplies `evaluateAdjustment`; wire the buyer's financial policy
+  before expecting accepted adjustment receipts.
 - Buyer change-cursor stores should implement `clear(key, expected)` so a seller
   that retires or rotates its opaque checkpoint cannot leave the worker in a
   permanent failed-drain loop.

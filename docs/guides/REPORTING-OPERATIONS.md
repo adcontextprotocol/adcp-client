@@ -44,16 +44,15 @@ manager and bind authorization to authenticated transport context.
 1. Back up the database and record the current application and schema versions.
 2. Stop old writers when the release notes declare a writer fence. Additive,
    idempotent migrations may otherwise be applied before rolling processes.
-3. On first deploy, construct the service with `applyMigrations`. The callback is
-   optional only for deployments whose migration system has already applied
-   `service.setup.migrations`; without either path the constructor fails its
-   probes. The
-   constructor passes the complete ordered SQL list to that callback before it
-   probes any table, so run each statement there with the deployment's migration
-   owner. Prefer one migration transaction where the platform permits it. Set
-   explicit lock and statement timeouts and retry only after diagnosing a
-   rollback. `service.setup.migrations` is the same list for auditing after a
-   successful construction; it is not the first-deploy entry point.
+3. On first deploy, construct the service with `applyMigrations`. The callback
+   receives the complete ordered SQL list before any probe, so hand it to your
+   migration runner and execute it with the deployment's migration owner.
+   `service.setup.migrations` is available only after successful construction;
+   it is an audit view, not a way to collect first-deploy SQL. Once the tables
+   are installed, a deployment may omit `applyMigrations` if its external
+   migration process applies the same ordered statements before startup.
+   Prefer one migration transaction where the platform permits it. Set explicit
+   lock and statement timeouts and retry only after diagnosing a rollback.
 4. Treat a migration, probe, policy-adoption, or
    capability-validation failure as a failed deployment; do not serve a reduced
    hand-authored capability document.
@@ -65,6 +64,13 @@ manager and bind authorization to authenticated transport context.
 Migrations are rerunnable and never authorize deleting or rebuilding reporting
 tables. Roll forward after a failed application release. Do not downgrade a
 writer across a retained-state compatibility fence.
+
+The seller production composer requires `deploymentWide: true` for its
+scheduler and explicit recovery pass. Its notification and webhook recovery
+operate over the whole namespace; isolate namespaces and publisher scopes when
+different operators own tenant partitions. For Reconciled Billing offerings,
+provide `obligatedConsumers` from a trusted authorization roster. A missing or
+incomplete roster cannot safely mark a billing obligation reconciled.
 
 ## Service objectives and alerts
 

@@ -1,5 +1,6 @@
 import type { WebhookActivityRecord } from '../types/core.generated';
 import type { ListAccountsRequest } from '../types/tools.generated';
+import { WebhookActivityRecordSchema } from '../types/schemas.generated';
 import type {
   NotificationDeliveryAttemptCheckpoint,
   NotificationDeliveryAttemptCheckpointInput,
@@ -512,11 +513,7 @@ export function composeWebhookAttemptResultObservers(
   };
 }
 
-/**
- * Decorate only accounts the authoritative list handler already returned.
- * Adopter-supplied activity is always stripped first so unsupported or
- * unrequested diagnostics can never leak through a permissive response shape.
- */
+/** Decorate only accounts the authoritative list handler already returned. */
 export async function projectListAccountsReportingWebhookActivityV1<
   TResponse extends { accounts?: readonly unknown[] },
 >(options: ProjectListAccountsReportingWebhookActivityOptionsV1<TResponse>): Promise<TResponse> {
@@ -528,9 +525,21 @@ export async function projectListAccountsReportingWebhookActivityV1<
   if (include) boundedInteger(limit, 'webhook_activity_limit', 1, 200);
   const maxConcurrency = options.maxConcurrency ?? 8;
   boundedInteger(maxConcurrency, 'maxConcurrency', 1, 64);
+  const adopterActivity = new Map<string, WebhookActivityRecord[]>();
   const accounts = options.response.accounts.map(value => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
-    const { webhook_activity: _untrustedActivity, ...account } = value as Record<string, unknown>;
+    const { webhook_activity: suppliedActivity, ...account } = value as Record<string, unknown>;
+    if (include && typeof account.account_id === 'string' && Array.isArray(suppliedActivity)) {
+      // The accounts.list handler is the authority for its own non-reporting
+      // activity. Keep only schema-valid fields and sanitize URLs before merge.
+      adopterActivity.set(
+        account.account_id,
+        suppliedActivity
+          .slice(0, 200)
+          .map(normalizeAdopterActivity)
+          .filter((record): record is WebhookActivityRecord => record !== null)
+      );
+    }
     return account;
   });
   if (include) {
@@ -552,7 +561,11 @@ export async function projectListAccountsReportingWebhookActivityV1<
         for (const [accountId, records] of batch) activity.set(accountId, records);
       }
       for (const { account, accountId } of identified) {
-        (account as Record<string, unknown>).webhook_activity = activity.get(accountId) ?? [];
+        (account as Record<string, unknown>).webhook_activity = mergeActivity(
+          activity.get(accountId) ?? [],
+          adopterActivity.get(accountId) ?? [],
+          limit
+        );
       }
     } else {
       let next = 0;
@@ -561,18 +574,64 @@ export async function projectListAccountsReportingWebhookActivityV1<
           while (true) {
             const item = identified[next++];
             if (!item) return;
-            (item.account as Record<string, unknown>).webhook_activity = await options.activity.listActivity({
+            const stored = await options.activity.listActivity({
               tenantId: options.tenantId,
               principalId: options.principalId,
               accountId: item.accountId,
               limit,
             });
+            (item.account as Record<string, unknown>).webhook_activity = mergeActivity(
+              stored,
+              adopterActivity.get(item.accountId) ?? [],
+              limit
+            );
           }
         })
       );
     }
   }
   return { ...options.response, accounts } as TResponse;
+}
+
+function normalizeAdopterActivity(value: unknown): WebhookActivityRecord | null {
+  const result = WebhookActivityRecordSchema.safeParse(value);
+  if (!result.success || result.data.notification_type.startsWith('reporting.')) return null;
+  const record = result.data;
+  try {
+    return {
+      idempotency_key: record.idempotency_key,
+      fired_at: record.fired_at,
+      notification_type: record.notification_type,
+      attempt: record.attempt,
+      status: record.status,
+      url: sanitizeReportingWebhookActivityUrl(record.url),
+      ...(record.notification_id !== undefined ? { notification_id: record.notification_id } : {}),
+      ...(record.subscriber_id !== undefined ? { subscriber_id: record.subscriber_id } : {}),
+      ...(record.completed_at !== undefined ? { completed_at: record.completed_at } : {}),
+      ...(record.sequence_number !== undefined ? { sequence_number: record.sequence_number } : {}),
+      ...(record.http_status_code !== undefined ? { http_status_code: record.http_status_code } : {}),
+      ...(record.response_time_ms !== undefined ? { response_time_ms: record.response_time_ms } : {}),
+      ...(record.payload_size_bytes !== undefined ? { payload_size_bytes: record.payload_size_bytes } : {}),
+      ...(record.error_message !== undefined ? { error_message: record.error_message } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function mergeActivity(
+  stored: readonly WebhookActivityRecord[],
+  supplied: readonly WebhookActivityRecord[],
+  limit: number
+): WebhookActivityRecord[] {
+  const merged = new Map<string, WebhookActivityRecord>();
+  for (const record of [...stored, ...supplied]) {
+    const key = `${record.subscriber_id ?? ''}:${record.idempotency_key}:${record.attempt}`;
+    if (!merged.has(key)) merged.set(key, record);
+  }
+  return [...merged.values()]
+    .sort((left, right) => Date.parse(right.fired_at) - Date.parse(left.fired_at) || right.attempt - left.attempt)
+    .slice(0, limit);
 }
 
 export function sanitizeReportingWebhookActivityUrl(value: string): string {
@@ -686,7 +745,9 @@ function validateContext(value: {
   boundedString(scope.tenantId, 'tenantId', 512);
   boundedString(scope.principalId, 'principalId', 512);
   boundedString(value.accountId, 'accountId', 512);
-  boundedString(value.subscriberId, 'subscriberId', 64);
+  // New subscriptions are capped at 64 by the protocol writer. Keep delivery
+  // compatible with durable 65-255 character IDs created by earlier releases.
+  boundedString(value.subscriberId, 'subscriberId', 255);
   boundedString(value.eventType, 'eventType', 128);
   boundedString(value.notificationId, 'notificationId', 255);
   if (scope.kind === 'account' && scope.accountId !== value.accountId) {
@@ -717,11 +778,15 @@ function activityOutcome(result: WebhookEmitAttemptResult): {
     };
   }
   const timeout = /timed?\s*out|timeout|abort/i.test(result.error ?? '');
+  const connectionFailure =
+    /^(?:E(?:CONN[A-Z_]*|HOSTUNREACH|NETUNREACH|AI_AGAIN)|ENOTFOUND|ETLS[A-Z_]*|CERT_[A-Z_]*):/.test(
+      result.error ?? ''
+    );
   return {
-    status: timeout ? 'timeout' : 'connection_error',
+    status: timeout ? 'timeout' : connectionFailure ? 'connection_error' : 'failed',
     httpStatusCode: null,
     responseTimeMs: null,
-    errorMessage: timeout ? 'HTTP attempt timed out' : 'Connection failed',
+    errorMessage: timeout ? 'HTTP attempt timed out' : connectionFailure ? 'Connection failed' : 'Delivery failed',
   };
 }
 

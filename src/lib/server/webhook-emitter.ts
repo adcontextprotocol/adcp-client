@@ -725,6 +725,9 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
           }
           attempts = attempt;
           await observeAttempt(options, 'attempt', attemptInfo);
+          // Observers are awaited and may outlive a recovery lease. Fence the
+          // final transport boundary after they finish, before any POST.
+          await recoveryHeartbeat?.renewNow();
 
           const started = Date.now();
           let status: number | undefined;
@@ -864,9 +867,15 @@ async function observeAttempt(
     }
   } catch (error) {
     try {
-      options.onAttemptObserverError?.(error, phase);
+      if (options.onAttemptObserverError) options.onAttemptObserverError(error, phase);
+      else console.warn(`[adcp/webhook] ${phase} observer failed`);
     } catch {
       // Delivery observability is deliberately isolated from transport.
+      try {
+        console.warn(`[adcp/webhook] ${phase} observer-error hook failed`);
+      } catch {
+        // A broken logger must not prevent delivery.
+      }
     }
   }
 }

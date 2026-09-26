@@ -156,7 +156,12 @@ describe(
       assert.equal(service.capabilities.readiness_notification, 'reporting.delivery_ready');
       assert.equal(service.capabilities.supports_webhook_activity, true);
       assert.equal(service.platform.capabilities, service.capabilities);
-      await service.recoverOnce();
+      await service.recoverOnce({ deploymentWide: true });
+      await assert.rejects(() => service.recoverOnce({ deploymentWide: false }), /deploymentWide: true/);
+      assert.throws(
+        () => service.start({ intervalMilliseconds: 1_000, accountIds: ['account-1'] }),
+        /deploymentWide: true/
+      );
     });
 
     test('projects webhook activity only through the trusted production hook', async () => {

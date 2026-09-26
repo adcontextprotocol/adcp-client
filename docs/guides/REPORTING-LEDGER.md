@@ -76,6 +76,16 @@ durably adopted. Its `platform` mounts `sync_reporting_receipts` through
 `createAdcpServerFromPlatform`, and its scheduler drives production, managed
 delivery, notification recovery, retry recovery, and bounded retention cleanup
 together. `stop()` aborts and awaits both worker loops.
+The production scheduler and `recoverOnce()` require the explicit
+`deploymentWide: true` option because notification and webhook recovery scan
+the entire configured namespace. Use an isolated namespace and publisher scope
+for each independently operated tenant partition. The Core-only scheduler may
+still use an `accountIds` roster. Production setup requires
+`activity.tenantScopeForAccount`; when an offering uses `consumer_receipt`, it
+also requires a trusted `obligatedConsumers` callback so lifecycle health can
+become reconciled only after every obligated consumer has accepted.
+See the [integrated seller example](../../examples/reliable-reporting-service/README.md#integrated-seller-production-service)
+for the full option shape.
 
 Install a buyer declaration after the account and its media-buy scope have
 been authorized and resolved. `installConfiguration` intentionally accepts no
@@ -507,6 +517,10 @@ task.
 That lifecycle activity is distinct from the protocol's webhook transport
 diagnostics. To support `list_accounts({ include_webhook_activity: true })`,
 wire the principal-scoped attempt log into the same notification runtime:
+
+This manual composition replaces the earlier `const notifications` block; it
+reuses that block's `attemptCheckpoint` and installs exactly one notification
+runtime. Prefer the production composer for new deployments.
 
 ```ts
 import {

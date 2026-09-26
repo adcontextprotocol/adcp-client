@@ -655,6 +655,18 @@ interface ReconcileReportingBaseOptions {
    * page a human. Inert display metadata — never dereference it.
    */
   operationsContact?: { url?: string; email?: string };
+  /**
+   * Buyer-owned commercial decision for an integrity-valid post-official
+   * adjustment. Without this callback, the SDK defers and sends no acceptance.
+   * A rejection sends a receipt with ADJUSTMENT_POLICY_REJECTED.
+   */
+  evaluateAdjustment?: (input: {
+    adjustment: ReportingAdjustment;
+    revision: ReportingRevision;
+    signal: AbortSignal;
+  }) => 'accept' | 'reject' | 'defer' | Promise<'accept' | 'reject' | 'defer'>;
+  /** Deadline for one policy decision. Defaults to 5 seconds. */
+  adjustmentPolicyTimeoutMs?: number;
 }
 
 type ReportingCheckpointOptions =
@@ -986,14 +998,65 @@ function adjustmentDigest(adjustment: ReportingAdjustment): string {
   return createHash('sha256').update(canonicalize(unsigned)).digest('hex');
 }
 
-function adjustmentReceiptMatches(receipt: ReportingAdjustmentReceipt, adjustment: ReportingAdjustment): boolean {
+function adjustmentReceiptMatches(
+  receipt: ReportingAdjustmentReceipt,
+  adjustment: ReportingAdjustment,
+  revision: ReportingRevision | undefined
+): boolean {
   return (
+    revision !== undefined &&
+    adjustmentValidationCodes(adjustment, revision).length === 0 &&
     receipt.status === 'accepted' &&
     receipt.reporting_adjustment_id === adjustment.reporting_adjustment_id &&
     receipt.adjusts_reporting_revision_id === adjustment.adjusts_reporting_revision_id &&
     sameSha256(receipt.observed_adjustment_sha256, adjustment.canonical_adjustment_sha256) &&
     sameSha256(receipt.observed_adjustment_sha256, adjustmentDigest(adjustment))
   );
+}
+
+function adjustmentValidationCodes(adjustment: ReportingAdjustment, revision: ReportingRevision): string[] {
+  const rejectionCodes: string[] = [];
+  const observedDigest = adjustmentDigest(adjustment);
+  if (!adjustment.canonical_adjustment_sha256) {
+    rejectionCodes.push('CANONICAL_ADJUSTMENT_DIGEST_MISSING');
+  } else if (!sameSha256(observedDigest, adjustment.canonical_adjustment_sha256)) {
+    rejectionCodes.push('CANONICAL_ADJUSTMENT_DIGEST_MISMATCH');
+  }
+
+  if (
+    !isReportingControlTotals(adjustment.control_total_deltas) ||
+    !isReportingControlTotals(revision.control_totals)
+  ) {
+    rejectionCodes.push('CONTROL_TOTAL_DELTA_MISMATCH');
+  } else {
+    const revisionTotals = new Map(revision.control_totals.map(total => [total.name, total]));
+    for (const delta of adjustment.control_total_deltas) {
+      const expected = revisionTotals.get(delta.name);
+      if (!expected || expected.value_type !== delta.value_type || expected.unit !== delta.unit) {
+        rejectionCodes.push('CONTROL_TOTAL_DELTA_MISMATCH');
+        break;
+      }
+    }
+  }
+
+  const periodStart = Date.parse(adjustment.accounting_period.start);
+  const periodEnd = Date.parse(adjustment.accounting_period.end);
+  const correctionObservedAt = Date.parse(adjustment.correction_observed_at);
+  const createdAt = Date.parse(adjustment.created_at);
+  const finalizedAt = Date.parse(revision.finalized_at ?? '');
+  if (
+    !Number.isFinite(periodStart) ||
+    !Number.isFinite(periodEnd) ||
+    periodEnd <= periodStart ||
+    !Number.isFinite(correctionObservedAt) ||
+    !Number.isFinite(createdAt) ||
+    !Number.isFinite(finalizedAt) ||
+    correctionObservedAt < finalizedAt ||
+    correctionObservedAt > createdAt
+  ) {
+    rejectionCodes.push('ADJUSTMENT_TIME_INVALID');
+  }
+  return [...new Set(rejectionCodes)];
 }
 
 function addImmutable<T>(map: Map<string, T>, id: string, value: T, kind: string): void {
@@ -2900,6 +2963,7 @@ export function evaluateReportingLedger(
   assertDirectReportingLedgerGraph(ledger);
   const obligationResults: ObligationReconciliation[] = [];
   const uniqueRevisions = new Map<string, ManagedReportingRevision>();
+  const revisionsById = new Map(ledger.revisions.map(item => [item.reporting_revision_id, item]));
   const { expectedByIdentity, obligationCounts } = buildExpectedIdentityIndex(
     ledger.obligations,
     expectedPeriods ?? []
@@ -2928,7 +2992,7 @@ export function evaluateReportingLedger(
       const receipts = adjustmentReceiptHistories.get(adjustment.reporting_adjustment_id) ?? [];
       receiptCount += receipts.length;
       acceptedReceiptCount += receipts.filter(receipt => receipt.status === 'accepted').length;
-      if (!receipts.some(receipt => adjustmentReceiptMatches(receipt, adjustment))) {
+      if (!receipts.some(receipt => adjustmentReceiptMatches(receipt, adjustment, revisionsById.get(revisionId)))) {
         hasMissingMatchingReceipt = true;
       }
     }
@@ -3114,48 +3178,8 @@ export function buildReportingAdjustmentReceipt(
   }
 
   const observedDigest = adjustmentDigest(adjustment);
-  const rejectionCodes: string[] = [];
-  if (!adjustment.canonical_adjustment_sha256) {
-    rejectionCodes.push('CANONICAL_ADJUSTMENT_DIGEST_MISSING');
-  } else if (!sameSha256(observedDigest, adjustment.canonical_adjustment_sha256)) {
-    rejectionCodes.push('CANONICAL_ADJUSTMENT_DIGEST_MISMATCH');
-  }
-
-  const revisionTotals = new Map(revision.control_totals.map(total => [total.name, total]));
-  const names = new Set<string>();
-  for (const delta of adjustment.control_total_deltas) {
-    const expected = revisionTotals.get(delta.name);
-    if (
-      names.has(delta.name) ||
-      !expected ||
-      expected.value_type !== delta.value_type ||
-      expected.unit !== delta.unit
-    ) {
-      rejectionCodes.push('CONTROL_TOTAL_DELTA_MISMATCH');
-      break;
-    }
-    names.add(delta.name);
-  }
-
-  const periodStart = Date.parse(adjustment.accounting_period.start);
-  const periodEnd = Date.parse(adjustment.accounting_period.end);
-  const correctionObservedAt = Date.parse(adjustment.correction_observed_at);
-  const createdAt = Date.parse(adjustment.created_at);
-  const finalizedAt = Date.parse(revision.finalized_at ?? '');
-  if (
-    !Number.isFinite(periodStart) ||
-    !Number.isFinite(periodEnd) ||
-    periodEnd <= periodStart ||
-    !Number.isFinite(correctionObservedAt) ||
-    !Number.isFinite(createdAt) ||
-    !Number.isFinite(finalizedAt) ||
-    correctionObservedAt < finalizedAt ||
-    correctionObservedAt > createdAt
-  ) {
-    rejectionCodes.push('ADJUSTMENT_TIME_INVALID');
-  }
-  const uniqueRejectionCodes = [...new Set(rejectionCodes)];
-  const [firstRejectionCode, ...remainingRejectionCodes] = uniqueRejectionCodes;
+  const rejectionCodes = adjustmentValidationCodes(adjustment, revision);
+  const [firstRejectionCode, ...remainingRejectionCodes] = rejectionCodes;
 
   return {
     reporting_receipt_id: options.reportingReceiptId ?? `reporting-adjustment-receipt:${generateIdempotencyKey()}`,
@@ -3316,6 +3340,17 @@ export async function reconcileReporting<TCredential = unknown>(
   const pendingConsumerStatusScope = options.pendingConsumerStatusScope ?? 'unscoped';
   const maxInspectionAttempts = options.maxInspectionAttempts ?? 3;
   const inspectionRetryBaseDelayMs = options.inspectionRetryBaseDelayMs ?? 100;
+  const adjustmentPolicyTimeoutMs = options.adjustmentPolicyTimeoutMs ?? 5_000;
+  if (
+    !Number.isSafeInteger(adjustmentPolicyTimeoutMs) ||
+    adjustmentPolicyTimeoutMs < 1 ||
+    adjustmentPolicyTimeoutMs > 60_000
+  ) {
+    throw new ReportingReconciliationError(
+      'INVALID_ADJUSTMENT_POLICY_TIMEOUT',
+      'adjustmentPolicyTimeoutMs must be an integer from 1 through 60000'
+    );
+  }
   if (!Number.isSafeInteger(maxInspectionAttempts) || maxInspectionAttempts < 1 || maxInspectionAttempts > 10) {
     throw new ReportingReconciliationError(
       'INVALID_INSPECTION_RETRY_POLICY',
@@ -3421,15 +3456,34 @@ export async function reconcileReporting<TCredential = unknown>(
     const revision = eligibleRevisions.get(adjustment.adjusts_reporting_revision_id);
     if (!revision) continue;
     const current = currentAdjustmentReceipt(adjustment, adjustmentReceiptHistories);
-    if (current && adjustmentReceiptMatches(current, adjustment)) continue;
+    if (current && adjustmentReceiptMatches(current, adjustment, revision)) continue;
     // Accepted is a terminal leaf. If the seller's accepted evidence does not
     // match the independently recomputed adjustment, report the ledger as
     // non-definitive but never fork the receipt chain with a second root.
     if (current?.status === 'accepted') continue;
 
-    const candidate = buildReportingAdjustmentReceipt(adjustment, revision, {
+    let candidate = buildReportingAdjustmentReceipt(adjustment, revision, {
       ...(current?.status === 'rejected' ? { supersedesReportingReceiptId: current.reporting_receipt_id } : {}),
     });
+    if (candidate.status === 'accepted') {
+      const decision = options.evaluateAdjustment
+        ? await callBeforeDeadline(
+            signal => Promise.resolve(options.evaluateAdjustment!({ adjustment, revision, signal })),
+            Date.now() + adjustmentPolicyTimeoutMs,
+            'ADJUSTMENT_POLICY_TIMEOUT',
+            'reporting adjustment policy decision timed out'
+          )
+        : 'defer';
+      if (decision === 'defer') continue;
+      if (decision === 'reject') {
+        candidate = { ...candidate, status: 'rejected', rejection_codes: ['ADJUSTMENT_POLICY_REJECTED'] };
+      } else if (decision !== 'accept') {
+        throw new ReportingReconciliationError(
+          'ADJUSTMENT_POLICY_INVALID',
+          'reporting adjustment policy decision is invalid'
+        );
+      }
+    }
     if (
       current?.status === 'rejected' &&
       candidate.status === 'rejected' &&
