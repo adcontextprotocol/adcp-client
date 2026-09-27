@@ -3074,6 +3074,46 @@ export function postProcessCanonicalPrimitiveConstraints(content: string): strin
   return content;
 }
 
+/** Restore goal target bounds from the owning schema. Other titled copies of
+ * these goals omit the bound, so the general unanimity pass leaves it out. */
+function postProcessOptimizationGoalTargetBounds(content: string): string {
+  for (const [file, schemaName] of [
+    ['optimization-goal.json', 'OptimizationGoal'],
+    ['canonical-optimization-goal.json', 'CanonicalOptimizationGoal'],
+  ] as const) {
+    const source = JSON.parse(
+      readFileSync(path.join(__dirname, '../schemas/cache/latest/core', file), 'utf8')
+    ) as Record<string, unknown>;
+    const arms = source.oneOf;
+    if (!Array.isArray(arms)) throw new Error(`${file}: expected oneOf goal arms`);
+    let boundedTargets = 0;
+    for (const arm of arms) {
+      const target = arm?.properties?.target;
+      if (!target) continue;
+      for (const variant of Array.isArray(target.oneOf) ? target.oneOf : [target]) {
+        const value = variant?.properties?.value;
+        if (!value) continue;
+        if (value.type !== 'number' || value.exclusiveMinimum !== 0) {
+          throw new Error(`${file}: unsupported target.value bound`);
+        }
+        boundedTargets++;
+      }
+    }
+    const start = content.indexOf(`export const ${schemaName}Schema`);
+    if (start < 0) throw new Error(`${schemaName}Schema is missing`);
+    const next = content.indexOf('\n\nexport const ', start + 1);
+    const end = next < 0 ? content.length : next;
+    const block = content.slice(start, end);
+    const occurrences = [...block.matchAll(/\bvalue: z\.number\(\)(?:\.gt\(0\))?/g)].length;
+    if (occurrences !== boundedTargets) {
+      throw new Error(`${schemaName}Schema has ${occurrences} target values; expected ${boundedTargets}`);
+    }
+    const bounded = block.replace(/\bvalue: z\.number\(\)(?!\.gt\(0\))/g, 'value: z.number().gt(0)');
+    content = content.slice(0, start) + bounded + content.slice(end);
+  }
+  return content;
+}
+
 /**
  * Preserve the audio-VAST constraints that cannot survive the JSON Schema ->
  * TypeScript intermediary. The source schema uses a root `not.anyOf` for the
@@ -5579,6 +5619,7 @@ async function generateZodSchemas() {
     // Reconcile canonical primitive constraints last, after structural and
     // exact-schema rewrites that may replace earlier generated blocks.
     zodSchemas = postProcessCanonicalPrimitiveConstraints(zodSchemas);
+    zodSchemas = postProcessOptimizationGoalTargetBounds(zodSchemas);
     zodSchemas = postProcessCanonicalVastAudioConstraints(zodSchemas);
     zodSchemas = postProcessPricingOptionConstraints(zodSchemas);
     zodSchemas = postProcessJsonSchemaUriFormats(zodSchemas);

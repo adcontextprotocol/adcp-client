@@ -6682,8 +6682,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             );
           }
         } else if ((!hasAccount || params.account == null) && resolveAccountFromAuth) {
-          // Auth-derived path for tools whose wire schema lacks an `account`
-          // field (provide_performance_feedback, list_creative_formats, the
+          // Auth-derived path for tools without a supplied `account` field
+          // (provide_performance_feedback, list_creative_formats, the
           // `tasks/get` polling path). Single-tenant agents return their
           // singleton; principal-keyed agents look up by authInfo. A `null`
           // return is allowed for publisher-wide tools whose schema has no

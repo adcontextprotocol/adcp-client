@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-24T12:38:15.765Z
+// Generated at: 2026-09-27T21:03:37.673Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -457,6 +457,19 @@ export const ReferenceAssetSchema = z.object({
     description: z.string().optional()
 }).passthrough();
 
+export const DurationSchema = z.object({
+    interval: z.number().int().gte(1),
+    unit: z.union([z.literal("seconds"), z.literal("minutes"), z.literal("hours"), z.literal("days"), z.literal("campaign")])
+}).passthrough();
+
+export const AttributionWindowSchema = z.object({
+    post_click: DurationSchema.optional(),
+    post_view: DurationSchema.optional(),
+    model: AttributionModelSchema.optional()
+}).passthrough();
+
+export const VendorMetricIDSchema = z.string().min(1).max(64).regex(new RegExp("^[a-z][a-z0-9_]*$"));
+
 export const BrandIDSchema = z.string().regex(new RegExp("^[a-z0-9_]+$"));
 
 export const ProvenanceSchema = z.object({
@@ -520,6 +533,12 @@ export const ProvenanceSchema = z.object({
         details_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional()
     }).passthrough()).optional(),
     ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const BrandKeySchema = z.object({
+    domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
+    brand_id: BrandIDSchema.optional(),
+    countries: z.array(z.string()).optional()
 }).passthrough();
 
 export const BusinessEntitySchema = z.object({
@@ -664,8 +683,6 @@ export const ForecastRangeSchema = z.object({
     }
 });
 
-export const VendorMetricIDSchema = z.string().min(1).max(64).regex(new RegExp("^[a-z][a-z0-9_]*$"));
-
 export const PlacementReferenceSchema = z.object({
     publisher_domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/).optional(),
     placement_id: z.string()
@@ -674,11 +691,6 @@ export const PlacementReferenceSchema = z.object({
 export const PlatformExtensionReferenceSchema = z.object({
     uri: z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(/^https:\/\//),
     digest: z.string().regex(/^sha256:[a-f0-9]{64}$/)
-}).passthrough();
-
-export const DurationSchema = z.object({
-    interval: z.number().int().gte(1),
-    unit: z.union([z.literal("seconds"), z.literal("minutes"), z.literal("hours"), z.literal("days"), z.literal("campaign")])
 }).passthrough();
 
 export const PlacementEvidenceSchema = z.object({
@@ -1091,12 +1103,6 @@ export const CatalogFieldMappingSchema = z.object({}).passthrough().merge(z.obje
     default: z.object({}).passthrough().optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
-
-export const AttributionWindowSchema = z.object({
-    post_click: DurationSchema.optional(),
-    post_view: DurationSchema.optional(),
-    model: AttributionModelSchema.optional()
-}).passthrough();
 
 export const TargetingUnknownAgeEligibilityConstraintSchema = z.object({}).passthrough();
 
@@ -1614,6 +1620,24 @@ export const CatalogSchema = z.object({
     feed_field_mappings: z.array(CatalogFieldMappingSchema).optional()
 }).passthrough();
 
+export const BrandReferenceSchema = z.object({
+    domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
+    brand_id: BrandIDSchema.optional(),
+    countries: z.array(z.string()).optional(),
+    industries: z.array(z.string()).optional(),
+    data_subject_contestation: z.object({}).passthrough().optional(),
+    brand_kit_override: z.object({
+        logo: ImageAssetSchema.optional(),
+        colors: z.object({
+            primary: z.string().regex(new RegExp("^#[0-9a-fA-F]{6}$")).optional(),
+            secondary: z.string().regex(new RegExp("^#[0-9a-fA-F]{6}$")).optional(),
+            accent: z.string().regex(new RegExp("^#[0-9a-fA-F]{6}$")).optional()
+        }).passthrough().optional(),
+        voice: z.string().optional(),
+        tagline: z.string().optional()
+    }).passthrough().optional()
+}).passthrough();
+
 export const AttestationCredentialUriLocatorSchema = z.object({
     type: z.literal("credential_uri"),
     credential_uri: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI"),
@@ -1627,6 +1651,12 @@ export const AttestationIssuerCredentialIdLocatorSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const AttestationBrandIssuerSchema = z.object({
+    type: z.literal("brand"),
+    brand: BrandReferenceSchema,
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
 export const AttestationAgentIssuerSchema = z.object({
     type: z.literal("agent"),
     agent_url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI"),
@@ -1636,6 +1666,12 @@ export const AttestationAgentIssuerSchema = z.object({
 export const AttestationOriginIssuerSchema = z.object({
     type: z.literal("origin"),
     origin: z.string().regex(new RegExp("^https://[^/?#@]+$")).refine(adcpJsonSchemaUri, "Invalid URI"),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const AttestationBrandSubjectSchema = z.object({
+    type: z.literal("brand"),
+    brand: BrandReferenceSchema,
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
@@ -1653,6 +1689,60 @@ export const AttestationResourceSubjectSchema = z.object({
     content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
+
+export const OptimizationGoalSchema = z.union([z.object({
+        kind: z.literal("metric"),
+        metric: z.union([z.literal("clicks"), z.literal("views"), z.literal("completed_views"), z.literal("viewed_seconds"), z.literal("viewable_rate"), z.literal("attention_seconds"), z.literal("attention_score"), z.literal("engagements"), z.literal("follows"), z.literal("saves"), z.literal("profile_visits"), z.literal("reach")]),
+        standard: ViewabilityStandardSchema.optional(),
+        vendor: BrandReferenceSchema.optional(),
+        reach_unit: ReachUnitSchema.optional(),
+        target_frequency: z.object({
+            min: z.int().min(1).optional(),
+            max: z.int().min(1).optional(),
+            window: DurationSchema
+        }).passthrough().optional(),
+        view_duration_seconds: z.number().gt(0).optional(),
+        target: z.union([z.object({
+                kind: z.literal("cost_per"),
+                value: z.number().gt(0)
+            }).passthrough(), z.object({
+                kind: z.literal("threshold_rate"),
+                value: z.number().gt(0)
+            }).passthrough()]).optional(),
+        priority: z.int().min(1).optional()
+    }).passthrough(), z.object({
+        kind: z.literal("event"),
+        event_sources: z.array(z.object({
+            event_source_id: z.string().min(1),
+            event_type: EventTypeSchema,
+            custom_event_name: z.string().optional(),
+            value_field: z.string().optional(),
+            value_factor: z.number().optional()
+        }).passthrough()),
+        target: z.union([z.object({
+                kind: z.literal("cost_per"),
+                value: z.number().gt(0)
+            }).passthrough(), z.object({
+                kind: z.literal("per_ad_spend"),
+                value: z.number().gt(0)
+            }).passthrough(), z.object({
+                kind: z.literal("maximize_value")
+            }).passthrough()]).optional(),
+        attribution_window: AttributionWindowSchema.optional(),
+        priority: z.int().min(1).optional()
+    }).passthrough(), z.object({
+        kind: z.literal("vendor_metric"),
+        vendor: BrandReferenceSchema,
+        metric_id: VendorMetricIDSchema,
+        target: z.union([z.object({
+                kind: z.literal("cost_per"),
+                value: z.number().gt(0)
+            }).passthrough(), z.object({
+                kind: z.literal("threshold_rate"),
+                value: z.number().gt(0)
+            }).passthrough()]).optional(),
+        priority: z.int().min(1).optional()
+    }).passthrough()]);
 
 export const ContextObjectSchema = z.object({}).passthrough();
 
@@ -2544,28 +2634,6 @@ export const MultiSize2Schema = MultiSizeSchema;
 
 export const None2Schema = NoneSchema;
 
-export const BrandReferenceSchema = z.object({
-    domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/),
-    brand_id: BrandIDSchema.optional(),
-    countries: z.array(z.string()).optional(),
-    industries: z.array(z.string()).optional(),
-    data_subject_contestation: z.object({
-        url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(/^https:\/\//).optional(),
-        email: z.email().optional(),
-        languages: z.array(z.string()).optional()
-    }).passthrough().optional(),
-    brand_kit_override: z.object({
-        logo: ImageAssetSchema.optional(),
-        colors: z.object({
-            primary: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
-            secondary: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
-            accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional()
-        }).passthrough().optional(),
-        voice: z.string().optional(),
-        tagline: z.string().optional()
-    }).passthrough().optional()
-}).passthrough();
-
 export const OperatorUnitSchema = z.object({
     id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9][A-Za-z0-9._:/-]*$")),
     name: z.string().min(1).max(200).optional()
@@ -2913,52 +2981,11 @@ export const FrequencyCapSchema = z.object({}).passthrough().merge(z.object({
     window: DurationSchema.optional()
 }).passthrough());
 
-export const OptimizationGoalSchema = z.union([z.object({
-        kind: z.literal("metric"),
-        metric: z.union([z.literal("clicks"), z.literal("views"), z.literal("completed_views"), z.literal("viewed_seconds"), z.literal("attention_seconds"), z.literal("attention_score"), z.literal("engagements"), z.literal("follows"), z.literal("saves"), z.literal("profile_visits"), z.literal("reach")]),
-        reach_unit: ReachUnitSchema.optional(),
-        target_frequency: z.union([z.object({}).passthrough(), z.object({}).passthrough()]).optional(),
-        view_duration_seconds: z.number().gt(0).optional(),
-        target: z.union([z.object({
-                kind: z.literal("cost_per"),
-                value: z.number().gt(0)
-            }).passthrough(), z.object({
-                kind: z.literal("threshold_rate"),
-                value: z.number().gt(0)
-            }).passthrough()]).optional(),
-        priority: z.number().int().gte(1).optional()
+export const BudgetAllocationSchema = z.union([z.object({
+        mode: z.literal("fixed")
     }).passthrough(), z.object({
-        kind: z.literal("event"),
-        event_sources: z.array(z.object({
-            event_source_id: z.string().min(1),
-            event_type: EventTypeSchema,
-            custom_event_name: z.string().optional(),
-            value_field: z.string().optional(),
-            value_factor: z.number().optional()
-        }).passthrough()),
-        target: z.union([z.object({
-                kind: z.literal("cost_per"),
-                value: z.number().gt(0)
-            }).passthrough(), z.object({
-                kind: z.literal("per_ad_spend"),
-                value: z.number().gt(0)
-            }).passthrough(), z.object({
-                kind: z.literal("maximize_value")
-            }).passthrough()]).optional(),
-        attribution_window: AttributionWindowSchema.optional(),
-        priority: z.number().int().gte(1).optional()
-    }).passthrough(), z.object({
-        kind: z.literal("vendor_metric"),
-        vendor: BrandReferenceSchema,
-        metric_id: VendorMetricIDSchema,
-        target: z.union([z.object({
-                kind: z.literal("cost_per"),
-                value: z.number().gt(0)
-            }).passthrough(), z.object({
-                kind: z.literal("threshold_rate"),
-                value: z.number().gt(0)
-            }).passthrough()]).optional(),
-        priority: z.number().int().gte(1).optional()
+        mode: z.literal("seller_optimized"),
+        optimization_goals: z.array(OptimizationGoalSchema.and(z.object({}).passthrough()))
     }).passthrough()]);
 
 export const FormatOptionReferenceSchema = z.union([PublisherCatalogFormatOptionReferenceSchema, ProductLocalFormatOptionReferenceSchema]);
@@ -3036,12 +3063,12 @@ export const AudienceCharacteristicSchema = z.object({
     label: z.string().optional()
 }).passthrough());
 
-export const BrandReference2Schema = BrandReferenceSchema;
-
 export const DateRangeSchema = z.object({
     start: z.string(),
     end: z.string()
 }).passthrough();
+
+export const AttestationSubjectSchema = z.union([AttestationBrandSubjectSchema, AttestationAgentSubjectSchema, AttestationResourceSubjectSchema]);
 
 export const AttestationEvaluationSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({
     reference_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")),
@@ -3074,8 +3101,6 @@ export const TargetingNegativeKeywordsSchema = z.array(NegativeKeywordSchema);
 export const DemographicPredicateSchema = z.object({
     age: DemographicAgeRangeSchema
 }).passthrough();
-
-export const BrandReference6Schema = BrandReferenceSchema;
 
 export const ImageFormatDeclarationSchema = z.object({
     format_kind: z.literal("image"),
@@ -3169,13 +3194,6 @@ export const ImpairmentSchema = z.object({
 
 export const MediaBuyFrequencyCapSchema = FrequencyCapSchema.and(z.object({}).passthrough());
 
-export const BudgetAllocationSchema = z.union([z.object({
-        mode: z.literal("fixed")
-    }).passthrough(), z.object({
-        mode: z.literal("seller_optimized"),
-        optimization_goals: z.array(OptimizationGoalSchema.and(z.object({}).passthrough()))
-    }).passthrough()]);
-
 export const BusinessEntity1Schema = BusinessEntitySchema;
 
 export const WebhookActivityRecordSchema = z.object({
@@ -3265,10 +3283,6 @@ export const DemographicTargetingResolutionSchema = z.object({}).passthrough().m
     applied_verification_methods: z.array(AgeVerificationMethodSchema).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
-
-export const BrandReference4Schema = BrandReferenceSchema;
-
-export const BrandReference5Schema = BrandReferenceSchema;
 
 export const PlatformExtensionReference1Schema = PlatformExtensionReferenceSchema;
 
@@ -3372,8 +3386,6 @@ export const OutcomeMeasurementSchema = z.object({
     window: DurationSchema.optional(),
     reporting: z.string()
 }).passthrough();
-
-export const BrandReference1Schema = BrandReferenceSchema;
 
 export const CreativePolicySchema = z.object({
     co_branding: CoBrandingRequirementSchema,
@@ -3785,14 +3797,6 @@ export const MaterialDeadlineSchema = z.object({
     label: z.string().optional()
 }).passthrough();
 
-export const BrandReference7Schema = BrandReferenceSchema;
-
-export const BrandReference8Schema = BrandReferenceSchema;
-
-export const BrandReference9Schema = BrandReferenceSchema;
-
-export const BrandReference10Schema = BrandReferenceSchema;
-
 export const PropertySchema = z.object({
     property_id: PropertyIDSchema.optional(),
     property_type: PropertyTypeSchema,
@@ -4050,12 +4054,6 @@ export const CanonicalPricingOptionSchema = z.object({}).passthrough().merge(z.o
 
 export const ProductPurchaseImpressionsSchema = z.number().gte(0);
 
-export const BrandKeySchema = z.object({
-    domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
-    brand_id: BrandIDSchema.optional(),
-    countries: z.array(z.string()).optional()
-}).passthrough();
-
 export const ProductPurchaseAudienceEvidenceRequirementsSchema = z.object({}).passthrough().merge(z.object({
     requirement_mode: z.union([z.literal("required"), z.literal("preferred")]),
     evidence_presence: z.union([z.literal("required"), z.literal("when_available")]),
@@ -4093,15 +4091,21 @@ export const StartTimingSchema = z.union([z.literal("asap"), z.string()]);
 
 export const CanonicalOptimizationGoalSchema = z.union([z.object({
         kind: z.literal("metric"),
-        metric: z.union([z.literal("clicks"), z.literal("views"), z.literal("completed_views"), z.literal("viewed_seconds"), z.literal("engagements"), z.literal("follows"), z.literal("saves"), z.literal("profile_visits"), z.literal("reach")]),
+        metric: z.union([z.literal("clicks"), z.literal("views"), z.literal("completed_views"), z.literal("viewed_seconds"), z.literal("viewable_rate"), z.literal("engagements"), z.literal("follows"), z.literal("saves"), z.literal("profile_visits"), z.literal("reach")]),
+        standard: ViewabilityStandardSchema.optional(),
+        vendor: BrandKeySchema.optional(),
         reach_unit: ReachUnitSchema.optional(),
-        target_frequency: z.union([z.object({}).passthrough(), z.object({}).passthrough()]).optional(),
+        target_frequency: z.object({
+            min: z.int().min(1).optional(),
+            max: z.int().min(1).optional(),
+            window: DurationSchema
+        }).passthrough().optional(),
         view_duration_seconds: z.number().gt(0).optional(),
         target: z.object({
             kind: z.literal("threshold_rate"),
             value: z.number().gt(0)
         }).passthrough().optional(),
-        priority: z.number().int().gte(1).optional()
+        priority: z.int().min(1).optional()
     }).passthrough(), z.object({
         kind: z.literal("event"),
         event_sources: z.array(z.object({
@@ -4115,7 +4119,7 @@ export const CanonicalOptimizationGoalSchema = z.union([z.object({
             kind: z.literal("maximize_value")
         }).passthrough().optional(),
         attribution_window: AttributionWindowSchema.optional(),
-        priority: z.number().int().gte(1).optional()
+        priority: z.int().min(1).optional()
     }).passthrough(), z.object({
         kind: z.literal("vendor_metric"),
         vendor: BrandKeySchema,
@@ -4124,7 +4128,7 @@ export const CanonicalOptimizationGoalSchema = z.union([z.object({
             kind: z.literal("threshold_rate"),
             value: z.number().gt(0)
         }).passthrough().optional(),
-        priority: z.number().int().gte(1).optional()
+        priority: z.int().min(1).optional()
     }).passthrough()]);
 
 export const CanonicalMetricQualifierSchema = z.object({
@@ -4409,8 +4413,6 @@ export const BuildCreativeSubmittedSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const BrandReference13Schema = BrandReferenceSchema;
-
 export const NamedFormatManifestSchema = z.object({}).passthrough();
 
 export const CanonicalFormatManifestSchema = z.object({}).passthrough();
@@ -4494,8 +4496,6 @@ export const CatalogItemAvailabilityStateSchema = z.object({}).passthrough().mer
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
 
-export const BrandReference11Schema = BrandReferenceSchema;
-
 export const CanonicalBudgetAllocationSchema = z.union([z.object({
         mode: z.literal("fixed")
     }).passthrough(), z.object({
@@ -4566,8 +4566,6 @@ export const MediaBuyAvailableActionSchema = z.object({
 
 export const MeasurementTerms1Schema = MeasurementTermsSchema;
 
-export const BrandReference12Schema = BrandReferenceSchema;
-
 export const UpdateMediaBuyAsyncSubmittedSchema = UpdateMediaBuySubmittedSchema;
 
 export const PreviewRenderSchema = z.union([z.object({
@@ -4627,8 +4625,6 @@ export const CreativeConsumptionSchema = z.object({
     renders: z.number().int().gte(0).optional(),
     duration_seconds: z.number().gte(0).optional()
 }).passthrough();
-
-export const BrandReference14Schema = BrandReferenceSchema;
 
 export const BuildCreativeEstimateSchema = z.object({
     mode: z.literal("estimate"),
@@ -5764,6 +5760,29 @@ export const VASTAssetSchema = z.object({
 
 export const AdCPAssetGroupVocabularyRegistrySchema = z.object({}).passthrough();
 
+export const AttestationIssuerSchema = z.union([AttestationBrandIssuerSchema, AttestationAgentIssuerSchema, AttestationOriginIssuerSchema]);
+
+export const AudienceEvidenceRequirementsSchema = z.object({}).passthrough().merge(z.object({
+    requirement_mode: z.union([z.literal("required"), z.literal("preferred")]),
+    evidence_presence: z.union([z.literal("required"), z.literal("when_available")]),
+    accepted_methodologies: z.array(AudienceEvidenceMethodologySchema).optional(),
+    excluded_methodologies: z.array(AudienceEvidenceMethodologySchema).optional(),
+    accepted_evidence_types: z.array(z.union([z.literal("measured"), z.literal("forecast"), z.literal("seller_declared")])).optional(),
+    accepted_providers: z.array(BrandReferenceSchema).optional(),
+    excluded_providers: z.array(BrandReferenceSchema).optional(),
+    accepted_subject_types: z.array(AudienceSubjectTypeSchema).optional(),
+    accepted_resolution_methods: z.array(AudienceResolutionMethodSchema).optional(),
+    minimum_confidence: z.number().gte(0).lte(1).optional(),
+    maximum_age: DurationSchema.and(z.object({
+        unit: z.union([z.literal("seconds"), z.literal("minutes"), z.literal("hours"), z.literal("days")]).optional()
+    }).passthrough()).optional(),
+    methodology_documentation_required: z.boolean().optional(),
+    independent_attestation_required: z.boolean().optional(),
+    accepted_attestation_issuers: z.array(AttestationIssuerSchema).optional(),
+    accepted_attestation_claim_types: z.array(z.string()).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough());
+
 export const AudienceMemberSchema = z.object({}).passthrough().merge(z.object({
     external_id: z.string(),
     hashed_email: z.string().regex(new RegExp("^[a-f0-9]{64}$")).optional(),
@@ -6528,8 +6547,8 @@ export const PerformanceFeedbackAssertionSchema = z.object({
     baseline: PerformanceBaselineSchema.optional(),
     metric: PerformanceFeedbackMetricSchema.optional(),
     metric_type: MetricTypeSchema.optional(),
-    producer: BrandReference1Schema.optional(),
-    vendor: BrandReference2Schema.optional(),
+    producer: BrandReferenceSchema.optional(),
+    vendor: BrandReferenceSchema.optional(),
     feedback_source: FeedbackSourceSchema.optional(),
     methodology: z.string().min(1).max(100).optional(),
     methodology_version: z.string().min(1).max(100).optional(),
@@ -6582,7 +6601,7 @@ export const PerformanceFeedbackSchema = z.object({
             }).passthrough().optional()
         }).passthrough()]).optional(),
     feedback_source: FeedbackSourceSchema,
-    vendor: BrandReference1Schema.optional(),
+    vendor: BrandReferenceSchema.optional(),
     status: z.union([z.literal("accepted"), z.literal("queued"), z.literal("applied"), z.literal("rejected")]),
     submitted_at: z.iso.datetime(),
     applied_at: z.iso.datetime().optional()
@@ -6735,8 +6754,6 @@ export const ProductAudienceEvidenceRequirementsSchema = z.object({}).passthroug
 }).passthrough());
 
 export const ProductChangeMapSchema = z.record(z.string(), z.union([z.literal("include"), z.literal("omit")]));
-
-export const BrandReference3Schema = BrandReferenceSchema;
 
 export const ReferenceRendererSchema = z.object({
     runtime: z.literal("browser-esm"),
@@ -7425,6 +7442,48 @@ export const ProtocolResponseSchema = z.object({
     context_id: z.string().optional(),
     data: z.unknown().optional()
 }).passthrough();
+
+export const AttestationReferenceSchema = z.object({
+    issuer: AttestationIssuerSchema,
+    claim_type: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
+    subject: AttestationSubjectSchema,
+    locator: z.union([AttestationCredentialUriLocatorSchema, AttestationIssuerCredentialIdLocatorSchema]).optional(),
+    embedded_credential: z.object({
+        format: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
+        value: z.union([z.object({}).passthrough(), z.string().min(1)]),
+        ext: ExtensionObjectSchema.optional()
+    }).passthrough().optional(),
+    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).optional(),
+    credential_version: z.string().min(1).max(255).optional(),
+    validity_hint: z.object({
+        not_before: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    verify_agent: z.object({
+        agent_url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI")
+    }).passthrough().optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough().and(z.union([z.object({}).passthrough(), z.object({}).passthrough()])).and(z.object({
+    issuer: AttestationIssuerSchema,
+    claim_type: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
+    subject: AttestationSubjectSchema,
+    locator: z.union([AttestationCredentialUriLocatorSchema, AttestationIssuerCredentialIdLocatorSchema]).optional(),
+    embedded_credential: z.object({
+        format: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
+        value: z.union([z.object({}).passthrough(), z.string().min(1)]),
+        ext: ExtensionObjectSchema.optional()
+    }).passthrough().optional(),
+    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).optional(),
+    credential_version: z.string().min(1).max(255).optional(),
+    validity_hint: z.object({
+        not_before: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    verify_agent: z.object({
+        agent_url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI")
+    }).passthrough().optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough());
 
 export const SignalDefinitionSchema = z.object({
     id: z.string().regex(/^[a-zA-Z0-9_-]+$/),
@@ -8593,6 +8652,30 @@ export const PublisherTMPXMacroMappingSchema = z.object({
     )
 }).strict();
 
+export const BrandReference1Schema = BrandReferenceSchema;
+
+export const BrandReference2Schema = BrandReferenceSchema;
+
+export const BrandReference3Schema = BrandReferenceSchema;
+
+export const BrandReference4Schema = BrandReferenceSchema;
+
+export const BrandReference5Schema = BrandReferenceSchema;
+
+export const BrandReference6Schema = BrandReferenceSchema;
+
+export const BrandReference7Schema = BrandReferenceSchema;
+
+export const BrandReference8Schema = BrandReferenceSchema;
+
+export const BrandReference9Schema = BrandReferenceSchema;
+
+export const BrandReference10Schema = BrandReferenceSchema;
+
+export const BrandReference11Schema = BrandReferenceSchema;
+
+export const BrandReference12Schema = BrandReferenceSchema;
+
 export const SignalCatalogTypeSchema = SignalAvailabilityTypeSchema;
 
 export const IdentityMatchResponseRouterPublisherSchema = z.object({
@@ -8704,12 +8787,6 @@ export const PolicyProfileSchema = z.object({}).passthrough().merge(z.object({
 
 export const PostalArea1Schema = PostalCountryAreaSchema;
 
-export const AttestationBrandIssuerSchema = z.object({
-    type: z.literal("brand"),
-    brand: BrandReferenceSchema,
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
 export const PostalAreaSchema = z.union([PostalArea1Schema, PostalAreaWithFusedSystemSchema]).superRefine((value, ctx) => {
   const postal = value as { country?: unknown; values?: unknown };
   if (typeof postal.country === "string" && (!Array.isArray(postal.values) || postal.values.length === 0)) {
@@ -8797,6 +8874,94 @@ export const ProductSignalTargetingOptionSchema = SignalListingSchema.and(z.obje
 export const ProductTargetingResolutionSchema = z.object({
     modifications: z.array(TargetingModificationSchema),
     effective_targeting_digest: z.string().regex(new RegExp("^sha256:[0-9a-f]{64}$")).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const AudienceEvidenceSchema: z.ZodType = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
+    evidence_id: z.string().min(1),
+    snapshot_id: z.string().min(1),
+    version: z.string().min(1),
+    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")),
+    audience: AudienceCharacteristicSchema,
+    relationship: z.union([z.literal("composition"), z.literal("index"), z.literal("reach_estimate")]),
+    value: z.number(),
+    unit: z.union([z.literal("fraction"), z.literal("ratio"), z.literal("count")]),
+    baseline: z.object({
+        system: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI"),
+        population_id: z.string().min(1),
+        version: z.string().min(1),
+        description: z.string().optional()
+    }).passthrough(),
+    evidence_type: z.union([z.literal("measured"), z.literal("forecast"), z.literal("seller_declared")]),
+    methodology: AudienceEvidenceMethodologySchema,
+    subject_type: AudienceSubjectTypeSchema,
+    resolution_method: AudienceResolutionMethodSchema.optional(),
+    provider: BrandReferenceSchema,
+    measurement_window: DateRangeSchema,
+    sample_size: z.number().int().gte(1).optional(),
+    confidence: z.number().gte(0).lte(1).optional(),
+    last_updated: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+    methodology_url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+    attestation_refs: z.array(AttestationReferenceSchema.and(z.object({
+        subject: AttestationSubjectSchema.and(z.object({
+            type: z.literal("resource"),
+            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
+            content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
+        }).passthrough())
+    }).passthrough())).max(10).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough()).merge(z.object({
+    evidence_id: z.string().min(1),
+    snapshot_id: z.string().min(1),
+    version: z.string().min(1),
+    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")),
+    audience: AudienceCharacteristicSchema,
+    relationship: z.union([z.literal("composition"), z.literal("index"), z.literal("reach_estimate")]),
+    value: z.number(),
+    unit: z.union([z.literal("fraction"), z.literal("ratio"), z.literal("count")]),
+    baseline: z.object({
+        system: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI"),
+        population_id: z.string().min(1),
+        version: z.string().min(1),
+        description: z.string().optional()
+    }).passthrough(),
+    evidence_type: z.union([z.literal("measured"), z.literal("forecast"), z.literal("seller_declared")]),
+    methodology: AudienceEvidenceMethodologySchema,
+    subject_type: AudienceSubjectTypeSchema,
+    resolution_method: AudienceResolutionMethodSchema.optional(),
+    provider: BrandReferenceSchema,
+    measurement_window: DateRangeSchema,
+    sample_size: z.number().int().gte(1).optional(),
+    confidence: z.number().gte(0).lte(1).optional(),
+    last_updated: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+    methodology_url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+    attestation_refs: z.array(AttestationReferenceSchema.and(z.object({
+        subject: AttestationSubjectSchema.and(z.object({
+            type: z.literal("resource"),
+            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
+            content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
+        }).passthrough())
+    }).passthrough())).max(10).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough());
+
+export const AudienceEvidenceSelectionSchema: z.ZodType = z.object({
+    evidence_id: z.string().min(1),
+    snapshot_id: z.string().min(1),
+    version: z.string().min(1),
+    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")),
+    decision_use: z.union([z.literal("recommendation"), z.literal("eligibility"), z.literal("package_construction")]),
+    evidence: AudienceEvidenceSchema.optional(),
+    attestation_evaluations: z.array(z.object({
+        reference: AttestationReferenceSchema,
+        evaluation: AttestationEvaluationSchema.and(z.object({
+            action_binding: z.object({
+                action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
+                action_id: z.string().min(1).max(1024),
+                action_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
+            }).passthrough()
+        }).passthrough())
+    }).passthrough()).max(10).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
@@ -8900,14 +9065,6 @@ export const FrequencyCapConstraintsSchema = z.object({}).passthrough().merge(z.
     suppression_constraints: z.array(FrequencyCapIntervalConstraintsSchema).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
-
-export const AttestationIssuerSchema = z.union([AttestationBrandIssuerSchema, AttestationAgentIssuerSchema, AttestationOriginIssuerSchema]);
-
-export const AttestationBrandSubjectSchema = z.object({
-    type: z.literal("brand"),
-    brand: BrandReferenceSchema,
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
 
 export const FileTransferSchema = z.object({
     pattern: z.literal("file_transfer"),
@@ -9176,6 +9333,7 @@ export const ListCreativeFormatsRequestSchema = z.object({
     disclosure_persistence: z.array(DisclosurePersistenceSchema).optional(),
     output_format_ids: z.array(FormatReferenceStructuredObjectSchema).optional(),
     input_format_ids: z.array(FormatReferenceStructuredObjectSchema).optional(),
+    account: AccountReferenceSchema.optional(),
     pagination: PaginationRequestSchema.optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
@@ -9294,27 +9452,6 @@ export const ExplicitPackagesWithSellerOptimizedAllocationSchema = z.object({
 }).passthrough();
 
 export const CommittedProposalExecutionSchema = z.object({}).passthrough();
-
-export const AudienceEvidenceRequirementsSchema = z.object({}).passthrough().merge(z.object({
-    requirement_mode: z.union([z.literal("required"), z.literal("preferred")]),
-    evidence_presence: z.union([z.literal("required"), z.literal("when_available")]),
-    accepted_methodologies: z.array(AudienceEvidenceMethodologySchema).optional(),
-    excluded_methodologies: z.array(AudienceEvidenceMethodologySchema).optional(),
-    accepted_evidence_types: z.array(z.union([z.literal("measured"), z.literal("forecast"), z.literal("seller_declared")])).optional(),
-    accepted_providers: z.array(BrandReferenceSchema).optional(),
-    excluded_providers: z.array(BrandReferenceSchema).optional(),
-    accepted_subject_types: z.array(AudienceSubjectTypeSchema).optional(),
-    accepted_resolution_methods: z.array(AudienceResolutionMethodSchema).optional(),
-    minimum_confidence: z.number().gte(0).lte(1).optional(),
-    maximum_age: DurationSchema.and(z.object({
-        unit: z.union([z.literal("seconds"), z.literal("minutes"), z.literal("hours"), z.literal("days")]).optional()
-    }).passthrough()).optional(),
-    methodology_documentation_required: z.boolean().optional(),
-    independent_attestation_required: z.boolean().optional(),
-    accepted_attestation_issuers: z.array(AttestationIssuerSchema).optional(),
-    accepted_attestation_claim_types: z.array(z.string()).optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough());
 
 export const MacroBearingURL1Schema = z.string();
 
@@ -10122,6 +10259,74 @@ export const EvaluatorSpecSchema = z.object({
         agent_url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI")
     }).passthrough()]));
 
+export const RightsConstraintSchema = z.object({}).passthrough().merge(z.object({
+    rights_id: z.string(),
+    rights_agent: z.object({
+        url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
+        id: z.string()
+    }).passthrough(),
+    rights_holder: BrandReferenceSchema.optional(),
+    valid_from: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    valid_until: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    uses: z.array(RightUseSchema),
+    countries: z.array(z.string()).optional(),
+    excluded_countries: z.array(z.string()).optional(),
+    impression_cap: z.number().int().gte(1).optional(),
+    right_type: RightTypeSchema.optional(),
+    approval_status: z.union([z.literal("pending"), z.literal("approved"), z.literal("rejected")]).optional(),
+    grant_status: z.union([z.literal("active"), z.literal("paused"), z.literal("revoked")]).optional(),
+    restrictions: z.array(z.string()).optional(),
+    disclosure: z.object({}).passthrough().optional(),
+    creative_approval_required: z.boolean().optional(),
+    verification_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).optional(),
+    attestation_refs: z.array(AttestationReferenceSchema.and(z.object({
+        issuer: z.object({
+            type: z.literal("brand"),
+            brand: BrandReferenceSchema
+        }).passthrough().optional(),
+        claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
+        subject: z.object({
+            type: z.literal("resource"),
+            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
+        }).passthrough().optional()
+    }).passthrough())).max(4).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough()).merge(z.object({
+    rights_id: z.string(),
+    rights_agent: z.object({
+        url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
+        id: z.string()
+    }).passthrough(),
+    rights_holder: BrandReferenceSchema.optional(),
+    valid_from: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    valid_until: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    uses: z.array(RightUseSchema),
+    countries: z.array(z.string()).optional(),
+    excluded_countries: z.array(z.string()).optional(),
+    impression_cap: z.number().int().gte(1).optional(),
+    right_type: RightTypeSchema.optional(),
+    approval_status: z.union([z.literal("pending"), z.literal("approved"), z.literal("rejected")]).optional(),
+    grant_status: z.union([z.literal("active"), z.literal("paused"), z.literal("revoked")]).optional(),
+    restrictions: z.array(z.string()).optional(),
+    disclosure: z.object({}).passthrough().optional(),
+    creative_approval_required: z.boolean().optional(),
+    verification_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).optional(),
+    attestation_refs: z.array(AttestationReferenceSchema.and(z.object({
+        issuer: z.object({
+            type: z.literal("brand"),
+            brand: BrandReferenceSchema
+        }).passthrough().optional(),
+        claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
+        subject: z.object({
+            type: z.literal("resource"),
+            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
+        }).passthrough().optional()
+    }).passthrough())).max(4).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough());
+
 export const PreviewCreativeBatchResponseSchema = z.object({
     response_type: z.literal("batch"),
     results: z.array(z.union([PreviewBatchResultSuccessSchema, PreviewBatchResultErrorSchema])),
@@ -10315,6 +10520,28 @@ export const ListCreativesRequestSchema = z.object({
     account: AccountReferenceSchema.optional(),
     fields: z.array(z.union([z.literal("creative_id"), z.literal("name"), z.literal("format_id"), z.literal("format_kind"), z.literal("format_option_ref"), z.literal("assets"), z.literal("status"), z.literal("created_date"), z.literal("updated_date"), z.literal("tags"), z.literal("rights"), z.literal("rights_attestation_evaluations"), z.literal("localization"), z.literal("localization_unavailable"), z.literal("assignments"), z.literal("snapshot"), z.literal("items"), z.literal("variables"), z.literal("concept"), z.literal("pricing_options")])).optional(),
     context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const RightsAttestationEvaluationSchema = z.object({
+    rights_id: z.string().min(1),
+    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")),
+    reference: AttestationReferenceSchema.and(z.object({
+        issuer: z.object({
+            type: z.literal("brand"),
+            brand: BrandReferenceSchema
+        }).passthrough().optional(),
+        claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
+        subject: z.object({
+            type: z.literal("resource"),
+            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
+        }).passthrough().optional()
+    }).passthrough()),
+    evaluation: AttestationEvaluationSchema.and(z.object({
+        action_binding: z.object({
+            action_type: z.literal("https://adcontextprotocol.org/actions/rights-grant-evaluation")
+        }).passthrough()
+    }).passthrough()).and(z.object({}).passthrough()),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
@@ -11445,6 +11672,194 @@ export const GetPlanAuditLogsRequestSchema = z.object({
     purchase_types: z.array(PurchaseTypeSchema).optional(),
     include_entries: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const GetPlanAuditLogsResponseSchema = z.object({
+    context_id: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    task_id: z.string().optional(),
+    status: TaskStatusSchema,
+    message: z.string().optional(),
+    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    replayed: z.boolean().optional(),
+    adcp_error: ErrorSchema.optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
+    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    payload: z.object({}).passthrough().optional(),
+    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
+    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    plans: z.array(z.object({
+        plan_id: z.string(),
+        plan_version: z.int(),
+        status: z.union([z.literal("active"), z.literal("suspended"), z.literal("completed")]),
+        budget: z.object({
+            authorized: z.number().optional(),
+            accounting_mode: z.union([z.literal("gross_commitment"), z.literal("verified_net_cost")]).optional(),
+            committed: z.number().optional(),
+            gross_committed: z.number().optional(),
+            adjustments_reported: z.number().optional(),
+            adjustments_verified: z.number().optional(),
+            net_cost: z.number().optional(),
+            headroom_restored: z.number().optional(),
+            net_committed: z.number().optional(),
+            ledger_committed: z.number().optional(),
+            remaining: z.number().optional(),
+            utilization_pct: z.number().optional()
+        }).passthrough(),
+        channel_allocation: z.record(z.string(), z.object({
+                committed: z.number().optional(),
+                pct: z.number().optional()
+            }).passthrough()).optional(),
+        summary: z.object({
+            checks_performed: z.int().optional(),
+            outcomes_reported: z.int().optional(),
+            adjustments_reported: z.int().optional(),
+            adjustments_verified: z.int().optional(),
+            statuses: z.object({
+                approved: z.int().optional(),
+                denied: z.int().optional(),
+                conditions: z.int().optional(),
+                human_reviewed: z.int().optional()
+            }).passthrough().optional(),
+            findings_count: z.int().optional(),
+            escalations: z.array(z.object({
+                check_id: z.string(),
+                reason: z.string(),
+                resolution: z.string().optional(),
+                resolved_at: z.iso.datetime().optional()
+            }).passthrough()).optional(),
+            drift_metrics: z.object({
+                escalation_rate: z.number().min(0).max(1).optional(),
+                escalation_rate_trend: z.union([z.literal("increasing"), z.literal("stable"), z.literal("declining")]).optional(),
+                auto_approval_rate: z.number().min(0).max(1).optional(),
+                human_override_rate: z.number().min(0).max(1).optional(),
+                mean_confidence: z.number().min(0).max(1).optional(),
+                thresholds: z.object({
+                    escalation_rate_max: z.number().min(0).max(1).optional(),
+                    escalation_rate_min: z.number().min(0).max(1).optional(),
+                    auto_approval_rate_max: z.number().min(0).max(1).optional(),
+                    human_override_rate_max: z.number().min(0).max(1).optional()
+                }).passthrough().optional()
+            }).passthrough().optional()
+        }).passthrough(),
+        entries: z.array(z.object({
+            id: z.string(),
+            type: z.union([z.literal("check"), z.literal("outcome"), z.literal("adjustment")]),
+            timestamp: z.iso.datetime(),
+            plan_id: z.string().optional(),
+            caller: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+            tool: z.string().optional(),
+            verdict: GovernanceDecisionSchema.optional(),
+            check_type: z.union([z.literal("intent"), z.literal("execution")]).optional(),
+            mode: GovernanceModeSchema.optional(),
+            explanation: z.string().optional(),
+            policies_evaluated: z.array(z.string()).optional(),
+            categories_evaluated: z.array(z.string()).optional(),
+            findings: z.array(z.object({
+                category_id: z.string(),
+                policy_id: z.string().optional(),
+                source_plan_id: z.string().optional(),
+                severity: EscalationSeveritySchema,
+                explanation: z.string(),
+                details: z.object({}).passthrough().optional(),
+                confidence: z.number().min(0).max(1).optional(),
+                uncertainty_reason: z.string().optional(),
+                attestation_reference_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional()
+            }).passthrough()).optional(),
+            delivery_statement: z.object({
+                statement_id: z.string(),
+                statement_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+                sequence: z.int().min(1),
+                issued_at: z.iso.datetime(),
+                seller_reference: z.string(),
+                cumulative_spend: z.number().min(0),
+                currency: z.string().regex(/^[A-Z]{3}$/),
+                reporting_period: z.object({
+                    start: z.iso.datetime(),
+                    end: z.iso.datetime()
+                }).passthrough(),
+                canonical_payload: z.object({
+                    seller_reference: z.string(),
+                    delivery_metrics: z.object({}).passthrough()
+                }).passthrough()
+            }).passthrough().optional(),
+            outcome: OutcomeTypeSchema.optional(),
+            error: ReportedOutcomeErrorSchema.optional(),
+            outcome_id: z.string().optional(),
+            seller_adjustment_id: z.string().optional(),
+            adjustment_type: z.union([z.literal("decommitment"), z.literal("refund"), z.literal("credit"), z.literal("makegood")]).optional(),
+            amount: z.object({
+                amount: z.number(),
+                currency: z.string().regex(/^[A-Z]{3}$/)
+            }).passthrough().optional(),
+            headroom_restored: z.number().min(0).optional(),
+            reason: z.string().optional(),
+            effective_at: z.iso.datetime().optional(),
+            committed_budget: z.number().optional(),
+            reported_committed_budget: z.number().min(0).optional(),
+            seller_reference: z.string().optional(),
+            delivery: z.object({
+                observation_id: z.string().min(1).max(255).optional(),
+                source: z.union([z.literal("seller_statement_copy"), z.literal("buyer_measurement")]).optional(),
+                observed_at: z.iso.datetime().optional(),
+                seller_statement_id: z.string().optional(),
+                seller_statement_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
+                reporting_period: z.object({
+                    start: z.iso.datetime(),
+                    end: z.iso.datetime()
+                }).passthrough().optional(),
+                cumulative_spend: z.number().min(0).optional(),
+                currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+                period_closed: z.boolean().optional(),
+                impressions: z.int().min(0).optional()
+            }).passthrough().optional(),
+            governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+            plan_hash: z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional(),
+            runtime_attestations: z.array(z.object({
+                reference: AttestationReferenceSchema,
+                evaluation: AttestationEvaluationSchema
+            }).passthrough()).max(10).optional(),
+            runtime_attestation_binding_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
+            purchase_type: PurchaseTypeSchema.optional(),
+            outcome_status: z.string().optional(),
+            delivery_reconciliation_status: z.union([z.literal("consistent"), z.literal("measurement_variance"), z.literal("disputed"), z.literal("unmatched"), z.literal("closed_unresolved")]).optional(),
+            delivery_period_state: z.union([z.literal("open"), z.literal("closed")]).optional(),
+            adjustment_state: z.union([z.literal("reported"), z.literal("verified"), z.literal("disputed")]).optional(),
+            verified_amount: z.number().min(0).optional(),
+            evidence: z.object({
+                evidence_id: z.string(),
+                evidence_type: z.union([z.literal("decommitment_agreement"), z.literal("refund_settlement"), z.literal("credit_note"), z.literal("makegood_agreement")]),
+                digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+                issued_at: z.iso.datetime()
+            }).passthrough().optional(),
+            reviewed_by: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+            reviewed_at: z.iso.datetime().optional(),
+            review_reason: z.string().optional()
+        }).passthrough()).optional(),
+        governed_actions: z.array(z.object({
+            governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")),
+            purchase_type: PurchaseTypeSchema,
+            status: z.union([z.literal("active"), z.literal("suspended"), z.literal("completed")]),
+            committed: z.number(),
+            adjustments_reported: z.number().optional(),
+            adjustments_verified: z.number().optional(),
+            net_cost: z.number().optional(),
+            headroom_restored: z.number().optional(),
+            net_committed: z.number().optional(),
+            seller_reported_spend: z.number().min(0).optional(),
+            buyer_observed_spend: z.number().min(0).optional(),
+            delivery_reporting_period: z.object({
+                start: z.iso.datetime(),
+                end: z.iso.datetime()
+            }).passthrough().optional(),
+            conservative_exposure: z.number().min(0).optional(),
+            delivery_reconciliation_status: z.union([z.literal("consistent"), z.literal("measurement_variance"), z.literal("disputed"), z.literal("unmatched"), z.literal("closed_unresolved")]).optional(),
+            delivery_period_state: z.union([z.literal("open"), z.literal("closed")]).optional(),
+            check_count: z.int(),
+            seller_reference: z.string().optional()
+        }).passthrough())
+    }).passthrough()),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
@@ -12677,8 +13092,6 @@ export const DAASTTrackerAssetSchema = z.object({}).passthrough().merge(z.object
     provenance: ProvenanceSchema.optional()
 }).passthrough());
 
-export const AttestationSubjectSchema = z.union([AttestationBrandSubjectSchema, AttestationAgentSubjectSchema, AttestationResourceSubjectSchema]);
-
 export const DeliveryRecordSchema = z.object({
     identifier: IdentifierSchema,
     impressions: z.number().int().gte(0),
@@ -12710,48 +13123,6 @@ export const ValidationResultSchema = z.object({
 
 export const ReportingDeliveryMethodSchema = z.union([ReportingFileTransferSchema, DatasetShareSchema, WarehouseMaterializationSchema]);
 
-export const AttestationReferenceSchema = z.object({
-    issuer: AttestationIssuerSchema,
-    claim_type: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    subject: AttestationSubjectSchema,
-    locator: z.union([AttestationCredentialUriLocatorSchema, AttestationIssuerCredentialIdLocatorSchema]).optional(),
-    embedded_credential: z.object({
-        format: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-        value: z.union([z.object({}).passthrough(), z.string().min(1)]),
-        ext: ExtensionObjectSchema.optional()
-    }).passthrough().optional(),
-    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).optional(),
-    credential_version: z.string().min(1).max(255).optional(),
-    validity_hint: z.object({
-        not_before: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    verify_agent: z.object({
-        agent_url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI")
-    }).passthrough().optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough().and(z.union([z.object({}).passthrough(), z.object({}).passthrough()])).and(z.object({
-    issuer: AttestationIssuerSchema,
-    claim_type: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    subject: AttestationSubjectSchema,
-    locator: z.union([AttestationCredentialUriLocatorSchema, AttestationIssuerCredentialIdLocatorSchema]).optional(),
-    embedded_credential: z.object({
-        format: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-        value: z.union([z.object({}).passthrough(), z.string().min(1)]),
-        ext: ExtensionObjectSchema.optional()
-    }).passthrough().optional(),
-    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).optional(),
-    credential_version: z.string().min(1).max(255).optional(),
-    validity_hint: z.object({
-        not_before: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    verify_agent: z.object({
-        agent_url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI")
-    }).passthrough().optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough());
-
 export const PlacementSelectionSchema = z.union([SelectedPlacementsSchema, ProductDefaultPlacementsSchema]);
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
@@ -12772,74 +13143,6 @@ export const ProductFormatDeclarationSchema: z.ZodObject<{ [K in keyof ProductFo
     v1_format_ref: z.array(FormatReferenceStructuredObjectSchema).optional(),
     format_schema: PlatformExtensionReferenceSchema.optional()
 }).passthrough()).and(z.union([ImageFormatDeclarationSchema, HTML5FormatDeclarationSchema, DisplayTagFormatDeclarationSchema, ImageCarouselFormatDeclarationSchema, HostedVideoFormatDeclarationSchema, VASTVideoFormatDeclarationSchema, HostedAudioFormatDeclarationSchema, VASTAudioFormatDeclarationSchema, DAASTAudioFormatDeclarationSchema, SponsoredPlacementFormatDeclarationSchema, NativeInFeedFormatDeclarationSchema, ResponsiveCreativeFormatDeclarationSchema, AgentPlacementFormatDeclarationSchema, SellerRenderedStatefulDisplayFormatDeclarationSchema, CoordinatedPlacementsFormatDeclarationSchema, CustomFormatDeclarationSchema]));
-
-export const AudienceEvidenceSchema: z.ZodType = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
-    evidence_id: z.string().min(1),
-    snapshot_id: z.string().min(1),
-    version: z.string().min(1),
-    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")),
-    audience: AudienceCharacteristicSchema,
-    relationship: z.union([z.literal("composition"), z.literal("index"), z.literal("reach_estimate")]),
-    value: z.number(),
-    unit: z.union([z.literal("fraction"), z.literal("ratio"), z.literal("count")]),
-    baseline: z.object({
-        system: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI"),
-        population_id: z.string().min(1),
-        version: z.string().min(1),
-        description: z.string().optional()
-    }).passthrough(),
-    evidence_type: z.union([z.literal("measured"), z.literal("forecast"), z.literal("seller_declared")]),
-    methodology: AudienceEvidenceMethodologySchema,
-    subject_type: AudienceSubjectTypeSchema,
-    resolution_method: AudienceResolutionMethodSchema.optional(),
-    provider: BrandReferenceSchema,
-    measurement_window: DateRangeSchema,
-    sample_size: z.number().int().gte(1).optional(),
-    confidence: z.number().gte(0).lte(1).optional(),
-    last_updated: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
-    methodology_url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-    attestation_refs: z.array(AttestationReferenceSchema.and(z.object({
-        subject: AttestationSubjectSchema.and(z.object({
-            type: z.literal("resource"),
-            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-            content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-        }).passthrough())
-    }).passthrough())).max(10).optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough()).merge(z.object({
-    evidence_id: z.string().min(1),
-    snapshot_id: z.string().min(1),
-    version: z.string().min(1),
-    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")),
-    audience: AudienceCharacteristicSchema,
-    relationship: z.union([z.literal("composition"), z.literal("index"), z.literal("reach_estimate")]),
-    value: z.number(),
-    unit: z.union([z.literal("fraction"), z.literal("ratio"), z.literal("count")]),
-    baseline: z.object({
-        system: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI"),
-        population_id: z.string().min(1),
-        version: z.string().min(1),
-        description: z.string().optional()
-    }).passthrough(),
-    evidence_type: z.union([z.literal("measured"), z.literal("forecast"), z.literal("seller_declared")]),
-    methodology: AudienceEvidenceMethodologySchema,
-    subject_type: AudienceSubjectTypeSchema,
-    resolution_method: AudienceResolutionMethodSchema.optional(),
-    provider: BrandReferenceSchema,
-    measurement_window: DateRangeSchema,
-    sample_size: z.number().int().gte(1).optional(),
-    confidence: z.number().gte(0).lte(1).optional(),
-    last_updated: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
-    methodology_url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-    attestation_refs: z.array(AttestationReferenceSchema.and(z.object({
-        subject: AttestationSubjectSchema.and(z.object({
-            type: z.literal("resource"),
-            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/audience-evidence"),
-            content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-        }).passthrough())
-    }).passthrough())).max(10).optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough());
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
 export const PlacementSchema: z.ZodType<Placement & Record<string, unknown>, Placement & Record<string, unknown>> = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).and(z.union([z.object({}).passthrough(), z.object({}).passthrough()])).and(z.object({
@@ -12873,26 +13176,6 @@ export const ProductAllowedActionSchema = z.object({
     sla: SLAWindowSchema.optional(),
     constraints: MediaBuyChangeTermConstraintsSchema.optional(),
     terms_ref: z.string().optional()
-}).passthrough();
-
-export const AudienceEvidenceSelectionSchema: z.ZodType = z.object({
-    evidence_id: z.string().min(1),
-    snapshot_id: z.string().min(1),
-    version: z.string().min(1),
-    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")),
-    decision_use: z.union([z.literal("recommendation"), z.literal("eligibility"), z.literal("package_construction")]),
-    evidence: AudienceEvidenceSchema.optional(),
-    attestation_evaluations: z.array(z.object({
-        reference: AttestationReferenceSchema,
-        evaluation: AttestationEvaluationSchema.and(z.object({
-            action_binding: z.object({
-                action_type: z.literal("https://adcontextprotocol.org/actions/audience-evidence-evaluation"),
-                action_id: z.string().min(1).max(1024),
-                action_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$"))
-            }).passthrough()
-        }).passthrough())
-    }).passthrough()).max(10).optional(),
-    ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const InstallmentSchema = z.object({
@@ -13111,9 +13394,10 @@ export const ProductSchema: ProductSchemaObject<ProductSchemaShape> & z.ZodType<
     audience_evidence_selections: z.array(AudienceEvidenceSelectionSchema).optional(),
     catalog_types: z.array(CatalogTypeSchema).optional(),
     metric_optimization: z.object({
-        supported_metrics: z.array(z.union([z.literal("clicks"), z.literal("views"), z.literal("completed_views"), z.literal("viewed_seconds"), z.literal("attention_seconds"), z.literal("attention_score"), z.literal("engagements"), z.literal("follows"), z.literal("saves"), z.literal("profile_visits"), z.literal("reach")])),
+        supported_metrics: z.array(z.union([z.literal("clicks"), z.literal("views"), z.literal("completed_views"), z.literal("viewed_seconds"), z.literal("viewable_rate"), z.literal("attention_seconds"), z.literal("attention_score"), z.literal("engagements"), z.literal("follows"), z.literal("saves"), z.literal("profile_visits"), z.literal("reach")])),
         supported_reach_units: z.array(ReachUnitSchema).optional(),
         supported_view_durations: z.array(z.number()).optional(),
+        supported_viewability_standards: z.array(ViewabilityStandardSchema).optional(),
         supported_targets: z.array(z.union([z.literal("cost_per"), z.literal("threshold_rate")])).optional()
     }).passthrough().optional(),
     vendor_metric_optimization: VendorMetricOptimizationSchema.optional(),
@@ -13260,74 +13544,6 @@ export const CanonicalProductActionSchema = z.object({
 }).passthrough();
 
 export const AssetVariantSchema = z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, DisplayTagAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, ZipAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema, MarkdownAssetSchema, BriefAssetSchema, CatalogAssetSchema, PublishedPostAssetSchema, CardAssetSchema, PixelTrackerAssetSchema, VASTTrackerAssetSchema, DAASTTrackerAssetSchema]);
-
-export const RightsConstraintSchema = z.object({}).passthrough().merge(z.object({
-    rights_id: z.string(),
-    rights_agent: z.object({
-        url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-        id: z.string()
-    }).passthrough(),
-    rights_holder: BrandReference1Schema.optional(),
-    valid_from: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    valid_until: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    uses: z.array(RightUseSchema),
-    countries: z.array(z.string()).optional(),
-    excluded_countries: z.array(z.string()).optional(),
-    impression_cap: z.number().int().gte(1).optional(),
-    right_type: RightTypeSchema.optional(),
-    approval_status: z.union([z.literal("pending"), z.literal("approved"), z.literal("rejected")]).optional(),
-    grant_status: z.union([z.literal("active"), z.literal("paused"), z.literal("revoked")]).optional(),
-    restrictions: z.array(z.string()).optional(),
-    disclosure: z.object({}).passthrough().optional(),
-    creative_approval_required: z.boolean().optional(),
-    verification_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).optional(),
-    attestation_refs: z.array(AttestationReferenceSchema.and(z.object({
-        issuer: z.object({
-            type: z.literal("brand"),
-            brand: BrandReference2Schema
-        }).passthrough().optional(),
-        claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-        subject: z.object({
-            type: z.literal("resource"),
-            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-        }).passthrough().optional()
-    }).passthrough())).max(4).optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough()).merge(z.object({
-    rights_id: z.string(),
-    rights_agent: z.object({
-        url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-        id: z.string()
-    }).passthrough(),
-    rights_holder: BrandReference1Schema.optional(),
-    valid_from: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    valid_until: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    uses: z.array(RightUseSchema),
-    countries: z.array(z.string()).optional(),
-    excluded_countries: z.array(z.string()).optional(),
-    impression_cap: z.number().int().gte(1).optional(),
-    right_type: RightTypeSchema.optional(),
-    approval_status: z.union([z.literal("pending"), z.literal("approved"), z.literal("rejected")]).optional(),
-    grant_status: z.union([z.literal("active"), z.literal("paused"), z.literal("revoked")]).optional(),
-    restrictions: z.array(z.string()).optional(),
-    disclosure: z.object({}).passthrough().optional(),
-    creative_approval_required: z.boolean().optional(),
-    verification_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).optional(),
-    attestation_refs: z.array(AttestationReferenceSchema.and(z.object({
-        issuer: z.object({
-            type: z.literal("brand"),
-            brand: BrandReference2Schema
-        }).passthrough().optional(),
-        claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-        subject: z.object({
-            type: z.literal("resource"),
-            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-        }).passthrough().optional()
-    }).passthrough())).max(4).optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough());
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
 export const TargetingOverlaySchema: z.ZodObject<{ [K in keyof TargetingOverlay]-?: undefined extends TargetingOverlay[K] ? z.ZodOptional<z.ZodType<Exclude<TargetingOverlay[K], undefined>, Exclude<TargetingOverlay[K], undefined>>> : z.ZodType<TargetingOverlay[K], TargetingOverlay[K]> }, z.core.$loose> & z.ZodType<TargetingOverlay & Record<string, unknown>, TargetingOverlay & Record<string, unknown>> = (() => {
@@ -15031,28 +15247,6 @@ export const CatalogRequirementsSchema = z.object({
     field_bindings: z.array(CatalogFieldBindingSchema).optional()
 }).passthrough();
 
-export const RightsAttestationEvaluationSchema = z.object({
-    rights_id: z.string().min(1),
-    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")),
-    reference: AttestationReferenceSchema.and(z.object({
-        issuer: z.object({
-            type: z.literal("brand"),
-            brand: BrandReferenceSchema
-        }).passthrough().optional(),
-        claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-        subject: z.object({
-            type: z.literal("resource"),
-            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-        }).passthrough().optional()
-    }).passthrough()),
-    evaluation: AttestationEvaluationSchema.and(z.object({
-        action_binding: z.object({
-            action_type: z.literal("https://adcontextprotocol.org/actions/rights-grant-evaluation")
-        }).passthrough()
-    }).passthrough()).and(z.object({}).passthrough()),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
 export const SignalPricingOptionSchema = z.object({
     pricing_option_id: z.string(),
     applies_to_output_format_ids: z.array(FormatReferenceStructuredObjectSchema).optional(),
@@ -16639,7 +16833,7 @@ export const CanonicalProposalSchema: z.ZodObject<{ [K in keyof CanonicalProposa
       });
     }
   }))).min(1).describe("Target users within travel time, distance, or a custom boundary around arbitrary geographic points. Multiple entries use OR semantics — a user within range of any listed point is eligible. For campaigns targeting 10+ locations, consider using store_catchments with a location catalog instead. Seller must declare support in get_adcp_capabilities.").optional(), "language": z.array(z.string().regex(new RegExp("^(?:[a-z]{2,8}(?:-[A-Z][a-z]{3})?(?:-(?:[A-Z]{2}|[0-9]{3}))?(?:-(?:[a-z0-9]{5,8}|[0-9][a-z0-9]{3}))*(?:-[0-9a-wy-z](?:-[a-z0-9]{2,8})+)*(?:-x(?:-[a-z0-9]{1,8})+)?|x(?:-[a-z0-9]{1,8})+)$")).min(2).max(63).describe("A well-formed BCP 47 language tag used by AdCP only as language identity. Script and region may refine that identity; other valid BCP 47 subtags remain part of tag matching but do not make this a general locale-settings object. It does not determine currency, time zone, number/date formatting, market, or legal jurisdiction. The AdCP canonical wire profile requires lower-case language and variants, title-case script, and upper-case region (for example `en-US`, `zh-Hant-TW`, or `x-private`). RFC 5646 comparisons are case-insensitive and its case regularization is optional; AdCP intentionally requires this stricter single wire spelling and receivers MUST reject differently cased tags rather than silently normalizing them. The schema pattern enforces the AdCP casing profile and extension structure for commonly used tags; conforming receivers additionally validate the complete RFC 5646 grammar and registry rules. Every new AdCP field carrying BCP 47 language identity or a concrete language range MUST reference this schema instead of declaring independent string constraints.")).min(1).describe("Restrict to users with specific language preferences using canonical BCP 47 language ranges. Each buyer range is evaluated against a user's language-preference tag with RFC 4647 section 3.3.1 Basic Filtering: 'fr' matches 'fr', 'fr-CA', and 'fr-FR', while 'fr-CA' matches 'fr-CA' and more-specific descendants but not 'fr' or 'fr-FR'. Values use OR logic.").optional(), "keyword_targets": z.array(z.object({ "keyword": z.string().min(1).describe("The keyword to target"), "match_type": z.enum(["broad","phrase","exact"]).describe("Keyword targeting match type. broad: ads may serve on queries semantically related to the keyword. phrase: ads serve when the query contains the keyword phrase. exact: ads serve only when the query matches the keyword exactly."), "bid_price": z.number().gte(0).describe("Per-keyword bid price, denominated in the same currency as the package's pricing option. Overrides the package-level bid_price for this keyword. Inherits the max_bid interpretation from the pricing option: when max_bid is true, this is the keyword's bid ceiling; when false, this is the exact bid. If omitted, the package bid_price applies.").optional() }).passthrough()).min(1).describe("Keyword targeting for search and retail media platforms. Restricts delivery to queries matching the specified keywords. Each keyword is identified by the tuple (keyword, match_type) — the same keyword string with different match types are distinct targets. Sellers SHOULD reject duplicate (keyword, match_type) pairs within a single request. Seller must declare support in get_adcp_capabilities.").optional(), "negative_keywords": z.array(z.object({ "keyword": z.string().min(1).describe("The keyword to exclude"), "match_type": z.enum(["broad","phrase","exact"]).describe("Keyword targeting match type. broad: ads may serve on queries semantically related to the keyword. phrase: ads serve when the query contains the keyword phrase. exact: ads serve only when the query matches the keyword exactly.") }).passthrough().describe("An excluded keyword.")).min(1).describe("Keywords to exclude from delivery. Queries matching these keywords will not trigger the ad. Each negative keyword is identified by the tuple (keyword, match_type). Seller must declare support in get_adcp_capabilities.").optional() }).catchall(z.any()).and(z.intersection(z.union([z.any().refine((value) => !z.object({ "demographics": z.any().refine((value) => value !== undefined, "Required"), "age_restriction": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "demographics": z.any().refine((value) => value !== undefined, "Required"), "age_restriction": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "demographics": z.object({ "age": z.object({ "include_unknown": z.literal(false).optional() }).optional() }).optional() }))]).describe("Unknown-age delivery cannot satisfy a minimum-age eligibility policy. When demographic audience targeting and age_restriction are both present, include_unknown must be false."), z.union([z.any().refine((value) => !z.object({ "age_restriction": z.object({ "verification_required": z.literal(true) }), "demographics": z.object({ "age": z.object({ "accepted_bases": z.any().refine((value) => value !== undefined, "Required") }).passthrough() }) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "age_restriction": z.object({ "verification_required": z.literal(true) }), "demographics": z.object({ "age": z.object({ "accepted_bases": z.any().refine((value) => value !== undefined, "Required") }).passthrough() }) }), z.object({ "demographics": z.object({ "age": z.object({ "accepted_bases": z.any().refine((value) => !z.array(z.any().refine((value) => !z.literal("verified").safeParse(value).success, "Invalid input: Should NOT be valid against schema")).safeParse(value).success, "Invalid input: Should NOT be valid against schema").optional() }).optional() }).optional() }))]).describe("A legal verification requirement always narrows demographic targeting. When the buyer supplies accepted_bases and age_restriction requires verification, verified must be accepted; otherwise the constraints have an empty intersection and the request is invalid."))).describe("Resolved effective buyer-selected targeting, including compatible wholesale signal selections, applied within the product's published targeting contract. Cleared dimensions are omitted; null is invalid in an accepted snapshot.").optional(), "optimization_goals": z.array(z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "kind": z.literal("metric"), "metric": z.enum(["clicks","views","completed_views","viewed_seconds","engagements","follows","saves","profile_visits","reach"]), "reach_unit": z.enum(["individuals","households","devices","accounts","cookies","custom"]).describe("Unit of measurement for reach and audience size metrics. Different channels and measurement providers count reach in fundamentally different units, making cross-channel comparison impossible without declaring the unit.").optional(), "target_frequency": z.object({ "min": z.number().int().gte(1).optional(), "max": z.number().int().gte(1).optional(), "window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.") }).passthrough().and(z.union([z.object({ "min": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).optional(), "view_duration_seconds": z.number().gt(0).optional(), "target": z.object({ "kind": z.literal("threshold_rate"), "value": z.number().gt(0) }).passthrough().optional(), "priority": z.number().int().gte(1).optional() }).passthrough(), z.object({ "kind": z.literal("event"), "event_sources": z.array(z.object({ "event_source_id": z.string().min(1), "event_type": z.enum(["page_view","view_content","select_content","select_item","search","share","add_to_cart","remove_from_cart","viewed_cart","add_to_wishlist","initiate_checkout","add_payment_info","purchase","refund","lead","qualify_lead","close_convert_lead","disqualify_lead","complete_registration","subscribe","follow","content_view","watch_milestone","start_trial","app_install","app_launch","contact","schedule","donate","submit_application","custom"]).describe("Standard marketing event types for event logging, aligned with IAB ECAPI"), "custom_event_name": z.string().min(1).optional(), "value_field": z.string().min(1).optional(), "value_factor": z.number().default(1) }).passthrough()).min(1), "target": z.object({ "kind": z.literal("maximize_value") }).passthrough().optional(), "attribution_window": z.object({ "post_click": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Post-click attribution window. Conversions occurring within this duration after a click are attributed to the ad.").optional(), "post_view": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Post-view attribution window. Conversions occurring within this duration after an ad impression (without click) are attributed to the ad.").optional(), "model": z.enum(["last_touch","first_touch","linear","time_decay","data_driven"]).describe("Attribution model used to assign credit when multiple touchpoints exist. SHOULD be populated when committing to a specific model; when absent, the seller's default applies.").optional() }).catchall(z.any()).describe("Describes the attribution methodology and lookback windows used for conversion measurement. Enables cross-platform comparison by making attribution methodology transparent. Used as a `$ref` from `optimization-goal.json` (buyer's optimization-time attribution choice), `get-media-buy-delivery-response.json` (seller-declared attribution methodology in delivery reports), and similar surfaces. All fields are optional individually but at least one of `post_click`, `post_view`, or `model` SHOULD be populated; absence of `model` means the seller's default attribution model applies (typically `last_touch` per industry convention) — sellers SHOULD populate `model` explicitly when committing to a specific methodology.").optional(), "priority": z.number().int().gte(1).optional() }).passthrough(), z.object({ "kind": z.literal("vendor_metric"), "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "metric_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).min(1).max(64).describe("Identifier for a vendor-defined metric within the vendor's vocabulary. Stable lookup key; the vendor publishes the canonical list (with category, methodology, and standard alignment) in `brand.json` `agents[type='measurement']`. Lowercase with underscores so a future enum promotion into `available-metric.json` is a literal string lift. Identifier is namespaced by the vendor — the same `metric_id` may mean different things in different vendors' vocabularies."), "target": z.object({ "kind": z.literal("threshold_rate"), "value": z.number().gt(0) }).passthrough().optional(), "priority": z.number().int().gte(1).optional() }).passthrough()];
+    const schemas = [z.object({ "kind": z.literal("metric"), "metric": z.enum(["clicks","views","completed_views","viewed_seconds","viewable_rate","engagements","follows","saves","profile_visits","reach"]), "standard": z.enum(["mrc","groupm"]).describe("Viewability measurement standard applied to determine whether an impression qualifies as viewable. These are materially different thresholds and should not be compared across standards.").optional(), "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery.").optional(), "reach_unit": z.enum(["individuals","households","devices","accounts","cookies","custom"]).describe("Unit of measurement for reach and audience size metrics. Different channels and measurement providers count reach in fundamentally different units, making cross-channel comparison impossible without declaring the unit.").optional(), "target_frequency": z.object({ "min": z.number().int().gte(1).optional(), "max": z.number().int().gte(1).optional(), "window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.") }).passthrough().and(z.union([z.object({ "min": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).optional(), "view_duration_seconds": z.number().gt(0).optional(), "target": z.object({ "kind": z.literal("threshold_rate"), "value": z.number().gt(0) }).passthrough().optional(), "priority": z.number().int().gte(1).optional() }).passthrough().and(z.intersection(z.union([z.any().refine((value) => !z.object({ "metric": z.literal("viewable_rate") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "metric": z.literal("viewable_rate") }), z.object({ "target": z.object({ "value": z.any().optional() }).optional() }))]), z.any())), z.object({ "kind": z.literal("event"), "event_sources": z.array(z.object({ "event_source_id": z.string().min(1), "event_type": z.enum(["page_view","view_content","select_content","select_item","search","share","add_to_cart","remove_from_cart","viewed_cart","add_to_wishlist","initiate_checkout","add_payment_info","purchase","refund","lead","qualify_lead","close_convert_lead","disqualify_lead","complete_registration","subscribe","follow","content_view","watch_milestone","start_trial","app_install","app_launch","contact","schedule","donate","submit_application","custom"]).describe("Standard marketing event types for event logging, aligned with IAB ECAPI"), "custom_event_name": z.string().min(1).optional(), "value_field": z.string().min(1).optional(), "value_factor": z.number().default(1) }).passthrough()).min(1), "target": z.object({ "kind": z.literal("maximize_value") }).passthrough().optional(), "attribution_window": z.object({ "post_click": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Post-click attribution window. Conversions occurring within this duration after a click are attributed to the ad.").optional(), "post_view": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Post-view attribution window. Conversions occurring within this duration after an ad impression (without click) are attributed to the ad.").optional(), "model": z.enum(["last_touch","first_touch","linear","time_decay","data_driven"]).describe("Attribution model used to assign credit when multiple touchpoints exist. SHOULD be populated when committing to a specific model; when absent, the seller's default applies.").optional() }).catchall(z.any()).describe("Describes the attribution methodology and lookback windows used for conversion measurement. Enables cross-platform comparison by making attribution methodology transparent. Used as a `$ref` from `optimization-goal.json` (buyer's optimization-time attribution choice), `get-media-buy-delivery-response.json` (seller-declared attribution methodology in delivery reports), and similar surfaces. All fields are optional individually but at least one of `post_click`, `post_view`, or `model` SHOULD be populated; absence of `model` means the seller's default attribution model applies (typically `last_touch` per industry convention) — sellers SHOULD populate `model` explicitly when committing to a specific methodology.").optional(), "priority": z.number().int().gte(1).optional() }).passthrough(), z.object({ "kind": z.literal("vendor_metric"), "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "metric_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).min(1).max(64).describe("Identifier for a vendor-defined metric within the vendor's vocabulary. Stable lookup key; the vendor publishes the canonical list (with category, methodology, and standard alignment) in `brand.json` `agents[type='measurement']`. Lowercase with underscores so a future enum promotion into `available-metric.json` is a literal string lift. Identifier is namespaced by the vendor — the same `metric_id` may mean different things in different vendors' vocabularies."), "target": z.object({ "kind": z.literal("threshold_rate"), "value": z.number().gt(0) }).passthrough().optional(), "priority": z.number().int().gte(1).optional() }).passthrough()];
     const { errors, failed } = schemas.reduce<{
       errors: z.core.$ZodIssue[];
       failed: number;
@@ -16736,7 +16930,7 @@ export const CanonicalProposalSchema: z.ZodObject<{ [K in keyof CanonicalProposa
     }
   }).describe("Campaign start timing: 'asap' or ISO 8601 date-time"), "end_time": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"), "total_budget": z.object({ "amount": z.number().gte(0), "currency": z.string().regex(new RegExp("^[A-Z]{3}$")) }).passthrough().optional(), "daily_budget_cap": z.number().gte(0).describe("Hard aggregate daily spend ceiling accepted as part of these terms. It bounds total spend without creating purchase allocations.").optional(), "frequency_cap": z.intersection(z.object({ "suppress": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Cooldown period between consecutive exposures to the same entity. Prevents back-to-back ad delivery (e.g. {\"interval\": 60, \"unit\": \"minutes\"} for a 1-hour cooldown). Preferred over suppress_minutes.").optional(), "suppress_minutes": z.number().gte(0).describe("Deprecated — use suppress instead. Cooldown period in minutes between consecutive exposures to the same entity (e.g. 60 for a 1-hour cooldown).").optional(), "max_impressions": z.number().int().gte(1).describe("Maximum number of impressions per entity per window. For duration windows, implementations typically use a rolling window. campaign applies across the owning field's full flight: the package flight for a targeting overlay, or the MediaBuy flight for a root cap.").optional(), "per": z.enum(["individuals","households","devices","accounts","cookies","custom"]).describe("Unit of measurement for reach and audience size metrics. Different channels and measurement providers count reach in fundamentally different units, making cross-channel comparison impossible without declaring the unit.").describe("Entity granularity for impression counting. Required when max_impressions is set.").optional(), "window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Time window for the max_impressions cap (e.g. {\"interval\": 7, \"unit\": \"days\"} or {\"interval\": 1, \"unit\": \"campaign\"} for the full flight). Required when max_impressions is set.").optional() }).catchall(z.any()).and(z.union([z.object({ "suppress": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "suppress_minutes": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).and(z.intersection(z.union([z.any().refine((value) => !z.object({ "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "max_impressions": z.any().refine((value) => value !== undefined, "Required"), "per": z.any().refine((value) => value !== undefined, "Required"), "window": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]), z.intersection(z.union([z.any().refine((value) => !z.object({ "per": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "per": z.any().refine((value) => value !== undefined, "Required"), "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]), z.union([z.any().refine((value) => !z.object({ "window": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "window": z.any().refine((value) => value !== undefined, "Required"), "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])))).describe("Frequency capping settings for package-level application. Two types of frequency control can be used independently or together: suppress enforces a cooldown between consecutive exposures; max_impressions + per + window caps total exposures per entity in a time window. When both suppress and max_impressions are set, an impression is delivered only if both constraints permit it (AND semantics). At least one of suppress, suppress_minutes, or max_impressions must be set. Field location determines scope; this value has no scope discriminator. The MediaBuy root uses the narrower media-buy-frequency-cap schema, which permits maximum impressions only in 3.2."), z.object({ "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough()).describe("Hard MediaBuy-level cap accepted as part of these terms. One counter aggregates exposures across every purchase; purchase targeting caps remain independently binding.").optional(), "budget_cap_timezone": z.string().min(1).describe("Shared IANA calendar-day boundary for aggregate and purchase daily caps in these terms.").optional(), "budget_allocation": z.any().superRefine((x, ctx) => {
     const schemas = [z.object({ "mode": z.literal("fixed") }).passthrough(), z.object({ "mode": z.literal("seller_optimized"), "optimization_goals": z.array(z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "kind": z.literal("metric"), "metric": z.enum(["clicks","views","completed_views","viewed_seconds","engagements","follows","saves","profile_visits","reach"]), "reach_unit": z.enum(["individuals","households","devices","accounts","cookies","custom"]).describe("Unit of measurement for reach and audience size metrics. Different channels and measurement providers count reach in fundamentally different units, making cross-channel comparison impossible without declaring the unit.").optional(), "target_frequency": z.object({ "min": z.number().int().gte(1).optional(), "max": z.number().int().gte(1).optional(), "window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.") }).passthrough().and(z.union([z.object({ "min": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).optional(), "view_duration_seconds": z.number().gt(0).optional(), "target": z.object({ "kind": z.literal("threshold_rate"), "value": z.number().gt(0) }).passthrough().optional(), "priority": z.number().int().gte(1).optional() }).passthrough(), z.object({ "kind": z.literal("event"), "event_sources": z.array(z.object({ "event_source_id": z.string().min(1), "event_type": z.enum(["page_view","view_content","select_content","select_item","search","share","add_to_cart","remove_from_cart","viewed_cart","add_to_wishlist","initiate_checkout","add_payment_info","purchase","refund","lead","qualify_lead","close_convert_lead","disqualify_lead","complete_registration","subscribe","follow","content_view","watch_milestone","start_trial","app_install","app_launch","contact","schedule","donate","submit_application","custom"]).describe("Standard marketing event types for event logging, aligned with IAB ECAPI"), "custom_event_name": z.string().min(1).optional(), "value_field": z.string().min(1).optional(), "value_factor": z.number().default(1) }).passthrough()).min(1), "target": z.object({ "kind": z.literal("maximize_value") }).passthrough().optional(), "attribution_window": z.object({ "post_click": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Post-click attribution window. Conversions occurring within this duration after a click are attributed to the ad.").optional(), "post_view": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Post-view attribution window. Conversions occurring within this duration after an ad impression (without click) are attributed to the ad.").optional(), "model": z.enum(["last_touch","first_touch","linear","time_decay","data_driven"]).describe("Attribution model used to assign credit when multiple touchpoints exist. SHOULD be populated when committing to a specific model; when absent, the seller's default applies.").optional() }).catchall(z.any()).describe("Describes the attribution methodology and lookback windows used for conversion measurement. Enables cross-platform comparison by making attribution methodology transparent. Used as a `$ref` from `optimization-goal.json` (buyer's optimization-time attribution choice), `get-media-buy-delivery-response.json` (seller-declared attribution methodology in delivery reports), and similar surfaces. All fields are optional individually but at least one of `post_click`, `post_view`, or `model` SHOULD be populated; absence of `model` means the seller's default attribution model applies (typically `last_touch` per industry convention) — sellers SHOULD populate `model` explicitly when committing to a specific methodology.").optional(), "priority": z.number().int().gte(1).optional() }).passthrough(), z.object({ "kind": z.literal("vendor_metric"), "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "metric_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).min(1).max(64).describe("Identifier for a vendor-defined metric within the vendor's vocabulary. Stable lookup key; the vendor publishes the canonical list (with category, methodology, and standard alignment) in `brand.json` `agents[type='measurement']`. Lowercase with underscores so a future enum promotion into `available-metric.json` is a literal string lift. Identifier is namespaced by the vendor — the same `metric_id` may mean different things in different vendors' vocabularies."), "target": z.object({ "kind": z.literal("threshold_rate"), "value": z.number().gt(0) }).passthrough().optional(), "priority": z.number().int().gte(1).optional() }).passthrough()];
+    const schemas = [z.object({ "kind": z.literal("metric"), "metric": z.enum(["clicks","views","completed_views","viewed_seconds","viewable_rate","engagements","follows","saves","profile_visits","reach"]), "standard": z.enum(["mrc","groupm"]).describe("Viewability measurement standard applied to determine whether an impression qualifies as viewable. These are materially different thresholds and should not be compared across standards.").optional(), "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery.").optional(), "reach_unit": z.enum(["individuals","households","devices","accounts","cookies","custom"]).describe("Unit of measurement for reach and audience size metrics. Different channels and measurement providers count reach in fundamentally different units, making cross-channel comparison impossible without declaring the unit.").optional(), "target_frequency": z.object({ "min": z.number().int().gte(1).optional(), "max": z.number().int().gte(1).optional(), "window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.") }).passthrough().and(z.union([z.object({ "min": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).optional(), "view_duration_seconds": z.number().gt(0).optional(), "target": z.object({ "kind": z.literal("threshold_rate"), "value": z.number().gt(0) }).passthrough().optional(), "priority": z.number().int().gte(1).optional() }).passthrough().and(z.intersection(z.union([z.any().refine((value) => !z.object({ "metric": z.literal("viewable_rate") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "metric": z.literal("viewable_rate") }), z.object({ "target": z.object({ "value": z.any().optional() }).optional() }))]), z.any())), z.object({ "kind": z.literal("event"), "event_sources": z.array(z.object({ "event_source_id": z.string().min(1), "event_type": z.enum(["page_view","view_content","select_content","select_item","search","share","add_to_cart","remove_from_cart","viewed_cart","add_to_wishlist","initiate_checkout","add_payment_info","purchase","refund","lead","qualify_lead","close_convert_lead","disqualify_lead","complete_registration","subscribe","follow","content_view","watch_milestone","start_trial","app_install","app_launch","contact","schedule","donate","submit_application","custom"]).describe("Standard marketing event types for event logging, aligned with IAB ECAPI"), "custom_event_name": z.string().min(1).optional(), "value_field": z.string().min(1).optional(), "value_factor": z.number().default(1) }).passthrough()).min(1), "target": z.object({ "kind": z.literal("maximize_value") }).passthrough().optional(), "attribution_window": z.object({ "post_click": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Post-click attribution window. Conversions occurring within this duration after a click are attributed to the ad.").optional(), "post_view": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Post-view attribution window. Conversions occurring within this duration after an ad impression (without click) are attributed to the ad.").optional(), "model": z.enum(["last_touch","first_touch","linear","time_decay","data_driven"]).describe("Attribution model used to assign credit when multiple touchpoints exist. SHOULD be populated when committing to a specific model; when absent, the seller's default applies.").optional() }).catchall(z.any()).describe("Describes the attribution methodology and lookback windows used for conversion measurement. Enables cross-platform comparison by making attribution methodology transparent. Used as a `$ref` from `optimization-goal.json` (buyer's optimization-time attribution choice), `get-media-buy-delivery-response.json` (seller-declared attribution methodology in delivery reports), and similar surfaces. All fields are optional individually but at least one of `post_click`, `post_view`, or `model` SHOULD be populated; absence of `model` means the seller's default attribution model applies (typically `last_touch` per industry convention) — sellers SHOULD populate `model` explicitly when committing to a specific methodology.").optional(), "priority": z.number().int().gte(1).optional() }).passthrough(), z.object({ "kind": z.literal("vendor_metric"), "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "metric_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).min(1).max(64).describe("Identifier for a vendor-defined metric within the vendor's vocabulary. Stable lookup key; the vendor publishes the canonical list (with category, methodology, and standard alignment) in `brand.json` `agents[type='measurement']`. Lowercase with underscores so a future enum promotion into `available-metric.json` is a literal string lift. Identifier is namespaced by the vendor — the same `metric_id` may mean different things in different vendors' vocabularies."), "target": z.object({ "kind": z.literal("threshold_rate"), "value": z.number().gt(0) }).passthrough().optional(), "priority": z.number().int().gte(1).optional() }).passthrough()];
     const { errors, failed } = schemas.reduce<{
       errors: z.core.$ZodIssue[];
       failed: number;
@@ -18649,194 +18843,6 @@ export const ReportPlanOutcomeRequestSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const GetPlanAuditLogsResponseSchema = z.object({
-    context_id: z.string().optional(),
-    context: ContextObjectSchema.optional(),
-    task_id: z.string().optional(),
-    status: TaskStatusSchema,
-    message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    replayed: z.boolean().optional(),
-    adcp_error: ErrorSchema.optional(),
-    push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
-    payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
-    plans: z.array(z.object({
-        plan_id: z.string(),
-        plan_version: z.int(),
-        status: z.union([z.literal("active"), z.literal("suspended"), z.literal("completed")]),
-        budget: z.object({
-            authorized: z.number().optional(),
-            accounting_mode: z.union([z.literal("gross_commitment"), z.literal("verified_net_cost")]).optional(),
-            committed: z.number().optional(),
-            gross_committed: z.number().optional(),
-            adjustments_reported: z.number().optional(),
-            adjustments_verified: z.number().optional(),
-            net_cost: z.number().optional(),
-            headroom_restored: z.number().optional(),
-            net_committed: z.number().optional(),
-            ledger_committed: z.number().optional(),
-            remaining: z.number().optional(),
-            utilization_pct: z.number().optional()
-        }).passthrough(),
-        channel_allocation: z.record(z.string(), z.object({
-                committed: z.number().optional(),
-                pct: z.number().optional()
-            }).passthrough()).optional(),
-        summary: z.object({
-            checks_performed: z.int().optional(),
-            outcomes_reported: z.int().optional(),
-            adjustments_reported: z.int().optional(),
-            adjustments_verified: z.int().optional(),
-            statuses: z.object({
-                approved: z.int().optional(),
-                denied: z.int().optional(),
-                conditions: z.int().optional(),
-                human_reviewed: z.int().optional()
-            }).passthrough().optional(),
-            findings_count: z.int().optional(),
-            escalations: z.array(z.object({
-                check_id: z.string(),
-                reason: z.string(),
-                resolution: z.string().optional(),
-                resolved_at: z.iso.datetime().optional()
-            }).passthrough()).optional(),
-            drift_metrics: z.object({
-                escalation_rate: z.number().min(0).max(1).optional(),
-                escalation_rate_trend: z.union([z.literal("increasing"), z.literal("stable"), z.literal("declining")]).optional(),
-                auto_approval_rate: z.number().min(0).max(1).optional(),
-                human_override_rate: z.number().min(0).max(1).optional(),
-                mean_confidence: z.number().min(0).max(1).optional(),
-                thresholds: z.object({
-                    escalation_rate_max: z.number().min(0).max(1).optional(),
-                    escalation_rate_min: z.number().min(0).max(1).optional(),
-                    auto_approval_rate_max: z.number().min(0).max(1).optional(),
-                    human_override_rate_max: z.number().min(0).max(1).optional()
-                }).passthrough().optional()
-            }).passthrough().optional()
-        }).passthrough(),
-        entries: z.array(z.object({
-            id: z.string(),
-            type: z.union([z.literal("check"), z.literal("outcome"), z.literal("adjustment")]),
-            timestamp: z.iso.datetime(),
-            plan_id: z.string().optional(),
-            caller: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-            tool: z.string().optional(),
-            verdict: GovernanceDecisionSchema.optional(),
-            check_type: z.union([z.literal("intent"), z.literal("execution")]).optional(),
-            mode: GovernanceModeSchema.optional(),
-            explanation: z.string().optional(),
-            policies_evaluated: z.array(z.string()).optional(),
-            categories_evaluated: z.array(z.string()).optional(),
-            findings: z.array(z.object({
-                category_id: z.string(),
-                policy_id: z.string().optional(),
-                source_plan_id: z.string().optional(),
-                severity: EscalationSeveritySchema,
-                explanation: z.string(),
-                details: z.object({}).passthrough().optional(),
-                confidence: z.number().min(0).max(1).optional(),
-                uncertainty_reason: z.string().optional(),
-                attestation_reference_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional()
-            }).passthrough()).optional(),
-            delivery_statement: z.object({
-                statement_id: z.string(),
-                statement_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-                sequence: z.int().min(1),
-                issued_at: z.iso.datetime(),
-                seller_reference: z.string(),
-                cumulative_spend: z.number().min(0),
-                currency: z.string().regex(/^[A-Z]{3}$/),
-                reporting_period: z.object({
-                    start: z.iso.datetime(),
-                    end: z.iso.datetime()
-                }).passthrough(),
-                canonical_payload: z.object({
-                    seller_reference: z.string(),
-                    delivery_metrics: z.object({}).passthrough()
-                }).passthrough()
-            }).passthrough().optional(),
-            outcome: OutcomeTypeSchema.optional(),
-            error: ReportedOutcomeErrorSchema.optional(),
-            outcome_id: z.string().optional(),
-            seller_adjustment_id: z.string().optional(),
-            adjustment_type: z.union([z.literal("decommitment"), z.literal("refund"), z.literal("credit"), z.literal("makegood")]).optional(),
-            amount: z.object({
-                amount: z.number(),
-                currency: z.string().regex(/^[A-Z]{3}$/)
-            }).passthrough().optional(),
-            headroom_restored: z.number().min(0).optional(),
-            reason: z.string().optional(),
-            effective_at: z.iso.datetime().optional(),
-            committed_budget: z.number().optional(),
-            reported_committed_budget: z.number().min(0).optional(),
-            seller_reference: z.string().optional(),
-            delivery: z.object({
-                observation_id: z.string().min(1).max(255).optional(),
-                source: z.union([z.literal("seller_statement_copy"), z.literal("buyer_measurement")]).optional(),
-                observed_at: z.iso.datetime().optional(),
-                seller_statement_id: z.string().optional(),
-                seller_statement_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
-                reporting_period: z.object({
-                    start: z.iso.datetime(),
-                    end: z.iso.datetime()
-                }).passthrough().optional(),
-                cumulative_spend: z.number().min(0).optional(),
-                currency: z.string().regex(/^[A-Z]{3}$/).optional(),
-                period_closed: z.boolean().optional(),
-                impressions: z.int().min(0).optional()
-            }).passthrough().optional(),
-            governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
-            plan_hash: z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional(),
-            runtime_attestations: z.array(z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema
-            }).passthrough()).max(10).optional(),
-            runtime_attestation_binding_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
-            purchase_type: PurchaseTypeSchema.optional(),
-            outcome_status: z.string().optional(),
-            delivery_reconciliation_status: z.union([z.literal("consistent"), z.literal("measurement_variance"), z.literal("disputed"), z.literal("unmatched"), z.literal("closed_unresolved")]).optional(),
-            delivery_period_state: z.union([z.literal("open"), z.literal("closed")]).optional(),
-            adjustment_state: z.union([z.literal("reported"), z.literal("verified"), z.literal("disputed")]).optional(),
-            verified_amount: z.number().min(0).optional(),
-            evidence: z.object({
-                evidence_id: z.string(),
-                evidence_type: z.union([z.literal("decommitment_agreement"), z.literal("refund_settlement"), z.literal("credit_note"), z.literal("makegood_agreement")]),
-                digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-                issued_at: z.iso.datetime()
-            }).passthrough().optional(),
-            reviewed_by: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-            reviewed_at: z.iso.datetime().optional(),
-            review_reason: z.string().optional()
-        }).passthrough()).optional(),
-        governed_actions: z.array(z.object({
-            governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")),
-            purchase_type: PurchaseTypeSchema,
-            status: z.union([z.literal("active"), z.literal("suspended"), z.literal("completed")]),
-            committed: z.number(),
-            adjustments_reported: z.number().optional(),
-            adjustments_verified: z.number().optional(),
-            net_cost: z.number().optional(),
-            headroom_restored: z.number().optional(),
-            net_committed: z.number().optional(),
-            seller_reported_spend: z.number().min(0).optional(),
-            buyer_observed_spend: z.number().min(0).optional(),
-            delivery_reporting_period: z.object({
-                start: z.iso.datetime(),
-                end: z.iso.datetime()
-            }).passthrough().optional(),
-            conservative_exposure: z.number().min(0).optional(),
-            delivery_reconciliation_status: z.union([z.literal("consistent"), z.literal("measurement_variance"), z.literal("disputed"), z.literal("unmatched"), z.literal("closed_unresolved")]).optional(),
-            delivery_period_state: z.union([z.literal("open"), z.literal("closed")]).optional(),
-            check_count: z.int(),
-            seller_reference: z.string().optional()
-        }).passthrough())
-    }).passthrough()),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
 export const CheckGovernanceRequestSchema = z.object({}).passthrough().merge(z.object({
     adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
     adcp_major_version: z.number().int().gte(1).lte(99).optional(),
@@ -19096,7 +19102,7 @@ export const GetAdCPCapabilitiesResponseSchema: z.ZodObject<{ [K in keyof GetAdC
                 max: z.int().min(0).optional()
             }).passthrough().optional()
         }).passthrough().optional(),
-        supported_optimization_metrics: z.array(z.union([z.literal("clicks"), z.literal("views"), z.literal("completed_views"), z.literal("viewed_seconds"), z.literal("attention_seconds"), z.literal("attention_score"), z.literal("engagements"), z.literal("follows"), z.literal("saves"), z.literal("profile_visits"), z.literal("reach")])).optional(),
+        supported_optimization_metrics: z.array(z.union([z.literal("clicks"), z.literal("views"), z.literal("completed_views"), z.literal("viewed_seconds"), z.literal("viewable_rate"), z.literal("attention_seconds"), z.literal("attention_score"), z.literal("engagements"), z.literal("follows"), z.literal("saves"), z.literal("profile_visits"), z.literal("reach")])).optional(),
         vendor_metric_optimization: z.object({
             supported_targets: z.array(z.union([z.literal("cost_per"), z.literal("threshold_rate")])).optional()
         }).passthrough().optional(),

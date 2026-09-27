@@ -119,6 +119,11 @@ const PRIORITY_CANONICAL_SCHEMAS = [
   // retain the wire schema's open-object signatures on CreativeBrief and its
   // nested named fields before the strict resolver gets to normalize them.
   'core/creative-brief.json',
+  // RC.7 adds metric-specific conditional guards to these unions. Aggregate
+  // dereferencing can compile the conditional arm as `{}` before the direct
+  // schema is reached, so own the complete discriminated unions first.
+  'core/optimization-goal.json',
+  'core/canonical-optimization-goal.json',
   // Compile direct constraint-bearing roots before forecast/tool schemas that
   // reference them. json-schema-to-typescript does not reliably preserve
   // injected @pattern tags when the first declaration originates through a
@@ -238,6 +243,8 @@ const PRIORITY_CANONICAL_TYPE_NAMES = new Set([
   'CanonicalProposal',
   'ExtensionObject',
   'CreativeBrief',
+  'OptimizationGoal',
+  'CanonicalOptimizationGoal',
   'BrandReference',
   'BusinessEntity',
   'PlatformExtensionReference',

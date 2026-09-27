@@ -183,8 +183,8 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'compact-and-legacy',
       version: '1.0.0',
-      adcpVersion: '3.2.0-rc.6',
-      capabilities: { supported_versions: ['3.0.25', '3.1.18', '3.2.0-rc.6'] },
+      adcpVersion: '3.2.0-rc.7',
+      capabilities: { supported_versions: ['3.0.25', '3.1.18', '3.2.0-rc.7'] },
       validation: { requests: 'off', responses: 'off' },
     });
 
@@ -210,7 +210,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       method: 'tools/call',
       params: {
         name: 'list_products',
-        arguments: { adcp_version: '3.2.0-rc.6', account: { account_id: 'acc-modern' } },
+        arguments: { adcp_version: '3.2.0-rc.7', account: { account_id: 'acc-modern' } },
       },
     });
     assert.notStrictEqual(compact.isError, true, JSON.stringify(compact.structuredContent));
@@ -227,7 +227,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       assert.notStrictEqual(legacy.isError, true, JSON.stringify(legacy.structuredContent));
     }
     assert.deepStrictEqual(calls, [
-      ['list_products', '3.2.0-rc.6', 'acc-modern'],
+      ['list_products', '3.2.0-rc.7', 'acc-modern'],
       ['get_products', '3.1.18', 'acc-3.1.18'],
       ['get_products', '3.0.25', 'acc-3.0.25'],
     ]);
@@ -274,8 +274,8 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'signed-reverse-compatibility',
       version: '1.0.0',
-      adcpVersion: '3.2.0-rc.6',
-      capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.6'] },
+      adcpVersion: '3.2.0-rc.7',
+      capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.7'] },
       validation: { requests: 'off', responses: 'off' },
       legacyCreativeFormatConverter: ({ formatId }) =>
         formatId.id === 'display-300x250'
@@ -329,7 +329,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'compact-only',
       version: '1.0.0',
-      adcpVersion: '3.2.0-rc.6',
+      adcpVersion: '3.2.0-rc.7',
       validation: { requests: 'off', responses: 'off' },
     });
 
@@ -377,7 +377,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       const server = createAdcpServerFromPlatform(platform, {
         name: `scoped-compact-${resolution}`,
         version: '1.0.0',
-        adcpVersion: '3.2.0-rc.6',
+        adcpVersion: '3.2.0-rc.7',
         validation: { requests: 'off', responses: 'off' },
       });
 
@@ -461,7 +461,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'anonymous-session',
       version: '1.0.0',
-      adcpVersion: '3.2.0-rc.6',
+      adcpVersion: '3.2.0-rc.7',
       resolveSessionKey: () => 'anonymous-session',
       validation: { requests: 'off', responses: 'off' },
     });
@@ -489,7 +489,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'compact-replay-auth',
       version: '1.0.0',
-      adcpVersion: '3.2.0-rc.6',
+      adcpVersion: '3.2.0-rc.7',
       idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
       resolveIdempotencyPrincipal: () => 'deliberately-shared-principal',
       resolveSessionKey: () => 'deliberately-shared-session',
@@ -538,7 +538,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'refinement-scope',
       version: '1.0.0',
-      adcpVersion: '3.2.0-rc.6',
+      adcpVersion: '3.2.0-rc.7',
       validation: { requests: 'off', responses: 'off' },
     });
     const response = await server.dispatchTestRequest(
@@ -6010,6 +6010,53 @@ describe('SalesPlatform optional methods (v1.0 gap-fill for rc.1)', () => {
     assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
     assert.strictEqual(result.structuredContent.formats[0].id, 'video_30s');
   });
+
+  it('listCreativeFormats resolves an optional rc.7 account and refuses an unauthorized one', async () => {
+    const resolvedRefs = [];
+    const platform = buildPlatform({
+      accounts: {
+        resolution: 'explicit',
+        resolve: async ref => {
+          resolvedRefs.push(ref);
+          if (ref?.account_id === 'unauthorized') return null;
+          return { id: ref?.account_id ?? 'auth-derived', metadata: {}, authInfo: { kind: 'api_key' } };
+        },
+      },
+      sales: {
+        ...buildPlatform().sales,
+        listCreativeFormatsLegacy: async (_req, ctx) => ({
+          formats: [{ agent_url: 'https://example.com/mcp', id: ctx.account.id, type: 'video' }],
+        }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'account-scoped-formats',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const call = account =>
+      server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'list_creative_formats',
+          arguments: account ? { account: { account_id: account } } : {},
+        },
+      });
+
+    const selected = await call('selected');
+    assert.notStrictEqual(selected.isError, true, JSON.stringify(selected.structuredContent));
+    assert.strictEqual(selected.structuredContent.formats[0].id, 'selected');
+    assert.deepStrictEqual(resolvedRefs[0], { account_id: 'selected' });
+
+    const fallback = await call();
+    assert.notStrictEqual(fallback.isError, true, JSON.stringify(fallback.structuredContent));
+    assert.strictEqual(fallback.structuredContent.formats[0].id, 'auth-derived');
+    assert.strictEqual(resolvedRefs[1], undefined);
+
+    const denied = await call('unauthorized');
+    assert.strictEqual(denied.structuredContent.adcp_error.code, 'ACCOUNT_NOT_FOUND');
+  });
 });
 
 describe('AccountStore optional methods (v1.0 gap-fill for rc.1)', () => {
@@ -8168,11 +8215,11 @@ describe('HITL push notification webhook on terminal state', () => {
     };
 
     const platform = buildHitlPlatform(async () => ({ media_buy_id: 'mb_42', status: 'active' }));
-    for (const adcpVersion of ['3.2-rc.6']) {
+    for (const adcpVersion of ['3.2-rc.7']) {
       const server = createAdcpServerFromPlatform(platform, {
         name: 'webhook',
         version: '0.0.1',
-        adcpVersion: '3.2.0-rc.6',
+        adcpVersion: '3.2.0-rc.7',
         validation: { requests: 'off', responses: 'off' },
         taskWebhookEmitter: fakeEmitter,
       });
@@ -8755,9 +8802,9 @@ describe('tasks_get wire tool (B9)', () => {
       {
         name: 'versioned-handoff',
         version: '0.0.1',
-        adcpVersion: '3.2.0-rc.6',
+        adcpVersion: '3.2.0-rc.7',
         defaultAdcpVersion: '3.1.18',
-        capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.6'] },
+        capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.7'] },
         resolveSessionKey: async context => {
           sessionResolverContexts.push(context);
           return 'session-version-probe';
@@ -8767,10 +8814,10 @@ describe('tasks_get wire tool (B9)', () => {
     );
 
     const defaultTaskId = await createTask(server, 'acc_default');
-    const modernTaskId = await createTask(server, 'acc_modern', '3.2.0-rc.6');
+    const modernTaskId = await createTask(server, 'acc_modern', '3.2.0-rc.7');
     for (const [taskId, accountId, adcpVersion] of [
       [defaultTaskId, 'acc_default', undefined],
-      [modernTaskId, 'acc_modern', '3.2.0-rc.6'],
+      [modernTaskId, 'acc_modern', '3.2.0-rc.7'],
     ]) {
       await server.dispatchTestRequest({
         method: 'tools/call',
@@ -8787,11 +8834,11 @@ describe('tasks_get wire tool (B9)', () => {
 
     assert.deepStrictEqual(
       requestContexts.map(ctx => ctx.servedAdcpVersion),
-      ['3.1', '3.2-rc.6']
+      ['3.1', '3.2-rc.7']
     );
     assert.deepStrictEqual(
       taskContexts.map(ctx => ctx.servedAdcpVersion),
-      ['3.1', '3.2-rc.6']
+      ['3.1', '3.2-rc.7']
     );
     for (const context of [
       ...requestContexts,
@@ -8802,9 +8849,9 @@ describe('tasks_get wire tool (B9)', () => {
       assert.strictEqual(Object.getOwnPropertyDescriptor(context, 'servedAdcpVersion').writable, false);
     }
     assert.ok(accountResolverContexts.some(ctx => ctx.servedAdcpVersion === '3.1'));
-    assert.ok(accountResolverContexts.some(ctx => ctx.servedAdcpVersion === '3.2-rc.6'));
+    assert.ok(accountResolverContexts.some(ctx => ctx.servedAdcpVersion === '3.2-rc.7'));
     assert.ok(sessionResolverContexts.some(ctx => ctx.servedAdcpVersion === '3.1'));
-    assert.ok(sessionResolverContexts.some(ctx => ctx.servedAdcpVersion === '3.2-rc.6'));
+    assert.ok(sessionResolverContexts.some(ctx => ctx.servedAdcpVersion === '3.2-rc.7'));
   });
 
   it('returns spec-flat lifecycle shape for a completed task', async () => {
@@ -8889,7 +8936,7 @@ describe('tasks_get wire tool (B9)', () => {
         creatives_processed: 2,
       });
       assert.deepStrictEqual(legacy.structuredContent.progress, canonical.structuredContent.progress);
-      assert.strictEqual(legacy.structuredContent.adcp_version, '3.2-rc.6');
+      assert.strictEqual(legacy.structuredContent.adcp_version, '3.2-rc.7');
       assert.strictEqual(legacy.structuredContent.adcp_version, canonical.structuredContent.adcp_version);
 
       const legacyPinned = await server.dispatchTestRequest({
@@ -8995,7 +9042,7 @@ describe('tasks_get wire tool (B9)', () => {
       assert.strictEqual(status.structuredContent.status, 'submitted');
       assert.strictEqual(status.structuredContent.has_webhook, true);
       assert.strictEqual(status.structuredContent.result, undefined);
-      assert.strictEqual(status.structuredContent.adcp_version, '3.2-rc.6');
+      assert.strictEqual(status.structuredContent.adcp_version, '3.2-rc.7');
 
       const listed = await server.dispatchTestRequest({
         method: 'tools/call',
@@ -10013,7 +10060,7 @@ describe('createAdcpServerFromPlatform — default resolveIdempotencyPrincipal',
       {
         name: 'principal-compat',
         version: '0.0.1',
-        adcpVersion: '3.2.0-rc.6',
+        adcpVersion: '3.2.0-rc.7',
         idempotency,
         validation: { requests: 'off', responses: 'off' },
       }

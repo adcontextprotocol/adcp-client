@@ -312,9 +312,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     assert.equal(filteredOut.pagination.has_more, false);
     assert.equal(beforeReceipt.materializations.length, 2, 'failed attempts remain immutable history');
     assert.equal(
-      validateResponse('get_reporting_status', beforeReceipt, '3.2.0-rc.6').valid,
+      validateResponse('get_reporting_status', beforeReceipt, '3.2.0-rc.7').valid,
       true,
-      JSON.stringify(validateResponse('get_reporting_status', beforeReceipt, '3.2.0-rc.6').issues)
+      JSON.stringify(validateResponse('get_reporting_status', beforeReceipt, '3.2.0-rc.7').issues)
     );
 
     const syncReceipts = ledger.createSyncReportingReceiptsHandler(
@@ -333,7 +333,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       context
     );
     assert.equal(rejectedResult.results[0].result, 'recorded');
-    assert.equal(validateResponse('sync_reporting_receipts', rejectedResult, '3.2.0-rc.6').valid, true);
+    assert.equal(validateResponse('sync_reporting_receipts', rejectedResult, '3.2.0-rc.7').valid, true);
 
     const accepted = receipt(fixture, {
       reporting_receipt_id: 'receipt-accepted-0001',
@@ -366,7 +366,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     assert.equal(acceptedStatus.periods[0].reconciliation_status, 'accepted');
     assert.equal(acceptedStatus.periods[0].health, 'complete');
     assert.equal(acceptedStatus.periods[0].receipt_count, 2);
-    assert.equal(validateResponse('get_reporting_status', acceptedStatus, '3.2.0-rc.6').valid, true);
+    assert.equal(validateResponse('get_reporting_status', acceptedStatus, '3.2.0-rc.7').valid, true);
 
     const pagedReceipts = [];
     let cursor;
@@ -381,9 +381,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
         context
       );
       assert.equal(
-        validateResponse('get_reporting_status', page, '3.2.0-rc.6').valid,
+        validateResponse('get_reporting_status', page, '3.2.0-rc.7').valid,
         true,
-        JSON.stringify(validateResponse('get_reporting_status', page, '3.2.0-rc.6').issues)
+        JSON.stringify(validateResponse('get_reporting_status', page, '3.2.0-rc.7').issues)
       );
       pagedReceipts.push(...page.receipts);
       cursor = page.pagination.cursor;
@@ -509,9 +509,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     assert.equal(reopened.adjustments.length, 1);
     assert.equal(reopened.revisions[0].reporting_revision_id, fixture.revision.reporting_revision_id);
     assert.equal(
-      validateResponse('get_reporting_status', reopened, '3.2.0-rc.6').valid,
+      validateResponse('get_reporting_status', reopened, '3.2.0-rc.7').valid,
       true,
-      JSON.stringify(validateResponse('get_reporting_status', reopened, '3.2.0-rc.6').issues)
+      JSON.stringify(validateResponse('get_reporting_status', reopened, '3.2.0-rc.7').issues)
     );
 
     const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
@@ -646,7 +646,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     // caller's own receipt echoed back — no other consumer's state is read.
     assert.equal(revokedReplay.results[0].result, 'recorded');
     assert.equal(revokedReplay.results[0].receipt.reporting_receipt_id, 'receipt-accepted-0001');
-    assert.equal(validateResponse('sync_reporting_receipts', revokedReplay, '3.2.0-rc.6').valid, true);
+    assert.equal(validateResponse('sync_reporting_receipts', revokedReplay, '3.2.0-rc.7').valid, true);
     const receiptCountBeforeRepresentation = await pool.query(
       `SELECT COUNT(*)::integer AS count FROM adcp_reporting_receipts
         WHERE account_id = $1 AND consumer_id = $2`,
@@ -786,7 +786,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       'recorded',
       'hard-coding official finality made every snapshot-finality contract unreconcilable'
     );
-    assert.equal(validateResponse('sync_reporting_receipts', accepted, '3.2.0-rc.6').valid, true);
+    assert.equal(validateResponse('sync_reporting_receipts', accepted, '3.2.0-rc.7').valid, true);
 
     const getStatus = ledger.createReportingStatusHandler(core, {
       resolveConsumerId: value => value.agent.agent_url,
@@ -797,9 +797,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     );
     assert.equal(status.periods[0].reconciliation_status, 'accepted');
     assert.equal(
-      validateResponse('get_reporting_status', status, '3.2.0-rc.6').valid,
+      validateResponse('get_reporting_status', status, '3.2.0-rc.7').valid,
       true,
-      JSON.stringify(validateResponse('get_reporting_status', status, '3.2.0-rc.6').issues)
+      JSON.stringify(validateResponse('get_reporting_status', status, '3.2.0-rc.7').issues)
     );
     snapshotFixture = { ...snapshot, acceptedRequest, acceptedResult: accepted };
   });
@@ -856,7 +856,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       },
       context
     );
-    assert.equal(validateResponse('sync_reporting_receipts', fresh, '3.2.0-rc.6').valid, true);
+    assert.equal(validateResponse('sync_reporting_receipts', fresh, '3.2.0-rc.7').valid, true);
     const remaining = await pool.query(`SELECT 1 FROM adcp_reporting_receipt_batches WHERE idempotency_key = $1`, [
       snapshot.acceptedRequest.idempotency_key,
     ]);
@@ -1159,7 +1159,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       context
     );
     assert.equal(semanticRejection.results[0].result, 'recorded');
-    assert.equal(validateResponse('sync_reporting_receipts', semanticRejection, '3.2.0-rc.6').valid, true);
+    assert.equal(validateResponse('sync_reporting_receipts', semanticRejection, '3.2.0-rc.7').valid, true);
 
     // Negative controls: a rejection with no codes, and an acceptance whose
     // digest disagrees, both stay refused.
@@ -1235,9 +1235,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       );
     }
     assert.equal(
-      validateResponse('get_reporting_status', revisionView, '3.2.0-rc.6').valid,
+      validateResponse('get_reporting_status', revisionView, '3.2.0-rc.7').valid,
       true,
-      JSON.stringify(validateResponse('get_reporting_status', revisionView, '3.2.0-rc.6').issues)
+      JSON.stringify(validateResponse('get_reporting_status', revisionView, '3.2.0-rc.7').issues)
     );
 
     // An unrelated revision returns no adjustments, so it must return no
@@ -3847,9 +3847,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     );
     assert.equal(period.receipt_count, 2, 'both the rejected and the repairing receipt are counted');
     assert.equal(
-      validateResponse('get_reporting_status', status, '3.2.0-rc.6').valid,
+      validateResponse('get_reporting_status', status, '3.2.0-rc.7').valid,
       true,
-      JSON.stringify(validateResponse('get_reporting_status', status, '3.2.0-rc.6').issues)
+      JSON.stringify(validateResponse('get_reporting_status', status, '3.2.0-rc.7').issues)
     );
 
     // Retention holds the acceptance while the resource it accepts is still
@@ -3874,7 +3874,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       { account: { account_id: counters.accountId }, view: 'periods', period: counters.period },
       context
     );
-    assert.equal(validateResponse('get_reporting_status', stillValid, '3.2.0-rc.6').valid, true);
+    assert.equal(validateResponse('get_reporting_status', stillValid, '3.2.0-rc.7').valid, true);
 
     // Once the resource horizon passes, both may go together.
     await pool.query(
@@ -3896,9 +3896,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     );
     assert.notEqual(afterPrune.periods[0].health, 'complete', 'and the period no longer claims to be settled');
     assert.equal(
-      validateResponse('get_reporting_status', afterPrune, '3.2.0-rc.6').valid,
+      validateResponse('get_reporting_status', afterPrune, '3.2.0-rc.7').valid,
       true,
-      JSON.stringify(validateResponse('get_reporting_status', afterPrune, '3.2.0-rc.6').issues)
+      JSON.stringify(validateResponse('get_reporting_status', afterPrune, '3.2.0-rc.7').issues)
     );
   });
 
@@ -4662,7 +4662,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       both.results.map(value => value.result),
       ['unchanged', 'recorded']
     );
-    assert.equal(validateResponse('sync_reporting_receipts', both, '3.2.0-rc.6').valid, true);
+    assert.equal(validateResponse('sync_reporting_receipts', both, '3.2.0-rc.7').valid, true);
     const leaf = await pool.query(
       `SELECT reporting_receipt_id FROM adcp_reporting_receipts WHERE account_id = $1 AND is_current`,
       [pair.accountId]
@@ -5215,9 +5215,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       );
       pages += 1;
       assert.equal(
-        validateResponse('get_reporting_status', page, '3.2.0-rc.6').valid,
+        validateResponse('get_reporting_status', page, '3.2.0-rc.7').valid,
         true,
-        JSON.stringify(validateResponse('get_reporting_status', page, '3.2.0-rc.6').issues)
+        JSON.stringify(validateResponse('get_reporting_status', page, '3.2.0-rc.7').issues)
       );
       for (const value of page.adjustment_receipts ?? []) {
         seenReceipts.push(value.reporting_receipt_id);
@@ -5661,9 +5661,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       'the pruned acceptance outranks the rejection it superseded'
     );
     assert.equal(
-      validateResponse('get_reporting_status', status, '3.2.0-rc.6').valid,
+      validateResponse('get_reporting_status', status, '3.2.0-rc.7').valid,
       true,
-      JSON.stringify(validateResponse('get_reporting_status', status, '3.2.0-rc.6').issues)
+      JSON.stringify(validateResponse('get_reporting_status', status, '3.2.0-rc.7').issues)
     );
   });
 
@@ -5704,9 +5704,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     assert.deepEqual(official.materializations ?? [], []);
     assert.deepEqual(official.receipts ?? [], []);
     assert.equal(
-      validateResponse('get_reporting_status', official, '3.2.0-rc.6').valid,
+      validateResponse('get_reporting_status', official, '3.2.0-rc.7').valid,
       true,
-      JSON.stringify(validateResponse('get_reporting_status', official, '3.2.0-rc.6').issues)
+      JSON.stringify(validateResponse('get_reporting_status', official, '3.2.0-rc.7').issues)
     );
     // Unfiltered, the same read still carries them.
     const unfiltered = await getStatus(
@@ -6334,9 +6334,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     ]);
     assert.equal(rows.rows[0].live, 0, 'the pruned body is not recreated');
     assert.equal(
-      validateResponse('sync_reporting_receipts', again, '3.2.0-rc.6').valid,
+      validateResponse('sync_reporting_receipts', again, '3.2.0-rc.7').valid,
       true,
-      JSON.stringify(validateResponse('sync_reporting_receipts', again, '3.2.0-rc.6').issues)
+      JSON.stringify(validateResponse('sync_reporting_receipts', again, '3.2.0-rc.7').issues)
     );
 
     // Retrying the very key that was just answered `unchanged`. The replay
@@ -6482,9 +6482,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       ['unchanged', 'recorded']
     );
     assert.equal(
-      validateResponse('sync_reporting_receipts', together, '3.2.0-rc.6').valid,
+      validateResponse('sync_reporting_receipts', together, '3.2.0-rc.7').valid,
       true,
-      JSON.stringify(validateResponse('sync_reporting_receipts', together, '3.2.0-rc.6').issues)
+      JSON.stringify(validateResponse('sync_reporting_receipts', together, '3.2.0-rc.7').issues)
     );
   });
 

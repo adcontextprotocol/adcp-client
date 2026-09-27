@@ -8,7 +8,7 @@ on:
       python_ref:
         description: 'adcp-client-python commit SHA, tag, or branch to test against'
         required: false
-        default: '92b1618c3bebfef481f3deef423cbe29d8820de3'
+        default: '8ca7dfe09facd3b4744665447e16a80474f021d7' # adcp-client-python v8.0.0-beta.16
       runner_package_ref:
         description: 'Optional @adcp/sdk npm package ref for manual runner probes, e.g. adcp-3.0 or @adcp/sdk@adcp-3.1. Empty packs this checkout.'
         required: false
@@ -19,7 +19,7 @@ on:
         description: 'adcp-client-python commit SHA, tag, or branch to test against'
         required: false
         type: string
-        default: '92b1618c3bebfef481f3deef423cbe29d8820de3'
+        default: '8ca7dfe09facd3b4744665447e16a80474f021d7' # adcp-client-python v8.0.0-beta.16
       runner_package_ref:
         description: 'Optional @adcp/sdk npm package ref for manual runner probes. Empty packs this checkout.'
         required: false
@@ -100,7 +100,8 @@ jobs:
         include:
           - language: python
             repository: adcontextprotocol/adcp-client-python
-            ref: ${{ inputs.python_ref || '92b1618c3bebfef481f3deef423cbe29d8820de3' }}
+            # v8.0.0-beta.16 speaks AdCP rc.6; this is an advisory cross-version probe until Python adopts rc.7.
+            ref: ${{ inputs.python_ref || '8ca7dfe09facd3b4744665447e16a80474f021d7' }}
             harness: scripts/ci/run_storyboard_reference_seller.sh
             port: 3001
             advisory: true
