@@ -628,6 +628,9 @@ function generateLlmsTxt(
   );
   ln(`- **Buyer** (calling a seller): read \`docs/guides/BUYER-QUICKSTART-3.2.md\` first.`);
   ln(
+    `- **Buyer Reliable Reporting**: import reconciliation, PostgreSQL persistence, and the worker from \`@adcp/sdk/reporting/consumer\`; see \`docs/guides/REPORTING-RECONCILIATION.md\`.`
+  );
+  ln(
     `- **Before proposal acceptance:** use \`verifyProposalCommercialTerms\` from \`@adcp/sdk/negotiation/verification\` with a complete, independently reviewed snapshot and the seller-served schema version. Never use an unreviewed candidate as its own expected terms. See \`docs/guides/PROPOSAL-TERMS-VERIFICATION.md\`.`
   );
   ln(
@@ -1386,6 +1389,13 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   );
   ln();
 
+  ln('## Buyer Reliable Reporting');
+  ln();
+  ln(
+    'Import `reconcileReportingCoreV1`, `reconcileReporting`, `createPostgresReportingConsumerRuntimeV1`, and `createReliableReportingConsumerV1` from `@adcp/sdk/reporting/consumer`. `ReliableReportingConsumerRunResultV1` and `ReliableReportingConsumerErrorContextV1` identify a run with `consumerScope`, `accountId`, and `reason`. Retain `expectedPeriods` from buyer commitments, use a non-secret seller/principal `consumerScope`, and make post-official adjustment acceptance an explicit `evaluateAdjustment` policy decision. Verify RFC 9421 with `@adcp/sdk/signing/server` before calling `handleAuthenticatedNotification`. See [Reporting reconciliation](guides/REPORTING-RECONCILIATION.md) and the [existing-app buyer worker](../examples/reliable-reporting-buyer/README.md).'
+  );
+  ln();
+
   ln('## MediaBuy Action Assessment Types');
   ln();
   ln(
@@ -2105,7 +2115,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`## Seller Reporting Source Contract`);
   ln();
   ln(
-    `Import from \`@adcp/sdk/reporting/source\`. This is a provider-neutral adapter boundary; the existing buyer-side \`reconcileReporting\` API is separate.`
+    `Import from \`@adcp/sdk/reporting/source\`. This is a provider-neutral adapter boundary; buyer reconciliation and worker APIs live at \`@adcp/sdk/reporting/consumer\`.`
   );
   ln();
   ln('```typescript');

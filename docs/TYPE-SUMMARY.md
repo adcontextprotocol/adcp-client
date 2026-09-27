@@ -5,6 +5,10 @@
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
+## Buyer Reliable Reporting
+
+Import `reconcileReportingCoreV1`, `reconcileReporting`, `createPostgresReportingConsumerRuntimeV1`, and `createReliableReportingConsumerV1` from `@adcp/sdk/reporting/consumer`. `ReliableReportingConsumerRunResultV1` and `ReliableReportingConsumerErrorContextV1` identify a run with `consumerScope`, `accountId`, and `reason`. Retain `expectedPeriods` from buyer commitments, use a non-secret seller/principal `consumerScope`, and make post-official adjustment acceptance an explicit `evaluateAdjustment` policy decision. Verify RFC 9421 with `@adcp/sdk/signing/server` before calling `handleAuthenticatedNotification`. See [Reporting reconciliation](guides/REPORTING-RECONCILIATION.md) and the [existing-app buyer worker](../examples/reliable-reporting-buyer/README.md).
+
 ## MediaBuy Action Assessment Types
 
 Use `@adcp/sdk/media-buy/actions` for pure buyer assessment and `@adcp/sdk/server` for `mediaBuyActionResolver`. See [action assessment guide](guides/MEDIA-BUY-ACTION-ASSESSMENT.md).
@@ -2825,7 +2829,7 @@ Source of truth: `schemas/cache/{version}/brand.json` and `adagents.json` — re
 
 ## Seller Reporting Source Contract
 
-Import from `@adcp/sdk/reporting/source`. This is a provider-neutral adapter boundary; the existing buyer-side `reconcileReporting` API is separate.
+Import from `@adcp/sdk/reporting/source`. This is a provider-neutral adapter boundary; buyer reconciliation and worker APIs live at `@adcp/sdk/reporting/consumer`.
 
 ```typescript
 type ReportingSourceManifestLevelV1 = 'basic' | 'evidenced';

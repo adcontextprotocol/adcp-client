@@ -1,5 +1,8 @@
 # Reporting reconciliation
 
+Import buyer reconciliation, inspection, PostgreSQL persistence, and the
+worker from `@adcp/sdk/reporting/consumer`.
+
 ## Core-only health reconciliation
 
 Use `reconcileReportingCoreV1` when the seller advertises the required Core
@@ -15,7 +18,7 @@ import {
   reconcileReportingCoreV1,
   type CoreReportingObligationV1,
   type CoreReportingRevisionV1,
-} from '@adcp/sdk';
+} from '@adcp/sdk/reporting/consumer';
 
 const obligations: CoreReportingObligationV1[] = [];
 const revisions: CoreReportingRevisionV1[] = [];
@@ -127,7 +130,7 @@ A unique official revision takes precedence over a retained snapshot even withou
 import {
   createHttpsReportingResourceReader,
   reconcileReporting,
-} from '@adcp/sdk';
+} from '@adcp/sdk/reporting/consumer';
 
 const result = await reconcileReporting({
   client: seller,
@@ -217,7 +220,7 @@ For a replicated production buyer, use the PostgreSQL persistence bundle instead
 process memory:
 
 ```ts
-import { createPostgresReportingConsumerRuntimeV1 } from '@adcp/sdk';
+import { createPostgresReportingConsumerRuntimeV1 } from '@adcp/sdk/reporting/consumer';
 
 const persistence = createPostgresReportingConsumerRuntimeV1({
   db: pool,
@@ -271,7 +274,7 @@ full reconciliation only when the delta contains records.
 import {
   createPostgresReportingConsumerRuntimeV1,
   createReliableReportingConsumerV1,
-} from '@adcp/sdk';
+} from '@adcp/sdk/reporting/consumer';
 
 const persistence = createPostgresReportingConsumerRuntimeV1({
   db: pool,
@@ -297,7 +300,7 @@ const consumer = createReliableReportingConsumerV1({
     },
   }],
   onResult: result => reportingMetrics.observe(result),
-  onError: (error, accountId) => reportingAlerts.capture(error, { accountId }),
+  onError: (error, accountId, context) => reportingAlerts.capture(error, context),
 });
 
 consumer.start();
@@ -334,6 +337,19 @@ coalesced in-process and fenced across replicas. Lease loss aborts subsequent
 protocol calls and prevents checkpoint advancement. A failed or expired change
 cursor falls back to a complete snapshot and is observable through `onError`
 and `cursorRecovered`.
+
+Every result and error context includes `consumerScope`, `accountId`, and
+`reason`. The partition is `(consumerScope, accountId)`; `reason` names the run
+that produced the result, which may be an already active poll or manual run.
+The optional
+`onError` callback keeps its `(error, accountId)` arguments and adds context as
+a third argument. Without `onError`, the worker emits a structured warning for
+background failures. Warnings omit error messages and stacks because they may
+contain credentials or seller response bodies.
+
+See the [existing-app buyer worker](../../examples/reliable-reporting-buyer/README.md)
+for migration, PostgreSQL readiness, signature verification, metrics, and
+shutdown wiring using the public buyer import.
 
 The authenticated `consumerScope` is required on every webhook path, including
 when an account ID is currently unique. Derive it from the verified sender or

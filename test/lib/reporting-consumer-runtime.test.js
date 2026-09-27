@@ -382,6 +382,7 @@ describe('Reliable Reporting buyer runtime', () => {
       { consumerScope: right.consumerScope }
     );
     assert.equal(result.state, 'reconciled');
+    assert.equal(result.consumerScope, right.consumerScope);
     assert.deepEqual(calls, ['right']);
     await consumer.stop();
   });
@@ -665,5 +666,172 @@ describe('Reliable Reporting buyer runtime', () => {
     assert.equal(result.state, 'lease_lost');
     assert.equal(persistence.cursors.size, 0, 'expired ownership cannot advance the durable cursor');
     await consumer.stop();
+  });
+
+  for (const runOnStart of [true, false]) {
+    test(`reports ${runOnStart ? 'startup' : 'poll'} failures without an observer or sensitive error text`, async () => {
+      const { createReliableReportingConsumerV1 } = require('../../dist/lib/reporting/consumer/index.js');
+      const warnings = [];
+      const originalWarn = console.warn;
+      let observed;
+      const warning = new Promise(resolve => {
+        observed = resolve;
+      });
+      let timeout;
+      console.warn = (...args) => {
+        warnings.push(args);
+        observed();
+      };
+      const consumer = createReliableReportingConsumerV1({
+        accounts: [
+          account({
+            async getReportingStatus() {
+              throw new Error('Bearer private-token');
+            },
+          }),
+        ],
+        persistence: memoryPersistence(),
+        ownerToken: `buyer-worker-${runOnStart ? 'startup' : 'poll'}`,
+        pollIntervalMs: 1_000,
+        runOnStart,
+      });
+      try {
+        consumer.start();
+        await Promise.race([
+          warning,
+          new Promise((_resolve, reject) => {
+            timeout = setTimeout(() => reject(new Error('missing warning')), 2_500);
+          }),
+        ]);
+        assert.equal(warnings[0][0], '[adcp/reporting] buyer consumer failure');
+        assert.deepEqual(warnings[0][1], {
+          consumerScope: AUTHENTICATION.consumerScope,
+          accountId: ACCOUNT_ID,
+          reason: runOnStart ? 'startup' : 'poll',
+          source: 'background',
+        });
+        assert.doesNotMatch(JSON.stringify(warnings), /private-token/);
+      } finally {
+        clearTimeout(timeout);
+        console.warn = originalWarn;
+        await consumer.stop();
+      }
+    });
+  }
+
+  for (const observerFails of [false, true]) {
+    test(`a throwing result hook exposes only safe context${observerFails ? ' when error observer fails' : ''}`, async () => {
+      const { createReliableReportingConsumerV1 } = require('../../dist/lib/reporting/consumer/index.js');
+      const warnings = [];
+      const contexts = [];
+      const originalWarn = console.warn;
+      console.warn = (...args) => warnings.push(args);
+      const consumer = createReliableReportingConsumerV1({
+        accounts: [
+          account({
+            async getReportingStatus() {
+              return page({ checkpoint: 'private-checkpoint' });
+            },
+            async syncReportingReceipts() {
+              return { status: 'completed', results: [] };
+            },
+          }),
+        ],
+        persistence: memoryPersistence(),
+        ownerToken: `buyer-hook-${observerFails ? 'failed' : 'missing'}`,
+        runOnStart: false,
+        onResult() {
+          throw new Error('Bearer private-token');
+        },
+        ...(observerFails
+          ? {
+              onError(_error, _accountId, context) {
+                contexts.push(context);
+                throw new Error('observer private-token');
+              },
+            }
+          : {}),
+      });
+      try {
+        assert.equal((await consumer.runAccount(ACCOUNT_ID)).state, 'reconciled');
+        assert.deepEqual(
+          contexts,
+          observerFails
+            ? [
+                {
+                  consumerScope: AUTHENTICATION.consumerScope,
+                  accountId: ACCOUNT_ID,
+                  reason: 'manual',
+                },
+              ]
+            : []
+        );
+        assert.deepEqual(warnings, [
+          [
+            '[adcp/reporting] buyer consumer failure',
+            {
+              consumerScope: AUTHENTICATION.consumerScope,
+              accountId: ACCOUNT_ID,
+              reason: 'manual',
+              source: observerFails ? 'observer' : 'background',
+            },
+          ],
+        ]);
+        assert.doesNotMatch(JSON.stringify(warnings), /private-token|private-checkpoint|reconciliation/);
+      } finally {
+        console.warn = originalWarn;
+        await consumer.stop();
+      }
+    });
+  }
+
+  test('error observers distinguish sellers sharing an account ID', async () => {
+    const { createReliableReportingConsumerV1 } = require('../../dist/lib/reporting/consumer/index.js');
+    const contexts = [];
+    const seenErrors = [];
+    let observed;
+    const done = new Promise(resolve => {
+      observed = resolve;
+    });
+    const broken = () =>
+      account({
+        async getReportingStatus() {
+          throw new Error('seller read failed');
+        },
+      });
+    const first = broken();
+    const second = { ...broken(), consumerScope: 'other-seller.example|buyer-principal-1' };
+    const consumer = createReliableReportingConsumerV1({
+      accounts: [first, second],
+      persistence: memoryPersistence(),
+      ownerToken: 'buyer-worker-two-sellers',
+      onError(error, accountId, context) {
+        seenErrors.push({ message: error.message, accountId });
+        contexts.push(context);
+        if (contexts.length === 2) observed();
+      },
+    });
+    let timeout;
+    try {
+      consumer.start();
+      await Promise.race([
+        done,
+        new Promise((_resolve, reject) => {
+          timeout = setTimeout(() => reject(new Error('missing two error contexts')), 2_500);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
+      await consumer.stop();
+    }
+    assert.deepEqual(seenErrors, [
+      { message: 'seller read failed', accountId: ACCOUNT_ID },
+      { message: 'seller read failed', accountId: ACCOUNT_ID },
+    ]);
+    assert.deepEqual(
+      contexts.map(context => context.consumerScope).sort(),
+      [first.consumerScope, second.consumerScope].sort()
+    );
+    assert.ok(contexts.every(context => context.reason === 'startup' && context.accountId === ACCOUNT_ID));
   });
 });
