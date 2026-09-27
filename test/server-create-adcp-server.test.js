@@ -1005,6 +1005,29 @@ describe('createAdcpServer', () => {
   });
 
   describe('compact account-selection envelope', () => {
+    it('rejects an explicit creative-formats account without an authorizing resolver', async () => {
+      let calls = 0;
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        resolveAccountFromAuth: async () => ({ account_id: 'auth-account' }),
+        creative: {
+          listCreativeFormats: async () => {
+            calls++;
+            return { formats: [] };
+          },
+        },
+      });
+      const explicit = await callToolRaw(server, 'list_creative_formats', {
+        account: { account_id: 'other-account' },
+      });
+      assert.strictEqual(explicit.structuredContent.adcp_error.code, 'ACCOUNT_NOT_FOUND');
+      assert.strictEqual(calls, 0);
+
+      await callTool(server, 'list_creative_formats', {});
+      assert.strictEqual(calls, 1);
+    });
+
     it('preserves ACCOUNT_NOT_FOUND when a buyer supplies a reference but no resolver is configured', async () => {
       let calls = 0;
       const server = createAdcpServer({

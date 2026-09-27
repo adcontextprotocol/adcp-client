@@ -17,8 +17,24 @@ for (const [name, schema] of [
       schema.safeParse({ kind: 'metric', metric: 'clicks', target: { kind: 'threshold_rate', value: -5 } }).success,
       false
     );
+    assert.equal(schema.safeParse({ kind: 'metric', metric: 'viewable_rate' }).success, false);
+    assert.equal(schema.safeParse({ kind: 'metric', metric: 'clicks', standard: 'mrc' }).success, false);
+    assert.equal(
+      schema.safeParse({
+        kind: 'metric',
+        metric: 'viewable_rate',
+        standard: 'mrc',
+        target: { kind: 'threshold_rate', value: 1.1 },
+      }).success,
+      false
+    );
 
-    const parsed = schema.safeParse({ kind: 'metric', metric: 'viewable_rate', standard: 'mrc' });
+    const parsed = schema.safeParse({
+      kind: 'metric',
+      metric: 'viewable_rate',
+      standard: 'mrc',
+      target: { kind: 'threshold_rate', value: 0.5 },
+    });
     assert.equal(parsed.success, true, JSON.stringify(parsed.error?.issues));
     assert.equal(parsed.data.kind, 'metric');
     assert.equal(parsed.data.metric, 'viewable_rate');

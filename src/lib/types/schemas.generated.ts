@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-27T21:03:37.673Z
+// Generated at: 2026-09-27T21:11:17.124Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1742,7 +1742,19 @@ export const OptimizationGoalSchema = z.union([z.object({
                 value: z.number().gt(0)
             }).passthrough()]).optional(),
         priority: z.int().min(1).optional()
-    }).passthrough()]);
+    }).passthrough()]).superRefine((goal, ctx) => {
+    if (goal.kind !== "metric") return;
+    if (goal.metric === "viewable_rate") {
+        if (goal.standard == null) ctx.addIssue({ code: "custom", path: ["standard"], message: "viewable_rate requires standard" });
+        if (goal.target != null) {
+            if (goal.target.kind !== "threshold_rate") ctx.addIssue({ code: "custom", path: ["target", "kind"], message: "viewable_rate requires threshold_rate target" });
+            if (goal.target.value > 1) ctx.addIssue({ code: "custom", path: ["target", "value"], message: "viewable_rate target must be at most 1" });
+        }
+    } else if (goal.metric !== "viewed_seconds") {
+        if (goal.standard !== undefined) ctx.addIssue({ code: "custom", path: ["standard"], message: "standard is only allowed for viewability metrics" });
+        if (goal.vendor !== undefined) ctx.addIssue({ code: "custom", path: ["vendor"], message: "vendor is only allowed for viewability metrics" });
+    }
+});
 
 export const ContextObjectSchema = z.object({}).passthrough();
 
@@ -4129,7 +4141,19 @@ export const CanonicalOptimizationGoalSchema = z.union([z.object({
             value: z.number().gt(0)
         }).passthrough().optional(),
         priority: z.int().min(1).optional()
-    }).passthrough()]);
+    }).passthrough()]).superRefine((goal, ctx) => {
+    if (goal.kind !== "metric") return;
+    if (goal.metric === "viewable_rate") {
+        if (goal.standard == null) ctx.addIssue({ code: "custom", path: ["standard"], message: "viewable_rate requires standard" });
+        if (goal.target != null) {
+            if (goal.target.kind !== "threshold_rate") ctx.addIssue({ code: "custom", path: ["target", "kind"], message: "viewable_rate requires threshold_rate target" });
+            if (goal.target.value > 1) ctx.addIssue({ code: "custom", path: ["target", "value"], message: "viewable_rate target must be at most 1" });
+        }
+    } else if (goal.metric !== "viewed_seconds") {
+        if (goal.standard !== undefined) ctx.addIssue({ code: "custom", path: ["standard"], message: "standard is only allowed for viewability metrics" });
+        if (goal.vendor !== undefined) ctx.addIssue({ code: "custom", path: ["vendor"], message: "vendor is only allowed for viewability metrics" });
+    }
+});
 
 export const CanonicalMetricQualifierSchema = z.object({
     viewability_standard: ViewabilityStandardSchema.optional(),
