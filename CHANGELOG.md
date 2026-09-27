@@ -1,5 +1,25 @@
 # Changelog
 
+## 14.0.0-rc.48
+
+### Minor Changes
+
+- c0c01e8: Add a production buyer reporting worker with durable incremental repair, fenced multi-replica execution, polling, authenticated webhook hints, bounded concurrency, and graceful shutdown.
+- c0c01e8: Add durable, principal-scoped reporting webhook activity for list_accounts, pre-POST reservations, sanitized diagnostics, retention, and async-safe emitter observers.
+- c0c01e8: Emit durable transactional `reporting.ledger_changed` and `reporting.delivery_ready` notifications alongside status changes.
+- c0c01e8: Harden Reliable Reporting tenant isolation, webhook recovery auditing, receipt replay scope, optional pagination compatibility, buyer deadlines and dynamic rosters, durable lease fencing, fair recovery, and bounded production database work. Buyer reconciliation now independently verifies post-official adjustments and durably submits adjustment receipts. Pending consumer-status stores require seller/principal scope, checkpoint identities include a versioned immutable-context fingerprint, production notification installation requires `accounts.list`, authenticated notification routing requires `consumerScope`, and subscriber IDs enforce the protocol's 64-character identifier grammar. Exact-revision reads now default to a configurable 32 MiB decoded-byte ceiling (`maxRevisionBytes`; use 256 MiB for pre-14 behavior). Webhook attempt observers are now awaitable and time-bounded, and signing plus each POST has a configurable 30 second default deadline; failures remain isolated through `onAttemptObserverError`. Reporting webhook attempt ordinals are allocated only at the final durable pre-POST barrier, remain dense across retryable authorization failures and restarts, and age out with their activity retention window.
+- c0c01e8: Project Reliable Reporting webhook activity through the real `list_accounts`
+  runtime using trusted authenticated scope, publish shared Python/TypeScript
+  canonical JSON fixtures, and add production parity and operations runbooks.
+- c0c01e8: Harden the Reliable Reporting buyer runtime with durable notification deduplication and authenticated seller/principal scope binding.
+- c0c01e8: Add a probed PostgreSQL production composer for Reliable Reporting, including Managed Delivery, all notification types, webhook activity, recovery workers, and receipt routing.
+
+### Patch Changes
+
+- c0c01e8: Make deployment-wide Managed Delivery planning durably fair across reporting accounts. PostgreSQL now persists a round-robin cursor and gives each selected account a bounded first-pass share before a hot tenant can consume spare capacity, so later and newly added accounts cannot be starved by the lexically first account.
+- 3d11a65: Expose registry runner capability versions and refresh-restoration tracking issue metadata.
+- c0c01e8: Add durable PostgreSQL buyer reporting checkpoints, pending status statements, change cursors, and fenced work leases.
+
 ## 14.0.0-rc.47
 
 ### Minor Changes
