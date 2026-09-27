@@ -25,7 +25,7 @@ describe('buyer worker signed webhook boundary', { skip: !DATABASE_URL && 'Postg
     try {
       await bootstrap.query(`CREATE SCHEMA "${schema}"`);
       pool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${schema}"` });
-      let lookup = () => undefined;
+      let lookup = _keyid => undefined;
       let revocationUnavailable = false;
       const revocation = new InMemoryRevocationStore();
       worker = await startBuyerReporting({
@@ -79,24 +79,24 @@ describe('buyer worker signed webhook boundary', { skip: !DATABASE_URL && 'Postg
         );
         return { method: 'POST', headers: { 'Content-Type': 'application/json', ...signed.headers }, body };
       };
-      lookup = () => {
+      lookup = _keyid => {
         throw new Error('registry secret');
       };
       let response = await fetch(localUrl, signedRequest());
       assert.equal(response.status, 503);
       assert.equal(response.headers.get('retry-after'), '30');
 
-      lookup = async () => {
+      lookup = async _keyid => {
         throw new Error('registry secret');
       };
       response = await fetch(localUrl, signedRequest());
       assert.equal(response.status, 503);
 
-      lookup = () => undefined;
+      lookup = _keyid => undefined;
       response = await fetch(localUrl, signedRequest());
       assert.equal(response.status, 403);
 
-      lookup = async () => 'other-seller.example|buyer-principal-1';
+      lookup = async _keyid => 'other-seller.example|buyer-principal-1';
       const replayed = signedRequest();
       response = await fetch(localUrl, replayed);
       assert.equal(response.status, 204, 'an awaited scope lookup routes only to its matching roster');
