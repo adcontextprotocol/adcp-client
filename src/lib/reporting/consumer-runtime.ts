@@ -65,7 +65,12 @@ export interface CreateReliableReportingConsumerOptionsV1<TCredential = unknown>
   maxConcurrentAccounts?: number;
   runOnStart?: boolean;
   onResult?: (result: ReliableReportingConsumerRunResultV1) => void | Promise<void>;
-  onError?: (error: unknown, accountId: string) => void | Promise<void>;
+  /** Errors from background work and hooks. The third argument identifies the durable partition. */
+  onError?: (
+    error: unknown,
+    accountId: string,
+    context: ReliableReportingConsumerErrorContextV1
+  ) => void | Promise<void>;
 }
 
 export type ReliableReportingConsumerRunReasonV1 =
@@ -74,24 +79,28 @@ export type ReliableReportingConsumerRunReasonV1 =
   | 'manual'
   | ReportingNotificationV1['notification_type'];
 
-export type ReliableReportingConsumerRunResultV1 =
-  | { accountId: string; reason: ReliableReportingConsumerRunReasonV1; state: 'busy' | 'stopping' | 'duplicate' }
-  | {
-      accountId: string;
-      reason: ReliableReportingConsumerRunReasonV1;
-      state: 'unchanged';
-      changesCheckpoint: string;
-    }
-  | {
-      accountId: string;
-      reason: ReliableReportingConsumerRunReasonV1;
-      state: 'reconciled';
-      /** Present when the seller supports opaque incremental change checkpoints. */
-      changesCheckpoint?: string;
-      cursorRecovered: boolean;
-      reconciliation: ReportingReconciliationResult;
-    }
-  | { accountId: string; reason: ReliableReportingConsumerRunReasonV1; state: 'lease_lost' };
+export interface ReliableReportingConsumerErrorContextV1 {
+  consumerScope: string;
+  accountId: string;
+  reason: ReliableReportingConsumerRunReasonV1;
+}
+
+export type ReliableReportingConsumerRunResultV1 = ReliableReportingConsumerErrorContextV1 &
+  (
+    | { state: 'busy' | 'stopping' | 'duplicate' }
+    | {
+        state: 'unchanged';
+        changesCheckpoint: string;
+      }
+    | {
+        state: 'reconciled';
+        /** Present when the seller supports opaque incremental change checkpoints. */
+        changesCheckpoint?: string;
+        cursorRecovered: boolean;
+        reconciliation: ReportingReconciliationResult;
+      }
+    | { state: 'lease_lost' }
+  );
 
 export interface ReliableReportingConsumerV1<TCredential = unknown> {
   start(): void;
@@ -332,16 +341,37 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
     try {
       await options.onResult?.(result);
     } catch (error) {
-      await reportError(error, result.accountId);
+      await reportError(error, {
+        consumerScope: result.consumerScope,
+        accountId: result.accountId,
+        reason: result.reason,
+      });
     }
   };
 
-  const reportError = async (error: unknown, accountId: string): Promise<void> => {
+  const reportError = async (error: unknown, context: ReliableReportingConsumerErrorContextV1): Promise<void> => {
+    const diagnostic = {
+      consumerScope: context.consumerScope,
+      accountId: context.accountId,
+      reason: context.reason,
+    };
+    const fallback = (source: 'background' | 'observer'): void => {
+      // Error messages and stacks can contain request bodies or credentials.
+      console.warn('[adcp/reporting] buyer consumer failure', {
+        ...diagnostic,
+        source,
+      });
+    };
+    if (!options.onError) {
+      fallback('background');
+      return;
+    }
     try {
-      await options.onError?.(error, accountId);
+      await options.onError(error, diagnostic.accountId, { ...diagnostic });
     } catch {
       // Observability must not turn a completed or failed reconciliation into
       // an unhandled rejection in the scheduler.
+      fallback('observer');
     }
   };
 
@@ -369,7 +399,7 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
           try {
             await runSelectedAccount(queued, reason);
           } catch (error) {
-            await reportError(error, queued.accountId);
+            await reportError(error, { consumerScope: queued.consumerScope, accountId: queued.accountId, reason });
           }
         }
       })
@@ -386,7 +416,7 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
       ownerToken: options.ownerToken,
       leaseMilliseconds,
     });
-    if (!claimedLease) return { accountId: account.accountId, reason, state: 'busy' };
+    if (!claimedLease) return { ...key, reason, state: 'busy' };
     let lease: ReportingConsumerWorkLeaseV1 = claimedLease;
 
     const leaseAbort = new AbortController();
@@ -470,7 +500,7 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
             true
           );
           if (!delta.changed) {
-            if (leaseLost) return { accountId: account.accountId, reason, state: 'lease_lost' };
+            if (leaseLost) return { ...key, reason, state: 'lease_lost' };
             await advanceCheckpoint(
               options.persistence.changesCheckpointStore,
               key,
@@ -480,7 +510,7 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
               assertLeaseCurrent
             );
             const unchanged: ReliableReportingConsumerRunResultV1 = {
-              accountId: account.accountId,
+              ...key,
               reason,
               state: 'unchanged',
               changesCheckpoint: delta.changesCheckpoint,
@@ -489,9 +519,9 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
             return unchanged;
           }
         } catch (error) {
-          if (leaseLost) return { accountId: account.accountId, reason, state: 'lease_lost' };
+          if (leaseLost) return { ...key, reason, state: 'lease_lost' };
           cursorRecovered = true;
-          await reportError(error, account.accountId);
+          await reportError(error, { ...key, reason });
         }
       }
 
@@ -508,8 +538,8 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
         ),
         pendingConsumerStatusScope: account.consumerScope,
       } as ReconcileReportingOptions<TCredential>);
-      if (shutdownAbort.signal.aborted) return { accountId: account.accountId, reason, state: 'stopping' };
-      if (leaseLost) return { accountId: account.accountId, reason, state: 'lease_lost' };
+      if (shutdownAbort.signal.aborted) return { ...key, reason, state: 'stopping' };
+      if (leaseLost) return { ...key, reason, state: 'lease_lost' };
       if (reconciliation.ledger.accountId !== account.accountId) {
         throw consumerError(
           'ACCOUNT_SCOPE_MISMATCH',
@@ -530,18 +560,18 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
           );
           checkpointAdvanced = true;
         } catch (error) {
-          await reportError(error, account.accountId);
+          await reportError(error, { ...key, reason });
         }
       } else if (previous && options.persistence.changesCheckpointStore.clear) {
         try {
           assertLeaseCurrent();
           await options.persistence.changesCheckpointStore.clear(key, previous.checkpoint, lease);
         } catch (error) {
-          await reportError(error, account.accountId);
+          await reportError(error, { ...key, reason });
         }
       }
       const completed: ReliableReportingConsumerRunResultV1 = {
-        accountId: account.accountId,
+        ...key,
         reason,
         state: 'reconciled',
         ...(checkpoint && checkpointAdvanced ? { changesCheckpoint: checkpoint } : {}),
@@ -552,17 +582,17 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
       return completed;
     } catch (error) {
       if (shutdownAbort.signal.aborted) {
-        return { accountId: account.accountId, reason, state: 'stopping' };
+        return { ...key, reason, state: 'stopping' };
       }
       if (leaseLost || leaseAbort.signal.aborted) {
-        return { accountId: account.accountId, reason, state: 'lease_lost' };
+        return { ...key, reason, state: 'lease_lost' };
       }
       throw error;
     } finally {
       leaseFinished = true;
       clearInterval(renewal);
       if (expiryTimer) clearTimeout(expiryTimer);
-      await options.persistence.workLeases.release(lease).catch(error => reportError(error, account.accountId));
+      await options.persistence.workLeases.release(lease).catch(error => reportError(error, { ...key, reason }));
     }
   };
 
@@ -571,12 +601,23 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
     reason: ReliableReportingConsumerRunReasonV1
   ): Promise<ReliableReportingConsumerRunResultV1> => {
     const key = runtimeAccountKey(account.consumerScope, account.accountId);
-    if (stopped) return Promise.resolve({ accountId: account.accountId, reason, state: 'stopping' });
+    if (stopped)
+      return Promise.resolve({
+        consumerScope: account.consumerScope,
+        accountId: account.accountId,
+        reason,
+        state: 'stopping',
+      });
     const existing = active.get(key);
     if (existing) return existing;
     const work = withAccountSlot(() =>
       stopped
-        ? Promise.resolve({ accountId: account.accountId, reason, state: 'stopping' as const })
+        ? Promise.resolve({
+            consumerScope: account.consumerScope,
+            accountId: account.accountId,
+            reason,
+            state: 'stopping' as const,
+          })
         : execute(account, reason)
     ).finally(() => active.delete(key));
     active.set(key, work);
@@ -640,6 +681,7 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
       if (!authentication) {
         throw new TypeError('consumerScope is required for a reporting notification');
       }
+      boundedString(authentication.consumerScope, 'consumerScope', 4_096);
       const candidates = accountsById.get(notification.account_id) ?? [];
       const account = candidates.find(candidate => candidate.consumerScope === authentication.consumerScope);
       if (!account) {
@@ -648,7 +690,11 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
             'NOTIFICATION_SCOPE_UNRECOGNIZED',
             'authenticated reporting notification does not match the current account roster'
           ),
-          notification.account_id
+          {
+            consumerScope: authentication.consumerScope,
+            accountId: notification.account_id,
+            reason: notification.notification_type,
+          }
         );
         return null;
       }
@@ -660,7 +706,12 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
         payloadSha256,
       };
       if (await options.persistence.notifications?.isProcessed(notificationIdentity)) {
-        return { accountId: account.accountId, reason: notification.notification_type, state: 'duplicate' };
+        return {
+          consumerScope: account.consumerScope,
+          accountId: account.accountId,
+          reason: notification.notification_type,
+          state: 'duplicate',
+        };
       }
       const accountKey = runtimeAccountKey(account.consumerScope, account.accountId);
       const existing = active.get(accountKey);
@@ -668,13 +719,22 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
         try {
           await existing;
         } catch (error) {
-          await reportError(error, account.accountId);
+          await reportError(error, {
+            consumerScope: account.consumerScope,
+            accountId: account.accountId,
+            reason: notification.notification_type,
+          });
         }
         // A concurrent delivery of this same logical notification may have
         // completed while we waited. Different notifications always receive a
         // follow-up read after the older in-flight snapshot settles.
         if (await options.persistence.notifications?.isProcessed(notificationIdentity)) {
-          return { accountId: account.accountId, reason: notification.notification_type, state: 'duplicate' };
+          return {
+            consumerScope: account.consumerScope,
+            accountId: account.accountId,
+            reason: notification.notification_type,
+            state: 'duplicate',
+          };
         }
       }
       if (accounts.get(runtimeAccountKey(account.consumerScope, account.accountId)) !== account) return null;

@@ -348,6 +348,16 @@
         "default": "./dist/lib/upstream-recorder/index.js"
       }
     },
+    "./reporting/consumer": {
+      "import": {
+        "types": "./dist/lib/reporting/consumer/index.d.mts",
+        "default": "./dist/lib/reporting/consumer/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/reporting/consumer/index.d.ts",
+        "default": "./dist/lib/reporting/consumer/index.js"
+      }
+    },
     "./reporting/source": {
       "import": {
         "types": "./dist/lib/reporting/source/index.d.mts",
@@ -487,6 +497,9 @@
       "upstream-recorder": [
         "dist/lib/upstream-recorder/index.d.ts"
       ],
+      "reporting/consumer": [
+        "dist/lib/reporting/consumer/index.d.ts"
+      ],
       "reporting/source": [
         "dist/lib/reporting/source/index.d.ts"
       ],
@@ -550,6 +563,7 @@
     "examples/CONTRIBUTING.md",
     "examples/adcp.config.json",
     "examples/reliable-reporting-service/README.md",
+    "examples/reliable-reporting-buyer/**/*",
     "examples/seller-3.2-starter.ts",
     "examples/supply-path-verification.ts",
     "examples/wholesale-feed-sync.ts",
@@ -634,7 +648,7 @@
     "typecheck:skill-examples": "tsx scripts/typecheck-skill-examples.ts",
     "check:skill-sync": "tsx scripts/check-skill-sync.ts",
     "check:package": "npm run check:runtime-compat && npm run check:packed-artifact && npm run check:publish-protocol-artifacts && npm run typecheck:examples && publint --strict && node --max-old-space-size=8192 ./node_modules/@arethetypeswrong/cli/dist/index.js --pack . --exclude-entrypoints compliance-fixtures/reporting-consumer-status-v1.json compliance-fixtures/principal.yaml compliance-fixtures/reporting-core.yaml compliance-fixtures/canonical-storyboards-provenance.json",
-    "check:packed-artifact": "node scripts/check-packed-artifact.mjs",
+    "check:packed-artifact": "node scripts/check-packed-artifact.mjs && node scripts/check-reporting-consumer-package.mjs",
     "check:runtime-compat": "node scripts/check-runtime-compat.mjs",
     "check:package-size": "node scripts/check-package-size.mjs",
     "check:publish-protocol-artifacts": "node scripts/check-publish-protocol-artifacts.mjs",
