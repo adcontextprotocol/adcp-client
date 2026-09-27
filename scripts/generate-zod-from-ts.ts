@@ -3074,6 +3074,96 @@ export function postProcessCanonicalPrimitiveConstraints(content: string): strin
   return content;
 }
 
+/** Restore goal target bounds from the owning schema. Other titled copies of
+ * these goals omit the bound, so the general unanimity pass leaves it out. */
+function postProcessOptimizationGoalTargetBounds(content: string): string {
+  for (const [file, schemaName] of [
+    ['optimization-goal.json', 'OptimizationGoal'],
+    ['canonical-optimization-goal.json', 'CanonicalOptimizationGoal'],
+  ] as const) {
+    const source = JSON.parse(
+      readFileSync(path.join(__dirname, '../schemas/cache/latest/core', file), 'utf8')
+    ) as Record<string, unknown>;
+    const arms = source.oneOf;
+    if (!Array.isArray(arms)) throw new Error(`${file}: expected oneOf goal arms`);
+    let boundedTargets = 0;
+    for (const arm of arms) {
+      const target = arm?.properties?.target;
+      if (!target) continue;
+      for (const variant of Array.isArray(target.oneOf) ? target.oneOf : [target]) {
+        const value = variant?.properties?.value;
+        if (!value) continue;
+        if (value.type !== 'number' || value.exclusiveMinimum !== 0) {
+          throw new Error(`${file}: unsupported target.value bound`);
+        }
+        boundedTargets++;
+      }
+    }
+    const start = content.indexOf(`export const ${schemaName}Schema`);
+    if (start < 0) throw new Error(`${schemaName}Schema is missing`);
+    const next = content.indexOf('\n\nexport const ', start + 1);
+    const end = next < 0 ? content.length : next;
+    const block = content.slice(start, end);
+    const occurrences = [...block.matchAll(/\bvalue: z\.number\(\)(?:\.gt\(0\))?/g)].length;
+    if (occurrences !== boundedTargets) {
+      throw new Error(`${schemaName}Schema has ${occurrences} target values; expected ${boundedTargets}`);
+    }
+    const bounded = block.replace(/\bvalue: z\.number\(\)(?!\.gt\(0\))/g, 'value: z.number().gt(0)');
+    content = content.slice(0, start) + bounded + content.slice(end);
+  }
+  return content;
+}
+
+/** Draft-07 goal conditionals disappear in the TypeScript intermediary. */
+function postProcessOptimizationGoalConditionals(content: string): string {
+  for (const [file, schemaName] of [
+    ['optimization-goal.json', 'OptimizationGoal'],
+    ['canonical-optimization-goal.json', 'CanonicalOptimizationGoal'],
+  ] as const) {
+    const source = JSON.parse(
+      readFileSync(path.join(__dirname, '../schemas/cache/latest/core', file), 'utf8')
+    ) as Record<string, any>;
+    const metricArm = source.oneOf?.find((arm: any) => arm.properties?.kind?.const === 'metric');
+    const targetProperties: Record<string, unknown> = { value: { maximum: 1 } };
+    if (schemaName === 'OptimizationGoal') targetProperties.kind = { const: 'threshold_rate' };
+    const expected = [
+      {
+        if: { properties: { metric: { const: 'viewable_rate' } }, required: ['metric'] },
+        then: { required: ['standard'], properties: { target: { properties: targetProperties } } },
+      },
+      {
+        if: { properties: { metric: { enum: ['viewable_rate', 'viewed_seconds'] } }, required: ['metric'] },
+        else: { not: { anyOf: [{ required: ['standard'] }, { required: ['vendor'] }] } },
+      },
+    ];
+    if (!metricArm || !isDeepStrictEqual(metricArm.allOf, expected)) {
+      throw new Error(`${file}: unsupported metric goal conditionals`);
+    }
+    const start = content.indexOf(`export const ${schemaName}Schema`);
+    const next = content.indexOf('\n\nexport const ', start + 1);
+    if (start < 0 || next < 0) throw new Error(`${schemaName}Schema block is missing`);
+    const block = content.slice(start, next);
+    if (!block.endsWith(';') || block.includes('.superRefine(')) {
+      throw new Error(`${schemaName}Schema has an unexpected generated shape`);
+    }
+    const refinement = `.superRefine((goal, ctx) => {
+    if (goal.kind !== "metric") return;
+    if (goal.metric === "viewable_rate") {
+        if (goal.standard == null) ctx.addIssue({ code: "custom", path: ["standard"], message: "viewable_rate requires standard" });
+        if (goal.target != null) {
+            if (goal.target.kind !== "threshold_rate") ctx.addIssue({ code: "custom", path: ["target", "kind"], message: "viewable_rate requires threshold_rate target" });
+            if (goal.target.value > 1) ctx.addIssue({ code: "custom", path: ["target", "value"], message: "viewable_rate target must be at most 1" });
+        }
+    } else if (goal.metric !== "viewed_seconds") {
+        if (goal.standard !== undefined) ctx.addIssue({ code: "custom", path: ["standard"], message: "standard is only allowed for viewability metrics" });
+        if (goal.vendor !== undefined) ctx.addIssue({ code: "custom", path: ["vendor"], message: "vendor is only allowed for viewability metrics" });
+    }
+})`;
+    content = content.slice(0, start) + block.slice(0, -1) + refinement + ';' + content.slice(next);
+  }
+  return content;
+}
+
 /**
  * Preserve the audio-VAST constraints that cannot survive the JSON Schema ->
  * TypeScript intermediary. The source schema uses a root `not.anyOf` for the
@@ -5579,6 +5669,8 @@ async function generateZodSchemas() {
     // Reconcile canonical primitive constraints last, after structural and
     // exact-schema rewrites that may replace earlier generated blocks.
     zodSchemas = postProcessCanonicalPrimitiveConstraints(zodSchemas);
+    zodSchemas = postProcessOptimizationGoalTargetBounds(zodSchemas);
+    zodSchemas = postProcessOptimizationGoalConditionals(zodSchemas);
     zodSchemas = postProcessCanonicalVastAudioConstraints(zodSchemas);
     zodSchemas = postProcessPricingOptionConstraints(zodSchemas);
     zodSchemas = postProcessJsonSchemaUriFormats(zodSchemas);

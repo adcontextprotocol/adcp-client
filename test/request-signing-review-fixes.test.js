@@ -270,7 +270,7 @@ describe('AdCP 3.2 RFC 8941 binary profile', () => {
       revocationStore: new InMemoryRevocationStore(),
       now: () => now,
       operation: 'create_media_buy',
-      adcpVersion: '3.2.0-rc.6',
+      adcpVersion: '3.2.0-rc.7',
     };
     const signBody = body =>
       signRequest(

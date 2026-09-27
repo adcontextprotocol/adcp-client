@@ -328,7 +328,7 @@ describe('ReliableReportingService', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'reporting-revision-test',
       version: '1.0.0',
-      adcpVersion: '3.2.0-rc.6',
+      adcpVersion: '3.2.0-rc.7',
       validation: { requests: 'strict', responses: 'strict' },
     });
     const wireExact = await server.dispatchTestRequest(
@@ -367,7 +367,7 @@ describe('ReliableReportingService', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'reporting-service-test',
       version: '1.0.0',
-      adcpVersion: '3.2.0-rc.6',
+      adcpVersion: '3.2.0-rc.7',
       validation: { requests: 'strict', responses: 'strict' },
     });
     const result = await server.dispatchTestRequest({
@@ -573,7 +573,7 @@ describe('ReliableReportingService', () => {
     const server = createAdcpServerFromPlatform(observed, {
       name: 'consumer-scope-test',
       version: '1.0.0',
-      adcpVersion: '3.2.0-rc.6',
+      adcpVersion: '3.2.0-rc.7',
       validation: { requests: 'off', responses: 'off' },
       idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
       // Shared by both seats, exactly as the credential is.
@@ -639,7 +639,7 @@ describe('ReliableReportingService', () => {
     const server = createAdcpServerFromPlatform(observed, {
       name: 'reporting-receipt-consumer-scope-test',
       version: '1.0.0',
-      adcpVersion: '3.2.0-rc.6',
+      adcpVersion: '3.2.0-rc.7',
       validation: { requests: 'off', responses: 'off' },
       idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
       resolveSessionKey: () => 'shared-oauth-client',
@@ -741,7 +741,7 @@ describe('ReliableReportingService', () => {
     const platform = service.install({
       capabilities: {
         specialisms: [],
-        supported_versions: ['3.1', '3.2-rc.6'],
+        supported_versions: ['3.1', '3.2-rc.7'],
         config: {},
       },
       accounts: {
@@ -753,7 +753,7 @@ describe('ReliableReportingService', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'version-bound-reporting-service',
       version: '1.0.0',
-      adcpVersion: '3.2.0-rc.6',
+      adcpVersion: '3.2.0-rc.7',
       defaultAdcpVersion: '3.1',
       validation: { requests: 'strict', responses: 'strict' },
     });
@@ -764,7 +764,7 @@ describe('ReliableReportingService', () => {
     });
     const currentTools = await server.dispatchTestRequest({
       method: 'tools/list',
-      params: { _meta: { adcp_version: '3.2-rc.6' } },
+      params: { _meta: { adcp_version: '3.2-rc.7' } },
     });
     for (const tool of ['get_reporting_status', 'get_media_buy_delivery']) {
       assert.equal(
@@ -790,7 +790,7 @@ describe('ReliableReportingService', () => {
       method: 'tools/call',
       params: {
         name: 'get_adcp_capabilities',
-        arguments: { adcp_version: '3.2-rc.6' },
+        arguments: { adcp_version: '3.2-rc.7' },
       },
     });
     assert.notEqual(legacyCapabilities.isError, true, JSON.stringify(legacyCapabilities.structuredContent));
@@ -953,7 +953,7 @@ describe('ReliableReportingService', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'reporting-rows-test',
       version: '1.0.0',
-      adcpVersion: '3.2.0-rc.6',
+      adcpVersion: '3.2.0-rc.7',
       validation: { requests: 'strict', responses: 'strict' },
     });
     const wire = await server.dispatchTestRequest(
@@ -1058,7 +1058,7 @@ describe('ReliableReportingService', () => {
       {
         name: 'shared-delivery-handler-test',
         version: '1.0.0',
-        adcpVersion: '3.2.0-rc.6',
+        adcpVersion: '3.2.0-rc.7',
         // Projection, not schema validation, is the behavior under test.
         validation: { requests: 'off', responses: 'off' },
       }
@@ -1237,7 +1237,7 @@ describe('ReliableReportingService', () => {
       {
         name: 'legacy-cumulative-delivery-test',
         version: '1.0.0',
-        adcpVersion: '3.2.0-rc.6',
+        adcpVersion: '3.2.0-rc.7',
         validation: { requests: 'off', responses: 'off' },
         legacyHandlers: {
           mediaBuy: {
@@ -1610,7 +1610,7 @@ describe('ReliableReportingService', () => {
       {
         name: 'strict-merge-seam-test',
         version: '1.0.0',
-        adcpVersion: '3.2.0-rc.6',
+        adcpVersion: '3.2.0-rc.7',
         validation: { requests: 'off', responses: 'off' },
         mergeSeam: 'strict',
         legacyHandlers: {
@@ -2645,7 +2645,7 @@ describe('ReliableReportingService', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'null-revision-test',
       version: '1.0.0',
-      adcpVersion: '3.2.0-rc.6',
+      adcpVersion: '3.2.0-rc.7',
       // Production shape: a null is never stripped before routing.
       validation: { requests: 'off', responses: 'off' },
     });

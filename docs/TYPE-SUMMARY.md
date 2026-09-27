@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-09-26
+> Generated at: 2026-09-27
 > @adcp/sdk v14.0.0-rc.48
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -1128,6 +1128,7 @@ _Request:_
   disclosure_persistence: Disclosure Persistence[]
   output_format_ids: Format Id[]
   input_format_ids: Format Id[]
+  account: Account Ref
   pagination: Pagination Request
   context: Context
 }

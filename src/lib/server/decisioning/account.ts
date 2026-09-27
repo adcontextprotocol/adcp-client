@@ -452,10 +452,10 @@ export interface AccountToolContext<TCtxMeta = Record<string, unknown>> extends 
 }
 
 /**
- * Request context for tools whose wire request does not carry an `account`
- * field — `preview_creative`, `list_creative_formats`, and
- * `provide_performance_feedback`. The framework calls
- * `accounts.resolve(undefined, ctx)` for these, accepting a `null` return; if
+ * Request context for tools that can omit an `account` field —
+ * `preview_creative`, `list_creative_formats` (optional since rc.7), and
+ * `provide_performance_feedback`. When omitted, the framework calls
+ * `accounts.resolve(undefined, ctx)`, accepting a `null` return; if
  * `null`, `ctx.account` is undefined when the handler runs.
  *
  * Adopter handlers MUST handle the `undefined` case explicitly. Choose one of:
@@ -623,8 +623,9 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * Resolve buyer's AccountReference into the platform's tenant model.
    *
    * `ref` is `undefined` when the wire request didn't carry an account
-   * field — `provide_performance_feedback` and `list_creative_formats` are
-   * the canonical examples. Per `resolution` mode:
+   * field — `provide_performance_feedback` and `list_creative_formats`
+   * without its optional rc.7 account are canonical examples. Per
+   * `resolution` mode:
    * - `'derived'`: return the account the credential can reach when exactly
    *   one is reachable (the singleton shortcut); return `null` when the
    *   credential can reach several and the buyer named none — ambiguity is

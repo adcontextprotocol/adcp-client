@@ -1,6 +1,6 @@
 # Migrating from 13.x to the 14 prerelease
 
-SDK 14 adopts AdCP `3.2.0-rc.6` while preserving the canonical creative boundary introduced in SDK 13. Most SDK 13 applications can install the prerelease and continue using the established 3.x tools unchanged; adopt the compact 3.2 lifecycle only after the remote agent advertises it.
+SDK 14 adopts AdCP `3.2.0-rc.7` while preserving the canonical creative boundary introduced in SDK 13. Most SDK 13 applications can install the prerelease and continue using the established 3.x tools unchanged; adopt the compact 3.2 lifecycle only after the remote agent advertises it.
 
 Legacy signal-discovery adapters may keep supplying `opts.signals.getSignals`
 (or `legacyHandlers.signals.getSignals`) while declaring the truthful
@@ -10,10 +10,10 @@ now satisfies platform validation without requiring adopters to invent an
 
 AdCP 3.2 prereleases are exact protocol pins: beta.6 replaces beta.5 in the
 SDK's compatible-version list rather than extending a rolling 3.2-beta range.
-Likewise, `3.2.0-rc.6` replaces `3.2.0-rc.4`; callers pinned to rc.4 must
+Likewise, `3.2.0-rc.7` replaces `3.2.0-rc.6`; callers pinned to rc.6 must
 upgrade both peers together because the SDK does not advertise superseded 3.2
 prereleases as compatible wire releases and ships only the current
-prerelease's schema bundle. Pin `adcpVersion: '3.2-rc.6'`; the moving family
+prerelease's schema bundle. Pin `adcpVersion: '3.2-rc.7'`; the moving family
 alias `'3.2-rc'` is intentionally rejected. Pinning a superseded exact
 prerelease such as `'3.2.0-rc.2'` raises a configuration error at schema load
 rather than silently validating against a different contract.
@@ -30,7 +30,8 @@ display, creative component assets, and A2A 1.0 request-signing method names.
 
 ### Configure replay safety for creative-feature evaluation
 
-AdCP `3.2.0-rc.6` classifies `get_creative_features` as a mutating evaluation.
+AdCP `3.2.0-rc.6` classified `get_creative_features` as a mutating evaluation;
+rc.7 retains that rule.
 SDK clients now generate an `idempotency_key` when callers omit one and include
 that key in request signing. Servers that register `getCreativeFeatures` must
 therefore configure an idempotency store whose replay TTL is at least 86,400
@@ -78,9 +79,9 @@ unversioned callers off 3.1:
 
 ```ts
 const server = createAdcpServer({
-  adcpVersion: '3.2.0-rc.6',
+  adcpVersion: '3.2.0-rc.7',
   defaultAdcpVersion: '3.1.18',
-  capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.6'] },
+  capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.7'] },
   // handlers...
 });
 ```
@@ -1151,7 +1152,7 @@ import { getToolInputSchema, getToolResponseSchema } from '@adcp/sdk/schemas';
 
 const request = getToolInputSchema('create_media_buy', { adcpVersion: '3.0' });
 const response = getToolResponseSchema('create_media_buy', {
-  adcpVersion: '3.2.0-rc.6',
+  adcpVersion: '3.2.0-rc.7',
   variant: 'sync',
 });
 

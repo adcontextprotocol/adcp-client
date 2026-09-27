@@ -3269,9 +3269,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         );
       }
     },
-    // Auth-derived path: framework calls this for tools whose wire request
-    // doesn't carry an `account` field (`provide_performance_feedback`,
-    // `list_creative_formats`, `tasks_get`). The platform's resolver runs
+    // Auth-derived path: framework calls this when the request omits
+    // `account` (`provide_performance_feedback`, `list_creative_formats`,
+    // `tasks_get`). The platform's resolver runs
     // with `undefined` ref + `authInfo` available — adopters of any
     // `resolution` mode can return a non-null Account here:
     //
@@ -7405,7 +7405,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       ) => {
         const reqCtx = ctxFor(ctx, params);
         return projectSync(
-          () => sales!.listCreativeFormatsLegacy!(params, reqCtx),
+          () => sales!.listCreativeFormatsLegacy!(asValidatedDomainRequest(params), reqCtx),
           r => r
         );
       },
@@ -7542,9 +7542,9 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       );
     },
 
-    // No-account tool — `list_creative_formats` request schema doesn't carry
-    // `account`. The framework's `resolveAccountFromAuth` runs and accepts a
-    // null return; the platform method receives `ctx.account` possibly
+    // Optional-account tool — `list_creative_formats` may carry `account`
+    // in rc.7. With no account, `resolveAccountFromAuth` accepts a null
+    // return; the platform method receives `ctx.account` possibly
     // undefined per `NoAccountCtx`. Wired identically on both
     // `CreativeBuilderPlatform` and `CreativeAdServerPlatform`.
     listCreativeFormats: async (params, ctx) => {
@@ -7558,7 +7558,8 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       }
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => (creative as CreativeBuilderPlatform).listCreativeFormatsLegacy!(params, reqCtx),
+        () =>
+          (creative as CreativeBuilderPlatform).listCreativeFormatsLegacy!(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     },

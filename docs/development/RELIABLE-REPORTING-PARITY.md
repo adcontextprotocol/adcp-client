@@ -13,6 +13,24 @@ receipt checkpoints. Exact buyer-adjustment parity remains a Python-side
 follow-up; the rows below distinguish shared proof from TypeScript-only proof
 instead of treating an unimplemented peer capability as verified.
 
+## 2026-09-27 interoperability checkpoint
+
+The [published Python `adcp==8.0.0b16` wheel](https://pypi.org/project/adcp/8.0.0b16/) (SHA-256
+`7589a546cacdddce3a7a827adaa11d4ccab34768c558689b1c6850b85cd098b1`)
+passes all seven shared canonical JSON vectors byte-for-byte. The published
+TypeScript `@adcp/sdk@14.0.0-rc.48` reference-seller run against the Python
+`v8.0.0-beta.16` source revision was **partial**: 30 steps passed, 11 failed,
+and 155 were skipped. Most failures arise because the Python example seller
+advertises `canonical_creatives=false` under AdCP 3.2. The [workflow run](https://github.com/adcontextprotocol/adcp-client/actions/runs/36349220286)
+is green only because the Python row is advisory.
+Python beta.16 speaks AdCP rc.6, so a TypeScript rc.7 candidate against that
+seller is a version-skew probe, not matching-release qualification.
+
+That storyboard is a general reference-seller smoke test. The installed,
+PostgreSQL-backed reporting matrix remains tracked in
+[Python issue #1199](https://github.com/adcontextprotocol/adcp-client-python/issues/1199);
+this checkpoint does not qualify its untested status, receipt, or replay flows.
+
 | Contract | Python implementation | TypeScript implementation | Shared proof |
 | --- | --- | --- | --- |
 | Canonical JSON and fingerprints | `reporting.canonical_json` | `reporting/source/manifest.ts` | `test/fixtures/reporting-interop/canonical-json-v1.json` |

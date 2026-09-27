@@ -424,8 +424,8 @@ accounts: {
   resolution: 'explicit',  // or omit — 'explicit' is the default
   resolve: async (ref, ctx) => {
     const id = refAccountId(ref);
-    if (id) return db.findById(id);
-    if (ref?.brand && ref?.operator) return db.findByBrandOperator(ref.brand, ref.operator);
+    if (id) return db.findForPrincipal(id, ctx.authInfo);
+    if (ref?.brand && ref?.operator) return db.findByBrandOperatorForPrincipal(ref.brand, ref.operator, ctx.authInfo);
     return null;
   },
 }
@@ -433,6 +433,9 @@ accounts: {
 
 `upsert` is optional for explicit-mode platforms. Implement it if your buyers
 need to pre-register accounts before use (e.g., credit-check gates).
+Always bind buyer-supplied account references to the authenticated principal;
+return `null` for a reference outside that principal's roster. This also applies
+to `list_creative_formats` when its optional rc.7 `account` field is supplied.
 
 For the Shape C publisher-curated pattern, prefer `createRosterAccountStore`
 over a hand-rolled store — it handles the id-arm dispatch and `list_accounts`
@@ -443,8 +446,9 @@ plumbing, and exposes `resolveWithoutRef` for the ref-less case (see
 
 ## Ref-less resolution (`list_creative_formats`, `preview_creative`, `provide_performance_feedback`)
 
-These tools send no `account` field on the wire, so the framework calls
-`accounts.resolve(undefined, ctx)`. Publisher-curated (`resolution: 'explicit'`)
+`preview_creative` and `provide_performance_feedback` send no `account` field.
+Since AdCP 3.2.0-rc.7, `list_creative_formats` may send one. When it is omitted,
+the framework calls `accounts.resolve(undefined, ctx)`. Publisher-curated (`resolution: 'explicit'`)
 platforms using `createRosterAccountStore` get `null` by default —
 `ctx.account` is `undefined` in those handlers.
 
@@ -455,7 +459,7 @@ account for these tools:
 import { createRosterAccountStore } from '@adcp/sdk/server';
 
 const accounts = createRosterAccountStore({
-  lookup: async (id, ctx) => db.findById(id),
+  lookup: async (id, ctx) => db.findForPrincipal(id, ctx?.authInfo),
   toAccount: row => ({
     id: row.id,
     name: row.name,
