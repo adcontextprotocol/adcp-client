@@ -14,7 +14,7 @@ A2A 1.0 request-signing method names.
 Install the v14 prerelease explicitly:
 
 ```bash
-npm install '@adcp/sdk@^14.0.0-0'
+npm install @adcp/sdk@rc
 ```
 
 If a pre-3.2 brief can return products without a proposal, configure a durable

@@ -26,7 +26,7 @@ const FIXTURE_DIR = path.join(__dirname, 'v2-projection-fixtures');
 // `schemas/cache/<3.1+>/`; CI syncs the maintained stable and current bundles.
 const SCHEMAS_CACHE_ROOT = path.join(__dirname, '..', '..', 'schemas', 'cache');
 const CURRENT_VERSION = readFileSync(path.join(__dirname, '..', '..', 'ADCP_VERSION'), 'utf8').trim();
-const REGISTRY_EXISTS = ['3.1.18', CURRENT_VERSION, 'latest'].some(v =>
+const REGISTRY_EXISTS = ['3.1.24', CURRENT_VERSION, 'latest'].some(v =>
   existsSync(path.join(SCHEMAS_CACHE_ROOT, v, 'registries', 'v1-canonical-mapping.json'))
 );
 const SKIP_REASON = REGISTRY_EXISTS ? false : 'requires a maintained 3.1+ schema cache';

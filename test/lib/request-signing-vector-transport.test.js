@@ -786,7 +786,7 @@ test('legacy omitted content-digest policy defaults to either before transport g
   for (const vector of ['negative-007-missing-content-digest', 'negative-018-digest-covered-when-forbidden']) {
     const result = await probeRequestSigningVector(vector, 'https://agent.invalid/a2a', {
       protocol: 'a2a',
-      adcpVersion: '3.1.18',
+      adcpVersion: '3.1.24',
       _profile: profile,
     });
     assert.strictEqual(result.skip_reason, 'capability_profile_mismatch', vector);
@@ -1243,7 +1243,7 @@ test('the 028 gate reads only its own capability field, on every compliance line
       _profile: { name: 'agent', tools: [], raw_capabilities: { request_signing: requestSigning } },
     });
 
-  for (const version of [undefined, '3.1.18']) {
+  for (const version of [undefined, '3.1.24']) {
     const line = version ?? 'default';
     // Absent bucket: the spec-defined gate. Excluded.
     assert.strictEqual(
@@ -1318,7 +1318,7 @@ test('a schema-invalid protocol-method declaration cannot suppress vector 028', 
   // Length is deliberately not in this list: 3.2 caps names at 256 and 3.1
   // declares no cap, so an over-long name is line-specific. See the
   // length-cap test below.
-  for (const version of [undefined, '3.1.18']) {
+  for (const version of [undefined, '3.1.24']) {
     const line = version ?? '3.2';
     for (const declaration of invalidEverywhere) {
       const result = await probe(declaration, version);
@@ -1336,9 +1336,9 @@ test('a schema-invalid protocol-method declaration cannot suppress vector 028', 
   //   3.2 adds A2A 1.0 PascalCase names and multi-segment paths, and forbids
   //   `tools/call`; 3.1 allows a single lowercase pair only.
   const perLine = [
-    { declaration: ['CancelTask'], valid: '3.2', invalid: '3.1.18' },
-    { declaration: ['tasks/pushNotificationConfig/set'], valid: '3.2', invalid: '3.1.18' },
-    { declaration: ['tools/call'], valid: '3.1.18', invalid: '3.2' },
+    { declaration: ['CancelTask'], valid: '3.2', invalid: '3.1.24' },
+    { declaration: ['tasks/pushNotificationConfig/set'], valid: '3.2', invalid: '3.1.24' },
+    { declaration: ['tools/call'], valid: '3.1.24', invalid: '3.2' },
   ];
   for (const { declaration, valid, invalid } of perLine) {
     const honoured = await probe(declaration, valid === '3.2' ? undefined : valid);
@@ -1376,7 +1376,7 @@ test('the protocol-method grammars match the shipped capabilities schemas', () =
   assert.strictEqual(PROTOCOL_METHOD_GRAMMARS.since_3_2.maxLength, since32.maxLength);
   assert.deepStrictEqual([...PROTOCOL_METHOD_GRAMMARS.since_3_2.forbidden], [since32.not.const]);
 
-  const pre32 = itemsFor('3.1.18');
+  const pre32 = itemsFor('3.1.24');
   assert.strictEqual(sourceOf(PROTOCOL_METHOD_GRAMMARS.pre_3_2.pattern), pre32.pattern);
   // 3.1 declares no cap and no forbidden constant; imposing either would
   // reject a name that line accepts, and a rejected declaration is graded.
@@ -1513,12 +1513,12 @@ test("method-name length is capped only where the line's schema caps it", async 
   assert.strictEqual(long31[0].length, 258);
 
   assert.strictEqual(
-    (await probe(short31, '3.1.18')).skip_reason,
+    (await probe(short31, '3.1.24')).skip_reason,
     'capability_profile_mismatch',
     '3.1: a short valid name is honoured'
   );
   assert.strictEqual(
-    (await probe(long31, '3.1.18')).skip_reason,
+    (await probe(long31, '3.1.24')).skip_reason,
     'capability_profile_mismatch',
     '3.1: a 258-character name is valid on this line and must stay honoured'
   );

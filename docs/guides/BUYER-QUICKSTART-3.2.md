@@ -9,7 +9,7 @@ For request-scoped callers whose callback or poll may run on another process,
 use the [durable buyer writes recipe](./DURABLE-BUYER-WRITES.md).
 
 ```bash
-npm install '@adcp/sdk@^14.0.0-0'
+npm install @adcp/sdk@rc
 ```
 
 ```ts

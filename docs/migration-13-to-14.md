@@ -80,8 +80,8 @@ unversioned callers off 3.1:
 ```ts
 const server = createAdcpServer({
   adcpVersion: '3.2.0-rc.7',
-  defaultAdcpVersion: '3.1.18',
-  capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.7'] },
+  defaultAdcpVersion: '3.1.24',
+  capabilities: { supported_versions: ['3.1.24', '3.2.0-rc.7'] },
   // handlers...
 });
 ```
@@ -100,7 +100,7 @@ SDK 14's AdCP 3.2 transport requires `@a2a-js/sdk` 1.x. Upgrade the peer
 alongside the AdCP SDK:
 
 ```bash
-npm install '@adcp/sdk@^14.0.0-0' @a2a-js/sdk@^1.0.1
+npm install @adcp/sdk@rc @a2a-js/sdk@^1.0.1
 ```
 
 The client and server use the official 1.0 Agent Card and JSON-RPC APIs and
@@ -302,7 +302,7 @@ tasks. A failed response may carry both the top-level summary `error` and a
 canonical `result.errors[]`; they describe the same failure.
 
 ```bash
-npm install '@adcp/sdk@^14.0.0-0'
+npm install @adcp/sdk@rc
 ```
 
 The untagged npm install remains SDK 13. Keep that line for production AdCP 3.1 deployments until the 3.2 application and its counterparties have completed beta validation.
@@ -514,7 +514,7 @@ be read are classified as before (no new failures from an unparseable
 
 ## Upgrade checklist
 
-1. Pin SDK 14 with the `beta` tag or an exact `14.0.0-beta.*` version. Do not rely on npm `latest` for beta rollout.
+1. Pin SDK 14 with the `rc` tag or an exact `14.0.0-rc.*` version. Do not rely on npm `latest` for RC rollout.
 2. Move compact-first applications to `agent.negotiateMediaBuyLifecycle()` so the SDK owns capability-gated established fallbacks and their declared loss boundaries.
 3. If you use request signing, propagate the negotiated or configured agent version into signing and verification. Expect standard padded Base64 plus mandatory `Content-Digest` only for AdCP 3.2.
 4. Return `media_buy_status`, not top-level `status`, from new media-buy server handlers.

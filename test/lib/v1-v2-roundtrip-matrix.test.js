@@ -41,7 +41,7 @@ const FIXTURE_DIR = path.join(__dirname, 'v2-projection-fixtures');
 const CATALOG_PATH = path.join(FIXTURE_DIR, 'aao-reference-formats.json');
 const SCHEMAS_CACHE_ROOT = path.join(__dirname, '..', '..', 'schemas', 'cache');
 const CURRENT_VERSION = readFileSync(path.join(__dirname, '..', '..', 'ADCP_VERSION'), 'utf8').trim();
-const REGISTRY_PATH = ['3.1.18', CURRENT_VERSION, 'latest']
+const REGISTRY_PATH = ['3.1.24', CURRENT_VERSION, 'latest']
   .map(version => path.join(SCHEMAS_CACHE_ROOT, version, 'registries', 'v1-canonical-mapping.json'))
   .find(candidate => existsSync(candidate));
 

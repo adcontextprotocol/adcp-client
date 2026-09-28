@@ -25,7 +25,7 @@ const CATALOG_PATH = path.join(FIXTURE_DIR, 'aao-reference-formats.json');
 // `latest` remain valid fallbacks.
 const SCHEMAS_CACHE_ROOT = path.join(__dirname, '..', '..', 'schemas', 'cache');
 const CURRENT_VERSION = readFileSync(path.join(__dirname, '..', '..', 'ADCP_VERSION'), 'utf8').trim();
-const REGISTRY_EXISTS = ['3.1.18', CURRENT_VERSION, 'latest'].some(v =>
+const REGISTRY_EXISTS = ['3.1.24', CURRENT_VERSION, 'latest'].some(v =>
   existsSync(path.join(SCHEMAS_CACHE_ROOT, v, 'registries', 'v1-canonical-mapping.json'))
 );
 

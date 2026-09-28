@@ -20,7 +20,7 @@ describe('version-aware tool JSON Schemas (#2678)', () => {
     assert.strictEqual(v30.schema.properties.paused, undefined);
 
     assert.strictEqual(v31.bundleKey, '3.1');
-    assert.strictEqual(v31.resolvedVersion, '3.1.18');
+    assert.strictEqual(v31.resolvedVersion, '3.1.24');
     assert.strictEqual(v31.schema.properties.adcp_major_version, undefined);
     assert.ok(v31.schema.properties.paused);
 
@@ -40,7 +40,7 @@ describe('version-aware tool JSON Schemas (#2678)', () => {
 
     const submitted = getToolResponseSchema('get_products', { adcpVersion: '3.1', variant: 'submitted' });
     assert.strictEqual(submitted.direction, 'submitted');
-    assert.strictEqual(submitted.resolvedVersion, '3.1.18');
+    assert.strictEqual(submitted.resolvedVersion, '3.1.24');
   });
 
   it('fails clearly for unavailable bundles, tools, and response variants', () => {

@@ -45,10 +45,22 @@ seller now negotiates rc.7 and executes two partial tracks: 30 steps passed,
 11 failed, and 155 skipped. The 11 failures center on the example seller's
 `canonical_creatives=false` advertisement under AdCP 3.2. The CI workflow
 uploads the full `storyboard-result-python.json` artifact. This general seller
-storyboard remains advisory. The installed PostgreSQL reporting matrix in
-[Python issue #1199](https://github.com/adcontextprotocol/adcp-client-python/issues/1199)
-has not run on these artifacts, so Managed Delivery, receipts, webhook replay,
-and buyer reconciliation remain unqualified across SDKs.
+storyboard remains advisory.
+
+The independent, installed-artifact PostgreSQL reporting gate passed on
+integrated Python `main` commit `7549e425ae1804da2a0cb5b746132605865e2a2e`:
+Core **4/4** and full lifecycle **4/4**. Its exact 2×2 used published Python
+`8.0.0b16` / `8.0.0b18` and published TypeScript `14.0.0-rc.47` /
+`14.0.0-rc.48` against the signed `3.2.0-rc.7` protocol bundle. Each full
+cell exercised Managed Delivery, Reconciled Billing, exact revision reads,
+accepted receipts, and signed webhook retry/replay in fresh PostgreSQL state.
+See the [#1199 acceptance record](https://github.com/adcontextprotocol/adcp-client-python/issues/1199#issuecomment-5868029489).
+
+That matrix does not include the current TypeScript `rc.49` artifact, the
+strict controller fix, or the final AdCP 3.2 bundle. Final SDK 14 release
+qualification must rerun the installed-artifact matrix on the exact release
+candidate and the Python release-PR merge commit. Python #1199 remains open
+for that final gate.
 
 | Contract | Python implementation | TypeScript implementation | Shared proof |
 | --- | --- | --- | --- |
