@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const { buildRequest } = require('../../dist/lib/testing/storyboard/request-builder.js');
 const { applyBrandInvariant } = require('../../dist/lib/testing/storyboard/runner.js');
+const { GetMediaBuyDeliveryRequestSchema } = require('../../dist/lib/types/schemas.generated.js');
 
 const BRAND = { domain: 'acmeoutdoor.example' };
 const ACCOUNT = {
@@ -16,6 +17,192 @@ function effectiveRequest(task, sampleRequest, context) {
   const step = { id: `scope-${task}`, title: `Scope ${task}`, task, sample_request: sampleRequest };
   return applyBrandInvariant(buildRequest(step, context, OPTIONS), OPTIONS, task);
 }
+
+test('controller uses an authored natural-key operator over stale context with the run brand (#3044)', () => {
+  const authoredAccount = {
+    brand: { domain: 'shared-seller.example' },
+    operator: 'buyer-agent.example',
+    sandbox: false,
+  };
+  const request = effectiveRequest(
+    'comply_test_controller',
+    { scenario: 'list_scenarios', account: authoredAccount },
+    { account: { account_id: 'account-from-sync' } }
+  );
+
+  assert.deepStrictEqual(request.account, { ...authoredAccount, brand: BRAND, sandbox: true });
+});
+
+test('reporting controller uses an authored account ID over a different context account (#3044)', () => {
+  const request = effectiveRequest(
+    'comply_test_controller',
+    { scenario: 'reporting_core_lifecycle_probe', account: { account_id: 'shared-account', sandbox: false } },
+    { account: { account_id: 'account-from-sync' } }
+  );
+
+  assert.deepStrictEqual(request.account, { account_id: 'shared-account', sandbox: true });
+});
+
+test('media-buy simulation keeps the create and plain delivery account scope (#3044)', () => {
+  const context = { account: { account_id: 'account-from-sync' } };
+  const authoredAccount = { account_id: 'different-fixture-account' };
+  const controller = effectiveRequest(
+    'comply_test_controller',
+    { scenario: 'simulate_delivery', account: authoredAccount },
+    context
+  );
+  const create = effectiveRequest('create_media_buy', { account: authoredAccount }, context);
+  const delivery = effectiveRequest('get_media_buy_delivery', { account: authoredAccount }, context);
+
+  assert.deepStrictEqual(controller.account, { ...create.account, sandbox: true });
+  assert.deepStrictEqual(delivery.account, create.account);
+});
+
+test('media-buy seeding keeps the later list account scope with a synced natural key (#3044)', () => {
+  const context = { account: { brand: BRAND, operator: 'synced-buyer.example' } };
+  const authoredAccount = { account_id: 'primary-account', sandbox: true };
+  const controller = effectiveRequest(
+    'comply_test_controller',
+    { scenario: 'seed_media_buy', account: authoredAccount, params: { media_buy_id: 'media-buy-1' } },
+    context
+  );
+  const list = effectiveRequest('get_media_buys', { account: authoredAccount }, context);
+
+  assert.deepStrictEqual(controller.account, { ...list.account, sandbox: true });
+  assert.deepStrictEqual(list.account, context.account);
+});
+
+test('Core revision controller and exact delivery read use the same authored account ID (#3044)', () => {
+  const context = { account: { account_id: 'account-from-sync' }, media_buy_id: 'stale-media-buy' };
+  const authoredAccount = { account_id: 'reporting_core_nonempty_lab' };
+  const controller = effectiveRequest(
+    'comply_test_controller',
+    { scenario: 'reporting_core_lifecycle_probe', account: { ...authoredAccount, sandbox: true } },
+    context
+  );
+  const delivery = effectiveRequest(
+    'get_media_buy_delivery',
+    { account: authoredAccount, reporting_revision_id: 'reporting-revision-1', pagination: { max_results: 1 } },
+    context
+  );
+
+  assert.deepStrictEqual(controller.account, { ...authoredAccount, sandbox: true });
+  assert.deepStrictEqual(delivery.account, authoredAccount);
+  assert.deepStrictEqual(delivery.pagination, { max_results: 1 });
+  assert.strictEqual(delivery.media_buy_ids, undefined);
+});
+
+test('exact revision read strips controller-only sandbox from an authored account ID (#3044)', () => {
+  const request = effectiveRequest(
+    'get_media_buy_delivery',
+    { account: { account_id: 'reporting-core-lab', sandbox: true }, reporting_revision_id: 'revision-1' },
+    { account: { account_id: 'account-from-sync' } }
+  );
+
+  assert.deepStrictEqual(request.account, { account_id: 'reporting-core-lab' });
+  assert.ok(GetMediaBuyDeliveryRequestSchema.safeParse(request).success);
+});
+
+test('exact revision read keeps an authored natural key in the sandbox partition (#3044)', () => {
+  const account = { brand: { domain: 'fixture-brand.example' }, operator: 'buyer-agent.example' };
+  const request = effectiveRequest(
+    'get_media_buy_delivery',
+    { account, reporting_revision_id: 'revision-1' },
+    { account: { account_id: 'account-from-sync' } }
+  );
+
+  assert.deepStrictEqual(request.account, { brand: BRAND, operator: account.operator, sandbox: true });
+  assert.ok(GetMediaBuyDeliveryRequestSchema.safeParse(request).success);
+});
+
+test('controller treats a sandbox-only fixture as a routing hint, not an account target (#3044)', () => {
+  const request = effectiveRequest(
+    'comply_test_controller',
+    { scenario: 'simulate_delivery', account: { sandbox: true } },
+    { account: { account_id: 'account-from-sync' } }
+  );
+
+  assert.deepStrictEqual(request.account, { account_id: 'account-from-sync', sandbox: true });
+});
+
+test('sandbox-only controller fallback retains the run brand on a natural context account (#3044)', () => {
+  const contextAccount = {
+    brand: { domain: 'synced-brand.example' },
+    operator: 'buyer-agent.example',
+  };
+  const request = effectiveRequest(
+    'comply_test_controller',
+    { scenario: 'simulate_delivery', account: { sandbox: true } },
+    { account: contextAccount }
+  );
+
+  assert.deepStrictEqual(request.account, { ...contextAccount, brand: BRAND, sandbox: true });
+});
+
+test('media-buy simulation and delivery read share the run brand and resolved operator (#3044)', () => {
+  const context = {
+    account: { brand: { domain: 'synced-brand.example' }, operator: 'buyer-agent.example' },
+  };
+  const authoredAccount = {
+    brand: { domain: 'fixture-brand.example' },
+    operator: 'buyer-agent.example',
+    sandbox: true,
+  };
+  const controller = effectiveRequest(
+    'comply_test_controller',
+    { scenario: 'simulate_delivery', account: authoredAccount },
+    context
+  );
+  const delivery = effectiveRequest(
+    'get_media_buy_delivery',
+    { account: authoredAccount, media_buy_id: 'media-buy-1' },
+    context
+  );
+
+  assert.deepStrictEqual(controller.account, { ...delivery.account, sandbox: true });
+  assert.deepStrictEqual(controller.account.brand, BRAND);
+});
+
+test('seed_account uses the authorized caller, not the account being created (#3044)', () => {
+  const request = effectiveRequest(
+    'comply_test_controller',
+    { scenario: 'seed_account', account: { account_id: 'new-account', sandbox: true } },
+    { account: { account_id: 'authorized-caller' } }
+  );
+
+  assert.deepStrictEqual(request.account, { account_id: 'authorized-caller', sandbox: true });
+});
+
+test('seed_account falls back to the harness caller for an authored natural key (#3044)', () => {
+  const request = effectiveRequest(
+    'comply_test_controller',
+    {
+      scenario: 'seed_account',
+      account: { brand: { domain: 'new-brand.example' }, operator: 'new-operator.example' },
+    },
+    {}
+  );
+
+  assert.deepStrictEqual(request.account, { brand: BRAND, operator: BRAND.domain, sandbox: true });
+});
+
+test('creative feature async arm keeps the later operation account scope and run brand (#3044)', () => {
+  const context = { account: { account_id: 'authorized-caller' } };
+  const authoredAccount = {
+    brand: { domain: 'fixture-brand.example' },
+    operator: 'buyer-agent.example',
+    sandbox: true,
+  };
+  const controller = effectiveRequest(
+    'comply_test_controller',
+    { scenario: 'force_get_creative_features_arm', account: authoredAccount },
+    context
+  );
+  const operation = effectiveRequest('get_creative_features', { account: authoredAccount }, context);
+
+  assert.deepStrictEqual(controller.account, operation.account);
+  assert.deepStrictEqual(controller.account.brand, BRAND);
+});
 
 test('create_media_buy and get_task_status retain one authored natural account scope (#2703)', () => {
   const context = {

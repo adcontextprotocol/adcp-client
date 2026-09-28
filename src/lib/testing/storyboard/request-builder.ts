@@ -183,6 +183,34 @@ function resolveMediaBuyAccount(fixtureAccount: unknown, contextAccount: unknown
   return resolvedAccount;
 }
 
+const OPERATION_SCOPED_CONTROLLER_SCENARIOS = new Set([
+  'force_create_media_buy_arm',
+  'force_get_products_arm',
+  'force_get_signals_arm',
+  'force_task_completion',
+  'simulate_delivery',
+  'simulate_budget_spend',
+  'force_media_buy_status',
+  'seed_media_buy',
+]);
+
+function isOperationScopedControllerScenario(scenario: unknown): boolean {
+  return typeof scenario === 'string' && OPERATION_SCOPED_CONTROLLER_SCENARIOS.has(scenario);
+}
+
+function hasAuthoredAccountIdentity(account: unknown): account is Record<string, unknown> {
+  if (account === null || typeof account !== 'object' || Array.isArray(account)) return false;
+  const ref = account as Record<string, unknown>;
+  return (
+    (typeof ref.account_id === 'string' && ref.account_id.length > 0) ||
+    (typeof ref.operator === 'string' && ref.operator.length > 0)
+  );
+}
+
+function isExactRevisionId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
 function generatedIdSuffix(step: StoryboardStep, runnerVars: RunnerVariables | undefined, nowMs?: number): string {
   const timestamp = nowMs ?? runClockMs(runnerVars);
   if (runnerVars?.runStartMs === undefined) return String(timestamp);
@@ -545,8 +573,8 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
   },
 
   get_media_buy_delivery(step, context, options) {
-    // Same account-resolution rule as get_media_buys — fixture fields preserved,
-    // with trusted context authoritative and authored natural operators preserved.
+    // Exact reporting-revision reads address the account that owns the authored
+    // revision. Other delivery reads follow the media-buy create/read scope.
     // Envelope fields dropped from the local spread; outer enrichRequest re-applies
     // them with `runnerVars` so mustache substitutions expand.
     const fixtureFields = step.sample_request
@@ -555,8 +583,14 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
         )
       : {};
     const result: Record<string, unknown> = { ...fixtureFields };
-    result.account = resolveMediaBuyAccount(fixtureFields.account, context.account, options);
-    if (context.media_buy_id != null && result.media_buy_ids === undefined) {
+    const exactRevision = isExactRevisionId(fixtureFields.reporting_revision_id);
+    result.account =
+      exactRevision && hasAuthoredAccountIdentity(fixtureFields.account)
+        ? typeof fixtureFields.account.account_id === 'string'
+          ? { account_id: fixtureFields.account.account_id }
+          : { ...fixtureFields.account, sandbox: true }
+        : resolveMediaBuyAccount(fixtureFields.account, context.account, options);
+    if (!exactRevision && context.media_buy_id != null && result.media_buy_ids === undefined) {
       result.media_buy_ids = [context.media_buy_id];
     }
     return result;
@@ -1081,22 +1115,27 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
 
   comply_test_controller(step, context, options) {
     // The test controller requires account.sandbox: true to be set.
-    // Task-lifecycle directives must target the same complete natural account
-    // as the operation/poll calls they coordinate. Other controller scenarios
-    // retain the historical harness-authoritative account behavior.
+    // Async directives and media-buy state simulations follow their
+    // operation's trusted context scope.
+    // seed_account uses the authorized caller, not the account being created.
+    // Other scenarios honor an authored ID or operator before falling back
+    // to context or harness scope. The run brand invariant still applies.
     const controllerFields = step.sample_request
       ? omitEnvelopeFields(
           injectContext({ ...(step.sample_request as Record<string, unknown>) }, context) as Record<string, unknown>
         )
       : undefined;
-    const controllerScenario = controllerFields?.scenario;
-    const accountScope =
-      controllerScenario === 'force_create_media_buy_arm' ||
-      controllerScenario === 'force_get_products_arm' ||
-      controllerScenario === 'force_get_signals_arm' ||
-      controllerScenario === 'force_task_completion'
-        ? resolveMediaBuyAccount(controllerFields?.account, context.account, options)
+    const authoredAccount = controllerFields?.account;
+    let accountScope: unknown;
+    if (controllerFields?.scenario === 'seed_account') {
+      accountScope = context.account ?? resolveAccount(options);
+    } else if (isOperationScopedControllerScenario(controllerFields?.scenario)) {
+      accountScope = resolveMediaBuyAccount(authoredAccount, context.account, options);
+    } else {
+      accountScope = hasAuthoredAccountIdentity(authoredAccount)
+        ? authoredAccount
         : (context.account ?? resolveAccount(options));
+    }
     const account: Record<string, unknown> = {
       ...(accountScope as Record<string, unknown>),
       sandbox: true,
