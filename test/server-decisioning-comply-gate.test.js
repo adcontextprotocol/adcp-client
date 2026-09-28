@@ -12,6 +12,8 @@ const { createAdcpServerFromPlatform } = require('../dist/lib/server/decisioning
 const { __resetObservedAccountModes } = require('../dist/lib/server/decisioning/runtime/observed-modes');
 const { getSdkServer, isToolAvailableForVersion } = require('../dist/lib/server/adcp-server');
 const { BuyerAgentRegistry } = require('../dist/lib/server/decisioning/buyer-agent');
+const { AccountNotFoundError } = require('../dist/lib/server/decisioning/account');
+const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
 
 function makePlatform(resolveAccount, overrides = {}) {
   return {
@@ -203,6 +205,101 @@ describe('createAdcpServerFromPlatform — sandbox-authority gate (resolver path
 
     assert.notStrictEqual(result.isError, true, 'sandbox-mode account must be admitted');
     assert.strictEqual(result.structuredContent.success, true);
+  });
+
+  it('projects a controller account_id assertion to the strict core account ref', async () => {
+    const seen = [];
+    const server = buildServer(async ref => {
+      seen.push(ref);
+      if (ref !== undefined && (Object.keys(ref).length !== 1 || ref.account_id !== 'sb_acc')) {
+        throw new Error('resolver requires the core account_id variant');
+      }
+      return {
+        id: ref?.account_id ?? 'principal_sb',
+        mode: 'sandbox',
+        ctx_metadata: {},
+        authInfo: { kind: 'api_key' },
+      };
+    });
+
+    const result = await callForceCreative(server, { account: { account_id: 'sb_acc', sandbox: true } });
+
+    assert.notStrictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.success, true);
+    assert.deepStrictEqual(seen.at(-1), { account_id: 'sb_acc' });
+
+    const routed = await callForceCreative(server, { context: { account: { account_id: 'sb_acc', sandbox: true } } });
+    assert.notStrictEqual(routed.isError, true);
+    assert.deepStrictEqual(seen.at(-1), { account_id: 'sb_acc' });
+  });
+
+  it('rejects malformed context account references before the resolver sees them', async () => {
+    const seen = [];
+    const server = buildServer(async ref => {
+      if (ref !== undefined) seen.push(ref);
+      return { id: 'principal_sb', mode: 'sandbox', ctx_metadata: {}, authInfo: { kind: 'api_key' } };
+    });
+
+    for (const account of ['not-an-object', { account_id: 123 }, { account_id: 'sb_acc', brand: {} }]) {
+      const result = await callForceCreative(server, { context: { account } });
+      assert.strictEqual(result.isError, true);
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    }
+    assert.deepStrictEqual(seen, []);
+  });
+
+  it('preserves sandbox on the natural-key resolver ref', async () => {
+    let seen;
+    const server = buildServer(async ref => {
+      if (ref !== undefined) seen = ref;
+      return { id: 'principal_sb', mode: 'sandbox', ctx_metadata: {}, authInfo: { kind: 'api_key' } };
+    });
+
+    const account = { brand: { domain: 'example.com' }, operator: 'seller.example', sandbox: true };
+    const result = await callForceCreative(server, { account });
+
+    assert.notStrictEqual(result.isError, true);
+    assert.deepStrictEqual(seen, account);
+  });
+
+  it('propagates resolver failures while keeping account-not-found as a denial', async () => {
+    const failing = buildServer(async ref => {
+      if (ref === undefined)
+        return { id: 'principal_sb', mode: 'sandbox', ctx_metadata: {}, authInfo: { kind: 'api_key' } };
+      throw new Error('account resolver configuration failed with secret-token');
+    });
+    const failed = await callForceCreative(failing, { account: { account_id: 'sb_acc', sandbox: true } });
+    assert.strictEqual(failed.isError, true);
+    assert.strictEqual(failed.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
+    assert.doesNotMatch(JSON.stringify(failed), /secret-token/);
+    const failedWire = await callMcpToolsCallHandler(failing, { account: { account_id: 'sb_acc', sandbox: true } });
+    assert.strictEqual(failedWire.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
+    assert.doesNotMatch(JSON.stringify(failedWire), /secret-token/);
+
+    const missing = buildServer(async ref => {
+      if (ref === undefined)
+        return { id: 'principal_sb', mode: 'sandbox', ctx_metadata: {}, authInfo: { kind: 'api_key' } };
+      throw new AccountNotFoundError();
+    });
+    assertPermissionDenied(await callForceCreative(missing, { account: { account_id: 'sb_acc', sandbox: true } }));
+
+    const typedMissing = buildServer(async ref => {
+      if (ref === undefined)
+        return { id: 'principal_sb', mode: 'sandbox', ctx_metadata: {}, authInfo: { kind: 'api_key' } };
+      throw new AdcpError('ACCOUNT_NOT_FOUND', { message: 'Account not found' });
+    });
+    assertPermissionDenied(await callForceCreative(typedMissing, { account: { account_id: 'sb_acc', sandbox: true } }));
+
+    const authRequired = buildServer(async ref => {
+      if (ref === undefined)
+        return { id: 'principal_sb', mode: 'sandbox', ctx_metadata: {}, authInfo: { kind: 'api_key' } };
+      throw new AdcpError('AUTH_REQUIRED', { message: 'Account credential required' });
+    });
+    const authResult = await callForceCreative(authRequired, { account: { account_id: 'sb_acc', sandbox: true } });
+    assert.strictEqual(authResult.isError, true);
+    assert.strictEqual(authResult.structuredContent.adcp_error.code, 'AUTH_REQUIRED');
+    const authWire = await callMcpToolsCallHandler(authRequired, { account: { account_id: 'sb_acc', sandbox: true } });
+    assert.strictEqual(authWire.structuredContent.adcp_error.code, 'AUTH_REQUIRED');
   });
 
   it("admits when resolver returns mode: 'mock'", async () => {
