@@ -258,7 +258,7 @@ adcp storyboard run myagent --storyboards creative-template
 adcp storyboard run myagent --tracks core,products,media_buy
 
 # Select a compliance version bundled in this package (no external paths)
-adcp storyboard run myagent --compliance-version 3.1.20
+adcp storyboard run myagent --compliance-version 3.1.24
 
 # Pin exact historical data from a matching external protocol bundle
 adcp storyboard run myagent --compliance-version 3.1.1 \
@@ -286,7 +286,7 @@ Useful flags:
 
 - `--storyboards ID,...`: Run specific storyboard or bundle IDs instead of capability-driven selection
 - `--tracks core,products,...`: Restrict the run to specific tracks
-- `--compliance-version VERSION`: Select an exact compliance/spec line; this package bundles 3.0.12, 3.1.20, and 3.2.0, while other historical patches require matching external `--compliance-dir` and `--schema-root` inputs
+- `--compliance-version VERSION`: Select an exact compliance/spec line; this package bundles 3.0.12, 3.1.24, 3.1.0-beta.7, and a 3.2.0 preview bundle. Other versions require matching external `--compliance-dir` and `--schema-root` inputs
 - `--compliance-dir PATH`: Use an external compliance directory from the selected protocol release
 - `--schema-root PATH`: Use the schema bundle from that same external protocol release
 - `--a2a-legacy-compat`: Use the official A2A 0.3 compatibility client when grading a 0.3-only agent; native conformance otherwise uses A2A 1.0

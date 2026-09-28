@@ -80,7 +80,12 @@ import type {
   GetPlanAuditLogsResponse,
   OutcomeType,
 } from '../types/tools.generated';
-import { type MutatingRequestInput, generateIdempotencyKey, isMutatingTask } from '../utils/idempotency';
+import {
+  type MutatingRequestInput,
+  generateIdempotencyKey,
+  isMutatingTask,
+  shouldAutoGenerateIdempotencyKey,
+} from '../utils/idempotency';
 
 import type {
   MCPWebhookPayload,
@@ -2983,7 +2988,7 @@ export class SingleAgentClient {
     // testing that needs to exercise server-side missing-key behavior.
     if (
       !options?.skipIdempotencyAutoInject &&
-      isMutatingTask(taskType) &&
+      shouldAutoGenerateIdempotencyKey(taskType, normalizedParams) &&
       normalizedParams &&
       typeof normalizedParams === 'object' &&
       !normalizedParams.idempotency_key
@@ -3007,7 +3012,7 @@ export class SingleAgentClient {
     throwIfAborted(options?.signal);
 
     // Guard mutating calls against pre-v3 sellers when opted in.
-    if (this.config.requireV3ForMutations && isMutatingTask(taskType)) {
+    if (this.config.requireV3ForMutations && shouldAutoGenerateIdempotencyKey(taskType, normalizedParams)) {
       await this.requireSupportedMajor(taskType, options);
       throwIfAborted(options?.signal);
     }
@@ -5475,7 +5480,7 @@ export class SingleAgentClient {
       );
 
       await this.validateTaskFeatures(taskName, options);
-      if (this.config.requireV3ForMutations && isMutatingTask(taskName)) {
+      if (this.config.requireV3ForMutations && shouldAutoGenerateIdempotencyKey(taskName, normalizedParams)) {
         await this.requireSupportedMajor(taskName, options);
       }
       const agent = await this.ensureEndpointDiscovered(options);

@@ -1211,7 +1211,15 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       testOptions.versionEnvelope === undefined
         ? { ...effectiveOptions, versionEnvelope: 'major-only' as const }
         : effectiveOptions;
-    const discoveryClient = createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', discoveryOptions);
+    // The first capability probe uses a major-only wire envelope for older
+    // sellers. Its transport-level validator therefore selects 3.0, whose
+    // compliance_testing.scenarios enum rejects valid 3.1 extensions. Keep
+    // that preliminary check advisory; discoverAgentProfile validates the
+    // returned payload strictly against the selected compliance bundle.
+    const discoveryClient = createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', {
+      ...discoveryOptions,
+      ...(discoveryOptions.versionEnvelope === 'major-only' && { strictResponseSchemaValidation: false }),
+    });
     const { profile, step: profileStep } = await discoverAgentProfile(
       discoveryClient,
       signal,
@@ -1223,10 +1231,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       ...(testOptions.adcpVersion !== undefined && { callerAdcpVersion: testOptions.adcpVersion }),
       ...(testOptions.versionEnvelope !== undefined && { callerVersionEnvelope: testOptions.versionEnvelope }),
     });
-    const client =
-      discoveryOptions === effectiveOptions
-        ? discoveryClient
-        : createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', effectiveOptions);
+    const client = createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', effectiveOptions);
     effectiveOptions._client = client;
     effectiveOptions._profile = profile;
 

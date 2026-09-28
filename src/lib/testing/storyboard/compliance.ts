@@ -239,7 +239,12 @@ function complianceMissingMessage(what: string, path: string): string {
   const cacheRoot = join(getRepoRoot(), 'compliance', 'cache');
   const bundledVersions = existsSync(cacheRoot)
     ? readdirSync(cacheRoot, { withFileTypes: true })
-        .filter(entry => entry.isDirectory() && existsSync(join(cacheRoot, entry.name, 'index.json')))
+        .filter(
+          entry =>
+            entry.isDirectory() &&
+            !entry.name.endsWith('.previous') &&
+            existsSync(join(cacheRoot, entry.name, 'index.json'))
+        )
         .map(entry => entry.name)
         .sort()
     : [];

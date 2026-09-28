@@ -443,8 +443,12 @@
     "dist/lib/**/*",
     "bin/**/*.js",
     "skills/**/*",
+    "!skills/*.previous/**",
     ".claude-plugin/**/*",
-    "compliance/cache/**/*",
+    "compliance/cache/3.0.12/**/*",
+    "compliance/cache/3.1.24/**/*",
+    "compliance/cache/3.1.0-beta.7/**/*",
+    "compliance/cache/3.2.0/**/*",
     "ADCP_VERSION",
     "docs/llms.txt",
     "docs/migration-*.md",
@@ -653,7 +657,7 @@
     },
     "minimatch": "^10.2.1"
   },
-  "adcp_version": "3.1.20",
+  "adcp_version": "3.1.24",
   "sideEffects": [
     "**/default-invariants.*"
   ]

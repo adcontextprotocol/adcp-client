@@ -1834,7 +1834,7 @@ describe('comply() degraded-profile path (security_baseline against 401-on-disco
     }
   });
 
-  it('emits reference-only tested_tracks from the degraded-profile constructor', async () => {
+  it('keeps tool-gated read probes out of tested_tracks when discovery gets 401', async () => {
     const server = http.createServer((_req, res) => {
       res.writeHead(401, {
         'content-type': 'application/json',
@@ -1852,11 +1852,10 @@ describe('comply() degraded-profile path (security_baseline against 401-on-disco
       });
 
       assert.ok(result.storyboards_executed?.includes('read_tool_idempotency'));
-      assert.ok(result.tested_tracks.length > 0, 'expected the failed read probe to produce a tested track');
-      for (const track of result.tested_tracks) {
-        assert.strictEqual('scenarios' in track, false, 'tested_tracks entries must omit scenarios');
-        assert.strictEqual('skipped_scenarios' in track, false, 'tested_tracks entries must omit skipped scenarios');
-      }
+      // In 3.1.24 every read probe has requires_tool. A 401 on discovery
+      // exposes none, so the core track is skipped rather than tested.
+      assert.deepStrictEqual(result.tested_tracks, []);
+      assert.ok(result.skipped_tracks.some(track => track.track === 'core'));
       const canonicalScenarioCount = result.tracks.reduce((count, track) => count + track.scenarios.length, 0);
       const serializedScenarioCount = (JSON.stringify(result).match(/"scenario":/g) ?? []).length;
       assert.strictEqual(serializedScenarioCount, canonicalScenarioCount);

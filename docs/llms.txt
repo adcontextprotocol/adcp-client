@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-09-20
-> Library: @adcp/sdk v13.0.4
+> Generated at: 2026-09-28
+> Library: @adcp/sdk v13.1.1
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 > Note: the `Library` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.
@@ -360,7 +360,7 @@ Request parameters for discovering available advertising products.
 
 **Request:**
 - Required: `buying_mode: 'brief' | 'wholesale' | 'refine'`
-- Optional: `brief: string`, `refine: object[]`, `brand: Brand Ref`, `catalog: Catalog`, `account: Account Ref`, `preferred_delivery_types: object[]`, `filters: Product Filters`, `property_list: Property List Ref`, +8 more
+- Optional: `idempotency_key: string`, `brief: string`, `refine: object[]`, `brand: Brand Ref`, `catalog: Catalog`, `account: Account Ref`, `preferred_delivery_types: object[]`, `filters: Product Filters`, +9 more
 
 **Response (success branch):**
 - Optional: `products: object[]`, `extensions: object`, `proposals: object[]`, `errors: object[]`, `property_list_applied: boolean`, `catalog_applied: boolean`, `refinement_applied: object[]`, `incomplete: object[]`, +8 more
@@ -1051,7 +1051,7 @@ Flow: `get_adcp_capabilities → sync_plans → check_governance → create_medi
 ### Media Buy
 
 **Media buy seller agent** — Seller agent that receives briefs, returns products, accepts media buys, and reports delivery.
-Flow: `get_adcp_capabilities → sync_accounts → sync_governance → get_products → list_creative_formats → create_media_buy → get_media_buys → list_creative_formats → sync_creatives → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → sync_accounts → get_products → list_creative_formats → create_media_buy → get_media_buys → list_creative_formats → sync_creatives → get_media_buy_delivery`
 
 **Seller fulfills a media buy with audience targeting from a synced CRM audience** — Verifies that a seller advertising audience_targeting can ingest a CRM audience via sync_audiences, accept a media buy whose targeting_overlay references the bound audience_id, reject malformed audience references, and report delivery for the audience-targeted buy. Sibling to media_buy_seller/performance_buy_flow on the audience side: the unbound-id rejection is the discriminating assertion.
 Flow: `sync_accounts → get_products → sync_audiences → create_media_buy → comply_test_controller → get_media_buy_delivery`
@@ -1165,7 +1165,7 @@ Flow: `sync_accounts → get_products → create_media_buy`
 Flow: `get_adcp_capabilities → get_products → sync_creatives → create_media_buy → update_media_buy`
 
 **Generative seller agent** — Seller agent that generates creatives from briefs at buy time — no pre-built assets required.
-Flow: `get_adcp_capabilities → sync_accounts → sync_governance → list_creative_formats → get_products → create_media_buy → sync_creatives → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → sync_accounts → list_creative_formats → get_products → create_media_buy → sync_creatives → get_media_buy_delivery`
 
 **Governance-aware seller** — Seller agent that composes with a campaign-governance agent on the buyer side after baseline sync_governance registration — calls check_governance before confirming spend, and propagates governance approvals, conditions, and denials unchanged. Optional claim for the full governance-check loop.
 Flow: `get_adcp_capabilities`
@@ -1174,16 +1174,16 @@ Flow: `get_adcp_capabilities`
 Flow: `sync_accounts → sync_governance`
 
 **Broadcast linear TV seller agent** — Seller agent for broadcast linear TV inventory — primetime and fringe spots with measurement windows, agency estimate numbers, Ad-ID-based creative sync, and delayed delivery reporting.
-Flow: `get_adcp_capabilities → get_products → sync_governance → create_media_buy → get_media_buys → list_creative_formats → sync_creatives → expect_webhook → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → get_products → create_media_buy → get_media_buys → list_creative_formats → sync_creatives → expect_webhook → get_media_buy_delivery`
 
 **Catalog-driven creative and conversion tracking** — Seller that renders dynamic ads from product catalogs, tracks conversions, and optimizes delivery based on performance feedback.
-Flow: `get_adcp_capabilities → sync_accounts → sync_governance → list_creative_formats → sync_catalogs → build_creative → expect_substitution_safe → get_products → create_media_buy → sync_event_sources → log_event → provide_performance_feedback → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → sync_accounts → list_creative_formats → sync_catalogs → build_creative → expect_substitution_safe → get_products → create_media_buy → sync_event_sources → log_event → provide_performance_feedback → get_media_buy_delivery`
 
 **Guaranteed media buy with human IO approval** — Seller agent that requires human-in-the-loop IO signing before guaranteed media buys go live.
-Flow: `get_adcp_capabilities → sync_accounts → sync_governance → get_products → create_media_buy → get_media_buys → sync_creatives → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → sync_accounts → get_products → create_media_buy → get_media_buys → sync_creatives → get_media_buy_delivery`
 
 **Non-guaranteed auction-based media buy** — Seller agent for auction-based, non-guaranteed buying where the buyer sets bid prices and budgets.
-Flow: `get_adcp_capabilities → get_products → sync_governance → create_media_buy → get_media_buys → update_media_buy → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → get_products → create_media_buy → get_media_buys → update_media_buy → get_media_buy_delivery`
 
 **Media buy via proposal acceptance** — Seller agent that generates curated media plan proposals the buyer can review, refine, and accept.
 Flow: `get_adcp_capabilities → sync_accounts → get_products → create_media_buy → list_creative_formats → sync_creatives → get_media_buy_delivery`
@@ -1304,7 +1304,7 @@ Flow: `get_adcp_capabilities → list_creatives`
 **Pagination cursor integrity — list_property_lists** — Validates the cursor↔has_more invariant by walking a paginated list_property_lists response from a continuation page to a terminal page.
 Flow: `get_adcp_capabilities → create_property_list → list_property_lists`
 
-**Read-tool idempotency_key tolerance** — Validates that read-only AdCP tasks accept the 3.1 every-request idempotency_key envelope without strict wrapper rejection.
+**Read-tool idempotency_key envelope tolerance** — Validates that read-only AdCP tasks and the 3.x get_products compatibility facade tolerate an optional idempotency_key without claiming read-response replay.
 Flow: `get_adcp_capabilities → get_products → list_accounts → list_creative_formats → list_creatives → get_adcp_capabilities`
 
 **Schema compliance — signals protocol** — Validates that signals agent responses conform to AdCP schemas with all required fields present and correctly typed.
@@ -1616,5 +1616,5 @@ JSON schemas (source of truth): `schemas/cache/latest/index.json` (local only)
 - npm: https://www.npmjs.com/package/@adcp/sdk
 - Spec: https://adcontextprotocol.org
 - CLI: `npx @adcp/sdk@adcp-3.1` for the maintained 13.x / AdCP 3.1 line
-- Bundled compliance caches: 3.0.12, 3.1.20, and 3.2.0; for example `--compliance-version 3.1.20` works without external cache paths
+- Bundled compliance caches: 3.0.12, 3.1.24, 3.1.0-beta.7, and the 3.2.0 preview bundle. For example `--compliance-version 3.1.24` works without external cache paths
 - Historical patches: the npm package does not ship the 3.1.1 compliance cache; use matching external inputs such as `--compliance-version 3.1.1 --compliance-dir /path/to/adcp-3.1.1/compliance --schema-root /path/to/adcp-3.1.1/schemas` with the maintained runner; prerelease inputs remain exact

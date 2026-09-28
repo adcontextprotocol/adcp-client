@@ -72,6 +72,15 @@ describe('applyIdempotencyInvariant', () => {
     assert.strictEqual(result.idempotency_key, undefined);
   });
 
+  test('adds a key for get_products refinement that may finalize a proposal', () => {
+    const request = { buying_mode: 'refine', refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'p1' }] };
+    const result = applyIdempotencyInvariant(request, 'get_products', {});
+    assert.match(result.idempotency_key, UUID_V4);
+    assert.strictEqual(request.idempotency_key, undefined);
+    const omitted = applyIdempotencyInvariant(request, 'get_products', { omit_idempotency_key: true });
+    assert.strictEqual(omitted, request);
+  });
+
   test('preserves a caller-supplied idempotency_key (BYOK)', () => {
     const result = applyIdempotencyInvariant(
       { idempotency_key: 'byok-1234567890abcdef', name: 'p1' },

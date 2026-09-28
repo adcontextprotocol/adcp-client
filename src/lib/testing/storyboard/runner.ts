@@ -62,7 +62,7 @@ import {
   type CreativeAssetExpansionFailure,
 } from './creative-assets';
 import { resolveAccount, resolveBrand } from '../client';
-import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
+import { generateIdempotencyKey, shouldAutoGenerateIdempotencyKey } from '../../utils/idempotency';
 import {
   getSchemaDefaultByPath,
   getSchemaValidatorByRef,
@@ -4902,7 +4902,8 @@ async function executeStep(
   // AdCP client's auto-inject — otherwise the SDK helpfully generates a UUID
   // and the server never sees a missing-key request. Paired flags so the two
   // layers agree; see `applyIdempotencyInvariant` for the runner-level skip.
-  const testsMissingIdempotencyKey = step.omit_idempotency_key === true && isMutatingTask(effectiveStep.task);
+  const testsMissingIdempotencyKey =
+    step.omit_idempotency_key === true && shouldAutoGenerateIdempotencyKey(effectiveStep.task, request);
 
   // Analogous to `testsMissingIdempotencyKey`: when a step sets
   // `omit_account: true` the runner has already suppressed account synthesis
@@ -7839,7 +7840,7 @@ export function applyDisableSandboxHint(request: Record<string, unknown>, taskNa
  * Skipped when:
  *   - `step.omit_idempotency_key === true` — the scenario is explicitly
  *     exercising the server's missing-key rejection path.
- *   - the task isn't mutating per {@link MUTATING_TASKS}.
+ *   - the task has no required key and isn't a `get_products` refine request.
  *   - the request already carries a key — typically a
  *     `$generate:uuid_v4#alias` the context injector has resolved to a
  *     concrete UUID for replay scenarios, or a BYOK key supplied inline.
@@ -7850,7 +7851,7 @@ export function applyIdempotencyInvariant(
   step: StoryboardStep
 ): Record<string, unknown> {
   if (step.omit_idempotency_key === true) return request;
-  if (!isMutatingTask(taskName)) return request;
+  if (!shouldAutoGenerateIdempotencyKey(taskName, request)) return request;
   if (typeof request.idempotency_key === 'string' && request.idempotency_key.length > 0) return request;
   return { ...request, idempotency_key: generateIdempotencyKey() };
 }
