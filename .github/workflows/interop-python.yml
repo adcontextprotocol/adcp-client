@@ -214,7 +214,7 @@ jobs:
               raise SystemExit('Python reference seller produced no storyboard result')
           result = json.loads(path.read_text())
           summary = result.get('summary') or {}
-          executed = sum(summary.get(f'tracks_{status}', 0) for status in ('passed', 'failed', 'partial'))
+          executed = sum(summary.get(f'tracks_{status}', 0) for status in ('passed', 'failed', 'partial', 'silent'))
           if executed == 0:
               raise SystemExit('Python reference seller executed zero tracks; check version negotiation')
           print(f'Python reference seller executed {executed} tracks')
