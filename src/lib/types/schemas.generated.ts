@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-27T21:11:17.124Z
+// Generated at: 2026-09-28T13:24:08.026Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -451,6 +451,14 @@ export const WebhookSecurityMethodSchema = z.union([z.literal("hmac_sha256"), z.
 
 export const ExtensionObjectSchema = z.record(z.string(), z.unknown());
 
+export const BrandIDSchema = z.string().regex(new RegExp("^[a-z0-9_]+$"));
+
+export const BrandKeySchema = z.object({
+    domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
+    brand_id: BrandIDSchema.optional(),
+    countries: z.array(z.string()).optional()
+}).passthrough();
+
 export const ReferenceAssetSchema = z.object({
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
     role: z.union([z.literal("style_reference"), z.literal("product_shot"), z.literal("mood_board"), z.literal("example_creative"), z.literal("logo"), z.literal("strategy_doc"), z.literal("storyboard")]),
@@ -469,8 +477,6 @@ export const AttributionWindowSchema = z.object({
 }).passthrough();
 
 export const VendorMetricIDSchema = z.string().min(1).max(64).regex(new RegExp("^[a-z][a-z0-9_]*$"));
-
-export const BrandIDSchema = z.string().regex(new RegExp("^[a-z0-9_]+$"));
 
 export const ProvenanceSchema = z.object({
     digital_source_type: DigitalSourceTypeSchema.optional(),
@@ -535,11 +541,59 @@ export const ProvenanceSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const BrandKeySchema = z.object({
-    domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
-    brand_id: BrandIDSchema.optional(),
-    countries: z.array(z.string()).optional()
-}).passthrough();
+export const CanonicalOptimizationGoalSchema = z.union([z.object({
+        kind: z.literal("metric"),
+        metric: z.union([z.literal("clicks"), z.literal("views"), z.literal("completed_views"), z.literal("viewed_seconds"), z.literal("viewable_rate"), z.literal("engagements"), z.literal("follows"), z.literal("saves"), z.literal("profile_visits"), z.literal("reach")]),
+        standard: ViewabilityStandardSchema.optional(),
+        vendor: BrandKeySchema.optional(),
+        reach_unit: ReachUnitSchema.optional(),
+        target_frequency: z.object({
+            min: z.int().min(1).optional(),
+            max: z.int().min(1).optional(),
+            window: DurationSchema
+        }).passthrough().optional(),
+        view_duration_seconds: z.number().gt(0).optional(),
+        target: z.object({
+            kind: z.literal("threshold_rate"),
+            value: z.number().gt(0)
+        }).passthrough().optional(),
+        priority: z.int().min(1).optional()
+    }).passthrough(), z.object({
+        kind: z.literal("event"),
+        event_sources: z.array(z.object({
+            event_source_id: z.string().min(1),
+            event_type: EventTypeSchema,
+            custom_event_name: z.string().min(1).optional(),
+            value_field: z.string().min(1).optional(),
+            value_factor: z.number().optional()
+        }).passthrough()),
+        target: z.object({
+            kind: z.literal("maximize_value")
+        }).passthrough().optional(),
+        attribution_window: AttributionWindowSchema.optional(),
+        priority: z.int().min(1).optional()
+    }).passthrough(), z.object({
+        kind: z.literal("vendor_metric"),
+        vendor: BrandKeySchema,
+        metric_id: VendorMetricIDSchema,
+        target: z.object({
+            kind: z.literal("threshold_rate"),
+            value: z.number().gt(0)
+        }).passthrough().optional(),
+        priority: z.int().min(1).optional()
+    }).passthrough()]).superRefine((goal, ctx) => {
+    if (goal.kind !== "metric") return;
+    if (goal.metric === "viewable_rate") {
+        if (goal.standard == null) ctx.addIssue({ code: "custom", path: ["standard"], message: "viewable_rate requires standard" });
+        if (goal.target != null) {
+            if (goal.target.kind !== "threshold_rate") ctx.addIssue({ code: "custom", path: ["target", "kind"], message: "viewable_rate requires threshold_rate target" });
+            if (goal.target.value > 1) ctx.addIssue({ code: "custom", path: ["target", "value"], message: "viewable_rate target must be at most 1" });
+        }
+    } else if (goal.metric !== "viewed_seconds") {
+        if (goal.standard !== undefined) ctx.addIssue({ code: "custom", path: ["standard"], message: "standard is only allowed for viewability metrics" });
+        if (goal.vendor !== undefined) ctx.addIssue({ code: "custom", path: ["vendor"], message: "vendor is only allowed for viewability metrics" });
+    }
+});
 
 export const BusinessEntitySchema = z.object({
     legal_name: z.string().max(200),
@@ -4101,59 +4155,12 @@ export const ProductPurchaseAudienceEvidenceRequirementsSchema = z.object({}).pa
 
 export const StartTimingSchema = z.union([z.literal("asap"), z.string()]);
 
-export const CanonicalOptimizationGoalSchema = z.union([z.object({
-        kind: z.literal("metric"),
-        metric: z.union([z.literal("clicks"), z.literal("views"), z.literal("completed_views"), z.literal("viewed_seconds"), z.literal("viewable_rate"), z.literal("engagements"), z.literal("follows"), z.literal("saves"), z.literal("profile_visits"), z.literal("reach")]),
-        standard: ViewabilityStandardSchema.optional(),
-        vendor: BrandKeySchema.optional(),
-        reach_unit: ReachUnitSchema.optional(),
-        target_frequency: z.object({
-            min: z.int().min(1).optional(),
-            max: z.int().min(1).optional(),
-            window: DurationSchema
-        }).passthrough().optional(),
-        view_duration_seconds: z.number().gt(0).optional(),
-        target: z.object({
-            kind: z.literal("threshold_rate"),
-            value: z.number().gt(0)
-        }).passthrough().optional(),
-        priority: z.int().min(1).optional()
+export const CanonicalBudgetAllocationSchema = z.union([z.object({
+        mode: z.literal("fixed")
     }).passthrough(), z.object({
-        kind: z.literal("event"),
-        event_sources: z.array(z.object({
-            event_source_id: z.string().min(1),
-            event_type: EventTypeSchema,
-            custom_event_name: z.string().min(1).optional(),
-            value_field: z.string().min(1).optional(),
-            value_factor: z.number().optional()
-        }).passthrough()),
-        target: z.object({
-            kind: z.literal("maximize_value")
-        }).passthrough().optional(),
-        attribution_window: AttributionWindowSchema.optional(),
-        priority: z.int().min(1).optional()
-    }).passthrough(), z.object({
-        kind: z.literal("vendor_metric"),
-        vendor: BrandKeySchema,
-        metric_id: VendorMetricIDSchema,
-        target: z.object({
-            kind: z.literal("threshold_rate"),
-            value: z.number().gt(0)
-        }).passthrough().optional(),
-        priority: z.int().min(1).optional()
-    }).passthrough()]).superRefine((goal, ctx) => {
-    if (goal.kind !== "metric") return;
-    if (goal.metric === "viewable_rate") {
-        if (goal.standard == null) ctx.addIssue({ code: "custom", path: ["standard"], message: "viewable_rate requires standard" });
-        if (goal.target != null) {
-            if (goal.target.kind !== "threshold_rate") ctx.addIssue({ code: "custom", path: ["target", "kind"], message: "viewable_rate requires threshold_rate target" });
-            if (goal.target.value > 1) ctx.addIssue({ code: "custom", path: ["target", "value"], message: "viewable_rate target must be at most 1" });
-        }
-    } else if (goal.metric !== "viewed_seconds") {
-        if (goal.standard !== undefined) ctx.addIssue({ code: "custom", path: ["standard"], message: "standard is only allowed for viewability metrics" });
-        if (goal.vendor !== undefined) ctx.addIssue({ code: "custom", path: ["vendor"], message: "vendor is only allowed for viewability metrics" });
-    }
-});
+        mode: z.literal("seller_optimized"),
+        optimization_goals: z.array(CanonicalOptimizationGoalSchema)
+    }).passthrough()]);
 
 export const CanonicalMetricQualifierSchema = z.object({
     viewability_standard: ViewabilityStandardSchema.optional(),
@@ -4519,13 +4526,6 @@ export const CatalogItemAvailabilityStateSchema = z.object({}).passthrough().mer
     errors: z.array(CatalogItemAvailabilityErrorSchema).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
-
-export const CanonicalBudgetAllocationSchema = z.union([z.object({
-        mode: z.literal("fixed")
-    }).passthrough(), z.object({
-        mode: z.literal("seller_optimized"),
-        optimization_goals: z.array(CanonicalOptimizationGoalSchema)
-    }).passthrough()]);
 
 export const CanonicalReportingCommitmentSchema = z.union([z.object({
         scope: z.literal("standard"),

@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.2.0-rc.7
-// Generated at: 2026-09-27T20:59:45.635Z
+// Generated at: 2026-09-28T13:22:20.960Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -2391,6 +2391,30 @@ export interface ExtensionObject {
   [k: string]: unknown | undefined;
 }
 
+// BRANDKEY PRIORITY CANONICAL SCHEMA
+/**
+ * Brand within a house-of-brands manifest. Omit for a single-brand domain.
+ */
+export type BrandID = string;
+
+/**
+ * Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery.
+ */
+export interface BrandKey {
+  /**
+   * Domain that hosts /.well-known/brand.json or is registered for the brand.
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+   */
+  domain: string;
+  brand_id?: BrandID;
+  /**
+   * Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.
+   *
+   * @minItems 1
+   */
+  countries?: [string, ...string[]];
+}
+
 // CREATIVEBRIEF PRIORITY CANONICAL SCHEMA
 /**
  * Campaign-level creative context for AI-powered creative generation. Provides the layer between brand identity (stable across campaigns) and individual creative execution (per-request). A brand has one identity (defined in brand.json) but different creative briefs for each campaign or flight.
@@ -2669,10 +2693,6 @@ export type OptimizationGoal =
        */
       priority?: number;
     };
-/**
- * Brand identifier within the house portfolio. Optional for single-brand domains.
- */
-export type BrandID = string;
 /**
  * Identifier for the metric within the vendor's vocabulary (e.g., `attention_score`, `attention_seconds`, `gco2e_per_impression`, `awareness_lift`). MUST be present in the vendor's published `measurement.metrics[]` catalog and in the product's `vendor_metric_optimization.supported_metrics[]`.
  */
@@ -3212,22 +3232,6 @@ export type CanonicalOptimizationGoal =
        */
       priority?: number;
     };
-/**
- * Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery.
- */
-export interface BrandKey {
-  /**
-   * Domain that hosts /.well-known/brand.json or is registered for the brand.
-   */
-  domain: string;
-  brand_id?: BrandID;
-  /**
-   * Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.
-   *
-   * @minItems 1
-   */
-  countries?: [string, ...string[]];
-}
 // BRANDREFERENCE PRIORITY CANONICAL SCHEMA
 
 // BUSINESSENTITY PRIORITY CANONICAL SCHEMA
