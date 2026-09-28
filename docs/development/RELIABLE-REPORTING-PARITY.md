@@ -31,6 +31,25 @@ PostgreSQL-backed reporting matrix remains tracked in
 [Python issue #1199](https://github.com/adcontextprotocol/adcp-client-python/issues/1199);
 this checkpoint does not qualify its untested status, receipt, or replay flows.
 
+## 2026-09-28 Python beta.18 checkpoint
+
+The [published `adcp==8.0.0b18` wheel](https://pypi.org/project/adcp/8.0.0b18/)
+(SHA-256 `3eabf30fbdae298111f3bbb4f4efb36f193dd08d7845217948ed211d7476e2c3`)
+reports AdCP `3.2.0-rc.7` and passes all seven shared canonical JSON vectors
+when imported from its installed wheel. Its source tag is
+[`v8.0.0-beta.18`](https://github.com/adcontextprotocol/adcp-client-python/releases/tag/v8.0.0-beta.18)
+at `4d066171cdda2a802a71d4776c1c51132d5baff7`.
+
+The published `@adcp/sdk@14.0.0-rc.49` CLI against the beta.18 Python example
+seller now negotiates rc.7 and executes two partial tracks: 30 steps passed,
+11 failed, and 155 skipped. The 11 failures center on the example seller's
+`canonical_creatives=false` advertisement under AdCP 3.2. The CI workflow
+uploads the full `storyboard-result-python.json` artifact. This general seller
+storyboard remains advisory. The installed PostgreSQL reporting matrix in
+[Python issue #1199](https://github.com/adcontextprotocol/adcp-client-python/issues/1199)
+has not run on these artifacts, so Managed Delivery, receipts, webhook replay,
+and buyer reconciliation remain unqualified across SDKs.
+
 | Contract | Python implementation | TypeScript implementation | Shared proof |
 | --- | --- | --- | --- |
 | Canonical JSON and fingerprints | `reporting.canonical_json` | `reporting/source/manifest.ts` | `test/fixtures/reporting-interop/canonical-json-v1.json` |

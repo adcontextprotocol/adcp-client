@@ -8,7 +8,7 @@ on:
       python_ref:
         description: 'adcp-client-python commit SHA, tag, or branch to test against'
         required: false
-        default: '8ca7dfe09facd3b4744665447e16a80474f021d7' # adcp-client-python v8.0.0-beta.16
+        default: '4d066171cdda2a802a71d4776c1c51132d5baff7' # adcp-client-python v8.0.0-beta.18
       runner_package_ref:
         description: 'Optional @adcp/sdk npm package ref for manual runner probes, e.g. adcp-3.0 or @adcp/sdk@adcp-3.1. Empty packs this checkout.'
         required: false
@@ -19,7 +19,7 @@ on:
         description: 'adcp-client-python commit SHA, tag, or branch to test against'
         required: false
         type: string
-        default: '8ca7dfe09facd3b4744665447e16a80474f021d7' # adcp-client-python v8.0.0-beta.16
+        default: '4d066171cdda2a802a71d4776c1c51132d5baff7' # adcp-client-python v8.0.0-beta.18
       runner_package_ref:
         description: 'Optional @adcp/sdk npm package ref for manual runner probes. Empty packs this checkout.'
         required: false
@@ -100,8 +100,8 @@ jobs:
         include:
           - language: python
             repository: adcontextprotocol/adcp-client-python
-            # v8.0.0-beta.16 speaks AdCP rc.6; this is an advisory cross-version probe until Python adopts rc.7.
-            ref: ${{ inputs.python_ref || '8ca7dfe09facd3b4744665447e16a80474f021d7' }}
+            # v8.0.0-beta.18 speaks AdCP rc.7; keep this general seller storyboard advisory until its failures are resolved.
+            ref: ${{ inputs.python_ref || '4d066171cdda2a802a71d4776c1c51132d5baff7' }}
             harness: scripts/ci/run_storyboard_reference_seller.sh
             port: 3001
             advisory: true
@@ -199,6 +199,26 @@ jobs:
           fi
 
           exit "$status"
+
+      - name: Require Python interop to execute tracks
+        if: matrix.language == 'python'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ['STORYBOARD_RESULT_PATH'])
+          if not path.is_file() or path.stat().st_size == 0:
+              raise SystemExit('Python reference seller produced no storyboard result')
+          result = json.loads(path.read_text())
+          summary = result.get('summary') or {}
+          executed = sum(summary.get(f'tracks_{status}', 0) for status in ('passed', 'failed', 'partial'))
+          if executed == 0:
+              raise SystemExit('Python reference seller executed zero tracks; check version negotiation')
+          print(f'Python reference seller executed {executed} tracks')
+          PY
 
       - name: Add interop summary
         if: always()
