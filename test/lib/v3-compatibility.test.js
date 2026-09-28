@@ -1433,6 +1433,20 @@ describe('normalizeRequestParams: idempotency_key auto-inject (MUTATING_TASKS co
     }
   });
 
+  test('get_products refine receives a key without requiring one on ordinary reads', () => {
+    const refined = normalizeRequestParams('get_products', {
+      buying_mode: 'refine',
+      refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'proposal-1' }],
+    });
+    assert.match(refined.idempotency_key, UUID_V4_PATTERN);
+    const skipped = normalizeRequestParams(
+      'get_products',
+      { buying_mode: 'refine', refine: [] },
+      { skipIdempotencyAutoInject: true }
+    );
+    assert.strictEqual(skipped.idempotency_key, undefined);
+  });
+
   test('preserves a caller-supplied idempotency_key (BYOK)', () => {
     const result = normalizeRequestParams('create_media_buy', {
       account: { account_id: 'test-acc' },

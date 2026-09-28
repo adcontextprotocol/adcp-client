@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-16T18:17:21.269Z
+// Generated at: 2026-09-28T12:31:36.952Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -6773,7 +6773,31 @@ export const IndividualCatalogAssetSchema = BaseIndividualAssetSchema.merge(z.ob
     asset_type: z.literal("catalog")
 }).passthrough());
 
+export const IndividualPublishedPostAssetSchema = BaseIndividualAssetSchema;
+
+export const IndividualCardAssetSchema = BaseIndividualAssetSchema;
+
+export const IndividualPixelTrackerAssetSchema = BaseIndividualAssetSchema;
+
+export const IndividualVastTrackerAssetSchema = BaseIndividualAssetSchema;
+
+export const IndividualDaastTrackerAssetSchema = BaseIndividualAssetSchema;
+
 export const GroupZipAssetSchema = BaseGroupAssetSchema;
+
+export const GroupBriefAssetSchema = BaseGroupAssetSchema;
+
+export const GroupCatalogAssetSchema = BaseGroupAssetSchema;
+
+export const GroupPublishedPostAssetSchema = BaseGroupAssetSchema;
+
+export const GroupCardAssetSchema = BaseGroupAssetSchema;
+
+export const GroupPixelTrackerAssetSchema = BaseGroupAssetSchema;
+
+export const GroupVastTrackerAssetSchema = BaseGroupAssetSchema;
+
+export const GroupDaastTrackerAssetSchema = BaseGroupAssetSchema;
 
 export const GroupAssetSlotSchema = z.union([GroupImageAssetSchema, GroupVideoAssetSchema, GroupAudioAssetSchema, GroupTextAssetSchema, GroupMarkdownAssetSchema, GroupHtmlAssetSchema, GroupCssAssetSchema, GroupJavaScriptAssetSchema, GroupVastAssetSchema, GroupDaastAssetSchema, GroupUrlAssetSchema, GroupWebhookAssetSchema]);
 
@@ -10109,6 +10133,7 @@ export const GetMediaBuysResponseMediaBuySchema = z.object({
 export const GetProductsRequestSchema = z.object({
     adcp_version: z.string().optional(),
     adcp_major_version: z.number().optional(),
+    idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/).optional(),
     buying_mode: z.union([z.literal("brief"), z.literal("wholesale"), z.literal("refine")]),
     brief: z.string().optional(),
     refine: z.array(z.union([z.object({

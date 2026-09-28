@@ -2250,7 +2250,8 @@ function isThrownAdcpError(value: unknown): value is McpToolResponse {
 function resolveExtraScope(
   toolName: string,
   params: Record<string, unknown>,
-  proposalScope?: Readonly<ProposalRefinementScope>
+  proposalScope?: Readonly<ProposalRefinementScope>,
+  resolvedAccount?: unknown
 ): string | undefined {
   if (toolName === 'si_send_message') {
     const sessionId = params.session_id;
@@ -2262,7 +2263,18 @@ function resolveExtraScope(
     // cannot replay a response across tenant or account boundaries.
     return JSON.stringify([proposalScope.tenant_id, proposalScope.principal_id, proposalScope.account_id ?? null]);
   }
+  if (toolName === 'get_products' && resolvedAccount !== undefined) {
+    const accountId = resolvedAccountId(resolvedAccount);
+    if (accountId) return JSON.stringify(['account', accountId]);
+  }
   return undefined;
+}
+
+function resolvedAccountId(value: unknown): string | undefined {
+  if (value === null || typeof value !== 'object') return undefined;
+  const account = value as { id?: unknown; account_id?: unknown };
+  const id = typeof account.id === 'string' ? account.id : account.account_id;
+  return typeof id === 'string' && id.length > 0 ? id : undefined;
 }
 
 function genericResponse(toolName: string, data: object, summary?: string): McpToolResponse {
@@ -5410,7 +5422,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // so disabled mode tolerates absence per the schema-filter
         // contract earlier in this dispatcher.
         if (
-          toolIsMutating &&
+          (toolIsMutating || toolName === 'get_products') &&
           typeof params.idempotency_key === 'string' &&
           !IDEMPOTENCY_KEY_PATTERN.test(params.idempotency_key)
         ) {
@@ -5422,9 +5434,21 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           );
         }
 
-        // --- Idempotency (mutating tools only) ---
+        // Optional keys on get_products still carry the replay contract: a
+        // refine/finalize request can commit a proposal, and a brief request
+        // can allocate an async task. Keyless reads remain valid.
         let idempotencyCheck: { key: string; principal: string; payloadHash: string; extraScope?: string } | undefined;
-        if (idempotency && toolIsMutating) {
+        if (
+          idempotency &&
+          (toolIsMutating || (toolName === 'get_products' && typeof params.idempotency_key === 'string'))
+        ) {
+          if (toolName === 'get_products' && ctx.account != null && !resolvedAccountId(ctx.account)) {
+            return finalize(
+              adcpError('SERVICE_UNAVAILABLE', {
+                message: 'Resolved account has no stable id for keyed get_products replay',
+              })
+            );
+          }
           const key = typeof params.idempotency_key === 'string' ? params.idempotency_key : undefined;
           if (!key) {
             return finalize(
@@ -5453,7 +5477,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // two different sessions must not replay into each other. The
           // caller's session_id enters the scope tuple so each session has
           // its own idempotency namespace.
-          const extraScope = resolveExtraScope(toolName, params, ctx.proposalRefinementScope);
+          const extraScope = resolveExtraScope(toolName, params, ctx.proposalRefinementScope, ctx.account);
 
           try {
             const checkResult = await idempotency.check({ principal, key, payload: params, extraScope });

@@ -258,6 +258,100 @@ describe('createAdcpServer with idempotency', () => {
     assert.equal(result.adcp_error, undefined);
   });
 
+  it('replays keyed get_products finalization without repeating the hold', async () => {
+    const idempotency = createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) });
+    let holds = 0;
+    const server = createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency,
+      resolveSessionKey: () => 'tenant',
+      mediaBuy: { getProducts: async () => ({ products: [], hold_number: ++holds }) },
+    });
+    const request = {
+      buying_mode: 'refine',
+      refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'proposal-1' }],
+      idempotency_key: 'finalize_hold_abcdefghij1234',
+    };
+    const first = await callTool(server, 'get_products', request);
+    const replay = await callTool(server, 'get_products', request);
+    assert.equal(holds, 1);
+    assert.equal(first.hold_number, 1);
+    assert.equal(replay.hold_number, 1);
+    assert.equal(replay.replayed, true);
+  });
+
+  it('keeps keyed get_products replays inside the resolved account', async () => {
+    const idempotency = createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) });
+    let accountId = 'account-a';
+    let calls = 0;
+    const server = createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency,
+      resolveSessionKey: () => 'principal',
+      resolveAccountFromAuth: async () => ({ id: accountId }),
+      mediaBuy: {
+        getProducts: async (_params, ctx) => ({
+          products: [],
+          cache_scope: 'account',
+          resolved_account: ctx.account.id,
+          call: ++calls,
+        }),
+      },
+    });
+    const request = { buying_mode: 'refine', refine: [], idempotency_key: 'account_scoped_abcdefghij1234' };
+    const first = await callTool(server, 'get_products', request);
+    accountId = 'account-b';
+    const second = await callTool(server, 'get_products', request);
+    assert.equal(first.resolved_account, 'account-a');
+    assert.equal(second.resolved_account, 'account-b');
+    assert.equal(calls, 2);
+  });
+
+  it('rejects keyed get_products when the resolved account has no stable id', async () => {
+    let calls = 0;
+    const server = createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
+      resolveSessionKey: () => 'principal',
+      resolveAccountFromAuth: async () => ({ label: 'unscoped' }),
+      mediaBuy: {
+        getProducts: async () => {
+          calls++;
+          return { products: [], cache_scope: 'account' };
+        },
+      },
+    });
+    const result = await callTool(server, 'get_products', {
+      buying_mode: 'refine',
+      refine: [],
+      idempotency_key: 'unscoped_account_abcdefghij1234',
+    });
+    assert.equal(result.adcp_error?.code, 'SERVICE_UNAVAILABLE');
+    assert.equal(calls, 0);
+  });
+
+  it('rejects malformed keys on get_products before calling the handler', async () => {
+    let calls = 0;
+    const server = createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
+      resolveSessionKey: () => 'tenant',
+      mediaBuy: {
+        getProducts: async () => {
+          calls++;
+          return { products: [] };
+        },
+      },
+    });
+    const result = await callTool(server, 'get_products', { brief: 'test', idempotency_key: 'too-short' });
+    assert.equal(result.adcp_error?.code, 'INVALID_REQUEST');
+    assert.equal(calls, 0);
+  });
+
   it('handler errors are NOT cached (retry re-executes)', async () => {
     const idempotency = createIdempotencyStore({
       backend: memoryBackend({ sweepIntervalMs: 0 }),

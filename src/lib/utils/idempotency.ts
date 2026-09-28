@@ -44,10 +44,17 @@ function deriveMutatingTasks(): Set<string> {
 }
 
 function isRequiredZodField(field: unknown): boolean {
-  const def = (field as { _def?: { typeName?: string } })?._def;
+  const zodField = field as { isOptional?: () => boolean; _def?: { typeName?: string; type?: string } } | undefined;
+  // Zod 4 uses `_def.type` rather than the Zod 3 `typeName`. The public
+  // isOptional() method works across both generations and reflects the
+  // schema's actual acceptance of an omitted key.
+  if (typeof zodField?.isOptional === 'function') return !zodField.isOptional();
+  const def = zodField?._def;
   if (!def) return false;
   // Zod wraps optional fields in ZodOptional or ZodDefault. Required = neither.
-  return def.typeName !== 'ZodOptional' && def.typeName !== 'ZodDefault';
+  return (
+    def.typeName !== 'ZodOptional' && def.typeName !== 'ZodDefault' && def.type !== 'optional' && def.type !== 'default'
+  );
 }
 
 /**
@@ -58,6 +65,17 @@ function isRequiredZodField(field: unknown): boolean {
  */
 export function isMutatingTask(toolName: string): boolean {
   return MUTATING_TASKS.has(toolName);
+}
+
+/** Refine may finalize a proposal even though get_products accepts keyless reads. */
+export function shouldAutoGenerateIdempotencyKey(toolName: string, params: unknown): boolean {
+  return (
+    isMutatingTask(toolName) ||
+    (toolName === 'get_products' &&
+      params !== null &&
+      typeof params === 'object' &&
+      (params as { buying_mode?: unknown }).buying_mode === 'refine')
+  );
 }
 
 /**

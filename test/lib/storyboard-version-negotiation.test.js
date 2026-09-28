@@ -675,7 +675,7 @@ describe('storyboard runner AdCP version negotiation', () => {
     assert.throws(
       () => loadComplianceIndex({ complianceDir: missing, version: '3.1.1' }),
       err =>
-        /bundles compliance caches for 3\.0\.12, 3\.1\.20, 3\.2\.0/.test(err.message) &&
+        /bundles compliance caches for .*3\.1\.24/.test(err.message) &&
         /not every historical patch/.test(err.message) &&
         /--compliance-dir/.test(err.message) &&
         /--schema-root/.test(err.message) &&
@@ -685,8 +685,86 @@ describe('storyboard runner AdCP version negotiation', () => {
 
   test('loads a standalone bundled compliance version without external paths', () => {
     const { loadComplianceIndex } = require('../../dist/lib/testing/storyboard/compliance.js');
-    const index = loadComplianceIndex({ version: '3.1.20' });
-    assert.strictEqual(index.adcp_version, '3.1.20');
+    const index = loadComplianceIndex({ version: '3.1.24' });
+    assert.strictEqual(index.adcp_version, '3.1.24');
+  });
+
+  test('major-only capability discovery accepts 3.1 extension scenarios before version negotiation', async () => {
+    const { ProtocolClient } = require('../../dist/lib/index.js');
+    const { createTestClient, discoverAgentProfile } = require('../../dist/lib/testing/client.js');
+    const response = {
+      status: 'completed',
+      adcp: { major_versions: [3], idempotency: { supported: false }, supported_versions: ['3.1'] },
+      supported_protocols: ['media_buy'],
+      compliance_testing: { scenarios: ['seller_custom_fixture_reset'] },
+    };
+    const originalCallTool = ProtocolClient.callTool;
+    ProtocolClient.callTool = async () => response;
+
+    try {
+      const probe = async (strictResponseSchemaValidation, payload = response) => {
+        ProtocolClient.callTool = async () => payload;
+        const client = createTestClient('https://stub.example/mcp', 'mcp', {
+          adcpVersion: '3.1.24',
+          versionEnvelope: 'major-only',
+          strictResponseSchemaValidation,
+        });
+        client.client.discoveredEndpoint = 'https://stub.example/mcp';
+        client.getAgentInfo = async () => ({ name: '3.1 seller', tools: [{ name: 'get_adcp_capabilities' }] });
+        return (await discoverAgentProfile(client, undefined, '3.1.24')).profile;
+      };
+
+      const strict = await probe(true);
+      assert.match(strict.capabilities_probe_error, /seller_custom_fixture_reset|must be one of/);
+
+      const negotiated = await probe(false);
+      assert.strictEqual(negotiated.capabilities_probe_error, undefined);
+      assert.ok(negotiated.supported_protocols.includes('media_buy'));
+      assert.deepStrictEqual(negotiated.capabilities_schema_issues, undefined);
+
+      const malformed = await probe(false, {
+        ...response,
+        account: { supported_billing: 'operator', sandbox: { supported: true } },
+      });
+      assert.ok(malformed.capabilities_schema_issues?.some(issue => issue.pointer === '/account/supported_billing'));
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+    }
+  });
+
+  test('comply uses advisory major-only discovery and retains strict storyboard validation', async () => {
+    const { ProtocolClient } = require('../../dist/lib/index.js');
+    const { SingleAgentClient } = require('../../dist/lib/core/SingleAgentClient.js');
+    const { comply } = require('../../dist/lib/testing/compliance/comply.js');
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-comply-major-probe-'));
+    const complianceDir = path.join(tempRoot, 'compliance');
+    writeComplianceIndex(complianceDir, '3.1.24');
+    const originalCallTool = ProtocolClient.callTool;
+    const originalGetAgentInfo = SingleAgentClient.prototype.getAgentInfo;
+    ProtocolClient.callTool = async () => ({
+      status: 'completed',
+      adcp: { major_versions: [3], idempotency: { supported: false }, supported_versions: ['3.1'] },
+      supported_protocols: ['media_buy'],
+      compliance_testing: { scenarios: ['seller_custom_fixture_reset'] },
+    });
+    SingleAgentClient.prototype.getAgentInfo = async function () {
+      this.discoveredEndpoint = 'https://stub.example/mcp';
+      return { name: '3.1 seller', tools: [{ name: 'get_adcp_capabilities' }] };
+    };
+    try {
+      const result = await comply('https://stub.example/mcp', {
+        version: '3.1.24',
+        complianceDir,
+        schemaRoot: path.resolve(__dirname, '../../schemas/cache/3.1.24'),
+      });
+      assert.strictEqual(result.agent_profile.capabilities_probe_error, undefined);
+      assert.ok(result.agent_profile.supported_protocols.includes('media_buy'));
+      assert.ok(!result.observations.some(o => o.source?.code === 'capabilities-probe-failed'));
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+      SingleAgentClient.prototype.getAgentInfo = originalGetAgentInfo;
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   test('hosted stable-line alias can resolve prerelease-backed compliance cache per call', () => {
