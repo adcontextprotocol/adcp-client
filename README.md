@@ -31,10 +31,10 @@ AdCP operations are **distributed and asynchronous by default**. An agent might:
 ```bash
 npm install @adcp/sdk@adcp-3.0   # 7.x, AdCP 3.0
 npm install @adcp/sdk             # 13.x, maintained AdCP 3.1 stable line
-npm install '@adcp/sdk@^14.0.0-0' # newest 14.x prerelease, AdCP 3.2 beta
+npm install @adcp/sdk@rc          # 14.x release candidate, AdCP 3.2 RC
 ```
 
-Trying the v14 prerelease? Read the [release-bound upgrade worksheet](./docs/migration-14.x-rc-worksheet.md) and [14.0.0 prerelease notes](./docs/releases/14.0.0-beta.0.md), then use the [13-to-14](./docs/migration-13-to-14.md) or [12-to-14](./docs/migration-12-to-14.md) migration guide. The npm `latest` tag remains on v13 for the maintained AdCP 3.1 stable line. SDK 14 requires Node.js `^20.19.0 || >=22.12.0`. Older paths: [12-to-13](./docs/migration-12-to-13.md), **[MIGRATION-v8.md](./MIGRATION-v8.md)**, and [8.0-to-8.1](./docs/migration-8.0-to-8.1.md).
+Trying the v14 release candidate? Read the [release-bound upgrade worksheet](./docs/migration-14.x-rc-worksheet.md), then use the [13-to-14](./docs/migration-13-to-14.md) or [12-to-14](./docs/migration-12-to-14.md) migration guide. The [prerelease history](./docs/releases/14.0.0-beta.0.md) covers earlier beta changes. The npm `latest` tag remains on v13 for the maintained AdCP 3.1 stable line. SDK 14 requires Node.js `^20.19.0 || >=22.12.0`. Older paths: [12-to-13](./docs/migration-12-to-13.md), **[MIGRATION-v8.md](./MIGRATION-v8.md)**, and [8.0-to-8.1](./docs/migration-8.0-to-8.1.md).
 
 ### Narrow type imports (`@adcp/sdk/types/<tool>`)
 

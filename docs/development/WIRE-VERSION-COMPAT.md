@@ -8,7 +8,7 @@ How `@adcp/sdk` keeps a buyer pinned to one AdCP major version while talking to 
 
 The SDK speaks one primary AdCP version on its public surface — `ADCP_VERSION`
 in `src/lib/version.ts`. The SDK 14 prerelease pin is `3.2.0-rc.7`; maintained side
-bundles cover `3.1.18`, `3.0.25`, and v2.5. Every buyer-facing type, helper,
+bundles cover `3.1.24`, `3.0.25`, and v2.5. Every buyer-facing type, helper,
 and example assumes the primary pin.
 
 In the field, sellers don't all upgrade in lockstep. There are still v2.5 sellers (Wonderstruck, others) and there will be v4 sellers before every v3 seller has finished migrating. The SDK has to:
@@ -28,7 +28,7 @@ There is exactly one active legacy compat layer at a time today: `legacy/v2-5/`.
 ```
 schemas/cache/
 ├── 3.2.0-rc.7/ # current SDK pin
-├── 3.1.18/       # maintained stable side bundle
+├── 3.1.24/       # maintained stable side bundle
 ├── 3.0.25/       # maintained stable side bundle
 ├── latest/       # symlink to the primary pin
 └── v2.5/         # legacy bundle, pulled from 2.5-maintenance HEAD

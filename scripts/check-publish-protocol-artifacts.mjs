@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 
 const PREVIEW_VERSION = /^\d+\.\d+(?:\.\d+)?-(?:alpha|beta|rc)(?:\.[0-9A-Za-z.-]+)?$/;
 const PREVIEW_TYPE_BUNDLE = /^v\d+(?:-\d+)*-(?:alpha|beta|rc)(?:-|$)/;
-const MAINTAINED_COMPLIANCE_ROOTS = ['3.0.25', '3.1.18'];
+const MAINTAINED_COMPLIANCE_ROOTS = ['3.0.25', '3.1.24'];
 
 function currentBundleKey(version) {
   return version.includes('-') ? version : version.split('.').slice(0, 2).join('.');

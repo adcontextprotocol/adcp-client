@@ -114,6 +114,9 @@ const PRIORITY_CANONICAL_SCHEMAS = [
   // it so first-definition deduplication cannot replace it with a closed
   // structural interface.
   'core/ext.json',
+  // BrandKey is referenced by several roots below. Own its constraints here
+  // before a transitive copy can claim the exported name.
+  'core/brand-key.json',
   // Compile this source-compatibility-sensitive named interface directly.
   // When first reached transitively through a large aggregate, jsts can
   // retain the wire schema's open-object signatures on CreativeBrief and its
@@ -4539,7 +4542,12 @@ async function generateTypes() {
       if (!schema) throw new Error(`Schema ${ref} not found in cache`);
       const typeName =
         typeof schema.title === 'string' ? schema.title.replace(/[^A-Za-z0-9]/g, '') : schemaPathToTypeName(ref);
-      const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema)));
+      const annotatedSchema = injectJsdocConstraints(schema);
+      // BrandKey.countries is non-empty when present. Preserve that direct
+      // constraint so a transitive reference cannot weaken the public type.
+      const strictSchema = enforceStrictSchema(
+        ref === 'core/brand-key.json' ? annotatedSchema : removeArrayLengthConstraints(annotatedSchema)
+      );
       const types = await compile(strictSchema, typeName, {
         bannerComment: '',
         style: { semi: true, singleQuote: true },

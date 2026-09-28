@@ -385,7 +385,7 @@ function declaredProtocolMethodCoverage(
 
 /**
  * The AdCP line a resolved compliance cache directory belongs to, e.g.
- * `3.1.18` for `<root>/compliance/cache/3.1.18/test-vectors/request-signing`.
+ * `3.1.24` for `<root>/compliance/cache/3.1.24/test-vectors/request-signing`.
  *
  * Read from the directory the vectors actually loaded from rather than from
  * `options.adcpVersion`, so a run pointed at a cache with `--compliance-dir`

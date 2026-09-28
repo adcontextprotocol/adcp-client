@@ -994,7 +994,7 @@ function isAgentUrlComparisonKey(key: string | undefined): boolean {
 
 function agentUrlValuesMatch(actual: string, expected: string): boolean {
   try {
-    // The 3.1.18 and 3.2 protocol bundles share this canonical target-URI
+    // The 3.1.24 and 3.2 protocol bundles share this canonical target-URI
     // profile, including empty-path normalization and byte-preserved query
     // strings. Reuse its signed-vector-tested implementation here.
     return canonicalTargetUri(actual, '3.2') === canonicalTargetUri(expected, '3.2');

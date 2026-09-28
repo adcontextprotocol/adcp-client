@@ -28,6 +28,7 @@ test('3.2 prerelease remains exact while retaining the complete supported 3.0 an
   assert.equal(ADCP_VERSION, '3.2.0-rc.7');
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.0.25'));
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.1.18'));
+  assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.1.24'));
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.2.0-rc.7'));
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.2-rc.7'));
   assert.ok(!COMPATIBLE_ADCP_VERSIONS.includes('3.2.0-rc.6'));

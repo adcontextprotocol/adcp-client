@@ -163,7 +163,7 @@ const MAX_PATCH_ENUMERATION = 500;
  * enumeration entirely.
  */
 const LAST_3_0_GA_PATCH = 25;
-const LAST_3_1_GA_PATCH = 18;
+const LAST_3_1_GA_PATCH = 24;
 
 function withVersionAliases(versions: readonly string[]): string[] {
   const out: string[] = [];

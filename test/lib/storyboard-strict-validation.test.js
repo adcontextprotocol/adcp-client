@@ -224,7 +224,7 @@ describe('storyboard validations: strict/lenient response_schema delta', () => {
     const [graded] = runValidations(
       [{ check: 'response_schema', description: 'response conforms' }],
       ctxWith('get_adcp_capabilities', response, 'protocol/get-adcp-capabilities-response.json', {
-        adcpVersion: '3.1.18',
+        adcpVersion: '3.1.24',
         strictResponseSchemaValidation: true,
       })
     );
@@ -343,7 +343,7 @@ describe('storyboard validations: strict/lenient response_schema delta', () => {
     const [result] = runValidations(
       [{ check: 'response_schema', description: 'response conforms' }],
       ctxWith('get_adcp_capabilities', response, 'protocol/get-adcp-capabilities-response.json', {
-        adcpVersion: '3.1.18',
+        adcpVersion: '3.1.24',
         strictResponseSchemaValidation: true,
       })
     );

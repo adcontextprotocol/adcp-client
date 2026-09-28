@@ -13,7 +13,7 @@ list_products → buy_products → control_media_buy
 Scaffold the PostgreSQL-backed path and run its diagnostics:
 
 ```bash
-npx --package '@adcp/sdk@^14.0.0-0' adcp init seller \
+npx --package @adcp/sdk@rc adcp init seller \
   --specialism sales-non-guaranteed --backend postgres --dir my-seller
 cd my-seller
 npm install
@@ -41,7 +41,7 @@ real canonical products from `PRODUCT_CATALOG_JSON`; an absent catalog produces
 an honest empty list, never fallback inventory.
 
 ```bash
-npm install '@adcp/sdk@^14.0.0-0'
+npm install @adcp/sdk@rc
 export ADCP_AUTH_TOKEN='replace-with-a-secret'
 export ADCP_ACCOUNT_ID='replace-with-the-authorized-account'
 # Supply canonical products from your catalog; [] is an honest empty response,

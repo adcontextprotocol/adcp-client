@@ -432,7 +432,7 @@ describe(
 // 2. Version scoping, pinned
 // ────────────────────────────────────────────────────────────
 
-const LEGACY_CACHE = path.join(__dirname, '..', '..', 'compliance', 'cache', '3.1.18');
+const LEGACY_CACHE = path.join(__dirname, '..', '..', 'compliance', 'cache', '3.1.24');
 const LEGACY_STORYBOARD = path.join(
   __dirname,
   '..',
@@ -459,7 +459,7 @@ describe('cache-backed suites actually run', () => {
     );
     assert.ok(
       legacyAvailable,
-      'compliance/cache/3.1.18 (or the legacy fixture) is missing in CI; the version-scoping ' +
+      'compliance/cache/3.1.24 (or the legacy fixture) is missing in CI; the version-scoping ' +
         'suite would have skipped silently. Run `npm run sync-schemas:all`.'
     );
   });
@@ -473,7 +473,7 @@ describe('version scoping', { skip: !legacyAvailable }, () => {
       supported_versions: ['3.1', '3.2', '3.2.0-rc.7'],
       major_versions: [3],
     };
-    for (const version of ['3.1.18', ADCP_VERSION]) {
+    for (const version of ['3.1.24', ADCP_VERSION]) {
       const resolved = resolveStoryboardsForCapabilities(caps, {
         complianceVersion: version,
         complianceDir: path.join('compliance', 'cache', version),
@@ -486,7 +486,7 @@ describe('version scoping', { skip: !legacyAvailable }, () => {
     }
   });
 
-  test('no AdCP 3.1.18 capability-gated scenario is neutralized', () => {
+  test('no AdCP 3.1.24 capability-gated scenario is neutralized', () => {
     // Enumerated rather than three fixed ids, so the guard cannot rot if
     // upstream renames one. 33 of these flipped partial -> passing before the
     // version gate landed.
@@ -497,8 +497,8 @@ describe('version scoping', { skip: !legacyAvailable }, () => {
       major_versions: [3],
     };
     const resolved = resolveStoryboardsForCapabilities(caps, {
-      complianceVersion: '3.1.18',
-      complianceDir: path.join('compliance', 'cache', '3.1.18'),
+      complianceVersion: '3.1.24',
+      complianceDir: path.join('compliance', 'cache', '3.1.24'),
     });
     const gated = resolved.storyboards.filter(sb => {
       const predicates = [
@@ -509,9 +509,9 @@ describe('version scoping', { skip: !legacyAvailable }, () => {
         predicates.length > 0 && !predicates.some(predicate => String(predicate.path).startsWith('compliance_testing'))
       );
     });
-    assert.ok(gated.length > 0, 'the 3.1.18 bundle must still contain capability-gated scenarios');
+    assert.ok(gated.length > 0, 'the 3.1.24 bundle must still contain capability-gated scenarios');
     for (const storyboard of gated) {
-      assert.equal(storyboard.adcp_version, '3.1.18', `${storyboard.id} carries the loader-stamped version`);
+      assert.equal(storyboard.adcp_version, '3.1.24', `${storyboard.id} carries the loader-stamped version`);
       assert.equal(
         rollupOf([storyboard, 'seller'], [capabilityUnsupportedResult(storyboard.id), passingStub('seller')]),
         'partial',
@@ -533,7 +533,7 @@ describe('version scoping', { skip: !legacyAvailable }, () => {
       const result = await runStoryboard(seller.url, storyboard, {
         ...RUN_OPTIONS,
         skip_controller_seeding: true,
-        adcpVersion: '3.1.18',
+        adcpVersion: '3.1.24',
       });
       // Unchanged from before this PR: the governance row is an actionable
       // `missing_tool` skip and the seller's own steps all execute and pass.
@@ -739,7 +739,7 @@ describe('rollup discrimination', () => {
     for (const [label, adcp_version, expected] of [
       ['absent', undefined, 'partial'],
       ['3.0.25', '3.0.25', 'partial'],
-      ['3.1.18', '3.1.18', 'partial'],
+      ['3.1.24', '3.1.24', 'partial'],
       ['3.2', '3.2', 'passing'],
       [ADCP_VERSION, ADCP_VERSION, 'passing'],
     ]) {

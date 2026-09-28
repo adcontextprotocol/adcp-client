@@ -34,7 +34,7 @@ export interface Storyboard {
   version: string;
   /**
    * AdCP compliance cache version this storyboard was loaded from, e.g.
-   * "3.1.18" or "3.2.0-rc.7". Injected by the local cache loader; not
+   * "3.1.24" or "3.2.0-rc.7". Injected by the local cache loader; not
    * authored in storyboard YAML.
    */
   adcp_version?: string;
