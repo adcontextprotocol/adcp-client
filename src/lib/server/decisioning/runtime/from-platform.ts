@@ -3755,20 +3755,32 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           const refFromContext = (input.context as { account?: AccountReference } | undefined)?.account;
           const accountRef = refFromTop ?? refFromContext;
 
-          // Same per-mode reference-shape contract the buyer-facing
-          // dispatchers enforce. Outside the try below on purpose: a refused
-          // reference is a buyer-fixable INVALID_REQUEST, not a resolver
-          // failure to swallow. This call site historically skipped the
-          // check; with `'derived'` now accepting `{ account_id }`, the
-          // controller must not be the one path where a reference bypasses
-          // it.
-          enforceAccountRefShapeForResolution(platform.accounts.resolution, accountRef);
+          if (accountRef !== undefined && (typeof accountRef !== 'object' || Array.isArray(accountRef))) {
+            return adcpError('INVALID_REQUEST', { message: 'account must be an object' });
+          }
 
+          // Enforce the same per-mode reference shape as buyer dispatch. The
+          // check runs inside the try so its typed INVALID_REQUEST becomes a
+          // structured AdCP error rather than a raw MCP exception.
+          // The controller's account_id arm also carries a sandbox assertion.
+          // It is not part of the core AccountReference accepted by account
+          // stores; the resolved account mode remains the authority.
+          const requestedAccountId = refAccountId(accountRef);
+          if (
+            requestedAccountId !== undefined &&
+            (typeof requestedAccountId !== 'string' ||
+              requestedAccountId.length === 0 ||
+              (accountRef !== undefined && ('brand' in accountRef || 'operator' in accountRef)))
+          ) {
+            return adcpError('INVALID_REQUEST', { message: 'Invalid account_id reference' });
+          }
+          const resolverRef = requestedAccountId === undefined ? accountRef : { account_id: requestedAccountId };
           let resolvedAccount: Account | null = null;
           const agent = principalAuthority.agent;
           try {
+            enforceAccountRefShapeForResolution(platform.accounts.resolution, accountRef);
             resolvedAccount = await platform.accounts.resolve(
-              accountRef,
+              resolverRef,
               toResolveCtx(
                 {
                   ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
@@ -3781,10 +3793,17 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
                 input
               )
             );
-          } catch {
-            // Resolver failures fall through to the wire-ref / env fallbacks.
-            // Treat as "no account resolved" — fail-closed by default unless a
-            // fallback admits.
+          } catch (err) {
+            if (err instanceof AccountNotFoundError || (err instanceof AdcpError && err.code === 'ACCOUNT_NOT_FOUND')) {
+              resolvedAccount = null;
+            } else if (err instanceof AdcpError) {
+              return adcpError(err.code, err.toStructuredError());
+            } else {
+              fwLogger.error?.('Account resolution failed during comply controller dispatch', {
+                error_type: err instanceof Error ? err.name : typeof err,
+              });
+              return adcpError('SERVICE_UNAVAILABLE', { message: 'Account resolution failed' });
+            }
           }
           resolvedAccount = assertResolvedAccountMatchesRef(
             platform.accounts.resolution,
@@ -3805,8 +3824,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           // resolver wins. The buyer's wire claim never overrides a
           // resolved live account.
           //
-          // The fallback is scoped to refs that name no account: a buyer who
-          // DID name an account and had it refused by the resolver must not
+          // The fallback uses the original accountRef and is scoped to refs
+          // that name no account. A buyer who named an account and had it
+          // refused by the resolver must not
           // re-admit themselves by asserting `sandbox: true` alongside it.
           // Fail-closed resolvers (`createDerivedAccountStore` and any
           // verified `'derived'` store) make `resolvedAccount == null`
