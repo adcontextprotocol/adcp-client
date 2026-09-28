@@ -69,6 +69,16 @@ function buildComplianceSummaryMarkdown(result, agentUrl) {
   return lines.join('\n');
 }
 
+/**
+ * Scale the implicit compliance budget with the selected storyboard set.
+ * Keep the historical 120-second floor for small/unknown selections and
+ * reserve ten seconds per selected storyboard for larger release lines.
+ */
+function defaultComplianceTimeoutSeconds(selectedStoryboardCount) {
+  if (!Number.isSafeInteger(selectedStoryboardCount) || selectedStoryboardCount <= 0) return 120;
+  return Math.max(120, selectedStoryboardCount * 10);
+}
+
 function formatReasonCounts(counts) {
   if (!counts) return undefined;
   const entries = Object.entries(counts).filter(([, count]) => count > 0);
@@ -164,4 +174,5 @@ module.exports = {
   buildStoryboardSummaryMarkdown,
   writeSummaryFile,
   printSoftFailBlock,
+  defaultComplianceTimeoutSeconds,
 };
