@@ -28,6 +28,8 @@ test('cardinality fallback runs while targeting declarations are still local', (
   visit(pipeline);
   assert.ok(calls.indexOf('alignTargetingInputArrayCardinality') >= 0);
   assert.ok(calls.indexOf('alignTargetingInputArrayCardinality') < calls.indexOf('addCoreGeneratedTypeImports'));
+  assert.ok(calls.indexOf('assertVerifiedSchemaRefsResolved') >= 0);
+  assert.ok(calls.indexOf('assertVerifiedSchemaRefsResolved') < calls.indexOf('writeFileIfChanged'));
   assert.ok(ts.isCallExpression(coreInitializer));
   assert.equal(coreInitializer.expression.getText(source), 'alignTargetingInputArrayCardinality');
 });
@@ -41,10 +43,10 @@ test('nullable targeting aliases survive independent root compilation in either 
     script,
     `
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { compile } from 'json-schema-to-typescript';
 import ts from 'typescript';
-import { nameTargetingInputForCodegen, codegenRefResolvers, enforceStrictSchema, filterDuplicateTypeDefinitions } from '../../scripts/generate-types';
+import { nameTargetingInputForCodegen, codegenRefResolvers, createVerifiedCacheRefResolver, assertVerifiedSchemaRefsResolved, enforceStrictSchema, filterDuplicateTypeDefinitions } from '../../scripts/generate-types';
 
 async function main() {
   // These four array titles are shared by targeting.json and the nullable
@@ -100,8 +102,9 @@ async function main() {
   }
   const inputId = stateId.replace('targeting.json', 'targeting-input.json');
   let inputReads = 0;
+  let cacheReads = 0;
   let httpReads = 0;
-  const resolver = { canRead: true, read: () => structuredClone(state) };
+  const resolver = { canRead: true, read: () => { cacheReads++; return structuredClone(state); } };
   const resolvers = codegenRefResolvers(resolver, url => {
     assert.equal(url, inputId);
     inputReads++;
@@ -110,13 +113,47 @@ async function main() {
   const compiled = await compile({ title: 'Referenced Input', type: 'object', properties: { targeting: { $ref: inputId } } }, 'ReferencedInput', {
     bannerComment: '', $refOptions: { resolve: { ...resolvers,
       http: { order: 200, canRead: () => true, read: file => {
-        if (file.url === inputId) { httpReads++; throw new Error('input normalization was bypassed'); }
+        httpReads++;
+        if (file.url === inputId) throw new Error('input normalization was bypassed');
         return structuredClone(state);
       } },
     } },
   });
   assert.equal(inputReads, 1);
+  assert.ok(cacheReads > 0, 'other AdCP refs must come from the verified cache');
   assert.equal(httpReads, 0);
+  assert.equal(resolvers.http, false, 'live HTTP fallback must remain disabled');
+  assert.equal(resolvers.file, false, 'local file fallback must remain disabled');
+  const cacheRoot = ${JSON.stringify(path.join(directory, 'cache'))};
+  mkdirSync(cacheRoot + '/core', { recursive: true });
+  const rawSchema = { title: 'Verified Fixture', type: 'string', pattern: '^verified$' };
+  writeFileSync(cacheRoot + '/core/verified.json', JSON.stringify(rawSchema));
+  const verified = createVerifiedCacheRefResolver(cacheRoot);
+  const verifiedUrl = 'https://adcontextprotocol.org/schemas/3.2.0-rc.7/core/verified.json';
+  assert.deepEqual(await verified.read({ url: verifiedUrl }), rawSchema, 'cached references retain their raw wire constraints');
+  await assert.rejects(
+    compile(
+      { title: 'Missing Ref', $ref: 'https://adcontextprotocol.org/schemas/3.2.0-rc.7/core/missing.json' },
+      'MissingRef',
+      {
+        bannerComment: '',
+        $refOptions: {
+          resolve: codegenRefResolvers(verified),
+        },
+      }
+    ),
+    /resolve|read|cache|missing/i
+  );
+  assert.throws(() => assertVerifiedSchemaRefsResolved(), /Unresolved verified schema references/);
+  await assert.rejects(verified.read({ url: 'https://example.org/schemas/3.2.0-rc.7/core/verified.json' }), /Cannot resolve/);
+  writeFileSync(cacheRoot + '/core/malformed.json', '{');
+  assert.throws(() => verified.read({ url: 'https://adcontextprotocol.org/schemas/3.2.0-rc.7/core/malformed.json' }), SyntaxError);
+  await assert.rejects(
+    compile({ title: 'File Ref', $ref: 'file://' + cacheRoot + '/core/verified.json' }, 'FileRef', {
+      bannerComment: '', $refOptions: { resolve: codegenRefResolvers(verified) },
+    }),
+    /resolve|read|cache|file/i
+  );
   assert.match(compiled, /TargetingGeoMetrosInput/);
   assert.match(compiled, /TargetingDeviceTypesInput/);
   assert.equal(nameTargetingInputForCodegen(input).properties.geo_metros.minItems, 1);

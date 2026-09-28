@@ -429,6 +429,41 @@ function loadCachedSchema(schemaRef: string): any {
   }
 }
 
+const unresolvedVerifiedSchemaRefs = new Set<string>();
+
+export function assertVerifiedSchemaRefsResolved(): void {
+  if (unresolvedVerifiedSchemaRefs.size > 0) {
+    throw new Error(`Unresolved verified schema references: ${[...unresolvedVerifiedSchemaRefs].sort().join(', ')}`);
+  }
+}
+
+function loadRawCachedSchema(cacheDir: string, schemaRef: string): any {
+  try {
+    const schemaPath = resolveSchemaRefInCache(cacheDir, schemaRef);
+    if (!schemaPath || !existsSync(schemaPath)) {
+      throw new Error(`Schema not found in verified cache for ref: ${schemaRef}`);
+    }
+    return JSON.parse(readFileSync(schemaPath, 'utf8'));
+  } catch (error) {
+    unresolvedVerifiedSchemaRefs.add(schemaRef);
+    throw error;
+  }
+}
+
+export function createVerifiedCacheRefResolver(cacheDir: string) {
+  return {
+    canRead: true,
+    read: (file: { url: string }) => {
+      const url = file.url;
+      if (schemaRefToCacheRelativePath(url)) {
+        return Promise.resolve(loadRawCachedSchema(cacheDir, url));
+      }
+      unresolvedVerifiedSchemaRefs.add(url);
+      return Promise.reject(new Error(`Cannot resolve $ref: ${url}`));
+    },
+  };
+}
+
 // Get cached AdCP version
 function getCachedAdCPVersion(): string {
   try {
@@ -1151,17 +1186,24 @@ export function nameTargetingInputForCodegen(schema: any): any {
 /** Ensure referenced targeting input gets the same names as an inline root. */
 export function codegenRefResolvers(refResolver: any, readTargetingInput = loadCachedSchema) {
   return {
-    cache: refResolver,
+    // The built-in HTTP resolver runs at order 200. A custom resolver with no
+    // order runs last, so remote $refs could bypass the verified bundle and
+    // make generated output depend on the live schema host. Fail closed when
+    // a reference is absent from the verified local cache.
+    http: false,
+    file: false,
+    cache: { ...refResolver, order: 2 },
     targetingInput: {
       order: 1,
       canRead: (file: { url: string }) => schemaRefToCacheRelativePath(file.url) === 'core/targeting-input.json',
       read: (file: { url: string }) => {
         const schema = readTargetingInput(file.url);
-        // The parser can fall through to HTTP on a read error. The generated
-        // targeting parity tests must also guard against missing normalization.
-        if (!schema) throw new Error(`Targeting input is missing from the verified cache: ${file.url}`);
-        // HTTP otherwise wins before the generic cache resolver. Apply only
-        // naming here, retaining the referenced wire shape and constraints.
+        if (!schema) {
+          unresolvedVerifiedSchemaRefs.add(file.url);
+          throw new Error(`Targeting input is missing from the verified cache: ${file.url}`);
+        }
+        // Apply only the naming override here, retaining the referenced wire
+        // shape and constraints from the verified cache.
         return nameTargetingInputForCodegen(schema);
       },
     },
@@ -2923,20 +2965,7 @@ async function generateToolTypes(tools: ToolDefinition[], preGeneratedTypes: Set
   toolTypes += '// Generated from official AdCP schemas\n\n';
 
   // Create custom $ref resolver for cached schemas
-  const refResolver = {
-    canRead: true,
-    read: (file: { url: string }) => {
-      const url = file.url;
-      // Handle any /schemas/ path (versioned or v1)
-      if (schemaRefToCacheRelativePath(url)) {
-        const schema = loadCachedSchema(url);
-        if (schema) {
-          return Promise.resolve(enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema))));
-        }
-      }
-      return Promise.reject(new Error(`Cannot resolve $ref: ${url}`));
-    },
-  };
+  const refResolver = createVerifiedCacheRefResolver(LATEST_CACHE_DIR);
 
   // Track generated types to avoid duplicates. Some shared schemas are owned by
   // core.generated.ts but are reached through tool request/response $refs; seed
@@ -4453,6 +4482,7 @@ async function compileGapSchemas(
 }
 
 async function generateTypes() {
+  unresolvedVerifiedSchemaRefs.clear();
   console.log('🔄 Generating AdCP types and fluent API...');
 
   // Check if schemas are cached
@@ -4473,20 +4503,7 @@ async function generateTypes() {
   let coreTypes = `// Generated AdCP core types from official schemas v${adcpVersion}\n// Generated at: ${new Date().toISOString()}\n\n`;
 
   // Custom $ref resolver for cached schemas
-  const refResolver = {
-    canRead: true,
-    read: (file: { url: string }) => {
-      const url = file.url;
-      // Handle any /schemas/ path (versioned or v1)
-      if (schemaRefToCacheRelativePath(url)) {
-        const schema = loadCachedSchema(url);
-        if (schema) {
-          return Promise.resolve(enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema))));
-        }
-      }
-      return Promise.reject(new Error(`Cannot resolve $ref: ${url}`));
-    },
-  };
+  const refResolver = createVerifiedCacheRefResolver(LATEST_CACHE_DIR);
 
   // Track generated types across all core schemas to prevent duplicates
   const generatedCoreTypes = new Set<string>();
@@ -4741,6 +4758,11 @@ async function generateTypes() {
 
   // Generate Agent classes
   const agentClasses = generateAgentClasses(tools);
+
+  // Compile passes can log and skip a bad schema. A missing or malformed
+  // verified reference must still stop generation before partial public type
+  // files are written.
+  assertVerifiedSchemaRefsResolved();
 
   // Write files only if content changed
   const coreTypesPath = path.join(libOutputDir, 'core.generated.ts');
