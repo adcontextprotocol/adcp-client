@@ -1,5 +1,30 @@
 # Changelog
 
+## 14.0.0-rc.49
+
+### Minor Changes
+
+- 03fe08b: Adopt the signed AdCP 3.2.0-rc.7 schema and compliance bundles as the default
+  wire release.
+
+  The generated types and validators now include the `viewable_rate` optimization
+  metric and optional account-scoped creative-format discovery. Account resolvers
+  must authorize any buyer-supplied `account_id`, including this new discovery
+  path. Reporting schemas retain their rc.6 wire shape; the shipped consumer-status
+  golden fixture remains byte-exact at rc.6. The packaged principal and
+  reporting-core storyboards are rebound to the signed rc.7 bundle. As with earlier 3.2
+  prereleases, rc.7 replaces rc.6 in the advertised compatible versions;
+  communicating peers should upgrade together or select the exact `3.2-rc.7`
+  alias.
+
+- 888d48f: Expose a focused `@adcp/sdk/reporting/consumer` buyer entrypoint and publish an
+  existing-application worker example with PostgreSQL persistence, signed webhook
+  intake, buyer-retained expectations, and explicit adjustment policy. Include
+  seller/principal scope and run reason in buyer worker results and error context;
+  emit a credential-safe structured warning when background errors have no
+  observer. Result objects now include `consumerScope`, and an omitted or failed
+  error observer produces a structured warning on stderr.
+
 ## 14.0.0-rc.48
 
 ### Minor Changes
