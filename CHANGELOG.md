@@ -1,5 +1,12 @@
 # Changelog
 
+## 13.1.2
+
+### Patch Changes
+
+- cdab9ad: Scale the CLI's default compliance timeout budget with the selected storyboard count (`max(120, 10 × n)`) instead of a flat 120 seconds, backported from main, so larger selections don't silently truncate a full assessment run.
+- 219ff4f: Bundle AdCP 3.1.24 compliance and schema data on the maintained 13.x line, validate 3.1 capability extensions against the selected compliance schema during major-only discovery, and preserve read-only `get_products` behavior when its `idempotency_key` is optional. Keyed `get_products` calls now receive replay protection, and the client generates a key for proposal finalization. The stale 3.1.20 compliance cache is no longer bundled; callers pinned to that exact patch should provide matching `--compliance-dir` and `--schema-root` paths.
+
 ## 13.1.1
 
 ### Patch Changes
