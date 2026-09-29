@@ -18,6 +18,32 @@ export interface LoadedVectors {
   sourceDir: string;
 }
 
+/** Replace root fixtures with authored profile counterparts when a profile is selected. */
+export function selectRequestSigningVectors(
+  loaded: LoadedVectors,
+  signingProfileVersion?: '3.2'
+): Pick<LoadedVectors, 'positive' | 'negative'> {
+  const profile = signingProfileVersion ? loaded.profiles[signingProfileVersion] : undefined;
+  if (!signingProfileVersion) return { positive: loaded.positive, negative: loaded.negative };
+  if (!profile)
+    throw new Error(`Request-signing profile ${signingProfileVersion} is unavailable in ${loaded.sourceDir}`);
+  const select = <T extends Vector>(root: T[], additions: T[], kind: 'positive' | 'negative'): T[] => {
+    const mirrored = new Set(
+      additions.map(vector => vector.id.replace(`profile-${signingProfileVersion}/${kind}/`, ''))
+    );
+    return [...root.filter(vector => !mirrored.has(vector.id)), ...additions];
+  };
+  return {
+    positive: select(loaded.positive, profile.positive, 'positive'),
+    negative: select(loaded.negative, profile.negative, 'negative'),
+  };
+}
+
+export function signingProfileForAdcpVersion(version?: string): '3.2' | undefined {
+  const match = /^(\d+)\.(\d+)/.exec(version ?? '');
+  return match && Number(match[1]) === 3 && Number(match[2]) === 2 ? '3.2' : undefined;
+}
+
 const ERROR_CODES: ReadonlySet<string> = new Set([
   'request_signature_required',
   'request_signature_header_malformed',

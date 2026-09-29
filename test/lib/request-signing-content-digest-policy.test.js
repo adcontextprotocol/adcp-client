@@ -83,6 +83,23 @@ test('a strict agent still skips vectors written for the other strict policy', a
   assert.strictEqual(result.skip_reason, 'capability_profile_mismatch');
 });
 
+test("a 'required' agent grades the missing-content-digest refusal", async () => {
+  const vector = vectorById('negative', '007-missing-content-digest');
+  for (const policyOption of [
+    { agentCapability: { supported: true, covers_content_digest: 'required', required_for: ['create_media_buy'] } },
+    { agentContentDigestPolicy: 'required' },
+  ]) {
+    const result = await gradeOneVector(vector.id, 'negative', UNREACHABLE, {
+      ...policyOption,
+      transport: 'raw',
+      allowPrivateIp: true,
+      timeoutMs: 500,
+    });
+    assert.notStrictEqual(result.skip_reason, 'capability_profile_mismatch');
+    assert.strictEqual(result.vector_id, vector.id);
+  }
+});
+
 test('the agentContentDigestPolicy path narrows the same way', async () => {
   // `adcp grade request-signing --content-digest-policy either` shares the
   // predicate; it over-skipped 010 for the same reason.

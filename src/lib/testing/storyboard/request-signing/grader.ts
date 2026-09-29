@@ -1,7 +1,7 @@
 import { randomBytes } from 'crypto';
 import { buildNegativeRequest, buildPositiveRequest, type BuildOptions, type SignedHttpRequest } from './builder';
 import { initializeMcpSession, probeSignedRequest, type ProbeOptions, type ProbeResult } from './probe';
-import { loadRequestSigningVectors, type LoadVectorsOptions } from './vector-loader';
+import { loadRequestSigningVectors, selectRequestSigningVectors, type LoadVectorsOptions } from './vector-loader';
 import { captureA2aRequest, operationFromVectorUrl, type CapturedA2aRequest } from './a2a-dispatch';
 import { loadSignedRequestsRunnerContract, type SignedRequestsRunnerContract } from './test-kit';
 import {
@@ -16,6 +16,8 @@ import { parseSignatureInput } from '../../../signing/parser';
 import type { NegativeVector, PositiveVector, VerifierCapabilityFixture } from './types';
 
 export interface GradeOptions extends LoadVectorsOptions {
+  /** Include authored 3.2 profile vectors, replacing root fixtures with the same basename. */
+  signingProfileVersion?: '3.2';
   /** Allow http:// and private-IP destinations. Off by default (match fetchProbe). */
   allowPrivateIp?: boolean;
   /** Skip the rate-abuse vector (it sends 100+ requests; slow). Defaults to false. */
@@ -45,7 +47,8 @@ export interface GradeOptions extends LoadVectorsOptions {
    * each vector's `Signature-Input` and auto-skips vectors whose actual
    * signed components are structurally incompatible with the agent's
    * policy (uncovered `content-digest` against a `'required'` verifier,
-   * or covered `content-digest` against a `'forbidden'` verifier).
+   * or covered `content-digest` against a `'forbidden'` verifier). A vector
+   * expecting that exact policy refusal remains gradable.
    *
    * Without this option, every vector runs and cap-profile mismatches
    * produce failed vectors that the operator has to manually translate
@@ -88,7 +91,7 @@ export interface GradeOptions extends LoadVectorsOptions {
    *   - Vectors whose actual `Signature-Input` does not cover
    *     `content-digest` against a `'required'` agent (rejected with
    *     `request_signature_components_incomplete` before the intended
-   *     error path).
+   *     error path, unless that is the vector's expected error).
    *
    * Skipped vectors use `skip_reason: 'capability_profile_mismatch'`.
    *
@@ -219,7 +222,7 @@ export interface GradeReport {
 }
 
 /**
- * Grade an agent's RFC 9421 verifier against the 28 conformance vectors.
+ * Grade an agent's RFC 9421 verifier against the selected conformance vectors.
  *
  * Preconditions the caller owns:
  *   - Agent advertises `request_signing.supported: true` in `get_adcp_capabilities`.
@@ -234,14 +237,15 @@ export interface GradeReport {
 export async function gradeRequestSigning(agentUrl: string, options: GradeOptions = {}): Promise<GradeReport> {
   const start = Date.now();
   const loaded = loadRequestSigningVectors(options);
+  const selected = selectRequestSigningVectors(loaded, options.signingProfileVersion);
   const contract = loadSignedRequestsRunnerContract(options);
   const transport = options.transport ?? 'mcp';
 
   // Avoid allocating an MCP session (or making authenticated egress) when
   // every vector is skipped or handled entirely by the local verifier.
   const hasRunnableNetworkVector =
-    loaded.positive.some(vector => !preflightSkip(vector, 'positive', contract, options)) ||
-    loaded.negative.some(vector => !vector.jwks_override && !preflightSkip(vector, 'negative', contract, options));
+    selected.positive.some(vector => !preflightSkip(vector, 'positive', contract, options)) ||
+    selected.negative.some(vector => !vector.jwks_override && !preflightSkip(vector, 'negative', contract, options));
 
   // Auto-initialize MCP session once before all vectors. A single session
   // covers the full batch — the session ID is injected post-signing so
@@ -274,7 +278,7 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
   };
 
   const positive: VectorGradeResult[] = [];
-  for (const vector of loaded.positive) {
+  for (const vector of selected.positive) {
     const skip = preflightSkip(vector, 'positive', contract, options);
     if (skip) {
       positive.push(skip);
@@ -287,7 +291,7 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
   }
 
   const negative: VectorGradeResult[] = [];
-  for (const vector of loaded.negative) {
+  for (const vector of selected.negative) {
     const skip = preflightSkip(vector, 'negative', contract, options);
     if (skip) {
       negative.push(skip);
@@ -338,6 +342,14 @@ const MCP_FLATTENED_VECTORS = new Set([
   '010-percent-encoded-slash-preserved',
   '011-ipv6-authority',
   '012-ipv6-authority-default-port-stripped',
+  'profile-3.2/positive/005-default-port-stripped',
+  'profile-3.2/positive/006-dot-segment-path',
+  'profile-3.2/positive/007-query-byte-preserved',
+  'profile-3.2/positive/008-percent-encoded-path',
+  'profile-3.2/positive/009-percent-encoded-unreserved-decoded',
+  'profile-3.2/positive/010-percent-encoded-slash-preserved',
+  'profile-3.2/positive/011-ipv6-authority',
+  'profile-3.2/positive/012-ipv6-authority-default-port-stripped',
 ]);
 
 // Vectors whose failure mode can't reach a live agent through HTTP. Document
@@ -615,11 +627,14 @@ export async function gradeOneVector(
   options: GradeOptions = {}
 ): Promise<VectorGradeResult> {
   const loaded = loadRequestSigningVectors(options);
+  const selected = selectRequestSigningVectors(loaded, options.signingProfileVersion);
   const contract = loadSignedRequestsRunnerContract(options);
   const transport = options.transport ?? 'mcp';
 
   const vector =
-    kind === 'positive' ? loaded.positive.find(v => v.id === vectorId) : loaded.negative.find(v => v.id === vectorId);
+    kind === 'positive'
+      ? selected.positive.find(v => v.id === vectorId)
+      : selected.negative.find(v => v.id === vectorId);
   if (!vector) throw new Error(`Unknown ${kind} vector "${vectorId}"`);
 
   const skip = preflightSkip(vector, kind, contract, options);
@@ -1038,7 +1053,11 @@ function contentDigestStructuralMismatch(
       `error path can fire.`
     );
   }
-  if (!signsCd && agentCoversContentDigest === 'required') {
+  if (
+    !signsCd &&
+    agentCoversContentDigest === 'required' &&
+    !('expected_error_code' in vector && vector.expected_error_code === 'request_signature_components_incomplete')
+  ) {
     return (
       `Vector's Signature-Input does not cover content-digest but agent declares ` +
       `covers_content_digest='required'. The verifier rejects with ` +
