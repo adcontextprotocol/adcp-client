@@ -6,6 +6,7 @@ const {
   runStoryboardStep,
 } = require('../../dist/lib/testing/storyboard/runner.js');
 const { prepareProtocolToolCall } = require('../../dist/lib/protocols/index.js');
+const { preparedProtocolToolCallFor } = require('../../dist/lib/protocols/prepared-call-context.js');
 const { computeGovernedPayloadHash } = require('../../dist/lib/governance/authorization.js');
 const { SingleAgentClient, ProtocolClient } = require('../../dist/lib/index.js');
 
@@ -168,6 +169,8 @@ test('the runner also suppresses the SDK idempotency default for governed steps'
     title: 'Build',
     task: 'build_creative',
     sample_request: { mode: 'generate', governance_context: 'approved' },
+    expect_error: true,
+    negative_path: 'schema_invalid',
     validations: [],
   };
   const storyboard = {
@@ -198,6 +201,43 @@ test('the runner also suppresses the SDK idempotency default for governed steps'
   assert.ok(sent, JSON.stringify(result));
   assert.equal(sent.params.idempotency_key, undefined);
   assert.equal(sent.taskOptions.skipIdempotencyAutoInject, true);
+  assert.equal(sent.taskOptions.preserveGovernedPayload, true);
+});
+
+test('missing approved idempotency keys fail their step before dispatch', async () => {
+  const step = {
+    id: 'build_without_approved_key',
+    title: 'Build',
+    task: 'build_creative',
+    sample_request: { mode: 'generate', governance_context: 'approved' },
+    validations: [],
+  };
+  const storyboard = {
+    id: 'governed_authoring_error',
+    version: '1.0.0',
+    title: 'Governed request',
+    category: 'test',
+    summary: '',
+    narrative: '',
+    agent: { interaction_model: 'sync', capabilities: [] },
+    caller: { role: 'buyer_agent' },
+    phases: [{ id: 'p', title: 'Build', steps: [step] }],
+  };
+  const result = await runStoryboardStep('https://creative.example/mcp', storyboard, step.id, {
+    protocol: 'mcp',
+    agentTools: ['build_creative'],
+    _profile: { name: 'Creative', tools: ['build_creative'] },
+    _client: {
+      getAgentInfo: async () => ({ name: 'Creative', tools: [{ name: 'build_creative' }] }),
+      buildCreativeLegacy: async () => {
+        throw new Error('invalid fixture must not dispatch');
+      },
+      resetContext: () => {},
+    },
+  });
+  assert.equal(result.passed, false);
+  assert.match(result.error, /must author the idempotency_key approved by check_governance/);
+  assert.equal(result.validations[0].json_pointer, '/idempotency_key');
 });
 
 test('the approved payload matches the SDK protocol boundary for build_creative', async () => {
@@ -248,14 +288,80 @@ test('the approved payload matches the SDK protocol boundary for build_creative'
   let sent;
   ProtocolClient.callTool = async (target, tool, params, taskOptions) => {
     assert.equal(tool, 'build_creative');
-    sent = prepareProtocolToolCall(target, params, { ...taskOptions, toolName: tool }).args;
+    sent = preparedProtocolToolCallFor(target, tool, params)?.args;
+    assert.ok(sent, 'TaskExecutor must hand the prepared wire request to ProtocolClient');
     return { structuredContent: { status: 'completed', creative_id: 'creative-1' } };
   };
   try {
-    await client.buildCreativeLegacy(governed);
+    await client.buildCreativeLegacy(governed, undefined, { preserveGovernedPayload: true });
   } finally {
     ProtocolClient.callTool = originalCallTool;
   }
+  assert.equal(computeGovernedPayloadHash(approval.payload), computeGovernedPayloadHash(sent));
+});
+
+test('governed requests bypass buyer normalization and seller field stripping', async () => {
+  const agent = { id: 'creative', name: 'Creative', agent_uri: 'https://creative.example/mcp', protocol: 'mcp' };
+  const payload = {
+    account_id: 'acc-1',
+    mode: 'generate',
+    message: 'Summer sale',
+    idempotency_key: 'preserved-build',
+  };
+  const approvalStep = {
+    id: 'approve_preserved',
+    title: 'Approve',
+    task: 'check_governance',
+    sample_request: {
+      phase: 'intent',
+      plan_id: 'plan-1',
+      tool: 'build_creative',
+      target_agent: agent.agent_uri,
+      payload,
+    },
+  };
+  const governedStep = {
+    id: 'build_preserved',
+    title: 'Build',
+    task: 'build_creative',
+    sample_request: { ...payload, governance_context: 'approved' },
+  };
+  const approval = buildStepRequest(approvalStep, approvalStep, {}, options);
+  const governed = buildStepRequest(governedStep, governedStep, {}, options);
+  const client = new SingleAgentClient(agent, {
+    adcpVersion: options.adcpVersion,
+    validateFeatures: false,
+    validation: { requests: 'off', responses: 'off' },
+  });
+  client.ensureEndpointDiscovered = async () => agent;
+  client.detectServerVersion = async () => 'v3';
+  client.cachedToolSchemas = new Map([['build_creative', { mode: {}, message: {}, idempotency_key: {} }]]);
+  client.getCapabilities = async () => ({
+    version: 'v3',
+    majorVersions: [3],
+    supportedVersions: [options.adcpVersion],
+    protocols: ['creative'],
+    features: {},
+    extensions: [],
+    _synthetic: true,
+  });
+  const originalCallTool = ProtocolClient.callTool;
+  let sent;
+  ProtocolClient.callTool = async (target, tool, params) => {
+    sent = preparedProtocolToolCallFor(target, tool, params)?.args;
+    assert.ok(sent);
+    return { structuredContent: { status: 'completed', creative_id: 'creative-1' } };
+  };
+  try {
+    await client.buildCreativeLegacy(governed, undefined, {
+      preserveGovernedPayload: true,
+      skipRequestValidation: true,
+    });
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+  }
+  assert.equal(sent.account_id, 'acc-1');
+  assert.equal(sent.account, undefined);
   assert.equal(computeGovernedPayloadHash(approval.payload), computeGovernedPayloadHash(sent));
 });
 

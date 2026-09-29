@@ -4586,10 +4586,12 @@ export class SingleAgentClient {
     const canonicalCreativeInvocation =
       CANONICAL_CREATIVE_ACTIVITY_TASKS.has(taskType) || canonicalRequest !== undefined;
     // Normalize params for backwards compatibility before validation
-    let normalizedParams = normalizeRequestParams(taskType, params, {
-      skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
-      skipAccountValidation: options?.skipAccountValidation,
-    });
+    let normalizedParams = options?.preserveGovernedPayload
+      ? params
+      : normalizeRequestParams(taskType, params, {
+          skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
+          skipAccountValidation: options?.skipAccountValidation,
+        });
     if (!options?.skipRequestValidation) assertNoPrincipalIdentityInput(taskType, normalizedParams);
     this.assertRequestSupportedByConfiguredVersion(taskType, normalizedParams, options, canonicalCreativeInvocation);
     this.assertDurablePropertyListCredentialSupported(taskType, normalizedParams);
@@ -4675,14 +4677,19 @@ export class SingleAgentClient {
       capabilityDiscoveryContext.capabilities
     );
     const inputSchemaStripLogs: any[] = [];
-    const { params: adaptedParams, driftLogs: adaptDriftLogs } = this.adaptRequest(
-      taskType,
-      normalizedParams,
-      serverVersion,
-      inputSchemaStripLogs,
-      capabilityDiscoveryContext.toolSchemas,
-      capabilityDiscoveryContext.capabilities
-    );
+    if (options?.preserveGovernedPayload && serverVersion !== 'v3') {
+      throw new Error('Governed storyboard requests require a v3 seller to preserve the approved payload.');
+    }
+    const { params: adaptedParams, driftLogs: adaptDriftLogs } = options?.preserveGovernedPayload
+      ? { params: normalizedParams, driftLogs: [] }
+      : this.adaptRequest(
+          taskType,
+          normalizedParams,
+          serverVersion,
+          inputSchemaStripLogs,
+          capabilityDiscoveryContext.toolSchemas,
+          capabilityDiscoveryContext.capabilities
+        );
 
     // Symmetric to the pre-adapter v3 pass above: when the adapter
     // rewrote the request for a v2 server, warn-validate the adapted
@@ -7814,10 +7821,12 @@ export class SingleAgentClient {
     let detectedServerVersion: 'v2' | 'v3' | undefined;
     let detectedServerVersionSynthetic: boolean | undefined;
     try {
-      const normalizedParams = normalizeRequestParams(taskName, params, {
-        skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
-        skipAccountValidation: options?.skipAccountValidation,
-      });
+      const normalizedParams = options?.preserveGovernedPayload
+        ? params
+        : normalizeRequestParams(taskName, params, {
+            skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
+            skipAccountValidation: options?.skipAccountValidation,
+          });
       if (!options?.skipRequestValidation) assertNoPrincipalIdentityInput(taskName, normalizedParams);
       this.assertRequestSupportedByConfiguredVersion(taskName, normalizedParams, options);
       this.assertDurablePropertyListCredentialSupported(taskName, normalizedParams);
@@ -7859,14 +7868,19 @@ export class SingleAgentClient {
         capabilityDiscoveryContext.capabilities
       );
       const inputSchemaStripLogs: any[] = [];
-      const { params: adaptedParams, driftLogs: adaptDriftLogs } = this.adaptRequest(
-        taskName,
-        normalizedParams,
-        serverVersion,
-        inputSchemaStripLogs,
-        capabilityDiscoveryContext.toolSchemas,
-        capabilityDiscoveryContext.capabilities
-      );
+      if (options?.preserveGovernedPayload && serverVersion !== 'v3') {
+        throw new Error('Governed storyboard requests require a v3 seller to preserve the approved payload.');
+      }
+      const { params: adaptedParams, driftLogs: adaptDriftLogs } = options?.preserveGovernedPayload
+        ? { params: normalizedParams, driftLogs: [] }
+        : this.adaptRequest(
+            taskName,
+            normalizedParams,
+            serverVersion,
+            inputSchemaStripLogs,
+            capabilityDiscoveryContext.toolSchemas,
+            capabilityDiscoveryContext.capabilities
+          );
 
       // Symmetric warn-only post-adapter pass against the v2.5 schema bundle.
       // Drift gets surfaced via result.metadata.debug_logs so adapter

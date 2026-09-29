@@ -6301,6 +6301,47 @@ async function executeStep(
     effectiveStep.task !== 'check_governance' &&
     effectiveStep.task !== 'report_plan_outcome' &&
     Object.prototype.hasOwnProperty.call(request, 'governance_context');
+  if (
+    governedRequest &&
+    !step.expect_error &&
+    step.omit_idempotency_key !== true &&
+    requestUsesIdempotency(effectiveStep.task, request) &&
+    (typeof request.idempotency_key !== 'string' || request.idempotency_key.length === 0)
+  ) {
+    const detail =
+      `Governed ${effectiveStep.task} must author the idempotency_key approved by check_governance; ` +
+      'the runner cannot mint one after approval.';
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: effectiveStep.task,
+      passed: false,
+      duration_ms: 0,
+      validations: [
+        {
+          check: 'governed_payload',
+          passed: false,
+          description: detail,
+          json_pointer: '/idempotency_key',
+          expected: 'the key authorized by check_governance',
+          actual: request.idempotency_key ?? null,
+          schema_id: null,
+          schema_url: null,
+        },
+      ],
+      context,
+      error: detail,
+      next: getNextStepPreview(step.id, allSteps, context, runState.runnerVars),
+      request: {
+        transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
+        operation: effectiveStep.task,
+        payload: redactSecrets(request),
+        ...(runState.agentUrl ? { url: redactOAuthUrlForOutput(runState.agentUrl) } : {}),
+      },
+      extraction: { path: 'none' },
+    };
+  }
   const testsIdempotencyKeyOmission =
     (step.omit_idempotency_key === true ||
       (governedRequest && (typeof request.idempotency_key !== 'string' || request.idempotency_key.length === 0))) &&
@@ -6455,6 +6496,7 @@ async function executeStep(
               skipIdempotencyAutoInject: testsIdempotencyKeyOmission,
               skipAccountValidation: testsMissingAccount,
               skipRequestValidation: testsSchemaInvalidRequest,
+              preserveGovernedPayload: governedRequest,
               responseProjection:
                 effectiveStep.response_projection ??
                 defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario),
@@ -6577,6 +6619,7 @@ async function executeStep(
           skipIdempotencyAutoInject: testsIdempotencyKeyOmission,
           skipAccountValidation: testsMissingAccount,
           skipRequestValidation: testsSchemaInvalidRequest,
+          preserveGovernedPayload: governedRequest,
           responseProjection:
             effectiveStep.response_projection ??
             defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario),
@@ -6624,6 +6667,7 @@ async function executeStep(
           skipIdempotencyAutoInject: testsIdempotencyKeyOmission,
           skipAccountValidation: testsMissingAccount,
           skipRequestValidation: testsSchemaInvalidRequest,
+          preserveGovernedPayload: governedRequest,
           responseProjection:
             effectiveStep.response_projection ??
             defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario),

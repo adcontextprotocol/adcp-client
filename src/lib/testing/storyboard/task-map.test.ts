@@ -186,6 +186,27 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
     });
   });
 
+  it('dispatches governed media buys through the unchanged legacy wire request', async () => {
+    let receivedParams: unknown;
+    let receivedOptions: unknown;
+    const client = {
+      createMediaBuy: async () => {
+        throw new Error('canonical projection would reshape an approved request');
+      },
+      createMediaBuyLegacy: async (params: unknown, _handler: unknown, options: unknown) => {
+        receivedParams = params;
+        receivedOptions = options;
+        return { data: { media_buy_id: 'buy_1' } };
+      },
+    };
+    const request = { packages: [], governance_context: { token: 'approved' }, idempotency_key: 'buy-1' };
+
+    await executeStoryboardTask(client, 'create_media_buy', request, { preserveGovernedPayload: true });
+
+    expect(receivedParams).toEqual(request);
+    expect(receivedOptions).toMatchObject({ preserveGovernedPayload: true });
+  });
+
   it('routes get_media_buys through raw execution with the legacy wire hint', async () => {
     let receivedTask: string | undefined;
     let receivedParams: unknown;
