@@ -1102,6 +1102,11 @@ describe('creative format delivery projection', () => {
       protocol: 'mcp',
     };
     const discoveryClient = new SingleAgentClient(clientConfig, adapters);
+    discoveryClient.getCapabilities = async () => ({
+      servedVersion: '3.0.25',
+      buyingModes: ['brief'],
+      features: { canonicalCreatives: false },
+    });
     discoveryClient.executeAndHandle = async (_task, _handler, _params, _input, _options, transform) => {
       const legacyResponse = {
         products: [
