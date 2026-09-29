@@ -990,6 +990,14 @@ function snapshotTaskOptions<T extends TaskOptions | undefined>(options: T): T {
   } as T;
 }
 
+function assertRawMethodForGovernedPayload(taskType: string, options?: TaskOptions): void {
+  if (options?.preserveGovernedPayload) {
+    throw new ConfigurationError(
+      `Governed ${taskType} requires the raw legacy task method; canonical creative projection can reshape approved arguments.`
+    );
+  }
+}
+
 const PRIMARY_ADCP_TASK_NAMES = {
   get_products: true,
   list_products: true,
@@ -4586,10 +4594,12 @@ export class SingleAgentClient {
     const canonicalCreativeInvocation =
       CANONICAL_CREATIVE_ACTIVITY_TASKS.has(taskType) || canonicalRequest !== undefined;
     // Normalize params for backwards compatibility before validation
-    let normalizedParams = normalizeRequestParams(taskType, params, {
-      skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
-      skipAccountValidation: options?.skipAccountValidation,
-    });
+    let normalizedParams = options?.preserveGovernedPayload
+      ? params
+      : normalizeRequestParams(taskType, params, {
+          skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
+          skipAccountValidation: options?.skipAccountValidation,
+        });
     if (!options?.skipRequestValidation) assertNoPrincipalIdentityInput(taskType, normalizedParams);
     this.assertRequestSupportedByConfiguredVersion(taskType, normalizedParams, options, canonicalCreativeInvocation);
     this.assertDurablePropertyListCredentialSupported(taskType, normalizedParams);
@@ -4602,6 +4612,7 @@ export class SingleAgentClient {
     // testing that needs to exercise server-side missing-key behavior.
     if (
       !options?.skipIdempotencyAutoInject &&
+      !options?.preserveGovernedPayload &&
       requestUsesIdempotency(taskType, normalizedParams) &&
       normalizedParams &&
       typeof normalizedParams === 'object' &&
@@ -4620,6 +4631,7 @@ export class SingleAgentClient {
       !options?.skipIdempotencyAutoInject &&
       !options?.skipAccountValidation &&
       !options?.skipRequestValidation &&
+      !options?.preserveGovernedPayload &&
       !isExternalSchemaRootActive(this.resolvedAdcpVersion)
     ) {
       this.validateRequest(taskType, normalizedParams);
@@ -4650,7 +4662,12 @@ export class SingleAgentClient {
     // v3-only fields out from under the v3 bundled schema. Skip the entire
     // Zod parse when compliance testing has suppressed request validation —
     // the invalid shape is intentional and must reach the seller.
-    if (!options?.skipIdempotencyAutoInject && !options?.skipAccountValidation && !options?.skipRequestValidation) {
+    if (
+      !options?.skipIdempotencyAutoInject &&
+      !options?.skipAccountValidation &&
+      !options?.skipRequestValidation &&
+      !options?.preserveGovernedPayload
+    ) {
       this.executor.validateRequest(taskType, normalizedParams);
     }
 
@@ -4675,14 +4692,21 @@ export class SingleAgentClient {
       capabilityDiscoveryContext.capabilities
     );
     const inputSchemaStripLogs: any[] = [];
-    const { params: adaptedParams, driftLogs: adaptDriftLogs } = this.adaptRequest(
-      taskType,
-      normalizedParams,
-      serverVersion,
-      inputSchemaStripLogs,
-      capabilityDiscoveryContext.toolSchemas,
-      capabilityDiscoveryContext.capabilities
-    );
+    if (options?.preserveGovernedPayload && serverVersion !== 'v3') {
+      throw new ConfigurationError(
+        'Governed storyboard requests require a v3 seller to preserve the approved payload.'
+      );
+    }
+    const { params: adaptedParams, driftLogs: adaptDriftLogs } = options?.preserveGovernedPayload
+      ? { params: normalizedParams, driftLogs: [] }
+      : this.adaptRequest(
+          taskType,
+          normalizedParams,
+          serverVersion,
+          inputSchemaStripLogs,
+          capabilityDiscoveryContext.toolSchemas,
+          capabilityDiscoveryContext.capabilities
+        );
 
     // Symmetric to the pre-adapter v3 pass above: when the adapter
     // rewrote the request for a v2 server, warn-validate the adapted
@@ -6363,6 +6387,7 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<CreateMediaBuyResponse>>> {
+    assertRawMethodForGovernedPayload('create_media_buy', options);
     this.assertDurableProjectionOverrideSupported(options?.legacyFormatConverter);
     const requestSnapshot = structuredCloneWithLegacyCreativeMetadata(params);
     const projectionCatalogs = options?.projectionCatalogs ? structuredClone(options.projectionCatalogs) : undefined;
@@ -6564,6 +6589,7 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<UpdateMediaBuyResponse>>> {
+    assertRawMethodForGovernedPayload('update_media_buy', options);
     this.assertDurableProjectionOverrideSupported(options?.legacyFormatConverter);
     const requestSnapshot = structuredCloneWithLegacyCreativeMetadata(params);
     const projectionCatalogs = options?.projectionCatalogs ? structuredClone(options.projectionCatalogs) : undefined;
@@ -6648,6 +6674,7 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: SyncCreativesTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<SyncCreativesResponse>>> {
+    assertRawMethodForGovernedPayload('sync_creatives', options);
     this.assertDurableProjectionOverrideSupported(
       options?.creativeFormatProjection?.legacyFormatConverter ?? options?.legacyFormatConverter
     );
@@ -7814,10 +7841,12 @@ export class SingleAgentClient {
     let detectedServerVersion: 'v2' | 'v3' | undefined;
     let detectedServerVersionSynthetic: boolean | undefined;
     try {
-      const normalizedParams = normalizeRequestParams(taskName, params, {
-        skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
-        skipAccountValidation: options?.skipAccountValidation,
-      });
+      const normalizedParams = options?.preserveGovernedPayload
+        ? params
+        : normalizeRequestParams(taskName, params, {
+            skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
+            skipAccountValidation: options?.skipAccountValidation,
+          });
       if (!options?.skipRequestValidation) assertNoPrincipalIdentityInput(taskName, normalizedParams);
       this.assertRequestSupportedByConfiguredVersion(taskName, normalizedParams, options);
       this.assertDurablePropertyListCredentialSupported(taskName, normalizedParams);
@@ -7833,7 +7862,12 @@ export class SingleAgentClient {
       // v3-only fields out from under the v3 bundled schema. Skip the entire
       // Zod parse when compliance testing has suppressed request validation —
       // the invalid shape is intentional and must reach the seller.
-      if (!options?.skipIdempotencyAutoInject && !options?.skipAccountValidation && !options?.skipRequestValidation) {
+      if (
+        !options?.skipIdempotencyAutoInject &&
+        !options?.skipAccountValidation &&
+        !options?.skipRequestValidation &&
+        !options?.preserveGovernedPayload
+      ) {
         this.executor.validateRequest(taskName, normalizedParams);
       }
 
@@ -7859,14 +7893,21 @@ export class SingleAgentClient {
         capabilityDiscoveryContext.capabilities
       );
       const inputSchemaStripLogs: any[] = [];
-      const { params: adaptedParams, driftLogs: adaptDriftLogs } = this.adaptRequest(
-        taskName,
-        normalizedParams,
-        serverVersion,
-        inputSchemaStripLogs,
-        capabilityDiscoveryContext.toolSchemas,
-        capabilityDiscoveryContext.capabilities
-      );
+      if (options?.preserveGovernedPayload && serverVersion !== 'v3') {
+        throw new ConfigurationError(
+          'Governed storyboard requests require a v3 seller to preserve the approved payload.'
+        );
+      }
+      const { params: adaptedParams, driftLogs: adaptDriftLogs } = options?.preserveGovernedPayload
+        ? { params: normalizedParams, driftLogs: [] }
+        : this.adaptRequest(
+            taskName,
+            normalizedParams,
+            serverVersion,
+            inputSchemaStripLogs,
+            capabilityDiscoveryContext.toolSchemas,
+            capabilityDiscoveryContext.capabilities
+          );
 
       // Symmetric warn-only post-adapter pass against the v2.5 schema bundle.
       // Drift gets surfaced via result.metadata.debug_logs so adapter

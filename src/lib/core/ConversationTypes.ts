@@ -261,6 +261,19 @@ export interface TaskOptions {
    */
   skipRequestValidation?: boolean;
   /**
+   * INTERNAL — storyboard governance approval binds the exact downstream
+   * arguments. Keep that request unchanged by buyer compatibility shims and
+   * seller-schema field stripping after check_governance has approved it.
+   * Local request-schema and account-required checks are also bypassed so
+   * a seller can grade the approved wire payload, including invalid vectors.
+   * Principal identity and version safety checks still run.
+   * Canonical creative methods reject this option because their projections
+   * can reshape requests; the storyboard runner uses their raw counterparts.
+   *
+   * @internal Do not set in production buyer code.
+   */
+  preserveGovernedPayload?: boolean;
+  /**
    * Transport-level safeguards for this call. Overrides the matching field
    * on the client constructor's `transport` option. Use to lift or tighten
    * `maxResponseBytes` per call when an agent legitimately publishes large

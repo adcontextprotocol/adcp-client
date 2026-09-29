@@ -1339,9 +1339,10 @@ export class TaskExecutor {
     // re-generating on retry defeats the whole point of the envelope.
     // `options.skipIdempotencyAutoInject` disables this for compliance testing
     // that needs to exercise server-side missing-key behavior.
-    const idempotencyKey = options.skipIdempotencyAutoInject
-      ? undefined
-      : resolveIdempotencyKey(taskName, params, serverVersion);
+    const idempotencyKey =
+      options.skipIdempotencyAutoInject || options.preserveGovernedPayload
+        ? undefined
+        : resolveIdempotencyKey(taskName, params, serverVersion);
     if (idempotencyKey) attachTaskDeadlineIdempotencyKey(options, idempotencyKey);
     if (serverVersion !== 'v2' && idempotencyKey && params && typeof params === 'object' && !params.idempotency_key) {
       params = { ...params, idempotency_key: idempotencyKey };
