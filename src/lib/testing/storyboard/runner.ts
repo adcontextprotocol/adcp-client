@@ -6294,22 +6294,24 @@ async function executeStep(
   // guarded A2A fetch boundary is wrapped with raw-response capture below so
   // http_* validations still observe status + `WWW-Authenticate`.
   //
-  // Idempotency omission scenarios set `step.omit_idempotency_key` to suppress
-  // both the runner's `applyIdempotencyInvariant` (above) and the AdCP client's
-  // auto-inject. This covers statically mutating tasks (where omission tests
-  // rejection) and the request-aware get_products proposal-finalize variant
-  // (where omission verifies the 3.2 compatibility path). Paired flags keep
-  // the two layers aligned; see `applyIdempotencyInvariant` for the runner skip.
+  // Idempotency omission scenarios suppress both the runner and SDK defaults.
+  // A governed request with no authored key must do the same: minting a key
+  // after check_governance approved the payload would change its wire hash.
+  const governedRequest =
+    effectiveStep.task !== 'check_governance' &&
+    effectiveStep.task !== 'report_plan_outcome' &&
+    Object.prototype.hasOwnProperty.call(request, 'governance_context');
   const testsIdempotencyKeyOmission =
-    step.omit_idempotency_key === true && requestUsesIdempotency(effectiveStep.task, request);
+    (step.omit_idempotency_key === true ||
+      (governedRequest && (typeof request.idempotency_key !== 'string' || request.idempotency_key.length === 0))) &&
+    requestUsesIdempotency(effectiveStep.task, request);
 
-  // Analogous to `testsIdempotencyKeyOmission`: when a step sets
-  // `omit_account: true` the runner has already suppressed account synthesis
-  // in `applyBrandInvariant` (above — ordering is load-bearing: this must
-  // come after `applyBrandInvariant` so the comment "above" stays accurate
-  // if either block is reordered). Track the flag here so the SDK call below
-  // can also skip client-side account validation/injection before the wire call.
-  const testsMissingAccount = step.omit_account === true && effectiveStep.task === 'create_media_buy';
+  // Missing-account probes and governed requests without an approved account
+  // also bypass the SDK's account requirement. A governed request must reach
+  // the seller as approved, even when the seller will reject it as invalid.
+  const testsMissingAccount =
+    effectiveStep.task === 'create_media_buy' &&
+    (step.omit_account === true || (governedRequest && !Object.prototype.hasOwnProperty.call(request, 'account')));
 
   // The storyboard contract defines schema-invalid negative paths as seller
   // validation probes: the malformed sample_request must reach the agent.
