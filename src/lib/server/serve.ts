@@ -1062,6 +1062,13 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
     }
   });
 
+  // MCP clients may hold a pooled connection while compiling or validating
+  // the next tool schema. Node's five-second default can close that socket
+  // during the pause, leaving a request racing the close with `fetch failed`.
+  // Keep the connection through a normal multi-step storyboard run.
+  httpServer.keepAliveTimeout = 60_000;
+  httpServer.headersTimeout = 65_000;
+
   const doListen = () => {
     httpServer.listen(port, () => {
       const actualPort = (httpServer.address() as { port: number }).port;

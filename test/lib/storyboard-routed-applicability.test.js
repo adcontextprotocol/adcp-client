@@ -77,6 +77,10 @@ async function startAgent(
     await mcp.connect(transport);
     await transport.handleRequest(req, res);
   });
+  // Routed preflight and fixture resolution can pause longer than Node's
+  // default five-second keep-alive window before the next MCP request.
+  server.keepAliveTimeout = 60_000;
+  server.headersTimeout = 65_000;
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   return {
     url: `http://127.0.0.1:${server.address().port}/mcp`,
