@@ -36,7 +36,10 @@ async function withDualSurfaceSeller(serverAdcpVersion, buyerAdcpVersion, run, o
     idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
     resolveSessionKey: () => 'dual-surface-seller',
     ...(options.mcpToolProfile && { mcpToolProfile: options.mcpToolProfile }),
-    capabilities: { supported_versions: supportedVersions },
+    capabilities: {
+      supported_versions: supportedVersions,
+      overrides: { media_buy: { buying_modes: ['brief', 'wholesale', 'refine'] } },
+    },
     validation: { requests: 'strict', responses: 'off' },
     mediaBuy: {
       listProducts: async params => {
@@ -614,6 +617,7 @@ for (const lane of [
       version: 'v3',
       servedVersion: '3.1.18',
       supportedVersions: ['3.1.18'],
+      buyingModes: ['brief', 'wholesale', 'refine'],
       idempotency: { replayTtlSeconds: 3600 },
       mediaBuyLifecycleTools: ['get_products'],
       discoveredTools: ['get_products'],

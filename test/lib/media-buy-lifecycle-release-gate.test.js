@@ -116,6 +116,7 @@ async function withHonestEstablishedSeller(version, run) {
       supported_protocols: ['media_buy'],
       media_buy: {
         ...(version.startsWith('3.1') && { features: { canonical_creatives: true } }),
+        ...(!version.startsWith('3.0') && { buying_modes: ['brief', 'wholesale', 'refine'] }),
       },
       ...(version.startsWith('3.0') && {
         account: {
@@ -718,7 +719,10 @@ test('the same compact-first buyer facade projects established direct and propos
     adcpVersion: '3.1.18',
     idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
     resolveSessionKey: () => 'a2a-release-gate',
-    capabilities: { supported_versions: ['3.0', '3.1'] },
+    capabilities: {
+      supported_versions: ['3.0', '3.1'],
+      overrides: { media_buy: { buying_modes: ['brief', 'wholesale', 'refine'] } },
+    },
     validation: { requests: 'strict', responses: 'strict' },
     mediaBuy: {
       getProducts: async params => {

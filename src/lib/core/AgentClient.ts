@@ -2,7 +2,8 @@
 
 import type { Client as MCPClient } from '@modelcontextprotocol/sdk/client/index.js';
 import { randomUUID } from 'node:crypto';
-import type { AgentConfig } from '../types';
+import type { AccountReference, AgentConfig } from '../types';
+import type { ResolveAccountOptions } from './account-resolution';
 import type {
   MCPWebhookPayload,
   GetBrandIdentityRequest,
@@ -1581,6 +1582,13 @@ export class AgentClient {
     });
     this.retainSession(result);
     return result;
+  }
+
+  /** Resolve the seller's account contract into a reusable wire account reference. */
+  async resolveAccount(hints: ResolveAccountOptions = {}, options?: TaskOptions): Promise<AccountReference> {
+    return this.client.resolveAccount(hints, this.withSession('resolve_account', options), result =>
+      this.retainSession(result)
+    );
   }
 
   /**

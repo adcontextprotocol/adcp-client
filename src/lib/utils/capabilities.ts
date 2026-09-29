@@ -9,6 +9,8 @@
 import { ConfigurationError } from '../errors';
 import type { GetAdCPCapabilitiesResponse } from '../types';
 
+export type BuyingMode = 'brief' | 'wholesale' | 'refine';
+
 /** Published wire declaration retained verbatim inside normalized capabilities. */
 export type AccountChangeFeedCapabilities = NonNullable<
   NonNullable<GetAdCPCapabilitiesResponse['account']>['change_feed']
@@ -114,6 +116,15 @@ export interface AccountCapabilities {
    */
   defaultBilling?: 'operator' | 'agent' | 'advertiser';
 
+  /** Currency and timezone constraints for buyer-declared account provisioning. */
+  supportedAccountCurrencyModes?: ('fixed' | 'per_media_buy')[];
+  timezone?: {
+    mode: 'seller_fixed' | 'account_fixed';
+    fixedTimezone?: string;
+    accountSelection?: 'seller_assigned' | 'buyer_selected';
+    supportedTimezones?: string[];
+  };
+
   /**
    * Whether an active account is required before calling get_products.
    */
@@ -216,6 +227,9 @@ export interface AdcpCapabilities {
 
   /** Compact media-buy lifecycle tools advertised by AdCP 3.2+ sellers. */
   mediaBuyLifecycleTools?: string[];
+
+  /** Buying modes declared for get_products. An omitted wire field means brief only. */
+  buyingModes?: BuyingMode[];
 
   /** Tool names observed from authoritative protocol discovery. */
   discoveredTools?: string[];
@@ -673,6 +687,15 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
       authorizationEndpoint: response.account.authorization_endpoint,
       supportedBilling: response.account.supported_billing ?? [],
       defaultBilling: response.account.default_billing,
+      supportedAccountCurrencyModes: response.account.supported_account_currency_modes,
+      ...(response.account.timezone && {
+        timezone: {
+          mode: response.account.timezone.mode,
+          fixedTimezone: response.account.timezone.fixed_timezone,
+          accountSelection: response.account.timezone.account_selection,
+          supportedTimezones: response.account.timezone.supported_timezones,
+        },
+      }),
       requiredForProducts: response.account.required_for_products ?? false,
       sandbox: response.account.sandbox ?? false,
       ...(response.account.change_feed !== undefined && { changeFeed: structuredClone(response.account.change_feed) }),
@@ -727,6 +750,11 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
     mediaBuyLifecycleTools: Array.isArray(response.media_buy?.lifecycle_tools)
       ? response.media_buy.lifecycle_tools.filter((tool: unknown): tool is string => typeof tool === 'string')
       : undefined,
+    buyingModes: Array.isArray(response.media_buy?.buying_modes)
+      ? response.media_buy.buying_modes.filter(
+          (mode: unknown): mode is BuyingMode => mode === 'brief' || mode === 'wholesale' || mode === 'refine'
+        )
+      : ['brief'],
     account,
     creative,
     idempotency,
@@ -782,6 +810,11 @@ export function supportsContentStandards(capabilities: AdcpCapabilities): boolea
  */
 export function supportsSyncCreatives(capabilities: AdcpCapabilities): boolean {
   return capabilities.creative?.hasCreativeLibrary === true;
+}
+
+/** Whether a seller explicitly supports this get_products buying mode. */
+export function supportsBuyingMode(capabilities: AdcpCapabilities, mode: BuyingMode): boolean {
+  return mode === 'brief' || (capabilities.buyingModes ?? ['brief']).includes(mode);
 }
 
 /**

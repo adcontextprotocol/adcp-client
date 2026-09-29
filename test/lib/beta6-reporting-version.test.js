@@ -32,7 +32,12 @@ function clientForSellerVersion(version) {
 
 function beta6MetricRequests(client) {
   return [
-    () => client.getProducts({ filters: { required_metrics: ['viewable_rate'] } }),
+    () =>
+      client.getProducts({
+        buying_mode: 'brief',
+        brief: 'Find inventory',
+        filters: { required_metrics: ['viewable_rate'] },
+      }),
     () =>
       client.createMediaBuy({
         account: { account_id: 'account-1' },
