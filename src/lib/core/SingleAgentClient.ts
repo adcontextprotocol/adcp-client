@@ -6,7 +6,7 @@ import {
 // Main ADCP Client - Type-safe conversation-aware client for AdCP agents
 
 import { createHash, randomUUID } from 'node:crypto';
-import type { AgentConfig } from '../types';
+import type { AccountReference, AgentConfig } from '../types';
 import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
 import { parseAdcpMajorVersion, toReleasePrecisionVersion, type AdcpVersion } from '../version';
 import {
@@ -240,7 +240,10 @@ import {
   listDeclaredFeatures,
   TASK_FEATURE_MAP,
   assertValidIdempotencyReplayTtlSeconds,
+  supportsBuyingMode,
 } from '../utils/capabilities';
+import { AccountPendingApprovalError, AccountRequiredError, UnsupportedBuyingModeError } from '../errors';
+import { selectListedAccount, type ResolveAccountOptions } from './account-resolution';
 
 import { normalizeRequestParams } from '../utils/request-normalizer';
 import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
@@ -6178,30 +6181,75 @@ export class SingleAgentClient {
       legacyFormatConverter,
       projectionCatalogs ?? this.config.projectionCatalogs
     );
-    const account = canonicalAccountRoutingSnapshot(params.account);
-    return this.executeAndHandle<CanonicalGetProductsResponse>(
-      'get_products',
-      'onGetProductsStatusChange',
-      params,
-      inputHandler,
-      taskOptions,
-      data => {
-        const { response, diagnostics } = toCanonicalOnlyResponse(data as unknown as { products?: V1Product[] }, {
-          legacyFormatConverter: effectiveLegacyFormatConverter,
-          projectionCatalogs: projectionCatalogs ?? this.config.projectionCatalogs,
-        });
-        const authoritativeProducts = Array.isArray((data as unknown as { products?: unknown[] }).products)
-          ? (data as unknown as { products: unknown[] }).products
-          : response.products;
-        this.rememberCanonicalProductRoutes(response.products, account, authoritativeProducts);
-        const { _message: _dropLegacyMessage, ...canonical } = response as typeof response & { _message?: unknown };
-        void _dropLegacyMessage;
-        return { ...canonical, projection: { diagnostics } } as CanonicalGetProductsResponse;
-      },
-      effectiveLegacyFormatConverter,
-      undefined,
-      projectionCatalogs
-    );
+    return withTaskDeadline(snapshotTaskOptions(taskOptions), async effectiveOptions => {
+      this.assertRequestSupportedByConfiguredVersion('get_products', params, effectiveOptions);
+      let request = params;
+      const legacyAccountId = (request as { account_id?: unknown }).account_id;
+      const accountReference =
+        request.account ??
+        (typeof legacyAccountId === 'string' && legacyAccountId ? { account_id: legacyAccountId } : undefined);
+      if (!effectiveOptions.skipRequestValidation) {
+        const capabilities = await this.getCapabilities(effectiveOptions);
+        const sellerDeclares31 =
+          capabilities.servedVersion !== undefined
+            ? !isPre31AdcpVersion(capabilities.servedVersion)
+            : capabilities.supportedVersions?.some(version => !isPre31AdcpVersion(version)) === true;
+        const sellerDeclaresBuyingModes = Array.isArray(
+          (capabilities._raw?.media_buy as { buying_modes?: unknown } | undefined)?.buying_modes
+        );
+        if (!capabilities._synthetic) {
+          const effectiveMode = request.buying_mode ?? (request.brief ? 'brief' : undefined);
+          if (
+            effectiveMode &&
+            (sellerDeclares31 || sellerDeclaresBuyingModes) &&
+            !supportsBuyingMode(capabilities, effectiveMode)
+          ) {
+            throw new UnsupportedBuyingModeError(effectiveMode, capabilities.buyingModes ?? ['brief']);
+          }
+          if (
+            !effectiveOptions.skipAccountValidation &&
+            !accountReference &&
+            capabilities.account?.requiredForProducts
+          ) {
+            throw new AccountRequiredError(
+              capabilities.account.requireOperatorAuth ? 'explicit' : 'implicit',
+              'get_products'
+            );
+          }
+        }
+        if (!request.buying_mode && !request.brief) {
+          const legacySeller = capabilities._synthetic || (!sellerDeclares31 && !sellerDeclaresBuyingModes);
+          if (!legacySeller && !supportsBuyingMode(capabilities, 'wholesale')) {
+            throw new UnsupportedBuyingModeError(undefined, capabilities.buyingModes ?? ['brief']);
+          }
+          request = { ...request, buying_mode: 'wholesale' };
+        }
+      }
+      const account = canonicalAccountRoutingSnapshot(accountReference);
+      return this.executeAndHandle<CanonicalGetProductsResponse>(
+        'get_products',
+        'onGetProductsStatusChange',
+        request,
+        inputHandler,
+        effectiveOptions,
+        data => {
+          const { response, diagnostics } = toCanonicalOnlyResponse(data as unknown as { products?: V1Product[] }, {
+            legacyFormatConverter: effectiveLegacyFormatConverter,
+            projectionCatalogs: projectionCatalogs ?? this.config.projectionCatalogs,
+          });
+          const authoritativeProducts = Array.isArray((data as unknown as { products?: unknown[] }).products)
+            ? (data as unknown as { products: unknown[] }).products
+            : response.products;
+          this.rememberCanonicalProductRoutes(response.products, account, authoritativeProducts);
+          const { _message: _dropLegacyMessage, ...canonical } = response as typeof response & { _message?: unknown };
+          void _dropLegacyMessage;
+          return { ...canonical, projection: { diagnostics } } as CanonicalGetProductsResponse;
+        },
+        effectiveLegacyFormatConverter,
+        undefined,
+        projectionCatalogs
+      );
+    });
   }
 
   /** Discover products through the compact AdCP 3.2 catalog task. */
@@ -6225,7 +6273,8 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetProductsResponse>> {
-    return this.executeTaskUnprojected<GetProductsResponse>('get_products', params, inputHandler, options);
+    const request = params.buying_mode || params.brief ? params : { ...params, buying_mode: 'wholesale' as const };
+    return this.executeTaskUnprojected<GetProductsResponse>('get_products', request, inputHandler, options);
   }
 
   /** @internal Run final legacy get_products adaptation before an application-owned atomic mutation claim. */
@@ -6235,7 +6284,9 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetProductsResponse>> {
-    const requestSnapshot = structuredClone(params);
+    const requestSnapshot = structuredClone(
+      params.buying_mode || params.brief ? params : { ...params, buying_mode: 'wholesale' as const }
+    );
     return this.executeTaskUnprojected<GetProductsResponse>(
       'get_products',
       requestSnapshot,
@@ -7168,6 +7219,159 @@ export class SingleAgentClient {
       inputHandler,
       options
     );
+  }
+
+  /**
+   * Resolve an account for the authenticated caller. Explicit-account sellers
+   * are discovered with list_accounts; implicit-account sellers are registered
+   * with sync_accounts and addressed by their natural key.
+   */
+  async resolveAccount(
+    hints: ResolveAccountOptions = {},
+    options?: TaskOptions,
+    /** @internal Allows the AgentClient wrapper to retain nested task session ids. */
+    onTaskResult?: (result: TaskResult<unknown>) => void
+  ): Promise<AccountReference> {
+    return withTaskDeadline(snapshotTaskOptions(options), async effectiveOptions => {
+      const capabilities = await this.getCapabilities(effectiveOptions);
+      if (capabilities._synthetic || !capabilities.account) {
+        throw new AccountRequiredError(
+          'explicit',
+          'resolveAccount',
+          'The seller did not provide an account contract. Probe get_adcp_capabilities or pass an account reference explicitly.'
+        );
+      }
+      if (capabilities.account.requireOperatorAuth) {
+        const accounts: ListAccountsResponse['accounts'] = [];
+        const seenCursors = new Set<string>();
+        let cursor: string | undefined;
+        for (let page = 0; page < 100; page++) {
+          const result = await this.listAccounts(
+            {
+              status: 'active',
+              ...(hints.sandbox !== undefined && { sandbox: hints.sandbox }),
+              ...(cursor !== undefined && { pagination: { cursor } }),
+            },
+            undefined,
+            effectiveOptions
+          );
+          onTaskResult?.(result);
+          if (
+            !result.success ||
+            result.status !== 'completed' ||
+            !result.data ||
+            !('accounts' in result.data) ||
+            !Array.isArray(result.data.accounts)
+          ) {
+            throw new Error('list_accounts did not return a completed account list.');
+          }
+          accounts.push(...result.data.accounts);
+          if (!result.data.pagination?.has_more) return selectListedAccount(accounts, hints);
+          const nextCursor = result.data.pagination.cursor;
+          if (!nextCursor || seenCursors.has(nextCursor)) break;
+          seenCursors.add(nextCursor);
+          cursor = nextCursor;
+        }
+        throw new AccountRequiredError(
+          'explicit',
+          'resolveAccount',
+          'Could not complete list_accounts pagination. Select an account_id explicitly after listing accounts.'
+        );
+      }
+      if (!hints.brand?.domain || !hints.operator) {
+        throw new AccountRequiredError(
+          'implicit',
+          'resolveAccount',
+          'Implicit-account sellers require both brand and operator to sync an account.'
+        );
+      }
+      const timezone = capabilities.account.timezone;
+      if (timezone?.accountSelection === 'buyer_selected') {
+        if (!hints.timezone || !timezone.supportedTimezones?.includes(hints.timezone)) {
+          throw new AccountRequiredError(
+            'implicit',
+            'resolveAccount',
+            'Choose a supported account timezone before sync_accounts.'
+          );
+        }
+      } else if (hints.timezone && timezone) {
+        throw new AccountRequiredError(
+          'implicit',
+          'resolveAccount',
+          'This seller does not accept a buyer-selected account timezone.'
+        );
+      }
+      const currencyModes = capabilities.account.supportedAccountCurrencyModes;
+      if (currencyModes?.length === 1 && currencyModes[0] === 'fixed' && !hints.currency) {
+        throw new AccountRequiredError('implicit', 'resolveAccount', 'This seller requires a fixed account currency.');
+      }
+      if (hints.currency && currencyModes?.length === 1 && currencyModes[0] === 'per_media_buy') {
+        throw new AccountRequiredError('implicit', 'resolveAccount', 'This seller selects currency per media buy.');
+      }
+      const account = {
+        brand: hints.brand,
+        operator: hints.operator,
+        ...(hints.operatorUnit !== undefined && { operator_unit: hints.operatorUnit }),
+        ...(hints.currency !== undefined && { currency: hints.currency }),
+        ...(hints.timezone !== undefined && { timezone: hints.timezone }),
+        ...(hints.sandbox !== undefined && { sandbox: hints.sandbox }),
+      };
+      const supportedBilling = capabilities.account.supportedBilling;
+      const billing =
+        hints.billing ??
+        capabilities.account.defaultBilling ??
+        (supportedBilling.length === 1 ? supportedBilling[0] : undefined);
+      if (!billing || (supportedBilling.length > 0 && !supportedBilling.includes(billing))) {
+        throw new AccountRequiredError(
+          'implicit',
+          'resolveAccount',
+          `Choose a supported billing party for sync_accounts (seller supports: ${supportedBilling.join(', ') || '(none)'}).`
+        );
+      }
+      const result = await this.syncAccounts(
+        {
+          accounts: [
+            {
+              ...account,
+              billing,
+            },
+          ],
+        },
+        undefined,
+        effectiveOptions
+      );
+      onTaskResult?.(result);
+      if (
+        !result.success ||
+        result.status !== 'completed' ||
+        !result.data ||
+        !('accounts' in result.data) ||
+        !Array.isArray(result.data.accounts)
+      ) {
+        throw new Error('sync_accounts did not return a completed account result.');
+      }
+      const synced = result.data.accounts.find(
+        row =>
+          row.brand?.domain === hints.brand!.domain &&
+          row.operator === hints.operator &&
+          (!hints.brand!.brand_id || row.brand.brand_id === hints.brand!.brand_id) &&
+          (!hints.operatorUnit || row.operator_unit?.id === hints.operatorUnit.id) &&
+          (!hints.currency || row.currency === hints.currency) &&
+          (!hints.timezone || row.timezone === hints.timezone) &&
+          (row.sandbox === undefined || (row.sandbox === true) === (hints.sandbox === true))
+      );
+      if (synced?.status === 'pending_approval') {
+        throw new AccountPendingApprovalError(account, synced.account_id);
+      }
+      if (!synced || synced.action === 'failed' || synced.status !== 'active') {
+        throw new AccountRequiredError(
+          'implicit',
+          'resolveAccount',
+          'sync_accounts did not establish an active account for the requested brand and operator.'
+        );
+      }
+      return account;
+    });
   }
 
   /**

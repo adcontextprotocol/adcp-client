@@ -116,6 +116,7 @@ async function withHonestEstablishedSeller(version, run) {
       supported_protocols: ['media_buy'],
       media_buy: {
         ...(version.startsWith('3.1') && { features: { canonical_creatives: true } }),
+        ...(!version.startsWith('3.0') && { buying_modes: ['brief', 'wholesale', 'refine'] }),
       },
       ...(version.startsWith('3.0') && {
         account: {

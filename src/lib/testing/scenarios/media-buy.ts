@@ -30,6 +30,7 @@ import {
 import { testDiscovery } from './discovery';
 import { getAuthoritativeMediaBuyStatus } from '../../utils/media-buy-status';
 import { generateIdempotencyKey } from '../../utils/idempotency';
+import type { ResolveAccountOptions } from '../../core/account-resolution';
 
 /**
  * Find a suitable product for testing based on options
@@ -237,7 +238,8 @@ export async function testCreateMediaBuy(
     profile.tools,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
     async params => client.listAccounts(params as any) as Promise<TaskResult>,
-    getMediaBuyAccountResolutionHints(profile)
+    getMediaBuyAccountResolutionHints(profile),
+    hints => client.resolveAccount(hints)
   );
   steps.push(...accountSteps);
 
@@ -767,7 +769,8 @@ export async function testCreativeSync(
     profile.tools,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
     async params => client.listAccounts(params as any) as Promise<TaskResult>,
-    getMediaBuyAccountResolutionHints(profile)
+    getMediaBuyAccountResolutionHints(profile),
+    hints => client.resolveAccount(hints)
   );
   steps.push(...accountSteps);
 
@@ -1286,7 +1289,8 @@ export async function resolveAccountForMediaBuy(
   options: TestOptions,
   tools: string[],
   listAccounts: (params: Record<string, unknown>) => Promise<TaskResult>,
-  hints: MediaBuyAccountResolutionHints = {}
+  hints: MediaBuyAccountResolutionHints = {},
+  resolveSellerAccount?: (hints: ResolveAccountOptions) => Promise<AccountReference>
 ): Promise<{ accountRef: AccountReference | undefined; steps: TestStepResult[] }> {
   const steps: TestStepResult[] = [];
 
@@ -1295,7 +1299,41 @@ export async function resolveAccountForMediaBuy(
     return { accountRef: { account_id: explicitAccountId }, steps };
   }
 
+  // Functional storyboards use the same account contract resolver as buyers.
+  // Preserve the legacy list_accounts heuristic only for sellers that did not
+  // publish an account capability block.
+  if (
+    resolveSellerAccount &&
+    hints.requireOperatorAuth !== undefined &&
+    tools.includes(hints.requireOperatorAuth ? 'list_accounts' : 'sync_accounts')
+  ) {
+    const brand = options.brand ?? resolveBrand(options);
+    const { result, step } = await runStep(
+      'Resolve account for media buy',
+      hints.requireOperatorAuth ? 'list_accounts' : 'sync_accounts',
+      () =>
+        resolveSellerAccount({
+          brand,
+          ...(!hints.requireOperatorAuth && { operator: brand.domain }),
+          ...(options.sandbox !== undefined && { sandbox: options.sandbox }),
+        })
+    );
+    if (result) step.details = `Using account: ${'account_id' in result ? result.account_id : brand.domain}`;
+    steps.push(step);
+    return { accountRef: result, steps };
+  }
+
   const hasListAccounts = tools.includes('list_accounts');
+  if (hints.requireOperatorAuth === true && !hasListAccounts) {
+    steps.push({
+      step: 'Resolve account for media buy',
+      task: 'list_accounts',
+      passed: false,
+      duration_ms: 0,
+      details: 'Seller requires an explicit account_id but did not advertise list_accounts; supply an account_id.',
+    });
+    return { accountRef: undefined, steps };
+  }
   const shouldDiscoverExplicitAccount = hasListAccounts && hints.requireOperatorAuth !== false;
 
   if (options.sandbox && shouldDiscoverExplicitAccount) {

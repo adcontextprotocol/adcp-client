@@ -118,6 +118,67 @@ export class UnsupportedTaskError extends ADCPError {
   }
 }
 
+/** Seller did not declare the requested get_products buying mode. */
+export class UnsupportedBuyingModeError extends ADCPError {
+  readonly code = 'UNSUPPORTED_BUYING_MODE';
+
+  constructor(
+    public readonly requestedMode: string | undefined,
+    public readonly declaredModes: readonly string[]
+  ) {
+    const requested = requestedMode ?? 'an inferred wholesale mode';
+    const declared = declaredModes.length ? declaredModes.join(', ') : '(unknown)';
+    super(
+      `Seller does not support ${requested} buying mode. Declared modes: ${declared}. ` +
+        'Supply a brief or choose a declared buying_mode after probing get_adcp_capabilities.'
+    );
+    this.details = { requested_mode: requestedMode, declared_modes: [...declaredModes] };
+  }
+}
+
+/** A seller requires an account reference before an account-scoped request. */
+export class AccountRequiredError extends ADCPError {
+  readonly code = 'ACCOUNT_REQUIRED';
+
+  constructor(
+    public readonly accountModel: 'explicit' | 'implicit',
+    public readonly taskName: string,
+    reason?: string
+  ) {
+    super(
+      reason ??
+        `${taskName} requires an account for this ${accountModel}-account seller. ` +
+          (accountModel === 'explicit'
+            ? 'Call resolveAccount() to discover an account_id, then pass account: { account_id }.'
+            : 'Call resolveAccount({ brand, operator }) to sync the account, then pass its natural key.')
+    );
+    this.details = { account_model: accountModel, task_name: taskName };
+  }
+}
+
+/** Account provisioning succeeded but the seller has not approved its use. */
+export class AccountPendingApprovalError extends ADCPError {
+  readonly code = 'ACCOUNT_PENDING_APPROVAL';
+
+  constructor(
+    public readonly account: import('../types').AccountReference,
+    public readonly accountId?: string
+  ) {
+    super('The seller is reviewing this account. Wait for approval before making account-scoped requests.');
+    this.details = { status: 'pending_approval', account_id: accountId, account };
+  }
+}
+
+/** More than one active account matches the caller's selection hints. */
+export class AccountAmbiguousError extends ADCPError {
+  readonly code = 'ACCOUNT_AMBIGUOUS';
+
+  constructor(public readonly candidates: readonly string[]) {
+    super('Multiple eligible accounts. Supply brand/operator or a select callback.');
+    this.details = { candidate_account_ids: [...candidates] };
+  }
+}
+
 /**
  * Error thrown when protocol communication fails
  */
