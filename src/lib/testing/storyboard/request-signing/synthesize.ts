@@ -1,5 +1,10 @@
 import type { Storyboard, StoryboardStep } from '../types';
-import { loadRequestSigningVectors, type LoadVectorsOptions } from './vector-loader';
+import {
+  loadRequestSigningVectors,
+  selectRequestSigningVectors,
+  signingProfileForAdcpVersion,
+  type LoadVectorsOptions,
+} from './vector-loader';
 import type { NegativeVector, PositiveVector } from './types';
 
 export const REQUEST_SIGNING_PROBE_TASK = 'request_signing_probe';
@@ -7,6 +12,8 @@ export const POSITIVE_STEP_PREFIX = 'positive-';
 export const NEGATIVE_STEP_PREFIX = 'negative-';
 
 export interface SynthesizeOptions extends LoadVectorsOptions {
+  /** Override profile selection inferred from the storyboard AdCP version. */
+  signingProfileVersion?: '3.2';
   /** Vector IDs to omit (e.g., capability-profile mismatches). */
   skipVectors?: string[];
 }
@@ -24,14 +31,18 @@ export function synthesizeRequestSigningSteps(storyboard: Storyboard, options: S
   if (storyboard.id !== 'signed_requests') return storyboard;
 
   const loaded = loadRequestSigningVectors(options);
+  const selected = selectRequestSigningVectors(
+    loaded,
+    options.signingProfileVersion ?? signingProfileForAdcpVersion(options.version ?? storyboard.adcp_version)
+  );
   const skip = new Set(options.skipVectors ?? []);
 
   const phases = storyboard.phases.map(phase => {
     if (phase.id === 'positive_vectors') {
-      return { ...phase, steps: loaded.positive.filter(v => !skip.has(v.id)).map(synthesizePositiveStep) };
+      return { ...phase, steps: selected.positive.filter(v => !skip.has(v.id)).map(synthesizePositiveStep) };
     }
     if (phase.id === 'negative_vectors') {
-      return { ...phase, steps: loaded.negative.filter(v => !skip.has(v.id)).map(synthesizeNegativeStep) };
+      return { ...phase, steps: selected.negative.filter(v => !skip.has(v.id)).map(synthesizeNegativeStep) };
     }
     return phase;
   });

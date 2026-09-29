@@ -3,7 +3,7 @@ import type { HttpProbeResult, RunnerDetailedSkipReason, StoryboardRunOptions } 
 import type { NegativeVector, PositiveVector, VerifierCapabilityFixture } from './types';
 import { advertisedContentDigestPolicyExclusion, gradeOneVector, semanticVectorExclusion } from './grader';
 import { parseRequestSigningStepId } from './synthesize';
-import { loadRequestSigningVectors } from './vector-loader';
+import { loadRequestSigningVectors, selectRequestSigningVectors, signingProfileForAdcpVersion } from './vector-loader';
 import { ADCP_VERSION } from '../../../version';
 import { redactCredentialPatterns } from '../../../utils/redact-credential-patterns';
 
@@ -170,10 +170,12 @@ export async function probeRequestSigningVector(
       `request_signing_probe: could not load request-signing vectors: ${err instanceof Error ? err.message : String(err)}`
     );
   }
+  const signingProfileVersion = signingProfileForAdcpVersion(options.adcpVersion);
+  const selected = selectRequestSigningVectors(loaded, signingProfileVersion);
   const vector: PositiveVector | NegativeVector | undefined =
     parsed.kind === 'negative'
-      ? loaded.negative.find(v => v.id === parsed.vector_id)
-      : loaded.positive.find(v => v.id === parsed.vector_id);
+      ? selected.negative.find(v => v.id === parsed.vector_id)
+      : selected.positive.find(v => v.id === parsed.vector_id);
   if (!vector) {
     // Synthesis and dispatch read the same vector set, so a miss means the two
     // disagree (version/complianceDir drift, upstream rename). Same class as a
@@ -237,6 +239,7 @@ export async function probeRequestSigningVector(
     const result = await gradeOneVector(parsed.vector_id, parsed.kind, agentUrl, {
       ...(options.adcpVersion && { version: options.adcpVersion }),
       ...(options.complianceDir && { complianceDir: options.complianceDir }),
+      signingProfileVersion,
       allowPrivateIp: options.allow_http === true,
       rateAbuseCap: rsOpts.rateAbuseCap,
       allowLiveSideEffects: rsOpts.allowLiveSideEffects,

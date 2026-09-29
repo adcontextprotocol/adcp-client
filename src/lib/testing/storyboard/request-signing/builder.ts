@@ -1,6 +1,7 @@
 import { createPrivateKey, randomBytes, randomUUID, sign as nodeSign, type JsonWebKey } from 'crypto';
 import {
   buildSignatureBase,
+  computeContentDigest,
   finalizeRequestSignature,
   formatSignatureParams,
   prepareRequestSignature,
@@ -327,7 +328,45 @@ const MUTATIONS: Record<string, Mutator> = {
   // to that intentionally invalid host spelling.
   'profile-3.2/negative/001-base64url-sf-binary': (vector, _keys, options) => passthrough(vector, options),
   'profile-3.2/negative/002-multiple-trailing-dots': (vector, _keys, options) => passthrough(vector, options),
+  'profile-3.2/negative/002-wrong-tag': delegateToRoot('002-wrong-tag'),
+  'profile-3.2/negative/003-expired-signature': delegateToRoot('003-expired-signature'),
+  'profile-3.2/negative/004-window-too-long': delegateToRoot('004-window-too-long'),
+  'profile-3.2/negative/005-alg-not-allowed': delegateToRoot('005-alg-not-allowed'),
+  'profile-3.2/negative/006-missing-covered-component': (vector, keys, options) =>
+    signWithComponents(
+      signerKeyFor(vector, keys),
+      vector,
+      options,
+      ['@method', '@target-uri', 'content-type', 'content-digest'],
+      true
+    ),
+  'profile-3.2/negative/007-missing-content-digest': delegateToRoot('007-missing-content-digest'),
+  'profile-3.2/negative/008-unknown-keyid': delegateToRoot('008-unknown-keyid'),
+  'profile-3.2/negative/009-key-ops-missing-verify': delegateToRoot('009-key-ops-missing-verify'),
+  'profile-3.2/negative/010-content-digest-mismatch': delegateToRoot('010-content-digest-mismatch'),
+  'profile-3.2/negative/012-missing-expires-param': delegateToRoot('012-missing-expires-param'),
+  'profile-3.2/negative/013-expires-le-created': delegateToRoot('013-expires-le-created'),
+  'profile-3.2/negative/014-missing-nonce-param': delegateToRoot('014-missing-nonce-param'),
+  'profile-3.2/negative/015-signature-invalid': (vector, keys, options) => {
+    const signed = sign(signerKeyFor(vector, keys), vector, options);
+    return {
+      ...signed,
+      headers: { ...signed.headers, Signature: `sig1=:${Buffer.alloc(64).toString('base64')}:` },
+    };
+  },
+  'profile-3.2/negative/016-replayed-nonce': delegateToRoot('016-replayed-nonce'),
+  'profile-3.2/negative/017-key-revoked': delegateToRoot('017-key-revoked'),
+  'profile-3.2/negative/020-rate-abuse': delegateToRoot('020-rate-abuse'),
+  'profile-3.2/negative/025-jwk-alg-crv-mismatch': delegateToRoot('025-jwk-alg-crv-mismatch'),
 };
+
+function delegateToRoot(rootId: string): Mutator {
+  return (vector, keys, options) => {
+    const mutation = MUTATIONS[rootId];
+    if (!mutation) throw new Error(`Missing root request-signing mutation "${rootId}"`);
+    return mutation(vector, keys, options);
+  };
+}
 
 function passthrough(vector: NegativeVector, options: BuildOptions): SignedHttpRequest {
   const shaped = applyTransport(vector, options);
@@ -374,6 +413,14 @@ interface SignArgs extends BuildOptions {
   coverContentDigest?: boolean;
 }
 
+function binaryEncoding(vector: PositiveVector | NegativeVector): 'base64' | 'base64url' {
+  return requestSigningEncodingForVersion(vector.signing_profile_version) === 'rfc8941-base64' ? 'base64' : 'base64url';
+}
+
+function canonicalizationProfile(vector: PositiveVector | NegativeVector): '3.2' | 'legacy' {
+  return binaryEncoding(vector) === 'base64' ? '3.2' : 'legacy';
+}
+
 function sign(key: SignerKey, vector: PositiveVector | NegativeVector, args: SignArgs): SignedHttpRequest {
   const shaped = applyTransport(vector, args);
   const request: RequestLike = {
@@ -393,7 +440,7 @@ function sign(key: SignerKey, vector: PositiveVector | NegativeVector, args: Sig
     request,
     { keyid: key.keyid, alg: key.alg },
     {
-      coverContentDigest: args.coverContentDigest === true,
+      coverContentDigest: args.coverContentDigest ?? vector.verifier_capability.covers_content_digest === 'required',
       now: args.now !== undefined ? () => args.now! : undefined,
       nonce: args.nonce,
       windowSeconds: args.windowSeconds,
@@ -591,6 +638,7 @@ function signWithParamOverride(
   override: ParamOverride
 ): SignedHttpRequest {
   const shaped = applyTransport(vector, options);
+  if (vector.verifier_capability.covers_content_digest === 'required') refreshContentDigest(shaped, vector);
   const url = shaped.url;
   const request: RequestLike = {
     method: shaped.method,
@@ -602,6 +650,9 @@ function signWithParamOverride(
   const components = hasBody
     ? ['@method', '@target-uri', '@authority', 'content-type']
     : ['@method', '@target-uri', '@authority'];
+  if (hasBody && vector.verifier_capability.covers_content_digest === 'required') {
+    components.push('content-digest');
+  }
 
   const now = nowSeconds(options);
   const windowSeconds = options.windowSeconds ?? 300;
@@ -615,7 +666,7 @@ function signWithParamOverride(
   };
 
   const paramsString = formatParamsWithOmissions(components, params, override);
-  const base = buildSignatureBase(components, request, params, paramsString);
+  const base = buildSignatureBase(components, request, params, paramsString, canonicalizationProfile(vector));
   const signature = produceSignature(key, Buffer.from(base, 'utf8'));
 
   return {
@@ -624,7 +675,7 @@ function signWithParamOverride(
     headers: {
       ...shaped.headers,
       'Signature-Input': `sig1=${paramsString}`,
-      Signature: `sig1=:${Buffer.from(signature).toString('base64url')}:`,
+      Signature: `sig1=:${Buffer.from(signature).toString(binaryEncoding(vector))}:`,
     },
     body: shaped.body,
   };
@@ -634,9 +685,11 @@ function signWithComponents(
   key: SignerKey,
   vector: PositiveVector | NegativeVector,
   options: BuildOptions,
-  components: string[]
+  components: string[],
+  refreshDigest = false
 ): SignedHttpRequest {
   const shaped = applyTransport(vector, options);
+  if (refreshDigest) refreshContentDigest(shaped, vector);
   const url = shaped.url;
   const request: RequestLike = {
     method: shaped.method,
@@ -655,7 +708,7 @@ function signWithComponents(
     tag: REQUEST_SIGNING_TAG,
   };
   const paramsString = formatSignatureParams(components, params);
-  const base = buildSignatureBase(components, request, params, paramsString);
+  const base = buildSignatureBase(components, request, params, paramsString, canonicalizationProfile(vector));
   const signature = produceSignature(key, Buffer.from(base, 'utf8'));
   return {
     method: shaped.method,
@@ -663,10 +716,19 @@ function signWithComponents(
     headers: {
       ...shaped.headers,
       'Signature-Input': `sig1=${paramsString}`,
-      Signature: `sig1=:${Buffer.from(signature).toString('base64url')}:`,
+      Signature: `sig1=:${Buffer.from(signature).toString(binaryEncoding(vector))}:`,
     },
     body: shaped.body,
   };
+}
+
+function refreshContentDigest(shaped: TransportShapedRequest, vector: PositiveVector | NegativeVector): void {
+  shaped.headers = mergeHeadersCaseInsensitively(shaped.headers, {
+    'Content-Digest': computeContentDigest(
+      shaped.body ?? '',
+      requestSigningEncodingForVersion(vector.signing_profile_version)
+    ),
+  });
 }
 
 function formatParamsWithOmissions(

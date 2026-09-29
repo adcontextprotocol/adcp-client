@@ -37,6 +37,7 @@ Options:
                              neg/007 and neg/018 against an 'either' agent)
                              will FAIL instead of SKIP.
   --only <id[,id...]>        Run only the named vector ids
+  --signing-profile 3.2      Grade only authored 3.2 profile vectors
   --allow-live-side-effects  Opt in to vectors 016/020 against non-sandbox
                              endpoints (USE WITH CARE — creates real orders)
   --allow-http               Allow http:// URLs + private-IP targets (dev loops)
@@ -192,6 +193,15 @@ async function runRequestSigningGrader(args) {
       case '--only':
         options.onlyVectors = parseVectorList(args[++i], '--only');
         break;
+      case '--signing-profile': {
+        const profile = args[++i];
+        if (profile !== '3.2') {
+          console.error(`ERROR: --signing-profile must be "3.2", got "${profile}"\n`);
+          process.exit(2);
+        }
+        options.signingProfileVersion = profile;
+        break;
+      }
       case '--allow-live-side-effects':
         options.allowLiveSideEffects = true;
         break;
