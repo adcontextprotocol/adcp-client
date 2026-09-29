@@ -6,7 +6,6 @@ const os = require('node:os');
 const { createHash } = require('node:crypto');
 const { loadStoryboardFile } = require('../../dist/lib/testing/storyboard/loader.js');
 const { resolveBundleOrStoryboard } = require('../../dist/lib/testing/storyboard/compliance.js');
-const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
 const { hasAnyRequiredTool } = require('../../dist/lib/testing/storyboard/agent-routing.js');
 const { partitionStoryboardsByRequiredTools } = require('../../dist/lib/testing/compliance/comply.js');
 const root = path.join(__dirname, '../fixtures/routed-applicability');
@@ -116,23 +115,6 @@ for (const version of ['3.1.20', '3.1.23']) {
         }
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
-      }
-    });
-
-    test('full governance/provenance declarations retain the explicit routed seeding boundary', async () => {
-      for (const sb of storyboards.slice(2).filter(sb => sb.prerequisites?.controller_seeding === true)) {
-        await assert.rejects(
-          () =>
-            runStoryboard('', sb, {
-              adcpVersion: version,
-              agents: {
-                seller: { url: 'https://seller.example/mcp' },
-                governance: { url: 'https://governance.example/mcp' },
-              },
-              default_agent: 'seller',
-            }),
-          /agents.*controller_seeding.*not yet supported/
-        );
       }
     });
 

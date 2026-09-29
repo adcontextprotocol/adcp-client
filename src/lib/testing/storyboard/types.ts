@@ -243,6 +243,10 @@ export interface Storyboard {
      * + adcontextprotocol/adcp#2584 (seed_* scenarios). Opts-out per run via
      * `StoryboardRunOptions.skip_controller_seeding` (for agents that seed via
      * tests or HTTP admin rather than the MCP controller).
+     * In routed runs, each fixture uses the agent selected for its owning
+     * public tool (for example, products use `get_products`, plans use
+     * `sync_plans`). A step-level `agent` for that tool disambiguates its route;
+     * otherwise normal specialism routing and `default_agent` apply.
      */
     controller_seeding?: boolean;
   };

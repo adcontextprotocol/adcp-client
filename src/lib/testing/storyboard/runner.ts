@@ -113,7 +113,7 @@ import { probeRequestSigningVector } from './request-signing/probe-dispatch';
 import { REQUEST_SIGNING_PROBE_TASK } from './request-signing/synthesize';
 import { createWebhookReceiver, type WebhookReceiver, type WebhookWaitResult } from './webhook-receiver';
 import { WEBHOOK_ASSERTION_TASKS, armWebhookAssertions, executeWebhookAssertionStep } from './webhook-assertions';
-import { runControllerSeeding, type ControllerSeedingResult } from './seeding';
+import { runControllerSeeding, type ControllerSeedingResult, type SeedCall } from './seeding';
 import { callControllerRaw } from '../test-controller';
 import { applyFixtureBindingsToRequest, type FixtureBindingRegistry } from './fixture-resolution';
 import { getComplianceCacheDir } from './compliance';
@@ -1670,24 +1670,6 @@ function validateAgentsMap(
     );
   }
 
-  // Controller seeding (`prerequisites.controller_seeding: true`) currently
-  // dispatches against the FIRST per-agent client only, which works for
-  // single-tenant runs but is the wrong shape under routed mode: a
-  // cross-specialism storyboard's `fixtures:` block typically declares
-  // seeds owned by different tenants (e.g., `seed_product` for sales,
-  // `seed_signal_provider` for signals). Per-tenant seed dispatch is a
-  // larger change tracked separately. Until that lands, fail-fast and
-  // tell the operator to seed each tenant out-of-band and pass
-  // `skip_controller_seeding: true`.
-  if (storyboard.prerequisites?.controller_seeding === true && options.skip_controller_seeding !== true) {
-    throw new Error(
-      'runStoryboard: `agents` + `prerequisites.controller_seeding: true` is not yet supported. ' +
-        'Controller seeding currently targets a single tenant; cross-tenant seed routing is a ' +
-        'follow-up. Pre-seed each tenant out-of-band and pass `skip_controller_seeding: true` to ' +
-        'opt out of the runner-side seeding loop.'
-    );
-  }
-
   // First positional arg must be empty when `agents` is set. Allowing a
   // non-empty value is ambiguous: is the map authoritative, or is the
   // positional arg a hidden default? Reject and require the caller to
@@ -1699,6 +1681,26 @@ function validateAgentsMap(
         '`options.agents`. The agents map is authoritative for routing; mixing ' +
         'a positional URL with the map is ambiguous.'
     );
+  }
+}
+
+/** The public tool whose route owns state written by each seed scenario. */
+function fixtureOwnerTask(scenario: SeedCall['scenario']): string {
+  switch (scenario) {
+    case 'seed_account':
+    case 'seed_buyer_agent':
+      return 'sync_accounts';
+    case 'seed_product':
+    case 'seed_pricing_option':
+      return 'get_products';
+    case 'seed_creative_format':
+      return 'list_creative_formats';
+    case 'seed_creative':
+      return 'sync_creatives';
+    case 'seed_plan':
+      return 'sync_plans';
+    case 'seed_media_buy':
+      return 'get_media_buys';
   }
 }
 
@@ -2941,10 +2943,9 @@ async function executeStoryboardPass(
   // route that is merely read from — a signals peer serving static marketplace
   // data — is not a fixture target and needs no controller of its own. So the
   // gate is unmet only when NO route serving a state-exercising step advertises
-  // one. Per-tenant fixture targeting would let this be exact; it is the
-  // follow-up already tracked where routed + `controller_seeding: true`
-  // fail-fasts, and until it lands a shared control plane fronting two tenants
-  // has to be declared, not inferred from a union.
+  // one. The fixture seeding pass checks controller availability again on
+  // each selected owner route, so this broad prerequisite cannot authorize
+  // a peer tenant's seed operation.
   //
   // Keyed by the EXACT `options.agents` key, never by URL: two keys may share
   // one URL with different `auth` (one tenant per bearer behind a shared
@@ -3583,11 +3584,10 @@ async function executeStoryboardPass(
   // fixture id the downstream phases reference. On any seed failure we
   // cascade-skip the remaining phases with `controller_seeding_failed` so
   // the report shows "setup broke" instead of a thicket of per-step
-  // PRODUCT_NOT_FOUND / VALIDATION_ERROR failures. Runs against the first
-  // client only: in multi-instance mode the seller is expected to share
-  // state across replicas (that is what multi-instance tests exist to
-  // verify). Sellers that hold per-replica state must opt out via
-  // `skip_controller_seeding`.
+  // PRODUCT_NOT_FOUND / VALIDATION_ERROR failures. Routed runs send each
+  // seed to the owner route; multi-instance runs use the first replica and
+  // expect the seller to share state across replicas. Sellers that hold
+  // per-replica state must opt out via `skip_controller_seeding`.
   //
   // The seeding phase is held in a sidecar rather than pushed into
   // `phaseResults` up-front so every downstream consumer that indexes
@@ -3623,15 +3623,41 @@ async function executeStoryboardPass(
                 context,
                 clients[0]!,
                 routingContext
-                  ? task => {
-                      // Resolve only a fixture strategy that is actually reached.
-                      // No union member can authorize a selected agent's operation.
-                      if (!options.agentTools?.includes(task))
-                        return { client: clients[0]!, options: { ...options, agentTools: [] } };
+                  ? (task, call) => {
+                      // Preserve the established discovery-only ladder when
+                      // this storyboard did not request controller seeding.
+                      if (storyboard.prerequisites?.controller_seeding !== true) {
+                        if (!options.agentTools?.includes(task)) {
+                          return { client: clients[0]!, options: { ...options, agentTools: [] } };
+                        }
+                        const selected = dispatch.nextFor({
+                          id: `__fixture_resolution_${task}__`,
+                          title: `Fixture resolution via ${task}`,
+                          task,
+                        });
+                        return { client: selected.client, options: selected.options! };
+                      }
+                      // The controller is a back-channel, not a specialism
+                      // claimant. Route by the public tool that owns the
+                      // fixture state and keep its auth/profile together.
+                      const ownerTask = call ? fixtureOwnerTask(call.scenario) : task;
+                      const matching = storyboard.phases.flatMap(phase =>
+                        phase.steps.filter(step => step.task === ownerTask && step.agent !== undefined)
+                      );
+                      const keys = [...new Set(matching.map(step => step.agent!))];
+                      if (keys.length > 1) {
+                        throw new RoutingError(
+                          `Fixture ${call?.step_id ?? task} has multiple owner routes [${keys.join(', ')}]. ` +
+                            'Disambiguate the storyboard topology before seeding (adcp-client#3047).',
+                          ownerTask,
+                          'ambiguous fixture owner'
+                        );
+                      }
                       const selected = dispatch.nextFor({
-                        id: `__fixture_resolution_${task}__`,
-                        title: `Fixture resolution via ${task}`,
-                        task,
+                        id: `__fixture_resolution_${call?.step_id ?? task}__`,
+                        title: `Fixture resolution via ${ownerTask}`,
+                        task: ownerTask,
+                        ...(keys[0] && { agent: keys[0] }),
                       });
                       return { client: selected.client, options: selected.options! };
                     }
