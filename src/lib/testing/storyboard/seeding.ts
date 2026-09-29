@@ -514,6 +514,7 @@ async function runRoutedControllerSeeding(
         allPassed: failedCount === 0,
         passedCount,
         failedCount,
+        seedUnsupported: failedCount === 0,
       };
     }
     steps.push(result.step);

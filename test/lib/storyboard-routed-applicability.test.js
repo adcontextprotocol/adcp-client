@@ -305,6 +305,49 @@ test('routed seeding reports completed writes when a later route withdraws a sce
   assert.equal(calls.governance.includes('comply_test_controller'), true);
 });
 
+test('a failed routed seed remains a setup failure if a later route withdraws a scenario', async () => {
+  const sb = {
+    ...storyboard(
+      [
+        { id: 'read_product', task: 'get_products', agent: 'sales' },
+        { id: 'write_plan', task: 'sync_plans', agent: 'governance' },
+      ],
+      []
+    ),
+    prerequisites: { description: 'seed two tenants', controller_seeding: true },
+    fixtures: {
+      products: [{ product_id: 'product_a', delivery_type: 'non_guaranteed' }],
+      plans: [{ plan_id: 'plan_a', budget: { total: 100, currency: 'USD' } }],
+    },
+  };
+  const { result } = await run(
+    {
+      sales: [
+        ['get_products', 'comply_test_controller'],
+        { supported_protocols: ['media_buy'], compliance_testing: { scenarios: ['seed_product'] } },
+        false,
+        [],
+        () => ({ success: false, error: 'SEED_REJECTED' }),
+      ],
+      governance: [
+        ['sync_plans', 'comply_test_controller'],
+        { supported_protocols: ['governance'], compliance_testing: { scenarios: ['seed_plan'] } },
+        false,
+        [],
+        () => ({ success: false, error: 'UNKNOWN_SCENARIO' }),
+      ],
+    },
+    sb,
+    { default_agent: 'sales', adcpVersion: ADCP_VERSION }
+  );
+
+  assert.equal(result.phases[0].passed, false);
+  assert.match(result.phases[0].steps[0].error, /SEED_REJECTED/);
+  assert.equal(result.phases[0].steps[1].skip_reason, 'fixture_seed_unsupported');
+  assert.ok(result.phases[1].steps.every(step => step.skip_reason === 'controller_seeding_failed'));
+  assert.equal(result.overall_passed, false);
+});
+
 test('a peer controller cannot seed a fixture for an owner without one', async () => {
   const sb = {
     ...storyboard([{ id: 'read_product', task: 'get_products', agent: 'sales' }], []),
