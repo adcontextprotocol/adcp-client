@@ -1136,7 +1136,7 @@ for (const strategies of [['discover'], ['discover', 'seed']]) {
       {
         seller: [
           ['get_products'],
-          { supported_protocols: ['media_buy'] },
+          { supported_protocols: ['media_buy'], media_buy: { buying_modes: ['brief', 'wholesale'] } },
           false,
           [
             require('./test-fixtures').createTestProduct({
