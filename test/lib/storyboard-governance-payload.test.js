@@ -448,6 +448,21 @@ test('governed media buys send approved legacy aliases without local rewriting',
   assert.equal(computeGovernedPayloadHash(expected), computeGovernedPayloadHash(sent));
 });
 
+test('canonical creative methods reject exact-payload preservation before reshaping', async () => {
+  const agent = { id: 'sales', name: 'Sales', agent_uri: 'https://sales.example/mcp', protocol: 'mcp' };
+  const client = new SingleAgentClient(agent, { adcpVersion: options.adcpVersion });
+  for (const [method, request] of [
+    ['createMediaBuy', { packages: [{ format_ids: ['format-1'] }], governance_context: 'approved' }],
+    ['updateMediaBuy', { packages: [{ format_ids: ['format-1'] }], governance_context: 'approved' }],
+    ['syncCreatives', { creatives: [], governance_context: 'approved' }],
+  ]) {
+    await assert.rejects(
+      client[method](request, undefined, { preserveGovernedPayload: true }),
+      /requires the raw legacy task method/
+    );
+  }
+});
+
 test('MCP auth overrides use the same wire envelope as the approved payload', () => {
   const payload = { mode: 'generate', message: 'Summer sale', idempotency_key: 'auth-build' };
   const agentUri = 'https://creative.example/mcp';

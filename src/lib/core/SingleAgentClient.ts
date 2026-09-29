@@ -990,6 +990,14 @@ function snapshotTaskOptions<T extends TaskOptions | undefined>(options: T): T {
   } as T;
 }
 
+function assertRawMethodForGovernedPayload(taskType: string, options?: TaskOptions): void {
+  if (options?.preserveGovernedPayload) {
+    throw new ConfigurationError(
+      `Governed ${taskType} requires the raw legacy task method; canonical creative projection can reshape approved arguments.`
+    );
+  }
+}
+
 const PRIMARY_ADCP_TASK_NAMES = {
   get_products: true,
   list_products: true,
@@ -6379,6 +6387,7 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<CreateMediaBuyResponse>>> {
+    assertRawMethodForGovernedPayload('create_media_buy', options);
     this.assertDurableProjectionOverrideSupported(options?.legacyFormatConverter);
     const requestSnapshot = structuredCloneWithLegacyCreativeMetadata(params);
     const projectionCatalogs = options?.projectionCatalogs ? structuredClone(options.projectionCatalogs) : undefined;
@@ -6580,6 +6589,7 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<UpdateMediaBuyResponse>>> {
+    assertRawMethodForGovernedPayload('update_media_buy', options);
     this.assertDurableProjectionOverrideSupported(options?.legacyFormatConverter);
     const requestSnapshot = structuredCloneWithLegacyCreativeMetadata(params);
     const projectionCatalogs = options?.projectionCatalogs ? structuredClone(options.projectionCatalogs) : undefined;
@@ -6664,6 +6674,7 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: SyncCreativesTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<SyncCreativesResponse>>> {
+    assertRawMethodForGovernedPayload('sync_creatives', options);
     this.assertDurableProjectionOverrideSupported(
       options?.creativeFormatProjection?.legacyFormatConverter ?? options?.legacyFormatConverter
     );

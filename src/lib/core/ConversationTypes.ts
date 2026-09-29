@@ -267,6 +267,8 @@ export interface TaskOptions {
    * Local request-schema and account-required checks are also bypassed so
    * a seller can grade the approved wire payload, including invalid vectors.
    * Principal identity and version safety checks still run.
+   * Canonical creative methods reject this option because their projections
+   * can reshape requests; the storyboard runner uses their raw counterparts.
    *
    * @internal Do not set in production buyer code.
    */
