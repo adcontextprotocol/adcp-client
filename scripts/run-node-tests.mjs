@@ -64,6 +64,9 @@ export const SLOW_NODE_TESTS = new Set([
   // alone, which leaves no margin under the fast suite's 60s per-test ceiling
   // once a shard runs files concurrently.
   'test/lib/storyboard-capability-rollup.test.js',
+  // Routed fixture seeding now adds live MCP agents and multi-owner checks;
+  // the combined file hit the fast lane's exact 60s per-file ceiling in CI.
+  'test/lib/storyboard-routed-applicability.test.js',
   // Boots ~20 live MCP/HTTP mock agents across 54 suites, including a full
   // comply() run and a deliberately slow SSE flood. ~29s standing alone, which
   // is past the point where the fast suite's 60s per-file ceiling still has
