@@ -2943,30 +2943,26 @@ async function executeStoryboardPass(
     routingContext && options.agents
       ? createRoutingDispatcher(routingContext, options, options.agents)
       : createDispatcher(agentUrls, clients, 'round-robin', dispatchOffset, profile);
-  // Root predicates describe the agent under test, not every agent that
-  // performs a routed step. With a default agent, evaluate its profile once;
-  // otherwise, one routed agent must satisfy the whole root conjunction.
-  // Phase predicates remain scoped to each selected step route.
+  // Root predicates describe the agent under test. A declared default agent
+  // owns that gate for the whole storyboard, including governance-agent steps.
+  // Without a default, keep each selected route's own applicability verdict.
+  // Phase predicates always remain scoped to the selected step route.
   const routedRootCapabilityDetail = (() => {
-    if (!routingContext || storyboardCapabilityPredicates(storyboard).length === 0) return null;
-    const profiles = options.default_agent
-      ? [routingContext.profiles.get(options.default_agent)].filter((profile): profile is AgentProfile => !!profile)
-      : [...routingContext.profiles.values()];
-    if (profiles.length === 0) {
+    if (!routingContext || !options.default_agent || storyboardCapabilityPredicates(storyboard).length === 0)
+      return null;
+    const profile = routingContext.profiles.get(options.default_agent);
+    if (!profile) {
       return (
         evaluateStoryboardCapabilityGates(storyboard, undefined, undefined, options.adcpVersion) ??
         'Capability predicates could not be evaluated: no discovered agent profile.'
       );
     }
-    const details = profiles.map(profile =>
-      evaluateStoryboardCapabilityGates(
-        storyboard,
-        profile,
-        normalizeAgentToolNames(profile.tools),
-        options.adcpVersion
-      )
+    return evaluateStoryboardCapabilityGates(
+      storyboard,
+      profile,
+      normalizeAgentToolNames(profile.tools),
+      options.adcpVersion
     );
-    return details.some(detail => detail === null) ? null : details[0]!;
   })();
   const routedStepCapabilitySkips = new Map<StoryboardStep, string>();
   const routedPhaseCapabilitySkips = new Map<string, string>();
@@ -3052,7 +3048,14 @@ async function executeStoryboardPass(
         try {
           const selected = dispatch.nextFor(step);
           const selectedOptions = selected.options!;
-          const rootDetail = routedRootCapabilityDetail;
+          const rootDetail = options.default_agent
+            ? routedRootCapabilityDetail
+            : evaluateStoryboardCapabilityGates(
+                storyboard,
+                selected.profile,
+                selectedOptions.agentTools,
+                options.adcpVersion
+              );
           let requirementSkip: { requirement: string; detail: string } | undefined;
           if (rootDetail === null && allRequires.includes('request_signer')) {
             const requirement = await checkRequires(['request_signer'], storyboard, selectedOptions, {

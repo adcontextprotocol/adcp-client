@@ -521,7 +521,7 @@ for (const adcpVersion of ['3.1.20', '3.1.23', ADCP_VERSION]) {
       }
     });
 
-    test('root gates use the routed agent union while phase gates follow selected routes', async () => {
+    test('without a default agent, root and phase gates follow selected routes', async () => {
       for (const scope of ['root', 'phase', 'all']) {
         for (const order of [
           ['a', 'b'],
@@ -552,16 +552,12 @@ for (const adcpVersion of ['3.1.20', '3.1.23', ADCP_VERSION]) {
             adcpVersion,
             _profile: { raw_capabilities: { account: { require_operator_auth: false } } },
           });
-          assert.deepEqual(
-            sets(result),
-            scope === 'phase'
-              ? { selected: ['supported'], skipped: [['unsupported', 'not_applicable']], failed: [] }
-              : { selected: ['unsupported', 'supported'], skipped: [], failed: [] }
-          );
-          assert.deepEqual(
-            calls.a,
-            scope === 'phase' ? ['get_adcp_capabilities'] : ['get_adcp_capabilities', 'get_adcp_capabilities']
-          );
+          assert.deepEqual(sets(result), {
+            selected: ['supported'],
+            skipped: [['unsupported', 'not_applicable']],
+            failed: [],
+          });
+          assert.deepEqual(calls.a, ['get_adcp_capabilities']);
           assert.deepEqual(calls.b, ['get_adcp_capabilities', 'get_adcp_capabilities']);
         }
       }

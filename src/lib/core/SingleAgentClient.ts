@@ -4685,7 +4685,9 @@ export class SingleAgentClient {
     );
     const inputSchemaStripLogs: any[] = [];
     if (options?.preserveGovernedPayload && serverVersion !== 'v3') {
-      throw new Error('Governed storyboard requests require a v3 seller to preserve the approved payload.');
+      throw new ConfigurationError(
+        'Governed storyboard requests require a v3 seller to preserve the approved payload.'
+      );
     }
     const { params: adaptedParams, driftLogs: adaptDriftLogs } = options?.preserveGovernedPayload
       ? { params: normalizedParams, driftLogs: [] }
@@ -7881,7 +7883,9 @@ export class SingleAgentClient {
       );
       const inputSchemaStripLogs: any[] = [];
       if (options?.preserveGovernedPayload && serverVersion !== 'v3') {
-        throw new Error('Governed storyboard requests require a v3 seller to preserve the approved payload.');
+        throw new ConfigurationError(
+          'Governed storyboard requests require a v3 seller to preserve the approved payload.'
+        );
       }
       const { params: adaptedParams, driftLogs: adaptDriftLogs } = options?.preserveGovernedPayload
         ? { params: normalizedParams, driftLogs: [] }

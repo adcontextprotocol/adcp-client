@@ -153,8 +153,8 @@ export interface Storyboard {
    * result instead of running phases — avoiding misleading per-phase failures
    * when the storyboard tests behavior the agent explicitly opted out of.
    * In routed runs, the predicate applies to `default_agent` when supplied;
-   * otherwise one discovered agent must satisfy the whole root gate. It is
-   * not rechecked against agents that only perform other routed steps.
+   * it is not rechecked against agents that only perform other routed steps.
+   * Without a default agent, each step uses its selected route's profile.
    *
    * `path` is a dotted key path into the raw `get_adcp_capabilities` response
    * (e.g. `"adcp.idempotency.supported"`).
