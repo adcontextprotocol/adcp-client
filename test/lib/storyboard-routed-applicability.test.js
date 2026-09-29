@@ -205,6 +205,32 @@ test('routed seeding follows the unique protocol owner without a step agent', as
   assert.equal(calls.signals.includes('comply_test_controller'), false);
 });
 
+test('routed seeding rejects conflicting explicit owners before writing fixtures', async () => {
+  const sb = {
+    ...storyboard(
+      [
+        { id: 'read_product_a', task: 'get_products', agent: 'a' },
+        { id: 'read_product_b', task: 'get_products', agent: 'b' },
+      ],
+      []
+    ),
+    prerequisites: { description: 'seed seller catalog', controller_seeding: true },
+    fixtures: { products: [{ product_id: 'product_a', delivery_type: 'non_guaranteed' }] },
+  };
+  const { result, calls } = await run(
+    {
+      a: [['get_products', 'comply_test_controller'], { supported_protocols: ['media_buy'] }],
+      b: [['get_products', 'comply_test_controller'], { supported_protocols: ['media_buy'] }],
+    },
+    sb,
+    { adcpVersion: ADCP_VERSION }
+  );
+
+  assert.match(JSON.stringify(result), /multiple owner routes/);
+  assert.equal(calls.a.includes('comply_test_controller'), false);
+  assert.equal(calls.b.includes('comply_test_controller'), false);
+});
+
 test('routed controller seeding sends products and plans to their owning agents', async () => {
   const sb = {
     ...storyboard(

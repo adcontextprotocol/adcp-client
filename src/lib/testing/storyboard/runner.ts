@@ -3657,7 +3657,7 @@ async function executeStoryboardPass(
                         id: `__fixture_resolution_${call?.step_id ?? task}__`,
                         title: `Fixture resolution via ${ownerTask}`,
                         task: ownerTask,
-                        ...(keys[0] && { agent: keys[0] }),
+                        ...(keys.length === 1 && { agent: keys[0] }),
                       });
                       return { client: selected.client, options: selected.options! };
                     }
