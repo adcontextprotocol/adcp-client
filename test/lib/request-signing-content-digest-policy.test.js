@@ -100,6 +100,33 @@ test("a 'required' agent grades the missing-content-digest refusal", async () =>
   }
 });
 
+test("a 'forbidden' agent grades the covered-content-digest refusal", async () => {
+  const vector = vectorById('negative', '018-digest-covered-when-forbidden');
+  for (const policyOption of [
+    { agentCapability: { supported: true, covers_content_digest: 'forbidden', required_for: ['create_media_buy'] } },
+    { agentContentDigestPolicy: 'forbidden' },
+  ]) {
+    const result = await gradeOneVector(vector.id, 'negative', UNREACHABLE, {
+      ...policyOption,
+      transport: 'raw',
+      allowPrivateIp: true,
+      timeoutMs: 500,
+    });
+    assert.notStrictEqual(result.skip_reason, 'capability_profile_mismatch');
+    assert.strictEqual(result.vector_id, vector.id);
+  }
+});
+
+test("a 'forbidden' agent skips other vectors that cover content-digest", async () => {
+  const vector = vectorById('positive', '002-post-with-content-digest');
+  const result = await gradeOneVector(vector.id, 'positive', UNREACHABLE, {
+    agentContentDigestPolicy: 'forbidden',
+    transport: 'raw',
+    timeoutMs: 500,
+  });
+  assert.strictEqual(result.skip_reason, 'capability_profile_mismatch');
+});
+
 test("a 'required' agent skips a different components-incomplete vector that also omits the digest", async () => {
   const vector = vectorById('negative', '006-missing-covered-component');
   assert.strictEqual(vector.expected_error_code, 'request_signature_components_incomplete');

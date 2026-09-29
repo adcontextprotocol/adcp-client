@@ -88,7 +88,7 @@ export interface GradeOptions extends LoadVectorsOptions {
    *   - Vectors whose actual `Signature-Input` covers `content-digest`
    *     against a `'forbidden'` agent (rejected with
    *     `request_signature_components_unexpected` before the intended
-   *     error path).
+   *     error path, unless that is the vector's expected error).
    *   - Vectors whose actual `Signature-Input` does not cover
    *     `content-digest` against a `'required'` agent (rejected with
    *     `request_signature_components_incomplete` before the intended
@@ -1047,7 +1047,20 @@ function contentDigestStructuralMismatch(
   const components = vectorCoveredComponents(vector);
   if (components === undefined) return undefined;
   const signsCd = components.includes('content-digest');
-  if (signsCd && agentCoversContentDigest === 'forbidden') {
+  const coversOtherRequiredComponents =
+    MANDATORY_COMPONENTS.every(component => components.includes(component)) &&
+    (!(vector.request.body && vector.request.body.length > 0) || components.includes('content-type'));
+  const expectsOnlyDigestUnexpected =
+    'expected_error_code' in vector &&
+    vector.expected_error_code === 'request_signature_components_unexpected' &&
+    coversOtherRequiredComponents &&
+    components.every(
+      component =>
+        MANDATORY_COMPONENTS.some(required => required === component) ||
+        component === 'content-type' ||
+        component === 'content-digest'
+    );
+  if (signsCd && agentCoversContentDigest === 'forbidden' && !expectsOnlyDigestUnexpected) {
     return (
       `Vector's Signature-Input covers content-digest but agent declares ` +
       `covers_content_digest='forbidden'. The verifier rejects with ` +
@@ -1058,8 +1071,7 @@ function contentDigestStructuralMismatch(
   const expectsOnlyDigestRefusal =
     'expected_error_code' in vector &&
     vector.expected_error_code === 'request_signature_components_incomplete' &&
-    MANDATORY_COMPONENTS.every(component => components.includes(component)) &&
-    (!(vector.request.body && vector.request.body.length > 0) || components.includes('content-type'));
+    coversOtherRequiredComponents;
   if (!signsCd && agentCoversContentDigest === 'required' && !expectsOnlyDigestRefusal) {
     return (
       `Vector's Signature-Input does not cover content-digest but agent declares ` +
