@@ -1,6 +1,7 @@
 import { createPrivateKey, randomBytes, randomUUID, sign as nodeSign, type JsonWebKey } from 'crypto';
 import {
   buildSignatureBase,
+  computeContentDigest,
   finalizeRequestSignature,
   formatSignatureParams,
   prepareRequestSignature,
@@ -332,12 +333,13 @@ const MUTATIONS: Record<string, Mutator> = {
   'profile-3.2/negative/004-window-too-long': delegateToRoot('004-window-too-long'),
   'profile-3.2/negative/005-alg-not-allowed': delegateToRoot('005-alg-not-allowed'),
   'profile-3.2/negative/006-missing-covered-component': (vector, keys, options) =>
-    signWithComponents(signerKeyFor(vector, keys), vector, options, [
-      '@method',
-      '@target-uri',
-      'content-type',
-      'content-digest',
-    ]),
+    signWithComponents(
+      signerKeyFor(vector, keys),
+      vector,
+      options,
+      ['@method', '@target-uri', 'content-type', 'content-digest'],
+      true
+    ),
   'profile-3.2/negative/007-missing-content-digest': delegateToRoot('007-missing-content-digest'),
   'profile-3.2/negative/008-unknown-keyid': delegateToRoot('008-unknown-keyid'),
   'profile-3.2/negative/009-key-ops-missing-verify': delegateToRoot('009-key-ops-missing-verify'),
@@ -636,6 +638,7 @@ function signWithParamOverride(
   override: ParamOverride
 ): SignedHttpRequest {
   const shaped = applyTransport(vector, options);
+  if (vector.verifier_capability.covers_content_digest === 'required') refreshContentDigest(shaped, vector);
   const url = shaped.url;
   const request: RequestLike = {
     method: shaped.method,
@@ -682,9 +685,11 @@ function signWithComponents(
   key: SignerKey,
   vector: PositiveVector | NegativeVector,
   options: BuildOptions,
-  components: string[]
+  components: string[],
+  refreshDigest = false
 ): SignedHttpRequest {
   const shaped = applyTransport(vector, options);
+  if (refreshDigest) refreshContentDigest(shaped, vector);
   const url = shaped.url;
   const request: RequestLike = {
     method: shaped.method,
@@ -715,6 +720,15 @@ function signWithComponents(
     },
     body: shaped.body,
   };
+}
+
+function refreshContentDigest(shaped: TransportShapedRequest, vector: PositiveVector | NegativeVector): void {
+  shaped.headers = mergeHeadersCaseInsensitively(shaped.headers, {
+    'Content-Digest': computeContentDigest(
+      shaped.body ?? '',
+      requestSigningEncodingForVersion(vector.signing_profile_version)
+    ),
+  });
 }
 
 function formatParamsWithOmissions(

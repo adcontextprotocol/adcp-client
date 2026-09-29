@@ -7,6 +7,7 @@ import { loadSignedRequestsRunnerContract, type SignedRequestsRunnerContract } f
 import {
   InMemoryReplayStore,
   InMemoryRevocationStore,
+  MANDATORY_COMPONENTS,
   RequestSignatureError,
   StaticJwksResolver,
   verifyRequestSignature,
@@ -1019,13 +1020,13 @@ function negativeAcceptedErrorCode(vector: NegativeVector, probe: ProbeResult): 
  * use canonical PascalCase headers; this isn't a general-purpose
  * header-name normalizer.
  */
-function vectorSignsContentDigest(vector: PositiveVector | NegativeVector): boolean | undefined {
+function vectorCoveredComponents(vector: PositiveVector | NegativeVector): string[] | undefined {
   const headers = vector.request.headers;
   const sigInput = headers['Signature-Input'] ?? headers['signature-input'];
   if (!sigInput) return undefined;
   try {
     const parsed = parseSignatureInput(sigInput);
-    return parsed.components.includes('content-digest');
+    return parsed.components;
   } catch {
     return undefined;
   }
@@ -1043,8 +1044,9 @@ function contentDigestStructuralMismatch(
   vector: PositiveVector | NegativeVector,
   agentCoversContentDigest: 'required' | 'forbidden' | 'either'
 ): string | undefined {
-  const signsCd = vectorSignsContentDigest(vector);
-  if (signsCd === undefined) return undefined;
+  const components = vectorCoveredComponents(vector);
+  if (components === undefined) return undefined;
+  const signsCd = components.includes('content-digest');
   if (signsCd && agentCoversContentDigest === 'forbidden') {
     return (
       `Vector's Signature-Input covers content-digest but agent declares ` +
@@ -1053,11 +1055,12 @@ function contentDigestStructuralMismatch(
       `error path can fire.`
     );
   }
-  if (
-    !signsCd &&
-    agentCoversContentDigest === 'required' &&
-    !('expected_error_code' in vector && vector.expected_error_code === 'request_signature_components_incomplete')
-  ) {
+  const expectsOnlyDigestRefusal =
+    'expected_error_code' in vector &&
+    vector.expected_error_code === 'request_signature_components_incomplete' &&
+    MANDATORY_COMPONENTS.every(component => components.includes(component)) &&
+    (!(vector.request.body && vector.request.body.length > 0) || components.includes('content-type'));
+  if (!signsCd && agentCoversContentDigest === 'required' && !expectsOnlyDigestRefusal) {
     return (
       `Vector's Signature-Input does not cover content-digest but agent declares ` +
       `covers_content_digest='required'. The verifier rejects with ` +

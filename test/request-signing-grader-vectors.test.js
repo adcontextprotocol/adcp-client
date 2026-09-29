@@ -165,6 +165,30 @@ describe('3.2 profile grading', () => {
     const components = parseSignatureInput(signed006.headers['Signature-Input']).components;
     assert.ok(components.includes('content-digest'));
     assert.ok(!components.includes('@authority'));
+    const mcpOptions = { transport: 'mcp', baseUrl: 'https://agent.example.com/mcp' };
+    const mcp006 = buildNegativeRequest(profile006, loaded.keys, mcpOptions);
+    assert.strictEqual(mcp006.headers['Content-Digest'], computeContentDigest(mcp006.body, 'rfc8941-base64'));
+
+    const root002 = loaded.negative.find(vector => vector.id === '002-wrong-tag');
+    const profile002 = {
+      ...root002,
+      id: 'profile-3.2/negative/002-wrong-tag',
+      signing_profile_version: '3.2',
+      verifier_capability: { ...root002.verifier_capability, covers_content_digest: 'required' },
+    };
+    const mcp002 = buildNegativeRequest(profile002, loaded.keys, mcpOptions);
+    assert.strictEqual(mcp002.headers['Content-Digest'], computeContentDigest(mcp002.body, 'rfc8941-base64'));
+    assert.ok(parseSignatureInput(mcp002.headers['Signature-Input']).components.includes('content-digest'));
+
+    const root010 = loaded.negative.find(vector => vector.id === '010-content-digest-mismatch');
+    const profile010 = {
+      ...root010,
+      id: 'profile-3.2/negative/010-content-digest-mismatch',
+      signing_profile_version: '3.2',
+      verifier_capability: { ...root010.verifier_capability, covers_content_digest: 'required' },
+    };
+    const mcp010 = buildNegativeRequest(profile010, loaded.keys, mcpOptions);
+    assert.notStrictEqual(mcp010.headers['Content-Digest'], computeContentDigest(mcp010.body, 'rfc8941-base64'));
 
     const root015 = loaded.negative.find(vector => vector.id === '015-signature-invalid');
     const profile015 = {

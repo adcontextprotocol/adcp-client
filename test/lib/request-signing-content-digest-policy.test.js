@@ -100,6 +100,17 @@ test("a 'required' agent grades the missing-content-digest refusal", async () =>
   }
 });
 
+test("a 'required' agent skips a different components-incomplete vector that also omits the digest", async () => {
+  const vector = vectorById('negative', '006-missing-covered-component');
+  assert.strictEqual(vector.expected_error_code, 'request_signature_components_incomplete');
+  const result = await gradeOneVector(vector.id, 'negative', UNREACHABLE, {
+    agentContentDigestPolicy: 'required',
+    transport: 'raw',
+    timeoutMs: 500,
+  });
+  assert.strictEqual(result.skip_reason, 'capability_profile_mismatch');
+});
+
 test('the agentContentDigestPolicy path narrows the same way', async () => {
   // `adcp grade request-signing --content-digest-policy either` shares the
   // predicate; it over-skipped 010 for the same reason.
