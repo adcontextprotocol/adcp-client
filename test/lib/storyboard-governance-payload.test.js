@@ -95,6 +95,21 @@ test('a governed request override remains exact after context injection', () => 
   assert.deepEqual(request, { ...override, message: 'Approved copy' });
 });
 
+test('context_inputs governance token preserves the approved build_creative request', () => {
+  const payload = { mode: 'generate', message: 'Summer sale', idempotency_key: 'context-build' };
+  const step = {
+    id: 'build_from_context',
+    title: 'Build',
+    task: 'build_creative',
+    sample_request: payload,
+    context_inputs: [{ key: 'token', inject_at: 'governance_context' }],
+  };
+  const built = buildStepRequest(step, step, { token: { token: 'approved' } }, { ...options, brand: undefined });
+  assert.deepEqual(built, { ...payload, governance_context: { token: 'approved' } });
+  assert.equal('quality' in built, false);
+  assert.equal('include_preview' in built, false);
+});
+
 test('governance approval payload is transport-independent without a webhook', () => {
   const step = {
     id: 'approve',

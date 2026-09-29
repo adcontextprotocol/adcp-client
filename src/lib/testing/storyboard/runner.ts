@@ -5777,19 +5777,22 @@ export function buildStepRequest(
   // 5. Empty object (only reachable for non-mutating tasks with neither fixture nor enricher)
   let request: Record<string, unknown>;
   const governedSource = options.request ?? step.sample_request;
+  const contextGovernance =
+    step.context_inputs?.length &&
+    Object.prototype.hasOwnProperty.call(applyContextInputs({}, step.context_inputs, context), 'governance_context');
   const governedFixture =
     effectiveStep.task !== 'check_governance' &&
     effectiveStep.task !== 'report_plan_outcome' &&
-    governedSource !== undefined &&
-    Object.prototype.hasOwnProperty.call(governedSource, 'governance_context');
+    ((governedSource !== undefined && Object.prototype.hasOwnProperty.call(governedSource, 'governance_context')) ||
+      contextGovernance);
   if (options.request) {
     request = injectContext({ ...options.request }, context, runnerVars);
   } else if (step.expect_error && step.sample_request) {
     request = injectContext({ ...step.sample_request }, context, runnerVars);
-  } else if (governedFixture && step.sample_request) {
+  } else if (governedFixture) {
     // The governance agent authorized the authored downstream payload. Extra
     // enricher or runner defaults would change its hash after approval.
-    request = injectContext({ ...step.sample_request }, context, runnerVars);
+    request = injectContext({ ...(step.sample_request ?? {}) }, context, runnerVars);
   } else if (hasRequestEnricher(effectiveStep.task)) {
     request = enrichRequest(effectiveStep, context, options, runnerVars);
   } else if (step.sample_request) {
@@ -5806,7 +5809,7 @@ export function buildStepRequest(
   if (governedFixture) {
     // Apply run-scoped fields symmetrically to the approval intent and the
     // downstream request. The enricher and idempotency defaults remain skipped.
-    request = applyBrandInvariant(request, options, effectiveStep.task, { omit_account: step.omit_account });
+    request = applyBrandInvariant(request, options, effectiveStep.task, { omit_account: true });
     return options.disable_sandbox === true ? applyDisableSandboxHint(request, effectiveStep.task) : request;
   }
 
@@ -5857,7 +5860,9 @@ export function buildStepRequest(
       agent_uri: typeof request.target_agent === 'string' ? request.target_agent : '',
       protocol: 'mcp' as const,
     };
-    const brandedPayload = applyBrandInvariant(request.payload as Record<string, unknown>, options, toolName);
+    const brandedPayload = applyBrandInvariant(request.payload as Record<string, unknown>, options, toolName, {
+      omit_account: true,
+    });
     let payload = prepareProtocolToolCall(targetAgent, brandedPayload, {
       toolName,
       adcpVersion: options.adcpVersion,
