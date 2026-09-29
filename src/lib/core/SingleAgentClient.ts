@@ -6206,7 +6206,7 @@ export class SingleAgentClient {
         void _legacyAccountId;
         request = { ...rest, account: { account_id: legacyAccountId } };
       }
-      if (!effectiveOptions.skipRequestValidation) {
+      if (!effectiveOptions.skipRequestValidation && this.config.validateFeatures !== false) {
         const capabilities = await this.getCapabilities(effectiveOptions);
         const sellerDeclares31 =
           capabilities.servedVersion !== undefined
