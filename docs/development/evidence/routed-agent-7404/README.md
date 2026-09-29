@@ -135,17 +135,15 @@ identical in 3.1.20 and 3.1.23.
   storyboards already satisfy all-of on the seller, so reverting the selector
   would not repair them. Seed validation and complete fixture declarations need
   protocol-side correction; this patch does not suppress those failures.
-- Routed legacy controller seeding (`prerequisites.controller_seeding: true`) is
-  explicitly unsupported unless the caller
-  provisions fixtures externally and sets `skip_controller_seeding: true`.
-  Tests retain the complete declarations and assert the existing refusal for each
-  declaration that enables controller seeding. A second matrix runs every authored
-  phase with the explicit external-seeding option, against split and complete
-  routed toolsets whose deterministic endpoints reject calls. Its exact selected,
-  skipped (including failed prerequisite skips), and failed sets are committed in
-  `test/fixtures/routed-applicability/routed-rejections.json`; none of the failures
-  become passing/neutral results. Legacy routed seeding is not implemented; declared `fixture_resolution`
-  seeding is routed per operation.
+- At this audit's snapshot, routed legacy controller seeding
+  (`prerequisites.controller_seeding: true`) required externally provisioned
+  fixtures and `skip_controller_seeding: true`. The external-seeding matrix in
+  `test/fixtures/routed-applicability/routed-rejections.json` records selected,
+  skipped, and failed sets from that snapshot. Current SDK code routes legacy
+  seed scenarios to the agents that own their fixture state; the current
+  controller and credential cases live in
+  `test/lib/storyboard-routed-applicability.test.js`. Declared
+  `fixture_resolution` seeding remains routed per operation.
 
 The independent routed matrix uses real discovery/dispatch through official SDK
 clients with deterministic test servers. It asserts selected/skipped/failed step
