@@ -70,6 +70,7 @@ import {
 } from './creative-assets';
 import { resolveAccount, resolveBrand } from '../client';
 import { requestUsesIdempotency, generateIdempotencyKey } from '../../utils/idempotency';
+import { isAdcpVersionAtLeast } from '../../utils/adcp-version-config';
 import {
   getSchemaDefaultByPath,
   getSchemaValidatorByRef,
@@ -5777,10 +5778,12 @@ export function buildStepRequest(
   // 5. Empty object (only reachable for non-mutating tasks with neither fixture nor enricher)
   let request: Record<string, unknown>;
   const governedSource = options.request ?? step.sample_request;
+  const payloadBoundGovernance = isAdcpVersionAtLeast(options.adcpVersion ?? ADCP_VERSION, '3.2.0-beta.1');
   const contextGovernance =
     step.context_inputs?.length &&
     Object.prototype.hasOwnProperty.call(applyContextInputs({}, step.context_inputs, context), 'governance_context');
   const governedFixture =
+    payloadBoundGovernance &&
     effectiveStep.task !== 'check_governance' &&
     effectiveStep.task !== 'report_plan_outcome' &&
     ((governedSource !== undefined && Object.prototype.hasOwnProperty.call(governedSource, 'governance_context')) ||
@@ -5845,6 +5848,7 @@ export function buildStepRequest(
   request = applyIdempotencyInvariant(request, effectiveStep.task, step);
 
   if (
+    payloadBoundGovernance &&
     effectiveStep.task === 'check_governance' &&
     request.phase !== 'delivery' &&
     request.payload !== null &&
@@ -5852,23 +5856,15 @@ export function buildStepRequest(
     !Array.isArray(request.payload)
   ) {
     const toolName = typeof request.tool === 'string' ? request.tool : undefined;
-    // The envelope settings are run-scoped; AgentEntry only overrides auth
-    // and transport. Without a webhook, transport does not change AdCP args.
-    const targetAgent = {
-      id: 'governed-target',
-      name: 'governed-target',
-      agent_uri: typeof request.target_agent === 'string' ? request.target_agent : '',
-      protocol: 'mcp' as const,
-    };
     const brandedPayload = applyBrandInvariant(request.payload as Record<string, unknown>, options, toolName, {
       omit_account: true,
     });
-    let payload = prepareProtocolToolCall(targetAgent, brandedPayload, {
+    let payload = prepareGovernedStoryboardWireArgs(
+      brandedPayload,
       toolName,
-      adcpVersion: options.adcpVersion,
-      wireAdcpVersion: options.wireAdcpVersion,
-      versionEnvelope: options.versionEnvelope,
-    }).args;
+      typeof request.target_agent === 'string' ? request.target_agent : '',
+      options
+    );
     if (options.disable_sandbox === true) {
       payload = applyDisableSandboxHint(payload, toolName);
     }
@@ -5879,6 +5875,27 @@ export function buildStepRequest(
   }
 
   return request;
+}
+
+/** @internal Prepare the exact no-webhook wire args used by governed storyboard requests. */
+export function prepareGovernedStoryboardWireArgs(
+  request: Record<string, unknown>,
+  toolName: string | undefined,
+  agentUri: string,
+  options: StoryboardRunOptions
+): Record<string, unknown> {
+  // The envelope settings are run-scoped; AgentEntry only overrides auth
+  // and transport. Without a webhook, transport does not change AdCP args.
+  return prepareProtocolToolCall(
+    { id: 'governed-target', name: 'governed-target', agent_uri: agentUri, protocol: 'mcp' },
+    request,
+    {
+      toolName,
+      adcpVersion: options.adcpVersion,
+      wireAdcpVersion: options.wireAdcpVersion,
+      versionEnvelope: options.versionEnvelope,
+    }
+  ).args;
 }
 
 async function executeStep(
@@ -6298,9 +6315,16 @@ async function executeStep(
   // A governed request with no authored key must do the same: minting a key
   // after check_governance approved the payload would change its wire hash.
   const governedRequest =
+    isAdcpVersionAtLeast(options.adcpVersion ?? ADCP_VERSION, '3.2.0-beta.1') &&
     effectiveStep.task !== 'check_governance' &&
     effectiveStep.task !== 'report_plan_outcome' &&
     Object.prototype.hasOwnProperty.call(request, 'governance_context');
+  // The raw method keeps both the request and response on the graded wire
+  // shape; canonical creative methods can transform approved request fields.
+  const responseProjection = governedRequest
+    ? 'raw'
+    : (effectiveStep.response_projection ??
+      defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario));
   if (
     governedRequest &&
     !step.expect_error &&
@@ -6497,9 +6521,7 @@ async function executeStep(
               skipAccountValidation: testsMissingAccount,
               skipRequestValidation: testsSchemaInvalidRequest,
               preserveGovernedPayload: governedRequest,
-              responseProjection:
-                effectiveStep.response_projection ??
-                defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario),
+              responseProjection,
               mediaBuyLifecycleCompatibility: options.mediaBuyLifecycleCompatibility,
               signal: options.signal,
             })
@@ -6553,7 +6575,9 @@ async function executeStep(
         const probe = await rawMcpProbe({
           agentUrl: runState.agentUrl,
           toolName: effectiveStep.task,
-          args: request,
+          args: governedRequest
+            ? prepareGovernedStoryboardWireArgs(request, effectiveStep.task, runState.agentUrl, options)
+            : request,
           headers: rawProbeHeaders,
           allowPrivateIp: options.allow_http === true,
           fetchFn: options.transport?.trustedFetchFn,
@@ -6620,9 +6644,7 @@ async function executeStep(
           skipAccountValidation: testsMissingAccount,
           skipRequestValidation: testsSchemaInvalidRequest,
           preserveGovernedPayload: governedRequest,
-          responseProjection:
-            effectiveStep.response_projection ??
-            defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario),
+          responseProjection,
           mediaBuyLifecycleCompatibility: options.mediaBuyLifecycleCompatibility,
           signal: options.signal,
         },
@@ -6668,9 +6690,7 @@ async function executeStep(
           skipAccountValidation: testsMissingAccount,
           skipRequestValidation: testsSchemaInvalidRequest,
           preserveGovernedPayload: governedRequest,
-          responseProjection:
-            effectiveStep.response_projection ??
-            defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario),
+          responseProjection,
           mediaBuyLifecycleCompatibility: options.mediaBuyLifecycleCompatibility,
           signal: options.signal,
         });

@@ -201,10 +201,28 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
     };
     const request = { packages: [], governance_context: { token: 'approved' }, idempotency_key: 'buy-1' };
 
-    await executeStoryboardTask(client, 'create_media_buy', request, { preserveGovernedPayload: true });
+    await executeStoryboardTask(client, 'create_media_buy', request, {
+      preserveGovernedPayload: true,
+      responseProjection: 'raw',
+    });
 
     expect(receivedParams).toEqual(request);
     expect(receivedOptions).toMatchObject({ preserveGovernedPayload: true });
+  });
+
+  it('rejects compatibility routing that could rewrite approved arguments', async () => {
+    const client = { buyProducts: async () => ({ data: {} }) };
+    await expect(
+      executeStoryboardTask(
+        client,
+        'buy_products',
+        { governance_context: 'approved' },
+        {
+          preserveGovernedPayload: true,
+          mediaBuyLifecycleCompatibility: {},
+        }
+      )
+    ).rejects.toThrow(/cannot use media-buy lifecycle compatibility/);
   });
 
   it('routes get_media_buys through raw execution with the legacy wire hint', async () => {

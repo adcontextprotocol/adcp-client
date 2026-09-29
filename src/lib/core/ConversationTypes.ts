@@ -264,6 +264,9 @@ export interface TaskOptions {
    * INTERNAL — storyboard governance approval binds the exact downstream
    * arguments. Keep that request unchanged by buyer compatibility shims and
    * seller-schema field stripping after check_governance has approved it.
+   * Local request-schema and account-required checks are also bypassed so
+   * a seller can grade the approved wire payload, including invalid vectors.
+   * Principal identity and version safety checks still run.
    *
    * @internal Do not set in production buyer code.
    */

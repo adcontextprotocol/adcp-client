@@ -4604,6 +4604,7 @@ export class SingleAgentClient {
     // testing that needs to exercise server-side missing-key behavior.
     if (
       !options?.skipIdempotencyAutoInject &&
+      !options?.preserveGovernedPayload &&
       requestUsesIdempotency(taskType, normalizedParams) &&
       normalizedParams &&
       typeof normalizedParams === 'object' &&
@@ -4622,6 +4623,7 @@ export class SingleAgentClient {
       !options?.skipIdempotencyAutoInject &&
       !options?.skipAccountValidation &&
       !options?.skipRequestValidation &&
+      !options?.preserveGovernedPayload &&
       !isExternalSchemaRootActive(this.resolvedAdcpVersion)
     ) {
       this.validateRequest(taskType, normalizedParams);
@@ -4652,7 +4654,12 @@ export class SingleAgentClient {
     // v3-only fields out from under the v3 bundled schema. Skip the entire
     // Zod parse when compliance testing has suppressed request validation —
     // the invalid shape is intentional and must reach the seller.
-    if (!options?.skipIdempotencyAutoInject && !options?.skipAccountValidation && !options?.skipRequestValidation) {
+    if (
+      !options?.skipIdempotencyAutoInject &&
+      !options?.skipAccountValidation &&
+      !options?.skipRequestValidation &&
+      !options?.preserveGovernedPayload
+    ) {
       this.executor.validateRequest(taskType, normalizedParams);
     }
 
@@ -7842,7 +7849,12 @@ export class SingleAgentClient {
       // v3-only fields out from under the v3 bundled schema. Skip the entire
       // Zod parse when compliance testing has suppressed request validation —
       // the invalid shape is intentional and must reach the seller.
-      if (!options?.skipIdempotencyAutoInject && !options?.skipAccountValidation && !options?.skipRequestValidation) {
+      if (
+        !options?.skipIdempotencyAutoInject &&
+        !options?.skipAccountValidation &&
+        !options?.skipRequestValidation &&
+        !options?.preserveGovernedPayload
+      ) {
         this.executor.validateRequest(taskName, normalizedParams);
       }
 

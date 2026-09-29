@@ -341,7 +341,6 @@ export async function executeStoryboardTask(
       pkg => pkg != null && typeof pkg === 'object' && Object.hasOwn(pkg as Record<string, unknown>, 'format_ids')
     );
   const useLegacyCreativeMethod =
-    opts.preserveGovernedPayload ||
     forceRawProjection ||
     preserveExplicitLegacySelectorRoutes ||
     (gradesLegacyCreativeWire(client) && readCreativeWireHint(params) !== 'canonical');
@@ -360,10 +359,18 @@ export async function executeStoryboardTask(
     !preserveExplicitLegacySelectorRoutes
       ? withLegacyCreativeWireHint(params)
       : params;
-  const compatibilityMethod =
-    opts.mediaBuyLifecycleCompatibility && !opts.preserveGovernedPayload
-      ? COMPATIBILITY_COORDINATOR_METHODS[taskName]
-      : undefined;
+  if (
+    opts.preserveGovernedPayload &&
+    opts.mediaBuyLifecycleCompatibility &&
+    COMPATIBILITY_COORDINATOR_METHODS[taskName]
+  ) {
+    throw new ConfigurationError(
+      `Governed ${taskName} cannot use media-buy lifecycle compatibility: the coordinator may change approved arguments.`
+    );
+  }
+  const compatibilityMethod = opts.mediaBuyLifecycleCompatibility
+    ? COMPATIBILITY_COORDINATOR_METHODS[taskName]
+    : undefined;
   const compatibilityMutation = new Set([
     'request_proposals',
     'refine_proposals',

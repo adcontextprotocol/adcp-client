@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const {
   applyFixtureBindingsSafely,
   buildStepRequest,
+  prepareGovernedStoryboardWireArgs,
   runStoryboardStep,
 } = require('../../dist/lib/testing/storyboard/runner.js');
 const { prepareProtocolToolCall } = require('../../dist/lib/protocols/index.js');
@@ -363,6 +364,126 @@ test('governed requests bypass buyer normalization and seller field stripping', 
   assert.equal(sent.account_id, 'acc-1');
   assert.equal(sent.account, undefined);
   assert.equal(computeGovernedPayloadHash(approval.payload), computeGovernedPayloadHash(sent));
+});
+
+test('the preservation option also blocks SDK idempotency minting', async () => {
+  const agent = { id: 'creative', name: 'Creative', agent_uri: 'https://creative.example/mcp', protocol: 'mcp' };
+  const client = new SingleAgentClient(agent, {
+    adcpVersion: options.adcpVersion,
+    validateFeatures: false,
+    validation: { requests: 'off', responses: 'off' },
+  });
+  client.ensureEndpointDiscovered = async () => agent;
+  client.detectServerVersion = async () => 'v3';
+  client.getCapabilities = async () => ({
+    version: 'v3',
+    majorVersions: [3],
+    supportedVersions: [options.adcpVersion],
+    protocols: ['creative'],
+    features: {},
+    extensions: [],
+    _synthetic: true,
+  });
+  const originalCallTool = ProtocolClient.callTool;
+  let sent;
+  ProtocolClient.callTool = async (target, tool, params) => {
+    sent = preparedProtocolToolCallFor(target, tool, params)?.args;
+    return { structuredContent: { status: 'completed', creative_id: 'creative-1' } };
+  };
+  try {
+    await client.buildCreativeLegacy(
+      { mode: 'generate', message: 'Summer sale', governance_context: 'approved' },
+      undefined,
+      { preserveGovernedPayload: true, skipRequestValidation: true }
+    );
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+  }
+  assert.ok(sent);
+  assert.equal(sent.idempotency_key, undefined);
+});
+
+test('governed media buys send approved legacy aliases without local rewriting', async () => {
+  const agent = { id: 'sales', name: 'Sales', agent_uri: 'https://sales.example/mcp', protocol: 'mcp' };
+  const client = new SingleAgentClient(agent, {
+    adcpVersion: options.adcpVersion,
+    validateFeatures: false,
+    validation: { requests: 'off', responses: 'off' },
+  });
+  client.ensureEndpointDiscovered = async () => agent;
+  client.detectServerVersion = async () => 'v3';
+  client.getCapabilities = async () => ({
+    version: 'v3',
+    majorVersions: [3],
+    supportedVersions: [options.adcpVersion],
+    protocols: ['media_buy'],
+    features: {},
+    extensions: [],
+    _synthetic: true,
+  });
+  const approvedPayload = {
+    account_id: 'acc-1',
+    packages: [{ product_id: 'product-1', optimization_goal: 'reach' }],
+    idempotency_key: 'alias-buy',
+  };
+  const originalCallTool = ProtocolClient.callTool;
+  let sent;
+  ProtocolClient.callTool = async (target, tool, params) => {
+    sent = preparedProtocolToolCallFor(target, tool, params)?.args;
+    return { structuredContent: { status: 'completed', media_buy_id: 'buy-1' } };
+  };
+  try {
+    await client.createMediaBuyLegacy({ ...approvedPayload, governance_context: 'approved' }, undefined, {
+      preserveGovernedPayload: true,
+    });
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+  }
+  assert.ok(sent);
+  assert.equal(sent.account_id, 'acc-1');
+  assert.equal(sent.account, undefined);
+  assert.equal(sent.packages[0].optimization_goal, 'reach');
+  assert.equal(sent.packages[0].optimization_goals, undefined);
+  const expected = prepareGovernedStoryboardWireArgs(approvedPayload, 'create_media_buy', agent.agent_uri, options);
+  assert.equal(computeGovernedPayloadHash(expected), computeGovernedPayloadHash(sent));
+});
+
+test('MCP auth overrides use the same wire envelope as the approved payload', () => {
+  const payload = { mode: 'generate', message: 'Summer sale', idempotency_key: 'auth-build' };
+  const agentUri = 'https://creative.example/mcp';
+  const approvalStep = {
+    id: 'approve_auth',
+    title: 'Approve',
+    task: 'check_governance',
+    sample_request: { phase: 'intent', plan_id: 'plan-1', tool: 'build_creative', target_agent: agentUri, payload },
+  };
+  const governedStep = {
+    id: 'build_auth',
+    title: 'Build',
+    task: 'build_creative',
+    auth: { type: 'valid' },
+    sample_request: { ...payload, governance_context: 'approved' },
+  };
+  const approval = buildStepRequest(approvalStep, approvalStep, {}, options);
+  const governed = buildStepRequest(governedStep, governedStep, {}, options);
+  const rawProbeArgs = prepareGovernedStoryboardWireArgs(governed, governedStep.task, agentUri, options);
+
+  assert.equal(rawProbeArgs.adcp_version, approval.payload.adcp_version);
+  assert.equal(rawProbeArgs.adcp_major_version, approval.payload.adcp_major_version);
+  assert.equal(computeGovernedPayloadHash(approval.payload), computeGovernedPayloadHash(rawProbeArgs));
+});
+
+test('legacy governance steps keep their previous runner defaults', () => {
+  const step = {
+    id: 'legacy_build',
+    title: 'Build',
+    task: 'build_creative',
+    sample_request: { mode: 'generate', governance_context: 'legacy-token' },
+  };
+  const request = buildStepRequest(step, step, {}, { ...options, adcpVersion: '3.1.24' });
+  assert.equal(typeof request.idempotency_key, 'string');
+  assert.equal(request.quality, 'draft');
+  assert.equal(request.include_preview, true);
 });
 
 test('sandbox hints are identical in approval payloads and governed requests', () => {
