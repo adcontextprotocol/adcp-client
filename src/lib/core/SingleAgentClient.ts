@@ -6240,8 +6240,13 @@ export class SingleAgentClient {
           if (!legacySeller && !supportsBuyingMode(capabilities, 'wholesale')) {
             throw new UnsupportedBuyingModeError(undefined, capabilities.buyingModes ?? ['brief']);
           }
-          request = { ...request, buying_mode: 'wholesale' };
         }
+      }
+      // The field remains required even when callers explicitly disable
+      // feature probing or request validation. Only the support check above
+      // depends on discovery; keep the wire request well formed in every mode.
+      if (!request.buying_mode && !request.brief) {
+        request = { ...request, buying_mode: 'wholesale' };
       }
       const account = canonicalAccountRoutingSnapshot(accountReference);
       return this.executeAndHandle<CanonicalGetProductsResponse>(

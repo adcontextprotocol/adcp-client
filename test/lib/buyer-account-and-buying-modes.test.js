@@ -22,13 +22,16 @@ function capabilities({ buyingModes, account, versions = ['3.1'] } = {}) {
   });
 }
 
-function clientWithCapabilities(caps) {
-  const client = new SingleAgentClient({
-    id: 'seller',
-    name: 'Seller',
-    agent_uri: 'https://seller.example/mcp',
-    protocol: 'mcp',
-  });
+function clientWithCapabilities(caps, config = {}) {
+  const client = new SingleAgentClient(
+    {
+      id: 'seller',
+      name: 'Seller',
+      agent_uri: 'https://seller.example/mcp',
+      protocol: 'mcp',
+    },
+    config
+  );
   client.getCapabilities = async () => caps;
   const calls = [];
   client.executeAndHandle = async (_task, _handler, params) => {
@@ -82,6 +85,20 @@ test('getProducts infers wholesale only when declared', async () => {
   const { client, calls } = clientWithCapabilities(capabilities({ buyingModes: ['brief', 'wholesale'] }));
   await client.getProducts({});
   assert.equal(calls[0].buying_mode, 'wholesale');
+});
+
+test('getProducts keeps a valid mode when feature probing is disabled', async () => {
+  for (const [config, taskOptions] of [
+    [{ validateFeatures: false }, undefined],
+    [{}, { skipRequestValidation: true }],
+  ]) {
+    const { client, calls } = clientWithCapabilities(capabilities(), config);
+    client.getCapabilities = async () => {
+      throw new Error('feature probing should be skipped');
+    };
+    await client.getProducts({}, undefined, taskOptions);
+    assert.equal(calls[0].buying_mode, 'wholesale');
+  }
 });
 
 test('getProducts preserves explicit wholesale for a legacy seller without 3.1 capability evidence', async () => {
