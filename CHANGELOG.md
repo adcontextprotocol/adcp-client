@@ -1,5 +1,20 @@
 # Changelog
 
+## 14.0.0-rc.50
+
+### Minor Changes
+
+- 80d46a1: Grade the request-signing 3.2 profile vectors when selected, including their negative mutations and storyboard steps. Keep the missing-content-digest refusal gradable for agents that require digest coverage.
+- f3562ac: Seed storyboard fixtures through the routed agent that owns each fixture's state. A read-only peer no longer needs a test controller, and routed runs preserve each selected agent's auth and controller capabilities during pre-flight seeding.
+
+### Patch Changes
+
+- ab47b6c: Honor explicit account IDs and operators in account, creative, and reporting controller storyboard steps while forcing sandbox routing and keeping the run brand. Exact reporting-revision delivery reads keep their authored account, so they query the revision that the controller published. Media-buy simulations and seeding retain their create/read account scope, sandbox-only hints fall back to the resolved account, and `seed_account` keeps the authorized caller scope.
+- a1c50b9: Keep `serve()` connections open while a client validates schemas between MCP calls, avoiding half-closed sockets in multi-step flows.
+- 95ff79a: Refresh the maintained AdCP 3.1 compatibility schema and compliance bundle to 3.1.24, and advertise compatibility through the latest 3.1 patch.
+- 08dee7d: Project account ID controller targets to core account references before resolution. Resolvers no longer receive the controller-only `sandbox` assertion on ID refs. Unexpected resolver failures now return a safe `SERVICE_UNAVAILABLE` error and never admit through the sandbox fallback; return `null` or throw `AccountNotFoundError` for missing accounts. The sandbox authority gate remains fail closed.
+- 08e19ce: Resolve type-generation schema references from the verified local AdCP bundle instead of the live schema host, preventing nondeterministic generated output during release checks.
+
 ## 14.0.0-rc.49
 
 ### Minor Changes
