@@ -16,7 +16,12 @@ import {
   runStep,
   type TestClient,
 } from '../client';
-import { closeScopedConnections, withMCPConnectionScope, type VersionEnvelopeMode } from '../../protocols';
+import {
+  closeScopedConnections,
+  prepareProtocolToolCall,
+  withMCPConnectionScope,
+  type VersionEnvelopeMode,
+} from '../../protocols';
 import { getCapturesFromError, withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
 import { defaultStoryboardResponseProjection, executeStoryboardTask } from './task-map';
 import { applyFunctionalRequestSigning } from './request-signing/functional-dispatch';
@@ -474,7 +479,8 @@ function schemaDefaultShouldApply(raw: unknown, dottedPath: string): boolean {
  *   `resolveCapabilityPathForGate`).
  *
  * - `contains: V` — array-membership. `actual` must be an array that
- *   includes `V` (structural JSON equality, no coercion). Empty arrays, non-arrays,
+ *   includes `V` (structural JSON equality, except governance task-mode
+ *   predicates match a subset of a task's modes). Empty arrays, non-arrays,
  *   and absent fields all skip unless the capabilities schema declares a
  *   default that the gate materialized before predicate evaluation.
  *
@@ -505,7 +511,7 @@ export function evaluateCapabilityPredicate(predicate: RequiresCapabilityPredica
         `agent declared ${actual === undefined ? 'no value' : JSON.stringify(actual)}.`
       );
     }
-    if (!actual.some(value => capabilityValuesEqual(value, predicate.contains))) {
+    if (!actual.some(value => capabilityContainsValue(predicate.path, value, predicate.contains))) {
       return (
         `Capability predicate \`${predicate.path}\` must contain ${JSON.stringify(predicate.contains)}: ` +
         `agent declared ${JSON.stringify(actual)}.`
@@ -520,7 +526,7 @@ export function evaluateCapabilityPredicate(predicate: RequiresCapabilityPredica
         `agent declared ${actual === undefined ? 'no value' : JSON.stringify(actual)}.`
       );
     }
-    if (actual.some(value => capabilityValuesEqual(value, predicate.not_contains))) {
+    if (actual.some(value => capabilityContainsValue(predicate.path, value, predicate.not_contains))) {
       return (
         `Capability predicate \`${predicate.path}\` must not contain ${JSON.stringify(predicate.not_contains)}: ` +
         `agent declared ${JSON.stringify(actual)}.`
@@ -543,6 +549,30 @@ export function evaluateCapabilityPredicate(predicate: RequiresCapabilityPredica
     );
   }
   return null;
+}
+
+/** Governance task declarations combine all supported modes in one task entry. */
+function capabilityContainsValue(path: string, actual: unknown, expected: unknown): boolean {
+  if (path !== 'adcp.governance_enforcement.tasks') return capabilityValuesEqual(actual, expected);
+  if (!actual || !expected || typeof actual !== 'object' || typeof expected !== 'object') {
+    return capabilityValuesEqual(actual, expected);
+  }
+  const actualTask = actual as Record<string, unknown>;
+  const expectedTask = expected as Record<string, unknown>;
+  if (
+    typeof expectedTask.task !== 'string' ||
+    !Array.isArray(expectedTask.modes) ||
+    expectedTask.modes.length === 0 ||
+    Object.keys(expectedTask).some(key => key !== 'task' && key !== 'modes')
+  ) {
+    return capabilityValuesEqual(actual, expected);
+  }
+  const actualModes = actualTask.modes;
+  if (!Array.isArray(actualModes)) return false;
+  return (
+    actualTask.task === expectedTask.task &&
+    expectedTask.modes.every(mode => actualModes.some(actualMode => capabilityValuesEqual(actualMode, mode)))
+  );
 }
 
 /** Key-order-insensitive equality for JSON-valued capability declarations. */
@@ -2912,10 +2942,31 @@ async function executeStoryboardPass(
     routingContext && options.agents
       ? createRoutingDispatcher(routingContext, options, options.agents)
       : createDispatcher(agentUrls, clients, 'round-robin', dispatchOffset, profile);
-  // A root or phase capability predicate constrains each selected agent.
-  // Neither map order nor another route's capability can grant/suppress a
-  // step. Keep whole-storyboard/phase skips only when every route is known
-  // and inapplicable; unresolved routes must reach the hard failure path.
+  // Root predicates describe the agent under test, not every agent that
+  // performs a routed step. With a default agent, evaluate its profile once;
+  // otherwise, one routed agent must satisfy the whole root conjunction.
+  // Phase predicates remain scoped to each selected step route.
+  const routedRootCapabilityDetail = (() => {
+    if (!routingContext || storyboardCapabilityPredicates(storyboard).length === 0) return null;
+    const profiles = options.default_agent
+      ? [routingContext.profiles.get(options.default_agent)].filter((profile): profile is AgentProfile => !!profile)
+      : [...routingContext.profiles.values()];
+    if (profiles.length === 0) {
+      return (
+        evaluateStoryboardCapabilityGates(storyboard, undefined, undefined, options.adcpVersion) ??
+        'Capability predicates could not be evaluated: no discovered agent profile.'
+      );
+    }
+    const details = profiles.map(profile =>
+      evaluateStoryboardCapabilityGates(
+        storyboard,
+        profile,
+        normalizeAgentToolNames(profile.tools),
+        options.adcpVersion
+      )
+    );
+    return details.some(detail => detail === null) ? null : details[0]!;
+  })();
   const routedStepCapabilitySkips = new Map<StoryboardStep, string>();
   const routedPhaseCapabilitySkips = new Map<string, string>();
   const routedStepRequirements = new Map<StoryboardStep, string>();
@@ -3000,12 +3051,7 @@ async function executeStoryboardPass(
         try {
           const selected = dispatch.nextFor(step);
           const selectedOptions = selected.options!;
-          const rootDetail = evaluateStoryboardCapabilityGates(
-            storyboard,
-            selected.profile,
-            selectedOptions.agentTools,
-            options.adcpVersion
-          );
+          const rootDetail = routedRootCapabilityDetail;
           let requirementSkip: { requirement: string; detail: string } | undefined;
           if (rootDetail === null && allRequires.includes('request_signer')) {
             const requirement = await checkRequires(['request_signer'], storyboard, selectedOptions, {
@@ -5715,7 +5761,8 @@ function unresolvedStepContextVars(
 
 // Shared request construction for execution and inspection before a cascade
 // skip. This never dispatches, but may generate context/runner aliases.
-function buildStepRequest(
+/** @internal Builds the exact runner request before protocol-owned fields are added. */
+export function buildStepRequest(
   step: StoryboardStep,
   effectiveStep: StoryboardStep,
   context: StoryboardContext,
@@ -5729,9 +5776,19 @@ function buildStepRequest(
   // 4. sample_request with context injection when no enricher is registered
   // 5. Empty object (only reachable for non-mutating tasks with neither fixture nor enricher)
   let request: Record<string, unknown>;
+  const governedSource = options.request ?? step.sample_request;
+  const governedFixture =
+    effectiveStep.task !== 'check_governance' &&
+    effectiveStep.task !== 'report_plan_outcome' &&
+    governedSource !== undefined &&
+    Object.prototype.hasOwnProperty.call(governedSource, 'governance_context');
   if (options.request) {
     request = injectContext({ ...options.request }, context, runnerVars);
   } else if (step.expect_error && step.sample_request) {
+    request = injectContext({ ...step.sample_request }, context, runnerVars);
+  } else if (governedFixture && step.sample_request) {
+    // The governance agent authorized the authored downstream payload. Extra
+    // enricher or runner defaults would change its hash after approval.
     request = injectContext({ ...step.sample_request }, context, runnerVars);
   } else if (hasRequestEnricher(effectiveStep.task)) {
     request = enrichRequest(effectiveStep, context, options, runnerVars);
@@ -5744,6 +5801,13 @@ function buildStepRequest(
   // Apply explicit context_inputs on top of whatever request source was used
   if (step.context_inputs?.length) {
     request = applyContextInputs(request, step.context_inputs, context);
+  }
+
+  if (governedFixture) {
+    // Apply run-scoped fields symmetrically to the approval intent and the
+    // downstream request. The enricher and idempotency defaults remain skipped.
+    request = applyBrandInvariant(request, options, effectiveStep.task, { omit_account: step.omit_account });
+    return options.disable_sandbox === true ? applyDisableSandboxHint(request, effectiveStep.task) : request;
   }
 
   // Brand/account is a storyboard-run-scoped invariant: every step in a run
@@ -5776,6 +5840,38 @@ function buildStepRequest(
   // error (see `testsIdempotencyKeyOmission` below) so that compliance
   // surfaces can still exercise the server's required-field check.
   request = applyIdempotencyInvariant(request, effectiveStep.task, step);
+
+  if (
+    effectiveStep.task === 'check_governance' &&
+    request.phase !== 'delivery' &&
+    request.payload !== null &&
+    typeof request.payload === 'object' &&
+    !Array.isArray(request.payload)
+  ) {
+    const toolName = typeof request.tool === 'string' ? request.tool : undefined;
+    // The envelope settings are run-scoped; AgentEntry only overrides auth
+    // and transport. Without a webhook, transport does not change AdCP args.
+    const targetAgent = {
+      id: 'governed-target',
+      name: 'governed-target',
+      agent_uri: typeof request.target_agent === 'string' ? request.target_agent : '',
+      protocol: 'mcp' as const,
+    };
+    const brandedPayload = applyBrandInvariant(request.payload as Record<string, unknown>, options, toolName);
+    let payload = prepareProtocolToolCall(targetAgent, brandedPayload, {
+      toolName,
+      adcpVersion: options.adcpVersion,
+      wireAdcpVersion: options.wireAdcpVersion,
+      versionEnvelope: options.versionEnvelope,
+    }).args;
+    if (options.disable_sandbox === true) {
+      payload = applyDisableSandboxHint(payload, toolName);
+    }
+    request = {
+      ...request,
+      payload,
+    };
+  }
 
   return request;
 }
@@ -7936,21 +8032,46 @@ type EffectiveStepRequestResult =
   | FixtureBindingApplicationResult
   | { ok: false; creativeAssetFailure: CreativeAssetFixtureUnavailableFailure };
 
-function applyFixtureBindingsSafely(
+/** @internal Apply schema-scoped fixture handles to the sent request. */
+export function applyFixtureBindingsSafely(
   request: Record<string, unknown>,
   task: string,
   options: StoryboardRunOptions,
   runState: ExecutionState
 ): FixtureBindingApplicationResult {
   try {
+    const boundRequest = applyFixtureBindingsToRequest(
+      request,
+      task,
+      runState.fixtureBindings,
+      options.adcpVersion ?? ADCP_VERSION
+    );
+    // check_governance.payload is schema-opaque, so its fixture handles need
+    // the downstream tool schema that will also bind the governed request.
+    if (
+      task === 'check_governance' &&
+      boundRequest.phase !== 'delivery' &&
+      typeof boundRequest.tool === 'string' &&
+      boundRequest.payload !== null &&
+      typeof boundRequest.payload === 'object' &&
+      !Array.isArray(boundRequest.payload)
+    ) {
+      return {
+        ok: true,
+        request: {
+          ...boundRequest,
+          payload: applyFixtureBindingsToRequest(
+            boundRequest.payload as Record<string, unknown>,
+            boundRequest.tool,
+            runState.fixtureBindings,
+            options.adcpVersion ?? ADCP_VERSION
+          ),
+        },
+      };
+    }
     return {
       ok: true,
-      request: applyFixtureBindingsToRequest(
-        request,
-        task,
-        runState.fixtureBindings,
-        options.adcpVersion ?? ADCP_VERSION
-      ),
+      request: boundRequest,
     };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
