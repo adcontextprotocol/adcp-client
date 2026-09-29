@@ -103,6 +103,14 @@ export interface GradeOptions extends LoadVectorsOptions {
    */
   agentContentDigestPolicy?: 'required' | 'forbidden' | 'either';
   /**
+   * The agent's advertised `request_signing.required_for`, read off its own
+   * capability block. Narrow like {@link agentContentDigestPolicy}: it may
+   * exclude only negative vectors whose `verifier_capability.required_for`
+   * names an operation the agent does not declare (vector 001 for a 3.x
+   * shadow-posture agent). Has no effect when `agentCapability` is provided.
+   */
+  agentRequiredFor?: readonly string[];
+  /**
    * Transport shape the agent speaks. `'mcp'` (default) wraps each
    * vector body in a JSON-RPC `tools/call` envelope and POSTs to the MCP
    * mount path (`agentUrl`) — use when grading an MCP agent whose verifier
@@ -456,6 +464,17 @@ function preflightSkip(
         skipped: true,
         skip_reason: 'capability_profile_mismatch',
         diagnostic: policyMismatch,
+      };
+    }
+  }
+  if (!options.agentCapability && options.agentRequiredFor) {
+    const requiredForMismatch = advertisedRequiredForExclusion(vector, kind, options.agentRequiredFor);
+    if (requiredForMismatch) {
+      return {
+        ...base,
+        skipped: true,
+        skip_reason: requiredForMismatch.skip_reason,
+        diagnostic: requiredForMismatch.diagnostic,
       };
     }
   }
@@ -1198,6 +1217,43 @@ export function advertisedContentDigestPolicyExclusion(
     diagnostic:
       `Vector expects ${expectedError} under covers_content_digest='${requiredPolicy}', ` +
       `but the agent declares '${agentPolicy}'.`,
+  };
+}
+
+/**
+ * Narrow `required_for` gate for an agent's discovered capability
+ * advertisement — the third axis after content-digest policy (#2993) and
+ * `protocol_methods_required_for`.
+ *
+ * A vector whose `verifier_capability.required_for` names an operation the
+ * agent does not declare in its own `request_signing.required_for` tests a
+ * rejection path the agent never opted into: `required_for: []` with
+ * `supported: true` is the spec's 3.x shadow posture (signing optional in
+ * 3.x, required for spend-committing operations in 4.0). Such a vector is
+ * out of scope for that agent and skips `capability_profile_mismatch`, the
+ * same verdict `capabilityMismatch()` already reaches for an
+ * operator-selected profile. Negative vectors only — a positive vector's
+ * `required_for` is a fixture setting, not an expected refusal. An agent
+ * that declares `required_for: ["create_media_buy"]` keeps grading vector
+ * 001 unchanged.
+ */
+export function advertisedRequiredForExclusion(
+  vector: PositiveVector | NegativeVector,
+  kind: 'positive' | 'negative',
+  agentRequiredFor: readonly string[]
+): SemanticVectorExclusion | undefined {
+  if (kind !== 'negative') return undefined;
+  const vectorRequiredFor = vector.verifier_capability.required_for ?? [];
+  if (vectorRequiredFor.length === 0) return undefined;
+  const declared = new Set(agentRequiredFor);
+  const missing = vectorRequiredFor.filter(op => !declared.has(op));
+  if (missing.length === 0) return undefined;
+  return {
+    skip_reason: 'capability_profile_mismatch',
+    diagnostic:
+      `Vector asserts required_for includes [${missing.join(', ')}] but the agent declares ` +
+      `required_for [${agentRequiredFor.join(', ')}]. The vector tests a rejection path the ` +
+      `agent has not opted into; add the operation to request_signing.required_for to grade it.`,
   };
 }
 
