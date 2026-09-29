@@ -20,7 +20,8 @@ async function startAgent(
   products = [],
   metadataStatus = 404,
   metadataResponse = {},
-  rejectedAuthorization
+  rejectedAuthorization,
+  controllerResponse
 ) {
   const calls = [];
   const authorization = [];
@@ -40,7 +41,7 @@ async function startAgent(
     }
     const mcp = new McpServer({ name: 'routing-contract-test', version: '1.0.0' });
     for (const name of new Set([...(capabilities === null ? [] : ['get_adcp_capabilities']), ...tools])) {
-      mcp.registerTool(name, {}, async () => {
+      mcp.registerTool(name, {}, async args => {
         calls.push(name);
         authorization.push(req.headers.authorization);
         if (rejectTools && name !== 'get_adcp_capabilities') {
@@ -66,7 +67,7 @@ async function startAgent(
               : name === 'get_products'
                 ? { products, cache_scope: 'public' }
                 : name === 'comply_test_controller'
-                  ? { success: true }
+                  ? (controllerResponse?.(args) ?? { success: true })
                   : {};
         return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data };
       });
@@ -110,9 +111,9 @@ function sets(result) {
 
 async function run(topology, sb, options = {}, entryOptions = {}) {
   const entries = await Promise.all(
-    Object.entries(topology).map(async ([key, [tools, caps, reject, products]]) => [
+    Object.entries(topology).map(async ([key, [tools, caps, reject, products, controllerResponse]]) => [
       key,
-      await startAgent(tools, caps, reject, products),
+      await startAgent(tools, caps, reject, products, 404, {}, undefined, controllerResponse),
     ])
   );
   const agents = Object.fromEntries(entries);
@@ -155,6 +156,247 @@ test('resets every routed agent that advertises reset_state before dispatch', as
     ),
     { sales: 1, signals: 1 }
   );
+});
+
+test('routed controller seeding targets the seller and exempts a read-only peer', async () => {
+  const sb = {
+    ...storyboard(
+      [
+        { id: 'read_product', task: 'get_products', agent: 'sales' },
+        { id: 'read_signal', task: 'get_signals', agent: 'signals' },
+      ],
+      []
+    ),
+    prerequisites: { description: 'seed seller catalog', controller_seeding: true },
+    fixtures: { products: [{ product_id: 'product_a', delivery_type: 'non_guaranteed' }] },
+  };
+  const { result, calls } = await run(
+    {
+      sales: [['get_products', 'comply_test_controller'], { supported_protocols: ['media_buy'] }],
+      signals: [['get_signals'], { supported_protocols: ['signals'] }],
+    },
+    sb,
+    { default_agent: 'sales', adcpVersion: ADCP_VERSION }
+  );
+
+  assert.equal(result.phases[0].phase_id, '__controller_seeding__');
+  assert.equal(result.phases[0].steps[0].passed, true);
+  assert.equal(calls.sales.filter(call => call === 'comply_test_controller').length, 2);
+  assert.equal(calls.signals.includes('comply_test_controller'), false);
+});
+
+test('routed seeding follows the unique protocol owner without a step agent', async () => {
+  const sb = {
+    ...storyboard([{ id: 'read_product', task: 'get_products' }], []),
+    prerequisites: { description: 'seed seller catalog', controller_seeding: true },
+    fixtures: { products: [{ product_id: 'product_a', delivery_type: 'non_guaranteed' }] },
+  };
+  const { result, calls } = await run(
+    {
+      sales: [['get_products', 'comply_test_controller'], { supported_protocols: ['media_buy'] }],
+      signals: [['get_signals', 'comply_test_controller'], { supported_protocols: ['signals'] }],
+    },
+    sb,
+    { adcpVersion: ADCP_VERSION }
+  );
+
+  assert.equal(result.phases[0].steps[0].passed, true);
+  assert.equal(calls.sales.includes('comply_test_controller'), true);
+  assert.equal(calls.signals.includes('comply_test_controller'), false);
+});
+
+test('routed seeding rejects conflicting explicit owners before writing fixtures', async () => {
+  const sb = {
+    ...storyboard(
+      [
+        { id: 'read_product_a', task: 'get_products', agent: 'a' },
+        { id: 'read_product_b', task: 'get_products', agent: 'b' },
+      ],
+      []
+    ),
+    prerequisites: { description: 'seed seller catalog', controller_seeding: true },
+    fixtures: { products: [{ product_id: 'product_a', delivery_type: 'non_guaranteed' }] },
+  };
+  const { result, calls } = await run(
+    {
+      a: [['get_products', 'comply_test_controller'], { supported_protocols: ['media_buy'] }],
+      b: [['get_products', 'comply_test_controller'], { supported_protocols: ['media_buy'] }],
+    },
+    sb,
+    { adcpVersion: ADCP_VERSION }
+  );
+
+  assert.match(JSON.stringify(result), /multiple owner routes/);
+  assert.equal(calls.a.includes('comply_test_controller'), false);
+  assert.equal(calls.b.includes('comply_test_controller'), false);
+});
+
+test('routed controller seeding sends products and plans to their owning agents', async () => {
+  const sb = {
+    ...storyboard(
+      [
+        { id: 'read_product', task: 'get_products', agent: 'sales' },
+        { id: 'write_plan', task: 'sync_plans', agent: 'governance' },
+      ],
+      []
+    ),
+    prerequisites: { description: 'seed two tenants', controller_seeding: true },
+    fixtures: {
+      products: [{ product_id: 'product_a', delivery_type: 'non_guaranteed' }],
+      plans: [{ plan_id: 'plan_a', budget: { total: 100, currency: 'USD' } }],
+    },
+    fixture_resolution: { products: [{ handle: 'product_a', strategies: ['seed'] }] },
+  };
+  const { result, calls } = await run(
+    {
+      sales: [['get_products', 'comply_test_controller'], { supported_protocols: ['media_buy'] }],
+      governance: [['sync_plans', 'comply_test_controller'], { supported_protocols: ['governance'] }],
+    },
+    sb,
+    { default_agent: 'sales', adcpVersion: ADCP_VERSION }
+  );
+
+  assert.equal(result.phases[0].phase_id, '__controller_seeding__');
+  assert.equal(result.phases[0].steps.length, 2);
+  assert.ok(result.phases[0].steps.every(step => step.passed));
+  assert.equal(result.fixture_resolutions[0].status, 'resolved');
+  assert.equal(calls.sales.filter(call => call === 'comply_test_controller').length, 2);
+  assert.equal(calls.governance.filter(call => call === 'comply_test_controller').length, 2);
+});
+
+test('routed seeding reports completed writes when a later route withdraws a scenario', async () => {
+  const sb = {
+    ...storyboard(
+      [
+        { id: 'read_product', task: 'get_products', agent: 'sales' },
+        { id: 'write_plan', task: 'sync_plans', agent: 'governance' },
+      ],
+      []
+    ),
+    prerequisites: { description: 'seed two tenants', controller_seeding: true },
+    fixtures: {
+      products: [{ product_id: 'product_a', delivery_type: 'non_guaranteed' }],
+      plans: [{ plan_id: 'plan_a', budget: { total: 100, currency: 'USD' } }],
+    },
+  };
+  const { result, calls } = await run(
+    {
+      sales: [
+        ['get_products', 'comply_test_controller'],
+        { supported_protocols: ['media_buy'], compliance_testing: { scenarios: ['seed_product'] } },
+      ],
+      governance: [
+        ['sync_plans', 'comply_test_controller'],
+        { supported_protocols: ['governance'], compliance_testing: { scenarios: ['seed_plan'] } },
+        false,
+        [],
+        () => ({ success: false, error: 'UNKNOWN_SCENARIO', error_detail: 'seed_plan withdrawn' }),
+      ],
+    },
+    sb,
+    { default_agent: 'sales', adcpVersion: ADCP_VERSION }
+  );
+
+  assert.equal(result.phases[0].phase_id, '__controller_seeding__');
+  assert.equal(result.phases[0].steps[0].passed, true);
+  assert.equal(result.phases[0].steps[0].skipped, undefined);
+  assert.equal(result.phases[0].steps[1].skip_reason, 'fixture_seed_unsupported');
+  assert.equal(calls.sales.includes('comply_test_controller'), true);
+  assert.equal(calls.governance.includes('comply_test_controller'), true);
+});
+
+test('a failed routed seed remains a setup failure if a later route withdraws a scenario', async () => {
+  const sb = {
+    ...storyboard(
+      [
+        { id: 'read_product', task: 'get_products', agent: 'sales' },
+        { id: 'write_plan', task: 'sync_plans', agent: 'governance' },
+      ],
+      []
+    ),
+    prerequisites: { description: 'seed two tenants', controller_seeding: true },
+    fixtures: {
+      products: [{ product_id: 'product_a', delivery_type: 'non_guaranteed' }],
+      plans: [{ plan_id: 'plan_a', budget: { total: 100, currency: 'USD' } }],
+    },
+  };
+  const { result } = await run(
+    {
+      sales: [
+        ['get_products', 'comply_test_controller'],
+        { supported_protocols: ['media_buy'], compliance_testing: { scenarios: ['seed_product'] } },
+        false,
+        [],
+        () => ({ success: false, error: 'SEED_REJECTED' }),
+      ],
+      governance: [
+        ['sync_plans', 'comply_test_controller'],
+        { supported_protocols: ['governance'], compliance_testing: { scenarios: ['seed_plan'] } },
+        false,
+        [],
+        () => ({ success: false, error: 'UNKNOWN_SCENARIO' }),
+      ],
+    },
+    sb,
+    { default_agent: 'sales', adcpVersion: ADCP_VERSION }
+  );
+
+  assert.equal(result.phases[0].passed, false);
+  assert.match(result.phases[0].steps[0].error, /SEED_REJECTED/);
+  assert.equal(result.phases[0].steps[1].skip_reason, 'fixture_seed_unsupported');
+  assert.ok(result.phases[1].steps.every(step => step.skip_reason === 'controller_seeding_failed'));
+  assert.equal(result.overall_passed, false);
+});
+
+test('a peer controller cannot seed a fixture for an owner without one', async () => {
+  const sb = {
+    ...storyboard([{ id: 'read_product', task: 'get_products', agent: 'sales' }], []),
+    prerequisites: { description: 'seed seller catalog', controller_seeding: true },
+    fixtures: { products: [{ product_id: 'product_a' }] },
+  };
+  const { result, calls } = await run(
+    {
+      sales: [['get_products'], { supported_protocols: ['media_buy'] }],
+      governance: [['comply_test_controller'], { supported_protocols: ['governance'] }],
+    },
+    sb,
+    { default_agent: 'sales', adcpVersion: ADCP_VERSION }
+  );
+
+  assert.equal(result.phases[0].phase_id, '__controller_seeding__');
+  assert.equal(result.phases[0].steps[0].skip_reason, 'missing_test_controller');
+  assert.equal(calls.sales.includes('comply_test_controller'), false);
+  assert.equal(calls.governance.includes('comply_test_controller'), false);
+});
+
+test('routed seeding keeps the owner credential when two keys share one endpoint', async () => {
+  const agent = await startAgent(['get_products', 'comply_test_controller'], { supported_protocols: ['media_buy'] });
+  const sb = {
+    ...storyboard([{ id: 'read_product', task: 'get_products', agent: 'sales' }], []),
+    prerequisites: { description: 'seed seller catalog', controller_seeding: true },
+    fixtures: { products: [{ product_id: 'product_a' }] },
+  };
+  try {
+    const result = await runStoryboard('', sb, {
+      agents: {
+        sales: { url: agent.url, auth: { type: 'bearer', token: 'sales-key' } },
+        peer: { url: agent.url, auth: { type: 'bearer', token: 'peer-key' } },
+      },
+      default_agent: 'sales',
+      adcpVersion: ADCP_VERSION,
+      strictResponseSchemaValidation: false,
+      invariants: [],
+    });
+    assert.equal(result.phases[0].phase_id, '__controller_seeding__');
+    assert.equal(result.phases[0].steps[0].passed, true);
+    const controllerAuth = agent.calls.flatMap((call, index) =>
+      call === 'comply_test_controller' ? [agent.authorization[index]] : []
+    );
+    assert.deepEqual(controllerAuth, ['Bearer sales-key', 'Bearer sales-key']);
+  } finally {
+    await closeConnections();
+    await agent.close();
+  }
 });
 
 for (const adcpVersion of ['3.1.20', '3.1.23', ADCP_VERSION]) {

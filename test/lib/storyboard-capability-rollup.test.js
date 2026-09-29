@@ -1910,32 +1910,6 @@ describe('executed: routed `controller` answers from the route that owns the sta
     }
   });
 
-  test('routed + `controller_seeding: true` still fail-fasts, so the gate change cannot open it', async () => {
-    // change_rights_state_projection is the one shipped controller storyboard
-    // that spans routes (`default_agent: sales`), and it declares
-    // `controller_seeding: true` — so routed runs of it throw before any gate
-    // runs, and stay fail-closed.
-    const seller = await startAgent({ tools: ['get_products'], protocols: ['media_buy'] });
-    try {
-      await assert.rejects(
-        runStoryboard(
-          '',
-          {
-            ...controllerStoryboard(),
-            default_agent: 'seller',
-            prerequisites: { controller_seeding: true },
-            fixtures: { products: [{ product_id: 'p1', name: 'P', delivery_type: 'guaranteed' }] },
-          },
-          { ...RUN_OPTIONS, agents: { seller: { url: seller.url } } }
-        ),
-        /`agents` \+ `prerequisites.controller_seeding: true` is not yet supported/
-      );
-    } finally {
-      await closeConnections();
-      await seller.close();
-    }
-  });
-
   test('a storyboard of nothing but controller steps still needs a controller', async () => {
     // `comply_test_controller` steps are excluded from the state-exercising
     // set, so a storyboard whose ONLY callable steps are controller calls left
