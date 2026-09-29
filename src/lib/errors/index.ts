@@ -175,7 +175,7 @@ export class AccountAmbiguousError extends ADCPError {
 
   constructor(public readonly candidates: readonly string[]) {
     super('Multiple eligible accounts. Supply brand/operator or a select callback.');
-    this.details = { candidate_account_ids: [...candidates] };
+    this.details = { candidate_count: candidates.length };
   }
 }
 

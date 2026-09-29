@@ -1313,7 +1313,8 @@ export async function resolveAccountForMediaBuy(
       hints.requireOperatorAuth ? 'list_accounts' : 'sync_accounts',
       () =>
         resolveSellerAccount({
-          brand,
+          ...(hints.requireOperatorAuth && !options.brand && !options.brand_manifest ? {} : { brand }),
+          ...(hints.requireOperatorAuth && { forTask: 'create_media_buy' }),
           ...(!hints.requireOperatorAuth && { operator: brand.domain }),
           ...(options.sandbox !== undefined && { sandbox: options.sandbox }),
         })

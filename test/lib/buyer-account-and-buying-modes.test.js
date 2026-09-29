@@ -11,10 +11,11 @@ const {
   AccountAmbiguousError,
 } = require('../../dist/lib/index.js');
 const { resolveAccountForMediaBuy } = require('../../dist/lib/testing/scenarios/media-buy.js');
+const { selectListedAccount } = require('../../dist/lib/core/account-resolution.js');
 
-function capabilities({ buyingModes, account } = {}) {
+function capabilities({ buyingModes, account, versions = ['3.1'] } = {}) {
   return parseCapabilitiesResponse({
-    adcp: { major_versions: [3], supported_versions: ['3.1'] },
+    adcp: { major_versions: [3], supported_versions: versions },
     supported_protocols: ['media_buy'],
     media_buy: buyingModes === undefined ? {} : { buying_modes: buyingModes },
     ...(account && { account }),
@@ -53,6 +54,15 @@ test('getProducts refuses undeclared wholesale before dispatch', async () => {
     return true;
   });
   assert.equal(calls.length, 0);
+});
+
+test('getProducts promotes a legacy account_id to the wire account reference', async () => {
+  const { client, calls } = clientWithCapabilities(
+    capabilities({ account: { require_operator_auth: true, required_for_products: true } })
+  );
+  await client.getProducts({ brief: 'sports', account_id: 'acc-1' });
+  assert.deepEqual(calls[0].account, { account_id: 'acc-1' });
+  assert.equal('account_id' in calls[0], false);
 });
 
 test('getProducts never infers wholesale without a seller declaration', async () => {
@@ -177,6 +187,31 @@ test('resolveAccount requires active status and matches the effective sandbox va
   await assert.rejects(client.resolveAccount({ sandbox: false }), AccountRequiredError);
 });
 
+test('listed account selection defaults to production and matches country identity', () => {
+  const accounts = [
+    { account_id: 'sandbox', status: 'active', sandbox: true, brand: { domain: 'brand.example', countries: ['NL'] } },
+    { account_id: 'germany', status: 'active', brand: { domain: 'brand.example', countries: ['DE'] } },
+    { account_id: 'netherlands', status: 'active', brand: { domain: 'brand.example', countries: ['NL'] } },
+  ];
+  assert.deepEqual(selectListedAccount(accounts, { brand: { domain: 'brand.example', countries: ['NL'] } }), {
+    account_id: 'netherlands',
+  });
+  assert.deepEqual(
+    selectListedAccount(accounts, { brand: { domain: 'brand.example', countries: ['NL'] }, sandbox: true }),
+    {
+      account_id: 'sandbox',
+    }
+  );
+});
+
+test('listed account selection honors introspected task authorization when requested', () => {
+  const accounts = [
+    { account_id: 'audit', status: 'active', authorization: { allowed_tasks: ['get_media_buys'] } },
+    { account_id: 'buyer', status: 'active', authorization: { allowed_tasks: ['create_media_buy'] } },
+  ];
+  assert.deepEqual(selectListedAccount(accounts, { forTask: 'create_media_buy' }), { account_id: 'buyer' });
+});
+
 test('resolveAccount examines every account page before selecting a singleton', async () => {
   const { client } = clientWithCapabilities(capabilities({ account: { require_operator_auth: true } }));
   client.listAccounts = async params =>
@@ -235,6 +270,7 @@ test('resolveAccount syncs an implicit natural key before returning it', async (
 test('resolveAccount preserves every buyer-selected natural-key field', async () => {
   const { client } = clientWithCapabilities(
     capabilities({
+      versions: ['3.2.0-rc.7'],
       account: {
         require_operator_auth: false,
         supported_billing: ['operator'],
@@ -289,6 +325,21 @@ test('resolveAccount preserves every buyer-selected natural-key field', async ()
   assert.deepEqual(synced.accounts, [{ ...expected, billing: 'operator' }]);
   await assert.rejects(client.resolveAccount({ ...hints, timezone: undefined }), AccountRequiredError);
   await assert.rejects(client.resolveAccount({ ...hints, currency: undefined }), AccountRequiredError);
+});
+
+test('resolveAccount rejects 3.2-only natural-key fields for a 3.1 seller', async () => {
+  const { client } = clientWithCapabilities(
+    capabilities({ account: { require_operator_auth: false, supported_billing: ['operator'] } })
+  );
+  let called = false;
+  client.syncAccounts = async () => {
+    called = true;
+  };
+  await assert.rejects(
+    client.resolveAccount({ brand: { domain: 'brand.example' }, operator: 'agency.example', currency: 'USD' }),
+    AccountRequiredError
+  );
+  assert.equal(called, false);
 });
 
 test('resolveAccount does not return an implicit key after a failed account row', async () => {
@@ -367,7 +418,7 @@ test('media-buy storyboard delegates declared account contracts to the public re
       return { account_id: 'acc-1' };
     }
   );
-  assert.deepEqual(passedHints, { brand: { domain: 'brand.example' } });
+  assert.deepEqual(passedHints, { brand: { domain: 'brand.example' }, forTask: 'create_media_buy' });
   assert.deepEqual(resolved.accountRef, { account_id: 'acc-1' });
   assert.equal(resolved.steps[0].passed, true);
 });

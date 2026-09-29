@@ -35,6 +35,8 @@ active account only when exactly one matches. Pass a brand, operator, or
 accounts, pass both brand and operator; the SDK calls `sync_accounts` and
 returns the natural-key reference after the seller confirms it is active. If
 that seller offers several billing parties, also pass `billing`.
+For an account ID roster, pass `forTask: 'create_media_buy'` to filter rows
+when the seller publishes per-account task authorization.
 When the seller's account capability calls for a fixed currency or a
 buyer-selected timezone, pass `currency` or `timezone` too. You can also pass
 `operatorUnit` and `sandbox`; these fields stay in the returned natural key.

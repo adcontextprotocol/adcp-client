@@ -4,6 +4,14 @@ import { AccountAmbiguousError, AccountRequiredError } from '../errors';
 export type ListedAccount = ListAccountsResponse['accounts'][number];
 type NaturalAccountReference = Extract<AccountReference, { brand: unknown }>;
 
+export function sameCountrySet(expected?: readonly string[], actual?: readonly string[]): boolean {
+  if (expected === undefined) return true;
+  if (!actual || expected.length !== actual.length) return false;
+  const sortedExpected = [...expected].sort();
+  const sortedActual = [...actual].sort();
+  return sortedExpected.every((country, index) => country === sortedActual[index]);
+}
+
 /** Hints for resolving a seller account against the caller's own credentials. */
 export interface ResolveAccountOptions {
   brand?: NaturalAccountReference['brand'];
@@ -12,6 +20,8 @@ export interface ResolveAccountOptions {
   currency?: NaturalAccountReference['currency'];
   timezone?: NaturalAccountReference['timezone'];
   sandbox?: boolean;
+  /** Require introspected access to this task when the seller publishes authorization. */
+  forTask?: string;
   /** Billing party for buyer-declared accounts when the seller has no default. */
   billing?: 'operator' | 'agent' | 'advertiser';
   /** An account_id or a callback choosing one of the eligible list_accounts rows. */
@@ -26,15 +36,19 @@ export function selectListedAccount(
   const candidates = accounts.filter(account => {
     if (typeof account.account_id !== 'string' || !account.account_id) return false;
     if (account.status !== 'active') return false;
+    if (hints.forTask && account.authorization && !account.authorization.allowed_tasks.includes(hints.forTask)) {
+      return false;
+    }
     if (hints.brand) {
       if (account.brand?.domain !== hints.brand.domain) return false;
       if (hints.brand.brand_id && account.brand.brand_id !== hints.brand.brand_id) return false;
+      if (!sameCountrySet(hints.brand.countries, account.brand.countries)) return false;
     }
     if (hints.operator && account.operator !== hints.operator) return false;
     if (hints.operatorUnit && account.operator_unit?.id !== hints.operatorUnit.id) return false;
     if (hints.currency && account.currency !== hints.currency) return false;
     if (hints.timezone && account.timezone !== hints.timezone) return false;
-    if (hints.sandbox !== undefined && (account.sandbox === true) !== hints.sandbox) return false;
+    if ((account.sandbox === true) !== (hints.sandbox === true)) return false;
     return true;
   });
 

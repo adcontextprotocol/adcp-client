@@ -243,7 +243,7 @@ import {
   supportsBuyingMode,
 } from '../utils/capabilities';
 import { AccountPendingApprovalError, AccountRequiredError, UnsupportedBuyingModeError } from '../errors';
-import { selectListedAccount, type ResolveAccountOptions } from './account-resolution';
+import { sameCountrySet, selectListedAccount, type ResolveAccountOptions } from './account-resolution';
 
 import { normalizeRequestParams } from '../utils/request-normalizer';
 import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
@@ -597,11 +597,22 @@ function canonicalAccountRoutingSnapshot(value: unknown): Readonly<Record<string
   const brand = Object.freeze({
     domain: sourceBrand.domain,
     ...(typeof sourceBrand.brand_id === 'string' ? { brand_id: sourceBrand.brand_id } : {}),
+    ...(Array.isArray(sourceBrand.countries) && sourceBrand.countries.every(country => typeof country === 'string')
+      ? { countries: Object.freeze([...sourceBrand.countries].sort()) }
+      : {}),
   });
+  const operatorUnit = account.operator_unit;
+  const unitId =
+    operatorUnit && typeof operatorUnit === 'object' && !Array.isArray(operatorUnit)
+      ? (operatorUnit as Record<string, unknown>).id
+      : undefined;
   return Object.freeze({
     brand,
     operator: account.operator,
-    ...(typeof account.sandbox === 'boolean' ? { sandbox: account.sandbox } : {}),
+    ...(typeof unitId === 'string' ? { operator_unit: Object.freeze({ id: unitId }) } : {}),
+    ...(typeof account.currency === 'string' ? { currency: account.currency } : {}),
+    ...(typeof account.timezone === 'string' ? { timezone: account.timezone } : {}),
+    sandbox: account.sandbox === true,
   });
 }
 
@@ -6188,6 +6199,13 @@ export class SingleAgentClient {
       const accountReference =
         request.account ??
         (typeof legacyAccountId === 'string' && legacyAccountId ? { account_id: legacyAccountId } : undefined);
+      if (!request.account && typeof legacyAccountId === 'string' && legacyAccountId) {
+        const { account_id: _legacyAccountId, ...rest } = request as CanonicalGetProductsRequest & {
+          account_id: string;
+        };
+        void _legacyAccountId;
+        request = { ...rest, account: { account_id: legacyAccountId } };
+      }
       if (!effectiveOptions.skipRequestValidation) {
         const capabilities = await this.getCapabilities(effectiveOptions);
         const sellerDeclares31 =
@@ -7249,7 +7267,7 @@ export class SingleAgentClient {
           const result = await this.listAccounts(
             {
               status: 'active',
-              ...(hints.sandbox !== undefined && { sandbox: hints.sandbox }),
+              sandbox: hints.sandbox ?? false,
               ...(cursor !== undefined && { pagination: { cursor } }),
             },
             undefined,
@@ -7283,6 +7301,18 @@ export class SingleAgentClient {
           'implicit',
           'resolveAccount',
           'Implicit-account sellers require both brand and operator to sync an account.'
+        );
+      }
+      const uses32NaturalKey =
+        hints.operatorUnit !== undefined || hints.currency !== undefined || hints.timezone !== undefined;
+      const sellerServes32 = capabilities.servedVersion
+        ? !isPre32AdcpVersion(capabilities.servedVersion)
+        : capabilities.supportedVersions?.some(version => !isPre32AdcpVersion(version)) === true;
+      if (uses32NaturalKey && (isPre32AdcpVersion(this.resolvedAdcpVersion) || !sellerServes32)) {
+        throw new AccountRequiredError(
+          'implicit',
+          'resolveAccount',
+          'Operator unit, account currency, and account timezone require AdCP 3.2 on both buyer and seller.'
         );
       }
       const timezone = capabilities.account.timezone;
@@ -7355,6 +7385,7 @@ export class SingleAgentClient {
           row.brand?.domain === hints.brand!.domain &&
           row.operator === hints.operator &&
           (!hints.brand!.brand_id || row.brand.brand_id === hints.brand!.brand_id) &&
+          sameCountrySet(hints.brand!.countries, row.brand.countries) &&
           (!hints.operatorUnit || row.operator_unit?.id === hints.operatorUnit.id) &&
           (!hints.currency || row.currency === hints.currency) &&
           (!hints.timezone || row.timezone === hints.timezone) &&
