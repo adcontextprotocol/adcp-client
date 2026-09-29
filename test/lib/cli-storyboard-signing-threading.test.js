@@ -19,6 +19,9 @@ const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
 
 const CLI = path.resolve(__dirname, '../../bin/adcp.js');
+// These CLI flag and exit-code cases assert legacy root vector IDs. Pin the
+// compliance line so the 3.2 default profile does not replace those steps.
+const LEGACY_SIGNING_VERSION = '3.1.24';
 const SKIPPED_VECTOR = '001-no-signature-header';
 // Second id in the CSV: proves the list is parsed, not passed through whole.
 const RATE_ABUSE_SENTINEL_VECTOR = '002-wrong-tag';
@@ -201,6 +204,8 @@ test('storyboard run <url> signed_requests threads the flags through the assessm
     'run',
     agentUrl,
     'signed_requests',
+    '--compliance-version',
+    LEGACY_SIGNING_VERSION,
     '--protocol',
     'mcp',
     '--allow-http',
@@ -258,7 +263,7 @@ test('an assessment that excluded every vector exits nonzero and says why', asyn
   // against a real assessment is the only way to prove the wiring, not just
   // the predicate.
   const { loadRequestSigningVectors } = require('../../dist/lib/testing/storyboard/request-signing/index.js');
-  const loaded = loadRequestSigningVectors();
+  const loaded = loadRequestSigningVectors({ version: LEGACY_SIGNING_VERSION });
   const everyVectorId = [...loaded.positive, ...loaded.negative].map(vector => vector.id).join(',');
 
   const server = http.createServer(async (req, res) => {
@@ -293,6 +298,8 @@ test('an assessment that excluded every vector exits nonzero and says why', asyn
     'run',
     agentUrl,
     'signed_requests',
+    '--compliance-version',
+    LEGACY_SIGNING_VERSION,
     '--protocol',
     'mcp',
     '--allow-http',
@@ -318,6 +325,8 @@ test('an assessment that excluded every vector exits nonzero and says why', asyn
     'run',
     agentUrl,
     'signed_requests',
+    '--compliance-version',
+    LEGACY_SIGNING_VERSION,
     '--protocol',
     'mcp',
     '--allow-http',
@@ -342,6 +351,8 @@ test('a coverage-unavailable single step exits nonzero instead of reporting succ
     'step',
     'https://agent.invalid/a2a',
     'signed_requests',
+    '--compliance-version',
+    LEGACY_SIGNING_VERSION,
     'negative-001-no-signature-header',
     '--protocol',
     'a2a',
@@ -363,6 +374,8 @@ test('--soft-fail turns the single-step coverage gap into exit 0, as the help pr
     'step',
     'https://agent.invalid/a2a',
     'signed_requests',
+    '--compliance-version',
+    LEGACY_SIGNING_VERSION,
     'negative-001-no-signature-header',
     '--protocol',
     'a2a',
@@ -383,6 +396,8 @@ test('an in-library vector still exits 0 on the same A2A run — only real gaps 
     'step',
     'https://agent.invalid/a2a',
     'signed_requests',
+    '--compliance-version',
+    LEGACY_SIGNING_VERSION,
     'negative-025-jwk-alg-crv-mismatch',
     '--protocol',
     'a2a',
