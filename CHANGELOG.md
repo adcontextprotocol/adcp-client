@@ -1,5 +1,15 @@
 # Changelog
 
+## 14.0.0-rc.51
+
+### Minor Changes
+
+- 39469e6: Honor seller-declared buying modes and account requirements before get_products dispatch. Calls without a brief no longer assume wholesale unless the seller declares it. Add a public account resolver that selects a single active seller-assigned account or syncs a buyer-declared natural key, and use it in media-buy storyboards.
+
+### Patch Changes
+
+- 7ab0bdc: Evaluate routed storyboard capability gates against the default agent when set, keeping route-specific applicability without a default, match governance task modes as subsets, and keep AdCP 3.2 governed requests identical to the payload approved by check_governance. The approved payload now includes the wire version envelope, fixture bindings, and run-scoped brand and sandbox fields. Governed requests use the raw wire route and bypass buyer normalization, creative wire hints, and seller-schema field stripping after approval; canonical creative methods reject the internal preservation option before they can reshape approved arguments. A missing approved idempotency key fails its storyboard step before dispatch. AdCP 3.1 governance retains its existing runner defaults. Routed storyboard applicability can change when governance steps use a separate agent.
+
 ## 14.0.0-rc.50
 
 ### Minor Changes
