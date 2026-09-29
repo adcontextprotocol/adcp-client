@@ -491,10 +491,30 @@ async function runRoutedControllerSeeding(
   const steps: StoryboardStepResult[] = [];
   let passedCount = 0;
   let failedCount = 0;
-  for (const { call, route } of selected) {
+  for (const [index, { call, route }] of selected.entries()) {
     const result = await executeLegacySeedCall(route.client, storyboard, call, route.options, context, seedContext);
     if (result.step.skip_reason === 'fixture_unsatisfied') {
-      return buildUnsupportedSeedResult(storyboard, calls, context, call.scenario, result.step.skip?.detail);
+      // A controller can withdraw support after preflight. Keep the results
+      // of earlier writes visible rather than relabeling them as skipped.
+      const unsupported = buildUnsupportedSeedResult(
+        storyboard,
+        selected.slice(index).map(item => item.call),
+        context,
+        call.scenario,
+        result.step.skip?.detail
+      );
+      return {
+        ...unsupported,
+        phase: {
+          ...unsupported.phase,
+          passed: failedCount === 0,
+          steps: [...steps, ...unsupported.phase.steps],
+          duration_ms: Date.now() - start,
+        },
+        allPassed: failedCount === 0,
+        passedCount,
+        failedCount,
+      };
     }
     steps.push(result.step);
     if (result.step.passed) passedCount++;
