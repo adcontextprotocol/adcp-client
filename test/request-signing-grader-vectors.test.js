@@ -91,6 +91,10 @@ describe('3.2 profile grading', () => {
       signingProfileVersion: '3.2',
     });
     assert.ok(profiled.positive.some(vector => vector.vector_id === profilePositiveId));
+    assert.ok(
+      [...profiled.positive, ...profiled.negative].every(vector => vector.vector_id.startsWith('profile-3.2/')),
+      'legacy root vectors cannot grade a 3.2 verifier'
+    );
     assert.strictEqual(
       profiled.negative.find(vector => vector.vector_id === profileNegativeId).skip_reason,
       'transport_ungradable'
@@ -117,6 +121,7 @@ describe('3.2 profile grading', () => {
     const result = synthesizeRequestSigningSteps(storyboard);
     assert.ok(result.phases[0].steps.some(step => step.id === `positive-${profilePositiveId}`));
     assert.ok(result.phases[1].steps.some(step => step.id === `negative-${profileNegativeId}`));
+    assert.ok(result.phases.flatMap(phase => phase.steps).every(step => step.id.includes('profile-3.2/')));
   });
 
   test('3.2 negative builders are registered and preserve required digest coverage', () => {

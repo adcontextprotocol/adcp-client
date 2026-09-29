@@ -37,8 +37,7 @@ Options:
                              neg/007 and neg/018 against an 'either' agent)
                              will FAIL instead of SKIP.
   --only <id[,id...]>        Run only the named vector ids
-  --signing-profile 3.2      Grade authored 3.2 profile vectors in place of
-                             matching root vectors
+  --signing-profile 3.2      Grade only authored 3.2 profile vectors
   --allow-live-side-effects  Opt in to vectors 016/020 against non-sandbox
                              endpoints (USE WITH CARE — creates real orders)
   --allow-http               Allow http:// URLs + private-IP targets (dev loops)

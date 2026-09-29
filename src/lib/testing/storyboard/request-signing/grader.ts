@@ -16,7 +16,7 @@ import { parseSignatureInput } from '../../../signing/parser';
 import type { NegativeVector, PositiveVector, VerifierCapabilityFixture } from './types';
 
 export interface GradeOptions extends LoadVectorsOptions {
-  /** Include authored 3.2 profile vectors, replacing root fixtures with the same basename. */
+  /** Grade only authored 3.2 profile vectors. Omit for the legacy root corpus. */
   signingProfileVersion?: '3.2';
   /** Allow http:// and private-IP destinations. Off by default (match fetchProbe). */
   allowPrivateIp?: boolean;

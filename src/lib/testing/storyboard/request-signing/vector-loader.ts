@@ -18,7 +18,7 @@ export interface LoadedVectors {
   sourceDir: string;
 }
 
-/** Replace root fixtures with authored profile counterparts when a profile is selected. */
+/** A selected signing profile uses only its authored fixtures and wire encoding. */
 export function selectRequestSigningVectors(
   loaded: LoadedVectors,
   signingProfileVersion?: '3.2'
@@ -27,16 +27,7 @@ export function selectRequestSigningVectors(
   if (!signingProfileVersion) return { positive: loaded.positive, negative: loaded.negative };
   if (!profile)
     throw new Error(`Request-signing profile ${signingProfileVersion} is unavailable in ${loaded.sourceDir}`);
-  const select = <T extends Vector>(root: T[], additions: T[], kind: 'positive' | 'negative'): T[] => {
-    const mirrored = new Set(
-      additions.map(vector => vector.id.replace(`profile-${signingProfileVersion}/${kind}/`, ''))
-    );
-    return [...root.filter(vector => !mirrored.has(vector.id)), ...additions];
-  };
-  return {
-    positive: select(loaded.positive, profile.positive, 'positive'),
-    negative: select(loaded.negative, profile.negative, 'negative'),
-  };
+  return profile;
 }
 
 export function signingProfileForAdcpVersion(version?: string): '3.2' | undefined {
