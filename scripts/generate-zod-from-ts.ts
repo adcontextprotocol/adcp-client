@@ -1306,11 +1306,14 @@ function postProcessPostalCountrySystemSchema(content: string): string {
 /** Restore the closed beta.4 SDK-local continuation schema exactly. */
 function postProcessCompatibilityPurchaseCoordinatorInput(content: string): string {
   const startMarker = 'export const CompatibilityPurchaseCoordinatorInputSchema = ';
-  const endMarker = '\n\nexport const OutcomeTargetSchema = ';
   const start = content.indexOf(startMarker);
   if (start < 0) throw new Error('CompatibilityPurchaseCoordinatorInputSchema was not generated.');
-  const end = content.indexOf(endMarker, start);
+  const end = content.indexOf('\n\nexport const ', start + 1);
   if (end < 0) throw new Error('Could not locate the end of CompatibilityPurchaseCoordinatorInputSchema.');
+  const block = content.slice(start, end);
+  if ((block.match(/export const /g) ?? []).length !== 1) {
+    throw new Error('CompatibilityPurchaseCoordinatorInputSchema post-processing would remove other exports.');
+  }
   const replacement = `export const CompatibilityPurchaseCoordinatorInputSchema = z.object({
     idempotency_key: z.uuid(),
     continuation_token: z.string().min(16),
@@ -5732,6 +5735,7 @@ if (require.main === module) {
 }
 
 export const __test__ = {
+  postProcessCompatibilityPurchaseCoordinatorInput,
   postProcessForPassthrough,
   postProcessTupleRestArrays,
   postProcessArrayMaxItems,
