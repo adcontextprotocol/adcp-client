@@ -616,7 +616,7 @@ function generateLlmsTxt(
   ln(`## Start here: SDK 14 and AdCP 3.2`);
   ln();
   ln(
-    `SDK 14 requires Node.js \`^20.19.0 || >=22.12.0\`; install the newest v14 prerelease with \`@adcp/sdk@^14.0.0-0\`.`
+    `SDK 14 requires Node.js \`^20.19.0 || >=22.12.0\`; install it with \`npm install @adcp/sdk\`, or pin the AdCP 3.2 line with \`@adcp/sdk@adcp-3.2\`.`
   );
   ln();
   ln(
@@ -701,7 +701,7 @@ function generateLlmsTxt(
   );
   ln();
   ln(
-    `**Four reference \`AccountStore\` shapes.** Pick the one whose onboarding model matches yours. **Shape A — \`InMemoryImplicitAccountStore\`**: \`resolution: 'implicit'\`, buyer-driven \`sync_accounts\` populates the auth-principal → accounts map. **Shape B — \`createOAuthPassthroughResolver\`**: \`resolution: 'explicit'\`, returns just the \`resolve\` function for adapters fronting an upstream OAuth listing endpoint (Snap, Meta, TikTok, LinkedIn — \`extract bearer → GET /me/adaccounts → match by id\`). **Shape C — \`createRosterAccountStore\`**: \`resolution: 'explicit'\`, returns a complete \`AccountStore\` for adopters who own the roster (storefront table, admin-UI-managed JSON). Supports \`resolveWithoutRef\` when \`list_creative_formats\` omits its optional rc.7 \`account\` field, and for \`preview_creative\` and \`provide_performance_feedback\` — set it to return a synthetic publisher-wide entry instead of \`null\`. Scope buyer-supplied account ids to the authenticated principal in \`lookup\`. **Shape D — \`createDerivedAccountStore\`**: \`resolution: 'derived'\`, an upstream-managed account-id namespace — the platform you front owns the roster (Meta / Snap ad accounts, audiostack, flashtalking, single-namespace retail-media). Buyers discover ids through \`list_accounts\` and send \`account: { account_id }\`; the framework refuses the \`{ brand, operator }\` arm for this mode and \`accounts.list\` is required (\`createAdcpServerFromPlatform\` throws \`PlatformConfigError\` without it). Provide \`toAccount(ctx)\` when a credential reaches exactly one account or \`listAccounts(ctx)\` when it reaches many (plus optional \`lookupAccount(id, ctx)\` for large rosters); the factory verifies buyer-supplied \`account_id\` against what the caller's credential can reach, returns \`null\` on a miss, auto-selects the account on ref-less tools only when exactly one is reachable, wires a filtered and paged \`list_accounts\`, and still emits legacy-compatible \`AUTH_REQUIRED\` on missing-credential calls. The framework backstops hand-rolled \`'derived'\` stores: a resolved account whose \`id\` isn't the one the buyer named is refused with \`ACCOUNT_NOT_FOUND\`, and \`sync_accounts\` / \`sync_governance\` entries are resolved against the caller's reachable set before any write. Buyer code must continue to handle \`AUTH_REQUIRED\` alongside \`AUTH_MISSING\` / \`AUTH_INVALID\`. Changed in SDK 14 (adcp-client#1647 / adcp#5062) — Shape D previously refused inline \`account_id\` and was documented as single-tenant-only. All four live at \`@adcp/sdk/server\`.`
+    `**Four reference \`AccountStore\` shapes.** Pick the one whose onboarding model matches yours. **Shape A — \`InMemoryImplicitAccountStore\`**: \`resolution: 'implicit'\`, buyer-driven \`sync_accounts\` populates the auth-principal → accounts map. **Shape B — \`createOAuthPassthroughResolver\`**: \`resolution: 'explicit'\`, returns just the \`resolve\` function for adapters fronting an upstream OAuth listing endpoint (Snap, Meta, TikTok, LinkedIn — \`extract bearer → GET /me/adaccounts → match by id\`). **Shape C — \`createRosterAccountStore\`**: \`resolution: 'explicit'\`, returns a complete \`AccountStore\` for adopters who own the roster (storefront table, admin-UI-managed JSON). Supports \`resolveWithoutRef\` when \`list_creative_formats\` omits its optional AdCP 3.2 \`account\` field, and for \`preview_creative\` and \`provide_performance_feedback\` — set it to return a synthetic publisher-wide entry instead of \`null\`. Scope buyer-supplied account ids to the authenticated principal in \`lookup\`. **Shape D — \`createDerivedAccountStore\`**: \`resolution: 'derived'\`, an upstream-managed account-id namespace — the platform you front owns the roster (Meta / Snap ad accounts, audiostack, flashtalking, single-namespace retail-media). Buyers discover ids through \`list_accounts\` and send \`account: { account_id }\`; the framework refuses the \`{ brand, operator }\` arm for this mode and \`accounts.list\` is required (\`createAdcpServerFromPlatform\` throws \`PlatformConfigError\` without it). Provide \`toAccount(ctx)\` when a credential reaches exactly one account or \`listAccounts(ctx)\` when it reaches many (plus optional \`lookupAccount(id, ctx)\` for large rosters); the factory verifies buyer-supplied \`account_id\` against what the caller's credential can reach, returns \`null\` on a miss, auto-selects the account on ref-less tools only when exactly one is reachable, wires a filtered and paged \`list_accounts\`, and still emits legacy-compatible \`AUTH_REQUIRED\` on missing-credential calls. The framework backstops hand-rolled \`'derived'\` stores: a resolved account whose \`id\` isn't the one the buyer named is refused with \`ACCOUNT_NOT_FOUND\`, and \`sync_accounts\` / \`sync_governance\` entries are resolved against the caller's reachable set before any write. Buyer code must continue to handle \`AUTH_REQUIRED\` alongside \`AUTH_MISSING\` / \`AUTH_INVALID\`. Changed in SDK 14 (adcp-client#1647 / adcp#5062) — Shape D previously refused inline \`account_id\` and was documented as single-tenant-only. All four live at \`@adcp/sdk/server\`.`
   );
   ln();
   ln(
@@ -1414,7 +1414,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
     '| `ActionBuy`, `ActionProduct`, `ActionProposal` | Structural inputs for joining current accepted terms with live actions and advisory products. |'
   );
   ln(
-    '| `LiveMediaBuyAction` | Readable canonical or legacy entry for assessment, projection and existing preflight helpers, including rc.3 package scope. |'
+    '| `LiveMediaBuyAction` | Readable canonical or legacy entry for assessment, projection and existing preflight helpers, including shared-frequency-cap package scope. |'
   );
   ln(
     '| `MediaBuyAvailableAction`, `MediaBuyValidAction` | Generated legacy wire entry / deprecated flat vocabulary; distinct from canonical helper entries. |'
@@ -2203,7 +2203,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`const getReportingStatus = createReportingStatusHandler(store);`);
   ln(`const getMediaBuyDelivery = createReportingDeliveryHandler(store); // exact reporting_revision_id reads`);
   ln();
-  ln(`// AdCP 3.2.0-rc.4: identity comes from authenticated transport.`);
+  ln(`// AdCP 3.2: identity comes from authenticated transport.`);
   ln(`const syncReportingStatus = createSyncReportingStatusHandler(store, {`);
   ln(`  resolveConsumerId: context => context.agent.agent_url,`);
   ln(`});`);

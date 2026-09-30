@@ -7,7 +7,7 @@ How `@adcp/sdk` keeps a buyer pinned to one AdCP major version while talking to 
 ## The shape of the problem
 
 The SDK speaks one primary AdCP version on its public surface — `ADCP_VERSION`
-in `src/lib/version.ts`. The SDK 14 prerelease pin is `3.2.0-rc.7`; maintained side
+in `src/lib/version.ts`. The SDK 14 pin is `3.2.1`; maintained side
 bundles cover `3.1.24`, `3.0.25`, and v2.5. Every buyer-facing type, helper,
 and example assumes the primary pin.
 
@@ -27,7 +27,7 @@ There is exactly one active legacy compat layer at a time today: `legacy/v2-5/`.
 
 ```
 schemas/cache/
-├── 3.2.0-rc.7/ # current SDK pin
+├── 3.2.1/       # current SDK pin
 ├── 3.1.24/       # maintained stable side bundle
 ├── 3.0.25/       # maintained stable side bundle
 ├── latest/       # symlink to the primary pin
@@ -440,8 +440,8 @@ What gets caught in code review every time:
 ## Historical recipe: opt-in side-bundle for a newer-than-pin spec version (retired)
 
 > Do not add a preview side-bundle to a current release. The package policy now
-> permits only the exact primary prerelease and maintained stable compatibility
-> bundles; it rejects versioned preview type exports and preview compatibility
+> permits only the primary `ADCP_VERSION` bundle and maintained stable
+> compatibility bundles; it rejects versioned preview type exports and preview compatibility
 > aliases. This section is retained only to explain older release mechanics.
 
 This was used when adopters needed access to a spec version **newer** than the SDK's primary pin. The pattern was fundamentally different from the legacy-shim recipe above:
@@ -542,8 +542,8 @@ Use `'X.Y-beta'` (release-precision) as the canonical pin in adopter-facing exam
 As soon as the primary `ADCP_VERSION` pin reaches or passes the preview line,
 the side-bundle pattern retires. Remove its sync/codegen scripts, generated
 types, package subpath, advertised compatibility aliases, and cached compliance
-artifacts in the same prerelease train. The publish audit permits only the exact
-current prerelease plus maintained stable compatibility bundles.
+artifacts in the same prerelease train. The publish audit permits only the current
+primary pin plus maintained stable compatibility bundles.
 
 ## N=1 vs N×M
 

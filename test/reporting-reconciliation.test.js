@@ -384,7 +384,7 @@ async function evaluateBothWithoutEffects(raw, expected) {
 }
 
 test('unique official takes precedence across complete managed reporting histories', async t => {
-  const canonical = getCanonicalToolValidator('get_reporting_status', 'sync', { adcpVersion: '3.2.0-rc.7' });
+  const canonical = getCanonicalToolValidator('get_reporting_status', 'sync', { adcpVersion: '3.2.1' });
   assert.equal(typeof canonical, 'function');
   const cases = [];
   for (const requiredFinality of ['snapshot', 'official']) {

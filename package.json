@@ -544,7 +544,7 @@
     ".claude-plugin/**/*",
     "compliance/cache/3.0.25/**/*",
     "compliance/cache/3.1.24/**/*",
-    "compliance/cache/3.2.0-rc.7/**/*",
+    "compliance/cache/3.2.1/**/*",
     "ADCP_VERSION",
     "docs/README.md",
     "docs/TYPE-SUMMARY.md",
@@ -796,7 +796,7 @@
     },
     "minimatch": "^10.2.1"
   },
-  "adcp_version": "3.2.0-rc.7",
+  "adcp_version": "3.2.1",
   "sideEffects": [
     "**/default-invariants.*"
   ]
