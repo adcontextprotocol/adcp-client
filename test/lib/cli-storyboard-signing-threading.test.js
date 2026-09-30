@@ -67,6 +67,11 @@ test('--signing-skip-vectors reaches the runner and skips the vector as operator
 
   // The storyboard implicitly requires `request_signing.supported: true`, so
   // the agent has to advertise it or the whole run skips before dispatch.
+  // It also has to declare `required_for: ['create_media_buy']`: the vector
+  // under test is the unsigned-request pre-check, which is out of scope for a
+  // `required_for: []` shadow-posture agent and would skip
+  // `capability_profile_mismatch` before any probe is dispatched
+  // (adcp-client#3056) — this test is about flag threading, not posture.
   const requestedPaths = [];
   const server = http.createServer(async (req, res) => {
     requestedPaths.push(req.url);
@@ -78,7 +83,7 @@ test('--signing-skip-vectors reaches the runner and skips the vector as operator
         adcp: { major_versions: [3], idempotency: { supported: true, replay_ttl_seconds: 86400 } },
         supported_protocols: ['media_buy'],
         specialisms: [],
-        request_signing: { supported: true, covers_content_digest: 'either', required_for: [] },
+        request_signing: { supported: true, covers_content_digest: 'either', required_for: ['create_media_buy'] },
       },
     }));
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });

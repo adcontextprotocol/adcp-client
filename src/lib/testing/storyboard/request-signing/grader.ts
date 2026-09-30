@@ -1232,8 +1232,21 @@ export function advertisedContentDigestPolicyExclusion(
  * 3.x, required for spend-committing operations in 4.0). Such a vector is
  * out of scope for that agent and skips `capability_profile_mismatch`, the
  * same verdict `capabilityMismatch()` already reaches for an
- * operator-selected profile. Negative vectors only — a positive vector's
- * `required_for` is a fixture setting, not an expected refusal. An agent
+ * operator-selected profile.
+ *
+ * Narrow on purpose, like {@link advertisedContentDigestPolicyExclusion}:
+ * nearly every vector's fixture lists `create_media_buy` under
+ * `required_for`, because that is the profile the vector was authored
+ * against — comparing the whole field to a live advertisement would exclude
+ * 39 of 40 vectors and let an agent switch the storyboard off by
+ * under-declaring. The gate fires only for the refusal that exists *solely*
+ * because of `required_for`: a negative vector expecting
+ * `request_signature_required` (the unsigned-request pre-check) whose
+ * fixture `required_for` names an operation the agent does not declare —
+ * vector 001 today. Vectors expecting any other refusal (wrong tag, digest
+ * mismatch, malformed header, …) test the verifier, not the posture, and
+ * stay graded; 027 and 028 expect `request_signature_required` too but
+ * declare `required_for: []`, so they are never excluded here. An agent
  * that declares `required_for: ["create_media_buy"]` keeps grading vector
  * 001 unchanged.
  */
@@ -1243,6 +1256,7 @@ export function advertisedRequiredForExclusion(
   agentRequiredFor: readonly string[]
 ): SemanticVectorExclusion | undefined {
   if (kind !== 'negative') return undefined;
+  if ((vector as NegativeVector).expected_error_code !== 'request_signature_required') return undefined;
   const vectorRequiredFor = vector.verifier_capability.required_for ?? [];
   if (vectorRequiredFor.length === 0) return undefined;
   const declared = new Set(agentRequiredFor);

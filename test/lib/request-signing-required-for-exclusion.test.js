@@ -56,11 +56,36 @@ test('storyboard dispatch: a required_for [] agent skips vector 001 as capabilit
 });
 
 test('storyboard dispatch: the same agent still grades negatives that test the verifier, not the posture', async () => {
-  // 015 declares required_for on its fixture too, but expects a signature
-  // refusal, and 001's sibling 019 is a malformed header — neither is a
-  // "you did not opt in" outcome... except that the fixture's required_for
-  // is what the gate reads. So pin the contract the other way: a vector
-  // whose fixture has required_for: [] can never be excluded by this gate.
+  // Nearly every vector's fixture lists create_media_buy under required_for —
+  // that is the profile the vector was authored against, not an expected
+  // refusal. Only the unsigned-request pre-check (request_signature_required)
+  // exists solely because of required_for; everything else must stay graded,
+  // or an agent could switch the storyboard off by under-declaring.
+  for (const fragment of [
+    '002-wrong-tag',
+    '010-content-digest-mismatch',
+    '015-signature-invalid',
+    '023-multi-valued-content-digest',
+  ]) {
+    const vector = vectorById('negative', fragment);
+    assert.ok(vector, `vector ${fragment} should exist`);
+    assert.ok(
+      (vector.verifier_capability.required_for ?? []).includes('create_media_buy'),
+      `${fragment} fixture lists create_media_buy`
+    );
+    assert.notStrictEqual(vector.expected_error_code, 'request_signature_required');
+    const result = await probeRequestSigningVector(
+      `negative-${fragment}`,
+      UNREACHABLE,
+      dispatchOptions({ supported: true, covers_content_digest: 'either', required_for: [] })
+    );
+    assert.notStrictEqual(result.skip_reason, 'capability_profile_mismatch', `${fragment} must still be graded`);
+  }
+});
+
+test('storyboard dispatch: request_signature_required vectors with required_for [] are never excluded', async () => {
+  // 027 expects the same refusal code as 001, but its fixture declares
+  // required_for: [] — the refusal comes from the body, not the posture.
   const vector = vectorById('negative', '027-webhook-registration-authentication-unsigned');
   assert.ok(vector, 'vector 027 should exist');
   assert.deepStrictEqual(vector.verifier_capability.required_for, []);
@@ -118,6 +143,16 @@ test('gradeOneVector: the agentRequiredFor option narrows the same way', async (
     timeoutMs: 500,
   });
   assert.notStrictEqual(graded.skip_reason, 'capability_profile_mismatch');
+});
+
+test('gradeOneVector: agentRequiredFor leaves verifier-testing negatives graded', async () => {
+  const vector = vectorById('negative', '002-wrong-tag');
+  const result = await gradeOneVector(vector.id, 'negative', UNREACHABLE, {
+    agentRequiredFor: [],
+    transport: 'raw',
+    timeoutMs: 500,
+  });
+  assert.notStrictEqual(result.skip_reason, 'capability_profile_mismatch');
 });
 
 test('gradeOneVector: agentRequiredFor never excludes a positive vector', async () => {
