@@ -110,6 +110,10 @@ export {
   // Types
   type ComplyOptions,
   type ComplianceBundleAssessmentOptions,
+  type ComplyRouteStoryboardContext,
+  type ComplyStoryboardRoute,
+  type ComplyStoryboardRouting,
+  type ComplyStoryboardSkip,
   type ComplianceTrack,
   type TrackResult,
   type TestedTrackEntry,

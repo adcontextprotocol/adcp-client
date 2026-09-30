@@ -11,7 +11,12 @@
 import { createTestClient, discoverAgentProfile, seedTestClientSigningCapability } from '../client';
 import type { TestOptions, TestResult, AgentProfile, TestStepResult } from '../types';
 import { collectDetachedAssertionFailures, mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
-import { applyAdcpVersionRunOptions, runStoryboard, storyboardCapabilityPredicates } from '../storyboard/runner';
+import {
+  applyAdcpVersionRunOptions,
+  runStoryboard,
+  storyboardCapabilityGateUnmet,
+  storyboardCapabilityPredicates,
+} from '../storyboard/runner';
 import { applyNativeA2AComplianceTransportOptions } from '../storyboard/native-a2a-compliance';
 import { validateTestKit } from '../storyboard/test-kit';
 import { checkAccountDiscoveryGate, isAccountBearingSpecialism } from './spec-conformance';
@@ -38,9 +43,11 @@ import type { NotApplicableStoryboard, ResolveOptions, ResolvedBundle } from '..
 import { REQUEST_SIGNING_PROBE_TASK } from '../storyboard/request-signing/synthesize';
 import { signingCoverage, type SigningCoverage, type SigningCoverageStepView } from '../storyboard/runner';
 import type {
+  AgentEntry,
   RunnerSelectionReason,
   RunnerSkipReason,
   Storyboard,
+  StoryboardContext,
   StoryboardPassResult,
   StoryboardResult,
   StoryboardRunOptions,
@@ -622,7 +629,95 @@ export interface ComplyOptions extends TestOptions {
   testKitPath?: string;
   /** Scoped hosted stable-line alias for prerelease-backed compliance caches. */
   hostedStableLineAlias?: string;
+  /**
+   * Per-storyboard routing hook. `comply()` grades one agent, so storyboards
+   * that need a second agent (`requires: [multi_agent]`, e.g. the
+   * governance-aware seller scenarios) otherwise skip with
+   * `requirement_unmet`. The hook lets a caller that can supply the other
+   * agents route those storyboards while every other storyboard keeps the
+   * ordinary single-URL run.
+   *
+   * Called once per selected storyboard, after capability discovery,
+   * `required_tools` partitioning and the `timeout_ms` budget check, and
+   * before the storyboard runs. Storyboards whose root capability predicate
+   * (`requires_capability` / `requires_all_capabilities`) the agent under
+   * test does not satisfy are not passed to the hook: they keep their
+   * `not_applicable` verdict. Not consulted in the degraded auth-rejected
+   * path, which runs only storyboards with no `required_tools`.
+   *
+   * Return:
+   * - `undefined`: run the storyboard as usual against `agentUrl`.
+   * - a {@link ComplyStoryboardRoute}: run it as
+   *   `runStoryboard('', storyboard, { ...runOptions, agents, default_agent, context })`.
+   *   The result lands in `tracks`, `summary`, `failures`,
+   *   `storyboards_executed` and `bundle_results` exactly like any other run.
+   * - a {@link ComplyStoryboardSkip}: do not run it. `comply()` records the
+   *   same whole-storyboard `requirement_unmet` skip the runner emits for an
+   *   unmet `requires:` gate, with `skip.detail` set to the reason (and
+   *   `skip.requirement: 'multi_agent'` when the storyboard declares it). The
+   *   storyboard is not listed in `storyboards_executed`, and it caps its
+   *   bundle at `partial` exactly as an unrouted `multi_agent` storyboard does.
+   *
+   * Credential and network isolation, enforced by `comply()` (each violation
+   * throws, failing the run, because it is a caller bug):
+   * - `agents[default_agent].url` must be the agent under test (`agentUrl`),
+   *   so the result is always attributable to the agent being graded.
+   * - An entry for the agent under test may omit `auth`; it then uses the
+   *   run-level `auth` (or test-kit default), as a normal run would. Every
+   *   other entry MUST declare its own `auth`. The runner otherwise falls
+   *   back to the run-level `auth` and then `test_kit.auth.api_key`, which
+   *   would hand the agent-under-test credential to another agent. An
+   *   entry's explicit `auth` is always used as-is, never replaced by
+   *   run-level auth.
+   * - Routing is refused when run-level `headers` are set, because the runner
+   *   sends them to every routed agent.
+   * - Run-level `transport` (including `fetchFn` / SSRF guards) is shared by
+   *   every routed agent. The hook cannot override it; only `url`, `auth` and
+   *   `transport` (wire protocol) are read from each entry.
+   *
+   * Not enforced (the hook sees the storyboard and owns these): step-level
+   * `auth` directives and `$test_kit.auth.*` references in a step that is
+   * routed to another agent send test-kit credentials to that agent. Refuse
+   * or skip such storyboards in the hook if the test kit carries a secret.
+   * Do not mutate `storyboard`; return a patched copy in `route.storyboard`.
+   */
+  routeStoryboard?: (
+    storyboard: Storyboard,
+    context: ComplyRouteStoryboardContext
+  ) => ComplyStoryboardRouting | Promise<ComplyStoryboardRouting>;
 }
+
+/** Second argument to {@link ComplyOptions.routeStoryboard}. */
+export interface ComplyRouteStoryboardContext {
+  /** The agent under test, as passed to `comply()`. */
+  agent_url: string;
+  /** Capability profile `comply()` discovered for the agent under test. */
+  profile: AgentProfile;
+}
+
+/** Route one storyboard across several agents. See {@link ComplyOptions.routeStoryboard}. */
+export interface ComplyStoryboardRoute {
+  /** Agents map for `runStoryboard`. `agents[default_agent].url` must be the agent under test. */
+  agents: Record<string, AgentEntry>;
+  /** Key of the agent under test in `agents`. */
+  default_agent: string;
+  /** Initial-context overrides, merged over any run-level context. */
+  context?: StoryboardContext;
+  /**
+   * Storyboard to run in place of the selected one (e.g. a patched copy).
+   * Must keep the same `id` so the result is attributed to the same bundle.
+   */
+  storyboard?: Storyboard;
+}
+
+/** Record a storyboard as not runnable. See {@link ComplyOptions.routeStoryboard}. */
+export interface ComplyStoryboardSkip {
+  /** Human-readable reason, reported as `skip.detail`. */
+  skip: string;
+}
+
+/** Return type of {@link ComplyOptions.routeStoryboard}. */
+export type ComplyStoryboardRouting = ComplyStoryboardRoute | ComplyStoryboardSkip | undefined;
 
 /**
  * Run compliance assessment against an agent.
@@ -1500,6 +1595,198 @@ function buildNotApplicableStoryboardResult(agentUrl: string, na: NotApplicableS
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Per-storyboard routing (ComplyOptions.routeStoryboard)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Run one selected storyboard, consulting `routeStoryboard` when supplied.
+ * `executed` is false only for a hook-requested skip, which never reaches
+ * the agent and so is not listed in `storyboards_executed`.
+ */
+async function runComplyStoryboard(
+  agentUrl: string,
+  storyboard: Storyboard,
+  runOptions: StoryboardRunOptions,
+  profile: AgentProfile,
+  routeStoryboard: ComplyOptions['routeStoryboard']
+): Promise<{ result: StoryboardResult; executed: boolean }> {
+  // Applicability comes before routing: a storyboard whose root capability
+  // predicate the agent under test does not satisfy keeps the runner's
+  // `not_applicable` verdict (no network call), so a hook skip can never turn
+  // it into a bundle-capping `requirement_unmet`.
+  if (!routeStoryboard || storyboardCapabilityGateUnmet(storyboard, runOptions) !== null) {
+    return { result: await runStoryboard(agentUrl, storyboard, runOptions), executed: true };
+  }
+  const routing = await routeStoryboard(storyboard, { agent_url: agentUrl, profile });
+  if (routing === undefined || routing === null) {
+    return { result: await runStoryboard(agentUrl, storyboard, runOptions), executed: true };
+  }
+  if (typeof routing !== 'object') {
+    throw new TypeError(
+      `routeStoryboard(${storyboard.id}) must return undefined, { skip } or { agents, default_agent }; got ${typeof routing}.`
+    );
+  }
+  if ('skip' in routing) {
+    if ('agents' in routing) {
+      throw new TypeError(`routeStoryboard(${storyboard.id}) returned both \`skip\` and \`agents\`; return one.`);
+    }
+    if (typeof routing.skip !== 'string' || routing.skip.trim() === '') {
+      throw new TypeError(`routeStoryboard(${storyboard.id}) returned \`skip\` without a non-empty reason string.`);
+    }
+    return { result: buildRouteSkippedStoryboardResult(agentUrl, storyboard, routing.skip), executed: false };
+  }
+  const routed = buildRoutedStoryboardRun(agentUrl, storyboard, runOptions, routing);
+  return { result: await runStoryboard('', routed.storyboard, routed.options), executed: true };
+}
+
+function sameAgentUrl(a: string, b: string): boolean {
+  try {
+    return new URL(a).href === new URL(b).href;
+  } catch {
+    return a === b;
+  }
+}
+
+/**
+ * Turn a hook route into routed `runStoryboard` options, enforcing the
+ * isolation contract documented on `ComplyOptions.routeStoryboard`.
+ */
+function buildRoutedStoryboardRun(
+  agentUrl: string,
+  selected: Storyboard,
+  runOptions: StoryboardRunOptions,
+  route: ComplyStoryboardRoute
+): { storyboard: Storyboard; options: StoryboardRunOptions } {
+  const where = `routeStoryboard(${selected.id})`;
+  const storyboard = route.storyboard ?? selected;
+  if (!storyboard || typeof storyboard !== 'object' || storyboard.id !== selected.id) {
+    throw new TypeError(
+      `${where} returned a replacement storyboard with a different id; it must keep id "${selected.id}" ` +
+        'so the result is attributed to the selected storyboard and its bundle.'
+    );
+  }
+  const agents = route.agents;
+  if (!agents || typeof agents !== 'object' || Object.keys(agents).length === 0) {
+    throw new TypeError(`${where} returned a route without a non-empty \`agents\` map.`);
+  }
+  const defaultKey = route.default_agent;
+  if (typeof defaultKey !== 'string' || !Object.prototype.hasOwnProperty.call(agents, defaultKey)) {
+    throw new TypeError(`${where} returned a \`default_agent\` that is not a key in \`agents\`.`);
+  }
+  const headers = runOptions.headers;
+  if (headers && Object.keys(headers).length > 0) {
+    throw new Error(
+      `${where}: refusing to route while run-level \`headers\` are set; the runner sends them to every ` +
+        'routed agent. Remove the headers or skip this storyboard.'
+    );
+  }
+
+  // Copy only the fields AgentEntry defines, agent under test first so the
+  // routed result's `agent_url` names the agent being graded.
+  const ordered = [defaultKey, ...Object.keys(agents).filter(key => key !== defaultKey)];
+  const isolated: Record<string, AgentEntry> = {};
+  for (const key of ordered) {
+    const entry = agents[key];
+    if (!entry || typeof entry !== 'object' || typeof entry.url !== 'string' || entry.url === '') {
+      throw new TypeError(`${where}: agents['${key}'] needs a non-empty \`url\`.`);
+    }
+    const isAgentUnderTest = sameAgentUrl(entry.url, agentUrl);
+    if (key === defaultKey && !isAgentUnderTest) {
+      throw new Error(
+        `${where}: agents['${key}'] (the default_agent) must be the agent under test (${redactOAuthUrlForOutput(agentUrl)}); ` +
+          'comply() attributes the result to that agent.'
+      );
+    }
+    if (entry.auth === undefined && !isAgentUnderTest) {
+      throw new Error(
+        `${where}: agents['${key}'] (${redactOAuthUrlForOutput(entry.url)}) must declare its own \`auth\`. ` +
+          'Without it the runner falls back to the run-level credential for the agent under test.'
+      );
+    }
+    isolated[key] = {
+      url: entry.url,
+      ...(entry.auth !== undefined && { auth: entry.auth }),
+      ...(entry.transport !== undefined && { transport: entry.transport }),
+    };
+  }
+
+  // Run-scoped single-agent state belongs to the agent comply() discovered;
+  // routed runs discover each entry themselves, and the runner rejects `_client`.
+  const options: StoryboardRunOptions = {
+    ...runOptions,
+    agents: isolated,
+    default_agent: defaultKey,
+    context: { ...runOptions.context, ...route.context },
+  };
+  delete options._client;
+  delete options._profile;
+  delete options.profile;
+  delete options._controllerCapabilities;
+  delete options.agentTools;
+  return { storyboard, options };
+}
+
+/**
+ * Whole-storyboard skip for a hook `{ skip }`. Same shape as the runner's
+ * unmet-`requires:` result, so summaries, tracks and `bundle_results` treat
+ * it like an unrouted `multi_agent` storyboard: a coverage gap that caps its
+ * bundle at `partial`, never a pass or `not_applicable`.
+ */
+function buildRouteSkippedStoryboardResult(agentUrl: string, storyboard: Storyboard, reason: string): StoryboardResult {
+  const requirement = storyboard.requires?.includes('multi_agent') ? 'multi_agent' : undefined;
+  const stepId = requirement ? `requirement_unmet:${requirement}` : 'requirement_unmet:route_storyboard';
+  return {
+    storyboard_id: storyboard.id,
+    storyboard_title: storyboard.title,
+    agent_url: redactOAuthUrlForOutput(agentUrl),
+    overall_passed: true,
+    phases: [
+      {
+        phase_id: 'requirement_unmet',
+        phase_title: requirement ? `Requirement unmet: ${requirement}` : 'Requirement unmet: not routable',
+        passed: true,
+        duration_ms: 0,
+        steps: [
+          {
+            storyboard_id: storyboard.id,
+            step_id: stepId,
+            phase_id: 'requirement_unmet',
+            title: requirement
+              ? `Storyboard skipped: requires '${requirement}'`
+              : 'Storyboard skipped: not routable by this run',
+            task: '',
+            passed: true,
+            skipped: true,
+            skip_reason: 'requirement_unmet',
+            skip: { reason: 'requirement_unmet', detail: reason, ...(requirement && { requirement }) },
+            duration_ms: 0,
+            validations: [],
+            context: {},
+            extraction: { path: 'none' },
+          },
+        ],
+      },
+    ],
+    context: {},
+    total_duration_ms: 0,
+    passed_count: 0,
+    failed_count: 0,
+    skipped_count: 1,
+    runner_capability_version: LIBRARY_VERSION,
+    tested_at: new Date().toISOString(),
+    strict_validation_summary: {
+      observable: false,
+      checked: 0,
+      passed: 0,
+      failed: 0,
+      strict_only_failures: 0,
+      lenient_also_failed: 0,
+    },
+    notices: [],
+  };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Failure extraction
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -1660,8 +1947,12 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     complianceDir,
     schemaRoot,
     hostedStableLineAlias,
+    routeStoryboard,
     ...testOptions
   } = options;
+  if (routeStoryboard !== undefined && typeof routeStoryboard !== 'function') {
+    throw new TypeError('routeStoryboard must be a function');
+  }
   const resolveOptions: ResolveOptions = {
     ...(version !== undefined && { version }),
     ...(complianceDir !== undefined && { complianceDir }),
@@ -1963,9 +2254,9 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
         stoppedForTimeoutBudget = true;
         break;
       }
-      const result = await runStoryboard(agentUrl, sb, runOptions);
+      const { result, executed } = await runComplyStoryboard(agentUrl, sb, runOptions, profile, routeStoryboard);
       storyboardResults.push(result);
-      executedStoryboards.push(sb);
+      if (executed) executedStoryboards.push(sb);
     }
     if (stoppedForTimeoutBudget) {
       allObservations.push(

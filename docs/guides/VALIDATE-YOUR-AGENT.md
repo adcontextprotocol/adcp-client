@@ -187,6 +187,46 @@ await comply(agentUrl, {
 });
 ```
 
+**Multi-agent storyboards under `comply()`.** `comply()` grades one agent, so
+storyboards that declare `requires: [multi_agent]` (for example the
+governance-aware seller scenarios) skip with `requirement_unmet` and cap their
+bundle at `partial`. A grader that can supply the other agents can route them
+per storyboard with `routeStoryboard`; every other storyboard keeps the
+ordinary single-URL run:
+
+```ts
+await comply(agentUrl, {
+  auth: { type: 'bearer', token: ownerToken },
+  routeStoryboard: storyboard => {
+    if (!storyboard.requires?.includes('multi_agent')) return undefined; // unchanged run
+    if (!canRoute(storyboard)) return { skip: `${storyboard.id}: no governance agent for this topology` };
+    return {
+      agents: {
+        seller: { url: agentUrl }, // agent under test: inherits the run-level auth
+        governance: { url: governanceUrl, auth: { type: 'bearer', token: governanceToken } },
+      },
+      default_agent: 'seller',
+      context: { seller_agent_url: agentUrl },
+    };
+  },
+});
+```
+
+A routed result lands in `tracks`, `failures`, `storyboards_executed` and
+`bundle_results` like any other run. `{ skip }` records the same
+`requirement_unmet` row an unrouted `multi_agent` storyboard gets, with your
+reason as `skip.detail`, so the bundle stays `partial`. Storyboards whose root
+capability predicate the agent under test does not satisfy are never passed to
+the hook and stay `not_applicable`. `comply()` refuses a route (throws) when
+`default_agent` is not the agent under test, when any other entry omits its
+own `auth` (the runner would otherwise fall back to the run-level credential
+or `test_kit.auth.api_key`), or when run-level `headers` are set (they are
+sent to every routed agent). Run-level `transport`, including a
+`trustedFetchFn` egress guard, applies to every routed agent. Step-level
+`auth` directives and `$test_kit.auth.*` references on steps routed to
+another agent are the hook's responsibility: skip such storyboards when the
+test kit carries a secret.
+
 **OAuth-protected agents.** Storyboard runs reuse tokens saved under an alias. Two supported flows:
 
 ```bash

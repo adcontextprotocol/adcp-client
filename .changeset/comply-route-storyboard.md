@@ -1,0 +1,7 @@
+---
+'@adcp/sdk': minor
+---
+
+Add `ComplyOptions.routeStoryboard`, a per-storyboard routing hook so hosted graders can run `requires: [multi_agent]` storyboards inside `comply()` (adcontextprotocol/adcp#7758). The hook receives each applicable storyboard plus `{ agent_url, profile }` and may return `undefined` (unchanged single-URL run), `{ agents, default_agent, context?, storyboard? }` (run via `runStoryboard('', storyboard, { ...runOptions, agents, default_agent, context })`, with the result flowing into tracks, failures, `storyboards_executed` and `bundle_results` like any other run), or `{ skip: reason }` (recorded as the same whole-storyboard `requirement_unmet` row an unrouted `multi_agent` storyboard gets, with the reason as `skip.detail`, so the bundle stays `partial`). Storyboards whose root capability predicate the agent under test does not satisfy are not passed to the hook and stay `not_applicable`.
+
+`comply()` enforces credential and network isolation for routed runs: `default_agent` must be the agent under test; every other entry must declare its own `auth` (otherwise the runner would fall back to the run-level credential or `test_kit.auth.api_key`); routing is refused while run-level `headers` are set; run-level `transport` (including `trustedFetchFn`) is shared by every routed agent. New exported types: `ComplyStoryboardRoute`, `ComplyStoryboardSkip`, `ComplyStoryboardRouting`, `ComplyRouteStoryboardContext`.

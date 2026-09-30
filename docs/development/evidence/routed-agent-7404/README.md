@@ -115,6 +115,9 @@ it cannot authorize a step that its selected agent does not advertise.
 `comply()` is a single-agent suite API; its public `ComplyOptions` does not declare
 `agents`, and the routed runner requires an empty positional URL. Tests exercise
 both existing selection seams without inventing a new routed `comply()` API.
+Graders that must run individual `multi_agent` storyboards inside a `comply()`
+assessment use the per-storyboard `ComplyOptions.routeStoryboard` hook instead
+(adcontextprotocol/adcp#7758).
 
 ## Protocol declaration work still required
 
