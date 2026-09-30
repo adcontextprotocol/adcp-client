@@ -20,7 +20,7 @@ const http = require('http');
 const os = require('os');
 const path = require('path');
 
-const { comply } = require('../../dist/lib/testing/compliance/index.js');
+const { comply, formatComplianceResults } = require('../../dist/lib/testing/compliance/index.js');
 const { ADCP_VERSION } = require('../../dist/lib/version.js');
 
 const OWNER_TOKEN = 'owner-token-for-seller-only';
@@ -70,7 +70,7 @@ function writeComplianceCache() {
     JSON.stringify({
       adcp_version: ADCP_VERSION,
       generated_at: new Date().toISOString(),
-      universal: ['plain-single', 'governed-multi', 'gated-multi'],
+      universal: ['plain-single', 'governed-multi', 'gated-multi', 'governance-only', 'kit-leak', 'kit-pinned'],
       protocols: [],
       specialisms: [],
     })
@@ -100,6 +100,38 @@ function writeComplianceCache() {
       steps: [probeStep('gated_seller', 'seller'), probeStep('gated_governance', 'governance')],
     })
   );
+  // Every step is served by the governance agent: passing evidence that says
+  // nothing about the agent under test.
+  fs.writeFileSync(
+    path.join(dir, 'universal', 'governance-only.yaml'),
+    storyboardYaml('governance_only', {
+      requires: ['multi_agent'],
+      steps: [probeStep('gov_only_a', 'governance'), probeStep('gov_only_b', 'governance')],
+    })
+  );
+  // An unpinned step reads the test-kit credential; it could route to governance.
+  fs.writeFileSync(
+    path.join(dir, 'universal', 'kit-leak.yaml'),
+    storyboardYaml('kit_leak', {
+      requires: ['multi_agent'],
+      steps: [
+        probeStep('kit_leak_seller', 'seller'),
+        probeStep('kit_leak_gov', 'governance'),
+        probeStep('kit_leak_unpinned', undefined, { key: '$test_kit.auth.api_key' }),
+      ],
+    })
+  );
+  // The same reference on a step pinned to the agent under test is allowed.
+  fs.writeFileSync(
+    path.join(dir, 'universal', 'kit-pinned.yaml'),
+    storyboardYaml('kit_pinned', {
+      requires: ['multi_agent'],
+      steps: [
+        probeStep('kit_pinned_seller', 'seller', { key: '$test_kit.auth.api_key' }),
+        probeStep('kit_pinned_gov', 'governance'),
+      ],
+    })
+  );
   return dir;
 }
 
@@ -116,7 +148,15 @@ function okTool(res, id, structuredContent) {
 
 async function startAgent(name) {
   const requests = [];
+  // 'ok' | 'bad_probe' (probe answers without `probed`) | 'down' (HTTP 500)
+  const state = { mode: 'ok' };
   const server = http.createServer(async (req, res) => {
+    if (state.mode === 'down') {
+      res.writeHead(500, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'down' }));
+      requests.push({ method: 'down', authorization: req.headers.authorization });
+      return;
+    }
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const raw = Buffer.concat(chunks).toString('utf8');
@@ -168,7 +208,9 @@ async function startAgent(name) {
         specialisms: [],
       });
     }
-    if (rpc.params?.name === '__test_probe') return okTool(res, rpc.id, { probed: true, served_by: name });
+    if (rpc.params?.name === '__test_probe') {
+      return okTool(res, rpc.id, state.mode === 'bad_probe' ? { served_by: name } : { probed: true, served_by: name });
+    }
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result: { isError: true, structuredContent: {} } }));
   });
@@ -178,7 +220,11 @@ async function startAgent(name) {
     requests,
     url: `http://127.0.0.1:${server.address().port}/mcp`,
     probes: () => requests.filter(r => r.tool === '__test_probe'),
-    reset: () => requests.splice(0),
+    state,
+    reset: () => {
+      requests.splice(0);
+      state.mode = 'ok';
+    },
     close: () => new Promise(resolve => server.close(resolve)),
   };
 }
@@ -238,7 +284,14 @@ describe('comply() routeStoryboard', () => {
   test('without a hook, multi_agent storyboards keep the requirement_unmet skip', async () => {
     const result = await run();
 
-    assert.deepEqual(result.storyboards_executed.sort(), ['gated_multi', 'governed_multi', 'plain_single']);
+    assert.deepEqual(result.storyboards_executed.sort(), [
+      'gated_multi',
+      'governance_only',
+      'governed_multi',
+      'kit_leak',
+      'kit_pinned',
+      'plain_single',
+    ]);
     assert.equal(governance.requests.length, 0, 'no second agent is contacted');
     assert.equal(bundleStatus(result, 'governed_multi'), 'partial');
     assert.equal(bundleStatus(result, 'plain_single'), 'passing');
@@ -255,7 +308,13 @@ describe('comply() routeStoryboard', () => {
 
     // The hook sees every applicable storyboard with the discovered profile,
     // but never the capability-gated one the seller does not claim.
-    assert.deepEqual(calls.map(c => c.id).sort(), ['governed_multi', 'plain_single']);
+    assert.deepEqual(calls.map(c => c.id).sort(), [
+      'governance_only',
+      'governed_multi',
+      'kit_leak',
+      'kit_pinned',
+      'plain_single',
+    ]);
     for (const call of calls) {
       assert.equal(call.agent_url, seller.url);
       assert.ok(call.tools.includes('__test_probe'));
@@ -293,7 +352,10 @@ describe('comply() routeStoryboard', () => {
     });
 
     assert.equal(governance.requests.length, 0);
-    assert.ok(!result.storyboards_executed.includes('governed_multi'), 'a skip is not an execution');
+    assert.ok(
+      result.storyboards_executed.includes('governed_multi'),
+      'listed like an unrouted requirement_unmet storyboard'
+    );
     assert.equal(bundleStatus(result, 'governed_multi'), 'partial');
     assert.equal(bundleStatus(result, 'plain_single'), 'passing');
     assert.ok((result.summary.skipped_by_reason?.requirement_unmet ?? 0) >= 1);
@@ -425,5 +487,161 @@ describe('comply() routeStoryboard', () => {
       seen.some(url => url.startsWith(governance.url)),
       'governance traffic went through the caller-supplied fetch'
     );
+  });
+  function routeOnly(ids, route = () => governanceRoute()) {
+    const set = new Set(ids);
+    return sb => (set.has(sb.id) ? route(sb) : undefined);
+  }
+
+  function stepsOf(result, storyboardId) {
+    return result.tracks
+      .flatMap(track => track.scenarios)
+      .filter(scenario => scenario.scenario.startsWith(`${storyboardId}/`))
+      .flatMap(scenario => scenario.steps);
+  }
+
+  for (const bad of [null, '', false, 0, {}, { type: 'bearer' }, { type: 'bearer', token: '' }, { type: 'nope' }]) {
+    test(`refuses a non-credential auth value ${JSON.stringify(bad)} on another agent`, async () => {
+      const route = governanceRoute();
+      route.agents.governance.auth = bad;
+      await assert.rejects(
+        run({ routeStoryboard: routeOnly(['governed_multi'], () => route) }),
+        /must declare its own `auth` credential object/
+      );
+      assert.equal(governance.requests.length, 0, 'the run-level credential was never offered to governance');
+    });
+  }
+
+  test('refuses an explicit non-credential auth on the agent-under-test entry too', async () => {
+    const route = governanceRoute();
+    route.agents.seller.auth = null;
+    await assert.rejects(
+      run({ routeStoryboard: routeOnly(['governed_multi'], () => route) }),
+      /agents\['seller'\].*credential object/
+    );
+  });
+
+  test('a failed step on another routed agent is a coverage gap, never failing', async () => {
+    const result = await run({
+      routeStoryboard: sb => {
+        if (sb.id === 'governed_multi') governance.state.mode = 'bad_probe';
+        return sb.id === 'governed_multi' ? governanceRoute() : undefined;
+      },
+    });
+    assert.equal(bundleStatus(result, 'governed_multi'), 'partial');
+    assert.ok(!(result.failures ?? []).some(f => f.storyboard_id === 'governed_multi'));
+    const step = stepsOf(result, 'governed_multi').find(s => s.step === 'governance_probe');
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'prerequisite_failed');
+    assert.equal(resultFor(result, 'governed_multi').overall_passed, true);
+  });
+
+  test("another routed agent's discovery failure is a coverage gap, never failing", async () => {
+    governance.state.mode = 'down';
+    const result = await comply(seller.url, {
+      allow_http: true,
+      complianceDir,
+      auth: { type: 'bearer', token: OWNER_TOKEN },
+      routeStoryboard: routeOnly(['governed_multi']),
+    });
+    governance.state.mode = 'ok';
+    assert.equal(bundleStatus(result, 'governed_multi'), 'partial');
+    assert.ok(!(result.failures ?? []).some(f => f.storyboard_id === 'governed_multi'));
+    const sellerStep = stepsOf(result, 'governed_multi').find(s => s.step === 'seller_probe');
+    assert.equal(sellerStep?.passed, true, 'the agent under test is still graded on its own step');
+  });
+
+  test('a failed step on the agent under test still fails the bundle', async () => {
+    const result = await run({
+      routeStoryboard: sb => {
+        if (sb.id === 'governed_multi') seller.state.mode = 'bad_probe';
+        return sb.id === 'governed_multi' ? governanceRoute() : undefined;
+      },
+    });
+    assert.equal(bundleStatus(result, 'governed_multi'), 'failing');
+    assert.ok(result.failures.some(f => f.storyboard_id === 'governed_multi' && f.step_id === 'seller_probe'));
+  });
+
+  test('passing steps served only by other agents cannot make the bundle pass', async () => {
+    const result = await run({ routeStoryboard: routeOnly(['governance_only']) });
+    assert.equal(governance.probes().length, 2);
+    assert.equal(bundleStatus(result, 'governance_only'), 'partial');
+    const gap = stepsOf(result, 'governance_only').find(s => s.skip_reason === 'prerequisite_failed');
+    assert.ok(gap, 'agent_under_test_coverage gap row present');
+  });
+
+  test('refuses (as a skip) a route whose unpinned step reads test-kit credentials', async () => {
+    const result = await run({
+      test_kit: { auth: { api_key: OWNER_TOKEN, probe_task: 'list_accounts' } },
+      routeStoryboard: routeOnly(['kit_leak']),
+    });
+    assert.equal(governance.requests.length, 0);
+    assert.equal(bundleStatus(result, 'kit_leak'), 'partial');
+    const step = stepsOf(result, 'kit_leak')[0];
+    assert.equal(step.skip_reason, 'requirement_unmet');
+    assert.match(step.warnings[0], /kit_leak_unpinned.*test-kit credentials/);
+  });
+
+  test('allows test-kit references on steps pinned to the agent under test', async () => {
+    const result = await run({
+      test_kit: { auth: { api_key: OWNER_TOKEN, probe_task: 'list_accounts' } },
+      routeStoryboard: routeOnly(['kit_pinned']),
+    });
+    assert.equal(bundleStatus(result, 'kit_pinned'), 'passing');
+    assert.ok(
+      seller.probes().some(p => p.args?.key !== undefined),
+      'the pinned step ran on the seller'
+    );
+    for (const request of governance.requests) assert.ok(!JSON.stringify(request).includes(OWNER_TOKEN));
+  });
+
+  test('refuses a replacement storyboard that changes what is graded', async () => {
+    await assert.rejects(
+      run({
+        routeStoryboard: routeOnly(['governed_multi'], sb => {
+          const patched = structuredClone(sb);
+          patched.phases[0].steps[0].validations = [];
+          return governanceRoute({ storyboard: patched });
+        }),
+      }),
+      /changes what is graded/
+    );
+  });
+
+  test('a skip on a storyboard without multi_agent carries no requirement', async () => {
+    const result = await run({ routeStoryboard: routeOnly(['plain_single'], () => ({ skip: 'operator skip' })) });
+    const step = stepsOf(result, 'plain_single')[0];
+    assert.equal(step.skip_reason, 'requirement_unmet');
+    assert.equal(step.requirement, undefined);
+    assert.equal(bundleStatus(result, 'plain_single'), 'partial');
+  });
+
+  test('strips control and bidi characters from the skip reason', async () => {
+    const result = await run({
+      routeStoryboard: routeOnly(['governed_multi'], () => ({ skip: 'bad\u0007reason‮\ninjected' })),
+    });
+    const warning = stepsOf(result, 'governed_multi')[0].warnings[0];
+    assert.doesNotMatch(warning, /[\u0000-\u001f‮]/);
+    assert.match(warning, /badreason/);
+  });
+
+  test('an error thrown by the hook propagates', async () => {
+    await assert.rejects(
+      run({
+        routeStoryboard: () => {
+          throw new Error('router exploded');
+        },
+      }),
+      /router exploded/
+    );
+  });
+
+  test('routed and skipped rows render in the text report', async () => {
+    const result = await run({
+      routeStoryboard: sb =>
+        sb.id === 'governed_multi' ? governanceRoute() : sb.id === 'kit_pinned' ? { skip: 'not today' } : undefined,
+    });
+    const text = formatComplianceResults(result);
+    assert.match(text, /governed_multi|governed-multi/);
   });
 });

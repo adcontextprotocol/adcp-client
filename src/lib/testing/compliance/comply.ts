@@ -13,6 +13,7 @@ import type { TestOptions, TestResult, AgentProfile, TestStepResult } from '../t
 import { collectDetachedAssertionFailures, mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
 import {
   applyAdcpVersionRunOptions,
+  collectCapabilityNotices,
   runStoryboard,
   storyboardCapabilityGateUnmet,
   storyboardCapabilityPredicates,
@@ -643,42 +644,67 @@ export interface ComplyOptions extends TestOptions {
    * (`requires_capability` / `requires_all_capabilities`) the agent under
    * test does not satisfy are not passed to the hook: they keep their
    * `not_applicable` verdict. Not consulted in the degraded auth-rejected
-   * path, which runs only storyboards with no `required_tools`.
+   * path, which runs only storyboards with no `required_tools`. An error the
+   * hook throws propagates out of `comply()`.
+   *
+   * `context.profile` is the agent under test's own `get_adcp_capabilities`
+   * answer: untrusted, agent-controlled input. Do not derive agent URLs or
+   * credentials from it.
    *
    * Return:
    * - `undefined`: run the storyboard as usual against `agentUrl`.
    * - a {@link ComplyStoryboardRoute}: run it as
-   *   `runStoryboard('', storyboard, { ...runOptions, agents, default_agent, context })`.
-   *   The result lands in `tracks`, `summary`, `failures`,
-   *   `storyboards_executed` and `bundle_results` exactly like any other run.
+   *   `runStoryboard('', storyboard, { ...runOptions, agents, default_agent, context })`
+   *   and grade the result against the agent under test only (below). The
+   *   result lands in `tracks`, `summary`, `failures`, `storyboards_executed`
+   *   and `bundle_results` like any other run.
    * - a {@link ComplyStoryboardSkip}: do not run it. `comply()` records the
-   *   same whole-storyboard `requirement_unmet` skip the runner emits for an
-   *   unmet `requires:` gate, with `skip.detail` set to the reason (and
-   *   `skip.requirement: 'multi_agent'` when the storyboard declares it). The
-   *   storyboard is not listed in `storyboards_executed`, and it caps its
-   *   bundle at `partial` exactly as an unrouted `multi_agent` storyboard does.
+   *   same whole-storyboard `requirement_unmet` row the runner emits for an
+   *   unmet `requires:` gate, with `skip.detail` set to the reason (control
+   *   and bidi characters stripped, max 1000 chars) and `skip.requirement:
+   *   'multi_agent'` when the storyboard declares it. Like an unrouted
+   *   `multi_agent` storyboard it is listed in `storyboards_executed` and caps
+   *   its bundle at `partial`.
    *
-   * Credential and network isolation, enforced by `comply()` (each violation
-   * throws, failing the run, because it is a caller bug):
-   * - `agents[default_agent].url` must be the agent under test (`agentUrl`),
-   *   so the result is always attributable to the agent being graded.
-   * - An entry for the agent under test may omit `auth`; it then uses the
-   *   run-level `auth` (or test-kit default), as a normal run would. Every
-   *   other entry MUST declare its own `auth`. The runner otherwise falls
-   *   back to the run-level `auth` and then `test_kit.auth.api_key`, which
-   *   would hand the agent-under-test credential to another agent. An
-   *   entry's explicit `auth` is always used as-is, never replaced by
-   *   run-level auth.
-   * - Routing is refused when run-level `headers` are set, because the runner
+   * Grading of routed results. The agent under test is only credited or
+   * blamed for what it served:
+   * - A failed step served by another routed agent, including that agent's
+   *   discovery failure (routed runs use `discovery_resilient`), becomes a
+   *   `prerequisite_failed` skip: a coverage gap (`partial`), never `failing`.
+   * - If no step served by the agent under test passed, a synthetic
+   *   `agent_under_test_coverage` gap row keeps the bundle from `passing`.
+   * - `failures[].fix_command` for a routed storyboard is a single-URL
+   *   command; re-running it reproduces only the unrouted skip.
+   *
+   * Credential and network isolation, enforced by `comply()`. Caller
+   * configuration errors throw, failing the run:
+   * - `agents[default_agent].url` must be the agent under test (`agentUrl`).
+   * - Every entry that sets `auth` must set a real credential object (a known
+   *   `type` with its secret fields); `null`, `''`, `{}` and the like throw.
+   *   Only an agent-under-test entry may omit `auth`; it then gets the
+   *   run-level `auth` pinned onto it (or the test-kit default if there is
+   *   none). Run-level `auth` is dropped from the routed options, so the
+   *   runner's `entry.auth ?? options.auth` fallback cannot hand it to
+   *   another agent.
+   * - Routing is refused while run-level `headers` are set, because the runner
    *   sends them to every routed agent.
-   * - Run-level `transport` (including `fetchFn` / SSRF guards) is shared by
-   *   every routed agent. The hook cannot override it; only `url`, `auth` and
-   *   `transport` (wire protocol) are read from each entry.
+   * - A replacement `route.storyboard` must keep the same `id` and grading
+   *   shape (phases, steps, tasks, agent pins, validations, expectations and
+   *   gates); only request payloads and context may change.
+   * - Run-level `transport` (including `trustedFetchFn` / SSRF guards) is
+   *   shared by every routed agent. The hook cannot override it; only `url`,
+   *   `auth` and `transport` (wire protocol) are read from each entry.
    *
-   * Not enforced (the hook sees the storyboard and owns these): step-level
-   * `auth` directives and `$test_kit.auth.*` references in a step that is
-   * routed to another agent send test-kit credentials to that agent. Refuse
-   * or skip such storyboards in the hook if the test kit carries a secret.
+   * Storyboard content that would forward test-kit credentials is refused as
+   * a skip rather than a throw: `$test_kit.auth` references in storyboard
+   * context, or a step not pinned to an agent-under-test key (unpinned steps
+   * route by protocol) that uses a `from_test_kit` auth directive or a
+   * `$test_kit.auth` reference.
+   *
+   * Known limit: version negotiation (`adcpVersion`, `wireAdcpVersion`,
+   * `versionEnvelope`) is done once against the agent under test and shared
+   * by every routed agent.
+   *
    * Do not mutate `storyboard`; return a patched copy in `route.storyboard`.
    */
   routeStoryboard?: (
@@ -1600,8 +1626,6 @@ function buildNotApplicableStoryboardResult(agentUrl: string, na: NotApplicableS
 
 /**
  * Run one selected storyboard, consulting `routeStoryboard` when supplied.
- * `executed` is false only for a hook-requested skip, which never reaches
- * the agent and so is not listed in `storyboards_executed`.
  */
 async function runComplyStoryboard(
   agentUrl: string,
@@ -1609,18 +1633,16 @@ async function runComplyStoryboard(
   runOptions: StoryboardRunOptions,
   profile: AgentProfile,
   routeStoryboard: ComplyOptions['routeStoryboard']
-): Promise<{ result: StoryboardResult; executed: boolean }> {
+): Promise<StoryboardResult> {
   // Applicability comes before routing: a storyboard whose root capability
   // predicate the agent under test does not satisfy keeps the runner's
   // `not_applicable` verdict (no network call), so a hook skip can never turn
   // it into a bundle-capping `requirement_unmet`.
   if (!routeStoryboard || storyboardCapabilityGateUnmet(storyboard, runOptions) !== null) {
-    return { result: await runStoryboard(agentUrl, storyboard, runOptions), executed: true };
+    return runStoryboard(agentUrl, storyboard, runOptions);
   }
   const routing = await routeStoryboard(storyboard, { agent_url: agentUrl, profile });
-  if (routing === undefined || routing === null) {
-    return { result: await runStoryboard(agentUrl, storyboard, runOptions), executed: true };
-  }
+  if (routing === undefined || routing === null) return runStoryboard(agentUrl, storyboard, runOptions);
   if (typeof routing !== 'object') {
     throw new TypeError(
       `routeStoryboard(${storyboard.id}) must return undefined, { skip } or { agents, default_agent }; got ${typeof routing}.`
@@ -1633,10 +1655,12 @@ async function runComplyStoryboard(
     if (typeof routing.skip !== 'string' || routing.skip.trim() === '') {
       throw new TypeError(`routeStoryboard(${storyboard.id}) returned \`skip\` without a non-empty reason string.`);
     }
-    return { result: buildRouteSkippedStoryboardResult(agentUrl, storyboard, routing.skip), executed: false };
+    return buildRouteSkippedStoryboardResult(agentUrl, storyboard, routing.skip, runOptions);
   }
   const routed = buildRoutedStoryboardRun(agentUrl, storyboard, runOptions, routing);
-  return { result: await runStoryboard('', routed.storyboard, routed.options), executed: true };
+  if ('refused' in routed) return buildRouteSkippedStoryboardResult(agentUrl, storyboard, routed.refused, runOptions);
+  const result = await runStoryboard('', routed.storyboard, routed.options);
+  return gradeRoutedResultForAgentUnderTest(result, routed.agentUnderTestIndexes, routed.keyByIndex);
 }
 
 function sameAgentUrl(a: string, b: string): boolean {
@@ -1647,22 +1671,123 @@ function sameAgentUrl(a: string, b: string): boolean {
   }
 }
 
+/** A usable credential object: non-null, a known `type`, and that type's secret fields present. */
+function isCredentialObject(auth: unknown): auth is NonNullable<AgentEntry['auth']> {
+  if (!auth || typeof auth !== 'object' || Array.isArray(auth)) return false;
+  const a = auth as Record<string, unknown>;
+  const nonEmpty = (v: unknown) => typeof v === 'string' && v.length > 0;
+  const isObject = (v: unknown) => !!v && typeof v === 'object' && !Array.isArray(v);
+  switch (a.type) {
+    case 'bearer':
+      return nonEmpty(a.token);
+    case 'basic':
+      return nonEmpty(a.username) && typeof a.password === 'string';
+    case 'oauth':
+      return isObject(a.tokens);
+    case 'oauth_client_credentials':
+      return isObject(a.credentials);
+    default:
+      return false;
+  }
+}
+
+function referencesTestKitAuth(value: unknown): boolean {
+  if (typeof value === 'string') return value.includes('$test_kit.auth');
+  if (Array.isArray(value)) return value.some(referencesTestKitAuth);
+  if (value && typeof value === 'object') return Object.values(value).some(referencesTestKitAuth);
+  return false;
+}
+
+/** A step-level `auth` directive that pulls a credential from the run's test kit. */
+function stepAuthUsesTestKit(auth: unknown): boolean {
+  return !!auth && typeof auth === 'object' && !!(auth as { from_test_kit?: unknown }).from_test_kit;
+}
+
+/**
+ * Why a routed storyboard would send test-kit credentials to an agent other
+ * than the agent under test, or `undefined`. Hosted runs put the owner's
+ * credential in `test_kit.auth`; only steps pinned to an agent-under-test key
+ * may read it, because an unpinned step routes by protocol and can land on
+ * another agent. `$test_kit.auth.probe_task` as a step's `task` names a tool,
+ * not a secret, so `task` is not scanned.
+ */
+function testKitCredentialLeak(storyboard: Storyboard, agentUnderTestKeys: ReadonlySet<string>): string | undefined {
+  if (referencesTestKitAuth(storyboard.context)) {
+    return 'its context references `$test_kit.auth`, which comply() will not forward to other routed agents.';
+  }
+  for (const phase of storyboard.phases ?? []) {
+    for (const step of phase.steps ?? []) {
+      if (step.agent !== undefined && agentUnderTestKeys.has(step.agent)) continue;
+      const { task: _task, ...rest } = step;
+      if (stepAuthUsesTestKit(step.auth) || referencesTestKitAuth(rest)) {
+        return (
+          `step "${step.id}" is not pinned to the agent under test but reads test-kit credentials; ` +
+          'comply() will not forward them to other routed agents.'
+        );
+      }
+    }
+  }
+  return undefined;
+}
+
+/** Projection of everything that grades a storyboard, for replacement checks. */
+function storyboardGradingShape(storyboard: Storyboard): string {
+  return JSON.stringify({
+    requires: storyboard.requires,
+    requires_capability: storyboard.requires_capability,
+    requires_all_capabilities: storyboard.requires_all_capabilities,
+    invariants: storyboard.invariants,
+    phases: (storyboard.phases ?? []).map(phase => ({
+      id: phase.id,
+      optional: phase.optional,
+      branch_set: phase.branch_set,
+      requires_capability: phase.requires_capability,
+      steps: (phase.steps ?? []).map(step => ({
+        id: step.id,
+        task: step.task,
+        agent: step.agent,
+        validations: step.validations,
+        expect_error: step.expect_error,
+        requires_tool: step.requires_tool,
+      })),
+    })),
+  });
+}
+
+type RoutedStoryboardRun =
+  | {
+      storyboard: Storyboard;
+      options: StoryboardRunOptions;
+      /** 1-based `agent_index` values whose entry is the agent under test. */
+      agentUnderTestIndexes: ReadonlySet<number>;
+      keyByIndex: ReadonlyMap<number, string>;
+    }
+  | { refused: string };
+
 /**
  * Turn a hook route into routed `runStoryboard` options, enforcing the
- * isolation contract documented on `ComplyOptions.routeStoryboard`.
+ * isolation contract documented on `ComplyOptions.routeStoryboard`. Caller
+ * configuration errors throw; storyboard content that would leak test-kit
+ * credentials returns `{ refused }` so the run records a skip instead.
  */
 function buildRoutedStoryboardRun(
   agentUrl: string,
   selected: Storyboard,
   runOptions: StoryboardRunOptions,
   route: ComplyStoryboardRoute
-): { storyboard: Storyboard; options: StoryboardRunOptions } {
+): RoutedStoryboardRun {
   const where = `routeStoryboard(${selected.id})`;
   const storyboard = route.storyboard ?? selected;
   if (!storyboard || typeof storyboard !== 'object' || storyboard.id !== selected.id) {
     throw new TypeError(
       `${where} returned a replacement storyboard with a different id; it must keep id "${selected.id}" ` +
         'so the result is attributed to the selected storyboard and its bundle.'
+    );
+  }
+  if (storyboard !== selected && storyboardGradingShape(storyboard) !== storyboardGradingShape(selected)) {
+    throw new TypeError(
+      `${where} returned a replacement storyboard that changes what is graded (phases, steps, tasks, agent ` +
+        'pins, validations, expectations or gates). A replacement may only change request payloads and context.'
     );
   }
   const agents = route.agents;
@@ -1682,10 +1807,16 @@ function buildRoutedStoryboardRun(
   }
 
   // Copy only the fields AgentEntry defines, agent under test first so the
-  // routed result's `agent_url` names the agent being graded.
+  // routed result's `agent_url` names the agent being graded. Every entry
+  // ends up with explicit auth (or none at all), and run-level `auth` is
+  // dropped below, so the runner's `entry.auth ?? options.auth` fallback has
+  // nothing to hand to another agent.
   const ordered = [defaultKey, ...Object.keys(agents).filter(key => key !== defaultKey)];
   const isolated: Record<string, AgentEntry> = {};
-  for (const key of ordered) {
+  const agentUnderTestIndexes = new Set<number>();
+  const agentUnderTestKeys = new Set<string>();
+  const keyByIndex = new Map<number, string>();
+  ordered.forEach((key, index) => {
     const entry = agents[key];
     if (!entry || typeof entry !== 'object' || typeof entry.url !== 'string' || entry.url === '') {
       throw new TypeError(`${where}: agents['${key}'] needs a non-empty \`url\`.`);
@@ -1697,33 +1828,172 @@ function buildRoutedStoryboardRun(
           'comply() attributes the result to that agent.'
       );
     }
-    if (entry.auth === undefined && !isAgentUnderTest) {
+    const hasOwnAuth = Object.prototype.hasOwnProperty.call(entry, 'auth');
+    if (hasOwnAuth ? !isCredentialObject(entry.auth) : !isAgentUnderTest) {
       throw new Error(
-        `${where}: agents['${key}'] (${redactOAuthUrlForOutput(entry.url)}) must declare its own \`auth\`. ` +
-          'Without it the runner falls back to the run-level credential for the agent under test.'
+        `${where}: agents['${key}'] (${redactOAuthUrlForOutput(entry.url)}) must declare its own \`auth\` ` +
+          'credential object ({ type: "bearer" | "basic" | "oauth" | "oauth_client_credentials", ... }). ' +
+          'Without it the runner falls back to the credential for the agent under test.'
       );
     }
+    // The agent under test keeps its run-level credential by pinning it here.
+    // With neither, the runner's test-kit default applies to this entry only,
+    // since every other entry carries explicit auth.
+    const auth = hasOwnAuth ? entry.auth : runOptions.auth;
     isolated[key] = {
       url: entry.url,
-      ...(entry.auth !== undefined && { auth: entry.auth }),
+      ...(auth !== undefined && { auth }),
       ...(entry.transport !== undefined && { transport: entry.transport }),
     };
-  }
+    keyByIndex.set(index + 1, key);
+    if (isAgentUnderTest) {
+      agentUnderTestIndexes.add(index + 1);
+      agentUnderTestKeys.add(key);
+    }
+  });
 
-  // Run-scoped single-agent state belongs to the agent comply() discovered;
-  // routed runs discover each entry themselves, and the runner rejects `_client`.
+  const leak = testKitCredentialLeak(storyboard, agentUnderTestKeys);
+  if (leak) return { refused: `${selected.id} cannot be routed: ${leak}` };
+
+  const context =
+    runOptions.context !== undefined || route.context !== undefined
+      ? { ...runOptions.context, ...route.context }
+      : undefined;
   const options: StoryboardRunOptions = {
     ...runOptions,
     agents: isolated,
     default_agent: defaultKey,
-    context: { ...runOptions.context, ...route.context },
+    // A broken peer agent must grade as a coverage gap for the agent under
+    // test, not fail the whole storyboard: resilient discovery turns it into
+    // per-step routing failures attributed to that peer's `agent_index`.
+    discovery_resilient: true,
+    ...(context !== undefined && { context }),
   };
+  delete options.auth;
+  // The runner rejects `_client` with `agents`. The rest is comply()'s
+  // single-agent state; the runner clears it per agent anyway.
   delete options._client;
   delete options._profile;
   delete options.profile;
   delete options._controllerCapabilities;
   delete options.agentTools;
-  return { storyboard, options };
+  return { storyboard, options, agentUnderTestIndexes, keyByIndex };
+}
+
+/**
+ * Grade a routed result against the agent under test only.
+ *
+ * - A failed step served by another routed agent (its `agent_index` is not an
+ *   agent-under-test entry) becomes a `prerequisite_failed` skip: a coverage
+ *   gap that caps the bundle at `partial`, never `failing`. Its step-scope
+ *   assertion failures move into the skip detail so they are not re-counted
+ *   as detached failures.
+ * - A whole-storyboard `discovery_failed` result (not attributable to one
+ *   agent) is graded the same way.
+ * - When no step served by the agent under test passed, a synthetic
+ *   coverage-gap row is added so the bundle cannot reach `passing` on other
+ *   agents' evidence.
+ */
+function gradeRoutedResultForAgentUnderTest(
+  result: StoryboardResult,
+  agentUnderTestIndexes: ReadonlySet<number>,
+  keyByIndex: ReadonlyMap<number, string>
+): StoryboardResult {
+  const isDiscoveryFailure =
+    result.phases.length === 1 && result.phases[0]!.phase_id === 'discovery_failed' && result.failed_count > 0;
+  const downgraded = new Map<string, string>();
+  const phases = result.phases.map(phase => {
+    let changed = false;
+    const steps = phase.steps.map(step => {
+      if (step.passed || step.skipped) return step;
+      const peer = isDiscoveryFailure
+        ? 'a routed agent'
+        : step.agent_index !== undefined && !agentUnderTestIndexes.has(step.agent_index)
+          ? `routed agent "${keyByIndex.get(step.agent_index) ?? step.agent_index}"`
+          : undefined;
+      if (!peer) return step;
+      changed = true;
+      const assertionErrors = (result.assertions ?? [])
+        .filter(a => !a.passed && a.scope !== 'storyboard' && a.step_id === step.step_id)
+        .map(a => a.error ?? a.description);
+      const detail = sanitizeAgentText(
+        `Step served by ${peer} failed; comply() grades it as a coverage gap for the agent under test, not a ` +
+          `failure. ${step.error ?? 'No error detail.'}` +
+          (assertionErrors.length > 0 ? ` Assertions: ${assertionErrors.join('; ')}` : ''),
+        1000
+      );
+      downgraded.set(step.step_id, detail);
+      const { error: _error, ...rest } = step;
+      return {
+        ...rest,
+        passed: true,
+        skipped: true,
+        skip_reason: 'prerequisite_failed' as const,
+        skip: { reason: 'prerequisite_failed' as const, detail },
+      };
+    });
+    return changed ? { ...phase, steps, passed: steps.every(step => step.passed) } : phase;
+  });
+
+  const autPassed = phases.some(phase =>
+    phase.steps.some(
+      step =>
+        step.passed && !step.skipped && step.agent_index !== undefined && agentUnderTestIndexes.has(step.agent_index)
+    )
+  );
+  if (downgraded.size === 0 && (autPassed || result.passed_count === 0)) return result;
+
+  const assertions = result.assertions?.filter(
+    a => a.passed || a.scope === 'storyboard' || a.step_id === undefined || !downgraded.has(a.step_id)
+  );
+  const graded: StoryboardResult = {
+    ...result,
+    phases,
+    ...(assertions !== undefined && { assertions }),
+    failed_count: result.failed_count - downgraded.size,
+    skipped_count: result.skipped_count + downgraded.size,
+  };
+  if (!autPassed && graded.passed_count > 0) {
+    graded.phases = [
+      ...graded.phases,
+      {
+        phase_id: 'agent_under_test_coverage',
+        phase_title: 'Agent under test coverage',
+        passed: true,
+        duration_ms: 0,
+        steps: [
+          {
+            storyboard_id: result.storyboard_id,
+            step_id: 'agent_under_test_coverage',
+            phase_id: 'agent_under_test_coverage',
+            title: 'No step served by the agent under test passed',
+            task: '',
+            passed: true,
+            skipped: true,
+            skip_reason: 'prerequisite_failed',
+            skip: {
+              reason: 'prerequisite_failed',
+              detail:
+                'Every passing step in this routed storyboard was served by another agent, so it carries no ' +
+                'evidence about the agent under test.',
+            },
+            duration_ms: 0,
+            validations: [],
+            context: {},
+            extraction: { path: 'none' },
+          },
+        ],
+      },
+    ];
+    graded.skipped_count += 1;
+  }
+  // Only a false verdict the downgrade explains can flip; never the reverse.
+  graded.overall_passed =
+    result.overall_passed ||
+    (graded.failed_count === 0 &&
+      !(graded.assertions ?? []).some(a => !a.passed && a.scope === 'storyboard') &&
+      collectDetachedAssertionFailures(graded).length === 0);
+  return graded;
 }
 
 /**
@@ -1732,7 +2002,13 @@ function buildRoutedStoryboardRun(
  * it like an unrouted `multi_agent` storyboard: a coverage gap that caps its
  * bundle at `partial`, never a pass or `not_applicable`.
  */
-function buildRouteSkippedStoryboardResult(agentUrl: string, storyboard: Storyboard, reason: string): StoryboardResult {
+function buildRouteSkippedStoryboardResult(
+  agentUrl: string,
+  storyboard: Storyboard,
+  reason: string,
+  runOptions: StoryboardRunOptions
+): StoryboardResult {
+  const detail = sanitizeAgentText(reason, 1000);
   const requirement = storyboard.requires?.includes('multi_agent') ? 'multi_agent' : undefined;
   const stepId = requirement ? `requirement_unmet:${requirement}` : 'requirement_unmet:route_storyboard';
   return {
@@ -1758,7 +2034,7 @@ function buildRouteSkippedStoryboardResult(agentUrl: string, storyboard: Storybo
             passed: true,
             skipped: true,
             skip_reason: 'requirement_unmet',
-            skip: { reason: 'requirement_unmet', detail: reason, ...(requirement && { requirement }) },
+            skip: { reason: 'requirement_unmet', detail, ...(requirement && { requirement }) },
             duration_ms: 0,
             validations: [],
             context: {},
@@ -1782,7 +2058,7 @@ function buildRouteSkippedStoryboardResult(agentUrl: string, storyboard: Storybo
       strict_only_failures: 0,
       lenient_also_failed: 0,
     },
-    notices: [],
+    notices: collectCapabilityNotices(storyboard, runOptions._profile),
   };
 }
 
@@ -2254,9 +2530,9 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
         stoppedForTimeoutBudget = true;
         break;
       }
-      const { result, executed } = await runComplyStoryboard(agentUrl, sb, runOptions, profile, routeStoryboard);
+      const result = await runComplyStoryboard(agentUrl, sb, runOptions, profile, routeStoryboard);
       storyboardResults.push(result);
-      if (executed) executedStoryboards.push(sb);
+      executedStoryboards.push(sb);
     }
     if (stoppedForTimeoutBudget) {
       allObservations.push(

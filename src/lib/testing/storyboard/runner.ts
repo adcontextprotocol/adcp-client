@@ -2659,7 +2659,8 @@ function buildRequiredToolsMissingResult(
  *   `webhook_signing.legacy_hmac_fallback: true`, which is removed in
  *   `effective_version: '4.0'`.
  */
-function collectCapabilityNotices(storyboard: Storyboard, profile: AgentProfile | undefined): RunnerNotice[] {
+/** @internal Exported for comply()'s synthesized requirement_unmet results. */
+export function collectCapabilityNotices(storyboard: Storyboard, profile: AgentProfile | undefined): RunnerNotice[] {
   const notices: RunnerNotice[] = (profile?.capabilities_schema_issues ?? []).map(issue => ({
     severity: 'info',
     code: 'capabilities_response_schema_invalid',
