@@ -1,11 +1,11 @@
 # SDK 14 release-bound upgrade worksheet
 
-This page joins the release facts that adopters need before changing a production pin. It is generated from package and version metadata with `npm run generate-release-worksheet`; migration decisions remain documented in [Migrating from 13.x to the 14 prerelease](./migration-13-to-14.md).
+This page joins the release facts that adopters need before changing a production pin. It is generated from package and version metadata with `npm run generate-release-worksheet`; migration decisions remain documented in [Migrating from 13.x to 14](./migration-13-to-14.md).
 
 ## Release represented by this checkout
 
 The changesets version lifecycle regenerates this section whenever the package
-version changes. For an unpublished candidate, integrity is intentionally shown
+version changes. For an unpublished version, integrity is intentionally shown
 as unavailable until the registry assigns it; use the exact registry command
 below as the publication/deployment gate.
 
@@ -14,11 +14,11 @@ below as the publication/deployment gate.
 | Exact npm package | `@adcp/sdk@14.0.0-rc.53` |
 | npm integrity | registry-derived after publication; run `npm view @adcp/sdk@14.0.0-rc.53 dist.integrity` |
 | Node.js runtime | `^20.19.0 || >=22.12.0` |
-| Default AdCP wire release | `3.2.0-rc.7` |
-| Maintained wire releases | `v2.5`, `v2.6`, `v3`, `3.0.0`, `3.0`, `3.0.1`, `3.0.2`, `3.0.3`, `3.0.4`, `3.0.5`, `3.0.6`, `3.0.7`, `3.0.8`, `3.0.9`, `3.0.10`, `3.0.11`, `3.0.12`, `3.0.13`, `3.0.14`, `3.0.15`, `3.0.16`, `3.0.17`, `3.0.18`, `3.0.19`, `3.0.20`, `3.0.21`, `3.0.22`, `3.0.23`, `3.0.24`, `3.0.25`, `3.1.0`, `3.1`, `3.1.1`, `3.1.2`, `3.1.3`, `3.1.4`, `3.1.5`, `3.1.6`, `3.1.7`, `3.1.8`, `3.1.9`, `3.1.10`, `3.1.11`, `3.1.12`, `3.1.13`, `3.1.14`, `3.1.15`, `3.1.16`, `3.1.17`, `3.1.18`, `3.1.19`, `3.1.20`, `3.1.21`, `3.1.22`, `3.1.23`, `3.1.24`, `3.2.0-rc.7`, `3.2-rc.7` |
+| Default AdCP wire release | `3.2.1` |
+| Maintained wire releases | `v2.5`, `v2.6`, `v3`, `3.0.0`, `3.0`, `3.0.1`, `3.0.2`, `3.0.3`, `3.0.4`, `3.0.5`, `3.0.6`, `3.0.7`, `3.0.8`, `3.0.9`, `3.0.10`, `3.0.11`, `3.0.12`, `3.0.13`, `3.0.14`, `3.0.15`, `3.0.16`, `3.0.17`, `3.0.18`, `3.0.19`, `3.0.20`, `3.0.21`, `3.0.22`, `3.0.23`, `3.0.24`, `3.0.25`, `3.1.0`, `3.1`, `3.1.1`, `3.1.2`, `3.1.3`, `3.1.4`, `3.1.5`, `3.1.6`, `3.1.7`, `3.1.8`, `3.1.9`, `3.1.10`, `3.1.11`, `3.1.12`, `3.1.13`, `3.1.14`, `3.1.15`, `3.1.16`, `3.1.17`, `3.1.18`, `3.1.19`, `3.1.20`, `3.1.21`, `3.1.22`, `3.1.23`, `3.1.24`, `3.2.1`, `3.2` |
 | Canonical migration notes | [13.x → 14](./migration-13-to-14.md) |
 
-Install exact production inputs rather than a moving prerelease range:
+Install exact production inputs rather than a moving range or dist-tag:
 
 ```bash
 npm install --save-exact '@adcp/sdk@14.0.0-rc.53'
@@ -60,7 +60,7 @@ ESM example:
 import { getCanonicalToolValidator } from '@adcp/sdk/schemas';
 
 const validate = getCanonicalToolValidator('get_reporting_status', 'sync', {
-  adcpVersion: '3.2.0-rc.7',
+  adcpVersion: '3.2.1',
 });
 if (!validate) throw new Error('Requested protocol schema is unavailable');
 
@@ -83,7 +83,7 @@ CommonJS uses the same packed-artifact export:
 ```js
 const { getCanonicalToolValidator } = require('@adcp/sdk/schemas');
 const validate = getCanonicalToolValidator('get_reporting_status', 'sync', {
-  adcpVersion: '3.2.0-rc.7',
+  adcpVersion: '3.2.1',
 });
 if (!validate) throw new Error('Requested protocol schema is unavailable');
 if (validate({ status: 'completed', view: 'summary' })) {
@@ -95,7 +95,7 @@ console.error(validate.errors);
 ## Historical worked example: rc.33/rc.35 → rc.36
 
 This example is intentionally retained as the concrete migration that introduced
-the rc.2 wire pin; it does not change when a later SDK candidate is released.
+the rc.2 wire pin; it does not change when a later SDK version is released.
 
 1. Change the exact SDK pin from `14.0.0-rc.33` or `14.0.0-rc.35` to `14.0.0-rc.36` and verify that historical release with `npm view @adcp/sdk@14.0.0-rc.36 dist.integrity`.
 2. Upgrade communicating 3.2 peers together. rc.33 and rc.35 defaulted to AdCP `3.2.0-rc.1`; rc.36 defaults to `3.2.0-rc.2` and no longer advertises the superseded rc.1 pin as compatible.

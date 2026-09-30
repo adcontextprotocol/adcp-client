@@ -1,8 +1,8 @@
-// AUTO-GENERATED FROM schemas/cache/3.2.0-rc.7/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.2.1/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.2.0-rc.7.
+ * Manifest-derived constants for AdCP 3.2.1.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
@@ -12,8 +12,8 @@
  * previously lived in `src/lib/utils/capabilities.ts` and
  * `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.2.0-rc.7/manifest.json` (adcp_version: 3.2.0-rc.7, generated_at:
- * 2026-09-27T14:07:31.715Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.2.1/manifest.json` (adcp_version: 3.2.1, generated_at:
+ * 2026-09-30T20:16:20.465Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -269,7 +269,7 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     suggestion: "do NOT auto-retry — auto-retry re-logs the credential on each attempt. Move authentication material or caller-supplied trust material out of request args (top-level, `context`, `ext`, any nested location) onto the relevant transport authentication/trust channel or account provisioning path (Authorization: Bearer, RFC 9421 signature/JWKS, mTLS, MCP/A2A authentication framing); rotate any leaked credential, then resubmit"
   },
   "CURSOR_EXPIRED": {
-    description: "The list_account_changes cursor is no longer within the seller's retained account change window. The seller MUST NOT silently restart from the retention boundary. error.details SHOULD include available_since and MAY include a replacement starting-position hint, without disclosing inaccessible history.",
+    description: "The list_account_changes cursor (experimental, account.change_feed) is no longer within the seller's retained account change window. The seller MUST NOT silently restart from the retention boundary. error.details SHOULD include available_since and MAY include a replacement starting-position hint, without disclosing inaccessible history.",
     recovery: "correctable",
     suggestion: "obtain a latest checkpoint, rebuild authoritative account snapshots, then drain changes after the checkpoint"
   },

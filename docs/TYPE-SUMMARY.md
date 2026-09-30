@@ -18,7 +18,7 @@ Use `@adcp/sdk/media-buy/actions` for pure buyer assessment and `@adcp/sdk/serve
 | `MediaBuyTask` | Narrow routing union: `update_media_buy`, `control_media_buy`, `refine_proposals`, `sync_creatives`. |
 | `ActionAvailability` | `available_now` with optional `nonDefaultRoute`, mode and authority; or `currently_unavailable` with reason, certainty and optional compatibility/constraint detail. |
 | `ActionBuy`, `ActionProduct`, `ActionProposal` | Structural inputs for joining current accepted terms with live actions and advisory products. |
-| `LiveMediaBuyAction` | Readable canonical or legacy entry for assessment, projection and existing preflight helpers, including rc.3 package scope. |
+| `LiveMediaBuyAction` | Readable canonical or legacy entry for assessment, projection and existing preflight helpers, including shared-frequency-cap package scope. |
 | `MediaBuyAvailableAction`, `MediaBuyValidAction` | Generated legacy wire entry / deprecated flat vocabulary; distinct from canonical helper entries. |
 | `MediaBuyAction`, `MediaBuyActionId` | Action identifiers accepted by assessment / mutation helpers; runtime validation preserves unknown future data. |
 | `ProposalChangeTerm`, `ChangeTermConstraints` | Negotiated term view and portable discriminated budget / flight / package-count / effective-timing constraints. |
@@ -821,7 +821,7 @@ _Request:_
   required_overlay_support: Targeting Overlay Requirements
   required_media_buy_support: Media Buy Support Requirements
   property_list: Property List Ref
-  fields: ('product_id' | 'name' | 'description' | 'publisher_properties' | 'channels' | 'video_placement_types' | 'audio_distribution_types' | 'sponsored_placement_types' | 'social_placement_surfaces' | 'format_options' | 'placements' | 'delivery_type' | 'exclusivity' | 'pricing_options' | 'forecast' | 'reporting_capabilities' | 'measurement_terms' | 'performance_standards' | 'catalog_types' | 'signal_targeting_allowed' | 'signal_targeting_rules' | 'demographic_targeting' | 'overlay_support' | 'media_buy_support' | 'audience_evidence' | 'audience_evidence_selections' | 'max_optimization_goals' | 'catalog_match' | 'list_applications' | 'brief_relevance' | 'acceptance_policy_profile_ids' | 'identity' | 'expires_at' | 'allowed_actions' | 'format_ids' | 'outcome_measurement' | 'delivery_measurement' | 'creative_policy' | 'metric_optimization' | 'conversion_tracking' | 'data_provider_signals' | 'included_signals' | 'signal_targeting_options' | 'overlay_support' | 'media_buy_support' | 'targeting_resolution' | 'collections' | 'collection_targeting_allowed' | 'installments' | 'is_custom' | 'product_card' | 'product_card_detailed' | 'enforced_policies' | 'trusted_match')[]
+  fields: ('product_id' | 'name' | 'description' | 'publisher_properties' | 'channels' | 'video_placement_types' | 'audio_distribution_types' | 'sponsored_placement_types' | 'social_placement_surfaces' | 'format_options' | 'placements' | 'delivery_type' | 'exclusivity' | 'pricing_options' | 'forecast' | 'reporting_capabilities' | 'measurement_terms' | 'performance_standards' | 'catalog_types' | 'signal_targeting_allowed' | 'signal_targeting_rules' | 'demographic_targeting' | 'overlay_support' | 'collections' | 'collection_targeting_allowed' | 'media_buy_support' | 'audience_evidence' | 'audience_evidence_selections' | 'max_optimization_goals' | 'catalog_match' | 'list_applications' | 'brief_relevance' | 'targeting_resolution' | 'acceptance_policy_profile_ids' | 'identity' | 'execution_requirements' | 'expires_at' | 'allowed_actions' | 'format_ids' | 'outcome_measurement' | 'delivery_measurement' | 'creative_policy' | 'metric_optimization' | 'conversion_tracking' | 'data_provider_signals' | 'included_signals' | 'signal_targeting_options' | 'overlay_support' | 'media_buy_support' | 'installments' | 'is_custom' | 'product_card' | 'product_card_detailed' | 'enforced_policies' | 'trusted_match')[]
   time_budget: Duration
   push_notification_config: Push Notification Config
   pagination: Pagination Request
@@ -2902,7 +2902,7 @@ await producer.runWorker();
 const getReportingStatus = createReportingStatusHandler(store);
 const getMediaBuyDelivery = createReportingDeliveryHandler(store); // exact reporting_revision_id reads
 
-// AdCP 3.2.0-rc.4: identity comes from authenticated transport.
+// AdCP 3.2: identity comes from authenticated transport.
 const syncReportingStatus = createSyncReportingStatusHandler(store, {
   resolveConsumerId: context => context.agent.agent_url,
 });
