@@ -1,5 +1,23 @@
 # Changelog
 
+## 14.0.0-rc.53
+
+### Minor Changes
+
+- b051298: Add `ComplyOptions.routeStoryboard`, a per-storyboard routing hook so hosted graders can run `requires: [multi_agent]` storyboards inside `comply()` (adcontextprotocol/adcp#7758). The hook receives each applicable storyboard plus `{ agent_url, profile }` (the profile is agent-reported, untrusted input). It may return `undefined` (unchanged single-URL run), `{ agents, default_agent, context?, storyboard? }` (routed `runStoryboard('', storyboard, { ...runOptions, agents, default_agent, context })`; the result flows into tracks, failures, `storyboards_executed` and `bundle_results`), or `{ skip: reason }` (recorded as the same whole-storyboard `requirement_unmet` row an unrouted `multi_agent` storyboard gets, with the sanitized reason as `skip.detail`, so the bundle stays `partial`). Storyboards whose root capability predicate the agent under test does not satisfy are not passed to the hook and stay `not_applicable`.
+
+  Routed results are graded against the agent under test only: a failed step or discovery failure on another routed agent becomes a `prerequisite_failed` coverage gap (`partial`, never `failing`), and a routed storyboard with no passing step served by the agent under test cannot reach `passing`.
+
+  `comply()` enforces credential and network isolation for routed runs: `default_agent` must be the agent under test; every entry that sets `auth` must set a real credential object, and only an agent-under-test entry may omit it (the run-level credential is pinned onto that entry and dropped from the shared routed options); routing is refused while run-level `headers` are set; a replacement storyboard must keep its id and grading shape; storyboards that would send `$test_kit.auth` / `from_test_kit` credentials through a step not pinned to the agent under test are recorded as skips; run-level `transport` (including `trustedFetchFn`) is shared by every routed agent. New exported types: `ComplyStoryboardRoute`, `ComplyStoryboardSkip`, `ComplyStoryboardRouting`, `ComplyRouteStoryboardContext`.
+
+### Patch Changes
+
+- 65bb5a7: fix(signing): reject Base64URL sf-binary under the AdCP 3.2 request-signing profile (#3073).
+
+  A verifier pinned to AdCP 3.2 (`adcpVersion`, or the `createAdcpServer` auto-wired verifier on a 3.2 server) now parses `Signature` and `Content-Digest` only as RFC 8941 padded standard Base64, regardless of `covers_content_digest`. A Base64URL `Signature` fails with `request_signature_header_malformed` at checklist step 1, before the window and crypto checks, so `profile-3.2/negative/001-base64url-sf-binary` passes even when graded at a live clock. A Base64URL or unpadded `Content-Digest` fails with `request_signature_header_malformed` instead of `request_signature_digest_mismatch`. The whole `Signature` dictionary is parsed strictly, and standard Base64 whose byte length needs no `=` padding is now accepted.
+
+  This removes the SDK 14 rolling-upgrade fallback in which a 3.2-pinned verifier with internal `covers_content_digest: 'either'` also accepted SDK 13 Base64URL signatures. The spec forbids a 3.2 verifier from retrying a legacy token. Serve legacy signers from an endpoint pinned to 3.0/3.1 instead. Verifiers pinned to 3.0/3.1 and unpinned verifiers keep accepting both serializations. Endpoints that advertise 3.2 must pass a trusted `adcpVersion`: an unpinned verifier cannot tell a legacy request from the 3.2 negative vector.
+
 ## 14.0.0-rc.52
 
 ### Patch Changes
