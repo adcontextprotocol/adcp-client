@@ -72,7 +72,7 @@ function makeExpressShim(req, res) {
  *   - Revocation list pre-contains test-revoked-2026.
  *   - Replay cap tunable so vector 020 finishes in under a second.
  */
-function startGraderServer({ replayCap, coversContentDigest = 'either' }) {
+function startGraderServer({ replayCap, coversContentDigest = 'either', adcpVersion = '3.1' }) {
   const publicKeys = JSON.parse(readFileSync(KEYS_PATH, 'utf8')).keys.map(k => {
     const pub = { ...k };
     delete pub._private_d_for_test_only;
@@ -89,7 +89,7 @@ function startGraderServer({ replayCap, coversContentDigest = 'either' }) {
   });
 
   const middleware = createExpressVerifier({
-    adcpVersion: '3.1',
+    ...(adcpVersion !== undefined ? { adcpVersion } : {}),
     capability: {
       supported: true,
       covers_content_digest: coversContentDigest,
@@ -395,5 +395,54 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
       [],
       'no un-skipped failures when content-digest policy is declared'
     );
+  });
+});
+
+// adcp-client#3073: graded over live HTTP, profile-3.2/negative/001 carries
+// fixed, long-expired timestamps. A verifier that leniently decoded its
+// Base64URL Signature surfaced request_signature_window_invalid (step 5)
+// instead of request_signature_header_malformed (step 1).
+describe('request-signing grader — AdCP 3.2 profile vs. a 3.2-pinned verifier', () => {
+  const BASE64URL_VECTOR = 'profile-3.2/negative/001-base64url-sf-binary';
+
+  for (const coversContentDigest of ['required', 'either']) {
+    test(`${BASE64URL_VECTOR} rejects at parse time (internal policy ${coversContentDigest})`, async () => {
+      const fresh = await startGraderServer({ replayCap: 1000, coversContentDigest, adcpVersion: '3.2' });
+      try {
+        const report = await gradeRequestSigning(fresh.url, {
+          allowPrivateIp: true,
+          transport: 'raw',
+          signingProfileVersion: '3.2',
+          onlyVectors: [BASE64URL_VECTOR],
+        });
+        const vector = report.negative.find(v => v.vector_id === BASE64URL_VECTOR);
+        assert.ok(vector, 'vector present in the 3.2 profile');
+        assert.ok(!vector.skipped, `vector graded: ${vector.skip_reason ?? ''}`);
+        assert.strictEqual(vector.actual_error_code, 'request_signature_header_malformed', vector.diagnostic);
+        assert.ok(vector.passed, vector.diagnostic);
+      } finally {
+        fresh.server.close();
+      }
+    });
+  }
+
+  test('every gradable 3.2 profile vector passes against a 3.2-pinned required verifier', async () => {
+    const fresh = await startGraderServer({ replayCap: 1000, coversContentDigest: 'required', adcpVersion: '3.2' });
+    try {
+      const report = await gradeRequestSigning(fresh.url, {
+        allowPrivateIp: true,
+        transport: 'raw',
+        signingProfileVersion: '3.2',
+        skipRateAbuse: true,
+      });
+      const graded = [...report.positive, ...report.negative];
+      assert.ok(graded.some(v => v.vector_id === BASE64URL_VECTOR && !v.skipped));
+      const failures = graded
+        .filter(v => !v.passed && !v.skipped)
+        .map(v => `${v.vector_id}: ${v.diagnostic ?? ''} (actual=${v.actual_error_code ?? 'none'})`);
+      assert.deepStrictEqual(failures, []);
+    } finally {
+      fresh.server.close();
+    }
   });
 });

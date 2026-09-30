@@ -59,8 +59,7 @@ function operationFromUrl(url) {
   return p.split('/').filter(Boolean).pop();
 }
 
-async function runVector(vector, { pinned = true } = {}) {
-  const now = vector.reference_now;
+async function runVector(vector, { pinned = true, now = vector.reference_now } = {}) {
   const replayStore = new InMemoryReplayStore();
   const revocationStore = new InMemoryRevocationStore();
   // Replay entries are scoped by `(keyid, @target-uri)` (adcp#2460). Vector
@@ -152,8 +151,30 @@ describe('AdCP 3.2 signing-profile vectors', () => {
       const actual = await runVector(vector);
       assert.strictEqual(actual.success, false);
       assert.strictEqual(actual.error_code, vector.expected_outcome.error_code);
+      // Sub-steps such as "9a" are strings; numbered steps must match exactly.
+      if (typeof vector.expected_outcome.failed_step === 'number') {
+        assert.strictEqual(actual.failed_step, vector.expected_outcome.failed_step);
+      }
     });
   }
+
+  // adcp-client#3073: a live grader sends this vector with its fixed, long-
+  // expired timestamps. The Base64URL Signature must be rejected at parse time
+  // (step 1), before the window check can report window_invalid.
+  test('negative/001-base64url-sf-binary fails at step 1 at a live clock', async () => {
+    const vector = JSON.parse(readFileSync(path.join(profileRoot, 'negative', '001-base64url-sf-binary.json'), 'utf8'));
+    for (const covers_content_digest of ['required', 'either']) {
+      const actual = await runVector(
+        { ...vector, verifier_capability: { ...vector.verifier_capability, covers_content_digest } },
+        { now: vector.reference_now + 30 * 24 * 60 * 60 }
+      );
+      assert.deepStrictEqual(
+        actual,
+        { success: false, error_code: 'request_signature_header_malformed', failed_step: 1 },
+        `covers_content_digest=${covers_content_digest}`
+      );
+    }
+  });
 
   test('unpinned verifier derives 3.2 URI rules from RFC 8941 signature encoding', async () => {
     const vector = JSON.parse(

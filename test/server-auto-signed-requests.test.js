@@ -175,7 +175,15 @@ function mcpUpdateMediaBuyBody() {
   });
 }
 
-async function postSigned({ url, body, sign, nonce, signUrl = url, requestHeaders = {} }) {
+async function postSigned({
+  url,
+  body,
+  sign,
+  nonce,
+  signUrl = url,
+  requestHeaders = {},
+  binaryEncoding = 'rfc8941-base64',
+}) {
   const parsed = new URL(url);
   const headers = {
     'Content-Type': 'application/json',
@@ -183,7 +191,10 @@ async function postSigned({ url, body, sign, nonce, signUrl = url, requestHeader
     ...requestHeaders,
   };
   if (sign) {
-    const signOpts = { coverContentDigest: true };
+    // The auto-wired verifier is pinned to the server's AdCP 3.2 release, so
+    // sign with the 3.2 RFC 8941 profile (#3073). Pass `binaryEncoding` to
+    // exercise the legacy 3.0/3.1 profile.
+    const signOpts = { coverContentDigest: true, binaryEncoding };
     if (nonce !== undefined) signOpts.nonce = nonce;
     const signed = signRequest(
       { method: 'POST', url: signUrl, headers, body },
@@ -359,6 +370,16 @@ describe('createAdcpServer: signedRequests auto-wiring', () => {
       const body = mcpCreateMediaBuyBody();
       const res = await postSigned({ url: started.url, body, sign: true });
       assert.strictEqual(res.status, 200, 'signed request should reach MCP dispatch');
+    });
+
+    it('rejects a legacy Base64URL signature on a 3.2 endpoint even with internal either policy (#3073)', async () => {
+      // sellerConfig() keeps covers_content_digest: 'either'. A 3.2 verifier
+      // still MUST NOT retry the legacy alphabet through a second decoder.
+      const body = mcpCreateMediaBuyBody();
+      const res = await postSigned({ url: started.url, body, sign: true, binaryEncoding: 'legacy-base64url' });
+      assert.strictEqual(res.status, 401, 'legacy Base64URL signature must be rejected');
+      const payload = await res.json();
+      assert.strictEqual(payload.error, 'request_signature_header_malformed');
     });
 
     it('rejects an unsigned create_media_buy request with 401', async () => {
@@ -824,7 +845,7 @@ describe('createAdcpServer: signedRequests auto-wiring', () => {
         const signed = signRequest(
           { method: 'POST', url: started.url, headers, body: bodyStr },
           { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: edPrivate },
-          { coverContentDigest: true }
+          { coverContentDigest: true, binaryEncoding: 'rfc8941-base64' }
         );
         const controller = new AbortController();
         const fetchPromise = fetch(started.url, {
