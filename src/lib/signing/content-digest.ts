@@ -37,12 +37,25 @@ export function parseContentDigest(header: string): Buffer | null {
   return m && m[1] ? Buffer.from(m[1], 'base64') : null;
 }
 
+/** Raw text of the `sha-256` byte-sequence token in a Content-Digest header, if present. */
+export function contentDigestSha256Token(header: string): string | undefined {
+  return header.match(/(?:^|[,\s])sha-256=:([^:]+):/)?.[1];
+}
+
+/**
+ * True when `encoded` is canonical padded standard Base64 (RFC 4648 §4), the
+ * RFC 8941 `sf-binary` form AdCP 3.2 requires: `+`/`/` alphabet, length a
+ * multiple of four, and only the `=` padding the byte length requires.
+ */
+export function isPaddedStandardBase64(encoded: string): boolean {
+  return encoded.length > 0 && encoded.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(encoded);
+}
+
 export function contentDigestUsesEncoding(header: string, encoding: SfBinaryEncoding): boolean {
-  const match = header.match(/(?:^|[,\s])sha-256=:([^:]+):/);
-  if (!match?.[1]) return false;
-  const encoded = match[1];
+  const encoded = contentDigestSha256Token(header);
+  if (!encoded) return false;
   if (encoding === 'legacy-base64url') return /^[A-Za-z0-9_-]+$/.test(encoded);
-  return encoded.length % 4 === 0 && /^[A-Za-z0-9+/]+={1,2}$/.test(encoded);
+  return isPaddedStandardBase64(encoded);
 }
 
 export function contentDigestMatches(header: string, body: string | Uint8Array): boolean {

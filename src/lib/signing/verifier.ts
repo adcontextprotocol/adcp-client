@@ -8,6 +8,7 @@ import {
 } from './canonicalize';
 import {
   contentDigestMatches,
+  contentDigestSha256Token,
   contentDigestUsesEncoding,
   requestSigningEncodingForVersion,
   type SfBinaryEncoding,
@@ -47,8 +48,12 @@ export interface VerifyRequestOptions {
   operation?: string;
   /**
    * Trusted endpoint release pin; never inferred from request payload data.
-   * When omitted, the verifier accepts both the legacy 3.0/3.1 Base64URL
-   * representation and the 3.2+ RFC 8941 Base64 representation. Digest
+   * A 3.2+ pin parses `Signature` and `Content-Digest` strictly as RFC 8941
+   * padded standard Base64 and rejects Base64URL as
+   * `request_signature_header_malformed`, regardless of
+   * `capability.covers_content_digest`. When omitted, the verifier accepts
+   * both the legacy 3.0/3.1 Base64URL representation and the 3.2+ RFC 8941
+   * Base64 representation, so it cannot grade as a 3.2 verifier. Digest
    * coverage still follows `capability.covers_content_digest`.
    */
   adcpVersion?: string;
@@ -135,7 +140,9 @@ export async function verifyRequestSignature(
       parsedEncoding = candidate;
       break;
     } catch (error) {
-      parseError ??= error;
+      // When every candidate fails, report the pinned profile's diagnostic,
+      // or the 3.2 one for an unpinned verifier.
+      if (parseError === undefined || candidate === (pinnedBinaryEncoding ?? 'rfc8941-base64')) parseError = error;
     }
   }
   if (!parsedSig) throw parseError;
@@ -278,9 +285,23 @@ export async function verifyRequestSignature(
     const digestHeader = getHeaderValue(request.headers, 'Content-Digest');
     const encodingMatches =
       !!digestHeader &&
-      contentDigestEncodingCandidates(pinnedBinaryEncoding, options.capability.covers_content_digest).some(candidate =>
+      contentDigestEncodingCandidates(pinnedBinaryEncoding).some(candidate =>
         contentDigestUsesEncoding(digestHeader, candidate)
       );
+    if (
+      digestHeader &&
+      !encodingMatches &&
+      pinnedBinaryEncoding === 'rfc8941-base64' &&
+      contentDigestSha256Token(digestHeader) !== undefined
+    ) {
+      // 3.2 request sf-binary is standard padded Base64 only; a Base64URL or
+      // unpadded digest is a malformed header, not a digest mismatch.
+      throw new RequestSignatureError(
+        'request_signature_header_malformed',
+        11,
+        'Content-Digest sha-256 value must use padded standard Base64 for AdCP 3.2+'
+      );
+    }
     if (!digestHeader || !encodingMatches || !contentDigestMatches(digestHeader, request.body ?? '')) {
       throw new RequestSignatureError(
         'request_signature_digest_mismatch',
@@ -337,24 +358,24 @@ function signatureEncodingCandidates(
   pinned: SfBinaryEncoding | undefined,
   digestPolicy: VerifierCapability['covers_content_digest'] | undefined
 ): readonly SfBinaryEncoding[] {
-  if (!pinned) return ['rfc8941-base64', 'legacy-base64url'];
-  if (digestPolicy !== 'either') return [pinned];
-  return [pinned, alternateBinaryEncoding(pinned)];
+  // Unpinned: a token valid in both alphabets (no `+`, `/`, `-`, `_`, or `=`)
+  // stays on the legacy profile, as it did before 3.2 existed.
+  if (!pinned) return ['legacy-base64url', 'rfc8941-base64'];
+  // A 3.2 endpoint parses `Signature` strictly as RFC 8941 sf-binary and MUST
+  // NOT retry a Base64URL token through the legacy decoder, whatever its
+  // internal digest policy (security.mdx, request-profile binary value
+  // encoding). Only an explicitly pinned 3.0/3.1 endpoint in `either` mode
+  // keeps accepting both serializations during a rolling upgrade.
+  if (pinned === 'rfc8941-base64' || digestPolicy !== 'either') return [pinned];
+  return ['legacy-base64url', 'rfc8941-base64'];
 }
 
-function contentDigestEncodingCandidates(
-  pinned: SfBinaryEncoding | undefined,
-  digestPolicy: VerifierCapability['covers_content_digest']
-): readonly SfBinaryEncoding[] {
+function contentDigestEncodingCandidates(pinned: SfBinaryEncoding | undefined): readonly SfBinaryEncoding[] {
   // Legacy bundles contain both historical Base64URL digests and standards-
-  // compliant RFC 8941 Base64 digests. A strict 3.2 endpoint narrows to the
-  // latter; rolling-upgrade and unpinned verifiers accept both serializations.
-  if (pinned === 'rfc8941-base64' && digestPolicy !== 'either') return [pinned];
+  // compliant RFC 8941 Base64 digests, so legacy and unpinned verifiers accept
+  // both serializations. A 3.2 endpoint accepts only RFC 8941 Base64.
+  if (pinned === 'rfc8941-base64') return [pinned];
   return ['rfc8941-base64', 'legacy-base64url'];
-}
-
-function alternateBinaryEncoding(encoding: SfBinaryEncoding): SfBinaryEncoding {
-  return encoding === 'rfc8941-base64' ? 'legacy-base64url' : 'rfc8941-base64';
 }
 
 function jsonRpcProtocolMethods(body: string | undefined): string[] {

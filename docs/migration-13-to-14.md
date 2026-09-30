@@ -975,12 +975,16 @@ SDK 13 used the legacy AdCP 3.0/3.1 representation. SDK 14 selects between two p
 
 High-level A2A/MCP clients carry the configured agent version automatically. Low-level signing integrations should pass their trusted version context and can inspect the signature encoding with `requestSigningEncodingForVersion()`. For SDK 13 source compatibility, a low-level verifier with no `adcpVersion` accepts either signature encoding and applies its configured digest-coverage policy; an explicit trusted 3.2 pin keeps mandatory digest coverage.
 
-For a staged server rollout, set the internal verifier option
-`signedRequests.covers_content_digest: 'either'` to accept SDK 13 Base64URL
-signatures and SDK 14's 3.2 encoding on the same endpoint. Continue advertising
-`covers_content_digest: 'required'` in the 3.2 capability document; SDK 14
-projects that strict public contract automatically. Move the internal verifier
-to `required` after legacy callers are gone.
+A verifier pinned to AdCP 3.2 parses `Signature` and `Content-Digest` only as
+RFC 8941 padded standard Base64. It rejects an SDK 13 Base64URL token with
+`request_signature_header_malformed` at parse time (checklist step 1 for
+`Signature`), even when the internal verifier policy is
+`signedRequests.covers_content_digest: 'either'`; the spec forbids a 3.2
+verifier from retrying a legacy token through a second decoder. To keep
+accepting SDK 13 signers, serve them from a separately configured endpoint
+pinned to 3.0/3.1, or coordinate the cutover before the shared endpoint
+advertises 3.2. A 3.0/3.1-pinned endpoint in `'either'` mode still accepts both
+serializations.
 
 Do not select a signing profile from a version value inside an unverified request body or header. On the server, bind the version to the endpoint, tenant, or authenticated agent configuration. Webhook signatures do not move to the 3.2 request profile.
 
@@ -988,7 +992,10 @@ Low-level `verifyRequestSignature()` calls that omit `adcpVersion` tolerate both
 the legacy Base64URL and 3.2 RFC 8941 Base64 serialization so frozen 3.0/3.1
 integrations do not inherit the SDK's own protocol pin. This does not relax
 digest policy: `capability.covers_content_digest` remains authoritative. Pass a
-trusted `adcpVersion` whenever one is available for deterministic diagnostics.
+trusted `adcpVersion` whenever one is available. An endpoint that advertises
+3.2 must pass `adcpVersion: '3.2'` (or its exact 3.2 release): an unpinned
+verifier accepts a Base64URL token that a 3.2 verifier must reject, so it fails
+the `profile-3.2/negative/001-base64url-sf-binary` conformance vector.
 
 ## Cross-role governance is capability-gated
 

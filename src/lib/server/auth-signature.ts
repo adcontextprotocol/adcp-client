@@ -83,8 +83,11 @@ export interface VerifySignatureAsAuthenticatorOptions {
   now?: () => number;
   /**
    * Trusted endpoint release pin used to select the 3.0/3.1 or 3.2 signature
-   * profile. When omitted, verification accepts both encodings for SDK 13
-   * compatibility while digest coverage follows `capability`.
+   * profile. Set it on every endpoint that advertises a 3.2 release: a 3.2
+   * pin rejects Base64URL `Signature` / `Content-Digest` values as
+   * `request_signature_header_malformed` whatever `capability` says. When
+   * omitted, verification accepts both encodings for SDK 13 compatibility
+   * while digest coverage follows `capability`.
    */
   adcpVersion?: string;
   /**
