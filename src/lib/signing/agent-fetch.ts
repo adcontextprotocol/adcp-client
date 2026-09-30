@@ -232,7 +232,7 @@ export interface BuildAgentSigningFetchOptions {
  * every outbound request:
  *   1. Sign immediately when the payload carries webhook authentication.
  *   2. Extract the AdCP operation name from the JSON-RPC body (MCP tool-call
- *      or A2A message/send). Non-AdCP JSON-RPC methods (e.g., `initialize`)
+ *      or an A2A send method). Non-AdCP JSON-RPC methods (e.g., `initialize`)
  *      pass through unsigned.
  *   3. Consult the cached seller capability to decide whether to sign.
  *   4. Resolve the seller's content-digest policy into a per-request toggle.

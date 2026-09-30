@@ -15,6 +15,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { generateKeyPairSync } = require('node:crypto');
 const http = require('node:http');
 
 const {
@@ -486,7 +487,11 @@ test('brand.json matching uses the PROTOCOL ENDPOINT, not the card base', async 
 // emits. A2A 1.0 sends `SendMessage` with proto-JSON parts that carry no
 // `kind`; before this, that body yielded no operation and went out unsigned.
 test('the signer reads the AdCP operation from both A2A families the client emits', async () => {
-  const { extractAdcpOperation, shouldSignOperation } = require('../../dist/lib/signing/agent-fetch.js');
+  const {
+    buildAgentSigningFetch,
+    extractAdcpOperation,
+    shouldSignOperation,
+  } = require('../../dist/lib/signing/agent-fetch.js');
   const modern = await withCardServer('1.0', base =>
     captureA2aRequest(base, { kind: 'sendMessage', operation: 'get_products', args: { brief: 'x' } })
   );
@@ -501,6 +506,29 @@ test('the signer reads the AdCP operation from both A2A families the client emit
   const capability = { supported: true, required_for: ['get_products'] };
   assert.strictEqual(shouldSignOperation(extractAdcpOperation(modern.body), capability, {}), true);
   assert.strictEqual(shouldSignOperation(extractAdcpOperation(legacy.body), capability, {}), true);
+
+  const { privateKey } = generateKeyPairSync('ed25519');
+  let sentHeaders;
+  const signedFetch = buildAgentSigningFetch({
+    signing: {
+      kid: 'buyer-test-key',
+      alg: 'ed25519',
+      private_key: { ...privateKey.export({ format: 'jwk' }), adcp_use: 'request-signing' },
+      agent_url: 'https://buyer.example.com',
+    },
+    getCapability: () => ({ requestSigning: capability, fetchedAt: Math.floor(Date.now() / 1000) }),
+    upstream: async (_url, init) => {
+      sentHeaders = new Headers(init.headers);
+      return new Response('{}', { status: 200 });
+    },
+  });
+  await signedFetch(modern.url, {
+    method: modern.method,
+    headers: modern.headers,
+    body: modern.body,
+  });
+  assert.ok(sentHeaders.get('signature-input'), 'A2A 1.0 request must carry Signature-Input');
+  assert.ok(sentHeaders.get('signature'), 'A2A 1.0 request must carry Signature');
 });
 
 test('an A2A 1.0 body with no data part yields no operation', () => {
