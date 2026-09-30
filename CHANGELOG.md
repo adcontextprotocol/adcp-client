@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.1.3
+
+### Patch Changes
+
+- f1844e0: Correct the npm README description and install commands for the maintained 13.x release.
+
 ## 13.1.2
 
 ### Patch Changes
