@@ -62,12 +62,22 @@ function describeBody(body: unknown): string {
   return typeof body;
 }
 
+/** A2A JSON-RPC methods that carry an AdCP operation, across A2A 0.3 and 1.0. */
+const A2A_SEND_METHODS: ReadonlySet<string> = new Set([
+  'message/send',
+  'message/stream',
+  'SendMessage',
+  'SendStreamingMessage',
+]);
+
 /**
  * Extract the AdCP operation name from a JSON-RPC request body, if any.
  *
  * - MCP tool calls: `method === "tools/call"` → `params.name` is the op name.
- * - A2A `message/send` / `message/stream`: the op name lives on the first
- *   data-kind part as `data.skill`.
+ * - A2A send methods — `message/send` / `message/stream` (A2A 0.3) and
+ *   `SendMessage` / `SendStreamingMessage` (A2A 1.0): the op name lives on
+ *   the first data part as `data.skill`. A2A 0.3 tags that part
+ *   `kind: "data"`; A2A 1.0 proto-JSON parts carry no `kind` at all.
  * - All other JSON-RPC methods (`initialize`, `tools/list`, notifications)
  *   return `undefined` — those are protocol-layer housekeeping, not AdCP
  *   operations subject to request-signing policy.
@@ -93,14 +103,15 @@ export function extractAdcpOperation(body: unknown): string | undefined {
     return typeof params?.name === 'string' ? params.name : undefined;
   }
 
-  if (rpc.method === 'message/send' || rpc.method === 'message/stream') {
+  if (typeof rpc.method === 'string' && A2A_SEND_METHODS.has(rpc.method)) {
     const params = rpc.params as { message?: { parts?: unknown } } | undefined;
     const parts = params?.message?.parts;
     if (!Array.isArray(parts)) return undefined;
     for (const part of parts) {
       if (part && typeof part === 'object') {
         const p = part as { kind?: unknown; data?: { skill?: unknown } };
-        if (p.kind === 'data' && typeof p.data?.skill === 'string') {
+        const isDataPart = p.kind === undefined || p.kind === 'data';
+        if (isDataPart && typeof p.data?.skill === 'string') {
           return p.data.skill;
         }
       }
