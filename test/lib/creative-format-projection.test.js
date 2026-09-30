@@ -48,6 +48,86 @@ describe('creative format delivery projection', () => {
     assert.match(safe.errors[0].message, /legacy creative identity/);
   });
 
+  // adcp-client#3060: the client fills `_message` from the seller's text part.
+  // Tokenizing that whole sentence masked every field that repeated it.
+  test('passes seller error text through verbatim when it carries no legacy identity', () => {
+    const sellerText = 'get_products failed: Missing operator domain identity';
+    const failedData = {
+      _message: sellerText,
+      adcp_error: { code: 'AUTH_MISSING', message: sellerText, recovery: 'terminal' },
+    };
+    const safe = stripLegacyCreativeIdentity({
+      data: failedData,
+      adcpError: { code: 'AUTH_MISSING', message: sellerText, recovery: 'terminal' },
+      error: `AUTH_MISSING: ${sellerText}`,
+      legacySource: failedData,
+    });
+
+    assert.equal(safe.adcpError.message, sellerText);
+    assert.equal(safe.error, `AUTH_MISSING: ${sellerText}`);
+    assert.equal(safe.data.adcp_error.message, sellerText);
+    assert.equal(Object.hasOwn(safe.data, '_message'), false);
+    assert.equal(Object.hasOwn(safe.legacySource, '_message'), false);
+    assert.doesNotMatch(JSON.stringify(safe), /\[legacy creative identity\]/);
+  });
+
+  test('SingleAgentClient keeps a failed get_products error readable on every surface', () => {
+    const client = new SingleAgentClient({ id: 'seller', name: 'Seller', agent_uri: SELLER, protocol: 'a2a' });
+    const sellerText = 'get_products failed: Missing operator domain identity';
+    const adcpError = { code: 'AUTH_MISSING', message: sellerText, recovery: 'terminal' };
+    const safe = client.canonicalizeCreativeTaskResult(
+      {
+        success: false,
+        status: 'failed',
+        data: { _message: sellerText, adcp_error: adcpError },
+        adcpError,
+        error: `AUTH_MISSING: ${sellerText}`,
+        metadata: { taskId: 'task-1', taskName: 'get_products', agent: {}, timestamp: new Date().toISOString() },
+      },
+      'get_products'
+    );
+
+    assert.equal(safe.error, `AUTH_MISSING: ${sellerText}`);
+    assert.equal(safe.adcpError.message, sellerText);
+    assert.equal(safe.data.adcp_error.message, sellerText);
+    assert.equal(Object.hasOwn(safe.data, '_message'), false);
+  });
+
+  test('still drops `_message` and masks legacy identity repeated in seller error text', () => {
+    const legacyUrl = 'https://custom-formats.example/agent';
+    const legacyId = 'custom_leaderboard_v7';
+    const sellerText = `format_id ${legacyId} is not supported`;
+    const failedData = {
+      _message: sellerText,
+      adcp_error: { code: 'UNSUPPORTED_FEATURE', message: sellerText },
+      details: { format_id: { agent_url: legacyUrl, id: legacyId } },
+    };
+    const safe = stripLegacyCreativeIdentity({
+      data: failedData,
+      adcpError: {
+        code: 'UNSUPPORTED_FEATURE',
+        message: `Unsupported ${legacyId} from ${legacyUrl}; please retry later`,
+      },
+      error: `UNSUPPORTED_FEATURE: ${sellerText}`,
+      legacySource: failedData,
+    });
+
+    assert.equal(Object.hasOwn(safe.data, '_message'), false);
+    assert.equal(Object.hasOwn(safe.data.details, 'format_id'), false);
+    // Keyword-bearing text is masked by the regex pass; bare repeats of a
+    // collected identity value/URL are masked by the token pass.
+    assert.equal(safe.data.adcp_error.message, 'legacy creative identity [legacy creative identity] is not supported');
+    assert.equal(
+      safe.error,
+      'UNSUPPORTED_FEATURE: legacy creative identity [legacy creative identity] is not supported'
+    );
+    assert.equal(
+      safe.adcpError.message,
+      'Unsupported [legacy creative identity] from [legacy creative identity]; please retry later'
+    );
+    assert.doesNotMatch(JSON.stringify(safe), /custom_leaderboard_v7|custom-formats\.example|format_id/);
+  });
+
   test('preserves non-creative agent URLs while failing closed on standalone format tuples and orphan diagnostics', () => {
     const buyerAgentUrl = 'https://legacy.example/formats';
     const safe = stripLegacyCreativeIdentity({
