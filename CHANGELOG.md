@@ -1,5 +1,11 @@
 # Changelog
 
+## 14.0.0-rc.52
+
+### Patch Changes
+
+- 57594b4: Describe the SDK's buyer, server, and conformance surfaces in the npm README.
+
 ## 14.0.0-rc.51
 
 ### Minor Changes
