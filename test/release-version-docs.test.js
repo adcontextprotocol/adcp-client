@@ -66,6 +66,14 @@ test('the release version workflow leaves generated agent docs current', { timeo
       path.join(worktree, '.changeset', 'release-version-docs-test.md'),
       "---\n'@adcp/sdk': patch\n---\n\nExercise release version documentation regeneration.\n"
     );
+    // This test checks version-derived docs, not CHANGELOG text. Changelog
+    // generation looks up the commit that added every pending changeset and,
+    // in a shallow CI checkout, keeps running `git fetch --deepen` until it
+    // finds one. A regenerated PR merge ref leaves the checked-out merge commit
+    // unreachable, so the deepen never advances and the test hangs until timeout.
+    const changesetConfigPath = path.join(worktree, '.changeset', 'config.json');
+    const changesetConfig = JSON.parse(readFileSync(changesetConfigPath, 'utf8'));
+    writeFileSync(changesetConfigPath, `${JSON.stringify({ ...changesetConfig, changelog: false }, null, 2)}\n`);
     symlinkSync(path.join(ROOT, 'node_modules'), path.join(worktree, 'node_modules'), 'dir');
     mkdirSync(path.join(worktree, 'schemas'), { recursive: true });
     symlinkSync(path.join(ROOT, 'schemas', 'cache'), path.join(worktree, 'schemas', 'cache'), 'dir');
