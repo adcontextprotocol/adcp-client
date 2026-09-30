@@ -7,7 +7,7 @@
 [![API Documentation](https://img.shields.io/badge/API-Documentation-blue.svg)](https://adcontextprotocol.github.io/adcp-client/api/)
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/adcontextprotocol/adcp-client/ci.yml?branch=main)](https://github.com/adcontextprotocol/adcp-client/actions)
 
-Official TypeScript/JavaScript client for the **Ad Context Protocol (AdCP)**. Build distributed advertising operations that work synchronously OR asynchronously with the same code.
+Official TypeScript/JavaScript SDK for the **Ad Context Protocol (AdCP)**. Use its buyer client to call agents, server framework to build them, and conformance tools to test them. The SDK supports MCP and A2A, with both immediate and asynchronous task results.
 
 ## For AI Agents
 
