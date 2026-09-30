@@ -695,6 +695,21 @@ function evaluateStoryboardCapabilityGates(
   return `Capability predicates not satisfied:\n${failures.map(detail => `- ${detail}`).join('\n')}`;
 }
 
+/**
+ * @internal The root capability verdict `runStoryboard()`'s single-agent
+ * pre-flight reaches for `options`, or `null` when the storyboard has no root
+ * predicate, the predicate is satisfied, or no profile is available yet (the
+ * runner then defers the gate until discovery). `comply()` uses this so a
+ * storyboard the agent under test does not claim keeps its `not_applicable`
+ * verdict instead of being handed to `ComplyOptions.routeStoryboard`.
+ */
+export function storyboardCapabilityGateUnmet(storyboard: Storyboard, options: StoryboardRunOptions): string | null {
+  if (storyboardCapabilityPredicates(storyboard).length === 0) return null;
+  const versioned = applyStoryboardVersionOptions(storyboard, applyReusableProfileOptions(options));
+  if (versioned._profile === undefined) return null;
+  return evaluateStoryboardCapabilityGates(storyboard, versioned._profile, versioned.agentTools, versioned.adcpVersion);
+}
+
 function collectPhaseCapabilitySkipDetails(
   storyboard: Storyboard,
   profile: AgentProfile | undefined,
@@ -2644,7 +2659,8 @@ function buildRequiredToolsMissingResult(
  *   `webhook_signing.legacy_hmac_fallback: true`, which is removed in
  *   `effective_version: '4.0'`.
  */
-function collectCapabilityNotices(storyboard: Storyboard, profile: AgentProfile | undefined): RunnerNotice[] {
+/** @internal Exported for comply()'s synthesized requirement_unmet results. */
+export function collectCapabilityNotices(storyboard: Storyboard, profile: AgentProfile | undefined): RunnerNotice[] {
   const notices: RunnerNotice[] = (profile?.capabilities_schema_issues ?? []).map(issue => ({
     severity: 'info',
     code: 'capabilities_response_schema_invalid',

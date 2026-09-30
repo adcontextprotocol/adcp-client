@@ -187,6 +187,55 @@ await comply(agentUrl, {
 });
 ```
 
+**Multi-agent storyboards under `comply()`.** `comply()` grades one agent, so
+storyboards that declare `requires: [multi_agent]` (for example the
+governance-aware seller scenarios) skip with `requirement_unmet` and cap their
+bundle at `partial`. A grader that can supply the other agents can route them
+per storyboard with `routeStoryboard`; every other storyboard keeps the
+ordinary single-URL run:
+
+```ts
+await comply(agentUrl, {
+  auth: { type: 'bearer', token: ownerToken },
+  routeStoryboard: storyboard => {
+    if (!storyboard.requires?.includes('multi_agent')) return undefined; // unchanged run
+    if (!canRoute(storyboard)) return { skip: `${storyboard.id}: no governance agent for this topology` };
+    return {
+      agents: {
+        seller: { url: agentUrl }, // agent under test: inherits the run-level auth
+        governance: { url: governanceUrl, auth: { type: 'bearer', token: governanceToken } },
+      },
+      default_agent: 'seller',
+      context: { seller_agent_url: agentUrl },
+    };
+  },
+});
+```
+
+A routed result lands in `tracks`, `failures`, `storyboards_executed` and
+`bundle_results` like any other run, graded against the agent under test
+only. A failed step, or a discovery failure, on another routed agent becomes a
+`prerequisite_failed` coverage gap (`partial`, never `failing`). A routed
+storyboard in which no step served by the agent under test passed cannot reach
+`passing`. `{ skip }` records the same `requirement_unmet` row an unrouted
+`multi_agent` storyboard gets, with your reason (control characters stripped)
+as `skip.detail`, so the bundle stays `partial`. Storyboards whose root
+capability predicate the agent under test does not satisfy are never passed to
+the hook and stay `not_applicable`. The hook's `profile` argument is the
+agent's own capability answer, so treat it as untrusted.
+
+`comply()` throws on caller misconfiguration. That covers a `default_agent`
+that is not the agent under test, an entry whose `auth` is not a real
+credential object (only the agent-under-test entry may omit it; it then keeps
+the run-level credential, which is dropped from the shared routed options), run-level
+`headers` (they are sent to every routed agent), and a replacement
+`storyboard` that changes phases, steps, validations or gates. A storyboard that
+would send `$test_kit.auth` or `from_test_kit` credentials through a step not
+pinned to the agent under test is recorded as a skip instead of being routed.
+Run-level `transport`, including a `trustedFetchFn` egress guard, applies to
+every routed agent. Version negotiation is done once, against the agent under
+test, and shared by the routed agents.
+
 **OAuth-protected agents.** Storyboard runs reuse tokens saved under an alias. Two supported flows:
 
 ```bash

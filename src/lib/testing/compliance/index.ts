@@ -13,7 +13,14 @@ export {
   formatComplianceResultsJSON,
   rotateStoryboardsForOffset,
 } from './comply';
-export type { ComplyOptions, ComplianceBundleAssessmentOptions } from './comply';
+export type {
+  ComplyOptions,
+  ComplianceBundleAssessmentOptions,
+  ComplyRouteStoryboardContext,
+  ComplyStoryboardRoute,
+  ComplyStoryboardRouting,
+  ComplyStoryboardSkip,
+} from './comply';
 
 export {
   buildComplianceSummary,
