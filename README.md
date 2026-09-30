@@ -7,7 +7,7 @@
 [![API Documentation](https://img.shields.io/badge/API-Documentation-blue.svg)](https://adcontextprotocol.github.io/adcp-client/api/)
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/adcontextprotocol/adcp-client/ci.yml?branch=main)](https://github.com/adcontextprotocol/adcp-client/actions)
 
-Official TypeScript/JavaScript client for the **Ad Context Protocol (AdCP)**. Build distributed advertising operations that work synchronously OR asynchronously with the same code.
+Official TypeScript/JavaScript SDK for the **Ad Context Protocol (AdCP)**. Use its buyer client to call agents, server framework to build them, and conformance tools to test them. The SDK supports MCP and A2A, with both immediate and asynchronous task results.
 
 ## For AI Agents
 
@@ -29,9 +29,12 @@ AdCP operations are **distributed and asynchronous by default**. An agent might:
 ## Installation
 
 ```bash
-npm install @adcp/sdk@adcp-3.0   # 7.x, AdCP 3.0
-npm install @adcp/sdk@adcp-3.1   # 8.x beta, AdCP 3.1
+npm install @adcp/sdk             # 13.x stable, AdCP 3.1
+npm install @adcp/sdk@adcp-3.0    # 7.x compatibility line, AdCP 3.0
+npm install @adcp/sdk@rc          # 14.x release candidate, AdCP 3.2
 ```
+
+Pin `@adcp/sdk@adcp-3.1` to stay on the maintained AdCP 3.1 line after a newer stable version becomes `latest`.
 
 Upgrading from v12 to the canonical-creative SDK surface? See [`docs/migration-12-to-13.md`](./docs/migration-12-to-13.md). Older paths: **[MIGRATION-v8.md](./MIGRATION-v8.md)** and [`docs/migration-8.0-to-8.1.md`](./docs/migration-8.0-to-8.1.md).
 
