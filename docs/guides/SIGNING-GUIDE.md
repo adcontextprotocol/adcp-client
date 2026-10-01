@@ -176,6 +176,8 @@ await signingFetch('https://seller.example.com/mcp', {
 });
 ```
 
+Fetch implementations differ on whether a bare trailing `?` reaches the wire. `createSigningFetch` and `createSigningFetchAsync` reject signed URLs with that empty query marker before sending; use an endpoint URL without it for Fetch-based agent calls.
+
 ### Agent-aware signing (recommended)
 
 For the common single-seller case, `createAgentSignedFetch` bundles capability detection, capability caching, and signing into one call. It only signs when the target seller advertises `signed-requests` support — so the `get_adcp_capabilities` priming call itself is always unsigned, as the spec requires.
@@ -379,6 +381,8 @@ app.post(
 `replayStore` and `revocationStore` default to in-memory implementations — fine for single-process deployments.
 
 `createExpressVerifier()` scopes replay entries and their safety cap by the exact signed `@target-uri`, including the query string. It verifies signatures; it does not decide which URLs are equivalent application routes. If you mount it directly on an MCP endpoint such as `/mcp`, reject query-string variants before the verifier unless your router treats each variant as a distinct supported endpoint. Otherwise a valid signer could create many replay-cache scopes by varying the query. The higher-level `serve()` helper already rejects query variants on its MCP mount. Do not use the replay-cache cap as a global request rate limiter.
+
+Check the raw request target for `?` when enforcing that rule: `/mcp?` has an empty parsed query but remains a distinct signed target.
 
 **For multi-instance verifier deployments, the in-memory default is a real gap.** Each process has its own cache; an attacker who captures a signed request can replay it against a sibling instance whose cache hasn't seen the nonce. The replay-protection invariant is "this `(keyid, scope, nonce)` tuple has not been seen before" — that has to hold across the fleet, not per-process. RFC 9421 expiry bounds the window to 5 minutes, but that's plenty of time for an in-flight replay. Use a shared backend.
 

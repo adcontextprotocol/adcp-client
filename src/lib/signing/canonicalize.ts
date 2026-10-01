@@ -68,7 +68,8 @@ export function canonicalTargetUri(rawUrl: string, profile: RequestCanonicalizat
   }
   // URL.search is empty for both a missing query and a trailing empty query.
   // Keep the latter's delimiter, which is significant to the signed target URI.
-  const emptyQueryMarker = u.search === '' && (rawUrl.split('#', 1)[0] ?? rawUrl).endsWith('?') ? '?' : '';
+  const fragmentlessHref = u.href.split('#', 1)[0] ?? u.href;
+  const emptyQueryMarker = u.search === '' && fragmentlessHref.endsWith('?') ? '?' : '';
   return uppercasePercentEncoding(decodeUnreservedPercentEncoding(`${assembled}${u.search}${emptyQueryMarker}`));
 }
 

@@ -159,7 +159,39 @@ describe('RFC 9421 e2e: signing-fetch → http server → createExpressVerifier'
     assert.strictEqual(json.verified_signer.keyid, 'test-ed25519-2026');
   });
 
-  test('signing fetch rejects an empty query marker that native fetch drops on the wire', async () => {
+  test('a raw HTTP target with an empty query marker verifies against the signed target URI', async () => {
+    const url = `http://127.0.0.1:${instance.port}/adcp/create_media_buy?`;
+    const body = '{}';
+    const signed = signRequest(
+      { method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body },
+      { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: privateJwk }
+    );
+    const result = await new Promise((resolve, reject) => {
+      const request = http.request(
+        {
+          hostname: '127.0.0.1',
+          port: instance.port,
+          path: '/adcp/create_media_buy?',
+          method: 'POST',
+          headers: signed.headers,
+        },
+        response => {
+          const chunks = [];
+          response.on('data', chunk => chunks.push(chunk));
+          response.on('end', () =>
+            resolve({ status: response.statusCode, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) })
+          );
+          response.on('error', reject);
+        }
+      );
+      request.on('error', reject);
+      request.end(body);
+    });
+    assert.strictEqual(result.status, 200);
+    assert.strictEqual(result.body.ok, true);
+  });
+
+  test('signing fetch rejects an empty query marker before dispatch', async () => {
     let received = 0;
     const server = http.createServer((req, res) => {
       received += 1;
@@ -168,20 +200,20 @@ describe('RFC 9421 e2e: signing-fetch → http server → createExpressVerifier'
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     try {
       const url = `http://127.0.0.1:${server.address().port}/p?`;
-      assert.strictEqual(await (await fetch(url)).text(), '/p');
-
       const signingFetch = createSigningFetch((input, init) => fetch(input, init), {
         keyid: 'test-ed25519-2026',
         alg: 'ed25519',
         privateKey: privateJwk,
       });
-      await assert.rejects(
-        () => signingFetch(url, { method: 'POST', body: '{}' }),
-        error =>
-          error instanceof TypeError &&
-          /cannot safely sign a URL with a trailing empty query marker/.test(error.message)
-      );
-      assert.strictEqual(received, 1, 'the signed request must not reach the wire');
+      for (const target of [url, `${url} \t`]) {
+        await assert.rejects(
+          () => signingFetch(target, { method: 'POST', body: '{}' }),
+          error =>
+            error instanceof TypeError &&
+            /cannot safely sign a URL with a trailing empty query marker/.test(error.message)
+        );
+      }
+      assert.strictEqual(received, 0, 'the signed request must not reach the wire');
     } finally {
       server.closeAllConnections();
       server.close();

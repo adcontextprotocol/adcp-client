@@ -180,6 +180,10 @@ export interface RequestContextFromLambdaOptions {
  * event. Reads `requestContext.domainName` for the authority, `rawPath` +
  * `rawQueryString` for the target (v2 / ALB), falling back to `path` +
  * `queryStringParameters` reconstruction (v1).
+ * API Gateway event fields may not distinguish a bare trailing `?` from no
+ * query. Do not serve signed URLs with an empty query delimiter through this
+ * adapter. If the ingress supplies the exact raw target, build the request
+ * context from that trusted value instead.
  *
  * Always emits `https://` — Lambda is not addressable over plain HTTP
  * through API Gateway / ALB in any documented configuration.

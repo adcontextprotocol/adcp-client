@@ -88,13 +88,12 @@ export function createSigningFetch(upstream: FetchLike, key: SignerKey, options:
 
 /** Fetch transports can omit a terminal empty query marker from the wire target. */
 export function assertFetchTargetCanBeSigned(url: string, apiName: string): void {
-  const fragmentless = url.split('#', 1)[0] ?? url;
-  const queryIndex = fragmentless.indexOf('?');
-  if (queryIndex >= 0 && queryIndex === fragmentless.length - 1) {
-    const directSigner = apiName === 'createSigningFetchAsync' ? 'signRequestAsync' : 'signRequest';
+  const parsed = new URL(url);
+  const fragmentlessHref = parsed.href.split('#', 1)[0] ?? parsed.href;
+  if (parsed.search === '' && fragmentlessHref.endsWith('?')) {
     throw new TypeError(
       `${apiName} cannot safely sign a URL with a trailing empty query marker ("?"): Fetch can omit it from the wire target. ` +
-        `Use a URL without the empty delimiter, or sign with ${directSigner} and a transport that preserves the exact target.`
+        'Use a URL without the empty delimiter.'
     );
   }
 }
