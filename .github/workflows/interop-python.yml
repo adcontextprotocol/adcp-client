@@ -100,8 +100,8 @@ jobs:
         include:
           - language: python
             repository: adcontextprotocol/adcp-client-python
-            # v8.0.0-beta.18 speaks AdCP rc.7; keep this general seller storyboard advisory until its failures are resolved.
-            ref: ${{ inputs.python_ref || '4d066171cdda2a802a71d4776c1c51132d5baff7' }}
+            # adcp-client-python#1270 adopts AdCP 3.2.1 GA and speaks wire version 3.2.
+            ref: ${{ inputs.python_ref || '0c1cc94405f3aa32aa4deb063c245c01ccc7b87a' }}
             harness: scripts/ci/run_storyboard_reference_seller.sh
             port: 3001
             advisory: true
@@ -194,7 +194,7 @@ jobs:
           set -e
 
           if [[ "$status" -ne 0 && "${{ matrix.advisory }}" == "true" ]]; then
-            echo "::warning::${{ matrix.language }} reference seller storyboard failed, but this lane is advisory for the current SDK prerelease."
+            echo "::warning::${{ matrix.language }} reference seller storyboard failed; this lane is advisory."
             exit 0
           fi
 
