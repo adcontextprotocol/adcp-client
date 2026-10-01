@@ -159,6 +159,35 @@ describe('RFC 9421 e2e: signing-fetch → http server → createExpressVerifier'
     assert.strictEqual(json.verified_signer.keyid, 'test-ed25519-2026');
   });
 
+  test('signing fetch rejects an empty query marker that native fetch drops on the wire', async () => {
+    let received = 0;
+    const server = http.createServer((req, res) => {
+      received += 1;
+      res.end(req.url);
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const url = `http://127.0.0.1:${server.address().port}/p?`;
+      assert.strictEqual(await (await fetch(url)).text(), '/p');
+
+      const signingFetch = createSigningFetch((input, init) => fetch(input, init), {
+        keyid: 'test-ed25519-2026',
+        alg: 'ed25519',
+        privateKey: privateJwk,
+      });
+      await assert.rejects(
+        () => signingFetch(url, { method: 'POST', body: '{}' }),
+        error =>
+          error instanceof TypeError &&
+          /cannot safely sign a URL with a trailing empty query marker/.test(error.message)
+      );
+      assert.strictEqual(received, 1, 'the signed request must not reach the wire');
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
   test('unsigned POST to required_for op rejects with request_signature_required', async () => {
     const url = `http://127.0.0.1:${instance.port}/adcp/create_media_buy`;
     const res = await fetch(url, {
