@@ -41,6 +41,15 @@ describe('AdCP 3.2 request-target canonicalization', () => {
       assert.strictEqual(canonicalAuthority(vector.input_url, '3.2'), vector.expected_authority);
     });
   }
+
+  test('default profile preserves the published trailing-empty-query vector', () => {
+    const vector = vectors.cases.find(entry => entry.name === 'trailing-empty-query-preserved');
+    assert.ok(vector);
+    assert.strictEqual(canonicalTargetUri(vector.input_url), vector.expected_target_uri);
+    assert.strictEqual(canonicalTargetUri(`${vector.input_url}#fragment`), vector.expected_target_uri);
+    assert.strictEqual(canonicalTargetUri('https://seller.example.com/p#?'), 'https://seller.example.com/p');
+    assert.notStrictEqual(canonicalTargetUri(vector.input_url), canonicalTargetUri('https://seller.example.com/p'));
+  });
 });
 
 function parseSigInput(headerValue) {
