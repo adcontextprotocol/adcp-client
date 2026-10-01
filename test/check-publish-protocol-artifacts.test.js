@@ -8,8 +8,8 @@ const modulePromise = import(
   pathToFileURL(path.resolve(__dirname, '..', 'scripts', 'check-publish-protocol-artifacts.mjs')).href
 );
 
-const currentProtocolVersion = '3.2.0-rc.7';
-const compatibleVersions = ['v2.5', 'v3', '3.0.25', '3.1.24', currentProtocolVersion, '3.2-rc.7'];
+const currentProtocolVersion = '3.2.1';
+const compatibleVersions = ['v2.5', 'v3', '3.0.25', '3.1.24', currentProtocolVersion, '3.2'];
 
 function fixture(overrides = {}) {
   return {
@@ -18,7 +18,7 @@ function fixture(overrides = {}) {
         { path: 'dist/lib/schemas-data/v2.5/bundled.schemas.br' },
         { path: 'dist/lib/schemas-data/3.0/bundled.schemas.br' },
         { path: 'dist/lib/schemas-data/3.1/bundled.schemas.br' },
-        { path: `dist/lib/schemas-data/${currentProtocolVersion}/bundled.schemas.br` },
+        { path: 'dist/lib/schemas-data/3.2/bundled.schemas.br' },
         { path: 'compliance/cache/3.0.25/index.json' },
         { path: 'compliance/cache/3.1.24/index.json' },
         { path: `compliance/cache/${currentProtocolVersion}/index.json` },
@@ -32,7 +32,7 @@ function fixture(overrides = {}) {
   };
 }
 
-test('allows the current RC, stable compatibility bundles, and historical beta release notes', async () => {
+test('allows the current release, stable compatibility bundles, and historical beta release notes', async () => {
   const { assertPublishProtocolArtifacts } = await modulePromise;
   assert.doesNotThrow(() => assertPublishProtocolArtifacts(fixture()));
 });

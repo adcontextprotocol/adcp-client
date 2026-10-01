@@ -2,6 +2,10 @@
 
 ## Applicability on current main
 
+> Historical record: "current" below means the tree at the time of this
+> review (SDK `14.0.0-rc.38`, AdCP `3.2.0-rc.3`). The SDK now pins AdCP
+> `3.2.1`; see `src/lib/version.ts`.
+
 The rebased candidate starts from `cccb3ea83cb07dc24584e07aa2626b55761564bf`,
 following #2939. The original PR head was
 `76b044514c9b03ce7905732bd0021fcc27746940`, based on

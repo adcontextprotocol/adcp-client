@@ -6,22 +6,22 @@ Your checklist to get from "agent boots" to "agent ships." Every tool below is a
 
 ```bash
 # 1. Does it answer at all? (60s)
-npx @adcp/sdk@adcp-3.1 http://localhost:3001/mcp get_adcp_capabilities '{}'              # MCP
-npx @adcp/sdk@adcp-3.1 --protocol a2a http://localhost:3001 get_adcp_capabilities '{}'   # A2A (preview)
+npx @adcp/sdk@adcp-3.2 http://localhost:3001/mcp get_adcp_capabilities '{}'              # MCP
+npx @adcp/sdk@adcp-3.2 --protocol a2a http://localhost:3001 get_adcp_capabilities '{}'   # A2A (preview)
 
 # 2. Does it walk the golden path? (2–5 min)
-npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp --auth $TOKEN            # MCP
-npx @adcp/sdk@adcp-3.1 storyboard run --protocol a2a http://localhost:3001 --auth $TOKEN # A2A (preview)
+npx @adcp/sdk@adcp-3.2 storyboard run http://localhost:3001/mcp --auth $TOKEN            # MCP
+npx @adcp/sdk@adcp-3.2 storyboard run --protocol a2a http://localhost:3001 --auth $TOKEN # A2A (preview)
 
 # 3. Does it crash on weird inputs? (1–3 min)
-npx @adcp/sdk@adcp-3.1 fuzz http://localhost:3001/mcp --auth-token $TOKEN
+npx @adcp/sdk@adcp-3.2 fuzz http://localhost:3001/mcp --auth-token $TOKEN
 
 # 4. Does webhook/async conformance pass? (2–5 min)
-npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp \
+npx @adcp/sdk@adcp-3.2 storyboard run http://localhost:3001/mcp \
   --webhook-receiver --auth $TOKEN
 
 # 5. Does it survive horizontal scaling? (same as 2, two URLs)
-npx @adcp/sdk@adcp-3.1 storyboard run \
+npx @adcp/sdk@adcp-3.2 storyboard run \
   --url https://a.agent.example/mcp --url https://b.agent.example/mcp \
   sales-guaranteed --auth $TOKEN
 ```
@@ -32,7 +32,7 @@ If all five pass and your skill's specialism-specific checks below pass, you're 
 
 **Working on the agent locally?** Before you reach for the remote-agent commands above, see [`VALIDATE-LOCALLY.md`](./VALIDATE-LOCALLY.md) — the same storyboards, zero tunnel setup, ten lines of code. Point `--local-agent <module>` at your handlers or call `runAgainstLocalAgent` directly from a test file.
 
-**Why `@adcp-3.1` in every `npx` command?** The tag pins the runner to the AdCP 3.1 compatibility line while it is prerelease. `@latest` may point at a different protocol line and will not reliably exercise the 3.1 validation surface. The explicit tag also avoids stale `npx` cache reuse from `~/.npm/_npx/`. If an old cache is causing confusing behavior, `rm -rf ~/.npm/_npx` clears all cached CLI versions.
+**Why `@adcp-3.2` in every `npx` command?** The tag pins the runner to the AdCP 3.2 line (SDK 14). `@latest` moves to the next protocol line when one ships, so a CI job that uses it can start grading against a different contract without a change on your side. Agents still on AdCP 3.1 should substitute `@adcp/sdk@adcp-3.1` (SDK 13, the maintained 3.1 line) in every command. The explicit tag also avoids stale `npx` cache reuse from `~/.npm/_npx/`. If an old cache is causing confusing behavior, `rm -rf ~/.npm/_npx` clears all cached CLI versions.
 
 ---
 
@@ -60,22 +60,22 @@ The main compliance entry point. Runs every storyboard that applies to your agen
 
 ```bash
 # Full capability-driven run — resolves bundles from your capabilities
-npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp --auth $TOKEN
+npx @adcp/sdk@adcp-3.2 storyboard run http://localhost:3001/mcp --auth $TOKEN
 
 # Single bundle or storyboard by id
-npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp sales-guaranteed --auth $TOKEN
+npx @adcp/sdk@adcp-3.2 storyboard run http://localhost:3001/mcp sales-guaranteed --auth $TOKEN
 
 # Specific tracks only (faster feedback when iterating)
-npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp --tracks core,products --auth $TOKEN
+npx @adcp/sdk@adcp-3.2 storyboard run http://localhost:3001/mcp --tracks core,products --auth $TOKEN
 
 # Pin a specific compliance cache/spec line
-npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp --compliance-version 3.0.12 --auth $TOKEN
+npx @adcp/sdk@adcp-3.2 storyboard run http://localhost:3001/mcp --compliance-version 3.1.24 --auth $TOKEN
 
 # Ad-hoc YAML (new storyboards under development)
-npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp --file ./my-wip.yaml --auth $TOKEN
+npx @adcp/sdk@adcp-3.2 storyboard run http://localhost:3001/mcp --file ./my-wip.yaml --auth $TOKEN
 
 # JSON report for CI / tooling
-npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp --json > report.json
+npx @adcp/sdk@adcp-3.2 storyboard run http://localhost:3001/mcp --json > report.json
 ```
 
 For a publisher split across sales, signals, governance, or creative tenants,
@@ -240,12 +240,12 @@ test, and shared by the routed agents.
 
 ```bash
 # (a) pre-save tokens
-npx @adcp/sdk@adcp-3.1 --save-auth my-agent https://agent.example.com/mcp --oauth
-npx @adcp/sdk@adcp-3.1 storyboard run my-agent
+npx @adcp/sdk@adcp-3.2 --save-auth my-agent https://agent.example.com/mcp --oauth
+npx @adcp/sdk@adcp-3.2 storyboard run my-agent
 
 # (b) inline on first run
-npx @adcp/sdk@adcp-3.1 --save-auth my-agent https://agent.example.com/mcp --no-auth
-npx @adcp/sdk@adcp-3.1 storyboard run my-agent --oauth
+npx @adcp/sdk@adcp-3.2 --save-auth my-agent https://agent.example.com/mcp --no-auth
+npx @adcp/sdk@adcp-3.2 storyboard run my-agent --oauth
 ```
 
 Either way, subsequent runs reuse the cached tokens (auto-refresh on expiry via the stored `refresh_token`). Raw URLs don't support `--oauth` — save an alias first.
@@ -260,27 +260,27 @@ Generates schema-valid requests, calls your agent, checks every response under t
 
 ```bash
 # Tier 1 + Tier 2 stateless + referential (safe, no mutation)
-npx @adcp/sdk@adcp-3.1 fuzz http://localhost:3001/mcp --auth-token $TOKEN
+npx @adcp/sdk@adcp-3.2 fuzz http://localhost:3001/mcp --auth-token $TOKEN
 
 # Reproducible (rerun with same seed to repro a failure)
-npx @adcp/sdk@adcp-3.1 fuzz http://localhost:3001/mcp --seed 42 --auth-token $TOKEN
+npx @adcp/sdk@adcp-3.2 fuzz http://localhost:3001/mcp --seed 42 --auth-token $TOKEN
 
 # Pre-seeded ID pools for referential tools (Tier 2)
-npx @adcp/sdk@adcp-3.1 fuzz http://localhost:3001/mcp \
+npx @adcp/sdk@adcp-3.2 fuzz http://localhost:3001/mcp \
   --fixture creative_ids=cre_a,cre_b \
   --fixture media_buy_ids=mb_1
 
 # Auto-seed + Tier 3 update-tool fuzzing (mutates agent state — SANDBOX ONLY)
-npx @adcp/sdk@adcp-3.1 fuzz http://localhost:3001/mcp --auto-seed --auth-token $TOKEN
+npx @adcp/sdk@adcp-3.2 fuzz http://localhost:3001/mcp --auto-seed --auth-token $TOKEN
 
 # Uniform-error-response invariant in full cross-tenant mode
-npx @adcp/sdk@adcp-3.1 fuzz http://localhost:3001/mcp \
+npx @adcp/sdk@adcp-3.2 fuzz http://localhost:3001/mcp \
   --auto-seed \
   --auth-token            $TENANT_A_TOKEN \
   --auth-token-cross-tenant $TENANT_B_TOKEN
 
 # Inspect the tool list + tier classification
-npx @adcp/sdk@adcp-3.1 fuzz --list-tools
+npx @adcp/sdk@adcp-3.2 fuzz --list-tools
 ```
 
 See [`docs/guides/CONFORMANCE.md`](./CONFORMANCE.md) for the fixture map, tier-by-tier tool list, and failure interpretation.
@@ -327,24 +327,24 @@ If you claim the `signed-requests` specialism, run the RFC 9421 grader. The grad
 
 ```bash
 # All 38 vectors
-npx @adcp/sdk@adcp-3.1 grade request-signing https://sandbox.agent.example/mcp
+npx @adcp/sdk@adcp-3.2 grade request-signing https://sandbox.agent.example/mcp
 
 # Skip rate-abuse (vector 020 fires cap+1 requests; skip in dev loops)
-npx @adcp/sdk@adcp-3.1 grade request-signing https://sandbox.agent.example/mcp --skip-rate-abuse
+npx @adcp/sdk@adcp-3.2 grade request-signing https://sandbox.agent.example/mcp --skip-rate-abuse
 
 # MCP transport (wraps vectors in JSON-RPC envelopes)
-npx @adcp/sdk@adcp-3.1 grade request-signing https://sandbox.agent.example/mcp --transport mcp
+npx @adcp/sdk@adcp-3.2 grade request-signing https://sandbox.agent.example/mcp --transport mcp
 
 # Isolate a single vector
-npx @adcp/sdk@adcp-3.1 grade request-signing https://sandbox.agent.example/mcp --only 016-replayed-nonce
+npx @adcp/sdk@adcp-3.2 grade request-signing https://sandbox.agent.example/mcp --only 016-replayed-nonce
 
 # Grade the authored AdCP 3.2 signing profile
-npx @adcp/sdk@rc grade request-signing https://sandbox.agent.example/mcp --signing-profile 3.2
+npx @adcp/sdk@adcp-3.2 grade request-signing https://sandbox.agent.example/mcp --signing-profile 3.2
 ```
 
 `--signing-profile 3.2` selects only the 3.2 profile vectors. The current
-3.2.0-rc.7 compliance cache includes one positive and two negative profile
-vectors; more are pending in the upstream corpus. Library callers can select
+3.2.1 compliance cache includes 11 positive and 19 negative profile
+vectors. Library callers can select
 the same set with `gradeRequestSigning(agentUrl, { signingProfileVersion: '3.2' })`.
 
 #### Same vectors inside `storyboard run`
@@ -353,17 +353,17 @@ The `signed_requests` storyboard synthesizes one step per vector and grades them
 
 ```bash
 # Per-operation HTTP endpoints instead of a single MCP mount
-npx @adcp/sdk@adcp-3.1 storyboard run https://sandbox.agent.example/adcp signed_requests \
+npx @adcp/sdk@adcp-3.2 storyboard run https://sandbox.agent.example/adcp signed_requests \
   --signing-transport raw --auth $TOKEN
 
 # Drop a vector your deployment can't satisfy, and the cap+1 flood
-npx @adcp/sdk@adcp-3.1 storyboard run https://sandbox.agent.example/mcp signed_requests \
+npx @adcp/sdk@adcp-3.2 storyboard run https://sandbox.agent.example/mcp signed_requests \
   --signing-skip-vectors 025-jwk-alg-crv-mismatch --signing-skip-rate-abuse --auth $TOKEN
 ```
 
 - **`--signing-transport` is not `--transport`.** `--transport`/`--protocol` selects how the storyboard talks to your agent; `--signing-transport` selects how the conformance vectors are framed. Mirrors `adcp grade request-signing --transport`.
 - **Leave it unset by default.** The vector transport is inferred from the resolved protocol: MCP frames each vector as a `tools/call` envelope; A2A signs the exact request emitted by the official `@a2a-js/sdk` client after Agent Card discovery.
-- **The 3.2 signing profile follows the storyboard version.** Select a 3.2 compliance cache with `--compliance-version 3.2.0-rc.7`; the `signed_requests` storyboard then selects its authored 3.2 profile vectors automatically. The `request_signing` options on `comply()` control transport and filtering; profile selection follows the resolved storyboard `adcp_version`.
+- **The 3.2 signing profile follows the storyboard version.** Select a 3.2 compliance cache with `--compliance-version 3.2.1`; the `signed_requests` storyboard then selects its authored 3.2 profile vectors automatically. The `request_signing` options on `comply()` control transport and filtering; profile selection follows the resolved storyboard `adcp_version`.
 - **A2A discovery fails closed.** If the Agent Card cannot resolve to a supported JSON-RPC interface, networked vectors skip with detailed reason `signing_transport_unavailable`; the storyboard cannot pass, the `security_transport` track stays `partial`, and the command exits 3. Publish a resolvable modern or legacy Agent Card, or grade an MCP/REST binding. Do not use `--soft-fail` to dismiss actual A2A verifier failures: once discovery succeeds, they are real grades.
 - **The in-library vector remains transport-independent.** `025-jwk-alg-crv-mismatch` is decided against the SDK verifier with no wire exchange, so its result does not grade your agent.
 - **Vectors excluded on their own terms say so, on every protocol.** `026-non-ascii-host` reports `transport_ungradable` (no HTTP client can carry a non-ASCII authority — `fetch` punycodes it first). `028-unsigned-protocol-method-required` reports `capability_profile_mismatch` unless your `get_adcp_capabilities` declares `request_signing.protocol_methods_required_for` — **this applies on MCP runs too, not just A2A**: previously the storyboard dispatched 028 at every agent, so one that never claimed the JSON-RPC bucket could fail it. Declare the bucket (e.g. `['tasks/cancel']`) if you verify signatures on protocol methods; a declaration your AdCP line's schema rejects is discarded rather than treated as "not declared", so it cannot suppress the vector. Note `adcp grade request-signing` does not read your advertisement — it uses the profile you pass it — so the two commands can disagree about 028 by design.
@@ -372,14 +372,14 @@ npx @adcp/sdk@adcp-3.1 storyboard run https://sandbox.agent.example/mcp signed_r
 - **Mistyped flag values are rejected.** `--signing-skip-vectors` validates every id against the shipped vector set (a typo silently skipped nothing before), and `--signing-skip-rate-abuse` refuses a value — `=false` used to read as "on".
 - **Vector `025-jwk-alg-crv-mismatch` is graded in-library.** It publishes a malformed JWK your agent never serves, so there is no HTTP exchange: the step asserts the grader's verdict (`probe_passed`), not a 401.
 
-> **Published 3.0 line.** These fixes ship on the 3.1+/prerelease line. The `adcp-3.0` dist-tag (`@adcp/sdk@7.11.x`) still defaults the vector transport to `raw` and has no `--signing-*` flags; an MCP-only agent must grade `signed_requests` from the 3.1 CLI (or drive `runStoryboard` with `request_signing: { transport: 'mcp' }`) until that line takes a backport.
+> **Published 3.0 line.** These fixes ship on the 3.1 and 3.2 lines. The `adcp-3.0` dist-tag (`@adcp/sdk@7.11.x`) still defaults the vector transport to `raw` and has no `--signing-*` flags; an MCP-only agent must grade `signed_requests` from the 3.1 or 3.2 CLI (or drive `runStoryboard` with `request_signing: { transport: 'mcp' }`) until that line takes a backport.
 
 ### Multi-instance testing
 
 Exposes `(brand, account)`-scoped state that lives per-process instead of in a shared store — a class of bug that single-URL runs never catch. See [`docs/guides/MULTI-INSTANCE-TESTING.md`](./MULTI-INSTANCE-TESTING.md).
 
 ```bash
-npx @adcp/sdk@adcp-3.1 storyboard run \
+npx @adcp/sdk@adcp-3.2 storyboard run \
   --url https://a.agent.example/mcp \
   --url https://b.agent.example/mcp \
   sales-guaranteed --auth $TOKEN
@@ -604,7 +604,7 @@ Use `--invariants` to load modules that assert properties across storyboard step
 
 ```bash
 # Load ./my-invariants.js (relative path) or a bare specifier (npm package)
-npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp \
+npx @adcp/sdk@adcp-3.2 storyboard run http://localhost:3001/mcp \
   --invariants ./assertions/idempotency.js,@my-org/adcp-invariants
 ```
 
@@ -762,18 +762,18 @@ Hints also land in machine-readable output:
 
 ```yaml
 - name: Storyboard (core + products)
-  run: npx @adcp/sdk@adcp-3.1 storyboard run $AGENT_URL --tracks core,products --auth $TOKEN
+  run: npx @adcp/sdk@adcp-3.2 storyboard run $AGENT_URL --tracks core,products --auth $TOKEN
 - name: Fuzz (fixed seed)
-  run: npx @adcp/sdk@adcp-3.1 fuzz $AGENT_URL --seed 42 --auth-token $TOKEN --format json
+  run: npx @adcp/sdk@adcp-3.2 fuzz $AGENT_URL --seed 42 --auth-token $TOKEN --format json
 ```
 
 ### Nightly (slow, broader coverage)
 
 ```yaml
 - name: Fuzz (random seed, auto-seed)
-  run: npx @adcp/sdk@adcp-3.1 fuzz $AGENT_URL --auto-seed --auth-token $TOKEN
+  run: npx @adcp/sdk@adcp-3.2 fuzz $AGENT_URL --auto-seed --auth-token $TOKEN
 - name: Full storyboard assessment
-  run: npx @adcp/sdk@adcp-3.1 storyboard run $AGENT_URL --auth $TOKEN --json > report.json
+  run: npx @adcp/sdk@adcp-3.2 storyboard run $AGENT_URL --auth $TOKEN --json > report.json
 ```
 
 Random seed on nightly broadens the surface; fixed seed on per-PR keeps reproducibility.

@@ -5,7 +5,7 @@ import type { ReportingConsumerStatus, SyncReportingStatusRequest, SyncReporting
 import { canonicalJsonSha256PreservingLoneSurrogates } from '../../utils/jcs';
 import { DEFAULT_UNKNOWN_ERROR_RECOVERY, getErrorRecovery, type ErrorRecovery } from '../../types/error-codes';
 import { validateSyncReportingStatusEnvelope } from '../../validation/sync-reporting-status-envelope';
-import { ADCP_MAJOR_VERSION, ADCP_VERSION } from '../../version';
+import { ADCP_MAJOR_VERSION, ADCP_VERSION, toReleasePrecisionVersion } from '../../version';
 import { isWellFormedUnicodeString } from '../../utils/well-formed-unicode';
 import {
   reportingLedgerConfigurationMatchesScope,
@@ -877,5 +877,5 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function wireAdcpVersion(): string {
-  return ADCP_VERSION.replace(/^(\d+\.\d+)\.0-/, '$1-');
+  return toReleasePrecisionVersion(ADCP_VERSION);
 }

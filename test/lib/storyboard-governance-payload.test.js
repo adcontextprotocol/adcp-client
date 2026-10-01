@@ -13,7 +13,7 @@ const { SingleAgentClient, ProtocolClient } = require('../../dist/lib/index.js')
 
 const options = {
   protocol: 'mcp',
-  adcpVersion: '3.2.0-rc.7',
+  adcpVersion: '3.2.1',
   versionEnvelope: 'auto',
   brand: { domain: 'advertiser.example' },
 };
@@ -41,7 +41,7 @@ test('check_governance approves the same version envelope sent to the governed t
   const request = buildStepRequest(step, step, {}, { ...options, brand: undefined });
   assert.deepEqual(request.payload, {
     adcp_major_version: 3,
-    adcp_version: '3.2-rc.7',
+    adcp_version: '3.2',
     ...payload,
   });
   const governedStep = {
@@ -150,7 +150,7 @@ test('a consultation re-check with prior governance context still envelopes its 
     },
   };
   const request = buildStepRequest(step, step, {}, { ...options, brand: undefined });
-  assert.equal(request.payload.adcp_version, '3.2-rc.7');
+  assert.equal(request.payload.adcp_version, '3.2');
   assert.equal(request.payload.adcp_major_version, 3);
 });
 

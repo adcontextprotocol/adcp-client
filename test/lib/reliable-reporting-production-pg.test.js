@@ -214,7 +214,7 @@ describe(
       const server = createAdcpServerFromPlatform(platform, {
         name: 'reporting-production-activity-test',
         version: '1.0.0',
-        adcpVersion: '3.2.0-rc.7',
+        adcpVersion: '3.2.1',
         validation: { requests: 'strict', responses: 'strict' },
       });
       const result = await server.dispatchTestRequest(

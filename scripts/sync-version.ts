@@ -164,6 +164,8 @@ const MAX_PATCH_ENUMERATION = 500;
  */
 const LAST_3_0_GA_PATCH = 25;
 const LAST_3_1_GA_PATCH = 24;
+/** First published AdCP 3.2 GA patch; 3.2.0 was withdrawn before GA. */
+const FIRST_3_2_GA_PATCH = 1;
 
 function withVersionAliases(versions: readonly string[]): string[] {
   const out: string[] = [];
@@ -232,6 +234,36 @@ function buildCompatibleVersions(adcpVersion: string): string[] {
         `Extend buildCompatibleVersions in scripts/sync-version.ts to define compat semantics.`
     );
     process.exit(1);
+  }
+
+  // 3.2 GA line. AdCP 3.2.0 was withdrawn before GA (its June 2026 preview
+  // artifacts remain on the CDN but are not the 3.2 contract), so the stable
+  // enumeration starts at FIRST_3_2_GA_PATCH and never advertises `3.2.0`.
+  // Peers negotiate the release-precision `3.2` alias on the wire. Keep
+  // every supported 3.0/3.1 GA patch for pinned peers.
+  if (major === 3 && minor === 2) {
+    if (patch < FIRST_3_2_GA_PATCH) {
+      console.error(
+        `❌ ADCP_VERSION ${JSON.stringify(adcpVersion)} is the withdrawn AdCP 3.2.0 release. ` +
+          `Pin 3.2.${FIRST_3_2_GA_PATCH} or later.`
+      );
+      process.exit(1);
+    }
+    if (patch > MAX_PATCH_ENUMERATION) {
+      console.error(
+        `❌ ADCP_VERSION ${JSON.stringify(adcpVersion)} exceeds MAX_PATCH_ENUMERATION ` +
+          `(${MAX_PATCH_ENUMERATION}). If the spec has genuinely produced this many patches, ` +
+          `raise the constant in scripts/sync-version.ts deliberately.`
+      );
+      process.exit(1);
+    }
+    const range3_0_x: string[] = [];
+    for (let p = 0; p <= LAST_3_0_GA_PATCH; p++) range3_0_x.push(`3.0.${p}`);
+    const range3_1_x: string[] = [];
+    for (let p = 0; p <= LAST_3_1_GA_PATCH; p++) range3_1_x.push(`3.1.${p}`);
+    const range3_2_x: string[] = [];
+    for (let p = FIRST_3_2_GA_PATCH; p <= patch; p++) range3_2_x.push(`3.2.${p}`);
+    return withVersionAliases([...PRE_3_1_COMPATIBLE_PREFIX, ...range3_0_x, ...range3_1_x, ...range3_2_x]);
   }
 
   if (major === 3 && minor === 1) {

@@ -27,8 +27,8 @@ describe('request-signing vector loader', () => {
   test('loads root vectors and exposes version profiles without changing the 3.1-compatible grader set', () => {
     assert.strictEqual(loaded.positive.length, 12, 'positive count');
     assert.strictEqual(loaded.negative.length, 28, 'negative count');
-    assert.strictEqual(loaded.profiles['3.2'].positive.length, 1, '3.2 positive profile count');
-    assert.strictEqual(loaded.profiles['3.2'].negative.length, 2, '3.2 negative profile count');
+    assert.strictEqual(loaded.profiles['3.2'].positive.length, 11, '3.2 positive profile count');
+    assert.strictEqual(loaded.profiles['3.2'].negative.length, 19, '3.2 negative profile count');
   });
 
   test('every vector carries request, verifier_capability, and a jwks selector', () => {
@@ -112,7 +112,7 @@ describe('3.2 profile grading', () => {
   test('3.2 storyboard synthesis includes profile vector steps', () => {
     const storyboard = {
       id: 'signed_requests',
-      adcp_version: '3.2.0-rc.7',
+      adcp_version: '3.2.1',
       phases: [
         { id: 'positive_vectors', steps: [] },
         { id: 'negative_vectors', steps: [] },

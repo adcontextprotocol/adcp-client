@@ -287,7 +287,7 @@ test('resolveAccount syncs an implicit natural key before returning it', async (
 test('resolveAccount preserves every buyer-selected natural-key field', async () => {
   const { client } = clientWithCapabilities(
     capabilities({
-      versions: ['3.2.0-rc.7'],
+      versions: ['3.2.1'],
       account: {
         require_operator_auth: false,
         supported_billing: ['operator'],
