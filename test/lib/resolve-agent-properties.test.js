@@ -63,6 +63,13 @@ describe('canonicalizeAgentUrl', () => {
     assert.strictEqual(canonicalizeAgentUrl('https://example.com/mcp#foo'), 'https://example.com/mcp');
   });
 
+  test('preserves a trailing empty query marker as a distinct agent URL', () => {
+    assert.strictEqual(canonicalizeAgentUrl('https://example.com/mcp?'), 'https://example.com/mcp?');
+    assert.strictEqual(canonicalizeAgentUrl('https://example.com/mcp?#frag'), 'https://example.com/mcp?');
+    assert.strictEqual(canonicalizeAgentUrl('https://example.com/mcp? \t'), 'https://example.com/mcp?');
+    assert.strictEqual(canonicalizeAgentUrl('https://example.com/mcp#?'), 'https://example.com/mcp');
+  });
+
   test('preserves trailing slash in the public canonical URL', () => {
     assert.strictEqual(canonicalizeAgentUrl('https://example.com/mcp/'), 'https://example.com/mcp/');
     assert.strictEqual(canonicalizeAgentUrl('https://example.com/'), 'https://example.com/');
@@ -123,6 +130,16 @@ describe('resolveAgentProperties — authorization_type: property_ids', () => {
     const file = {
       ...adAgents,
       authorized_agents: [{ ...adAgents.authorized_agents[0], url: 'https://agent-news.example/mcp/' }],
+    };
+    const scope = resolveAgentProperties(file, 'https://agent-news.example/mcp');
+    assert.strictEqual(scope.properties.length, 0);
+    assert.strictEqual(scope.unresolvable, 'agent_not_listed');
+  });
+
+  test('canonical-URL match: empty query marker does not match a URL without it', () => {
+    const file = {
+      ...adAgents,
+      authorized_agents: [{ ...adAgents.authorized_agents[0], url: 'https://agent-news.example/mcp?' }],
     };
     const scope = resolveAgentProperties(file, 'https://agent-news.example/mcp');
     assert.strictEqual(scope.properties.length, 0);

@@ -55,6 +55,7 @@ export function createSigningFetch(upstream: FetchLike, key: SignerKey, options:
         'createSigningFetch does not accept Request objects (the body would be consumed out from under the signer). Pass a URL string and a separate init.'
       );
     }
+    assertFetchTargetCanBeSigned(url, 'createSigningFetch');
 
     const headers = headersToRecord(init?.headers);
     for (const name of Object.keys(headers)) {
@@ -83,6 +84,18 @@ export function createSigningFetch(upstream: FetchLike, key: SignerKey, options:
     if (body !== undefined && mergedInit.body === undefined) mergedInit.body = body;
     return upstream(url, mergedInit);
   };
+}
+
+/** Fetch transports can omit a terminal empty query marker from the wire target. */
+export function assertFetchTargetCanBeSigned(url: string, apiName: string): void {
+  const parsed = new URL(url);
+  const fragmentlessHref = parsed.href.split('#', 1)[0] ?? parsed.href;
+  if (parsed.search === '' && fragmentlessHref.endsWith('?')) {
+    throw new TypeError(
+      `${apiName} cannot safely sign a URL with a trailing empty query marker ("?"): Fetch can omit it from the wire target. ` +
+        'Use a URL without the empty delimiter.'
+    );
+  }
 }
 
 function headersToRecord(headers: HeadersInit | Headers | undefined): Record<string, string> {

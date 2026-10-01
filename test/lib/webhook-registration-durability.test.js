@@ -92,6 +92,49 @@ test('client rejects a registration store that acknowledges but drops the durabl
   );
 });
 
+test('registered callback URL distinguishes an empty query from no query', async () => {
+  const secret = 'empty-query-callback-secret';
+  const operationId = 'empty-query-callback';
+  const callbackUrl = 'https://buyer.example/callback?';
+  const client = new SingleAgentClient(agent, {
+    webhookSecret: secret,
+    webhookRegistrationStore: new InMemoryWebhookRegistrationStore(),
+  });
+  await client.persistWebhookRegistration({
+    agent,
+    taskType: 'create_media_buy',
+    operationId,
+    callbackUrl,
+    mode: 'hmac-sha256',
+  });
+
+  const rawBody = JSON.stringify({
+    idempotency_key: 'empty-query-delivery',
+    operation_id: operationId,
+    task_id: 'empty-query-task',
+    task_type: 'create_media_buy',
+    status: 'completed',
+    timestamp: new Date().toISOString(),
+    result: { media_buy_id: 'empty-query-buy', packages: [] },
+  });
+  const options = {
+    rawBody,
+    headers: hmacHeaders(rawBody, secret),
+    taskType: 'create_media_buy',
+    operationId,
+    requestMethod: 'POST',
+  };
+  const matched = await client.verifyAndParseWebhook({ ...options, requestUrl: callbackUrl });
+  assert.equal(matched.ok, true, JSON.stringify(matched));
+
+  const mismatched = await client.verifyAndParseWebhook({
+    ...options,
+    requestUrl: 'https://buyer.example/callback',
+  });
+  assert.equal(mismatched.ok, false);
+  assert.equal(mismatched.code, 'webhook_signature_invalid');
+});
+
 test('corrupt durable state never falls back to recordless read-only HMAC verification', async () => {
   const secret = 'corrupt-registration-secret';
   const operationId = 'corrupt-read-only-registration';

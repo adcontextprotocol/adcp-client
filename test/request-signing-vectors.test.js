@@ -20,10 +20,10 @@ const ROOT = path.join(__dirname, '..', 'compliance', 'cache', 'latest', 'test-v
 
 const keysData = JSON.parse(readFileSync(path.join(ROOT, 'keys.json'), 'utf8'));
 const keysByKid = new Map(keysData.keys.map(k => [k.kid, k]));
+const canonicalizationVectors = JSON.parse(readFileSync(path.join(ROOT, 'canonicalization.json'), 'utf8'));
 
 describe('AdCP 3.2 request-target canonicalization', () => {
-  const vectors = JSON.parse(readFileSync(path.join(ROOT, 'canonicalization.json'), 'utf8'));
-  for (const vector of vectors.cases) {
+  for (const vector of canonicalizationVectors.cases) {
     test(vector.name, () => {
       if (vector.reject) {
         for (const canonicalize of [canonicalTargetUri, canonicalAuthority]) {
@@ -41,6 +41,16 @@ describe('AdCP 3.2 request-target canonicalization', () => {
       assert.strictEqual(canonicalAuthority(vector.input_url, '3.2'), vector.expected_authority);
     });
   }
+});
+
+test('default profile preserves the published trailing-empty-query vector', () => {
+  const vector = canonicalizationVectors.cases.find(entry => entry.name === 'trailing-empty-query-preserved');
+  assert.ok(vector);
+  assert.strictEqual(canonicalTargetUri(vector.input_url), vector.expected_target_uri);
+  assert.strictEqual(canonicalTargetUri(`${vector.input_url}#fragment`), vector.expected_target_uri);
+  assert.strictEqual(canonicalTargetUri(`${vector.input_url} \t`), vector.expected_target_uri);
+  assert.strictEqual(canonicalTargetUri('https://seller.example.com/p#?'), 'https://seller.example.com/p');
+  assert.notStrictEqual(canonicalTargetUri(vector.input_url), canonicalTargetUri('https://seller.example.com/p'));
 });
 
 function parseSigInput(headerValue) {
