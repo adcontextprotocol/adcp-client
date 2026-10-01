@@ -8,7 +8,7 @@ on:
       python_ref:
         description: 'adcp-client-python commit SHA, tag, or branch to test against'
         required: false
-        default: '4d066171cdda2a802a71d4776c1c51132d5baff7' # adcp-client-python v8.0.0-beta.18
+        default: '' # Use the pinned matrix fallback unless explicitly overridden.
       runner_package_ref:
         description: 'Optional @adcp/sdk npm package ref for manual runner probes, e.g. adcp-3.0 or @adcp/sdk@adcp-3.1. Empty packs this checkout.'
         required: false
@@ -19,7 +19,7 @@ on:
         description: 'adcp-client-python commit SHA, tag, or branch to test against'
         required: false
         type: string
-        default: '4d066171cdda2a802a71d4776c1c51132d5baff7' # adcp-client-python v8.0.0-beta.18
+        default: '' # Use the pinned matrix fallback unless explicitly overridden.
       runner_package_ref:
         description: 'Optional @adcp/sdk npm package ref for manual runner probes. Empty packs this checkout.'
         required: false
