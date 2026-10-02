@@ -26,6 +26,9 @@ async function startConformantA2aFixture(handlers) {
   const app = express();
   app.use(express.json());
   const server = app.listen(0);
+  // Cold schema loading can outlast the default idle socket timeout between
+  // consecutive sends; this fixture exercises context continuity.
+  server.keepAliveTimeout = 0;
   await new Promise(resolve => server.once('listening', resolve));
   const { port } = server.address();
   const cardUrl = `http://127.0.0.1:${port}/a2a`;

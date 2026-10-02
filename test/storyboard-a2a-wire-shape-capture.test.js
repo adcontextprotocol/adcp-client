@@ -14,6 +14,7 @@ const { runStoryboardStep } = require('../dist/lib/testing/storyboard/runner');
 function createAdcpServer(config) {
   // Sparse handler fixtures — opt out of strict validation for tests.
   return _createAdcpServer({
+    resolveAccount: ref => (ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined),
     ...config,
     stateStore: config?.stateStore ?? new InMemoryStateStore(),
     validation: { requests: 'off', responses: 'off', ...(config?.validation ?? {}) },
