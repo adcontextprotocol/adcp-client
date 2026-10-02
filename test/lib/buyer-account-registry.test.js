@@ -1104,3 +1104,39 @@ test('failed async refresh of a pending legacy account retains the original bill
   await assert.rejects(registry.ensure(account, { billing: 'agent' }), /different billing terms/);
   assert.equal(calls, 2);
 });
+
+test('custom repair callbacks cannot overwrite accounts outside the requested handle (#3093)', async () => {
+  const registry = new BuyerAccountRegistry(
+    () => 'seller',
+    async () => provisionResult(),
+    undefined,
+    async () => [
+      { account_id: 'seller-id', status: 'active' },
+      { account_id: 'other-id', status: 'active' },
+    ]
+  );
+  await registry.ensure(account);
+  await registry.observeSync([{ account_id: 'other-id' }], [{ account_id: 'other-id', status: 'suspended' }]);
+  await registry.applyStatusChange({ account_id: 'seller-id' });
+  assert.equal((await registry.get({ account_id: 'other-id' })).status, 'suspended');
+});
+
+test('status notifications block cached authorization immediately while queued persistence waits (#3093)', async () => {
+  const registry = new BuyerAccountRegistry(
+    () => 'seller',
+    async () => provisionResult(),
+    undefined,
+    async () => [{ account_id: 'seller-id', status: 'suspended' }]
+  );
+  await registry.ensure(account);
+  let release;
+  registry.writes = new Promise(resolve => {
+    release = resolve;
+  });
+  const repair = registry.applyStatusChange({ account_id: 'seller-id' });
+  assert.equal((await registry.get(account)).status, 'unknown');
+  assert.equal((await registry.get({ account_id: 'seller-id' })).status, 'unknown');
+  release();
+  await repair;
+  assert.equal((await registry.get(account)).status, 'suspended');
+});

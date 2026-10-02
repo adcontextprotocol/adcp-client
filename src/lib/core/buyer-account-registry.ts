@@ -601,7 +601,9 @@ export class BuyerAccountRegistry {
         await this.enqueue(() => this.reconcileId(accountId, 'unknown', scope, () => this.repairs.get(key) === token));
         invalidationPersisted = true;
       }
-      const rows = await this.repair(accountId, options);
+      const rows = (await this.repair(accountId, options)).filter(
+        row => row !== null && typeof row === 'object' && (row as AccountRow).account_id === accountId
+      );
       await this.observeListAtScope(rows, accountId, scope, () => this.repairs.get(key) === token);
     } finally {
       if (this.repairs.get(key) === token) {
