@@ -139,6 +139,7 @@ export class UnsupportedBuyingModeError extends ADCPError {
 /** A seller requires an account reference before an account-scoped request. */
 export class AccountRequiredError extends ADCPError {
   readonly code = 'ACCOUNT_REQUIRED';
+  readonly fault = 'buyer_setup' as const;
 
   constructor(
     public readonly accountModel: 'explicit' | 'implicit',
@@ -159,6 +160,7 @@ export class AccountRequiredError extends ADCPError {
 /** Account provisioning succeeded but the seller has not approved its use. */
 export class AccountPendingApprovalError extends ADCPError {
   readonly code = 'ACCOUNT_PENDING_APPROVAL';
+  readonly fault = 'buyer_setup' as const;
 
   constructor(
     public readonly account: import('../types').AccountReference,
@@ -176,6 +178,37 @@ export class AccountAmbiguousError extends ADCPError {
   constructor(public readonly candidates: readonly string[]) {
     super('Multiple eligible accounts. Supply brand/operator or a select callback.');
     this.details = { candidate_count: candidates.length };
+  }
+}
+
+/** Buyer setup errors must be excluded from seller-health failure counts. */
+export abstract class BuyerSetupError extends ADCPError {
+  readonly fault = 'buyer_setup' as const;
+}
+export class AccountNotFoundError extends BuyerSetupError {
+  readonly code: string = 'ACCOUNT_NOT_FOUND';
+  constructor(message = 'The account has not been provisioned at this seller.') {
+    super(message);
+  }
+}
+export class AccountSetupRequiredError extends BuyerSetupError {
+  readonly code: string = 'ACCOUNT_SETUP_REQUIRED';
+  constructor(message = 'Complete account setup before making account-scoped requests.') {
+    super(message);
+  }
+}
+export class AccountPaymentRequiredError extends BuyerSetupError {
+  readonly code: string = 'ACCOUNT_PAYMENT_REQUIRED';
+  constructor(message = 'Complete account payment before making account-scoped requests.') {
+    super(message);
+  }
+}
+export class AccountNotProvisionedError extends AccountNotFoundError {
+  constructor(
+    public readonly account: import('../types').AccountReference,
+    public readonly taskName: string
+  ) {
+    super(`${taskName} requires an account provisioned at this seller. Call client.accounts.ensure first.`);
   }
 }
 
@@ -889,6 +922,12 @@ export function adcpErrorToTypedError(
   idempotencyKey?: string
 ): ADCPError | undefined {
   switch (adcpError.code) {
+    case 'ACCOUNT_NOT_FOUND':
+      return new AccountNotFoundError(adcpError.message);
+    case 'ACCOUNT_SETUP_REQUIRED':
+      return new AccountSetupRequiredError(adcpError.message);
+    case 'ACCOUNT_PAYMENT_REQUIRED':
+      return new AccountPaymentRequiredError(adcpError.message);
     case 'IDEMPOTENCY_CONFLICT':
       return new IdempotencyConflictError(idempotencyKey, adcpError.message);
     case 'IDEMPOTENCY_EXPIRED':

@@ -440,6 +440,10 @@ interface PendingTaskHandle {
 }
 
 export class AgentClient {
+  get accounts() {
+    return this.client.accounts;
+  }
+
   private client: SingleAgentClient;
   private currentContextId?: string;
   private pendingTask?: PendingTaskHandle;

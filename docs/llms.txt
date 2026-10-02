@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-10-01
+> Generated at: 2026-10-02
 > Library: @adcp/sdk v14.0.0
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -19,6 +19,7 @@ SDK 14 is compact-lifecycle first: `list_products → buy_products → control_m
 
 - **MediaBuy change rights:** use `assessMediaBuyAction` from `@adcp/sdk/media-buy/actions` for possible / promised / available-now assessment, and `mediaBuyActionResolver` from `@adcp/sdk/server` for explicit seller acceptance and current projection. See `docs/guides/MEDIA-BUY-ACTION-ASSESSMENT.md`.
 - **Buyer** (calling a seller): read `docs/guides/BUYER-QUICKSTART-3.2.md` first.
+- **Account setup and first discovery:** read `docs/guides/FIRST-CALL-TO-A-SELLER.md` for the provisioning registry, account policies, billing terms, and product cache.
 - **Buyer Reliable Reporting**: import reconciliation, PostgreSQL persistence, and the worker from `@adcp/sdk/reporting/consumer`; see `docs/guides/REPORTING-RECONCILIATION.md`.
 - **Before proposal acceptance:** use `verifyProposalCommercialTerms` from `@adcp/sdk/negotiation/verification` with a complete, independently reviewed snapshot and the seller-served schema version. Never use an unreviewed candidate as its own expected terms. See `docs/guides/PROPOSAL-TERMS-VERIFICATION.md`.
 - **Seller** (implementing an agent that others call): read `docs/guides/SELLER-QUICKSTART-3.2.md` first, then `docs/guides/BUILD-AN-AGENT.md` for the complete framework surface.
