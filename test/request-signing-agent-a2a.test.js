@@ -40,17 +40,22 @@ delete privateJwk.use;
  * handler observed, so tests can assert whether the Signature-Input /
  * Signature / Content-Digest headers were present per skill.
  */
-async function startA2aStub(initialCapability) {
+async function startA2aStub(initialCapability, options = {}) {
   const state = {
     capability: initialCapability,
     rpcCalls: [],
   };
 
   const httpServer = http.createServer(async (req, res) => {
-    if (req.method === 'GET' && req.url === '/.well-known/agent.json') {
+    if (req.method === 'GET' && req.url.startsWith('/.well-known/')) {
       const { port } = httpServer.address();
       const card = {
-        protocolVersion: '0.3.0',
+        protocolVersion: options.version ?? '0.3.0',
+        ...(options.version === '1.0' && {
+          supportedInterfaces: [
+            { url: `http://127.0.0.1:${port}/rpc`, protocolBinding: 'JSONRPC', protocolVersion: '1.0', tenant: '' },
+          ],
+        }),
         name: 'signing-a2a-stub',
         description: 'A2A stub for request-signing integration tests',
         url: `http://127.0.0.1:${port}/rpc`,
@@ -95,10 +100,20 @@ async function startA2aStub(initialCapability) {
     }
 
     const skill =
-      parsed?.params?.message?.parts?.find(p => p?.kind === 'data' && typeof p?.data?.skill === 'string')?.data
-        ?.skill ?? '<unknown>';
+      parsed?.params?.message?.parts?.find(
+        p => (p?.kind === 'data' || p?.kind === undefined) && typeof p?.data?.skill === 'string'
+      )?.data?.skill ?? '<unknown>';
 
     state.rpcCalls.push({ headers: { ...req.headers }, skill, method: parsed.method, body: parsed });
+
+    if (options.rejection && req.headers.signature) {
+      res.writeHead(401, {
+        'content-type': 'application/json',
+        ...(options.rejection.challenge && { 'www-authenticate': options.rejection.challenge }),
+      });
+      res.end(JSON.stringify({ error: options.rejection.reason, access_token: 'seller-reflected-secret' }));
+      return;
+    }
 
     const resultPayload =
       skill === 'get_adcp_capabilities'
@@ -129,7 +144,17 @@ async function startA2aStub(initialCapability) {
 
     res.statusCode = 200;
     res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify(response));
+    res.end(
+      JSON.stringify(
+        options.version === '1.0'
+          ? {
+              jsonrpc: '2.0',
+              id: parsed.id,
+              result: { message: { messageId: 'caps-response', role: 'ROLE_AGENT', parts: [{ data: resultPayload }] } },
+            }
+          : response
+      )
+    );
   });
 
   await new Promise(resolve => httpServer.listen(0, '127.0.0.1', resolve));
@@ -302,4 +327,63 @@ test('A2A: reporting webhook authentication payload is signed even when the oper
 
 test('A2A: teardown', async () => {
   await resetGlobalState();
+});
+
+for (const version of ['0.3.0', '1.0']) {
+  for (const challenge of [undefined, 'Signature error="request_signature_jwks_untrusted"']) {
+    test(`A2A ${version}: signed 401 preserves original ${challenge ? 'Signature challenge' : 'seller reason'}`, async () => {
+      await resetGlobalState();
+      const reason =
+        "JWKS URI failed SSRF check: unsupported URI scheme for SSRF-validated fetch: '' (only http/https allowed)";
+      const stub = await startA2aStub(
+        { supported: true, required_for: ['get_products'] },
+        { version, rejection: { challenge, reason } }
+      );
+      try {
+        const agent = { ...agentFor(stub.url), auth_token: 'also-has-static-auth' };
+        await assert.rejects(ProtocolClient.callTool(agent, 'get_products', { buying_mode: 'wholesale' }), err => {
+          const { AuthenticationRequiredError } = require('../dist/lib/errors');
+          assert.ok(err instanceof AuthenticationRequiredError);
+          assert.strictEqual(err.status, 401);
+          assert.strictEqual(err.requestSigned, true);
+          assert.match(err.message, /SDK-signed request/);
+          assert.match(err.message, /brand_json_url.*agents\[\].*jwks_uri/);
+          assert.doesNotMatch(err.message, /provide auth_token|not natively supported|OAuth/);
+          assert.match(err.responseBody, /JWKS URI failed SSRF check/);
+          assert.doesNotMatch(err.responseBody, /seller-reflected-secret/);
+          assert.doesNotMatch(JSON.stringify(err), /JWKS URI failed|seller-reflected-secret/);
+          assert.strictEqual(err.signatureErrorCode, challenge ? 'request_signature_jwks_untrusted' : undefined);
+          assert.strictEqual(err.challenge?.scheme, challenge ? 'signature' : undefined);
+          return true;
+        });
+        assert.strictEqual(stub.state.rpcCalls.filter(r => r.skill === 'get_products').length, 1);
+        assert.ok(
+          stub.state.rpcCalls.every(r => r.skill !== '<unknown>'),
+          'no unsigned auth re-probe replaced the signed response'
+        );
+      } finally {
+        await cleanup(stub);
+      }
+    });
+  }
+}
+
+test('A2A signed 401 retains seller diagnostics in the public task result', async () => {
+  await resetGlobalState();
+  const stub = await startA2aStub(
+    { supported: true, required_for: ['get_products'] },
+    { version: '1.0', rejection: { reason: 'JWKS URI failed SSRF check' } }
+  );
+  try {
+    const { TaskExecutor } = require('../dist/lib/core/TaskExecutor');
+    const executor = new TaskExecutor({ strictSchemaValidation: false });
+    const result = await executor.executeTask(agentFor(stub.url), 'get_products', { buying_mode: 'wholesale' });
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.errorInstance.status, 401);
+    assert.strictEqual(result.errorInstance.requestSigned, true);
+    assert.match(result.errorInstance.responseBody, /JWKS URI failed SSRF check/);
+    assert.doesNotMatch(JSON.stringify(result), /JWKS URI failed SSRF check/);
+  } finally {
+    await cleanup(stub);
+  }
 });

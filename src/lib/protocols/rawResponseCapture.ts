@@ -142,9 +142,6 @@ export function wrapFetchWithCapture(upstream: typeof fetch): typeof fetch {
     const slot = rawResponseCaptureStorage.getStore();
     if (!slot) return upstream(input, init);
 
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-    const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
-    const requestMetadata = extractSafeRequestMetadata(init?.body, slot.maxBodyBytes);
     const startedAt = Date.now();
     const response = await upstream(input, init);
     const latencyMs = Date.now() - startedAt;
@@ -153,42 +150,66 @@ export function wrapFetchWithCapture(upstream: typeof fetch): typeof fetch {
     const cloneForRead = response.clone();
     const { body, bodyTruncated } = await readBodyBounded(cloneForRead, slot.maxBodyBytes);
 
-    const headers: Record<string, string> = {};
-    response.headers.forEach((value, key) => {
-      const lower = key.toLowerCase();
-      headers[key] = REDACTED_HEADER_NAMES.has(lower) ? REDACTED_PLACEHOLDER : value;
-    });
-
-    // Ceilings are opt-in: without them this stays the historical unbounded
-    // recorder, so ordinary MCP behaviour is unchanged unless a caller asked
-    // for a bound. When one is hit the slot is marked so the caller can fail
-    // closed rather than reason about a silently truncated log.
-    if (slot.maxCaptures !== undefined && slot.captures.length >= slot.maxCaptures) {
-      slot.overflowed ??= 'captures';
-      return response;
-    }
-    const redactedBody = redactBearerInBody(body);
-    if (slot.maxTotalBodyBytes !== undefined && slot.totalBodyBytes + redactedBody.length > slot.maxTotalBodyBytes) {
-      slot.overflowed ??= 'bytes';
-      return response;
-    }
-    slot.totalBodyBytes += redactedBody.length;
-
-    slot.captures.push({
-      url,
-      method,
-      ...requestMetadata,
-      status: response.status,
-      headers,
-      body: redactedBody,
-      latencyMs,
-      timestamp: new Date(startedAt).toISOString(),
-      bodyTruncated,
-    });
+    recordRawResponseCapture(input, init, response, body, bodyTruncated, startedAt, { latencyMs });
 
     return response;
   };
   return wrapped;
+}
+
+/** Record an already bounded response without cloning or reading its stream. */
+export function recordRawResponseCapture(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  response: Response,
+  body: string,
+  bodyTruncated: boolean,
+  startedAt: number,
+  safeMetadata?: { url?: string; headers?: Record<string, string>; latencyMs?: number }
+): void {
+  const slot = rawResponseCaptureStorage.getStore();
+  if (!slot) return;
+  const url =
+    safeMetadata?.url ?? (typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url);
+  const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+  const requestMetadata = extractSafeRequestMetadata(init?.body, slot.maxBodyBytes);
+  const latencyMs = safeMetadata?.latencyMs ?? Date.now() - startedAt;
+  if (body.length > slot.maxBodyBytes) {
+    body = body.slice(0, slot.maxBodyBytes);
+    bodyTruncated = true;
+  }
+  const headers: Record<string, string> = {};
+  response.headers.forEach((value, key) => {
+    const lower = key.toLowerCase();
+    headers[key] = REDACTED_HEADER_NAMES.has(lower) ? REDACTED_PLACEHOLDER : value;
+  });
+
+  // Ceilings are opt-in: without them this stays the historical unbounded
+  // recorder, so ordinary MCP behaviour is unchanged unless a caller asked
+  // for a bound. When one is hit the slot is marked so the caller can fail
+  // closed rather than reason about a silently truncated log.
+  if (slot.maxCaptures !== undefined && slot.captures.length >= slot.maxCaptures) {
+    slot.overflowed ??= 'captures';
+    return;
+  }
+  const redactedBody = redactBearerInBody(body);
+  if (slot.maxTotalBodyBytes !== undefined && slot.totalBodyBytes + redactedBody.length > slot.maxTotalBodyBytes) {
+    slot.overflowed ??= 'bytes';
+    return;
+  }
+  slot.totalBodyBytes += redactedBody.length;
+
+  slot.captures.push({
+    url,
+    method,
+    ...requestMetadata,
+    status: response.status,
+    headers: safeMetadata?.headers ?? headers,
+    body: redactedBody,
+    latencyMs,
+    timestamp: new Date(startedAt).toISOString(),
+    bodyTruncated,
+  });
 }
 
 /**

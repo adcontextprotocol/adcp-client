@@ -12,6 +12,7 @@ import {
 import { listMCPTasks } from '../protocols/mcp-tasks';
 import { withPreparedProtocolToolCall } from '../protocols/prepared-call-context';
 import { getAuthToken } from '../auth';
+import { getSignedRequestRejection } from '../protocols/signedRequestRejection';
 import { is401Error, adcpErrorToTypedError, ConfigurationError } from '../errors';
 import type { ADCPError } from '../errors';
 import type { DeferredTaskState, DeferredTaskStorage } from '../storage/interfaces';
@@ -5765,7 +5766,7 @@ export class TaskExecutor {
       status: 'failed' as const,
       error: error.message || String(error),
       adcpError: adcpErrorInfo,
-      errorInstance: this.buildErrorInstance(taskId, adcpErrorInfo),
+      errorInstance: getSignedRequestRejection(error) ?? this.buildErrorInstance(taskId, adcpErrorInfo),
       correlationId,
       metadata: this.buildMetadata({
         taskId,

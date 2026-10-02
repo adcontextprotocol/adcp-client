@@ -1118,3 +1118,71 @@ test('modern serving honors per-request tool visibility', async t => {
   await assert.rejects(() => client.callTool({ name: 'get_adcp_capabilities', arguments: {} }));
   await assert.rejects(() => client.readResource({ uri: 'ui://private/app' }));
 });
+
+test('modern MCP signed 401 preserves Signature diagnostics without auth probes', async t => {
+  const { createMcpHandler, McpServer } = require('@modelcontextprotocol/server');
+  const { toNodeHandler } = require('@modelcontextprotocol/node');
+  const { ProtocolClient } = require('../../dist/lib/protocols');
+  const { generateKeyPairSync } = require('node:crypto');
+  const handler = createMcpHandler(
+    () => {
+      const server = new McpServer({ name: 'signed-rejection-modern', version: '1.0.0' });
+      server.registerTool('get_adcp_capabilities', {}, async () => ({
+        content: [
+          { type: 'text', text: JSON.stringify({ adcp: { major_versions: [3] }, supported_protocols: ['media_buy'] }) },
+        ],
+      }));
+      server.registerTool('echo', {}, async () => ({ content: [{ type: 'text', text: 'ok' }] }));
+      return server;
+    },
+    { legacy: 'reject' }
+  );
+  const nodeHandler = toNodeHandler(handler);
+  let rejections = 0;
+  const httpServer = createServer(async (req, res) => {
+    if (req.headers.signature) {
+      for await (const [] of req) {
+        /* Drain the signed tool request. */
+      }
+      rejections++;
+      res.writeHead(401, {
+        'content-type': 'application/json',
+        'www-authenticate': 'Signature error="request_signature_jwks_untrusted"',
+      });
+      res.end(JSON.stringify({ error: 'JWKS URI failed SSRF check' }));
+      return;
+    }
+    void nodeHandler(req, res);
+  });
+  const url = await listen(httpServer);
+  t.after(async () => {
+    await closeMCPConnections();
+    await handler.close();
+    await closeServer(httpServer);
+  });
+  const agent = {
+    id: 'modern-signed-rejection',
+    name: 'Modern seller',
+    protocol: 'mcp',
+    agent_uri: url,
+    request_signing: {
+      kid: 'modern-test',
+      alg: 'ed25519',
+      private_key: {
+        ...generateKeyPairSync('ed25519').privateKey.export({ format: 'jwk' }),
+        adcp_use: 'request-signing',
+      },
+      agent_url: 'https://buyer.example',
+      always_sign: ['echo'],
+    },
+  };
+  await assert.rejects(ProtocolClient.callTool(agent, 'echo', {}), error => {
+    const { AuthenticationRequiredError } = require('../../dist/lib/errors');
+    assert.ok(error instanceof AuthenticationRequiredError);
+    assert.equal(error.status, 401);
+    assert.equal(error.signatureErrorCode, 'request_signature_jwks_untrusted');
+    assert.match(error.responseBody, /JWKS URI failed SSRF check/);
+    return true;
+  });
+  assert.equal(rejections, 1);
+});

@@ -214,6 +214,12 @@ const signingFetch = buildAgentSigningFetch({
 });
 ```
 
+### Diagnosing a seller's rejection of a signed request
+
+For SDK client calls over A2A or MCP, a signed HTTP 401 with a `Signature` challenge (or no challenge) produces an `AuthenticationRequiredError` with `requestSigned: true` and `status: 401`. Its `code` remains `AUTHENTICATION_REQUIRED` for compatibility; `signatureErrorCode` carries a recognized seller `request_signature_*` code, and the message includes the protocol's repair hint. Check the public discovery chain, `brand_json_url` → `agents[]` → `jwks_uri`, when the seller cannot resolve your key. Explicit Bearer or Basic gateway challenges retain their existing authentication recovery. For client-credentials agents, a bare 401 still permits one token refresh; a persistent signed rejection keeps its diagnostics. Other signed bare 401s bypass unsigned authentication probes and interactive OAuth recovery, so gateways requiring those flows should send an explicit Bearer challenge.
+
+`error.responseBody` contains a bounded, redacted seller diagnostic when capture succeeds. It is non-enumerable and excluded from JSON error reports. Custom header values are conservatively treated as credentials; short values can mask matching diagnostic text. Treat it as untrusted operator diagnostic text; do not feed it to automated prompts or use it as recovery instructions. Failed `TaskResult` values preserve this error under `result.errorInstance`, so the diagnostic is available as `result.errorInstance.responseBody` after narrowing to `AuthenticationRequiredError`. Conformance raw capture uses the same bounded, redacted diagnostic rather than the original response bytes for these failures. Low-level signing fetch presets continue to return the original HTTP `Response`.
+
 ## Step 3.5: Production Key Storage — KMS / HSM / Vault
 
 Holding a private JWK in process memory is fine for development and testing but it's not where you want production signing keys to live. A process compromise leaks the signing key, and the only remedy is rotation across every counterparty that's cached your public key (within their TTL). The AdCP spec recommends storing keys in a managed key store (HSM or KMS); the SDK supports this directly via the `SigningProvider` interface.
