@@ -24,6 +24,58 @@ accounts: {
 }
 ```
 
+For buyer setup and opt-in lifecycle management, see
+[First call to a seller](./FIRST-CALL-TO-A-SELLER.md).
+
+Account resolvers receive `ctx.provisioning`. It is false on discovery and
+negotiation (`get_products`, `list_products`, `get_signals`, and proposal
+request/refine/decline); these tasks MUST use lookup only. It is true on spend
+commitments, `activate_signal`, and `sync_*` tasks. Lazy provisioning must be
+explicitly gated:
+
+```ts
+resolve: async (ref, ctx) => {
+  const existing = await db.findAuthorizedAccount(ref, ctx?.authInfo);
+  if (existing || !ctx?.provisioning) return existing;
+  return await db.createAuthorizedAccount(ref, ctx?.authInfo);
+},
+```
+
+A supplied unknown reference returns `ACCOUNT_NOT_FOUND`, even on optional
+account tools. Account-carrying tools without a resolver refuse supplied
+references and warn at construction in development. Existing handler-bag
+servers that configured only `resolveAccountFromAuth` must add a ref-aware
+`resolveAccount`: it must look the supplied reference up within the caller's
+authorized roster and return null on a miss. An auth-only resolver cannot
+authorize an arbitrary reference. `requiredForProducts`
+is enforced by the framework when neither the request nor authentication
+resolves an account. `list_accounts.account` remains a filter.
+
+Migration for handler-bag sellers: move account authorization out of individual
+handlers and into the resolver before upgrading. This intentionally tightens
+the old behavior that let unchecked references reach handlers:
+
+```ts
+createAdcpServer({
+  name: 'Seller',
+  version: '1.0.0',
+  resolveAccount: (ref, ctx) => authorizedAccounts.find(ref, ctx.authInfo),
+  mediaBuy: {
+    getProducts: (params, ctx) => catalog.forAccount(ctx.account, params),
+  },
+});
+```
+
+`authorizedAccounts.find` must return null on an unknown reference or a
+reference owned by another principal. Public discovery may omit `account`;
+resource creation and spend commitments need an authorized account.
+
+`InMemoryImplicitAccountStore` matches supplied refs on the complete natural
+key, including operator unit, currency, timezone, and sandbox. It retains its
+24-hour TTL and replacement sync semantics. Set `mergeOnUpsert: true` for
+additive batches and revoke individual refs with `remove(ref, ctx)`; passing
+`delete_missing: true` in `sync_accounts` retains replacement semantics.
+
 **Each mode has exactly one spelling.** `'derived'` keeps its name even
 though [adcp#5062](https://github.com/adcontextprotocol/adcp/pull/5062)
 calls the shape an *upstream-managed account-id namespace*: `resolution` is

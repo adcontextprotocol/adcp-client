@@ -191,6 +191,7 @@ function hasIdempotencyClearAll(store: IdempotencyStore): boolean {
 // fence itself still prevents a transient renewal outage from reopening the
 // mutation.
 const IDEMPOTENCY_CLAIM_RENEW_INTERVAL_MS = 60_000;
+import { isAccountProvisioningTask } from './account-provisioning';
 import { isMutatingTask, requestUsesIdempotency, IDEMPOTENCY_KEY_PATTERN, MUTATING_TASKS } from '../utils/idempotency';
 import { STATUS_FREE_SYNC_RESPONSE_TOOLS } from '../utils/envelope-status-compat';
 import { validateRequest, validateResponse, formatIssues, type ValidationIssue } from '../validation/schema-validator';
@@ -594,6 +595,8 @@ export interface SessionKeyContext<TAccount = unknown> {
  * resolved `TAccount` rather than re-resolving inside every handler.
  */
 export interface ResolveAccountContext {
+  /** Whether this task may create/activate accounts or accept default terms. */
+  readonly provisioning?: boolean;
   /** The AdCP tool being called. */
   toolName: AdcpServerToolName;
   /** Immutable SDK-selected AdCP release for this request. */
@@ -6634,13 +6637,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         }
 
         // --- Account resolution ---
-        if (hasAccount && params.account != null && resolveAccount) {
+        if (hasAccount && toolName !== 'list_accounts' && params.account != null && resolveAccount) {
           try {
             const account = await resolveAccount(
               params.account,
               withImmutableServedAdcpVersion(
                 {
                   toolName: toolName as AdcpServerToolName,
+                  provisioning: isAccountProvisioningTask(toolName),
                   authInfo: ctx.authInfo,
                   ...(ctx.agent != null && { agent: ctx.agent }),
                   input: params,
@@ -6681,17 +6685,18 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               })
             );
           }
-        } else if (hasAccount && toolName === 'list_creative_formats' && params.account != null) {
+        } else if (hasAccount && toolName !== 'list_accounts' && params.account != null) {
           // The rc.7 discovery request may select an account. An auth-derived
           // resolver cannot authorize an arbitrary buyer-supplied reference.
           return finalize(
             adcpError('ACCOUNT_NOT_FOUND', {
               message: 'The specified account cannot be resolved',
               field: 'account',
-              suggestion: 'Omit account to use the authenticated account',
+              suggestion:
+                'The seller must configure resolveAccount to authorize supplied references; use list_accounts to discover an authorized account',
             })
           );
-        } else if ((!hasAccount || params.account == null) && resolveAccountFromAuth) {
+        } else if ((!hasAccount || params.account == null || toolName === 'list_accounts') && resolveAccountFromAuth) {
           // Auth-derived path for tools without a supplied `account` field
           // (provide_performance_feedback, list_creative_formats, the
           // `tasks/get` polling path). Single-tenant agents return their
@@ -6704,6 +6709,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               withImmutableServedAdcpVersion(
                 {
                   toolName: toolName as AdcpServerToolName,
+                  provisioning: isAccountProvisioningTask(toolName),
                   authInfo: ctx.authInfo,
                   ...(ctx.agent != null && { agent: ctx.agent }),
                   input: params,
@@ -6740,6 +6746,20 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               );
             }
           }
+        }
+
+        if (
+          (toolName === 'get_products' || toolName === 'list_products') &&
+          capConfig?.account?.requiredForProducts &&
+          ctx.account == null
+        ) {
+          return finalize(
+            adcpError('ACCOUNT_REQUIRED', {
+              message: 'This seller requires an account for product discovery',
+              field: 'account',
+              suggestion: 'Provision an account with sync_accounts or discover one with list_accounts',
+            })
+          );
         }
 
         // --- Sandbox-only enforcement (Phase 1.5 of #1269) ---
@@ -8528,6 +8548,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
   // Tool coherence warnings
   checkCoherence(registeredToolNames, logger);
+  if (
+    !resolveAccount &&
+    process.env.NODE_ENV !== 'production' &&
+    ['get_products', 'get_signals', 'request_proposals', 'create_media_buy'].some(tool => registeredToolNames.has(tool))
+  ) {
+    logger.warn(
+      'Account-carrying tools are registered without resolveAccount. Supplied references will fail with ACCOUNT_NOT_FOUND.'
+    );
+  }
 
   // --- Idempotency configuration guardrails ---
   //
