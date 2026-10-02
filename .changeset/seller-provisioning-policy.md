@@ -1,5 +1,5 @@
 ---
-'@adcp/sdk': minor
+'@adcp/sdk': major
 ---
 
 Expose `ctx.provisioning` to account resolvers, refuse supplied account references without a resolver, and enforce sellers' declared product-account requirement (#3094). Check implicit resolver identity metadata against the supplied natural key as defense in depth (#3091).
