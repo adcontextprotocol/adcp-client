@@ -599,6 +599,8 @@ test('modern serving returns structured AdCP validation errors while advertising
     () =>
       createAdcpServer({
         name: 'modern-validation-test',
+        resolveAccount: ref =>
+          ref?.account_id === 'acct-modern-validation' ? { account_id: ref.account_id } : undefined,
         version: '1.0.0',
         adcpVersion: '3.2.1',
         mcpToolProfile: 'all',

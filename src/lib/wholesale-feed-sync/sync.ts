@@ -36,6 +36,7 @@ type BootstrapFeedResult<T> = {
   items: Map<string, T>;
   metadata: FeedMetadata;
 };
+const bootstrapReadFailures = new WeakSet<Error>();
 
 const DEFAULT_PROBE_INTERVAL_MS = 600_000;
 const DEFAULT_CAPABILITY_REFRESH_INTERVAL_MS = 86_400_000;
@@ -282,7 +283,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   async refresh(): Promise<void> {
     const epoch = this.lifecycleEpoch;
     this.emit('resyncing', { reason: 'manual' });
-    await this.bootstrap({ emitDiffs: true, epoch });
+    await this.bootstrap({ emitDiffs: true, epoch, propagateFailure: true });
   }
 
   /**
@@ -358,8 +359,10 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       try {
         if (!(await this.recoverFromBulkChange(event, epoch))) return;
       } catch (err) {
-        await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
-        this.rememberLastWebhookEventId(event.event_id);
+        if (!(err instanceof Error && bootstrapReadFailures.has(err))) {
+          await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
+          this.rememberLastWebhookEventId(event.event_id);
+        }
         throw err;
       }
       await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
@@ -459,12 +462,18 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   // ====== Private: bootstrap (wholesale enumeration) ======
 
   private async bootstrap(
-    options: { emitDiffs?: boolean; entities?: 'products' | 'signals' | 'all'; epoch?: number } = {}
+    options: {
+      emitDiffs?: boolean;
+      entities?: 'products' | 'signals' | 'all';
+      epoch?: number;
+      propagateFailure?: boolean;
+    } = {}
   ): Promise<boolean> {
     const epoch = options.epoch ?? this.lifecycleEpoch;
     if (!this.isLifecycleCurrent(epoch)) return false;
     this.setState('bootstrapping');
     const previousLastSyncedAt = this._lastSyncedAt;
+    let reportedFailure: Error | undefined;
     try {
       // Build into local maps and atomically swap on success. The previous
       // implementation cleared the live indexes BEFORE fetching, so an
@@ -486,12 +495,32 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       if (refreshProducts) {
         productResult = await this.bootstrapProducts(epoch);
         if (productResult.cancelled) return false;
-        if (productResult.failure) return this.handleBootstrapFailure(productResult.failure);
+        if (productResult.failure) {
+          const failure = productResult.failure;
+          reportedFailure = failure.error;
+          this.handleBootstrapFailure(failure);
+          if (options.propagateFailure) {
+            bootstrapReadFailures.add(failure.error);
+            if (failure.adcpError) Object.assign(failure.error, { adcpError: failure.adcpError });
+            throw failure.error;
+          }
+          return false;
+        }
       }
       if (refreshSignals) {
         signalResult = await this.bootstrapSignals(epoch);
         if (signalResult.cancelled) return false;
-        if (signalResult.failure) return this.handleBootstrapFailure(signalResult.failure);
+        if (signalResult.failure) {
+          const failure = signalResult.failure;
+          reportedFailure = failure.error;
+          this.handleBootstrapFailure(failure);
+          if (options.propagateFailure) {
+            bootstrapReadFailures.add(failure.error);
+            if (failure.adcpError) Object.assign(failure.error, { adcpError: failure.adcpError });
+            throw failure.error;
+          }
+          return false;
+        }
       }
 
       if (!this.isLifecycleCurrent(epoch)) return false;
@@ -534,11 +563,13 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       return true;
     } catch (err) {
       if (!this.isLifecycleCurrent(epoch)) return false;
+      if (err === reportedFailure) throw err; // Already reported with its structured failure.
       this._lastSyncedAt = previousLastSyncedAt;
       this.setState(this._lastSyncedAt ? 'degraded' : 'error');
       const error = err instanceof Error ? err : new Error(String(err));
       this.errorHandler?.(error);
       if (this.listenerCount('error') > 0) this.emit('error', { error });
+      if (options.propagateFailure) bootstrapReadFailures.add(error);
       throw error;
     }
   }
@@ -683,7 +714,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       );
     }
     const entities = affected === 'product' ? 'products' : 'signals';
-    return this.bootstrap({ emitDiffs: true, entities, epoch });
+    return this.bootstrap({ emitDiffs: true, entities, epoch, propagateFailure: true });
   }
 
   private async recoverFromVersionMismatch(
@@ -693,7 +724,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     this.emit('resyncing', { reason: 'version_mismatch' });
     const beforeVersion = this.currentWholesaleFeedVersionForEvent(event);
     for (let attempt = 1; attempt <= VERSION_MISMATCH_RECOVERY_ATTEMPTS; attempt++) {
-      const recovered = await this.bootstrap({ emitDiffs: true, epoch });
+      const recovered = await this.bootstrap({ emitDiffs: true, epoch, propagateFailure: true });
       if (!recovered) return false;
       const afterVersion = this.currentWholesaleFeedVersionForEvent(event);
       if (afterVersion !== beforeVersion) return true;

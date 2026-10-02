@@ -821,3 +821,286 @@ test('partial list pages do not invalidate a filtered account and repair skips u
   assert.equal(await c.accounts.get({ account_id: 'unrelated-id' }), undefined);
   assert.equal(calls, 2);
 });
+
+test('old handle notifications cannot undo an explicitly replaced natural account (#3093)', async () => {
+  const records = new Map();
+  const storage = { get: async key => records.get(key), set: async (key, value) => records.set(key, value) };
+  const registry = new BuyerAccountRegistry(
+    () => 'seller',
+    async () => provisionResult(),
+    storage
+  );
+  await registry.ensure(account);
+  await registry.observeSync([account], [{ ...account, account_id: 'replacement-id', status: 'suspended' }]);
+  assert.deepEqual((await registry.get({ account_id: 'seller-id' })).aliases, []);
+  const restarted = new BuyerAccountRegistry(
+    () => 'seller',
+    async () => {
+      throw Error('must not provision');
+    },
+    storage,
+    async () => [{ ...account, account_id: 'seller-id', status: 'active' }]
+  );
+  await restarted.applyStatusChange({ account_id: 'seller-id' });
+  const current = await restarted.get(account);
+  assert.equal(current.account_id, 'replacement-id');
+  assert.equal(current.status, 'suspended');
+});
+
+test('provisioning term persistence merges into the latest authoritative status (#3093)', async () => {
+  const registry = new BuyerAccountRegistry(
+    () => 'seller',
+    async () => provisionResult(),
+    undefined,
+    async () => [{ account_id: 'seller-id', status: 'suspended' }]
+  );
+  const get = registry.get.bind(registry);
+  let injected = false;
+  registry.get = async ref => {
+    const entry = await get(ref);
+    if (!injected && !('account_id' in ref) && entry?.status === 'active') {
+      injected = true;
+      await registry.applyStatusChange({ account_id: 'seller-id' });
+    }
+    return entry;
+  };
+  const settled = await registry.ensure(account, { billing: 'operator' });
+  assert.equal(settled.status, 'suspended');
+  assert.equal((await get(account)).status, 'suspended');
+  const handle = await get({ account_id: 'seller-id' });
+  assert.equal(handle.status, 'suspended');
+  assert.ok(handle.setupTerms.billing);
+});
+
+test('durable alias indexes respect registry capacity (#3093)', async () => {
+  const records = new Map();
+  const registry = new BuyerAccountRegistry(
+    () => 'seller',
+    async () => provisionResult(),
+    { get: async key => records.get(key), set: async (key, value) => records.set(key, value) },
+    undefined,
+    { maxEntries: 2 }
+  );
+  for (const domain of ['first.example', 'second.example']) {
+    const ref = { ...account, brand: { domain } };
+    await registry.observeSync([ref], [{ ...ref, account_id: 'shared-id', status: 'active' }]);
+  }
+  const third = { ...account, brand: { domain: 'third.example' } };
+  await assert.rejects(
+    registry.observeSync([third], [{ ...third, account_id: 'shared-id', status: 'active' }]),
+    /alias capacity/
+  );
+  assert.equal((await registry.get({ account_id: 'shared-id' })).aliases.length, 2);
+  assert.equal(await registry.get(third), undefined, 'rejected aliases must not establish unindexed active accounts');
+});
+
+for (const observation of ['sync', 'list']) {
+  test(`a newer ${observation} observation supersedes an in-flight account status repair (#3093)`, async () => {
+    let finishRepair;
+    let repairStarted;
+    const started = new Promise(resolve => {
+      repairStarted = resolve;
+    });
+    const registry = new BuyerAccountRegistry(
+      () => 'seller',
+      async () => provisionResult(),
+      undefined,
+      async () => {
+        repairStarted();
+        return new Promise(resolve => {
+          finishRepair = resolve;
+        });
+      }
+    );
+    await registry.ensure(account);
+    const repair = registry.applyStatusChange({ account_id: 'seller-id' });
+    await started;
+    const row = { ...account, account_id: 'seller-id', status: 'suspended' };
+    if (observation === 'sync') await registry.observeSync([account], [row]);
+    else await registry.observeList([row]);
+    finishRepair([{ ...row, status: 'active' }]);
+    await repair;
+    assert.equal((await registry.get(account)).status, 'suspended');
+    assert.equal((await registry.get({ account_id: 'seller-id' })).status, 'suspended');
+  });
+}
+
+test('legacy account_id fields receive strict provisioning and payment policy checks (#3093)', async () => {
+  const c = client('strict');
+  await assert.rejects(c.applyAccountPolicy('create_media_buy', { account_id: 'unknown' }), AccountNotProvisionedError);
+  await c.accounts.observeSync(
+    [{ account_id: 'seller-id' }],
+    [{ account_id: 'seller-id', status: 'payment_required' }]
+  );
+  await assert.rejects(
+    c.applyAccountPolicy('create_media_buy', { account_id: 'seller-id' }),
+    error => error.code === 'ACCOUNT_PAYMENT_REQUIRED'
+  );
+});
+
+test('pending legacy rows without a handle can be refreshed with identical setup options (#3093)', async () => {
+  let calls = 0;
+  const registry = new BuyerAccountRegistry(
+    () => 'seller',
+    async () => ({
+      ...provisionResult(),
+      data: { accounts: [{ ...account, action: 'created', status: ++calls === 1 ? 'pending_approval' : 'active' }] },
+    }),
+    undefined,
+    undefined,
+    { maxEntries: 2 }
+  );
+  assert.equal((await registry.ensure(account, { billing: 'operator' })).status, 'pending_approval');
+  await assert.rejects(registry.ensure(account), /original billing options/);
+  assert.equal((await registry.ensure(account, { billing: 'operator' })).status, 'active');
+  assert.equal(calls, 2);
+});
+
+test('internal resolveAccount memoization does not opt default-off clients into unrelated roster tracking (#3093)', async () => {
+  const c = client();
+  c.syncAccounts = async () => provisionResult();
+  await c.resolveAccount({ ...account });
+  assert.equal(c.accountRegistryContext('list_accounts', {}).knownOnly, true);
+  void c.accounts;
+  assert.ok(c.accountRegistryContext('list_accounts', {}));
+});
+
+for (const observation of ['list', 'sync']) {
+  test(`an old ${observation} response cannot cancel a newer suspension repair (#3093)`, async () => {
+    let finish;
+    let announce;
+    const started = new Promise(resolve => {
+      announce = resolve;
+    });
+    const registry = new BuyerAccountRegistry(
+      () => 'seller',
+      async () => provisionResult(),
+      undefined,
+      async () => {
+        announce();
+        return new Promise(resolve => {
+          finish = resolve;
+        });
+      }
+    );
+    await registry.ensure(account);
+    const epoch = registry.captureObservation();
+    const repair = registry.applyStatusChange({ account_id: 'seller-id' });
+    await started;
+    const staleRow = { ...account, account_id: 'seller-id', status: 'active' };
+    if (observation === 'list') await registry.observeList([staleRow], undefined, epoch);
+    else await registry.observeSync([account], [staleRow], false, epoch);
+    assert.equal((await registry.get(account)).status, 'unknown');
+    finish([{ ...staleRow, status: 'suspended' }]);
+    await repair;
+    assert.equal((await registry.get(account)).status, 'suspended');
+  });
+}
+
+test('default-off explicit sync refreshes known bindings without tracking unrelated accounts (#3093)', async () => {
+  const c = client();
+  c.syncAccounts = async () => provisionResult();
+  await c.resolveAccount({ ...account });
+  const unrelated = { ...account, brand: { domain: 'unrelated.example' } };
+  const params = { accounts: [account, unrelated] };
+  const result = {
+    success: true,
+    status: 'completed',
+    metadata: {},
+    data: {
+      accounts: [
+        { ...account, account_id: 'replacement', status: 'suspended' },
+        { ...unrelated, account_id: 'unrelated', status: 'active' },
+      ],
+    },
+  };
+  await c.finalizeTaskResult(result, {
+    kind: 'single-agent',
+    taskType: 'sync_accounts',
+    canonical: false,
+    productPolicyRequest: {},
+    accountRegistry: c.accountRegistryContext('sync_accounts', params),
+  });
+  const registry = c.getAccountRegistry();
+  assert.equal((await registry.get(account)).account_id, 'replacement');
+  assert.equal(await registry.get(unrelated), undefined);
+});
+
+test('legacy policy lookup preserves governed and validated payload identity (#3093)', async () => {
+  const c = client('strict');
+  const params = { account_id: 'seller-id' };
+  assert.equal(await c.applyAccountPolicy('create_media_buy', params, { preserveGovernedPayload: true }), params);
+  assert.equal(await c.applyAccountPolicy('create_media_buy', params, { skipAccountValidation: true }), params);
+  await c.accounts.observeSync([{ account_id: 'seller-id' }], [{ account_id: 'seller-id', status: 'active' }]);
+  assert.equal(await c.applyAccountPolicy('create_media_buy', params), params);
+});
+
+test('a handle repair before async provisioning completion preserves the original request binding (#3093)', async () => {
+  let finish;
+  const registry = new BuyerAccountRegistry(
+    () => 'seller',
+    async () => ({
+      success: true,
+      status: 'submitted',
+      metadata: { taskId: 'setup' },
+      submitted: {
+        waitForCompletion: () =>
+          new Promise(resolve => {
+            finish = resolve;
+          }),
+      },
+    }),
+    undefined,
+    async () => [{ ...account, currency: 'USD', account_id: 'seller-id', status: 'active' }]
+  );
+  const setup = registry.ensure(account, { billing: 'operator' });
+  while (!finish) await new Promise(resolve => setImmediate(resolve));
+  await registry.applyStatusChange({ account_id: 'seller-id' });
+  finish(provisionResult('pending_approval'));
+  assert.equal((await setup).status, 'active');
+  assert.equal((await registry.get(account)).account_id, 'seller-id');
+});
+
+test('approval status repair is shared by concurrent ensure callers (#3093)', async () => {
+  let repairs = 0;
+  const registry = new BuyerAccountRegistry(
+    () => 'seller',
+    async () => provisionResult('pending_approval'),
+    undefined,
+    async () => {
+      repairs++;
+      await new Promise(resolve => setImmediate(resolve));
+      return [{ account_id: 'seller-id', status: 'active' }];
+    }
+  );
+  await registry.ensure(account);
+  const entries = await Promise.all([registry.ensure(account), registry.ensure(account)]);
+  assert.equal(repairs, 1);
+  assert.ok(entries.every(entry => entry.status === 'active'));
+});
+
+test('failed async refresh of a pending legacy account retains the original billing commitment (#3093)', async () => {
+  let calls = 0;
+  const registry = new BuyerAccountRegistry(
+    () => 'seller',
+    async () => {
+      if (++calls === 1)
+        return {
+          ...provisionResult(),
+          data: { accounts: [{ ...account, status: 'pending_approval', action: 'created' }] },
+        };
+      return {
+        success: true,
+        status: 'submitted',
+        metadata: { taskId: 'refresh' },
+        submitted: {
+          waitForCompletion: async () => ({ success: false, status: 'failed', metadata: {}, error: 'retry later' }),
+        },
+      };
+    }
+  );
+  await registry.ensure(account, { billing: 'operator' });
+  await assert.rejects(registry.ensure(account, { billing: 'operator' }));
+  await assert.rejects(registry.ensure(account, { billing: 'agent' }), /different billing terms/);
+  assert.equal(calls, 2);
+});

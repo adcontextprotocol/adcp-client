@@ -46,6 +46,8 @@ function waitForListening(server) {
 function makeFactory({ calls, validation } = {}) {
   return () =>
     _createAdcpServer({
+      resolveAccount: ref =>
+        ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined,
       name: 'Disabled E2E',
       version: '1.0.0',
       idempotency: 'disabled',
@@ -75,6 +77,8 @@ describe('idempotency: disabled — MCP wire roundtrip', () => {
     const httpServer = serve(
       () =>
         _createAdcpServer({
+          resolveAccount: ref =>
+            ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined,
           name: 'Stateless fallback E2E',
           version: '1.0.0',
           adcpVersion: '3.1.18',
@@ -259,6 +263,8 @@ describe('idempotency: disabled — A2A wire roundtrip', () => {
     const calls = [];
     const fallbackContexts = [];
     const adcp = _createAdcpServer({
+      resolveAccount: ref =>
+        ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined,
       name: 'Disabled E2E',
       version: '1.0.0',
       adcpVersion: '3.1.18',

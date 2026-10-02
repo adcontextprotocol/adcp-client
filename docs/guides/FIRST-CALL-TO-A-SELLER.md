@@ -75,7 +75,7 @@ The registry is in memory by default. Set `accountStorage` to an adapter with
 protocol, and caller scope. Client-credentials OAuth uses the stable client ID, token endpoint, scopes, and resource. Authorization-code OAuth pins this client's initial grant fingerprint, keeping distinct user grants apart while automatic refreshes preserve its partition. Create a new client when switching users. Other credential modes fingerprint credentials;
 for continuity across token rotations, supply `accountRegistryScope` from a
 trusted stable principal identifier. Never share that scope between tenants.
-Registry memory is bounded by `accountRegistryMaxEntries` (default 10,000); durable adapters allow eviction and reload. Stored entries contain account references, seller handles, status, optional pending task IDs, and hashes of explicitly chosen setup terms;
+Registry memory and aliases per handle are bounded by `accountRegistryMaxEntries` (default 10,000); durable adapters allow entry eviction and reload. Without storage, reaching capacity throws a setup error; raise the limit or configure storage for large rosters. `resolveAccount()` also uses the memoized registry when policy is off, but this internal use does not enable observations of unrelated rosters. Memoized entries require explicit `syncAccounts()` or authoritative status repair when seller linkage expires or is replaced externally. Stored entries contain account references, seller handles, status, optional pending task IDs, and hashes of explicitly chosen setup terms;
 billing entities and tokens are not persisted. Manual feed mode recovers through
 an explicit `refresh()`; auto-poll mode also retries initial failures.
 
@@ -97,3 +97,5 @@ instance so different local verification policies cannot share filtered results.
 a failed refresh. Its error event includes `adcpError`; a mirror becomes
 `degraded` until a successful refresh restores `syncing`. Initial failure sets
 `error`. Exhaustive state switches must handle the new `degraded` member.
+
+Manual `WholesaleFeedSync.refresh()` and webhook repairs reject failed catalog reads, including failed task results. A failed webhook repair remains eligible for redelivery; acknowledge it only after repair succeeds. Bootstrap `start()` still reports failed task results through its state and error callback/event, and schedules recovery in auto-poll mode.

@@ -5,7 +5,7 @@ import {
 } from '../supply-path/products';
 // Main ADCP Client - Type-safe conversation-aware client for AdCP agents
 
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID, scryptSync } from 'node:crypto';
 const SKIP_PRODUCT_CACHE = Symbol('adcp.skipProductCache');
 const SKIP_ACCOUNT_REGISTRY_OBSERVATION = Symbol('adcp.skipAccountRegistryObservation');
 import type { AccountReference, AgentConfig } from '../types';
@@ -570,7 +570,13 @@ interface DeferredClientFinalizationContext {
   readonly routingSnapshot?: CanonicalCreativeRoutingSnapshot;
   readonly optionTaskId?: string;
   readonly optionContextId?: string;
-  readonly accountRegistry?: { scope: string; refs?: AccountReference[]; dryRun?: boolean };
+  readonly accountRegistry?: {
+    scope: string;
+    refs?: AccountReference[];
+    dryRun?: boolean;
+    knownOnly?: boolean;
+    observationEpoch?: number;
+  };
 }
 
 function isDeferredClientFinalizationContext(value: unknown): value is DeferredClientFinalizationContext {
@@ -1780,33 +1786,47 @@ function propertyListResolutionErrorCode(err: unknown): string {
 
 export class SingleAgentClient {
   private _accounts?: BuyerAccountRegistry;
-  private initialOAuthCallerScope?: string;
+  private accountRegistryExplicitlyAccessed = false;
+  private initialOAuthGrantMaterial?: string;
+  private accountCredentialMaterial?: string;
+  private accountCredentialScope?: string;
+
+  private credentialScope(material: string): string {
+    if (this.accountCredentialMaterial !== material) {
+      this.accountCredentialScope = scryptSync(material, 'adcp-sdk/account-registry-scope/v1', 32).toString('hex');
+      this.accountCredentialMaterial = material;
+    }
+    return this.accountCredentialScope!;
+  }
 
   private accountScope(): string {
     const agent = this.normalizedAgent ?? this.agent;
     const cc = agent.oauth_client_credentials;
-    if (!cc && agent.oauth_tokens && !this.initialOAuthCallerScope)
-      this.initialOAuthCallerScope = createHash('sha256').update(JSON.stringify(agent.oauth_tokens)).digest('hex');
+    if (!cc && agent.oauth_tokens && !this.initialOAuthGrantMaterial)
+      this.initialOAuthGrantMaterial = JSON.stringify(agent.oauth_tokens);
     const oauthIdentity = cc
       ? { client_id: cc.client_id, token_endpoint: cc.token_endpoint, scope: cc.scope, resource: cc.resource }
-      : this.initialOAuthCallerScope;
+      : this.initialOAuthGrantMaterial;
     const credential =
       this.config.accountRegistryScope ??
-      createHash('sha256')
-        .update(
-          JSON.stringify({
-            token: agent.auth_token,
-            oauth: oauthIdentity,
-            oauthClient: agent.oauth_client?.client_id,
-            oauthResource: agent.oauth_resource,
-            headers: agent.headers,
-          })
-        )
-        .digest('hex');
+      this.credentialScope(
+        JSON.stringify({
+          token: agent.auth_token,
+          oauth: oauthIdentity,
+          oauthClient: agent.oauth_client?.client_id,
+          oauthResource: agent.oauth_resource,
+          headers: agent.headers,
+        })
+      );
     return JSON.stringify([this.agent.agent_uri, this.agent.protocol, credential]);
   }
 
   get accounts(): BuyerAccountRegistry {
+    this.accountRegistryExplicitlyAccessed = true;
+    return this.getAccountRegistry();
+  }
+
+  private getAccountRegistry(): BuyerAccountRegistry {
     return (this._accounts ??= new BuyerAccountRegistry(
       () => this.accountScope(),
       async (account, options, taskOptions) => {
@@ -1877,8 +1897,11 @@ export class SingleAgentClient {
     params: any,
     options?: TaskOptions
   ): DeferredClientFinalizationContext['accountRegistry'] {
-    if (!this._accounts && (this.config.accountPolicy ?? 'off') === 'off' && !this.config.accountStorage)
-      return undefined;
+    const knownOnly =
+      !this.accountRegistryExplicitlyAccessed &&
+      (this.config.accountPolicy ?? 'off') === 'off' &&
+      !this.config.accountStorage;
+    if (knownOnly && !this._accounts) return undefined;
     if (
       (options as TaskOptions & { [SKIP_ACCOUNT_REGISTRY_OBSERVATION]?: boolean })?.[SKIP_ACCOUNT_REGISTRY_OBSERVATION]
     )
@@ -1886,6 +1909,8 @@ export class SingleAgentClient {
     if (task !== 'sync_accounts' && task !== 'list_accounts') return undefined;
     return {
       scope: this.accountScope(),
+      ...(knownOnly && { knownOnly: true }),
+      observationEpoch: this.getAccountRegistry().captureObservation(),
       ...(task === 'list_accounts' && params.account && { refs: [params.account] }),
       ...(task === 'sync_accounts' && {
         refs: Array.isArray(params.accounts)
@@ -1901,29 +1926,29 @@ export class SingleAgentClient {
 
   private async applyAccountPolicy(task: string, params: any, options?: TaskOptions): Promise<any> {
     const policy = this.config.accountPolicy ?? 'off';
+    const ref =
+      params?.account ?? (typeof params?.account_id === 'string' ? { account_id: params.account_id } : undefined);
     if (
       policy === 'off' ||
       options?.skipAccountValidation ||
       options?.preserveGovernedPayload ||
-      !params?.account ||
+      !ref ||
       task === 'list_accounts'
     )
       return params;
-    const ref = params.account;
     if (
       typeof ref !== 'object' ||
       ref === null ||
       (!('account_id' in ref) && (typeof ref.brand?.domain !== 'string' || typeof ref.operator !== 'string'))
     )
       return params; // Let normal request validation report malformed references.
-    const known = await this.accounts.get(params.account);
+    const known = await this.getAccountRegistry().get(ref);
     if (known && !['unknown', 'provisioning', 'failed_provisioning'].includes(known.status)) {
       if (
         ['create_media_buy', 'buy_products', 'accept_proposal', 'activate_signal', 'acquire_rights'].includes(task) &&
         known.status !== 'active'
       ) {
-        if (known.status === 'pending_approval')
-          throw new AccountPendingApprovalError(params.account, known.account_id);
+        if (known.status === 'pending_approval') throw new AccountPendingApprovalError(ref, known.account_id);
         if (known.status === 'payment_required') throw new AccountPaymentRequiredError();
         throw new AccountSetupRequiredError(
           `Account status is ${known.status}. Refresh it with client.accounts.applyStatusChange or complete seller setup.`
@@ -1942,7 +1967,7 @@ export class SingleAgentClient {
         'decline_proposals',
       ].includes(task)
     ) {
-      throw new AccountNotProvisionedError(params.account, task);
+      throw new AccountNotProvisionedError(ref, task);
     }
     const caps = await this.getCapabilities(options);
     if (
@@ -1951,11 +1976,11 @@ export class SingleAgentClient {
       params.push_notification_config ||
       !schemaAllowsTopLevelField(task, 'brand')
     ) {
-      throw new AccountNotProvisionedError(params.account, task);
+      throw new AccountNotProvisionedError(ref, task);
     }
+    if (!('brand' in ref)) throw new AccountNotProvisionedError(ref, task);
     const { account, ...publicRequest } = params;
-    if (!('brand' in account)) throw new AccountNotProvisionedError(account, task);
-    return { ...publicRequest, brand: params.brand ?? account.brand };
+    return { ...publicRequest, brand: params.brand ?? ref.brand };
   }
 
   private executor: TaskExecutor;
@@ -2055,9 +2080,7 @@ export class SingleAgentClient {
     this.normalizedAgent = this.normalizeAgentConfig(this.agent);
     // Pin this client's configured OAuth grant, retaining caller isolation across automatic token refreshes.
     if (this.normalizedAgent.oauth_tokens && !this.normalizedAgent.oauth_client_credentials)
-      this.initialOAuthCallerScope = createHash('sha256')
-        .update(JSON.stringify(this.normalizedAgent.oauth_tokens))
-        .digest('hex');
+      this.initialOAuthGrantMaterial = JSON.stringify(this.normalizedAgent.oauth_tokens);
     this.capabilityEvidenceAuthMaterial = this.currentCapabilityEvidenceAuthMaterial();
 
     this.executor = new TaskExecutor({
@@ -5045,22 +5068,45 @@ export class SingleAgentClient {
       Array.isArray(result.data.accounts)
     ) {
       try {
+        const registry = this.getAccountRegistry();
+        let refs = context.accountRegistry.refs ?? [];
+        let rows: readonly unknown[] = result.data.accounts;
+        if (context.accountRegistry.knownOnly) {
+          refs = (await Promise.all(refs.map(async ref => ((await registry.get(ref)) ? ref : undefined)))).filter(
+            (ref): ref is AccountReference => ref !== undefined
+          );
+          if (taskType === 'list_accounts') {
+            rows = (
+              await Promise.all(
+                result.data.accounts.map(async row => {
+                  const ref = canonicalAccountRoutingSnapshot(row);
+                  if (ref && (await registry.get(ref as AccountReference))) return row;
+                  const natural = canonicalAccountRoutingSnapshot({ ...row, account_id: undefined });
+                  return natural && (await registry.get(natural as AccountReference)) ? row : undefined;
+                })
+              )
+            ).filter(row => row !== undefined);
+          }
+        }
+        if (context.accountRegistry.scope !== this.accountScope()) return result;
         if (taskType === 'sync_accounts')
-          await this.accounts.observeSync(
-            context.accountRegistry.refs ?? [],
-            result.data.accounts,
-            context.accountRegistry.dryRun
+          await registry.observeSync(
+            refs,
+            rows,
+            context.accountRegistry.dryRun,
+            context.accountRegistry.observationEpoch
           );
         if (taskType === 'list_accounts') {
-          const ref = context.accountRegistry.refs?.[0];
-          await this.accounts.observeList(
-            result.data.accounts,
+          const ref = refs[0];
+          await registry.observeList(
+            rows,
             ref &&
               'account_id' in ref &&
               (!(result.data as unknown as ListAccountsResponse).pagination?.has_more ||
                 result.data.accounts.some(row => (row as { account_id?: string }).account_id === ref.account_id))
               ? ref.account_id
-              : undefined
+              : undefined,
+            context.accountRegistry.observationEpoch
           );
         }
       } catch {
@@ -7720,7 +7766,7 @@ export class SingleAgentClient {
       }
       let synced;
       try {
-        synced = await this.accounts.ensure(
+        synced = await this.getAccountRegistry().ensure(
           account,
           {
             billing,

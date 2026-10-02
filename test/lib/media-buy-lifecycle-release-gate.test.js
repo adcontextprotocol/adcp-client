@@ -714,6 +714,7 @@ test('the same compact-first buyer facade projects established direct and propos
     format_ids: [{ agent_url: 'https://creative.adcontextprotocol.org', id: 'display_300x250' }],
   });
   const adcp = createAdcpServer({
+    resolveAccount: ref => (ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined),
     name: 'a2a-established-release-gate',
     version: '1.0.0',
     adcpVersion: '3.1.18',
@@ -1069,6 +1070,7 @@ test('the compact-first buyer uses the native 3.2 lifecycle discovered over offi
     };
   };
   const adcp = createAdcpServer({
+    resolveAccount: ref => (ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined),
     name: 'a2a-compact-release-gate',
     version: '1.0.0',
     adcpVersion: '3.2.1',

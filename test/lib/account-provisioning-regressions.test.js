@@ -113,7 +113,7 @@ for (const task of ['getProducts', 'getSignals']) {
     sync.stop();
     const good = client[task];
     client[task] = async () => failure;
-    await sync.refresh();
+    await assert.rejects(sync.refresh(), error => error.adcpError?.code === 'ACCOUNT_NOT_FOUND');
     assert.equal(sync.state, 'degraded');
     assert.equal(sync.products.count, 1);
     assert.equal(sync.signals.count, 1);
@@ -206,7 +206,7 @@ test('thrown and non-terminal refreshes preserve a good mirror (#3092)', async (
   assert.equal(sync.state, 'degraded');
   assert.equal(sync.products.count, 1);
   client.getProducts = async () => ({ success: true, status: 'submitted', metadata: {} });
-  await sync.refresh();
+  await assert.rejects(sync.refresh(), /bootstrap/);
   assert.equal(sync.state, 'degraded');
   assert.equal(sync.products.count, 1);
   sync.stop();

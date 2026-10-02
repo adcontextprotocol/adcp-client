@@ -12,6 +12,7 @@ const { ADCP_MIRRORED_STRUCTURED_CONTENT_META_KEY } = require('../dist/lib/serve
 // silently re-enable the other side.
 function createAdcpServer(config) {
   return _createAdcpServer({
+    resolveAccount: ref => (ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined),
     ...config,
     validation: { requests: 'off', responses: 'off', ...(config?.validation ?? {}) },
   });
@@ -1133,6 +1134,7 @@ describe('createAdcpServer with idempotency', () => {
     });
     let calls = 0;
     const server = _createAdcpServer({
+      resolveAccount: ref => (ref ? { account_id: ref.account_id ?? JSON.stringify(ref) } : undefined),
       name: 'T',
       version: '1.0.0',
       idempotency,
@@ -1177,6 +1179,7 @@ describe('createAdcpServer with idempotency', () => {
       backend: memoryBackend({ sweepIntervalMs: 0 }),
     });
     const server = _createAdcpServer({
+      resolveAccount: ref => (ref ? { account_id: ref.account_id ?? JSON.stringify(ref) } : undefined),
       name: 'T',
       version: '1.0.0',
       idempotency,
@@ -1240,6 +1243,7 @@ describe('createAdcpServer with idempotency', () => {
       releaseHandler = resolve;
     });
     const server = _createAdcpServer({
+      resolveAccount: ref => (ref ? { account_id: ref.account_id ?? JSON.stringify(ref) } : undefined),
       name: 'T',
       version: '1.0.0',
       idempotency,
@@ -1284,6 +1288,7 @@ describe('createAdcpServer with idempotency', () => {
     });
     let calls = 0;
     const server = _createAdcpServer({
+      resolveAccount: ref => (ref ? { account_id: ref.account_id ?? JSON.stringify(ref) } : undefined),
       name: 'T',
       version: '1.0.0',
       idempotency,
@@ -1787,6 +1792,7 @@ describe("createAdcpServer with idempotency: 'disabled'", () => {
       return { media_buy_id: `mb_${calls.length}`, packages: [] };
     };
     const server = _createAdcpServer({
+      resolveAccount: ref => (ref ? { account_id: ref.account_id ?? JSON.stringify(ref) } : undefined),
       name: 'T',
       version: '1.0.0',
       idempotency: 'disabled',

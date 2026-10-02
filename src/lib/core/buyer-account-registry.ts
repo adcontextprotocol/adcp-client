@@ -66,6 +66,11 @@ export class BuyerAccountRegistry {
   private pending = new Map<string, PendingProvisioning>();
   private writes: Promise<void> = Promise.resolve();
   private repairs = new Map<string, object>();
+  private repairWaiters = new Map<string, Promise<void>>();
+  private invalidatedHandles = new Set<string>();
+  private observationEpoch = 0;
+  private observationFloor = 0;
+  private statusEpochs = new Map<string, number>();
   private readonly maxEntries: number;
   private readonly normalizeOptions?: BuyerAccountRegistryOptions['normalizeOptions'];
   constructor(
@@ -87,6 +92,17 @@ export class BuyerAccountRegistry {
   private key(account: AccountReference, scope = this.scope()): string {
     return `${scope}:${accountReferenceKey(account)}`;
   }
+  /** Capture before a seller request; observations older than a status repair are ignored. */
+  captureObservation(): number {
+    return this.observationEpoch;
+  }
+  private observationIsCurrent(accountId: string | undefined, epoch: number | undefined, scope: string): boolean {
+    return (
+      epoch === undefined ||
+      (epoch >= this.observationFloor &&
+        (!accountId || (this.statusEpochs.get(this.key({ account_id: accountId }, scope)) ?? 0) <= epoch))
+    );
+  }
   private remember(key: string, entry: ProvisionedAccount): void {
     if (!this.entries.has(key) && this.entries.size >= this.maxEntries) {
       if (!this.storage)
@@ -107,6 +123,8 @@ export class BuyerAccountRegistry {
     if (key !== this.key(account) || (entry && accountReferenceKey(entry.account) !== accountReferenceKey(account)))
       return undefined;
     if (entry) this.remember(key, entry);
+    if (entry?.account_id && this.invalidatedHandles.has(this.key({ account_id: entry.account_id })))
+      return { ...structuredClone(entry), status: 'unknown' };
     return entry ? structuredClone(entry) : undefined;
   }
   async ensure(
@@ -141,8 +159,16 @@ export class BuyerAccountRegistry {
       if (shared.result) onTaskResult?.(shared.result);
       return entry;
     }
+    const terms = setupTerms(options);
+    if (
+      current?.status === 'failed_provisioning' &&
+      current.setupTerms &&
+      !isDeepStrictEqual(current.setupTerms, terms)
+    )
+      throw new AccountSetupRequiredError(
+        'The pending account was provisioned with different billing terms. Call syncAccounts explicitly to change terms.'
+      );
     if (current && current.status !== 'failed_provisioning') {
-      const terms = setupTerms(options);
       if (
         Object.entries(terms ?? {}).some(
           ([name, value]) =>
@@ -179,9 +205,14 @@ export class BuyerAccountRegistry {
         throw new AccountSetupRequiredError(
           `Reconcile pending sync_accounts task ${current.pendingTaskId} and observe its completed account rows before provisioning again.`
         );
-      return current; // Never silently re-accept terms for pending or suspended accounts.
+      if (current.status !== 'pending_approval' || current.account_id) return current;
+      // Legacy sellers can return pending rows without a handle. Repeat setup only with identical selected terms.
+      if (!current.setupTerms || !isDeepStrictEqual(current.setupTerms, terms))
+        throw new AccountSetupRequiredError(
+          'Provide the original billing options to refresh a legacy account without a handle, or call syncAccounts explicitly.'
+        );
     }
-    const requiredEntries = current?.status === 'failed_provisioning' ? 1 : 2;
+    const requiredEntries = current ? 1 : 2;
     if (!this.storage && this.entries.size + this.pending.size * 2 + requiredEntries > this.maxEntries) {
       throw new AccountSetupRequiredError(
         'Account registry capacity reached; configure durable storage or increase maxEntries.'
@@ -200,6 +231,7 @@ export class BuyerAccountRegistry {
     };
     // Provisioning may commit spend/terms. Each caller cancels its wait; the one seller operation continues.
     const operationOptions = { ...taskOptions, signal: undefined, timeout: undefined };
+    const observationEpoch = this.captureObservation();
     const request = this.provision(structuredClone(account), pending.options, operationOptions).then(async initial => {
       let result = initial;
       pending.result = result;
@@ -214,15 +246,35 @@ export class BuyerAccountRegistry {
         const provisional: ProvisionedAccount = {
           account: structuredClone(account),
           status: 'provisioning',
+          setupTerms: current?.setupTerms ?? terms,
           ...(result.metadata.taskId && { pendingTaskId: result.metadata.taskId }),
         };
-        await this.write(provisional, scope);
+        await this.enqueue(async () => {
+          const latest = await this.get(account);
+          if (
+            !latest ||
+            latest.status === 'failed_provisioning' ||
+            (latest.status === current?.status && latest.account_id === current?.account_id)
+          )
+            await this.write(provisional, scope);
+        });
         if (!result.submitted) return provisional;
         result = await result.submitted.waitForCompletion();
         pending.result = result;
         notify(result);
         if (!result.success) {
-          await this.write({ account: structuredClone(account), status: 'failed_provisioning' }, scope);
+          await this.enqueue(async () => {
+            const latest = await this.get(account);
+            if (!latest || latest.status === 'provisioning')
+              await this.write(
+                {
+                  account: structuredClone(account),
+                  status: 'failed_provisioning',
+                  setupTerms: current?.setupTerms ?? terms,
+                },
+                scope
+              );
+          });
           throw (
             adcpErrorToTypedError(result.adcpError ?? { code: 'ACCOUNT_SETUP_REQUIRED', message: result.error }) ??
             new Error(result.error)
@@ -234,11 +286,22 @@ export class BuyerAccountRegistry {
         throw new AccountSetupRequiredError(
           'sync_accounts has not completed; observe its completion before provisioning again.'
         );
-      await this.observeSync([account], result.data.accounts);
+      await this.observeSync([account], result.data.accounts, false, observationEpoch);
       const entry = await this.get(account);
       if (scope !== this.scope()) throw new AccountNotFoundError('Caller credentials changed during provisioning.');
       if (!entry || entry.status === 'provisioning' || entry.status === 'failed_provisioning') {
-        await this.write({ account, status: 'failed_provisioning' }, scope);
+        await this.enqueue(async () => {
+          const latest = await this.get(account);
+          if (!latest || ['provisioning', 'failed_provisioning'].includes(latest.status))
+            await this.write(
+              {
+                account,
+                status: 'failed_provisioning',
+                setupTerms: current?.setupTerms ?? terms,
+              },
+              scope
+            );
+        });
         const failed = result.data.accounts.find(row => row.action === 'failed');
         const error = failed?.errors?.[0];
         throw (
@@ -246,14 +309,22 @@ export class BuyerAccountRegistry {
           new AccountNotFoundError('sync_accounts did not establish the requested account.')
         );
       }
-      entry.setupTerms = setupTerms(options);
-      await this.write(entry, scope);
-      if (entry.account_id && !('account_id' in account)) {
-        const idEntry = await this.get({ account_id: entry.account_id });
+      let settled = entry;
+      await this.enqueue(async () => {
+        const latest = await this.get(account);
         if (scope !== this.scope()) throw new AccountNotFoundError('Caller credentials changed during provisioning.');
-        if (idEntry) await this.write({ ...idEntry, setupTerms: entry.setupTerms }, scope);
-      }
-      return entry;
+        if (!latest) throw new AccountNotFoundError('The provisioned account is no longer registered.');
+        settled = latest;
+        if (latest.account_id !== entry.account_id) return; // An explicit sync replaced this handle.
+        settled = { ...latest, setupTerms: setupTerms(options) };
+        await this.write(settled, scope);
+        if (settled.account_id && !('account_id' in account)) {
+          const idEntry = await this.get({ account_id: settled.account_id });
+          if (scope !== this.scope()) throw new AccountNotFoundError('Caller credentials changed during provisioning.');
+          if (idEntry) await this.write({ ...idEntry, setupTerms: settled.setupTerms }, scope);
+        }
+      });
+      return settled;
     });
     pending.promise = request;
     this.pending.set(key, pending);
@@ -265,30 +336,52 @@ export class BuyerAccountRegistry {
     if (callbackFailed) throw callbackError;
     return entry;
   }
-  private async write(entry: ProvisionedAccount, scope: string): Promise<void> {
+  private async write(entry: ProvisionedAccount, scope: string, isCurrent: () => boolean = () => true): Promise<void> {
+    if (!isCurrent()) return;
     const key = this.key(entry.account, scope);
     if (scope === this.scope()) this.remember(key, entry);
     await this.storage?.set(key, structuredClone(entry));
   }
-  private async record(ref: AccountReference, row: AccountRow, scope: string, preserveTerms = false): Promise<void> {
+  private async record(
+    ref: AccountReference,
+    row: AccountRow,
+    scope: string,
+    preserveTerms = false,
+    isCurrent: () => boolean = () => true
+  ): Promise<void> {
     const entry: ProvisionedAccount = {
       account: structuredClone(ref),
       status: row.status!,
       ...(row.account_id && { account_id: row.account_id }),
     };
     const prior = await this.get(ref);
-    if (scope !== this.scope()) return;
+    if (scope !== this.scope() || !isCurrent()) return;
+    const idRef = row.account_id && !('account_id' in ref) ? { account_id: row.account_id } : undefined;
+    const priorId = idRef ? await this.get(idRef) : undefined;
+    if (scope !== this.scope() || !isCurrent()) return;
+    const aliases = new Map((priorId?.aliases ?? []).map(alias => [accountReferenceKey(alias), alias]));
+    if (idRef) {
+      aliases.set(accountReferenceKey(ref), structuredClone(ref));
+      if (aliases.size > this.maxEntries)
+        throw new AccountSetupRequiredError('Account alias capacity reached; increase registry maxEntries.');
+    }
+    if (!('account_id' in ref) && prior?.account_id && prior.account_id !== row.account_id) {
+      const oldId = await this.get({ account_id: prior.account_id });
+      if (scope !== this.scope() || !isCurrent()) return;
+      if (oldId?.aliases) {
+        await this.write(
+          { ...oldId, aliases: oldId.aliases.filter(alias => accountReferenceKey(alias) !== accountReferenceKey(ref)) },
+          scope,
+          isCurrent
+        );
+      }
+    }
     if (preserveTerms && prior?.setupTerms) entry.setupTerms = prior.setupTerms;
     if ('account_id' in ref) {
       if (prior?.aliases) entry.aliases = prior.aliases;
     }
-    await this.write(entry, scope);
-    if (!row.account_id || 'account_id' in ref || scope !== this.scope()) return;
-    const idRef = { account_id: row.account_id };
-    const priorId = await this.get(idRef);
-    if (scope !== this.scope()) return;
-    const aliases = new Map((priorId?.aliases ?? []).map(alias => [accountReferenceKey(alias), alias]));
-    aliases.set(accountReferenceKey(ref), structuredClone(ref));
+    await this.write(entry, scope, isCurrent);
+    if (!idRef || scope !== this.scope() || !isCurrent()) return;
     await this.write(
       {
         account: idRef,
@@ -297,7 +390,8 @@ export class BuyerAccountRegistry {
         aliases: [...aliases.values()],
         ...(preserveTerms && priorId?.setupTerms && { setupTerms: priorId.setupTerms }),
       },
-      scope
+      scope,
+      isCurrent
     );
   }
   private enqueue(run: () => Promise<void>): Promise<void> {
@@ -305,7 +399,12 @@ export class BuyerAccountRegistry {
     this.writes = next.catch(() => {});
     return next;
   }
-  async observeSync(refs: readonly AccountReference[], rows: readonly unknown[], dryRun = false): Promise<void> {
+  async observeSync(
+    refs: readonly AccountReference[],
+    rows: readonly unknown[],
+    dryRun = false,
+    observationEpoch?: number
+  ): Promise<void> {
     if (dryRun) return;
     const scope = this.scope();
     return this.enqueue(async () => {
@@ -327,17 +426,46 @@ export class BuyerAccountRegistry {
           );
         });
         if (candidates.length !== 1) continue; // Never guess between multiple natural-key variants.
-        const row = candidates[0] as AccountRow;
+        let row = candidates[0] as AccountRow;
         if (row.action === 'failed' || typeof row.status !== 'string') continue;
-        await this.record(ref, row, scope);
+        const prior = await this.get(ref);
+        if (scope !== this.scope()) return;
+        let rowEpoch = observationEpoch;
+        let repairedBinding = false;
+        if (!this.observationIsCurrent(row.account_id, rowEpoch, scope)) {
+          if (!row.account_id || (prior?.account_id && prior.account_id !== row.account_id)) continue;
+          const captured = this.captureObservation();
+          const authoritative = await this.get({ account_id: row.account_id });
+          if (scope !== this.scope()) return;
+          row = {
+            ...row,
+            status: captured === this.captureObservation() ? (authoritative?.status ?? 'unknown') : 'unknown',
+          };
+          rowEpoch = this.captureObservation();
+          repairedBinding = true;
+        }
+        const isCurrent = () => scope === this.scope() && this.observationIsCurrent(row.account_id, rowEpoch, scope);
+        await this.record(ref, row, scope, false, isCurrent);
+        if (!isCurrent() || repairedBinding) continue;
+        for (const id of [row.account_id])
+          if (id) {
+            const key = this.key({ account_id: id }, scope);
+            this.repairs.delete(key);
+            this.invalidatedHandles.delete(key);
+          }
       }
     });
   }
-  private async reconcileId(accountId: string, status: string, scope: string): Promise<void> {
-    if (scope !== this.scope()) return;
+  private async reconcileId(
+    accountId: string,
+    status: string,
+    scope: string,
+    isCurrent: () => boolean = () => true
+  ): Promise<void> {
+    if (scope !== this.scope() || !isCurrent()) return;
     const idRef = { account_id: accountId };
     const indexed = await this.get(idRef);
-    if (scope !== this.scope()) return;
+    if (scope !== this.scope() || !isCurrent()) return;
     const aliases = new Map((indexed?.aliases ?? []).map(ref => [accountReferenceKey(ref), ref]));
     for (const [key, entry] of this.entries) {
       if (
@@ -350,52 +478,81 @@ export class BuyerAccountRegistry {
     }
     for (const ref of aliases.values()) {
       const prior = await this.get(ref);
-      if (scope !== this.scope()) return;
-      await this.write({ ...prior, account: ref, account_id: accountId, status }, scope);
+      if (scope !== this.scope() || !isCurrent()) return;
+      if (!prior || prior.account_id !== accountId) {
+        aliases.delete(accountReferenceKey(ref));
+        continue;
+      }
+      await this.write({ ...prior, account: ref, account_id: accountId, status }, scope, isCurrent);
     }
-    if (scope !== this.scope()) return;
+    if (scope !== this.scope() || !isCurrent()) return;
     if (indexed || aliases.size)
       await this.write(
         { ...indexed, account: idRef, account_id: accountId, status, aliases: [...aliases.values()] },
-        scope
+        scope,
+        isCurrent
       );
   }
-  async observeList(rows: readonly unknown[], queriedAccountId?: string): Promise<void> {
+  async observeList(rows: readonly unknown[], queriedAccountId?: string, observationEpoch?: number): Promise<void> {
     const scope = this.scope();
-    return this.observeListAtScope(rows, queriedAccountId, scope);
+    return this.observeListAtScope(rows, queriedAccountId, scope, undefined, observationEpoch);
   }
   private async observeListAtScope(
     rows: readonly unknown[],
     queriedAccountId: string | undefined,
     scope: string,
-    isCurrent: () => boolean = () => true
+    isCurrent?: () => boolean,
+    observationEpoch?: number
   ): Promise<void> {
     return this.enqueue(async () => {
-      if (scope !== this.scope() || !isCurrent()) return;
+      if (scope !== this.scope() || (isCurrent && !isCurrent())) return;
+      if (!this.observationIsCurrent(queriedAccountId, observationEpoch, scope)) return;
       let foundQuery = false;
       for (const value of rows) {
         if (!value || typeof value !== 'object') continue;
         const row = value as AccountRow;
         if (typeof row.account_id !== 'string' || typeof row.status !== 'string') continue;
+        if (!this.observationIsCurrent(row.account_id, observationEpoch, scope)) continue;
+        const current = () =>
+          scope === this.scope() &&
+          (!isCurrent || isCurrent()) &&
+          this.observationIsCurrent(row.account_id, observationEpoch, scope);
         if (row.account_id === queriedAccountId) foundQuery = true;
-        await this.reconcileId(row.account_id, row.status, scope);
-        await this.record({ account_id: row.account_id }, row, scope, true);
-        if (row.brand?.domain && row.operator)
-          await this.record(
-            {
-              brand: row.brand,
-              operator: row.operator,
-              ...(row.operator_unit && { operator_unit: row.operator_unit }),
-              ...(row.currency && { currency: row.currency }),
-              ...(row.timezone && { timezone: row.timezone }),
-              ...(row.sandbox !== undefined && { sandbox: row.sandbox }),
-            },
-            row,
-            scope,
-            true
-          );
+        await this.reconcileId(row.account_id, row.status, scope, current);
+        await this.record({ account_id: row.account_id }, row, scope, true, current);
+        if (row.brand?.domain && row.operator) {
+          const ref: AccountReference = {
+            brand: row.brand,
+            operator: row.operator,
+            ...(row.operator_unit && { operator_unit: row.operator_unit }),
+            ...(row.currency && { currency: row.currency }),
+            ...(row.timezone && { timezone: row.timezone }),
+            ...(row.sandbox !== undefined && { sandbox: row.sandbox }),
+          };
+          const prior = await this.get(ref);
+          if (scope !== this.scope()) return;
+          // A roster/status lookup cannot undo an explicit sync to a replacement handle.
+          if (!prior?.account_id || prior.account_id === row.account_id)
+            await this.record(ref, row, scope, true, current);
+        }
+        if (!isCurrent && current()) {
+          const key = this.key({ account_id: row.account_id }, scope);
+          this.repairs.delete(key);
+          this.invalidatedHandles.delete(key);
+        }
       }
-      if (queriedAccountId && !foundQuery) await this.reconcileId(queriedAccountId, 'unknown', scope);
+      if (queriedAccountId && !foundQuery) {
+        const current = () =>
+          scope === this.scope() &&
+          (!isCurrent || isCurrent()) &&
+          this.observationIsCurrent(queriedAccountId, observationEpoch, scope);
+        await this.reconcileId(queriedAccountId, 'unknown', scope, current);
+        if (!isCurrent && current()) {
+          const key = this.key({ account_id: queriedAccountId }, scope);
+          this.repairs.delete(key);
+          this.invalidatedHandles.delete(key);
+        }
+      }
     });
   }
   /** After verifying account.status_changed, repair aliases by handle from the authoritative seller. */
@@ -403,17 +560,54 @@ export class BuyerAccountRegistry {
     return this.repairStatus(notification.account_id, options, true);
   }
   private async repairStatus(accountId: string, options: TaskOptions | undefined, invalidate: boolean): Promise<void> {
+    throwIfAborted(options?.signal);
+    const key = this.key({ account_id: accountId });
+    let operation = !invalidate ? this.repairWaiters.get(key) : undefined;
+    if (!operation) {
+      operation = this.runRepair(accountId, { ...options, signal: undefined, timeout: undefined }, invalidate);
+      this.repairWaiters.set(key, operation);
+      const cleanup = () => {
+        if (this.repairWaiters.get(key) === operation) this.repairWaiters.delete(key);
+      };
+      void operation.then(cleanup, cleanup);
+    }
+    const wait = (promise: Promise<void>) =>
+      withTaskDeadline(options, taskOptions => withAbortSignal([taskOptions.signal], undefined, () => promise));
+    await wait(operation);
+    let newer = this.repairWaiters.get(key);
+    while (newer && newer !== operation) {
+      operation = newer;
+      await wait(operation);
+      newer = this.repairWaiters.get(key);
+    }
+  }
+  private async runRepair(accountId: string, options: TaskOptions | undefined, invalidate: boolean): Promise<void> {
     if (!this.repair) throw new Error('Account registry requires a list_accounts repair callback.');
     const scope = this.scope();
     const key = this.key({ account_id: accountId }, scope);
     const token = {};
+    this.statusEpochs.delete(key);
+    this.statusEpochs.set(key, ++this.observationEpoch);
+    if (this.statusEpochs.size > this.maxEntries) {
+      const oldestKey = this.statusEpochs.keys().next().value!;
+      this.observationFloor = this.statusEpochs.get(oldestKey)!;
+      this.statusEpochs.delete(oldestKey);
+    }
     this.repairs.set(key, token);
-    if (invalidate) await this.enqueue(() => this.reconcileId(accountId, 'unknown', scope));
+    if (invalidate) this.invalidatedHandles.add(key);
+    let invalidationPersisted = !invalidate;
     try {
+      if (invalidate) {
+        await this.enqueue(() => this.reconcileId(accountId, 'unknown', scope, () => this.repairs.get(key) === token));
+        invalidationPersisted = true;
+      }
       const rows = await this.repair(accountId, options);
       await this.observeListAtScope(rows, accountId, scope, () => this.repairs.get(key) === token);
     } finally {
-      if (this.repairs.get(key) === token) this.repairs.delete(key);
+      if (this.repairs.get(key) === token) {
+        this.repairs.delete(key);
+        if (invalidationPersisted) this.invalidatedHandles.delete(key);
+      }
     }
   }
 }
