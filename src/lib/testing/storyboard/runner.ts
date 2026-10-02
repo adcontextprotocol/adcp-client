@@ -9,6 +9,7 @@
 import { createHash, createHmac } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { ACCOUNT_FREE_DISCOVERY_TASKS } from './account-policy';
 import {
   createTestClient,
   getOrCreateClientResolution,
@@ -7265,7 +7266,7 @@ async function executeStep(
   const hasData = taskResult?.data !== undefined && taskResult?.data !== null;
 
   // Convention-based extraction (for non-error steps, or when expect_error succeeded)
-  if (passed && hasData && taskResult) {
+  if (passed && hasData && taskResult && !(effectiveStep.task === 'sync_accounts' && request.dry_run === true)) {
     const extracted = extractContextWithProvenance(effectiveStep.task, taskResult.data, step.id);
     for (const group of extracted.clearGroups ?? []) {
       if (group.when && !group.when.values.includes(updatedContext[group.when.key])) continue;
@@ -10295,7 +10296,7 @@ export function applyBrandInvariant(
         result.account = merged;
       }
     }
-  } else if (topAccountOk && taskName !== 'list_accounts') {
+  } else if (topAccountOk && taskName !== 'list_accounts' && !ACCOUNT_FREE_DISCOVERY_TASKS.has(taskName ?? '')) {
     // No account on the request — construct one so tools whose schema
     // declares `account` but not top-level `brand` (e.g. get_media_buys,
     // list_creatives) still carry the run-scoped brand on the wire.

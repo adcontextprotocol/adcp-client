@@ -97,9 +97,11 @@ function readCompactMediaBuyFields(data: unknown): Record<string, unknown> {
 export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
   sync_accounts(data) {
     const d = data as Record<string, unknown> | undefined;
+    if (d?.dry_run === true) return {};
     const accounts = d?.accounts as Array<Record<string, unknown>> | undefined;
     if (!accounts?.[0]) return {};
     const first = accounts[0];
+    if (first.action === 'failed') return {};
     const extracted: Record<string, unknown> = {};
     if (first.account_id) extracted.account_id = first.account_id;
     if (first.status) extracted.account_status = first.status;
@@ -111,6 +113,10 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
     const accountRef: Record<string, unknown> = {};
     if (first.brand) accountRef.brand = first.brand;
     if (first.operator) accountRef.operator = first.operator;
+    for (const field of ['operator_unit', 'currency', 'timezone', 'sandbox']) {
+      if (first[field] !== undefined) accountRef[field] = first[field];
+    }
+    if (!first.brand && !first.operator && first.account_id) accountRef.account_id = first.account_id;
     extracted.account = accountRef;
     return extracted;
   },
