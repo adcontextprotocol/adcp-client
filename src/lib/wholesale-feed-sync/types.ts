@@ -24,7 +24,7 @@ export type WholesaleFeedSyncMode = 'manual' | 'auto-poll';
 /**
  * Lifecycle state of the sync engine.
  */
-export type WholesaleFeedSyncState = 'idle' | 'bootstrapping' | 'syncing' | 'error';
+export type WholesaleFeedSyncState = 'idle' | 'bootstrapping' | 'syncing' | 'degraded' | 'error';
 
 /**
  * Subset of `SingleAgentClient` that {@link WholesaleFeedSync} actually uses.
@@ -194,8 +194,8 @@ export interface ResolvedCapabilities {
  *   picks a mode. Useful for UI mode badges.
  * - `resyncing` — emitted before a `wholesale_feed.bulk_change` recovery
  *   re-bootstrap, webhook-version mismatch repair, or manual refresh.
- * - `error` — background poll/probe error. Non-fatal; sync stays in
- *   `'syncing'` and retries on the next tick.
+ * - `error` — initial bootstrap, re-sync, or background probe failure.
+ *   Failed refreshes preserve the last good mirror and retry on the next tick.
  * - `stateChange` — fires on every {@link WholesaleFeedSyncState} transition.
  */
 export interface WholesaleFeedSyncEvents {
@@ -203,7 +203,7 @@ export interface WholesaleFeedSyncEvents {
   sync: [{ eventsApplied: number }];
   mode_resolved: [{ mode: WholesaleFeedSyncMode; capabilities: ResolvedCapabilities }];
   resyncing: [{ reason: 'bulk_change' | 'version_mismatch' | 'manual' }];
-  error: [{ error: Error }];
+  error: [{ error: Error; adcpError?: import('../core/ConversationTypes').AdcpErrorInfo }];
   stateChange: [{ from: WholesaleFeedSyncState; to: WholesaleFeedSyncState }];
   // Per-event-type fan-outs. Payload is the full WholesaleFeedEvent so callers
   // can read `event_id`, `created_at`, and the discriminated `payload`.
