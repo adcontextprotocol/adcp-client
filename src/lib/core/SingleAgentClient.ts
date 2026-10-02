@@ -1808,6 +1808,17 @@ export class SingleAgentClient {
     const oauthIdentity = cc
       ? { client_id: cc.client_id, token_endpoint: cc.token_endpoint, scope: cc.scope, resource: cc.resource }
       : this.initialOAuthGrantMaterial;
+    const signing = agent.request_signing;
+    const signingIdentity = signing
+      ? signing.kind === 'provider'
+        ? {
+            keyid: signing.provider.keyid,
+            algorithm: signing.provider.algorithm,
+            fingerprint: signing.provider.fingerprint,
+            purpose: signing.provider.adcpUse,
+          }
+        : { keyid: signing.kid, algorithm: signing.alg, key: signing.private_key }
+      : undefined;
     const credential =
       this.config.accountRegistryScope ??
       this.credentialScope(
@@ -1817,6 +1828,7 @@ export class SingleAgentClient {
           oauthClient: agent.oauth_client?.client_id,
           oauthResource: agent.oauth_resource,
           headers: agent.headers,
+          signing: signingIdentity,
         })
       );
     return JSON.stringify([this.agent.agent_uri, this.agent.protocol, credential]);

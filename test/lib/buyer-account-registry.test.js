@@ -431,6 +431,49 @@ test('client-credentials scope survives token rotation and isolates other princi
   assert.equal((await first.accounts.get(account)).status, 'active');
   assert.equal(await make('caller-b').accounts.get(account), undefined);
 });
+test('durable registry isolates request-signing keys and restores the same signer (#3093)', async () => {
+  const records = new Map();
+  const storage = { get: async key => records.get(key), set: async (key, value) => records.set(key, value) };
+  const make = requestSigning =>
+    new SingleAgentClient(
+      {
+        id: 'seller',
+        name: 'Seller',
+        agent_uri: 'https://seller.example/mcp',
+        protocol: 'mcp',
+        request_signing: requestSigning,
+      },
+      { accountStorage: storage }
+    );
+  const provider = (fingerprint, algorithm = 'ed25519') => ({
+    kind: 'provider',
+    provider: {
+      keyid: 'shared-key-id',
+      algorithm,
+      fingerprint,
+      sign: async () => {
+        throw Error('registry observations do not sign requests');
+      },
+    },
+  });
+  await make(provider('caller-a')).accounts.observeSync([account], provisionResult().data.accounts);
+  assert.equal((await make(provider('caller-a')).accounts.get(account)).status, 'active');
+  assert.equal(await make(provider('caller-b')).accounts.get(account), undefined);
+  assert.equal(await make(provider('caller-a', 'ecdsa-p256-sha256')).accounts.get(account), undefined);
+  assert.equal(await make(undefined).accounts.get(account), undefined);
+
+  const { generateKeyPairSync } = require('node:crypto');
+  const inline = () => ({
+    kind: 'inline',
+    kid: 'shared-inline-key-id',
+    alg: 'ed25519',
+    private_key: generateKeyPairSync('ed25519').privateKey.export({ format: 'jwk' }),
+  });
+  const firstKey = inline();
+  await make(firstKey).accounts.observeSync([account], provisionResult().data.accounts);
+  assert.equal((await make(structuredClone(firstKey)).accounts.get(account)).status, 'active');
+  assert.equal(await make(inline()).accounts.get(account), undefined);
+});
 test('conditional cache snapshots survive eviction and asynchronous completion (#3093)', async () => {
   const cache = createProductCache({ publicTtl: 0 });
   const c = new SingleAgentClient(
