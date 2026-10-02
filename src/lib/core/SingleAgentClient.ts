@@ -129,6 +129,7 @@ import {
 import { withTaskDeadline } from './task-deadline';
 import { createMCPRequestHeaders } from '../auth';
 import { isAbortOrTimeoutError } from '../protocols/abort';
+import { getSignedRequestRejection } from '../protocols/signedRequestRejection';
 import { ProtocolClient, normalizeTransportOptions } from '../protocols';
 import {
   AuthenticationCredentialsRejectedError,
@@ -3143,6 +3144,8 @@ export class SingleAgentClient {
         }
         return { success: true };
       } catch (error: unknown) {
+        const signedRejection = getSignedRequestRejection(error);
+        if (signedRejection) throw signedRejection;
         if (isAbortOrTimeoutError(error)) {
           throw error;
         }

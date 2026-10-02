@@ -391,7 +391,7 @@ function sanitizeBodyText(text: string, limit: number): { body: string; truncate
   return { body: redactSensitiveJsonOrText(bounded), truncated };
 }
 
-function redactSensitiveJsonOrText(text: string): string {
+export function redactSensitiveJsonOrText(text: string): string {
   try {
     return JSON.stringify(redactSensitiveValue(JSON.parse(text)));
   } catch {

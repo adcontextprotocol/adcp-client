@@ -67,7 +67,7 @@ async function startTokenServer() {
  * *accepted* tokens is mutable — tests rotate it to simulate the AS
  * rotating a session out from under us.
  */
-async function startMcpStubWithBearerGate(initialAcceptedTokens) {
+async function startMcpStubWithBearerGate(initialAcceptedTokens, challenge = 'Bearer error="invalid_token"') {
   const state = {
     acceptedTokens: new Set(initialAcceptedTokens),
     calls: [],
@@ -90,11 +90,11 @@ async function startMcpStubWithBearerGate(initialAcceptedTokens) {
     }
     const authHeader = req.headers.authorization || '';
     const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice('Bearer '.length) : '';
-    state.calls.push({ bearer, toolName: undefined });
+    state.calls.push({ bearer, signature: req.headers.signature, toolName: undefined });
     if (!state.acceptedTokens.has(bearer)) {
       res.writeHead(401, {
         'content-type': 'application/json',
-        'www-authenticate': 'Bearer error="invalid_token"',
+        ...(challenge && { 'www-authenticate': challenge }),
       });
       res.end(JSON.stringify({ error: 'invalid_token' }));
       return;
@@ -191,45 +191,98 @@ describe('CC integration: token exchange + bearer attach', () => {
 });
 
 describe('CC integration: mid-session 401 retry', () => {
-  test('mid-session token rotation: 401 triggers force-refresh and retry succeeds', async () => {
-    await resetGlobalState();
-    const tokenServer = await startTokenServer();
-    const mcpServer = await startMcpStubWithBearerGate(['tok_1']);
-    try {
-      const agent = makeAgent({ agentUrl: mcpServer.url, tokenUrl: tokenServer.url });
+  for (const challenge of ['Bearer error="invalid_token"', undefined]) {
+    test(`mid-session token rotation on a signed request: ${challenge ? 'Bearer' : 'bare'} 401 refreshes and retries`, async () => {
+      await resetGlobalState();
+      const tokenServer = await startTokenServer();
+      const mcpServer = await startMcpStubWithBearerGate(['tok_1'], challenge ?? null);
+      try {
+        const agent = makeAgent({ agentUrl: mcpServer.url, tokenUrl: tokenServer.url });
 
-      // Prime: first call exchanges tok_1, MCP accepts it.
-      await ProtocolClient.callTool(agent, 'ping', {});
-      assert.strictEqual(tokenServer.state.issued, 1);
+        const { generateKeyPairSync } = require('node:crypto');
+        agent.request_signing = {
+          kid: 'refresh-test',
+          alg: 'ed25519',
+          private_key: {
+            ...generateKeyPairSync('ed25519').privateKey.export({ format: 'jwk' }),
+            adcp_use: 'request-signing',
+          },
+          agent_url: 'https://buyer.example',
+          always_sign: ['ping'],
+        };
 
-      // Simulate the AS rotating out tok_1 and minting tok_2 — the next token
-      // exchange will produce tok_2, but our cache still has tok_1.
-      mcpServer.state.acceptedTokens = new Set(['tok_2']);
+        // Prime: first call exchanges tok_1, MCP accepts it.
+        await ProtocolClient.callTool(agent, 'ping', {});
+        assert.strictEqual(tokenServer.state.issued, 1);
 
-      // Second call: the pre-flight check sees tok_1 as "valid" (not near
-      // expiry), sends it, MCP 401s. The retry path force-refreshes → gets
-      // tok_2 → retries → success. Exactly one extra token POST + one extra
-      // MCP call beyond the 401.
-      const callsBeforeRetry = mcpServer.state.calls.length;
-      const result = await ProtocolClient.callTool(agent, 'ping', {});
-      assert.ok(result, 'retry succeeded');
+        // Simulate the AS rotating out tok_1 and minting tok_2 — the next token
+        // exchange will produce tok_2, but our cache still has tok_1.
+        mcpServer.state.acceptedTokens = new Set(['tok_2']);
 
-      assert.strictEqual(tokenServer.state.issued, 2, 'force-refresh triggered a second exchange');
-      // After the rotation, any MCP request that came in must either be the
-      // 401 attempt with tok_1 or the retry with tok_2 — no other bearers.
-      const postRotation = mcpServer.state.calls.slice(callsBeforeRetry);
-      const bearers = new Set(postRotation.map(c => c.bearer));
-      assert.ok(bearers.has('tok_2'), 'retry used the rotated token');
-      for (const b of bearers) {
-        assert.ok(b === 'tok_1' || b === 'tok_2', `unexpected bearer: ${b}`);
+        // Second call: the pre-flight check sees tok_1 as "valid" (not near
+        // expiry), sends it, MCP 401s. The retry path force-refreshes → gets
+        // tok_2 → retries → success. Exactly one extra token POST + one extra
+        // MCP call beyond the 401.
+        const callsBeforeRetry = mcpServer.state.calls.length;
+        const result = await ProtocolClient.callTool(agent, 'ping', {});
+        assert.ok(result, 'retry succeeded');
+
+        assert.strictEqual(tokenServer.state.issued, 2, 'force-refresh triggered a second exchange');
+        // After the rotation, any MCP request that came in must either be the
+        // 401 attempt with tok_1 or the retry with tok_2 — no other bearers.
+        const postRotation = mcpServer.state.calls.slice(callsBeforeRetry);
+        const bearers = new Set(postRotation.map(c => c.bearer));
+        assert.ok(bearers.has('tok_2'), 'retry used the rotated token');
+        assert.ok(
+          postRotation.some(c => c.bearer === 'tok_1' && c.signature),
+          'the rejected request carried an SDK signature'
+        );
+        for (const b of bearers) {
+          assert.ok(b === 'tok_1' || b === 'tok_2', `unexpected bearer: ${b}`);
+        }
+        assert.strictEqual(agent.oauth_tokens.access_token, 'tok_2');
+      } finally {
+        await closeMCPConnections();
+        await mcpServer.stop();
+        await tokenServer.stop();
       }
-      assert.strictEqual(agent.oauth_tokens.access_token, 'tok_2');
-    } finally {
-      await closeMCPConnections();
-      await mcpServer.stop();
-      await tokenServer.stop();
-    }
-  });
+    });
+  }
+
+  for (const challenge of [null, 'Signature error="request_signature_key_unknown"']) {
+    test(`signed ${challenge ? 'Signature' : 'bare'} rejection keeps diagnostics and bounds credential refresh`, async () => {
+      await resetGlobalState();
+      const tokenServer = await startTokenServer();
+      const mcpServer = await startMcpStubWithBearerGate(['tok_1'], challenge);
+      try {
+        const agent = makeAgent({ agentUrl: mcpServer.url, tokenUrl: tokenServer.url });
+        const { generateKeyPairSync } = require('node:crypto');
+        agent.request_signing = {
+          kid: 'refresh-test',
+          alg: 'ed25519',
+          private_key: {
+            ...generateKeyPairSync('ed25519').privateKey.export({ format: 'jwk' }),
+            adcp_use: 'request-signing',
+          },
+          agent_url: 'https://buyer.example',
+          always_sign: ['ping'],
+        };
+        await ProtocolClient.callTool(agent, 'ping', {});
+        mcpServer.state.acceptedTokens.clear();
+        await assert.rejects(ProtocolClient.callTool(agent, 'ping', {}), error => {
+          assert.strictEqual(error.requestSigned, true);
+          assert.match(error.responseBody, /invalid_token/);
+          assert.doesNotMatch(error.message, /provide auth_token/);
+          return true;
+        });
+        assert.strictEqual(tokenServer.state.issued, challenge ? 1 : 2);
+      } finally {
+        await closeMCPConnections();
+        await mcpServer.stop();
+        await tokenServer.stop();
+      }
+    });
+  }
 
   test('retry that still 401s surfaces the error (no infinite loop)', async () => {
     await resetGlobalState();
