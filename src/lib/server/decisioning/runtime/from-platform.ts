@@ -49,6 +49,7 @@
  * @public
  */
 
+import { isAccountProvisioningTask } from '../../account-provisioning';
 import { randomUUID } from 'node:crypto';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type { AdcpServer } from '../../adcp-server';
@@ -1910,6 +1911,29 @@ function assertResolvedAccountMatchesRef<T extends { id: string }>(
   logger: AdcpLogger
 ): T | null {
   if (account == null) return null;
+  if (normalizeAccountResolution(resolution) === 'implicit' && ref && 'brand' in ref) {
+    const identity = account as T & Partial<Extract<AccountReference, { brand: unknown }>>;
+    // Missing identity metadata remains compatible with existing custom stores;
+    // every identity field they do return must agree with the requested key.
+    if (
+      (identity.brand && identity.brand.domain !== ref.brand.domain) ||
+      (identity.brand?.brand_id !== undefined &&
+        ref.brand.brand_id !== undefined &&
+        identity.brand.brand_id !== ref.brand.brand_id) ||
+      (identity.brand?.countries !== undefined &&
+        ref.brand.countries !== undefined &&
+        [...identity.brand.countries].sort().join('\0') !== [...ref.brand.countries].sort().join('\0')) ||
+      (identity.operator !== undefined && identity.operator !== ref.operator) ||
+      (identity.operator_unit !== undefined &&
+        ref.operator_unit !== undefined &&
+        identity.operator_unit.id !== ref.operator_unit.id) ||
+      (identity.currency !== undefined && ref.currency !== undefined && identity.currency !== ref.currency) ||
+      (identity.timezone !== undefined && ref.timezone !== undefined && identity.timezone !== ref.timezone) ||
+      (identity.sandbox !== undefined && identity.sandbox !== (ref.sandbox === true))
+    )
+      return null;
+    return account;
+  }
   if (normalizeAccountResolution(resolution) !== 'derived') return account;
   const requestedId = refAccountId(ref);
   if (requestedId === undefined || account.id === requestedId) return account;
@@ -5684,6 +5708,7 @@ function toResolveCtx(
     {
       ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
       ...(toolName !== undefined && { toolName }),
+      provisioning: isAccountProvisioningTask(toolName),
       ...(ctx.agent != null && { agent: ctx.agent }),
       ...(input != null && { input }),
     },
