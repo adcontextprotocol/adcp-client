@@ -49,7 +49,7 @@ delete privateJwk.use;
  * case. Every inbound POST is tagged with the tool name the handler observes
  * by closing `entry` over the per-request MCP server instance.
  */
-async function startMcpStub(initialCapability) {
+async function startMcpStub(initialCapability, rejection) {
   const state = {
     capability: initialCapability,
     toolCallHeaders: [],
@@ -107,6 +107,17 @@ async function startMcpStub(initialCapability) {
     const entry = { headers: { ...req.headers }, toolName: undefined };
     state.toolCallHeaders.push(entry);
 
+    if (rejection && req.headers.signature) {
+      for await (const [] of req) {
+        /* Drain the rejected tool request. */
+      }
+      res.writeHead(401, {
+        'content-type': 'application/json',
+        ...(rejection.challenge && { 'www-authenticate': rejection.challenge }),
+      });
+      res.end(JSON.stringify({ error: rejection.reason }));
+      return;
+    }
     const mcp = createServer(entry);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     try {
@@ -632,3 +643,29 @@ test('ALS: signing call followed by non-signing call in the same async chain doe
 test('teardown: close pooled MCP connections', async () => {
   await resetGlobalState();
 });
+
+for (const challenge of [undefined, 'Signature error="request_signature_key_unknown"']) {
+  test(`MCP: signed 401 preserves ${challenge ? 'Signature challenge' : 'seller reason'}`, async () => {
+    await resetGlobalState();
+    const stub = await startMcpStub(
+      { supported: true, required_for: ['create_media_buy'] },
+      { challenge, reason: 'Seller could not discover the signing key' }
+    );
+    try {
+      const agent = { ...agentFor(stub.url), auth_token: 'static-plus-signature' };
+      await assert.rejects(ProtocolClient.callTool(agent, 'create_media_buy', { plan_id: 'rejected' }), err => {
+        const { AuthenticationRequiredError } = require('../dist/lib/errors');
+        assert.ok(err instanceof AuthenticationRequiredError);
+        assert.strictEqual(err.status, 401);
+        assert.strictEqual(err.requestSigned, true);
+        assert.match(err.responseBody, /Seller could not discover the signing key/);
+        assert.strictEqual(err.signatureErrorCode, challenge ? 'request_signature_key_unknown' : undefined);
+        assert.doesNotMatch(err.message, /auth_token|OAuth/);
+        return true;
+      });
+      assert.strictEqual(stub.state.toolCallHeaders.filter(r => r.headers.signature).length, 1);
+    } finally {
+      await cleanup(stub);
+    }
+  });
+}

@@ -102,8 +102,10 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.1 GA replaces the rc.7 bundle: 27 request-signing profile vectors,
 // six media-buy storyboards, the hosted-grader test kit, and five new schemas
 // (execution requirements, outcome-target cost-per, reporting delivery offering id) (+39).
+// Signed-request rejection diagnostics add one internal dual-format module
+// with both declaration flavours (+4 files); byte budgets stay fixed.
 const MAX_PACKED_FILE_COUNT =
-  6_135 + 34 + 4 + 10 + 4 + 4 + 4 + 9 + 16 + 4 + 1 + 5 + 8 + 4 + 4 + 11 + 4 + 13 + 6 + 4 + 39;
+  6_135 + 34 + 4 + 10 + 4 + 4 + 4 + 9 + 16 + 4 + 1 + 5 + 8 + 4 + 4 + 11 + 4 + 13 + 6 + 4 + 39 + 4;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

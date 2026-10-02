@@ -16,6 +16,7 @@ import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext } from '../signing/client';
 import { redactArgsForLog } from '../utils/redact-args';
 import { wrapFetchWithCapture } from './rawResponseCapture';
+import { getSignedRequestRejection, wrapFetchWithSignedRequestRejection } from './signedRequestRejection';
 import { wrapFetchWithSizeLimit } from './responseSizeLimit';
 import { sanitizeTransportUrl, wrapFetchWithTransportDiagnostics } from './transportDiagnostics';
 import {
@@ -786,7 +787,7 @@ async function connectMCPWithFallbackImpl(
   const diagnosticFetch = wrapFetchWithTransportDiagnostics(sizeLimited);
   const baseFetch: typeof fetch = signingContext
     ? (buildAgentSigningFetch({
-        upstream: diagnosticFetch,
+        upstream: wrapFetchWithSignedRequestRejection(diagnosticFetch, url.toString()),
         signing: signingContext.signing,
         getCapability: signingContext.getCapability,
         adcpVersion: signingContext.adcpVersion,
@@ -1229,7 +1230,7 @@ export async function connectMCP(options: {
   const diagnosticFetch = wrapFetchWithTransportDiagnostics(sizeLimited);
   const signedFetch: typeof fetch = signingContext
     ? (buildAgentSigningFetch({
-        upstream: diagnosticFetch,
+        upstream: wrapFetchWithSignedRequestRejection(diagnosticFetch, agentUrl),
         signing: signingContext.signing,
         getCapability: signingContext.getCapability,
         adcpVersion: signingContext.adcpVersion,
@@ -1249,6 +1250,9 @@ export async function connectMCP(options: {
     });
     return { client: mcpClient, transport };
   } catch (error) {
+    const signedRejection = getSignedRequestRejection(error);
+    if (signedRejection) throw signedRejection;
+
     // UnauthorizedError is also used by the MCP transport when no OAuth
     // provider exists. Only interpret it as an initiated OAuth flow when this
     // connection actually supplied a provider; static and unauthenticated
