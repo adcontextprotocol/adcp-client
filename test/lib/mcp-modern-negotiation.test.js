@@ -1139,7 +1139,7 @@ test('modern MCP signed 401 preserves Signature diagnostics without auth probes'
   let rejections = 0;
   const httpServer = createServer(async (req, res) => {
     if (req.headers.signature) {
-      for await (const chunk of req) {
+      for await (const [] of req) {
         /* Drain the signed tool request. */
       }
       rejections++;

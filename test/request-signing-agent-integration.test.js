@@ -108,7 +108,7 @@ async function startMcpStub(initialCapability, rejection) {
     state.toolCallHeaders.push(entry);
 
     if (rejection && req.headers.signature) {
-      for await (const chunk of req) {
+      for await (const [] of req) {
         /* Drain the rejected tool request. */
       }
       res.writeHead(401, {
