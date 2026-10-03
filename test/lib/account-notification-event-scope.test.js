@@ -325,6 +325,109 @@ test('submitted handlers cannot hide malformed account results behind synthetic 
   assert.equal(calls, 1);
 });
 
+test('platform commercial failure pointers retain original account indices after event rejection', async t => {
+  const { createAdcpServerFromPlatform } = require('../../dist/lib/server/decisioning/runtime/from-platform.js');
+  const captures = [];
+  const platform = {
+    capabilities: {
+      specialisms: ['sales-non-guaranteed'],
+      creative_agents: [],
+      channels: ['display'],
+      pricingModels: ['cpm'],
+      supportedBillings: ['operator'],
+      supportedPaymentTerms: ['net_30'],
+      config: {},
+    },
+    accounts: {
+      resolve: async () => null,
+      upsert: async refs => {
+        captures.push(refs);
+        return refs.map(ref => ({ brand: ref.brand, operator: ref.operator, action: 'created', status: 'active' }));
+      },
+      list: async () => ({ items: [], nextCursor: null }),
+    },
+    statusMappers: {},
+    sales: {
+      getProducts: async () => ({ cache_scope: 'account', products: [] }),
+      createMediaBuy: async () => ({ media_buy_id: 'unused' }),
+      updateMediaBuy: async () => ({ media_buy_id: 'unused' }),
+      syncCreatives: async () => [],
+      getMediaBuyDelivery: async () => ({ media_buys: [] }),
+    },
+  };
+  const server = createAdcpServerFromPlatform(platform, {
+    name: 'event-commercial-gate-test',
+    version: '1.0.0',
+    adcpVersion: '3.2.1',
+    validation: { requests: 'strict', responses: 'strict' },
+  });
+  t.after(() => server.close());
+  const valid = entry(['product.updated'], 'valid');
+  const commercialFailure = { ...entry(['product.updated'], 'commercial'), payment_terms: 'net_60' };
+  const response = await server.dispatchTestRequest({
+    method: 'tools/call',
+    params: { name: 'sync_accounts', arguments: request([entry(), valid, commercialFailure]) },
+  });
+  assertRejected(response);
+  const commercial = response.structuredContent.accounts[2];
+  assert.equal(commercial.action, 'failed');
+  assert.equal(commercial.errors[0].code, 'PAYMENT_TERMS_NOT_SUPPORTED');
+  assert.equal(commercial.errors[0].field, 'accounts[2].payment_terms');
+  assert.equal(captures.length, 1);
+  assert.equal(captures[0].length, 1);
+  assert.deepEqual(captures[0][0].brand, valid.brand);
+  const opaqueError = await server.dispatchTestRequest({
+    method: 'tools/call',
+    params: {
+      name: 'sync_accounts',
+      arguments: request([entry(), { account: { account_id: 'existing-account' }, payment_terms: 'net_60' }], {
+        idempotency_key: 'notification-event-scope-opaque-commercial',
+      }),
+    },
+  });
+  assert.equal(opaqueError.structuredContent.adcp_error.code, 'PAYMENT_TERMS_NOT_SUPPORTED');
+  assert.equal(opaqueError.structuredContent.adcp_error.field, 'accounts[1].payment_terms');
+  assert.equal(captures.length, 1, 'opaque commercial failure must not reach the writer');
+});
+
+test('returned and thrown handler error diagnostics retain original indices across retries', async t => {
+  const { adcpError } = require('../../dist/lib/server/errors.js');
+  for (const scenario of ['returned', 'thrown', 'issues only']) {
+    await t.test(scenario, async t => {
+      let calls = 0;
+      const issues = [{ pointer: '/accounts/0/account', message: 'Invalid account setting', keyword: 'required' }];
+      const envelope = adcpError('VALIDATION_ERROR', {
+        message: 'Cannot update this account',
+        ...(scenario !== 'issues only' && { field: 'accounts[0].account' }),
+        issues,
+        details: { issues },
+      });
+      const snapshot = structuredClone(envelope);
+      const { call } = fixture(t, {
+        accounts: {
+          syncAccounts: async () => {
+            calls += 1;
+            if (scenario === 'thrown') throw envelope;
+            return envelope;
+          },
+        },
+      });
+      const args = request([entry(), entry(['product.updated'], 'valid')]);
+      const response = await call(args);
+      assert.equal(response.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+      if (scenario !== 'issues only') assert.equal(response.structuredContent.adcp_error.field, 'accounts[1].account');
+      assert.equal(response.structuredContent.adcp_error.issues[0].pointer, '/accounts/1/account');
+      assert.equal(response.structuredContent.adcp_error.details.issues[0].pointer, '/accounts/1/account');
+      const replay = await call(args);
+      assert.deepEqual(replay.structuredContent.adcp_error, response.structuredContent.adcp_error);
+      // Returned operation errors reexecute; stable thrown errors replay.
+      // Error-envelope replay does not carry the success replay marker.
+      assert.equal(calls, scenario === 'thrown' ? 1 : 2);
+      assert.deepEqual(envelope, snapshot);
+    });
+  }
+});
+
 test('merging into a cached frozen response keeps each request JSON mirror isolated', async t => {
   const valid = entry(['product.updated'], 'valid');
   const cached = syncAccountsResponse({

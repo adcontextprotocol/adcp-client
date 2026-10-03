@@ -3182,6 +3182,53 @@ function accountNotificationFailureRows(
   return rows;
 }
 
+function restoreSyncAccountErrorIndices(
+  row: Record<string, unknown>,
+  acceptedIndices: number[]
+): Record<string, unknown> {
+  if (!isPlainObject(row)) return row;
+  const restorePath = (path: string, pointer = false) => {
+    const match = pointer ? /^\/accounts\/(\d+)(?=\/|$)/.exec(path) : /^accounts\[(\d+)\](?=\.|\[|$)/.exec(path);
+    if (match === null) return path;
+    const originalIndex = acceptedIndices[Number(match[1])];
+    if (originalIndex === undefined) return path;
+    return `${pointer ? `/accounts/${originalIndex}` : `accounts[${originalIndex}]`}${path.slice(match[0].length)}`;
+  };
+  const restoreIssues = (issues: unknown[]) =>
+    issues.map(issue =>
+      isPlainObject(issue) && typeof issue.pointer === 'string'
+        ? { ...issue, pointer: restorePath(issue.pointer, true) }
+        : issue
+    );
+  const restoreField = (error: unknown) => {
+    if (!isPlainObject(error)) return error;
+    return {
+      ...error,
+      ...(typeof error.field === 'string' && { field: restorePath(error.field) }),
+      ...(Array.isArray(error.issues) && { issues: restoreIssues(error.issues) }),
+      ...(isPlainObject(error.details) &&
+        Array.isArray(error.details.issues) && {
+          details: { ...error.details, issues: restoreIssues(error.details.issues) },
+        }),
+    };
+  };
+  return {
+    ...row,
+    ...(Array.isArray(row.errors) && { errors: row.errors.map(restoreField) }),
+    ...(isPlainObject(row.adcp_error) && { adcp_error: restoreField(row.adcp_error) }),
+  };
+}
+
+function restoreSyncAccountEnvelopeErrorIndices(response: McpToolResponse, acceptedIndices: number[]): McpToolResponse {
+  const body = response.structuredContent;
+  if (body === undefined || !(Array.isArray(body.errors) || isPlainObject(body.adcp_error))) return response;
+  const restored = cloneFormattedResponse(response);
+  const mirrorsStructuredContent = contentTextMirrorsStructuredContent(restored, body);
+  restored.structuredContent = restoreSyncAccountErrorIndices(body, acceptedIndices);
+  syncContentJsonText(restored, restored.structuredContent, mirrorsStructuredContent);
+  return restored;
+}
+
 function validateFrameworkPayload(
   toolName: string,
   direction: 'request' | 'response',
@@ -7286,6 +7333,16 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
         // --- Handler ---
         let mutationHandlerCompleted = false;
+        const acceptedAccountIndices: number[] | undefined =
+          notificationFailureRows.size > 0
+            ? params.accounts.flatMap((_entry: unknown, index: number) =>
+                notificationFailureRows.has(index) ? [] : [index]
+              )
+            : undefined;
+        const restoreHandlerErrorIndices = (response: McpToolResponse) =>
+          acceptedAccountIndices === undefined
+            ? response
+            : restoreSyncAccountEnvelopeErrorIndices(response, acceptedAccountIndices);
         try {
           if (webhookEmitter) {
             const tenantScope = webhookTenantScopeForContext(ctx);
@@ -7361,6 +7418,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           } else {
             formatted = wrap(result);
           }
+          formatted = restoreHandlerErrorIndices(formatted);
 
           if (
             notificationFailureRows.size > 0 &&
@@ -7371,7 +7429,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             // JSON mirror update below must never modify handler-owned data.
             formatted = cloneFormattedResponse(formatted);
             const body = formatted.structuredContent!;
-            const acceptedRows = body?.accounts;
+            // Platform policy errors use request-relative accounts[i] paths.
+            // Restore those indices after removing notification-invalid rows.
+            const acceptedRows = Array.isArray(body.accounts)
+              ? body.accounts.map(row => restoreSyncAccountErrorIndices(row, acceptedAccountIndices!))
+              : body.accounts;
             const submitted = isSubmittedEnvelope(body);
             let accounts: Record<string, unknown>[];
             if (submitted) {
@@ -8183,6 +8245,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               });
               thrownTypedEnvelope = projectThrownAdcpError(err);
             }
+            if (thrownTypedEnvelope !== undefined) {
+              thrownTypedEnvelope = restoreHandlerErrorIndices(thrownTypedEnvelope);
+            }
 
             const thrownRecovery = thrownTypedEnvelope ? thrownAdcpErrorRecovery(thrownTypedEnvelope) : undefined;
             let stableTypedOutcome =
@@ -8305,7 +8370,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               message: env.message,
               stack: err instanceof Error ? err.stack : undefined,
             });
-            return finalize(err);
+            return finalize(restoreHandlerErrorIndices(err));
           }
           // Raw `AdcpError` class throws — distinct from the
           // already-projected envelope above. The framework has long
@@ -8321,7 +8386,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               message: err.message,
               stack: err.stack,
             });
-            return finalize(projectThrownAdcpError(err));
+            return finalize(restoreHandlerErrorIndices(projectThrownAdcpError(err)));
           }
           const reason = err instanceof Error ? err.message : String(err);
           // Log the full stack — `logger.error` with just the message turned
