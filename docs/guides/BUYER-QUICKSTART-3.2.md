@@ -1,15 +1,17 @@
 # Call a seller with AdCP 3.2
 
+For a new seller, start with [account setup and public discovery](./FIRST-CALL-TO-A-SELLER.md).
+
 For product possibility, accepted change rights, and current execution routes, use the [MediaBuy action assessment helpers](./MEDIA-BUY-ACTION-ASSESSMENT.md).
 
-Requires Node.js `^20.19.0 || >=22.12.0`. Install the SDK 14 prerelease
+Requires Node.js `^20.19.0 || >=22.12.0`. Install SDK 14
 and create one client:
 
 For request-scoped callers whose callback or poll may run on another process,
 use the [durable buyer writes recipe](./DURABLE-BUYER-WRITES.md).
 
 ```bash
-npm install @adcp/sdk@rc
+npm install @adcp/sdk
 ```
 
 ```ts
@@ -25,7 +27,34 @@ const seller = client.agent('default-agent');
 
 Set `SELLER_URL` to the seller's MCP endpoint, `ADCP_TOKEN` to a credential
 the seller issued, and `SELLER_ACCOUNT_ID` to an account that credential may
-use. Obtain all three from the seller; account references are seller-scoped.
+use. Account references are seller-scoped.
+
+If you do not already have an account reference, replace the `account` line
+above with `seller.resolveAccount()`.
+For sellers that assign account IDs, it calls `list_accounts` and selects an
+active account only when exactly one matches. Pass a brand, operator, or
+`select` callback when several accounts are available. For buyer-declared
+accounts, pass both brand and operator; the SDK calls `sync_accounts` and
+returns the natural-key reference after the seller confirms it is active. If
+that seller offers several billing parties, also pass `billing`.
+For an account ID roster, pass `forTask: 'create_media_buy'` to filter rows
+when the seller publishes per-account task authorization.
+When the seller's account capability calls for a fixed currency or a
+buyer-selected timezone, pass `currency` or `timezone` too. You can also pass
+`operatorUnit` and `sandbox`; these fields stay in the returned natural key.
+
+```ts
+const account = await seller.resolveAccount({
+  brand: { domain: 'advertiser.example' },
+  operator: 'agency.example',
+});
+```
+
+The established `getProducts()` path checks `media_buy.buying_modes` before
+sending a request. AdCP 3.1+ sellers that omit the declaration support `brief` only.
+Supply a brief for those sellers; wholesale discovery requires a seller that
+declares `wholesale`. If the seller requires an account for product discovery,
+pass the resolved `account` reference to `getProducts()`.
 
 ## Direct purchase
 

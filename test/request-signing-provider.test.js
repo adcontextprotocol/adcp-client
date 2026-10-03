@@ -234,6 +234,31 @@ describe('createSigningFetchAsync rejects non-UTF-8 byte bodies', () => {
   });
 });
 
+test('createSigningFetchAsync rejects an empty query marker before calling the provider or transport', async () => {
+  let signed = false;
+  let sent = false;
+  const provider = {
+    keyid: 'empty-query-provider',
+    algorithm: 'ed25519',
+    fingerprint: 'empty-query-provider',
+    async sign() {
+      signed = true;
+      return new Uint8Array(64);
+    },
+  };
+  const signingFetch = createSigningFetchAsync(async () => {
+    sent = true;
+    return new Response('ok');
+  }, provider);
+  await assert.rejects(
+    () => signingFetch('https://seller.example.com/p?', { method: 'POST', body: '{}' }),
+    error =>
+      error instanceof TypeError && /cannot safely sign a URL with a trailing empty query marker/.test(error.message)
+  );
+  assert.strictEqual(signed, false);
+  assert.strictEqual(sent, false);
+});
+
 describe('createSigningFetchAsync routes through the provider', () => {
   test('signs POST requests and forwards to upstream', async () => {
     const kid = 'test-ed25519-2026';

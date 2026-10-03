@@ -119,6 +119,7 @@ export function createExpressVerifier(options: ExpressMiddlewareOptions) {
           keyid: result.keyid,
           agent_url: result.agent_url,
           verified_at: result.verified_at,
+          ...(result.operatorRecord !== undefined && { operatorRecord: result.operatorRecord }),
         };
       }
       next();

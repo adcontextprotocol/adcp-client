@@ -150,10 +150,10 @@ and may always differ from its `term_id`. No helper fetches that reference.
 Change-term identities and `seller_managed` were introduced in `3.2.0-beta.9`.
 Earlier served versions cannot emit or execute those fields through these helpers;
 the explicit `wireVersion: '3.1'` seller projection remains available.
-The rc.3 shared-frequency-cap action comes from the pinned canonical metadata;
+The shared-frequency-cap action (introduced in AdCP 3.2.0-rc.3) comes from the pinned canonical metadata;
 `applicable_package_ids` provides an exact live package scope. Seller emission
 defaults to the SDK pin. Set `adcpVersion` to the version actually served at both
-emission and assertion boundaries (for example, `adcpVersion: '3.2.0-rc.7'`);
+emission and assertion boundaries (for example, `adcpVersion: '3.2.1'`);
 older targets receive an unavailable diagnostic. Package scope requires every
 requested package to belong to the emitted set; it never authorizes a buy-wide
 mutation. Without the requested packages, assessment remains unknown.

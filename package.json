@@ -1,6 +1,6 @@
 {
   "name": "@adcp/sdk",
-  "version": "14.0.0-rc.49",
+  "version": "14.0.0",
   "description": "AdCP SDK — client, server, and compliance harnesses for the AdContext Protocol (MCP + A2A)",
   "workspaces": [
     ".",
@@ -544,7 +544,7 @@
     ".claude-plugin/**/*",
     "compliance/cache/3.0.25/**/*",
     "compliance/cache/3.1.24/**/*",
-    "compliance/cache/3.2.0-rc.7/**/*",
+    "compliance/cache/3.2.1/**/*",
     "ADCP_VERSION",
     "docs/README.md",
     "docs/TYPE-SUMMARY.md",
@@ -726,7 +726,7 @@
     "semver": "^7.8.5",
     "structured-headers": "2.0.3",
     "tldts": "^7.0.0",
-    "undici": "^8.11.2",
+    "undici": "^6.28.0",
     "ws": "^8.21.3",
     "yaml": "^2.9.0"
   },
@@ -749,7 +749,7 @@
     "@a2a-js/sdk": "^1.0.1",
     "@apidevtools/json-schema-ref-parser": "^15.5.2",
     "@arethetypeswrong/cli": "^0.18.5",
-    "@changesets/cli": "^2.31.1",
+    "@changesets/cli": "^3.0.3",
     "@commitlint/cli": "^20.5.3",
     "@commitlint/config-conventional": "^20.5.3",
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -796,7 +796,7 @@
     },
     "minimatch": "^10.2.1"
   },
-  "adcp_version": "3.2.0-rc.7",
+  "adcp_version": "3.2.1",
   "sideEffects": [
     "**/default-invariants.*"
   ]

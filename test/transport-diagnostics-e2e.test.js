@@ -10,6 +10,7 @@ const { InMemoryStateStore } = require('../dist/lib/server/state-store');
 
 function createAdcpServer(config) {
   return _createAdcpServer({
+    resolveAccount: ref => (ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined),
     ...config,
     stateStore: config?.stateStore ?? new InMemoryStateStore(),
     validation: { requests: 'off', responses: 'off', ...(config?.validation ?? {}) },

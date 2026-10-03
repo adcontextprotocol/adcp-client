@@ -40,7 +40,7 @@ function runtimeClient(executeTask, config = {}) {
   client.cachedCapabilities = {
     version: 'v3',
     majorVersions: [3],
-    supportedVersions: ['3.2.0-rc.7'],
+    supportedVersions: ['3.2.1'],
     protocols: ['creative'],
     features: {},
     extensions: [],

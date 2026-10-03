@@ -9,6 +9,7 @@
 import { createHash, createHmac } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { ACCOUNT_FREE_DISCOVERY_TASKS } from './account-policy';
 import {
   createTestClient,
   getOrCreateClientResolution,
@@ -16,7 +17,12 @@ import {
   runStep,
   type TestClient,
 } from '../client';
-import { closeScopedConnections, withMCPConnectionScope, type VersionEnvelopeMode } from '../../protocols';
+import {
+  closeScopedConnections,
+  prepareProtocolToolCall,
+  withMCPConnectionScope,
+  type VersionEnvelopeMode,
+} from '../../protocols';
 import { getCapturesFromError, withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
 import { defaultStoryboardResponseProjection, executeStoryboardTask } from './task-map';
 import { applyFunctionalRequestSigning } from './request-signing/functional-dispatch';
@@ -65,6 +71,7 @@ import {
 } from './creative-assets';
 import { resolveAccount, resolveBrand } from '../client';
 import { requestUsesIdempotency, generateIdempotencyKey } from '../../utils/idempotency';
+import { isAdcpVersionAtLeast } from '../../utils/adcp-version-config';
 import {
   getSchemaDefaultByPath,
   getSchemaValidatorByRef,
@@ -474,7 +481,8 @@ function schemaDefaultShouldApply(raw: unknown, dottedPath: string): boolean {
  *   `resolveCapabilityPathForGate`).
  *
  * - `contains: V` — array-membership. `actual` must be an array that
- *   includes `V` (structural JSON equality, no coercion). Empty arrays, non-arrays,
+ *   includes `V` (structural JSON equality, except governance task-mode
+ *   predicates match a subset of a task's modes). Empty arrays, non-arrays,
  *   and absent fields all skip unless the capabilities schema declares a
  *   default that the gate materialized before predicate evaluation.
  *
@@ -505,7 +513,7 @@ export function evaluateCapabilityPredicate(predicate: RequiresCapabilityPredica
         `agent declared ${actual === undefined ? 'no value' : JSON.stringify(actual)}.`
       );
     }
-    if (!actual.some(value => capabilityValuesEqual(value, predicate.contains))) {
+    if (!actual.some(value => capabilityContainsValue(predicate.path, value, predicate.contains))) {
       return (
         `Capability predicate \`${predicate.path}\` must contain ${JSON.stringify(predicate.contains)}: ` +
         `agent declared ${JSON.stringify(actual)}.`
@@ -520,7 +528,7 @@ export function evaluateCapabilityPredicate(predicate: RequiresCapabilityPredica
         `agent declared ${actual === undefined ? 'no value' : JSON.stringify(actual)}.`
       );
     }
-    if (actual.some(value => capabilityValuesEqual(value, predicate.not_contains))) {
+    if (actual.some(value => capabilityContainsValue(predicate.path, value, predicate.not_contains))) {
       return (
         `Capability predicate \`${predicate.path}\` must not contain ${JSON.stringify(predicate.not_contains)}: ` +
         `agent declared ${JSON.stringify(actual)}.`
@@ -543,6 +551,30 @@ export function evaluateCapabilityPredicate(predicate: RequiresCapabilityPredica
     );
   }
   return null;
+}
+
+/** Governance task declarations combine all supported modes in one task entry. */
+function capabilityContainsValue(path: string, actual: unknown, expected: unknown): boolean {
+  if (path !== 'adcp.governance_enforcement.tasks') return capabilityValuesEqual(actual, expected);
+  if (!actual || !expected || typeof actual !== 'object' || typeof expected !== 'object') {
+    return capabilityValuesEqual(actual, expected);
+  }
+  const actualTask = actual as Record<string, unknown>;
+  const expectedTask = expected as Record<string, unknown>;
+  if (
+    typeof expectedTask.task !== 'string' ||
+    !Array.isArray(expectedTask.modes) ||
+    expectedTask.modes.length === 0 ||
+    Object.keys(expectedTask).some(key => key !== 'task' && key !== 'modes')
+  ) {
+    return capabilityValuesEqual(actual, expected);
+  }
+  const actualModes = actualTask.modes;
+  if (!Array.isArray(actualModes)) return false;
+  return (
+    actualTask.task === expectedTask.task &&
+    expectedTask.modes.every(mode => actualModes.some(actualMode => capabilityValuesEqual(actualMode, mode)))
+  );
 }
 
 /** Key-order-insensitive equality for JSON-valued capability declarations. */
@@ -662,6 +694,21 @@ function evaluateStoryboardCapabilityGates(
   if (failures.length === 0) return null;
   if (failures.length === 1) return failures[0]!;
   return `Capability predicates not satisfied:\n${failures.map(detail => `- ${detail}`).join('\n')}`;
+}
+
+/**
+ * @internal The root capability verdict `runStoryboard()`'s single-agent
+ * pre-flight reaches for `options`, or `null` when the storyboard has no root
+ * predicate, the predicate is satisfied, or no profile is available yet (the
+ * runner then defers the gate until discovery). `comply()` uses this so a
+ * storyboard the agent under test does not claim keeps its `not_applicable`
+ * verdict instead of being handed to `ComplyOptions.routeStoryboard`.
+ */
+export function storyboardCapabilityGateUnmet(storyboard: Storyboard, options: StoryboardRunOptions): string | null {
+  if (storyboardCapabilityPredicates(storyboard).length === 0) return null;
+  const versioned = applyStoryboardVersionOptions(storyboard, applyReusableProfileOptions(options));
+  if (versioned._profile === undefined) return null;
+  return evaluateStoryboardCapabilityGates(storyboard, versioned._profile, versioned.agentTools, versioned.adcpVersion);
 }
 
 function collectPhaseCapabilitySkipDetails(
@@ -2613,7 +2660,8 @@ function buildRequiredToolsMissingResult(
  *   `webhook_signing.legacy_hmac_fallback: true`, which is removed in
  *   `effective_version: '4.0'`.
  */
-function collectCapabilityNotices(storyboard: Storyboard, profile: AgentProfile | undefined): RunnerNotice[] {
+/** @internal Exported for comply()'s synthesized requirement_unmet results. */
+export function collectCapabilityNotices(storyboard: Storyboard, profile: AgentProfile | undefined): RunnerNotice[] {
   const notices: RunnerNotice[] = (profile?.capabilities_schema_issues ?? []).map(issue => ({
     severity: 'info',
     code: 'capabilities_response_schema_invalid',
@@ -2912,10 +2960,27 @@ async function executeStoryboardPass(
     routingContext && options.agents
       ? createRoutingDispatcher(routingContext, options, options.agents)
       : createDispatcher(agentUrls, clients, 'round-robin', dispatchOffset, profile);
-  // A root or phase capability predicate constrains each selected agent.
-  // Neither map order nor another route's capability can grant/suppress a
-  // step. Keep whole-storyboard/phase skips only when every route is known
-  // and inapplicable; unresolved routes must reach the hard failure path.
+  // Root predicates describe the agent under test. A declared default agent
+  // owns that gate for the whole storyboard, including governance-agent steps.
+  // Without a default, keep each selected route's own applicability verdict.
+  // Phase predicates always remain scoped to the selected step route.
+  const routedRootCapabilityDetail = (() => {
+    if (!routingContext || !options.default_agent || storyboardCapabilityPredicates(storyboard).length === 0)
+      return null;
+    const profile = routingContext.profiles.get(options.default_agent);
+    if (!profile) {
+      return (
+        evaluateStoryboardCapabilityGates(storyboard, undefined, undefined, options.adcpVersion) ??
+        'Capability predicates could not be evaluated: no discovered agent profile.'
+      );
+    }
+    return evaluateStoryboardCapabilityGates(
+      storyboard,
+      profile,
+      normalizeAgentToolNames(profile.tools),
+      options.adcpVersion
+    );
+  })();
   const routedStepCapabilitySkips = new Map<StoryboardStep, string>();
   const routedPhaseCapabilitySkips = new Map<string, string>();
   const routedStepRequirements = new Map<StoryboardStep, string>();
@@ -3000,12 +3065,14 @@ async function executeStoryboardPass(
         try {
           const selected = dispatch.nextFor(step);
           const selectedOptions = selected.options!;
-          const rootDetail = evaluateStoryboardCapabilityGates(
-            storyboard,
-            selected.profile,
-            selectedOptions.agentTools,
-            options.adcpVersion
-          );
+          const rootDetail = options.default_agent
+            ? routedRootCapabilityDetail
+            : evaluateStoryboardCapabilityGates(
+                storyboard,
+                selected.profile,
+                selectedOptions.agentTools,
+                options.adcpVersion
+              );
           let requirementSkip: { requirement: string; detail: string } | undefined;
           if (rootDetail === null && allRequires.includes('request_signer')) {
             const requirement = await checkRequires(['request_signer'], storyboard, selectedOptions, {
@@ -5715,7 +5782,8 @@ function unresolvedStepContextVars(
 
 // Shared request construction for execution and inspection before a cascade
 // skip. This never dispatches, but may generate context/runner aliases.
-function buildStepRequest(
+/** @internal Builds the exact runner request before protocol-owned fields are added. */
+export function buildStepRequest(
   step: StoryboardStep,
   effectiveStep: StoryboardStep,
   context: StoryboardContext,
@@ -5729,10 +5797,25 @@ function buildStepRequest(
   // 4. sample_request with context injection when no enricher is registered
   // 5. Empty object (only reachable for non-mutating tasks with neither fixture nor enricher)
   let request: Record<string, unknown>;
+  const governedSource = options.request ?? step.sample_request;
+  const payloadBoundGovernance = isAdcpVersionAtLeast(options.adcpVersion ?? ADCP_VERSION, '3.2.0-beta.1');
+  const contextGovernance =
+    step.context_inputs?.length &&
+    Object.prototype.hasOwnProperty.call(applyContextInputs({}, step.context_inputs, context), 'governance_context');
+  const governedFixture =
+    payloadBoundGovernance &&
+    effectiveStep.task !== 'check_governance' &&
+    effectiveStep.task !== 'report_plan_outcome' &&
+    ((governedSource !== undefined && Object.prototype.hasOwnProperty.call(governedSource, 'governance_context')) ||
+      contextGovernance);
   if (options.request) {
     request = injectContext({ ...options.request }, context, runnerVars);
   } else if (step.expect_error && step.sample_request) {
     request = injectContext({ ...step.sample_request }, context, runnerVars);
+  } else if (governedFixture) {
+    // The governance agent authorized the authored downstream payload. Extra
+    // enricher or runner defaults would change its hash after approval.
+    request = injectContext({ ...(step.sample_request ?? {}) }, context, runnerVars);
   } else if (hasRequestEnricher(effectiveStep.task)) {
     request = enrichRequest(effectiveStep, context, options, runnerVars);
   } else if (step.sample_request) {
@@ -5744,6 +5827,13 @@ function buildStepRequest(
   // Apply explicit context_inputs on top of whatever request source was used
   if (step.context_inputs?.length) {
     request = applyContextInputs(request, step.context_inputs, context);
+  }
+
+  if (governedFixture) {
+    // Apply run-scoped fields symmetrically to the approval intent and the
+    // downstream request. The enricher and idempotency defaults remain skipped.
+    request = applyBrandInvariant(request, options, effectiveStep.task, { omit_account: true });
+    return options.disable_sandbox === true ? applyDisableSandboxHint(request, effectiveStep.task) : request;
   }
 
   // Brand/account is a storyboard-run-scoped invariant: every step in a run
@@ -5777,7 +5867,55 @@ function buildStepRequest(
   // surfaces can still exercise the server's required-field check.
   request = applyIdempotencyInvariant(request, effectiveStep.task, step);
 
+  if (
+    payloadBoundGovernance &&
+    effectiveStep.task === 'check_governance' &&
+    request.phase !== 'delivery' &&
+    request.payload !== null &&
+    typeof request.payload === 'object' &&
+    !Array.isArray(request.payload)
+  ) {
+    const toolName = typeof request.tool === 'string' ? request.tool : undefined;
+    const brandedPayload = applyBrandInvariant(request.payload as Record<string, unknown>, options, toolName, {
+      omit_account: true,
+    });
+    let payload = prepareGovernedStoryboardWireArgs(
+      brandedPayload,
+      toolName,
+      typeof request.target_agent === 'string' ? request.target_agent : '',
+      options
+    );
+    if (options.disable_sandbox === true) {
+      payload = applyDisableSandboxHint(payload, toolName);
+    }
+    request = {
+      ...request,
+      payload,
+    };
+  }
+
   return request;
+}
+
+/** @internal Prepare the exact no-webhook wire args used by governed storyboard requests. */
+export function prepareGovernedStoryboardWireArgs(
+  request: Record<string, unknown>,
+  toolName: string | undefined,
+  agentUri: string,
+  options: StoryboardRunOptions
+): Record<string, unknown> {
+  // The envelope settings are run-scoped; AgentEntry only overrides auth
+  // and transport. Without a webhook, transport does not change AdCP args.
+  return prepareProtocolToolCall(
+    { id: 'governed-target', name: 'governed-target', agent_uri: agentUri, protocol: 'mcp' },
+    request,
+    {
+      toolName,
+      adcpVersion: options.adcpVersion,
+      wireAdcpVersion: options.wireAdcpVersion,
+      versionEnvelope: options.versionEnvelope,
+    }
+  ).args;
 }
 
 async function executeStep(
@@ -6193,22 +6331,72 @@ async function executeStep(
   // guarded A2A fetch boundary is wrapped with raw-response capture below so
   // http_* validations still observe status + `WWW-Authenticate`.
   //
-  // Idempotency omission scenarios set `step.omit_idempotency_key` to suppress
-  // both the runner's `applyIdempotencyInvariant` (above) and the AdCP client's
-  // auto-inject. This covers statically mutating tasks (where omission tests
-  // rejection) and the request-aware get_products proposal-finalize variant
-  // (where omission verifies the 3.2 compatibility path). Paired flags keep
-  // the two layers aligned; see `applyIdempotencyInvariant` for the runner skip.
+  // Idempotency omission scenarios suppress both the runner and SDK defaults.
+  // A governed request with no authored key must do the same: minting a key
+  // after check_governance approved the payload would change its wire hash.
+  const governedRequest =
+    isAdcpVersionAtLeast(options.adcpVersion ?? ADCP_VERSION, '3.2.0-beta.1') &&
+    effectiveStep.task !== 'check_governance' &&
+    effectiveStep.task !== 'report_plan_outcome' &&
+    Object.prototype.hasOwnProperty.call(request, 'governance_context');
+  // The raw method keeps both the request and response on the graded wire
+  // shape; canonical creative methods can transform approved request fields.
+  const responseProjection = governedRequest
+    ? 'raw'
+    : (effectiveStep.response_projection ??
+      defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario));
+  if (
+    governedRequest &&
+    !step.expect_error &&
+    step.omit_idempotency_key !== true &&
+    requestUsesIdempotency(effectiveStep.task, request) &&
+    (typeof request.idempotency_key !== 'string' || request.idempotency_key.length === 0)
+  ) {
+    const detail =
+      `Governed ${effectiveStep.task} must author the idempotency_key approved by check_governance; ` +
+      'the runner cannot mint one after approval.';
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: effectiveStep.task,
+      passed: false,
+      duration_ms: 0,
+      validations: [
+        {
+          check: 'governed_payload',
+          passed: false,
+          description: detail,
+          json_pointer: '/idempotency_key',
+          expected: 'the key authorized by check_governance',
+          actual: request.idempotency_key ?? null,
+          schema_id: null,
+          schema_url: null,
+        },
+      ],
+      context,
+      error: detail,
+      next: getNextStepPreview(step.id, allSteps, context, runState.runnerVars),
+      request: {
+        transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
+        operation: effectiveStep.task,
+        payload: redactSecrets(request),
+        ...(runState.agentUrl ? { url: redactOAuthUrlForOutput(runState.agentUrl) } : {}),
+      },
+      extraction: { path: 'none' },
+    };
+  }
   const testsIdempotencyKeyOmission =
-    step.omit_idempotency_key === true && requestUsesIdempotency(effectiveStep.task, request);
+    (step.omit_idempotency_key === true ||
+      (governedRequest && (typeof request.idempotency_key !== 'string' || request.idempotency_key.length === 0))) &&
+    requestUsesIdempotency(effectiveStep.task, request);
 
-  // Analogous to `testsIdempotencyKeyOmission`: when a step sets
-  // `omit_account: true` the runner has already suppressed account synthesis
-  // in `applyBrandInvariant` (above — ordering is load-bearing: this must
-  // come after `applyBrandInvariant` so the comment "above" stays accurate
-  // if either block is reordered). Track the flag here so the SDK call below
-  // can also skip client-side account validation/injection before the wire call.
-  const testsMissingAccount = step.omit_account === true && effectiveStep.task === 'create_media_buy';
+  // Missing-account probes and governed requests without an approved account
+  // also bypass the SDK's account requirement. A governed request must reach
+  // the seller as approved, even when the seller will reject it as invalid.
+  const testsMissingAccount =
+    effectiveStep.task === 'create_media_buy' &&
+    (step.omit_account === true || (governedRequest && !Object.prototype.hasOwnProperty.call(request, 'account')));
 
   // The storyboard contract defines schema-invalid negative paths as seller
   // validation probes: the malformed sample_request must reach the agent.
@@ -6352,9 +6540,8 @@ async function executeStep(
               skipIdempotencyAutoInject: testsIdempotencyKeyOmission,
               skipAccountValidation: testsMissingAccount,
               skipRequestValidation: testsSchemaInvalidRequest,
-              responseProjection:
-                effectiveStep.response_projection ??
-                defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario),
+              preserveGovernedPayload: governedRequest,
+              responseProjection,
               mediaBuyLifecycleCompatibility: options.mediaBuyLifecycleCompatibility,
               signal: options.signal,
             })
@@ -6408,7 +6595,9 @@ async function executeStep(
         const probe = await rawMcpProbe({
           agentUrl: runState.agentUrl,
           toolName: effectiveStep.task,
-          args: request,
+          args: governedRequest
+            ? prepareGovernedStoryboardWireArgs(request, effectiveStep.task, runState.agentUrl, options)
+            : request,
           headers: rawProbeHeaders,
           allowPrivateIp: options.allow_http === true,
           fetchFn: options.transport?.trustedFetchFn,
@@ -6474,9 +6663,8 @@ async function executeStep(
           skipIdempotencyAutoInject: testsIdempotencyKeyOmission,
           skipAccountValidation: testsMissingAccount,
           skipRequestValidation: testsSchemaInvalidRequest,
-          responseProjection:
-            effectiveStep.response_projection ??
-            defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario),
+          preserveGovernedPayload: governedRequest,
+          responseProjection,
           mediaBuyLifecycleCompatibility: options.mediaBuyLifecycleCompatibility,
           signal: options.signal,
         },
@@ -6521,9 +6709,8 @@ async function executeStep(
           skipIdempotencyAutoInject: testsIdempotencyKeyOmission,
           skipAccountValidation: testsMissingAccount,
           skipRequestValidation: testsSchemaInvalidRequest,
-          responseProjection:
-            effectiveStep.response_projection ??
-            defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario),
+          preserveGovernedPayload: governedRequest,
+          responseProjection,
           mediaBuyLifecycleCompatibility: options.mediaBuyLifecycleCompatibility,
           signal: options.signal,
         });
@@ -7079,7 +7266,7 @@ async function executeStep(
   const hasData = taskResult?.data !== undefined && taskResult?.data !== null;
 
   // Convention-based extraction (for non-error steps, or when expect_error succeeded)
-  if (passed && hasData && taskResult) {
+  if (passed && hasData && taskResult && !(effectiveStep.task === 'sync_accounts' && request.dry_run === true)) {
     const extracted = extractContextWithProvenance(effectiveStep.task, taskResult.data, step.id);
     for (const group of extracted.clearGroups ?? []) {
       if (group.when && !group.when.values.includes(updatedContext[group.when.key])) continue;
@@ -7936,21 +8123,46 @@ type EffectiveStepRequestResult =
   | FixtureBindingApplicationResult
   | { ok: false; creativeAssetFailure: CreativeAssetFixtureUnavailableFailure };
 
-function applyFixtureBindingsSafely(
+/** @internal Apply schema-scoped fixture handles to the sent request. */
+export function applyFixtureBindingsSafely(
   request: Record<string, unknown>,
   task: string,
   options: StoryboardRunOptions,
   runState: ExecutionState
 ): FixtureBindingApplicationResult {
   try {
+    const boundRequest = applyFixtureBindingsToRequest(
+      request,
+      task,
+      runState.fixtureBindings,
+      options.adcpVersion ?? ADCP_VERSION
+    );
+    // check_governance.payload is schema-opaque, so its fixture handles need
+    // the downstream tool schema that will also bind the governed request.
+    if (
+      task === 'check_governance' &&
+      boundRequest.phase !== 'delivery' &&
+      typeof boundRequest.tool === 'string' &&
+      boundRequest.payload !== null &&
+      typeof boundRequest.payload === 'object' &&
+      !Array.isArray(boundRequest.payload)
+    ) {
+      return {
+        ok: true,
+        request: {
+          ...boundRequest,
+          payload: applyFixtureBindingsToRequest(
+            boundRequest.payload as Record<string, unknown>,
+            boundRequest.tool,
+            runState.fixtureBindings,
+            options.adcpVersion ?? ADCP_VERSION
+          ),
+        },
+      };
+    }
     return {
       ok: true,
-      request: applyFixtureBindingsToRequest(
-        request,
-        task,
-        runState.fixtureBindings,
-        options.adcpVersion ?? ADCP_VERSION
-      ),
+      request: boundRequest,
     };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -8687,13 +8899,13 @@ async function probeBrandJwks(
   // handed. security.mdx @ 3.1.1 :1142 step 1: "invoke `get_adcp_capabilities` via the
   // agent's declared transport (MCP `tools/call` or A2A skill invocation) ... The agent
   // URL is the protocol endpoint, not a JSON capabilities document." Step 5 then
-  // byte-equals `agents[].url` against that same `A`.
+  // canonically matches `agents[].url` against that same `A`.
   //
   // On MCP the two are the same string, so this changed nothing there. On A2A they are
   // NOT: the runner must be given the card's BASE (the card lives at
   // `<base>/.well-known/agent-card.json`, so passing the RPC endpoint asks for
   // `/a2a/.well-known/...` and 404s), while the endpoint `A` names is the one the card
-  // resolves to. Matching the base produced zero byte-equal hits against a conformant
+  // resolves to. Matching the base produced zero canonical hits against a conformant
   // brand.json publishing the RPC endpoint — the agent was graded non-conformant for
   // publishing exactly what the spec asks for.
   const matchUrl =
@@ -10084,7 +10296,7 @@ export function applyBrandInvariant(
         result.account = merged;
       }
     }
-  } else if (topAccountOk && taskName !== 'list_accounts') {
+  } else if (topAccountOk && taskName !== 'list_accounts' && !ACCOUNT_FREE_DISCOVERY_TASKS.has(taskName ?? '')) {
     // No account on the request — construct one so tools whose schema
     // declares `account` but not top-level `brand` (e.g. get_media_buys,
     // list_creatives) still carry the run-scoped brand on the wire.

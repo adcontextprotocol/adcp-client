@@ -1,7 +1,12 @@
 import { basename, dirname } from 'path';
 import type { HttpProbeResult, RunnerDetailedSkipReason, StoryboardRunOptions } from '../types';
 import type { NegativeVector, PositiveVector, VerifierCapabilityFixture } from './types';
-import { advertisedContentDigestPolicyExclusion, gradeOneVector, semanticVectorExclusion } from './grader';
+import {
+  advertisedContentDigestPolicyExclusion,
+  advertisedRequiredForExclusion,
+  gradeOneVector,
+  semanticVectorExclusion,
+} from './grader';
 import { parseRequestSigningStepId } from './synthesize';
 import { loadRequestSigningVectors, selectRequestSigningVectors, signingProfileForAdcpVersion } from './vector-loader';
 import { ADCP_VERSION } from '../../../version';
@@ -186,6 +191,7 @@ export async function probeRequestSigningVector(
     );
   }
   const agentContentDigestPolicy = declaredContentDigestPolicy(options, loaded.sourceDir);
+  const agentRequiredFor = declaredRequiredFor(options);
   // Semantic exclusions next, before anything protocol-specific. A vector the
   // grader refuses on the vector's own terms — outside the agent's declared
   // verifier profile, or ungradable over HTTP on any binding — is refused
@@ -198,7 +204,9 @@ export async function probeRequestSigningVector(
   const semantic =
     (agentContentDigestPolicy
       ? advertisedContentDigestPolicyExclusion(vector, parsed.kind, agentContentDigestPolicy)
-      : undefined) ?? semanticVectorExclusion(vector, declaredProtocolMethodCoverage(options, loaded.sourceDir));
+      : undefined) ??
+    (agentRequiredFor ? advertisedRequiredForExclusion(vector, parsed.kind, agentRequiredFor) : undefined) ??
+    semanticVectorExclusion(vector, declaredProtocolMethodCoverage(options, loaded.sourceDir));
   if (semantic) {
     // Carry the grader's diagnostic. It names the vector's unmet demand (the
     // method, the profile dimension), which is what lets an operator audit an
@@ -313,6 +321,39 @@ function declaredContentDigestPolicy(
     return major < 3 || (major === 3 && minor < 2) ? 'either' : undefined;
   }
   return policy === 'required' || policy === 'forbidden' || policy === 'either' ? policy : undefined;
+}
+
+/**
+ * Read the agent's advertised `request_signing.required_for` for the grader's
+ * narrow required-for gate (adcp-client#3056), fail-closed the same way as
+ * {@link declaredProtocolMethodCoverage}:
+ *
+ *   - no block, or a block without `supported: true` → `undefined` (the
+ *     `request_signer` requirement gate already decides applicability);
+ *   - `required_for` absent → `undefined`: the capabilities schema never
+ *     requires it, and an agent that says nothing has not declared a posture
+ *     the runner can compare against, so the vector is graded;
+ *   - a schema-valid array of operation names, `[]` included → the declared
+ *     set (`[]` is the 3.x shadow posture: signing supported, nothing
+ *     required yet);
+ *   - anything else (`null`, a bare string, a non-string or blank entry) →
+ *     `undefined`: not evidence of a posture, so the declaration is
+ *     discarded and the vector graded rather than suppressed.
+ */
+function declaredRequiredFor(options: StoryboardRunOptions): readonly string[] | undefined {
+  const raw = options._profile?.raw_capabilities;
+  if (!raw || typeof raw !== 'object') return undefined;
+  const block = (raw as { request_signing?: unknown }).request_signing;
+  if (!block || typeof block !== 'object') return undefined;
+  const declared = block as Record<string, unknown>;
+  if (declared.supported !== true) return undefined;
+  const value = declared.required_for;
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return undefined;
+  const wellFormed = value.every(
+    entry => typeof entry === 'string' && entry.length > 0 && entry.length <= 256 && !/\s/.test(entry)
+  );
+  return wellFormed ? (value as string[]) : undefined;
 }
 
 /**

@@ -15,6 +15,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { generateKeyPairSync } = require('node:crypto');
 const http = require('node:http');
 
 const {
@@ -475,8 +476,68 @@ test('brand.json matching uses the PROTOCOL ENDPOINT, not the card base', async 
     ],
   };
   // The base the runner is handed for card discovery matches nothing — this is the bug.
-  assert.throws(() => selectAgentByUrl(brand, 'https://seller.example:8443/'), /byte-equal/i);
+  assert.throws(() => selectAgentByUrl(brand, 'https://seller.example:8443/'), /canonical URL/i);
   // The card-resolved protocol endpoint matches exactly one.
   const agent = selectAgentByUrl(brand, 'https://seller.example:8443/a2a');
   assert.strictEqual(agent.jwks_uri, 'https://seller.example:8443/.well-known/jwks.json');
+});
+
+// adcp-client#3081. The signer decides whether to sign from the operation it
+// reads off the body, so it must read the bodies the official client really
+// emits. A2A 1.0 sends `SendMessage` with proto-JSON parts that carry no
+// `kind`; before this, that body yielded no operation and went out unsigned.
+test('the signer reads the AdCP operation from both A2A families the client emits', async () => {
+  const {
+    buildAgentSigningFetch,
+    extractAdcpOperation,
+    shouldSignOperation,
+  } = require('../../dist/lib/signing/agent-fetch.js');
+  const modern = await withCardServer('1.0', base =>
+    captureA2aRequest(base, { kind: 'sendMessage', operation: 'get_products', args: { brief: 'x' } })
+  );
+  const legacy = await withLegacyCardServer(base =>
+    captureA2aRequest(base, { kind: 'sendMessage', operation: 'get_products', args: { brief: 'x' } })
+  );
+
+  assert.strictEqual(JSON.parse(modern.body).method, 'SendMessage');
+  assert.strictEqual(extractAdcpOperation(modern.body), 'get_products');
+  assert.strictEqual(extractAdcpOperation(legacy.body), 'get_products');
+
+  const capability = { supported: true, required_for: ['get_products'] };
+  assert.strictEqual(shouldSignOperation(extractAdcpOperation(modern.body), capability, {}), true);
+  assert.strictEqual(shouldSignOperation(extractAdcpOperation(legacy.body), capability, {}), true);
+
+  const { privateKey } = generateKeyPairSync('ed25519');
+  let sentHeaders;
+  const signedFetch = buildAgentSigningFetch({
+    signing: {
+      kid: 'buyer-test-key',
+      alg: 'ed25519',
+      private_key: { ...privateKey.export({ format: 'jwk' }), adcp_use: 'request-signing' },
+      agent_url: 'https://buyer.example.com',
+    },
+    getCapability: () => ({ requestSigning: capability, fetchedAt: Math.floor(Date.now() / 1000) }),
+    upstream: async (_url, init) => {
+      sentHeaders = new Headers(init.headers);
+      return new Response('{}', { status: 200 });
+    },
+  });
+  await signedFetch(modern.url, {
+    method: modern.method,
+    headers: modern.headers,
+    body: modern.body,
+  });
+  assert.ok(sentHeaders.get('signature-input'), 'A2A 1.0 request must carry Signature-Input');
+  assert.ok(sentHeaders.get('signature'), 'A2A 1.0 request must carry Signature');
+});
+
+test('an A2A 1.0 body with no data part yields no operation', () => {
+  const { extractAdcpOperation } = require('../../dist/lib/signing/agent-fetch.js');
+  const body = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'SendMessage',
+    params: { message: { role: 'ROLE_USER', parts: [{ text: 'hello' }] } },
+  });
+  assert.strictEqual(extractAdcpOperation(body), undefined);
 });

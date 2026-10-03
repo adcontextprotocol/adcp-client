@@ -14,12 +14,14 @@ const CURRENT_PRERELEASE_FAMILY = CURRENT_PRERELEASE_RELEASE_PRECISION.includes(
   : CURRENT_PRERELEASE_RELEASE_PRECISION;
 const CURRENT_PRERELEASE_NUMBER = Number(CURRENT_PRERELEASE_RELEASE_PRECISION.match(/\.(\d+)$/)?.[1] ?? 0);
 const DIFFERENT_PRERELEASE_NUMBER = CURRENT_PRERELEASE_NUMBER + 1;
+// A stable pin's "different" release is the next protocol minor line.
+const NEXT_RELEASE_LINE = CURRENT_RELEASE_LINE.replace(/\.(\d+)$/, (_, minor) => `.${Number(minor) + 1}`);
 const DIFFERENT_PRERELEASE_RELEASE_PRECISION = CURRENT_PRERELEASE_RELEASE_PRECISION.includes('-')
   ? CURRENT_PRERELEASE_FAMILY + `.${DIFFERENT_PRERELEASE_NUMBER}`
-  : '3.2';
+  : NEXT_RELEASE_LINE;
 const DIFFERENT_PRERELEASE_VERSION = ADCP_VERSION.includes('-')
   ? ADCP_VERSION.replace(/\.\d+$/, `.${DIFFERENT_PRERELEASE_NUMBER}`)
-  : '3.2.0';
+  : `${NEXT_RELEASE_LINE}.0`;
 
 function a2aCapabilitiesStoryboard() {
   return {
@@ -573,7 +575,11 @@ describe('storyboard runner AdCP version negotiation', () => {
       isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, [CURRENT_PRERELEASE_RELEASE_PRECISION]),
       true
     );
-    assert.strictEqual(isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, [CURRENT_PRERELEASE_FAMILY]), false);
+    // A stable pin's family alias is its release-precision value, so it matches.
+    assert.strictEqual(
+      isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, [CURRENT_PRERELEASE_FAMILY]),
+      !CURRENT_IS_PRERELEASE
+    );
     assert.strictEqual(
       isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, [DIFFERENT_PRERELEASE_RELEASE_PRECISION]),
       false

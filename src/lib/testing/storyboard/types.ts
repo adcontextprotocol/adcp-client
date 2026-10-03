@@ -34,7 +34,7 @@ export interface Storyboard {
   version: string;
   /**
    * AdCP compliance cache version this storyboard was loaded from, e.g.
-   * "3.1.24" or "3.2.0-rc.7". Injected by the local cache loader; not
+   * "3.1.24" or "3.2.1". Injected by the local cache loader; not
    * authored in storyboard YAML.
    */
   adcp_version?: string;
@@ -152,6 +152,9 @@ export interface Storyboard {
    * `{ skipped: true, skip_reason: 'capability_unsupported' }` storyboard
    * result instead of running phases — avoiding misleading per-phase failures
    * when the storyboard tests behavior the agent explicitly opted out of.
+   * In routed runs, the predicate applies to `default_agent` when supplied;
+   * it is not rechecked against agents that only perform other routed steps.
+   * Without a default agent, each step uses its selected route's profile.
    *
    * `path` is a dotted key path into the raw `get_adcp_capabilities` response
    * (e.g. `"adcp.idempotency.supported"`).
@@ -187,11 +190,15 @@ export interface Storyboard {
    *   response schema declares a default for that exact path and the parent
    *   capability object is present. Like `present:`, absence is otherwise the
    *   load-bearing signal — a seller that doesn't advertise the array hasn't
-   *   opted into the variant this storyboard tests.
+   *   opted into the variant this storyboard tests. For
+   *   `adcp.governance_enforcement.tasks`, an entry matches when its task is
+   *   equal and its declared modes include every mode in the predicate;
+   *   sellers combine all modes for a task in one entry.
    *
    * - `not_contains: V` — negative array-membership matcher. The value at
-   *   `path` MUST be an array and MUST NOT include `V` (structural JSON equality, no
-   *   coercion). This is useful for rejection scenarios that apply only when
+   *   `path` MUST be an array and MUST NOT include `V` (structural JSON equality,
+   *   except governance task-mode predicates match a subset; no coercion).
+   *   This is useful for rejection scenarios that apply only when
    *   an advertised allowlist omits a value. Missing and non-array values do
    *   not satisfy the predicate; a separate discovery validation should grade
    *   a required capability declaration. Schema defaults are materialized on

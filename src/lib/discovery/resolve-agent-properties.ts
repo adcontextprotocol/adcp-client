@@ -105,7 +105,12 @@ export function canonicalizeAgentUrl(raw: string): string | null {
   // Use `protocol + host` (NOT `origin`) so the assembled string keeps
   // the IDN-A-label form Node produces.
   const path = decodeUnreservedPercentEncoding(parsed.pathname);
-  const query = parsed.search ? decodeUnreservedPercentEncoding(parsed.search) : '';
+  const fragmentlessHref = parsed.href.split('#', 1)[0] ?? parsed.href;
+  const query = parsed.search
+    ? decodeUnreservedPercentEncoding(parsed.search)
+    : fragmentlessHref.endsWith('?')
+      ? '?'
+      : '';
   return `${parsed.protocol}//${parsed.host}${path}${query}`;
 }
 

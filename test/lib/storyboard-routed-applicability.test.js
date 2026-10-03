@@ -521,7 +521,7 @@ for (const adcpVersion of ['3.1.20', '3.1.23', ADCP_VERSION]) {
       }
     });
 
-    test('root and phase capabilities follow selected routes in either map order', async () => {
+    test('without a default agent, root and phase gates follow selected routes', async () => {
       for (const scope of ['root', 'phase', 'all']) {
         for (const order of [
           ['a', 'b'],
@@ -560,6 +560,66 @@ for (const adcpVersion of ['3.1.20', '3.1.23', ADCP_VERSION]) {
           assert.deepEqual(calls.a, ['get_adcp_capabilities']);
           assert.deepEqual(calls.b, ['get_adcp_capabilities', 'get_adcp_capabilities']);
         }
+      }
+    });
+
+    test('root governance gate uses the default governed agent for governance-route steps', async () => {
+      const sb = storyboard([
+        { id: 'governance', task: 'get_adcp_capabilities', agent: 'governance' },
+        { id: 'governed', task: 'get_adcp_capabilities', agent: 'sales' },
+      ]);
+      sb.requires_capability = {
+        path: 'adcp.governance_enforcement.tasks',
+        contains: { task: 'create_media_buy', modes: ['signed_context'] },
+      };
+      const { result, calls } = await run(
+        {
+          sales: [
+            [],
+            {
+              adcp: {
+                governance_enforcement: {
+                  tasks: [{ task: 'create_media_buy', modes: ['signed_context', 'online_execution_check'] }],
+                },
+              },
+            },
+          ],
+          governance: [[], {}],
+        },
+        sb,
+        { adcpVersion, default_agent: 'sales' }
+      );
+      assert.deepEqual(sets(result), { selected: ['governance', 'governed'], skipped: [], failed: [] });
+      assert.deepEqual(calls.governance, ['get_adcp_capabilities', 'get_adcp_capabilities']);
+      assert.deepEqual(calls.sales, ['get_adcp_capabilities', 'get_adcp_capabilities']);
+    });
+
+    test('a missing default-agent profile cannot satisfy the root governance gate', async () => {
+      const governance = await startAgent([], {});
+      const sb = storyboard([{ id: 'governance', task: 'get_adcp_capabilities', agent: 'governance' }]);
+      sb.requires_all_capabilities = [
+        {
+          path: 'adcp.governance_enforcement.tasks',
+          contains: { task: 'create_media_buy', modes: ['signed_context'] },
+        },
+        { path: 'account.require_operator_auth', equals: true },
+      ];
+      try {
+        const result = await runStoryboard('', sb, {
+          adcpVersion,
+          discovery_resilient: true,
+          default_agent: 'sales',
+          agents: { sales: { url: 'http://127.0.0.1:1/mcp' }, governance: { url: governance.url } },
+        });
+        assert.deepEqual(sets(result), {
+          selected: [],
+          skipped: [['capability_unsupported', 'capability_unsupported']],
+          failed: [],
+        });
+        assert.deepEqual(governance.calls, ['get_adcp_capabilities']);
+      } finally {
+        await closeConnections();
+        await governance.close();
       }
     });
 
@@ -1136,7 +1196,7 @@ for (const strategies of [['discover'], ['discover', 'seed']]) {
       {
         seller: [
           ['get_products'],
-          { supported_protocols: ['media_buy'] },
+          { supported_protocols: ['media_buy'], media_buy: { buying_modes: ['brief', 'wholesale'] } },
           false,
           [
             require('./test-fixtures').createTestProduct({

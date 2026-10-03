@@ -195,6 +195,7 @@ export interface StoryboardTaskExecutionOptions {
   skipIdempotencyAutoInject?: boolean;
   skipAccountValidation?: boolean;
   skipRequestValidation?: boolean;
+  preserveGovernedPayload?: boolean;
   responseProjection?: 'raw';
   mediaBuyLifecycleCompatibility?: MediaBuyLifecycleCoordinatorOptions;
   signal?: AbortSignal;
@@ -351,9 +352,22 @@ export async function executeStoryboardTask(
   // the raw response shape; it must not force the seller onto a legacy-only
   // response. Other creative lifecycle methods retain explicit legacy routing.
   const callParams =
-    legacyMethodName && taskName !== 'get_products' && !forceRawProjection && !preserveExplicitLegacySelectorRoutes
+    legacyMethodName &&
+    taskName !== 'get_products' &&
+    !forceRawProjection &&
+    !opts.preserveGovernedPayload &&
+    !preserveExplicitLegacySelectorRoutes
       ? withLegacyCreativeWireHint(params)
       : params;
+  if (
+    opts.preserveGovernedPayload &&
+    opts.mediaBuyLifecycleCompatibility &&
+    COMPATIBILITY_COORDINATOR_METHODS[taskName]
+  ) {
+    throw new ConfigurationError(
+      `Governed ${taskName} cannot use media-buy lifecycle compatibility: the coordinator may change approved arguments.`
+    );
+  }
   const compatibilityMethod = opts.mediaBuyLifecycleCompatibility
     ? COMPATIBILITY_COORDINATOR_METHODS[taskName]
     : undefined;
@@ -376,11 +390,16 @@ export async function executeStoryboardTask(
   // Only pass TaskOptions when a flag is actually set — avoids changing
   // behavior for the common path that relies on method defaults.
   const taskOptions =
-    opts.skipIdempotencyAutoInject || opts.skipAccountValidation || opts.skipRequestValidation || opts.signal
+    opts.skipIdempotencyAutoInject ||
+    opts.skipAccountValidation ||
+    opts.skipRequestValidation ||
+    opts.preserveGovernedPayload ||
+    opts.signal
       ? {
           ...(opts.skipIdempotencyAutoInject && { skipIdempotencyAutoInject: true }),
           ...(opts.skipAccountValidation && { skipAccountValidation: true }),
           ...(opts.skipRequestValidation && { skipRequestValidation: true }),
+          ...(opts.preserveGovernedPayload && { preserveGovernedPayload: true }),
           ...(opts.signal && { signal: opts.signal }),
         }
       : undefined;

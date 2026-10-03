@@ -153,6 +153,7 @@ export const MetroAreaSystemValues = ["nielsen_dma", "uk_itl1", "uk_itl2", "euro
 export const MoovAtomPositionValues = ["start", "end"] as const;
 export const NotificationTypeValues = ["scheduled", "final", "delayed", "adjusted", "window_update", "impairment", "creative.status_changed", "creative.assignment_changed", "indicators.changed", "creative.purged", "account.status_changed", "account.change_recorded", "product.created", "product.updated", "product.priced", "product.removed", "signal.created", "signal.updated", "signal.priced", "signal.removed", "wholesale_feed.bulk_change", "capabilities.changed", "reporting.delivery_ready", "reporting.status_changed", "reporting.ledger_changed", "principal.changed"] as const;
 export const OfferingAvailabilityStatusValues = ["available", "limited", "sold_out", "expired", "region_restricted", "inactive"] as const;
+export const OutcomeTargetCostStrengthValues = ["cap", "target"] as const;
 export const OutcomeTypeValues = ["completed", "failed", "delivery"] as const;
 export const PacingValues = ["even", "asap", "front_loaded"] as const;
 export const PaymentTermsValues = ["net_15", "net_30", "net_45", "net_60", "net_90", "prepay"] as const;

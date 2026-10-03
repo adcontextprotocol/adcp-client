@@ -199,7 +199,7 @@ describe('createAdcpServerFromPlatform — sandbox-authority gate (resolver path
 
     const listed = await listTools(server);
     assert.ok(listed.tools.some(tool => tool.name === 'comply_test_controller'));
-    assert.strictEqual(isToolAvailableForVersion(server, 'comply_test_controller', '3.2.0-rc.7'), true);
+    assert.strictEqual(isToolAvailableForVersion(server, 'comply_test_controller', '3.2.1'), true);
 
     const result = await callForceCreative(server, { account: { account_id: 'sb_acc' } });
 

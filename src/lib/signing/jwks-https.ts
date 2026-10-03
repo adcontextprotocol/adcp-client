@@ -1,5 +1,6 @@
 import { ssrfSafeFetch, type SsrfDnsLookup } from '../net';
 import type { AdcpJsonWebKey } from './types';
+import { parseStrictJson } from './agent-resolver/strict-json';
 import type { JwksResolver } from './jwks';
 
 export interface HttpsJwksResolverOptions {
@@ -16,6 +17,10 @@ export interface HttpsJwksResolverOptions {
    * longer. Default 3600s (1 hour).
    */
   maxAgeSeconds?: number;
+  /** Protocol cache floor. Defaults to 0; governance uses 60 seconds. */
+  minCacheAgeSeconds?: number;
+  /** Reject refresh failures instead of serving an expired snapshot. Default false. */
+  failClosed?: boolean;
   /** Allow `http://` / private-IP JWKS URLs (dev loops only). Default false. */
   allowPrivateIp?: boolean;
   /** DNS resolver forwarded to the SSRF-safe fetch path. Defaults to `dns/promises.lookup`. */
@@ -58,16 +63,30 @@ export class HttpsJwksResolver implements JwksResolver {
   private readonly url: string;
   private readonly minCooldown: number;
   private readonly maxAge: number;
+  private readonly minCacheAge: number;
+  private readonly failClosed: boolean;
   private readonly allowPrivateIp: boolean;
   private readonly lookup: SsrfDnsLookup | undefined;
   private readonly now: () => number;
   private cache: CacheSnapshot | undefined;
   private inFlight: Promise<void> | undefined;
+  private lastAttemptAt = Number.NEGATIVE_INFINITY;
 
   constructor(url: string, options: HttpsJwksResolverOptions = {}) {
     this.url = url;
     this.minCooldown = options.minCooldownSeconds ?? DEFAULT_MIN_COOLDOWN_SECONDS;
     this.maxAge = options.maxAgeSeconds ?? DEFAULT_MAX_AGE_SECONDS;
+    this.minCacheAge = Math.min(options.minCacheAgeSeconds ?? 0, this.maxAge);
+    if (!Number.isFinite(this.maxAge) || this.maxAge < 0) {
+      throw new TypeError('maxAgeSeconds must be a finite non-negative number');
+    }
+    if (!Number.isFinite(this.minCooldown) || this.minCooldown < 0) {
+      throw new TypeError('minCooldownSeconds must be a finite non-negative number');
+    }
+    if (!Number.isFinite(options.minCacheAgeSeconds ?? 0) || (options.minCacheAgeSeconds ?? 0) < 0) {
+      throw new TypeError('minCacheAgeSeconds must be a finite non-negative number');
+    }
+    this.failClosed = options.failClosed === true;
     this.allowPrivateIp = options.allowPrivateIp ?? false;
     this.lookup = options.lookup;
     this.now = options.now ?? (() => Math.floor(Date.now() / 1000));
@@ -75,10 +94,13 @@ export class HttpsJwksResolver implements JwksResolver {
 
   async resolve(keyid: string): Promise<AdcpJsonWebKey | null> {
     if (!this.cache) {
+      if (!this.inFlight && this.now() - this.lastAttemptAt < this.minCooldown) {
+        throw new Error('JWKS lookup is in its retry cooldown');
+      }
       await this.refresh();
     } else if (this.cache.keys.has(keyid)) {
       // Fast path — known kid in a non-expired snapshot.
-      if (this.now() <= this.cache.expiresAt) {
+      if (this.now() < this.cache.expiresAt) {
         return this.cache.keys.get(keyid) ?? null;
       }
       // Cache past its expiry; refresh if cooldown elapsed. When the cooldown
@@ -86,17 +108,20 @@ export class HttpsJwksResolver implements JwksResolver {
       // protects the counterparty's JWKS endpoint from being hammered, and the
       // spec's 30-second floor is also the maximum staleness a verifier may
       // tolerate in this path.
-      if (this.now() - this.cache.fetchedAt >= this.minCooldown) {
-        await this.refresh().catch(() => {
+      if (this.now() - this.lastAttemptAt >= this.minCooldown) {
+        await this.refresh().catch(error => {
+          if (this.failClosed) throw error;
           /* keep stale on transient failure */
         });
       }
-    } else if (this.now() - this.cache.fetchedAt >= this.minCooldown) {
+    } else if (this.now() - this.lastAttemptAt >= this.minCooldown) {
       // Unknown kid and cooldown elapsed — counterparty may have rotated.
-      await this.refresh().catch(() => {
+      await this.refresh().catch(error => {
+        if (this.failClosed) throw error;
         /* keep stale on transient failure */
       });
     }
+    if (this.failClosed && this.cache && this.now() >= this.cache.expiresAt) throw new Error('JWKS snapshot expired');
     return this.cache?.keys.get(keyid) ?? null;
   }
 
@@ -115,6 +140,7 @@ export class HttpsJwksResolver implements JwksResolver {
       await this.inFlight;
       return;
     }
+    this.lastAttemptAt = this.now();
     this.inFlight = this.doRefresh().finally(() => {
       this.inFlight = undefined;
     });
@@ -159,7 +185,7 @@ export class HttpsJwksResolver implements JwksResolver {
     const text = Buffer.from(res.body).toString('utf8');
     let parsed: unknown;
     try {
-      parsed = JSON.parse(text);
+      parsed = parseStrictJson(text);
     } catch {
       throw new Error(`JWKS fetch ${this.url} returned non-JSON body`);
     }
@@ -175,6 +201,7 @@ export class HttpsJwksResolver implements JwksResolver {
     for (const entry of keysField) {
       if (entry && typeof entry === 'object' && typeof (entry as AdcpJsonWebKey).kid === 'string') {
         const jwk = entry as AdcpJsonWebKey;
+        if (byKid.has(jwk.kid)) throw new Error('JWKS has duplicate key identifiers');
         byKid.set(jwk.kid, jwk);
       }
     }
@@ -192,11 +219,11 @@ export class HttpsJwksResolver implements JwksResolver {
     // `no-store` / `no-cache` → treat as "expires immediately"; the next
     // resolve() will refresh past the cooldown, which is the spec-mandated
     // floor (30s) for not hammering the counterparty.
-    if (/\bno-store\b|\bno-cache\b/.test(cacheCtl)) return this.now();
+    if (/\bno-store\b|\bno-cache\b/.test(cacheCtl)) return this.now() + this.minCacheAge;
     const match = /max-age\s*=\s*(\d+)/.exec(cacheCtl);
     if (match) {
       const serverMax = Number(match[1]);
-      if (Number.isFinite(serverMax)) return this.now() + Math.min(serverMax, this.maxAge);
+      if (Number.isFinite(serverMax)) return this.now() + Math.max(this.minCacheAge, Math.min(serverMax, this.maxAge));
     }
     return this.now() + this.maxAge;
   }

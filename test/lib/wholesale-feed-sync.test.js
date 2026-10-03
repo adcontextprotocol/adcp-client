@@ -389,6 +389,7 @@ describe('WholesaleFeedSync legacy-view wholesale feed flow', () => {
 
     await assert.rejects(() => sync.start(), /persistence saveState timed out after 5ms/);
     assert.strictEqual(sync.state, 'error');
+    sync.stop();
   });
 
   test('reset persists an empty snapshot without stale tokens or webhook cursor', async () => {
@@ -1101,4 +1102,44 @@ describe('WholesaleFeedSync legacy-view wholesale feed flow', () => {
     assert.strictEqual(calls.getProducts.at(-1).if_pricing_version, 'price-v1');
     sync.stop();
   });
+});
+
+test('failed webhook repair rejects and leaves the delivery available for retry (#3092)', async () => {
+  const account = { account_id: 'acc_acme' };
+  let failing = false;
+  let repairs = 0;
+  const { client } = makeStubClient({
+    capabilities: {
+      wholesale_feed_versioning: { supported: true },
+      wholesale_feed_webhooks: { supported: true, event_types: ['wholesale_feed.bulk_change'] },
+    },
+    getProducts: () => {
+      repairs++;
+      if (failing)
+        return { success: false, status: 'failed', error: 'rate limited', adcpError: { code: 'RATE_LIMITED' } };
+      return makeProductsResult([makeProduct('p1')], { wholesale_feed_version: repairs > 1 ? 'v2' : 'v1' });
+    },
+  });
+  const sync = new WholesaleFeedSync({ client, account, webhookScope: { accountId: 'acc_acme' } });
+  await sync.start();
+  failing = true;
+  const webhook = makeWebhook(
+    makeEvent('wholesale_feed.bulk_change', 'feed', 'bulk-retry', {
+      summary: 'refresh',
+      affected_count: 1,
+      affected_entity_type: 'product',
+      applies_to: { scope: 'public' },
+    }),
+    { version: 'v2', previous: 'v1' }
+  );
+  await assert.rejects(sync.applyWebhook(webhook), /rate limited/);
+  assert.equal(sync.state, 'degraded');
+  assert.equal(sync.products.count, 1);
+  failing = false;
+  await sync.applyWebhook(webhook);
+  assert.equal(repairs, 3);
+  assert.equal(sync.state, 'syncing');
+  await sync.applyWebhook(webhook);
+  assert.equal(repairs, 3, 'successful retry is deduplicated');
+  sync.stop();
 });

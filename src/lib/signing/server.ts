@@ -144,3 +144,5 @@ export {
   type ResolvedAgentJwksResolverOptions,
   type TraceStep,
 } from './agent-resolver';
+
+export type { PublisherSigningKeyPin } from './publisher-pins';

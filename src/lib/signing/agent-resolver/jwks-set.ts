@@ -141,11 +141,12 @@ export function createAgentJwksSet(agentUrl: string, options: CreateAgentJwksSet
   const now = options.now ?? (() => Date.now() / 1000);
 
   let cache: CachedJwks | undefined;
-  let lastRefetchAt = 0;
+  let lastRefetchAt = Number.NEGATIVE_INFINITY;
   let inFlight: Promise<CachedJwks> | undefined;
 
   const refresh = async (): Promise<CachedJwks> => {
     if (inFlight) return inFlight;
+    lastRefetchAt = now();
     inFlight = (async () => {
       const resolution = await resolveAgent(agentUrl, options);
       const refreshedAt = now();
@@ -175,10 +176,27 @@ export function createAgentJwksSet(agentUrl: string, options: CreateAgentJwksSet
   const ensureFresh = async (): Promise<CachedJwks> => {
     if (
       !cache ||
-      now() - cache.fetchedAt >= cacheMaxAge ||
+      now() - cache.fetchedAt >=
+        Math.min(
+          cacheMaxAge,
+          1800,
+          Math.max(30, headerLifetime(cache.resolution.brandJsonCacheControl)),
+          Math.max(60, headerLifetime(cache.resolution.jwksCacheControl))
+        ) ||
       (cache.resolution.operatorAuthorizationValidUntil !== undefined &&
         now() >= cache.resolution.operatorAuthorizationValidUntil)
     ) {
+      if (!inFlight && now() - lastRefetchAt < 30) {
+        const expired =
+          cache?.resolution.operatorAuthorizationValidUntil !== undefined &&
+          now() >= cache.resolution.operatorAuthorizationValidUntil;
+        throw new AgentResolverError(
+          expired ? 'request_signature_brand_origin_mismatch' : 'request_signature_brand_json_unreachable',
+          'Expired operator mapping cannot be used during the discovery cooldown',
+          { agent_url: agentUrl },
+          ['agent_url']
+        );
+      }
       return refresh();
     }
     return cache;
@@ -192,7 +210,7 @@ export function createAgentJwksSet(agentUrl: string, options: CreateAgentJwksSet
       // Likely cause: kid miss (key rotated). Subject to the cooldown,
       // refetch once and retry — same logic the spec's verifier checklist
       // applies between the agent-URL preamble and the kid resolution.
-      if (now() - lastRefetchAt < kidCooldown) throw err;
+      if (now() - lastRefetchAt < Math.max(30, kidCooldown)) throw err;
       const refreshed = await refresh();
       return refreshed.getKey(protectedHeader, token);
     }
@@ -234,4 +252,11 @@ function filterJwksToAllowedAlgs(
   // Keep keys without a declared `alg` (jose still gates by the verifier's
   // `algorithms` option) and keys whose declared `alg` is in the allowlist.
   return jwks.keys.filter(jwk => typeof jwk.alg !== 'string' || allowedAlgs.has(jwk.alg));
+}
+
+function headerLifetime(value: string | undefined): number {
+  if (!value) return Infinity;
+  if (/\bno-cache\b|\bno-store\b/i.test(value)) return 0;
+  const match = /(?:^|,)\s*max-age\s*=\s*"?(\d+)/i.exec(value);
+  return match ? Number(match[1]) : Infinity;
 }

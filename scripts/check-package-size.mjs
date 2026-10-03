@@ -17,7 +17,11 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // enough compressor variance for supported Node/npm versions without allowing
 // the old 48 MB artifact shape to return. The packed limit is decimal because
 // npm reports published package size in MB and issue #2579 set a 20 MB target.
-const MAX_PACKED_TARBALL_BYTES = 20_000_000;
+// Canonical agent resolution adds three dual-format module/declaration sets
+// and one migration guide (+13 files). The measured tarball is 20,004,504
+// bytes; allow 25 KB above the existing 20 MB target for these artifacts and
+// compressor variance. All other byte budgets remain unchanged.
+const MAX_PACKED_TARBALL_BYTES = 20_025_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -98,7 +102,19 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // and one packaged operations guide (+1); byte budgets remain unchanged.
 // The focused buyer entrypoint adds four dual-format runtime/declaration files,
 // and its published existing-app worker and guide add two more (+6).
-const MAX_PACKED_FILE_COUNT = 6_135 + 34 + 4 + 10 + 4 + 4 + 4 + 9 + 16 + 4 + 1 + 5 + 8 + 4 + 4 + 11 + 4 + 13 + 6;
+// Public account resolution adds one dual-format runtime/declaration module (+4).
+// AdCP 3.2.1 GA replaces the rc.7 bundle: 27 request-signing profile vectors,
+// six media-buy storyboards, the hosted-grader test kit, and five new schemas
+// (execution requirements, outcome-target cost-per, reporting delivery offering id) (+39).
+// Signed-request rejection diagnostics add one internal dual-format module
+// with both declaration flavours (+4 files); byte budgets stay fixed.
+// Buyer provisioning and discovery authorization add five runtime/declaration
+// module sets (+20 files) and one first-call guide (+1); byte budgets stay fixed.
+// Opt-in strict account references add one internal dual-format
+// runtime/declaration module for once-per-process deprecation warnings
+// (+4 files); byte budgets stay fixed.
+const MAX_PACKED_FILE_COUNT =
+  6_135 + 34 + 4 + 10 + 4 + 4 + 4 + 9 + 16 + 4 + 1 + 5 + 8 + 4 + 4 + 11 + 4 + 13 + 6 + 4 + 39 + 4 + 21 + 4 + 13;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
@@ -153,7 +169,10 @@ export function checkPackageSize(repoRoot) {
   }
 
   if (packageInfo.size > MAX_PACKED_TARBALL_BYTES) {
-    throw new Error(`packed tarball is ${mib(packageInfo.size)} MiB; budget is ${mib(MAX_PACKED_TARBALL_BYTES)} MiB`);
+    throw new Error(
+      `packed tarball is ${packageInfo.size} bytes (${mib(packageInfo.size)} MiB); ` +
+        `budget is ${MAX_PACKED_TARBALL_BYTES} bytes (${mib(MAX_PACKED_TARBALL_BYTES)} MiB)`
+    );
   }
   if (packageInfo.unpackedSize > MAX_UNPACKED_PACKAGE_BYTES) {
     throw new Error(

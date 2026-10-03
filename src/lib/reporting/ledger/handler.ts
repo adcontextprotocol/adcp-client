@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { ADCP_MAJOR_VERSION, ADCP_VERSION } from '../../version';
+import { ADCP_MAJOR_VERSION, ADCP_VERSION, toReleasePrecisionVersion } from '../../version';
 import { AdcpError } from '../../server/decisioning/async-outcome';
 import type { GetReportingStatusResponse } from '../../types';
 import type { ReportingAdjustmentReceipt, ReportingMaterialization, ReportingReceipt } from '../../types';
@@ -1230,7 +1230,7 @@ function scopedConfigurations(
 }
 
 function wireAdcpVersion(): string {
-  return ADCP_VERSION.replace(/^(\d+\.\d+)\.0-/, '$1-');
+  return toReleasePrecisionVersion(ADCP_VERSION);
 }
 
 function uniqueIssues(issues: ReportingLedgerIssueV1[]): ReportingLedgerIssueV1[] {

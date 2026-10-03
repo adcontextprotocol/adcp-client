@@ -12,6 +12,7 @@ import {
 import { listMCPTasks } from '../protocols/mcp-tasks';
 import { withPreparedProtocolToolCall } from '../protocols/prepared-call-context';
 import { getAuthToken } from '../auth';
+import { getSignedRequestRejection } from '../protocols/signedRequestRejection';
 import { is401Error, adcpErrorToTypedError, ConfigurationError } from '../errors';
 import type { ADCPError } from '../errors';
 import type { DeferredTaskState, DeferredTaskStorage } from '../storage/interfaces';
@@ -1339,9 +1340,10 @@ export class TaskExecutor {
     // re-generating on retry defeats the whole point of the envelope.
     // `options.skipIdempotencyAutoInject` disables this for compliance testing
     // that needs to exercise server-side missing-key behavior.
-    const idempotencyKey = options.skipIdempotencyAutoInject
-      ? undefined
-      : resolveIdempotencyKey(taskName, params, serverVersion);
+    const idempotencyKey =
+      options.skipIdempotencyAutoInject || options.preserveGovernedPayload
+        ? undefined
+        : resolveIdempotencyKey(taskName, params, serverVersion);
     if (idempotencyKey) attachTaskDeadlineIdempotencyKey(options, idempotencyKey);
     if (serverVersion !== 'v2' && idempotencyKey && params && typeof params === 'object' && !params.idempotency_key) {
       params = { ...params, idempotency_key: idempotencyKey };
@@ -5764,7 +5766,7 @@ export class TaskExecutor {
       status: 'failed' as const,
       error: error.message || String(error),
       adcpError: adcpErrorInfo,
-      errorInstance: this.buildErrorInstance(taskId, adcpErrorInfo),
+      errorInstance: getSignedRequestRejection(error) ?? this.buildErrorInstance(taskId, adcpErrorInfo),
       correlationId,
       metadata: this.buildMetadata({
         taskId,

@@ -768,6 +768,11 @@ export const DistributionIDsSource_SelectionTypeValues = ["distribution_ids"] as
 /** single | DoohParameters.type */
 export const DoohParameters_TypeValues = ["dooh"] as const;
 
+// ====== DownstreamConnectionExecutionRequirement ======
+
+/** single | DownstreamConnectionExecutionRequirement.kind */
+export const DownstreamConnectionExecutionRequirement_KindValues = ["downstream_connection"] as const;
+
 // ====== DownstreamConnectionRequirement ======
 
 /** single | DownstreamConnectionRequirement.connection_type */
@@ -799,6 +804,11 @@ export const EmptyReportGoldenVector_CanonicalUtf8Base64Values = ["W10="] as con
 export const EmptyReportGoldenVector_PurposeValues = ["empty_report"] as const;
 /** single | EmptyReportGoldenVector.sha256 */
 export const EmptyReportGoldenVector_Sha256Values = ["4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"] as const;
+
+// ====== EventSourceExecutionRequirement ======
+
+/** single | EventSourceExecutionRequirement.kind */
+export const EventSourceExecutionRequirement_KindValues = ["event_source"] as const;
 
 // ====== EventSurface ======
 
@@ -906,7 +916,7 @@ export const GetProductsCompletion_CacheScopeValues = ["public", "account"] as c
 /** single | GetProductsRequest.buying_mode */
 export const GetProductsRequest_BuyingModeValues = ["brief", "wholesale", "refine"] as const;
 /** array of | GetProductsRequest.fields */
-export const GetProductsRequest_FieldsValues = ["product_id", "name", "description", "publisher_properties", "channels", "video_placement_types", "audio_distribution_types", "sponsored_placement_types", "social_placement_surfaces", "format_options", "placements", "delivery_type", "exclusivity", "pricing_options", "forecast", "reporting_capabilities", "measurement_terms", "performance_standards", "catalog_types", "signal_targeting_allowed", "signal_targeting_rules", "demographic_targeting", "overlay_support", "media_buy_support", "audience_evidence", "audience_evidence_selections", "max_optimization_goals", "catalog_match", "list_applications", "brief_relevance", "acceptance_policy_profile_ids", "identity", "expires_at", "allowed_actions", "format_ids", "outcome_measurement", "delivery_measurement", "creative_policy", "metric_optimization", "conversion_tracking", "data_provider_signals", "included_signals", "signal_targeting_options", "targeting_resolution", "collections", "collection_targeting_allowed", "installments", "is_custom", "product_card", "product_card_detailed", "enforced_policies", "trusted_match"] as const;
+export const GetProductsRequest_FieldsValues = ["product_id", "name", "description", "publisher_properties", "channels", "video_placement_types", "audio_distribution_types", "sponsored_placement_types", "social_placement_surfaces", "format_options", "placements", "delivery_type", "exclusivity", "pricing_options", "forecast", "reporting_capabilities", "measurement_terms", "performance_standards", "catalog_types", "signal_targeting_allowed", "signal_targeting_rules", "demographic_targeting", "overlay_support", "collections", "collection_targeting_allowed", "media_buy_support", "audience_evidence", "audience_evidence_selections", "max_optimization_goals", "catalog_match", "list_applications", "brief_relevance", "targeting_resolution", "acceptance_policy_profile_ids", "identity", "execution_requirements", "expires_at", "allowed_actions", "format_ids", "outcome_measurement", "delivery_measurement", "creative_policy", "metric_optimization", "conversion_tracking", "data_provider_signals", "included_signals", "signal_targeting_options", "installments", "is_custom", "product_card", "product_card_detailed", "enforced_policies", "trusted_match"] as const;
 
 // ====== GetSignalsRequest ======
 
@@ -1073,7 +1083,7 @@ export const ListCreativesRequest_FieldsValues = ["creative_id", "name", "format
 // ====== ListProductsRequest ======
 
 /** array of | ListProductsRequest.fields */
-export const ListProductsRequest_FieldsValues = ["product_id", "name", "description", "publisher_properties", "channels", "video_placement_types", "audio_distribution_types", "sponsored_placement_types", "social_placement_surfaces", "format_options", "placements", "delivery_type", "exclusivity", "pricing_options", "forecast", "reporting_capabilities", "measurement_terms", "performance_standards", "catalog_types", "signal_targeting_allowed", "signal_targeting_rules", "demographic_targeting", "overlay_support", "media_buy_support", "audience_evidence", "audience_evidence_selections", "max_optimization_goals", "catalog_match", "list_applications", "brief_relevance", "acceptance_policy_profile_ids", "identity", "expires_at", "allowed_actions"] as const;
+export const ListProductsRequest_FieldsValues = ["product_id", "name", "description", "publisher_properties", "channels", "video_placement_types", "audio_distribution_types", "sponsored_placement_types", "social_placement_surfaces", "format_options", "placements", "delivery_type", "exclusivity", "pricing_options", "forecast", "reporting_capabilities", "measurement_terms", "performance_standards", "catalog_types", "signal_targeting_allowed", "signal_targeting_rules", "demographic_targeting", "overlay_support", "collections", "collection_targeting_allowed", "media_buy_support", "audience_evidence", "audience_evidence_selections", "max_optimization_goals", "catalog_match", "list_applications", "brief_relevance", "targeting_resolution", "acceptance_policy_profile_ids", "identity", "execution_requirements", "expires_at", "allowed_actions"] as const;
 
 // ====== MacroDeclaration ======
 
@@ -1104,8 +1114,6 @@ export const MacroTranslationTarget_NextOperationValues = ["resolve_value"] as c
 
 // ====== MaxBidWithCostPer ======
 
-/** array of | MaxBidWithCostPer.cost_per_strengths */
-export const MaxBidWithCostPer_CostPerStrengthsValues = ["cap", "target"] as const;
 /** single | MaxBidWithCostPer.kind */
 export const MaxBidWithCostPer_KindValues = ["max_bid_with_cost_per"] as const;
 
@@ -2101,6 +2109,9 @@ export const CapabilitiesChangedWebhook_NotificationTypeValues = AgentWebhookCha
 // --- CapabilityChangeNotificationsSupported ---
 /** @deprecated use `AgentWebhookChallenge_EventTypesValues` — same literal set, CapabilityChangeNotificationsSupported.event_types duplicates the canonical export. */
 export const CapabilityChangeNotificationsSupported_EventTypesValues = AgentWebhookChallenge_EventTypesValues;
+// --- CatalogExecutionRequirement ---
+/** @deprecated use `CatalogAsset_AssetTypeValues` — same literal set, CatalogExecutionRequirement.kind duplicates the canonical export. */
+export const CatalogExecutionRequirement_KindValues = CatalogAsset_AssetTypeValues;
 // --- CatalogItemAvailabilityUpdateResult ---
 /** @deprecated use `CatalogItemAvailabilityUpdate_ActionValues` — same literal set, CatalogItemAvailabilityUpdateResult.action duplicates the canonical export. */
 export const CatalogItemAvailabilityUpdateResult_ActionValues = CatalogItemAvailabilityUpdate_ActionValues;
@@ -2365,8 +2376,6 @@ export const PairedRedirect_AssetTypeValues = DisplayTagFormatDeclaration_Format
 /** @deprecated use `PlacementPresentationDocument_SchemaVersionValues` — same literal set, PlacementPresentationReference.schema_version duplicates the canonical export. */
 export const PlacementPresentationReference_SchemaVersionValues = PlacementPresentationDocument_SchemaVersionValues;
 // --- PolicyProfile ---
-/** @deprecated use `MaxBidWithCostPer_CostPerStrengthsValues` — same literal set, PolicyProfile.cost_per_strengths duplicates the canonical export. */
-export const PolicyProfile_CostPerStrengthsValues = MaxBidWithCostPer_CostPerStrengthsValues;
 /** @deprecated use `MaxBidWithRoas_RoasStrengthsValues` — same literal set, PolicyProfile.roas_strengths duplicates the canonical export. */
 export const PolicyProfile_RoasStrengthsValues = MaxBidWithRoas_RoasStrengthsValues;
 // --- PostalAreaSupport ---

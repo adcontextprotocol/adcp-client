@@ -21,6 +21,7 @@ export const ATTACKER_INFLUENCED = Symbol.for('adcp.attacker-influenced');
 
 export type AgentResolverErrorCode =
   | 'request_signature_brand_json_url_missing'
+  | 'request_signature_key_unknown'
   | 'request_signature_capabilities_unreachable'
   | 'request_signature_brand_json_unreachable'
   | 'request_signature_brand_json_malformed'

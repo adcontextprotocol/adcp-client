@@ -23,6 +23,7 @@
  * payload" pattern.
  */
 
+import { ACCOUNT_FREE_DISCOVERY_TASKS } from './account-policy';
 import { createHash } from 'node:crypto';
 import { resolveBrand, resolveAccount } from '../client';
 import type { TestOptions } from '../types';
@@ -183,6 +184,30 @@ function resolveMediaBuyAccount(fixtureAccount: unknown, contextAccount: unknown
   return resolvedAccount;
 }
 
+function resolveDiscoveryAccount(
+  task: string,
+  fixtureAccount: unknown,
+  contextAccount: unknown,
+  options: TestOptions
+): unknown {
+  if (
+    ACCOUNT_FREE_DISCOVERY_TASKS.has(task) &&
+    contextAccount === undefined &&
+    hasUnresolvedContextReference(fixtureAccount)
+  )
+    return undefined;
+  if (ACCOUNT_FREE_DISCOVERY_TASKS.has(task) && fixtureAccount === undefined && contextAccount === undefined)
+    return undefined;
+  if (
+    contextAccount === undefined &&
+    fixtureAccount &&
+    typeof fixtureAccount === 'object' &&
+    'account_id' in fixtureAccount
+  )
+    return fixtureAccount;
+  return resolveMediaBuyAccount(fixtureAccount, contextAccount, options);
+}
+
 const OPERATION_SCOPED_CONTROLLER_SCENARIOS = new Set([
   'force_create_media_buy_arm',
   'force_get_products_arm',
@@ -332,7 +357,8 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
       !hasUnresolvedContextReference(fixtureAccount)
         ? fixtureAccount
         : undefined;
-    const resolvedAccount = fixtureWholesaleAccount ?? resolveMediaBuyAccount(fixtureAccount, context.account, options);
+    const resolvedAccount =
+      fixtureWholesaleAccount ?? resolveDiscoveryAccount('get_products', fixtureAccount, context.account, options);
 
     if (fixtureFields.buying_mode === 'wholesale') {
       return {
@@ -815,7 +841,8 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
       !hasUnresolvedContextReference(fixtureAccount)
         ? fixtureAccount
         : undefined;
-    const account = fixtureWholesaleAccount ?? resolveMediaBuyAccount(fixtureAccount, context.account, options);
+    const account =
+      fixtureWholesaleAccount ?? resolveDiscoveryAccount('get_signals', fixtureAccount, context.account, options);
 
     if (fixtureFields.discovery_mode === 'wholesale') {
       return { ...fixtureFields, account };

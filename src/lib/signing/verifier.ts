@@ -8,6 +8,7 @@ import {
 } from './canonicalize';
 import {
   contentDigestMatches,
+  contentDigestSha256Token,
   contentDigestUsesEncoding,
   requestSigningEncodingForVersion,
   type SfBinaryEncoding,
@@ -29,6 +30,7 @@ import {
   REQUEST_SIGNING_TAG,
   type VerifierCapability,
   type VerifyResult,
+  type VerifiedSigner,
 } from './types';
 
 export interface VerifyRequestOptions {
@@ -47,8 +49,12 @@ export interface VerifyRequestOptions {
   operation?: string;
   /**
    * Trusted endpoint release pin; never inferred from request payload data.
-   * When omitted, the verifier accepts both the legacy 3.0/3.1 Base64URL
-   * representation and the 3.2+ RFC 8941 Base64 representation. Digest
+   * A 3.2+ pin parses `Signature` and `Content-Digest` strictly as RFC 8941
+   * padded standard Base64 and rejects Base64URL as
+   * `request_signature_header_malformed`, regardless of
+   * `capability.covers_content_digest`. When omitted, the verifier accepts
+   * both the legacy 3.0/3.1 Base64URL representation and the 3.2+ RFC 8941
+   * Base64 representation, so it cannot grade as a 3.2 verifier. Digest
    * coverage still follows `capability.covers_content_digest`.
    */
   adcpVersion?: string;
@@ -59,7 +65,8 @@ export async function verifyRequestSignature(
   request: RequestLike,
   options: VerifyRequestOptions
 ): Promise<VerifyResult> {
-  const now = options.now ? options.now() : Math.floor(Date.now() / 1000);
+  const currentTime = options.now ?? (() => Math.floor(Date.now() / 1000));
+  const now = currentTime();
   const pinnedBinaryEncoding =
     options.adcpVersion !== undefined ? requestSigningEncodingForVersion(options.adcpVersion) : undefined;
   const sigInputHeader = getHeaderValue(request.headers, 'Signature-Input');
@@ -135,7 +142,9 @@ export async function verifyRequestSignature(
       parsedEncoding = candidate;
       break;
     } catch (error) {
-      parseError ??= error;
+      // When every candidate fails, report the pinned profile's diagnostic,
+      // or the 3.2 one for an unpinned verifier.
+      if (parseError === undefined || candidate === (pinnedBinaryEncoding ?? 'rfc8941-base64')) parseError = error;
     }
   }
   if (!parsedSig) throw parseError;
@@ -179,13 +188,37 @@ export async function verifyRequestSignature(
 
   // Step 7: resolve keyid.
   let jwk;
+  let resolvedAgentUrl: string | undefined;
+  let authorizationValidUntil: number | undefined;
+  let operatorRecord: VerifiedSigner['operatorRecord'];
   try {
-    jwk = await options.jwks.resolve(parsedInput.params.keyid);
+    if (options.jwks.resolveWithMetadata) {
+      const resolution = await options.jwks.resolveWithMetadata(parsedInput.params.keyid);
+      if (resolution.legacyWebhookFallback)
+        throw new AgentResolverError(
+          'request_signature_brand_json_url_missing',
+          'Legacy discovery is limited to webhook verification',
+          {}
+        );
+      jwk = resolution.jwk;
+      resolvedAgentUrl = resolution.agentUrl;
+      operatorRecord = resolution.operatorRecord;
+      authorizationValidUntil = resolution.operatorAuthorizationValidUntil;
+    } else {
+      jwk = await options.jwks.resolve(parsedInput.params.keyid);
+    }
   } catch (err) {
     if (err instanceof AgentResolverError) {
       throw new RequestSignatureError(err.code, 7, err.message, err.detail);
     }
     throw err;
+  }
+  if (authorizationValidUntil !== undefined && currentTime() >= authorizationValidUntil) {
+    throw new RequestSignatureError(
+      'request_signature_brand_origin_mismatch',
+      7,
+      'Delegated operator authorization expired before verification'
+    );
   }
   if (!jwk) {
     throw new RequestSignatureError(
@@ -278,9 +311,23 @@ export async function verifyRequestSignature(
     const digestHeader = getHeaderValue(request.headers, 'Content-Digest');
     const encodingMatches =
       !!digestHeader &&
-      contentDigestEncodingCandidates(pinnedBinaryEncoding, options.capability.covers_content_digest).some(candidate =>
+      contentDigestEncodingCandidates(pinnedBinaryEncoding).some(candidate =>
         contentDigestUsesEncoding(digestHeader, candidate)
       );
+    if (
+      digestHeader &&
+      !encodingMatches &&
+      pinnedBinaryEncoding === 'rfc8941-base64' &&
+      contentDigestSha256Token(digestHeader) !== undefined
+    ) {
+      // 3.2 request sf-binary is standard padded Base64 only; a Base64URL or
+      // unpadded digest is a malformed header, not a digest mismatch.
+      throw new RequestSignatureError(
+        'request_signature_header_malformed',
+        11,
+        'Content-Digest sha-256 value must use padded standard Base64 for AdCP 3.2+'
+      );
+    }
     if (!digestHeader || !encodingMatches || !contentDigestMatches(digestHeader, request.body ?? '')) {
       throw new RequestSignatureError(
         'request_signature_digest_mismatch',
@@ -307,6 +354,14 @@ export async function verifyRequestSignature(
     }
   }
 
+  if (authorizationValidUntil !== undefined && currentTime() >= authorizationValidUntil) {
+    throw new RequestSignatureError(
+      'request_signature_brand_origin_mismatch',
+      7,
+      'Delegated operator authorization expired during verification'
+    );
+  }
+
   // Step 12: commit the (keyid, nonce) into the replay cache now that all
   // prior checks have passed. Floor the TTL at one max-window + skew so a
   // signer minting tiny validity windows can't replay outside the configured
@@ -329,32 +384,46 @@ export async function verifyRequestSignature(
     );
   }
 
-  const agent_url = options.agentUrlForKeyid?.(jwk.kid);
-  return { status: 'verified', keyid: jwk.kid, agent_url, verified_at: now };
+  if (authorizationValidUntil !== undefined && currentTime() >= authorizationValidUntil) {
+    throw new RequestSignatureError(
+      'request_signature_brand_origin_mismatch',
+      7,
+      'Delegated operator authorization expired before acceptance'
+    );
+  }
+
+  const agent_url = resolvedAgentUrl ?? options.agentUrlForKeyid?.(jwk.kid);
+  return {
+    status: 'verified',
+    keyid: jwk.kid,
+    agent_url,
+    verified_at: now,
+    ...(operatorRecord !== undefined && { operatorRecord }),
+  };
 }
 
 function signatureEncodingCandidates(
   pinned: SfBinaryEncoding | undefined,
   digestPolicy: VerifierCapability['covers_content_digest'] | undefined
 ): readonly SfBinaryEncoding[] {
-  if (!pinned) return ['rfc8941-base64', 'legacy-base64url'];
-  if (digestPolicy !== 'either') return [pinned];
-  return [pinned, alternateBinaryEncoding(pinned)];
+  // Unpinned: a token valid in both alphabets (no `+`, `/`, `-`, `_`, or `=`)
+  // stays on the legacy profile, as it did before 3.2 existed.
+  if (!pinned) return ['legacy-base64url', 'rfc8941-base64'];
+  // A 3.2 endpoint parses `Signature` strictly as RFC 8941 sf-binary and MUST
+  // NOT retry a Base64URL token through the legacy decoder, whatever its
+  // internal digest policy (security.mdx, request-profile binary value
+  // encoding). Only an explicitly pinned 3.0/3.1 endpoint in `either` mode
+  // keeps accepting both serializations during a rolling upgrade.
+  if (pinned === 'rfc8941-base64' || digestPolicy !== 'either') return [pinned];
+  return ['legacy-base64url', 'rfc8941-base64'];
 }
 
-function contentDigestEncodingCandidates(
-  pinned: SfBinaryEncoding | undefined,
-  digestPolicy: VerifierCapability['covers_content_digest']
-): readonly SfBinaryEncoding[] {
+function contentDigestEncodingCandidates(pinned: SfBinaryEncoding | undefined): readonly SfBinaryEncoding[] {
   // Legacy bundles contain both historical Base64URL digests and standards-
-  // compliant RFC 8941 Base64 digests. A strict 3.2 endpoint narrows to the
-  // latter; rolling-upgrade and unpinned verifiers accept both serializations.
-  if (pinned === 'rfc8941-base64' && digestPolicy !== 'either') return [pinned];
+  // compliant RFC 8941 Base64 digests, so legacy and unpinned verifiers accept
+  // both serializations. A 3.2 endpoint accepts only RFC 8941 Base64.
+  if (pinned === 'rfc8941-base64') return [pinned];
   return ['rfc8941-base64', 'legacy-base64url'];
-}
-
-function alternateBinaryEncoding(encoding: SfBinaryEncoding): SfBinaryEncoding {
-  return encoding === 'rfc8941-base64' ? 'legacy-base64url' : 'rfc8941-base64';
 }
 
 function jsonRpcProtocolMethods(body: string | undefined): string[] {

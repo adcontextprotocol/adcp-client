@@ -53,7 +53,7 @@ Your domain (e.g., agent.example.com)
         -> /.well-known/jwks.json      # JSON Web Key Set with public keys
 ```
 
-`@adcp/sdk` provides `BrandJsonJwksResolver` which handles this entire chain automatically, with caching and refresh.
+`@adcp/sdk` provides `ResolvedAgentJwksResolver` which handles this entire chain automatically, with caching and refresh.
 
 ## Step 1: Generate a Signing Key
 
@@ -176,6 +176,8 @@ await signingFetch('https://seller.example.com/mcp', {
 });
 ```
 
+Fetch implementations differ on whether a bare trailing `?` reaches the wire. `createSigningFetch` and `createSigningFetchAsync` reject signed URLs with that empty query marker before sending; use an endpoint URL without it for Fetch-based agent calls.
+
 ### Agent-aware signing (recommended)
 
 For the common single-seller case, `createAgentSignedFetch` bundles capability detection, capability caching, and signing into one call. It only signs when the target seller advertises `signed-requests` support — so the `get_adcp_capabilities` priming call itself is always unsigned, as the spec requires.
@@ -211,6 +213,12 @@ const signingFetch = buildAgentSigningFetch({
   getCapability: () => capabilityCache.get('https://seller.example.com'),
 });
 ```
+
+### Diagnosing a seller's rejection of a signed request
+
+For SDK client calls over A2A or MCP, a signed HTTP 401 with a `Signature` challenge (or no challenge) produces an `AuthenticationRequiredError` with `requestSigned: true` and `status: 401`. Its `code` remains `AUTHENTICATION_REQUIRED` for compatibility; `signatureErrorCode` carries a recognized seller `request_signature_*` code, and the message includes the protocol's repair hint. Check the public discovery chain, `brand_json_url` → `agents[]` → `jwks_uri`, when the seller cannot resolve your key. Explicit Bearer or Basic gateway challenges retain their existing authentication recovery. For client-credentials agents, a bare 401 still permits one token refresh; a persistent signed rejection keeps its diagnostics. Other signed bare 401s bypass unsigned authentication probes and interactive OAuth recovery, so gateways requiring those flows should send an explicit Bearer challenge.
+
+`error.responseBody` contains a bounded, redacted seller diagnostic when capture succeeds. It is non-enumerable and excluded from JSON error reports. Custom header values are conservatively treated as credentials; short values can mask matching diagnostic text. Treat it as untrusted operator diagnostic text; do not feed it to automated prompts or use it as recovery instructions. Failed `TaskResult` values preserve this error under `result.errorInstance`, so the diagnostic is available as `result.errorInstance.responseBody` after narrowing to `AuthenticationRequiredError`. Conformance raw capture uses the same bounded, redacted diagnostic rather than the original response bytes for these failures. Low-level signing fetch presets continue to return the original HTTP `Response`.
 
 ## Step 3.5: Production Key Storage — KMS / HSM / Vault
 
@@ -380,6 +388,8 @@ app.post(
 
 `createExpressVerifier()` scopes replay entries and their safety cap by the exact signed `@target-uri`, including the query string. It verifies signatures; it does not decide which URLs are equivalent application routes. If you mount it directly on an MCP endpoint such as `/mcp`, reject query-string variants before the verifier unless your router treats each variant as a distinct supported endpoint. Otherwise a valid signer could create many replay-cache scopes by varying the query. The higher-level `serve()` helper already rejects query variants on its MCP mount. Do not use the replay-cache cap as a global request rate limiter.
 
+Check the raw request target for `?` when enforcing that rule: `/mcp?` has an empty parsed query but remains a distinct signed target.
+
 **For multi-instance verifier deployments, the in-memory default is a real gap.** Each process has its own cache; an attacker who captures a signed request can replay it against a sibling instance whose cache hasn't seen the nonce. The replay-protection invariant is "this `(keyid, scope, nonce)` tuple has not been seen before" — that has to hold across the fleet, not per-process. RFC 9421 expiry bounds the window to 5 minutes, but that's plenty of time for an in-flight replay. Use a shared backend.
 
 The SDK ships `PostgresReplayStore` for this:
@@ -425,13 +435,13 @@ import {
   requireAuthenticatedOrSigned,
   mcpToolNameResolver,
 } from '@adcp/sdk/server';
-import { BrandJsonJwksResolver } from '@adcp/sdk/signing/server';
+import { ResolvedAgentJwksResolver } from '@adcp/sdk/signing/server';
 
 serve(createAgent, {
   authenticate: requireAuthenticatedOrSigned({
     signature: verifySignatureAsAuthenticator({
       capability: { supported: true, required_for: ['create_media_buy'], covers_content_digest: 'either' },
-      jwks: new BrandJsonJwksResolver(),
+      jwks: new ResolvedAgentJwksResolver(expectedBuyerAgentUrl, 'mcp'),
       resolveOperation: mcpToolNameResolver,
     }),
     fallback: verifyApiKey({ keys: { 'sk_live_abc': { principal: 'acct_42' } } }),
@@ -449,7 +459,8 @@ Set `requiredFor` to the AdCP operations you want to gate behind signatures — 
 |---|---|
 | `StaticJwksResolver` | Fixed set of known buyer keys. Good for dev/testing. |
 | `HttpsJwksResolver` | Fetches JWKS from a URL with caching and refresh. |
-| `BrandJsonJwksResolver` | Full discovery chain: brand.json -> jwks_uri -> JWKS. Production recommended. |
+| `ResolvedAgentJwksResolver` | Capability-bound discovery from an expected agent URL. Production recommended. |
+| `BrandJsonJwksResolver` | Confirms an operator mapping against capabilities; accepts an explicit `agentUrl` or infers a unique onboarding URL from existing configuration. |
 
 ## Step 5: Verify Inbound Webhooks (Buyer / Orchestrator)
 
@@ -458,16 +469,18 @@ When sellers send webhooks, verify the signature to confirm authenticity:
 ```typescript
 import {
   verifyWebhookSignature,
-  BrandJsonJwksResolver,
+  ResolvedAgentJwksResolver,
   InMemoryReplayStore,
+  InMemoryRevocationStore,
 } from '@adcp/sdk/signing/server';
 
-const jwks = new BrandJsonJwksResolver();
+const jwks = new ResolvedAgentJwksResolver(expectedSellerAgentUrl, 'mcp', { legacyWebhookFallback: true });
 const replayStore = new InMemoryReplayStore();
+const revocationStore = new InMemoryRevocationStore();
 
 app.post('/webhook', async (req, res) => {
   try {
-    await verifyWebhookSignature(req, { jwks, replayStore });
+    await verifyWebhookSignature(req, { jwks, replayStore, revocationStore });
   } catch (err) {
     return res.status(401).json({ error: 'invalid webhook signature' });
   }

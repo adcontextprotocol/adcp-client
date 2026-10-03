@@ -32,6 +32,7 @@ export {
   targetDeclaresGovernanceEnforcement,
   targetDeclaresLegacyGovernanceAwareness,
   verifyGovernanceAuthorization,
+  createGovernanceAgentJwksResolver,
 } from './authorization';
 export type {
   BuildGovernanceExecutionRequestInput,
@@ -54,6 +55,7 @@ export type {
   GovernanceRevocationStatus,
   InMemoryGovernanceReplayStoreOptions,
   VerifyGovernanceAuthorizationOptions,
+  GovernanceBuyerIdentity,
 } from './authorization';
 
 /**

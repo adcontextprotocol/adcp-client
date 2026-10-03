@@ -287,7 +287,7 @@ Remote `--wait` requires ngrok: `brew install ngrok`
 ```bash
 which adcp 2>/dev/null && echo "installed" || echo "use npx @adcp/sdk@latest"
 ```
-If not installed, prefix all commands with `npx @adcp/sdk@latest`. Requires Node.js 18+.
+If not installed, prefix all commands with `npx @adcp/sdk@latest`. Requires Node.js `^20.19.0 || >=22.12.0`.
 
 ### Step 2: Route the request
 

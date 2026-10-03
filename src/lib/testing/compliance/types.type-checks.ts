@@ -61,3 +61,32 @@ const probePassedCheck: StoryboardValidationFromBarrel['check'] = 'probe_passed'
 const probePassedMember: StoryboardValidationCheckAlias = 'probe_passed';
 void probePassedCheck;
 void probePassedMember;
+
+// ── ComplyOptions.routeStoryboard (adcontextprotocol/adcp#7758) ──────────────
+// The hook's route/skip shapes are reachable from the `@adcp/sdk/testing`
+// barrel, and a hosted router's `{ agents, default_agent, context, storyboard }`
+// result is assignable to the route without a cast.
+import type {
+  ComplyStoryboardRoute as ComplyStoryboardRouteFromBarrel,
+  ComplyStoryboardRouting as ComplyStoryboardRoutingFromBarrel,
+  ComplyRouteStoryboardContext as ComplyRouteStoryboardContextFromBarrel,
+} from '../index';
+
+const routeStoryboardHook: NonNullable<ComplyOptionsFromBarrel['routeStoryboard']> = async (
+  storyboard,
+  context: ComplyRouteStoryboardContextFromBarrel
+): Promise<ComplyStoryboardRoutingFromBarrel> => {
+  if (!storyboard.requires?.includes('multi_agent')) return undefined;
+  if (context.profile.tools.length === 0) return { skip: 'no tools discovered' };
+  const route: ComplyStoryboardRouteFromBarrel = {
+    agents: {
+      seller: { url: context.agent_url },
+      governance: { url: 'https://governance.example/mcp', auth: { type: 'bearer', token: 't' }, transport: 'mcp' },
+    },
+    default_agent: 'seller',
+    context: { seller_agent_url: context.agent_url },
+    storyboard,
+  };
+  return route;
+};
+void routeStoryboardHook;

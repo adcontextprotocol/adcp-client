@@ -191,6 +191,8 @@ function hasIdempotencyClearAll(store: IdempotencyStore): boolean {
 // fence itself still prevents a transient renewal outage from reopening the
 // mutation.
 const IDEMPOTENCY_CLAIM_RENEW_INTERVAL_MS = 60_000;
+import { isAccountProvisioningTask } from './account-provisioning';
+import { warnAccountReferenceDeprecation } from './account-reference-warnings';
 import { isMutatingTask, requestUsesIdempotency, IDEMPOTENCY_KEY_PATTERN, MUTATING_TASKS } from '../utils/idempotency';
 import { STATUS_FREE_SYNC_RESPONSE_TOOLS } from '../utils/envelope-status-compat';
 import { validateRequest, validateResponse, formatIssues, type ValidationIssue } from '../validation/schema-validator';
@@ -594,6 +596,8 @@ export interface SessionKeyContext<TAccount = unknown> {
  * resolved `TAccount` rather than re-resolving inside every handler.
  */
 export interface ResolveAccountContext {
+  /** Whether this task may create/activate accounts or accept default terms. */
+  readonly provisioning?: boolean;
   /** The AdCP tool being called. */
   toolName: AdcpServerToolName;
   /** Immutable SDK-selected AdCP release for this request. */
@@ -1190,6 +1194,11 @@ export interface ProtocolHandlers<TAccount = unknown> {
 export interface AccountHandlers<TAccount = unknown> {
   listAccountChanges?: DomainHandler<'list_account_changes', TAccount>;
   listAccounts?: DomainHandler<'list_accounts', TAccount>;
+  /**
+   * Synchronous results must contain one row per dispatched entry in input
+   * order. With schema validation enabled, the framework may withhold invalid
+   * notification entries and merge their failures back into the response.
+   */
   syncAccounts?: DomainHandler<'sync_accounts', TAccount>;
   syncGovernance?: DomainHandler<'sync_governance', TAccount>;
   getAccountFinancials?: DomainHandler<'get_account_financials', TAccount>;
@@ -1822,6 +1831,34 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * principal across requests.
    */
   resolveAccount?: (ref: AccountReference, ctx: ResolveAccountContext) => Promise<TAccount | null>;
+
+  /**
+   * Opt in to strict buyer-supplied account references. Default `false` in
+   * SDK 14; becomes the default in the next major release.
+   *
+   * When `true`:
+   * - A request that carries `account` on a server without `resolveAccount`
+   *   fails with `ACCOUNT_NOT_FOUND` instead of reaching the handler
+   *   unverified. An auth-only `resolveAccountFromAuth` does not authorize an
+   *   arbitrary reference.
+   * - A seller that declares `capabilities.account.requiredForProducts`
+   *   refuses `get_products` with `ACCOUNT_REQUIRED` when the request carries
+   *   no account and authentication resolves none.
+   * - `list_accounts.account` is treated as a filter: `resolveAccount` is not
+   *   called for it, and `ctx.account` comes from `resolveAccountFromAuth`.
+   * - On `createAdcpServerFromPlatform` with `accounts.resolution: 'implicit'`,
+   *   an account whose returned identity metadata (`brand`, `operator`,
+   *   `operator_unit`, `currency`, `timezone`, `sandbox`) disagrees with the
+   *   supplied natural key is refused with `ACCOUNT_NOT_FOUND`.
+   *
+   * When `false` (default), each case keeps the SDK 14.0 behavior and logs a
+   * deprecation warning once per process per warning code (`logger.warn`, plus
+   * `process.emitWarning` outside `NODE_ENV=production`); later occurrences
+   * log at debug level. Configure a reference-aware `resolveAccount` that
+   * returns `null` for unknown or unauthorized references, then set this
+   * flag. See `docs/guides/account-resolution.md`.
+   */
+  strictAccountReferences?: boolean;
 
   /**
    * Resolve an account when the wire request doesn't carry one.
@@ -3099,6 +3136,126 @@ function shallowToolInputHintSchema(toolName: string): AnySchema | undefined {
   const schema = z.object(hintShape).passthrough();
   SHALLOW_HINT_SCHEMAS.set(toolName, schema);
   return schema;
+}
+
+/** Only notification event enums have this per-account rejection contract. */
+function isAccountNotificationEventIssue(issue: ValidationIssue): boolean {
+  return (
+    issue.keyword === 'enum' && /^\/accounts\/\d+\/notification_configs\/\d+\/event_types\/\d+$/.test(issue.pointer)
+  );
+}
+
+function rejectedSyncAccountRow(entry: Record<string, unknown>): Record<string, unknown> {
+  const identity =
+    entry.account !== undefined
+      ? { account: entry.account }
+      : Object.fromEntries(
+          ['brand', 'operator', 'operator_unit', 'currency', 'timezone', 'sandbox']
+            .filter(key => entry[key] !== undefined)
+            .map(key => [key, entry[key]])
+        );
+  return {
+    ...identity,
+    action: 'failed',
+    // Provisioning was declined. A failed settings update does not establish
+    // the existing account's lifecycle state, so leave that status unknown.
+    ...(entry.account === undefined && { status: 'rejected' }),
+    errors: [],
+  };
+}
+
+function accountNotificationFailureRows(
+  accounts: Record<string, unknown>[],
+  issues: ValidationIssue[],
+  deleteMissing: boolean
+): Map<number, Record<string, unknown>> {
+  const rows = new Map<number, Record<string, unknown>>();
+  for (const issue of issues) {
+    const [, accountIndex, configIndex, eventIndex] = issue.pointer.match(
+      /^\/accounts\/(\d+)\/notification_configs\/(\d+)\/event_types\/(\d+)$/
+    )!;
+    const index = Number(accountIndex);
+    const entry = accounts[index]!;
+    let row = rows.get(index);
+    if (row === undefined) {
+      row = rejectedSyncAccountRow(entry);
+      rows.set(index, row);
+    }
+    (row.errors as Record<string, unknown>[]).push({
+      code: 'VALIDATION_ERROR',
+      recovery: 'correctable',
+      message: issue.message,
+      field: `notification_configs[${configIndex}].event_types[${eventIndex}]`,
+    });
+  }
+  // Filtering a replacement roster would make rejected-but-present accounts
+  // look omitted and let a handler deactivate them. Refuse the whole roster
+  // explicitly rather than silently disabling the requested deletion policy.
+  if (deleteMissing) {
+    for (const [index, entry] of accounts.entries()) {
+      if (rows.has(index)) continue;
+      rows.set(index, {
+        ...rejectedSyncAccountRow(entry),
+        errors: [
+          {
+            code: 'VALIDATION_ERROR',
+            recovery: 'correctable',
+            message:
+              'delete_missing cannot be applied while account notification event types are invalid. Correct the rejected entries and retry.',
+            field: 'delete_missing',
+          },
+        ],
+      });
+    }
+  }
+  return rows;
+}
+
+function restoreSyncAccountErrorIndices(
+  row: Record<string, unknown>,
+  acceptedIndices: number[]
+): Record<string, unknown> {
+  if (!isPlainObject(row)) return row;
+  const restorePath = (path: string, pointer = false) => {
+    const match = pointer ? /^\/accounts\/(\d+)(?=\/|$)/.exec(path) : /^accounts\[(\d+)\](?=\.|\[|$)/.exec(path);
+    if (match === null) return path;
+    const originalIndex = acceptedIndices[Number(match[1])];
+    if (originalIndex === undefined) return path;
+    return `${pointer ? `/accounts/${originalIndex}` : `accounts[${originalIndex}]`}${path.slice(match[0].length)}`;
+  };
+  const restoreIssues = (issues: unknown[]) =>
+    issues.map(issue =>
+      isPlainObject(issue) && typeof issue.pointer === 'string'
+        ? { ...issue, pointer: restorePath(issue.pointer, true) }
+        : issue
+    );
+  const restoreField = (error: unknown) => {
+    if (!isPlainObject(error)) return error;
+    return {
+      ...error,
+      ...(typeof error.field === 'string' && { field: restorePath(error.field) }),
+      ...(Array.isArray(error.issues) && { issues: restoreIssues(error.issues) }),
+      ...(isPlainObject(error.details) &&
+        Array.isArray(error.details.issues) && {
+          details: { ...error.details, issues: restoreIssues(error.details.issues) },
+        }),
+    };
+  };
+  return {
+    ...row,
+    ...(Array.isArray(row.errors) && { errors: row.errors.map(restoreField) }),
+    ...(isPlainObject(row.adcp_error) && { adcp_error: restoreField(row.adcp_error) }),
+  };
+}
+
+function restoreSyncAccountEnvelopeErrorIndices(response: McpToolResponse, acceptedIndices: number[]): McpToolResponse {
+  const body = response.structuredContent;
+  if (body === undefined || !(Array.isArray(body.errors) || isPlainObject(body.adcp_error))) return response;
+  const restored = cloneFormattedResponse(response);
+  const mirrorsStructuredContent = contentTextMirrorsStructuredContent(restored, body);
+  restored.structuredContent = restoreSyncAccountErrorIndices(body, acceptedIndices);
+  syncContentJsonText(restored, restored.structuredContent, mirrorsStructuredContent);
+  return restored;
 }
 
 function validateFrameworkPayload(
@@ -4949,6 +5106,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     defaultAdcpVersion: configuredDefaultAdcpVersion,
     mcpToolProfile = 'auto',
     requireCompactMutationAccountScope = false,
+    strictAccountReferences = false,
     resolveAccount,
     resolveAccountFromAuth,
     resolveSessionKey,
@@ -6071,6 +6229,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       const wrap = meta?.wrap ?? ((data: any, summary?: string) => genericResponse(toolName, data, summary));
       const toolHandler = async (params: any, extra: any) => {
         const callRequestValidationMode = effectiveRequestValidationMode(extra);
+        let notificationFailureRows = new Map<number, Record<string, unknown>>();
         const releaseSelection = selectServedAdcpRelease(params, capConfig, adcpVersion, defaultAdcpVersion);
         let releaseError: McpToolResponse | undefined;
         let requestRelease: ServedAdcpRelease;
@@ -6606,10 +6765,39 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             // (`/foo/idempotency_key`) won't match this filter and the
             // strict-mode failure will correctly bubble up — drift is
             // surfaced rather than silently swallowed.
-            const issues =
+            let issues =
               idempotencyDisabled && requestIsStateChanging
                 ? outcome.issues.filter(i => !(i.keyword === 'required' && i.pointer === '/idempotency_key'))
                 : outcome.issues;
+            if (toolName === 'sync_accounts' && effectiveFrameworkRequestValidationMode === 'strict') {
+              const eventIssues = issues.filter(isAccountNotificationEventIssue);
+              // Do not construct account identities from otherwise malformed
+              // entries; strict mode rejects the remaining issues below. Sole
+              // event-type failures become account rows instead of a
+              // request-level rejection. Warn mode stays advisory, as in 14.0:
+              // the full request reaches the handler with a logged warning.
+              if (eventIssues.length > 0 && eventIssues.length === issues.length) {
+                const failedRows = accountNotificationFailureRows(
+                  params.accounts,
+                  eventIssues,
+                  params.delete_missing === true
+                );
+                // Older releases require brand/operator on failed rows and
+                // cannot represent an opaque settings-update account reference.
+                // Keep request-level validation when the negotiated response
+                // cannot express these failures, before any sibling can commit.
+                if (
+                  validateResponse(
+                    'sync_accounts',
+                    { accounts: [...failedRows.values()] },
+                    requestRelease.validationVersion
+                  ).valid
+                ) {
+                  notificationFailureRows = failedRows;
+                  issues = [];
+                }
+              }
+            }
             if (issues.length > 0) {
               if (effectiveFrameworkRequestValidationMode === 'strict') {
                 // Thread `exposeSchemaPath` the same way response-side does
@@ -6634,13 +6822,29 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         }
 
         // --- Account resolution ---
-        if (hasAccount && params.account != null && resolveAccount) {
+        let unresolvedAccountPassThrough = false;
+        // `list_accounts.account` is a filter. Strict mode treats it as one;
+        // the SDK 14.0 default still resolves it as the request's account.
+        const suppliedAccountRef =
+          hasAccount && params.account != null && !(strictAccountReferences && toolName === 'list_accounts');
+        if (suppliedAccountRef && toolName === 'list_accounts') {
+          warnAccountReferenceDeprecation(
+            logger,
+            'ADCP_LIST_ACCOUNTS_FILTER_RESOLVED',
+            '[adcp/createAdcpServer] DEPRECATED: list_accounts.account is resolved as the request account ' +
+              '(SDK 14.0 behavior). The next major release, or strictAccountReferences: true, treats it as a ' +
+              'filter: resolveAccount is not called for it and ctx.account comes from resolveAccountFromAuth.',
+            { tool: toolName }
+          );
+        }
+        if (suppliedAccountRef && resolveAccount) {
           try {
             const account = await resolveAccount(
               params.account,
               withImmutableServedAdcpVersion(
                 {
                   toolName: toolName as AdcpServerToolName,
+                  provisioning: isAccountProvisioningTask(toolName),
                   authInfo: ctx.authInfo,
                   ...(ctx.agent != null && { agent: ctx.agent }),
                   input: params,
@@ -6681,17 +6885,36 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               })
             );
           }
-        } else if (hasAccount && toolName === 'list_creative_formats' && params.account != null) {
-          // The rc.7 discovery request may select an account. An auth-derived
-          // resolver cannot authorize an arbitrary buyer-supplied reference.
-          return finalize(
-            adcpError('ACCOUNT_NOT_FOUND', {
-              message: 'The specified account cannot be resolved',
-              field: 'account',
-              suggestion: 'Omit account to use the authenticated account',
-            })
-          );
-        } else if ((!hasAccount || params.account == null) && resolveAccountFromAuth) {
+        } else if (suppliedAccountRef) {
+          // An auth-derived resolver cannot authorize an arbitrary
+          // buyer-supplied reference. The rc.7 `list_creative_formats`
+          // selector has always been refused; other tools keep the SDK 14.0
+          // pass-through unless the seller opts in to strict references.
+          if (strictAccountReferences || toolName === 'list_creative_formats') {
+            return finalize(
+              adcpError('ACCOUNT_NOT_FOUND', {
+                message: 'The specified account cannot be resolved',
+                field: 'account',
+                suggestion:
+                  'The seller must configure resolveAccount to authorize supplied references; use list_accounts to discover an authorized account',
+              })
+            );
+          }
+          if (toolName !== 'list_accounts') {
+            warnAccountReferenceDeprecation(
+              logger,
+              'ADCP_UNRESOLVED_ACCOUNT_REFERENCE',
+              '[adcp/createAdcpServer] DEPRECATED: a request carried a buyer-supplied account reference, but no ' +
+                'resolveAccount is configured. The reference reached the handler unverified (ctx.account is ' +
+                'undefined). The next major release refuses it with ACCOUNT_NOT_FOUND. Configure a ' +
+                'reference-aware resolveAccount that returns null for unknown or unauthorized references, then ' +
+                'set strictAccountReferences: true. See ' +
+                'https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/account-resolution.md',
+              { tool: toolName }
+            );
+          }
+          unresolvedAccountPassThrough = true;
+        } else if (!suppliedAccountRef && resolveAccountFromAuth) {
           // Auth-derived path for tools without a supplied `account` field
           // (provide_performance_feedback, list_creative_formats, the
           // `tasks/get` polling path). Single-tenant agents return their
@@ -6704,6 +6927,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               withImmutableServedAdcpVersion(
                 {
                   toolName: toolName as AdcpServerToolName,
+                  provisioning: isAccountProvisioningTask(toolName),
                   authInfo: ctx.authInfo,
                   ...(ctx.agent != null && { agent: ctx.agent }),
                   input: params,
@@ -6739,6 +6963,34 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 })
               );
             }
+          }
+        }
+
+        if (
+          (toolName === 'get_products' || toolName === 'list_products') &&
+          capConfig?.account?.requiredForProducts &&
+          ctx.account == null &&
+          // A supplied reference the compatibility pass-through handed to the
+          // handler satisfies the seller's declared requirement.
+          !unresolvedAccountPassThrough
+        ) {
+          if (!strictAccountReferences) {
+            warnAccountReferenceDeprecation(
+              logger,
+              'ADCP_REQUIRED_FOR_PRODUCTS_NOT_ENFORCED',
+              '[adcp/createAdcpServer] DEPRECATED: this seller declares account.required_for_products, but ' +
+                `${toolName} ran without an account (SDK 14.0 behavior). The next major release, or ` +
+                'strictAccountReferences: true, refuses it with ACCOUNT_REQUIRED.',
+              { tool: toolName }
+            );
+          } else {
+            return finalize(
+              adcpError('ACCOUNT_REQUIRED', {
+                message: 'This seller requires an account for product discovery',
+                field: 'account',
+                suggestion: 'Provision an account with sync_accounts or discover one with list_accounts',
+              })
+            );
           }
         }
 
@@ -7159,6 +7411,16 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
         // --- Handler ---
         let mutationHandlerCompleted = false;
+        const acceptedAccountIndices: number[] | undefined =
+          notificationFailureRows.size > 0
+            ? params.accounts.flatMap((_entry: unknown, index: number) =>
+                notificationFailureRows.has(index) ? [] : [index]
+              )
+            : undefined;
+        const restoreHandlerErrorIndices = (response: McpToolResponse) =>
+          acceptedAccountIndices === undefined
+            ? response
+            : restoreSyncAccountEnvelopeErrorIndices(response, acceptedAccountIndices);
         try {
           if (webhookEmitter) {
             const tenantScope = webhookTenantScopeForContext(ctx);
@@ -7166,7 +7428,22 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               tenantScope === undefined ? configuredWebhookEmitter! : webhookEmitter.forTenantScope(tenantScope);
             ctx.emitWebhook = scopedEmitter.emit.bind(scopedEmitter);
           }
-          const result = await handler(params, ctx);
+          // Preserve the original params through authorization and replay
+          // lookup above. Filter only at dispatch, so the replay fingerprint
+          // includes rejected entries and they never reach a subscriber writer.
+          const handlerParams =
+            notificationFailureRows.size === 0
+              ? params
+              : {
+                  ...params,
+                  accounts: params.accounts.filter(
+                    (_entry: unknown, index: number) => !notificationFailureRows.has(index)
+                  ),
+                };
+          const result =
+            notificationFailureRows.size > 0 && handlerParams.accounts.length === 0
+              ? { accounts: [], ...(params.dry_run === true && { dry_run: true }) }
+              : await handler(handlerParams, ctx);
           mutationHandlerCompleted = true;
           // Narrow Error / Submitted arms of the *Response union before
           // reaching the success-arm builder: wrap() on an Error payload
@@ -7218,6 +7495,60 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             }
           } else {
             formatted = wrap(result);
+          }
+          formatted = restoreHandlerErrorIndices(formatted);
+
+          if (
+            notificationFailureRows.size > 0 &&
+            !isErrorResponse(formatted) &&
+            !(Array.isArray(formatted.structuredContent?.errors) && formatted.structuredContent?.accounts === undefined)
+          ) {
+            // Adopters may return cached or frozen formatted responses. The
+            // JSON mirror update below must never modify handler-owned data.
+            formatted = cloneFormattedResponse(formatted);
+            const body = formatted.structuredContent!;
+            // Platform policy errors use request-relative accounts[i] paths.
+            // Restore those indices after removing notification-invalid rows.
+            const acceptedRows = Array.isArray(body.accounts)
+              ? body.accounts.map(row => restoreSyncAccountErrorIndices(row, acceptedAccountIndices!))
+              : body.accounts;
+            const submitted = isSubmittedEnvelope(body);
+            let accounts: Record<string, unknown>[];
+            if (submitted) {
+              if (acceptedRows !== undefined && !Array.isArray(acceptedRows)) {
+                throw new Error('sync_accounts submitted accounts must be an array when present');
+              }
+              // Report terminal validation failures in the acknowledgement.
+              // Accepted entries remain pending under the adopter's task_id;
+              // the framework does not own their eventual task completion.
+              accounts = [
+                ...(Array.isArray(acceptedRows) ? acceptedRows : []),
+                ...[...notificationFailureRows.entries()].sort(([a], [b]) => a - b).map(([, row]) => row),
+              ];
+            } else {
+              if (!Array.isArray(acceptedRows) || acceptedRows.length !== handlerParams.accounts.length) {
+                throw new Error('sync_accounts handler must return one result row for each accepted account entry');
+              }
+              let acceptedIndex = 0;
+              accounts = params.accounts.map(
+                (_entry: unknown, index: number) => notificationFailureRows.get(index) ?? acceptedRows[acceptedIndex++]
+              );
+            }
+            const merged = { ...body, accounts };
+            if (isFormattedResponse(result)) {
+              const mirrorsStructuredContent = contentTextMirrorsStructuredContent(formatted, body);
+              formatted = { ...formatted, structuredContent: wrap(merged).structuredContent };
+              syncContentJsonText(formatted, formatted.structuredContent!, mirrorsStructuredContent);
+            } else {
+              const rejected = accounts.filter(row => row.action === 'failed').length;
+              const synced = accounts.length - rejected;
+              const summary = submitted
+                ? typeof body.message === 'string'
+                  ? body.message
+                  : `Task ${body.task_id} submitted`
+                : `Synced ${synced} account${synced === 1 ? '' : 's'}`;
+              formatted = wrap(merged, `${summary}; ${rejected} account${rejected === 1 ? '' : 's'} rejected`);
+            }
           }
 
           // --- Test-controller bridge: augment read-side tools with seeded fixtures. ---
@@ -7992,6 +8323,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               });
               thrownTypedEnvelope = projectThrownAdcpError(err);
             }
+            if (thrownTypedEnvelope !== undefined) {
+              thrownTypedEnvelope = restoreHandlerErrorIndices(thrownTypedEnvelope);
+            }
 
             const thrownRecovery = thrownTypedEnvelope ? thrownAdcpErrorRecovery(thrownTypedEnvelope) : undefined;
             let stableTypedOutcome =
@@ -8114,7 +8448,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               message: env.message,
               stack: err instanceof Error ? err.stack : undefined,
             });
-            return finalize(err);
+            return finalize(restoreHandlerErrorIndices(err));
           }
           // Raw `AdcpError` class throws — distinct from the
           // already-projected envelope above. The framework has long
@@ -8130,7 +8464,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               message: err.message,
               stack: err.stack,
             });
-            return finalize(projectThrownAdcpError(err));
+            return finalize(restoreHandlerErrorIndices(projectThrownAdcpError(err)));
           }
           const reason = err instanceof Error ? err.message : String(err);
           // Log the full stack — `logger.error` with just the message turned
@@ -8528,6 +8862,19 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
   // Tool coherence warnings
   checkCoherence(registeredToolNames, logger);
+  if (
+    !resolveAccount &&
+    process.env.NODE_ENV !== 'production' &&
+    ['get_products', 'get_signals', 'request_proposals', 'create_media_buy'].some(tool => registeredToolNames.has(tool))
+  ) {
+    logger.warn(
+      strictAccountReferences
+        ? 'Account-carrying tools are registered without resolveAccount. Supplied references will fail with ACCOUNT_NOT_FOUND.'
+        : 'Account-carrying tools are registered without resolveAccount. Supplied references reach handlers unverified; ' +
+            'this is deprecated and they will fail with ACCOUNT_NOT_FOUND in the next major release. ' +
+            'Configure a reference-aware resolveAccount and set strictAccountReferences: true.'
+    );
+  }
 
   // --- Idempotency configuration guardrails ---
   //

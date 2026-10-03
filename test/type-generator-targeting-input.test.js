@@ -129,11 +129,11 @@ async function main() {
   const rawSchema = { title: 'Verified Fixture', type: 'string', pattern: '^verified$' };
   writeFileSync(cacheRoot + '/core/verified.json', JSON.stringify(rawSchema));
   const verified = createVerifiedCacheRefResolver(cacheRoot);
-  const verifiedUrl = 'https://adcontextprotocol.org/schemas/3.2.0-rc.7/core/verified.json';
+  const verifiedUrl = 'https://adcontextprotocol.org/schemas/3.2.1/core/verified.json';
   assert.deepEqual(await verified.read({ url: verifiedUrl }), rawSchema, 'cached references retain their raw wire constraints');
   await assert.rejects(
     compile(
-      { title: 'Missing Ref', $ref: 'https://adcontextprotocol.org/schemas/3.2.0-rc.7/core/missing.json' },
+      { title: 'Missing Ref', $ref: 'https://adcontextprotocol.org/schemas/3.2.1/core/missing.json' },
       'MissingRef',
       {
         bannerComment: '',
@@ -145,9 +145,9 @@ async function main() {
     /resolve|read|cache|missing/i
   );
   assert.throws(() => assertVerifiedSchemaRefsResolved(), /Unresolved verified schema references/);
-  await assert.rejects(verified.read({ url: 'https://example.org/schemas/3.2.0-rc.7/core/verified.json' }), /Cannot resolve/);
+  await assert.rejects(verified.read({ url: 'https://example.org/schemas/3.2.1/core/verified.json' }), /Cannot resolve/);
   writeFileSync(cacheRoot + '/core/malformed.json', '{');
-  assert.throws(() => verified.read({ url: 'https://adcontextprotocol.org/schemas/3.2.0-rc.7/core/malformed.json' }), SyntaxError);
+  assert.throws(() => verified.read({ url: 'https://adcontextprotocol.org/schemas/3.2.1/core/malformed.json' }), SyntaxError);
   await assert.rejects(
     compile({ title: 'File Ref', $ref: 'file://' + cacheRoot + '/core/verified.json' }, 'FileRef', {
       bannerComment: '', $refOptions: { resolve: codegenRefResolvers(verified) },

@@ -99,6 +99,53 @@ describe('AdCP governance authorization profile', () => {
     });
   }
 
+  it('matches issuer URLs canonically and uses that identity for revocation', async () => {
+    const accepted = vectors.signed_jws.cases.find(testCase => testCase.id === 'valid-exact-authorization');
+    const claims = { ...accepted.claims, iss: 'https://GOV.example.com:443/governance', jti: 'canonical-issuer' };
+    const options = verifierOptions(accepted);
+    options.token = await signAuthorization(claims);
+    let revokedIssuer;
+    options.isJtiRevoked = async issuer => {
+      revokedIssuer = issuer;
+      return false;
+    };
+    const result = await verifyGovernanceAuthorization(options);
+    assert.equal(result.ok, true, result.message);
+    assert.equal(revokedIssuer, 'https://gov.example.com/governance');
+  });
+  it('accepts per-request buyer identity without an unrelated JWKS argument', async () => {
+    const accepted = vectors.signed_jws.cases.find(testCase => testCase.id === 'valid-exact-authorization');
+    const options = verifierOptions(accepted);
+    const fixtureResolver = options.jwks;
+    delete options.jwks;
+    const seen = [];
+    options.buyerIdentity = {
+      brandJson: {
+        house: { domain: 'agency.example', agents: [] },
+        brands: [
+          {
+            url: 'https://advertiser.example',
+            agents: [
+              {
+                type: 'governance',
+                url: 'https://GOV.example.com:443/governance',
+                jwks_uri: 'https://gov-keys.example/tenant.json',
+              },
+            ],
+          },
+        ],
+      },
+      brandDomain: 'advertiser.example',
+      jwksForUri: uri => {
+        seen.push(uri);
+        return fixtureResolver;
+      },
+    };
+    const result = await verifyGovernanceAuthorization(options);
+    assert.equal(result.ok, true, result.message);
+    assert.deepEqual(seen, ['https://gov-keys.example/tenant.json']);
+  });
+
   for (const authorizationCase of vectors.authorization_cases) {
     it(`enforces published authorization case: ${authorizationCase.id}`, async () => {
       const accepted = vectors.signed_jws.cases.find(testCase => testCase.id === 'valid-exact-authorization');

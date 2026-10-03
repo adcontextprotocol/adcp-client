@@ -93,8 +93,9 @@ are cached separately from ordinary SDK schema validators.
 Preserving an opaque condition or contract pointer does not evaluate that
 condition, resolve the contract, or grant permission to execute an action.
 
-Pass the seller-served release. Full prerelease pins remain exact; release-precision
-pins such as `3.2-rc.2` resolve to their installed bundle. Stable patch selection
+Pass the seller-served release, for example `3.2` or `3.2.1`. Release-precision
+pins resolve to their installed bundle; full prerelease pins remain exact and
+resolve only when that exact bundle is installed. Stable patch selection
 follows the SDK loader's minor-line compatibility rules. `schemaVersion` records
 the actual selected release. Missing bundles return `schema_unavailable`. There is
 no network fallback, downgrade, field stripping, or automatic version projection.

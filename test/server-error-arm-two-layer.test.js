@@ -28,6 +28,7 @@ const { getValidator } = require('../dist/lib/validation/schema-loader');
 // not request-side gating that some tools have stricter shapes for.
 function createAdcpServer(config) {
   return _createAdcpServer({
+    resolveAccount: ref => (ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined),
     ...config,
     validation: { requests: 'off', responses: 'off', ...(config?.validation ?? {}) },
   });

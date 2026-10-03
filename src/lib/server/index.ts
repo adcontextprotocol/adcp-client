@@ -657,6 +657,7 @@ export {
   computeGovernedPayloadHash,
   createGovernanceEnforcementMiddleware,
   verifyGovernanceAuthorization,
+  createGovernanceAgentJwksResolver,
 } from '../governance';
 export type {
   BuildGovernanceExecutionRequestInput,
@@ -673,6 +674,7 @@ export type {
   GovernanceRevocationResolver,
   GovernanceRevocationStatus,
   VerifyGovernanceAuthorizationOptions,
+  GovernanceBuyerIdentity,
 } from '../governance';
 
 export {

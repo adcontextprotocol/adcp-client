@@ -5,8 +5,10 @@ import {
 } from '../supply-path/products';
 // Main ADCP Client - Type-safe conversation-aware client for AdCP agents
 
-import { createHash, randomUUID } from 'node:crypto';
-import type { AgentConfig } from '../types';
+import { createHash, randomUUID, scryptSync } from 'node:crypto';
+const SKIP_PRODUCT_CACHE = Symbol('adcp.skipProductCache');
+const SKIP_ACCOUNT_REGISTRY_OBSERVATION = Symbol('adcp.skipAccountRegistryObservation');
+import type { AccountReference, AgentConfig } from '../types';
 import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
 import { parseAdcpMajorVersion, toReleasePrecisionVersion, type AdcpVersion } from '../version';
 import {
@@ -129,6 +131,7 @@ import {
 import { withTaskDeadline } from './task-deadline';
 import { createMCPRequestHeaders } from '../auth';
 import { isAbortOrTimeoutError } from '../protocols/abort';
+import { getSignedRequestRejection } from '../protocols/signedRequestRejection';
 import { ProtocolClient, normalizeTransportOptions } from '../protocols';
 import {
   AuthenticationCredentialsRejectedError,
@@ -240,7 +243,20 @@ import {
   listDeclaredFeatures,
   TASK_FEATURE_MAP,
   assertValidIdempotencyReplayTtlSeconds,
+  supportsBuyingMode,
 } from '../utils/capabilities';
+import {
+  AccountPendingApprovalError,
+  AccountRequiredError,
+  AccountNotProvisionedError,
+  AccountNotFoundError,
+  AccountSetupRequiredError,
+  AccountPaymentRequiredError,
+  UnsupportedBuyingModeError,
+} from '../errors';
+import { BuyerAccountRegistry, type AccountPolicy, type BuyerAccountStorage } from './buyer-account-registry';
+import type { ProductCache } from './product-cache';
+import { sameCountrySet, selectListedAccount, type ResolveAccountOptions } from './account-resolution';
 
 import { normalizeRequestParams } from '../utils/request-normalizer';
 import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
@@ -555,6 +571,13 @@ interface DeferredClientFinalizationContext {
   readonly routingSnapshot?: CanonicalCreativeRoutingSnapshot;
   readonly optionTaskId?: string;
   readonly optionContextId?: string;
+  readonly accountRegistry?: {
+    scope: string;
+    refs?: AccountReference[];
+    dryRun?: boolean;
+    knownOnly?: boolean;
+    observationEpoch?: number;
+  };
 }
 
 function isDeferredClientFinalizationContext(value: unknown): value is DeferredClientFinalizationContext {
@@ -594,11 +617,22 @@ function canonicalAccountRoutingSnapshot(value: unknown): Readonly<Record<string
   const brand = Object.freeze({
     domain: sourceBrand.domain,
     ...(typeof sourceBrand.brand_id === 'string' ? { brand_id: sourceBrand.brand_id } : {}),
+    ...(Array.isArray(sourceBrand.countries) && sourceBrand.countries.every(country => typeof country === 'string')
+      ? { countries: Object.freeze([...sourceBrand.countries].sort()) }
+      : {}),
   });
+  const operatorUnit = account.operator_unit;
+  const unitId =
+    operatorUnit && typeof operatorUnit === 'object' && !Array.isArray(operatorUnit)
+      ? (operatorUnit as Record<string, unknown>).id
+      : undefined;
   return Object.freeze({
     brand,
     operator: account.operator,
-    ...(typeof account.sandbox === 'boolean' ? { sandbox: account.sandbox } : {}),
+    ...(typeof unitId === 'string' ? { operator_unit: Object.freeze({ id: unitId }) } : {}),
+    ...(typeof account.currency === 'string' ? { currency: account.currency } : {}),
+    ...(typeof account.timezone === 'string' ? { timezone: account.timezone } : {}),
+    sandbox: account.sandbox === true,
   });
 }
 
@@ -976,6 +1010,14 @@ function snapshotTaskOptions<T extends TaskOptions | undefined>(options: T): T {
   } as T;
 }
 
+function assertRawMethodForGovernedPayload(taskType: string, options?: TaskOptions): void {
+  if (options?.preserveGovernedPayload) {
+    throw new ConfigurationError(
+      `Governed ${taskType} requires the raw legacy task method; canonical creative projection can reshape approved arguments.`
+    );
+  }
+}
+
 const PRIMARY_ADCP_TASK_NAMES = {
   get_products: true,
   list_products: true,
@@ -1166,6 +1208,12 @@ export type WebhookParseErrorCode =
   | 'webhook_verification_unavailable';
 
 export interface WebhookVerificationConfig {
+  /** Applicable pins from persisted media-buy records. Reuse refresh callbacks bound to the seller/publisher/tenant across deliveries to share their cooldown. Never use webhook payload fields. */
+  publisherPins?: (
+    registration: Readonly<WebhookRegistration>
+  ) => Promise<readonly import('../signing/publisher-pins').PublisherSigningKeyPin[]>;
+  /** Local diagnostics for request_signature_* discovery causes. */
+  onKeyResolutionError?: (error: unknown) => void;
   /** Deterministic/custom key source. Defaults to resolveAgent brand.json discovery. */
   jwks?: JwksResolver;
   /** Shared nonce replay store. Defaults to one process-local store per client. */
@@ -1306,6 +1354,13 @@ const MCP_WEBHOOK_REQUIRED_FIELDS = ['idempotency_key', 'task_id', 'task_type', 
  * Configuration for SingleAgentClient (and multi-agent client)
  */
 export interface SingleAgentClientConfig extends ConversationConfig {
+  /** Default off preserves existing wire requests; auto/strict use the provisioning registry. */
+  accountPolicy?: AccountPolicy;
+  accountStorage?: BuyerAccountStorage;
+  accountRegistryMaxEntries?: number;
+  /** Trusted stable caller identity for durable registry partitioning. Default is credential fingerprint. */
+  accountRegistryScope?: string;
+  productCache?: ProductCache;
   /** Durable storage for restart-safe A2A human continuations. */
   deferredStorage?: DeferredTaskStorage;
   /** Resolve current trusted agent configuration for a persisted continuation. */
@@ -1737,6 +1792,230 @@ function propertyListResolutionErrorCode(err: unknown): string {
 }
 
 export class SingleAgentClient {
+  private _accounts?: BuyerAccountRegistry;
+  private accountRegistryExplicitlyAccessed = false;
+  private initialOAuthGrantMaterial?: string;
+  private accountCredentialMaterial?: string;
+  private accountCredentialScope?: string;
+
+  private credentialScope(material: string): string {
+    if (this.accountCredentialMaterial !== material) {
+      this.accountCredentialScope = scryptSync(material, 'adcp-sdk/account-registry-scope/v1', 32).toString('hex');
+      this.accountCredentialMaterial = material;
+    }
+    return this.accountCredentialScope!;
+  }
+
+  private accountScope(): string {
+    const agent = this.normalizedAgent ?? this.agent;
+    const cc = agent.oauth_client_credentials;
+    if (!cc && agent.oauth_tokens && !this.initialOAuthGrantMaterial)
+      this.initialOAuthGrantMaterial = JSON.stringify(agent.oauth_tokens);
+    const oauthIdentity = cc
+      ? { client_id: cc.client_id, token_endpoint: cc.token_endpoint, scope: cc.scope, resource: cc.resource }
+      : this.initialOAuthGrantMaterial;
+    const signing = agent.request_signing;
+    const signingIdentity = signing
+      ? signing.kind === 'provider'
+        ? {
+            keyid: signing.provider.keyid,
+            algorithm: signing.provider.algorithm,
+            fingerprint: signing.provider.fingerprint,
+            purpose: signing.provider.adcpUse,
+          }
+        : { keyid: signing.kid, algorithm: signing.alg, key: signing.private_key }
+      : undefined;
+    const credential =
+      this.config.accountRegistryScope ??
+      this.credentialScope(
+        JSON.stringify({
+          token: agent.auth_token,
+          oauth: oauthIdentity,
+          oauthClient: agent.oauth_client?.client_id,
+          oauthResource: agent.oauth_resource,
+          headers: agent.headers,
+          signing: signingIdentity,
+        })
+      );
+    return JSON.stringify([this.agent.agent_uri, this.agent.protocol, credential]);
+  }
+
+  get accounts(): BuyerAccountRegistry {
+    this.accountRegistryExplicitlyAccessed = true;
+    return this.getAccountRegistry();
+  }
+
+  private getAccountRegistry(): BuyerAccountRegistry {
+    return (this._accounts ??= new BuyerAccountRegistry(
+      () => this.accountScope(),
+      async (account, options, taskOptions) => {
+        const caps = await this.getCapabilities(taskOptions);
+        const supported = caps.account?.supportedBilling ?? [];
+        const billing =
+          options.billing ?? caps.account?.defaultBilling ?? (supported.length === 1 ? supported[0] : undefined);
+        if (!billing || (supported.length && !supported.includes(billing))) {
+          throw new AccountRequiredError(
+            'implicit',
+            'sync_accounts',
+            'Choose a supported billing party before provisioning.'
+          );
+        }
+        return this.syncAccounts(
+          {
+            accounts: [
+              {
+                ...account,
+                billing,
+                ...(options.paymentTerms !== undefined && { payment_terms: options.paymentTerms }),
+                ...(options.billingEntity !== undefined && { billing_entity: options.billingEntity }),
+              },
+            ],
+          } as MutatingRequestInput<SyncAccountsRequest>,
+          undefined,
+          taskOptions
+        );
+      },
+      this.config.accountStorage,
+      async (accountId, options) => {
+        const rows: ListAccountsResponse['accounts'] = [];
+        const cursors = new Set<string>();
+        let cursor: string | undefined;
+        for (let page = 0; page < 100; page++) {
+          const result = await this.listAccounts(
+            { account: { account_id: accountId }, ...(cursor && { pagination: { cursor } }) },
+            undefined,
+            { ...options, [SKIP_ACCOUNT_REGISTRY_OBSERVATION]: true } as TaskOptions
+          );
+          if (!result.success || result.status !== 'completed' || !result.data || !('accounts' in result.data))
+            throw new Error('Account status reconciliation failed.');
+          rows.push(...result.data.accounts);
+          if (rows.some(row => row.account_id === accountId) || !result.data.pagination?.has_more)
+            return rows.filter(row => row.account_id === accountId);
+          const next = result.data.pagination.cursor;
+          if (!next || cursors.has(next)) break;
+          cursors.add(next);
+          cursor = next;
+        }
+        throw new Error('Account status reconciliation could not complete pagination.');
+      },
+      {
+        maxEntries: this.config.accountRegistryMaxEntries,
+        normalizeOptions: async (options, taskOptions) => {
+          if (options.billing) return options;
+          const caps = await this.getCapabilities(taskOptions);
+          const supported = caps.account?.supportedBilling ?? [];
+          const billing = caps.account?.defaultBilling ?? (supported.length === 1 ? supported[0] : undefined);
+          return { ...options, ...(billing && { billing }) };
+        },
+      }
+    ));
+  }
+
+  /**
+   * The memoized registry backs `resolveAccount()` only when the caller opts
+   * in with an account policy or registry configuration. Otherwise
+   * `resolveAccount()` keeps the SDK 14.0 sync-on-every-call behavior.
+   */
+  private accountRegistryOptedIn(): boolean {
+    return (
+      (this.config.accountPolicy ?? 'off') !== 'off' ||
+      this.config.accountStorage !== undefined ||
+      this.config.accountRegistryScope !== undefined ||
+      this.config.accountRegistryMaxEntries !== undefined
+    );
+  }
+
+  private accountRegistryContext(
+    task: string,
+    params: any,
+    options?: TaskOptions
+  ): DeferredClientFinalizationContext['accountRegistry'] {
+    const knownOnly =
+      !this.accountRegistryExplicitlyAccessed &&
+      (this.config.accountPolicy ?? 'off') === 'off' &&
+      !this.config.accountStorage;
+    if (knownOnly && !this._accounts) return undefined;
+    if (
+      (options as TaskOptions & { [SKIP_ACCOUNT_REGISTRY_OBSERVATION]?: boolean })?.[SKIP_ACCOUNT_REGISTRY_OBSERVATION]
+    )
+      return undefined;
+    if (task !== 'sync_accounts' && task !== 'list_accounts') return undefined;
+    return {
+      scope: this.accountScope(),
+      ...(knownOnly && { knownOnly: true }),
+      observationEpoch: this.getAccountRegistry().captureObservation(),
+      ...(task === 'list_accounts' && params.account && { refs: [params.account] }),
+      ...(task === 'sync_accounts' && {
+        refs: Array.isArray(params.accounts)
+          ? params.accounts.flatMap((value: unknown) => {
+              const ref = canonicalAccountRoutingSnapshot(value);
+              return ref ? [ref as AccountReference] : [];
+            })
+          : [],
+        dryRun: params.dry_run === true,
+      }),
+    };
+  }
+
+  private async applyAccountPolicy(task: string, params: any, options?: TaskOptions): Promise<any> {
+    const policy = this.config.accountPolicy ?? 'off';
+    const ref =
+      params?.account ?? (typeof params?.account_id === 'string' ? { account_id: params.account_id } : undefined);
+    if (
+      policy === 'off' ||
+      options?.skipAccountValidation ||
+      options?.preserveGovernedPayload ||
+      !ref ||
+      task === 'list_accounts'
+    )
+      return params;
+    if (
+      typeof ref !== 'object' ||
+      ref === null ||
+      (!('account_id' in ref) && (typeof ref.brand?.domain !== 'string' || typeof ref.operator !== 'string'))
+    )
+      return params; // Let normal request validation report malformed references.
+    const known = await this.getAccountRegistry().get(ref);
+    if (known && !['unknown', 'provisioning', 'failed_provisioning'].includes(known.status)) {
+      if (
+        ['create_media_buy', 'buy_products', 'accept_proposal', 'activate_signal', 'acquire_rights'].includes(task) &&
+        known.status !== 'active'
+      ) {
+        if (known.status === 'pending_approval') throw new AccountPendingApprovalError(ref, known.account_id);
+        if (known.status === 'payment_required') throw new AccountPaymentRequiredError();
+        throw new AccountSetupRequiredError(
+          `Account status is ${known.status}. Refresh it with client.accounts.applyStatusChange or complete seller setup.`
+        );
+      }
+      return params;
+    }
+    if (
+      policy === 'strict' ||
+      ![
+        'get_products',
+        'list_products',
+        'get_signals',
+        'request_proposals',
+        'refine_proposals',
+        'decline_proposals',
+      ].includes(task)
+    ) {
+      throw new AccountNotProvisionedError(ref, task);
+    }
+    const caps = await this.getCapabilities(options);
+    if (
+      caps._synthetic ||
+      (['get_products', 'list_products'].includes(task) && caps.account?.requiredForProducts) ||
+      params.push_notification_config ||
+      !schemaAllowsTopLevelField(task, 'brand')
+    ) {
+      throw new AccountNotProvisionedError(ref, task);
+    }
+    if (!('brand' in ref)) throw new AccountNotProvisionedError(ref, task);
+    const { account, ...publicRequest } = params;
+    return { ...publicRequest, brand: params.brand ?? ref.brand };
+  }
+
   private executor: TaskExecutor;
   private asyncHandler?: AsyncHandler;
   private normalizedAgent: InternalAgentConfig;
@@ -1832,6 +2111,9 @@ export class SingleAgentClient {
 
     // Normalize agent URL for MCP protocol
     this.normalizedAgent = this.normalizeAgentConfig(this.agent);
+    // Pin this client's configured OAuth grant, retaining caller isolation across automatic token refreshes.
+    if (this.normalizedAgent.oauth_tokens && !this.normalizedAgent.oauth_client_credentials)
+      this.initialOAuthGrantMaterial = JSON.stringify(this.normalizedAgent.oauth_tokens);
     this.capabilityEvidenceAuthMaterial = this.currentCapabilityEvidenceAuthMaterial();
 
     this.executor = new TaskExecutor({
@@ -2076,6 +2358,7 @@ export class SingleAgentClient {
     } = configuredResolverOptions ?? {};
     const resolver = new ResolvedAgentJwksResolver(registration.agentUrl, registration.protocol, {
       ...resolverOptionsWithoutOperatorContext,
+      legacyWebhookFallback: configuredResolverOptions?.legacyWebhookFallback ?? true,
       ...(delegatedOperatorAuthorization?.brand !== undefined && {
         requiredOperatorBrand: delegatedOperatorAuthorization.brand,
       }),
@@ -3121,6 +3404,8 @@ export class SingleAgentClient {
         }
         return { success: true };
       } catch (error: unknown) {
+        const signedRejection = getSignedRequestRejection(error);
+        if (signedRejection) throw signedRejection;
         if (isAbortOrTimeoutError(error)) {
           throw error;
         }
@@ -3514,6 +3799,8 @@ export class SingleAgentClient {
           },
           {
             jwks: this.webhookJwksFor(registration),
+            publisherPins: await this.config.webhookVerification?.publisherPins?.(registration),
+            onKeyResolutionError: this.config.webhookVerification?.onKeyResolutionError,
             replayStore: this.webhookReplayStore,
             revocationStore: this.webhookRevocationStore,
             ...(this.config.webhookVerification?.now && { now: this.config.webhookVerification.now }),
@@ -3528,6 +3815,13 @@ export class SingleAgentClient {
         );
       } catch (cause) {
         if (cause instanceof WebhookSignatureError) {
+          if (cause.retryable)
+            return {
+              ok: false,
+              code: 'webhook_verification_unavailable',
+              message: 'Seller signing keys could not be resolved for webhook verification.',
+              cause,
+            };
           return { ok: false, code: cause.code, message: cause.message, cause };
         }
         if (
@@ -4571,11 +4865,14 @@ export class SingleAgentClient {
     throwIfAborted(options?.signal);
     const canonicalCreativeInvocation =
       CANONICAL_CREATIVE_ACTIVITY_TASKS.has(taskType) || canonicalRequest !== undefined;
+    params = await this.applyAccountPolicy(taskType, params, options);
     // Normalize params for backwards compatibility before validation
-    let normalizedParams = normalizeRequestParams(taskType, params, {
-      skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
-      skipAccountValidation: options?.skipAccountValidation,
-    });
+    let normalizedParams = options?.preserveGovernedPayload
+      ? params
+      : normalizeRequestParams(taskType, params, {
+          skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
+          skipAccountValidation: options?.skipAccountValidation,
+        });
     if (!options?.skipRequestValidation) assertNoPrincipalIdentityInput(taskType, normalizedParams);
     this.assertRequestSupportedByConfiguredVersion(taskType, normalizedParams, options, canonicalCreativeInvocation);
     this.assertDurablePropertyListCredentialSupported(taskType, normalizedParams);
@@ -4588,6 +4885,7 @@ export class SingleAgentClient {
     // testing that needs to exercise server-side missing-key behavior.
     if (
       !options?.skipIdempotencyAutoInject &&
+      !options?.preserveGovernedPayload &&
       requestUsesIdempotency(taskType, normalizedParams) &&
       normalizedParams &&
       typeof normalizedParams === 'object' &&
@@ -4606,6 +4904,7 @@ export class SingleAgentClient {
       !options?.skipIdempotencyAutoInject &&
       !options?.skipAccountValidation &&
       !options?.skipRequestValidation &&
+      !options?.preserveGovernedPayload &&
       !isExternalSchemaRootActive(this.resolvedAdcpVersion)
     ) {
       this.validateRequest(taskType, normalizedParams);
@@ -4636,7 +4935,12 @@ export class SingleAgentClient {
     // v3-only fields out from under the v3 bundled schema. Skip the entire
     // Zod parse when compliance testing has suppressed request validation —
     // the invalid shape is intentional and must reach the seller.
-    if (!options?.skipIdempotencyAutoInject && !options?.skipAccountValidation && !options?.skipRequestValidation) {
+    if (
+      !options?.skipIdempotencyAutoInject &&
+      !options?.skipAccountValidation &&
+      !options?.skipRequestValidation &&
+      !options?.preserveGovernedPayload
+    ) {
       this.executor.validateRequest(taskType, normalizedParams);
     }
 
@@ -4661,14 +4965,21 @@ export class SingleAgentClient {
       capabilityDiscoveryContext.capabilities
     );
     const inputSchemaStripLogs: any[] = [];
-    const { params: adaptedParams, driftLogs: adaptDriftLogs } = this.adaptRequest(
-      taskType,
-      normalizedParams,
-      serverVersion,
-      inputSchemaStripLogs,
-      capabilityDiscoveryContext.toolSchemas,
-      capabilityDiscoveryContext.capabilities
-    );
+    if (options?.preserveGovernedPayload && serverVersion !== 'v3') {
+      throw new ConfigurationError(
+        'Governed storyboard requests require a v3 seller to preserve the approved payload.'
+      );
+    }
+    const { params: adaptedParams, driftLogs: adaptDriftLogs } = options?.preserveGovernedPayload
+      ? { params: normalizedParams, driftLogs: [] }
+      : this.adaptRequest(
+          taskType,
+          normalizedParams,
+          serverVersion,
+          inputSchemaStripLogs,
+          capabilityDiscoveryContext.toolSchemas,
+          capabilityDiscoveryContext.capabilities
+        );
 
     // Symmetric to the pre-adapter v3 pass above: when the adapter
     // rewrote the request for a v2 server, warn-validate the adapted
@@ -4700,6 +5011,7 @@ export class SingleAgentClient {
         serverVersionSynthetic: capabilityDiscoveryContext.capabilities._synthetic,
       }),
       productPolicyRequest: productPolicyRequestSnapshot(normalizedParams),
+      accountRegistry: this.accountRegistryContext(taskType, normalizedParams, effectiveOptions),
       ...(projectionCatalogs !== undefined && { projectionCatalogs }),
       ...(routingSnapshot !== undefined && { routingSnapshot }),
       ...(effectiveOptions?.taskId !== undefined && { optionTaskId: effectiveOptions.taskId }),
@@ -4791,6 +5103,70 @@ export class SingleAgentClient {
       }
     )[DEFERRED_SETTLEMENT_ACK];
     const taskType = context.taskType;
+    if (
+      context.accountRegistry !== undefined &&
+      context.accountRegistry.scope === this.accountScope() &&
+      result.success &&
+      result.status === 'completed' &&
+      result.data &&
+      typeof result.data === 'object' &&
+      'accounts' in result.data &&
+      Array.isArray(result.data.accounts)
+    ) {
+      try {
+        const registry = this.getAccountRegistry();
+        let refs = context.accountRegistry.refs ?? [];
+        let rows: readonly unknown[] = result.data.accounts;
+        if (context.accountRegistry.knownOnly) {
+          refs = (await Promise.all(refs.map(async ref => ((await registry.get(ref)) ? ref : undefined)))).filter(
+            (ref): ref is AccountReference => ref !== undefined
+          );
+          if (taskType === 'list_accounts') {
+            rows = (
+              await Promise.all(
+                result.data.accounts.map(async row => {
+                  const ref = canonicalAccountRoutingSnapshot(row);
+                  if (ref && (await registry.get(ref as AccountReference))) return row;
+                  const natural = canonicalAccountRoutingSnapshot({ ...row, account_id: undefined });
+                  return natural && (await registry.get(natural as AccountReference)) ? row : undefined;
+                })
+              )
+            ).filter(row => row !== undefined);
+          }
+        }
+        if (context.accountRegistry.scope !== this.accountScope()) return result;
+        if (taskType === 'sync_accounts')
+          await registry.observeSync(
+            refs,
+            rows,
+            context.accountRegistry.dryRun,
+            context.accountRegistry.observationEpoch
+          );
+        if (taskType === 'list_accounts') {
+          const ref = refs[0];
+          await registry.observeList(
+            rows,
+            ref &&
+              'account_id' in ref &&
+              (!(result.data as unknown as ListAccountsResponse).pagination?.has_more ||
+                result.data.accounts.some(row => (row as { account_id?: string }).account_id === ref.account_id))
+              ? ref.account_id
+              : undefined,
+            context.accountRegistry.observationEpoch
+          );
+        }
+      } catch {
+        result.debug_logs = [
+          ...(result.debug_logs ?? []),
+          {
+            level: 'warn',
+            timestamp: new Date().toISOString(),
+            message:
+              'Account registry observation failed. The seller operation completed; reconcile with listAccounts before relying on the registry.',
+          },
+        ];
+      }
+    }
     const resumedOptions: TaskOptions = {
       ...(options ?? {}),
       ...(context.optionTaskId !== undefined && { taskId: context.optionTaskId }),
@@ -6178,30 +6554,172 @@ export class SingleAgentClient {
       legacyFormatConverter,
       projectionCatalogs ?? this.config.projectionCatalogs
     );
-    const account = canonicalAccountRoutingSnapshot(params.account);
-    return this.executeAndHandle<CanonicalGetProductsResponse>(
-      'get_products',
-      'onGetProductsStatusChange',
-      params,
-      inputHandler,
-      taskOptions,
-      data => {
-        const { response, diagnostics } = toCanonicalOnlyResponse(data as unknown as { products?: V1Product[] }, {
-          legacyFormatConverter: effectiveLegacyFormatConverter,
-          projectionCatalogs: projectionCatalogs ?? this.config.projectionCatalogs,
-        });
-        const authoritativeProducts = Array.isArray((data as unknown as { products?: unknown[] }).products)
-          ? (data as unknown as { products: unknown[] }).products
-          : response.products;
-        this.rememberCanonicalProductRoutes(response.products, account, authoritativeProducts);
-        const { _message: _dropLegacyMessage, ...canonical } = response as typeof response & { _message?: unknown };
-        void _dropLegacyMessage;
-        return { ...canonical, projection: { diagnostics } } as CanonicalGetProductsResponse;
-      },
-      effectiveLegacyFormatConverter,
-      undefined,
-      projectionCatalogs
-    );
+    return withTaskDeadline(snapshotTaskOptions(taskOptions), async effectiveOptions => {
+      this.assertRequestSupportedByConfiguredVersion('get_products', params, effectiveOptions);
+      let request = await this.applyAccountPolicy('get_products', params, effectiveOptions);
+      const legacyAccountId = (request as { account_id?: unknown }).account_id;
+      const accountReference =
+        request.account ??
+        (typeof legacyAccountId === 'string' && legacyAccountId ? { account_id: legacyAccountId } : undefined);
+      if (!request.account && typeof legacyAccountId === 'string' && legacyAccountId) {
+        const { account_id: _legacyAccountId, ...rest } = request as CanonicalGetProductsRequest & {
+          account_id: string;
+        };
+        void _legacyAccountId;
+        request = { ...rest, account: { account_id: legacyAccountId } };
+      }
+      if (!effectiveOptions.skipRequestValidation && this.config.validateFeatures !== false) {
+        const capabilities = await this.getCapabilities(effectiveOptions);
+        const sellerDeclares31 =
+          capabilities.servedVersion !== undefined
+            ? !isPre31AdcpVersion(capabilities.servedVersion)
+            : capabilities.supportedVersions?.some(version => !isPre31AdcpVersion(version)) === true;
+        const sellerDeclaresBuyingModes = Array.isArray(
+          (capabilities._raw?.media_buy as { buying_modes?: unknown } | undefined)?.buying_modes
+        );
+        if (!capabilities._synthetic) {
+          const effectiveMode = request.buying_mode ?? (request.brief ? 'brief' : undefined);
+          if (
+            effectiveMode &&
+            (sellerDeclares31 || sellerDeclaresBuyingModes) &&
+            !supportsBuyingMode(capabilities, effectiveMode)
+          ) {
+            throw new UnsupportedBuyingModeError(effectiveMode, capabilities.buyingModes ?? ['brief']);
+          }
+          if (
+            !effectiveOptions.skipAccountValidation &&
+            !accountReference &&
+            capabilities.account?.requiredForProducts
+          ) {
+            throw new AccountRequiredError(
+              capabilities.account.requireOperatorAuth ? 'explicit' : 'implicit',
+              'get_products'
+            );
+          }
+        }
+        if (!request.buying_mode && !request.brief) {
+          const legacySeller = capabilities._synthetic || (!sellerDeclares31 && !sellerDeclaresBuyingModes);
+          if (!legacySeller && !supportsBuyingMode(capabilities, 'wholesale')) {
+            throw new UnsupportedBuyingModeError(undefined, capabilities.buyingModes ?? ['brief']);
+          }
+        }
+      }
+      // The field remains required even when callers explicitly disable
+      // feature probing or request validation. Only the support check above
+      // depends on discovery; keep the wire request well formed in every mode.
+      if (!request.buying_mode && !request.brief) {
+        request = { ...request, buying_mode: 'wholesale' };
+      }
+      const account = canonicalAccountRoutingSnapshot(accountReference);
+      const cache =
+        !effectiveOptions.skipRequestValidation &&
+        !effectiveOptions.preserveGovernedPayload &&
+        !inputHandler &&
+        !request.push_notification_config &&
+        !this.config.webhookUrlTemplate &&
+        !this.config.handlers?.onGetProductsStatusChange
+          ? this.config.productCache
+          : undefined;
+      // Scope derivation hashes credential material; only pay for it with an opt-in cache.
+      const cacheScope = cache
+        ? JSON.stringify([
+            this.accountScope(),
+            this.resolvedAdcpVersion,
+            this.capabilityEvidenceScopeKey,
+            effectiveOptions.contextId,
+          ])
+        : '';
+      const cacheParams = request as unknown as Record<string, unknown>;
+      const skipCacheRead = (options as CanonicalReadTaskOptions & { [SKIP_PRODUCT_CACHE]?: boolean })?.[
+        SKIP_PRODUCT_CACHE
+      ];
+      if (
+        cache &&
+        !skipCacheRead &&
+        cacheParams.if_wholesale_feed_version === undefined &&
+        cacheParams.if_pricing_version === undefined
+      ) {
+        const hit = cache.read<CanonicalGetProductsResponse>(cacheScope, cacheParams);
+        if (hit) {
+          throwIfAborted(effectiveOptions.signal);
+          if (hit.success && hit.status === 'completed')
+            this.rememberCanonicalProductRoutes(hit.data.products ?? [], account, hit.data.products ?? []);
+          return attachMatch(
+            await this.applyProductPropertyPolicy(
+              hit,
+              'get_products',
+              productPolicyRequestSnapshot(request),
+              effectiveOptions.signal
+            )
+          );
+        }
+      }
+      const conditionalSnapshot = skipCacheRead
+        ? undefined
+        : cache?.read<CanonicalGetProductsResponse>(cacheScope, cacheParams, true);
+      const result = await this.executeAndHandle<CanonicalGetProductsResponse>(
+        'get_products',
+        'onGetProductsStatusChange',
+        cache && !skipCacheRead ? cache.conditionalParams(cacheScope, cacheParams) : request,
+        inputHandler,
+        effectiveOptions,
+        data => {
+          const { response, diagnostics } = toCanonicalOnlyResponse(data as unknown as { products?: V1Product[] }, {
+            legacyFormatConverter: effectiveLegacyFormatConverter,
+            projectionCatalogs: projectionCatalogs ?? this.config.projectionCatalogs,
+          });
+          const authoritativeProducts = Array.isArray((data as unknown as { products?: unknown[] }).products)
+            ? (data as unknown as { products: unknown[] }).products
+            : response.products;
+          this.rememberCanonicalProductRoutes(response.products, account, authoritativeProducts);
+          const { _message: _dropLegacyMessage, ...canonical } = response as typeof response & { _message?: unknown };
+          void _dropLegacyMessage;
+          return { ...canonical, projection: { diagnostics } } as CanonicalGetProductsResponse;
+        },
+        effectiveLegacyFormatConverter,
+        undefined,
+        projectionCatalogs
+      );
+      const finishCache = async (
+        completed: TaskResult<CanonicalGetProductsResponse>
+      ): Promise<TaskResult<CanonicalGetProductsResponse>> => {
+        if (!cache) return completed;
+        const cachedResult = cache.write(cacheScope, cacheParams, completed, conditionalSnapshot);
+        if (cachedResult.success && cachedResult.status === 'completed') {
+          if (
+            !skipCacheRead &&
+            cacheParams.if_wholesale_feed_version === undefined &&
+            cacheParams.if_pricing_version === undefined &&
+            (cachedResult.data as { unchanged?: boolean }).unchanged === true
+          ) {
+            // A missing/mismatched conditional snapshot needs a real unconditional read.
+            return this.getProducts(params, inputHandler, {
+              ...options,
+              ...effectiveOptions,
+              [SKIP_PRODUCT_CACHE]: true,
+            } as CanonicalReadTaskOptions);
+          }
+          this.rememberCanonicalProductRoutes(
+            cachedResult.data.products ?? [],
+            account,
+            cachedResult.data.products ?? []
+          );
+        }
+        if (cachedResult.submitted) {
+          const submitted = cachedResult.submitted;
+          cachedResult.submitted = {
+            ...submitted,
+            waitForCompletion: (interval, signal) => submitted.waitForCompletion(interval, signal).then(finishCache),
+          };
+        }
+        if (cachedResult.deferred) {
+          const deferred = cachedResult.deferred;
+          cachedResult.deferred = { ...deferred, resume: input => deferred.resume(input).then(finishCache) };
+        }
+        return attachMatch(cachedResult);
+      };
+      return finishCache(result);
+    });
   }
 
   /** Discover products through the compact AdCP 3.2 catalog task. */
@@ -6225,7 +6743,8 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetProductsResponse>> {
-    return this.executeTaskUnprojected<GetProductsResponse>('get_products', params, inputHandler, options);
+    const request = params.buying_mode || params.brief ? params : { ...params, buying_mode: 'wholesale' as const };
+    return this.executeTaskUnprojected<GetProductsResponse>('get_products', request, inputHandler, options);
   }
 
   /** @internal Run final legacy get_products adaptation before an application-owned atomic mutation claim. */
@@ -6235,7 +6754,9 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetProductsResponse>> {
-    const requestSnapshot = structuredClone(params);
+    const requestSnapshot = structuredClone(
+      params.buying_mode || params.brief ? params : { ...params, buying_mode: 'wholesale' as const }
+    );
     return this.executeTaskUnprojected<GetProductsResponse>(
       'get_products',
       requestSnapshot,
@@ -6289,6 +6810,7 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<CreateMediaBuyResponse>>> {
+    assertRawMethodForGovernedPayload('create_media_buy', options);
     this.assertDurableProjectionOverrideSupported(options?.legacyFormatConverter);
     const requestSnapshot = structuredCloneWithLegacyCreativeMetadata(params);
     const projectionCatalogs = options?.projectionCatalogs ? structuredClone(options.projectionCatalogs) : undefined;
@@ -6490,6 +7012,7 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<UpdateMediaBuyResponse>>> {
+    assertRawMethodForGovernedPayload('update_media_buy', options);
     this.assertDurableProjectionOverrideSupported(options?.legacyFormatConverter);
     const requestSnapshot = structuredCloneWithLegacyCreativeMetadata(params);
     const projectionCatalogs = options?.projectionCatalogs ? structuredClone(options.projectionCatalogs) : undefined;
@@ -6574,6 +7097,7 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: SyncCreativesTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<SyncCreativesResponse>>> {
+    assertRawMethodForGovernedPayload('sync_creatives', options);
     this.assertDurableProjectionOverrideSupported(
       options?.creativeFormatProjection?.legacyFormatConverter ?? options?.legacyFormatConverter
     );
@@ -7171,6 +7695,199 @@ export class SingleAgentClient {
   }
 
   /**
+   * Resolve an account for the authenticated caller. Explicit-account sellers
+   * are discovered with list_accounts; implicit-account sellers are registered
+   * with sync_accounts and addressed by their natural key.
+   */
+  async resolveAccount(
+    hints: ResolveAccountOptions = {},
+    options?: TaskOptions,
+    /** @internal Allows the AgentClient wrapper to retain nested task session ids. */
+    onTaskResult?: (result: TaskResult<unknown>) => void
+  ): Promise<AccountReference> {
+    return withTaskDeadline(snapshotTaskOptions(options), async effectiveOptions => {
+      const capabilities = await this.getCapabilities(effectiveOptions);
+      if (capabilities._synthetic || !capabilities.account) {
+        throw new AccountRequiredError(
+          'explicit',
+          'resolveAccount',
+          'The seller did not provide an account contract. Probe get_adcp_capabilities or pass an account reference explicitly.'
+        );
+      }
+      if (capabilities.account.requireOperatorAuth) {
+        const accounts: ListAccountsResponse['accounts'] = [];
+        const seenCursors = new Set<string>();
+        let cursor: string | undefined;
+        for (let page = 0; page < 100; page++) {
+          const result = await this.listAccounts(
+            {
+              status: 'active',
+              sandbox: hints.sandbox ?? false,
+              ...(cursor !== undefined && { pagination: { cursor } }),
+            },
+            undefined,
+            effectiveOptions
+          );
+          onTaskResult?.(result);
+          if (
+            !result.success ||
+            result.status !== 'completed' ||
+            !result.data ||
+            !('accounts' in result.data) ||
+            !Array.isArray(result.data.accounts)
+          ) {
+            throw new Error('list_accounts did not return a completed account list.');
+          }
+          accounts.push(...result.data.accounts);
+          if (!result.data.pagination?.has_more) return selectListedAccount(accounts, hints);
+          const nextCursor = result.data.pagination.cursor;
+          if (!nextCursor || seenCursors.has(nextCursor)) break;
+          seenCursors.add(nextCursor);
+          cursor = nextCursor;
+        }
+        throw new AccountRequiredError(
+          'explicit',
+          'resolveAccount',
+          'Could not complete list_accounts pagination. Select an account_id explicitly after listing accounts.'
+        );
+      }
+      if (!hints.brand?.domain || !hints.operator) {
+        throw new AccountRequiredError(
+          'implicit',
+          'resolveAccount',
+          'Implicit-account sellers require both brand and operator to sync an account.'
+        );
+      }
+      const uses32NaturalKey =
+        hints.operatorUnit !== undefined || hints.currency !== undefined || hints.timezone !== undefined;
+      const sellerServes32 = capabilities.servedVersion
+        ? !isPre32AdcpVersion(capabilities.servedVersion)
+        : capabilities.supportedVersions?.some(version => !isPre32AdcpVersion(version)) === true;
+      if (uses32NaturalKey && (isPre32AdcpVersion(this.resolvedAdcpVersion) || !sellerServes32)) {
+        throw new AccountRequiredError(
+          'implicit',
+          'resolveAccount',
+          'Operator unit, account currency, and account timezone require AdCP 3.2 on both buyer and seller.'
+        );
+      }
+      const timezone = capabilities.account.timezone;
+      if (timezone?.accountSelection === 'buyer_selected') {
+        if (!hints.timezone || !timezone.supportedTimezones?.includes(hints.timezone)) {
+          throw new AccountRequiredError(
+            'implicit',
+            'resolveAccount',
+            'Choose a supported account timezone before sync_accounts.'
+          );
+        }
+      } else if (hints.timezone && timezone) {
+        throw new AccountRequiredError(
+          'implicit',
+          'resolveAccount',
+          'This seller does not accept a buyer-selected account timezone.'
+        );
+      }
+      const currencyModes = capabilities.account.supportedAccountCurrencyModes;
+      if (currencyModes?.length === 1 && currencyModes[0] === 'fixed' && !hints.currency) {
+        throw new AccountRequiredError('implicit', 'resolveAccount', 'This seller requires a fixed account currency.');
+      }
+      if (hints.currency && currencyModes?.length === 1 && currencyModes[0] === 'per_media_buy') {
+        throw new AccountRequiredError('implicit', 'resolveAccount', 'This seller selects currency per media buy.');
+      }
+      const account = {
+        brand: hints.brand,
+        operator: hints.operator,
+        ...(hints.operatorUnit !== undefined && { operator_unit: hints.operatorUnit }),
+        ...(hints.currency !== undefined && { currency: hints.currency }),
+        ...(hints.timezone !== undefined && { timezone: hints.timezone }),
+        ...(hints.sandbox !== undefined && { sandbox: hints.sandbox }),
+      };
+      const supportedBilling = capabilities.account.supportedBilling;
+      const billing =
+        hints.billing ??
+        capabilities.account.defaultBilling ??
+        (supportedBilling.length === 1 ? supportedBilling[0] : undefined);
+      if (!billing || (supportedBilling.length > 0 && !supportedBilling.includes(billing))) {
+        throw new AccountRequiredError(
+          'implicit',
+          'resolveAccount',
+          `Choose a supported billing party for sync_accounts (seller supports: ${supportedBilling.join(', ') || '(none)'}).`
+        );
+      }
+      if (!this.accountRegistryOptedIn()) {
+        // SDK 14.0 behavior: sync on every call so callers observe the
+        // seller's current status. The memoized registry path is opt-in.
+        const result = await this.syncAccounts(
+          {
+            accounts: [
+              {
+                ...account,
+                billing,
+                ...(hints.paymentTerms !== undefined && { payment_terms: hints.paymentTerms }),
+                ...(hints.billingEntity !== undefined && { billing_entity: hints.billingEntity }),
+              },
+            ],
+          } as MutatingRequestInput<SyncAccountsRequest>,
+          undefined,
+          effectiveOptions
+        );
+        onTaskResult?.(result);
+        if (
+          !result.success ||
+          result.status !== 'completed' ||
+          !result.data ||
+          !('accounts' in result.data) ||
+          !Array.isArray(result.data.accounts)
+        ) {
+          throw new Error('sync_accounts did not return a completed account result.');
+        }
+        const syncedRow = result.data.accounts.find(
+          row =>
+            row.brand?.domain === hints.brand!.domain &&
+            row.operator === hints.operator &&
+            (!hints.brand!.brand_id || row.brand.brand_id === hints.brand!.brand_id) &&
+            sameCountrySet(hints.brand!.countries, row.brand.countries) &&
+            (!hints.operatorUnit || row.operator_unit?.id === hints.operatorUnit.id) &&
+            (!hints.currency || row.currency === hints.currency) &&
+            (!hints.timezone || row.timezone === hints.timezone) &&
+            (row.sandbox === undefined || (row.sandbox === true) === (hints.sandbox === true))
+        );
+        if (syncedRow?.status === 'pending_approval') {
+          throw new AccountPendingApprovalError(account, syncedRow.account_id);
+        }
+        if (!syncedRow || syncedRow.action === 'failed' || syncedRow.status !== 'active') {
+          throw new AccountRequiredError(
+            'implicit',
+            'resolveAccount',
+            'sync_accounts did not establish an active account for the requested brand and operator.'
+          );
+        }
+        return account;
+      }
+      let synced;
+      try {
+        synced = await this.getAccountRegistry().ensure(
+          account,
+          {
+            billing,
+            paymentTerms: hints.paymentTerms,
+            billingEntity: hints.billingEntity,
+          },
+          effectiveOptions,
+          onTaskResult
+        );
+      } catch (error) {
+        if (error instanceof AccountNotFoundError)
+          throw new AccountRequiredError('implicit', 'resolveAccount', error.message);
+        throw error;
+      }
+      if (synced.status === 'pending_approval') throw new AccountPendingApprovalError(account, synced.account_id);
+      if (synced.status !== 'active')
+        throw new AccountRequiredError('implicit', 'resolveAccount', 'The account is not active.');
+      return account;
+    });
+  }
+
+  /**
    * Sync accounts
    */
   async syncAccounts(
@@ -7573,11 +8290,14 @@ export class SingleAgentClient {
     const startTime = Date.now();
     let detectedServerVersion: 'v2' | 'v3' | undefined;
     let detectedServerVersionSynthetic: boolean | undefined;
+    params = await this.applyAccountPolicy(taskName, params, options);
     try {
-      const normalizedParams = normalizeRequestParams(taskName, params, {
-        skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
-        skipAccountValidation: options?.skipAccountValidation,
-      });
+      const normalizedParams = options?.preserveGovernedPayload
+        ? params
+        : normalizeRequestParams(taskName, params, {
+            skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
+            skipAccountValidation: options?.skipAccountValidation,
+          });
       if (!options?.skipRequestValidation) assertNoPrincipalIdentityInput(taskName, normalizedParams);
       this.assertRequestSupportedByConfiguredVersion(taskName, normalizedParams, options);
       this.assertDurablePropertyListCredentialSupported(taskName, normalizedParams);
@@ -7593,7 +8313,12 @@ export class SingleAgentClient {
       // v3-only fields out from under the v3 bundled schema. Skip the entire
       // Zod parse when compliance testing has suppressed request validation —
       // the invalid shape is intentional and must reach the seller.
-      if (!options?.skipIdempotencyAutoInject && !options?.skipAccountValidation && !options?.skipRequestValidation) {
+      if (
+        !options?.skipIdempotencyAutoInject &&
+        !options?.skipAccountValidation &&
+        !options?.skipRequestValidation &&
+        !options?.preserveGovernedPayload
+      ) {
         this.executor.validateRequest(taskName, normalizedParams);
       }
 
@@ -7619,14 +8344,21 @@ export class SingleAgentClient {
         capabilityDiscoveryContext.capabilities
       );
       const inputSchemaStripLogs: any[] = [];
-      const { params: adaptedParams, driftLogs: adaptDriftLogs } = this.adaptRequest(
-        taskName,
-        normalizedParams,
-        serverVersion,
-        inputSchemaStripLogs,
-        capabilityDiscoveryContext.toolSchemas,
-        capabilityDiscoveryContext.capabilities
-      );
+      if (options?.preserveGovernedPayload && serverVersion !== 'v3') {
+        throw new ConfigurationError(
+          'Governed storyboard requests require a v3 seller to preserve the approved payload.'
+        );
+      }
+      const { params: adaptedParams, driftLogs: adaptDriftLogs } = options?.preserveGovernedPayload
+        ? { params: normalizedParams, driftLogs: [] }
+        : this.adaptRequest(
+            taskName,
+            normalizedParams,
+            serverVersion,
+            inputSchemaStripLogs,
+            capabilityDiscoveryContext.toolSchemas,
+            capabilityDiscoveryContext.capabilities
+          );
 
       // Symmetric warn-only post-adapter pass against the v2.5 schema bundle.
       // Drift gets surfaced via result.metadata.debug_logs so adapter
@@ -7647,6 +8379,7 @@ export class SingleAgentClient {
           serverVersionSynthetic: capabilityDiscoveryContext.capabilities._synthetic,
         }),
         productPolicyRequest: productPolicyRequestSnapshot(normalizedParams),
+        accountRegistry: this.accountRegistryContext(taskName, normalizedParams, effectiveOptions),
         ...(effectiveOptions?.taskId !== undefined && { optionTaskId: effectiveOptions.taskId }),
         ...(effectiveOptions?.contextId !== undefined && { optionContextId: effectiveOptions.contextId }),
       };

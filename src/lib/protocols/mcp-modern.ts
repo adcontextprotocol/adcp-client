@@ -37,6 +37,7 @@ import {
   withAbortSignal,
 } from './abort';
 import { wrapFetchWithCapture } from './rawResponseCapture';
+import { wrapFetchWithSignedRequestRejection } from './signedRequestRejection';
 import { wrapFetchWithSizeLimit } from './responseSizeLimit';
 import { wrapFetchWithTransportDiagnostics } from './transportDiagnostics';
 import { createAgentTransportFetch } from '../net/agent-transport-fetch';
@@ -338,7 +339,7 @@ async function createNegotiatedClient(
   const diagnosticFetch = wrapFetchWithTransportDiagnostics(wrapFetchWithSizeLimit(networkFetch));
   const signedFetch: typeof fetch = options.signingContext
     ? (buildAgentSigningFetch({
-        upstream: diagnosticFetch,
+        upstream: wrapFetchWithSignedRequestRejection(diagnosticFetch, options.agentUrl),
         signing: options.signingContext.signing,
         getCapability: options.signingContext.getCapability,
         adcpVersion: options.signingContext.adcpVersion,

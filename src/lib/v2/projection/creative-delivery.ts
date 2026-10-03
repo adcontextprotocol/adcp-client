@@ -302,8 +302,13 @@ export function stripLegacyCreativeIdentity<T>(value: T): CanonicalCreativeRespo
     'coordinated_placements',
     'custom',
   ]);
-  const creativeIdentityKey = (key: string): boolean =>
-    key === '_message' || /(^|_)(?:format_ids?|v1_format_ref)($|_)/.test(key);
+  // `_message` is SDK-synthesized prose (the seller's text part) that may echo
+  // a legacy identity, so it is dropped from canonical output like the
+  // structured identity keys. It is NOT an identity source, though: its value
+  // is a whole sentence, and tokenizing it would mask every diagnostic that
+  // repeats the seller's text (e.g. `adcp_error.message`) — see #3060.
+  const identityValueKey = (key: string): boolean => /(^|_)(?:format_ids?|v1_format_ref)($|_)/.test(key);
+  const creativeIdentityKey = (key: string): boolean => key === '_message' || identityValueKey(key);
   const ownDataValue = (owner: Record<string, unknown>, key: string): unknown => {
     const descriptor = Object.getOwnPropertyDescriptor(owner, key);
     return descriptor && 'value' in descriptor ? descriptor.value : undefined;
@@ -396,7 +401,9 @@ export function stripLegacyCreativeIdentity<T>(value: T): CanonicalCreativeRespo
       const descriptor = Object.getOwnPropertyDescriptor(owner, key);
       if (!descriptor || !('value' in descriptor)) continue;
       const child = descriptor.value;
-      if (creativeIdentityKey(key)) collectStrings(child);
+      // `_message` falls through to the structural walk: a plain string yields
+      // no tokens, while any nested identity field would still be collected.
+      if (identityValueKey(key)) collectStrings(child);
       else collectLegacyTokens(child, key);
     }
   };

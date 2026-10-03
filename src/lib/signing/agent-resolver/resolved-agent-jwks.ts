@@ -6,6 +6,11 @@ import { resolveAgent, type AgentProtocol, type AgentResolution, type ResolveAge
 export interface ResolvedAgentJwksResolverOptions extends Pick<
   ResolveAgentOptions,
   | 'fetchCapabilities'
+  | 'agentType'
+  | 'agentId'
+  | 'expectedBrandJsonUrl'
+  | 'legacyWebhookFallback'
+  | 'lookup'
   | 'allowPrivateIp'
   | 'bodyCaps'
   | 'timeoutMs'
@@ -28,10 +33,17 @@ export class ResolvedAgentJwksResolver implements JwksResolver {
   private readonly cacheTtlSeconds: number;
   private readonly unknownKidCooldownSeconds: number;
   private readonly resolveAgentFn: (agentUrl: string, options: ResolveAgentOptions) => Promise<AgentResolution>;
+  private canonicalAgentUrl?: string;
+  private legacyWebhookFallback?: boolean;
+  private operatorRecord?: JwksResolution['operatorRecord'];
+  get resolvedAgentUrl(): string | undefined {
+    return this.canonicalAgentUrl;
+  }
   private keys = new Map<string, AdcpJsonWebKey>();
   private expiresAt = 0;
   private operatorAuthorizationValidUntil?: number;
   private lastUnknownKidRefresh = Number.NEGATIVE_INFINITY;
+  private lastDiscoveryAttemptAt = Number.NEGATIVE_INFINITY;
   private inFlight?: Promise<void>;
 
   constructor(
@@ -59,6 +71,16 @@ export class ResolvedAgentJwksResolver implements JwksResolver {
     const now = this.now();
     let refreshed = false;
     if (now >= this.expiresAt) {
+      if (!this.inFlight && now - this.lastDiscoveryAttemptAt < 30) {
+        const expiredAuthorization =
+          this.operatorAuthorizationValidUntil !== undefined && now >= this.operatorAuthorizationValidUntil;
+        throw new AgentResolverError(
+          expiredAuthorization ? 'request_signature_brand_origin_mismatch' : 'request_signature_brand_json_unreachable',
+          'Expired operator mapping cannot be used during the discovery cooldown',
+          { agent_url: this.agentUrl },
+          ['agent_url']
+        );
+      }
       await this.refresh();
       refreshed = true;
     }
@@ -72,15 +94,27 @@ export class ResolvedAgentJwksResolver implements JwksResolver {
       this.lastUnknownKidRefresh = now;
       return this.resolution(null);
     }
-    if (now - this.lastUnknownKidRefresh < this.unknownKidCooldownSeconds) return this.resolution(null);
+    if (
+      now - Math.max(this.lastUnknownKidRefresh, this.lastDiscoveryAttemptAt) <
+      Math.max(30, this.unknownKidCooldownSeconds)
+    )
+      return this.resolution(null);
     await this.refresh();
     this.lastUnknownKidRefresh = now;
     return this.resolution(this.keys.get(keyid) ?? null);
   }
 
+  async forceRefresh(): Promise<void> {
+    this.expiresAt = 0;
+    await this.refresh();
+  }
+
   private resolution(jwk: AdcpJsonWebKey | null): JwksResolution {
     return {
       jwk,
+      ...(this.operatorRecord !== undefined && { operatorRecord: this.operatorRecord }),
+      ...(this.legacyWebhookFallback && { legacyWebhookFallback: true }),
+      ...(this.resolvedAgentUrl !== undefined && { agentUrl: this.resolvedAgentUrl }),
       ...(this.operatorAuthorizationValidUntil !== undefined && {
         operatorAuthorizationValidUntil: this.operatorAuthorizationValidUntil,
       }),
@@ -89,23 +123,11 @@ export class ResolvedAgentJwksResolver implements JwksResolver {
 
   private async refresh(): Promise<void> {
     if (this.inFlight) return this.inFlight;
+    this.lastDiscoveryAttemptAt = this.now();
     this.inFlight = (async () => {
       const resolution = await this.resolveAgentFn(this.agentUrl, {
+        ...this.options,
         protocol: this.protocol,
-        ...(this.options.fetchCapabilities && { fetchCapabilities: this.options.fetchCapabilities }),
-        ...(this.options.allowPrivateIp !== undefined && { allowPrivateIp: this.options.allowPrivateIp }),
-        ...(this.options.bodyCaps && { bodyCaps: this.options.bodyCaps }),
-        ...(this.options.timeoutMs !== undefined && { timeoutMs: this.options.timeoutMs }),
-        ...(this.options.now && { now: this.options.now }),
-        ...(this.options.requiredOperatorBrand !== undefined && {
-          requiredOperatorBrand: this.options.requiredOperatorBrand,
-        }),
-        ...(this.options.requiredOperatorScope !== undefined && {
-          requiredOperatorScope: this.options.requiredOperatorScope,
-        }),
-        ...(this.options.requiredOperatorCountry !== undefined && {
-          requiredOperatorCountry: this.options.requiredOperatorCountry,
-        }),
       });
       const refreshedAt = this.now();
       if (
@@ -122,13 +144,32 @@ export class ResolvedAgentJwksResolver implements JwksResolver {
       const next = new Map<string, AdcpJsonWebKey>();
       for (const candidate of resolution.jwks.keys) {
         if (candidate && typeof candidate === 'object' && typeof candidate.kid === 'string') {
+          if (next.has(candidate.kid))
+            throw new AgentResolverError(
+              'request_signature_key_unknown',
+              'JWKS has duplicate key identifiers',
+              { agent_url: this.agentUrl },
+              ['agent_url']
+            );
           next.set(candidate.kid, candidate as unknown as AdcpJsonWebKey);
         }
       }
       this.keys = next;
+      this.canonicalAgentUrl = resolution.agentUrl;
+      this.operatorRecord =
+        resolution.brandJson === undefined
+          ? undefined
+          : { url: resolution.brandJsonUrl, document: resolution.brandJson };
+      this.legacyWebhookFallback = resolution.legacyWebhookFallback;
       this.operatorAuthorizationValidUntil = resolution.operatorAuthorizationValidUntil;
       this.expiresAt = Math.min(
-        refreshedAt + this.cacheTtlSeconds,
+        refreshedAt +
+          Math.min(
+            this.cacheTtlSeconds,
+            1800,
+            Math.max(30, cacheLifetime(resolution.brandJsonCacheControl)),
+            Math.max(60, cacheLifetime(resolution.jwksCacheControl))
+          ),
         resolution.operatorAuthorizationValidUntil ?? Number.POSITIVE_INFINITY
       );
     })().finally(() => {
@@ -136,4 +177,12 @@ export class ResolvedAgentJwksResolver implements JwksResolver {
     });
     return this.inFlight;
   }
+}
+
+/** Headers inform freshness; the caller applies the minimum safe polling interval. */
+function cacheLifetime(cacheControl: string | undefined): number {
+  if (!cacheControl) return Infinity;
+  if (/\bno-cache\b|\bno-store\b/i.test(cacheControl)) return 0;
+  const match = /(?:^|,)\s*max-age\s*=\s*"?(\d+)/i.exec(cacheControl);
+  return match ? Number(match[1]) : Infinity;
 }

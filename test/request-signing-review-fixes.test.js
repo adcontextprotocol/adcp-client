@@ -270,7 +270,7 @@ describe('AdCP 3.2 RFC 8941 binary profile', () => {
       revocationStore: new InMemoryRevocationStore(),
       now: () => now,
       operation: 'create_media_buy',
-      adcpVersion: '3.2.0-rc.7',
+      adcpVersion: '3.2.1',
     };
     const signBody = body =>
       signRequest(
@@ -402,35 +402,156 @@ describe('AdCP 3.2 RFC 8941 binary profile', () => {
     );
   });
 
-  test('3.2 verifier accepts a legacy Base64URL request profile when rolling-upgrade policy is either', async () => {
-    const now = 1776520800;
-    const url = 'https://seller.example.com/adcp/create_media_buy';
-    const body = '{"plan_id":"legacy_profile"}';
-    const signed = signRequest(
-      { method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body },
+  // adcp-client#3073: a 3.2 verifier MUST NOT retry a Base64URL token
+  // through the legacy decoder, whatever its internal digest policy.
+  const signLegacyProfile = ({ now, nonce, body }) =>
+    signRequest(
+      {
+        method: 'POST',
+        url: 'https://seller.example.com/adcp/create_media_buy',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      },
       { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: privateJwk },
-      {
-        now: () => now,
-        windowSeconds: 300,
-        nonce: 'legacy-profile-nonce',
-        coverContentDigest: true,
-        binaryEncoding: 'legacy-base64url',
-      }
+      { now: () => now, windowSeconds: 300, nonce, coverContentDigest: true, binaryEncoding: 'legacy-base64url' }
     );
-
-    const result = await verifyRequestSignature(
-      { method: 'POST', url, headers: signed.headers, body },
+  const verifyAt = (signed, body, now, capabilityDigest, adcpVersion) =>
+    verifyRequestSignature(
+      { method: 'POST', url: 'https://seller.example.com/adcp/create_media_buy', headers: signed.headers, body },
       {
-        capability: { supported: true, covers_content_digest: 'either', required_for: [] },
+        capability: { supported: true, covers_content_digest: capabilityDigest, required_for: [] },
         jwks: new StaticJwksResolver([publicJwk]),
         replayStore: new InMemoryReplayStore(),
         revocationStore: new InMemoryRevocationStore(),
         now: () => now,
         operation: 'create_media_buy',
-        adcpVersion: '3.2-beta.1',
+        ...(adcpVersion !== undefined ? { adcpVersion } : {}),
       }
     );
+  const isMalformedAtStep = step => err =>
+    err instanceof RequestSignatureError &&
+    err.code === 'request_signature_header_malformed' &&
+    err.failedStep === step;
+
+  for (const digestPolicy of ['either', 'required']) {
+    test(`3.2 verifier rejects a legacy Base64URL Signature at step 1 when digest policy is ${digestPolicy}`, async () => {
+      const now = 1776520800;
+      const body = '{"plan_id":"legacy_profile"}';
+      const signed = signLegacyProfile({ now, nonce: `legacy-profile-${digestPolicy}`, body });
+      assert.match(signed.headers.Signature, /[-_]/, 'fixture must exercise the Base64URL alphabet');
+      await assert.rejects(() => verifyAt(signed, body, now, digestPolicy, '3.2-beta.1'), isMalformedAtStep(1));
+    });
+  }
+
+  test('3.2 verifier reports the malformed Signature before an expired window', async () => {
+    // Mirrors profile-3.2/negative/001 graded live: the vector's timestamps
+    // are fixed, so a lenient parser would surface window_invalid instead.
+    const signedAt = 1776520800;
+    const body = '{"plan_id":"legacy_profile"}';
+    const signed = signLegacyProfile({ now: signedAt, nonce: 'legacy-profile-expired', body });
+    await assert.rejects(() => verifyAt(signed, body, signedAt + 86400, 'either', '3.2'), isMalformedAtStep(1));
+  });
+
+  test('3.0/3.1-pinned and unpinned verifiers keep accepting legacy Base64URL signatures', async () => {
+    const now = 1776520800;
+    const body = '{"plan_id":"legacy_profile"}';
+    for (const [adcpVersion, digestPolicy] of [
+      ['3.1', 'either'],
+      ['3.1', 'required'],
+      ['3.0', 'either'],
+      [undefined, 'either'],
+      [undefined, 'required'],
+    ]) {
+      const signed = signLegacyProfile({ now, nonce: `legacy-ok-${adcpVersion ?? 'unpinned'}-${digestPolicy}`, body });
+      const result = await verifyAt(signed, body, now, digestPolicy, adcpVersion);
+      assert.strictEqual(result.keyid, 'test-ed25519-2026', `${adcpVersion ?? 'unpinned'} / ${digestPolicy}`);
+    }
+  });
+
+  test('3.2 verifier rejects a Base64URL Content-Digest as malformed even when digest policy is either', async () => {
+    const now = 1776520800;
+    const body = '{"plan_id":"digest_alphabet"}';
+    const legacyDigest = computeContentDigest(body, 'legacy-base64url');
+    assert.match(legacyDigest, /[-_]|[^=]:$/, 'fixture must not be valid padded standard Base64');
+    // Re-sign over the legacy digest so the signature itself is valid and
+    // only the digest serialization is wrong.
+    const resignWithDigest = (binaryEncoding, nonce) => {
+      const signed = signRequest(
+        {
+          method: 'POST',
+          url: 'https://seller.example.com/adcp/create_media_buy',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+        },
+        { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: privateJwk },
+        { now: () => now, windowSeconds: 300, nonce, binaryEncoding, coverContentDigest: true }
+      );
+      const headers = { ...signed.headers, 'Content-Digest': legacyDigest };
+      const input = parseSignatureInput(headers['Signature-Input']);
+      const base = buildSignatureBase(
+        input.components,
+        { method: 'POST', url: 'https://seller.example.com/adcp/create_media_buy', headers, body },
+        input.params,
+        input.signatureParamsValue,
+        binaryEncoding === 'rfc8941-base64' ? '3.2' : 'legacy'
+      );
+      const sig = nodeSign(null, Buffer.from(base, 'utf8'), createPrivateKey({ key: privateJwk, format: 'jwk' }));
+      const encoded = binaryEncoding === 'rfc8941-base64' ? sig.toString('base64') : sig.toString('base64url');
+      return { headers: { ...headers, Signature: `sig1=:${encoded}:` } };
+    };
+
+    const strict = resignWithDigest('rfc8941-base64', 'digest-alphabet-nonce');
+    for (const digestPolicy of ['either', 'required']) {
+      await assert.rejects(() => verifyAt(strict, body, now, digestPolicy, '3.2'), isMalformedAtStep(11));
+    }
+    // A 3.1 endpoint keeps its lenient digest parsing for legacy peers.
+    const legacy = resignWithDigest('legacy-base64url', 'digest-alphabet-legacy');
+    const result = await verifyAt(legacy, body, now, 'either', '3.1');
     assert.strictEqual(result.keyid, 'test-ed25519-2026');
+  });
+});
+
+describe('parseSignature sf-binary encoding (adcp-client#3073)', () => {
+  const { parseSignature } = require('../dist/lib/signing/parser.js');
+  const SIG_STD = 'RiD5mPhxpBWhmaqUL5+vceyPX5jpjzYZhSnteuYCIYhIqdIl0Yxdh5qstCPXwkKL4AZOsPBL7+8ctbPkHunSAw==';
+  const SIG_URL = SIG_STD.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const malformed = err => err instanceof RequestSignatureError && err.code === 'request_signature_header_malformed';
+
+  test('3.2 profile accepts padded standard Base64 and decodes the same bytes as the legacy form', () => {
+    const strict = parseSignature(`sig1=:${SIG_STD}:`, 'sig1', 'rfc8941-base64');
+    const legacy = parseSignature(`sig1=:${SIG_URL}:`, 'sig1', 'legacy-base64url');
+    assert.strictEqual(strict.bytes.length, 64);
+    assert.deepStrictEqual(Buffer.from(strict.bytes), Buffer.from(legacy.bytes));
+  });
+
+  test('3.2 profile accepts a byte length that needs no padding', () => {
+    const noPad = Buffer.alloc(48, 7).toString('base64');
+    assert.ok(!noPad.includes('='));
+    assert.strictEqual(parseSignature(`sig1=:${noPad}:`, 'sig1', 'rfc8941-base64').bytes.length, 48);
+  });
+
+  for (const [name, value] of [
+    ['Base64URL alphabet, unpadded', SIG_URL],
+    ['Base64URL alphabet, padded', `${SIG_URL}==`],
+    ['standard alphabet without padding', SIG_STD.replace(/=+$/, '')],
+    ['excess padding', `${SIG_STD.slice(0, -2)}A===`],
+    ['padding before the end', `${SIG_STD.slice(0, 4)}=${SIG_STD.slice(5)}`],
+  ]) {
+    test(`3.2 profile rejects ${name} at step 1`, () => {
+      assert.throws(
+        () => parseSignature(`sig1=:${value}:`, 'sig1', 'rfc8941-base64'),
+        err => malformed(err) && err.failedStep === 1
+      );
+    });
+  }
+
+  test('3.2 profile parses the whole Signature dictionary strictly, including ignored labels', () => {
+    assert.throws(() => parseSignature(`sig1=:${SIG_STD}:, sig2=:${SIG_URL}:`, 'sig1', 'rfc8941-base64'), malformed);
+  });
+
+  test('legacy profile still requires unpadded Base64URL for the processed label', () => {
+    assert.strictEqual(parseSignature(`sig1=:${SIG_URL}:`, 'sig1', 'legacy-base64url').bytes.length, 64);
+    assert.throws(() => parseSignature(`sig1=:${SIG_STD}:`, 'sig1', 'legacy-base64url'), malformed);
   });
 });
 
