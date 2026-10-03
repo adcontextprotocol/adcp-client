@@ -9,7 +9,7 @@
  * (internal-topology leak). We surface the `code` only.
  */
 
-import { ssrfSafeFetch, SsrfRefusedError, type SsrfFetchOptions } from '../../net';
+import { ssrfSafeFetch, SsrfRefusedError, type SsrfDnsLookup, type SsrfFetchOptions } from '../../net';
 
 import { parseStrictJson, StrictJsonError } from './strict-json';
 
@@ -51,7 +51,7 @@ export interface SafeFetchJsonResult {
 export async function safeFetchJson(
   url: string,
   kind: FetchKind,
-  options: { allowPrivateIp?: boolean; timeoutMs?: number; maxBodyBytes: number }
+  options: { allowPrivateIp?: boolean; timeoutMs?: number; maxBodyBytes: number; lookup?: SsrfDnsLookup }
 ): Promise<SafeFetchJsonResult> {
   const fetchOpts: SsrfFetchOptions = {
     method: 'GET',
@@ -59,6 +59,7 @@ export async function safeFetchJson(
     allowPrivateIp: options.allowPrivateIp === true,
     timeoutMs: options.timeoutMs ?? DEFAULT_TOTAL_TIMEOUT_MS,
     maxBodyBytes: options.maxBodyBytes,
+    lookup: options.lookup,
   };
 
   let res;

@@ -8899,13 +8899,13 @@ async function probeBrandJwks(
   // handed. security.mdx @ 3.1.1 :1142 step 1: "invoke `get_adcp_capabilities` via the
   // agent's declared transport (MCP `tools/call` or A2A skill invocation) ... The agent
   // URL is the protocol endpoint, not a JSON capabilities document." Step 5 then
-  // byte-equals `agents[].url` against that same `A`.
+  // canonically matches `agents[].url` against that same `A`.
   //
   // On MCP the two are the same string, so this changed nothing there. On A2A they are
   // NOT: the runner must be given the card's BASE (the card lives at
   // `<base>/.well-known/agent-card.json`, so passing the RPC endpoint asks for
   // `/a2a/.well-known/...` and 404s), while the endpoint `A` names is the one the card
-  // resolves to. Matching the base produced zero byte-equal hits against a conformant
+  // resolves to. Matching the base produced zero canonical hits against a conformant
   // brand.json publishing the RPC endpoint — the agent was graded non-conformant for
   // publishing exactly what the spec asks for.
   const matchUrl =

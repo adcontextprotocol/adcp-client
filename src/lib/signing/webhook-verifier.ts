@@ -14,8 +14,8 @@
  *     `content-type`, and `content-digest` — `content-digest` is unconditional
  *     for webhooks (vs policy-driven on requests) because every webhook
  *     carries a JSON body.
- *   - JWKS resolved via the publisher's `brand.json` `agents[]` `jwks_uri`,
- *     not the request-path capability document.
+ *   - JWKS resolved via the capabilities-selected operator brand.json;
+ *     publisher pins narrow its keys for applicable inventory.
  *
  * Checklist steps below mirror the 14-step shape in
  * `docs/building/implementation/security.mdx#verifier-checklist-for-webhooks`
@@ -25,13 +25,22 @@
 
 import { buildSignatureBase, canonicalTargetUri, getHeaderValue } from './canonicalize';
 import { contentDigestMatches } from './content-digest';
-import { RequestSignatureError, WebhookSignatureError } from './errors';
+import { RequestSignatureError, WebhookSignatureError, RequestSigningErrorCodeMetadata } from './errors';
+import { AgentResolverError } from './agent-resolver/errors';
+import { BrandJsonResolverError } from './brand-jwks';
 import { parseSignature, parseSignatureInput, type ParsedSignatureInput } from './parser';
 import { jwkToPublicKey, verifySignature } from './crypto';
-import type { JwksResolver } from './jwks';
+import type { JwksResolution, JwksResolver } from './jwks';
+import { assertPublisherPins, type PublisherSigningKeyPin } from './publisher-pins';
 import { InMemoryReplayStore, type ReplayStore } from './replay';
 import { InMemoryRevocationStore, type RevocationStore } from './revocation';
 import { ALLOWED_ALGS, CLOCK_SKEW_TOLERANCE_SECONDS, MAX_SIGNATURE_WINDOW_SECONDS } from './types';
+
+function keyDiscoveryRetryable(error: unknown): boolean {
+  if (error instanceof AgentResolverError) return RequestSigningErrorCodeMetadata[error.code].recovery === 'transient';
+  if (error instanceof BrandJsonResolverError) return error.code === 'fetch_failed';
+  return true;
+}
 
 export const WEBHOOK_SIGNING_TAG = 'adcp/webhook-signing/v1';
 
@@ -59,6 +68,10 @@ export const WEBHOOK_MANDATORY_COMPONENTS: ReadonlyArray<string> = [
 
 export interface VerifyWebhookOptions {
   jwks: JwksResolver;
+  /** Applicable publishers from the verifier's own media-buy record. */
+  publisherPins?: readonly PublisherSigningKeyPin[];
+  /** Log the underlying request_signature_* discovery cause locally. */
+  onKeyResolutionError?: (error: unknown) => void;
   replayStore: ReplayStore;
   revocationStore: RevocationStore;
   /** Now in seconds since epoch. Defaults to `Date.now() / 1000`. */
@@ -169,9 +182,25 @@ export async function verifyWebhookSignature(
   const canonicalWebhookTarget = validateTargetUri(request.url);
 
   // Step 7: resolve keyid.
-  const keyResolution = options.jwks.resolveWithMetadata
-    ? await options.jwks.resolveWithMetadata(parsedInput.params.keyid)
-    : { jwk: await options.jwks.resolve(parsedInput.params.keyid) };
+  let keyResolution: JwksResolution;
+  try {
+    keyResolution = options.jwks.resolveWithMetadata
+      ? await options.jwks.resolveWithMetadata(parsedInput.params.keyid)
+      : { jwk: await options.jwks.resolve(parsedInput.params.keyid) };
+  } catch (error) {
+    try {
+      options.onKeyResolutionError?.(error);
+    } catch {
+      /* Logging cannot change verification. */
+    }
+    throw new WebhookSignatureError(
+      'webhook_signature_key_unknown',
+      7,
+      'Signing key discovery or publisher pin check failed.',
+      undefined,
+      keyDiscoveryRetryable(error)
+    );
+  }
   const jwk = keyResolution.jwk;
   if (!jwk) {
     throw new WebhookSignatureError(
@@ -302,6 +331,27 @@ export async function verifyWebhookSignature(
     );
   }
 
+  // Refresh publisher pins only after authenticating the signature and body,
+  // so a forged signature cannot trigger forced adagents.json fetches.
+  if (options.publisherPins) {
+    try {
+      await assertPublisherPins(jwk, options.publisherPins, currentTime);
+    } catch (error) {
+      try {
+        options.onKeyResolutionError?.(error);
+      } catch {
+        /* Logging cannot change verification. */
+      }
+      throw new WebhookSignatureError(
+        'webhook_signature_key_unknown',
+        7,
+        'Signing key is outside the applicable publisher pins.',
+        undefined,
+        keyDiscoveryRetryable(error)
+      );
+    }
+  }
+
   // Resolution can be valid at step 7 and expire while cryptographic and
   // digest verification are in flight. Recheck immediately before accepting
   // the delivery or consuming replay capacity.
@@ -337,7 +387,7 @@ export async function verifyWebhookSignature(
     assertDelegatedOperatorAuthorizationActive(keyResolution.operatorAuthorizationValidUntil, currentTime());
   }
 
-  const agent_url = options.agentUrlForKeyid?.(jwk.kid);
+  const agent_url = keyResolution.agentUrl ?? options.agentUrlForKeyid?.(jwk.kid);
   return {
     status: 'verified',
     keyid: jwk.kid,

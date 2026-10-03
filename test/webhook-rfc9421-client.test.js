@@ -54,7 +54,7 @@ function keypair(kid = 'seller-webhook-2026') {
   };
 }
 
-async function registeredRfcClient() {
+async function registeredRfcClient(verificationOptions = {}) {
   const store = new InMemoryWebhookRegistrationStore();
   const callbackUrl = 'https://buyer.example/webhooks/get_products/op-rfc-1';
   await store.putIfAbsent({
@@ -72,7 +72,7 @@ async function registeredRfcClient() {
   const { signer, publicJwk } = keypair();
   const client = new SingleAgentClient(agent, {
     webhookRegistrationStore: store,
-    webhookVerification: { jwks: new StaticJwksResolver([publicJwk]) },
+    webhookVerification: { jwks: new StaticJwksResolver([publicJwk]), ...verificationOptions },
   });
   return { client, callbackUrl, signer };
 }
@@ -221,6 +221,47 @@ test('webhook registrations own and fence delegated-operator authorization conte
 });
 
 describe('SingleAgentClient RFC 9421 webhook receiver', () => {
+  test('preserves retries for transient discovery and publisher refresh failures', async () => {
+    for (const verificationOptions of [
+      {
+        jwks: {
+          resolve: async () => {
+            throw new AgentResolverError('request_signature_brand_json_unreachable', 'temporarily offline');
+          },
+        },
+      },
+      {
+        publisherPins: async () => [
+          {
+            publisher: 'publisher.example',
+            signingKeys: [],
+            refresh: async () => {
+              throw new Error('temporarily offline');
+            },
+          },
+        ],
+      },
+    ]) {
+      const { client, callbackUrl, signer } = await registeredRfcClient(verificationOptions);
+      const rawBody = JSON.stringify(envelope());
+      const signed = signWebhook(
+        { method: 'POST', url: callbackUrl, headers: { 'content-type': 'application/json' }, body: rawBody },
+        signer
+      );
+      const result = await client.verifyAndParseWebhook({
+        rawBody,
+        headers: signed.headers,
+        taskType: 'get_products',
+        operationId: 'op-rfc-1',
+        requestMethod: 'POST',
+        requestUrl: callbackUrl,
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'webhook_verification_unavailable');
+      assert.equal(result.cause.code, 'webhook_signature_key_unknown');
+      assert.equal(result.cause.retryable, true);
+    }
+  });
   test('verifies the registered seller, public URL, and exact raw bytes', async () => {
     const { client, callbackUrl, signer } = await registeredRfcClient();
     const rawBody = JSON.stringify(envelope());
@@ -1831,17 +1872,19 @@ describe('seller-pinned webhook JWK discovery cache', () => {
     assert.strictEqual(resolutions, 1);
     assert.strictEqual(await resolver.resolve('unknown-key'), null);
     assert.strictEqual(await resolver.resolve('unknown-key'), null);
-    assert.strictEqual(resolutions, 2);
+    assert.strictEqual(resolutions, 1, 'the just-fetched JWKS is authoritative within the cooldown');
     assert.strictEqual(await resolver.resolve('different-attacker-key'), null);
-    assert.strictEqual(resolutions, 2, 'unknown-kid cooldown is global, not attacker-keyed');
+    assert.strictEqual(resolutions, 1, 'unknown-kid cooldown is global, not attacker-keyed');
     now += 31;
     assert.strictEqual(await resolver.resolve('unknown-key'), null);
-    assert.strictEqual(resolutions, 3);
+    assert.strictEqual(resolutions, 2);
   });
 
-  test('binds A2A discovery protocol and retries immediately after a failed refresh', async () => {
+  test('binds A2A discovery protocol and bounds retries after a failed refresh', async () => {
     let resolutions = 0;
+    let now = 1_700_000_000;
     const resolver = new ResolvedAgentJwksResolver('https://seller.example/a2a', 'a2a', {
+      now: () => now,
       resolve: async (_agentUrl, options) => {
         resolutions += 1;
         assert.strictEqual(options.protocol, 'a2a');
@@ -1850,6 +1893,9 @@ describe('seller-pinned webhook JWK discovery cache', () => {
       },
     });
     await assert.rejects(resolver.resolve('recovered-key'), /temporary discovery failure/);
+    await assert.rejects(resolver.resolve('recovered-key'), /discovery cooldown/);
+    assert.strictEqual(resolutions, 1);
+    now += 30;
     assert.strictEqual((await resolver.resolve('recovered-key')).kid, 'recovered-key');
     assert.strictEqual(resolutions, 2);
   });

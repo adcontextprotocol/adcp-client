@@ -64,6 +64,8 @@ export interface RevocationSnapshot {
 export interface VerifiedSigner {
   keyid: string;
   agent_url?: string;
+  /** Exact operator record selected during verified agent discovery. */
+  operatorRecord?: { url: string; document: unknown };
   verified_at: number;
 }
 
