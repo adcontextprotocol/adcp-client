@@ -74,9 +74,21 @@ jobs:
           publish-script: npm run release
           pr-title: 'chore: release package'
           commit-message: 'chore: release package'
+          create-github-releases: false
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           NPM_CONFIG_PROVENANCE: true
+
+      - name: Create GitHub releases with bounded notes
+        if: steps.changesets.outputs.published == 'true'
+        uses: actions/github-script@v7
+        env:
+          PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.published-packages }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const createReleases = require('./.github/scripts/create-package-releases.cjs');
+            await createReleases({ github, context, core, publishedPackages: JSON.parse(process.env.PUBLISHED_PACKAGES) });
 
       # `npm deprecate '@adcp/client@…'` is run manually post-release for now.
       # OIDC trusted-publishing tokens are scoped to the publishing package, so
