@@ -173,6 +173,35 @@ describe('canonical agent selection', () => {
 });
 
 describe('capability-bound discovery and cache freshness', () => {
+  it('rejects invalid standalone configuration before onboarding or network access', () => {
+    for (const agentUrl of [undefined, 'https://seller.example/mcp']) {
+      for (const maxAgeSeconds of [0, NaN, Infinity, -1]) {
+        for (const limits of [{ maxAgeSeconds }, { jwksOptions: { maxAgeSeconds } }]) {
+          assert.throws(
+            () =>
+              new BrandJsonJwksResolver('https://seller.example/operator.json', {
+                agentType: 'sales',
+                agentUrl,
+                ...limits,
+              }),
+            TypeError
+          );
+        }
+      }
+      for (const minCooldownSeconds of [NaN, Infinity, -1]) {
+        assert.throws(
+          () =>
+            new BrandJsonJwksResolver('https://seller.example/operator.json', {
+              agentType: 'sales',
+              agentUrl,
+              minCooldownSeconds,
+            }),
+          TypeError
+        );
+      }
+    }
+    assert.equal(hits.length, 0);
+  });
   it('infers one legacy onboarding URL and confirms it before accepting any key', async () => {
     const options = stage();
     const resolver = new BrandJsonJwksResolver(`${origin}/operator.json`, {

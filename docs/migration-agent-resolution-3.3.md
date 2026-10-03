@@ -56,6 +56,9 @@ are throttled for at most 60 seconds.
 with the protocol discovery cooldown. Public `forceRefresh()` is an
 operator-triggered cache flush and bypasses normal resolved-key cooldowns;
 failed onboarding attempts retain their 30-second cooldown.
+Standalone `HttpsJwksResolver` also applies its configured cooldown after a
+failed initial fetch or refresh and rejects non-finite or negative cache
+options. Brand resolvers validate their configuration before fetching.
 
 Canonical identity normalization preserves path slashes, query order, trailing
 empty queries and scheme distinctions. Update principal indexes that previously

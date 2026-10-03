@@ -119,6 +119,14 @@ export class BrandJsonJwksResolver implements JwksResolver {
     private readonly brandJsonUrl: string,
     private readonly options: BrandJsonJwksResolverOptions
   ) {
+    for (const lifetime of [options.maxAgeSeconds, options.jwksOptions?.maxAgeSeconds]) {
+      if (lifetime !== undefined && (!Number.isFinite(lifetime) || lifetime <= 0))
+        throw new TypeError('maxAgeSeconds must be a finite positive number.');
+    }
+    for (const cooldown of [options.minCooldownSeconds, options.jwksOptions?.minCooldownSeconds]) {
+      if (cooldown !== undefined && (!Number.isFinite(cooldown) || cooldown < 0))
+        throw new TypeError('minCooldownSeconds must be a finite non-negative number.');
+    }
     if (options.agentUrl !== undefined) this.resolver = this.createResolver(options.agentUrl, brandJsonUrl);
   }
   private createResolver(agentUrl: string, operatorUrl: string): ResolvedAgentJwksResolver {
