@@ -35,7 +35,7 @@ test('Changesets release versioning regenerates agent docs after the package ver
   assert.ok(worksheetIndex > docsIndex, 'the release worksheet must regenerate after agent docs');
 
   const workflow = readFileSync(path.join(ROOT, '.github', 'workflows', 'release.yml'), 'utf8');
-  assert.match(workflow, /^\s+version:\s*['"]?npm run version['"]?\s*$/m);
+  assert.match(workflow, /^\s+version-script:\s*['"]?npm run version['"]?\s*$/m);
 
   const docsCheck = pkg.scripts['ci:docs-check'];
   assert.match(docsCheck, /^npm run generate-agent-docs && /);

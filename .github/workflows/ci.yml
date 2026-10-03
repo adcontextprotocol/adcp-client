@@ -654,7 +654,9 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: '20.x'
+          # This lane exercises Changesets release tooling, which requires
+          # Node 22 or 24. The runtime matrix keeps SDK Node 20 coverage.
+          node-version: '24.x'
           cache: 'npm'
 
       - name: Install dependencies
