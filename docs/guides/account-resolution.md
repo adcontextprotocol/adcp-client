@@ -41,24 +41,28 @@ resolve: async (ref, ctx) => {
 },
 ```
 
-A supplied unknown reference returns `ACCOUNT_NOT_FOUND`, even on optional
-account tools. Account-carrying tools without a resolver refuse supplied
-references and warn at construction in development. Existing handler-bag
-servers that configured only `resolveAccountFromAuth` must add a ref-aware
-`resolveAccount`: it must look the supplied reference up within the caller's
-authorized roster and return null on a miss. An auth-only resolver cannot
-authorize an arbitrary reference. `requiredForProducts`
-is enforced by the framework when neither the request nor authentication
-resolves an account. `list_accounts.account` remains a filter.
+When `resolveAccount` is configured, a supplied unknown reference returns
+`ACCOUNT_NOT_FOUND`, even on optional account tools. `requiredForProducts` is
+enforced by the framework: a seller that declares it refuses `get_products`
+with `ACCOUNT_REQUIRED` when the request carries no account and authentication
+resolves none. `list_accounts.account` remains a filter.
 
-Migration for handler-bag sellers: move account authorization out of individual
-handlers and into the resolver before upgrading. This intentionally tightens
-the old behavior that let unchecked references reach handlers:
+### Strict account references (`strictAccountReferences`)
+
+SDK 14 still lets a buyer-supplied `account` reach a raw handler-bag seller
+that has no reference-aware `resolveAccount`: the handler sees
+`params.account`, `ctx.account` is undefined, and the framework logs a
+one-time deprecation warning per server (through `logger.warn`, and also
+`process.emitWarning` outside `NODE_ENV=production`). An auth-only
+`resolveAccountFromAuth` does not authorize an arbitrary reference.
+
+**Strict mode becomes the default in the next major release.** Opt in now:
 
 ```ts
 createAdcpServer({
   name: 'Seller',
   version: '1.0.0',
+  strictAccountReferences: true,
   resolveAccount: (ref, ctx) => authorizedAccounts.find(ref, ctx.authInfo),
   mediaBuy: {
     getProducts: (params, ctx) => catalog.forAccount(ctx.account, params),
@@ -66,9 +70,24 @@ createAdcpServer({
 });
 ```
 
+With `strictAccountReferences: true`:
+
+- A supplied reference on a server without `resolveAccount` fails with
+  `ACCOUNT_NOT_FOUND` before the handler runs.
+- On `createAdcpServerFromPlatform` with `resolution: 'implicit'`, an account
+  whose returned identity metadata (`brand`, `operator`, `operator_unit`,
+  `currency`, `timezone`, `sandbox`) disagrees with the supplied natural key
+  is refused with `ACCOUNT_NOT_FOUND`. Without the flag, each mismatch logs a
+  deprecation warning and the account is still used, as in SDK 14.0. Fields
+  your store does not return are not compared.
+
+Migration for handler-bag sellers: move account authorization out of
+individual handlers and into `resolveAccount`, then set the flag.
 `authorizedAccounts.find` must return null on an unknown reference or a
 reference owned by another principal. Public discovery may omit `account`;
-resource creation and spend commitments need an authorized account.
+resource creation and spend commitments need an authorized account. Implicit
+stores should resolve by the complete natural key and return identity
+metadata that echoes it, or omit the metadata.
 
 `InMemoryImplicitAccountStore` matches supplied refs on the complete natural
 key, including operator unit, currency, timezone, and sandbox. It retains its

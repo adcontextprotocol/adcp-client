@@ -1832,6 +1832,30 @@ export interface AdcpServerConfig<TAccount = unknown> {
   resolveAccount?: (ref: AccountReference, ctx: ResolveAccountContext) => Promise<TAccount | null>;
 
   /**
+   * Opt in to strict buyer-supplied account references. Default `false` in
+   * SDK 14; becomes the default in the next major release.
+   *
+   * When `true`:
+   * - A request that carries `account` on a server without `resolveAccount`
+   *   fails with `ACCOUNT_NOT_FOUND` instead of reaching the handler
+   *   unverified. An auth-only `resolveAccountFromAuth` does not authorize an
+   *   arbitrary reference.
+   * - On `createAdcpServerFromPlatform` with `accounts.resolution: 'implicit'`,
+   *   an account whose returned identity metadata (`brand`, `operator`,
+   *   `operator_unit`, `currency`, `timezone`, `sandbox`) disagrees with the
+   *   supplied natural key is refused with `ACCOUNT_NOT_FOUND`.
+   *
+   * When `false` (default), both cases log a deprecation warning — once per
+   * server for the unresolved pass-through, and a `logger.warn` per identity
+   * mismatch — and keep the SDK 14.0 behavior. Outside `NODE_ENV=production`
+   * the warning is also emitted through `process.emitWarning`. Configure a
+   * reference-aware `resolveAccount` that returns `null` for unknown or
+   * unauthorized references, then set this flag. See
+   * `docs/guides/account-resolution.md`.
+   */
+  strictAccountReferences?: boolean;
+
+  /**
    * Resolve an account when the wire request doesn't carry one.
    *
    * For tools whose request schema lacks an `account` field
@@ -5077,6 +5101,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     defaultAdcpVersion: configuredDefaultAdcpVersion,
     mcpToolProfile = 'auto',
     requireCompactMutationAccountScope = false,
+    strictAccountReferences = false,
     resolveAccount,
     resolveAccountFromAuth,
     resolveSessionKey,
@@ -5187,6 +5212,30 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     process.emitWarning(message, { type: 'AdcpServerConfigWarning', code: 'ADCP_BRIDGE_NO_RESOLVER' });
     logger.warn(message);
   }
+
+  // Compatibility window for raw handler-bag sellers without a reference-aware
+  // `resolveAccount`: a supplied `account` still reaches the handler
+  // unverified, as in SDK 14.0. Warn once per server; `strictAccountReferences`
+  // (default in the next major) refuses it instead.
+  let unresolvedAccountReferenceWarned = false;
+  const warnUnresolvedAccountReference = (toolName: string): void => {
+    if (unresolvedAccountReferenceWarned) return;
+    unresolvedAccountReferenceWarned = true;
+    const message =
+      `[adcp/createAdcpServer] DEPRECATED: ${toolName} received a buyer-supplied account reference, but no ` +
+      'resolveAccount is configured. The reference reached the handler unverified (ctx.account is undefined). ' +
+      'The next major release refuses it with ACCOUNT_NOT_FOUND. Configure a reference-aware resolveAccount ' +
+      'that returns null for unknown or unauthorized references, then set strictAccountReferences: true. ' +
+      'See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/account-resolution.md';
+    logger.warn(message, { tool: toolName, code: 'ADCP_UNRESOLVED_ACCOUNT_REFERENCE' });
+    if (process.env.NODE_ENV !== 'production') {
+      try {
+        process.emitWarning(message, { type: 'DeprecationWarning', code: 'ADCP_UNRESOLVED_ACCOUNT_REFERENCE' });
+      } catch {
+        // `--throw-deprecation` must not turn a compatibility warning into a request failure.
+      }
+    }
+  };
 
   // Pre-resolve credential-policy patterns once. The patterns config is
   // a stable property of `CredentialPolicyConfig`; pulling it out here
@@ -6791,6 +6840,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         }
 
         // --- Account resolution ---
+        let unresolvedAccountPassThrough = false;
         if (hasAccount && toolName !== 'list_accounts' && params.account != null && resolveAccount) {
           try {
             const account = await resolveAccount(
@@ -6840,16 +6890,22 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             );
           }
         } else if (hasAccount && toolName !== 'list_accounts' && params.account != null) {
-          // The rc.7 discovery request may select an account. An auth-derived
-          // resolver cannot authorize an arbitrary buyer-supplied reference.
-          return finalize(
-            adcpError('ACCOUNT_NOT_FOUND', {
-              message: 'The specified account cannot be resolved',
-              field: 'account',
-              suggestion:
-                'The seller must configure resolveAccount to authorize supplied references; use list_accounts to discover an authorized account',
-            })
-          );
+          // An auth-derived resolver cannot authorize an arbitrary
+          // buyer-supplied reference. The rc.7 `list_creative_formats`
+          // selector has always been refused; other tools keep the SDK 14.0
+          // pass-through unless the seller opts in to strict references.
+          if (strictAccountReferences || toolName === 'list_creative_formats') {
+            return finalize(
+              adcpError('ACCOUNT_NOT_FOUND', {
+                message: 'The specified account cannot be resolved',
+                field: 'account',
+                suggestion:
+                  'The seller must configure resolveAccount to authorize supplied references; use list_accounts to discover an authorized account',
+              })
+            );
+          }
+          warnUnresolvedAccountReference(toolName);
+          unresolvedAccountPassThrough = true;
         } else if ((!hasAccount || params.account == null || toolName === 'list_accounts') && resolveAccountFromAuth) {
           // Auth-derived path for tools without a supplied `account` field
           // (provide_performance_feedback, list_creative_formats, the
@@ -6905,7 +6961,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         if (
           (toolName === 'get_products' || toolName === 'list_products') &&
           capConfig?.account?.requiredForProducts &&
-          ctx.account == null
+          ctx.account == null &&
+          // A supplied reference the compatibility pass-through handed to the
+          // handler satisfies the seller's declared requirement.
+          !unresolvedAccountPassThrough
         ) {
           return finalize(
             adcpError('ACCOUNT_REQUIRED', {
@@ -8790,7 +8849,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     ['get_products', 'get_signals', 'request_proposals', 'create_media_buy'].some(tool => registeredToolNames.has(tool))
   ) {
     logger.warn(
-      'Account-carrying tools are registered without resolveAccount. Supplied references will fail with ACCOUNT_NOT_FOUND.'
+      strictAccountReferences
+        ? 'Account-carrying tools are registered without resolveAccount. Supplied references will fail with ACCOUNT_NOT_FOUND.'
+        : 'Account-carrying tools are registered without resolveAccount. Supplied references reach handlers unverified; ' +
+            'this is deprecated and they will fail with ACCOUNT_NOT_FOUND in the next major release. ' +
+            'Configure a reference-aware resolveAccount and set strictAccountReferences: true.'
     );
   }
 
