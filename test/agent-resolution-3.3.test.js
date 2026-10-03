@@ -9,6 +9,7 @@ const {
   resolveAgent,
   ResolvedAgentJwksResolver,
   BrandJsonJwksResolver,
+  BrandJsonResolverError,
   AgentResolverError,
   createWebhookVerifier,
   StaticJwksResolver,
@@ -384,6 +385,23 @@ describe('capability-bound discovery and cache freshness', () => {
 });
 
 describe('3.x webhook legacy discovery', () => {
+  it('preserves standalone legacy webhook discovery by default and allows opting out', async () => {
+    stage();
+    routes['/.well-known/brand.json'] = routes['/operator.json'];
+    const options = {
+      agentType: 'sales',
+      allowPrivateIp: true,
+      fetchCapabilities: async () => ({ webhook_signing: { supported: true } }),
+    };
+    const url = `${origin}/.well-known/brand.json`;
+    const result = await new BrandJsonJwksResolver(url, options).resolveWithMetadata(publicKey.kid);
+    assert.equal(result.jwk.kid, publicKey.kid);
+    assert.equal(result.legacyWebhookFallback, true);
+    await assert.rejects(
+      () => new BrandJsonJwksResolver(url, { ...options, legacyWebhookFallback: false }).resolve(publicKey.kid),
+      error => error.code === 'request_signature_brand_json_url_missing'
+    );
+  });
   it('uses the agent-host record when the capability field is absent', async () => {
     stage();
     routes['/.well-known/brand.json'] = routes['/operator.json'];
@@ -492,6 +510,8 @@ describe('webhook publisher pins', () => {
       [wrongKey],
       [],
       [{ ...publicKey, revoked_at: new Date((vector.reference_now - 1) * 1000).toISOString() }],
+      [publicKey, { ...publicKey, kid: 'alias', revoked_at: new Date(vector.reference_now * 1000).toISOString() }],
+      [publicKey, { ...publicKey, revoked_at: 'invalid' }],
     ]) {
       const publisher = pin(signingKeys);
       await assert.rejects(() => verifier(new StaticJwksResolver([publicKey]), [publisher])(vector.request), unknown);
@@ -670,6 +690,97 @@ describe('governance relying-party collection', () => {
         buyer({ agents: [entry, { ...entry, url: 'https://GOVERNANCE.example:443/mcp' }] })
       )
     );
+  });
+});
+
+describe('governance default JWKS freshness and retry limits', () => {
+  function resolver(options) {
+    const issuer = `${origin}/governance`;
+    return createGovernanceAgentJwksResolver(issuer, {
+      brandJson: { agents: [{ type: 'governance', url: issuer, jwks_uri: `${origin}/keys.json` }] },
+      brandDomain: 'buyer.example',
+      jwksOptions: { allowPrivateIp: true, ...options },
+    });
+  }
+  it('throttles sequential cold failures even with a configured zero cooldown', async () => {
+    let clock = 1000;
+    const jwks = resolver({ now: () => clock, minCooldownSeconds: 0 });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await assert.rejects(() => jwks.resolve(publicKey.kid));
+    }
+    assert.equal(hits.length, 1);
+    clock += 29;
+    await assert.rejects(() => jwks.resolve(publicKey.kid));
+    assert.equal(hits.length, 1);
+    clock++;
+    await assert.rejects(() => jwks.resolve(publicKey.kid));
+    assert.equal(hits.length, 2);
+  });
+  it('throttles failed unknown-key refreshes from their last attempt', async () => {
+    let clock = 1000;
+    stage();
+    const jwks = resolver({ now: () => clock, minCooldownSeconds: 0 });
+    await jwks.resolve(publicKey.kid);
+    clock += 30;
+    delete routes['/keys.json'];
+    await assert.rejects(() => jwks.resolve('rotated'));
+    assert.equal(await jwks.resolve('rotated-again'), null);
+    clock += 29;
+    assert.equal(await jwks.resolve('another-miss'), null);
+    assert.equal(hits.length, 2);
+    clock++;
+    await assert.rejects(() => jwks.resolve('rotated'));
+    assert.equal(hits.length, 3);
+  });
+  it('refreshes at the exact expiry boundary and refuses a removed key', async () => {
+    let clock = 1000;
+    stage();
+    routes['/keys.json'].headers['cache-control'] = 'max-age=0';
+    const jwks = resolver({ now: () => clock });
+    assert.equal((await jwks.resolve(publicKey.kid)).kid, publicKey.kid);
+    routes['/keys.json'].body.keys = [];
+    clock += 59;
+    assert.equal((await jwks.resolve(publicKey.kid)).kid, publicKey.kid);
+    assert.equal(hits.length, 1);
+    clock++;
+    assert.equal(await jwks.resolve(publicKey.kid), null);
+    assert.equal(hits.length, 2);
+  });
+  it('never serves expired keys during failed-refresh cooldowns', async () => {
+    let clock = 1000;
+    stage();
+    const jwks = resolver({ now: () => clock, maxAgeSeconds: 60 });
+    await jwks.resolve(publicKey.kid);
+    delete routes['/keys.json'];
+    clock += 60;
+    await assert.rejects(() => jwks.resolve(publicKey.kid));
+    await assert.rejects(() => jwks.resolve(publicKey.kid), /expired/);
+    assert.equal(hits.length, 2);
+  });
+  it('rejects invalid cache and cooldown options before network access', () => {
+    for (const maxAgeSeconds of [NaN, Infinity, -1, 0]) {
+      assert.throws(() => resolver({ maxAgeSeconds }), TypeError);
+    }
+    for (const minCooldownSeconds of [NaN, Infinity, -1]) {
+      assert.throws(() => resolver({ minCooldownSeconds }), TypeError);
+    }
+    assert.equal(hits.length, 0);
+  });
+});
+
+describe('webhook discovery retry classification', () => {
+  it('distinguishes permanent onboarding errors from transient fetch failures', async () => {
+    for (const code of ['agent_ambiguous', 'agent_not_found', 'invalid_house', 'fetch_failed']) {
+      const jwks = {
+        resolve: async () => {
+          throw new BrandJsonResolverError(code, 'Discovery failed');
+        },
+      };
+      await assert.rejects(
+        () => verifier(jwks, [])(vector.request),
+        error => unknown(error) && error.retryable === (code === 'fetch_failed')
+      );
+    }
   });
 });
 

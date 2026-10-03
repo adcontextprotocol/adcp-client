@@ -33,11 +33,7 @@ async function refreshPin(publisher: PublisherSigningKeyPin, now: () => number):
     (existing.inFlight || checkedAt - existing.attemptedAt < 30) &&
     existing.inputPins !== JSON.stringify(publisher.signingKeys)
   ) {
-    throw new AgentResolverError(
-      'request_signature_key_unknown',
-      'Publisher pin changed during the refresh cooldown',
-      {}
-    );
+    throw new Error('Publisher pin changed during the refresh cooldown');
   }
   if (existing?.inFlight) return existing.inFlight;
   if (existing && checkedAt - existing.attemptedAt < 30) {
@@ -47,8 +43,7 @@ async function refreshPin(publisher: PublisherSigningKeyPin, now: () => number):
   const state: RefreshState = { attemptedAt: checkedAt, inputPins: JSON.stringify(publisher.signingKeys) };
   if (states.size >= 512) {
     const evictable = [...states].find(([, candidate]) => !candidate.inFlight);
-    if (!evictable)
-      throw new AgentResolverError('request_signature_key_unknown', 'Publisher refresh capacity exceeded', {});
+    if (!evictable) throw new Error('Publisher refresh capacity exceeded');
     states.delete(evictable[0]);
   }
   states.set(publisher.publisher, state);
@@ -96,10 +91,11 @@ async function matchingValidity(
     if (pin.revoked_at === undefined) validity.push(Infinity);
     else if (typeof pin.revoked_at === 'string') {
       const revoked = Date.parse(pin.revoked_at) / 1000;
-      if (Number.isFinite(revoked)) validity.push(revoked);
-    }
+      validity.push(Number.isFinite(revoked) ? revoked : -Infinity);
+    } else validity.push(-Infinity);
   }
-  return validity;
+  // Repeating a public key must not undo an earlier revocation of that key.
+  return validity.length ? [Math.min(...validity)] : [];
 }
 
 async function matches(keyThumbprint: string, pins: readonly Record<string, unknown>[] | undefined, now: () => number) {

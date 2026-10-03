@@ -32,9 +32,18 @@ the final operator collections or capability discovery.
 Explicit capability URLs allow no HTTP or document-indirection redirects. The
 webhook-only fallback allows the bounded host/www HTTP policy and one document
 indirection. Request verification rejects keys discovered through that fallback.
-`SingleAgentClient` enables the fallback by default for its webhook resolver;
+`SingleAgentClient` and `BrandJsonJwksResolver` enable the fallback by default for webhooks;
 set `webhookVerification.resolverOptions.legacyWebhookFallback` to `false` to
-disable it. Standalone resolvers require explicitly enabling it.
+disable it. Set `legacyWebhookFallback: false` on a standalone brand resolver to disable it.
+`ResolvedAgentJwksResolver` requires explicitly enabling the fallback for webhook use.
+Wrappers shared with request verification must forward `resolveWithMetadata`
+so the verifier can refuse webhook-only fallback keys.
+
+Capabilities discovery defaults to MCP. A2A integrations using
+`BrandJsonJwksResolver` must set `protocol: 'a2a'`; the onboarding record does
+not determine the transport. Existing cross-domain onboarding records must
+agree with the agent's capabilities-selected operator record. A legacy
+webhook without `brand_json_url` must use the agent-origin well-known record.
 
 Expired operator mappings fail closed. Successful operator records have a
 30-second minimum polling interval, including `no-cache` records, with their
@@ -43,6 +52,10 @@ and the configured local cap. Capabilities are re-confirmed on every refresh.
 A local cap shorter than the discovery cooldown can temporarily reject
 verification rather than reuse an expired mapping. Negative discovery results
 are throttled for at most 60 seconds.
+`maxAgeSeconds` must be positive; zero cannot provide a usable verified mapping
+with the protocol discovery cooldown. Public `forceRefresh()` is an
+operator-triggered cache flush and bypasses normal resolved-key cooldowns;
+failed onboarding attempts retain their 30-second cooldown.
 
 Canonical identity normalization preserves path slashes, query order, trailing
 empty queries and scheme distinctions. Update principal indexes that previously

@@ -57,8 +57,9 @@ export class BrandJsonResolverError extends Error {
 export interface BrandJsonJwksResolverOptions {
   /** Expected agent URL. Prefer supplying it; legacy configurations infer one onboarding URL, then confirm it through capabilities and canonical matching. */
   agentUrl?: string;
+  /** Capabilities transport. Defaults to MCP; A2A integrations must set 'a2a'. */
   protocol?: AgentProtocol;
-  /** Enable the 3.x webhook-only domain-derived fallback. Default false. */
+  /** Enable the 3.x webhook-only domain-derived fallback. Default true. Request verification refuses these keys. */
   legacyWebhookFallback?: boolean;
   fetchCapabilities?: FetchCapabilitiesFn;
   /** Functional role of the agent whose keys we want to resolve. */
@@ -127,7 +128,7 @@ export class BrandJsonJwksResolver implements JwksResolver {
       agentId: options.agentId,
       expectedBrandJsonUrl: operatorUrl,
       fetchCapabilities: options.fetchCapabilities,
-      legacyWebhookFallback: options.legacyWebhookFallback,
+      legacyWebhookFallback: options.legacyWebhookFallback ?? true,
       allowPrivateIp: options.allowPrivateIp,
       lookup: options.lookup,
       now: options.now,
@@ -196,7 +197,13 @@ function inferOnboardingAgentUrl(document: unknown, selector: BrandJsonJwksResol
               (selector.agentId === undefined || entry.id === selector.agentId) &&
               typeof entry.url === 'string'
           )
-          .map(entry => canonicalAgentUrl(entry.url));
+          .flatMap(entry => {
+            try {
+              return [canonicalAgentUrl(entry.url)];
+            } catch {
+              return [];
+            }
+          });
   let urls: string[];
   if (isPortfolioHouse(record.house)) {
     const house = record.house as Record<string, unknown>;

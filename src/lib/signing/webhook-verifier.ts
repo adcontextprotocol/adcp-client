@@ -27,12 +27,19 @@ import { buildSignatureBase, canonicalTargetUri, getHeaderValue } from './canoni
 import { contentDigestMatches } from './content-digest';
 import { RequestSignatureError, WebhookSignatureError, RequestSigningErrorCodeMetadata } from './errors';
 import { AgentResolverError } from './agent-resolver/errors';
+import { BrandJsonResolverError } from './brand-jwks';
 import { parseSignature, parseSignatureInput, type ParsedSignatureInput } from './parser';
 import { jwkToPublicKey, verifySignature } from './crypto';
 import type { JwksResolution, JwksResolver } from './jwks';
 import { assertPublisherPins, type PublisherSigningKeyPin } from './publisher-pins';
 import { InMemoryReplayStore, type ReplayStore } from './replay';
 import { InMemoryRevocationStore, type RevocationStore } from './revocation';
+
+function keyDiscoveryRetryable(error: unknown): boolean {
+  if (error instanceof AgentResolverError) return RequestSigningErrorCodeMetadata[error.code].recovery === 'transient';
+  if (error instanceof BrandJsonResolverError) return error.code === 'fetch_failed';
+  return true;
+}
 import { ALLOWED_ALGS, CLOCK_SKEW_TOLERANCE_SECONDS, MAX_SIGNATURE_WINDOW_SECONDS } from './types';
 
 export const WEBHOOK_SIGNING_TAG = 'adcp/webhook-signing/v1';
@@ -191,7 +198,7 @@ export async function verifyWebhookSignature(
       7,
       'Signing key discovery or publisher pin check failed.',
       undefined,
-      !(error instanceof AgentResolverError) || RequestSigningErrorCodeMetadata[error.code].recovery === 'transient'
+      keyDiscoveryRetryable(error)
     );
   }
   const jwk = keyResolution.jwk;
@@ -340,7 +347,7 @@ export async function verifyWebhookSignature(
         7,
         'Signing key is outside the applicable publisher pins.',
         undefined,
-        !(error instanceof AgentResolverError) || RequestSigningErrorCodeMetadata[error.code].recovery === 'transient'
+        keyDiscoveryRetryable(error)
       );
     }
   }

@@ -244,9 +244,18 @@ export function createGovernanceAgentJwksResolver(issuer: string, buyer: Governa
   }
   let resolver = cache.get(key);
   if (!resolver) {
+    const maxAge = buyer.jwksOptions?.maxAgeSeconds ?? 1800;
+    const minCooldown = buyer.jwksOptions?.minCooldownSeconds ?? 30;
+    if (!Number.isFinite(maxAge) || maxAge <= 0) {
+      throw new TypeError('Governance maxAgeSeconds must be a finite positive number');
+    }
+    if (!Number.isFinite(minCooldown) || minCooldown < 0) {
+      throw new TypeError('Governance minCooldownSeconds must be a finite non-negative number');
+    }
     resolver = new HttpsJwksResolver(uri, {
       ...buyer.jwksOptions,
-      maxAgeSeconds: Math.min(buyer.jwksOptions?.maxAgeSeconds ?? 1800, 1800),
+      maxAgeSeconds: Math.min(maxAge, 1800),
+      minCooldownSeconds: Math.max(minCooldown, 30),
       minCacheAgeSeconds: 60,
       failClosed: true,
     });
