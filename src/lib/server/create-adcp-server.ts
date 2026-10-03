@@ -1193,6 +1193,11 @@ export interface ProtocolHandlers<TAccount = unknown> {
 export interface AccountHandlers<TAccount = unknown> {
   listAccountChanges?: DomainHandler<'list_account_changes', TAccount>;
   listAccounts?: DomainHandler<'list_accounts', TAccount>;
+  /**
+   * Synchronous results must contain one row per dispatched entry in input
+   * order. With schema validation enabled, the framework may withhold invalid
+   * notification entries and merge their failures back into the response.
+   */
   syncAccounts?: DomainHandler<'sync_accounts', TAccount>;
   syncGovernance?: DomainHandler<'sync_governance', TAccount>;
   getAccountFinancials?: DomainHandler<'get_account_financials', TAccount>;
@@ -3104,17 +3109,13 @@ function shallowToolInputHintSchema(toolName: string): AnySchema | undefined {
   return schema;
 }
 
+/** Only notification event enums have this per-account rejection contract. */
 function isAccountNotificationEventIssue(issue: ValidationIssue): boolean {
   return (
     issue.keyword === 'enum' && /^\/accounts\/\d+\/notification_configs\/\d+\/event_types\/\d+$/.test(issue.pointer)
   );
 }
 
-/**
- * Account notification event enums have an explicit per-account rejection
- * contract. Only this field's enum failures bypass request-level rejection;
- * all other schema constraints still run before any handler side effects.
- */
 function rejectedSyncAccountRow(entry: Record<string, unknown>): Record<string, unknown> {
   const identity =
     entry.account !== undefined
@@ -3124,7 +3125,14 @@ function rejectedSyncAccountRow(entry: Record<string, unknown>): Record<string, 
             .filter(key => entry[key] !== undefined)
             .map(key => [key, entry[key]])
         );
-  return { ...identity, action: 'failed', status: 'rejected', errors: [] };
+  return {
+    ...identity,
+    action: 'failed',
+    // Provisioning was declined. A failed settings update does not establish
+    // the existing account's lifecycle state, so leave that status unknown.
+    ...(entry.account === undefined && { status: 'rejected' }),
+    errors: [],
+  };
 }
 
 function accountNotificationFailureRows(
@@ -6688,14 +6696,28 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               const eventIssues = issues.filter(isAccountNotificationEventIssue);
               // Do not construct account identities from otherwise malformed
               // entries. Strict mode rejects the remaining issues below;
-              // warn mode retains its existing handler-owned behavior.
+              // warn mode passes those malformed requests to the handler.
+              // Sole event-type failures become account rows in either mode.
               if (eventIssues.length > 0 && eventIssues.length === issues.length) {
-                notificationFailureRows = accountNotificationFailureRows(
+                const failedRows = accountNotificationFailureRows(
                   params.accounts,
                   eventIssues,
                   params.delete_missing === true
                 );
-                issues = [];
+                // Older releases require brand/operator on failed rows and
+                // cannot represent an opaque settings-update account reference.
+                // Keep request-level validation when the negotiated response
+                // cannot express these failures, before any sibling can commit.
+                if (
+                  validateResponse(
+                    'sync_accounts',
+                    { accounts: [...failedRows.values()] },
+                    requestRelease.validationVersion
+                  ).valid
+                ) {
+                  notificationFailureRows = failedRows;
+                  issues = [];
+                }
               }
             }
             if (issues.length > 0) {
@@ -7348,18 +7370,45 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             // Adopters may return cached or frozen formatted responses. The
             // JSON mirror update below must never modify handler-owned data.
             formatted = cloneFormattedResponse(formatted);
-            const body = formatted.structuredContent;
+            const body = formatted.structuredContent!;
             const acceptedRows = body?.accounts;
-            if (!Array.isArray(acceptedRows) || acceptedRows.length !== handlerParams.accounts.length) {
-              throw new Error('sync_accounts handler must return one result row for each accepted account entry');
+            const submitted = isSubmittedEnvelope(body);
+            let accounts: Record<string, unknown>[];
+            if (submitted) {
+              if (acceptedRows !== undefined && !Array.isArray(acceptedRows)) {
+                throw new Error('sync_accounts submitted accounts must be an array when present');
+              }
+              // Report terminal validation failures in the acknowledgement.
+              // Accepted entries remain pending under the adopter's task_id;
+              // the framework does not own their eventual task completion.
+              accounts = [
+                ...(Array.isArray(acceptedRows) ? acceptedRows : []),
+                ...[...notificationFailureRows.entries()].sort(([a], [b]) => a - b).map(([, row]) => row),
+              ];
+            } else {
+              if (!Array.isArray(acceptedRows) || acceptedRows.length !== handlerParams.accounts.length) {
+                throw new Error('sync_accounts handler must return one result row for each accepted account entry');
+              }
+              let acceptedIndex = 0;
+              accounts = params.accounts.map(
+                (_entry: unknown, index: number) => notificationFailureRows.get(index) ?? acceptedRows[acceptedIndex++]
+              );
             }
-            let acceptedIndex = 0;
-            const accounts = params.accounts.map(
-              (_entry: unknown, index: number) => notificationFailureRows.get(index) ?? acceptedRows[acceptedIndex++]
-            );
-            const mirrorsStructuredContent = contentTextMirrorsStructuredContent(formatted, body!);
-            formatted = { ...formatted, structuredContent: wrap({ ...body, accounts }).structuredContent };
-            syncContentJsonText(formatted, formatted.structuredContent!, mirrorsStructuredContent);
+            const merged = { ...body, accounts };
+            if (isFormattedResponse(result)) {
+              const mirrorsStructuredContent = contentTextMirrorsStructuredContent(formatted, body);
+              formatted = { ...formatted, structuredContent: wrap(merged).structuredContent };
+              syncContentJsonText(formatted, formatted.structuredContent!, mirrorsStructuredContent);
+            } else {
+              const rejected = accounts.filter(row => row.action === 'failed').length;
+              const synced = accounts.length - rejected;
+              const summary = submitted
+                ? typeof body.message === 'string'
+                  ? body.message
+                  : `Task ${body.task_id} submitted`
+                : `Synced ${synced} account${synced === 1 ? '' : 's'}`;
+              formatted = wrap(merged, `${summary}; ${rejected} account${rejected === 1 ? '' : 's'} rejected`);
+            }
           }
 
           // --- Test-controller bridge: augment read-side tools with seeded fixtures. ---

@@ -85,7 +85,9 @@ function assertRejected(response, index = 0, field = 'notification_configs[0].ev
   assert.equal(body.adcp_error, undefined);
   const row = body.accounts[index];
   assert.equal(row.action, 'failed');
-  assert.equal(row.status, 'rejected');
+  if (row.account)
+    assert.equal(row.status, undefined, 'failed settings updates must not invent an account lifecycle state');
+  else assert.equal(row.status, 'rejected');
   assert.equal(row.errors[0].code, 'VALIDATION_ERROR');
   assert.equal(row.errors[0].field, field);
   assert.equal(row.notification_configs, undefined, 'rejected subscriptions must not be echoed');
@@ -218,6 +220,111 @@ test('mixed batches preserve preformatted protocol error arms', async t => {
   assert.equal(response.content[0].text, 'Roster sync refused');
 });
 
+test('submitted tasks report rejected accounts immediately while retaining queued task handles', async t => {
+  const accepted = entry(['product.updated'], 'valid');
+  const calls = [];
+  const { call } = fixture(t, {
+    validation: { requests: 'strict', responses: 'strict' },
+    accounts: {
+      syncAccounts: async params => {
+        calls.push(params.accounts);
+        return { status: 'submitted', task_id: 'queued-account-sync', message: 'Account sync queued' };
+      },
+    },
+  });
+  const response = await call(request([entry(), accepted]));
+  assert.equal(response.structuredContent.task_id, 'queued-account-sync');
+  assert.equal(response.structuredContent.status, 'submitted');
+  assert.equal(response.structuredContent.message, 'Account sync queued');
+  assertRejected(response);
+  assert.equal(response.structuredContent.accounts.length, 1);
+  assert.match(response.content[0].text, /1 account rejected/);
+  assert.deepEqual(calls, [[accepted]]);
+  const replay = await call(request([entry(), accepted]));
+  assert.equal(replay.structuredContent.task_id, 'queued-account-sync');
+  assert.equal(replay.structuredContent.status, 'submitted');
+  assert.equal(replay.structuredContent.replayed, true);
+  assert.deepEqual(replay.structuredContent.accounts, response.structuredContent.accounts);
+  assert.deepEqual(calls, [[accepted]]);
+});
+
+test('default text summaries surface account rejections for agent buyers', async t => {
+  for (const accounts of [[entry()], [entry(), entry(['product.updated'], 'valid')]]) {
+    await t.test(`${accounts.length} requested accounts`, async t => {
+      const { call } = fixture(t);
+      const response = await call(request(accounts));
+      assertRejected(response);
+      assert.match(response.content[0].text, /1 account rejected/);
+      assert.match(response.content[0].text, new RegExp(`Synced ${accounts.length - 1} account`));
+    });
+  }
+});
+
+test('submitted formatted responses preserve partial handler rows, resources, and JSON mirrors', async t => {
+  const accepted = entry(['product.updated'], 'valid');
+  const completedRow = { brand: accepted.brand, operator: accepted.operator, action: 'updated', status: 'active' };
+  const body = {
+    status: 'submitted',
+    task_id: 'partly-completed-account-sync',
+    accounts: [completedRow],
+  };
+  const resource = { type: 'resource_link', uri: 'https://buyer.example/sync-report', name: 'Sync report' };
+  const cached = {
+    structuredContent: body,
+    content: [{ type: 'text', text: JSON.stringify(body) }, resource],
+    _meta: { source: 'adopter' },
+  };
+  const snapshot = structuredClone(cached);
+  const { call } = fixture(t, { accounts: { syncAccounts: async () => cached } });
+  const response = await call(request([entry(), accepted, entry(['product.updated'], 'pending')]));
+  assert.equal(response.structuredContent.status, 'submitted');
+  assert.equal(response.structuredContent.task_id, body.task_id);
+  assert.deepEqual(response.structuredContent.accounts[0], completedRow);
+  assertRejected(response, 1);
+  assert.equal(response.structuredContent.accounts.length, 2);
+  assert.deepEqual(JSON.parse(response.content[0].text), response.structuredContent);
+  assert.deepEqual(response.content[1], resource);
+  assert.deepEqual(response._meta, cached._meta);
+  assert.deepEqual(cached, snapshot);
+});
+
+test('wrong handler row counts fence committed siblings instead of allowing re-execution', async t => {
+  let calls = 0;
+  const { call } = fixture(t, {
+    accounts: {
+      syncAccounts: async () => {
+        calls += 1;
+        return { accounts: [] };
+      },
+    },
+  });
+  const args = request([entry(), entry(['product.updated'], 'valid')]);
+  const response = await call(args);
+  assert.equal(response.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
+  assert.match(response.structuredContent.adcp_error.message, /reconcile/i);
+  const retry = await call(args);
+  assert.equal(retry.structuredContent.adcp_error.code, 'IDEMPOTENCY_IN_FLIGHT');
+  assert.equal(calls, 1);
+});
+
+test('submitted handlers cannot hide malformed account results behind synthetic failures', async t => {
+  let calls = 0;
+  const { call } = fixture(t, {
+    accounts: {
+      syncAccounts: async () => {
+        calls += 1;
+        return { status: 'submitted', task_id: 'malformed-account-sync', accounts: { invalid: true } };
+      },
+    },
+  });
+  const args = request([entry(), entry(['product.updated'], 'valid')]);
+  const response = await call(args);
+  assert.equal(response.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
+  const retry = await call(args);
+  assert.equal(retry.structuredContent.adcp_error.code, 'IDEMPOTENCY_IN_FLIGHT');
+  assert.equal(calls, 1);
+});
+
 test('merging into a cached frozen response keeps each request JSON mirror isolated', async t => {
   const valid = entry(['product.updated'], 'valid');
   const cached = syncAccountsResponse({
@@ -305,6 +412,61 @@ test('validation off on unforced dispatch retains handler-owned account validati
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].accounts, args.accounts);
   assert.equal(response.structuredContent.accounts[0].action, 'updated');
+});
+
+test('warn validation reports sole event-type failures per account and otherwise retains advisory dispatch', async t => {
+  const { call, calls } = fixture(t, { validation: { requests: 'warn', responses: 'strict' } });
+  const valid = entry(['product.updated'], 'valid');
+  const response = await call(request([entry(), valid]));
+  assertRejected(response);
+  assert.deepEqual(calls[0].accounts, [valid]);
+  const malformed = { ...entry(), billing: 'invalid' };
+  const advisory = await call(request([malformed], { idempotency_key: 'notification-event-scope-warn-malformed' }));
+  assert.equal(advisory.structuredContent.accounts[0].action, 'updated');
+  assert.deepEqual(calls[1].accounts, [malformed]);
+});
+
+test('legacy response schemas keep opaque failure identities on the strict request path before writes', async t => {
+  for (const deleteMissing of [false, true]) {
+    await t.test(`delete_missing: ${deleteMissing}`, async t => {
+      const { call, calls } = fixture(t, {
+        adcpVersion: '3.1.24',
+        validation: { requests: 'strict', responses: 'strict' },
+      });
+      const opaque = {
+        account: { account_id: 'legacy-existing' },
+        notification_configs: entry(['account.status_changed']).notification_configs,
+      };
+      // A replacement roster also refuses valid settings-update peers, so
+      // their failure identities must be checked before applying that policy.
+      const accounts = deleteMissing
+        ? [
+            entry(['account.status_changed']),
+            { ...opaque, notification_configs: entry(['product.updated']).notification_configs },
+          ]
+        : [opaque, entry(['product.updated'], 'valid')];
+      const response = await call(request(accounts, { adcp_version: '3.1', delete_missing: deleteMissing }));
+      assert.equal(response.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+      assert.deepEqual(calls, []);
+    });
+  }
+});
+
+test('legacy provisioning identities still produce schema-valid per-account event failures', async t => {
+  const { call, calls } = fixture(t, {
+    adcpVersion: '3.1.24',
+    validation: { requests: 'strict', responses: 'strict' },
+  });
+  const response = await call(
+    request([entry(['account.status_changed']), entry(['product.updated'], 'valid')], { adcp_version: '3.1' })
+  );
+  assert.notEqual(response.isError, true, JSON.stringify(response.structuredContent));
+  assert.equal(response.structuredContent.accounts[0].action, 'failed');
+  assert.equal(response.structuredContent.accounts[0].errors[0].field, 'notification_configs[0].event_types[0]');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].accounts.length, 1);
+  const outcome = validateResponse('sync_accounts', response.structuredContent, '3.1.24');
+  assert.equal(outcome.valid, true, JSON.stringify(outcome.issues));
 });
 
 for (const protocolVersion of ['2026-07-28', '2025-11-25']) {
