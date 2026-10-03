@@ -97,6 +97,15 @@ for (const code of ['ACCOUNT_NOT_FOUND', 'ACCOUNT_SETUP_REQUIRED', 'ACCOUNT_PAYM
     assert.equal(error.fault, 'buyer_setup');
   });
 }
+// Opts in to the memoized registry without changing the default-off request policy.
+function registryClient() {
+  const c = new SingleAgentClient(
+    { id: 'seller', name: 'Seller', agent_uri: 'https://seller.example/mcp', protocol: 'mcp' },
+    { accountRegistryScope: 'caller-a' }
+  );
+  c.getCapabilities = async () => ({ account: { requiredForProducts: false, supportedBilling: ['operator'] } });
+  return c;
+}
 function client(policy = 'off') {
   const c = new SingleAgentClient(
     { id: 'seller', name: 'Seller', agent_uri: 'https://seller.example/mcp', protocol: 'mcp' },
@@ -340,8 +349,8 @@ test('authoritative repair updates original aliases after restart and invalidate
   await restarted.applyStatusChange({ account_id: 'seller-id' });
   assert.equal((await restarted.get(account)).status, 'unknown');
 });
-test('plain resolveAccount calls share provisioning and preserve payment errors (#3093)', async () => {
-  const c = client();
+test('registry-backed resolveAccount calls share provisioning and preserve payment errors (#3093)', async () => {
+  const c = registryClient();
   let calls = 0;
   c.syncAccounts = async () => {
     calls++;
@@ -349,7 +358,7 @@ test('plain resolveAccount calls share provisioning and preserve payment errors 
   };
   await Promise.all([c.resolveAccount({ ...account }), c.resolveAccount({ ...account })]);
   assert.equal(calls, 1);
-  const held = client();
+  const held = registryClient();
   held.syncAccounts = async () => ({
     success: false,
     status: 'failed',
@@ -999,8 +1008,8 @@ test('pending legacy rows without a handle can be refreshed with identical setup
   assert.equal(calls, 2);
 });
 
-test('internal resolveAccount memoization does not opt default-off clients into unrelated roster tracking (#3093)', async () => {
-  const c = client();
+test('registry-backed resolveAccount does not opt default-off clients into unrelated roster tracking (#3093)', async () => {
+  const c = registryClient();
   c.syncAccounts = async () => provisionResult();
   await c.resolveAccount({ ...account });
   assert.equal(c.accountRegistryContext('list_accounts', {}).knownOnly, true);
@@ -1041,7 +1050,7 @@ for (const observation of ['list', 'sync']) {
 }
 
 test('default-off explicit sync refreshes known bindings without tracking unrelated accounts (#3093)', async () => {
-  const c = client();
+  const c = registryClient();
   c.syncAccounts = async () => provisionResult();
   await c.resolveAccount({ ...account });
   const unrelated = { ...account, brand: { domain: 'unrelated.example' } };
