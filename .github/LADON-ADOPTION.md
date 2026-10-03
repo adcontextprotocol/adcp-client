@@ -133,15 +133,25 @@ An escalation comment or an optional failed check does not enforce a merge hold.
    publication. **Do not merge #29 or move `ladon/review/v1` until all four
    human-reviewed external consumer pins have landed and the effective human gate is
    verified.** Keep consumer SHA pins after promotion.
-4. Keep [Version Packages #2912](https://github.com/adcontextprotocol/adcp-client/pull/2912)
-   quarantined Draft/auto-off. Its generated head advanced to
+4. The **2026-09-14 historical quarantine snapshot** held
+   [Version Packages #2912](https://github.com/adcontextprotocol/adcp-client/pull/2912)
+   Draft/auto-off. Its generated head advanced to
    `1be6b25e8083601f8bf08f1b701435181f33215f` on base
    `55829081dae2673f73615af2a4f6f029cddff813` after #2913 merged externally.
-   Coordinator evidence reports npm dist-tags still at rc.36 / latest 13.0.4,
+   Coordinator evidence at that time reported npm dist-tags at rc.36 / latest 13.0.4,
    with no new package published. Maintain a **global release/merge hold**
    until all four external consumer pins land and an authorized human configures and
    validates the actually required trusted human-approval gate. This work does
    not undo #2913's merge, authorize a release, or change either PR.
+
+The 2026-10-03 refresh supersedes that release snapshot: #2912 has merged,
+SDK 14.0.0 is published, and `latest`, `rc`, and `adcp-3.2` currently point to
+14.0.0. Release PR #3101 proposes 14.1.0. These observations do not establish
+human-only review enforcement or lift this adoption's coordinated policy hold.
+The refreshed code rejects policy-file rename evasion, incomplete inventories
+(including GitHub's 3,000-file cap), and head changes during inspection.
+Its 23 consumer regressions and 330 pinned upstream tests pass. Administrator
+enforcement and the five-consumer rollout remain separate prerequisites.
 
 Main snapshots are evidence at a point in time, not moving claims. The consumer
 bases were refreshed to adcp `1467e46117e8d329f4116e548e9290be75d8e3b3` and
