@@ -40,7 +40,7 @@ function collectInvocations(value, location, result = []) {
   return result;
 }
 
-function runGate(paths, failedApi = false) {
+function runGate(paths, failedApi = false, metadata = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'ladon-gate-'));
   const output = join(directory, 'output');
   try {
@@ -51,7 +51,7 @@ function runGate(paths, failedApi = false) {
         `gh() { ${
           failedApi
             ? 'return 1;'
-            : 'while [ "$#" -gt 0 ]; do case "$1" in --jq) shift; printf "%s" "$TEST_FILES" | jq -r "$1"; return ;; *) shift ;; esac; done; return 1;'
+            : 'local input="$TEST_PR"; for arg in "$@"; do case "$arg" in */files) input="$TEST_FILES" ;; esac; done; while [ "$#" -gt 0 ]; do case "$1" in --jq) shift; printf "%s" "$input" | jq -cr "$1"; return ;; *) shift ;; esac; done; printf "%s" "$input";'
         } }; ${gate.run}`,
       ],
       {
@@ -59,6 +59,8 @@ function runGate(paths, failedApi = false) {
         env: {
           ...process.env,
           TEST_FILES: JSON.stringify(paths.map(file => (typeof file === 'string' ? { filename: file } : file))),
+          TEST_PR: JSON.stringify({ changed_files: paths.length, head: { sha: 'current-head' }, ...metadata }),
+          EXPECTED_HEAD: 'current-head',
           PR_NUMBER: '1',
           REPO: 'adcontextprotocol/test',
           GITHUB_OUTPUT: output,
@@ -168,6 +170,18 @@ test('renaming an ordinary file into a protected policy path requires human revi
   const result = runGate([{ filename: '.github/LADON-ADOPTION.md', previous_filename: 'docs/ordinary.md' }]);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.output, /^modified=true$/m);
+});
+
+test('a partial GitHub file inventory cannot proceed to automated review', () => {
+  const result = runGate(['src/ordinary.ts'], false, { changed_files: 3001 });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout, /Incomplete PR file inventory/);
+});
+
+test('an obsolete PR head cannot proceed to automated review', () => {
+  const result = runGate(['src/ordinary.ts'], false, { head: { sha: 'replacement-head' } });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout, /PR head changed/);
 });
 
 test('ordinary source review proceeds only through the disabled invocation', () => {

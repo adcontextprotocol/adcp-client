@@ -64,9 +64,26 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          CHANGED="$(gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/files" --jq '.[] | (.filename, (.previous_filename // empty))')"
+          PR="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}")"
+          if [ "$(jq -r '.head.sha' <<< "$PR")" != "$EXPECTED_HEAD" ]; then
+            echo "::error::PR head changed before review-policy inspection."
+            exit 1
+          fi
+          FILES="$(gh api --paginate --slurp "repos/${REPO}/pulls/${PR_NUMBER}/files" --jq 'flatten')"
+          # GitHub caps this endpoint at 3,000 files. A partial inventory must
+          # never allow a protected policy path to bypass human review.
+          if [ "$(jq 'length' <<< "$FILES")" -ne "$(jq -r '.changed_files' <<< "$PR")" ]; then
+            echo "::error::Incomplete PR file inventory; human review is required."
+            exit 1
+          fi
+          if [ "$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.head.sha')" != "$EXPECTED_HEAD" ]; then
+            echo "::error::PR head changed during review-policy inspection."
+            exit 1
+          fi
+          CHANGED="$(jq -r '.[] | (.filename, (.previous_filename // empty))' <<< "$FILES")"
           MODIFIED=""
           while IFS= read -r f; do
             case "$f" in
