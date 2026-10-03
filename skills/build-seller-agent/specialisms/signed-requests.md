@@ -33,7 +33,9 @@ const platform = definePlatform({
     pricingModels: ['cpm'] as const,
   },
   accounts: { resolve: async (ref, ctx) => /* ... */ null },
-  sales: defineSalesCorePlatform({ /* handlers */ }),
+  sales: defineSalesCorePlatform({
+    /* handlers */
+  }),
 });
 
 createAdcpServerFromPlatform(platform, {
@@ -89,6 +91,14 @@ const revocationStore = new InMemoryRevocationStore({
 ```bash
 npx tsx agent.ts &
 npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp signed_requests --json
+
+# Dev loop: skip the cap+1 flood, and any vector your deployment can't satisfy
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp signed_requests \
+  --signing-skip-rate-abuse --signing-skip-vectors 007-missing-content-digest --json
 ```
 
 Every negative vector must return the exact `expected_outcome.error_code` in `WWW-Authenticate: Signature error="<code>"`. A non-claiming agent is not graded against this specialism.
+
+Grade every binding you expose. MCP vectors are framed as `tools/call` envelopes, REST vectors use `--signing-transport raw`, and A2A vectors sign the exact request emitted by the official `@a2a-js/sdk` client after Agent Card discovery. An unresolved or unsupported A2A card reports `COVERAGE UNAVAILABLE` and keeps the track `partial`; once discovery succeeds, verifier failures are real and must not be waived with `--soft-fail`. Only `025-jwk-alg-crv-mismatch` grades the SDK verifier rather than your agent because it publishes a malformed JWK you never serve.
+
+Two vectors are excluded on their own terms rather than by transport, on every protocol: `026-non-ascii-host` (`transport_ungradable` — `fetch` punycodes a non-ASCII authority before the request leaves, so no HTTP client can carry it) and `028-unsigned-protocol-method-required` (`capability_profile_mismatch` unless your capabilities declare `request_signing.protocol_methods_required_for`, e.g. `['tasks/cancel']` — that one field is read on its own, so a minimal `{ supported: true }` block gates it the same way a fully populated one does). Declare that bucket if you verify signatures on JSON-RPC protocol methods; otherwise the vector is legitimately out of scope for you.

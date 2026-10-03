@@ -1,5 +1,5 @@
 import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
-import { createHmac } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 
 export type TransportActivityType = 'request_started' | 'response_received' | 'request_failed';
 
@@ -16,6 +16,8 @@ export interface TransportActivityContext {
 
 export interface TransportActivity {
   type: TransportActivityType;
+  /** Correlates one request_started event with its response/failure event. */
+  transportRequestId: string;
   agentId: string;
   protocol: 'mcp' | 'a2a';
   tool?: string;
@@ -49,6 +51,10 @@ interface TransportDiagnosticsSlot extends TransportActivityContext {
 }
 
 const BODY_SNIPPET_LIMIT = 64 * 1024;
+/** Maximum time diagnostics may spend waiting for a response-body preview. */
+export const BODY_SNIPPET_TIMEOUT_MS = 1_000;
+/** Maximum time a request waits for asynchronous diagnostics observers to flush. */
+export const OBSERVER_FLUSH_TIMEOUT_MS = 5_000;
 const REDACTED = '[redacted]';
 
 const SAFE_HEADER_NAMES = new Set([
@@ -97,7 +103,7 @@ export function withTransportDiagnostics<T>(
     try {
       return await fn();
     } finally {
-      await Promise.allSettled(slot.pending);
+      await settleWithin(Promise.allSettled(slot.pending), OBSERVER_FLUSH_TIMEOUT_MS);
     }
   });
 }
@@ -132,9 +138,11 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
   const wrapped: typeof fetch = async (input, init) => {
     const slot = transportDiagnosticsStorage.getStore();
     if (!slot?.onTransportActivity) return upstream(input, init);
+    const handler = slot.onTransportActivity;
 
     const startedAtMs = Date.now();
     const startedAt = new Date(startedAtMs).toISOString();
+    const transportRequestId = randomUUID();
     const method = getMethod(input, init);
     const url = sanitizeTransportUrl(getUrl(input));
     const requestHeaders = sanitizeTransportHeaders(mergeRequestHeaders(input, init));
@@ -142,6 +150,7 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
     const baseEvent = {
       agentId: slot.agentId,
       protocol: slot.protocol,
+      transportRequestId,
       ...(slot.tool && { tool: slot.tool, taskType: slot.taskType ?? slot.tool }),
       ...(slot.operationId && { operationId: slot.operationId }),
       ...(slot.taskId && { taskId: slot.taskId }),
@@ -157,7 +166,7 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
       startedAt,
     };
 
-    emitTransportActivity(slot.onTransportActivity, {
+    emitTransportActivity(handler, {
       type: 'request_started',
       ...baseEvent,
       timestamp: startedAt,
@@ -167,8 +176,7 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
       const response = await upstream(input, init);
       const durationMs = Date.now() - startedAtMs;
       const responseHeaders = sanitizeResponseHeaders(response.headers);
-      const responseBody = await responseBodySnippet(response);
-      emitTransportActivity(slot.onTransportActivity, {
+      const responseEvent = {
         type: 'response_received',
         ...baseEvent,
         timestamp: new Date().toISOString(),
@@ -176,14 +184,43 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
         httpStatus: response.status,
         statusText: response.statusText,
         responseHeaders,
-        ...(responseBody && {
-          responseBody: responseBody.body,
-          responseBodyTruncated: responseBody.truncated,
-        }),
-      });
+      } as const;
+      const responseBody = responseBodySnippet(response);
+      if (!responseBody) {
+        // Non-text bodies, SSE, bodies without a finite declared size, and
+        // bodies declared over the capture limit are never cloned. An absent
+        // body is complete; a present but uncaptured body is truncated.
+        emitTransportActivity(
+          handler,
+          response.body
+            ? {
+                ...responseEvent,
+                responseBodyTruncated: true,
+              }
+            : responseEvent
+        );
+      } else {
+        // Body capture is fire-and-forget. The response_received event fires
+        // when capture completes, which may be after the diagnostics scope exits.
+        void responseBody.then(
+          captured => {
+            return emitTransportActivity(handler, {
+              ...responseEvent,
+              ...(captured && { responseBody: captured.body }),
+              responseBodyTruncated: captured?.truncated ?? true,
+            });
+          },
+          () => {
+            return emitTransportActivity(handler, {
+              ...responseEvent,
+              responseBodyTruncated: true,
+            });
+          }
+        );
+      }
       return response;
     } catch (error) {
-      emitTransportActivity(slot.onTransportActivity, {
+      emitTransportActivity(handler, {
         type: 'request_failed',
         ...baseEvent,
         timestamp: new Date().toISOString(),
@@ -197,7 +234,7 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
   return wrapped;
 }
 
-function emitTransportActivity(handler: TransportActivityHandler, event: TransportActivity): void {
+function emitTransportActivity(handler: TransportActivityHandler, event: TransportActivity): Promise<void> | undefined {
   try {
     const slot = transportDiagnosticsStorage.getStore();
     const frozen = Object.freeze(structuredClone(event));
@@ -208,8 +245,10 @@ function emitTransportActivity(handler: TransportActivityHandler, event: Transpo
         () => {}
       );
     slot?.pending.push(pending);
+    return pending;
   } catch {
     // Observability hooks must not change protocol behavior.
+    return undefined;
   }
 }
 
@@ -237,12 +276,25 @@ function sanitizeResponseHeaders(headers: Headers): Record<string, string> {
 
 function headerEntries(headers: HeadersInit | undefined): Array<[string, string]> {
   if (!headers) return [];
-  if (headers instanceof Headers) {
+  if (Array.isArray(headers)) return headers.map(([key, value]) => [key, String(value)]);
+
+  // Headers objects are not required to share the global constructor. In
+  // particular, callers can return an undici Response whose Headers instance
+  // comes from a different package version than Node's built-in fetch. Use the
+  // web-platform iteration surface instead of a realm-sensitive instanceof
+  // check so diagnostics retain correlation metadata across those boundaries.
+  const forEach = (headers as { forEach?: unknown }).forEach;
+  if (typeof forEach === 'function') {
     const entries: Array<[string, string]> = [];
-    headers.forEach((value, key) => entries.push([key, value]));
-    return entries;
+    try {
+      forEach.call(headers, (value: unknown, key: unknown) => entries.push([String(key), String(value)]));
+      return entries;
+    } catch {
+      // Diagnostics must not change request behavior when a non-standard
+      // Headers-like object exposes a throwing iterator. Fall through to the
+      // record representation, which is also how plain HeadersInit is handled.
+    }
   }
-  if (Array.isArray(headers)) return headers.map(([key, value]) => [key, value]);
   return Object.entries(headers).map(([key, value]) => [key, String(value)]);
 }
 
@@ -270,14 +322,66 @@ function bodySnippet(body: BodyInit | null | undefined): { body: string; truncat
   return undefined;
 }
 
-async function responseBodySnippet(response: Response): Promise<{ body: string; truncated: boolean } | undefined> {
+function responseBodySnippet(
+  response: Response
+): Promise<{ body: string; truncated: boolean } | undefined> | undefined {
   const contentType = response.headers.get('content-type') ?? '';
   if (!isDiagnosticTextContentType(contentType)) return undefined;
+  const declaredLength = parseDiagnosticContentLength(response.headers.get('content-length'));
+  if (declaredLength === undefined || declaredLength > BODY_SNIPPET_LIMIT) return undefined;
+
+  let diagnosticResponse: Response;
   try {
-    const { text, truncated } = await readResponseTextBounded(response.clone(), BODY_SNIPPET_LIMIT);
-    return { body: redactSensitiveJsonOrText(text), truncated };
+    diagnosticResponse = response.clone();
   } catch {
     return undefined;
+  }
+
+  return (async () => {
+    try {
+      const captureAbort = new AbortController();
+      const captured = await settleWithin(
+        readResponseTextBounded(diagnosticResponse, BODY_SNIPPET_LIMIT, captureAbort.signal),
+        BODY_SNIPPET_TIMEOUT_MS,
+        () => captureAbort.abort()
+      );
+      if (captured === undefined) return undefined;
+      const { text, truncated } = captured;
+      return { body: redactSensitiveJsonOrText(text), truncated };
+    } catch {
+      return undefined;
+    }
+  })();
+}
+
+/**
+ * Parse an explicit finite decimal length when one is available. Missing or
+ * invalid lengths disable response-body capture.
+ */
+function parseDiagnosticContentLength(value: string | null): number | undefined {
+  if (value === null || !/^(0|[1-9][0-9]*)$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
+async function settleWithin<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  onTimeout?: () => void
+): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<undefined>(resolve => {
+        timer = setTimeout(() => {
+          onTimeout?.();
+          resolve(undefined);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -287,7 +391,7 @@ function sanitizeBodyText(text: string, limit: number): { body: string; truncate
   return { body: redactSensitiveJsonOrText(bounded), truncated };
 }
 
-function redactSensitiveJsonOrText(text: string): string {
+export function redactSensitiveJsonOrText(text: string): string {
   try {
     return JSON.stringify(redactSensitiveValue(JSON.parse(text)));
   } catch {
@@ -342,7 +446,8 @@ function isDiagnosticTextContentType(contentType: string): boolean {
 
 async function readResponseTextBounded(
   response: Response,
-  limit: number
+  limit: number,
+  signal?: AbortSignal
 ): Promise<{ text: string; truncated: boolean }> {
   if (!response.body) {
     const text = await response.text();
@@ -353,6 +458,14 @@ async function readResponseTextBounded(
   const decoder = new TextDecoder();
   let text = '';
   let truncated = false;
+  const cancel = () => {
+    // This reader owns only the cloned diagnostics branch. Do not await tee
+    // cancellation because the caller may not consume the original until the
+    // wrapper returns.
+    void reader.cancel().catch(() => {});
+  };
+  signal?.addEventListener('abort', cancel, { once: true });
+  if (signal?.aborted) cancel();
 
   try {
     while (text.length <= limit) {
@@ -373,6 +486,7 @@ async function readResponseTextBounded(
     }
     if (!truncated) text += decoder.decode();
   } finally {
+    signal?.removeEventListener('abort', cancel);
     reader.releaseLock();
   }
 

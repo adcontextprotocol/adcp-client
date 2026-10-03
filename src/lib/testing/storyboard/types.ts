@@ -9,6 +9,7 @@
 import type { AgentProfile, TestOptions } from '../types';
 import type { BuyerAgent, BuyerAgentBillingMode, BuyerAgentStatus } from '../../server/decisioning/buyer-agent';
 import type { WebhookConformanceSigningOptions } from '../../conformance/types';
+import type { AcceptancePolicyRegistryResolver } from '../../acceptance-policy';
 
 // ────────────────────────────────────────────────────────────
 // Parsed storyboard structure (mirrors YAML schema)
@@ -33,7 +34,7 @@ export interface Storyboard {
   version: string;
   /**
    * AdCP compliance cache version this storyboard was loaded from, e.g.
-   * "3.0.12" or "3.1.0-beta.7". Injected by the local cache loader; not
+   * "3.1.24" or "3.2.1". Injected by the local cache loader; not
    * authored in storyboard YAML.
    */
   adcp_version?: string;
@@ -151,6 +152,9 @@ export interface Storyboard {
    * `{ skipped: true, skip_reason: 'capability_unsupported' }` storyboard
    * result instead of running phases — avoiding misleading per-phase failures
    * when the storyboard tests behavior the agent explicitly opted out of.
+   * In routed runs, the predicate applies to `default_agent` when supplied;
+   * it is not rechecked against agents that only perform other routed steps.
+   * Without a default agent, each step uses its selected route's profile.
    *
    * `path` is a dotted key path into the raw `get_adcp_capabilities` response
    * (e.g. `"adcp.idempotency.supported"`).
@@ -186,11 +190,15 @@ export interface Storyboard {
    *   response schema declares a default for that exact path and the parent
    *   capability object is present. Like `present:`, absence is otherwise the
    *   load-bearing signal — a seller that doesn't advertise the array hasn't
-   *   opted into the variant this storyboard tests.
+   *   opted into the variant this storyboard tests. For
+   *   `adcp.governance_enforcement.tasks`, an entry matches when its task is
+   *   equal and its declared modes include every mode in the predicate;
+   *   sellers combine all modes for a task in one entry.
    *
    * - `not_contains: V` — negative array-membership matcher. The value at
-   *   `path` MUST be an array and MUST NOT include `V` (structural JSON equality, no
-   *   coercion). This is useful for rejection scenarios that apply only when
+   *   `path` MUST be an array and MUST NOT include `V` (structural JSON equality,
+   *   except governance task-mode predicates match a subset; no coercion).
+   *   This is useful for rejection scenarios that apply only when
    *   an advertised allowlist omits a value. Missing and non-array values do
    *   not satisfy the predicate; a separate discovery validation should grade
    *   a required capability declaration. Schema defaults are materialized on
@@ -242,6 +250,10 @@ export interface Storyboard {
      * + adcontextprotocol/adcp#2584 (seed_* scenarios). Opts-out per run via
      * `StoryboardRunOptions.skip_controller_seeding` (for agents that seed via
      * tests or HTTP admin rather than the MCP controller).
+     * In routed runs, each fixture uses the agent selected for its owning
+     * public tool (for example, products use `get_products`, plans use
+     * `sync_plans`). A step-level `agent` for that tool disambiguates its route;
+     * otherwise normal specialism routing and `default_agent` apply.
      */
     controller_seeding?: boolean;
   };
@@ -975,6 +987,21 @@ export type StoryboardValidationCheck =
   | 'http_status'
   | 'http_status_in'
   | 'on_401_require_header'
+  /**
+   * Assert that the step's probe reported no grading error, without asserting
+   * anything about an HTTP exchange. For probes whose verdict is decided
+   * in-library rather than on the wire — the `jwks_override` request-signing
+   * negatives, which mutate a JWK the agent under test never publishes and so
+   * are graded against the SDK verifier at `http_status: 0` — this is the only
+   * honest assertion: synthesizing a 401 from a library boolean would claim a
+   * wire exchange that never happened (RFC 9421 §3; adcp-client#2955).
+   *
+   * Passes when the probe result carries no `error`; fails with the probe's
+   * own diagnostic otherwise. Like the `http_status` family it requires a
+   * probe result, so authoring it on an ordinary task step fails the step
+   * rather than passing vacuously.
+   */
+  | 'probe_passed'
   // Cross-cutting
   | 'resource_equals_agent_url'
   | 'oauth_metadata_graph'
@@ -1498,6 +1525,45 @@ export type WebhookAssertionErrorCode =
 export const WEBHOOK_IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_.:-]{16,255}$/;
 
 /**
+ * Runner-native sentinel task for the MCP session auth probe
+ * (adcp-client#2940).
+ *
+ * `$test_kit.auth.probe_task` normally resolves to an advertised entry of
+ * `PROBE_TASK_ALLOWLIST`. When MCP discovery succeeds but the agent advertises
+ * none of them, `selectProbeTask` resolves to this sentinel instead of
+ * `undefined` — but only on an explicit `protocol: 'mcp'`. The runner then
+ * drives a complete MCP session lifecycle: `initialize` →
+ * `notifications/initialized` → `tools/call` against a canonical AdCP
+ * protected read the agent advertises, then `DELETE` to terminate the session.
+ *
+ * The graded call is `tools/call`, not MCP discovery: `tools/list` is not an
+ * AdCP protected task (`get_adcp_capabilities` is mandatory-public), so it can
+ * never be evidence about this agent's authentication. Grading a real
+ * protected operation — rather than stopping at the handshake — is also what
+ * makes the verdict independent of whether the agent enforces auth at the
+ * session boundary or per operation.
+ *
+ * The target is drawn from the canonical AdCP tool registries, excludes the
+ * public tier and mutating tasks, and must declare no required request field.
+ * The runner still cannot guarantee an agent accepts an empty-argument call:
+ * the next candidate is tried, and if every one refuses the shape the step
+ * reports *inconclusive* on its response rather than an auth result. When the
+ * agent advertises no eligible target at all, the step is skipped
+ * `session_probe_ungradable` instead.
+ *
+ * What the probe can establish is bounded: that the endpoint accepts a
+ * credential the *runner was configured with* and refuses the states it was
+ * told to refuse, **at the tool it graded**. It is evidence that the auth
+ * mechanism is enforced, not proof that every tool enforces it. It does not
+ * verify any cryptographic property of that credential, and does not prove
+ * which issuer minted it.
+ *
+ * Deliberately **not** a member of `PROBE_TASK_ALLOWLIST`: operators cannot
+ * select it via `test_kit.auth.probe_task`, only the runner can resolve to it.
+ */
+export const MCP_SESSION_PROBE_TASK = 'mcp_session_probe';
+
+/**
  * Raw HTTP probe result for tasks like `protected_resource_metadata` that
  * bypass the MCP transport. Carried through the runner alongside
  * `TaskResult` so validations like `http_status` and `on_401_require_header`
@@ -1512,6 +1578,18 @@ export interface HttpProbeResult {
   body: unknown;
   /** Optional error — set when the fetch failed (network, SSRF guard, etc.). */
   error?: string;
+  /**
+   * The probe could not complete for a reason the runner owns — a transport
+   * or precondition failure (MCP initialize, DNS, an unreadable fixture
+   * cache), as opposed to a verdict the probe reached.
+   *
+   * Needed because both shapes report `status: 0` with `error` set: an
+   * in-library request-signing grade that failed is a real verdict about the
+   * agent's expected behavior, while a failed MCP handshake says only that
+   * the run never got far enough to ask. Coverage reporting has to tell an
+   * operator which of the two happened, and the remedies are opposites.
+   */
+  probe_error?: boolean;
   /**
    * Probe was intentionally skipped (e.g. operator opted out of a vector,
    * capability profile mismatch, or test-kit contract not in scope). When
@@ -1641,6 +1719,24 @@ export interface StoryboardRunOptions extends TestOptions {
   /** Compliance cache root for bundle-scoped fixtures and test vectors. */
   complianceDir?: string;
   /**
+   * Operator controls for the remote integrity checks performed by the
+   * `media_buy_seller/acceptance_policy_discovery` storyboard.
+   *
+   * Resolution is enabled by default and uses the public registry without
+   * ambient credentials. Supply a scoped resolver for a private/staging
+   * registry, or set `enabled: false` for an intentionally in-band-only run.
+   */
+  acceptancePolicyDiscovery?: {
+    enabled?: boolean;
+    registryResolver?: AcceptancePolicyRegistryResolver;
+  };
+  /** @internal Test-only seams for deterministic acceptance-policy runner coverage. */
+  _acceptancePolicyDiscoveryDependencies?: {
+    resolveCatalog?: typeof import('../../acceptance-policy').resolveAcceptancePolicyCatalog;
+    resolveProfiles?: typeof import('../../acceptance-policy').resolveVerifiedAcceptancePolicyProfiles;
+    now?: () => number;
+  };
+  /**
    * Pre-discovered agent profile to reuse instead of repeating capability
    * discovery. When `agentTools` is omitted, the runner derives it from
    * `profile.tools` so storyboard-level `required_tools` and step-level
@@ -1648,8 +1744,8 @@ export interface StoryboardRunOptions extends TestOptions {
    *
    * Reuse a profile only for the same agent URL, authentication, AdCP version,
    * and route that produced it. Route-specific profiles are not interchangeable.
-   * In an `agents` run this value supplies only the run-level/default-agent
-   * gating context; each routed agent is still discovered independently.
+   * Ignored in an `agents` run: each routed agent is discovered independently,
+   * and its profile governs the steps selected for that agent.
    * Profile reuse does not retain or reuse a client or transport connection.
    *
    * `AgentProfile` does not carry the server's exact wire version. Pass
@@ -1685,7 +1781,11 @@ export interface StoryboardRunOptions extends TestOptions {
   contributions?: string[];
   /** Override the step's sample_request with a custom request */
   request?: Record<string, unknown>;
-  /** Agent's available tools for storyboard/step-level tool gates. */
+  /**
+   * Agent's available tools for storyboard/step-level tool gates. Ignored when
+   * `agents` is supplied: routed discovery determines applicability and each
+   * selected agent's tool list controls its execution gates.
+   */
   agentTools?: string[];
   /**
    * Allow plain-http agent URLs during compliance runs and permit guarded
@@ -1742,17 +1842,26 @@ export interface StoryboardRunOptions extends TestOptions {
      *     operation AdCP endpoint (e.g. `<baseUrl>/create_media_buy`).
      *     Works for agents that expose AdCP tools as discrete HTTP
      *     operations.
-     *   - `mcp` (default) — wraps each vector body in a JSON-RPC `tools/call`
+     *   - `mcp` — wraps each vector body in a JSON-RPC `tools/call`
      *     envelope and POSTs to the agent's single `/mcp` mount. Required
      *     for MCP-only agents that don't expose per-operation endpoints.
      *     The operation name is derived from the last path segment of the
      *     vector's target URL.
      *
-     * Matches the `adcp grade request-signing --transport <mode>` CLI flag.
-     * Agents that only speak MCP JSON-RPC can't grade under `raw`; use
-     * `mcp` to let the runner round-trip every vector through `tools/call`.
+     * Defaults to the run's resolved protocol: MCP wraps each vector in a
+     * `tools/call` envelope; A2A captures and signs the exact request emitted
+     * by the official `@a2a-js/sdk` client after Agent Card discovery. If an
+     * A2A card cannot resolve to a supported JSON-RPC interface, networked
+     * vectors fail closed as `signing_transport_unavailable`. Setting this
+     * field explicitly overrides inference; on an A2A run, use an override
+     * only when the agent's MCP or REST binding answers at the same URL.
+     *
+     * Matches the `adcp grade request-signing --transport <mode>` CLI flag,
+     * and `adcp storyboard run --signing-transport <mode>`. Agents that only
+     * speak MCP JSON-RPC can't grade under `raw`; use `mcp` to let the runner
+     * round-trip every vector through `tools/call`.
      */
-    transport?: 'raw' | 'mcp';
+    transport?: 'raw' | 'mcp' | 'a2a';
     /**
      * Pre-provisioned MCP session ID to attach as `Mcp-Session-Id` on every
      * vector probe after signing. When `transport` is `'mcp'` and this is
@@ -1795,6 +1904,12 @@ export interface StoryboardRunOptions extends TestOptions {
    * (`StoryboardStep.task`) is resolved to the agent that claims its
    * specialism via `TASK_FEATURE_MAP` × per-agent `get_adcp_capabilities`.
    * An optional explicit `StoryboardStep.agent` override takes precedence.
+   * Discovered tools across the map determine storyboard-level any-of
+   * applicability. Each dispatched step uses its selected agent's tools
+   * and profile; run-level `agentTools` cannot override routed discovery.
+   * Per-entry authentication and transport override caller-supplied run
+   * defaults. Other run options, including headers and request signing,
+   * remain shared defaults across the map.
    *
    * Mutually exclusive with `multi_instance_strategy` (which is replica
    * round-robin, a different concept) and with the legacy `_client`
@@ -1818,7 +1933,7 @@ export interface StoryboardRunOptions extends TestOptions {
   agents?: Record<string, AgentEntry>;
   /**
    * Fallback agent key (must be present in `agents`) for tasks with no entry
-   * in `TASK_FEATURE_MAP` — e.g., `comply_test_controller`, future tasks
+   * in `TASK_FEATURE_MAP` — e.g., `sync_creatives`, future tasks
    * shipped before the SDK adds them to the map. When omitted, unmapped
    * tasks fail-fast with `unroutable_task`.
    */
@@ -1846,6 +1961,14 @@ export interface StoryboardRunOptions extends TestOptions {
    * runs have no roster to be resilient about.
    */
   discovery_resilient?: boolean;
+  /**
+   * Pre-discovered routed-agent profiles. Internal CLI seam used by the
+   * capability-driven routed assessment so selection and execution share the
+   * same capability snapshot instead of probing every tenant twice.
+   *
+   * @internal
+   */
+  _routingProfiles?: Map<string, import('../types').AgentProfile>;
   /**
    * Host an ephemeral webhook receiver during the run so `expect_webhook*`
    * pseudo-steps can observe outbound webhooks from the agent under test.
@@ -2116,6 +2239,26 @@ export type RunnerDetailedSkipReason =
   | 'capability_profile_mismatch'
   /** Request-signing vector cannot be graded faithfully by the selected transport. */
   | 'transport_ungradable'
+  /**
+   * The run's protocol has no shape the request-signing vectors can be
+   * framed in, so the runner could not grade them at all — a runner-owned
+   * coverage gap, not a property of the agent.
+   *
+   * Canonicalizes to `not_applicable` with `skip.detail` set to this exact
+   * token, the shape `runner-output-contract.yaml` defines for a registered
+   * `canonical_detail_sub_reasons.not_applicable.*` sub-reason (see
+   * `rate_limit_not_triggered`, the shipped precedent). It deliberately does
+   * NOT use `fixture_unavailable`: that reason's contract text mandates a
+   * `creative_asset_fixture_unavailable:` detail prefix and says the
+   * storyboard grades `not_applicable` with no verdict movement, which is
+   * the opposite of what this gap must do.
+   *
+   * The gap is kept visible by coverage, not by the reason: `signingCoverage`
+   * in the runner decides the storyboard verdict, the track rollup, the
+   * report block and the CLI exit from whether any probe reached the agent.
+   * See that function for why a skip reason cannot carry that weight.
+   */
+  | 'signing_transport_unavailable'
   /** Request-signing grader's MCP-transport mode collapses URL-edge vectors (#617). */
   | 'mcp_mode_flattens_url_edges'
   /** RFC 9728 protected-resource metadata returned 404 → agent is not advertising OAuth, cascade-skip oauth_discovery (#677). */
@@ -2141,6 +2284,13 @@ export type RunnerDetailedSkipReason =
   | 'fixture_seed_unsupported'
   /** A valid fixture strategy ladder exhausted without finding a binding. */
   | 'fixture_unsatisfied'
+  /**
+   * The MCP session auth probe (`mcp_session_probe`) cannot grade this step:
+   * its authored validations assert an AdCP task response body that no MCP
+   * protocol operation produces. Distinct from the generic `probe_skipped` so
+   * human and JUnit output can surface the actionable detail (adcp-client#2940).
+   */
+  | 'session_probe_ungradable'
   /**
    * A root capability predicate on the storyboard evaluated to false —
    * the agent explicitly declared it does not support the capability this
@@ -2180,13 +2330,27 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   not_in_only_vectors: 'not_applicable',
   grader_skipped: 'not_applicable',
   capability_profile_mismatch: 'not_applicable',
+  // Scope note (adcp-client#2954): `transport_ungradable` marks vectors the
+  // grader's own TRANSPORT_UNGRADABLE table carves out on every run because
+  // no HTTP client can put those bytes on the wire — `026-non-ascii-host`
+  // for any storyboard-synthesized run, plus a profile-3.2 entry the
+  // storyboard never synthesizes. It stays `not_applicable`: those vectors
+  // are inapplicable to every binding, and the other ~38 still verify the
+  // agent.
+  //
+  // `signing_transport_unavailable` is also `not_applicable` at the canonical
+  // layer, but for the contract-shape reason documented on the enum member
+  // above — not because the gap is tolerable. Its weight is carried by
+  // `signingCoverage`, which asks whether any vector reached the agent.
   transport_ungradable: 'not_applicable',
+  signing_transport_unavailable: 'not_applicable',
   mcp_mode_flattens_url_edges: 'not_applicable',
   oauth_not_advertised: 'not_applicable',
   rate_limit_not_triggered: 'not_applicable',
   force_scenario_unsupported: 'not_applicable',
   fixture_seed_unsupported: 'not_applicable',
   fixture_unsatisfied: 'not_applicable',
+  session_probe_ungradable: 'not_applicable',
   capability_unsupported: 'not_applicable',
   capability_prerequisite_unavailable: 'not_applicable',
   rate_abuse_opt_out: 'unsatisfied_contract',

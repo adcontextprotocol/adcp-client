@@ -28,6 +28,7 @@
  */
 
 import type { AccountReference, BrandReference } from '../types/tools.generated';
+import { accountReferenceKey } from '../core/account-key';
 import type {
   Account,
   AccountStore,
@@ -70,11 +71,7 @@ export function defaultImplicitKeyFn(authInfo: ResolvedAuthInfo): string | undef
 // (brand, operator, sandbox) tuple so upsert() can return 'unchanged'
 // without calling buildAccount again (which may be non-deterministic).
 function refNaturalKey(ref: AccountReference): string {
-  const r = ref as Record<string, unknown>;
-  const domain = (r['brand'] as Record<string, unknown> | undefined)?.['domain'] as string | undefined;
-  const operator = r['operator'] as string | undefined;
-  const sandbox = Boolean(r['sandbox'] as boolean | undefined);
-  return `${domain ?? ''}|${operator ?? ''}|${sandbox ? '1' : '0'}`;
+  return accountReferenceKey(ref);
 }
 
 // ---------------------------------------------------------------------------
@@ -112,8 +109,10 @@ export interface ImplicitAccountStoreOptions<TCtxMeta = Record<string, unknown>>
 
   /**
    * Sync-linkage TTL in milliseconds. Entries stored by `upsert()` expire
-   * after this duration; `resolve()` returns `null` (→ `ACCOUNT_NOT_FOUND`)
-   * for expired entries, prompting the buyer to call `sync_accounts` again.
+   * after this duration; `resolve()` returns `null`. A request that omitted
+   * account then gets `ACCOUNT_REQUIRED`, prompting the buyer to call
+   * `sync_accounts` again; a supplied unresolved reference remains
+   * `ACCOUNT_NOT_FOUND`.
    *
    * **Default:** `86_400_000` (24 hours). Align with your platform's session
    * or token lifetime; longer TTLs risk serving stale account state.
@@ -123,6 +122,8 @@ export interface ImplicitAccountStoreOptions<TCtxMeta = Record<string, unknown>>
    * itself is valid before a fresh `sync_accounts` is required.
    */
   ttlMs?: number;
+  /** Additive sync batches. Default false preserves historical replace-as-revocation behavior. */
+  mergeOnUpsert?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +151,9 @@ function defaultBuildAccount<TCtxMeta>(
     ...(brand !== undefined && { brand }),
     ...(operator !== '' && { operator }),
     ...(sandbox && { sandbox: true }),
+    ...('operator_unit' in ref && { operator_unit: ref.operator_unit }),
+    ...('currency' in ref && { currency: ref.currency }),
+    ...('timezone' in ref && { timezone: ref.timezone }),
     ctx_metadata: {} as TCtxMeta & Record<string, unknown>,
   };
 }
@@ -162,6 +166,7 @@ interface StoredEntry<TCtxMeta> {
   accounts: Account<TCtxMeta>[];
   refs: AccountReference[];
   storedAt: number;
+  storedAtByKey: Map<string, number>;
 }
 
 /**
@@ -173,7 +178,7 @@ interface StoredEntry<TCtxMeta> {
  * 2. Buyer calls any tool (e.g. `create_media_buy`) without `ext.account_ref`
  *    → framework calls `resolve(undefined, ctx)` → store looks up by `authKey`.
  * 3. If no prior sync: `resolve()` returns `null` → framework emits
- *    `ACCOUNT_NOT_FOUND`. Do NOT return `AUTH_REQUIRED` — that signals
+ *    `ACCOUNT_REQUIRED`. Do NOT return `AUTH_REQUIRED` — that signals
  *    missing credentials, not a missing pre-sync.
  *
  * This class is intentionally minimal. Copy-and-adapt for durable stores
@@ -206,8 +211,10 @@ export class InMemoryImplicitAccountStore<TCtxMeta = Record<string, unknown>> im
   readonly resolution = 'implicit' as const;
 
   private _store = new Map<string, StoredEntry<TCtxMeta>>();
+  private _writes = new Map<string, Promise<void>>();
   private _keyFn: (authInfo: ResolvedAuthInfo) => string | undefined;
   private _ttlMs: number;
+  private _mergeOnUpsert: boolean;
   private _buildAccount: (
     ref: AccountReference,
     ctx?: ResolveContext
@@ -219,25 +226,23 @@ export class InMemoryImplicitAccountStore<TCtxMeta = Record<string, unknown>> im
       (defaultBuildAccount as unknown as (ref: AccountReference, ctx?: ResolveContext) => Account<TCtxMeta>);
     this._keyFn = options?.keyFn ?? defaultImplicitKeyFn;
     this._ttlMs = options?.ttlMs ?? 86_400_000;
+    this._mergeOnUpsert = options?.mergeOnUpsert ?? false;
   }
 
   /**
    * Resolve the caller's account from the auth-principal→account mapping
    * populated by a prior `sync_accounts` call.
    *
-   * Returns `null` (→ `ACCOUNT_NOT_FOUND`) when:
+   * Returns `null` (→ `ACCOUNT_REQUIRED` on an account-required operation
+   * whose request omitted account) when:
    * - No prior `sync_accounts` was called for this principal
    * - The stored entry has exceeded `ttlMs`
    * - `ctx.authInfo` is absent or carries no extractable key
    *
-   * **Multi-account note.** When a buyer synced multiple refs in one
-   * `sync_accounts` call, this implementation returns the _first_ stored
-   * account. If your platform requires per-request account disambiguation
-   * (e.g., different brands on the same buyer), switch to `'explicit'` mode
-   * so buyers pass `ext.account_ref` on each request, or override `keyFn`
-   * to encode the brand into the key.
+   * Supplied references match the complete stored natural key. An omitted
+   * reference retains the historical first-account selection.
    */
-  async resolve(_ref: AccountReference | undefined, ctx?: ResolveContext): Promise<Account<TCtxMeta> | null> {
+  async resolve(ref: AccountReference | undefined, ctx?: ResolveContext): Promise<Account<TCtxMeta> | null> {
     const authInfo = ctx?.authInfo;
     if (!authInfo) return null;
     const key = this._keyFn(authInfo);
@@ -248,7 +253,16 @@ export class InMemoryImplicitAccountStore<TCtxMeta = Record<string, unknown>> im
       this._store.delete(key);
       return null;
     }
-    return entry.accounts[0] ?? null;
+    if (ref === undefined)
+      return (
+        entry.accounts.find(
+          (_account, index) =>
+            Date.now() - (entry.storedAtByKey.get(refNaturalKey(entry.refs[index]!)) ?? entry.storedAt) <= this._ttlMs
+        ) ?? null
+      );
+    const index = entry.refs.findIndex(stored => refNaturalKey(stored) === refNaturalKey(ref));
+    if (Date.now() - (entry.storedAtByKey.get(refNaturalKey(ref)) ?? entry.storedAt) > this._ttlMs) return null;
+    return index < 0 ? null : (entry.accounts[index] ?? null);
   }
 
   /**
@@ -267,6 +281,25 @@ export class InMemoryImplicitAccountStore<TCtxMeta = Record<string, unknown>> im
    * reaching this method.
    */
   async upsert(refs: AccountReference[], ctx?: ResolveContext): Promise<SyncAccountsResultRow[]> {
+    const snapshot = structuredClone(refs);
+    return this.withPrincipalLock(ctx, () => this.upsertUnlocked(snapshot, ctx));
+  }
+
+  private withPrincipalLock<T>(ctx: ResolveContext | undefined, run: () => Promise<T>): Promise<T> {
+    const key = ctx?.authInfo ? this._keyFn(ctx.authInfo) : undefined;
+    if (key === undefined) return run();
+    const next = (this._writes.get(key) ?? Promise.resolve()).then(run);
+    const tail = next.then(
+      () => {},
+      () => {}
+    );
+    this._writes.set(key, tail);
+    return next.finally(() => {
+      if (this._writes.get(key) === tail) this._writes.delete(key);
+    });
+  }
+
+  private async upsertUnlocked(refs: AccountReference[], ctx?: ResolveContext): Promise<SyncAccountsResultRow[]> {
     const authInfo = ctx?.authInfo;
 
     // Derive the key before building any accounts. If the key cannot be
@@ -298,8 +331,13 @@ export class InMemoryImplicitAccountStore<TCtxMeta = Record<string, unknown>> im
     // detect re-syncs of the same (brand, operator, sandbox) tuple.
     const existing = this._store.get(key);
     const existingByNk = new Map<string, { account: Account<TCtxMeta>; ref: AccountReference }>();
-    if (existing) {
+    if (existing && Date.now() - existing.storedAt <= this._ttlMs) {
       for (let i = 0; i < existing.refs.length; i++) {
+        if (
+          Date.now() - (existing.storedAtByKey.get(refNaturalKey(existing.refs[i]!)) ?? existing.storedAt) >
+          this._ttlMs
+        )
+          continue;
         existingByNk.set(refNaturalKey(existing.refs[i]!), {
           account: existing.accounts[i]!,
           ref: existing.refs[i]!,
@@ -374,7 +412,19 @@ export class InMemoryImplicitAccountStore<TCtxMeta = Record<string, unknown>> im
     // (either 'unchanged' or 'created'). An all-fail batch leaves the prior
     // sync linkage intact so the buyer can retry without losing their mapping.
     if (newAccounts.length > 0) {
-      this._store.set(key, { accounts: newAccounts, refs: newRefs, storedAt: Date.now() });
+      const storedAt = Date.now();
+      const storedAtByKey = new Map(newRefs.map(ref => [refNaturalKey(ref), storedAt]));
+      if (this._mergeOnUpsert && ctx?.input?.delete_missing !== true) {
+        const syncedKeys = new Set(newRefs.map(refNaturalKey));
+        for (const [nk, hit] of existingByNk) {
+          if (!syncedKeys.has(nk)) {
+            newAccounts.push(hit.account);
+            newRefs.push(hit.ref);
+            storedAtByKey.set(nk, existing!.storedAtByKey.get(nk) ?? existing!.storedAt);
+          }
+        }
+      }
+      this._store.set(key, { accounts: newAccounts, refs: newRefs, storedAt, storedAtByKey });
     }
     return rows;
   }
@@ -382,6 +432,24 @@ export class InMemoryImplicitAccountStore<TCtxMeta = Record<string, unknown>> im
   // ---------------------------------------------------------------------------
   // Test helpers
   // ---------------------------------------------------------------------------
+
+  /** Revoke a single reference for this principal without clearing other brands. */
+  async remove(ref: AccountReference, ctx?: ResolveContext): Promise<void> {
+    return this.withPrincipalLock(ctx, () => this.removeUnlocked(ref, ctx));
+  }
+
+  private async removeUnlocked(ref: AccountReference, ctx?: ResolveContext): Promise<void> {
+    const key = ctx?.authInfo ? this._keyFn(ctx.authInfo) : undefined;
+    if (key === undefined) return;
+    const entry = this._store.get(key);
+    if (!entry) return;
+    const index = entry.refs.findIndex(stored => refNaturalKey(stored) === refNaturalKey(ref));
+    if (index < 0) return;
+    entry.refs.splice(index, 1);
+    entry.accounts.splice(index, 1);
+    entry.storedAtByKey.delete(refNaturalKey(ref));
+    if (!entry.accounts.length) this._store.delete(key);
+  }
 
   /** Remove all stored sync linkages. */
   clear(): void {

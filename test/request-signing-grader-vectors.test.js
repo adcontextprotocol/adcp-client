@@ -7,6 +7,8 @@ const {
   buildNegativeRequest,
   listSupportedNegativeVectors,
   gradeOneVector,
+  gradeRequestSigning,
+  synthesizeRequestSigningSteps,
 } = require('../dist/lib/testing/storyboard/request-signing/index.js');
 
 const {
@@ -16,6 +18,7 @@ const {
   jwkToPublicKey,
   buildSignatureBase,
   REQUEST_SIGNING_TAG,
+  computeContentDigest,
 } = require('../dist/lib/signing/index.js');
 
 const loaded = loadRequestSigningVectors();
@@ -24,8 +27,8 @@ describe('request-signing vector loader', () => {
   test('loads root vectors and exposes version profiles without changing the 3.1-compatible grader set', () => {
     assert.strictEqual(loaded.positive.length, 12, 'positive count');
     assert.strictEqual(loaded.negative.length, 28, 'negative count');
-    assert.strictEqual(loaded.profiles['3.2'].positive.length, 1, '3.2 positive profile count');
-    assert.strictEqual(loaded.profiles['3.2'].negative.length, 2, '3.2 negative profile count');
+    assert.strictEqual(loaded.profiles['3.2'].positive.length, 11, '3.2 positive profile count');
+    assert.strictEqual(loaded.profiles['3.2'].negative.length, 19, '3.2 negative profile count');
   });
 
   test('every vector carries request, verifier_capability, and a jwks selector', () => {
@@ -71,6 +74,132 @@ describe('request-signing vector loader', () => {
     for (const v of loaded.negative) {
       assert.ok(known.has(v.expected_error_code), `${v.id}: unknown code ${v.expected_error_code}`);
     }
+  });
+});
+
+describe('3.2 profile grading', () => {
+  const profilePositiveId = 'profile-3.2/positive/001-post-with-content-digest';
+  const profileNegativeId = 'profile-3.2/negative/002-multiple-trailing-dots';
+
+  test('batch grading selects profile vectors only when requested', async () => {
+    const base = { onlyVectors: [profileNegativeId], transport: 'raw' };
+    const root = await gradeRequestSigning('https://agent.example.invalid', base);
+    assert.ok(!root.negative.some(vector => vector.vector_id === profileNegativeId));
+
+    const profiled = await gradeRequestSigning('https://agent.example.invalid', {
+      ...base,
+      signingProfileVersion: '3.2',
+    });
+    assert.ok(profiled.positive.some(vector => vector.vector_id === profilePositiveId));
+    assert.ok(
+      [...profiled.positive, ...profiled.negative].every(vector => vector.vector_id.startsWith('profile-3.2/')),
+      'legacy root vectors cannot grade a 3.2 verifier'
+    );
+    assert.strictEqual(
+      profiled.negative.find(vector => vector.vector_id === profileNegativeId).skip_reason,
+      'transport_ungradable'
+    );
+  });
+
+  test('single-vector grading requires the profile gate', async () => {
+    await assert.rejects(() => gradeOneVector(profileNegativeId, 'negative', 'https://agent.example.invalid'));
+    const result = await gradeOneVector(profileNegativeId, 'negative', 'https://agent.example.invalid', {
+      signingProfileVersion: '3.2',
+    });
+    assert.strictEqual(result.skip_reason, 'transport_ungradable');
+  });
+
+  test('3.2 storyboard synthesis includes profile vector steps', () => {
+    const storyboard = {
+      id: 'signed_requests',
+      adcp_version: '3.2.1',
+      phases: [
+        { id: 'positive_vectors', steps: [] },
+        { id: 'negative_vectors', steps: [] },
+      ],
+    };
+    const result = synthesizeRequestSigningSteps(storyboard);
+    assert.ok(result.phases[0].steps.some(step => step.id === `positive-${profilePositiveId}`));
+    assert.ok(result.phases[1].steps.some(step => step.id === `negative-${profileNegativeId}`));
+    assert.ok(result.phases.flatMap(phase => phase.steps).every(step => step.id.includes('profile-3.2/')));
+  });
+
+  test('3.2 negative builders are registered and preserve required digest coverage', () => {
+    const suffixes = [
+      '002-wrong-tag',
+      '003-expired-signature',
+      '004-window-too-long',
+      '005-alg-not-allowed',
+      '006-missing-covered-component',
+      '007-missing-content-digest',
+      '008-unknown-keyid',
+      '009-key-ops-missing-verify',
+      '010-content-digest-mismatch',
+      '012-missing-expires-param',
+      '013-expires-le-created',
+      '014-missing-nonce-param',
+      '015-signature-invalid',
+      '016-replayed-nonce',
+      '017-key-revoked',
+      '020-rate-abuse',
+      '025-jwk-alg-crv-mismatch',
+    ];
+    const registered = new Set(listSupportedNegativeVectors());
+    for (const suffix of suffixes) assert.ok(registered.has(`profile-3.2/negative/${suffix}`), suffix);
+
+    const root006 = loaded.negative.find(vector => vector.id === '006-missing-covered-component');
+    const profile006 = {
+      ...root006,
+      id: 'profile-3.2/negative/006-missing-covered-component',
+      signing_profile_version: '3.2',
+      verifier_capability: { ...root006.verifier_capability, covers_content_digest: 'required' },
+      request: {
+        ...root006.request,
+        headers: {
+          ...root006.request.headers,
+          'Content-Digest': computeContentDigest(root006.request.body ?? '', 'rfc8941-base64'),
+        },
+      },
+    };
+    const signed006 = buildNegativeRequest(profile006, loaded.keys);
+    const components = parseSignatureInput(signed006.headers['Signature-Input']).components;
+    assert.ok(components.includes('content-digest'));
+    assert.ok(!components.includes('@authority'));
+    const mcpOptions = { transport: 'mcp', baseUrl: 'https://agent.example.com/mcp' };
+    const mcp006 = buildNegativeRequest(profile006, loaded.keys, mcpOptions);
+    assert.strictEqual(mcp006.headers['Content-Digest'], computeContentDigest(mcp006.body, 'rfc8941-base64'));
+
+    const root002 = loaded.negative.find(vector => vector.id === '002-wrong-tag');
+    const profile002 = {
+      ...root002,
+      id: 'profile-3.2/negative/002-wrong-tag',
+      signing_profile_version: '3.2',
+      verifier_capability: { ...root002.verifier_capability, covers_content_digest: 'required' },
+    };
+    const mcp002 = buildNegativeRequest(profile002, loaded.keys, mcpOptions);
+    assert.strictEqual(mcp002.headers['Content-Digest'], computeContentDigest(mcp002.body, 'rfc8941-base64'));
+    assert.ok(parseSignatureInput(mcp002.headers['Signature-Input']).components.includes('content-digest'));
+
+    const root010 = loaded.negative.find(vector => vector.id === '010-content-digest-mismatch');
+    const profile010 = {
+      ...root010,
+      id: 'profile-3.2/negative/010-content-digest-mismatch',
+      signing_profile_version: '3.2',
+      verifier_capability: { ...root010.verifier_capability, covers_content_digest: 'required' },
+    };
+    const mcp010 = buildNegativeRequest(profile010, loaded.keys, mcpOptions);
+    assert.notStrictEqual(mcp010.headers['Content-Digest'], computeContentDigest(mcp010.body, 'rfc8941-base64'));
+
+    const root015 = loaded.negative.find(vector => vector.id === '015-signature-invalid');
+    const profile015 = {
+      ...root015,
+      id: 'profile-3.2/negative/015-signature-invalid',
+      signing_profile_version: '3.2',
+      verifier_capability: { ...root015.verifier_capability, covers_content_digest: 'required' },
+    };
+    const signed015 = buildNegativeRequest(profile015, loaded.keys);
+    assert.ok(parseSignatureInput(signed015.headers['Signature-Input']).components.includes('content-digest'));
+    assert.ok(parseSignature(signed015.headers.Signature, 'sig1', 'rfc8941-base64').bytes.every(byte => byte === 0));
   });
 });
 

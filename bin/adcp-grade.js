@@ -37,13 +37,15 @@ Options:
                              neg/007 and neg/018 against an 'either' agent)
                              will FAIL instead of SKIP.
   --only <id[,id...]>        Run only the named vector ids
+  --signing-profile 3.2      Grade only authored 3.2 profile vectors
   --allow-live-side-effects  Opt in to vectors 016/020 against non-sandbox
                              endpoints (USE WITH CARE — creates real orders)
   --allow-http               Allow http:// URLs + private-IP targets (dev loops)
   --transport <mode>         \`mcp\` (default) wraps each vector body in a
                              JSON-RPC tools/call envelope and posts to the
                              agent's MCP mount (see #612); \`raw\` posts to
-                             per-operation AdCP endpoints (REST-binding agents).
+                             per-operation AdCP endpoints (REST-binding agents);
+                             \`a2a\` signs the official A2A client's request.
   --timeout <ms>             Per-probe timeout (default 10000)
   --json                     Emit the full GradeReport as JSON
   -h, --help                 Show this help
@@ -191,6 +193,15 @@ async function runRequestSigningGrader(args) {
       case '--only':
         options.onlyVectors = parseVectorList(args[++i], '--only');
         break;
+      case '--signing-profile': {
+        const profile = args[++i];
+        if (profile !== '3.2') {
+          console.error(`ERROR: --signing-profile must be "3.2", got "${profile}"\n`);
+          process.exit(2);
+        }
+        options.signingProfileVersion = profile;
+        break;
+      }
       case '--allow-live-side-effects':
         options.allowLiveSideEffects = true;
         break;
@@ -199,8 +210,8 @@ async function runRequestSigningGrader(args) {
         break;
       case '--transport': {
         const mode = args[++i];
-        if (mode !== 'raw' && mode !== 'mcp') {
-          console.error(`ERROR: --transport must be \"raw\" or \"mcp\", got \"${mode}\"\n`);
+        if (mode !== 'raw' && mode !== 'mcp' && mode !== 'a2a') {
+          console.error(`ERROR: --transport must be \"raw\", \"mcp\", or \"a2a\", got \"${mode}\"\n`);
           process.exit(2);
         }
         options.transport = mode;

@@ -199,6 +199,20 @@ export interface TaskOptions {
   /** Suppress automatic webhook URL generation for this call. */
   disableWebhook?: boolean;
   /**
+   * Opt a direct mutating A2A call into operation-routed pause recovery.
+   *
+   * `ownerScope` must identify the authenticated buyer principal and account
+   * in the host's authorization model. It is hashed together with the trusted
+   * seller binding and must be supplied again during recovery.
+   *
+   * Requires a `DeferredTaskStorage` implementation with the operation-route
+   * methods. The SDK returns a distinct, host-only recovery capability in
+   * `result.deferred.recovery` when the seller first pauses.
+   */
+  durableContinuationRecovery?: {
+    ownerScope: string;
+  };
+  /**
    * Trusted local authorization tuple for a delegated, cross-origin seller.
    * The SDK snapshots this before dispatch and persists it with any generated
    * webhook registration. It is never inferred from or sent in task arguments.
@@ -246,6 +260,19 @@ export interface TaskOptions {
    * @internal Do not set in production buyer code.
    */
   skipRequestValidation?: boolean;
+  /**
+   * INTERNAL — storyboard governance approval binds the exact downstream
+   * arguments. Keep that request unchanged by buyer compatibility shims and
+   * seller-schema field stripping after check_governance has approved it.
+   * Local request-schema and account-required checks are also bypassed so
+   * a seller can grade the approved wire payload, including invalid vectors.
+   * Principal identity and version safety checks still run.
+   * Canonical creative methods reject this option because their projections
+   * can reshape requests; the storyboard runner uses their raw counterparts.
+   *
+   * @internal Do not set in production buyer code.
+   */
+  preserveGovernedPayload?: boolean;
   /**
    * Transport-level safeguards for this call. Overrides the matching field
    * on the client constructor's `transport` option. Use to lift or tighten
@@ -337,6 +364,22 @@ export interface DeferredContinuation<T> {
   question?: string;
   /** Resume the same seller task with user input or after refreshing auth. */
   resume: (input: any) => Promise<TaskResult<T>>;
+  /**
+   * Stable operation route and host-only recovery capability. Present only
+   * when the call opted into durable operation-routed recovery. Persist this
+   * once; never expose `recoveryKey` to the seller or a human approver.
+   */
+  recovery?: {
+    operationId: string;
+    recoveryKey: string;
+  };
+}
+
+/** Authenticated owner input for direct pause route recovery. */
+export interface DirectPauseRecoveryRequest {
+  operationId: string;
+  recoveryKey: string;
+  ownerScope: string;
 }
 
 /**

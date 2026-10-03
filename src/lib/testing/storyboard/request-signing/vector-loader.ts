@@ -18,6 +18,23 @@ export interface LoadedVectors {
   sourceDir: string;
 }
 
+/** A selected signing profile uses only its authored fixtures and wire encoding. */
+export function selectRequestSigningVectors(
+  loaded: LoadedVectors,
+  signingProfileVersion?: '3.2'
+): Pick<LoadedVectors, 'positive' | 'negative'> {
+  const profile = signingProfileVersion ? loaded.profiles[signingProfileVersion] : undefined;
+  if (!signingProfileVersion) return { positive: loaded.positive, negative: loaded.negative };
+  if (!profile)
+    throw new Error(`Request-signing profile ${signingProfileVersion} is unavailable in ${loaded.sourceDir}`);
+  return profile;
+}
+
+export function signingProfileForAdcpVersion(version?: string): '3.2' | undefined {
+  const match = /^(\d+)\.(\d+)/.exec(version ?? '');
+  return match && Number(match[1]) === 3 && Number(match[2]) === 2 ? '3.2' : undefined;
+}
+
 const ERROR_CODES: ReadonlySet<string> = new Set([
   'request_signature_required',
   'request_signature_header_malformed',

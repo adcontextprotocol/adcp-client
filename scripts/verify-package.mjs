@@ -140,8 +140,10 @@ try {
   const requiredGuides = [
     'package/docs/migration-12-to-14.md',
     'package/docs/migration-13-to-14.md',
+    'package/docs/migration-14.x-rc-worksheet.md',
     'package/docs/migration-12-to-13.md',
     'package/docs/guides/PROPOSAL-TERMS-VERIFICATION.md',
+    'package/docs/guides/EXISTING-PLATFORM.md',
     'package/MIGRATION-v8.md',
   ];
   for (const guide of requiredGuides) {
@@ -231,6 +233,18 @@ try {
   );
   console.log('  starter initializes without source-tree access or invented inventory');
 
+  console.log('🧩 Existing-platform smoke executes from the installed tarball:');
+  run(
+    path.join(REPO_ROOT, 'node_modules', '.bin', 'tsx'),
+    [path.join(tmpDir, 'node_modules', '@adcp', 'sdk', 'examples', 'existing-platform-thin.ts')],
+    {
+      cwd: tmpDir,
+      stdio: 'inherit',
+      env: { ...process.env, ADCP_EXAMPLE_CHECK: '1' },
+    }
+  );
+  console.log('  scoped evidence and submitted-task recovery pass without provider credentials');
+
   console.log('🏗️  Packed CLI scaffolds a clean, compilable PostgreSQL seller:');
   const scaffoldDir = path.join(tmpDir, 'packed-seller');
   run(
@@ -270,7 +284,8 @@ try {
     { specifier: '@adcp/sdk/signing/server', symbol: 'resolveAgent' },
     { specifier: '@adcp/sdk/testing', symbol: 'mergeSeedProductLegacy' },
     { specifier: '@adcp/sdk/negotiation/verification', symbol: 'verifyProposalCommercialTerms' },
-    { specifier: '@adcp/sdk/schemas', symbol: 'CreativeAssetSchema' },
+    { specifier: '@adcp/sdk/schemas', symbol: 'getCanonicalToolValidator' },
+    { specifier: '@adcp/sdk/media-buy/actions', symbol: 'assessMediaBuyAction' },
   ];
 
   // Shared by both generated smoke modules. A function declaration (not an
@@ -294,7 +309,16 @@ try {
         `import * as m${i} from '${c.specifier}';\nassertion(m${i}, '${c.symbol}');\nconsole.log('  ESM ${c.specifier} → ${c.symbol} ok');`
     )
     .join('\n');
-  writeFileSync(path.join(tmpDir, 'smoke.mjs'), `${assertSource}${esmBody}\n`);
+  const canonicalSchemaSmoke = [
+    "const canonical = m6.getCanonicalToolValidator('get_reporting_status', 'sync', { adcpVersion: '3.2.1' });",
+    "if (!canonical) throw new Error('canonical get_reporting_status schema is missing');",
+    "const validReportingFailure = { status: 'failed', view: 'summary', failure_kind: 'lookup_unavailable', errors: [{ code: 'NOT_FOUND', message: 'Reporting status resource is unavailable.' }] };",
+    "if (!canonical(validReportingFailure)) throw new Error('valid canonical control failed: ' + JSON.stringify(canonical.errors));",
+    "if (canonical({ status: 'completed', view: 'summary' })) throw new Error('invalid canonical control passed');",
+    "if (!Array.isArray(canonical.errors) || canonical.errors.length < 2) throw new Error('canonical validator did not collect all errors');",
+    '',
+  ].join('\n');
+  writeFileSync(path.join(tmpDir, 'smoke.mjs'), `${assertSource}${esmBody}\n${canonicalSchemaSmoke}`);
 
   // CJS: real `require` of every case in one module.
   const cjsBody = cases
@@ -303,7 +327,7 @@ try {
         `const m${i} = require('${c.specifier}');\nassertion(m${i}, '${c.symbol}');\nconsole.log('  CJS ${c.specifier} → ${c.symbol} ok');`
     )
     .join('\n');
-  writeFileSync(path.join(tmpDir, 'smoke.cjs'), `${assertSource}${cjsBody}\n`);
+  writeFileSync(path.join(tmpDir, 'smoke.cjs'), `${assertSource}${cjsBody}\n${canonicalSchemaSmoke}`);
 
   console.log('🔍 ESM import:');
   run('node', ['smoke.mjs'], { cwd: tmpDir, stdio: 'inherit' });
@@ -320,15 +344,18 @@ try {
       "const { validateRequest } = require('./node_modules/@adcp/sdk/dist/lib/validation/index.js');",
       "const { loadRequestSchema } = require('./node_modules/@adcp/sdk/dist/lib/conformance/schemaLoader.js');",
       "const { getToolsWithErrorArm } = require('./node_modules/@adcp/sdk/dist/lib/server/error-arm-tools.js');",
-      "const invalid = validateRequest('get_products', {}, '3.2.0-rc.3');",
+      "const invalid = validateRequest('get_products', {}, '3.2.1');",
       "if (invalid.valid || !invalid.issues.some(issue => issue.pointer === '/buying_mode')) {",
       "  throw new Error('runtime validator did not load the archived get_products schema');",
       '}',
-      "const schema = loadRequestSchema('get_products', { version: '3.2.0-rc.3' });",
-      "if (!schema.$id?.includes('/bundled/media-buy/get-products-request.json')) {",
-      '  throw new Error(`conformance loader returned the wrong archived schema ID: ${schema.$id}`);',
+      "const schema = loadRequestSchema('get_products', { version: '3.2.1' });",
+      "if (schema.$id !== 'https://adcontextprotocol.org/schemas/3.2.1/media-buy/get-products-request.json') {",
+      '  throw new Error(`conformance loader returned the wrong authored schema ID: ${schema.$id}`);',
       '}',
-      "const errorArmTools = getToolsWithErrorArm('3.2.0-rc.3');",
+      'if (!schema._bundled || !schema.$defs || Object.keys(schema.$defs).length === 0) {',
+      "  throw new Error('conformance loader did not return the selected bundled schema');",
+      '}',
+      "const errorArmTools = getToolsWithErrorArm('3.2.1');",
       "if (!errorArmTools.has('create_media_buy')) {",
       "  throw new Error('server error-arm discovery did not load the archived response schemas');",
       '}',

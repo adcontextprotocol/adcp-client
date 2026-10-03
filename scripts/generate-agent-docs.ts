@@ -209,7 +209,16 @@ function summarizeResponseFields(schema: any): { required: string[]; optional: s
     return prohibited;
   };
 
-  const summarizeBranch = (branch: any) => {
+  const dereferenceBranch = (branch: any): any => {
+    if (!branch?.$ref) return branch;
+    const resolved = branch.$ref.startsWith('#') ? resolveSchemaFragment(schema, branch.$ref) : loadSchema(branch.$ref);
+    if (!resolved) return branch;
+    const { $ref: _ref, ...overrides } = branch;
+    return { ...resolved, ...overrides };
+  };
+
+  const summarizeBranch = (rawBranch: any) => {
+    const branch = dereferenceBranch(rawBranch);
     const prohibited = new Set([...prohibitedFields(schema.not), ...prohibitedFields(branch.not)]);
     const properties = Object.fromEntries(
       Object.entries({ ...(schema.properties || {}), ...(branch.properties || {}) }).filter(
@@ -607,14 +616,23 @@ function generateLlmsTxt(
   ln(`## Start here: SDK 14 and AdCP 3.2`);
   ln();
   ln(
-    `SDK 14 requires Node.js \`^20.19.0 || >=22.12.0\`; install the newest v14 prerelease with \`@adcp/sdk@^14.0.0-0\`.`
+    `SDK 14 requires Node.js \`^20.19.0 || >=22.12.0\`; install it with \`npm install @adcp/sdk\`, or pin the AdCP 3.2 line with \`@adcp/sdk@adcp-3.2\`.`
   );
   ln();
   ln(
     `SDK 14 is compact-lifecycle first: \`list_products → buy_products → control_media_buy\`, with \`request_proposals → refine_proposals → accept_proposal\` when terms need negotiation.`
   );
   ln();
+  ln(
+    '- **MediaBuy change rights:** use `assessMediaBuyAction` from `@adcp/sdk/media-buy/actions` for possible / promised / available-now assessment, and `mediaBuyActionResolver` from `@adcp/sdk/server` for explicit seller acceptance and current projection. See `docs/guides/MEDIA-BUY-ACTION-ASSESSMENT.md`.'
+  );
   ln(`- **Buyer** (calling a seller): read \`docs/guides/BUYER-QUICKSTART-3.2.md\` first.`);
+  ln(
+    `- **Account setup and first discovery:** read \`docs/guides/FIRST-CALL-TO-A-SELLER.md\` for the provisioning registry, account policies, billing terms, and product cache.`
+  );
+  ln(
+    `- **Buyer Reliable Reporting**: import reconciliation, PostgreSQL persistence, and the worker from \`@adcp/sdk/reporting/consumer\`; see \`docs/guides/REPORTING-RECONCILIATION.md\`.`
+  );
   ln(
     `- **Before proposal acceptance:** use \`verifyProposalCommercialTerms\` from \`@adcp/sdk/negotiation/verification\` with a complete, independently reviewed snapshot and the seller-served schema version. Never use an unreviewed candidate as its own expected terms. See \`docs/guides/PROPOSAL-TERMS-VERIFICATION.md\`.`
   );
@@ -678,7 +696,7 @@ function generateLlmsTxt(
   );
   ln();
   ln(
-    `**Typed errors instead of \`new AdcpError(code, ...)\`.** \`AuthMissingError\`, \`AuthInvalidError\`, \`PermissionDeniedError(action)\`, \`RateLimitedError(retryAfterSeconds)\`, \`ServiceUnavailableError\`, \`UnsupportedFeatureError(feature)\`, \`GovernanceDeniedError\`, \`PolicyViolationError\`, \`IdempotencyConflictError\`, \`InvalidRequestError\`, \`InvalidStateError\`, plus the not-found family (\`AccountNotFoundError\`, \`MediaBuyNotFoundError\`, \`PackageNotFoundError\`, \`ProductNotFoundError\`, \`CreativeNotFoundError\`) and the budget / state family. \`AuthRequiredError\` remains as a deprecated \`AUTH_REQUIRED\` compatibility wrapper for older sellers; new seller code should use the split auth classes. Each maps to its wire error code with \`recovery\` baked in. Throw from platform methods. In \`accounts.resolve\`, use auth errors only for inbound authentication failures; missing sync linkage or unknown account references should stay \`ACCOUNT_NOT_FOUND\` / \`null\`.`
+    `**Typed errors instead of \`new AdcpError(code, ...)\`.** \`AuthMissingError\`, \`AuthInvalidError\`, \`PermissionDeniedError(action)\`, \`RateLimitedError(retryAfterSeconds)\`, \`ServiceUnavailableError\`, \`UnsupportedFeatureError(feature)\`, \`GovernanceDeniedError\`, \`PolicyViolationError\`, \`IdempotencyConflictError\`, \`InvalidRequestError\`, \`InvalidStateError\`, plus the not-found family (\`AccountNotFoundError\`, \`MediaBuyNotFoundError\`, \`PackageNotFoundError\`, \`ProductNotFoundError\`, \`CreativeNotFoundError\`) and the budget / state family. \`AuthRequiredError\` remains as a deprecated \`AUTH_REQUIRED\` compatibility wrapper for older sellers; new seller code should use the split auth classes. Each maps to its wire error code with \`recovery\` baked in. Throw from platform methods. In \`accounts.resolve\`, use auth errors only for inbound authentication failures. Return \`null\` when auth-derived resolution cannot select an account: account-required operations emit correctable \`ACCOUNT_REQUIRED\`. Buyer-supplied unknown, unauthorized, or mismatched references stay terminal \`ACCOUNT_NOT_FOUND\`.`
   );
   ln();
   ln(
@@ -686,7 +704,7 @@ function generateLlmsTxt(
   );
   ln();
   ln(
-    `**Four reference \`AccountStore\` shapes.** Pick the one whose onboarding model matches yours. **Shape A — \`InMemoryImplicitAccountStore\`**: \`resolution: 'implicit'\`, buyer-driven \`sync_accounts\` populates the auth-principal → accounts map. **Shape B — \`createOAuthPassthroughResolver\`**: \`resolution: 'explicit'\`, returns just the \`resolve\` function for adapters fronting an upstream OAuth listing endpoint (Snap, Meta, TikTok, LinkedIn — \`extract bearer → GET /me/adaccounts → match by id\`). **Shape C — \`createRosterAccountStore\`**: \`resolution: 'explicit'\`, returns a complete \`AccountStore\` for adopters who own the roster (storefront table, admin-UI-managed JSON). Supports \`resolveWithoutRef\` for tools that send no \`account\` field on the wire (\`list_creative_formats\`, \`preview_creative\`, \`provide_performance_feedback\`) — set it to return a synthetic publisher-wide entry instead of \`null\`. **Shape D — \`createDerivedAccountStore\`**: \`resolution: 'derived'\`, an upstream-managed account-id namespace — the platform you front owns the roster (Meta / Snap ad accounts, audiostack, flashtalking, single-namespace retail-media). Buyers discover ids through \`list_accounts\` and send \`account: { account_id }\`; the framework refuses the \`{ brand, operator }\` arm for this mode and \`accounts.list\` is required (\`createAdcpServerFromPlatform\` throws \`PlatformConfigError\` without it). Provide \`toAccount(ctx)\` when a credential reaches exactly one account or \`listAccounts(ctx)\` when it reaches many (plus optional \`lookupAccount(id, ctx)\` for large rosters); the factory verifies buyer-supplied \`account_id\` against what the caller's credential can reach, returns \`null\` on a miss, auto-selects the account on ref-less tools only when exactly one is reachable, wires a filtered and paged \`list_accounts\`, and still emits legacy-compatible \`AUTH_REQUIRED\` on missing-credential calls. The framework backstops hand-rolled \`'derived'\` stores: a resolved account whose \`id\` isn't the one the buyer named is refused with \`ACCOUNT_NOT_FOUND\`, and \`sync_accounts\` / \`sync_governance\` entries are resolved against the caller's reachable set before any write. Buyer code must continue to handle \`AUTH_REQUIRED\` alongside \`AUTH_MISSING\` / \`AUTH_INVALID\`. Changed in SDK 14 (adcp-client#1647 / adcp#5062) — Shape D previously refused inline \`account_id\` and was documented as single-tenant-only. All four live at \`@adcp/sdk/server\`.`
+    `**Four reference \`AccountStore\` shapes.** Pick the one whose onboarding model matches yours. **Shape A — \`InMemoryImplicitAccountStore\`**: \`resolution: 'implicit'\`, buyer-driven \`sync_accounts\` populates the auth-principal → accounts map. **Shape B — \`createOAuthPassthroughResolver\`**: \`resolution: 'explicit'\`, returns just the \`resolve\` function for adapters fronting an upstream OAuth listing endpoint (Snap, Meta, TikTok, LinkedIn — \`extract bearer → GET /me/adaccounts → match by id\`). **Shape C — \`createRosterAccountStore\`**: \`resolution: 'explicit'\`, returns a complete \`AccountStore\` for adopters who own the roster (storefront table, admin-UI-managed JSON). Supports \`resolveWithoutRef\` when \`list_creative_formats\` omits its optional AdCP 3.2 \`account\` field, and for \`preview_creative\` and \`provide_performance_feedback\` — set it to return a synthetic publisher-wide entry instead of \`null\`. Scope buyer-supplied account ids to the authenticated principal in \`lookup\`. **Shape D — \`createDerivedAccountStore\`**: \`resolution: 'derived'\`, an upstream-managed account-id namespace — the platform you front owns the roster (Meta / Snap ad accounts, audiostack, flashtalking, single-namespace retail-media). Buyers discover ids through \`list_accounts\` and send \`account: { account_id }\`; the framework refuses the \`{ brand, operator }\` arm for this mode and \`accounts.list\` is required (\`createAdcpServerFromPlatform\` throws \`PlatformConfigError\` without it). Provide \`toAccount(ctx)\` when a credential reaches exactly one account or \`listAccounts(ctx)\` when it reaches many (plus optional \`lookupAccount(id, ctx)\` for large rosters); the factory verifies buyer-supplied \`account_id\` against what the caller's credential can reach, returns \`null\` on a miss, auto-selects the account on ref-less tools only when exactly one is reachable, wires a filtered and paged \`list_accounts\`, and still emits legacy-compatible \`AUTH_REQUIRED\` on missing-credential calls. The framework backstops hand-rolled \`'derived'\` stores: a resolved account whose \`id\` isn't the one the buyer named is refused with \`ACCOUNT_NOT_FOUND\`, and \`sync_accounts\` / \`sync_governance\` entries are resolved against the caller's reachable set before any write. Buyer code must continue to handle \`AUTH_REQUIRED\` alongside \`AUTH_MISSING\` / \`AUTH_INVALID\`. Changed in SDK 14 (adcp-client#1647 / adcp#5062) — Shape D previously refused inline \`account_id\` and was documented as single-tenant-only. All four live at \`@adcp/sdk/server\`.`
   );
   ln();
   ln(
@@ -772,6 +790,10 @@ function generateLlmsTxt(
   ln();
   ln(
     `A submitted mutation must settle before it can be controlled; retain the task handle or configure \`push_notification_config\`. The buyer quick start shows completion, revision-aware control, readback, and correction paths.`
+  );
+  ln();
+  ln(
+    `**Existing applications.** The [thin existing-platform recipe](./guides/EXISTING-PLATFORM.md) shows one SDK task inside application-owned auth and transactions, durable submitted-task recording, the error/cancellation matrix, non-blocking bounded diagnostics, and same-instance capability evidence reuse with \`AgentClient.createWithCapabilityPreflight()\` (or the lower-level \`getCapabilityEvidenceScope()\` + \`primeCapabilities()\` pair). The SDK 14 release represented by the checkout, its registry integrity check, peer/runtime ranges, wire pin, and a historical rc.33/rc.35 → rc.36 example are generated in [the release worksheet](./migration-14.x-rc-worksheet.md).`
   );
   ln();
 
@@ -1290,6 +1312,7 @@ function generateLlmsTxt(
   const docLinks: [string, string][] = [
     ['Full type signatures', 'TYPE-SUMMARY.md'],
     ['Buyer quick start (AdCP 3.2)', 'guides/BUYER-QUICKSTART-3.2.md'],
+    ['Assess and resolve MediaBuy actions', 'guides/MEDIA-BUY-ACTION-ASSESSMENT.md'],
     ['Verify proposal terms before acceptance', 'guides/PROPOSAL-TERMS-VERIFICATION.md'],
     ['Seller quick start (AdCP 3.2)', 'guides/SELLER-QUICKSTART-3.2.md'],
     ['Production durability checklist', 'guides/PRODUCTION-DURABILITY.md'],
@@ -1308,6 +1331,8 @@ function generateLlmsTxt(
     ['Conformance (property-based fuzzing)', 'guides/CONFORMANCE.md'],
     ['Reporting source executor (seller adapters)', 'guides/REPORTING-SOURCE-EXECUTOR.md'],
     ['Seller reporting ledger', 'guides/REPORTING-LEDGER.md'],
+    ['Buyer reporting reconciliation', 'guides/REPORTING-RECONCILIATION.md'],
+    ['Reliable Reporting production operations', 'guides/REPORTING-OPERATIONS.md'],
     ['Validate your agent (5-command checklist)', 'guides/VALIDATE-YOUR-AGENT.md'],
     ['Async patterns (polling, webhooks, deferred)', 'guides/ASYNC-DEVELOPER-GUIDE.md'],
     ['Async API reference', 'guides/ASYNC-API-REFERENCE.md'],
@@ -1367,6 +1392,44 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   );
   ln();
 
+  ln('## Buyer Reliable Reporting');
+  ln();
+  ln(
+    'Import `reconcileReportingCoreV1`, `reconcileReporting`, `createPostgresReportingConsumerRuntimeV1`, and `createReliableReportingConsumerV1` from `@adcp/sdk/reporting/consumer`. `ReliableReportingConsumerRunResultV1` and `ReliableReportingConsumerErrorContextV1` identify a run with `consumerScope`, `accountId`, and `reason`. Retain `expectedPeriods` from buyer commitments, use a non-secret seller/principal `consumerScope`, and make post-official adjustment acceptance an explicit `evaluateAdjustment` policy decision. Verify RFC 9421 with `@adcp/sdk/signing/server` before calling `handleAuthenticatedNotification`. See [Reporting reconciliation](guides/REPORTING-RECONCILIATION.md) and the [existing-app buyer worker](../examples/reliable-reporting-buyer/README.md).'
+  );
+  ln();
+
+  ln('## MediaBuy Action Assessment Types');
+  ln();
+  ln(
+    'Use `@adcp/sdk/media-buy/actions` for pure buyer assessment and `@adcp/sdk/server` for `mediaBuyActionResolver`. See [action assessment guide](guides/MEDIA-BUY-ACTION-ASSESSMENT.md).'
+  );
+  ln();
+  ln('| Type | Use |');
+  ln('| --- | --- |');
+  ln(
+    '| `MediaBuyTask` | Narrow routing union: `update_media_buy`, `control_media_buy`, `refine_proposals`, `sync_creatives`. |'
+  );
+  ln(
+    '| `ActionAvailability` | `available_now` with optional `nonDefaultRoute`, mode and authority; or `currently_unavailable` with reason, certainty and optional compatibility/constraint detail. |'
+  );
+  ln(
+    '| `ActionBuy`, `ActionProduct`, `ActionProposal` | Structural inputs for joining current accepted terms with live actions and advisory products. |'
+  );
+  ln(
+    '| `LiveMediaBuyAction` | Readable canonical or legacy entry for assessment, projection and existing preflight helpers, including shared-frequency-cap package scope. |'
+  );
+  ln(
+    '| `MediaBuyAvailableAction`, `MediaBuyValidAction` | Generated legacy wire entry / deprecated flat vocabulary; distinct from canonical helper entries. |'
+  );
+  ln(
+    '| `MediaBuyAction`, `MediaBuyActionId` | Action identifiers accepted by assessment / mutation helpers; runtime validation preserves unknown future data. |'
+  );
+  ln(
+    '| `ProposalChangeTerm`, `ChangeTermConstraints` | Negotiated term view and portable discriminated budget / flight / package-count / effective-timing constraints. |'
+  );
+  ln();
+
   // --- Client types ---
   ln(`## Client Types`);
   ln();
@@ -1402,11 +1465,58 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`}`);
   ln();
   ln(`interface TaskOptions {`);
+  ln(`  timeout?: number;             // Absolute whole-task deadline`);
+  ln(`  signal?: AbortSignal;         // Caller cancellation`);
+  ln(`  // Direct A2A mutation route, bound to authenticated principal + account scope.`);
+  ln(`  durableContinuationRecovery?: { ownerScope: string };`);
   ln(`  // Trusted local receiver policy; snapshotted and persisted with generated`);
   ln(`  // webhook registrations, never inferred from or sent in task arguments.`);
   ln(`  delegatedOperatorAuthorization?: DelegatedOperatorAuthorizationContext;`);
   ln(`  // ...deadline, cancellation, transport, and conversation options...`);
   ln(`}`);
+  ln();
+  ln(`interface DeferredContinuation<T> {`);
+  ln(`  token: string;`);
+  ln(`  question?: string;`);
+  ln(`  resume(input: unknown): Promise<TaskResult<T>>;`);
+  ln(`  recovery?: { operationId: string; recoveryKey: string }; // Host-only, persist once`);
+  ln(`}`);
+  ln();
+  ln(`// AgentClient public direct-mutation route recovery`);
+  ln(`agent.recoverDirectPauseContinuation<T>({ operationId, recoveryKey, ownerScope });`);
+  ln();
+  ln(`interface ValidateAdAgentsOptions {`);
+  ln(`  timeoutMs?: number;           // Per-request ceiling`);
+  ln(`  signal?: AbortSignal;         // One signal/deadline across the complete discovery flow`);
+  ln(`  maxBodyBytes?: number;`);
+  ln(`  userAgent?: string;`);
+  ln(`  logLevel?: LogLevel;`);
+  ln(`  urlForDomain?: (domain: string, path: string) => string;`);
+  ln(`}`);
+  ln();
+  ln(`interface CapabilityEvidenceScope {`);
+  ln(`  agentUri: string;`);
+  ln(`  adcpVersion: string;`);
+  ln(`  scopeKey: string;             // Opaque, client-bound authorization/transport scope`);
+  ln(`}`);
+  ln();
+  ln(`interface CapabilityEvidenceSnapshot {`);
+  ln(`  scope: CapabilityEvidenceScope;`);
+  ln(`  capabilities: AdcpCapabilities;`);
+  ln(`  observedAt: string;`);
+  ln(`  expiresAt: string;`);
+  ln(`  toolSchemas?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;`);
+  ln(`}`);
+  ln();
+  ln(`type CreateTargetingInput = TargetingOverlayInput | undefined; // whole field omitted / dimension null / value`);
+  ln(
+    `type UpdateTargetingInput = TargetingOverlayInput | undefined; // overlay field only; keyword deltas are siblings`
+  );
+  ln();
+  ln(`// Constructs, scopes, and primes one exact instance before first dispatch.`);
+  ln(`AgentClient.createWithCapabilityPreflight(agent, async ({ client, scope }) => ({`);
+  ln(`  ...(await loadCapabilityEvidence(client, scope)), scope,`);
+  ln(`}));`);
   ln();
   ln(`interface TaskResult<T = any> {`);
   ln(`  success: boolean;`);
@@ -2008,7 +2118,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`## Seller Reporting Source Contract`);
   ln();
   ln(
-    `Import from \`@adcp/sdk/reporting/source\`. This is a provider-neutral adapter boundary; the existing buyer-side \`reconcileReporting\` API is separate.`
+    `Import from \`@adcp/sdk/reporting/source\`. This is a provider-neutral adapter boundary; buyer reconciliation and worker APIs live at \`@adcp/sdk/reporting/consumer\`.`
   );
   ln();
   ln('```typescript');
@@ -2027,6 +2137,18 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`type ReportingSourceExecutorResultV1 =`);
   ln(`  | { ok: true; response: ReportingSourceExecutionResponseV1; manifestBytes: Uint8Array }`);
   ln(`  | { ok: false; error: ReportingSourceErrorV1 };`);
+  ln(`type InlineReportingMetricEvidenceV1 =`);
+  ln(`  | { constituent_id: string; metric: string; status: 'present' | 'explicit_zero'; data_through: string }`);
+  ln(
+    `  | { constituent_id: string; metric: string; status: 'unsupported' | 'delayed' | 'partial' | 'stale' | 'missing'; reason: string; data_through?: string };`
+  );
+  ln(`interface InlineReportingAvailabilityEvidenceV1 {`);
+  ln(`  version: '1.0';`);
+  ln(`  cells: readonly InlineReportingMetricEvidenceV1[];`);
+  ln(`}`);
+  ln(
+    `// Inline callback requests include constituents: { constituent_id, media_buy_id }[]; evidence-bearing responses add availability_evidence.`
+  );
   ln(`// validateReportingSourceExecutionV1({ level, capabilities, request, result, objectReader })`);
   ln(`// runReportingSourceReplayConformanceV1({ level, executor, request, objectReader })`);
   ln(`// validateReportingRevisionSequenceV1(manifests, { crossFinalityBridge })`);
@@ -2041,25 +2163,123 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   // --- Seller reporting ledger ---
   ln(`## Seller Reporting Ledger`);
   ln();
-  ln(`Import from \`@adcp/sdk/reporting/ledger\`.`);
+  ln(
+    `Ledger symbols import from \`@adcp/sdk/reporting/ledger\`; \`createPostgresPersistentNotificationRuntime\` is a server symbol and imports from \`@adcp/sdk/server\`.`
+  );
   ln();
   ln('```typescript');
-  ln(`const store = new PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true });`);
+  ln(`// Build the notification path first: the store must be constructed with the`);
+  ln(`// activity port, or lifecycle transitions record no activity and notify nobody.`);
+  ln(`const attemptCheckpoint = createPostgresReportingNotificationAttemptCheckpoint({`);
+  ln(`  db: pool,`);
+  ln(`  namespace: 'seller-production',`);
+  ln(`});`);
+  ln(`const notifications = createPostgresPersistentNotificationRuntime({`);
+  ln(`  db: pool,`);
+  ln(`  publisherScope: 'seller-production',`);
+  ln(`  checkpointDeliveryAttempt: attemptCheckpoint,`);
+  ln(`  subscriptions: { acknowledgeIsolatedDatabase: true },`);
+  ln(`  ...notificationOptions,`);
+  ln(`});`);
+  ln(`const reportingActivity = createPostgresReportingNotificationActivityRuntime({`);
+  ln(`  db: pool,`);
+  ln(`  notifications,`);
+  ln(`  namespace: 'seller-production',`);
+  ln(`  attemptCheckpoint,`);
+  ln(`  tenantScopeForAccount: accountId => trustedTenantDirectory.tenantFor(accountId),`);
+  ln(`});`);
+  ln();
+  ln(`// One store, wired to the activity port, used by every participant below.`);
+  ln(`const store = new PostgresReportingLedgerStore(pool, {`);
+  ln(`  acknowledgeIsolatedDatabase: true,`);
+  ln(`  notificationActivityPort: reportingActivity.port,`);
+  ln(`});`);
+  ln();
+  ln(`// Every migration this wiring needs, before probing.`);
   ln(`await pool.query(REPORTING_LEDGER_MIGRATION);`);
+  ln(`for (const sql of notifications.migrations.all) await pool.query(sql);`);
+  ln(`for (const sql of reportingActivity.migrations.all) await pool.query(sql);`);
+  ln();
   ln(`const producer = createReportingProducer({ store, source, offerings, contact });`);
   ln(`await producer.planObligations();`);
   ln(`await producer.runWorker();`);
   ln(`const getReportingStatus = createReportingStatusHandler(store);`);
   ln(`const getMediaBuyDelivery = createReportingDeliveryHandler(store); // exact reporting_revision_id reads`);
   ln();
-  ln(`// AdCP 3.2.0-rc.3: identity comes from authenticated transport.`);
+  ln(`// AdCP 3.2: identity comes from authenticated transport.`);
   ln(`const syncReportingStatus = createSyncReportingStatusHandler(store, {`);
   ln(`  resolveConsumerId: context => context.agent.agent_url,`);
+  ln(`});`);
+  ln();
+  ln(`await reportingActivity.probe();`);
+  ln(`// Run repeatedly from a durable scheduler; this call is bounded.`);
+  ln(`await reportingActivity.recoverOnce({ ownerToken: stableWorkerId });`);
+  ln(`const activityPage = await reportingActivity.listActivity({`);
+  ln(`  tenantId: trustedTenant,`);
+  ln(`  accountId: resolvedAccountId,`);
+  ln(`  limit: 100,`);
   ln(`});`);
   ln('```');
   ln();
   ln(
     `The store freezes configuration lineage and period-end denominators, retains immutable RFC 8785 JCS/SHA-256-bound revisions, atomically fences lifecycle projections against their revision evidence, and provides leased production plus snapshot-stable status pagination. \`projectReportingObligationHealthV1\` implements waiting, healthy, delayed, action_required, and complete without I/O.`
+  );
+  ln();
+  ln(
+    `\`ReportingLedgerNotificationActivityPortV1<TTransaction>\` is the custom-store seam. Invoke it inside the authoritative transition transaction and fence both predecessor health and finality. The bundled PostgreSQL runtime persists exactly-once intent plus paginatable account activity, then projects health changes through \`PersistentNotificationRuntime\`; finality-only changes remain internal activity. It never owns subscriber credentials or sends webhooks itself. \`listActivity()\` is adopter-facing only because no public AdCP account-activity read task exists.`
+  );
+  ln();
+
+  // --- Reliable reporting service ---
+  ln(`## Reliable Reporting Service`);
+  ln();
+  ln(
+    `Import from \`@adcp/sdk/reporting/service\`. This is the adapter-first lifecycle owner over the source and ledger primitives; it does not introduce another store or transport.`
+  );
+  ln();
+  ln('```typescript');
+  ln(`interface ReliableReportingAdapterV1 {`);
+  ln(`  readonly sourceOffering: ReportingSourceOfferingV1;`);
+  ln(`  readonly deliveryOffering: ReportingDeliveryOffering;`);
+  ln(`  // Exactly one of fetchSlice or executor.`);
+  ln(`  readonly fetchSlice?: InlineReportingDeliveryFetchV1;`);
+  ln(`  readonly executor?: ReportingSourceWithReaderV1;`);
+  ln(`  // Opt-in bounded replay window for the inline executor; never applied`);
+  ln(`  // silently. A feed that outlives its replay ceiling needs this or a`);
+  ln(`  // durable executor.`);
+  ln(`  readonly inlineReplayRetention?: InlineReportingReplayRetentionV1;`);
+  ln(`}`);
+  ln();
+  ln(`const reporting = createReliableReportingService({`);
+  ln(`  store,`);
+  ln(`  adapters,`);
+  ln(`  contact,`);
+  ln(`  automatedRecoveryWindowSeconds,`);
+  ln(`  statusRetentionDays, // enforce this commitment in the ledger database`);
+  ln(`  resolveSource: account => ({ adapterId, sourceScope, sourceTimezone }),`);
+  ln(`  resolveCurrency: account => currency,`);
+  ln(`  resolveCoverage: account => ({ constituents }), // authorized media-buy/package denominator`);
+  ln(`  resolveConsumerId, // optional; controls consumer-status handler/capability`);
+  ln(`});`);
+  ln();
+  ln(`await pool.query(reporting.setup.migrations[0]);`);
+  ln(`const installedPlatform = reporting.install(platform);`);
+  ln(`await reporting.installConfiguration(configuration, { account: ctx.account });`);
+  ln(`await reporting.runCycle({ accountId }); // tenant-partitioned`);
+  ln(`reporting.start({ intervalMilliseconds, deploymentWide: true }); // explicit full-ledger scan`);
+  ln(`await reporting.stop();`);
+  ln('```');
+  ln();
+  ln(
+    `Account identity comes only from the framework-resolved context. Trusted host callbacks derive adapter routing, credential-free \`sourceScope\`, source timezone, currency, and the authorized constituent denominator. A declaration cannot supply \`account\`, \`sourceScope\`, \`sourceTimezone\`, \`contract\`, \`currency\`, \`constituents\`, or \`mediaBuyIds\`; \`mediaBuyIds\` is derived from \`resolveCoverage\`, so a buyer cannot name another buyer's media buys on a shared upstream network. Currency is frozen into configuration and obligation lineage. Capabilities are Core-only and derived from installed adapters and handlers; managed delivery, reconciled billing, receipts, webhook activity, and notifications are not advertised. Installation requires \`platform.accounts.upsert\`, which owns the advertised \`sync_accounts\` configuration path.`
+  );
+  ln();
+  ln(
+    `For complete seller production assembly, use async \`createPostgresReliableReportingProductionService\` from \`@adcp/sdk/reporting/service\`. It owns the PostgreSQL Core/Managed stores, receipts, all three reporting notifications, webhook activity, migrations, probes, recovery, and capability publication. Supply \`activity.tenantScopeForAccount\`; Reconciled Billing offerings also require a trusted \`obligatedConsumers\` roster. Its scheduler and \`recoverOnce\` require explicit \`deploymentWide: true\` because recovery scans the whole namespace. See \`docs/guides/REPORTING-LEDGER.md\` and \`docs/guides/REPORTING-OPERATIONS.md\`.`
+  );
+  ln();
+  ln(
+    `Buyer production processes use \`createPostgresReportingConsumerRuntimeV1\` with \`createReliableReportingConsumerV1\` from the package root. Verify webhook signatures before passing authenticated hints, preserve seller/principal scope, and configure \`evaluateAdjustment\` to authorize integrity-valid post-official corrections; the default defers them. See \`docs/guides/REPORTING-RECONCILIATION.md\`.`
   );
   ln();
 

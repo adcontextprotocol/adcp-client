@@ -16,19 +16,34 @@ const REASON = /^[A-Za-z0-9](?:[A-Za-z0-9 !#$%&'()*+,./:;<=>?@^_{}|~-]{0,510}[A-
 
 export const ReportingSha256V1Schema = z.string().regex(SHA256);
 export const ReportingFingerprintV1Schema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const EXTERNAL_ID_MAX_CHARS = 255;
+
+/**
+ * Whether `value` is padded or carries a control character, without allocating.
+ *
+ * A validator's checks all run even once one has failed, so splitting the value into a
+ * code point array meant an over-long identifier was still walked in full: a validator
+ * that rejects a 256 character id would allocate a 256 element array, and an
+ * arbitrarily large one an arbitrarily large array. The length gate comes first and is
+ * O(1), and the scan below reads code units in place. Control characters all sit below
+ * the surrogate range, so scanning code units is equivalent to scanning code points.
+ */
+function isUnpaddedControlFreeIdentifier(value: string): boolean {
+  if (value.length > EXTERNAL_ID_MAX_CHARS) return false;
+  if (value.length === 0) return false;
+  if (/^\s/.test(value) || /\s$/.test(value)) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    if (unit <= 31 || unit === 127) return false;
+  }
+  return true;
+}
+
 export const ReportingExternalIdV1Schema = z
   .string()
   .min(1)
-  .max(255)
-  .refine(
-    value =>
-      value.trim() === value &&
-      !Array.from(value).some(character => {
-        const codePoint = character.codePointAt(0);
-        return codePoint !== undefined && (codePoint <= 31 || codePoint === 127);
-      }),
-    'Identifier must not contain whitespace padding or control characters'
-  );
+  .max(EXTERNAL_ID_MAX_CHARS)
+  .refine(isUnpaddedControlFreeIdentifier, 'Identifier must not contain whitespace padding or control characters');
 export const ReportingOpaqueReferenceV1Schema = z.string().regex(OPAQUE_REF);
 export const ReportingEvidenceReasonV1Schema = z.string().min(1).max(512).regex(REASON);
 export const ReportingInstantV1Schema = z.iso.datetime({ offset: true }).refine(value => {

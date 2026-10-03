@@ -326,6 +326,15 @@ export {
   type IssueTokenOptions,
 } from './test-authorization-server';
 
+export {
+  loadCanonicalPrincipalStoryboard,
+  loadCanonicalReportingCoreStoryboard,
+  loadCanonicalStoryboardFixtureProvenance,
+  type CanonicalStoryboardFileProvenance,
+  type CanonicalStoryboardFixture,
+  type CanonicalStoryboardFixtureProvenance,
+} from './canonical-storyboards';
+
 function isStateStore(value: unknown): value is AdcpStateStore {
   return (
     value != null &&

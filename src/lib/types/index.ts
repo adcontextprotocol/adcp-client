@@ -52,8 +52,33 @@ export type {
   ExtensionObject,
   PlacementPresentationDocument,
   PlacementPresentationReference,
+  WholesaleFeedEvent,
+  WholesaleFeedWebhook,
 } from './core.generated';
-import type { FormatReferenceStructuredObject } from './core.generated';
+// Supporting proposal-discovery criteria types are part of the public 3.2
+// negotiation surface and must not require deep generated-file imports.
+export type {
+  AcceptanceContext,
+  MediaBuyFrequencyCap,
+  OutcomeTarget,
+  ProductMediaBuySupportRequirements,
+  TargetingOverlay,
+  TargetingOverlayInput,
+} from './core.generated';
+import type {
+  FormatReferenceStructuredObject,
+  TargetingOverlayInput as GeneratedTargetingOverlayInput,
+} from './core.generated';
+
+/** Create-side `targeting_overlay`, including omission of the whole field. */
+export type CreateTargetingInput = GeneratedTargetingOverlayInput | undefined;
+/**
+ * Update-side `targeting_overlay`, including omission of the whole field.
+ *
+ * This is the overlay field only. Package update requests also expose
+ * incremental keyword/negative-keyword add/remove siblings.
+ */
+export type UpdateTargetingInput = GeneratedTargetingOverlayInput | undefined;
 export type { RequireCacheScopeWhenProducts, ServerPayload } from './server-payload';
 export * from './server-payload-aliases';
 /**
@@ -111,12 +136,17 @@ export type {
   SyncReportingReceiptsResponse,
   ReportingCanonicalContentDigest,
   ReportingAdjustment,
+  ReportingAdjustmentReceipt,
   ReportingConsumerStatus,
   ReportingControlTotal,
+  ReportingDeliveryCapabilities,
   ReportingMaterialization,
+  ReportingResource,
   ReportingObligation,
   ReportingReceipt,
   ReportingRevision,
+  ReportingVerification,
+  ReportingVerificationProfile,
 } from './tools.generated';
 
 // Capabilities

@@ -90,6 +90,22 @@ const prePushHook = `#!/bin/bash
 # Pre-push hook to validate code before pushing
 # Goal: Fast validation (<10s) - CI will run comprehensive checks
 
+# Changesets pushes release tags concurrently. Each tag points to an already
+# validated commit; rebuilding the shared dist directory for every tag races.
+saw_ref=0
+saw_branch_ref=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  saw_ref=1
+  case "$remote_ref" in
+    refs/tags/*) ;;
+    *) saw_branch_ref=1 ;;
+  esac
+done
+if [ "$saw_ref" -eq 1 ] && [ "$saw_branch_ref" -eq 0 ]; then
+  echo "🏷️ Tag-only push; skipping branch validation."
+  exit 0
+fi
+
 echo "🔍 Running pre-push validation..."
 
 # Only run essential fast checks locally:
@@ -192,7 +208,8 @@ function installHooks() {
     if (
       existingContent.includes('npm run ci:pre-push') ||
       !existingContent.includes('Fast validation') ||
-      !existingContent.includes('format:check')
+      !existingContent.includes('format:check') ||
+      !existingContent.includes('Tag-only push')
     ) {
       fs.writeFileSync(prePushPath, prePushHook);
       fs.chmodSync(prePushPath, 0o755);

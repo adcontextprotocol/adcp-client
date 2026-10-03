@@ -2,6 +2,11 @@ import type { AdcpJsonWebKey } from './types';
 
 export interface JwksResolution {
   jwk: AdcpJsonWebKey | null;
+  /** Canonical agent identity established by capability-bound discovery. */
+  agentUrl?: string;
+  /** Exact capability-selected operator document for signed-buyer governance. */
+  operatorRecord?: { url: string; document: unknown };
+  legacyWebhookFallback?: boolean;
   /** Epoch seconds for a delegated-operator authorization boundary, when applicable. */
   operatorAuthorizationValidUntil?: number;
 }

@@ -10,13 +10,18 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifacts.mjs';
 
 // Compact local-ref schema bundles and omission of source maps bring the
 // package below pnpm's default fetch-timeout boundary on moderate links. Keep
 // enough compressor variance for supported Node/npm versions without allowing
 // the old 48 MB artifact shape to return. The packed limit is decimal because
 // npm reports published package size in MB and issue #2579 set a 20 MB target.
-const MAX_PACKED_TARBALL_BYTES = 20_000_000;
+// Canonical agent resolution adds three dual-format module/declaration sets
+// and one migration guide (+13 files). The measured tarball is 20,004,504
+// bytes; allow 25 KB above the existing 20 MB target for these artifacts and
+// compressor variance. All other byte budgets remain unchanged.
+const MAX_PACKED_TARBALL_BYTES = 20_025_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -35,7 +40,81 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // new compliance storyboards. With their bundled and compact-projection copies
 // that is +26 published files. The request-only Targeting Input helpers add one
 // module (CJS + ESM + both declaration flavours), for +4 more.
-const MAX_PACKED_FILE_COUNT = 6_059;
+// The 14.x adoption pass adds an existing-platform guide, a release worksheet,
+// and a compile-gated thin integration example; byte budgets remain unchanged.
+// The targeting-input migration follow-up adds one compile-gated provider
+// adapter example; byte budgets remain unchanged.
+// Canonical principal/reporting-core distribution adds two YAML files, one
+// provenance manifest, and one dual-format module/declaration set (+7 files).
+// The rc.3 buyer-side consumer-status loop adds one module,
+// `reporting/content-mismatch` (CJS + ESM + both declaration flavours), for +4.
+// Its reconciliation changes are edits to existing modules, and the unpacked
+// total is unchanged against the 120 MiB ceiling.
+// Unified action assessment adds nine module sets (36 artifacts) and one guide.
+// Superseded preview compliance and historical compatibility test schemas are
+// not published. Retiring the v3.1 beta type bundle removes eight artifacts;
+// its current legacy-view wholesale type replacement adds four, for 6,107
+// published files. Byte budgets stay fixed.
+// Reliable Reporting Core adds three module sets (CJS + ESM + both declaration
+// flavours) and one packaged setup guide, bringing the clean package to 6,120
+// published files. Byte budgets stay fixed.
+// Transactional reporting notification activity adds one module set (CJS + ESM
+// + both declaration flavours), for 6,124 published files. Managed Delivery and
+// Reconciled Billing add two public dual-format runtime/declaration module sets
+// — `reporting/ledger/managed` and `reporting/ledger/managed-postgres`, each CJS
+// + ESM + both declaration flavours — for +8 files and 6,132 total.
+// The durable buyer-writes adoption example adds two TypeScript files and one
+// packaged guide, bringing the clean package to 6,135 published files. The
+// remaining changes edit existing modules; byte budgets stay fixed.
+// Supply-path verification adds 32 runtime/declaration artifacts and its guide
+// and packaged example (34 files total); byte and schema budgets stay unchanged.
+// Native A2A compliance routing adds one internal dual-format module with both
+// declaration flavours (+4 files); byte and schema budgets stay unchanged.
+// AdCP 3.2.0-rc.4 adds frequency-cap storyboards, error-recovery/reporting-summary/
+// supply-path vectors, verification-token claims, and their packaged skill copies.
+// After compact-schema packaging and existing filters, the publish set grows by 10 files.
+// Official-client A2A request-signing dispatch adds one internal dual-format
+// module with both declaration flavours (+4 files).
+// Targeting-overlay conformance adds one public dual-format runtime/declaration
+// module set (+4 files); byte and schema budgets stay unchanged.
+// Core-only buyer reconciliation adds one public dual-format
+// runtime/declaration module set (+4 files); byte budgets stay fixed.
+// Principal lifecycle helpers add two dual-format runtime/declaration module
+// sets and one packaged guide (+9 files); byte budgets stay fixed.
+// Durable server-side principal state adds four dual-format
+// runtime/declaration module sets (+16 files); byte budgets stay fixed.
+// Wholesale-feed webhook registration adds one public dual-format
+// runtime/declaration module set (+4 files); byte budgets stay fixed.
+// The compile-gated wholesale-feed mirror quickstart adds one packaged file.
+// Acceptance-policy catalog resolution adds one public dual-format
+// runtime/declaration module set and one packaged buyer guide (+5 files).
+// The focused client entrypoint and cross-format response-schema cache add two
+// dual-format runtime/declaration module sets (+8 files); byte budgets stay fixed.
+// Acceptance-policy assessment adds one public dual-format runtime/declaration
+// module set (+4 files); byte and schema budgets stay fixed.
+// Acceptance-policy storyboard verification adds one internal dual-format
+// runtime/declaration module set (+4 files); byte and schema budgets stay fixed.
+// AdCP 3.2.0-rc.6 replaces the rc.4 schema/compliance bundle and adds eleven
+// publishable schema, storyboard, and packaged-skill artifacts in aggregate.
+// Calendar-day source boundaries add the internal reporting/ledger/schedule module:
+// schedule.js, schedule.mjs, schedule.d.ts, and schedule.d.mts (+4 files).
+// Reliable Reporting adds three dual-format runtime/declaration modules (+12)
+// and one packaged operations guide (+1); byte budgets remain unchanged.
+// The focused buyer entrypoint adds four dual-format runtime/declaration files,
+// and its published existing-app worker and guide add two more (+6).
+// Public account resolution adds one dual-format runtime/declaration module (+4).
+// AdCP 3.2.1 GA replaces the rc.7 bundle: 27 request-signing profile vectors,
+// six media-buy storyboards, the hosted-grader test kit, and five new schemas
+// (execution requirements, outcome-target cost-per, reporting delivery offering id) (+39).
+// Signed-request rejection diagnostics add one internal dual-format module
+// with both declaration flavours (+4 files); byte budgets stay fixed.
+// Buyer provisioning and discovery authorization add five runtime/declaration
+// module sets (+20 files) and one first-call guide (+1); byte budgets stay fixed.
+// Opt-in strict account references add one internal dual-format
+// runtime/declaration module for once-per-process deprecation warnings
+// (+4 files); byte budgets stay fixed.
+const MAX_PACKED_FILE_COUNT =
+  6_135 + 34 + 4 + 10 + 4 + 4 + 4 + 9 + 16 + 4 + 1 + 5 + 8 + 4 + 4 + 11 + 4 + 13 + 6 + 4 + 39 + 4 + 21 + 4 + 13;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
@@ -90,7 +169,10 @@ export function checkPackageSize(repoRoot) {
   }
 
   if (packageInfo.size > MAX_PACKED_TARBALL_BYTES) {
-    throw new Error(`packed tarball is ${mib(packageInfo.size)} MiB; budget is ${mib(MAX_PACKED_TARBALL_BYTES)} MiB`);
+    throw new Error(
+      `packed tarball is ${packageInfo.size} bytes (${mib(packageInfo.size)} MiB); ` +
+        `budget is ${MAX_PACKED_TARBALL_BYTES} bytes (${mib(MAX_PACKED_TARBALL_BYTES)} MiB)`
+    );
   }
   if (packageInfo.unpackedSize > MAX_UNPACKED_PACKAGE_BYTES) {
     throw new Error(
@@ -125,6 +207,15 @@ export function checkPackageSize(repoRoot) {
       throw new Error(`packed package is missing a required bundled schema archive: ${expectedArchivePath}`);
     }
   }
+
+  const manifest = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+  const versionSource = readFileSync(path.join(repoRoot, 'src', 'lib', 'version.ts'), 'utf8');
+  const compatibleBlock = /export const COMPATIBLE_ADCP_VERSIONS = \[([\s\S]*?)\] as const;/.exec(versionSource)?.[1];
+  if (compatibleBlock === undefined) {
+    throw new Error('could not read COMPATIBLE_ADCP_VERSIONS from src/lib/version.ts');
+  }
+  const compatibleVersions = [...compatibleBlock.matchAll(/'([^']+)'/g)].map(match => match[1]);
+  assertPublishProtocolArtifacts({ packageInfo, manifest, currentProtocolVersion, compatibleVersions });
 
   const cjsSchema = packageInfo.files.find(file => file.path === 'dist/lib/types/schemas.generated.d.ts');
   const esmSchema = packageInfo.files.find(file => file.path === 'dist/lib/types/schemas.generated.d.mts');

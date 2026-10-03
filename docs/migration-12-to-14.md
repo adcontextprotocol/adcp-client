@@ -1,8 +1,11 @@
-# Migrating from 12.x to the 14 prerelease
+# Migrating from 12.x to 14
 
-This is the direct upgrade path for applications skipping SDK 13. SDK 14 includes both SDK 13's canonical-creative and security boundary changes and the AdCP `3.2.0-rc.3` release-candidate surface. Treat it as two review checkpoints even if you deploy one package update.
+This is the direct upgrade path for applications skipping SDK 13. SDK 14 includes both SDK 13's canonical-creative and security boundary changes and the AdCP `3.2.1` surface (the AdCP 3.2 GA release). Treat it as two review checkpoints even if you deploy one package update.
 
-AdCP prerelease pins are exact: beta.6 supersedes beta.5. Beta.2 added canonical
+SDK 14 pins the signed AdCP `3.2.1` bundle; `adcpVersion: '3.2'` (or
+`'3.2.1'`) selects it. AdCP 3.2 prerelease pins are no longer compatible:
+a caller pinned to `'3.2-rc.7'` or `'3.2.0-rc.7'` must switch to `'3.2'`.
+The 3.2 surface accumulated across the prerelease cycle. Beta.2 added canonical
 compact proposal and direct-buy lifecycle storyboards through operational
 control and MediaBuy readback; beta.4 adds flexible-window availability and
 durable products-only legacy purchase continuations. Beta.5 defines stable
@@ -11,10 +14,10 @@ and crash-safe continuation generation replacement. Beta.6 adds coordinated
 placements, seller-rendered stateful display, creative component assets, and
 A2A 1.0 request-signing method names.
 
-Install the v14 prerelease explicitly:
+Install SDK 14:
 
 ```bash
-npm install '@adcp/sdk@^14.0.0-0'
+npm install @adcp/sdk
 ```
 
 If a pre-3.2 brief can return products without a proposal, configure a durable
@@ -23,7 +26,7 @@ authoritative `reconcileLegacyPurchase(record, exactInput)` callback before
 offering `continueLegacyPurchase()`. Reverse compact-seller support for older
 buyers remains application-owned through explicit legacy sales handlers.
 
-The npm `latest` tag remains on SDK 13, the maintained AdCP 3.1 stable line. If you do not need AdCP 3.2 yet, upgrading 12→13 first is the lower-risk production move.
+The npm `latest` tag points at SDK 14. SDK 13, the maintained AdCP 3.1 line, is published under the `adcp-3.1` tag. If you do not need AdCP 3.2 yet, upgrading 12→13 (`npm install @adcp/sdk@adcp-3.1`) first is the lower-risk production move.
 
 ## Direct upgrade checklist
 
@@ -110,7 +113,7 @@ without context. Cached delegated keys expire no later than `valid_until`. See
 - Use `PayloadDigestOptions` for `computePayloadDigestSha256()` rather than the removed bare `RegExp` or `false` overloads.
 - Use explicit legacy helper names such as `LEGACY_STANDARD_FORMATS`, `getStandardFormatsLegacy()`, `buildProductLegacy()`, and `buildListCreativesResponseLegacy()` for raw named-format work.
 
-Compile and test these changes before enabling any 3.2 feature. That isolates SDK-boundary regressions from protocol-beta behavior.
+Compile and test these changes before enabling any 3.2 feature. That isolates SDK-boundary regressions from AdCP 3.2 protocol behavior.
 
 ## Add the AdCP 3.2 lifecycle
 
@@ -194,7 +197,7 @@ Run the SDK 13 boundary migration and 3.2 adoption as separate CI lanes, then te
 |---|---|---|
 | SDK 14 | AdCP 3.0 seller | established tools, legacy signing encoding, canonical projection |
 | SDK 14 | AdCP 3.1 seller | established tools, legacy signing encoding, canonical projection |
-| SDK 14 | AdCP 3.2 beta seller | compact lifecycle, mandatory digest, standard Base64 |
+| SDK 14 | AdCP 3.2 seller | compact lifecycle, mandatory digest, standard Base64 |
 | AdCP 3.0/3.1 buyer | SDK 14 server | legacy tool facades and response overlays still work |
 
-Canary by tenant or endpoint and retain SDK 13 as the stable rollback line. Do not make storage or orchestration depend exclusively on 3.2 until all required counterparties advertise and pass the beta workflow.
+Canary by tenant or endpoint and retain SDK 13 (`adcp-3.1`) as the rollback line. Do not make storage or orchestration depend exclusively on 3.2 until all required counterparties advertise and pass the 3.2 workflow.

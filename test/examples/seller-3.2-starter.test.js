@@ -7,6 +7,8 @@ const { spawn } = require('node:child_process');
 const { connect } = require('node:net');
 const path = require('node:path');
 const { createMCPClient } = require('../../dist/lib/protocols');
+const { getSchemaDocumentByRef } = require('../../dist/lib/validation/schema-loader.js');
+const { proposalTermsDigest } = require('../../dist/lib/negotiation/verification.js');
 
 const ROOT = path.resolve(__dirname, '../..');
 
@@ -78,6 +80,40 @@ test('compact starter enforces pricing, account, and terminal lifecycle boundari
   assert.notEqual(listed.isError, true, JSON.stringify(listed));
   assert.equal(listed.structuredContent.products[0].product_id, product.product_id);
   const feedVersion = listed.structuredContent.feed_version;
+
+  const purchaseRef = getSchemaDocumentByRef('media-buy/buy-products-request.json').schema.properties.purchases.items
+    .$ref;
+  const permitsClear = purchaseRef.endsWith('/product-purchase-input.json');
+  for (const [name, targeting_overlay, code] of [
+    ['empty-overlay', {}, 'UNSUPPORTED_FEATURE'],
+    ['nonempty', { geo_countries: ['US'] }, 'UNSUPPORTED_FEATURE'],
+    ['empty-countries', { geo_countries: [] }, 'VALIDATION_ERROR'],
+    ['clear-countries', { geo_countries: null }, permitsClear ? 'UNSUPPORTED_FEATURE' : 'VALIDATION_ERROR'],
+    ['invalid-element', { geo_countries: [42] }, 'VALIDATION_ERROR'],
+  ]) {
+    await t.test(`targeting ${name} is rejected before snapshot creation`, async () => {
+      const result = await client.callTool('buy_products', {
+        account,
+        brand: { domain: 'advertiser.example' },
+        feed_version: feedVersion,
+        purchases: [
+          { product_id: product.product_id, pricing_option_id: 'display-cpm', budget: 1000, targeting_overlay },
+        ],
+        start_time: 'asap',
+        end_time: '2026-12-31T23:59:59Z',
+        idempotency_key: `targeting-${name}-0001`,
+      });
+      assert.equal(result.isError, true);
+      assert.equal(result.structuredContent.adcp_error.code, code);
+      assert.match(result.structuredContent.adcp_error.field, /targeting_overlay/);
+      if (code === 'UNSUPPORTED_FEATURE')
+        assert.equal(result.structuredContent.adcp_error.field, 'purchases[0].targeting_overlay');
+      assert.equal(result.structuredContent.accepted_proposal, undefined);
+    });
+  }
+  const afterRejectedTargeting = await client.callTool('get_media_buys', { account });
+  assert.notEqual(afterRejectedTargeting.isError, true, JSON.stringify(afterRejectedTargeting));
+  assert.deepEqual(afterRejectedTargeting.structuredContent.media_buys, []);
 
   const invalidPricing = await client.callTool('buy_products', {
     account,
@@ -235,7 +271,7 @@ test('compact starter enforces pricing, account, and terminal lifecycle boundari
     total_budget: { amount: 1000, currency: 'USD' },
     purchase_order_ref: 'PO-STARTER-1',
     context: { campaign: 'buyer-campaign-1' },
-    start_time: 'asap',
+    start_time: '2026-12-01T00:00:00Z',
     end_time: '2026-12-31T23:59:59Z',
     idempotency_key: 'valid-purchase-000001',
   });
@@ -247,6 +283,26 @@ test('compact starter enforces pricing, account, and terminal lifecycle boundari
     currency: 'USD',
   });
   assert.equal(bought.structuredContent.accepted_proposal.commercial_terms.purchase_order_ref, 'PO-STARTER-1');
+  assert.deepEqual(acceptedPurchase, {
+    product_id: product.product_id,
+    pricing_option_id: 'display-cpm',
+    budget: 1000,
+    context: { line_item: 'buyer-line-1' },
+    pricing: product.pricing_options[0],
+    measurement_terms: product.measurement_terms,
+    performance_standards: product.performance_standards,
+    start_time: '2026-12-01T00:00:00Z',
+    end_time: '2026-12-31T23:59:59Z',
+  });
+  assert.equal(
+    bought.structuredContent.accepted_proposal.terms_digest,
+    proposalTermsDigest(bought.structuredContent.accepted_proposal.commercial_terms)
+  );
+  // Fixed-flight commercial terms have a stable digest; changes require review.
+  assert.equal(
+    bought.structuredContent.accepted_proposal.terms_digest,
+    'sha256:nq7wnX0GYS36FZG0Toc5V1WD1rh3R8SSldqB6T9EGjQ'
+  );
   assert.deepEqual(acceptedPurchase.measurement_terms, product.measurement_terms);
   assert.deepEqual(acceptedPurchase.performance_standards, product.performance_standards);
   assert.deepEqual(
@@ -333,6 +389,10 @@ test('compact starter enforces pricing, account, and terminal lifecycle boundari
     media_buy_ids: [bought.structuredContent.media_buy_id],
   });
   assert.equal(afterRejectedEdit.structuredContent.media_buys[0].status, 'paused');
+  assert.deepEqual(
+    afterRejectedEdit.structuredContent.media_buys[0].accepted_proposal,
+    bought.structuredContent.accepted_proposal
+  );
   assert.deepEqual(afterRejectedEdit.structuredContent.media_buys[0].context, { campaign: 'buyer-campaign-1' });
   assert.deepEqual(afterRejectedEdit.structuredContent.media_buys[0].packages[0].context, {
     line_item: 'buyer-line-1',

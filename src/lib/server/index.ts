@@ -180,6 +180,7 @@ export { createMediaBuyStore, DEFAULT_MEDIA_BUY_STORE_COLLECTION } from './media
 // command into strict effective targeting before persisting or echoing it.
 export { applyTargetingInput, hasTargetingClears, resolveTargetingInput } from '../media-buy/targeting-input';
 export type { ResolvedTargetingInput, TargetingInputFor } from '../media-buy/targeting-input';
+export type { CreateTargetingInput, UpdateTargetingInput } from '../types';
 export type {
   MediaBuyStore,
   CreateMediaBuyStoreOptions,
@@ -555,6 +556,7 @@ export {
   createPostgresPersistentNotificationRuntime,
   getNotificationSubscriptionMigration,
   memoryNotificationSubscriptionStore,
+  notificationSuppressionDisposition,
   pgNotificationSubscriptionStore,
   projectNotificationSubscriptionReadback,
   validatePersistentNotificationDestination,
@@ -564,6 +566,8 @@ export type {
   NotificationAuthenticationMode,
   NotificationCredentialBindingAdapter,
   NotificationDeliveryAuthorizationInput,
+  NotificationDeliveryAttemptCheckpoint,
+  NotificationDeliveryAttemptCheckpointInput,
   NotificationDeliveryAuthorizer,
   NotificationDestinationValidator,
   NotificationEvent,
@@ -571,6 +575,9 @@ export type {
   NotificationFanoutDelivery,
   NotificationFanoutResult,
   NotificationProofAdapter,
+  NotificationPreparationResult,
+  PreparedNotificationReplacement,
+  NotificationRecipientRef,
   NotificationReplacementResult,
   NotificationSubscriptionConfigInput,
   NotificationSubscriptionMatch,
@@ -578,6 +585,7 @@ export type {
   NotificationSubscriptionSet,
   NotificationSubscriptionStore,
   NotificationSubscriptionStoreReplaceResult,
+  NotificationSuppressionDisposition,
   NotificationSubscriptionView,
   PersistentNotificationRuntime,
   PersistentNotificationRuntimeOptions,
@@ -586,6 +594,41 @@ export type {
   StoredNotificationAuthentication,
   StoredNotificationSubscription,
 } from './notification-subscriptions';
+
+export {
+  createPrincipalLifecycle,
+  createPrincipalStateStore,
+  principalNotificationSubscriptionStore,
+  DEFAULT_PRINCIPAL_STORE_COLLECTION,
+} from './principal';
+export type {
+  CreatePrincipalLifecycleOptions,
+  CreatePrincipalStateStoreOptions,
+  PendingPrincipalNotification,
+  PrepareReportingDestination,
+  PrincipalAppliedResult,
+  PrincipalConfiguration,
+  PrincipalConfigurationInput,
+  PrincipalDeclarationSupport,
+  PrincipalDeclarations,
+  PrincipalDeclarationsState,
+  PrincipalDestinationTransition,
+  PrincipalKind,
+  PrincipalLifecycleRuntime,
+  PrincipalNotificationRecoveryResult,
+  PrincipalPendingNotificationPage,
+  PrincipalReportingDestination,
+  PrincipalReportingDestinationInput,
+  PrincipalStateStore,
+  PrincipalStoreReplaceResult,
+  PrincipalStoreScope,
+  ReportingDestinationPreparation,
+  ResolvedReportingDestination,
+  ResolvedPrincipalScope,
+  StoredPrincipalRecord,
+  StoredReportingDestinationGeneration,
+  VersionedPrincipalRecord,
+} from './principal';
 
 export { createPinAndBindFetch, WEBHOOK_SSRF_POLICY, LOOPBACK_OK_WEBHOOK_SSRF_POLICY } from './pin-and-bind-fetch';
 export type { PinAndBindFetchOptions, DnsLookupAll } from './pin-and-bind-fetch';
@@ -614,6 +657,7 @@ export {
   computeGovernedPayloadHash,
   createGovernanceEnforcementMiddleware,
   verifyGovernanceAuthorization,
+  createGovernanceAgentJwksResolver,
 } from '../governance';
 export type {
   BuildGovernanceExecutionRequestInput,
@@ -630,6 +674,7 @@ export type {
   GovernanceRevocationResolver,
   GovernanceRevocationStatus,
   VerifyGovernanceAuthorizationOptions,
+  GovernanceBuyerIdentity,
 } from '../governance';
 
 export {
@@ -799,3 +844,10 @@ export {
   type ConformanceClientOptions,
   type ConformanceStatus,
 } from './socket-mode';
+
+export { mediaBuyActionResolver } from './media-buy-action-resolver';
+export type {
+  SellerActionDecision,
+  SellerActionResolutionOptions,
+  SellerActionResolution,
+} from './media-buy-action-resolver';

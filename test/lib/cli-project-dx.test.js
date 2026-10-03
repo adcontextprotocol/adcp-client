@@ -80,7 +80,12 @@ test('init seller creates a compile-gated PostgreSQL 3.2 project without invento
     mkdirSync(installedSdkDir, { recursive: true });
     writeFileSync(path.join(installedSdkDir, 'package.json'), JSON.stringify({ version: '13.9.0' }));
 
-    const doctor = run(['doctor', '--dir', dir, '--json']);
+    const doctor = run(['doctor', '--dir', dir, '--json'], {
+      ADCP_AUTH_TOKEN: '',
+      ADCP_ACCOUNT_ID: '',
+      DATABASE_URL: '',
+      ADCP_DEPLOYMENT_NAMESPACE: '',
+    });
     assert.equal(doctor.status, 1);
     const report = JSON.parse(doctor.stdout);
     assert.equal(report.ok, false);

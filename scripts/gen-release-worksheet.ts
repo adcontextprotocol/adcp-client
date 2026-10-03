@@ -1,0 +1,178 @@
+#!/usr/bin/env tsx
+
+import { readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+
+const root = path.resolve(__dirname, '..');
+const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')) as {
+  name: string;
+  version: string;
+  adcp_version: string;
+  engines?: { node?: string };
+  peerDependencies?: Record<string, string>;
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>;
+};
+const versionSource = readFileSync(path.join(root, 'src/lib/version.ts'), 'utf8');
+const compatibleMatch = versionSource.match(/export const COMPATIBLE_ADCP_VERSIONS = \[([\s\S]*?)\] as const;/);
+if (!compatibleMatch) throw new Error('Unable to read COMPATIBLE_ADCP_VERSIONS from src/lib/version.ts');
+const compatibleVersions = [...compatibleMatch[1].matchAll(/'([^']+)'/g)].map(match => match[1]);
+
+const integrity = `registry-derived after publication; run \`npm view ${pkg.name}@${pkg.version} dist.integrity\``;
+
+const requiredPeers = Object.entries(pkg.peerDependencies ?? {})
+  .map(
+    ([name, range]) =>
+      `| \`${name}\` | \`${range}\` | ${pkg.peerDependenciesMeta?.[name]?.optional === true ? 'Optional' : 'Required'} |`
+  )
+  .join('\n');
+const document = `# SDK 14 release-bound upgrade worksheet
+
+This page joins the release facts that adopters need before changing a production pin. It is generated from package and version metadata with \`npm run generate-release-worksheet\`; migration decisions remain documented in [Migrating from 13.x to 14](./migration-13-to-14.md).
+
+## Release represented by this checkout
+
+The changesets version lifecycle regenerates this section whenever the package
+version changes. For an unpublished version, integrity is intentionally shown
+as unavailable until the registry assigns it; use the exact registry command
+below as the publication/deployment gate.
+
+| Fact | Value |
+| --- | --- |
+| Exact npm package | \`${pkg.name}@${pkg.version}\` |
+| npm integrity | ${integrity} |
+| Node.js runtime | \`${pkg.engines?.node ?? 'not declared'}\` |
+| Default AdCP wire release | \`${pkg.adcp_version}\` |
+| Maintained wire releases | ${compatibleVersions.map(version => `\`${version}\``).join(', ')} |
+| Canonical migration notes | [13.x → 14](./migration-13-to-14.md) |
+
+Install exact production inputs rather than a moving range or dist-tag:
+
+\`\`\`bash
+npm install --save-exact '${pkg.name}@${pkg.version}'
+npm view '${pkg.name}@${pkg.version}' dist.integrity
+\`\`\`
+
+### Required and optional peers
+
+Install the peer packages used by your application at versions satisfying these release ranges. A2A and MCP calls continue to use their official protocol clients.
+
+| Peer | Supported range | Installation |
+| --- | --- | --- |
+${requiredPeers}
+
+## Schema access and validation tiers
+
+| Tier | Public route | Intended use | Normative behavior |
+| --- | --- | --- | --- |
+| Convenience Zod schemas | Generated values such as \`GetReportingStatusResponseSchema\` from \`@adcp/sdk/schemas\` | Application parsing and typed integration | SDK convenience surface; do not substitute it for protocol conformance |
+| Runtime AJV validation | Automatic client/server validation | Live wire traffic with extensible response envelopes | Response roots may be relaxed for envelope compatibility; diagnostics are bounded for runtime input |
+| Canonical JSON Schema validation | \`getCanonicalToolValidator()\` from \`@adcp/sdk/schemas\` | Offline conformance checks and CI | Exact selected protocol documents, no response-root relaxation, all AJV errors collected |
+| Bundled tool descriptor | \`getToolInputSchema()\` and \`getToolResponseSchema()\` | Schema publication and MCP registration | Self-contained, pre-resolved descriptor retained for compatibility; returns a caller-owned document, not a compiled validator |
+| Raw authored document | \`getSchemaDocumentByRef()\` | Immutable graph inspection and custom tooling | Callers traversing \`$ref\` must register the complete selected-version graph and preserve nested \`$id\` scopes |
+
+The canonical validator compiles the complete selected bundle offline and does
+not fetch references at runtime. Unknown tools return \`undefined\`; unresolved,
+unknown, or cross-version references fail compilation rather than falling back
+to another bundled release. It is deliberately not the live-response validator:
+transport envelope extensions accepted by the SDK runtime can be rejected by
+the authored tool schema.
+
+ESM example:
+
+\`\`\`ts
+import { getCanonicalToolValidator } from '@adcp/sdk/schemas';
+
+const validate = getCanonicalToolValidator('get_reporting_status', 'sync', {
+  adcpVersion: '${pkg.adcp_version}',
+});
+if (!validate) throw new Error('Requested protocol schema is unavailable');
+
+const valid = {
+  status: 'failed',
+  view: 'summary',
+  failure_kind: 'lookup_unavailable',
+  message: 'Reporting status resource is unavailable.',
+  errors: [{ code: 'NOT_FOUND', message: 'Reporting status resource is unavailable.' }],
+};
+if (!validate(valid)) throw new Error(JSON.stringify(validate.errors));
+
+const invalid = { status: 'completed', view: 'summary' };
+if (validate(invalid)) throw new Error('Invalid control unexpectedly passed');
+console.error(validate.errors); // all collected normative violations
+\`\`\`
+
+CommonJS uses the same packed-artifact export:
+
+\`\`\`js
+const { getCanonicalToolValidator } = require('@adcp/sdk/schemas');
+const validate = getCanonicalToolValidator('get_reporting_status', 'sync', {
+  adcpVersion: '${pkg.adcp_version}',
+});
+if (!validate) throw new Error('Requested protocol schema is unavailable');
+if (validate({ status: 'completed', view: 'summary' })) {
+  throw new Error('Invalid control unexpectedly passed');
+}
+console.error(validate.errors);
+\`\`\`
+
+## Historical worked example: rc.33/rc.35 → rc.36
+
+This example is intentionally retained as the concrete migration that introduced
+the rc.2 wire pin; it does not change when a later SDK version is released.
+
+1. Change the exact SDK pin from \`14.0.0-rc.33\` or \`14.0.0-rc.35\` to \`14.0.0-rc.36\` and verify that historical release with \`npm view @adcp/sdk@14.0.0-rc.36 dist.integrity\`.
+2. Upgrade communicating 3.2 peers together. rc.33 and rc.35 defaulted to AdCP \`3.2.0-rc.1\`; rc.36 defaults to \`3.2.0-rc.2\` and no longer advertises the superseded rc.1 pin as compatible.
+3. Preserve an existing server's explicit \`defaultAdcpVersion\`. Raising the supported ceiling to rc.2 must not silently move unversioned callers off the release the application chose to serve by default.
+4. Audit durable idempotency records containing malformed lone UTF-16 surrogates. rc.36 preserves distinct malformed payloads in request fingerprints, so a request that previously collided may now correctly return an idempotency conflict. Well-formed request fingerprints do not change.
+5. Run mixed-version integration coverage for every release your deployment still advertises, then deploy all rc.2-speaking peers before sending rc.2-only payloads.
+
+The complete behavioral inventory, including server-default separation and A2A 1.0 peer requirements, is in the [13.x → 14 migration guide](./migration-13-to-14.md).
+
+## Reliable Reporting durable-state upgrade
+
+- Pending consumer-status keys now include a stable, non-secret seller and
+  authenticated-principal \`consumerScope\`; custom stores must migrate or retire
+  unscoped pending rows before enabling the worker.
+- Configure \`pendingConsumerStatusScope\` whenever a custom
+  \`pendingConsumerStatusStore\` is supplied. This prevents one seller/principal
+  from replaying another caller's exact status body.
+- Receipt checkpoint keys now include a versioned immutable-context
+  fingerprint. Existing PostgreSQL rows are not reused under the new key and
+  are retained until an operator archives them; the SDK does not time-prune
+  receipt checkpoints or unconfirmed pending statuses. Delete old-key rows
+  only after the seller's authoritative ledger confirms the receipt/status and
+  the deployment's evidence-retention window has elapsed. Custom checkpoint
+  stores must include optional key fields when deriving storage identity.
+- Exact-revision consumption now defaults to a 32 MiB decoded-byte ceiling.
+  Set \`ledgerLimits.maxRevisionBytes\` to \`268435456\` to preserve the pre-14
+  256 MiB ceiling while measuring and migrating large reporting periods.
+- \`ledgerLimits.maxRecords\` is now one aggregate safety budget across ledger
+  records and consumer-status history. Deployments that previously sized those
+  histories independently should measure their combined peak and set an
+  explicit bounded value before upgrading.
+- Webhook signing plus each external POST now has a 30 second default deadline.
+  Set \`webhooks.deliveryTimeoutMs\` explicitly if an existing receiver has a
+  different bounded acknowledgement SLO.
+- Webhook attempt observers are awaited before each POST and after its result,
+  with a 5 second default observer deadline. Set
+  \`webhooks.attemptObserverTimeoutMs\` for a different bounded telemetry SLO;
+  a slow observer adds delivery latency.
+- Notification \`subscriber_id\` now always enforces the protocol grammar
+  \`^[A-Za-z0-9_.:-]{1,64}$\`, including when server request validation is off.
+  Rename non-conforming retained subscriber IDs. The activity log keeps
+  delivering older 65–255 character IDs during migration, but replacement
+  registrations must use the new grammar.
+- Reconciled Billing production composition now requires a trusted
+  \`obligatedConsumers\` roster; a missing roster cannot establish complete
+  billing health. The production recovery worker requires explicit
+  \`deploymentWide: true\` because it scans the whole namespace.
+- Buyer reconciliation defers integrity-valid post-official adjustments until
+  the adopter supplies \`evaluateAdjustment\`; wire the buyer's financial policy
+  before expecting accepted adjustment receipts.
+- Buyer change-cursor stores should implement \`clear(key, expected)\` so a seller
+  that retires or rotates its opaque checkpoint cannot leave the worker in a
+  permanent failed-drain loop.
+`;
+
+writeFileSync(path.join(root, 'docs/migration-14.x-rc-worksheet.md'), document);
+console.log(`Wrote docs/migration-14.x-rc-worksheet.md for ${pkg.name}@${pkg.version}`);

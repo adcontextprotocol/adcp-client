@@ -11,7 +11,14 @@
 import { createTestClient, discoverAgentProfile, seedTestClientSigningCapability } from '../client';
 import type { TestOptions, TestResult, AgentProfile, TestStepResult } from '../types';
 import { collectDetachedAssertionFailures, mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
-import { applyAdcpVersionRunOptions, runStoryboard } from '../storyboard/runner';
+import {
+  applyAdcpVersionRunOptions,
+  collectCapabilityNotices,
+  runStoryboard,
+  storyboardCapabilityGateUnmet,
+  storyboardCapabilityPredicates,
+} from '../storyboard/runner';
+import { applyNativeA2AComplianceTransportOptions } from '../storyboard/native-a2a-compliance';
 import { validateTestKit } from '../storyboard/test-kit';
 import { checkAccountDiscoveryGate, isAccountBearingSpecialism } from './spec-conformance';
 
@@ -21,6 +28,7 @@ import { checkAccountDiscoveryGate, isAccountBearingSpecialism } from './spec-co
 // `resolveAssertions` throws and every comply() call against an up-to-date
 // compliance cache fails at startup.
 import { registerDefaultInvariants } from '../storyboard/default-invariants';
+import { hasAnyRequiredTool } from '../storyboard/agent-routing';
 
 registerDefaultInvariants();
 import {
@@ -33,10 +41,14 @@ import {
   getStoryboardVersionGateReason,
 } from '../storyboard/compliance';
 import type { NotApplicableStoryboard, ResolveOptions, ResolvedBundle } from '../storyboard/compliance';
+import { REQUEST_SIGNING_PROBE_TASK } from '../storyboard/request-signing/synthesize';
+import { signingCoverage, type SigningCoverage, type SigningCoverageStepView } from '../storyboard/runner';
 import type {
+  AgentEntry,
   RunnerSelectionReason,
   RunnerSkipReason,
   Storyboard,
+  StoryboardContext,
   StoryboardPassResult,
   StoryboardResult,
   StoryboardRunOptions,
@@ -599,6 +611,15 @@ export interface ComplyOptions extends TestOptions {
    * through to `runStoryboard`; default false.
    */
   allowLiveSideEffects?: StoryboardRunOptions['allowLiveSideEffects'];
+  /**
+   * Request-signing grader knobs for the `signed_requests` storyboard's
+   * synthesized vector steps (transport, skip lists, rate-abuse opt-out).
+   * Passed through to `runStoryboard`. See
+   * `StoryboardRunOptions.request_signing`; the CLI surfaces the same knobs
+   * as `--signing-transport` / `--signing-skip-vectors` /
+   * `--signing-skip-rate-abuse`.
+   */
+  request_signing?: StoryboardRunOptions['request_signing'];
   /** Explicit compliance cache version override. */
   version?: string;
   /** Explicit compliance cache directory override. */
@@ -609,7 +630,120 @@ export interface ComplyOptions extends TestOptions {
   testKitPath?: string;
   /** Scoped hosted stable-line alias for prerelease-backed compliance caches. */
   hostedStableLineAlias?: string;
+  /**
+   * Per-storyboard routing hook. `comply()` grades one agent, so storyboards
+   * that need a second agent (`requires: [multi_agent]`, e.g. the
+   * governance-aware seller scenarios) otherwise skip with
+   * `requirement_unmet`. The hook lets a caller that can supply the other
+   * agents route those storyboards while every other storyboard keeps the
+   * ordinary single-URL run.
+   *
+   * Called once per selected storyboard, after capability discovery,
+   * `required_tools` partitioning and the `timeout_ms` budget check, and
+   * before the storyboard runs. Storyboards whose root capability predicate
+   * (`requires_capability` / `requires_all_capabilities`) the agent under
+   * test does not satisfy are not passed to the hook: they keep their
+   * `not_applicable` verdict. Not consulted in the degraded auth-rejected
+   * path, which runs only storyboards with no `required_tools`. An error the
+   * hook throws propagates out of `comply()`.
+   *
+   * `context.profile` is the agent under test's own `get_adcp_capabilities`
+   * answer: untrusted, agent-controlled input. Do not derive agent URLs or
+   * credentials from it.
+   *
+   * Return:
+   * - `undefined`: run the storyboard as usual against `agentUrl`.
+   * - a {@link ComplyStoryboardRoute}: run it as
+   *   `runStoryboard('', storyboard, { ...runOptions, agents, default_agent, context })`
+   *   and grade the result against the agent under test only (below). The
+   *   result lands in `tracks`, `summary`, `failures`, `storyboards_executed`
+   *   and `bundle_results` like any other run.
+   * - a {@link ComplyStoryboardSkip}: do not run it. `comply()` records the
+   *   same whole-storyboard `requirement_unmet` row the runner emits for an
+   *   unmet `requires:` gate, with `skip.detail` set to the reason (control
+   *   and bidi characters stripped, max 1000 chars) and `skip.requirement:
+   *   'multi_agent'` when the storyboard declares it. Like an unrouted
+   *   `multi_agent` storyboard it is listed in `storyboards_executed` and caps
+   *   its bundle at `partial`.
+   *
+   * Grading of routed results. The agent under test is only credited or
+   * blamed for what it served:
+   * - A failed step served by another routed agent, including that agent's
+   *   discovery failure (routed runs use `discovery_resilient`), becomes a
+   *   `prerequisite_failed` skip: a coverage gap (`partial`), never `failing`.
+   * - If no step served by the agent under test passed, a synthetic
+   *   `agent_under_test_coverage` gap row keeps the bundle from `passing`.
+   * - `failures[].fix_command` for a routed storyboard is a single-URL
+   *   command; re-running it reproduces only the unrouted skip.
+   *
+   * Credential and network isolation, enforced by `comply()`. Caller
+   * configuration errors throw, failing the run:
+   * - `agents[default_agent].url` must be the agent under test (`agentUrl`).
+   * - Every entry that sets `auth` must set a real credential object (a known
+   *   `type` with its secret fields); `null`, `''`, `{}` and the like throw.
+   *   Only an agent-under-test entry may omit `auth`; it then gets the
+   *   run-level `auth` pinned onto it (or the test-kit default if there is
+   *   none). Run-level `auth` is dropped from the routed options, so the
+   *   runner's `entry.auth ?? options.auth` fallback cannot hand it to
+   *   another agent.
+   * - Routing is refused while run-level `headers` are set, because the runner
+   *   sends them to every routed agent.
+   * - A replacement `route.storyboard` must keep the same `id` and grading
+   *   shape (phases, steps, tasks, agent pins, validations, expectations and
+   *   gates); only request payloads and context may change.
+   * - Run-level `transport` (including `trustedFetchFn` / SSRF guards) is
+   *   shared by every routed agent. The hook cannot override it; only `url`,
+   *   `auth` and `transport` (wire protocol) are read from each entry.
+   *
+   * Storyboard content that would forward test-kit credentials is refused as
+   * a skip rather than a throw: `$test_kit.auth` references in storyboard
+   * context, or a step not pinned to an agent-under-test key (unpinned steps
+   * route by protocol) that uses a `from_test_kit` auth directive or a
+   * `$test_kit.auth` reference.
+   *
+   * Known limit: version negotiation (`adcpVersion`, `wireAdcpVersion`,
+   * `versionEnvelope`) is done once against the agent under test and shared
+   * by every routed agent.
+   *
+   * Do not mutate `storyboard`; return a patched copy in `route.storyboard`.
+   */
+  routeStoryboard?: (
+    storyboard: Storyboard,
+    context: ComplyRouteStoryboardContext
+  ) => ComplyStoryboardRouting | Promise<ComplyStoryboardRouting>;
 }
+
+/** Second argument to {@link ComplyOptions.routeStoryboard}. */
+export interface ComplyRouteStoryboardContext {
+  /** The agent under test, as passed to `comply()`. */
+  agent_url: string;
+  /** Capability profile `comply()` discovered for the agent under test. */
+  profile: AgentProfile;
+}
+
+/** Route one storyboard across several agents. See {@link ComplyOptions.routeStoryboard}. */
+export interface ComplyStoryboardRoute {
+  /** Agents map for `runStoryboard`. `agents[default_agent].url` must be the agent under test. */
+  agents: Record<string, AgentEntry>;
+  /** Key of the agent under test in `agents`. */
+  default_agent: string;
+  /** Initial-context overrides, merged over any run-level context. */
+  context?: StoryboardContext;
+  /**
+   * Storyboard to run in place of the selected one (e.g. a patched copy).
+   * Must keep the same `id` so the result is attributed to the same bundle.
+   */
+  storyboard?: Storyboard;
+}
+
+/** Record a storyboard as not runnable. See {@link ComplyOptions.routeStoryboard}. */
+export interface ComplyStoryboardSkip {
+  /** Human-readable reason, reported as `skip.detail`. */
+  skip: string;
+}
+
+/** Return type of {@link ComplyOptions.routeStoryboard}. */
+export type ComplyStoryboardRouting = ComplyStoryboardRoute | ComplyStoryboardSkip | undefined;
 
 /**
  * Run compliance assessment against an agent.
@@ -767,6 +901,87 @@ function resolveFromCapabilities(
   };
 }
 
+/** @internal CLI selection details; not part of the SDK's public surface. */
+export interface RoutedAssessmentSelection {
+  storyboards: Storyboard[];
+  agents: Record<
+    string,
+    {
+      supported_protocols: string[];
+      specialisms: string[];
+      supported_versions: string[];
+    }
+  >;
+  not_applicable: NotApplicableStoryboard[];
+  missing_tools: NotApplicableStoryboard[];
+}
+
+/**
+ * Resolve a capability-driven assessment for a routed topology.
+ *
+ * Each tenant contributes its applicable bundles to a stable union. Required
+ * tool applicability is then evaluated against the topology-wide tool set,
+ * allowing a cross-specialism storyboard selected by one tenant to be served
+ * by another tenant in the same routing map.
+ *
+ * @internal CLI assessment helper.
+ */
+export function resolveRoutedAssessment(
+  profiles: ReadonlyMap<string, AgentProfile>,
+  resolveOptions: ResolveOptions = {}
+): RoutedAssessmentSelection {
+  const agents: RoutedAssessmentSelection['agents'] = {};
+  const topologyTools = new Set<string>();
+  const supportedProtocols = new Set<string>();
+  const specialisms = new Set<string>();
+  const majorVersions = new Set<number>();
+  const complianceIndex = loadComplianceIndex(resolveOptions);
+
+  for (const [agentKey, profile] of profiles) {
+    if (
+      profile.adcp_supported_versions?.length &&
+      !isComplianceVersionSupported(complianceIndex.adcp_version, profile.adcp_supported_versions, resolveOptions)
+    ) {
+      throw new Error(
+        `Compliance cache version ${complianceIndex.adcp_version} is not supported by routed agent "${agentKey}". ` +
+          `Agent advertises adcp.supported_versions [${profile.adcp_supported_versions.join(', ')}].`
+      );
+    }
+    agents[agentKey] = {
+      supported_protocols: [...(profile.supported_protocols ?? [])],
+      specialisms: [...(profile.specialisms ?? [])],
+      supported_versions: [...(profile.adcp_supported_versions ?? [])],
+    };
+    for (const tool of profile.tools) topologyTools.add(tool);
+    for (const protocol of profile.supported_protocols ?? []) supportedProtocols.add(protocol);
+    for (const specialism of profile.specialisms ?? []) specialisms.add(specialism);
+    for (const version of profile.adcp_major_versions ?? []) majorVersions.add(version);
+  }
+
+  // Resolve once for the topology rather than reparsing the compliance cache
+  // once per tenant. The union is the intended assessment surface; routed
+  // execution still binds every step to the profile of the tenant serving it.
+  const resolved = resolveFromCapabilities(
+    {
+      name: 'routed topology',
+      tools: [...topologyTools],
+      supported_protocols: [...supportedProtocols],
+      specialisms: [...specialisms],
+      adcp_major_versions: [...majorVersions],
+      adcp_supported_versions: [complianceIndex.adcp_version],
+    },
+    resolveOptions
+  );
+  const partition = partitionStoryboardsByRequiredTools(resolved.storyboards, [...topologyTools]);
+
+  return {
+    storyboards: partition.runnable,
+    agents,
+    not_applicable: resolved.not_applicable,
+    missing_tools: partition.missing,
+  };
+}
+
 export interface ComplianceBundleAssessmentOptions {
   /** Storyboards excluded because the seller's declared version predates them. */
   notApplicable?: readonly NotApplicableStoryboard[];
@@ -784,6 +999,202 @@ const NEUTRAL_BUNDLE_SKIP_REASONS = new Set<string>([
   // remain coverage gaps and therefore keep the bundle partial.
   'capability_prerequisite_unavailable',
 ]);
+
+/**
+ * A storyboard skipped because the agent's **own capability declaration** says
+ * the scenario is not its surface carries no verdict about the agent, so it
+ * must not be aggregated as missing coverage.
+ *
+ * `capability_unsupported` is the detailed reason `buildCapabilityUnsupportedResult`
+ * emits when a root `requires_capability` / `requires_all_capabilities`
+ * predicate evaluated false against the discovered profile — e.g. a pure
+ * seller that never declares `adcp.governance_enforcement.tasks` against
+ * `media_buy_seller/governance_approved`. It canonicalizes to
+ * `not_applicable`, whose contract text is exactly this case: "the agent not
+ * declaring the protocol or specialism this storyboard targets".
+ *
+ * Agent-declaration-driven is the whole point, and it is what keeps the rule
+ * sound (adcp-client#2945 review):
+ *
+ *   - A seller that does NOT claim governance-aware capability gets the
+ *     scenario graded not-applicable and can reach `passing` on its own
+ *     seller surface.
+ *   - A seller that DOES claim it passes the capability gate, so the scenario
+ *     proceeds and any later gate — `requires: [multi_agent]` with no second
+ *     tenant, a missing controller, absent runner infrastructure — caps the
+ *     bundle. A claimant is never credited for a capability that was never
+ *     exercised.
+ *
+ * Every other skip still caps: all `requirement_unmet` values including
+ * `multi_agent` (an unmet gate means evidence was never collected and the
+ * operator can supply what was missing), the `required_any_of_tools` family
+ * gate, step-scope coverage skips, zero-observation evidence, and
+ * ungradable validations.
+ */
+/** AdCP release that introduced the normative "Applicability order" rule. */
+const CAPABILITY_ROLLUP_MIN_ADCP_VERSION = '3.2';
+
+/** Phase id, step id and detailed skip reason of the root applicability row. */
+const CAPABILITY_UNSUPPORTED_ROW_ID = 'capability_unsupported';
+
+/**
+ * Every key `buildCapabilityUnsupportedResult` emits, plus `notices`, which
+ * its call sites spread in. A result carrying anything else is not the root
+ * applicability skip.
+ */
+const CAPABILITY_UNSUPPORTED_RESULT_KEYS: ReadonlySet<string> = new Set([
+  'storyboard_id',
+  'storyboard_title',
+  'agent_url',
+  'overall_passed',
+  'phases',
+  'context',
+  'total_duration_ms',
+  'passed_count',
+  'failed_count',
+  'skipped_count',
+  'runner_capability_version',
+  'tested_at',
+  'strict_validation_summary',
+  'notices',
+]);
+
+/** Every key the builder's single synthetic phase emits. */
+const CAPABILITY_UNSUPPORTED_PHASE_KEYS: ReadonlySet<string> = new Set([
+  'phase_id',
+  'phase_title',
+  'passed',
+  'steps',
+  'duration_ms',
+]);
+
+/** Every key the builder's single synthetic step row emits. */
+const CAPABILITY_UNSUPPORTED_STEP_KEYS: ReadonlySet<string> = new Set([
+  'storyboard_id',
+  'step_id',
+  'phase_id',
+  'title',
+  'task',
+  'passed',
+  'skipped',
+  'skip_reason',
+  'skip',
+  'duration_ms',
+  'validations',
+  'context',
+  'error',
+  'extraction',
+]);
+
+/**
+ * Normalized dotted-path segments of a capability predicate. Segment matching
+ * rather than a prefix test, so ` Compliance_Testing.scenarios ` and
+ * `adcp.compliance_testing.scenarios` are both recognised as the
+ * test-harness namespace and neither slips past the guard.
+ */
+function capabilityPathSegments(path: unknown): string[] {
+  return String(path ?? '')
+    .trim()
+    .toLowerCase()
+    .split('.')
+    .map(segment => segment.trim())
+    .filter(segment => segment.length > 0);
+}
+
+function isCapabilityUnsupportedSkip(storyboard: Storyboard, result: StoryboardResult): boolean {
+  // Anchor on a capability predicate the storyboard actually declares. Without
+  // this the rule would rest on which emitter happens to use the
+  // `capability_unsupported` token, and a future synthesized use of it would
+  // silently inherit neutrality.
+  const predicates = storyboardCapabilityPredicates(storyboard);
+  if (predicates.length === 0) return false;
+  // Version-scoped, fail closed. The "Applicability order" paragraph that
+  // makes this grade normative — capability predicates evaluated before
+  // `requires`, an unsatisfied predicate keeping the storyboard "out of the
+  // coverage totals of agents that never claimed the capability" — arrived in
+  // AdCP 3.2. `adcp_version` is stamped onto every cache-loaded storyboard by
+  // `annotateStoryboardVersion`; a storyboard without it is hand-built or
+  // caller-supplied, and a pre-3.2 bundle predates the rule. Both keep capping
+  // the bundle exactly as before (adcp-client#2945 review).
+  //
+  // Typed `string | undefined`, but this is an exported grading boundary a
+  // JavaScript caller can reach with anything at all. `null`, a number, or a
+  // `{}` would throw inside `compareAdcpVersionStrings` (`.startsWith` on a
+  // non-string) and take the whole rollup down; a non-string is also not a
+  // version this rule can read, so it fails closed like an absent one
+  // (adcp-client#2945 review).
+  if (typeof storyboard.adcp_version !== 'string') return false;
+  if (compareAdcpVersionStrings(storyboard.adcp_version, CAPABILITY_ROLLUP_MIN_ADCP_VERSION) < 0) return false;
+  // A `compliance_testing.*` gate declares which deterministic-test scenarios
+  // the agent's own controller implements — test-harness scope, not product
+  // surface. Neutralizing it would let an agent drop one scenario string from
+  // its own list and flip the bundle to `passing` at no cost, which is the
+  // asymmetry this rule exists to avoid. Those storyboards stay coverage gaps.
+  if (predicates.some(predicate => capabilityPathSegments(predicate.path).includes('compliance_testing'))) {
+    return false;
+  }
+
+  // `buildComplianceBundleResults` is exported, so the shape check is a public
+  // grading boundary rather than an internal invariant. Rather than chase the
+  // fields that can carry execution evidence — `response_record`,
+  // `strict_validation_summary.failed`, and whatever a future release adds —
+  // this is a POSITIVE whitelist of exactly what
+  // `buildCapabilityUnsupportedResult` emits, plus the harmless metadata its
+  // call sites spread in. Any other key means the caller is describing
+  // something richer than "this storyboard was never attempted", and the
+  // ordinary cap checks must run (adcp-client#2945 review).
+  for (const key of Object.keys(result)) {
+    if (!CAPABILITY_UNSUPPORTED_RESULT_KEYS.has(key)) return false;
+  }
+  if (result.overall_passed !== true) return false;
+  if (result.passed_count !== 0 || result.failed_count !== 0 || result.skipped_count !== 1) return false;
+  // The builder emits an unobservable, all-zero strict-validation summary.
+  // Anything else is a record of validation work that did happen.
+  const strict = result.strict_validation_summary;
+  if (strict !== undefined) {
+    if (
+      strict.observable !== false ||
+      strict.checked !== 0 ||
+      strict.passed !== 0 ||
+      strict.failed !== 0 ||
+      strict.strict_only_failures !== 0 ||
+      strict.lenient_also_failed !== 0
+    ) {
+      return false;
+    }
+  }
+  if (result.phases.length !== 1) return false;
+  const phase = result.phases[0]!;
+  // Same positive whitelist at phase scope. Without it the phase was the one
+  // level of the synthetic result a caller could hang extra evidence off —
+  // branch/assertion rollups, a future per-phase field — and still be
+  // neutralized (adcp-client#2945 review).
+  for (const key of Object.keys(phase)) {
+    if (!CAPABILITY_UNSUPPORTED_PHASE_KEYS.has(key)) return false;
+  }
+  if (phase.phase_id !== CAPABILITY_UNSUPPORTED_ROW_ID || phase.passed !== true) return false;
+  const steps = phase.steps ?? [];
+  if (steps.length !== 1) return false;
+  const step = steps[0]!;
+  for (const key of Object.keys(step)) {
+    if (!CAPABILITY_UNSUPPORTED_STEP_KEYS.has(key)) return false;
+  }
+  return (
+    step.step_id === CAPABILITY_UNSUPPORTED_ROW_ID &&
+    step.skipped === true &&
+    step.passed === true &&
+    step.skip_reason === CAPABILITY_UNSUPPORTED_ROW_ID &&
+    // Canonical reason and a non-blank detail, per the output contract.
+    step.skip?.reason === 'not_applicable' &&
+    typeof step.skip.detail === 'string' &&
+    step.skip.detail.trim().length > 0 &&
+    // A row that names a runtime requirement is reporting an unmet gate, not
+    // an unclaimed capability.
+    step.skip.requirement === undefined &&
+    // No execution evidence on the row itself.
+    (step.validations?.length ?? 0) === 0
+  );
+}
 
 /**
  * Aggregate the exact cache bundles selected for a capability-driven run.
@@ -813,6 +1224,11 @@ export function buildComplianceBundleResults(
       if (!result.overall_passed && (result.failed_count > 0 || collectDetachedAssertionFailures(result).length > 0)) {
         return 'failing' as const;
       }
+      // Checked after `failing` so a real failure always wins: a scenario the
+      // agent's own declaration puts outside its surface carries no verdict.
+      // Unmet requirements and every coverage gap fall through and still cap
+      // the bundle below.
+      if (isCapabilityUnsupportedSkip(storyboard, result)) return 'not_applicable' as const;
       const branchSetPhaseIds = new Set(
         storyboard.phases.filter(phase => phase.branch_set !== undefined).map(phase => phase.id)
       );
@@ -875,9 +1291,31 @@ export function buildComplianceBundleResults(
       return 'passing' as const;
     });
 
+    // Storyboards that do not apply to this agent or run carry no verdict, so
+    // they neither grant nor withhold the bundle's. `graded` must be non-empty
+    // for `passing` — an all-not-applicable bundle still reports
+    // `not_applicable` below rather than passing vacuously. Every other
+    // status (`untested`, `partial`, `failing`) still blocks `passing`.
+    // Version-excluded storyboards (`options.notApplicable`, derived from the
+    // agent's declared `major_versions`) are deliberately NOT forgiven here:
+    // that is a separate pre-existing path on an input the agent controls, so
+    // it keeps capping the bundle exactly as it did before.
+    const graded = statuses.filter(
+      (candidate, index) => candidate !== 'not_applicable' || notApplicableIds.has(storyboardIds[index]!)
+    );
+    // A version-excluded entry survives into `graded`, and it must keep
+    // capping. Without this branch a bundle whose every executed storyboard
+    // was capability-neutralized would fall through to the
+    // all-statuses-not_applicable case and report `not_applicable`, when the
+    // version-excluded sibling means real coverage is still missing — base
+    // reports `partial` there. A bundle that is *wholly* version-excluded has
+    // nothing neutralized (`statuses.length === graded.length`) and still
+    // reports `not_applicable`, as it did before (adcp-client#2945 review).
+    const hasNeutralizedStoryboard = statuses.length > graded.length;
     let status: ComplianceBundleResult['status'];
     if (failingBundleIds.has(bundle.ref.id) || statuses.includes('failing')) status = 'failing';
-    else if (statuses.length > 0 && statuses.every(candidate => candidate === 'passing')) status = 'passing';
+    else if (graded.length > 0 && graded.every(candidate => candidate === 'passing')) status = 'passing';
+    else if (hasNeutralizedStoryboard && graded.includes('not_applicable')) status = 'partial';
     else if (statuses.length > 0 && statuses.every(candidate => candidate === 'not_applicable')) {
       status = 'not_applicable';
     } else if (statuses.length === 0 || statuses.every(candidate => candidate === 'untested')) {
@@ -1059,12 +1497,11 @@ export function partitionStoryboardsByRequiredTools(
   storyboards: Storyboard[],
   discoveredTools: readonly string[]
 ): { runnable: Storyboard[]; missing: NotApplicableStoryboard[] } {
-  const discoveredToolNames = new Set(discoveredTools);
   const runnable: Storyboard[] = [];
   const missing: NotApplicableStoryboard[] = [];
   for (const sb of storyboards) {
     const required = sb.required_tools ?? [];
-    const hasApplicableTool = required.length === 0 || required.some(tool => discoveredToolNames.has(tool));
+    const hasApplicableTool = hasAnyRequiredTool(required, discoveredTools);
     if (!hasApplicableTool) {
       missing.push({
         storyboard_id: sb.id,
@@ -1180,6 +1617,448 @@ function buildNotApplicableStoryboardResult(agentUrl: string, na: NotApplicableS
     runner_capability_version: LIBRARY_VERSION,
     tested_at: now,
     notices: [],
+  };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Per-storyboard routing (ComplyOptions.routeStoryboard)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Run one selected storyboard, consulting `routeStoryboard` when supplied.
+ */
+async function runComplyStoryboard(
+  agentUrl: string,
+  storyboard: Storyboard,
+  runOptions: StoryboardRunOptions,
+  profile: AgentProfile,
+  routeStoryboard: ComplyOptions['routeStoryboard']
+): Promise<StoryboardResult> {
+  // Applicability comes before routing: a storyboard whose root capability
+  // predicate the agent under test does not satisfy keeps the runner's
+  // `not_applicable` verdict (no network call), so a hook skip can never turn
+  // it into a bundle-capping `requirement_unmet`.
+  if (!routeStoryboard || storyboardCapabilityGateUnmet(storyboard, runOptions) !== null) {
+    return runStoryboard(agentUrl, storyboard, runOptions);
+  }
+  const routing = await routeStoryboard(storyboard, { agent_url: agentUrl, profile });
+  if (routing === undefined || routing === null) return runStoryboard(agentUrl, storyboard, runOptions);
+  if (typeof routing !== 'object') {
+    throw new TypeError(
+      `routeStoryboard(${storyboard.id}) must return undefined, { skip } or { agents, default_agent }; got ${typeof routing}.`
+    );
+  }
+  if ('skip' in routing) {
+    if ('agents' in routing) {
+      throw new TypeError(`routeStoryboard(${storyboard.id}) returned both \`skip\` and \`agents\`; return one.`);
+    }
+    if (typeof routing.skip !== 'string' || routing.skip.trim() === '') {
+      throw new TypeError(`routeStoryboard(${storyboard.id}) returned \`skip\` without a non-empty reason string.`);
+    }
+    return buildRouteSkippedStoryboardResult(agentUrl, storyboard, routing.skip, runOptions);
+  }
+  const routed = buildRoutedStoryboardRun(agentUrl, storyboard, runOptions, routing);
+  if ('refused' in routed) return buildRouteSkippedStoryboardResult(agentUrl, storyboard, routed.refused, runOptions);
+  const result = await runStoryboard('', routed.storyboard, routed.options);
+  return gradeRoutedResultForAgentUnderTest(result, routed.agentUnderTestIndexes, routed.keyByIndex);
+}
+
+function sameAgentUrl(a: string, b: string): boolean {
+  try {
+    return new URL(a).href === new URL(b).href;
+  } catch {
+    return a === b;
+  }
+}
+
+/** A usable credential object: non-null, a known `type`, and that type's secret fields present. */
+function isCredentialObject(auth: unknown): auth is NonNullable<AgentEntry['auth']> {
+  if (!auth || typeof auth !== 'object' || Array.isArray(auth)) return false;
+  const a = auth as Record<string, unknown>;
+  const nonEmpty = (v: unknown) => typeof v === 'string' && v.length > 0;
+  const isObject = (v: unknown) => !!v && typeof v === 'object' && !Array.isArray(v);
+  switch (a.type) {
+    case 'bearer':
+      return nonEmpty(a.token);
+    case 'basic':
+      return nonEmpty(a.username) && typeof a.password === 'string';
+    case 'oauth':
+      return isObject(a.tokens);
+    case 'oauth_client_credentials':
+      return isObject(a.credentials);
+    default:
+      return false;
+  }
+}
+
+function referencesTestKitAuth(value: unknown): boolean {
+  if (typeof value === 'string') return value.includes('$test_kit.auth');
+  if (Array.isArray(value)) return value.some(referencesTestKitAuth);
+  if (value && typeof value === 'object') return Object.values(value).some(referencesTestKitAuth);
+  return false;
+}
+
+/** A step-level `auth` directive that pulls a credential from the run's test kit. */
+function stepAuthUsesTestKit(auth: unknown): boolean {
+  return !!auth && typeof auth === 'object' && !!(auth as { from_test_kit?: unknown }).from_test_kit;
+}
+
+/**
+ * Why a routed storyboard would send test-kit credentials to an agent other
+ * than the agent under test, or `undefined`. Hosted runs put the owner's
+ * credential in `test_kit.auth`; only steps pinned to an agent-under-test key
+ * may read it, because an unpinned step routes by protocol and can land on
+ * another agent. `$test_kit.auth.probe_task` as a step's `task` names a tool,
+ * not a secret, so `task` is not scanned.
+ */
+function testKitCredentialLeak(storyboard: Storyboard, agentUnderTestKeys: ReadonlySet<string>): string | undefined {
+  if (referencesTestKitAuth(storyboard.context)) {
+    return 'its context references `$test_kit.auth`, which comply() will not forward to other routed agents.';
+  }
+  for (const phase of storyboard.phases ?? []) {
+    for (const step of phase.steps ?? []) {
+      if (step.agent !== undefined && agentUnderTestKeys.has(step.agent)) continue;
+      const { task: _task, ...rest } = step;
+      if (stepAuthUsesTestKit(step.auth) || referencesTestKitAuth(rest)) {
+        return (
+          `step "${step.id}" is not pinned to the agent under test but reads test-kit credentials; ` +
+          'comply() will not forward them to other routed agents.'
+        );
+      }
+    }
+  }
+  return undefined;
+}
+
+/** Projection of everything that grades a storyboard, for replacement checks. */
+function storyboardGradingShape(storyboard: Storyboard): string {
+  return JSON.stringify({
+    requires: storyboard.requires,
+    requires_capability: storyboard.requires_capability,
+    requires_all_capabilities: storyboard.requires_all_capabilities,
+    invariants: storyboard.invariants,
+    phases: (storyboard.phases ?? []).map(phase => ({
+      id: phase.id,
+      optional: phase.optional,
+      branch_set: phase.branch_set,
+      requires_capability: phase.requires_capability,
+      steps: (phase.steps ?? []).map(step => ({
+        id: step.id,
+        task: step.task,
+        agent: step.agent,
+        validations: step.validations,
+        expect_error: step.expect_error,
+        requires_tool: step.requires_tool,
+      })),
+    })),
+  });
+}
+
+type RoutedStoryboardRun =
+  | {
+      storyboard: Storyboard;
+      options: StoryboardRunOptions;
+      /** 1-based `agent_index` values whose entry is the agent under test. */
+      agentUnderTestIndexes: ReadonlySet<number>;
+      keyByIndex: ReadonlyMap<number, string>;
+    }
+  | { refused: string };
+
+/**
+ * Turn a hook route into routed `runStoryboard` options, enforcing the
+ * isolation contract documented on `ComplyOptions.routeStoryboard`. Caller
+ * configuration errors throw; storyboard content that would leak test-kit
+ * credentials returns `{ refused }` so the run records a skip instead.
+ */
+function buildRoutedStoryboardRun(
+  agentUrl: string,
+  selected: Storyboard,
+  runOptions: StoryboardRunOptions,
+  route: ComplyStoryboardRoute
+): RoutedStoryboardRun {
+  const where = `routeStoryboard(${selected.id})`;
+  const storyboard = route.storyboard ?? selected;
+  if (!storyboard || typeof storyboard !== 'object' || storyboard.id !== selected.id) {
+    throw new TypeError(
+      `${where} returned a replacement storyboard with a different id; it must keep id "${selected.id}" ` +
+        'so the result is attributed to the selected storyboard and its bundle.'
+    );
+  }
+  if (storyboard !== selected && storyboardGradingShape(storyboard) !== storyboardGradingShape(selected)) {
+    throw new TypeError(
+      `${where} returned a replacement storyboard that changes what is graded (phases, steps, tasks, agent ` +
+        'pins, validations, expectations or gates). A replacement may only change request payloads and context.'
+    );
+  }
+  const agents = route.agents;
+  if (!agents || typeof agents !== 'object' || Object.keys(agents).length === 0) {
+    throw new TypeError(`${where} returned a route without a non-empty \`agents\` map.`);
+  }
+  const defaultKey = route.default_agent;
+  if (typeof defaultKey !== 'string' || !Object.prototype.hasOwnProperty.call(agents, defaultKey)) {
+    throw new TypeError(`${where} returned a \`default_agent\` that is not a key in \`agents\`.`);
+  }
+  const headers = runOptions.headers;
+  if (headers && Object.keys(headers).length > 0) {
+    throw new Error(
+      `${where}: refusing to route while run-level \`headers\` are set; the runner sends them to every ` +
+        'routed agent. Remove the headers or skip this storyboard.'
+    );
+  }
+
+  // Copy only the fields AgentEntry defines, agent under test first so the
+  // routed result's `agent_url` names the agent being graded. Every entry
+  // ends up with explicit auth (or none at all), and run-level `auth` is
+  // dropped below, so the runner's `entry.auth ?? options.auth` fallback has
+  // nothing to hand to another agent.
+  const ordered = [defaultKey, ...Object.keys(agents).filter(key => key !== defaultKey)];
+  const isolated: Record<string, AgentEntry> = {};
+  const agentUnderTestIndexes = new Set<number>();
+  const agentUnderTestKeys = new Set<string>();
+  const keyByIndex = new Map<number, string>();
+  ordered.forEach((key, index) => {
+    const entry = agents[key];
+    if (!entry || typeof entry !== 'object' || typeof entry.url !== 'string' || entry.url === '') {
+      throw new TypeError(`${where}: agents['${key}'] needs a non-empty \`url\`.`);
+    }
+    const isAgentUnderTest = sameAgentUrl(entry.url, agentUrl);
+    if (key === defaultKey && !isAgentUnderTest) {
+      throw new Error(
+        `${where}: agents['${key}'] (the default_agent) must be the agent under test (${redactOAuthUrlForOutput(agentUrl)}); ` +
+          'comply() attributes the result to that agent.'
+      );
+    }
+    const hasOwnAuth = Object.prototype.hasOwnProperty.call(entry, 'auth');
+    if (hasOwnAuth ? !isCredentialObject(entry.auth) : !isAgentUnderTest) {
+      throw new Error(
+        `${where}: agents['${key}'] (${redactOAuthUrlForOutput(entry.url)}) must declare its own \`auth\` ` +
+          'credential object ({ type: "bearer" | "basic" | "oauth" | "oauth_client_credentials", ... }). ' +
+          'Without it the runner falls back to the credential for the agent under test.'
+      );
+    }
+    // The agent under test keeps its run-level credential by pinning it here.
+    // With neither, the runner's test-kit default applies to this entry only,
+    // since every other entry carries explicit auth.
+    const auth = hasOwnAuth ? entry.auth : runOptions.auth;
+    isolated[key] = {
+      url: entry.url,
+      ...(auth !== undefined && { auth }),
+      ...(entry.transport !== undefined && { transport: entry.transport }),
+    };
+    keyByIndex.set(index + 1, key);
+    if (isAgentUnderTest) {
+      agentUnderTestIndexes.add(index + 1);
+      agentUnderTestKeys.add(key);
+    }
+  });
+
+  const leak = testKitCredentialLeak(storyboard, agentUnderTestKeys);
+  if (leak) return { refused: `${selected.id} cannot be routed: ${leak}` };
+
+  const context =
+    runOptions.context !== undefined || route.context !== undefined
+      ? { ...runOptions.context, ...route.context }
+      : undefined;
+  const options: StoryboardRunOptions = {
+    ...runOptions,
+    agents: isolated,
+    default_agent: defaultKey,
+    // A broken peer agent must grade as a coverage gap for the agent under
+    // test, not fail the whole storyboard: resilient discovery turns it into
+    // per-step routing failures attributed to that peer's `agent_index`.
+    discovery_resilient: true,
+    ...(context !== undefined && { context }),
+  };
+  delete options.auth;
+  // The runner rejects `_client` with `agents`. The rest is comply()'s
+  // single-agent state; the runner clears it per agent anyway.
+  delete options._client;
+  delete options._profile;
+  delete options.profile;
+  delete options._controllerCapabilities;
+  delete options.agentTools;
+  return { storyboard, options, agentUnderTestIndexes, keyByIndex };
+}
+
+/**
+ * Grade a routed result against the agent under test only.
+ *
+ * - A failed step served by another routed agent (its `agent_index` is not an
+ *   agent-under-test entry) becomes a `prerequisite_failed` skip: a coverage
+ *   gap that caps the bundle at `partial`, never `failing`. Its step-scope
+ *   assertion failures move into the skip detail so they are not re-counted
+ *   as detached failures.
+ * - A whole-storyboard `discovery_failed` result (not attributable to one
+ *   agent) is graded the same way.
+ * - When no step served by the agent under test passed, a synthetic
+ *   coverage-gap row is added so the bundle cannot reach `passing` on other
+ *   agents' evidence.
+ */
+function gradeRoutedResultForAgentUnderTest(
+  result: StoryboardResult,
+  agentUnderTestIndexes: ReadonlySet<number>,
+  keyByIndex: ReadonlyMap<number, string>
+): StoryboardResult {
+  const isDiscoveryFailure =
+    result.phases.length === 1 && result.phases[0]!.phase_id === 'discovery_failed' && result.failed_count > 0;
+  const downgraded = new Map<string, string>();
+  const phases = result.phases.map(phase => {
+    let changed = false;
+    const steps = phase.steps.map(step => {
+      if (step.passed || step.skipped) return step;
+      const peer = isDiscoveryFailure
+        ? 'a routed agent'
+        : step.agent_index !== undefined && !agentUnderTestIndexes.has(step.agent_index)
+          ? `routed agent "${keyByIndex.get(step.agent_index) ?? step.agent_index}"`
+          : undefined;
+      if (!peer) return step;
+      changed = true;
+      const assertionErrors = (result.assertions ?? [])
+        .filter(a => !a.passed && a.scope !== 'storyboard' && a.step_id === step.step_id)
+        .map(a => a.error ?? a.description);
+      const detail = sanitizeAgentText(
+        `Step served by ${peer} failed; comply() grades it as a coverage gap for the agent under test, not a ` +
+          `failure. ${step.error ?? 'No error detail.'}` +
+          (assertionErrors.length > 0 ? ` Assertions: ${assertionErrors.join('; ')}` : ''),
+        1000
+      );
+      downgraded.set(step.step_id, detail);
+      const { error: _error, ...rest } = step;
+      return {
+        ...rest,
+        passed: true,
+        skipped: true,
+        skip_reason: 'prerequisite_failed' as const,
+        skip: { reason: 'prerequisite_failed' as const, detail },
+      };
+    });
+    return changed ? { ...phase, steps, passed: steps.every(step => step.passed) } : phase;
+  });
+
+  const autPassed = phases.some(phase =>
+    phase.steps.some(
+      step =>
+        step.passed && !step.skipped && step.agent_index !== undefined && agentUnderTestIndexes.has(step.agent_index)
+    )
+  );
+  if (downgraded.size === 0 && (autPassed || result.passed_count === 0)) return result;
+
+  const assertions = result.assertions?.filter(
+    a => a.passed || a.scope === 'storyboard' || a.step_id === undefined || !downgraded.has(a.step_id)
+  );
+  const graded: StoryboardResult = {
+    ...result,
+    phases,
+    ...(assertions !== undefined && { assertions }),
+    failed_count: result.failed_count - downgraded.size,
+    skipped_count: result.skipped_count + downgraded.size,
+  };
+  if (!autPassed && graded.passed_count > 0) {
+    graded.phases = [
+      ...graded.phases,
+      {
+        phase_id: 'agent_under_test_coverage',
+        phase_title: 'Agent under test coverage',
+        passed: true,
+        duration_ms: 0,
+        steps: [
+          {
+            storyboard_id: result.storyboard_id,
+            step_id: 'agent_under_test_coverage',
+            phase_id: 'agent_under_test_coverage',
+            title: 'No step served by the agent under test passed',
+            task: '',
+            passed: true,
+            skipped: true,
+            skip_reason: 'prerequisite_failed',
+            skip: {
+              reason: 'prerequisite_failed',
+              detail:
+                'Every passing step in this routed storyboard was served by another agent, so it carries no ' +
+                'evidence about the agent under test.',
+            },
+            duration_ms: 0,
+            validations: [],
+            context: {},
+            extraction: { path: 'none' },
+          },
+        ],
+      },
+    ];
+    graded.skipped_count += 1;
+  }
+  // Only a false verdict the downgrade explains can flip; never the reverse.
+  graded.overall_passed =
+    result.overall_passed ||
+    (graded.failed_count === 0 &&
+      !(graded.assertions ?? []).some(a => !a.passed && a.scope === 'storyboard') &&
+      collectDetachedAssertionFailures(graded).length === 0);
+  return graded;
+}
+
+/**
+ * Whole-storyboard skip for a hook `{ skip }`. Same shape as the runner's
+ * unmet-`requires:` result, so summaries, tracks and `bundle_results` treat
+ * it like an unrouted `multi_agent` storyboard: a coverage gap that caps its
+ * bundle at `partial`, never a pass or `not_applicable`.
+ */
+function buildRouteSkippedStoryboardResult(
+  agentUrl: string,
+  storyboard: Storyboard,
+  reason: string,
+  runOptions: StoryboardRunOptions
+): StoryboardResult {
+  const detail = sanitizeAgentText(reason, 1000);
+  const requirement = storyboard.requires?.includes('multi_agent') ? 'multi_agent' : undefined;
+  const stepId = requirement ? `requirement_unmet:${requirement}` : 'requirement_unmet:route_storyboard';
+  return {
+    storyboard_id: storyboard.id,
+    storyboard_title: storyboard.title,
+    agent_url: redactOAuthUrlForOutput(agentUrl),
+    overall_passed: true,
+    phases: [
+      {
+        phase_id: 'requirement_unmet',
+        phase_title: requirement ? `Requirement unmet: ${requirement}` : 'Requirement unmet: not routable',
+        passed: true,
+        duration_ms: 0,
+        steps: [
+          {
+            storyboard_id: storyboard.id,
+            step_id: stepId,
+            phase_id: 'requirement_unmet',
+            title: requirement
+              ? `Storyboard skipped: requires '${requirement}'`
+              : 'Storyboard skipped: not routable by this run',
+            task: '',
+            passed: true,
+            skipped: true,
+            skip_reason: 'requirement_unmet',
+            skip: { reason: 'requirement_unmet', detail, ...(requirement && { requirement }) },
+            duration_ms: 0,
+            validations: [],
+            context: {},
+            extraction: { path: 'none' },
+          },
+        ],
+      },
+    ],
+    context: {},
+    total_duration_ms: 0,
+    passed_count: 0,
+    failed_count: 0,
+    skipped_count: 1,
+    runner_capability_version: LIBRARY_VERSION,
+    tested_at: new Date().toISOString(),
+    strict_validation_summary: {
+      observable: false,
+      checked: 0,
+      passed: 0,
+      failed: 0,
+      strict_only_failures: 0,
+      lenient_also_failed: 0,
+    },
+    notices: collectCapabilityNotices(storyboard, runOptions._profile),
   };
 }
 
@@ -1339,12 +2218,17 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     trusted_match_publisher_auth_runner,
     contracts,
     allowLiveSideEffects,
+    request_signing,
     version,
     complianceDir,
     schemaRoot,
     hostedStableLineAlias,
+    routeStoryboard,
     ...testOptions
   } = options;
+  if (routeStoryboard !== undefined && typeof routeStoryboard !== 'function') {
+    throw new TypeError('routeStoryboard must be a function');
+  }
   const resolveOptions: ResolveOptions = {
     ...(version !== undefined && { version }),
     ...(complianceDir !== undefined && { complianceDir }),
@@ -1383,9 +2267,18 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
   return await withExternalSchemaRoot(complianceIndex.adcp_version, scopedSchemaRoot, async () => {
     let effectiveOptions: TestOptions = applyAdcpVersionRunOptions(complianceIndex.adcp_version, {
       ...testOptions,
+      // `comply()` has always defaulted an unset transport to MCP when it built
+      // its clients (`effectiveOptions.protocol ?? 'mcp'`, below). Resolve it
+      // here instead of at each call site so the storyboard runner sees the
+      // same transport the requests actually use: probe selection is
+      // explicit-MCP-only by design, and leaving `protocol` unset would deny
+      // the MCP session sentinel to the default `comply()` caller while still
+      // speaking MCP on the wire.
+      protocol: testOptions.protocol ?? 'mcp',
       sandbox: testOptions.sandbox !== false,
       test_session_id: testOptions.test_session_id || `comply-${Date.now()}`,
     });
+    effectiveOptions = applyNativeA2AComplianceTransportOptions(effectiveOptions);
     effectiveOptions = applyFunctionalRequestSigning(effectiveOptions, {
       ...(complianceDir !== undefined && { complianceDir }),
       version: complianceIndex.adcp_version,
@@ -1626,6 +2519,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       ...(trusted_match_publisher_auth_runner !== undefined && { trusted_match_publisher_auth_runner }),
       ...(contracts !== undefined && { contracts }),
       ...(allowLiveSideEffects !== undefined && { allowLiveSideEffects }),
+      ...(request_signing !== undefined && { request_signing }),
       ...(signal !== undefined && { signal }),
     };
 
@@ -1636,7 +2530,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
         stoppedForTimeoutBudget = true;
         break;
       }
-      const result = await runStoryboard(agentUrl, sb, runOptions);
+      const result = await runComplyStoryboard(agentUrl, sb, runOptions, profile, routeStoryboard);
       storyboardResults.push(result);
       executedStoryboards.push(sb);
     }
@@ -2006,6 +2900,7 @@ async function runWithDegradedProfile(
     }),
     ...(options.contracts !== undefined && { contracts: options.contracts }),
     ...(options.allowLiveSideEffects !== undefined && { allowLiveSideEffects: options.allowLiveSideEffects }),
+    ...(options.request_signing !== undefined && { request_signing: options.request_signing }),
     ...(signal !== undefined && { signal }),
   };
 
@@ -2425,6 +3320,21 @@ export function formatComplianceResults(result: ComplianceResult): string {
           }
         }
       }
+
+      // Steps the runner could not grade are pass-shaped (`passed: true`,
+      // `skipped: true`), so neither the ❌ block above nor the scenario
+      // count says anything about them: a storyboard whose every vector went
+      // ungraded would print a bare ❌ with no failing step under it, or —
+      // on a track carried by a sibling scenario — nothing at all. Name the
+      // gap once per storyboard, with the remedy its probes carry.
+      const scenariosByStoryboard = new Map<string, TestResult[]>();
+      for (const scenario of track.scenarios) {
+        const storyboardId = String(scenario.scenario).split('/')[0]!;
+        scenariosByStoryboard.set(storyboardId, [...(scenariosByStoryboard.get(storyboardId) ?? []), scenario]);
+      }
+      for (const scenarios of scenariosByStoryboard.values()) {
+        output += formatUnverifiedCoverage(scenarios);
+      }
     }
   }
 
@@ -2516,6 +3426,86 @@ function formatReasonCounts(counts: Partial<Record<string, number>> | undefined)
 /**
  * Format compliance results as JSON.
  */
+/**
+ * What to tell an operator for each way a run can end up with no graded
+ * vector. They are not interchangeable: a failed handshake is not an
+ * exclusion, and telling someone to drop `--signing-skip-vectors` when the
+ * agent was unreachable sends them the wrong way.
+ */
+const SIGNING_COVERAGE_CAUSES: Record<Exclude<SigningCoverage, 'not_probed' | 'graded'>, string> = {
+  probe_errored: 'the probes could not complete — see the step errors above',
+  transport_unverified: 'this run has no dispatch shape for the vectors',
+  scope_excluded: "every vector was excluded by this run's own selection",
+  self_check_only: 'only the in-library SDK self-check ran, which never contacts the agent',
+};
+
+/**
+ * Render a storyboard's ungraded request-signing coverage as an explicit gap.
+ *
+ * Grouped by storyboard, not by scenario: the compliance projection emits one
+ * scenario per phase, so a per-scenario rule reports `positive_vectors`
+ * graded and `negative_vectors` unverified for the same run — and the CLI
+ * exit contract, reading the same projection, would fail a report that prints
+ * all green. The runner decides this storyboard-wide; so does this.
+ *
+ * Returns '' for storyboards that graded a vector, and for every storyboard
+ * that runs no signing probes at all.
+ */
+function formatUnverifiedCoverage(scenarios: readonly TestResult[]): string {
+  const steps = scenarios.flatMap(scenario => (scenario.steps ?? []).map(toSigningCoverageStep));
+  const coverage = signingCoverage(steps);
+  if (coverage === 'not_probed' || coverage === 'graded') return '';
+
+  const probes = steps.filter(step => step.task === REQUEST_SIGNING_PROBE_TASK);
+  const label = String(scenarios[0]?.scenario ?? 'signed_requests').split('/')[0] ?? 'signed_requests';
+  const cause = SIGNING_COVERAGE_CAUSES[coverage];
+  let output = `   ⏭️  COVERAGE UNAVAILABLE — ${sanitizeReportText(label)}: `;
+  output += `none of ${probes.length} request-signing vector(s) reached the agent (${cause})\n`;
+  // The operator-facing remedy rides on the probe result, because
+  // `skip.detail` carries the contract's machine-readable sub-reason token.
+  // One line per distinct remedy: the vectors share a cause, so repeating it
+  // per step would bury the report.
+  const remedies = [
+    ...new Set(
+      probes.map(step => probeRemedy(step.response)).filter((remedy): remedy is string => remedy !== undefined)
+    ),
+  ];
+  for (const remedy of remedies.slice(0, 2)) {
+    output += `      ${sanitizeReportText(remedy)}\n`;
+  }
+  return output;
+}
+
+/** Project a mapped compliance step onto the runner's coverage view. */
+function toSigningCoverageStep(step: TestStepResult): SigningCoverageStepView {
+  return {
+    task: step.task,
+    skipped: step.skipped,
+    skip_reason: step.skip_reason,
+    // `mapStepToTestStep` carries the probe's `HttpProbeResult` here.
+    response: step.observation_data,
+  };
+}
+
+function probeRemedy(response: unknown): string | undefined {
+  if (!response || typeof response !== 'object') return undefined;
+  const error = (response as { error?: unknown }).error;
+  return typeof error === 'string' && error.length > 0 ? error : undefined;
+}
+
+/**
+ * Strip C0/C1 control characters from text bound for the terminal report.
+ * The producers here are library constants today; this is the seam where an
+ * adopter-supplied detail would land, and the CLI-side renderer already
+ * escapes for the same reason.
+ */
+function sanitizeReportText(text: string): string {
+  return text.replace(
+    /[\u0000-\u001f\u007f-\u009f]/g,
+    char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`
+  );
+}
+
 export function formatComplianceResultsJSON(result: ComplianceResult): string {
   // Normalize the reference projection at the serialization boundary too. This
   // keeps output deduplicated when JavaScript callers pass a pre-v13 result

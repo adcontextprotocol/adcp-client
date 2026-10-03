@@ -1,39 +1,72 @@
+import type {
+  McpUiResourceCsp,
+  McpUiResourceMeta,
+  McpUiResourcePermissions,
+  McpUiToolMeta,
+} from '@modelcontextprotocol/ext-apps';
+import type {
+  McpServer,
+  ReadResourceCallback,
+  RegisteredResource,
+  RegisteredTool,
+  ResourceMetadata,
+  ToolAnnotations,
+} from '@modelcontextprotocol/server';
+
+interface McpAppToolConfig {
+  title?: string;
+  description?: string;
+  inputSchema?: unknown;
+  outputSchema?: unknown;
+  annotations?: ToolAnnotations;
+  _meta: McpAppToolMeta;
+}
+
+interface McpAppServerHelpers {
+  RESOURCE_MIME_TYPE: 'text/html;profile=mcp-app';
+  RESOURCE_URI_META_KEY: 'ui/resourceUri';
+  registerAppTool(
+    server: Pick<McpServer, 'registerTool'>,
+    name: string,
+    config: McpAppToolConfig,
+    handler: (...args: never[]) => unknown
+  ): RegisteredTool;
+  registerAppResource(
+    server: Pick<McpServer, 'registerResource'>,
+    name: string,
+    uri: string,
+    config: ResourceMetadata,
+    handler: ReadResourceCallback
+  ): RegisteredResource;
+}
+
+// TypeScript's legacy `node` resolver cannot follow this package export, but
+// Node 20 can load the ESM helper from CommonJS. Keep the runtime import on the
+// public subpath while typing the narrow official surface used below.
+const { RESOURCE_MIME_TYPE, RESOURCE_URI_META_KEY, registerAppResource, registerAppTool } =
+  require('@modelcontextprotocol/ext-apps/server') as McpAppServerHelpers;
+
 /** MIME type required by the stable MCP Apps HTML resource contract. */
-export const MCP_APP_RESOURCE_MIME_TYPE = 'text/html;profile=mcp-app' as const;
+export const MCP_APP_RESOURCE_MIME_TYPE = RESOURCE_MIME_TYPE;
 
 /** Content Security Policy sources requested by an MCP App resource. */
-export interface McpAppResourceCsp {
-  /** Origins allowed for fetch, XHR, and WebSocket connections. */
-  connectDomains?: string[];
-  /** Origins allowed for scripts, styles, images, fonts, and media. */
-  resourceDomains?: string[];
-  /** Origins allowed for nested iframes. */
-  frameDomains?: string[];
-  /** Origins allowed in the document's base URI. */
-  baseUriDomains?: string[];
-}
+export type McpAppResourceCsp = McpUiResourceCsp;
 
 /** Browser permissions an MCP App may ask its host to grant. */
-export interface McpAppResourcePermissions {
-  camera?: Record<string, never>;
-  microphone?: Record<string, never>;
-  geolocation?: Record<string, never>;
-  clipboardWrite?: Record<string, never>;
-}
+export type McpAppResourcePermissions = McpUiResourcePermissions;
 
 /** Security and presentation hints for an MCP App resource. */
-export interface McpAppResourceUiMeta {
-  csp?: McpAppResourceCsp;
-  permissions?: McpAppResourcePermissions;
-  /** Host-specific dedicated sandbox domain. */
-  domain?: string;
-  /** Whether the host should render a visible boundary around the app. */
-  prefersBorder?: boolean;
-}
+export type McpAppResourceUiMeta = McpUiResourceMeta;
 
 /** Typed metadata emitted on both resource discovery and resource content. */
 export interface McpAppResourceMeta {
   ui?: McpAppResourceUiMeta;
+}
+
+/** Portable MCP Apps tool metadata, including the deprecated host key. */
+export interface McpAppToolMeta {
+  ui?: McpUiToolMeta;
+  [RESOURCE_URI_META_KEY]?: string;
 }
 
 /** Transport-neutral context passed to an MCP App resource handler. */
@@ -120,9 +153,43 @@ export function mcpAppResourceMetadata(resource: AdcpMcpResourceDefinition): Rec
   return {
     ...(resource.title !== undefined && { title: resource.title }),
     ...(resource.description !== undefined && { description: resource.description }),
-    mimeType: MCP_APP_RESOURCE_MIME_TYPE,
     ...(resource._meta !== undefined && { _meta: resource._meta }),
   };
+}
+
+/** @internal */
+export function mcpAppResourceUri(meta: Record<string, unknown> | undefined): string | undefined {
+  const ui = meta?.ui;
+  const nested = ui !== null && typeof ui === 'object' ? (ui as Record<string, unknown>).resourceUri : undefined;
+  if (typeof nested === 'string') return nested;
+  const legacy = meta?.[RESOURCE_URI_META_KEY];
+  return typeof legacy === 'string' ? legacy : undefined;
+}
+
+/** @internal */
+export function isMcpAppToolMeta(meta: Record<string, unknown> | undefined): boolean {
+  if (meta === undefined) return false;
+  const ui = meta.ui;
+  return (ui !== null && typeof ui === 'object') || Object.hasOwn(meta, RESOURCE_URI_META_KEY);
+}
+
+/** @internal */
+export function registerMcpAppTool(
+  server: Pick<McpServer, 'registerTool'>,
+  name: string,
+  config: McpAppToolConfig,
+  handler: (...args: never[]) => unknown
+): RegisteredTool {
+  return registerAppTool(server, name, config, handler);
+}
+
+/** @internal */
+export function registerMcpAppResource(
+  server: Pick<McpServer, 'registerResource'>,
+  resource: AdcpMcpResourceDefinition,
+  handler: ReadResourceCallback
+): RegisteredResource {
+  return registerAppResource(server, resource.name, resource.uri, mcpAppResourceMetadata(resource), handler);
 }
 
 /** @internal */

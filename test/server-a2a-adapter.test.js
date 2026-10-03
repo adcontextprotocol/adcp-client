@@ -21,6 +21,7 @@ const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/id
 // same rationale as server-create-adcp-server.test.js.
 function createAdcpServer(config) {
   return _createAdcpServer({
+    resolveAccount: ref => (ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined),
     ...config,
     stateStore: config?.stateStore ?? new InMemoryStateStore(),
     validation: { requests: 'off', responses: 'off', ...(config?.validation ?? {}) },
@@ -409,9 +410,9 @@ describe('createA2AAdapter', () => {
       const adcp = createAdcpServer({
         name: 'dual-version A2A seller',
         version: '1.0.0',
-        adcpVersion: '3.2.0-rc.3',
+        adcpVersion: '3.2.1',
         defaultAdcpVersion: '3.1.18',
-        capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.3'] },
+        capabilities: { supported_versions: ['3.1.18', '3.2.1'] },
         mediaBuy: {
           getProducts: async () => ({ products: [] }),
           listProducts: async () => ({ outcome: 'listed', products: [], feed_version: 'feed-1' }),
@@ -428,8 +429,8 @@ describe('createA2AAdapter', () => {
       const adcp = createAdcpServer({
         name: '3.2 A2A task seller',
         version: '1.0.0',
-        adcpVersion: '3.2.0-rc.3',
-        capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.3'] },
+        adcpVersion: '3.2.1',
+        capabilities: { supported_versions: ['3.1.18', '3.2.1'] },
         toolVersions: { tasks_get: { max: '3.1' } },
         customTools: {
           tasks_get: {

@@ -215,7 +215,7 @@ export interface Account<TCtxMeta = Record<string, unknown>> {
 
   /**
    * Account-level webhook subscriptions registered through `sync_accounts`.
-   * Beta 3 adds wholesale product/signal feed webhooks here. The framework
+   * Wholesale product/signal feed webhooks are registered here. The framework
    * strips legacy `authentication.credentials` before emitting accounts on
    * `list_accounts`; adopters must still persist credentials server-side if
    * they accept legacy webhook auth.
@@ -382,6 +382,8 @@ export interface ResolvedAuthInfo {
 }
 
 export interface ResolveContext {
+  /** True only for provisioning tasks. Discovery/negotiation MUST use lookup only. */
+  readonly provisioning?: boolean;
   /** Authenticated principal extracted by `serve({ authenticate })`. Undefined when no `authenticate` is configured. */
   authInfo?: ResolvedAuthInfo;
   /** Tool the buyer is calling — useful for tool-aware tenant routing. */
@@ -452,10 +454,10 @@ export interface AccountToolContext<TCtxMeta = Record<string, unknown>> extends 
 }
 
 /**
- * Request context for tools whose wire request does not carry an `account`
- * field — `preview_creative`, `list_creative_formats`, and
- * `provide_performance_feedback`. The framework calls
- * `accounts.resolve(undefined, ctx)` for these, accepting a `null` return; if
+ * Request context for tools that can omit an `account` field —
+ * `preview_creative`, `list_creative_formats` (optional since rc.7), and
+ * `provide_performance_feedback`. When omitted, the framework calls
+ * `accounts.resolve(undefined, ctx)`, accepting a `null` return; if
  * `null`, `ctx.account` is undefined when the handler runs.
  *
  * Adopter handlers MUST handle the `undefined` case explicitly. Choose one of:
@@ -468,9 +470,10 @@ export interface AccountToolContext<TCtxMeta = Record<string, unknown>> extends 
  *   2. **Auth-derived lookup** — in `accounts.resolve(undefined, ctx)`, look
  *      up by `ctx.authInfo.clientId` (or whichever principal field your auth
  *      wires) and return the matching account.
- *   3. **Error out** — throw `AdcpError({ code: 'ACCOUNT_NOT_FOUND' })` from
+ *   3. **Error out** — throw `AdcpError({ code: 'ACCOUNT_REQUIRED' })` from
  *      within the handler when `ctx.account == null` and the operation
- *      requires tenant scoping.
+ *      requires tenant scoping. The platform adapter does this automatically
+ *      for its account-required operations.
  *
  * The narrowed type catches the mismatch at authorship time — adopters who
  * forget to handle `ctx.account === undefined` get a TS error, not a runtime
@@ -622,8 +625,9 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * Resolve buyer's AccountReference into the platform's tenant model.
    *
    * `ref` is `undefined` when the wire request didn't carry an account
-   * field — `provide_performance_feedback` and `list_creative_formats` are
-   * the canonical examples. Per `resolution` mode:
+   * field — `provide_performance_feedback` and `list_creative_formats`
+   * without its optional rc.7 account are canonical examples. Per
+   * `resolution` mode:
    * - `'derived'`: return the account the credential can reach when exactly
    *   one is reachable (the singleton shortcut); return `null` when the
    *   credential can reach several and the buyer named none — ambiguity is
@@ -669,8 +673,11 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * }
    * ```
    *
-   * Two failure shapes:
-   * - **Unknown / cross-tenant reference**: return `null` (canonical) — OR
+   * Three failure shapes:
+   * - **No buyer reference and no auth-derived selection**: return `null`.
+   *   Account-required operations emit correctable `ACCOUNT_REQUIRED`; truly
+   *   publisher-wide operations may continue without `ctx.account`.
+   * - **Unknown / cross-tenant buyer reference**: return `null` (canonical) — OR
    *   throw `AccountNotFoundError` if your codebase already throws a
    *   not-found exception class. Framework emits the spec's fixed
    *   `ACCOUNT_NOT_FOUND` envelope either way. The buyer learns no detail

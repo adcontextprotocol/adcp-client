@@ -34,7 +34,9 @@ import { createA2AClient, createMCPClient } from '../../protocols';
 import { isDevelopmentBrandDomain } from '../../brand/domain';
 import type { IdentityKeyOriginPurpose, IdentityPosture } from './capabilities-types';
 import { readBrandJsonUrl, readIdentityPosture } from './capabilities-types';
-import { canonicalizeOrigin } from './canonicalize';
+import type { SsrfDnsLookup } from '../../net';
+import { checkDelegatedOperatorAuthorization } from './operator-authorization';
+import { fetchLegacyBrandJson } from './legacy-brand';
 import {
   checkOriginConsistency,
   checkRequiredOrigins,
@@ -45,7 +47,7 @@ import { AgentResolverError, type AgentResolverErrorDetail } from './errors';
 import { eTldPlusOne, sameEtldPlusOne } from './etld';
 import { MAX_BRAND_JSON_BYTES, MAX_JWKS_BYTES, safeFetchJson, SafeFetchError } from './fetch-helpers';
 import { unwrapProtocolResponse } from '../protocol-response';
-import { type AgentEntry, selectAgentByUrl, AgentSelectorError } from './select-agent';
+import { type AgentEntry, selectAgentByUrl, agentJwksUri, AgentSelectorError, canonicalAgentUrl } from './select-agent';
 
 export type AgentProtocol = 'mcp' | 'a2a';
 
@@ -74,6 +76,13 @@ export interface FetchCapabilitiesFn {
 export interface ResolveAgentOptions {
   /** Default `'mcp'`. Ignored when `fetchCapabilities` is supplied. */
   protocol?: AgentProtocol;
+  /** URL matching is mandatory; these filters may only narrow it. */
+  expectedBrandJsonUrl?: string;
+  agentType?: string;
+  agentId?: string;
+  /** Enable the 3.x webhook-only fallback when brand_json_url is absent. */
+  legacyWebhookFallback?: boolean;
+  lookup?: SsrfDnsLookup;
   /**
    * Override the capabilities-fetch step entirely. Tests pass a fake; production
    * callers who already hold a configured protocol client can wire it through
@@ -108,10 +117,7 @@ export interface ResolveAgentOptions {
    */
   declaredPurposes?: readonly IdentityKeyOriginPurpose[];
   /**
-   * Sell-side webhook publisher pin marker — when `webhook_signing` is
-   * `true`, the step-7 origin-consistency check is skipped for the
-   * webhook-signing purpose only (operator-side webhook-signing remains
-   * checked). Buyer-side / receive-side verifiers MUST leave this unset.
+   * @deprecated Publisher pins never skip origin consistency. Ignored.
    */
   publisherPinned?: { webhook_signing?: boolean };
   /** Override the current time (epoch seconds) — for deterministic tests. */
@@ -149,6 +155,11 @@ export interface TraceStep {
 export interface AgentResolution {
   agentUrl: string;
   brandJsonUrl: string;
+  /** Exact selected operator record; use it for signed-buyer governance. */
+  brandJson?: unknown;
+  brandJsonCacheControl?: string;
+  /** True only on the explicitly enabled 3.x webhook compatibility path. */
+  legacyWebhookFallback?: boolean;
   agentEntry: AgentEntry;
   jwksUri: string;
   jwks: { keys: ReadonlyArray<Record<string, unknown>> };
@@ -216,7 +227,13 @@ export async function resolveAgent(agentUrl: string, options: ResolveAgentOption
   }
 
   // ─── Step 2: read identity.brand_json_url ─────────────────────────────
-  const brandJsonUrl = readBrandJsonUrl(capabilitiesPayload);
+  let brandJsonUrl = readBrandJsonUrl(capabilitiesPayload);
+  const identity = (capabilitiesPayload as { identity?: { brand_json_url?: unknown } } | null)?.identity;
+  const legacyFallback =
+    options.legacyWebhookFallback === true &&
+    identity?.brand_json_url === undefined &&
+    permitsLegacyWebhookDiscovery(capabilitiesPayload);
+  if (legacyFallback) brandJsonUrl = `${new URL(agentUrl).origin}/.well-known/brand.json`;
   const identityPosture = readIdentityPosture(capabilitiesPayload);
   // Spec mandates `https://`; dev/test deployments setting `allowPrivateIp`
   // are also allowed `http://` (matches the parallel carve-out in
@@ -237,6 +254,18 @@ export async function resolveAgent(agentUrl: string, options: ResolveAgentOption
       ['agent_url']
     );
   }
+  if (
+    !legacyFallback &&
+    options.expectedBrandJsonUrl !== undefined &&
+    canonicalAgentUrl(brandJsonUrl) !== canonicalAgentUrl(options.expectedBrandJsonUrl)
+  ) {
+    throw new AgentResolverError(
+      'request_signature_brand_origin_mismatch',
+      'Cached operator mapping disagrees with identity.brand_json_url',
+      { agent_url: agentUrl },
+      ['agent_url']
+    );
+  }
   pushTrace(trace, { step: 2, name: 'read_brand_json_url', ok: true, detail: { brand_json_url: brandJsonUrl } });
 
   // ─── Step 3: eTLD+1 origin binding ────────────────────────────────────
@@ -246,29 +275,40 @@ export async function resolveAgent(agentUrl: string, options: ResolveAgentOption
   // `allowPrivateIp` will hit `request_signature_brand_origin_mismatch` on
   // an IP literal — which is the right answer: an agent advertising an IP
   // brand_json_url has no business being trusted at the wire.
-  let agentEtld1: string;
-  let brandEtld1: string;
-  let sameOrigin: boolean;
-  try {
-    agentEtld1 = eTldPlusOne(agentUrl);
-    brandEtld1 = eTldPlusOne(brandJsonUrl);
-    sameOrigin = sameEtldPlusOne(agentUrl, brandJsonUrl);
-  } catch {
-    if (allowPrivateIp) {
-      const agentHost = new URL(agentUrl).hostname;
-      const brandHost = new URL(brandJsonUrl).hostname;
-      const agentIsExplicitDevelopmentHost =
-        agentHost === 'localhost' ||
-        isDevelopmentBrandDomain(agentHost) ||
-        parseTld(agentHost, { extractHostname: false }).isIp;
-      const brandIsExplicitDevelopmentHost =
-        brandHost === 'localhost' ||
-        isDevelopmentBrandDomain(brandHost) ||
-        parseTld(brandHost, { extractHostname: false }).isIp;
-      if (agentIsExplicitDevelopmentHost && brandIsExplicitDevelopmentHost) {
-        agentEtld1 = agentHost;
-        brandEtld1 = brandHost;
-        sameOrigin = agentHost === brandHost;
+  let agentEtld1 = '';
+  let brandEtld1 = '';
+  let sameOrigin = true;
+  if (!legacyFallback) {
+    try {
+      agentEtld1 = eTldPlusOne(agentUrl);
+      brandEtld1 = eTldPlusOne(brandJsonUrl);
+      sameOrigin = sameEtldPlusOne(agentUrl, brandJsonUrl);
+    } catch {
+      if (allowPrivateIp) {
+        const agentHost = new URL(agentUrl).hostname;
+        const brandHost = new URL(brandJsonUrl).hostname;
+        const agentIsExplicitDevelopmentHost =
+          agentHost === 'localhost' ||
+          isDevelopmentBrandDomain(agentHost) ||
+          parseTld(agentHost, { extractHostname: false }).isIp;
+        const brandIsExplicitDevelopmentHost =
+          brandHost === 'localhost' ||
+          isDevelopmentBrandDomain(brandHost) ||
+          parseTld(brandHost, { extractHostname: false }).isIp;
+        if (agentIsExplicitDevelopmentHost && brandIsExplicitDevelopmentHost) {
+          agentEtld1 = agentHost;
+          brandEtld1 = brandHost;
+          sameOrigin = agentHost === brandHost;
+        } else {
+          const detail: AgentResolverErrorDetail = { agent_url: agentUrl, brand_json_url: brandJsonUrl };
+          pushTrace(trace, { step: 3, name: 'etld1_binding', ok: false, detail });
+          throw new AgentResolverError(
+            'request_signature_brand_origin_mismatch',
+            `Cannot compute eTLD+1 for agent or brand.json host`,
+            detail,
+            ['agent_url', 'brand_json_url']
+          );
+        }
       } else {
         const detail: AgentResolverErrorDetail = { agent_url: agentUrl, brand_json_url: brandJsonUrl };
         pushTrace(trace, { step: 3, name: 'etld1_binding', ok: false, detail });
@@ -279,27 +319,34 @@ export async function resolveAgent(agentUrl: string, options: ResolveAgentOption
           ['agent_url', 'brand_json_url']
         );
       }
-    } else {
-      const detail: AgentResolverErrorDetail = { agent_url: agentUrl, brand_json_url: brandJsonUrl };
-      pushTrace(trace, { step: 3, name: 'etld1_binding', ok: false, detail });
-      throw new AgentResolverError(
-        'request_signature_brand_origin_mismatch',
-        `Cannot compute eTLD+1 for agent or brand.json host`,
-        detail,
-        ['agent_url', 'brand_json_url']
-      );
     }
   }
 
   // ─── Step 4: fetch brand.json (no redirects, strict JSON) ─────────────
   let brandJson: unknown;
   let brandJsonFetchedAt: number;
+  let brandJsonCacheControl: string | undefined;
   try {
-    const fetched = await safeFetchJson(brandJsonUrl, 'brand.json', {
-      allowPrivateIp,
-      timeoutMs,
-      maxBodyBytes: brandJsonCap,
-    });
+    const fetchOptions = { allowPrivateIp, timeoutMs, maxBodyBytes: brandJsonCap, lookup: options.lookup };
+    const fetched = legacyFallback
+      ? await fetchLegacyBrandJson(agentUrl, fetchOptions)
+      : await safeFetchJson(brandJsonUrl, 'brand.json', fetchOptions);
+    if (legacyFallback && 'url' in fetched) brandJsonUrl = fetched.url as string;
+    brandJsonCacheControl = fetched.headers['cache-control'];
+    if (
+      legacyFallback &&
+      options.expectedBrandJsonUrl !== undefined &&
+      canonicalAgentUrl(brandJsonUrl) !== canonicalAgentUrl(options.expectedBrandJsonUrl) &&
+      canonicalAgentUrl(`${new URL(agentUrl).origin}/.well-known/brand.json`) !==
+        canonicalAgentUrl(options.expectedBrandJsonUrl)
+    ) {
+      throw new AgentResolverError(
+        'request_signature_brand_origin_mismatch',
+        'Cached mapping disagrees with legacy discovery',
+        { agent_url: agentUrl },
+        ['agent_url']
+      );
+    }
     brandJson = fetched.body;
     brandJsonFetchedAt = fetched.fetchedAt;
     pushTrace(trace, {
@@ -310,6 +357,7 @@ export async function resolveAgent(agentUrl: string, options: ResolveAgentOption
       url: brandJsonUrl,
     });
   } catch (err) {
+    if (err instanceof AgentResolverError) throw err;
     if (err instanceof SafeFetchError && /strict-JSON parse/.test(err.message)) {
       const detail: AgentResolverErrorDetail = {
         brand_json_url: brandJsonUrl,
@@ -355,7 +403,23 @@ export async function resolveAgent(agentUrl: string, options: ResolveAgentOption
         ['agent_url']
       );
     }
-    operatorAuthorizationValidUntil = delegation.validUntil;
+    // Explicit receiver policy is an additional account-authorization gate;
+    // it never changes which operator record or signing keys identify A.
+    if (
+      options.requiredOperatorBrand !== undefined ||
+      options.requiredOperatorScope !== undefined ||
+      options.requiredOperatorCountry !== undefined
+    ) {
+      const authorization = checkDelegatedOperatorAuthorization(brandJson, agentEtld1, now(), options);
+      if (!authorization)
+        throw new AgentResolverError(
+          'request_signature_brand_origin_mismatch',
+          'Delegated operator does not satisfy the receiver account authorization policy',
+          { agent_url: agentUrl },
+          ['agent_url']
+        );
+      operatorAuthorizationValidUntil = authorization.validUntil;
+    }
     pushTrace(trace, {
       step: 3,
       name: 'etld1_binding',
@@ -371,10 +435,10 @@ export async function resolveAgent(agentUrl: string, options: ResolveAgentOption
     });
   }
 
-  // ─── Step 5: byte-equal agents[] selection ────────────────────────────
+  // ─── Step 5: canonical agents[] selection ────────────────────────────
   let agentEntry: AgentEntry;
   try {
-    agentEntry = selectAgentByUrl(brandJson, agentUrl);
+    agentEntry = selectAgentByUrl(brandJson, agentUrl, options);
     pushTrace(trace, { step: 5, name: 'select_agent', ok: true, detail: { url: agentEntry.url } });
   } catch (err) {
     if (err instanceof AgentSelectorError) {
@@ -397,24 +461,27 @@ export async function resolveAgent(agentUrl: string, options: ResolveAgentOption
       pushTrace(trace, { step: 5, name: 'select_agent', ok: false, detail });
       throw new AgentResolverError(code, err.message, detail, attacker);
     }
-    throw err;
+    throw new AgentResolverError(
+      'request_signature_brand_json_malformed',
+      'Matched agent has an invalid URL or JWKS source',
+      { brand_json_url: brandJsonUrl },
+      ['brand_json_url']
+    );
   }
 
   // ─── Step 6: resolve jwks_uri ─────────────────────────────────────────
-  const declaredJwksUri = agentEntry.jwks_uri;
-  const jwksUriFromEntry =
-    typeof declaredJwksUri === 'string' && acceptsScheme(declaredJwksUri) ? declaredJwksUri : undefined;
-  const jwksUri = jwksUriFromEntry ?? `${originOf(agentUrl)}/.well-known/jwks.json`;
+  const jwksUri = agentJwksUri(agentEntry);
   pushTrace(trace, { step: 6, name: 'resolve_jwks_uri', ok: true, detail: { jwks_uri: jwksUri } });
 
   // ─── Step 7: identity.key_origins consistency ─────────────────────────
-  const consistencyResults = runConsistencyChecks({
-    capabilitiesPayload,
-    identityPosture,
-    jwksUri,
-    publisherPinnedWebhookSigning: options.publisherPinned?.webhook_signing === true,
-    extraDeclaredPurposes: options.declaredPurposes ?? [],
-  });
+  const consistencyResults = legacyFallback
+    ? []
+    : runConsistencyChecks({
+        capabilitiesPayload,
+        identityPosture,
+        jwksUri,
+        extraDeclaredPurposes: options.declaredPurposes ?? [],
+      });
 
   const failedConsistency = consistencyResults.filter(r => r.ok === false);
   if (failedConsistency.length > 0) {
@@ -449,6 +516,7 @@ export async function resolveAgent(agentUrl: string, options: ResolveAgentOption
       allowPrivateIp,
       timeoutMs,
       maxBodyBytes: jwksCap,
+      lookup: options.lookup,
     });
     if (
       !fetched.body ||
@@ -472,13 +540,9 @@ export async function resolveAgent(agentUrl: string, options: ResolveAgentOption
       ...(err instanceof SafeFetchError && err.httpStatus !== undefined && { http_status: err.httpStatus }),
     };
     pushTrace(trace, { step: 8, name: 'fetch_jwks', ok: false, url: jwksUri, detail });
-    // The spec hands step 8 off to the verifier checklist, where the
-    // canonical "JWKS unreachable" code (`request_signature_key_unknown`)
-    // only applies once a kid lookup has been attempted. The bootstrap
-    // chain needs a code before we have a kid, so we emit the SDK-side
-    // `request_signature_jwks_unreachable`. Operators triaging the
-    // rejection see `detail.jwks_uri`, not `detail.brand_json_url`.
-    throw new AgentResolverError('request_signature_jwks_unreachable', `JWKS fetch failed`, detail, ['jwks_uri']);
+    const code =
+      transport === 'ssrf_refused' ? 'request_signature_jwks_untrusted' : 'request_signature_jwks_unavailable';
+    throw new AgentResolverError(code, `JWKS fetch failed`, detail, ['jwks_uri']);
   }
 
   // A delegation can expire while brand.json/JWKS discovery is in flight.
@@ -499,8 +563,11 @@ export async function resolveAgent(agentUrl: string, options: ResolveAgentOption
   }
 
   return {
-    agentUrl,
+    agentUrl: canonicalAgentUrl(agentEntry.url),
     brandJsonUrl,
+    brandJson,
+    ...(legacyFallback && { legacyWebhookFallback: true }),
+    ...(brandJsonCacheControl !== undefined && { brandJsonCacheControl }),
     agentEntry,
     jwksUri,
     jwks,
@@ -543,141 +610,20 @@ interface ActiveOperatorDelegation {
   validUntil?: number;
 }
 
-const AUTHORIZED_OPERATOR_SCOPES = new Set<string>([
-  'all',
-  'media_buying',
-  'creative_generation',
-  'rights_clearance',
-  'governance',
-  'measurement',
-  'agent_operations',
-]);
-const AUTHORIZED_OPERATOR_DOMAIN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
-
-/**
- * Evaluate the complete cross-origin delegation tuple. Domain matching is
- * deliberately at eTLD+1 (including the private PSL) to match step 3 of the
- * discovery algorithm; brand, activity, country, and time remain independent
- * authorization dimensions and must all match the same entry.
- */
+/** Origin binding is operator identity, separate from account authorization. */
 function findAuthorizedOperator(
   brandJson: unknown,
   agentEtld1: string,
-  now: number,
-  options: Pick<
-    ResolveAgentOptions,
-    'requiredOperatorBrand' | 'requiredOperatorScope' | 'requiredOperatorCountry' | 'allowPrivateIp'
-  >
+  _now: number,
+  _options: ResolveAgentOptions
 ): ActiveOperatorDelegation | undefined {
   if (!brandJson || typeof brandJson !== 'object') return undefined;
-  const operators = (brandJson as { authorized_operators?: unknown }).authorized_operators;
-  if (!Array.isArray(operators)) return undefined;
-  let latestValidUntil: number | undefined;
-  let matched = false;
-  for (const op of operators) {
-    if (!op || typeof op !== 'object' || Array.isArray(op)) continue;
-    const candidate = op as Record<string, unknown>;
-    const domain = candidate.domain;
-    const brands = candidate.brands;
-    if (typeof domain !== 'string' || !AUTHORIZED_OPERATOR_DOMAIN.test(domain) || !isValidBrandGrant(brands)) {
-      continue;
-    }
-    try {
-      if (eTldPlusOne(domain) !== agentEtld1) continue;
-    } catch {
-      if (!(options.allowPrivateIp && isDevelopmentBrandDomain(domain) && domain === agentEtld1)) {
-        continue;
-      }
-    }
-
-    const scopes = candidate.scopes;
-    if (scopes !== undefined && !isValidScopeGrant(scopes)) continue;
-    const countries = candidate.countries;
-    if (countries !== undefined && !isValidCountryGrant(countries)) continue;
-
-    const validFrom = parseOptionalRfc3339(candidate.valid_from);
-    const validUntil = parseOptionalRfc3339(candidate.valid_until);
-    if (validFrom === null || validUntil === null) continue;
-    if (validFrom !== undefined && validUntil !== undefined && validFrom >= validUntil) continue;
-    if (validFrom !== undefined && now < validFrom) continue;
-    if (validUntil !== undefined && now >= validUntil) continue;
-
-    if (!matchesGrant(brands, options.requiredOperatorBrand, '*')) continue;
-    if (scopes !== undefined && !matchesGrant(scopes, options.requiredOperatorScope, 'all')) continue;
-    if (countries !== undefined && !matchesGrant(countries, options.requiredOperatorCountry)) continue;
-
-    matched = true;
-    // Any unbounded active sibling keeps the same authorization tuple active.
-    if (validUntil === undefined) return {};
-    latestValidUntil = Math.max(latestValidUntil ?? Number.NEGATIVE_INFINITY, validUntil);
+  const obj = brandJson as Record<string, unknown>;
+  if (!obj.house || typeof obj.house !== 'object' || Array.isArray(obj.house) || !Array.isArray(obj.brands)) {
+    return undefined;
   }
-  return matched ? { validUntil: latestValidUntil } : undefined;
-}
-
-function isValidBrandGrant(value: unknown): value is string[] {
-  return (
-    Array.isArray(value) &&
-    value.length > 0 &&
-    value.every(item => typeof item === 'string' && (item === '*' || /^[a-z0-9_]+$/.test(item)))
-  );
-}
-
-function isValidScopeGrant(value: unknown): value is string[] {
-  return (
-    Array.isArray(value) &&
-    value.length > 0 &&
-    new Set(value).size === value.length &&
-    value.every(item => typeof item === 'string' && AUTHORIZED_OPERATOR_SCOPES.has(item))
-  );
-}
-
-function isValidCountryGrant(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every(item => typeof item === 'string' && /^[A-Z]{2}$/.test(item));
-}
-
-function matchesGrant(grants: readonly string[], required: string | undefined, wildcard?: string): boolean {
-  if (wildcard !== undefined && grants.includes(wildcard)) return true;
-  return required !== undefined && grants.includes(required);
-}
-
-function parseOptionalRfc3339(value: unknown): number | undefined | null {
-  if (value === undefined) return undefined;
-  if (typeof value !== 'string') return null;
-  const match = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?([Zz]|([+-])(\d{2}):(\d{2}))$/.exec(
-    value
-  );
-  if (!match) return null;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const hour = Number(match[4]);
-  const minute = Number(match[5]);
-  const second = Number(match[6]);
-  const offsetHour = match[10] === undefined ? 0 : Number(match[10]);
-  const offsetMinute = match[11] === undefined ? 0 : Number(match[11]);
-  if (
-    month < 1 ||
-    month > 12 ||
-    day < 1 ||
-    day > daysInMonth(year, month) ||
-    hour > 23 ||
-    minute > 59 ||
-    second > 59 ||
-    offsetHour > 23 ||
-    offsetMinute > 59
-  ) {
-    return null;
-  }
-  const parsed = Date.parse(value) / 1000;
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function daysInMonth(year: number, month: number): number {
-  return new Date(Date.UTC(year, month, 0)).getUTCDate();
-}
-
-function originOf(url: string): string {
-  return canonicalizeOrigin(url);
+  if (!Array.isArray(obj.authorized_operators)) return undefined;
+  return obj.authorized_operators.some(op => op && typeof op === 'object' && op.domain === agentEtld1) ? {} : undefined;
 }
 
 function pushTrace(trace: TraceStep[], step: TraceStep): void {
@@ -692,7 +638,6 @@ interface ConsistencyArgs {
   capabilitiesPayload: unknown;
   identityPosture: IdentityPosture | undefined;
   jwksUri: string;
-  publisherPinnedWebhookSigning: boolean;
   extraDeclaredPurposes: readonly IdentityKeyOriginPurpose[];
 }
 
@@ -716,10 +661,27 @@ function runConsistencyChecks(args: ConsistencyArgs): ConsistencyResult[] {
         purpose,
         declaredOrigin,
         resolvedJwksUri: args.jwksUri,
-        publisherPinned: purpose === 'webhook_signing' && args.publisherPinnedWebhookSigning,
       });
       if (result.ok === false) results.push(result);
     }
   }
   return results;
+}
+
+/** The missing-field compatibility exception ends at AdCP 4.0. */
+function permitsLegacyWebhookDiscovery(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') return true;
+  const caps = payload as { adcp_version?: unknown; adcp?: { supported_versions?: unknown; major_versions?: unknown } };
+  const major = (value: unknown) => (typeof value === 'string' ? Number(/^(\d+)\./.exec(value)?.[1]) : value);
+  if (
+    Number(major(caps.adcp_version)) >= 4 ||
+    (Array.isArray(caps.adcp?.supported_versions) && caps.adcp.supported_versions.some(v => Number(major(v)) >= 4)) ||
+    (Array.isArray(caps.adcp?.major_versions) && caps.adcp.major_versions.some(v => typeof v === 'number' && v >= 4))
+  )
+    return false;
+  if (caps.adcp_version !== undefined) return typeof caps.adcp_version === 'string' && /^3\./.test(caps.adcp_version);
+  if (Array.isArray(caps.adcp?.supported_versions))
+    return caps.adcp.supported_versions.some(v => typeof v === 'string' && /^3\./.test(v));
+  if (Array.isArray(caps.adcp?.major_versions)) return caps.adcp.major_versions.includes(3);
+  return true;
 }

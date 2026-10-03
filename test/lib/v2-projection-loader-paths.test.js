@@ -27,7 +27,7 @@ const SRC_DIST = path.join(REPO_ROOT, 'dist');
 const SRC_SCHEMAS_DATA = path.join(SRC_DIST, 'lib', 'schemas-data');
 const { ADCP_VERSION } = require('../../dist/lib/version.js');
 const { resolveBundleKey } = require('../../dist/lib/validation/schema-loader.js');
-const { BETA_VERSIONS_TO_TRY } = require('../../dist/lib/v2/projection/cache-versions.js');
+const { SCHEMA_VERSIONS_TO_TRY } = require('../../dist/lib/v2/projection/cache-versions.js');
 const ADCP_BUNDLE_KEY = resolveBundleKey(ADCP_VERSION);
 
 let tmpRoot;
@@ -94,8 +94,10 @@ function runInFakeInstall(snippet) {
 
 describe('v1↔v2 projection loaders resolve from published-tarball paths', () => {
   test('projection cache preference starts with the current pin and bundle key', () => {
-    assert.strictEqual(BETA_VERSIONS_TO_TRY[0], ADCP_VERSION);
-    assert.ok(BETA_VERSIONS_TO_TRY.includes(ADCP_BUNDLE_KEY));
+    assert.strictEqual(SCHEMA_VERSIONS_TO_TRY[0], ADCP_VERSION);
+    assert.ok(SCHEMA_VERSIONS_TO_TRY.includes(ADCP_BUNDLE_KEY));
+    assert.ok(SCHEMA_VERSIONS_TO_TRY.includes('3.1'));
+    assert.ok(!SCHEMA_VERSIONS_TO_TRY.some(version => version.includes('beta')));
   });
 
   test('registry.ts loadRegistry() finds v1-canonical-mapping.json in dist/lib/schemas-data', () => {

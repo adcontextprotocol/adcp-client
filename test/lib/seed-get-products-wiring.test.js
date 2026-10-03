@@ -419,6 +419,8 @@ describe('createAdcpServer — seeded get_products under strict response validat
     const server = _createAdcpServer({
       name: 'Test',
       version: '1.0.0',
+      resolveAccount: () => ({ account_id: 'sandbox-test-account', mode: 'sandbox' }),
+      resolveAccountFromAuth: () => ({ account_id: 'sandbox-test-account', mode: 'sandbox' }),
       validation: { requests: 'off', responses: 'strict' },
       mediaBuy: {
         getProducts: async () => ({ products: [] }),

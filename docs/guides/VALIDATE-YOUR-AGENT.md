@@ -6,22 +6,22 @@ Your checklist to get from "agent boots" to "agent ships." Every tool below is a
 
 ```bash
 # 1. Does it answer at all? (60s)
-npx @adcp/sdk@adcp-3.1 http://localhost:3001/mcp get_adcp_capabilities '{}'              # MCP
-npx @adcp/sdk@adcp-3.1 --protocol a2a http://localhost:3001 get_adcp_capabilities '{}'   # A2A (preview)
+npx @adcp/sdk@adcp-3.2 http://localhost:3001/mcp get_adcp_capabilities '{}'              # MCP
+npx @adcp/sdk@adcp-3.2 --protocol a2a http://localhost:3001 get_adcp_capabilities '{}'   # A2A (preview)
 
 # 2. Does it walk the golden path? (2–5 min)
-npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp --auth $TOKEN            # MCP
-npx @adcp/sdk@adcp-3.1 storyboard run --protocol a2a http://localhost:3001 --auth $TOKEN # A2A (preview)
+npx @adcp/sdk@adcp-3.2 storyboard run http://localhost:3001/mcp --auth $TOKEN            # MCP
+npx @adcp/sdk@adcp-3.2 storyboard run --protocol a2a http://localhost:3001 --auth $TOKEN # A2A (preview)
 
 # 3. Does it crash on weird inputs? (1–3 min)
-npx @adcp/sdk@adcp-3.1 fuzz http://localhost:3001/mcp --auth-token $TOKEN
+npx @adcp/sdk@adcp-3.2 fuzz http://localhost:3001/mcp --auth-token $TOKEN
 
 # 4. Does webhook/async conformance pass? (2–5 min)
-npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp \
+npx @adcp/sdk@adcp-3.2 storyboard run http://localhost:3001/mcp \
   --webhook-receiver --auth $TOKEN
 
 # 5. Does it survive horizontal scaling? (same as 2, two URLs)
-npx @adcp/sdk@adcp-3.1 storyboard run \
+npx @adcp/sdk@adcp-3.2 storyboard run \
   --url https://a.agent.example/mcp --url https://b.agent.example/mcp \
   sales-guaranteed --auth $TOKEN
 ```
@@ -32,7 +32,7 @@ If all five pass and your skill's specialism-specific checks below pass, you're 
 
 **Working on the agent locally?** Before you reach for the remote-agent commands above, see [`VALIDATE-LOCALLY.md`](./VALIDATE-LOCALLY.md) — the same storyboards, zero tunnel setup, ten lines of code. Point `--local-agent <module>` at your handlers or call `runAgainstLocalAgent` directly from a test file.
 
-**Why `@adcp-3.1` in every `npx` command?** The tag pins the runner to the AdCP 3.1 compatibility line while it is prerelease. `@latest` may point at a different protocol line and will not reliably exercise the 3.1 validation surface. The explicit tag also avoids stale `npx` cache reuse from `~/.npm/_npx/`. If an old cache is causing confusing behavior, `rm -rf ~/.npm/_npx` clears all cached CLI versions.
+**Why `@adcp-3.2` in every `npx` command?** The tag pins the runner to the AdCP 3.2 line (SDK 14). `@latest` moves to the next protocol line when one ships, so a CI job that uses it can start grading against a different contract without a change on your side. Agents still on AdCP 3.1 should substitute `@adcp/sdk@adcp-3.1` (SDK 13, the maintained 3.1 line) in every command. The explicit tag also avoids stale `npx` cache reuse from `~/.npm/_npx/`. If an old cache is causing confusing behavior, `rm -rf ~/.npm/_npx` clears all cached CLI versions.
 
 ---
 
@@ -60,23 +60,47 @@ The main compliance entry point. Runs every storyboard that applies to your agen
 
 ```bash
 # Full capability-driven run — resolves bundles from your capabilities
-npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp --auth $TOKEN
+npx @adcp/sdk@adcp-3.2 storyboard run http://localhost:3001/mcp --auth $TOKEN
 
 # Single bundle or storyboard by id
-npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp sales-guaranteed --auth $TOKEN
+npx @adcp/sdk@adcp-3.2 storyboard run http://localhost:3001/mcp sales-guaranteed --auth $TOKEN
 
 # Specific tracks only (faster feedback when iterating)
-npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp --tracks core,products --auth $TOKEN
+npx @adcp/sdk@adcp-3.2 storyboard run http://localhost:3001/mcp --tracks core,products --auth $TOKEN
 
 # Pin a specific compliance cache/spec line
-npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp --compliance-version 3.0.12 --auth $TOKEN
+npx @adcp/sdk@adcp-3.2 storyboard run http://localhost:3001/mcp --compliance-version 3.1.24 --auth $TOKEN
 
 # Ad-hoc YAML (new storyboards under development)
-npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp --file ./my-wip.yaml --auth $TOKEN
+npx @adcp/sdk@adcp-3.2 storyboard run http://localhost:3001/mcp --file ./my-wip.yaml --auth $TOKEN
 
 # JSON report for CI / tooling
-npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp --json > report.json
+npx @adcp/sdk@adcp-3.2 storyboard run http://localhost:3001/mcp --json > report.json
 ```
+
+For a publisher split across sales, signals, governance, or creative tenants,
+provide an agents map and omit the storyboard ID to assess the whole topology:
+
+```yaml
+# publisher.yaml
+agents:
+  sales:
+    url: https://sales.example.com/mcp
+  signals:
+    url: https://signals.example.com/mcp
+default_agent: sales
+```
+
+```bash
+adcp storyboard run --agents-map ./publisher.yaml --json > report.json
+adcp storyboard run --agents-map ./publisher.yaml --format junit > report.xml
+```
+
+The runner discovers every tenant, selects the union of storyboards applicable
+to their declared capabilities, and evaluates `required_tools` against the
+whole topology. JSON reports group executed results by tenant, with storyboards
+that touch multiple tenants under `cross-tenant-topology`. JUnit uses the same
+group as the suite package and name prefix.
 
 Storyboard `response_schema` checks use strict JSON Schema validation for
 grading by default, matching the hosted compliance grader. A strict failure
@@ -103,6 +127,9 @@ temporary legacy compatibility harnesses rather than routine compliance runs.
 - `--brief <text>` — custom product-discovery brief (default varies by storyboard)
 - `--auth <token>` — bearer token (also accepts `$ADCP_AUTH_TOKEN`)
 - `--oauth` — run the browser OAuth flow inline when the saved alias has no valid tokens (MCP only; equivalent to `adcp --save-auth <alias> <url> --oauth` then re-running)
+- `--signing-transport raw|mcp|a2a` — how the `signed_requests` conformance vectors are framed on the wire. Not the same as `--transport`/`--protocol`. Default: inferred from the resolved protocol
+- `--signing-skip-vectors <ids>` — comma-separated vector ids to exclude (graded `operator_skip`); unknown ids are rejected
+- `--signing-skip-rate-abuse` — skip the rate-abuse vector, which floods cap+1 requests at the agent (bare flag; `=false` is rejected, not read as "off")
 
 **Authoring webhook assertions.** Webhook storyboard pseudo-steps share the
 receiver URL and filter contract. Use `triggered_by` to scope the observation
@@ -160,16 +187,65 @@ await comply(agentUrl, {
 });
 ```
 
+**Multi-agent storyboards under `comply()`.** `comply()` grades one agent, so
+storyboards that declare `requires: [multi_agent]` (for example the
+governance-aware seller scenarios) skip with `requirement_unmet` and cap their
+bundle at `partial`. A grader that can supply the other agents can route them
+per storyboard with `routeStoryboard`; every other storyboard keeps the
+ordinary single-URL run:
+
+```ts
+await comply(agentUrl, {
+  auth: { type: 'bearer', token: ownerToken },
+  routeStoryboard: storyboard => {
+    if (!storyboard.requires?.includes('multi_agent')) return undefined; // unchanged run
+    if (!canRoute(storyboard)) return { skip: `${storyboard.id}: no governance agent for this topology` };
+    return {
+      agents: {
+        seller: { url: agentUrl }, // agent under test: inherits the run-level auth
+        governance: { url: governanceUrl, auth: { type: 'bearer', token: governanceToken } },
+      },
+      default_agent: 'seller',
+      context: { seller_agent_url: agentUrl },
+    };
+  },
+});
+```
+
+A routed result lands in `tracks`, `failures`, `storyboards_executed` and
+`bundle_results` like any other run, graded against the agent under test
+only. A failed step, or a discovery failure, on another routed agent becomes a
+`prerequisite_failed` coverage gap (`partial`, never `failing`). A routed
+storyboard in which no step served by the agent under test passed cannot reach
+`passing`. `{ skip }` records the same `requirement_unmet` row an unrouted
+`multi_agent` storyboard gets, with your reason (control characters stripped)
+as `skip.detail`, so the bundle stays `partial`. Storyboards whose root
+capability predicate the agent under test does not satisfy are never passed to
+the hook and stay `not_applicable`. The hook's `profile` argument is the
+agent's own capability answer, so treat it as untrusted.
+
+`comply()` throws on caller misconfiguration. That covers a `default_agent`
+that is not the agent under test, an entry whose `auth` is not a real
+credential object (only the agent-under-test entry may omit it; it then keeps
+the run-level credential, which is dropped from the shared routed options), run-level
+`headers` (they are sent to every routed agent), and a replacement
+`storyboard` that changes phases, steps, validations or gates. A storyboard that
+would send `$test_kit.auth` or `from_test_kit` credentials through a step not
+pinned to the agent under test is recorded as a skip instead of being routed.
+Run-level `transport`, including a `trustedFetchFn` egress guard, applies to
+every routed agent. Version negotiation is done once, against the agent under
+test, and shared by the routed agents.
+
 **OAuth-protected agents.** Storyboard runs reuse tokens saved under an alias. Two supported flows:
 
 ```bash
 # (a) pre-save tokens
-npx @adcp/sdk@adcp-3.1 --save-auth my-agent https://agent.example.com/mcp --oauth
-npx @adcp/sdk@adcp-3.1 storyboard run my-agent
+npx @adcp/sdk@adcp-3.2 --save-auth my-agent https://agent.example.com/mcp --oauth
+npx @adcp/sdk@adcp-3.2 storyboard run my-agent
 
 # (b) inline on first run
-npx @adcp/sdk@adcp-3.1 --save-auth my-agent https://agent.example.com/mcp --no-auth
-npx @adcp/sdk@adcp-3.1 storyboard run my-agent --oauth
+npx @adcp/sdk@adcp-3.2 --save-auth my-agent https://agent.example.com/mcp --no-auth
+npx @adcp/sdk@adcp-3.2 storyboard run my-agent --oauth
 ```
 
 Either way, subsequent runs reuse the cached tokens (auto-refresh on expiry via the stored `refresh_token`). Raw URLs don't support `--oauth` — save an alias first.
@@ -184,27 +260,27 @@ Generates schema-valid requests, calls your agent, checks every response under t
 
 ```bash
 # Tier 1 + Tier 2 stateless + referential (safe, no mutation)
-npx @adcp/sdk@adcp-3.1 fuzz http://localhost:3001/mcp --auth-token $TOKEN
+npx @adcp/sdk@adcp-3.2 fuzz http://localhost:3001/mcp --auth-token $TOKEN
 
 # Reproducible (rerun with same seed to repro a failure)
-npx @adcp/sdk@adcp-3.1 fuzz http://localhost:3001/mcp --seed 42 --auth-token $TOKEN
+npx @adcp/sdk@adcp-3.2 fuzz http://localhost:3001/mcp --seed 42 --auth-token $TOKEN
 
 # Pre-seeded ID pools for referential tools (Tier 2)
-npx @adcp/sdk@adcp-3.1 fuzz http://localhost:3001/mcp \
+npx @adcp/sdk@adcp-3.2 fuzz http://localhost:3001/mcp \
   --fixture creative_ids=cre_a,cre_b \
   --fixture media_buy_ids=mb_1
 
 # Auto-seed + Tier 3 update-tool fuzzing (mutates agent state — SANDBOX ONLY)
-npx @adcp/sdk@adcp-3.1 fuzz http://localhost:3001/mcp --auto-seed --auth-token $TOKEN
+npx @adcp/sdk@adcp-3.2 fuzz http://localhost:3001/mcp --auto-seed --auth-token $TOKEN
 
 # Uniform-error-response invariant in full cross-tenant mode
-npx @adcp/sdk@adcp-3.1 fuzz http://localhost:3001/mcp \
+npx @adcp/sdk@adcp-3.2 fuzz http://localhost:3001/mcp \
   --auto-seed \
   --auth-token            $TENANT_A_TOKEN \
   --auth-token-cross-tenant $TENANT_B_TOKEN
 
 # Inspect the tool list + tier classification
-npx @adcp/sdk@adcp-3.1 fuzz --list-tools
+npx @adcp/sdk@adcp-3.2 fuzz --list-tools
 ```
 
 See [`docs/guides/CONFORMANCE.md`](./CONFORMANCE.md) for the fixture map, tier-by-tier tool list, and failure interpretation.
@@ -251,24 +327,59 @@ If you claim the `signed-requests` specialism, run the RFC 9421 grader. The grad
 
 ```bash
 # All 38 vectors
-npx @adcp/sdk@adcp-3.1 grade request-signing https://sandbox.agent.example/mcp
+npx @adcp/sdk@adcp-3.2 grade request-signing https://sandbox.agent.example/mcp
 
 # Skip rate-abuse (vector 020 fires cap+1 requests; skip in dev loops)
-npx @adcp/sdk@adcp-3.1 grade request-signing https://sandbox.agent.example/mcp --skip-rate-abuse
+npx @adcp/sdk@adcp-3.2 grade request-signing https://sandbox.agent.example/mcp --skip-rate-abuse
 
 # MCP transport (wraps vectors in JSON-RPC envelopes)
-npx @adcp/sdk@adcp-3.1 grade request-signing https://sandbox.agent.example/mcp --transport mcp
+npx @adcp/sdk@adcp-3.2 grade request-signing https://sandbox.agent.example/mcp --transport mcp
 
 # Isolate a single vector
-npx @adcp/sdk@adcp-3.1 grade request-signing https://sandbox.agent.example/mcp --only 016-replayed-nonce
+npx @adcp/sdk@adcp-3.2 grade request-signing https://sandbox.agent.example/mcp --only 016-replayed-nonce
+
+# Grade the authored AdCP 3.2 signing profile
+npx @adcp/sdk@adcp-3.2 grade request-signing https://sandbox.agent.example/mcp --signing-profile 3.2
 ```
+
+`--signing-profile 3.2` selects only the 3.2 profile vectors. The current
+3.2.1 compliance cache includes 11 positive and 19 negative profile
+vectors. Library callers can select
+the same set with `gradeRequestSigning(agentUrl, { signingProfileVersion: '3.2' })`.
+
+#### Same vectors inside `storyboard run`
+
+The `signed_requests` storyboard synthesizes one step per vector and grades them through the same engine. `storyboard run` exposes the knobs that matter there:
+
+```bash
+# Per-operation HTTP endpoints instead of a single MCP mount
+npx @adcp/sdk@adcp-3.2 storyboard run https://sandbox.agent.example/adcp signed_requests \
+  --signing-transport raw --auth $TOKEN
+
+# Drop a vector your deployment can't satisfy, and the cap+1 flood
+npx @adcp/sdk@adcp-3.2 storyboard run https://sandbox.agent.example/mcp signed_requests \
+  --signing-skip-vectors 025-jwk-alg-crv-mismatch --signing-skip-rate-abuse --auth $TOKEN
+```
+
+- **`--signing-transport` is not `--transport`.** `--transport`/`--protocol` selects how the storyboard talks to your agent; `--signing-transport` selects how the conformance vectors are framed. Mirrors `adcp grade request-signing --transport`.
+- **Leave it unset by default.** The vector transport is inferred from the resolved protocol: MCP frames each vector as a `tools/call` envelope; A2A signs the exact request emitted by the official `@a2a-js/sdk` client after Agent Card discovery.
+- **The 3.2 signing profile follows the storyboard version.** Select a 3.2 compliance cache with `--compliance-version 3.2.1`; the `signed_requests` storyboard then selects its authored 3.2 profile vectors automatically. The `request_signing` options on `comply()` control transport and filtering; profile selection follows the resolved storyboard `adcp_version`.
+- **A2A discovery fails closed.** If the Agent Card cannot resolve to a supported JSON-RPC interface, networked vectors skip with detailed reason `signing_transport_unavailable`; the storyboard cannot pass, the `security_transport` track stays `partial`, and the command exits 3. Publish a resolvable modern or legacy Agent Card, or grade an MCP/REST binding. Do not use `--soft-fail` to dismiss actual A2A verifier failures: once discovery succeeds, they are real grades.
+- **The in-library vector remains transport-independent.** `025-jwk-alg-crv-mismatch` is decided against the SDK verifier with no wire exchange, so its result does not grade your agent.
+- **Vectors excluded on their own terms say so, on every protocol.** `026-non-ascii-host` reports `transport_ungradable` (no HTTP client can carry a non-ASCII authority — `fetch` punycodes it first). `028-unsigned-protocol-method-required` reports `capability_profile_mismatch` unless your `get_adcp_capabilities` declares `request_signing.protocol_methods_required_for` — **this applies on MCP runs too, not just A2A**: previously the storyboard dispatched 028 at every agent, so one that never claimed the JSON-RPC bucket could fail it. Declare the bucket (e.g. `['tasks/cancel']`) if you verify signatures on protocol methods; a declaration your AdCP line's schema rejects is discarded rather than treated as "not declared", so it cannot suppress the vector. Note `adcp grade request-signing` does not read your advertisement — it uses the profile you pass it — so the two commands can disagree about 028 by design.
+- **A run that graded nothing exits nonzero.** Skipped steps are `passed: true`, so a coverage gap used to exit 0. `adcp storyboard step` now exits 3 when the runner could not dispatch the step, and the full assessment exits 3 when a storyboard's signing coverage went unverified — including when your own `--signing-skip-vectors` removed every vector, which is the other way to end up with nothing graded. The message names which of the two happened. Everything else keeps exit 0: other `partial` runs, legacy fixture gaps, and single steps you excluded yourself. `--soft-fail` works on both commands and reports the gap while exiting 0.
+- **Library callers get the same knobs.** `comply(agentUrl, { request_signing: { transport: 'mcp', skipVectors: [...], onlyVectors: [...], skipRateAbuse: true, rateAbuseCap: 5 } })` from `@adcp/sdk/testing` mirrors the storyboard CLI knobs. The standalone `gradeRequestSigning()` API also accepts `signingProfileVersion: '3.2'`, matching `adcp grade request-signing --signing-profile 3.2`. `storyboard run` prefixes transport and vector-filter flags because `--transport` is already taken by the storyboard's own transport.
+- **Mistyped flag values are rejected.** `--signing-skip-vectors` validates every id against the shipped vector set (a typo silently skipped nothing before), and `--signing-skip-rate-abuse` refuses a value — `=false` used to read as "on".
+- **Vector `025-jwk-alg-crv-mismatch` is graded in-library.** It publishes a malformed JWK your agent never serves, so there is no HTTP exchange: the step asserts the grader's verdict (`probe_passed`), not a 401.
+
+> **Published 3.0 line.** These fixes ship on the 3.1 and 3.2 lines. The `adcp-3.0` dist-tag (`@adcp/sdk@7.11.x`) still defaults the vector transport to `raw` and has no `--signing-*` flags; an MCP-only agent must grade `signed_requests` from the 3.1 or 3.2 CLI (or drive `runStoryboard` with `request_signing: { transport: 'mcp' }`) until that line takes a backport.
 
 ### Multi-instance testing
 
 Exposes `(brand, account)`-scoped state that lives per-process instead of in a shared store — a class of bug that single-URL runs never catch. See [`docs/guides/MULTI-INSTANCE-TESTING.md`](./MULTI-INSTANCE-TESTING.md).
 
 ```bash
-npx @adcp/sdk@adcp-3.1 storyboard run \
+npx @adcp/sdk@adcp-3.2 storyboard run \
   --url https://a.agent.example/mcp \
   --url https://b.agent.example/mcp \
   sales-guaranteed --auth $TOKEN
@@ -493,7 +604,7 @@ Use `--invariants` to load modules that assert properties across storyboard step
 
 ```bash
 # Load ./my-invariants.js (relative path) or a bare specifier (npm package)
-npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp \
+npx @adcp/sdk@adcp-3.2 storyboard run http://localhost:3001/mcp \
   --invariants ./assertions/idempotency.js,@my-org/adcp-invariants
 ```
 
@@ -629,6 +740,12 @@ Hints also land in machine-readable output:
 |---|---|
 | `storyboard run` skips steps with "no webhook_receiver_runner" | Add `--webhook-receiver` |
 | `storyboard run` fails on `security_baseline` | You skipped `authenticate` in `serve()` — see [build-seller-agent/SKILL.md § signed-requests](../../skills/build-seller-agent/SKILL.md) |
+| `None of the required contributions were recorded: ["auth_mechanism_verified"]` | No auth mechanism could be verified. If your steps also show task `mcp_session_probe`, your read surface is outside the probe allowlist and the runner fell back to the MCP session probe — see the next rows |
+| `Skipped (not_applicable / session_probe_ungradable)` | The runner prints the full reason and remedy on the line directly below. Four causes: (1) you advertise no **canonical AdCP** read task the probe can call with an empty body — tool names you invented are not eligible, and public-tier (`get_adcp_capabilities`, `get_products`, `list_products`, `list_creative_formats`) and mutating tools are excluded by design; (2) the step is a positive static-credential probe the session probe cannot grade; (3) the run signs functional dispatch and your `request_signing` advertisement covers every target the probe could call; (4) the run passed a `-H` header the runner can classify neither as a credential nor as routing — that one is about how the run was invoked, not about your agent, and the detail names the header. **A static-credential-only agent with no allowlisted read tool cannot be certified**: the positive probe asserts an AdCP response body no protocol operation produces, so its branch's contribution gate stays closed. Two remedies: advertise one allowlisted read tool (`list_creatives`, `get_media_buy_delivery`, `list_authorized_properties`, `get_signals`, `list_property_lists`, `list_collection_lists`, `list_content_standards`, `list_accounts`) — the durable fix — or serve RFC 9728 metadata and run with `--oauth` so the OAuth branch is verified instead |
+| `Error: MCP session auth probe is inconclusive: …` | A rejection is auth evidence only when a valid credential of the **same kind** reaches the same protected tool. The message names what is missing: no OAuth access token for this run (run with `--oauth`), no API key / Basic credential configured, the valid credential was refused too, or the agent refused the *shape* of the call (advertise a tool that accepts an empty request body) |
+| `Error: MCP session auth probe refuses this as auth evidence: …` | The probe's bad or absent credential got a successful payload from your protected tool — it is serving tenant-scoped data to anyone — or a valid credential failed to reach it |
+| `Error: MCP session probe could not run: …` | Not an authentication result at all: a wire version this SDK does not implement, a response shape the official MCP client rejects, or an exchange that never completed. Nothing was learned about your credentials; fix the named protocol problem and re-run |
+| `extraction.note` reads `MCP session probe graded <tool> at <stage>` | Which protected tool the verdict rests on, and where the agent decided (`initialize` for session-boundary auth, `tools/call` for per-operation auth). The verdict is evidence that the mechanism is enforced **at that tool** — it is not a claim that every tool enforces auth |
 | `storyboard run` reports `Agent requires OAuth` / exits without running | Save tokens once with `adcp --save-auth <alias> <url> --oauth`, or pass `--oauth` to `storyboard run` to complete auth inline |
 | `storyboard run` prints `💡 Hint: Rejected …` below an error | Catalog inconsistency between the two tools — see [§ Reading hint lines](#reading--hint-lines-context-value-rejections) above |
 | `fuzz` reports `500` status with stack trace | Validate inputs and return `adcpError('REFERENCE_NOT_FOUND', ...)` instead |
@@ -645,18 +762,18 @@ Hints also land in machine-readable output:
 
 ```yaml
 - name: Storyboard (core + products)
-  run: npx @adcp/sdk@adcp-3.1 storyboard run $AGENT_URL --tracks core,products --auth $TOKEN
+  run: npx @adcp/sdk@adcp-3.2 storyboard run $AGENT_URL --tracks core,products --auth $TOKEN
 - name: Fuzz (fixed seed)
-  run: npx @adcp/sdk@adcp-3.1 fuzz $AGENT_URL --seed 42 --auth-token $TOKEN --format json
+  run: npx @adcp/sdk@adcp-3.2 fuzz $AGENT_URL --seed 42 --auth-token $TOKEN --format json
 ```
 
 ### Nightly (slow, broader coverage)
 
 ```yaml
 - name: Fuzz (random seed, auto-seed)
-  run: npx @adcp/sdk@adcp-3.1 fuzz $AGENT_URL --auto-seed --auth-token $TOKEN
+  run: npx @adcp/sdk@adcp-3.2 fuzz $AGENT_URL --auto-seed --auth-token $TOKEN
 - name: Full storyboard assessment
-  run: npx @adcp/sdk@adcp-3.1 storyboard run $AGENT_URL --auth $TOKEN --json > report.json
+  run: npx @adcp/sdk@adcp-3.2 storyboard run $AGENT_URL --auth $TOKEN --json > report.json
 ```
 
 Random seed on nightly broadens the surface; fixed seed on per-PR keeps reproducibility.

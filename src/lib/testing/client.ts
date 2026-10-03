@@ -21,7 +21,7 @@ import { injectLegacyEnvelopeStatus } from '../utils/envelope-status-compat';
 import { parseCapabilitiesResponse } from '../utils/capabilities';
 import { classifyProbeUrl } from '../utils/probe-policy';
 import { SsrfRefusedError } from '../net/ssrf-fetch';
-import { ADCP_VERSION } from '../version';
+import { ADCP_VERSION, toReleasePrecisionVersion } from '../version';
 import type { VersionEnvelopeMode } from '../protocols';
 import type { AgentRequestSigningConfig } from '../types/adcp';
 import { createHmac, hkdfSync, randomBytes } from 'node:crypto';
@@ -47,6 +47,7 @@ interface TestClientVersionOptions {
   allowPrivateIp?: boolean;
   maxResponseBytes?: number;
   requestTimeoutMs?: number;
+  legacyCompatEnabled?: boolean;
 }
 
 /**
@@ -244,6 +245,9 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
       ...(options.transport?.requestTimeoutMs !== undefined && {
         requestTimeoutMs: options.transport.requestTimeoutMs,
       }),
+      ...(options.transport?.legacyCompat?.enabled !== undefined && {
+        legacyCompatEnabled: options.transport.legacyCompat.enabled,
+      }),
     } satisfies TestClientVersionOptions,
     enumerable: false,
   });
@@ -312,7 +316,8 @@ function testClientMatchesVersionOptions(client: TestClient, agentUrl: string, o
     meta.fetchFn === effectiveOptions.transport?.trustedFetchFn &&
     meta.allowPrivateIp === effectiveOptions.transport?.allowPrivateIp &&
     meta.maxResponseBytes === effectiveOptions.transport?.maxResponseBytes &&
-    meta.requestTimeoutMs === effectiveOptions.transport?.requestTimeoutMs
+    meta.requestTimeoutMs === effectiveOptions.transport?.requestTimeoutMs &&
+    meta.legacyCompatEnabled === effectiveOptions.transport?.legacyCompat?.enabled
   );
 }
 
@@ -554,7 +559,34 @@ export async function runStep<T>(
   }
 }
 
-function describeVersionUnsupported(result: unknown, requestedVersion: string | undefined): string | undefined {
+/**
+ * The `adcp_version` value a test client's requests carry on the wire.
+ *
+ * Bundle identifiers (`"3.2.1"`, `"3.2.0-rc.7"`) are internal: they key schema
+ * and compliance caches. The envelope builder collapses them to release
+ * precision (`"3.2"`, `"3.2-rc.7"`) before emit, so any diagnostic that names
+ * "what we requested" must apply the same collapse or it reports a value that
+ * was never sent. Returns `undefined` for `major-only` / `none` envelope
+ * modes, which send no release string.
+ *
+ * @internal Exported for unit tests.
+ */
+export function testClientWireAdcpVersion(client: unknown, fallbackVersion?: string): string | undefined {
+  const meta = (client as { [TEST_CLIENT_VERSION_OPTIONS]?: TestClientVersionOptions } | undefined)?.[
+    TEST_CLIENT_VERSION_OPTIONS
+  ];
+  if (meta && meta.versionEnvelope !== 'auto') return undefined;
+  const getAdcpVersion = (client as { getAdcpVersion?: () => string } | undefined)?.getAdcpVersion;
+  const pinned =
+    meta?.wireAdcpVersion ??
+    meta?.adcpVersion ??
+    (typeof getAdcpVersion === 'function' ? getAdcpVersion.call(client) : undefined) ??
+    fallbackVersion;
+  return pinned === undefined ? undefined : toReleasePrecisionVersion(pinned);
+}
+
+/** @internal Exported for unit tests. */
+export function describeVersionUnsupported(result: unknown, requestedVersion: string | undefined): string | undefined {
   if (!result || typeof result !== 'object') return undefined;
   const record = result as Record<string, unknown>;
   const dataRecord =
@@ -569,7 +601,18 @@ function describeVersionUnsupported(result: unknown, requestedVersion: string | 
   if (adcpErrorRecord.code !== 'VERSION_UNSUPPORTED') return undefined;
 
   const details = extractVersionUnsupportedDetails(adcpErrorRecord) ?? extractVersionUnsupportedDetails(record.data);
-  const requested = details?.requested_version ?? requestedVersion;
+  // Prefer the seller's echo of what it received. `claimed_version` is the
+  // key adcp (Python) sellers use; only a string can be a release pin.
+  const detailRecord =
+    adcpErrorRecord.details && typeof adcpErrorRecord.details === 'object'
+      ? (adcpErrorRecord.details as Record<string, unknown>)
+      : undefined;
+  const claimed = typeof detailRecord?.claimed_version === 'string' ? detailRecord.claimed_version : undefined;
+  // `requestedVersion` is a fallback for sellers that don't echo; callers pass
+  // the wire value, but collapse defensively so a bundle id (`"3.2.1"`) can
+  // never be reported as the requested release.
+  const fallback = requestedVersion === undefined ? undefined : toReleasePrecisionVersion(requestedVersion);
+  const requested = details?.requested_version ?? claimed ?? fallback;
   const supported = details?.supported_versions;
   const requestedText = requested ? `requested ${JSON.stringify(requested)}` : 'requested version is unsupported';
   const supportedText = supported?.length
@@ -623,7 +666,7 @@ export async function discoverAgentProfile(
   if (profile.tools.includes('get_adcp_capabilities')) {
     try {
       const caps = (await raceWithSignal(client.getAdcpCapabilities({}, undefined, { signal }), signal)) as TaskResult;
-      const versionUnsupported = describeVersionUnsupported(caps, schemaAdcpVersion ?? client.getAdcpVersion?.());
+      const versionUnsupported = describeVersionUnsupported(caps, testClientWireAdcpVersion(client, schemaAdcpVersion));
       if (versionUnsupported) {
         // Some transports return AdCP error envelopes as successful tool data.
         // Detect the protocol error before validating/parsing it as a

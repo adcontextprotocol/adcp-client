@@ -90,7 +90,7 @@ describe('assertUpdateMediaBuyAllowed', () => {
     assert.throws(
       () =>
         assertUpdateMediaBuyAllowed(buyWith([{ action: 'pause', mode: 'self_serve' }]), {
-          packages: [{ package_id: 'pkg_1', paused: false }],
+          packages: [{ package_id: 'pkg_1' }],
         }),
       err => {
         assert.ok(err instanceof AdcpError);

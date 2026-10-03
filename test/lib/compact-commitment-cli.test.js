@@ -94,9 +94,11 @@ before(async () => {
   server = serve(
     () =>
       createAdcpServer({
+        resolveAccount: ref =>
+          ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined,
         name: 'Compact commitment seller',
         version: '1.0.0',
-        adcpVersion: '3.2.0-rc.3',
+        adcpVersion: '3.2.1',
         idempotency: 'disabled',
         validation: { requests: 'strict', responses: 'strict' },
         mediaBuy: {
@@ -167,7 +169,7 @@ for (const [tool, payload] of calls) {
     );
     assert.doesNotMatch(result.stderr, /Schema validation failed/, `${tool}: ${result.stderr}`);
     const output = JSON.parse(result.stdout);
-    assert.strictEqual(output.data.adcp_version, '3.2-rc.3');
+    assert.strictEqual(output.data.adcp_version, '3.2');
     assert.strictEqual(output.data.media_buy_id, 'mb-1');
   });
 }

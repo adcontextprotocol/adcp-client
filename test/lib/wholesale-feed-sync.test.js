@@ -145,7 +145,7 @@ function makeStubClient(opts = {}) {
   return { client, calls };
 }
 
-describe('WholesaleFeedSync beta 3 wholesale feed flow', () => {
+describe('WholesaleFeedSync legacy-view wholesale feed flow', () => {
   const account = { account_id: 'acc_acme' };
 
   test('resolves auto-poll from wholesale_feed_versioning and records webhook event types', async () => {
@@ -217,6 +217,252 @@ describe('WholesaleFeedSync beta 3 wholesale feed flow', () => {
     assert.strictEqual(calls.getProducts.length, 2);
     assert.strictEqual(calls.getSignals.length, 2);
     sync.stop();
+  });
+
+  test('restores a persisted mirror before the first conditional bootstrap', async () => {
+    const persisted = {
+      version: 1,
+      products: {
+        items: [makeProduct('p1')],
+        wholesaleFeedVersion: 'products-v1',
+        pricingVersion: 'products-price-v1',
+        cacheScope: 'account',
+      },
+      signals: {
+        items: [makeSignal('s1')],
+        wholesaleFeedVersion: 'signals-v1',
+        pricingVersion: 'signals-price-v1',
+        cacheScope: 'account',
+      },
+      lastSyncedAt: '2026-05-22T11:00:00.000Z',
+    };
+    let loadCount = 0;
+    const saved = [];
+    const { client, calls } = makeStubClient({
+      capabilities: {
+        wholesale_feed_versioning: { supported: true },
+        signals: { discovery_modes: ['wholesale'] },
+      },
+      getProducts: params => {
+        assert.strictEqual(params.if_wholesale_feed_version, 'products-v1');
+        assert.strictEqual(params.if_pricing_version, 'products-price-v1');
+        return makeUnchangedResult({
+          wholesale_feed_version: 'products-v1',
+          pricing_version: 'products-price-v1',
+          cache_scope: 'account',
+        });
+      },
+      getSignals: params => {
+        assert.strictEqual(params.if_wholesale_feed_version, 'signals-v1');
+        assert.strictEqual(params.if_pricing_version, 'signals-price-v1');
+        return makeUnchangedResult({
+          wholesale_feed_version: 'signals-v1',
+          pricing_version: 'signals-price-v1',
+          cache_scope: 'account',
+        });
+      },
+    });
+    const sync = new WholesaleFeedSync({
+      client,
+      account,
+      persistenceHooks: {
+        async loadState() {
+          loadCount++;
+          return persisted;
+        },
+        async saveState(state) {
+          saved.push(structuredClone(state));
+        },
+      },
+      capabilityRefreshIntervalMs: 0,
+    });
+
+    await sync.start();
+    await sync.start();
+
+    assert.strictEqual(loadCount, 1);
+    assert.strictEqual(calls.getProducts.length, 2);
+    assert.strictEqual(calls.getSignals.length, 2);
+    assert.strictEqual(sync.products.get('p1').name, 'Product p1');
+    assert.strictEqual(sync.signals.get('s1').name, 'Signal s1');
+    assert.strictEqual(saved.length, 0);
+    sync.stop();
+  });
+
+  test('persists detached snapshots after bootstrap and webhook mutations', async () => {
+    const saved = [];
+    const { client } = makeStubClient({
+      capabilities: { wholesale_feed_versioning: { supported: true } },
+      getProducts: () =>
+        makeProductsResult([makeProduct('p1')], {
+          wholesale_feed_version: 'v1',
+          pricing_version: 'price-v1',
+        }),
+    });
+    const sync = new WholesaleFeedSync({
+      client,
+      account,
+      persistenceHooks: {
+        async loadState() {
+          return null;
+        },
+        async saveState(state) {
+          saved.push(structuredClone(state));
+          state.products.items[0].name = 'Mutated by storage adapter';
+        },
+      },
+    });
+
+    await sync.start();
+    const event = {
+      ...makeEvent('product.updated', 'product', 'p1', {
+        product_id: 'p1',
+        product: makeProduct('p1', { name: 'Persisted update' }),
+        applies_to: { scope: 'public' },
+      }),
+      event_id: '01997088-9abc-7def-8abc-0123456789ab',
+    };
+    await sync.applyWebhook(makeWebhook(event, { version: 'v2', previous: 'v1' }));
+
+    assert.strictEqual(saved.length, 2);
+    assert.strictEqual(saved[0].products.wholesaleFeedVersion, 'v1');
+    assert.strictEqual(saved.at(-1).products.items[0].name, 'Persisted update');
+    assert.strictEqual(saved.at(-1).products.wholesaleFeedVersion, 'v2');
+    assert.strictEqual(saved.at(-1).lastWebhookEventId, event.event_id);
+    assert.ok(saved.at(-1).lastEventAt);
+    assert.strictEqual(sync.products.get('p1').name, 'Persisted update');
+    sync.stop();
+  });
+
+  test('rejects unsupported persisted-state versions before making agent calls', async () => {
+    const { client, calls } = makeStubClient();
+    const sync = new WholesaleFeedSync({
+      client,
+      persistenceHooks: {
+        async loadState() {
+          return { version: 2, products: { items: [] }, signals: { items: [] } };
+        },
+        async saveState() {},
+      },
+    });
+
+    await assert.rejects(() => sync.start(), /invalid persisted state: unsupported version 2/);
+    assert.strictEqual(calls.capabilities, 0);
+    assert.strictEqual(calls.getProducts.length, 0);
+    assert.strictEqual(calls.getSignals.length, 0);
+  });
+
+  test('bounds persistence loads before making agent calls', async () => {
+    const { client, calls } = makeStubClient();
+    const sync = new WholesaleFeedSync({
+      client,
+      persistenceTimeoutMs: 5,
+      persistenceHooks: {
+        async loadState() {
+          return new Promise(() => {});
+        },
+        async saveState() {},
+      },
+    });
+
+    await assert.rejects(() => sync.start(), /persistence loadState timed out after 5ms/);
+    assert.strictEqual(calls.capabilities, 0);
+  });
+
+  test('bounds persistence saves and surfaces the bootstrap failure', async () => {
+    const { client } = makeStubClient({
+      getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' }),
+    });
+    const sync = new WholesaleFeedSync({
+      client,
+      persistenceTimeoutMs: 5,
+      persistenceHooks: {
+        async loadState() {
+          return null;
+        },
+        async saveState() {
+          return new Promise(() => {});
+        },
+      },
+    });
+    sync.on('error', () => {});
+
+    await assert.rejects(() => sync.start(), /persistence saveState timed out after 5ms/);
+    assert.strictEqual(sync.state, 'error');
+    sync.stop();
+  });
+
+  test('reset persists an empty snapshot without stale tokens or webhook cursor', async () => {
+    const saved = [];
+    const { client } = makeStubClient({
+      capabilities: { wholesale_feed_versioning: { supported: true } },
+      getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' }),
+    });
+    const sync = new WholesaleFeedSync({
+      client,
+      persistenceHooks: {
+        async loadState() {
+          return null;
+        },
+        async saveState(state) {
+          saved.push(structuredClone(state));
+        },
+      },
+    });
+
+    await sync.start();
+    await sync.reset();
+
+    assert.strictEqual(sync.products.count, 0);
+    assert.strictEqual(sync.signals.count, 0);
+    assert.deepStrictEqual(saved.at(-1), {
+      version: 1,
+      products: { items: [], cacheScope: 'public' },
+      signals: { items: [], cacheScope: 'public' },
+    });
+  });
+
+  test('serializes overlapping saves so reset wins over an in-flight bootstrap write', async () => {
+    const firstSaveGate = deferred();
+    const seen = [];
+    let saveCalls = 0;
+    let activeSaves = 0;
+    let maxActiveSaves = 0;
+    const { client } = makeStubClient({
+      getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' }),
+    });
+    const sync = new WholesaleFeedSync({
+      client,
+      persistenceHooks: {
+        async loadState() {
+          return null;
+        },
+        async saveState(state) {
+          saveCalls++;
+          activeSaves++;
+          maxActiveSaves = Math.max(maxActiveSaves, activeSaves);
+          if (saveCalls === 1) await firstSaveGate.promise;
+          seen.push(structuredClone(state));
+          activeSaves--;
+        },
+      },
+    });
+
+    const starting = sync.start();
+    await waitFor(() => saveCalls === 1, 'expected bootstrap persistence to begin');
+    const resetting = sync.reset();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.strictEqual(saveCalls, 1);
+    firstSaveGate.resolve();
+    await Promise.all([starting, resetting]);
+
+    assert.strictEqual(maxActiveSaves, 1);
+    assert.strictEqual(saveCalls, 2);
+    assert.deepStrictEqual(seen.at(-1), {
+      version: 1,
+      products: { items: [], cacheScope: 'public' },
+      signals: { items: [], cacheScope: 'public' },
+    });
   });
 
   test('stop cancels an in-flight bootstrap before it commits mirror state', async () => {
@@ -405,6 +651,55 @@ describe('WholesaleFeedSync beta 3 wholesale feed flow', () => {
     ]);
     assert.deepStrictEqual(typed, ['product.updated', 'signal.priced']);
     assert.deepStrictEqual(wildcard, ['product.updated', 'signal.priced']);
+    sync.stop();
+  });
+
+  test('applyWebhook rejects canonical product payloads before mirror, version, or dedupe mutation', async () => {
+    const { client } = makeStubClient({
+      capabilities: { wholesale_feed_versioning: { supported: true } },
+      getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' }),
+    });
+    const sync = new WholesaleFeedSync({ client, account });
+    const emitted = [];
+    sync.on('event', ({ event }) => emitted.push(event.event_type));
+    await sync.start();
+
+    const canonicalEvent = makeEvent('product.updated', 'product', 'p1', {
+      product_id: 'p1',
+      canonical_product: {},
+      applies_to: { scope: 'public' },
+    });
+    const canonicalWebhook = {
+      ...makeWebhook(canonicalEvent, { version: 'v2', previous: 'v1' }),
+      product_payload_view: 'canonical',
+    };
+
+    await assert.rejects(
+      () => sync.applyWebhook(canonicalWebhook),
+      err => {
+        assert.strictEqual(err.code, 'wholesale_feed_webhook_field_invalid');
+        assert.strictEqual(err.field, 'product_payload_view');
+        return true;
+      }
+    );
+    assert.strictEqual(sync.products.get('p1').name, 'Product p1');
+    assert.deepStrictEqual(emitted, []);
+
+    const legacyWebhook = {
+      ...canonicalWebhook,
+      product_payload_view: 'legacy',
+      event: {
+        ...canonicalEvent,
+        payload: {
+          product_id: 'p1',
+          product: makeProduct('p1', { name: 'Applied after rejection' }),
+          applies_to: { scope: 'public' },
+        },
+      },
+    };
+    await sync.applyWebhook(legacyWebhook);
+    assert.strictEqual(sync.products.get('p1').name, 'Applied after rejection');
+    assert.deepStrictEqual(emitted, ['product.updated']);
     sync.stop();
   });
 
@@ -807,4 +1102,44 @@ describe('WholesaleFeedSync beta 3 wholesale feed flow', () => {
     assert.strictEqual(calls.getProducts.at(-1).if_pricing_version, 'price-v1');
     sync.stop();
   });
+});
+
+test('failed webhook repair rejects and leaves the delivery available for retry (#3092)', async () => {
+  const account = { account_id: 'acc_acme' };
+  let failing = false;
+  let repairs = 0;
+  const { client } = makeStubClient({
+    capabilities: {
+      wholesale_feed_versioning: { supported: true },
+      wholesale_feed_webhooks: { supported: true, event_types: ['wholesale_feed.bulk_change'] },
+    },
+    getProducts: () => {
+      repairs++;
+      if (failing)
+        return { success: false, status: 'failed', error: 'rate limited', adcpError: { code: 'RATE_LIMITED' } };
+      return makeProductsResult([makeProduct('p1')], { wholesale_feed_version: repairs > 1 ? 'v2' : 'v1' });
+    },
+  });
+  const sync = new WholesaleFeedSync({ client, account, webhookScope: { accountId: 'acc_acme' } });
+  await sync.start();
+  failing = true;
+  const webhook = makeWebhook(
+    makeEvent('wholesale_feed.bulk_change', 'feed', 'bulk-retry', {
+      summary: 'refresh',
+      affected_count: 1,
+      affected_entity_type: 'product',
+      applies_to: { scope: 'public' },
+    }),
+    { version: 'v2', previous: 'v1' }
+  );
+  await assert.rejects(sync.applyWebhook(webhook), /rate limited/);
+  assert.equal(sync.state, 'degraded');
+  assert.equal(sync.products.count, 1);
+  failing = false;
+  await sync.applyWebhook(webhook);
+  assert.equal(repairs, 3);
+  assert.equal(sync.state, 'syncing');
+  await sync.applyWebhook(webhook);
+  assert.equal(repairs, 3, 'successful retry is deduplicated');
+  sync.stop();
 });

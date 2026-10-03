@@ -484,6 +484,7 @@ describe('runner-output contract: secret redaction', () => {
       api_key: 'apk_abc',
       nested: {
         credentials: 'hunter2',
+        recoveryKey: 'direct-continuation-capability',
         push_notification_config: { authentication: { credentials: 'secret-bearer' } },
       },
       benign: 'keep me',
@@ -491,6 +492,7 @@ describe('runner-output contract: secret redaction', () => {
     assert.strictEqual(out.authorization, '[redacted]');
     assert.strictEqual(out.api_key, '[redacted]');
     assert.strictEqual(out.nested.credentials, '[redacted]');
+    assert.strictEqual(out.nested.recoveryKey, '[redacted]');
     assert.strictEqual(out.nested.push_notification_config.authentication.credentials, '[redacted]');
     assert.strictEqual(out.benign, 'keep me');
     assert.strictEqual(out.brand, 'nike');

@@ -5,15 +5,17 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const {
+  buildReportingAdjustmentReceipt,
   buildReportingReceipt,
+  canonicalJsonSha256,
   createHttpsReportingResourceReader,
   createReportingManifestInspector,
   evaluateReportingLedger,
   loadReportingLedger,
   reconcileReporting,
   ReportingInspectionError,
-} = require('../dist/lib/index.js');
-const { TOOL_RESPONSE_SCHEMAS } = require('../dist/lib/utils/response-schemas.js');
+} = require('@adcp/sdk');
+const { TOOL_RESPONSE_SCHEMAS, getCanonicalToolValidator } = require('@adcp/sdk/schemas');
 
 const period = {
   start: '2026-08-01T00:00:00Z',
@@ -194,6 +196,20 @@ function materialization(id = 'materialization-billing', obligationId = 'obligat
   };
 }
 
+function reportingAdjustment(overrides = {}) {
+  const unsigned = {
+    reporting_adjustment_id: 'adjustment-august-1',
+    adjusts_reporting_revision_id: revision.reporting_revision_id,
+    reason_code: 'late_attribution',
+    accounting_period: { start: period.start, end: period.end },
+    control_total_deltas: [{ name: 'impressions', value: '12', value_type: 'integer', unit: 'impressions' }],
+    correction_observed_at: '2026-09-02T01:00:00Z',
+    created_at: '2026-09-02T01:00:01Z',
+    ...overrides,
+  };
+  return { ...unsigned, canonical_adjustment_sha256: canonicalJsonSha256(unsigned) };
+}
+
 function response(receipts = []) {
   const item = obligation();
   if (receipts.length) {
@@ -229,6 +245,666 @@ function response(receipts = []) {
     pagination: { has_more: false, total_count: 3 + receipts.length },
   };
 }
+
+function officialHistory({
+  requiredFinality = 'official',
+  officialArtifact = true,
+  linked = false,
+  reversed = false,
+  singleOfficial = false,
+} = {}) {
+  const raw = response();
+  const expected = expectedPeriod({ requiredFinality });
+  const item = raw.periods[0];
+  item.required_finality = requiredFinality;
+  raw.scope.finality = ['snapshot', 'official'];
+  raw.ledger_as_of = '2026-09-02T00:02:00Z';
+  const official = raw.revisions[0];
+  const snapshot = {
+    ...structuredClone(official),
+    reporting_revision_id: 'revision-august-snapshot',
+    finality: 'snapshot',
+    observed_at: period.end,
+    created_at: period.end,
+  };
+  delete snapshot.finality_basis;
+  delete snapshot.finality_policy_id;
+  delete snapshot.finalized_at;
+  if (linked) official.supersedes_reporting_revision_id = snapshot.reporting_revision_id;
+  const officialMaterialization = raw.materializations[0];
+  raw.revisions = singleOfficial ? [official] : [snapshot, official];
+  raw.materializations = singleOfficial
+    ? [officialMaterialization]
+    : [
+        {
+          ...structuredClone(officialMaterialization),
+          reporting_materialization_id: 'materialization-snapshot',
+          reporting_revision_id: snapshot.reporting_revision_id,
+        },
+        ...(officialArtifact ? [officialMaterialization] : []),
+      ];
+  raw.receipts = raw.materializations.map((artifact, index) =>
+    buildReportingReceipt(
+      {
+        obligation: item,
+        revision: raw.revisions.find(candidate => candidate.reporting_revision_id === artifact.reporting_revision_id),
+        materialization: artifact,
+        expected,
+      },
+      { rowCount: 7, controlTotals: structuredClone(totals), canonicalContentDigest: structuredClone(digest) },
+      `reporting-receipt-history-${index}`,
+      '2026-09-02T00:01:00Z'
+    )
+  );
+  Object.assign(item, {
+    revision_count: raw.revisions.length,
+    materialization_count: raw.materializations.length,
+    successful_materialization_count: raw.materializations.length,
+    receipt_count: raw.receipts.length,
+    accepted_receipt_count: raw.receipts.length,
+    pending_adjustment_count: 0,
+    reconciliation_status: officialArtifact ? 'accepted' : 'pending',
+    health: officialArtifact ? 'complete' : 'action_required',
+    issues: officialArtifact
+      ? []
+      : [
+          {
+            issue_id: 'official-receipt-required',
+            code: 'RECEIPT_REQUIRED',
+            severity: 'action_required',
+            responsible_party: 'seller',
+            recommended_action: 'contact_seller',
+            reporting_obligation_id: item.reporting_obligation_id,
+          },
+        ],
+  });
+  if (reversed) for (const key of ['revisions', 'materializations', 'receipts']) raw[key].reverse();
+  raw.pagination.total_count =
+    raw.periods.length + raw.revisions.length + raw.materializations.length + raw.receipts.length;
+  return { raw, expected };
+}
+
+function asLedger(raw) {
+  return {
+    ledgerSnapshotId: raw.ledger_snapshot_id,
+    ledgerAsOf: raw.ledger_as_of,
+    accountId: raw.account_id,
+    scope: raw.scope,
+    obligations: raw.periods,
+    revisions: raw.revisions,
+    materializations: raw.materializations,
+    receipts: raw.receipts,
+  };
+}
+
+const reportingNow = new Date('2026-09-03T00:00:00Z');
+
+async function evaluateBothWithoutEffects(raw, expected) {
+  const before = structuredClone(raw);
+  const expectedBefore = structuredClone(expected);
+  const effects = [];
+  let statusReads = 0;
+  const results = await Promise.allSettled([
+    Promise.resolve().then(() => evaluateReportingLedger(asLedger(raw), [expected], reportingNow)),
+    reconcileReporting({
+      client: {
+        async getReportingStatus(params, options) {
+          statusReads += 1;
+          assert.deepEqual(params, { account: { account_id: 'account-1' }, view: 'periods' });
+          assert.ok(options.signal instanceof AbortSignal);
+          return raw;
+        },
+        async syncReportingReceipts() {
+          effects.push('receipt');
+          throw new Error('unexpected receipt submission');
+        },
+      },
+      request: { account: { account_id: 'account-1' } },
+      expectedPeriods: [expected],
+      async inspect(context) {
+        effects.push(`inspect:${context.revision.reporting_revision_id}`);
+        throw new Error('unexpected inspection');
+      },
+      now: reportingNow,
+    }),
+  ]);
+  assert.equal(statusReads, 1);
+  assert.deepEqual(effects, []);
+  assert.deepEqual(raw, before, 'caller-owned history must remain unchanged');
+  assert.deepEqual(expected, expectedBefore, 'consumer expectation must remain unchanged');
+  assert.equal(results[0].status, results[1].status, 'public APIs must agree');
+  if (results[0].status === 'fulfilled') {
+    assert.deepEqual(results[0].value.obligations, results[1].value.obligations);
+    assert.equal(results[0].value.definitive, results[1].value.definitive);
+    assert.deepEqual(results[1].value.submittedReceipts, []);
+  } else {
+    assert.equal(results[0].reason.code, results[1].reason.code);
+  }
+  return results;
+}
+
+test('unique official takes precedence across complete managed reporting histories', async t => {
+  const canonical = getCanonicalToolValidator('get_reporting_status', 'sync', { adcpVersion: '3.2.1' });
+  assert.equal(typeof canonical, 'function');
+  const cases = [];
+  for (const requiredFinality of ['snapshot', 'official']) {
+    for (const officialArtifact of [true, false]) {
+      for (const linked of [false, true]) {
+        for (const reversed of [false, true]) cases.push({ requiredFinality, officialArtifact, linked, reversed });
+      }
+    }
+  }
+  cases.push({ requiredFinality: 'official', officialArtifact: true, singleOfficial: true });
+  for (const parameters of cases) {
+    await t.test(JSON.stringify(parameters), async () => {
+      const { raw, expected } = officialHistory(parameters);
+      const parsed = TOOL_RESPONSE_SCHEMAS.get_reporting_status.safeParse(raw);
+      assert.equal(parsed.success, true, parsed.error?.message);
+      assert.equal(canonical(raw), true, JSON.stringify(canonical.errors));
+      assert.equal(raw.account_id, 'account-1');
+      assert.equal(raw.scope.scope_closed, true);
+      assert.equal(raw.scope.coverage_complete, true);
+      assert.deepEqual(raw.scope.finality, ['snapshot', 'official']);
+      assert.deepEqual(raw.scope.delivery_config_generations, [
+        {
+          delivery_config_id: 'billing-feed',
+          delivery_config_version: 1,
+          feed_purpose: 'billing',
+        },
+      ]);
+      const evidenceCount = parameters.singleOfficial || !parameters.officialArtifact ? 1 : 2;
+      assert.deepEqual(
+        [
+          raw.periods[0].revision_count,
+          raw.periods[0].materialization_count,
+          raw.periods[0].successful_materialization_count,
+          raw.periods[0].receipt_count,
+          raw.periods[0].accepted_receipt_count,
+        ],
+        [parameters.singleOfficial ? 1 : 2, evidenceCount, evidenceCount, evidenceCount, evidenceCount]
+      );
+      assert.deepEqual(raw.pagination, { has_more: false, total_count: 1 + raw.revisions.length + 2 * evidenceCount });
+      for (const [key, id] of [
+        ['revisions', 'reporting_revision_id'],
+        ['materializations', 'reporting_materialization_id'],
+        ['receipts', 'reporting_receipt_id'],
+      ]) {
+        assert.equal(new Set(raw[key].map(item => item[id])).size, raw[key].length);
+      }
+      for (const item of raw.revisions) {
+        for (const key of [
+          'account_id',
+          'report_definition_id',
+          'reporting_profile',
+          'media_buy_ids',
+          'coverage',
+          'period',
+        ]) {
+          assert.deepEqual(item[key], raw.periods[0][key]);
+        }
+        assert.ok(Date.parse(item.created_at) <= Date.parse(raw.ledger_as_of));
+      }
+      for (const artifact of raw.materializations) {
+        for (const key of [
+          'reporting_obligation_id',
+          'delivery_config_id',
+          'delivery_config_version',
+          'destination_ref',
+          'feed_purpose',
+        ]) {
+          assert.equal(artifact[key], raw.periods[0][key]);
+        }
+      }
+      for (const receipt of raw.receipts) {
+        assert.equal(receipt.status, 'accepted');
+        const artifact = raw.materializations.find(
+          item => item.reporting_materialization_id === receipt.reporting_materialization_id
+        );
+        assert.equal(receipt.reporting_obligation_id, artifact.reporting_obligation_id);
+        assert.equal(receipt.reporting_revision_id, artifact.reporting_revision_id);
+        assert.equal(receipt.observed_row_count, 7);
+        assert.deepEqual(receipt.observed_control_totals, totals);
+        assert.deepEqual(receipt.observed_canonical_content_digest, digest);
+        assert.ok(Date.parse(receipt.observed_at) <= Date.parse(raw.ledger_as_of));
+      }
+      for (const outcome of await evaluateBothWithoutEffects(raw, expected)) {
+        assert.equal(outcome.status, 'fulfilled', outcome.reason?.message);
+        const result = outcome.value;
+        assert.equal(result.obligations.length, 1);
+        assert.equal(result.obligations[0].reportingRevisionId, revision.reporting_revision_id);
+        assert.equal(
+          result.obligations[0].reportingMaterializationId,
+          parameters.officialArtifact ? 'materialization-billing' : undefined
+        );
+        assert.equal(result.obligations[0].definitive, parameters.officialArtifact);
+        assert.equal(result.definitive, parameters.officialArtifact);
+        assert.deepEqual(
+          result.obligations[0].reasons,
+          parameters.officialArtifact ? [] : ['MISSING_VERIFIED_MATERIALIZATION', 'OBLIGATION_ACTION_REQUIRED']
+        );
+        assert.deepEqual(
+          result.totalsByRevision.map(item => item.reportingRevisionId),
+          [revision.reporting_revision_id]
+        );
+      }
+    });
+  }
+});
+
+test('official precedence preserves ambiguous and corrupt revision history', async t => {
+  const variants = [
+    [
+      'multiple officials',
+      raw => {
+        raw.revisions.push({ ...structuredClone(raw.revisions[1]), reporting_revision_id: 'second-official' });
+      },
+      'AMBIGUOUS_REVISION_CHAIN',
+    ],
+    [
+      'linked officials',
+      raw => {
+        raw.revisions.push({
+          ...structuredClone(raw.revisions[1]),
+          reporting_revision_id: 'second-official',
+          supersedes_reporting_revision_id: raw.revisions[1].reporting_revision_id,
+        });
+      },
+      'AMBIGUOUS_REVISION_CHAIN',
+    ],
+    [
+      'unlinked snapshot heads',
+      raw => {
+        raw.revisions.push({ ...structuredClone(raw.revisions[0]), reporting_revision_id: 'second-snapshot' });
+      },
+      'AMBIGUOUS_REVISION_CHAIN',
+    ],
+    [
+      'snapshot fork beside an official',
+      raw => {
+        raw.revisions[1].supersedes_reporting_revision_id = raw.revisions[0].reporting_revision_id;
+        raw.revisions.push({
+          ...structuredClone(raw.revisions[0]),
+          reporting_revision_id: 'fork-snapshot',
+          supersedes_reporting_revision_id: raw.revisions[0].reporting_revision_id,
+        });
+      },
+      'AMBIGUOUS_REVISION_CHAIN',
+    ],
+    [
+      'self-cycle beside an official',
+      raw => {
+        raw.revisions[0].supersedes_reporting_revision_id = raw.revisions[0].reporting_revision_id;
+      },
+      'AMBIGUOUS_REVISION_CHAIN',
+    ],
+    [
+      'snapshot cycle beside an official',
+      raw => {
+        raw.revisions[0].supersedes_reporting_revision_id = 'cycle-snapshot';
+        raw.revisions.push({
+          ...structuredClone(raw.revisions[0]),
+          reporting_revision_id: 'cycle-snapshot',
+          supersedes_reporting_revision_id: raw.revisions[0].reporting_revision_id,
+        });
+      },
+      'AMBIGUOUS_REVISION_CHAIN',
+    ],
+    [
+      'superseded terminal official',
+      raw => {
+        raw.revisions[0].supersedes_reporting_revision_id = raw.revisions[1].reporting_revision_id;
+      },
+      'AMBIGUOUS_REVISION_CHAIN',
+    ],
+    [
+      'missing predecessor',
+      raw => {
+        raw.revisions[1].supersedes_reporting_revision_id = 'missing-revision';
+      },
+      'REVISION_PREDECESSOR_MISSING',
+    ],
+    [
+      'cross-slice predecessor',
+      raw => {
+        raw.revisions[0].reporting_profile = 'different-profile';
+        raw.revisions[1].supersedes_reporting_revision_id = raw.revisions[0].reporting_revision_id;
+      },
+      'REVISION_CHAIN_SCOPE_MISMATCH',
+    ],
+  ];
+  for (const [name, mutate, reason] of variants) {
+    await t.test(name, async () => {
+      const { raw, expected } = officialHistory();
+      mutate(raw);
+      raw.periods[0].revision_count = raw.revisions.length;
+      raw.pagination.total_count =
+        raw.periods.length + raw.revisions.length + raw.materializations.length + raw.receipts.length;
+      for (const outcome of await evaluateBothWithoutEffects(raw, expected)) {
+        assert.equal(outcome.status, 'fulfilled', outcome.reason?.message);
+        assert.equal(outcome.value.definitive, false);
+        assert.ok(outcome.value.obligations[0].reasons.includes(reason));
+        if (reason === 'AMBIGUOUS_REVISION_CHAIN') {
+          assert.equal(outcome.value.obligations[0].reportingRevisionId, undefined);
+          assert.equal(outcome.value.obligations[0].reportingMaterializationId, undefined);
+        }
+        assert.deepEqual(outcome.value.ledger.revisions, raw.revisions);
+      }
+    });
+  }
+});
+
+test('unmaterialized official revisions still require an owned logical slice', async t => {
+  const variants = [
+    [
+      'account',
+      official => {
+        official.account_id = 'other-account';
+      },
+    ],
+    [
+      'definition',
+      official => {
+        official.report_definition_id = 'other-definition';
+      },
+    ],
+    [
+      'profile',
+      official => {
+        official.reporting_profile = 'other-profile';
+      },
+    ],
+    [
+      'media buys',
+      official => {
+        official.media_buy_ids = ['other-buy'];
+      },
+    ],
+    [
+      'period',
+      official => {
+        official.period.start = '2026-08-02T00:00:00Z';
+      },
+    ],
+    [
+      'timezone',
+      official => {
+        official.period.source_timezone = 'America/New_York';
+      },
+    ],
+  ];
+  for (const [name, mutate] of variants) {
+    await t.test(name, async () => {
+      const { raw, expected } = officialHistory({ officialArtifact: false, linked: true });
+      mutate(raw.revisions[1]);
+      for (const outcome of await evaluateBothWithoutEffects(raw, expected)) {
+        assert.equal(outcome.status, 'rejected');
+        assert.equal(outcome.reason.code, 'LEDGER_GRAPH_INTEGRITY_FAILED');
+      }
+    });
+  }
+});
+
+test('official precedence cannot hide a materialization ownership mismatch', async t => {
+  for (const [key, value] of [
+    ['reporting_obligation_id', 'other-obligation'],
+    ['reporting_revision_id', 'other-revision'],
+    ['delivery_config_id', 'other-config'],
+    ['delivery_config_version', 2],
+    ['destination_ref', 'other-destination'],
+    ['feed_purpose', 'analytics'],
+  ]) {
+    await t.test(key, async () => {
+      const { raw, expected } = officialHistory();
+      raw.materializations[0][key] = value;
+      for (const outcome of await evaluateBothWithoutEffects(raw, expected)) {
+        assert.equal(outcome.status, 'rejected');
+        assert.equal(outcome.reason.code, 'LEDGER_GRAPH_INTEGRITY_FAILED');
+      }
+    });
+  }
+});
+
+test('official precedence does not relax history counts, finality, or the expected contract', async t => {
+  const variants = [
+    [
+      'revision count',
+      raw => {
+        raw.periods[0].revision_count += 1;
+      },
+      'ASSOCIATED_HISTORY_INCOMPLETE',
+    ],
+    [
+      'materialization count',
+      raw => {
+        raw.periods[0].materialization_count += 1;
+      },
+      'ASSOCIATED_HISTORY_INCOMPLETE',
+    ],
+    [
+      'receipt count',
+      raw => {
+        raw.periods[0].receipt_count += 1;
+      },
+      'ASSOCIATED_HISTORY_INCOMPLETE',
+    ],
+    [
+      'official policy',
+      raw => {
+        raw.revisions[1].finality_policy_id = 'different-policy';
+      },
+      'EXPECTED_FINALITY_POLICY_MISMATCH',
+    ],
+    [
+      'official basis',
+      raw => {
+        raw.revisions[1].finality_basis = 'source_final';
+      },
+      'EXPECTED_FINALITY_POLICY_MISMATCH',
+    ],
+    [
+      'official time',
+      raw => {
+        raw.revisions[1].finalized_at = '2026-08-31T00:00:00Z';
+      },
+      'FINALITY_NOT_MET',
+    ],
+    [
+      'contract',
+      raw => {
+        raw.revisions[1].schema_sha256 = 'f'.repeat(64);
+      },
+      'EXPECTED_CONTRACT_MISMATCH',
+    ],
+    [
+      'coverage',
+      raw => {
+        raw.revisions[1].coverage.covered_package_ids.pop();
+      },
+      'COVERAGE_SCOPE_MISMATCH',
+    ],
+  ];
+  for (const [name, mutate, reason] of variants) {
+    await t.test(name, async () => {
+      const { raw, expected } = officialHistory({ requiredFinality: 'snapshot' });
+      mutate(raw);
+      for (const outcome of await evaluateBothWithoutEffects(raw, expected)) {
+        assert.equal(outcome.status, 'fulfilled', outcome.reason?.message);
+        assert.equal(outcome.value.definitive, false);
+        assert.equal(outcome.value.obligations[0].reportingRevisionId, revision.reporting_revision_id);
+        assert.ok(outcome.value.obligations[0].reasons.includes(reason));
+      }
+    });
+  }
+});
+
+test('an official without an artifact never inspects even an unreceipted snapshot', async () => {
+  for (const linked of [false, true]) {
+    const { raw, expected } = officialHistory({ officialArtifact: false, linked });
+    raw.receipts = [];
+    raw.periods[0].receipt_count = 0;
+    raw.periods[0].accepted_receipt_count = 0;
+    raw.pagination.total_count -= 1;
+    for (const outcome of await evaluateBothWithoutEffects(raw, expected)) {
+      assert.equal(outcome.status, 'fulfilled', outcome.reason?.message);
+      assert.equal(outcome.value.definitive, false);
+      assert.equal(outcome.value.obligations[0].reportingRevisionId, revision.reporting_revision_id);
+      assert.equal(outcome.value.obligations[0].reportingMaterializationId, undefined);
+    }
+  }
+});
+
+test('official precedence still requires a closed, completely retained ledger scope', async () => {
+  for (const key of ['scope_closed', 'coverage_complete']) {
+    const { raw, expected } = officialHistory();
+    raw.scope[key] = false;
+    for (const outcome of await evaluateBothWithoutEffects(raw, expected)) {
+      assert.equal(outcome.status, 'fulfilled', outcome.reason?.message);
+      assert.equal(outcome.value.definitive, false);
+    }
+  }
+});
+
+test('official selection drains every page and rejects looping or rewritten history before inspection', async t => {
+  for (const variant of ['complete', 'missing cursor', 'rewritten revision']) {
+    await t.test(variant, async () => {
+      const { raw, expected } = officialHistory({ officialArtifact: false });
+      const first = structuredClone(raw);
+      first.revisions = [first.revisions[0]];
+      first.pagination = { ...raw.pagination, has_more: true, cursor: 'official-page' };
+      const second = {
+        ...structuredClone(raw),
+        periods: [],
+        revisions: [raw.revisions[1]],
+        materializations: [],
+        receipts: [],
+      };
+      if (variant === 'missing cursor') delete first.pagination.cursor;
+      if (variant === 'rewritten revision') {
+        second.revisions.push({ ...structuredClone(raw.revisions[0]), row_count: 8 });
+      }
+      const before = structuredClone([first, second]);
+      let reads = 0;
+      const effects = [];
+      const action = reconcileReporting({
+        client: {
+          async getReportingStatus(params, options) {
+            assert.ok(options.signal instanceof AbortSignal);
+            assert.deepEqual(params, {
+              account: { account_id: 'account-1' },
+              view: 'periods',
+              ...(reads ? { pagination: { cursor: 'official-page' } } : {}),
+            });
+            assert.ok(reads < 2);
+            return reads++ === 0 ? first : second;
+          },
+          async syncReportingReceipts() {
+            effects.push('receipt');
+            throw new Error('unexpected receipt');
+          },
+        },
+        request: { account: { account_id: 'account-1' } },
+        expectedPeriods: [expected],
+        async inspect() {
+          effects.push('inspect');
+          throw new Error('unexpected inspection');
+        },
+        now: reportingNow,
+      });
+      if (variant === 'complete') {
+        const result = await action;
+        assert.equal(result.obligations[0].reportingRevisionId, revision.reporting_revision_id);
+        assert.equal(result.obligations[0].reportingMaterializationId, undefined);
+        assert.equal(result.definitive, false);
+        assert.deepEqual(result.ledger.revisions, raw.revisions);
+      } else {
+        const code = {
+          'missing cursor': 'CURSOR_LOOP',
+          'rewritten revision': 'IMMUTABLE_RECORD_CHANGED',
+        }[variant];
+        await assert.rejects(action, error => error.code === code);
+      }
+      assert.equal(reads, variant === 'missing cursor' ? 1 : 2);
+      assert.deepEqual(effects, []);
+      assert.deepEqual([first, second], before);
+    });
+  }
+});
+
+test('an unreceipted official uses the exact public inspection and receipt callbacks', async () => {
+  const { raw, expected } = officialHistory();
+  raw.receipts = raw.receipts.filter(item => item.reporting_revision_id !== revision.reporting_revision_id);
+  raw.periods[0].receipt_count = raw.receipts.length;
+  raw.periods[0].accepted_receipt_count = raw.receipts.length;
+  raw.periods[0].reconciliation_status = 'pending';
+  raw.periods[0].health = 'action_required';
+  raw.periods[0].issues = officialHistory({ officialArtifact: false }).raw.periods[0].issues;
+  raw.pagination.total_count -= 1;
+  const before = structuredClone(raw);
+  const observed = {
+    rowCount: 7,
+    controlTotals: structuredClone(totals),
+    canonicalContentDigest: structuredClone(digest),
+  };
+  const effects = [];
+  let storedReceipt;
+  const result = await reconcileReporting({
+    client: {
+      async getReportingStatus(params, options) {
+        effects.push('status');
+        assert.deepEqual(params, { account: { account_id: 'account-1' }, view: 'periods' });
+        assert.ok(options.signal instanceof AbortSignal);
+        const page = structuredClone(raw);
+        if (storedReceipt) {
+          page.receipts.push(storedReceipt);
+          page.periods[0].receipt_count += 1;
+          page.periods[0].accepted_receipt_count += 1;
+          page.periods[0].reconciliation_status = 'accepted';
+          page.periods[0].health = 'complete';
+          page.periods[0].issues = [];
+          page.pagination.total_count += 1;
+          page.ledger_snapshot_id = 'after-official-receipt';
+          page.ledger_as_of = storedReceipt.observed_at;
+        }
+        return page;
+      },
+      async syncReportingReceipts(params, options) {
+        effects.push('receipt');
+        assert.deepEqual(params.account, { account_id: 'account-1' });
+        assert.equal(typeof params.idempotency_key, 'string');
+        assert.ok(params.idempotency_key.length > 0);
+        assert.ok(options.signal instanceof AbortSignal);
+        assert.equal(params.receipts.length, 1);
+        const receipt = params.receipts[0];
+        assert.equal(receipt.reporting_revision_id, revision.reporting_revision_id);
+        assert.equal(receipt.reporting_materialization_id, 'materialization-billing');
+        assert.equal(receipt.status, 'accepted');
+        assert.equal(receipt.observed_row_count, observed.rowCount);
+        assert.deepEqual(receipt.observed_control_totals, observed.controlTotals);
+        assert.deepEqual(receipt.observed_canonical_content_digest, observed.canonicalContentDigest);
+        storedReceipt = structuredClone(receipt);
+        return { status: 'completed', results: [{ result: 'recorded', receipt: storedReceipt }] };
+      },
+    },
+    request: { account: { account_id: 'account-1' } },
+    expectedPeriods: [expected],
+    async inspect(context) {
+      effects.push('inspect');
+      assert.deepEqual(Object.keys(context).sort(), ['expected', 'materialization', 'obligation', 'revision']);
+      assert.deepEqual(context, {
+        obligation: raw.periods[0],
+        revision: raw.revisions[1],
+        materialization: raw.materializations[1],
+        expected,
+      });
+      return observed;
+    },
+    now: reportingNow,
+  });
+  assert.deepEqual(effects, ['status', 'inspect', 'receipt', 'status']);
+  assert.equal(result.definitive, true);
+  assert.deepEqual(result.submittedReceipts, [storedReceipt]);
+  assert.deepEqual(raw, before);
+});
 
 test('runtime response validation requires the current reporting evidence overlay', () => {
   const schema = TOOL_RESPONSE_SCHEMAS.get_reporting_status;
@@ -322,7 +998,7 @@ test('runtime response validation requires the current reporting evidence overla
   summary.issues = [];
   assert.equal(schema.safeParse(summary).success, true);
   assert.equal(schema.safeParse({ ...summary, periods: [] }).success, false);
-  assert.equal(schema.safeParse({ ...summary, next_expected_at: '2026-09-04T00:00:00Z' }).success, false);
+  assert.equal(schema.safeParse({ ...summary, next_expected_at: '2026-09-04T00:00:00Z' }).success, true);
 
   const snapshotWithOfficialEvidence = response([]);
   snapshotWithOfficialEvidence.revisions[0].finality = 'snapshot';
@@ -374,7 +1050,8 @@ test('rejects out-of-scope and orphan records before evaluating ledger completen
     raw => {
       raw.revisions.push({
         ...structuredClone(revision),
-        reporting_revision_id: 'orphan-same-scope',
+        reporting_revision_id: 'orphan-unowned-scope',
+        reporting_profile: 'unowned-profile',
       });
     },
     raw => {
@@ -707,6 +1384,259 @@ test('records a rejected receipt when consumer billing evidence differs', () => 
     'CONTROL_TOTAL_MISMATCH',
     'CANONICAL_DIGEST_MISMATCH',
   ]);
+});
+
+test('reconciles post-official adjustments with an independently verified durable receipt', async () => {
+  const base = response([]);
+  const revisionReceipt = buildReportingReceipt(
+    {
+      obligation: base.periods[0],
+      revision: base.revisions[0],
+      materialization: base.materializations[0],
+    },
+    { rowCount: 7, controlTotals: totals, canonicalContentDigest: digest },
+    'reporting-receipt:official-adjustment-base',
+    '2026-09-02T00:01:00Z'
+  );
+  const adjustment = reportingAdjustment();
+  const recordedAdjustmentReceipts = [];
+  const checkpointValues = new Map();
+  const checkpointStore = {
+    async get() {},
+    async put() {},
+    async getAdjustment(key) {
+      return checkpointValues.get(JSON.stringify(key));
+    },
+    async putAdjustment(key, value) {
+      checkpointValues.set(JSON.stringify(key), structuredClone(value));
+    },
+  };
+  const client = {
+    async getReportingStatus() {
+      const raw = response([revisionReceipt]);
+      raw.adjustments = [adjustment];
+      raw.adjustment_receipts = recordedAdjustmentReceipts;
+      Object.assign(raw.periods[0], {
+        adjustment_count: 1,
+        adjustment_receipt_count: raw.adjustment_receipts.length,
+        accepted_adjustment_receipt_count: recordedAdjustmentReceipts.filter(receipt => receipt.status === 'accepted')
+          .length,
+        pending_adjustment_count: recordedAdjustmentReceipts.some(receipt => receipt.status === 'accepted') ? 0 : 1,
+      });
+      raw.pagination.total_count += 1 + raw.adjustment_receipts.length;
+      return raw;
+    },
+    async syncReportingReceipts(request) {
+      assert.equal(request.receipts, undefined);
+      const recordedAdjustmentReceipt = {
+        ...request.adjustment_receipts[0],
+        received_at: '2026-09-02T01:01:00Z',
+      };
+      recordedAdjustmentReceipts.push(recordedAdjustmentReceipt);
+      return {
+        status: 'completed',
+        results: [{ result: 'recorded', adjustment_receipt: recordedAdjustmentReceipt }],
+      };
+    },
+  };
+
+  const reconcileOptions = {
+    client,
+    request: { account: { account_id: 'account-1' }, period: { start: period.start, end: period.end } },
+    expectedPeriods: [expectedPeriod()],
+    checkpointStore,
+    checkpointScope: 'seller.example/principal-1',
+    now: new Date('2026-09-03T00:00:00Z'),
+    async inspect() {
+      throw new Error('the accepted official receipt must prevent a resource reread');
+    },
+  };
+  const deferred = await reconcileReporting(reconcileOptions);
+  assert.equal(deferred.definitive, false, 'a valid adjustment needs an explicit buyer policy decision');
+  assert.equal(deferred.submittedAdjustmentReceipts.length, 0);
+
+  const policyRejected = await reconcileReporting({ ...reconcileOptions, evaluateAdjustment: () => 'reject' });
+  assert.equal(policyRejected.definitive, false);
+  assert.equal(policyRejected.submittedAdjustmentReceipts[0].status, 'rejected');
+  assert.deepEqual(policyRejected.submittedAdjustmentReceipts[0].rejection_codes, ['ADJUSTMENT_POLICY_REJECTED']);
+
+  const result = await reconcileReporting({ ...reconcileOptions, evaluateAdjustment: async () => 'accept' });
+
+  assert.equal(result.definitive, true, JSON.stringify(result.obligations));
+  assert.equal(result.submittedReceipts.length, 0);
+  assert.equal(result.submittedAdjustmentReceipts.length, 1);
+  assert.equal(result.submittedAdjustmentReceipts[0].status, 'accepted');
+  assert.equal(
+    result.submittedAdjustmentReceipts[0].observed_adjustment_sha256,
+    adjustment.canonical_adjustment_sha256
+  );
+});
+
+test('rejects a tampered adjustment digest instead of accepting seller-authored evidence', () => {
+  const adjustment = reportingAdjustment({ reason_detail: 'source corrected after close' });
+  adjustment.canonical_adjustment_sha256 = '0'.repeat(64);
+  const receipt = buildReportingAdjustmentReceipt(adjustment, revision, {
+    reportingReceiptId: 'reporting-adjustment-receipt:tampered',
+    observedAt: '2026-09-02T01:01:00Z',
+  });
+
+  assert.equal(receipt.status, 'rejected');
+  assert.deepEqual(receipt.rejection_codes, ['CANONICAL_ADJUSTMENT_DIGEST_MISMATCH']);
+  assert.notEqual(receipt.observed_adjustment_sha256, adjustment.canonical_adjustment_sha256);
+});
+
+test('rejects invalid adjustment control-total values even when their digest matches', () => {
+  for (const delta of [
+    { name: 'impressions', value: 'NaN', value_type: 'integer', unit: 'impressions' },
+    { name: 'impressions', value: '1e1000000', value_type: 'decimal', unit: 'impressions' },
+    { name: 'impressions', value_type: 'integer', unit: 'impressions' },
+  ]) {
+    const adjustment = reportingAdjustment({ control_total_deltas: [delta] });
+    const receipt = buildReportingAdjustmentReceipt(adjustment, revision);
+    assert.equal(receipt.status, 'rejected');
+    assert.ok(receipt.rejection_codes.includes('CONTROL_TOTAL_DELTA_MISMATCH'));
+  }
+});
+
+test('handles a rejected adjustment receipt that omits optional rejection codes', async () => {
+  const base = response([]);
+  const revisionReceipt = buildReportingReceipt(
+    {
+      obligation: base.periods[0],
+      revision: base.revisions[0],
+      materialization: base.materializations[0],
+    },
+    { rowCount: 7, controlTotals: totals, canonicalContentDigest: digest },
+    'reporting-receipt:optional-adjustment-rejection-codes',
+    '2026-09-02T00:01:00Z'
+  );
+  const adjustment = reportingAdjustment({ reason_detail: 'source corrected after close' });
+  adjustment.canonical_adjustment_sha256 = '0'.repeat(64);
+  const rejected = buildReportingAdjustmentReceipt(adjustment, base.revisions[0], {
+    reportingReceiptId: 'reporting-adjustment-receipt:without-rejection-codes',
+    observedAt: '2026-09-02T01:01:00Z',
+  });
+  delete rejected.rejection_codes;
+  rejected.received_at = '2026-09-02T01:01:01Z';
+  let submitted;
+
+  const result = await reconcileReporting({
+    client: {
+      async getReportingStatus() {
+        const raw = response([revisionReceipt]);
+        raw.adjustments = [adjustment];
+        raw.adjustment_receipts = [rejected];
+        Object.assign(raw.periods[0], {
+          adjustment_count: 1,
+          adjustment_receipt_count: 1,
+          accepted_adjustment_receipt_count: 0,
+          pending_adjustment_count: 1,
+        });
+        raw.pagination.total_count += 2;
+        return raw;
+      },
+      async syncReportingReceipts(request) {
+        submitted = request.adjustment_receipts[0];
+        const recorded = { ...submitted, received_at: '2026-09-02T01:02:00Z' };
+        return { status: 'completed', results: [{ result: 'recorded', adjustment_receipt: recorded }] };
+      },
+    },
+    request: { account: { account_id: 'account-1' }, period: { start: period.start, end: period.end } },
+    expectedPeriods: [expectedPeriod()],
+    now: new Date('2026-09-03T00:00:00Z'),
+    async inspect() {
+      throw new Error('the accepted revision receipt must prevent a resource reread');
+    },
+  });
+
+  assert.equal(submitted.supersedes_reporting_receipt_id, rejected.reporting_receipt_id);
+  assert.deepEqual(submitted.rejection_codes, ['CANONICAL_ADJUSTMENT_DIGEST_MISMATCH']);
+  assert.equal(result.submittedAdjustmentReceipts.length, 1);
+});
+
+test('never treats a semantically invalid accepted adjustment receipt as definitive or forks it', async () => {
+  const base = response([]);
+  const revisionReceipt = buildReportingReceipt(
+    {
+      obligation: base.periods[0],
+      revision: base.revisions[0],
+      materialization: base.materializations[0],
+    },
+    { rowCount: 7, controlTotals: totals, canonicalContentDigest: digest },
+    'reporting-receipt:terminal-adjustment-base',
+    '2026-09-02T00:01:00Z'
+  );
+  const adjustment = reportingAdjustment({
+    control_total_deltas: [{ name: 'impressions', value: '12', value_type: 'integer', unit: 'EUR' }],
+  });
+  const { rejection_codes: _rejectionCodes, ...rejectedBase } = buildReportingAdjustmentReceipt(
+    adjustment,
+    base.revisions[0],
+    {
+      reportingReceiptId: 'reporting-adjustment-receipt:terminal',
+      observedAt: '2026-09-02T01:01:00Z',
+    }
+  );
+  const accepted = { ...rejectedBase, status: 'accepted', received_at: '2026-09-02T01:01:01Z' };
+  let submissions = 0;
+  const result = await reconcileReporting({
+    client: {
+      async getReportingStatus() {
+        const raw = response([revisionReceipt]);
+        raw.adjustments = [adjustment];
+        raw.adjustment_receipts = [accepted];
+        Object.assign(raw.periods[0], {
+          adjustment_count: 1,
+          adjustment_receipt_count: 1,
+          accepted_adjustment_receipt_count: 1,
+          pending_adjustment_count: 0,
+        });
+        raw.pagination.total_count += 2;
+        return raw;
+      },
+      async syncReportingReceipts() {
+        submissions += 1;
+        throw new Error('an accepted adjustment leaf must never be superseded or forked');
+      },
+    },
+    request: { account: { account_id: 'account-1' }, period: { start: period.start, end: period.end } },
+    expectedPeriods: [expectedPeriod()],
+    now: new Date('2026-09-03T00:00:00Z'),
+    async inspect() {
+      throw new Error('the accepted revision receipt must prevent a resource reread');
+    },
+  });
+  assert.equal(submissions, 0);
+  assert.equal(result.submittedAdjustmentReceipts.length, 0);
+  assert.equal(result.definitive, false);
+  assert.ok(result.obligations[0].reasons.includes('MISSING_MATCHING_ADJUSTMENT_RECEIPT'));
+});
+
+test('treats a positive pending adjustment count as incomplete even when detail arrays are empty', async () => {
+  const base = response([]);
+  const revisionReceipt = buildReportingReceipt(
+    {
+      obligation: base.periods[0],
+      revision: base.revisions[0],
+      materialization: base.materializations[0],
+    },
+    { rowCount: 7, controlTotals: totals, canonicalContentDigest: digest },
+    'reporting-receipt:pending-adjustment-count',
+    '2026-09-02T00:01:00Z'
+  );
+  const raw = response([revisionReceipt]);
+  raw.periods[0].pending_adjustment_count = 3;
+  const ledger = await loadReportingLedger(
+    {
+      async getReportingStatus() {
+        return raw;
+      },
+    },
+    { account: { account_id: 'account-1' } }
+  );
+  const result = evaluateReportingLedger(ledger, [expectedPeriod()]);
+  assert.equal(result.definitive, false);
+  assert.ok(result.obligations[0].reasons.includes('ASSOCIATED_HISTORY_INCOMPLETE'));
 });
 
 test('does not claim completeness when an expected seller obligation is missing', async () => {
@@ -1841,6 +2771,7 @@ test('portable inspection fixture: checkpoint avoids rereading after a receipt w
   let checkpointKey;
   let recordedReceipt;
   let syncAttempts = 0;
+  let statusReads = 0;
   const syncIdempotencyKeys = [];
   const reader = fixtureReader();
   const checkpointStore = {
@@ -1855,7 +2786,12 @@ test('portable inspection fixture: checkpoint avoids rereading after a receipt w
   };
   const client = {
     async getReportingStatus() {
-      return fixtureLedgerResponse(recordedReceipt ? [recordedReceipt] : []);
+      statusReads += 1;
+      const raw = fixtureLedgerResponse(recordedReceipt ? [recordedReceipt] : []);
+      if (statusReads > 1) {
+        raw.periods[0].health = 'delayed';
+      }
+      return raw;
     },
     async syncReportingReceipts(request) {
       syncAttempts += 1;

@@ -409,6 +409,14 @@ const MAX_TTL = 604800; // 7 days
 const DEFAULT_TTL = 86400; // 24 hours
 const DEFAULT_CLOCK_SKEW = 60;
 /**
+ * Durable horizon for an unresolved owner claim. AdCP requires ambiguous
+ * in-flight outcomes to survive the completed-entry replay window and never
+ * become executable merely because a lease elapsed. Year 9999 is supported by
+ * the built-in memory, PostgreSQL, and Redis backends while remaining a safe
+ * integer Unix timestamp.
+ */
+const UNRESOLVED_RETAIN_UNTIL = 253402300799;
+/**
  * How long a transient-error cache entry lives. Long enough to absorb a
  * buyer SDK's retry storm (typical exponential backoff takes ~2–3
  * attempts past 10s), short enough that genuine fixes by the handler
@@ -518,8 +526,6 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
     async check({ principal, key, payload, extraScope }): Promise<IdempotencyCheckResult> {
       const scopedKey = scope(principal, key, extraScope);
       const payloadHash = hashPayload(payload);
-      let expiredClaimPayloadHash: string | undefined;
-
       const cached = await backend.get(scopedKey);
       if (cached) {
         const nowSeconds = Math.floor(Date.now() / 1000);
@@ -565,7 +571,11 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
             // ownership too.
             return { kind: 'in-flight', retryAfterSeconds: 1 };
           }
-          expiredClaimPayloadHash = cached.payloadHash;
+          // Lease expiry means the original outcome is ambiguous, not that a
+          // retry may become a new owner. Keep the durable claim fenced until
+          // the original owner publishes/releases it or an operator
+          // reconciles the natural resource.
+          return { kind: 'in-flight', retryAfterSeconds: 1 };
         } else {
           if (cached.expiresAt + clockSkewSeconds < nowSeconds) {
             return { kind: 'expired' };
@@ -582,11 +592,10 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
       // window as the base claim fence: if renewal infrastructure is down
       // while a money-moving handler is still active, a retry must remain
       // blocked rather than automatically re-entering after 120 seconds.
-      // The tradeoff is deliberate: a crashed handler can hold its key for
-      // the advertised replay window, after which natural-key reconciliation
-      // is required anyway.
+      // The tradeoff is deliberate: a crashed or ambiguous handler holds its
+      // key until explicit reconciliation publishes or releases an outcome.
       const expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
-      const retainUntil = expiresAt + clockSkewSeconds;
+      const retainUntil = UNRESOLVED_RETAIN_UNTIL;
       const claimToken = `${IN_FLIGHT_HASH_PREFIX}${payloadHash}:${randomUUID()}`;
       const claimEntry = {
         payloadHash: claimToken,
@@ -594,10 +603,7 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
         expiresAt,
         retainUntil,
       };
-      const claimed =
-        expiredClaimPayloadHash === undefined
-          ? await backend.putIfAbsent(scopedKey, claimEntry)
-          : await backend.replaceIfPayloadHashAndExpired(scopedKey, expiredClaimPayloadHash, claimEntry);
+      const claimed = await backend.putIfAbsent(scopedKey, claimEntry);
 
       if (!claimed) {
         // Someone beat us to the claim — re-read to find out what they did.
@@ -644,7 +650,7 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
         throw new Error('Idempotency renew requires the claimToken returned by check().');
       }
       const expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
-      const retainUntil = expiresAt + clockSkewSeconds;
+      const retainUntil = UNRESOLVED_RETAIN_UNTIL;
       const renewed = await backend.replaceIfPayloadHash(scopedKey, claimToken, {
         payloadHash: claimToken,
         response: null,

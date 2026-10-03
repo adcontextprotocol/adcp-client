@@ -212,9 +212,10 @@ export function normalizeRequestParams(
 
   // ── get_products-specific normalization ──
   if (taskType === 'get_products') {
-    // Infer buying_mode from brief presence if not supplied
+    // A missing brief never implies wholesale. The public getProducts path
+    // may select wholesale only after checking the seller's declaration.
     if (!normalized.buying_mode) {
-      normalized.buying_mode = normalized.brief ? 'brief' : 'wholesale';
+      if (normalized.brief) normalized.buying_mode = 'brief';
     }
 
     // Strip removed v2 fields that would fail strict validation

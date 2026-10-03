@@ -16,7 +16,8 @@
  *      credential-scoped set, and returns `null` on a miss → `ACCOUNT_NOT_FOUND`.
  *   4. Tools with no `account` on the wire (`list_creative_formats`,
  *      `provide_performance_feedback`) auto-select the account when the
- *      credential reaches exactly one.
+ *      credential reaches exactly one; account-required operations return
+ *      `ACCOUNT_REQUIRED` when no unique auth-derived selection exists.
  *
  * `createDerivedAccountStore` implements 2–4; the only thing you write is the
  * credential-scoped roster lookup.

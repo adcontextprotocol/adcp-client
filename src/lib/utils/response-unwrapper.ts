@@ -5,7 +5,7 @@
  * Follows canonical A2A response format per AdCP specification.
  */
 
-import { z } from 'zod';
+import type { z } from 'zod';
 import { getBestUnionErrors } from './union-errors';
 
 /**
@@ -32,9 +32,9 @@ import type {
   GetSignalsResponse,
   ActivateSignalResponse,
 } from '../types/tools.generated';
-import { prepareResponseForSchemaValidation, TOOL_RESPONSE_SCHEMAS } from './response-schemas';
 import { injectLegacyEnvelopeStatus, normalizeLegacyMediaBuyStatusForReturn } from './envelope-status-compat';
 import { getLatestA2ADataPartFromResponse } from './a2a-artifacts';
+import { getCachedResponseSchemas, type ResponseSchemasModule } from './response-schema-cache';
 
 /**
  * Typed error thrown when the response unwrapper's Zod schema rejects an
@@ -338,6 +338,7 @@ export function unwrapProtocolResponse(
 
   // Validate success responses against tool schema if tool name provided
   if (toolName) {
+    const { prepareResponseForSchemaValidation, TOOL_RESPONSE_SCHEMAS } = loadResponseSchemas();
     const schema = TOOL_RESPONSE_SCHEMAS[toolName];
     if (schema) {
       // Strip _message before validation — it's a text summary added by the unwrapper,
@@ -466,6 +467,7 @@ function restoreLegacyMediaBuyStatusForReturn<T extends AdCPResponse & { _messag
  * Returns the filtered response, or null if filtering can't help.
  */
 function filterInvalidProducts(schema: z.ZodType, data: Record<string, unknown>): Record<string, unknown> | null {
+  const { z } = require('zod') as typeof import('zod');
   const products = data.products;
   if (!Array.isArray(products)) return null;
 
@@ -822,6 +824,7 @@ export function isAdcpSuccess(response: any, taskName: string, responseAdcpVersi
   }
 
   // Try to validate with Zod schema if available
+  const { prepareResponseForSchemaValidation, TOOL_RESPONSE_SCHEMAS } = loadResponseSchemas();
   const schema = TOOL_RESPONSE_SCHEMAS[taskName];
   if (schema) {
     const { _message: _, ...stripped } = (response ?? {}) as Record<string, unknown>;
@@ -838,4 +841,12 @@ export function isAdcpSuccess(response: any, taskName: string, responseAdcpVersi
 
   // Unknown task - can't validate, assume success if no errors
   return true;
+}
+
+let responseSchemasModule: ResponseSchemasModule | undefined;
+
+function loadResponseSchemas(): ResponseSchemasModule {
+  responseSchemasModule ??=
+    getCachedResponseSchemas() ?? (require('./response-schemas') as typeof import('./response-schemas'));
+  return responseSchemasModule;
 }

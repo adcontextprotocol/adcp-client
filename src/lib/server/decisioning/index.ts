@@ -176,6 +176,7 @@ export type {
 
 // Top-level platform + compile-time capability enforcement
 export type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from './platform';
+export type { ReliableReportingPlatform } from './specialisms/reporting';
 
 // Method-level composition (closes #1314) — wrap individual platform methods
 // with `before` / `after` hooks for short-circuit + enrichment patterns.

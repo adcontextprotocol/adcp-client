@@ -412,6 +412,31 @@ async function manageTaskLifecycle() {
 }
 ```
 
+For a direct A2A mutation that may pause more than once, opt into an atomic
+operation route and persist the returned host-only capability once:
+
+```typescript
+const paused = await agent.buyProducts(request, undefined, {
+  durableContinuationRecovery: {
+    ownerScope: `principal:${principalId}/account:${accountId}`,
+  },
+});
+
+const savedRecovery = paused.deferred?.recovery;
+if (!savedRecovery) throw new Error('Seller did not return a recoverable A2A pause');
+await saveHostOnly(savedRecovery);
+
+const current = await restartedAgent.recoverDirectPauseContinuation({
+  ...savedRecovery,
+  ownerScope: `principal:${principalId}/account:${accountId}`,
+});
+```
+
+`ownerScope` must come from authenticated host context. The recovery key is
+separate from the resume token and must not be placed in approval links or
+sent to the seller. Recovery returns the current nested pause without a seller
+call; its `deferred.resume()` remains generation-fenced.
+
 Durable snapshots redact entire secret-shaped containers and truncate
 over-depth subtrees. `SingleAgentClient.getProducts()` rejects an authenticated
 request `property_list` before seller dispatch when durable storage also needs

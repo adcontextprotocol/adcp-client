@@ -8,6 +8,7 @@
  * capability cache). The aggregate `@adcp/sdk/signing` barrel re-exports
  * both for back-compat.
  */
+export type { SsrfDnsLookup } from '../net';
 export {
   buildResponseSignatureBase,
   buildSignatureBase,
@@ -35,6 +36,7 @@ export {
 export { jwkToPublicKey, verifySignature } from './crypto';
 export {
   RequestSignatureError,
+  RequestSigningErrorCodeMetadata,
   type RequestSignatureErrorCode,
   ResponseSignatureError,
   type ResponseSignatureErrorCode,
@@ -142,3 +144,5 @@ export {
   type ResolvedAgentJwksResolverOptions,
   type TraceStep,
 } from './agent-resolver';
+
+export type { PublisherSigningKeyPin } from './publisher-pins';

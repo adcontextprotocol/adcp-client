@@ -128,6 +128,8 @@ export interface WebhookDeliveryRecovery {
 /** Fenced ownership returned by SDK durable recovery implementations. */
 export interface WebhookDeliveryRecoveryClaim {
   readonly leaseExpiresAtMs: number;
+  /** Monotone durable recovery-run ordinal when the backend exposes one. */
+  readonly attemptCount?: number;
   /** Backend-independent renewal cadence. SDK claims set this from the configured lease duration. */
   readonly heartbeatIntervalMs?: number;
   renew(): Promise<boolean>;
@@ -229,11 +231,26 @@ function maybeWarnHmacDeprecation(suppressLegacyWarnings?: boolean): void {
 }
 
 export interface WebhookRetryOptions {
-  /** Max delivery attempts (≥1). Default 5. */
+  /**
+   * Max delivery attempts (≥1). Default 5.
+   *
+   * A finite value floors to a whole attempt and clamps up to 1. A non-finite
+   * value falls back to the default, because an attempt bound has nothing to
+   * saturate to the way a delay does: `NaN` would make the delivery loop run
+   * zero attempts and re-queue itself forever without ever posting, and
+   * `Infinity` would leave it unbounded.
+   */
   maxAttempts?: number;
-  /** Initial backoff in ms. Default 1000. */
+  /**
+   * Initial backoff in ms. Default 1000.
+   *
+   * Normalized to a whole millisecond from 0 through 604800000 (seven days),
+   * the range every durable recovery backend accepts for a retry-after. A
+   * fractional value floors, a value above the ceiling saturates to it, and
+   * `Infinity` saturates rather than collapsing to an immediate retry.
+   */
   initialDelayMs?: number;
-  /** Cap per-attempt backoff. Default 60000. */
+  /** Cap per-attempt backoff. Default 60000. Normalized like `initialDelayMs`. */
   maxDelayMs?: number;
   /** Jitter factor ∈ [0,1]: 0 = none, 0.5 = ±50%. Default 0.25. */
   jitter?: number;
@@ -324,9 +341,24 @@ export interface WebhookEmitterOptions {
   /** Signing tag override. Defaults to `adcp/webhook-signing/v1`. */
   tag?: string;
   /** Observability hook called BEFORE each attempt. */
-  onAttempt?: (info: WebhookEmitAttempt) => void;
+  onAttempt?: (info: WebhookEmitAttempt) => void | Promise<void>;
   /** Observability hook called AFTER each attempt completes. */
-  onAttemptResult?: (info: WebhookEmitAttemptResult) => void;
+  onAttemptResult?: (info: WebhookEmitAttemptResult) => void | Promise<void>;
+  /** Observer failures are isolated from delivery and reported here. */
+  onAttemptObserverError?: (error: unknown, phase: 'attempt' | 'result') => void;
+  /** Maximum time allowed for each non-authoritative observability hook. Defaults to 5 seconds. */
+  attemptObserverTimeoutMs?: number;
+  /** Maximum time allowed for signing plus one external POST. Defaults to 30 seconds. */
+  deliveryTimeoutMs?: number;
+  /**
+   * Resolve a retry ordinal before authorization. A successful authorization
+   * may replace it with the ordinal returned by its final durable pre-POST
+   * checkpoint; reporting activity uses that later seam so suppressions do
+   * not consume transport attempts. Do not back both seams with the same
+   * counter: use this option for pre-authorization allocation or return an
+   * ordinal from the authorizer checkpoint, never both.
+   */
+  resolveAttemptOrdinal?: (candidate: Readonly<WebhookEmitAttempt>) => number | Promise<number>;
   /**
    * Fail-closed authorization hook invoked immediately before every external
    * POST, including each in-process retry and every recovered attempt. A
@@ -388,11 +420,21 @@ export interface WebhookEmitAttempt {
   idempotency_key: string;
   attempt: number;
   url: string;
+  /** Exact UTF-8 byte length of the serialized request body. */
+  payload_size_bytes: number;
   /** Durable non-secret context supplied by the emission owner. */
   attemptAuthorizationContext?: Record<string, unknown>;
+  /**
+   * True when this attempt replays a durable outbox snapshot rather than a live
+   * emission. A recovered attempt is pinned to the snapshot it was taken from,
+   * so authority that has since moved on can never become valid for it.
+   */
+  recovered?: boolean;
 }
 
 export type WebhookAttemptSuppressionReason =
+  /** A durable pre-POST attempt checkpoint could not be written. */
+  | 'attempt_checkpoint_unavailable'
   | 'authorization_denied'
   | 'authorization_error'
   | 'subscription_missing'
@@ -406,8 +448,20 @@ export type WebhookAttemptAuthorizationDecision =
       decision: 'allow';
       /** Optional just-in-time override; `null` explicitly selects RFC 9421. */
       authentication?: WebhookAuthentication;
+      /** Durable transport ordinal allocated by the pre-POST checkpoint. */
+      attemptOrdinal?: number;
     }
-  | { decision: 'suppress'; reason: WebhookAttemptSuppressionReason };
+  | {
+      decision: 'suppress';
+      reason: WebhookAttemptSuppressionReason;
+      /**
+       * True when authority could not be established rather than deliberately
+       * withheld. The delivery stays pending for the outbox worker instead of
+       * being terminalized, so a transient store, authorization or credential
+       * failure does not destroy the only durable record of the send.
+       */
+      retryable?: boolean;
+    };
 
 export type WebhookAttemptAuthorizer = (
   info: Readonly<WebhookEmitAttempt>
@@ -431,8 +485,12 @@ export interface WebhookEmitResult {
   final_status?: number;
   /** Sanitized per-attempt failure classifications; nested provider/backend messages are never copied here. */
   errors: string[];
-  /** Present when live delivery authority failed closed before an external attempt. */
-  suppression?: { reason: WebhookAttemptSuppressionReason };
+  /**
+   * Present when live delivery authority failed closed before an external
+   * attempt. `retryable` marks authority that could not be established, which
+   * leaves the delivery pending for the outbox worker.
+   */
+  suppression?: { reason: WebhookAttemptSuppressionReason; retryable?: boolean };
 }
 
 export interface WebhookEmitter {
@@ -495,6 +553,10 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
   const fetchImpl = options.fetch ?? createPinAndBindFetch();
   const sleep = options.sleep ?? defaultSleep;
   const now = options.now ?? Date.now;
+  const observerTimeoutMs = options.attemptObserverTimeoutMs ?? 5_000;
+  const deliveryTimeoutMs = options.deliveryTimeoutMs ?? 30_000;
+  assertPositiveInteger(observerTimeoutMs, 'attemptObserverTimeoutMs', 300_000);
+  assertPositiveInteger(deliveryTimeoutMs, 'deliveryTimeoutMs', 300_000);
 
   const makeEmitter = (boundTenantScope: string | undefined): RecoverableWebhookEmitter => ({
     forTenantScope(nextTenantScope: string): RecoverableWebhookEmitter {
@@ -595,15 +657,26 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
             binding = await refreshDeliveryBinding(store, deliveryKey, binding, retryHorizonSeconds);
           }
           assertWithinRetryHorizon(binding, deliveryId, now(), retryHorizonSeconds);
-          const attemptInfo: WebhookEmitAttempt = {
+          const candidate: WebhookEmitAttempt = {
             delivery_id: deliveryId,
             idempotency_key,
             attempt,
             url,
+            payload_size_bytes: Buffer.byteLength(bodyBytes, 'utf8'),
             ...(attemptAuthorizationContext === undefined
               ? {}
               : { attemptAuthorizationContext: structuredClone(attemptAuthorizationContext) }),
+            ...(recoveredClaim ? { recovered: true } : {}),
           };
+          const resolvedAttempt = options.resolveAttemptOrdinal
+            ? await promiseBeforeDeadline(
+                Promise.resolve(options.resolveAttemptOrdinal(candidate)),
+                deliveryTimeoutMs,
+                'webhook attempt ordinal resolution timed out'
+              )
+            : attempt;
+          assertPositiveInteger(resolvedAttempt, 'resolved webhook attempt ordinal', 1_000_000);
+          let attemptInfo: WebhookEmitAttempt = { ...candidate, attempt: resolvedAttempt };
 
           let attemptAuthentication = authentication;
           if (options.authorizeAttempt) {
@@ -615,15 +688,19 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
               authorization = { decision: 'suppress', reason: 'authorization_error' };
             }
             if (authorization.decision === 'suppress') {
+              const retryableSuppression = authorization.retryable === true;
               await recoveryHeartbeat?.stop();
               const heartbeatError = recoveryHeartbeat?.lossMessage();
               if (heartbeatError) errors.push(heartbeatError);
               if (!recoveredClaim) {
                 if (recoveryClaim) {
-                  if (!heartbeatError && !(await recoveryClaim.settle('terminal'))) {
+                  const settled = retryableSuppression
+                    ? await recoveryClaim.release(backoffDelay(attempt, retries))
+                    : await recoveryClaim.settle('terminal');
+                  if (!heartbeatError && !settled) {
                     errors.push('suppressed delivery could not settle its recovery lease');
                   }
-                } else {
+                } else if (!retryableSuppression) {
                   await options.deliveryRecovery?.settle(deliveryKey, 'terminal');
                 }
               }
@@ -632,10 +709,14 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
                 idempotency_key,
                 attempts,
                 delivered: false,
-                terminal: true,
+                terminal: !retryableSuppression,
                 errors,
-                suppression: { reason: authorization.reason },
+                suppression: { reason: authorization.reason, ...(retryableSuppression ? { retryable: true } : {}) },
               };
+            }
+            if (authorization.attemptOrdinal !== undefined) {
+              assertPositiveInteger(authorization.attemptOrdinal, 'authorized webhook attempt ordinal', 1_000_000);
+              attemptInfo = { ...attemptInfo, attempt: authorization.attemptOrdinal };
             }
             if ('authentication' in authorization) {
               attemptAuthentication =
@@ -643,7 +724,10 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
             }
           }
           attempts = attempt;
-          options.onAttempt?.(attemptInfo);
+          await observeAttempt(options, 'attempt', attemptInfo);
+          // Observers are awaited and may outlive a recovery lease. Fence the
+          // final transport boundary after they finish, before any POST.
+          await recoveryHeartbeat?.renewNow();
 
           const started = Date.now();
           let status: number | undefined;
@@ -651,23 +735,30 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
           let terminal = false;
 
           try {
-            const response = await deliverOnce({
-              url,
-              bodyBytes,
-              signerKey: options.signerKey,
-              signerProvider: options.signerProvider,
-              authentication: attemptAuthentication,
-              tag: options.tag,
-              userAgent: options.userAgent,
-              fetch: fetchImpl,
-              suppressLegacyWarnings: options.suppressLegacyWarnings,
-            });
+            const controller = new AbortController();
+            const response = await promiseBeforeDeadline(
+              deliverOnce({
+                url,
+                bodyBytes,
+                signerKey: options.signerKey,
+                signerProvider: options.signerProvider,
+                authentication: attemptAuthentication,
+                tag: options.tag,
+                userAgent: options.userAgent,
+                fetch: fetchImpl,
+                signal: controller.signal,
+                suppressLegacyWarnings: options.suppressLegacyWarnings,
+              }),
+              deliveryTimeoutMs,
+              'webhook delivery timed out',
+              () => controller.abort()
+            );
             status = response.status;
             lastStatus = status;
 
             if (status >= 200 && status < 300) {
               const durationMs = Date.now() - started;
-              options.onAttemptResult?.({ ...attemptInfo, status, durationMs, willRetry: false });
+              await observeAttempt(options, 'result', { ...attemptInfo, status, durationMs, willRetry: false });
               await recoveryHeartbeat?.stop();
               const heartbeatError = recoveryHeartbeat?.lossMessage();
               if (heartbeatError) errors.push(heartbeatError);
@@ -714,7 +805,7 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
 
           const willRetry = !terminal && attempt < retries.maxAttempts;
           finalTerminal = terminal;
-          options.onAttemptResult?.({
+          await observeAttempt(options, 'result', {
             ...attemptInfo,
             ...(status !== undefined && { status }),
             durationMs: Date.now() - started,
@@ -757,6 +848,38 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
   return makeEmitter(tenantScope);
 }
 
+async function observeAttempt(
+  options: WebhookEmitterOptions,
+  phase: 'attempt' | 'result',
+  value: WebhookEmitAttempt | WebhookEmitAttemptResult
+): Promise<void> {
+  try {
+    const observer =
+      phase === 'attempt'
+        ? options.onAttempt?.(value as WebhookEmitAttempt)
+        : options.onAttemptResult?.(value as WebhookEmitAttemptResult);
+    if (observer !== undefined) {
+      await promiseBeforeDeadline(
+        Promise.resolve(observer),
+        options.attemptObserverTimeoutMs ?? 5_000,
+        `webhook ${phase} observer timed out`
+      );
+    }
+  } catch (error) {
+    try {
+      if (options.onAttemptObserverError) options.onAttemptObserverError(error, phase);
+      else console.warn(`[adcp/webhook] ${phase} observer failed`);
+    } catch {
+      // Delivery observability is deliberately isolated from transport.
+      try {
+        console.warn(`[adcp/webhook] ${phase} observer-error hook failed`);
+      } catch {
+        // A broken logger must not prevent delivery.
+      }
+    }
+  }
+}
+
 function assertAttemptAuthorizationDecision(value: unknown): asserts value is WebhookAttemptAuthorizationDecision {
   if (value == null || typeof value !== 'object') {
     throw new TypeError('authorizeAttempt must return an authorization decision');
@@ -769,6 +892,7 @@ function assertAttemptAuthorizationDecision(value: unknown): asserts value is We
   if (
     decision.decision !== 'suppress' ||
     ![
+      'attempt_checkpoint_unavailable',
       'authorization_denied',
       'authorization_error',
       'subscription_missing',
@@ -884,6 +1008,35 @@ interface DeliveryResponse {
   location?: string;
 }
 
+function assertPositiveInteger(value: number, name: string, maximum: number): void {
+  if (!Number.isSafeInteger(value) || value < 1 || value > maximum) {
+    throw new TypeError(`${name} must be an integer from 1 through ${maximum}`);
+  }
+}
+
+async function promiseBeforeDeadline<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  message: string,
+  onTimeout?: () => void
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      onTimeout?.();
+      const error = new Error(message);
+      Object.assign(error, { code: 'ETIMEDOUT' });
+      reject(error);
+    }, timeoutMs);
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([operation, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function deliverOnce(args: {
   url: string;
   bodyBytes: string;
@@ -893,6 +1046,7 @@ async function deliverOnce(args: {
   tag?: string;
   userAgent?: string;
   fetch: typeof fetch;
+  signal: AbortSignal;
   suppressLegacyWarnings?: boolean;
 }): Promise<DeliveryResponse> {
   const headers = await buildHeaders(args);
@@ -900,6 +1054,7 @@ async function deliverOnce(args: {
     method: 'POST',
     headers,
     body: args.bodyBytes,
+    signal: args.signal,
   });
   return {
     status: response.status,
@@ -1147,19 +1302,60 @@ function isTerminalStatus(status: number, wwwAuthenticate?: string): boolean {
   return false;
 }
 
+/**
+ * Backoff in whole milliseconds, inside the retry-after range every durable
+ * recovery backend accepts.
+ *
+ * Normalized here rather than at the call sites because this value is both slept
+ * on and handed to `WebhookDeliveryRecoveryClaim.release`, which asserts a safe
+ * integer from 0 through 604800000. A fractional configured delay used to reach
+ * that assertion unchanged: releasing a retryable suppression threw instead of
+ * releasing, and the delivery stayed leased until its lease expired.
+ */
 function backoffDelay(attempt: number, retries: Required<WebhookRetryOptions>): number {
   const base = Math.min(retries.initialDelayMs * Math.pow(2, attempt - 1), retries.maxDelayMs);
-  if (retries.jitter <= 0) return base;
-  const jitterWindow = base * retries.jitter;
-  const offset = Math.random() * jitterWindow * 2 - jitterWindow;
-  return Math.max(0, Math.floor(base + offset));
+  const jittered =
+    retries.jitter <= 0 ? base : base + (Math.random() * base * retries.jitter * 2 - base * retries.jitter);
+  return clampRetryAfterMs(jittered);
 }
 
+/**
+ * Whole milliseconds within the recovery contract's accepted range.
+ *
+ * Non-finite input is deliberately split rather than collapsed. `Infinity`
+ * means "wait as long as possible", so it saturates to the ceiling; mapping it
+ * to 0 would turn a request for the longest possible backoff into an immediate
+ * retry burst. `NaN` and `-Infinity` carry no such intent and floor to 0, which
+ * is the same value an explicit negative delay already produced.
+ */
+function clampRetryAfterMs(value: number): number {
+  if (Number.isNaN(value)) return 0;
+  if (value === Number.POSITIVE_INFINITY) return MAX_RETRY_AFTER_MS;
+  if (value === Number.NEGATIVE_INFINITY) return 0;
+  return Math.min(MAX_RETRY_AFTER_MS, Math.max(0, Math.floor(value)));
+}
+
+const MAX_RETRY_AFTER_MS = 604_800_000;
+const DEFAULT_MAX_ATTEMPTS = 5;
+
 function resolveRetries(opts?: WebhookRetryOptions): Required<WebhookRetryOptions> {
+  // Delays are normalized to whole milliseconds on the way in as well, so the
+  // durable snapshot a recovered attempt replays carries the same integers this
+  // process used rather than whatever was configured. An infinite delay
+  // saturates to the ceiling here, so it cannot become a zero-delay burst.
+  //
+  // An attempt bound cannot saturate the same way, so a non-finite one falls
+  // back to the default instead. `NaN` is the dangerous case: `attempt <= NaN`
+  // is false on the first comparison, so the delivery loop runs zero attempts,
+  // reports no terminal outcome, and releases its recovery lease with a zero
+  // backoff — an immediately re-eligible entry that never posts anything.
+  const configuredMaxAttempts = opts?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   return {
-    maxAttempts: Math.max(1, opts?.maxAttempts ?? 5),
-    initialDelayMs: Math.max(0, opts?.initialDelayMs ?? 1000),
-    maxDelayMs: Math.max(0, opts?.maxDelayMs ?? 60_000),
+    maxAttempts: Number.isFinite(configuredMaxAttempts)
+      ? Math.max(1, Math.floor(configuredMaxAttempts))
+      : DEFAULT_MAX_ATTEMPTS,
+    initialDelayMs: clampRetryAfterMs(opts?.initialDelayMs ?? 1000),
+    maxDelayMs: clampRetryAfterMs(opts?.maxDelayMs ?? 60_000),
     jitter: Math.max(0, Math.min(1, opts?.jitter ?? 0.25)),
   };
 }

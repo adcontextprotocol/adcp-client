@@ -1,6 +1,104 @@
 # Reporting reconciliation
 
-`reconcileReporting` turns the reporting ledger into a buyer-verifiable result. It reads one stable ledger snapshot, checks the expected period set, inspects each current destination materialization, submits any required consumer receipts, and then reads the seller's ledger back before returning.
+Import buyer reconciliation, inspection, PostgreSQL persistence, and the
+worker from `@adcp/sdk/reporting/consumer`.
+
+## Core-only health reconciliation
+
+Use `reconcileReportingCoreV1` when the seller advertises the required Core
+tier without managed delivery or reconciled billing. It is a synchronous pure
+function: pass the obligations and revisions returned by
+`get_reporting_status`, the response's scope closure facts, and the recovery
+window recorded from reporting capabilities. It derives `waiting`, `healthy`,
+`delayed`, `action_required`, or `complete` without a destination, manifest,
+canonicalization contract, resource reader, materialization, or receipt.
+
+```ts
+import {
+  reconcileReportingCoreV1,
+  type CoreReportingObligationV1,
+  type CoreReportingRevisionV1,
+} from '@adcp/sdk/reporting/consumer';
+
+const obligations: CoreReportingObligationV1[] = [];
+const revisions: CoreReportingRevisionV1[] = [];
+const seenCursors = new Set<string>();
+let cursor: string | undefined;
+let status;
+let snapshotId: string | undefined;
+let ledgerAsOf: string | undefined;
+let pageCount = 0;
+do {
+  if (++pageCount > 1_000) throw new Error('Seller reporting history exceeds the buyer page budget');
+  status = await seller.getReportingStatus({
+    account: { account_id: 'account-1' },
+    view: 'periods',
+    ...(cursor ? { pagination: { cursor } } : {}),
+  });
+  if (!status.ledger_snapshot_id || !status.ledger_as_of) {
+    throw new Error('Seller omitted reporting snapshot identity');
+  }
+  if (
+    (snapshotId && status.ledger_snapshot_id !== snapshotId) ||
+    (ledgerAsOf && status.ledger_as_of !== ledgerAsOf)
+  ) {
+    throw new Error('Seller reporting snapshot changed during pagination');
+  }
+  snapshotId ??= status.ledger_snapshot_id;
+  ledgerAsOf ??= status.ledger_as_of;
+  obligations.push(...(status.periods ?? []));
+  revisions.push(...(status.revisions ?? []));
+  if (obligations.length + revisions.length > 100_000) {
+    throw new Error('Seller reporting history exceeds the buyer record budget');
+  }
+  if (!status.pagination) throw new Error('Seller omitted reporting pagination');
+  if (status.pagination.has_more && !status.pagination.cursor) {
+    throw new Error('Seller reporting cursor did not advance');
+  }
+  cursor = status.pagination.has_more ? status.pagination.cursor : undefined;
+  if (cursor && seenCursors.has(cursor)) throw new Error('Seller reporting cursor repeated');
+  if (cursor) seenCursors.add(cursor);
+} while (cursor);
+
+const reportingDelivery = capabilities.media_buy?.reporting_delivery;
+if (
+  !status?.scope ||
+  !ledgerAsOf ||
+  !reportingDelivery ||
+  typeof reportingDelivery.automated_recovery_window_seconds !== 'number'
+) {
+  throw new Error('Seller omitted required reporting Core facts');
+}
+
+const result = reconcileReportingCoreV1({
+  obligations,
+  revisions,
+  scope: {
+    closed: status.scope.scope_closed,
+    coverageComplete: status.scope.coverage_complete,
+    recordsComplete: true,
+  },
+  clocks: {
+    ledgerAsOf,
+    automatedRecoveryWindowSeconds:
+      reportingDelivery.automated_recovery_window_seconds,
+  },
+});
+```
+
+Core revisions join to obligations by their protocol logical-slice identity:
+account, report definition, reporting profile, media-buy denominator, and
+period. A qualifying revision with `row_count: 0` satisfies its obligation;
+zero rows is explicit reporting, while no revision is a missing report.
+
+`scope.coverage_complete` proves retention coverage, not that the seller emitted
+every obligation the buyer independently expected. Buyers that derive an
+expected-period denominator from an accepted schedule must compare that set to
+`obligations` separately; seller scope coverage cannot prove an omitted period.
+
+## Managed-delivery and receipt reconciliation
+
+`reconcileReporting` turns the reporting ledger into a buyer-verifiable result. It reads one stable ledger snapshot, checks the expected period set, inspects each current destination materialization, independently verifies post-official adjustment digests and semantics, submits any required revision or adjustment receipts, and then reads the seller's ledger back before returning.
 
 The helper only returns `definitive: true` when all of these conditions hold:
 
@@ -10,15 +108,29 @@ The helper only returns `definitive: true` when all of these conditions hold:
 - every obligation's history counts match the returned immutable records;
 - the current revision has the required finality;
 - a verified, unexpired materialization matches the obligation;
-- every consumer-receipt obligation has an accepted receipt for the same revision, materialization, row count, control totals, and required verification evidence.
+- every consumer-receipt obligation has an accepted receipt for the same revision, materialization, row count, control totals, and required verification evidence;
+- every post-official adjustment on that revision has an accepted adjustment receipt whose observed digest and control-total values were independently validated. Digest, target-revision, timing, and control-total disagreements produce a rejected receipt and keep the result nondefinitive.
+
+An integrity-valid adjustment is **deferred by default**. Configure
+`evaluateAdjustment({ adjustment, revision, signal })` to return `accept`,
+`reject`, or `defer` after applying the buyer's financial policy. `reject`
+submits a receipt with `ADJUSTMENT_POLICY_REJECTED`; `defer` sends no receipt
+and keeps billing nondefinitive. Set `adjustmentPolicyTimeoutMs` if the default
+five-second policy deadline is unsuitable. Route large or unusual corrections
+to human review; a matching digest proves the seller's record is unchanged,
+not that the buyer agrees with its commercial effect. Direct callers of
+`buildReportingAdjustmentReceipt` must apply the same policy before submitting
+an integrity-valid accepted receipt.
 
 An omitted expected-period denominator can still diagnose delivery, but can never prove completeness. Pass `[]` only when the buyer independently knows that no periods are expected in the requested scope.
+
+A unique official revision takes precedence over a retained snapshot even without an explicit supersession link. The logical-slice join includes owned revisions whose destination materialization is still pending. In that case the result names the official revision, remains nondefinitive with `MISSING_VERIFIED_MATERIALIZATION`, and does not inspect or receipt the older snapshot. Forks, cycles, multiple official revisions, incomplete history, and mismatched ownership still prevent definitive reconciliation; the seller's retained records are preserved.
 
 ```ts
 import {
   createHttpsReportingResourceReader,
   reconcileReporting,
-} from '@adcp/sdk';
+} from '@adcp/sdk/reporting/consumer';
 
 const result = await reconcileReporting({
   client: seller,
@@ -102,6 +214,204 @@ When `inspect` is omitted, `resourceReader` enables the built-in manifest path. 
 
 The HTTPS reader applies the SDK's DNS-pinned SSRF controls, refuses redirects and cross-origin `object_ref` values, and accepts short-lived headers only through the credential provider. `allowedOrigins` must come from the consumer's saved destination configuration; the reader refuses to send credentials to an origin named only by the seller's resource descriptor. For S3, GCS, or Azure, implement `ReportingResourceReader`; it receives the destination-bound context and opaque credentials without placing either in the ledger or receipt. Complex control totals can supply `controlTotalCalculator`; the default handles only report-definition metrics whose declared aggregation is `sum` and whose `source_expression` resolves to numeric row values.
 
-Keep `inspect` as the advanced override for native snapshots. A BigQuery adapter can inspect a table version, while Snowflake or Databricks adapters can verify a shared relation. `ReportingInspectionError.retryable` distinguishes transport/readiness failures from permanent digest, schema, or integrity failures, so permanent failures are never retried. Store receipts in a durable `checkpointStore` so a process restart does not repeat destination work. Set `checkpointScope` to a stable, non-secret seller-and-authenticated-principal identifier; checkpoint keys also include account, obligation, revision, materialization, and destination. The checkpoint preserves the receipt-write idempotency key across uncertain retries.
+Keep `inspect` as the advanced override for native snapshots. A BigQuery adapter can inspect a table version, while Snowflake or Databricks adapters can verify a shared relation. `ReportingInspectionError.retryable` distinguishes transport/readiness failures from permanent digest, schema, or integrity failures, so permanent failures are never retried. Store receipts in a durable `checkpointStore` so a process restart does not repeat destination work. Set `checkpointScope` to a stable, non-secret seller-and-authenticated-principal identifier; revision checkpoint keys include account, obligation, revision, materialization, and destination. Adjustment checkpoint keys include account, adjustment, target revision, and any rejected receipt being superseded. Both preserve the receipt-write idempotency key and exact receipt body across uncertain retries.
+
+For a replicated production buyer, use the PostgreSQL persistence bundle instead of
+process memory:
+
+```ts
+import { createPostgresReportingConsumerRuntimeV1 } from '@adcp/sdk/reporting/consumer';
+
+const persistence = createPostgresReportingConsumerRuntimeV1({
+  db: pool,
+  namespace: 'billing-reporting-v1',
+});
+
+for (const migration of persistence.migrations.all) await pool.query(migration);
+await persistence.probe();
+
+const result = await reconcileReporting({
+  // ...client, request, expectations, and inspector configuration...
+  checkpointStore: persistence.checkpointStore,
+  checkpointScope: 'seller-42:buyer-principal-7',
+  pendingConsumerStatusStore: persistence.pendingConsumerStatusStore,
+  pendingConsumerStatusScope: 'seller-42:buyer-principal-7',
+});
+```
+
+The bundle also exposes a compare-and-set `changesCheckpointStore` for the
+opaque `changes_after` recovery cursor and a database-clock, generation-fenced
+`workLeases` store. Its `notifications` store records processed webhook
+idempotency keys with immutable payload hashes, so transport retries remain
+deduplicated after a restart and reusing a key for different content fails
+closed. Claim one lease per seller/principal/account before running
+reconciliation in multiple replicas. A stale generation cannot renew or
+release its successor's lease. The scope is stored only as a SHA-256 digest;
+never put credentials, bearer tokens, or connection strings in it.
+
+Revision and adjustment receipt checkpoints are immutable first-writer-wins records. Replaying the
+same checkpoint is accepted, while different bytes for the same reporting
+revision and destination fail closed with
+`ReportingConsumerPersistenceConflictError`. Pending consumer-status statements
+remain replaceable until the seller confirms them, preserving the exact
+`status_as_of` and request body across lost responses. The durable consumer
+runtime passes its lease fence into pending writes and exact-value clears; the
+PostgreSQL store verifies that fence with database time, so a stalled former
+owner cannot erase its successor's retry statement. Custom stores should honor
+the optional lease argument for the same cross-replica guarantee. Run
+migrations during a controlled deployment before admitting traffic, and make
+`probe()` part of readiness rather than liveness.
+
+### Production consumer loop
+
+`createReliableReportingConsumerV1` assembles those stores into a bounded,
+replica-safe worker. Polling remains authoritative for clock-driven status
+changes. `reporting.delivery_ready` and `reporting.ledger_changed` doorbells
+first drain every `changes_after` page from the durable checkpoint, then run a
+full reconciliation only when the delta contains records.
+
+```ts
+import {
+  createPostgresReportingConsumerRuntimeV1,
+  createReliableReportingConsumerV1,
+} from '@adcp/sdk/reporting/consumer';
+
+const persistence = createPostgresReportingConsumerRuntimeV1({
+  db: pool,
+  namespace: 'billing-reporting-v1',
+});
+
+const consumer = createReliableReportingConsumerV1({
+  persistence,
+  ownerToken: processInstanceId, // unique per process; never a credential
+  pollIntervalMs: 60_000,
+  leaseMilliseconds: 30_000,
+  maxConcurrentAccounts: 8,
+  accounts: [{
+    consumerScope: 'seller-42:buyer-principal-7',
+    accountId: 'account-1',
+    reconciliation: {
+      client: seller,
+      request: { account: { account_id: 'account-1' } },
+      expectedPeriods,
+      resourceReader,
+      credentialProvider,
+      manifestInspectorOptions,
+    },
+  }],
+  onResult: result => reportingMetrics.observe(result),
+  onError: (error, accountId, context) => reportingAlerts.capture(error, context),
+});
+
+consumer.start();
+
+// Refresh onboarding/offboarding atomically; in-flight work finishes on its
+// original immutable account configuration.
+consumer.replaceAccounts(nextAuthenticatedAccountRoster);
+
+// Verify RFC 9421 with verifyWebhookSignature from @adcp/sdk/signing/server,
+// then map the verified keyid/agent_url through your trusted seller registry.
+const result = await consumer.handleAuthenticatedNotification(verifiedWebhookBody, {
+  // Derived from the authenticated sender/signing key, never from the body.
+  consumerScope: 'seller-42:buyer-principal-7',
+});
+
+// Stop accepting work and wait for in-flight reconciliation before closing DB/network clients.
+await consumer.stop();
+```
+
+The HTTP route should acknowledge `reconciled`, `unchanged`, `duplicate`, and
+`null` with 2xx. Return 503 with `Retry-After` for `busy`, `lease_lost`, or
+`stopping` so the seller retries its durable notification. Map
+`ReportingReconciliationError` code `INVALID_NOTIFICATION` to 400; reject an
+unverified signature before calling the runtime. Other failures should be
+logged and returned as retryable 5xx. This response mapping keeps a doorbell
+from being lost when another replica owns the account lease. Polling remains
+the authoritative repair path.
+
+Webhook bodies are routing hints, never reporting evidence. The runtime accepts
+them only through the deliberately named `handleAuthenticatedNotification`
+entry point; signature verification belongs at the HTTP boundary. Unknown
+accounts and unrelated notification types are ignored. Work for one account is
+coalesced in-process and fenced across replicas. Lease loss aborts subsequent
+protocol calls and prevents checkpoint advancement. A failed or expired change
+cursor falls back to a complete snapshot and is observable through `onError`
+and `cursorRecovered`.
+
+Every result and error context includes `consumerScope`, `accountId`, and
+`reason`. The partition is `(consumerScope, accountId)`; `reason` names the run
+that produced the result, which may be an already active poll or manual run.
+The optional
+`onError` callback keeps its `(error, accountId)` arguments and adds context as
+a third argument. Without `onError`, the worker emits a structured warning for
+background failures. Warnings omit error messages and stacks because they may
+contain credentials or seller response bodies.
+
+See the [existing-app buyer worker](../../examples/reliable-reporting-buyer/README.md)
+for migration, PostgreSQL readiness, signature verification, metrics, and
+shutdown wiring using the public buyer import.
+
+The authenticated `consumerScope` is required on every webhook path, including
+when an account ID is currently unique. Derive it from the verified sender or
+signing key; the notification body is never an authority for tenant routing.
+Completed notifications are durably deduplicated
+for at least 30 days. Call `persistence.notifications.pruneProcessed()` from
+bounded maintenance after choosing your retention horizon.
+
+Run `reporting.status_changed` through a full read: health can cross a deadline
+without committing a new immutable record. Periodic polling is required for the
+same reason even when every webhook arrives. Persist a checkpoint only after
+the entire snapshot or delta has been consumed; the runtime enforces this and
+uses compare-and-set advancement to fail closed on unexpected concurrency.
 
 Totals are returned once per canonical reporting revision. Each entry includes its coverage status and covered/package denominators, so partial evidence cannot be mistaken for full billing totals. Delivering the same revision to a buyer, governance agent, and archive destination does not multiply its rows or financial control totals. Each consumer still authenticates independently and submits its own receipt; one consumer's acceptance never implies another's.
+
+## Consumer status and posting deadlines
+
+`reconcileReporting` also plans the rc.3 **consumer-status** loop: the statements the buyer owes the
+seller about what it did and did not receive. Every plan lands on
+`ReportingReconciliationResult.consumerStatuses`; the subset actually written appears on
+`postedConsumerStatuses`, item-local rejections on `failedConsumerStatuses`.
+
+Nothing is posted until a plan is `overdue`, and `overdue` needs a deadline. **If no deadline can be
+derived the SDK posts nothing — by design.** That is the single most common surprise here, so the
+resolution order is worth knowing:
+
+| # | Source | Notes |
+|---|---|---|
+| 1 | `obligation.expected_at` | The seller's own commitment. Normalized, never echoed verbatim. |
+| 1a | — *(present but unreadable)* | **Nothing is derived and rows 2–3 are not consulted.** A present `expected_at` is the seller's real deadline; a locally derived one would disagree with it and the statement would be refused on every run. Only the seller can fix the value. |
+| 2 | `ExpectedReportingPeriod.deliverySlaSeconds` | Added to the period end for every finality. `reporting-schedule.json` defines `expected_at` only as period end plus `delivery_sla`; an SDK-local source-finality cutoff never replaces this protocol clock. |
+| 3 | `obligation.schedule.delivery_sla` | Last resort, only when you pinned nothing above **and an obligation exists** — so it is never available for `obligation_missing`, which is what the pins are for. Deliberately last: it is as seller-controlled as `expected_at`, and preferring it would let a seller move its own deadline. |
+
+The deadline is then that instant plus `ExpectedReportingPeriod.automatedRecoveryWindowSeconds`. That
+window is advertised on the delivery **capabilities**, not on the obligation, so the ledger cannot
+supply it — **without it nothing is ever overdue and nothing is ever posted.** Record it when you
+accept the configuration generation.
+
+`received` and `content_mismatch` additionally require `client.getMediaBuyDelivery`, because both
+must carry a digest the buyer recomputed from rows it actually read.
+
+### Why a plan was not posted
+
+`plan.suppressed` says which, and `plan.reason` says what to do about it.
+
+| `suppressed` | Meaning | Your move |
+|---|---|---|
+| `unchanged` | The current leaf already says exactly this. | Nothing. Re-posting would supersede a statement with its own duplicate. |
+| `deadline_unknown` | No deadline could be derived: a pin is missing, the seller's `expected_at` is unreadable, or the deadline overflowed the representable range. | `reason` names which. Record the pin it names; for an unreadable `expected_at` only the seller can fix it; for an overflow, lower `automatedRecoveryWindowSeconds` or have the seller correct `expected_at`. |
+| `consumption_unavailable` | No exact-revision reader is wired. | Supply `client.getMediaBuyDelivery`. |
+| `posting_unavailable` | No poster is wired, so there is nothing to append to. | Supply `client.syncReportingStatus`. |
+| `period_identity_unknown` | The seller's `period.source_timezone` is not a recognized IANA zone, and that value is part of the chain's logical key. | Record `ExpectedReportingPeriod.periodSourceTimezone`, or have the seller correct it. Substituting a zone would produce a statement it refuses on every run. |
+| `local_budget_exhausted` | Your own `ledgerLimits` ran out mid-read, the revision exceeded the SDK's size ceiling, or a row was too *wide* for the SDK to walk. | Raise `maxRevisionRows`, `maxRevisionBytes`, `maxPages` or `maxLoadMs`. Never reported as a seller failure — a row nested deeper than the reader walks is `unreadable` / `reader_incompatible` instead, because no conformant tabular row has that shape. |
+| `leaf_undisclosed` | Your chain has more than one unsuperseded leaf, or the seller named a current leaf it did not return. | A seller-side defect either way; the buyer declines to guess which leaf to supersede. |
+| `chain_indeterminate` | The revision chain forked, or a head names a predecessor you never saw. | A seller-side defect. The buyer stays silent rather than blaming the seller for what it could not read. |
+
+**Alert on any `suppressed` value other than `unchanged`.** `unchanged` is the healthy steady state — every posted period comes back `unchanged` on the next reconcile — but the other seven mean this period will never post until something changes.
+
+Two more conditions deserve an alert, because neither sets `suppressed`:
+
+- **`plan.deadlineBeyondPin` is set.** The seller's own `expected_at` is later than your pinned expectation by more than your recovery window. It is still honoured — the spec makes the seller's instant authoritative — but left unwatched it is indistinguishable from "not due yet", and a seller can use it to opt out of the loop entirely.
+- **`overdue: true`, unsuppressed, and absent from `postedConsumerStatuses`.** Look in `failedConsumerStatuses`.
+
+Some suppressions are the seller's doing and you cannot configure your way out of them — `leaf_undisclosed` and `chain_indeterminate` in particular. Those are worth escalating out of band rather than retrying.

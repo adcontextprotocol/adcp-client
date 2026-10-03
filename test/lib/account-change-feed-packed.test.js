@@ -41,6 +41,8 @@ test('packed account feed MCP schema, runtime semantics and cursor types', { tim
     let calls = 0;
     const now = '2026-08-24T11:58:04Z';
     const server = createAdcpServer({
+      resolveAccount: ref =>
+        ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined,
       name: 'packed-account-feed',
       version: '1.0.0',
       stateStore: new sdk.InMemoryStateStore(),

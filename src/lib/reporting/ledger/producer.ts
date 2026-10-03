@@ -3,10 +3,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { ReportingAdjustment, ReportingControlTotal, ReportingRevision } from '../../types';
 import { ReportingAdjustmentSchema, ReportingRevisionSchema } from '../../schemas';
 import { canonicalize } from '../../utils/jcs';
+import { AdcpError } from '../../server/decisioning/async-outcome';
 import {
   canonicalJsonV1,
   reportingIsoDurationMillisecondsV1,
   reportingCoverageDenominatorFingerprintV1,
+  reportingScheduleOriginV1,
+  reportingUtcOffsetChangesV1,
   REPORTING_SOURCE_CONTRACT_VERSION_V1,
   validateReportingSourceExecutionV1,
   type ReportingSourceManifestV1,
@@ -15,6 +18,17 @@ import {
 } from '../source';
 import { reportingLedgerSuccessor } from './coverage';
 import {
+  assertReportingCalendarDayPeriod,
+  assertReportingCalendarDaySource,
+  frozenCalendarObligationsCoverOwnership,
+  isFrozenCalendarRulesMismatch,
+  isReportingCalendarDay,
+  reportingCalendarDayFingerprint,
+  reportingCalendarDayRules,
+  reportingCalendarDaySchedule,
+  reportingPeriodSchedule,
+} from './schedule';
+import {
   reconcileReportingStatusDeadlinesV1,
   reconcileReportingStatusLifecycleV1,
   retryReportingStatusNotificationsV1,
@@ -22,9 +36,11 @@ import {
 import type {
   CreateReportingProducerOptionsV1,
   ReportingLedgerAdjustmentV1,
+  ReportingFinalityV1,
   ReportingLedgerConfigurationV1,
   ReportingLedgerObligationV1,
   ReportingLedgerRevisionV1,
+  ReportingLedgerStore,
   ReportingProducerV1,
 } from './types';
 
@@ -35,6 +51,8 @@ const MAX_SETTLEMENT_GRACE_MS = 30_000;
 const MAX_REVISION_OBJECTS = 10_000;
 const MAX_REVISION_BYTES = 64 * 1024 * 1024;
 const MAX_REVISION_ROWS = 1_000_000;
+
+class ReportingSourceConfigurationError extends Error {}
 
 export function createReportingProducer(options: CreateReportingProducerOptionsV1): ReportingProducerV1 {
   const offeringById = new Map(options.offerings.map(offering => [offering.offeringId, offering]));
@@ -59,35 +77,68 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
           ? { supersededAt: new Date(instant(input.supersededAt, 'supersededAt')).toISOString() }
           : {}),
       };
-      const offering = requiredOffering(offeringById, normalizedInput.offeringId);
-      validateConfigurationAgainstOffering(normalizedInput, offering);
+      // Resolve stored generations before the offering. An offering can be
+      // withdrawn, and an installed generation is immutable — looking the
+      // offering up first made reinstalling one throw "Unknown reporting
+      // source offering" without ever reading the ledger.
       const existing = (await options.store.listConfigurations(normalizedInput.account.account_id)).filter(
         value => value.delivery_config_id === normalizedInput.delivery_config_id
       );
-      if (existing.some(value => value.delivery_config_version > normalizedInput.delivery_config_version)) {
-        throw new Error('Reporting configuration version cannot regress');
-      }
       const semantic = { ...normalizedInput };
       const semanticFingerprint = prefixedDigest(semantic);
       const predecessorFingerprint = prefixedDigest({ ...input });
+      // Resolve an exact replay before validating. A generation is immutable,
+      // so reinstalling one that predates a rule we have since added must
+      // return the stored generation rather than throw — validating first made
+      // an idempotent reinstall of a legacy billing configuration fail, with
+      // no way to express the row that already exists.
       const replay = existing.find(value => value.delivery_config_version === normalizedInput.delivery_config_version);
       if (replay) {
-        if (![semanticFingerprint, predecessorFingerprint].includes(replay.semanticFingerprint)) {
+        const replayFingerprints = [semanticFingerprint, predecessorFingerprint];
+        if (isReportingCalendarDay(normalizedInput.schedule, normalizedInput.sourceTimezone)) {
+          replayFingerprints.push(reportingCalendarDayFingerprint(normalizedInput));
+          if (replay.calendarRules) {
+            replayFingerprints.push(reportingCalendarDayFingerprint(normalizedInput, replay.calendarRules));
+          }
+        }
+        if (!replayFingerprints.includes(replay.semanticFingerprint)) {
           throw new Error('Reporting configuration generation is immutable');
         }
         return replay;
       }
+      // Only a genuinely new generation is held to current rules, and only a
+      // new generation needs a live offering.
+      validateConfigurationAgainstOffering(normalizedInput, requiredOffering(offeringById, normalizedInput.offeringId));
+      if (existing.some(value => value.delivery_config_version > normalizedInput.delivery_config_version)) {
+        throw new Error('Reporting configuration version cannot regress');
+      }
       const installedAt = new Date().toISOString();
+      let calendarRules: ReportingLedgerConfigurationV1['calendarRules'];
+      if (isReportingCalendarDay(normalizedInput.schedule, normalizedInput.sourceTimezone)) {
+        const schedule = reportingCalendarDaySchedule(normalizedInput.schedule, normalizedInput.sourceTimezone);
+        const firstOwnedOrdinal = Math.max(
+          0,
+          schedule.ceil(Math.max(Date.parse(normalizedInput.schedule.anchor), Date.parse(installedAt)))
+        );
+        calendarRules = {
+          ...reportingCalendarDayRules(normalizedInput.sourceTimezone),
+          firstOwnedOrdinal,
+          firstOwnedBoundary: new Date(schedule.boundary(firstOwnedOrdinal)).toISOString(),
+        };
+      }
       const configuration: ReportingLedgerConfigurationV1 = {
         ...normalizedInput,
         sourceTimezone: normalizedInput.sourceTimezone,
+        ...(calendarRules ? { calendarRules } : {}),
         configurationId: `rcfg_${digest([
           normalizedInput.account.account_id,
           normalizedInput.delivery_config_id,
           normalizedInput.delivery_config_version,
         ]).slice(0, 32)}`,
         installedAt,
-        semanticFingerprint,
+        semanticFingerprint: calendarRules
+          ? reportingCalendarDayFingerprint(normalizedInput, calendarRules)
+          : semanticFingerprint,
       };
       return (await options.store.putConfiguration(configuration)).value;
     },
@@ -98,23 +149,61 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
       positiveInteger(maxObligations, 'maxObligations');
       const created: ReportingLedgerObligationV1[] = [];
       let attempted = 0;
-      const configurations = await options.store.listConfigurations(planOptions.account_id);
+      const configurations = (await options.store.listConfigurations(planOptions.account_id)).sort(
+        (left, right) =>
+          instant(left.installedAt, 'installedAt') - instant(right.installedAt, 'installedAt') ||
+          left.delivery_config_version - right.delivery_config_version ||
+          left.configurationId.localeCompare(right.configurationId)
+      );
       const obligationsByAccount = new Map<string, ReportingLedgerObligationV1[]>();
       for (const configuration of configurations) {
+        const successor = reportingLedgerSuccessor(configuration, configurations);
         const anchor = instant(configuration.schedule.anchor, 'schedule.anchor');
         const effectiveFrom = Math.max(anchor, instant(configuration.installedAt, 'installedAt'));
-        const successor = reportingLedgerSuccessor(configuration, configurations);
+        let schedule: ReturnType<typeof reportingPeriodSchedule>;
+        try {
+          schedule = reportingPeriodSchedule(configuration);
+        } catch (error) {
+          const predecessor = configurations.find(
+            candidate =>
+              reportingLedgerSuccessor(candidate, configurations)?.configurationId === configuration.configurationId
+          );
+          if (
+            isFrozenCalendarRulesMismatch(error) &&
+            !successor &&
+            predecessor &&
+            runtimeCanResolveCalendarGeneration(predecessor)
+          ) {
+            // During a timezone-data rollout an old replica must finish the
+            // predecessor's final owned period without trying to author the
+            // successor installed by a new-runtime replica.
+            continue;
+          }
+          if (
+            !isFrozenCalendarRulesMismatch(error) ||
+            !(await supersededCalendarGenerationIsDurablyCovered(options.store, configuration, successor))
+          ) {
+            throw error;
+          }
+          // The host can no longer reproduce this generation's calendar, but
+          // its contiguous frozen obligations prove every closed period it
+          // owned before the successor was installed is durable. Do not let a
+          // safely sealed predecessor poison planning for the new generation.
+          continue;
+        }
         const generationEndValue = Math.min(
           successor ? instant(successor.installedAt, 'successor.installedAt') : Number.POSITIVE_INFINITY,
           configuration.supersededAt ? instant(configuration.supersededAt, 'supersededAt') : Number.POSITIVE_INFINITY
         );
         const generationEnd = Number.isFinite(generationEndValue) ? generationEndValue : undefined;
         const effectiveUntil = Math.min(nowMs, generationEnd ?? nowMs);
-        const first = Math.max(0, Math.ceil((effectiveFrom - anchor) / configuration.schedule.periodMilliseconds));
-        const ownershipLast = generationEnd
-          ? Math.ceil((effectiveUntil - anchor) / configuration.schedule.periodMilliseconds) - 1
-          : Number.POSITIVE_INFINITY;
-        const latestClosed = Math.floor((nowMs - anchor) / configuration.schedule.periodMilliseconds) - 1;
+        const first = Math.max(0, schedule.ceil(effectiveFrom));
+        const ownershipLast = generationEnd ? schedule.ceil(effectiveUntil) - 1 : Number.POSITIVE_INFINITY;
+        if (ownershipLast < first) continue;
+        const latestClosed =
+          schedule.floor(
+            Number.isFinite(ownershipLast) ? Math.min(nowMs, schedule.boundary(ownershipLast + 1)) : nowMs
+          ) - 1;
         const last = Math.min(ownershipLast, latestClosed);
         let accountObligations = obligationsByAccount.get(configuration.account.account_id);
         if (!accountObligations) {
@@ -134,7 +223,14 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
             await reconcileReportingStatusLifecycleV1({
               store: options.store,
               reporting_obligation_id: written.value.reporting_obligation_id,
-              ledgerAsOf: now,
+              // A fallback clock, never a pinned cutoff. `now` is this host's
+              // instant: a host running fast pinned a cutoff ahead of the
+              // database, the watermark was stamped with it, and every
+              // database-timestamped change inside that skew — a revocation,
+              // a receipt — landed behind the watermark and never made the
+              // obligation due again, so a `complete` transition and its
+              // webhook stood over state that had already contradicted it.
+              now: () => new Date(now),
               subscribers: options.subscribers,
             });
           }
@@ -161,16 +257,47 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
         throw new RangeError(`settlementGraceMilliseconds must not exceed ${MAX_SETTLEMENT_GRACE_MS}`);
       }
       const owner = `reporting-worker-${randomUUID()}`;
-      const counts = { claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0 };
+      const counts = { claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0, reconcilesDeferred: 0 };
+      // Publishing a projection is downstream of the durable write, and it
+      // must not take the sweep down with it. An obligation whose projection
+      // cannot be computed — one that has outgrown a projection bound, a
+      // subscriber that throws — aborted every tenant queued behind it, and
+      // the recovery path then rethrew the same failure, so the worker could
+      // not make progress at all. Containing it leaves the obligation due:
+      // this writes no watermark, so the deadline sweep, which isolates per
+      // obligation and records a backoff, owns the retry.
+      const reconcileQuietly = async (reporting_obligation_id: string, nowAt: Date) => {
+        try {
+          await reconcileReportingStatusLifecycleV1({
+            store: options.store,
+            reporting_obligation_id,
+            // Fallback clock, not a pin; see planObligations.
+            now: () => nowAt,
+            subscribers: options.subscribers,
+          });
+        } catch (error) {
+          if (workerOptions.signal?.aborted) workerOptions.signal.throwIfAborted();
+          if (isLeaseLost(error)) throw error;
+          counts.reconcilesDeferred += 1;
+        }
+      };
+      // No host cutoff. The sweeps resolve the ledger's own instant, which is
+      // what lands in each obligation's watermark — a worker host running
+      // fast would otherwise permanently bury database-timestamped work
+      // committed inside the skew.
       await retryReportingStatusNotificationsV1({
         store: options.store,
-        ledgerAsOf: now().toISOString(),
+        // A fallback, not a pin: a database-backed store uses its own clock,
+        // while a simulated-time driver still gets the instant it is advancing.
+        fallbackLedgerAsOf: now().toISOString(),
         ...(workerOptions.account_id ? { account_id: workerOptions.account_id } : {}),
         subscribers: options.subscribers,
       });
       await reconcileReportingStatusDeadlinesV1({
         store: options.store,
-        ledgerAsOf: now().toISOString(),
+        // A fallback, not a pin: a database-backed store uses its own clock,
+        // while a simulated-time driver still gets the instant it is advancing.
+        fallbackLedgerAsOf: now().toISOString(),
         ...(workerOptions.account_id ? { account_id: workerOptions.account_id } : {}),
         subscribers: options.subscribers,
       });
@@ -190,6 +317,22 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
         try {
           const obligation = lease.obligation;
           const offering = requiredOffering(offeringById, obligation.offeringId);
+          if (isReportingCalendarDay(obligation.schedule, obligation.period.sourceTimezone)) {
+            try {
+              assertReportingCalendarDayPeriod(
+                obligation.schedule,
+                obligation.period.sourceTimezone,
+                offering,
+                instant(obligation.period.start, 'period.start'),
+                instant(obligation.period.end, 'period.end')
+              );
+            } catch (error) {
+              throw new ReportingSourceConfigurationError(
+                'Frozen reporting period is incompatible with its source offering',
+                { cause: error }
+              );
+            }
+          }
           const previous = await options.store.listRevisions(obligation.reporting_obligation_id);
           const adjustments = await options.store.listAdjustments(obligation.reporting_obligation_id);
           const publicationCount = previous.length + adjustments.length;
@@ -210,12 +353,7 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
               obligation.state = nextExisting ? 'pending' : 'terminal';
               obligation.nextAttemptAt = nextExisting ?? nowValue.toISOString();
               await options.store.updateObligation(obligation, lease);
-              await reconcileReportingStatusLifecycleV1({
-                store: options.store,
-                reporting_obligation_id: obligation.reporting_obligation_id,
-                ledgerAsOf: nowValue.toISOString(),
-                subscribers: options.subscribers,
-              });
+              await reconcileQuietly(obligation.reporting_obligation_id, nowValue);
               continue;
             }
           }
@@ -249,12 +387,7 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
             await options.store.updateObligation(obligation, lease);
             if (result.error.code === 'NOT_READY' || result.error.code === 'PARTIAL_RESULT') counts.notReady += 1;
             else counts.failed += 1;
-            await reconcileReportingStatusLifecycleV1({
-              store: options.store,
-              reporting_obligation_id: obligation.reporting_obligation_id,
-              ledgerAsOf: nowValue.toISOString(),
-              subscribers: options.subscribers,
-            });
+            await reconcileQuietly(obligation.reporting_obligation_id, nowValue);
             continue;
           }
           const manifest = await validateReportingSourceExecutionV1({
@@ -302,12 +435,7 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
           obligation.attemptCount += 1;
           await options.store.updateObligation(obligation, lease);
           await options.store.resolveIssue(sourceExecutionIssueId(obligation), nowValue.toISOString());
-          await reconcileReportingStatusLifecycleV1({
-            store: options.store,
-            reporting_obligation_id: obligation.reporting_obligation_id,
-            ledgerAsOf: nowValue.toISOString(),
-            subscribers: options.subscribers,
-          });
+          await reconcileQuietly(obligation.reporting_obligation_id, nowValue);
         } catch (error) {
           if (workerOptions.signal?.aborted) workerOptions.signal.throwIfAborted();
           if (isLeaseLost(error)) continue;
@@ -323,14 +451,13 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
             await options.store.updateObligation(
               obligation,
               lease,
-              sourceExecutionIssue(obligation, nowValue.toISOString())
+              sourceExecutionIssue(
+                obligation,
+                nowValue.toISOString(),
+                error instanceof ReportingSourceConfigurationError
+              )
             );
-            await reconcileReportingStatusLifecycleV1({
-              store: options.store,
-              reporting_obligation_id: obligation.reporting_obligation_id,
-              ledgerAsOf: nowValue.toISOString(),
-              subscribers: options.subscribers,
-            });
+            await reconcileQuietly(obligation.reporting_obligation_id, nowValue);
           } catch (recoveryError) {
             if (!isLeaseLost(recoveryError)) throw recoveryError;
           }
@@ -341,13 +468,17 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
       }
       await retryReportingStatusNotificationsV1({
         store: options.store,
-        ledgerAsOf: now().toISOString(),
+        // A fallback, not a pin: a database-backed store uses its own clock,
+        // while a simulated-time driver still gets the instant it is advancing.
+        fallbackLedgerAsOf: now().toISOString(),
         ...(workerOptions.account_id ? { account_id: workerOptions.account_id } : {}),
         subscribers: options.subscribers,
       });
       await reconcileReportingStatusDeadlinesV1({
         store: options.store,
-        ledgerAsOf: now().toISOString(),
+        // A fallback, not a pin: a database-backed store uses its own clock,
+        // while a simulated-time driver still gets the instant it is advancing.
+        fallbackLedgerAsOf: now().toISOString(),
         ...(workerOptions.account_id ? { account_id: workerOptions.account_id } : {}),
         subscribers: options.subscribers,
       });
@@ -358,16 +489,22 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
 
 function sourceExecutionIssue(
   obligation: ReportingLedgerObligationV1,
-  observedAt: string
+  observedAt: string,
+  configurationRequired = false
 ): import('./types').ReportingLedgerIssueV1 {
   return {
     issueId: sourceExecutionIssueId(obligation),
     reporting_obligation_id: obligation.reporting_obligation_id,
-    code: 'PRODUCTION_FAILED',
-    severity: Date.parse(observedAt) < Date.parse(obligation.recoveryDeadlineAt) ? 'delayed' : 'action_required',
+    code: configurationRequired ? 'CONFIGURATION_REQUIRED' : 'PRODUCTION_FAILED',
+    severity:
+      configurationRequired || Date.parse(observedAt) >= Date.parse(obligation.recoveryDeadlineAt)
+        ? 'action_required'
+        : 'delayed',
     responsibleParty: 'seller',
     recommendedAction:
-      Date.parse(observedAt) < Date.parse(obligation.recoveryDeadlineAt) ? 'wait_for_retry' : 'contact_seller',
+      configurationRequired || Date.parse(observedAt) >= Date.parse(obligation.recoveryDeadlineAt)
+        ? 'contact_seller'
+        : 'wait_for_retry',
     openedAt: observedAt,
     observedAt,
   };
@@ -377,18 +514,50 @@ function sourceExecutionIssueId(obligation: ReportingLedgerObligationV1): string
   return `rpti_${digest(['source-execution-failed-v1', obligation.reporting_obligation_id]).slice(0, 32)}`;
 }
 
+function runtimeCanResolveCalendarGeneration(configuration: ReportingLedgerConfigurationV1): boolean {
+  try {
+    reportingPeriodSchedule(configuration);
+    return true;
+  } catch (error) {
+    if (isFrozenCalendarRulesMismatch(error)) return false;
+    throw error;
+  }
+}
+
+/**
+ * A changed host may stop resolving a predecessor solely because its frozen
+ * tzdb/ICU identity differs. It is safe to seal that predecessor only when the
+ * current resolver reproduces every owned, closed ordinal byte-for-byte from
+ * durable obligations. The successor then owns all later periods.
+ */
+async function supersededCalendarGenerationIsDurablyCovered(
+  store: ReportingLedgerStore,
+  configuration: ReportingLedgerConfigurationV1,
+  successor: ReportingLedgerConfigurationV1 | undefined
+): Promise<boolean> {
+  if (!isReportingCalendarDay(configuration.schedule, configuration.sourceTimezone)) return false;
+  const ownershipEnd = Math.min(
+    successor ? instant(successor.installedAt, 'successor.installedAt') : Number.POSITIVE_INFINITY,
+    configuration.supersededAt ? instant(configuration.supersededAt, 'supersededAt') : Number.POSITIVE_INFINITY
+  );
+  return frozenCalendarObligationsCoverOwnership(
+    configuration,
+    ownershipEnd,
+    await store.listObligations(configuration.account.account_id)
+  );
+}
+
 function planObligation(
   configuration: ReportingLedgerConfigurationV1,
   periodOrdinal: number,
   createdAt: string
 ): ReportingLedgerObligationV1 {
-  const anchor = instant(configuration.schedule.anchor, 'schedule.anchor');
-  const start = anchor + periodOrdinal * configuration.schedule.periodMilliseconds;
-  const end = start + configuration.schedule.periodMilliseconds;
-  const expectedOffset =
-    configuration.requiredFinality === 'official'
-      ? (configuration.schedule.officialAfterMilliseconds ?? configuration.schedule.deliverySlaMilliseconds)
-      : configuration.schedule.deliverySlaMilliseconds;
+  const schedule = reportingPeriodSchedule(configuration);
+  const { start, end } = schedule.period(periodOrdinal);
+  // `reporting-schedule.json` defines expected_at uniformly as period.end +
+  // delivery_sla. `officialAfterMilliseconds` is a private source-finality
+  // boundary and must not move the public obligation due time.
+  const expectedOffset = configuration.schedule.deliverySlaMilliseconds;
   const expectedAt = end + expectedOffset;
   const recoveryDeadlineAt = expectedAt + configuration.schedule.recoveryWindowMilliseconds;
   const semantic = {
@@ -668,7 +837,7 @@ function buildRevision(
     ...(previous.at(-1) ? { supersedes_reporting_revision_id: previous.at(-1)!.reporting_revision_id } : {}),
     row_count: rows.length,
     control_totals: controlTotals,
-    ...(obligation.feedPurpose === 'billing'
+    ...(obligation.canonicalization
       ? {
           canonical_content_digest: {
             algorithm: 'sha256',
@@ -735,6 +904,17 @@ function validateManifestFinalityForObligation(
   ) {
     throw new Error('Authoritative source evidence predates the pinned contractual cutoff');
   }
+}
+
+/**
+ * SHA-256 of the RFC 8785 JCS serialization of an adjustment with
+ * `canonical_adjustment_sha256` omitted, per RC3 `core/reporting-adjustment`.
+ *
+ * Exported so the durable store can recognise a pre-upgrade adjustment row that
+ * predates the digest and replay it without a false immutability conflict.
+ */
+export function reportingCanonicalAdjustmentSha256V1(wireAdjustmentWithoutDigest: unknown): string {
+  return createHash('sha256').update(canonicalize(wireAdjustmentWithoutDigest), 'utf8').digest('hex');
 }
 
 function canonicalRowsSha256(rows: readonly Record<string, unknown>[], primaryKeys: readonly string[]): string {
@@ -807,6 +987,22 @@ function buildAdjustment(
         ]
       : [];
   });
+  const wireAdjustmentWithoutDigest = {
+    reporting_adjustment_id: adjustmentId,
+    adjusts_reporting_revision_id: official.reporting_revision_id,
+    reason_code: 'source_correction' as const,
+    accounting_period: { start: obligation.period.start, end: obligation.period.end },
+    control_total_deltas: [
+      {
+        name: 'row_count',
+        value: String(rows.length - effectiveRowCount(official.binding.rowCount, previous)),
+        value_type: 'integer' as const,
+      },
+      ...controlTotalDeltas,
+    ],
+    correction_observed_at: manifest.period.observedAt,
+    created_at: createdAt,
+  };
   return {
     reporting_adjustment_id: adjustmentId,
     reporting_obligation_id: obligation.reporting_obligation_id,
@@ -820,21 +1016,19 @@ function buildAdjustment(
     dataThrough: manifest.period.dataThrough,
     sourceReadCutoffAt: manifest.period.sourceReadCutoffAt,
     createdAt,
+    // `canonical_adjustment_sha256` is optional in RC3 and exists so Reconciled
+    // Billing consumers can recompute the digest before accepting or rejecting
+    // an adjustment. Emitting it unconditionally changed the wire content — and
+    // therefore `adjustmentIdentityFingerprint` — for every Core adopter,
+    // including delivery-only feeds that never read it. Gate it on the same
+    // pinned canonicalization contract that gates the revision's
+    // `canonical_content_digest`, so obligations without one keep byte-identical
+    // output across the upgrade.
     wireAdjustment: ReportingAdjustmentSchema.parse({
-      reporting_adjustment_id: adjustmentId,
-      adjusts_reporting_revision_id: official.reporting_revision_id,
-      reason_code: 'source_correction',
-      accounting_period: { start: obligation.period.start, end: obligation.period.end },
-      control_total_deltas: [
-        {
-          name: 'row_count',
-          value: String(rows.length - effectiveRowCount(official.binding.rowCount, previous)),
-          value_type: 'integer',
-        },
-        ...controlTotalDeltas,
-      ],
-      correction_observed_at: manifest.period.observedAt,
-      created_at: createdAt,
+      ...wireAdjustmentWithoutDigest,
+      ...(obligation.canonicalization
+        ? { canonical_adjustment_sha256: reportingCanonicalAdjustmentSha256V1(wireAdjustmentWithoutDigest) }
+        : {}),
     }) as unknown as ReportingAdjustment,
   };
 }
@@ -1006,14 +1200,221 @@ function requiredOffering(
   offeringId: string
 ): ReportingSourceOfferingV1 {
   const offering = offerings.get(offeringId);
-  if (!offering) throw new Error(`Unknown reporting source offering: ${offeringId}`);
+  if (!offering) throw new ReportingSourceConfigurationError(`Unknown reporting source offering: ${offeringId}`);
   return offering;
+}
+
+/**
+ * A configuration named a reserved capability this seller does not implement.
+ *
+ * Extends `AdcpError` deliberately. `createAdcpServer` dispatches on
+ * `instanceof AdcpError` and projects every other throw to
+ * `SERVICE_UNAVAILABLE`, whose recovery is `transient` — so a plain `Error`
+ * subclass carrying an ad-hoc `code` would tell the buyer to **retry the same
+ * unsupported request**, which is the opposite of what this refusal means and
+ * exactly the outcome the reservation exists to prevent.
+ */
+export class UnsupportedReportingFeatureError extends AdcpError {
+  constructor(message: string, details?: Record<string, unknown>) {
+    super('UNSUPPORTED_FEATURE', {
+      recovery: 'terminal',
+      message,
+      field: 'reporting_delivery_configs',
+      suggestion:
+        'Remove authoritative_party or set it to "seller". No AdCP 3.2 seller implements a buyer-deposited billing revision task.',
+      ...(details ? { details } : {}),
+    });
+  }
+}
+
+/**
+ * Reject a reserved `authoritative_party` before a configuration generation can
+ * become ready.
+ *
+ * `authoritative_party: 'consumer'` is reserved for a buyer-deposited billing
+ * revision task that no released AdCP version defines. The wire schema keeps
+ * the value parseable precisely so a seller can answer `UNSUPPORTED_FEATURE`
+ * instead of a parse error — which means the refusal has to live in seller
+ * code. Coercing to `'seller'` would silently install a different contract than
+ * the buyer asked for, and relaxing the billing implication for that value
+ * would let a buyer-authoritative billing feed through with no consumer receipt
+ * and no delivery method.
+ *
+ * Call this from a `sync_accounts` handler on each requested
+ * `reporting_delivery_configs[].configuration` as well; `installConfiguration`
+ * applies it to the SDK's own install path.
+ *
+ * @see https://github.com/adcontextprotocol/adcp/issues/7440
+ */
+export function assertSupportedReportingAuthoritativeParty(configuration: {
+  delivery_config_id?: string;
+  authoritative_party?: unknown;
+  authoritativeParty?: unknown;
+}): void {
+  // Reject a wrong-shaped argument rather than passing. Every field here is
+  // optional, so the realistic mistakes — handing over the enclosing
+  // `reporting_delivery_configs[i]` instead of its `.configuration`, or the
+  // whole array — would otherwise no-op, and a gate that cannot distinguish
+  // "checked and fine" from "checked nothing" is not a gate.
+  if (!configuration || typeof configuration !== 'object' || Array.isArray(configuration)) {
+    throw new TypeError(
+      'assertSupportedReportingAuthoritativeParty expects one reporting delivery configuration object'
+    );
+  }
+  // `null` is not absence: an explicit null must not coerce to seller.
+  const requested =
+    'authoritative_party' in configuration ? configuration.authoritative_party : configuration.authoritativeParty;
+  if (requested === undefined || requested === 'seller') return;
+  throw new UnsupportedReportingFeatureError(
+    'Reporting delivery configuration requests an authoritative_party this seller does not implement. ' +
+      'See https://github.com/adcontextprotocol/adcp/issues/7440.',
+    {
+      // Structured and bounded rather than interpolated: both values are
+      // buyer-supplied, so a raw splice into the message would let a caller
+      // forge log records with newlines or blow up a log line with a 1 MB value.
+      requested_authoritative_party: boundedDiagnostic(requested),
+      ...(typeof configuration.delivery_config_id === 'string'
+        ? { delivery_config_id: boundedDiagnostic(configuration.delivery_config_id) }
+        : {}),
+    }
+  );
+}
+
+/** Bound and flatten a buyer-supplied value before it reaches a log or a wire detail. */
+function boundedDiagnostic(value: unknown): string {
+  return String(value)
+    .replace(/[\r\n\t]+/g, ' ')
+    .slice(0, 64);
+}
+
+/** Periods the planner will generate before a configuration is revisited. */
+const OFFSET_HORIZON_MILLISECONDS = 400 * 86_400_000;
+/** Bounds the probe; a century of 10-day samples is a few milliseconds. */
+const MAX_OFFSET_SCAN_MILLISECONDS = 100 * 365 * 86_400_000;
+
+/** Unparseable is simply "does not describe": a calendar duration such as P1M
+ * has no fixed millisecond width, so it can never match these boundaries. */
+function identityDurationMilliseconds(value: string): number | undefined {
+  try {
+    return reportingIsoDurationMillisecondsV1(value);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The echoed schedule identity is a public producer input, and the status
+ * projection emits it verbatim as the installed schedule. Unvalidated, a
+ * caller could install `periodDuration: 'P1M'` over daily millisecond
+ * boundaries and have the ledger advertise a monthly schedule it never runs.
+ */
+function assertScheduleIdentityMatchesBoundaries(
+  schedule: ReportingLedgerConfigurationV1['schedule'],
+  sourceTimezone: string
+): void {
+  if (schedule.periodDuration !== undefined) {
+    if (identityDurationMilliseconds(schedule.periodDuration) !== schedule.periodMilliseconds) {
+      throw new Error('Reporting periodDuration does not describe the configured period boundaries');
+    }
+  }
+  if (schedule.deliverySlaDuration !== undefined) {
+    // `expected_at` is period end plus this duration for every finality.
+    if (identityDurationMilliseconds(schedule.deliverySlaDuration) !== schedule.deliverySlaMilliseconds) {
+      throw new Error('Reporting deliverySlaDuration does not describe the offset its obligations expect');
+    }
+  }
+  if (schedule.alignment === undefined) {
+    if (schedule.periodTimezone !== undefined) {
+      throw new Error('Reporting periodTimezone requires an explicit schedule alignment');
+    }
+    return;
+  }
+  if (!['utc', 'account_timezone', 'source_timezone', 'billing_cycle'].includes(schedule.alignment)) {
+    throw new Error('Reporting schedule alignment is not a recognized value');
+  }
+  // reporting-schedule.json: billing_cycle and source_timezone carry a period
+  // timezone; utc and account_timezone forbid one.
+  const carriesTimezone = schedule.alignment === 'billing_cycle' || schedule.alignment === 'source_timezone';
+  if (!carriesTimezone && schedule.periodTimezone !== undefined) {
+    throw new Error(`Reporting ${schedule.alignment} alignment must not declare a period timezone`);
+  }
+  if (carriesTimezone && schedule.periodTimezone !== undefined && schedule.periodTimezone !== sourceTimezone) {
+    throw new Error('Reporting periodTimezone does not match the configured source timezone');
+  }
+  // Only billing_cycle carries its anchor on the wire. Every other alignment
+  // has consumers derive boundaries from the normative origin in
+  // reporting-schedule.json, so an anchor off that grid makes the producer run
+  // one set of periods while buyers compute another — a daily 06:00 anchor is
+  // published as a plain `utc` schedule and read as 00:00 boundaries.
+  if (schedule.alignment === 'billing_cycle') return;
+  if (schedule.alignment === 'account_timezone') {
+    throw new Error('Reporting account_timezone alignment is not schedulable by this ledger');
+  }
+  if (isReportingCalendarDay(schedule, sourceTimezone)) {
+    reportingCalendarDaySchedule(schedule, sourceTimezone);
+    return;
+  }
+  const anchorMs = instant(schedule.anchor, 'schedule.anchor');
+  const originMs = reportingScheduleOriginV1(schedule.alignment, sourceTimezone);
+  const offset = anchorMs - originMs;
+  const phase = ((offset % schedule.periodMilliseconds) + schedule.periodMilliseconds) % schedule.periodMilliseconds;
+  if (phase !== 0) {
+    throw new Error(
+      `Reporting ${schedule.alignment} anchor is not on a period boundary derived from its protocol origin`
+    );
+  }
+  // Boundaries here advance by fixed milliseconds, while the spec advances
+  // calendar durations through local civil time. They agree only while the
+  // zone holds one offset: a P1D America/New_York generation anchored at
+  // 05:00Z keeps computing 05:00Z after the spring transition, where civil
+  // time says 04:00Z.
+  // Span both today and the anchor, whichever comes first, through the horizon
+  // beyond the later of them. Starting at the anchor collapsed the scan to a
+  // zero-width window for any anchor past `now + horizon`, so a future-dated
+  // DST generation was accepted without ever being probed.
+  // Obligations begin at `max(anchor, installedAt)`, so history before
+  // installation is never generated and must not refuse a configuration. A
+  // scan starting at the anchor rejected the protocol's own 1970 origin for
+  // any zone that ran DST decades ago — Asia/Shanghai, Asia/Seoul — while the
+  // identical schedule at a recent anchor was accepted. Scan the operational
+  // window instead, anchored forward for a future-dated generation so it is
+  // still probed.
+  const now = Date.now();
+  const scanStartMs = Math.max(Math.min(anchorMs, now), now - OFFSET_HORIZON_MILLISECONDS);
+  const scanEndMs = Math.max(anchorMs, now) + OFFSET_HORIZON_MILLISECONDS;
+  if (scanEndMs - scanStartMs > MAX_OFFSET_SCAN_MILLISECONDS) {
+    throw new Error('Reporting configuration anchor is too far from the operational horizon to verify its timezone');
+  }
+  if (reportingUtcOffsetChangesV1(sourceTimezone, scanStartMs, scanEndMs)) {
+    throw new Error('Reporting source timezone changes its UTC offset; fixed-length periods cannot express its days');
+  }
 }
 
 function validateConfigurationAgainstOffering(
   configuration: Omit<ReportingLedgerConfigurationV1, 'configurationId' | 'installedAt' | 'semanticFingerprint'>,
   offering: ReportingSourceOfferingV1
 ): void {
+  // Refuse the reserved capability before any other validation so the buyer
+  // gets UNSUPPORTED_FEATURE rather than an incidental complaint about a
+  // field it would have had to change anyway.
+  assertSupportedReportingAuthoritativeParty(configuration);
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: configuration.sourceTimezone }).format();
+  } catch {
+    throw new Error('Reporting configuration requires a valid IANA source timezone');
+  }
+  if (offering.sourceTimezone.ianaTimezone && offering.sourceTimezone.ianaTimezone !== configuration.sourceTimezone) {
+    throw new Error('Reporting configuration source timezone does not match its offering');
+  }
+  if (canonicalize(configuration.contract) !== canonicalize(offering.contract)) {
+    throw new Error('Reporting configuration contract does not match its offering');
+  }
+  if (configuration.requiredFinality === 'official' && offering.publicationClass !== 'AUTHORITATIVE') {
+    throw new Error('Official reporting requires an authoritative offering');
+  }
+  if (offering.publicationClass === 'AUTHORITATIVE' && configuration.requiredFinality !== 'official') {
+    throw new Error('Authoritative source offerings require official ledger finality');
+  }
   positiveInteger(configuration.schedule.periodMilliseconds, 'periodMilliseconds');
   if (configuration.schedule.periodMilliseconds % 1_000 !== 0) {
     throw new Error('Reporting period must be representable as whole ISO 8601 seconds');
@@ -1040,23 +1441,13 @@ function validateConfigurationAgainstOffering(
   for (const offset of configuration.schedule.restatementMilliseconds ?? []) {
     nonnegativeInteger(offset, 'restatementMilliseconds');
   }
+  assertScheduleIdentityMatchesBoundaries(configuration.schedule, configuration.sourceTimezone);
+  if (isReportingCalendarDay(configuration.schedule, configuration.sourceTimezone)) {
+    assertReportingCalendarDaySource(configuration.schedule, configuration.sourceTimezone, offering, Date.now());
+  }
   const anchor = instant(configuration.schedule.anchor, 'schedule.anchor');
   if (configuration.supersededAt && instant(configuration.supersededAt, 'supersededAt') <= anchor) {
     throw new Error('Reporting configuration supersession must follow its schedule anchor');
-  }
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: configuration.sourceTimezone }).format();
-  } catch {
-    throw new Error('Reporting configuration requires a valid IANA source timezone');
-  }
-  if (offering.sourceTimezone.ianaTimezone && offering.sourceTimezone.ianaTimezone !== configuration.sourceTimezone) {
-    throw new Error('Reporting configuration source timezone does not match its offering');
-  }
-  if (canonicalize(configuration.contract) !== canonicalize(offering.contract)) {
-    throw new Error('Reporting configuration contract does not match its offering');
-  }
-  if (configuration.requiredFinality === 'official' && offering.publicationClass !== 'AUTHORITATIVE') {
-    throw new Error('Official reporting requires an authoritative offering');
   }
   if (configuration.requiredFinality === 'official') {
     if (!configuration.finalityPolicy || !/^[A-Za-z0-9_.:-]{1,255}$/.test(configuration.finalityPolicy.policyId)) {
@@ -1083,10 +1474,17 @@ function validateConfigurationAgainstOffering(
     throw new Error('Snapshot reporting cannot declare an official finality policy');
   }
   positiveInteger(configuration.delivery_config_version, 'delivery_config_version');
-  if (offering.publicationClass === 'AUTHORITATIVE' && configuration.requiredFinality !== 'official') {
-    throw new Error('Authoritative source offerings require official ledger finality');
-  }
   if (configuration.feedPurpose === 'billing') {
+    // RC3 states this unconditionally in `core/reporting-delivery-config`:
+    // "feed_purpose billing still requires required_finality official". It was
+    // never enforced here, and until the receipt store stopped hard-coding
+    // official finality nothing else enforced it either. Without it a billing
+    // configuration can accept a terminal accepted receipt against a
+    // provisional snapshot revision that a later revision supersedes, and an
+    // accepted leaf cannot be repaired.
+    if (configuration.requiredFinality !== 'official') {
+      throw new Error('Billing reporting requires official ledger finality');
+    }
     if (
       !configuration.canonicalization ||
       !/^[A-Za-z0-9_.:-]{1,128}$/.test(configuration.canonicalization.id) ||

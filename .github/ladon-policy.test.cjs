@@ -46,12 +46,19 @@ function runGate(paths, failedApi = false) {
   try {
     const result = spawnSync(
       'bash',
-      ['-c', `gh() { ${failedApi ? 'return 1;' : 'printf "%s\\n" "$TEST_PATHS";'} }; ${gate.run}`],
+      [
+        '-c',
+        `gh() { ${
+          failedApi
+            ? 'return 1;'
+            : 'while [ "$#" -gt 0 ]; do case "$1" in --jq) shift; printf "%s" "$TEST_FILES" | jq -r "$1"; return ;; *) shift ;; esac; done; return 1;'
+        } }; ${gate.run}`,
+      ],
       {
         encoding: 'utf8',
         env: {
           ...process.env,
-          TEST_PATHS: paths.join('\n'),
+          TEST_FILES: JSON.stringify(paths.map(file => (typeof file === 'string' ? { filename: file } : file))),
           PR_NUMBER: '1',
           REPO: 'adcontextprotocol/test',
           GITHUB_OUTPUT: output,
@@ -142,6 +149,27 @@ test('file API failure cannot proceed past the workflow-modification gate', () =
   assert.notEqual(runGate([], true).status, 0);
 });
 
+test('renaming protected policy files to an unlisted path still requires human review', () => {
+  for (const previous_filename of [
+    '.github/workflows/ai-review.yml',
+    'LADON.md',
+    '.github/workflows/ladon-policy.yml',
+    '.github/ladon-policy.test.cjs',
+    '.github/LADON-ADOPTION.md',
+  ]) {
+    const result = runGate([{ filename: 'src/renamed-policy.txt', previous_filename }]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.output, /^modified=true$/m);
+    assert.ok(result.output.includes(previous_filename));
+  }
+});
+
+test('renaming an ordinary file into a protected policy path requires human review', () => {
+  const result = runGate([{ filename: '.github/LADON-ADOPTION.md', previous_filename: 'docs/ordinary.md' }]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.output, /^modified=true$/m);
+});
+
 test('ordinary source review proceeds only through the disabled invocation', () => {
   const result = runGate(['src/example.ts']);
   assert.equal(result.status, 0, result.stderr);
@@ -190,7 +218,10 @@ test('read-only policy CI runs exact-head parsing and upstream approval/race reg
   assert.equal(checkouts[1].with.path, '.ladon-reviewed-actions');
   assert.equal(ci.jobs.policy.env.LADON_ACTIONS_PATH, '${{ github.workspace }}/.ladon-reviewed-actions');
   assert.equal(ci.jobs.policy.steps.find(step => step.run?.startsWith('node --test'))['working-directory'], 'consumer');
-  assert.equal(ci.jobs.policy.steps.find(step => step.uses?.startsWith('actions/setup-node@')).with['node-version-file'], '.ladon-reviewed-actions/.nvmrc');
+  assert.equal(
+    ci.jobs.policy.steps.find(step => step.uses?.startsWith('actions/setup-node@')).with['node-version-file'],
+    '.ladon-reviewed-actions/.nvmrc'
+  );
   assert.equal(checkouts[1].with.ref, REVIEW);
   assert.equal(checkouts[1].with.repository, 'adcontextprotocol/actions');
   checkouts.forEach(step => assert.equal(step.with['persist-credentials'], false));

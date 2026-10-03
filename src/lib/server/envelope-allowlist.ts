@@ -67,6 +67,9 @@ export const ERROR_ENVELOPE_FIELD_ALLOWLIST: Readonly<Record<string, ReadonlySet
   // Spec-defined: conflict is not a replay; `replayed` intentionally
   // dropped. `operation_id` round-trips for async-op correlation.
   IDEMPOTENCY_CONFLICT: new Set(['context', 'operation_id']),
+  // A cached purge result is itself the durable outcome. Replays MUST be
+  // distinguishable without reopening the committed-resource lookup.
+  COMMITTED_RESOURCE_PURGED: new Set(['context', 'replayed']),
 });
 
 /**

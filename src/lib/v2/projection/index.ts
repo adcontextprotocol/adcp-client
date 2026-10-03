@@ -187,6 +187,7 @@ export {
   type CanonicalCreativeResponse,
   type CanonicalGetProductsResponse,
   type CanonicalGetProductsRequest,
+  type CanonicalCreateMediaBuyInput,
   type CanonicalCreateMediaBuyRequest,
   type CanonicalCreateMediaBuyResponse,
   type CanonicalCreativeFilters,

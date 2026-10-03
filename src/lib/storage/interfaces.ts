@@ -171,6 +171,12 @@ export interface DeferredTaskState {
   settlementOperationId?: string;
   /** New-format records whose operation index must fence every state transition. */
   settlementOperationRouteRequired?: true;
+  /** Operation-routed direct pause that does not require compatibility-coordinator settlement. */
+  directContinuationRecovery?: true;
+  /** SHA-256 digest of the separate SDK-minted recovery capability. */
+  directContinuationRecoveryKeyDigest?: string;
+  /** SHA-256 digest binding authenticated principal/account scope to trusted seller ID and origin. */
+  directContinuationOwnerBindingDigest?: string;
   /** Require the owning durable coordinator to authorize this token before sending seller continuation input. */
   settlementResumeAuthorizationRequired?: boolean;
   /** Seller work handle bound by the durable mutation owner before the pause. */
@@ -199,7 +205,12 @@ export interface DeferredTaskState {
   expiresAt: number;
 }
 
-/** Durable deferred-task storage must generation-fence claim and cleanup. */
+/**
+ * Durable deferred-task storage must generation-fence claim and cleanup.
+ * Implementations MUST round-trip every `DeferredTaskState` field opaquely;
+ * dropping an unknown route-kind or ownership field can strand an in-flight
+ * mutation during a rolling SDK deployment.
+ */
 export interface DeferredTaskStorage extends Storage<DeferredTaskState> {
   /** Atomically create a value only when the key is absent or expired. */
   putIfAbsent(key: string, value: DeferredTaskState, ttl?: number): Promise<boolean>;
@@ -223,7 +234,8 @@ export interface DeferredTaskStorage extends Storage<DeferredTaskState> {
   /**
    * Atomically replace the exact routed generation. With a distinct
    * replacement key this installs a nested generation and moves the route,
-   * retaining the predecessor as a dispatch fence. With the same key it
+   * retaining the predecessor as a dispatch fence. Removing that predecessor
+   * MUST NOT remove a route that already points at the replacement. With the same key it
    * performs an in-place route-fenced state transition (for example, terminal
    * callback checkpointing).
    */

@@ -90,7 +90,7 @@ describe('origin canonicalizer', () => {
   });
 });
 
-describe('byte-equal agents[] selector', () => {
+describe('canonical agents[] selector', () => {
   const flat = {
     agents: [
       { type: 'sales', url: 'https://x.com/mcp', jwks_uri: 'https://keys.x.com/jwks.json' },
@@ -113,7 +113,7 @@ describe('byte-equal agents[] selector', () => {
     ],
   };
 
-  it('finds a unique entry on byte-equal match', () => {
+  it('finds a unique entry on canonical match', () => {
     const entry = selectAgentByUrl(flat, 'https://x.com/mcp');
     assert.equal(entry.type, 'sales');
   });
@@ -191,7 +191,7 @@ describe('identity.key_origins consistency', () => {
     assert.equal(result.actual_origin, 'https://keys.example.com');
   });
 
-  it('skips the check entirely when publisherPinned is true', () => {
+  it('still checks the origin when publisherPinned is true', () => {
     // Sell-side webhook-signing carve-out: publisher pin is authoritative,
     // operator brand.json origin is advisory.
     const result = checkOriginConsistency({
@@ -200,7 +200,7 @@ describe('identity.key_origins consistency', () => {
       resolvedJwksUri: 'https://pin.publisher.example/jwks.json',
       publisherPinned: true,
     });
-    assert.deepEqual(result, { ok: true });
+    assert.equal(result.code, 'key_origin_mismatch');
   });
 
   it('returns ok when no origin is declared (caller checks _missing separately)', () => {

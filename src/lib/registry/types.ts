@@ -300,7 +300,11 @@ type RegistryCreateAdagentsRequest = NonNullable<
 type RegistryCreateAdagentsResponse = operations['createAdagents']['responses']['200']['content']['application/json'];
 
 /** Agent authorization entry accepted by the registry adagents.json generator. */
-export type AdagentsAuthorizedAgent = RegistryCreateAdagentsRequest['authorized_agents'][number] & {
+export type AdagentsAuthorizedAgent = Omit<
+  RegistryCreateAdagentsRequest['authorized_agents'][number],
+  'collections'
+> & {
+  collections?: import('../discovery/types').AuthorizationCollectionSelector[];
   [key: string]: unknown;
 };
 

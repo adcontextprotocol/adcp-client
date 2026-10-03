@@ -14,6 +14,44 @@ certification references. They intentionally show complete adapters, durable
 boundaries, and conformance hooks, so many are 700–1,400 lines. Start with the
 compact seller, then open the advanced example matching your backend.
 
+Adding one task to an application that already owns auth and storage? Start
+with [`existing-platform-thin.ts`](./existing-platform-thin.ts) and the
+[existing-platform guide](../docs/guides/EXISTING-PLATFORM.md).
+
+Running buyer writes from request-scoped processes? The
+[`durable-buyer-writes`](./durable-buyer-writes/) example connects the caller,
+fresh callback/poll worker, PostgreSQL receiver stores, and host publication
+outbox described in the
+[durable buyer writes guide](../docs/guides/DURABLE-BUYER-WRITES.md).
+
+Maintaining a buyer-side copy of a seller's wholesale products and signals?
+[`wholesale-feed-sync.ts`](./wholesale-feed-sync.ts) shows the complete path:
+durable bootstrap, declarative account-level webhook registration, raw-body
+RFC 9421 verification, notification normalization, `applyWebhook()`, and
+automatic repair on version gaps or bulk changes. Set `ADCP_SELLER_URL`,
+`ADCP_SELLER_AGENT_ID`, `ADCP_SELLER_BRAND_JSON_URL`, `ADCP_ACCOUNT_ID`,
+`ADCP_SUBSCRIBER_ID`, and the externally reachable HTTPS `ADCP_WEBHOOK_URL`,
+then run `npx tsx examples/wholesale-feed-sync.ts`. The example's file-backed
+snapshot and in-memory replay protection are single-process defaults; use
+shared persistence, replay, and webhook-dedupe stores for multiple replicas.
+See [Verifying inbound webhooks](../docs/recipes/verifying-inbound-webhooks.md)
+for the full deployment hardening checklist.
+
+Migrating a seller adapter to AdCP 3.2 targeting? The focused
+[`targeting-input-existing-platform.ts`](./targeting-input-existing-platform.ts)
+example carries nullable omit/clear/set commands through provider translation,
+persists strict accepted state, produces strict readback, and refuses clears the
+provider cannot honor.
+
+Adding Reliable Reporting Core to an existing seller? Start with the
+[adapter-first installation example](./reliable-reporting-service/README.md).
+It uses the durable ledger as the sole authority and shows trusted account,
+source-scope, timezone, and currency resolution without sample reporting data.
+
+The [existing-app reliable reporting buyer](./reliable-reporting-buyer/README.md)
+wires the public buyer entrypoint, PostgreSQL stores, verified webhook intake,
+buyer-retained expectations, adjustment policy, metrics, and shutdown.
+
 ## Building an AdCP agent — fork-target reference adapters
 
 Pick the example whose AdCP role and specialism most closely matches what you're building, fork it, replace the `// SWAP:` markers, and follow the `FORK CHECKLIST` block for the unmarked but load-bearing constants. The `hello_*_adapter_*` examples are paired with the three-gate CI test (strict tsc / storyboard / upstream-traffic) where a matching mock server exists; examples without one are called out below with the narrower runtime coverage they currently have. `proxy-seller-snap/` is a lighter bridge-pattern fork target: it proves seed-bridge wiring and must be paired with your live-OAuth sandbox runner for upstream health.
@@ -181,3 +219,5 @@ npm run dev
 ```
 
 See the main README for full testing framework documentation.
+
+Supply-path verification: [supply-path-verification.ts](supply-path-verification.ts) reads owner, host, agent and collection from environment variables and prints a live evidence-bearing verdict.

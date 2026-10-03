@@ -40,8 +40,10 @@ export type ResolveAccountHooks<TCtxMeta = Record<string, unknown>> = ComposeHoo
 export interface ResolveGuardOptions {
   /**
    * Behavior when the predicate denies.
-   *  - `'null'` (default) — return `null`. Buyer sees `ACCOUNT_NOT_FOUND`,
-   *    same as a genuinely-unknown account. Avoids principal enumeration.
+   *  - `'null'` (default) — return `null`. A denied buyer-supplied reference
+   *    sees `ACCOUNT_NOT_FOUND`, same as a genuinely-unknown account, which
+   *    avoids principal enumeration. When no reference was supplied, an
+   *    account-required operation sees correctable `ACCOUNT_REQUIRED`.
    *  - `'throw'` — throw {@link PermissionDeniedError}. Surfaces a typed
    *    error to the buyer; use only when the principal is already known
    *    to be allowed to know the account exists.

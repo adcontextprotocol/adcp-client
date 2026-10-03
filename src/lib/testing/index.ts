@@ -110,6 +110,10 @@ export {
   // Types
   type ComplyOptions,
   type ComplianceBundleAssessmentOptions,
+  type ComplyRouteStoryboardContext,
+  type ComplyStoryboardRoute,
+  type ComplyStoryboardRouting,
+  type ComplyStoryboardSkip,
   type ComplianceTrack,
   type TrackResult,
   type TestedTrackEntry,
@@ -396,4 +400,8 @@ export {
   type OAuthMetadataGraphVectorCorpus,
   BrandJsonSchema,
   AdagentsJsonSchema,
+  // Report consumers key on `StoryboardStepResult.task`; the MCP session auth
+  // probe is runner-native, so its task name ships as a constant rather than a
+  // magic string operators have to copy (adcp-client#2940).
+  MCP_SESSION_PROBE_TASK,
 } from './storyboard';

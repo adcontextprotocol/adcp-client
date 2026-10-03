@@ -114,11 +114,19 @@ const PRIORITY_CANONICAL_SCHEMAS = [
   // it so first-definition deduplication cannot replace it with a closed
   // structural interface.
   'core/ext.json',
+  // BrandKey is referenced by several roots below. Own its constraints here
+  // before a transitive copy can claim the exported name.
+  'core/brand-key.json',
   // Compile this source-compatibility-sensitive named interface directly.
   // When first reached transitively through a large aggregate, jsts can
   // retain the wire schema's open-object signatures on CreativeBrief and its
   // nested named fields before the strict resolver gets to normalize them.
   'core/creative-brief.json',
+  // RC.7 adds metric-specific conditional guards to these unions. Aggregate
+  // dereferencing can compile the conditional arm as `{}` before the direct
+  // schema is reached, so own the complete discriminated unions first.
+  'core/optimization-goal.json',
+  'core/canonical-optimization-goal.json',
   // Compile direct constraint-bearing roots before forecast/tool schemas that
   // reference them. json-schema-to-typescript does not reliably preserve
   // injected @pattern tags when the first declaration originates through a
@@ -144,6 +152,10 @@ const PRIORITY_CANONICAL_SCHEMAS = [
   'core/canonical-format-option.json',
   'core/delivery-metric-aggregate.json',
   'core/cancellation-policy.json',
+  // The aggregate media-buy root can encounter validation-only copies of
+  // these branches first and reduce every constraint variant to `{}`. Own the
+  // authoritative discriminated union before compiling aggregate roots.
+  'media-buy/change-term-constraints.json',
   // `action` on both of these is `$ref core/media-buy-available-action-id.json`
   // (AdCP 3.2, adcp#7449): an `anyOf` of the legacy `MediaBuyValidAction` enum
   // plus structured-only consts. json-schema-to-typescript emits that alias
@@ -221,12 +233,21 @@ const PRIORITY_EXTRACTED_TYPES = [
     reason: 'the async-response-data webhook union can collapse the conditional creatives[] item to an empty object',
     numberedReferenceAliases: [],
   },
+  {
+    ref: 'media-buy/media-buy-commitment-response.json',
+    typeName: 'CommittedMediaBuy',
+    reason:
+      'aggregate lifecycle roots can retain the field names while dropping the canonical string, integer, and timestamp constraints',
+    numberedReferenceAliases: [],
+  },
 ] as const;
 
 const PRIORITY_CANONICAL_TYPE_NAMES = new Set([
   'CanonicalProposal',
   'ExtensionObject',
   'CreativeBrief',
+  'OptimizationGoal',
+  'CanonicalOptimizationGoal',
   'BrandReference',
   'BusinessEntity',
   'PlatformExtensionReference',
@@ -239,6 +260,12 @@ const PRIORITY_CANONICAL_TYPE_NAMES = new Set([
   'CanonicalFormatOption',
   'DeliveryMetricAggregate',
   'CancellationPolicy',
+  'MediaBuyChangeTermConstraints',
+  'BudgetChangeConstraints',
+  'FlightChangeConstraints',
+  'PackageCountConstraints',
+  'EffectiveTimingConstraints',
+  'CommittedMediaBuy',
   'MediaBuyAvailableAction',
   'ProductAllowedAction',
   'PackageUpdate',
@@ -400,6 +427,41 @@ function loadCachedSchema(schemaRef: string): any {
     console.warn(`⚠️  Failed to load cached schema ${schemaRef}:`, error.message);
     return null;
   }
+}
+
+const unresolvedVerifiedSchemaRefs = new Set<string>();
+
+export function assertVerifiedSchemaRefsResolved(): void {
+  if (unresolvedVerifiedSchemaRefs.size > 0) {
+    throw new Error(`Unresolved verified schema references: ${[...unresolvedVerifiedSchemaRefs].sort().join(', ')}`);
+  }
+}
+
+function loadRawCachedSchema(cacheDir: string, schemaRef: string): any {
+  try {
+    const schemaPath = resolveSchemaRefInCache(cacheDir, schemaRef);
+    if (!schemaPath || !existsSync(schemaPath)) {
+      throw new Error(`Schema not found in verified cache for ref: ${schemaRef}`);
+    }
+    return JSON.parse(readFileSync(schemaPath, 'utf8'));
+  } catch (error) {
+    unresolvedVerifiedSchemaRefs.add(schemaRef);
+    throw error;
+  }
+}
+
+export function createVerifiedCacheRefResolver(cacheDir: string) {
+  return {
+    canRead: true,
+    read: (file: { url: string }) => {
+      const url = file.url;
+      if (schemaRefToCacheRelativePath(url)) {
+        return Promise.resolve(loadRawCachedSchema(cacheDir, url));
+      }
+      unresolvedVerifiedSchemaRefs.add(url);
+      return Promise.reject(new Error(`Cannot resolve $ref: ${url}`));
+    },
+  };
 }
 
 // Get cached AdCP version
@@ -1073,11 +1135,87 @@ export function normalizeCanonicalFormatOptionKindsForCodegen(schema: any): any 
   };
 }
 
+/** Name request-only array aliases without changing protocol constraints. */
+export function nameTargetingInputForCodegen(schema: any): any {
+  if (schema?.title !== 'Targeting Overlay Input' || !schema.properties) return schema;
+  const namedSchema = { ...schema };
+  // Request-only clear commands must not share a generated alias with strict
+  // targeting state. Otherwise first-definition deduplication either drops
+  // input nullability or leaks it into accepted snapshots, depending on root
+  // compilation order. Keep the canonical state names and name the nullable
+  // input arrays separately; the wire schema and its constraints are unchanged.
+  namedSchema.properties = Object.fromEntries(
+    Object.entries(namedSchema.properties).map(([key, property]: [string, any]) => {
+      if (
+        Array.isArray(property.type) &&
+        property.type.includes('array') &&
+        property.type.includes('null') &&
+        typeof property.title === 'string' &&
+        !property.title.endsWith(' Input')
+      ) {
+        return [key, { ...property, title: `${property.title} Input` }];
+      }
+      // Pointer-inferred DeviceType/DevicePlatform array names also collide
+      // with their canonical item enums. Name the array branch in both raw
+      // and bundled schemas, retaining its values and the outer null command.
+      if ((key === 'device_type' || key === 'device_platform') && Array.isArray(property.anyOf)) {
+        return [
+          key,
+          {
+            ...property,
+            anyOf: property.anyOf.map((branch: any) =>
+              (branch.type === 'array' ||
+                (typeof branch.$ref === 'string' && branch.$ref.endsWith(`/core/targeting.json#/properties/${key}`))) &&
+              branch.title === undefined
+                ? {
+                    ...branch,
+                    title: key === 'device_type' ? 'Targeting Device Types Input' : 'Targeting Device Platforms Input',
+                  }
+                : branch
+            ),
+          },
+        ];
+      }
+      return [key, property];
+    })
+  );
+
+  return namedSchema;
+}
+
+/** Ensure referenced targeting input gets the same names as an inline root. */
+export function codegenRefResolvers(refResolver: any, readTargetingInput = loadCachedSchema) {
+  return {
+    // The built-in HTTP resolver runs at order 200. A custom resolver with no
+    // order runs last, so remote $refs could bypass the verified bundle and
+    // make generated output depend on the live schema host. Fail closed when
+    // a reference is absent from the verified local cache.
+    http: false,
+    file: false,
+    cache: { ...refResolver, order: 2 },
+    targetingInput: {
+      order: 1,
+      canRead: (file: { url: string }) => schemaRefToCacheRelativePath(file.url) === 'core/targeting-input.json',
+      read: (file: { url: string }) => {
+        const schema = readTargetingInput(file.url);
+        if (!schema) {
+          unresolvedVerifiedSchemaRefs.add(file.url);
+          throw new Error(`Targeting input is missing from the verified cache: ${file.url}`);
+        }
+        // Apply only the naming override here, retaining the referenced wire
+        // shape and constraints from the verified cache.
+        return nameTargetingInputForCodegen(schema);
+      },
+    },
+  };
+}
+
 export function enforceStrictSchema(schema: any): any {
   if (!schema || typeof schema !== 'object') {
     return schema;
   }
 
+  schema = nameTargetingInputForCodegen(schema);
   schema = normalizeSignalTargetingForCodegen(schema);
   schema = normalizePostalAreaForCodegen(schema);
   schema = nameVendorMetricValueQualifierForCodegen(schema);
@@ -2682,6 +2820,78 @@ function addBackwardCompatTypeAliases(typeDefinitions: string): string {
   return output;
 }
 
+/** Align the aggregate copy with rc.6's authoritative commitment response. */
+function alignCommittedMediaBuyName(typeDefinitions: string): string {
+  const start = typeDefinitions.indexOf('export interface CommittedMediaBuy {');
+  if (start === -1) return typeDefinitions;
+  const end = typeDefinitions.indexOf('\nexport ', start + 1);
+  const blockEnd = end === -1 ? typeDefinitions.length : end;
+  const block = typeDefinitions.slice(start, blockEnd);
+  if (/^  name\?: string;$/m.test(block)) return typeDefinitions;
+  const anchor = '  media_buy_id: string;\n';
+  if (!block.includes(anchor)) {
+    throw new Error('alignCommittedMediaBuyName: CommittedMediaBuy.media_buy_id anchor not found');
+  }
+  const addition = `${anchor}  /**
+   * Persisted human-readable MediaBuy name for trafficking UI display and operational communication.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern \\S
+   */
+  name?: string;\n`;
+  return typeDefinitions.slice(0, start) + block.replace(anchor, addition) + typeDefinitions.slice(blockEnd);
+}
+
+/** Preserve each change-term branch's canonical "at least one bound" anyOf. */
+function requireMediaBuyChangeTermConstraintBounds(typeDefinitions: string): string {
+  const schema = loadCachedSchema('media-buy/change-term-constraints.json') as {
+    oneOf?: Array<{ title?: unknown; anyOf?: Array<{ required?: unknown }> }>;
+  } | null;
+  if (!schema || !Array.isArray(schema.oneOf)) {
+    throw new Error('requireMediaBuyChangeTermConstraintBounds: canonical oneOf is missing');
+  }
+
+  const escapePattern = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  let output = typeDefinitions;
+  for (const branch of schema.oneOf) {
+    if (typeof branch.title !== 'string' || !Array.isArray(branch.anyOf)) {
+      throw new Error('requireMediaBuyChangeTermConstraintBounds: canonical branch metadata is missing');
+    }
+    const typeName = branch.title
+      .split(/[^A-Za-z0-9]+/)
+      .filter(Boolean)
+      .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+      .join('');
+    const requiredFields = branch.anyOf.map(option => {
+      if (!Array.isArray(option.required) || option.required.length !== 1 || typeof option.required[0] !== 'string') {
+        throw new Error(`requireMediaBuyChangeTermConstraintBounds: ${typeName} has an unsupported anyOf branch`);
+      }
+      return option.required[0];
+    });
+    if (requiredFields.length === 0 || new Set(requiredFields).size !== requiredFields.length) {
+      throw new Error(`requireMediaBuyChangeTermConstraintBounds: ${typeName} required fields are invalid`);
+    }
+
+    const interfacePattern = new RegExp(`export interface ${typeName} \\{[\\s\\S]*?\\n\\}`);
+    const match = output.match(interfacePattern);
+    if (!match) continue;
+    const interfaceBlock = match[0];
+    const requiredArms = requiredFields.map(fieldName => {
+      const fieldPattern = new RegExp(`^  ${escapePattern(fieldName)}\\?: ([^;]+);$`, 'm');
+      const fieldMatch = interfaceBlock.match(fieldPattern);
+      if (!fieldMatch) {
+        throw new Error(`requireMediaBuyChangeTermConstraintBounds: ${typeName}.${fieldName} field is missing`);
+      }
+      return `  | { ${fieldName}: ${fieldMatch[1]} }`;
+    });
+    const hardened =
+      interfaceBlock.replace(`export interface ${typeName} {`, `export type ${typeName} = {`) +
+      ` & (\n${requiredArms.join('\n')}\n);`;
+    output = output.replace(interfaceBlock, hardened);
+  }
+  return output;
+}
+
 function hardenTrustedMatchGeneratedTypes(typeDefinitions: string): string {
   let output = typeDefinitions;
 
@@ -2755,20 +2965,7 @@ async function generateToolTypes(tools: ToolDefinition[], preGeneratedTypes: Set
   toolTypes += '// Generated from official AdCP schemas\n\n';
 
   // Create custom $ref resolver for cached schemas
-  const refResolver = {
-    canRead: true,
-    read: (file: { url: string }) => {
-      const url = file.url;
-      // Handle any /schemas/ path (versioned or v1)
-      if (schemaRefToCacheRelativePath(url)) {
-        const schema = loadCachedSchema(url);
-        if (schema) {
-          return Promise.resolve(enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema))));
-        }
-      }
-      return Promise.reject(new Error(`Cannot resolve $ref: ${url}`));
-    },
-  };
+  const refResolver = createVerifiedCacheRefResolver(LATEST_CACHE_DIR);
 
   // Track generated types to avoid duplicates. Some shared schemas are owned by
   // core.generated.ts but are reached through tool request/response $refs; seed
@@ -2791,9 +2988,7 @@ async function generateToolTypes(tools: ToolDefinition[], preGeneratedTypes: Set
           additionalProperties: false, // Disable [k: string]: unknown for type safety
           strictIndexSignatures: true, // Add | undefined to index signatures for optional property compatibility
           $refOptions: {
-            resolve: {
-              cache: refResolver,
-            },
+            resolve: codegenRefResolvers(refResolver),
           },
         });
 
@@ -2816,9 +3011,7 @@ async function generateToolTypes(tools: ToolDefinition[], preGeneratedTypes: Set
           additionalProperties: false, // Disable [k: string]: unknown for type safety
           strictIndexSignatures: true, // Add | undefined to index signatures for optional property compatibility
           $refOptions: {
-            resolve: {
-              cache: refResolver,
-            },
+            resolve: codegenRefResolvers(refResolver),
           },
         });
 
@@ -2911,6 +3104,27 @@ function removeResidualInlineIndexSignatureArms(typeDefinitions: string): string
   result = result.replace(/^\s*\[k: string\]: unknown(?: \| undefined)?;\n/gm, '');
   result = result.replace(/(\s*\/\*\*\n\s*\* @maximum 1\n\s*\*\/\n\s*(?:low|mid|high)\?:) \{\n\s*\};/g, '$1 number;');
   return result.replace(placeholder, '[k: string]: unknown | undefined;');
+}
+
+/**
+ * Strip residual open-object markers, then collapse empty numbered interfaces
+ * that only become identical after that cleanup. Keeping this pass limited to
+ * empty interfaces avoids treating unrelated structural mismatches as aliases.
+ */
+export function stabilizeEmptyNumberedInterfacesAfterOpenObjectCleanup(typeDefinitions: string): string {
+  let result = removeResidualInlineIndexSignatureArms(typeDefinitions);
+  const emptyInterfaces = new Set([...result.matchAll(/^export interface (\w+) \{\s*\}$/gm)].map(match => match[1]));
+  const collapsed = [...emptyInterfaces]
+    .map(numbered => {
+      const match = numbered.match(/^(.+?)\d+$/);
+      return match && emptyInterfaces.has(match[1]) ? { numbered, base: match[1] } : null;
+    })
+    .filter((entry): entry is { numbered: string; base: string } => entry !== null);
+
+  for (const { numbered, base } of collapsed) {
+    result = result.replace(new RegExp(`\\b${numbered}\\b`, 'g'), base);
+  }
+  return collapsed.length > 0 ? filterDuplicateTypeDefinitions(result, new Set<string>()) : result;
 }
 
 /**
@@ -3404,6 +3618,12 @@ const JSTS_UNDER_RESOLUTION_ALIASES: Array<{ numbered: string; base: string }> =
   { numbered: 'TargetingOverlaySupport1', base: 'TargetingOverlaySupport' },
   { numbered: 'DeliveryForecast2', base: 'DeliveryForecast' },
   { numbered: 'ExistingBinding1', base: 'ExistingBinding' },
+  { numbered: 'SignalTargeting1', base: 'SignalTargeting' },
+  { numbered: 'FileTransfer1', base: 'ReportingFileTransfer' },
+  // tasks-list-request.json in rc.6 carries a lagging inline copy of the
+  // canonical task-type enum that omits get_creative_features. Keep the
+  // public filter type aligned with the authoritative enum document.
+  { numbered: 'TaskType1', base: 'TaskType' },
 ];
 
 const JSTS_REPEATED_UNDER_RESOLUTION_BASES = [
@@ -3540,7 +3760,9 @@ export function renameKnownNumberedSemanticTypes(typeDefinitions: string): strin
 
 function buildKnownJstsAliases(typeDefinitions: string): Array<{ numbered: string; base: string }> {
   const exportedTypes = collectExportedTypeNames(typeDefinitions);
-  const aliases = new Map(JSTS_UNDER_RESOLUTION_ALIASES.map(alias => [alias.numbered, alias]));
+  const aliases = new Map(
+    JSTS_UNDER_RESOLUTION_ALIASES.filter(alias => exportedTypes.has(alias.base)).map(alias => [alias.numbered, alias])
+  );
 
   for (const base of JSTS_REPEATED_UNDER_RESOLUTION_BASES) {
     if (!exportedTypes.has(base)) continue;
@@ -4215,9 +4437,7 @@ async function compileGapSchemas(
     additionalProperties: false,
     strictIndexSignatures: true,
     $refOptions: {
-      resolve: {
-        cache: refResolver,
-      },
+      resolve: codegenRefResolvers(refResolver),
     },
   };
   // json-schema-to-typescript clones its options and schema and creates a new
@@ -4262,6 +4482,7 @@ async function compileGapSchemas(
 }
 
 async function generateTypes() {
+  unresolvedVerifiedSchemaRefs.clear();
   console.log('🔄 Generating AdCP types and fluent API...');
 
   // Check if schemas are cached
@@ -4282,20 +4503,7 @@ async function generateTypes() {
   let coreTypes = `// Generated AdCP core types from official schemas v${adcpVersion}\n// Generated at: ${new Date().toISOString()}\n\n`;
 
   // Custom $ref resolver for cached schemas
-  const refResolver = {
-    canRead: true,
-    read: (file: { url: string }) => {
-      const url = file.url;
-      // Handle any /schemas/ path (versioned or v1)
-      if (schemaRefToCacheRelativePath(url)) {
-        const schema = loadCachedSchema(url);
-        if (schema) {
-          return Promise.resolve(enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema))));
-        }
-      }
-      return Promise.reject(new Error(`Cannot resolve $ref: ${url}`));
-    },
-  };
+  const refResolver = createVerifiedCacheRefResolver(LATEST_CACHE_DIR);
 
   // Track generated types across all core schemas to prevent duplicates
   const generatedCoreTypes = new Set<string>();
@@ -4329,7 +4537,7 @@ async function generateTypes() {
         style: { semi: true, singleQuote: true },
         additionalProperties: false,
         strictIndexSignatures: true,
-        $refOptions: { resolve: { cache: refResolver } },
+        $refOptions: { resolve: codegenRefResolvers(refResolver) },
       });
       const filteredTypes = filterDuplicateTypeDefinitions(types, generatedCoreTypes);
       coreTypes += `// ${typeName.toUpperCase()} CANONICAL ENUM\n${filteredTypes}\n`;
@@ -4351,13 +4559,18 @@ async function generateTypes() {
       if (!schema) throw new Error(`Schema ${ref} not found in cache`);
       const typeName =
         typeof schema.title === 'string' ? schema.title.replace(/[^A-Za-z0-9]/g, '') : schemaPathToTypeName(ref);
-      const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema)));
+      const annotatedSchema = injectJsdocConstraints(schema);
+      // BrandKey.countries is non-empty when present. Preserve that direct
+      // constraint so a transitive reference cannot weaken the public type.
+      const strictSchema = enforceStrictSchema(
+        ref === 'core/brand-key.json' ? annotatedSchema : removeArrayLengthConstraints(annotatedSchema)
+      );
       const types = await compile(strictSchema, typeName, {
         bannerComment: '',
         style: { semi: true, singleQuote: true },
         additionalProperties: false,
         strictIndexSignatures: true,
-        $refOptions: { resolve: { cache: refResolver } },
+        $refOptions: { resolve: codegenRefResolvers(refResolver) },
       });
       const filteredTypes = filterDuplicateTypeDefinitions(types, generatedCoreTypes);
       coreTypes += `// ${typeName.toUpperCase()} PRIORITY CANONICAL SCHEMA\n${filteredTypes}\n`;
@@ -4382,7 +4595,7 @@ async function generateTypes() {
         style: { semi: true, singleQuote: true },
         additionalProperties: false,
         strictIndexSignatures: true,
-        $refOptions: { resolve: { cache: refResolver } },
+        $refOptions: { resolve: codegenRefResolvers(refResolver) },
       });
       const emittedNames = collectExportedTypeNames(types);
       if (!emittedNames.has(typeName)) {
@@ -4425,9 +4638,7 @@ async function generateTypes() {
           additionalProperties: false, // Disable [k: string]: unknown for type safety
           strictIndexSignatures: true, // Add | undefined to index signatures for optional property compatibility
           $refOptions: {
-            resolve: {
-              cache: refResolver,
-            },
+            resolve: codegenRefResolvers(refResolver),
           },
         });
 
@@ -4477,9 +4688,7 @@ async function generateTypes() {
           additionalProperties: false, // Disable [k: string]: unknown for type safety
           strictIndexSignatures: true, // Add | undefined to index signatures for optional property compatibility
           $refOptions: {
-            resolve: {
-              cache: refResolver,
-            },
+            resolve: codegenRefResolvers(refResolver),
           },
         });
 
@@ -4512,7 +4721,7 @@ async function generateTypes() {
   // occurrences of the same schema within a single compilation unit
   toolTypes = removeNumberedTypeDuplicates(toolTypes);
   toolTypes = removeNumberedCoreTypeDuplicates(toolTypes, CORE_AUTHORED_TOOL_SHARED_TYPES);
-  toolTypes = removeResidualInlineIndexSignatureArms(toolTypes);
+  toolTypes = stabilizeEmptyNumberedInterfacesAfterOpenObjectCleanup(toolTypes);
   toolTypes = namePostalAreaCountryBranch(toolTypes);
   toolTypes = applyKnownJstsAliases(toolTypes);
   toolTypes = fixTypedIndexSignatures(toolTypes);
@@ -4550,6 +4759,11 @@ async function generateTypes() {
   // Generate Agent classes
   const agentClasses = generateAgentClasses(tools);
 
+  // Compile passes can log and skip a bad schema. A missing or malformed
+  // verified reference must still stop generation before partial public type
+  // files are written.
+  assertVerifiedSchemaRefsResolved();
+
   // Write files only if content changed
   const coreTypesPath = path.join(libOutputDir, 'core.generated.ts');
   // Strip inline index-signature arms first so numbered-duplicate detection compares
@@ -4559,23 +4773,27 @@ async function generateTypes() {
   // see applyKnownJstsAliases for the rationale. Finally, restore the asset_type
   // discriminator on Individual*Asset slot aliases that jsts collapses (#1498).
   const processedCoreTypes = alignTargetingInputArrayCardinality(
-    relaxArrayCardinalityTypes(
-      normalizeTransformerParamJsonValueTypes(
-        relaxZodCompatibilityArrayTypes(
-          hardenTrustedMatchGeneratedTypes(
-            applyIndividualAssetDiscriminators(
-              addBackwardCompatTypeAliases(
-                simplifyForecastRange(
-                  simplifyPriceBreakdown(
-                    widenMediaBuyFeaturesIndexSignature(
-                      widenPostalAreaSupportIndexSignature(
-                        widenReportedOutcomeErrorIndexSignature(
-                          fixTypedIndexSignatures(
-                            removeResidualInlineIndexSignatureArms(
-                              applyKnownJstsAliases(
-                                namePostalAreaCountryBranch(
-                                  renameKnownNumberedSemanticTypes(
-                                    removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))
+    requireMediaBuyChangeTermConstraintBounds(
+      alignCommittedMediaBuyName(
+        relaxArrayCardinalityTypes(
+          normalizeTransformerParamJsonValueTypes(
+            relaxZodCompatibilityArrayTypes(
+              hardenTrustedMatchGeneratedTypes(
+                applyIndividualAssetDiscriminators(
+                  addBackwardCompatTypeAliases(
+                    simplifyForecastRange(
+                      simplifyPriceBreakdown(
+                        widenMediaBuyFeaturesIndexSignature(
+                          widenPostalAreaSupportIndexSignature(
+                            widenReportedOutcomeErrorIndexSignature(
+                              fixTypedIndexSignatures(
+                                removeResidualInlineIndexSignatureArms(
+                                  applyKnownJstsAliases(
+                                    namePostalAreaCountryBranch(
+                                      renameKnownNumberedSemanticTypes(
+                                        removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))
+                                      )
+                                    )
                                   )
                                 )
                               )
@@ -4588,22 +4806,27 @@ async function generateTypes() {
                 )
               )
             )
-          )
+          ),
+          { maxItemsOnly: true }
         )
-      ),
-      { maxItemsOnly: true }
+      )
     )
   );
   const coreChanged = writeFileIfChanged(coreTypesPath, processedCoreTypes);
 
   const toolTypesPath = path.join(libOutputDir, 'tools.generated.ts');
-  const processedToolTypes = relaxArrayCardinalityTypes(
-    normalizeTransformerParamJsonValueTypes(
-      relaxZodCompatibilityArrayTypes(
-        addCanonicalToolTypeAliases(applyIndividualAssetDiscriminators(addBackwardCompatTypeAliases(toolTypes)), tools)
-      )
-    ),
-    { maxItemsOnly: true }
+  const processedToolTypes = alignCommittedMediaBuyName(
+    relaxArrayCardinalityTypes(
+      normalizeTransformerParamJsonValueTypes(
+        relaxZodCompatibilityArrayTypes(
+          addCanonicalToolTypeAliases(
+            applyIndividualAssetDiscriminators(addBackwardCompatTypeAliases(toolTypes)),
+            tools
+          )
+        )
+      ),
+      { maxItemsOnly: true }
+    )
   );
   const toolsChanged = writeFileIfChanged(toolTypesPath, processedToolTypes);
 

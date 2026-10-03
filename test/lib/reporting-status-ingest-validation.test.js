@@ -110,6 +110,79 @@ describe('reporting consumer status validation', () => {
     );
   });
 
+  test('an exact content_mismatch retry replays after the revision is superseded', async () => {
+    // rc.3 rejects a NEW content_mismatch naming a revision the seller no
+    // longer requires. It must not retroactively fail one already accepted:
+    // `immutability` says "Exact retries are unchanged", and a buyer retrying
+    // after a transport failure would otherwise get a hard rejection for a
+    // statement that was valid when it was made.
+    //
+    // The guarantee is ordering — the batch replay short-circuits before
+    // validateStatus runs — so this pins the ordering rather than re-deriving
+    // it. The store below reports the disputed revision as superseded and
+    // fails loudly if validation is reached at all.
+    const disputed = consumerStatus({
+      reporting_status_id: 'reporting_status_cm_0001',
+      reporting_obligation_id: 'reporting-obligation-0001',
+      reporting_revision_id: 'reporting-revision-0001',
+      observed_revision_content_sha256: 'a'.repeat(64),
+      consumer_status: 'content_mismatch',
+      mismatch_code: 'coverage_short',
+    });
+    const recorded = {
+      inserted: true,
+      value: { ...disputed, consumerId: 'consumer-1', account_id: 'account-1', recorded_at: '2026-09-03T00:00:01Z' },
+    };
+    let validationReached = false;
+    const handler = createSyncReportingStatusHandler(
+      {
+        // The seller has moved on: reporting-revision-0002 supersedes the one
+        // under dispute, so a fresh statement naming it would be refused.
+        listRevisionMetadata: async () => {
+          validationReached = true;
+          return [
+            { reporting_revision_id: 'reporting-revision-0001', revisionNumber: 1, createdAt: '2026-09-02T01:00:00Z' },
+            {
+              reporting_revision_id: 'reporting-revision-0002',
+              revisionNumber: 2,
+              supersedes_reporting_revision_id: 'reporting-revision-0001',
+              createdAt: '2026-09-02T02:00:00Z',
+            },
+          ];
+        },
+        listConfigurations: async () => {
+          validationReached = true;
+          return [];
+        },
+        getConsumerStatusBatchReplay: async () => [recorded],
+        syncConsumerStatusBatch: async () => {
+          throw new Error('an exact retry must replay, not re-append');
+        },
+      },
+      { resolveConsumerId: () => 'consumer-1' }
+    );
+
+    const retry = await handler(
+      {
+        account: { account_id: 'account-1' },
+        idempotency_key: 'reporting-status-cm-retry',
+        statuses: [disputed],
+      },
+      { account: { id: 'account-1' } }
+    );
+
+    // The replay returns the original verdict verbatim — `recorded`, because
+    // that is what the first call answered — rather than a rejection.
+    assert.equal(retry.results[0].result, 'recorded');
+    assert.equal(retry.results[0].consumer_status.reporting_status_id, 'reporting_status_cm_0001');
+    assert.equal(
+      retry.results[0].consumer_status.recorded_at,
+      '2026-09-03T00:00:01Z',
+      'the durable statement is replayed verbatim, not re-recorded'
+    );
+    assert.equal(validationReached, false, 'the replay short-circuits before any currency check');
+  });
+
   test('returns an item-local field for malformed status recovery', async () => {
     const handler = createSyncReportingStatusHandler(
       {

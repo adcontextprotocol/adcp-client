@@ -34,6 +34,7 @@ import type {
   BrandAgentType,
   BrandReference,
   BrowserFamily,
+  BudgetChangeConstraints,
   BusinessEntity,
   C2PAWatermarkAction,
   CSSAssetRequirements,
@@ -59,6 +60,7 @@ import type {
   CanonicalFormatVASTVideo,
   CanonicalMediaBuyActionMode,
   CanonicalMediaBuyActionName,
+  CanonicalOptimizationGoal,
   CanonicalProposal,
   CatalogAction,
   CatalogItemDeliveryMetrics,
@@ -70,6 +72,7 @@ import type {
   CollectionKind,
   CollectionRelationship,
   CollectionStatus,
+  CommittedMediaBuy,
   CompletionSource,
   ConsentBasis,
   ContentIDType,
@@ -110,6 +113,7 @@ import type {
   DisclosurePosition,
   DistanceUnit,
   DistributionIdentifierType,
+  EffectiveTimingConstraints,
   EmbeddedProvenanceMethod,
   ErrorCode,
   ErrorScope,
@@ -121,6 +125,7 @@ import type {
   FeedFormat,
   FeedbackSource,
   Fixed,
+  FlightChangeConstraints,
   ForecastMethod,
   ForecastPoint,
   ForecastRangeUnit,
@@ -170,6 +175,7 @@ import type {
   MeasurementTerms,
   MediaBuyActionMode,
   MediaBuyAvailableAction,
+  MediaBuyChangeTermConstraints,
   MediaBuyFrequencyCapControlMode,
   MediaBuyHealth,
   MediaBuyStatus,
@@ -183,8 +189,11 @@ import type {
   None,
   NotificationType,
   OfferingAvailabilityStatus,
+  OptimizationGoal,
+  OutcomeTargetCostStrength,
   OutcomeType,
   Pacing,
+  PackageCountConstraints,
   PackageUpdate,
   PaymentTerms,
   PerformanceBaseline,
@@ -221,6 +230,7 @@ import type {
   ReportingHealth,
   RepresentationSelectionStrategy,
   RequestProposalsResponse,
+  RequestSigningErrorCode,
   Responsive,
   RestrictedAttribute,
   RightType,
@@ -230,6 +240,7 @@ import type {
   SISessionStatus,
   ScanType,
   ScopedCreativeApproval,
+  SellerPolicyDeclineReason,
   SignalAvailabilityType,
   SignalDefinitionEnrichment,
   SignalSource,
@@ -277,7 +288,7 @@ import type {
   WebhookSecurityMethod,
 } from './core.generated';
 
-export type { AccountCurrencyMode, AccountReference, AccountScope, AccountStatus, ActionNotAllowedReason, ActionSource, AdCPProtocol, AdCPSpecialism, AdCPVersionEnvelope, AdvertiserIndustry, AgeDeterminationBasis, AgeVerificationMethod, AssessmentStatus, AssetContentType, AssetVariant, AttestationClaim, AttributionMethodology, AttributionModel, AudienceConstraints, AudienceEvidenceMethodology, AudienceResolutionMethod, AudienceSource, AudienceStatus, AudienceSubjectType, AudioChannelLayout, AudioDistributionType, AuthenticationScheme, AvailabilityStatus, AvailableMetric, BillingParty, BinaryVerdict, BrandAgentType, BrandReference, BrowserFamily, BusinessEntity, C2PAWatermarkAction, CTVAdExperience, CanceledBy, CancellationPolicy, CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement, CanonicalFormatBase, CanonicalFormatCoordinatedPlacements, CanonicalFormatDAASTAudio, CanonicalFormatDisplayTag, CanonicalFormatHTML5Banner, CanonicalFormatHostedAudio, CanonicalFormatHostedVideo, CanonicalFormatImage, CanonicalFormatImageCarousel, CanonicalFormatNativeInFeed, CanonicalFormatOption, CanonicalFormatResponsiveCreative, CanonicalFormatSellerRenderedStatefulDisplay, CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven, CanonicalFormatVASTAudio, CanonicalFormatVASTVideo, CanonicalMediaBuyActionMode, CanonicalMediaBuyActionName, CanonicalProposal, CatalogAction, CatalogItemDeliveryMetrics, CatalogItemStatus, CatalogType, CloudStorageProtocol, CoBrandingRequirement, CollectionCadence, CollectionKind, CollectionRelationship, CollectionStatus, CompletionSource, ConsentBasis, ContentIDType, ContentRatingSystem, CountryFusedPostalCodeSystem, CreativeAction, CreativeActivationMethod, CreativeAgentCapability, CreativeApprovalStatus, CreativeAsset, CreativeBrief, CreativeEventReasonCode, CreativeIdentifierType, CreativeMotionLevel, CreativeQuality, CreativeSelectionStrategy, CreativeSortField, CreativeStatus, DAASTTrackingEvent, DAASTVersion, DOOHMotionType, DayOfWeek, DaypartTimezoneMode, DelegationAuthority, DeliveryMetricAggregate, DeliveryMetrics, DeliveryRecipientCloud, DeliveryStatus, DeliveryType, DemographicSystem, DerivativeType, DevicePlatform, DeviceType, DigitalSourceType, DimensionUnit, DisclosurePersistence, DisclosurePosition, DistanceUnit, DistributionIdentifierType, EmbeddedProvenanceMethod, ErrorCode, ErrorScope, EscalationSeverity, EventType, Exclusivity, ExtensionObject, FeatureCheckStatus, FeedFormat, FeedbackSource, Fixed, ForecastMethod, ForecastPoint, ForecastRangeUnit, ForecastableMetric, Format, FormatIDParameter, FormatReferenceStructuredObject, FrameRateType, FrequencyCapControlMode, FrequencyCapMutableField, FrequencyCapScope, GOPType, GenreTaxonomy, GeoDeliveryMetrics, GeographicTargetingLevel, GetProductsAsyncSubmitted, GovernanceDecision, GovernanceDomain, GovernanceMode, GovernancePhase, HTTPMethod, HistoryEntryType, ImageAsset, ImpairmentOfflineState, ImpairmentReasonCode, IndicatorType, InstallmentStatus, JavaScriptModuleType, KeywordDeliveryMetrics, LandingPageRequirement, LiftDimension, LogoSlot, MacroDialectFamily, MacroMappingStatus, MacroProcessingActor, MacroProcessingOperation, MacroResolutionReason, MacroValueContext, MakegoodRemedy, MarkdownFlavor, MatchIDType, MatchType, MeasurementTerms, MediaBuyActionMode, MediaBuyAvailableAction, MediaBuyFrequencyCapControlMode, MediaBuyHealth, MediaBuyStatus, MediaBuyValidAction, MediaChannel, MetricScope, MetricType, MetroAreaSystem, MoovAtomPosition, MultiSize, None, NotificationType, OfferingAvailabilityStatus, OutcomeType, Pacing, PackageUpdate, PaymentTerms, PerformanceBaseline, PerformanceStandardMetric, PixelTrackingEvent, PlatformExtensionReference, PolicyCategory, PolicyEnforcementLevel, PostalCodeSystem, PostalCountrySystem, PreviewOutputFormat, PriceAdjustmentKind, PricingModel, PricingStructure, PrincipalKind, ProductAllowedAction, ProductionQuality, PropertyIdentifierTypes, PropertyType, ProposalDeclineReason, ProposalRefinementReason, ProposalStatus, ProtocolEnvelope, Provenance, PublisherIdentifierTypes, PublisherPropertySelector, PurchaseType, ReachAggregation, ReachUnit, ReportingDeliveryMethod, ReportingDestinationSetupState, ReportingFinality, ReportingFrequency, ReportingHealth, RepresentationSelectionStrategy, RequestProposalsResponse, Responsive, RestrictedAttribute, RightType, RightUse, RightsBillingPeriod, RightsConstraint, SISessionStatus, ScanType, ScopedCreativeApproval, SignalAvailabilityType, SignalDefinitionEnrichment, SignalSource, SignalTargetingExpression, SignalValueType, SizeModeMutex, SnapshotUnavailableReason, SocialPlacementSurface, SortDirection, SortMetric, SpecialCategory, SponsoredPlacementType, TMPResponseType, TalentRole, TargetingOverlayRequirements, TargetingOverlaySupport, TaskStatus, TaskType, TrackerExecutionActor, TrackerFiringPath, TransportMode, TravelTimeUnit, UIDType, URLAssetType, UniversalMacro, UpdateFrequency, VASTMediaDeliveryMethod, VASTTrackingEvent, VASTVersion, ValidationMode, VendorRelationship, VideoPlacementType, ViewThresholdBasis, ViewabilityStandard, WCAGLevel, WarningAffectedResource, WarningCode, WatermarkMediaType, WebhookResponseType, WebhookSecurityMethod } from './core.generated';
+export type { AccountCurrencyMode, AccountReference, AccountScope, AccountStatus, ActionNotAllowedReason, ActionSource, AdCPProtocol, AdCPSpecialism, AdCPVersionEnvelope, AdvertiserIndustry, AgeDeterminationBasis, AgeVerificationMethod, AssessmentStatus, AssetContentType, AssetVariant, AttestationClaim, AttributionMethodology, AttributionModel, AudienceConstraints, AudienceEvidenceMethodology, AudienceResolutionMethod, AudienceSource, AudienceStatus, AudienceSubjectType, AudioChannelLayout, AudioDistributionType, AuthenticationScheme, AvailabilityStatus, AvailableMetric, BillingParty, BinaryVerdict, BrandAgentType, BrandReference, BrowserFamily, BudgetChangeConstraints, BusinessEntity, C2PAWatermarkAction, CTVAdExperience, CanceledBy, CancellationPolicy, CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement, CanonicalFormatBase, CanonicalFormatCoordinatedPlacements, CanonicalFormatDAASTAudio, CanonicalFormatDisplayTag, CanonicalFormatHTML5Banner, CanonicalFormatHostedAudio, CanonicalFormatHostedVideo, CanonicalFormatImage, CanonicalFormatImageCarousel, CanonicalFormatNativeInFeed, CanonicalFormatOption, CanonicalFormatResponsiveCreative, CanonicalFormatSellerRenderedStatefulDisplay, CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven, CanonicalFormatVASTAudio, CanonicalFormatVASTVideo, CanonicalMediaBuyActionMode, CanonicalMediaBuyActionName, CanonicalOptimizationGoal, CanonicalProposal, CatalogAction, CatalogItemDeliveryMetrics, CatalogItemStatus, CatalogType, CloudStorageProtocol, CoBrandingRequirement, CollectionCadence, CollectionKind, CollectionRelationship, CollectionStatus, CommittedMediaBuy, CompletionSource, ConsentBasis, ContentIDType, ContentRatingSystem, CountryFusedPostalCodeSystem, CreativeAction, CreativeActivationMethod, CreativeAgentCapability, CreativeApprovalStatus, CreativeAsset, CreativeBrief, CreativeEventReasonCode, CreativeIdentifierType, CreativeMotionLevel, CreativeQuality, CreativeSelectionStrategy, CreativeSortField, CreativeStatus, DAASTTrackingEvent, DAASTVersion, DOOHMotionType, DayOfWeek, DaypartTimezoneMode, DelegationAuthority, DeliveryMetricAggregate, DeliveryMetrics, DeliveryRecipientCloud, DeliveryStatus, DeliveryType, DemographicSystem, DerivativeType, DevicePlatform, DeviceType, DigitalSourceType, DimensionUnit, DisclosurePersistence, DisclosurePosition, DistanceUnit, DistributionIdentifierType, EffectiveTimingConstraints, EmbeddedProvenanceMethod, ErrorCode, ErrorScope, EscalationSeverity, EventType, Exclusivity, ExtensionObject, FeatureCheckStatus, FeedFormat, FeedbackSource, Fixed, FlightChangeConstraints, ForecastMethod, ForecastPoint, ForecastRangeUnit, ForecastableMetric, Format, FormatIDParameter, FormatReferenceStructuredObject, FrameRateType, FrequencyCapControlMode, FrequencyCapMutableField, FrequencyCapScope, GOPType, GenreTaxonomy, GeoDeliveryMetrics, GeographicTargetingLevel, GetProductsAsyncSubmitted, GovernanceDecision, GovernanceDomain, GovernanceMode, GovernancePhase, HTTPMethod, HistoryEntryType, ImageAsset, ImpairmentOfflineState, ImpairmentReasonCode, IndicatorType, InstallmentStatus, JavaScriptModuleType, KeywordDeliveryMetrics, LandingPageRequirement, LiftDimension, LogoSlot, MacroDialectFamily, MacroMappingStatus, MacroProcessingActor, MacroProcessingOperation, MacroResolutionReason, MacroValueContext, MakegoodRemedy, MarkdownFlavor, MatchIDType, MatchType, MeasurementTerms, MediaBuyActionMode, MediaBuyAvailableAction, MediaBuyChangeTermConstraints, MediaBuyFrequencyCapControlMode, MediaBuyHealth, MediaBuyStatus, MediaBuyValidAction, MediaChannel, MetricScope, MetricType, MetroAreaSystem, MoovAtomPosition, MultiSize, None, NotificationType, OfferingAvailabilityStatus, OptimizationGoal, OutcomeTargetCostStrength, OutcomeType, Pacing, PackageCountConstraints, PackageUpdate, PaymentTerms, PerformanceBaseline, PerformanceStandardMetric, PixelTrackingEvent, PlatformExtensionReference, PolicyCategory, PolicyEnforcementLevel, PostalCodeSystem, PostalCountrySystem, PreviewOutputFormat, PriceAdjustmentKind, PricingModel, PricingStructure, PrincipalKind, ProductAllowedAction, ProductionQuality, PropertyIdentifierTypes, PropertyType, ProposalDeclineReason, ProposalRefinementReason, ProposalStatus, ProtocolEnvelope, Provenance, PublisherIdentifierTypes, PublisherPropertySelector, PurchaseType, ReachAggregation, ReachUnit, ReportingDeliveryMethod, ReportingDestinationSetupState, ReportingFinality, ReportingFrequency, ReportingHealth, RepresentationSelectionStrategy, RequestProposalsResponse, RequestSigningErrorCode, Responsive, RestrictedAttribute, RightType, RightUse, RightsBillingPeriod, RightsConstraint, SISessionStatus, ScanType, ScopedCreativeApproval, SellerPolicyDeclineReason, SignalAvailabilityType, SignalDefinitionEnrichment, SignalSource, SignalTargetingExpression, SignalValueType, SizeModeMutex, SnapshotUnavailableReason, SocialPlacementSurface, SortDirection, SortMetric, SpecialCategory, SponsoredPlacementType, TMPResponseType, TalentRole, TargetingOverlayRequirements, TargetingOverlaySupport, TaskStatus, TaskType, TrackerExecutionActor, TrackerFiringPath, TransportMode, TravelTimeUnit, UIDType, URLAssetType, UniversalMacro, UpdateFrequency, VASTMediaDeliveryMethod, VASTTrackingEvent, VASTVersion, ValidationMode, VendorRelationship, VideoPlacementType, ViewThresholdBasis, ViewabilityStandard, WCAGLevel, WarningAffectedResource, WarningCode, WatermarkMediaType, WebhookResponseType, WebhookSecurityMethod } from './core.generated';
 
 // Tool Parameter and Response Types
 // Generated from official AdCP schemas
@@ -1285,6 +1296,8 @@ export interface GetProductsRequest {
         | 'signal_targeting_rules'
         | 'demographic_targeting'
         | 'overlay_support'
+        | 'collections'
+        | 'collection_targeting_allowed'
         | 'media_buy_support'
         | 'audience_evidence'
         | 'audience_evidence_selections'
@@ -1292,8 +1305,10 @@ export interface GetProductsRequest {
         | 'catalog_match'
         | 'list_applications'
         | 'brief_relevance'
+        | 'targeting_resolution'
         | 'acceptance_policy_profile_ids'
         | 'identity'
+        | 'execution_requirements'
         | 'expires_at'
         | 'allowed_actions'
       )
@@ -1309,9 +1324,6 @@ export interface GetProductsRequest {
         | 'signal_targeting_options'
         | 'overlay_support'
         | 'media_buy_support'
-        | 'targeting_resolution'
-        | 'collections'
-        | 'collection_targeting_allowed'
         | 'installments'
         | 'is_custom'
         | 'product_card'
@@ -1891,9 +1903,21 @@ export interface MediaBuyFeatures {
    */
   committed_metrics_supported?: boolean;
   /**
-   * Supports media-buy-level shared budgets with budget_allocation.mode `seller_optimized`. Sellers declaring true MUST accept eligible explicit-package and proposal executions, enforce the aggregate budget and package constraints, apply media-buy-level pacing, and echo the allocation configuration on buy read surfaces. Product combinations may still be rejected when their currencies, optimization capabilities, pricing terms, or delivery constraints are incompatible. Sellers that do not declare this feature MUST reject any request carrying `budget_allocation.mode: 'seller_optimized'` with `UNSUPPORTED_FEATURE` before any provider mutation, and MUST NOT coerce the request to fixed allocation.
+   * Supports the core seller-optimized shared-budget contract for budget_allocation.mode `seller_optimized`: one hard shared total_budget, seller allocation of that total across the buy's packages against budget_allocation.optimization_goals, media-buy-level pacing, and echo of the allocation configuration on buy read surfaces. Sellers declaring true MUST accept eligible explicit-package and proposal executions that use only these core controls and MUST enforce the aggregate budget. Core media-buy pacing: sellers declaring true MUST accept omitted media-buy pacing (which defaults to even when total_budget is present) and pacing `even` on seller-optimized buys; they MAY reject `asap` or `front_loaded` with `UNSUPPORTED_FEATURE` (error.field `pacing`) before any provider mutation, and MUST NOT silently coerce them to `even`. Package-level controls inside a seller-optimized buy are separate capabilities: package budget caps (seller_optimized_package_budgets), package minimum-spend targets (seller_optimized_min_spend_targets), and package pacing (seller_optimized_package_pacing). A seller declaring this feature but not one of those sub-capabilities MUST reject any request that would leave that package control on a seller-optimized buy with `UNSUPPORTED_FEATURE` before any over-subscription validation or provider mutation, and MUST NOT silently drop, soften, or coerce it. Over-subscription validation (`INVALID_REQUEST`) applies only to package controls the seller has declared; see seller_optimized_min_spend_targets. Product combinations may still be rejected when their currencies, optimization capabilities, pricing terms, or delivery constraints are incompatible. Sellers that do not declare this feature MUST reject any request carrying `budget_allocation.mode: 'seller_optimized'` with `UNSUPPORTED_FEATURE` before any provider mutation, and MUST NOT coerce the request to fixed allocation.
    */
   seller_optimized_budget?: boolean;
+  /**
+   * Honors package `budget` as an optional hard lifetime package spend cap inside a seller-optimized buy: packages[].budget and new_packages[].budget on create_media_buy and update_media_buy, purchases[].budget on buy_products, package budget controls on control_media_buy, and max_spend_percentage on seller-optimized proposal allocations. The cap is a ceiling, not a reserved or current allocation, and package caps may sum above total_budget. Meaningful only with seller_optimized_budget: true; seller declarations may be true only with seller_optimized_budget: true, while buyer required_features filters may request this feature alone. A seller that declares seller_optimized_budget without this feature MUST reject a request that would leave a package budget on a seller-optimized buy, including an allocation-mode switch that retains fixed-mode package budgets (the buyer clears them with null in the same atomic update), with `UNSUPPORTED_FEATURE` before any over-subscription validation or provider mutation, and MUST NOT issue seller-optimized proposals carrying max_spend_percentage. Does not govern fixed allocation, where package budgets remain required.
+   */
+  seller_optimized_package_budgets?: boolean;
+  /**
+   * Honors package `min_spend_target` as a soft lifetime minimum-spend target inside a seller-optimized buy: packages[].min_spend_target and new_packages[].min_spend_target on create_media_buy and update_media_buy, purchases[].min_spend_target on buy_products, package min_spend_target controls on control_media_buy, and min_spend_target_percentage on seller-optimized proposal allocations. The seller SHOULD attempt to deliver at least the target before allocating incremental spend elsewhere; it is not a billing or delivery guarantee. Meaningful only with seller_optimized_budget: true; seller declarations may be true only with seller_optimized_budget: true, while buyer required_features filters may request this feature alone. Sellers declaring this feature MUST reject package minimum-spend targets summing above total_budget with `INVALID_REQUEST` before mutation, and, when they also declare seller_optimized_package_budgets, MUST likewise reject a min_spend_target above its own package budget. A seller that declares seller_optimized_budget without this feature MUST reject a request carrying a numeric min_spend_target with `UNSUPPORTED_FEATURE` before any over-subscription validation or provider mutation, so an over-subscribed target sent to such a seller yields `UNSUPPORTED_FEATURE`, and MUST NOT issue seller-optimized proposals carrying min_spend_target_percentage.
+   */
+  seller_optimized_min_spend_targets?: boolean;
+  /**
+   * Honors package `pacing` as subordinate per-package pacing inside a seller-optimized buy, in addition to the media-buy-level pacing covered by seller_optimized_budget: packages[].pacing and new_packages[].pacing on create_media_buy and update_media_buy, purchases[].pacing on buy_products, package pacing controls on control_media_buy, and allocation pacing on seller-optimized proposals. Package pacing MUST NOT cause delivery to exceed aggregate media-buy pacing. Meaningful only with seller_optimized_budget: true; seller declarations may be true only with seller_optimized_budget: true, while buyer required_features filters may request this feature alone. Package pacing equal to the effective media-buy pacing adds no subordinate constraint and does not require this feature; buyers SHOULD omit package pacing on seller-optimized buys unless this feature is advertised. A seller that declares seller_optimized_budget without this feature MUST reject a request that would leave package pacing differing from media-buy pacing on a seller-optimized buy, including an allocation-mode switch that retains such fixed-mode package pacing (the buyer can align it in the same update), with `UNSUPPORTED_FEATURE` before any provider mutation, and MUST NOT issue seller-optimized proposals carrying allocation pacing. Does not govern package pacing in fixed allocation.
+   */
+  seller_optimized_package_pacing?: boolean;
   /**
    * Structured support for canonical bidding by authored scope, allocation context, mode, strength, and strength-qualified multi-field combination. Presence does not imply support for both scopes, both allocation modes, or every policy shape. Sellers MUST preserve every advertised semantic exactly and reject unadvertised policies rather than translating them.
    */
@@ -2663,6 +2687,12 @@ export type Product = {
     overlay_support?: TargetingOverlaySupport;
     media_buy_support?: ProductMediaBuySupport;
     identity?: ProductIdentity;
+    /**
+     * Experimental (`media_buy.execution_requirements`). Account resources a package on this product needs before `create_media_buy` succeeds. Every entry is required. Account-independent: it does not change `cache_scope` and carries no account resource IDs or names. When present, it plus the `required_connections` of the package's selected format declarations is complete for the kinds in `product-execution-requirement.json`: a seller MUST NOT reject a package that satisfies all of them for lacking an undeclared kind. Absence means undeclared. A declaring seller MUST reject an unmet `event_source` or `catalog` entry on a buyer-supplied `create_media_buy` `packages[]` or `update_media_buy` `new_packages[]` entry, or an update that removes a satisfying binding, with `VALIDATION_ERROR`, `error.field` at the binding, and `error.details` per `error-details/execution-requirement-unmet.json`.
+     *
+     * @minItems 1
+     */
+    execution_requirements?: [ProductExecutionRequirement, ...ProductExecutionRequirement[]];
     targeting_resolution?: ProductTargetingResolution;
     /**
      * Immutable population-level evidence explaining why this inventory may suit an audience. This supports discovery, comparison, and planning only. It does not imply exact demographic targeting, user-level signal membership, or legal-age verification. Sellers MUST publish each distinct snapshot with a new snapshot_id and content_digest.
@@ -2697,6 +2727,7 @@ export type Product = {
           | 'views'
           | 'completed_views'
           | 'viewed_seconds'
+          | 'viewable_rate'
           | 'attention_seconds'
           | 'attention_score'
           | 'engagements'
@@ -2710,6 +2741,7 @@ export type Product = {
           | 'views'
           | 'completed_views'
           | 'viewed_seconds'
+          | 'viewable_rate'
           | 'attention_seconds'
           | 'attention_score'
           | 'engagements'
@@ -2729,6 +2761,12 @@ export type Product = {
        * Video view duration thresholds (in seconds) this product supports for completed_views goals. Only relevant when supported_metrics includes 'completed_views'. When absent, the seller uses their platform default. Buyers must set view_duration_seconds to a value in this list — sellers reject unsupported values.
        */
       supported_view_durations?: number[];
+      /**
+       * Viewability standards this product can optimize viewable_rate goals against. Only relevant when supported_metrics includes 'viewable_rate'. When absent, buyers cannot assume a specific standard is supported and sellers reject unsupported values. Buyers must set the goal's standard to a value in this list when it is present.
+       *
+       * @minItems 1
+       */
+      supported_viewability_standards?: [ViewabilityStandard, ...ViewabilityStandard[]];
       /**
        * Target kinds available for metric goals on this product. Values match target.kind on the optimization goal. Only these target kinds are accepted — goals with unlisted target kinds will be rejected. When omitted, buyers can set target-less metric goals (maximize volume within budget) but cannot set specific targets.
        */
@@ -3655,6 +3693,72 @@ export type DownstreamConnectionRequirement = {
    * Expiration time for the downstream grant, when known.
    */
   expires_at?: string;
+} & {
+  /**
+   * Stable provider or platform namespace, preferably lowercase. Examples: `social.example`, `shortvideo.example`, or a seller-defined namespace. Omit only when the requirement is provider-agnostic, or when an `authorization_url` fully routes the human to the correct provider-specific connection flow.
+   */
+  provider?: string;
+  /**
+   * Kind of downstream connection required. `advertiser_account` is the platform account used to buy/manage ads. `publisher_identity` is the creator, page, channel, organization, or profile that owns source posts. `post_authorization` is a post-scoped grant when the platform authorizes individual posts instead of, or in addition to, the owning identity.
+   */
+  connection_type: 'advertiser_account' | 'publisher_identity' | 'post_authorization';
+  /**
+   * Concrete AdCP protocol operation names that require this downstream connection. Sellers SHOULD include this in product declarations when the requirement is known ahead of time, and in AUTHORIZATION_REQUIRED details when it explains the failed operation. Prefer specific operation names such as `list_creatives`, `sync_creatives`, `create_media_buy`, `get_media_buy_delivery`, or `get_creative_delivery` over broad category labels such as `reporting`.
+   */
+  required_for?: string[];
+  /**
+   * Granularity of the downstream grant.
+   */
+  scope?: 'account' | 'identity' | 'post' | 'unknown';
+  /**
+   * Current seller-observed state for this downstream connection when known. Product declarations MAY omit status or use `unknown`; AUTHORIZATION_REQUIRED details SHOULD use `missing`, `expired`, or `revoked` for the connection that blocked the call.
+   */
+  status?: 'connected' | 'missing' | 'pending' | 'expired' | 'revoked' | 'not_required' | 'unknown';
+  /**
+   * Seller-defined identifier for an already-created downstream connection. Omit when no connection exists yet or when exposing it would leak platform/account state.
+   */
+  connection_id?: string;
+  /**
+   * Optional opaque provider-native resource hint, such as a platform account id, profile URL, handle, channel id, post id, or post URL. This is a hint for routing authorization, not proof that authorization exists.
+   */
+  resource_ref?: {
+    /**
+     * Provider-native advertiser or business account id, when safe to disclose.
+     */
+    platform_account_id?: string;
+    /**
+     * Provider-native creator, page, channel, organization, or profile id, when safe to disclose.
+     */
+    identity_id?: string;
+    /**
+     * Provider-native public handle for the owning identity, when available.
+     */
+    handle?: string;
+    /**
+     * Public URL for the owning identity, when available.
+     */
+    profile_url?: string;
+    /**
+     * Provider-native post id, when the grant is post-scoped or the failed request referenced a specific post.
+     */
+    post_id?: string;
+    /**
+     * Public URL for the referenced post, when available.
+     */
+    post_url?: string;
+  };
+  /**
+   * Seller-hosted or provider-hosted URL where a human can complete or restore this downstream connection.
+   */
+  authorization_url?: string;
+  /**
+   * Human-readable instructions for completing or restoring this downstream connection.
+   */
+  authorization_instructions?: string;
+  /**
+   * Expiration time for the downstream grant, when known.
+   */
+  expires_at?: string;
 };
 /**
  * Represents a specific public ad placement within a product's inventory. `kind` identifies the authority: `publisher_ref` resolves the canonical `{publisher_domain, placement_id}` in the publisher's adagents.json; `seller_inline` is defined by the sales agent and is self-contained only when paired with `seller_agent`. Legacy inline placements without seller_agent remain valid but are scoped to the enclosing seller and product. Whether a publisher reference resolved from publisher-hosted adagents.json or a community-maintained fallback is resolver metadata, not placement structure. Placement selection purchases inventory; creative assignments may then route creatives only within the purchased set.
@@ -4013,45 +4117,9 @@ export type VendorMetricID = string;
  */
 export type MediaBuyAvailableActionID = MediaBuyValidAction | 'update_media_buy_frequency_cap';
 /**
- * Optional advisory machine-readable bounds buyers can use during product selection. The proposal must restate any binding bounds in commercial_terms.change_terms[].constraints.
+ * Identifier of one seller-advertised managed reporting-delivery offering, matching get_adcp_capabilities.media_buy.reporting_delivery.offerings[].offering_id. Shared by the legacy and canonical product reporting capabilities.
  */
-export type MediaBuyChangeTermConstraints =
-  | BudgetChangeConstraints
-  | FlightChangeConstraints
-  | PackageCountConstraints
-  | EffectiveTimingConstraints;
-export type BudgetChangeConstraints =
-  | {
-    }
-  | {
-    }
-  | {
-    }
-  | {
-    };
-export type FlightChangeConstraints =
-  | {
-    }
-  | {
-    }
-  | {
-    }
-  | {
-    };
-export type PackageCountConstraints =
-  | {
-    }
-  | {
-    }
-  | {
-    };
-export type EffectiveTimingConstraints =
-  | {
-    }
-  | {
-    }
-  | {
-    };
+export type ReportingDeliveryOfferingID = string;
 /**
  * Product-scoped demographic breakdown support for by_demographic reporting. Declares reportable age ranges and measurement systems independently from demographic targeting execution.
  */
@@ -4517,6 +4585,13 @@ export type MediaBuyFrequencyCapSupport = FrequencyCapConstraints & {
    */
   supported_control_modes?: [MediaBuyFrequencyCapControlMode, ...MediaBuyFrequencyCapControlMode[]];
 };
+/**
+ * Experimental. One account resource a package on the product needs before it can be created. `kind` determines the binding: `event_source` via `packages[].optimization_goals[].event_sources[]`, `catalog` via `packages[].catalogs[]`, `downstream_connection` by completing the connection. Account-independent: MUST NOT carry account-specific resource IDs or names. Alternatives inside one requirement are any-of.
+ */
+export type ProductExecutionRequirement =
+  | EventSourceExecutionRequirement
+  | CatalogExecutionRequirement
+  | DownstreamConnectionExecutionRequirement;
 /**
  * Sparse, buyer-reviewable change from targeting requested in get_products to targeting bound to a returned configured product. Entries are applied in array order to the original targeting_overlay; after every entry, the complete result MUST validate against targeting.json. A seller MUST NOT emit two replace operations for the same path or combine replace and remove_values on the same path. Selecting the configured product_id accepts the ordered result.
  */
@@ -5084,7 +5159,7 @@ export type Proposal = {
    */
   description?: string;
   /**
-   * Products and budget constraints in this plan. Fixed proposals require allocation_percentage on every entry and percentages MUST sum to 100. Seller-optimized proposals forbid exact allocation_percentage and may instead supply min_spend_target_percentage and max_spend_percentage. Publishers are responsible for validating cross-entry sums; buyers SHOULD validate them before execution.
+   * Products and budget constraints in this plan. Fixed proposals require allocation_percentage on every entry and percentages MUST sum to 100. Seller-optimized proposals forbid exact allocation_percentage and may instead supply min_spend_target_percentage and max_spend_percentage, each only when the seller advertises the matching package-control capability (seller_optimized_min_spend_targets, seller_optimized_package_budgets). Publishers are responsible for validating cross-entry sums; buyers SHOULD validate them before execution.
    *
    * @minItems 1
    */
@@ -5130,7 +5205,7 @@ export type Proposal = {
   ext?: ExtensionObject;
 };
 /**
- * How a media buy's total budget is allocated across its packages. Fixed allocation preserves independent package budgets. Seller-optimized allocation delegates continuous cross-package allocation to the seller within the media-buy total, package caps, minimum-spend targets, flight windows, and pacing controls. When a seller-optimized media-buy BiddingPolicy carries cost_per or roas, that control binds to this allocation block's primary optimization goal rather than independently to each package goal.
+ * How a media buy's total budget is allocated across its packages. Omission on a request means fixed allocation (legacy-compatible); buyer agents SHOULD send this block explicitly ({mode: "fixed"} or seller_optimized) rather than rely on omission, and SHOULD ask the principal rather than guess when the instruction does not determine whether the budget is one shared pool or split per package. Fixed allocation preserves independent package budgets. Seller-optimized allocation delegates continuous cross-package allocation to the seller within the media-buy total, package caps, minimum-spend targets, flight windows, and pacing controls. The core seller-optimized contract is gated by media_buy.features.seller_optimized_budget; package caps, minimum-spend targets, and package pacing are separately gated by seller_optimized_package_budgets, seller_optimized_min_spend_targets, and seller_optimized_package_pacing; an undeclared package control is rejected with UNSUPPORTED_FEATURE before any over-subscription validation. Core seller-optimized pacing guarantees only omitted or `even` media-buy pacing; sellers MAY reject `asap` or `front_loaded` with UNSUPPORTED_FEATURE and MUST NOT coerce them to `even`. When a seller-optimized media-buy BiddingPolicy carries cost_per or roas, that control binds to this allocation block's primary optimization goal rather than independently to each package goal.
  */
 export type BudgetAllocation =
   | {
@@ -5155,170 +5230,6 @@ export type BudgetAllocation =
         ...(OptimizationGoal & {
         })[]
       ];
-    };
-/**
- * A single objective function: what to maximize or optimize, in what units, and in what priority order. Used on packages to optimize delivery within one package and on seller-optimized budget allocations to allocate spend across packages. Currency-bearing execution policy belongs in BiddingPolicy in 3.2. Legacy target.cost_per and target.per_ad_spend remain accepted only on package goals for migration and are deprecated. The primary goal is the earliest array entry among goals with the lowest explicit numeric priority; goals without priority follow all explicitly prioritized goals; when all priorities are omitted, the first entry is primary. This array-order tie-break makes duplicate priorities deterministic.
- */
-export type OptimizationGoal =
-  | {
-      kind: 'metric';
-      /**
-       * Seller-native metric to optimize for. Delivery metrics: clicks (link clicks, swipe-throughs, CTA taps that navigate away), views (viewable impressions), completed_views (video/audio completions — see view_duration_seconds), reach (unique audience reach — see reach_unit and target_frequency). Duration/score metrics: viewed_seconds (time in view per impression — reported back via `delivery-metrics.viewability.viewed_seconds`, governed by the viewability `standard`). Audience action metrics: engagements (any direct interaction with the ad unit beyond viewing — social reactions/comments/shares, story/unit opens, interactive overlay taps, companion banner interactions on audio and CTV), follows (new followers, page likes, artist/podcast/channel follows, or free channel/feed subscribes; paid subscriptions use event_type: subscribe), saves (saves, bookmarks, playlist adds, pins — signals of intent to return), profile_visits (visits to the brand's in-platform page — profile, artist page, channel, or storefront. Does not include external website clicks, which are covered by 'clicks'). **DEPRECATED values** (slated for removal at next major): `attention_seconds` and `attention_score` — these have no industry-graduated definition (DoubleVerify, IAS, Adelaide, TVision, Lumen each define them differently) and cannot be meaningfully optimized for without a vendor binding. Use `kind: 'vendor_metric'` with an explicit `vendor` and `metric_id` instead — that path binds the goal to a specific measurement vendor and reconciles to the same `(vendor, metric_id)` key in delivery's `vendor_metric_values[]`. Sellers MAY reject the deprecated values with `TERMS_REJECTED` and a suggestion to use the `vendor_metric` kind.
-       */
-      metric:
-        | 'clicks'
-        | 'views'
-        | 'completed_views'
-        | 'viewed_seconds'
-        | 'attention_seconds'
-        | 'attention_score'
-        | 'engagements'
-        | 'follows'
-        | 'saves'
-        | 'profile_visits'
-        | 'reach';
-      /**
-       * Unit for reach measurement. Required when metric is 'reach'. Must be a value declared in the product's metric_optimization.supported_reach_units.
-       */
-      reach_unit?: ReachUnit;
-      /**
-       * Target frequency band for reach optimization. Only applicable when metric is 'reach'. Frames frequency as an optimization signal: the seller should treat impressions toward entities already within the [min, max] band as lower-value, and impressions toward unreached entities as higher-value. This shifts budget toward fresh reach rather than re-reaching known users. When omitted, the seller maximizes unique reach without a frequency constraint. A hard cap can still be layered via targeting_overlay.frequency_cap if a ceiling is needed.
-       */
-      target_frequency?:
-        | {
-          }
-        | {
-          };
-      /**
-       * Minimum video view duration in seconds that qualifies as a completed_view for this goal. Only applicable when metric is 'completed_views'. When omitted, the seller uses their platform default (typically 2–15 seconds). Common values: 2 (Snap/LinkedIn default), 6 (TikTok), 15 (Snap 15-second views, Meta ThruPlay). Sellers declare which durations they support in metric_optimization.supported_view_durations. Sellers must reject goals with unsupported values — silent rounding would create measurement discrepancies.
-       */
-      view_duration_seconds?: number;
-      /**
-       * Target for this metric. When omitted, the seller optimizes for maximum metric volume within budget.
-       */
-      target?:
-        | {
-            kind: 'cost_per';
-            /**
-             * Target cost per metric unit in the buy currency
-             */
-            value: number;
-          }
-        | {
-            kind: 'threshold_rate';
-            /**
-             * Minimum per-impression value. Units depend on the metric: proportion (clicks, views, completed_views), seconds (viewed_seconds, attention_seconds), or score (attention_score).
-             */
-            value: number;
-          };
-      /**
-       * Relative priority among sibling goals. Lower numbers rank first. Goals without priority follow explicitly prioritized goals. Ties use array order, so the earliest goal at the lowest explicit priority is primary; when all priorities are omitted, the first goal is primary.
-       */
-      priority?: number;
-    }
-  | {
-      kind: 'event';
-      /**
-       * Event source and type pairs that feed this goal. Each entry identifies a source and event type to include. When the seller supports multi_source_event_dedup (declared in get_adcp_capabilities), they deduplicate by event_id across all entries — the same business event from multiple sources counts once, using value_field and value_factor from the first matching entry. When multi_source_event_dedup is false or absent, buyers should use a single entry per goal; the seller will use only the first entry. All event sources must be configured via sync_event_sources.
-       *
-       * @minItems 1
-       */
-      event_sources: [
-        {
-          /**
-           * Event source to include (must be configured on this account via sync_event_sources)
-           */
-          event_source_id: string;
-          event_type: EventType;
-          /**
-           * Required when event_type is 'custom'. Platform-specific name for the custom event.
-           */
-          custom_event_name?: string;
-          /**
-           * Which field in the event's custom_data carries the monetary value. The seller must use this field for value extraction and aggregation when computing ROAS and conversion value metrics. Required on at least one entry when target.kind is 'per_ad_spend' or 'maximize_value' — sellers must reject these target kinds when no event source entry includes value_field. When canonical bidding.roas binds to this goal, every referenced value-bearing source MUST declare value_currencies containing the media-buy currency; the seller validates this at buy creation. Once that source contract is declared, log_event rejects monetary records whose currency is missing or absent from the list. For each buy, only records exactly matching its media-buy currency contribute to ROAS; records in other declared currencies remain available to matching buys, and sellers MUST NOT convert between them. When present without a value-oriented target, the seller may use it for delivery reporting but must not change the objective. Common values: 'value', 'order_total', 'profit_margin'. This is not passed as a parameter to underlying platform APIs — the seller maps it to their platform's value ingestion mechanism.
-           */
-          value_field?: string;
-          /**
-           * Unit-scaling multiplier the seller must apply to value_field before aggregation. Use -1 for refund events (negate the value), 0.01 for values in cents, -0.01 for refunds in cents. It MUST NOT be used for currency conversion. A value of 0 zeroes out this source's value contribution (the source still counts for event dedup). Defaults to 1. This is not passed as a parameter to underlying platform APIs — the seller applies it when computing aggregated value metrics.
-           */
-          value_factor?: number;
-        },
-        ...{
-          /**
-           * Event source to include (must be configured on this account via sync_event_sources)
-           */
-          event_source_id: string;
-          event_type: EventType;
-          /**
-           * Required when event_type is 'custom'. Platform-specific name for the custom event.
-           */
-          custom_event_name?: string;
-          /**
-           * Which field in the event's custom_data carries the monetary value. The seller must use this field for value extraction and aggregation when computing ROAS and conversion value metrics. Required on at least one entry when target.kind is 'per_ad_spend' or 'maximize_value' — sellers must reject these target kinds when no event source entry includes value_field. When canonical bidding.roas binds to this goal, every referenced value-bearing source MUST declare value_currencies containing the media-buy currency; the seller validates this at buy creation. Once that source contract is declared, log_event rejects monetary records whose currency is missing or absent from the list. For each buy, only records exactly matching its media-buy currency contribute to ROAS; records in other declared currencies remain available to matching buys, and sellers MUST NOT convert between them. When present without a value-oriented target, the seller may use it for delivery reporting but must not change the objective. Common values: 'value', 'order_total', 'profit_margin'. This is not passed as a parameter to underlying platform APIs — the seller maps it to their platform's value ingestion mechanism.
-           */
-          value_field?: string;
-          /**
-           * Unit-scaling multiplier the seller must apply to value_field before aggregation. Use -1 for refund events (negate the value), 0.01 for values in cents, -0.01 for refunds in cents. It MUST NOT be used for currency conversion. A value of 0 zeroes out this source's value contribution (the source still counts for event dedup). Defaults to 1. This is not passed as a parameter to underlying platform APIs — the seller applies it when computing aggregated value metrics.
-           */
-          value_factor?: number;
-        }[]
-      ];
-      /**
-       * Target cost or return for this event goal. When omitted, the seller optimizes for maximum conversion count within budget — regardless of whether value_field is present on event sources. The presence of value_field alone does not change the optimization objective; it only makes value available for reporting. An explicit target of maximize_value or per_ad_spend is required to steer toward value.
-       */
-      target?:
-        | {
-            kind: 'cost_per';
-            /**
-             * Target cost per event in the buy currency
-             */
-            value: number;
-          }
-        | {
-            kind: 'per_ad_spend';
-            /**
-             * Target return ratio (e.g., 4.0 means $4 of value per $1 spent)
-             */
-            value: number;
-          }
-        | {
-            kind: 'maximize_value';
-          };
-      /**
-       * Attribution window for this optimization goal — references the canonical `attribution-window` shape (post_click, post_view, model). Values must match an option declared in the seller's `conversion_tracking.attribution_windows` capability. Sellers MUST reject windows not in their declared capabilities. When the entire field is omitted, the seller uses their default window.
-       */
-      attribution_window?: AttributionWindow;
-      /**
-       * Relative priority among sibling goals. Lower numbers rank first. Goals without priority follow explicitly prioritized goals. Ties use array order, so the earliest goal at the lowest explicit priority is primary; when all priorities are omitted, the first goal is primary.
-       */
-      priority?: number;
-    }
-  | {
-      kind: 'vendor_metric';
-      vendor: BrandReference;
-      metric_id: VendorMetricID;
-      /**
-       * Target for this vendor metric. When omitted, the seller optimizes for maximum metric volume / score within budget. `cost_per` and `threshold_rate` semantics mirror the same target kinds on the `metric` kind — units are vendor-defined and depend on the vendor's `measurement.metrics[]` declaration for this `metric_id`.
-       */
-      target?:
-        | {
-            kind: 'cost_per';
-            /**
-             * Target cost per metric unit in the buy currency. Units of the metric are vendor-defined.
-             */
-            value: number;
-          }
-        | {
-            kind: 'threshold_rate';
-            /**
-             * Minimum per-impression value. Units of the metric are vendor-defined.
-             */
-            value: number;
-          };
-      /**
-       * Relative priority among sibling goals. Lower numbers rank first. Goals without priority follow explicitly prioritized goals. Ties use array order, so the earliest goal at the lowest explicit priority is primary; when all priorities are omitted, the first goal is primary.
-       */
-      priority?: number;
     };
 /**
  * Canonical response contract for get_products, including completed results, terminal failures, wholesale unchanged responses, and the structured GetProductsRejected business outcome.
@@ -5658,7 +5569,7 @@ export interface Error {
   details?: {
   };
   /**
-   * Agent recovery classification. transient: retry after delay (rate limit, service unavailable, timeout). correctable: fix the request and resend (invalid field, budget too low, creative rejected). terminal: requires human action (account suspended, payment required, account not found). Senders SHOULD populate `recovery` on every error from 3.1 onward — it is the normative carrier of recovery semantics across version skew. When `buyer_reason` is present, `recovery` is required and MUST classify that buyer-actionable reason. If the enclosing code and buyer reason are both registered, their standard recovery classifications MUST agree with each other and with this field. A receiver that does not recognize `error.code` (a newer code, or a platform-specific code) MUST still be able to classify the error from `recovery`. The `enumMetadata.recovery` block in `enums/error-code.json` is the documentary mirror for known top-level and buyer-reason codes; `error.recovery` on the wire is authoritative.
+   * Agent recovery classification. transient: retry after delay (rate limit, service unavailable, timeout). correctable: fix the request and resend (invalid field, budget too low, creative rejected). terminal: requires human action (account suspended, payment required, account not found). AdCP 3.2 producers MUST populate `recovery` on every error; 3.1 producers SHOULD populate it. The shared 3.x schema intentionally does not add `recovery` to `required` so retained and live errors from earlier 3.x producers remain decodable. When `buyer_reason` is present, `recovery` is required and MUST classify that buyer-actionable reason. If the enclosing code and buyer reason are both registered, their standard recovery classifications MUST agree with each other and with this field. A receiver that does not recognize `error.code` (a newer code, or a platform-specific code) MUST still be able to classify the error from `recovery`. When a legacy error omits `recovery`, receivers use the registered classification for a known code and fall back to `transient` for an unknown code, subject to the bounded retry budget. The `enumMetadata.recovery` block in `enums/error-code.json` is the documentary mirror for known top-level and buyer-reason codes; `error.recovery` on the wire is authoritative when present.
    */
   recovery?: 'transient' | 'correctable' | 'terminal';
   /**
@@ -6522,7 +6433,7 @@ export interface ReportingCapabilities {
    */
   expected_delay_minutes: number;
   /**
-   * Timezone for this product's reporting periods. Use 'UTC' or an IANA timezone (e.g., 'America/New_York'). This explicit reporting clock may equal Account.timezone or differ when the upstream platform reports on a separate boundary; buyers MUST use this value for daily/monthly report alignment.
+   * Timezone for this product's reporting periods. Use 'UTC' or an IANA timezone (e.g., 'America/New_York'). This explicit reporting clock may equal Account.timezone or differ when the upstream platform reports on a separate boundary, so buyers MUST NOT infer it from Account.timezone. It is the reporting timezone for this product's delivery reporting: get_media_buy_delivery start_date, end_date, and daily_breakdown dates are calendar dates in it, and reporting_period boundaries and daily, weekly, or monthly windows fall on its calendar boundaries. Buyers MUST use this value for daily/monthly report alignment.
    */
   timezone: string;
   /**
@@ -6532,7 +6443,7 @@ export interface ReportingCapabilities {
   /**
    * Product-scoped subset of get_adcp_capabilities.media_buy.reporting_delivery.offerings[].offering_id that packages using this product can satisfy. This binds seller-wide managed-delivery offerings to product/package eligibility. An empty array explicitly declares no managed offering; absence means product-level applicability is unknown and MUST NOT be inferred from the seller-wide list. Account, seat, credential, or provider constraints may narrow support further during sync_accounts validation.
    */
-  reporting_delivery_offering_ids?: string[];
+  reporting_delivery_offering_ids?: ReportingDeliveryOfferingID[];
   /**
    * Metrics available in reporting. Impressions and spend are always implicitly included. When a creative format declares reported_metrics, buyers receive the intersection of these product-level metrics and the format's reported_metrics.
    */
@@ -7024,6 +6935,47 @@ export interface ProductIdentity {
    * Human-readable methodology for this product's custom reach unit. Required when the product reports reach or frequency with reach_unit custom, including frequency-only reporting.
    */
   reach_methodology?: string;
+}
+/**
+ * Each package needs event optimization fed by a conversion event source; declare it only when the product requires event optimization. Satisfied when an `optimization_goals[]` entry of `kind: "event"` that the seller will use has a used `event_sources[]` entry referencing an event source available to the account (registered via `sync_event_sources`, or the seller-managed source it returns under `conversion_tracking.platform_managed: true`) with an `event_type` accepted here.
+ */
+export interface EventSourceExecutionRequirement {
+  kind: 'event_source';
+  /**
+   * Event types that satisfy the requirement (any-of): the satisfying `event_sources[]` entry MUST use one of these `event_type` values. Omit when any event type satisfies it.
+   *
+   * @minItems 1
+   */
+  event_types?: [EventType, ...EventType[]];
+  ext?: ExtensionObject;
+}
+/**
+ * Each package needs a catalog. Satisfied by a `packages[].catalogs[]` entry whose `type` is in `catalog_types`. App promotion uses `["app"]`; app items carry `app_id`, `bundle_id`, `apple_id`, and `store_url`. Every listed type MUST also appear in the product's `catalog_types`.
+ */
+export interface CatalogExecutionRequirement {
+  kind: 'catalog';
+  /**
+   * Catalog types that satisfy the requirement (any-of). One catalog of any listed type satisfies it.
+   *
+   * @minItems 1
+   */
+  catalog_types: [CatalogType, ...CatalogType[]];
+  ext?: ExtensionObject;
+}
+/**
+ * The product needs a seller-side platform connection or grant, such as the advertiser account or the publisher identity the ads run as. Satisfied by completing the connection, not by a request field; a missing, pending, expired, or revoked connection fails with `AUTHORIZATION_REQUIRED` per `error-details/authorization-required.json`. A connection needed by every package MUST be declared here; one needed only by some formats stays in that format declaration's `required_connections`. With several eligible connected identities, the seller applies its documented default.
+ */
+export interface DownstreamConnectionExecutionRequirement {
+  kind: 'downstream_connection';
+  /**
+   * The required connection. Account-independent: `status` is omitted or `unknown`; `resource_ref`, `connection_id`, and `expires_at` MUST be omitted; `required_for`, when present, includes `create_media_buy`.
+   */
+  connection: DownstreamConnectionRequirement & {
+    status?: 'unknown';
+    required_for?: {
+    };
+  };
+  ext?: ExtensionObject;
 }
 /**
  * Discovery-time targeting resolution bound to this configured product. modifications sparsely disclose product-specific differences from get_products.targeting_overlay. Request-level brief interpretation is returned once on GetProductsResponse.targeting_resolution. Exact structured overlay values are not repeated. Selecting product_id accepts the disclosed modifications; product forecast and pricing MUST reflect them.
@@ -7757,11 +7709,11 @@ export interface ProductAllocation {
    */
   allocation_percentage?: number;
   /**
-   * Soft minimum-spend target as a percentage of the executed total budget. Only valid in seller-optimized proposals. The seller SHOULD attempt to reach it, but it is not a delivery guarantee. Minimum targets across allocations MUST sum to no more than 100.
+   * Soft minimum-spend target as a percentage of the executed total budget. Only valid in seller-optimized proposals, and sellers MUST NOT emit it unless they advertise media_buy.features.seller_optimized_min_spend_targets. The seller SHOULD attempt to reach it, but it is not a delivery guarantee. Minimum targets across allocations MUST sum to no more than 100.
    */
   min_spend_target_percentage?: number;
   /**
-   * Hard maximum share of the executed total budget that this product may spend. Only valid in seller-optimized proposals. Maximums across allocations MUST collectively permit 100 percent of the budget to be spent.
+   * Hard maximum share of the executed total budget that this product may spend. Only valid in seller-optimized proposals, and sellers MUST NOT emit it unless they advertise media_buy.features.seller_optimized_package_budgets. Maximums across allocations MUST collectively permit 100 percent of the budget to be spent.
    */
   max_spend_percentage?: number;
   pacing?: Pacing;
@@ -8209,6 +8161,33 @@ export type ProductAudienceEvidenceRequirements = {
   ext?: ExtensionObject;
 };
 /**
+ * Reverse-forecast planning input: a goal plus a volume, a cost_per target, or both (at least one). Goals use the forecastable-metric and event-type vocabularies, so forecast points always carry the goal's metric or event key in metrics, with forecast_range_unit 'clicks' or 'conversions' where those units apply. volume and cost_per define the request shapes and answers, which travel on proposals. list_products returns no proposals, so there the field is inert for every seller, declaring or not: it does not filter or rank products, produces no answer, and MUST NOT cause a rejection beyond schema validation. On request_proposals and proposal refinement, sellers not declaring media_buy.outcome_target MUST reject the field with UNSUPPORTED_FEATURE rather than silently ignore it; declaring sellers MAY reject a goal they cannot plan against at all (for example 'spend', which restates budget) with INVALID_REQUEST naming criteria.outcome_target.goal. A planning input, not a delivery guarantee: obligations arise only at proposal finalization.
+ */
+export type OutcomeTarget = {
+} & {
+  /**
+   * The outcome to plan against: a seller-tracked delivery metric or an advertiser conversion event.
+   */
+  goal:
+    | {
+        kind: 'metric';
+        metric: ForecastableMetric;
+      }
+    | {
+        kind: 'event';
+        event_type: EventType;
+        /**
+         * Required when event_type is 'custom'. Platform-specific name for the custom event.
+         */
+        custom_event_name?: string;
+      };
+  /**
+   * Desired total volume of the goal's metric or event across the planned flight. Alone, the seller solves for budget and answers with total_budget_guidance and a forecast. With cost_per, the seller plans toward the volume at the cost: under a cap it SHOULD keep the buyer's amount and forecast the lower volume it can deliver, unless no volume can be planned at that amount; under a target the ask is plannable when the seller can forecast the volume around it.
+   */
+  volume?: number;
+  cost_per?: OutcomeTargetCostPer;
+};
+/**
  * Filter catalog to exact canonical item keys. The key field is offering_id for offering, store_id for store, hotel_id for hotel, flight_id for flight, job_id for job, vehicle_id for vehicle, listing_id for real_estate, program_id for education, destination_id for destination, and app_id for app. Product, inventory, and promotion catalogs use the stable normalized source identifier retained during ingestion (for example a retailer SKU). The same canonical key is used by catalog availability item_id.
  *
  * @minItems 1
@@ -8227,7 +8206,7 @@ export type Gtins = [string, ...string[]];
  */
 export type Tags = [string, ...string[]];
 /**
- * Canonical product fields a buyer requests from list_products. Required product_id and name fields are always returned. list_applications also overrides projection whenever a property or collection list is in the effective targeting because it is the decision receipt for seller-specific list matching. Legacy named-format fields remain available only through get_products.
+ * Canonical product fields a buyer requests from list_products. Required product_id and name fields are always returned. list_applications also overrides projection whenever a property or collection list is in the effective targeting because it is the decision receipt for seller-specific list matching. targeting_resolution and expires_at override projection whenever the seller returns modifications, as does collection_targeting_allowed whenever returned overlay_support declares collection_list. Legacy named-format fields remain available only through get_products.
  *
  * @minItems 1
  */
@@ -8256,6 +8235,8 @@ export type ProductResponseFields = [
     | 'signal_targeting_rules'
     | 'demographic_targeting'
     | 'overlay_support'
+    | 'collections'
+    | 'collection_targeting_allowed'
     | 'media_buy_support'
     | 'audience_evidence'
     | 'audience_evidence_selections'
@@ -8263,8 +8244,10 @@ export type ProductResponseFields = [
     | 'catalog_match'
     | 'list_applications'
     | 'brief_relevance'
+    | 'targeting_resolution'
     | 'acceptance_policy_profile_ids'
     | 'identity'
+    | 'execution_requirements'
     | 'expires_at'
     | 'allowed_actions'
   ),
@@ -8292,6 +8275,8 @@ export type ProductResponseFields = [
     | 'signal_targeting_rules'
     | 'demographic_targeting'
     | 'overlay_support'
+    | 'collections'
+    | 'collection_targeting_allowed'
     | 'media_buy_support'
     | 'audience_evidence'
     | 'audience_evidence_selections'
@@ -8299,8 +8284,10 @@ export type ProductResponseFields = [
     | 'catalog_match'
     | 'list_applications'
     | 'brief_relevance'
+    | 'targeting_resolution'
     | 'acceptance_policy_profile_ids'
     | 'identity'
+    | 'execution_requirements'
     | 'expires_at'
     | 'allowed_actions'
   )[]
@@ -8398,6 +8385,9 @@ export interface ProductDiscoveryCriteria {
   media_buy_frequency_cap?: MediaBuyFrequencyCap;
   required_overlay_support?: TargetingOverlayRequirements;
   required_media_buy_support?: ProductMediaBuySupportRequirements;
+  /**
+   * Reverse-forecast planning input for sellers declaring media_buy.outcome_target: a goal plus a volume, a cost target, or both, answered on proposals. Inert on list_products for every seller. See outcome-target.json.
+   */
   outcome_target?: OutcomeTarget;
   acceptance_context?: AcceptanceContext;
   catalog?: CatalogSelection;
@@ -8418,34 +8408,38 @@ export interface CanonicalMediaBuyFeatures {
    * Seller preserves the accepted per-purchase reporting contract and exposes it on proposal and MediaBuy readback.
    */
   reporting_commitment_snapshots?: boolean;
+  /**
+   * Core seller-optimized shared-budget contract: shared total_budget, seller allocation across packages, media-buy pacing, and allocation echo.
+   */
   seller_optimized_budget?: boolean;
+  /**
+   * Package budget caps inside seller-optimized buys; implies seller_optimized_budget.
+   */
+  seller_optimized_package_budgets?: boolean;
+  /**
+   * Package minimum-spend targets inside seller-optimized buys; implies seller_optimized_budget.
+   */
+  seller_optimized_min_spend_targets?: boolean;
+  /**
+   * Package pacing inside seller-optimized buys; implies seller_optimized_budget.
+   */
+  seller_optimized_package_pacing?: boolean;
   bidding_policy?: BiddingPolicyCapability;
   [k: string]: boolean | BiddingPolicyCapability | undefined;
 }
 /**
- * Reverse-forecast planning input: the buyer states the outcome needed and the seller solves for budget. The goal is a compact planning-time object — delivery metrics use the same forecastable-metric vocabulary as forecast points, and outcome events use the same event-type vocabulary — so every permitted goal has a defined answer: the seller responds with total_budget_guidance on proposals and forecasts whose points carry the goal's metric or event key in metrics, using forecast_range_unit 'clicks' or 'conversions' to structure the curve where those units apply. Execution machinery (targets, priorities, event sources, vendor bindings) belongs to the package-level optimization-goal, which shares this vocabulary; buyers carry the same metric or event name from plan to buy. A planning input, not a delivery guarantee — obligations arise only at proposal finalization. Sellers not declaring media_buy.outcome_target MUST reject the field with UNSUPPORTED_FEATURE rather than silently ignore it; declaring sellers MAY reject a goal they cannot plan against (for example 'spend', which restates budget) with INVALID_REQUEST naming criteria.outcome_target.goal.
+ * Average cost the buyer will pay per goal result: BiddingPolicy.cost_per plus a currency. It requires a goal expressible as a canonical optimization goal; otherwise the seller rejects with INVALID_REQUEST naming criteria.outcome_target.cost_per, since the goal stays plannable by volume. With a buyer budget (offer_filters.budget_range or the brief), the seller plans the volume it can deliver within it at or below (cap) or around (target) the cost; with volume, see volume; with neither, it MUST state the spend for the volume it can deliver at the cost in total_budget_guidance. Each proposal answers in commercial_terms.bidding.cost_per, which the buyer adopts on acceptance; it is an execution control, not an expected price, and billing stays on the selected pricing option. The answer MUST NOT carry purchase-level bidding. Under fixed or omitted budget_allocation every purchase's primary optimization goal, and under seller_optimized the primary budget_allocation.optimization_goals goal, MUST match goal and resolve to one result unit as BiddingPolicy.cost_per defines it: the same metric and result-defining qualifiers, or for an event goal every event_sources[] entry carrying the goal's event_type (and custom_event_name) with one resolved attribution_window. Seller-added qualifiers (such as view_duration_seconds or reach_unit) are permitted and visible in the proposal. For an event goal the seller fills event_sources from sources available on the buyer's account for that event, buyer-synced or seller-managed, exactly one unless it advertises conversion_tracking.multi_source_event_dedup, and states attribution_window, which SHOULD be one advertised in conversion_tracking.attribution_windows; with none available it rejects. A seller MUST NOT answer with a bidding policy outside its advertised features.bidding_policy profile for the proposal's scope and allocation mode; a declaring seller without one rejects. Rejections of a target that cannot be represented or bound (strength, currency, goal, capability) use INVALID_REQUEST naming criteria.outcome_target.cost_per; a valid target with no viable inventory is outcome 'rejected'.
  */
-export interface OutcomeTarget {
+export interface OutcomeTargetCostPer {
   /**
-   * The outcome to plan against: a seller-tracked delivery metric or an advertiser conversion event.
+   * Average cost amount per goal result, denominated in currency. The answered commercial_terms.bidding.cost_per.amount MUST be greater than or equal to it: the requested amount when it is plannable, otherwise the lowest plannable amount. An amount is plannable when the seller can forecast goal volume at or below (cap) or around (target) it within the buyer's budget, spending at least offer_filters.budget_range.min when present. When the planned spend at the answered amount is below commercial_terms.total_budget, each forecast point MUST carry metrics.spend. A seller MAY return additional proposals at higher amounts under the same strength to show what volume a higher cost buys.
    */
-  goal:
-    | {
-        kind: 'metric';
-        metric: ForecastableMetric;
-      }
-    | {
-        kind: 'event';
-        event_type: EventType;
-        /**
-         * Required when event_type is 'custom'. Platform-specific name for the custom event.
-         */
-        custom_event_name?: string;
-      };
+  amount: number;
   /**
-   * Desired total volume of the goal's metric or event across the planned flight.
+   * ISO 4217 currency of amount. BiddingPolicy.cost_per has no currency because it inherits the media-buy currency, and no media buy exists at request time, so the request states it. It becomes the answer's currency: every answering proposal's purchases[].pricing.currency (which bidding amounts use) and forecast.currency MUST equal it, as MUST commercial_terms.total_budget.currency and total_budget_guidance.currency when present; sellers MUST NOT convert currency. It MUST equal offer_filters.budget_range.currency when present. The seller plans within budget_range.max when present, else at or above budget_range.min, and total_budget MUST NOT exceed max or fall below min. A seller rejects a conflict with budget_range, pricing_currencies, the account currency, or the requested products' pricing currencies with INVALID_REQUEST naming criteria.outcome_target.cost_per.
    */
-  volume: number;
+  currency: string;
+  strength: OutcomeTargetCostStrength;
 }
 /**
  * Reference and item selectors for a catalog already known to the seller. Feed URLs, mappings, schedules, and inline catalog data belong to sync_catalogs. Different selector fields combine with AND semantics; values within ids, gtins, or tags use OR semantics.
@@ -8615,6 +8609,21 @@ export type CanonicalProduct = {
    */
   format_options?: [CanonicalFormatOption, ...CanonicalFormatOption[]];
   placements?: CanonicalProductPlacement[];
+  /**
+   * Collections available in this product, each referencing collections declared in an adagents.json by domain and explicit collection_ids. The domain-only bulk-grant selector form is for authorization scoping, not product composition. A selected-mode collection_selection names collections from this set.
+   *
+   * @minItems 1
+   */
+  collections?: [
+    CollectionSelector & {
+    },
+    ...(CollectionSelector & {
+    })[]
+  ];
+  /**
+   * Whether buyers can select a subset of this product's collections through targeting_overlay.collection_list or targeting_overlay.collection_selection. When false, the product is a fixed bundle (a collection_selection that exactly restates the complete bundle remains an inherent match).
+   */
+  collection_targeting_allowed?: boolean;
   delivery_type?: DeliveryType;
   exclusivity?: Exclusivity;
   /**
@@ -8641,6 +8650,12 @@ export type CanonicalProduct = {
   media_buy_support?: ProductMediaBuySupport;
   identity?: ProductIdentity;
   /**
+   * Experimental account resources a package on this product needs before it can be created. See Product.execution_requirements for completeness, binding, and rejection rules.
+   *
+   * @minItems 1
+   */
+  execution_requirements?: [ProductExecutionRequirement, ...ProductExecutionRequirement[]];
+  /**
    * @minItems 1
    */
   audience_evidence?: [CanonicalAudienceEvidence, ...CanonicalAudienceEvidence[]];
@@ -8664,6 +8679,10 @@ export type CanonicalProduct = {
    */
   list_applications?: [InventoryListApplication, ...InventoryListApplication[]];
   brief_relevance?: string;
+  targeting_resolution?: ProductTargetingResolution;
+  /**
+   * Expiration of a request-specific configured offer. Canonical products have no is_custom flag; expires_at is what marks an offer as request-specific. After it, the buyer rediscovers.
+   */
   expires_at?: string;
   allowed_actions?: CanonicalProductAction[];
   acceptance_policy_profile_ids?: AcceptancePolicyProfileIDs;
@@ -8972,6 +8991,10 @@ export interface CanonicalReportingCapabilities {
    */
   timezone: string;
   supports_webhooks: boolean;
+  /**
+   * Product-scoped subset of get_adcp_capabilities.media_buy.reporting_delivery.offerings[].offering_id that packages using this product can satisfy. This binds seller-wide managed-delivery offerings to product/package eligibility. An empty array explicitly declares no managed offering; absence means product-level applicability is unknown and MUST NOT be inferred from the seller-wide list. Account, seat, credential, or provider constraints may narrow support further during sync_accounts validation.
+   */
+  reporting_delivery_offering_ids?: ReportingDeliveryOfferingID[];
   available_metrics: AvailableMetric[];
   vendor_metrics?: {
     vendor: BrandKey;
@@ -9203,72 +9226,6 @@ export type BiddingPolicy = {
   };
 };
 /**
- * Canonical 3.2 optimization objective. Monetary execution policy belongs in BiddingPolicy; legacy monetary targets and unbound attention metrics are excluded.
- */
-export type CanonicalOptimizationGoal =
-  | {
-      kind: 'metric';
-      metric:
-        | 'clicks'
-        | 'views'
-        | 'completed_views'
-        | 'viewed_seconds'
-        | 'engagements'
-        | 'follows'
-        | 'saves'
-        | 'profile_visits'
-        | 'reach';
-      reach_unit?: ReachUnit;
-      target_frequency?:
-        | {
-          }
-        | {
-          };
-      view_duration_seconds?: number;
-      target?: {
-        kind: 'threshold_rate';
-        value: number;
-      };
-      priority?: number;
-    }
-  | {
-      kind: 'event';
-      /**
-       * @minItems 1
-       */
-      event_sources: [
-        {
-          event_source_id: string;
-          event_type: EventType;
-          custom_event_name?: string;
-          value_field?: string;
-          value_factor?: number;
-        },
-        ...{
-          event_source_id: string;
-          event_type: EventType;
-          custom_event_name?: string;
-          value_field?: string;
-          value_factor?: number;
-        }[]
-      ];
-      target?: {
-        kind: 'maximize_value';
-      };
-      attribution_window?: AttributionWindow;
-      priority?: number;
-    }
-  | {
-      kind: 'vendor_metric';
-      vendor: BrandKey;
-      metric_id: VendorMetricID;
-      target?: {
-        kind: 'threshold_rate';
-        value: number;
-      };
-      priority?: number;
-    };
-/**
  * Buyer evidence-admissibility policy carried into the accepted purchase snapshot.
  */
 export type ProductPurchaseAudienceEvidenceRequirements = {
@@ -9494,7 +9451,7 @@ export interface ProductPurchase {
    */
   catalog_ids?: [string, ...string[]];
   /**
-   * Hard spend cap for this selection in the media-buy currency.
+   * Hard spend cap for this selection in the media-buy currency. In seller-optimized allocation it is an optional ceiling, not a reserved allocation, and requires advertised media_buy.features.seller_optimized_package_budgets; otherwise rejected with UNSUPPORTED_FEATURE before any over-subscription validation.
    */
   budget?: number;
   /**
@@ -9502,7 +9459,7 @@ export interface ProductPurchase {
    */
   daily_budget_cap?: number;
   /**
-   * Soft lifetime spend target for seller-optimized allocation.
+   * Soft lifetime spend target for seller-optimized allocation. Requires advertised media_buy.features.seller_optimized_min_spend_targets; otherwise rejected with UNSUPPORTED_FEATURE before any over-subscription validation.
    */
   min_spend_target?: number;
   impressions?: ProductPurchaseImpressions;
@@ -10181,7 +10138,7 @@ export type TargetingOverlayInput = TargetingUnknownAgeEligibilityConstraint &
     geo_countries_exclude?: GeoCountriesExclude | null;
     geo_regions?: GeoRegions | null;
     geo_regions_exclude?: GeoRegionsExclude | null;
-    geo_metros?: TargetingGeoMetros;
+    geo_metros?: TargetingGeoMetrosInput;
     geo_metros_exclude?: GeoMetrosExclude | null;
     geo_postal_areas?: GeoPostalAreas | null;
     geo_postal_areas_exclude?: GeoPostalAreasExclude | null;
@@ -10209,17 +10166,17 @@ export type TargetingOverlayInput = TargetingUnknownAgeEligibilityConstraint &
     placement_selection?: PlacementSelection | null;
     collection_selection?: TargetingCollectionSelection | null;
     age_restriction?: AgeRestriction | null;
-    device_platform?: [DevicePlatform, ...DevicePlatform[]] | null;
+    device_platform?: TargetingDevicePlatformsInput | null;
     device_platform_exclude?: DevicePlatformExclude | null;
-    device_type?: [DeviceType, ...DeviceType[]] | null;
+    device_type?: TargetingDeviceTypesInput | null;
     device_type_exclude?: DeviceTypeExclude | null;
     browser?: Browser | null;
     browser_exclude?: BrowserExclude | null;
     store_catchments?: StoreCatchments | null;
     geo_proximity?: GeoProximity | null;
-    language?: TargetingLanguages;
-    keyword_targets?: TargetingKeywords;
-    negative_keywords?: TargetingNegativeKeywords;
+    language?: TargetingLanguagesInput;
+    keyword_targets?: TargetingKeywordsInput;
+    negative_keywords?: TargetingNegativeKeywordsInput;
   };
 /**
  * Restrict delivery to specific countries. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').
@@ -10245,6 +10202,12 @@ export type GeoRegions = [string, ...string[]];
  * @minItems 1
  */
 export type GeoRegionsExclude = [string, ...string[]];
+/**
+ * Restrict delivery to specific metro areas. Each entry specifies the classification system and target values. Seller must declare supported systems in get_adcp_capabilities.
+ *
+ * @minItems 1
+ */
+export type TargetingGeoMetrosInput = [GeoMetro, ...GeoMetro[]] | null;
 /**
  * Exclude specific metro areas from delivery. Each entry specifies the classification system and excluded values. Seller must declare supported systems in get_adcp_capabilities.
  *
@@ -10313,11 +10276,23 @@ export type AudienceInclude = [string, ...string[]];
  */
 export type AudienceExclude = [string, ...string[]];
 /**
+ * Restrict to specific platforms. Use for technical compatibility (app only works on iOS). Values from Sec-CH-UA-Platform standard, extended for CTV.
+ *
+ * @minItems 1
+ */
+export type TargetingDevicePlatformsInput = [DevicePlatform, ...DevicePlatform[]];
+/**
  * Exclude specific operating-system platforms from delivery. When a platform appears in both device_platform and device_platform_exclude, exclusion wins. Sellers MUST reject a request they cannot enforce rather than silently dropping the exclusion.
  *
  * @minItems 1
  */
 export type DevicePlatformExclude = [DevicePlatform, ...DevicePlatform[]];
+/**
+ * Restrict to specific device form factors. Use for campaigns targeting hardware categories rather than operating systems (e.g., mobile-only promotions, CTV campaigns).
+ *
+ * @minItems 1
+ */
+export type TargetingDeviceTypesInput = [DeviceType, ...DeviceType[]];
 /**
  * Exclude specific device form factors from delivery (e.g., exclude CTV for app-install campaigns).
  *
@@ -10380,6 +10355,49 @@ export type StoreCatchments = [
   }[]
 ];
 /**
+ * Restrict to users with specific language preferences using canonical BCP 47 language ranges. Each buyer range is evaluated against a user's language-preference tag with RFC 4647 section 3.3.1 Basic Filtering: 'fr' matches 'fr', 'fr-CA', and 'fr-FR', while 'fr-CA' matches 'fr-CA' and more-specific descendants but not 'fr' or 'fr-FR'. Values use OR logic.
+ *
+ * @minItems 1
+ */
+export type TargetingLanguagesInput = [LanguageTag, ...LanguageTag[]] | null;
+/**
+ * Keyword targeting for search and retail media platforms. Restricts delivery to queries matching the specified keywords. Each keyword is identified by the tuple (keyword, match_type) — the same keyword string with different match types are distinct targets. Sellers SHOULD reject duplicate (keyword, match_type) pairs within a single request. Seller must declare support in get_adcp_capabilities.
+ *
+ * @minItems 1
+ */
+export type TargetingKeywordsInput =
+  | [
+      {
+        /**
+         * The keyword to target
+         */
+        keyword: string;
+        match_type: MatchType;
+        /**
+         * Per-keyword bid price, denominated in the same currency as the package's pricing option. Overrides the package-level bid_price for this keyword. Inherits the max_bid interpretation from the pricing option: when max_bid is true, this is the keyword's bid ceiling; when false, this is the exact bid. If omitted, the package bid_price applies.
+         */
+        bid_price?: number;
+      },
+      ...{
+        /**
+         * The keyword to target
+         */
+        keyword: string;
+        match_type: MatchType;
+        /**
+         * Per-keyword bid price, denominated in the same currency as the package's pricing option. Overrides the package-level bid_price for this keyword. Inherits the max_bid interpretation from the pricing option: when max_bid is true, this is the keyword's bid ceiling; when false, this is the exact bid. If omitted, the package bid_price applies.
+         */
+        bid_price?: number;
+      }[]
+    ]
+  | null;
+/**
+ * Keywords to exclude from delivery. Queries matching these keywords will not trigger the ad. Each negative keyword is identified by the tuple (keyword, match_type). Seller must declare support in get_adcp_capabilities.
+ *
+ * @minItems 1
+ */
+export type TargetingNegativeKeywordsInput = [NegativeKeyword, ...NegativeKeyword[]] | null;
+/**
  * @minItems 1
  */
 export type OptimizationGoals = [CanonicalOptimizationGoal, ...CanonicalOptimizationGoal[]];
@@ -10414,6 +10432,13 @@ export interface BuyProductsRequest {
    * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
+  /**
+   * Human-readable name for this media buy, shared by buyer and seller for trafficking UI display and operational communication. When supplied, the seller MUST persist it and echo it unchanged on the commitment success response and subsequent get_media_buys reads. The name is operational metadata outside accepted_proposal and is not covered by terms_digest. This display label is not an identifier or financial reference.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern \S
+   */
+  name?: string;
   /**
    * Execution account. A natural-key account is the single brand source and MUST NOT be combined with top-level brand.
    */
@@ -10497,7 +10522,7 @@ export interface ProductPurchaseInput {
   format_option_refs?: FormatOptionRefs;
   catalog_ids?: CatalogIds;
   /**
-   * Hard spend cap for this selection in the media-buy currency.
+   * Hard spend cap for this selection in the media-buy currency. In seller-optimized allocation it is an optional ceiling, not a reserved allocation, and requires advertised media_buy.features.seller_optimized_package_budgets; otherwise rejected with UNSUPPORTED_FEATURE before any over-subscription validation.
    */
   budget?: number;
   /**
@@ -10505,7 +10530,7 @@ export interface ProductPurchaseInput {
    */
   daily_budget_cap?: number;
   /**
-   * Soft lifetime spend target for seller-optimized allocation.
+   * Soft lifetime spend target for seller-optimized allocation. Requires advertised media_buy.features.seller_optimized_min_spend_targets; otherwise rejected with UNSUPPORTED_FEATURE before any over-subscription validation.
    */
   min_spend_target?: number;
   impressions?: ProductPurchaseImpressions;
@@ -10634,51 +10659,6 @@ export type Warning = {
   };
   ext?: ExtensionObject;
 };
-export interface CommittedMediaBuy {
-  status: 'completed';
-  media_buy_id: string;
-  revision: number;
-  media_buy_status?: MediaBuyStatus;
-  confirmed_at?: string | null;
-  accepted_proposal: CanonicalProposal & {
-    proposal_status: 'accepted';
-    media_buy_id: string;
-  };
-  /**
-   * Execution identities assigned to the immutable purchases. purchase_index is the zero-based position in accepted_proposal.commercial_terms.purchases and disambiguates repeated product IDs.
-   *
-   * @minItems 1
-   */
-  purchase_bindings: [
-    {
-      purchase_index: number;
-      product_id: string;
-      package_id: string;
-    },
-    ...{
-      purchase_index: number;
-      product_id: string;
-      package_id: string;
-    }[]
-  ];
-  available_actions: CanonicalMediaBuyAction[];
-  /**
-   * Non-blocking observations about this completed commitment. The MediaBuy was still created or amended exactly as represented. Continuing conditions also appear as indicators on get_media_buys.
-   *
-   * @minItems 1
-   */
-  warnings?: [
-    Warning & {
-      code?: 'inventory_shortfall_forecast' | 'flight_change_creates_pacing_risk';
-    },
-    ...(Warning & {
-      code?: 'inventory_shortfall_forecast' | 'flight_change_creates_pacing_risk';
-    })[]
-  ];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-  replayed?: true;
-}
 /**
  * Shared closed field set for task-discriminated canonical MediaBuy actions.
  */
@@ -10737,6 +10717,13 @@ export interface AcceptProposalRequest {
    * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
+  /**
+   * Human-readable MediaBuy name supplied by the buyer for trafficking UI display and operational communication. When supplied, this value wins over proposal.name; the seller MUST persist it and echo it unchanged on the commitment success response and subsequent get_media_buys reads. It is operational metadata outside accepted_proposal and is not covered by proposal_terms_digest or terms_digest. When an acceptance creates a MediaBuy and name is absent, the seller MAY seed the MediaBuy name from proposal.name only when proposal.name already satisfies the MediaBuy name constraints (non-whitespace and no longer than 255 characters); the seller MUST NOT silently truncate or otherwise rewrite it. A seeded value counts as a name created through AdCP and MUST be reported on commitment and read surfaces. This display label is not an identifier or financial reference.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern \S
+   */
+  name?: string;
   account: CanonicalAccountReference;
   /**
    * @minLength 1
@@ -10824,11 +10811,17 @@ export type AcceptProposalResponse = MediaBuyCommitmentResponse;
 export type PackageControl = {
 } & {
   package_id: string;
+  /**
+   * Replace this package's hard lifetime spend cap. A number in a resulting seller-optimized buy requires advertised media_buy.features.seller_optimized_package_budgets; otherwise rejected with UNSUPPORTED_FEATURE before any over-subscription validation.
+   */
   budget?: number | null;
   /**
    * Replace this package's subordinate hard daily cap; null removes it. Numeric changes apply immediately with package spend already incurred in the shared current cap day counted.
    */
   daily_budget_cap?: number | null;
+  /**
+   * Replace this package's soft minimum-spend target. A number is valid only for seller-optimized allocation and requires advertised media_buy.features.seller_optimized_min_spend_targets; otherwise rejected with UNSUPPORTED_FEATURE before any over-subscription validation.
+   */
   min_spend_target?: number | null;
   impressions?: number;
   pacing?: Pacing;
@@ -11097,6 +11090,7 @@ export interface ListCreativeFormatsRequest {
    * Filter to formats whose input_format_ids includes any of these format IDs. Returns formats that accept these creatives as input — inspect each result's output_format_ids to see what they can produce.
    */
   input_format_ids?: FormatReferenceStructuredObject[];
+  account?: AccountReference;
   pagination?: PaginationRequest;
   context?: ContextObject;
   ext?: ExtensionObject;
@@ -11707,7 +11701,7 @@ export type CreateMediaBuyRequest = (
    */
   budget_cap_timezone?: string;
   /**
-   * How budget is allocated across explicit packages. Omit for legacy fixed allocation. In proposal mode the committed proposal supplies this configuration and callers MUST omit it here.
+   * How budget is allocated across explicit packages. Omission means fixed allocation (legacy-compatible). Buyer agents SHOULD send budget_allocation explicitly ({mode: "fixed"} or seller_optimized) rather than rely on omission, and when the principal's instruction does not determine whether the budget is one shared pool across packages or split per package, SHOULD ask the principal rather than guess. seller_optimized requires advertised media_buy.features.seller_optimized_budget; inside it, package budget caps, min_spend_target, and package pacing each require their own advertised sub-capability (seller_optimized_package_budgets, seller_optimized_min_spend_targets, seller_optimized_package_pacing), otherwise the request is rejected with UNSUPPORTED_FEATURE before any over-subscription validation. In proposal mode the committed proposal supplies this configuration and callers MUST omit it here.
    */
   budget_allocation?: BudgetAllocation;
   /**
@@ -11854,11 +11848,11 @@ export type PackageRequest = AdCPVersionEnvelope & {
   params?: {
   };
   /**
-   * Hard lifetime spend cap for this package in the media buy's currency. Required in fixed allocation mode. Optional in seller-optimized mode; when omitted, the package is bounded by the shared total_budget and any other package constraints. In seller-optimized mode this is a ceiling, not a reserved or current allocation.
+   * Hard lifetime spend cap for this package in the media buy's currency. Required in fixed allocation mode. Optional in seller-optimized mode; when omitted, the package is bounded by the shared total_budget and any other package constraints. In seller-optimized mode this is a ceiling, not a reserved or current allocation, and requires advertised media_buy.features.seller_optimized_package_budgets; otherwise rejected with UNSUPPORTED_FEATURE before any over-subscription validation.
    */
   budget?: number;
   /**
-   * Soft lifetime spend target for this package in the media buy's currency. Only valid with seller-optimized budget allocation. The seller SHOULD attempt to deliver at least this amount before allocating incremental spend elsewhere, but inventory, policy, optimization targets, or other delivery constraints may prevent it. This is not a billing guarantee. Must not exceed the package budget when both are present; sellers MUST reject with `INVALID_REQUEST` when this constraint is violated.
+   * Soft lifetime spend target for this package in the media buy's currency. Only valid with seller-optimized budget allocation. Requires advertised media_buy.features.seller_optimized_min_spend_targets; otherwise rejected with UNSUPPORTED_FEATURE before any over-subscription validation. The seller SHOULD attempt to deliver at least this amount before allocating incremental spend elsewhere, but inventory, policy, optimization targets, or other delivery constraints may prevent it. This is not a billing guarantee. Must not exceed the package budget when both are present; a seller advertising both seller_optimized_min_spend_targets and seller_optimized_package_budgets MUST reject a violation with `INVALID_REQUEST`, while a seller missing either capability rejects the undeclared control with UNSUPPORTED_FEATURE before any over-subscription validation.
    */
   min_spend_target?: number;
   pacing?: Pacing;
@@ -15156,7 +15150,7 @@ export type ReportingStatusIssue = {
    */
   opened_at?: string;
   /**
-   * Optional seller-maintained lifecycle for this issue_id. open is the default when omitted. acknowledged means a human on responsible_party has taken it up but the condition persists. resolved means the underlying condition no longer holds; a recurrence uses a new issue_id. waived means the parties agreed off-protocol to stop acting on it. Only open and acknowledged issues appear in issues[]; retiring an issue removes it from the projection rather than publishing it at resolved or waived, so a reader that treats a nonempty issues[] as degradation stays correct. Retiring is never a way to discharge a condition that still holds: for CONSUMER_STATUS_MISMATCH see the consumer_mismatch_lifecycle rule.
+   * Optional seller-maintained lifecycle for this issue_id. open is the default when omitted. acknowledged means a human on responsible_party has taken it up but the condition persists. resolved means the underlying condition no longer holds; a recurrence uses a new issue_id. waived means the parties agreed off-protocol to disregard this exact issue even though its underlying condition may still hold. Only open and acknowledged issues appear in issues[]; retiring an issue removes it from the projection rather than publishing it at resolved or waived, so a reader that treats a nonempty issues[] as degradation stays correct. A CONSUMER_STATUS_MISMATCH waiver follows the bilateral, exact-scope requirements in consumer_mismatch_lifecycle.
    */
   issue_state?: 'open' | 'acknowledged' | 'resolved' | 'waived';
   /**
@@ -15222,7 +15216,7 @@ export type ReportingStatusIssue = {
    */
   opened_at?: string;
   /**
-   * Optional seller-maintained lifecycle for this issue_id. open is the default when omitted. acknowledged means a human on responsible_party has taken it up but the condition persists. resolved means the underlying condition no longer holds; a recurrence uses a new issue_id. waived means the parties agreed off-protocol to stop acting on it. Only open and acknowledged issues appear in issues[]; retiring an issue removes it from the projection rather than publishing it at resolved or waived, so a reader that treats a nonempty issues[] as degradation stays correct. Retiring is never a way to discharge a condition that still holds: for CONSUMER_STATUS_MISMATCH see the consumer_mismatch_lifecycle rule.
+   * Optional seller-maintained lifecycle for this issue_id. open is the default when omitted. acknowledged means a human on responsible_party has taken it up but the condition persists. resolved means the underlying condition no longer holds; a recurrence uses a new issue_id. waived means the parties agreed off-protocol to disregard this exact issue even though its underlying condition may still hold. Only open and acknowledged issues appear in issues[]; retiring an issue removes it from the projection rather than publishing it at resolved or waived, so a reader that treats a nonempty issues[] as degradation stays correct. A CONSUMER_STATUS_MISMATCH waiver follows the bilateral, exact-scope requirements in consumer_mismatch_lifecycle.
    */
   issue_state?: 'open' | 'acknowledged' | 'resolved' | 'waived';
   /**
@@ -16265,7 +16259,7 @@ export interface UpdateMediaBuyRequest {
    */
   budget_cap_timezone?: string | null;
   /**
-   * Updated allocation configuration. Switching between fixed and seller-optimized modes is allowed only when update_budget_allocation is advertised in available_actions and the resulting package constraints are valid.
+   * Updated allocation configuration. Switching between fixed and seller-optimized modes is allowed only when update_budget_allocation is advertised in available_actions and the resulting package constraints are valid. A resulting seller_optimized allocation requires advertised media_buy.features.seller_optimized_budget, and any package budget caps, min_spend_target values, or package pacing it retains require their own advertised sub-capability; otherwise the update is rejected with UNSUPPORTED_FEATURE before any over-subscription validation.
    */
   budget_allocation?: BudgetAllocation;
   pacing?: Pacing;
@@ -17106,12 +17100,12 @@ export interface GetMediaBuyDeliveryRequest {
    */
   status_filter?: MediaBuyStatus | MediaBuyStatus[];
   /**
-   * Inclusive start date for the reporting period (YYYY-MM-DD). When omitted along with end_date, returns campaign lifetime data. Only accepted when the product's reporting_capabilities.date_range_support is 'date_range'.
+   * Inclusive start date for the reporting period (YYYY-MM-DD), as a calendar date in the reporting timezone: the reporting_capabilities.timezone of the products behind the in-scope packages. It is a UTC day only when that timezone is UTC. When omitted along with end_date, returns campaign lifetime data. Only accepted when the product's reporting_capabilities.date_range_support is 'date_range'. A date-bounded request whose in-scope packages span more than one reporting timezone MUST be rejected with VALIDATION_ERROR. The buyer narrows media_buy_ids to buys that share one reporting timezone, or omits both dates when a single buy's packages span reporting timezones.
    * @pattern ^\d{4}-\d{2}-\d{2}$
    */
   start_date?: string;
   /**
-   * Exclusive end date for the reporting period (YYYY-MM-DD). Must be later than start_date. When omitted along with start_date, returns campaign lifetime data. Only accepted when the product's reporting_capabilities.date_range_support is 'date_range'.
+   * Exclusive end date for the reporting period (YYYY-MM-DD), as a calendar date in the same reporting timezone as start_date. Must be later than start_date. When omitted along with start_date, returns campaign lifetime data. Only accepted when the product's reporting_capabilities.date_range_support is 'date_range'.
    * @pattern ^\d{4}-\d{2}-\d{2}$
    */
   end_date?: string;
@@ -17805,19 +17799,24 @@ export interface GetMediaBuyDeliveryResponse {
    */
   next_expected_at?: string;
   /**
-   * Half-open date range for the report: start is inclusive and end is exclusive. All periods use UTC timezone.
+   * Half-open period for the report: start is inclusive and end is exclusive. Both are instants. For a date-bounded request they are the instants at which start_date and end_date begin in the reporting timezone (the in-scope products' reporting_capabilities.timezone, echoed in timezone). They fall on UTC midnight only when that timezone is UTC. An exact reporting_revision_id read returns the revision's period instead, whose source_timezone names its calendar.
    */
   reporting_period: {
     /**
-     * ISO 8601 start timestamp in UTC (e.g., 2024-02-05T00:00:00Z)
+     * Inclusive RFC 3339 start instant. For a date-bounded request, the start of start_date in the reporting timezone, written with that zone's UTC offset or as the equivalent UTC instant (e.g., 2026-04-15T00:00:00-04:00 or 2026-04-15T04:00:00Z for America/New_York; 2026-04-15T00:00:00Z for UTC).
      * @format date-time
      */
     start: string;
     /**
-     * Exclusive ISO 8601 end timestamp in UTC (e.g., 2024-02-06T00:00:00Z for a report covering 2024-02-05)
+     * Exclusive RFC 3339 end instant. For a date-bounded request, the start of end_date in the reporting timezone (e.g., 2026-04-16T00:00:00-04:00 for a report covering 2026-04-15 in America/New_York).
      * @format date-time
      */
     end: string;
+    /**
+     * Reporting timezone applied to this report, as 'UTC' or an IANA timezone identifier. It equals the in-scope products' reporting_capabilities.timezone. start_date, end_date, the reporting_period boundaries, daily_breakdown[].date, and daily, weekly, or monthly windows[] all use it, so a stored report stays interpretable if the product's capability later changes. Sellers SHOULD return it on reads without reporting_revision_id whenever every in-scope media buy shares one reporting timezone. Exact reporting_revision_id reads return the revision period, which carries source_timezone instead.
+     * @minLength 1
+     */
+    timezone?: string;
   };
   /**
    * Present only for a reporting_revision_id selector. Binds the complete ordered reporting_rows sequence obtained by concatenating every cursor page to one immutable Reliable Reporting revision; consumers verify content_sha256 over RFC 8785 JCS of {reporting_revision_id,row_count,control_totals,reporting_rows} before using it as revision evidence.
@@ -18302,7 +18301,7 @@ export interface GetMediaBuyDeliveryResponse {
        */
       daily_breakdown?: {
         /**
-         * Date (YYYY-MM-DD)
+         * Calendar date (YYYY-MM-DD) in the reporting timezone: reporting_period.timezone when present, otherwise this package's product reporting_capabilities.timezone. The row covers that local day, which can be 23 or 25 hours long across a DST change.
          * @pattern ^\d{4}-\d{2}-\d{2}$
          */
         date: string;
@@ -18349,7 +18348,7 @@ export interface GetMediaBuyDeliveryResponse {
      */
     windows?: {
       /**
-       * ISO 8601 start of the window slice (inclusive). UTC.
+       * ISO 8601 start of the window slice (inclusive). Daily, weekly, monthly, and quarterly slices start on reporting-timezone calendar boundaries (see reporting_period.timezone), which are UTC midnights only when that timezone is UTC. Weekly slices start Monday 00:00 in the reporting timezone (ISO 8601 weeks). Quarterly slices start on 1 January, 1 April, 1 July and 1 October.
        * @format date-time
        */
       window_start: string;
@@ -18387,11 +18386,11 @@ export interface GetMediaBuyDeliveryResponse {
       measurement_window?: string;
     }[];
     /**
-     * Day-by-day delivery for a media-buy row with one currency. Sellers MUST omit this aggregate breakdown for a legacy or externally created mixed-currency buy because these rows have no package currency field.
+     * Day-by-day delivery for a media-buy row with one currency. Sellers MUST omit this aggregate breakdown for a legacy or externally created mixed-currency buy because these rows have no package currency field. Sellers MUST also omit this aggregate breakdown when the media buy's packages span more than one reporting timezone; package-level daily_breakdown remains, each in its own product's reporting timezone.
      */
     daily_breakdown?: {
       /**
-       * Date (YYYY-MM-DD)
+       * Calendar date (YYYY-MM-DD) in the reporting timezone: reporting_period.timezone when present, otherwise this media buy's product reporting_capabilities.timezone. The row covers that local day, which can be 23 or 25 hours long across a DST change.
        * @pattern ^\d{4}-\d{2}-\d{2}$
        */
       date: string;
@@ -18777,7 +18776,7 @@ export type GetReportingStatusResponse = {
    */
   data_through?: string | null;
   /**
-   * Next obligation due time for an open scope. Omitted for a closed complete scope.
+   * Next obligation due time for an open scope. In a complete summary (view: summary, health: complete), the nearest future period start, strictly after ledger_as_of, across all active committed configuration generations in scope.delivery_config_generations. Sellers MUST populate it when such a scheduled period exists outside the closed evaluated scope, and omit it when none exists. This complete-scope projection applies only to summary responses. It is derived from the configuration schedule and does not represent an open obligation in the evaluated scope; its presence does not indicate that the scope is still open. Projecting it MUST NOT create, expose, lease, count, or alter an obligation whose period has not closed, or change obligation_counts, scope, or coverage. Obligation expected_at remains period.end plus schedule.delivery_sla; get_media_buy_delivery.next_expected_at remains the next webhook notification time.
    * @format date-time
    */
   next_expected_at?: string;
@@ -19268,20 +19267,15 @@ export interface SHA512PhysicalChecksum {
   value: string;
 }
 export interface SummaryView {
-  status: 'completed';
   view: 'summary';
 }
 export interface PeriodsView {
-  status: 'completed';
   view: 'periods';
-  pagination: {
-  };
+  pagination: {};
 }
 export interface RevisionView {
-  status: 'completed';
   view: 'revision';
-  pagination: {
-  };
+  pagination: {};
 }
 export interface UnavailableLookup {
   adcp_version?: string;
@@ -28849,7 +28843,7 @@ export type GetMediaBuyArtifactsResponse = {
 
 // get_creative_features parameters
 /**
- * Request payload for the get_creative_features task. Submits a creative manifest for evaluation by a governance agent, which analyzes the creative and returns scored feature values (brand safety, content categorization, quality metrics, etc.).
+ * Request payload for the get_creative_features task. Submits a creative manifest for evaluation by a governance agent, which analyzes the creative and returns scored feature values (brand safety, content categorization, quality metrics, etc.). Although named like a read, this operation creates a provider-side evaluation and may record consumption or cost, so it is replay-protected and economically consequential.
  */
 export interface GetCreativeFeaturesRequest {
   /**
@@ -28861,19 +28855,27 @@ export interface GetCreativeFeaturesRequest {
    * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
+  /**
+   * Optional in AdCP 3.x for wire compatibility; clients SHOULD send a unique key for every logical evaluation. When supplied to a provider that advertises adcp.idempotency.supported: true, exact retries with the same canonical payload MUST return the cached initial response with replayed: true and MUST NOT dispatch a second provider evaluation or record a second consumption or cost event. Reusing the key with a different creative_manifest, account, or feature_ids payload returns IDEMPOTENCY_CONFLICT. The provider MUST retain the replay record for at least 24 hours. Keys MUST be unique per (provider, request) pair to prevent cross-provider correlation. This field becomes required in AdCP 4.0; use a fresh UUID v4 for each logical evaluation.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
+   */
+  idempotency_key?: string;
   creative_manifest: CreativeManifest;
   /**
    * Optional filter to specific features. If omitted, returns all available features.
    */
   feature_ids?: string[];
   account?: AccountReference;
+  push_notification_config?: PushNotificationConfig;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
 
 // get_creative_features response
 /**
- * Response payload for the get_creative_features task. Returns scored feature values from the governance agent's evaluation of the submitted creative manifest.
+ * Response payload for the get_creative_features task. Exactly one shape is returned: terminal success with results, terminal error, or a submitted acknowledgement carrying the pollable task identity. In AdCP 3.x providers SHOULD also include a stable evaluation_id on accepted work; it becomes required in AdCP 4.0.
  */
 export type GetCreativeFeaturesResponse = {
   /**
@@ -28921,44 +28923,43 @@ export type GetCreativeFeaturesResponse = {
    * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
-} & (
-  | {
-      /**
-       * Feature values for the evaluated creative
-       */
-      results: CreativeFeatureResult[];
-      /**
-       * URL to the vendor's full assessment report. The vendor controls what information is disclosed and access control.
-       */
-      detail_url?: string;
-      /**
-       * Non-blocking audit observations from the governance agent. Observations surface audit-worthy claims that are not verifier refutations and are not rejection grounds by themselves.
-       */
-      audit_observations?: CreativeAuditObservation[];
-      /**
-       * Which rate card pricing option was applied for this evaluation. Present when the governance agent charges for evaluations and account was provided in the request.
-       */
-      pricing_option_id?: string;
-      /**
-       * Cost incurred for this evaluation, denominated in currency.
-       * @minimum 0
-       */
-      vendor_cost?: number;
-      /**
-       * ISO 4217 currency code for vendor_cost.
-       * @pattern ^[A-Z]{3}$
-       */
-      currency?: string;
-      consumption?: CreativeConsumption;
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    }
-  | {
-      errors: Error[];
-      context?: ContextObject;
-      ext?: ExtensionObject;
-    }
-);
+} & (GetCreativeFeaturesSuccess | GetCreativeFeaturesError | GetCreativeFeaturesSubmitted);
+/**
+ * Terminal success response. In AdCP 3.x evaluation_id is an optional migration field that providers SHOULD emit; it becomes required in AdCP 4.0. When present, it is the provider-side reconciliation identity allocated when the evaluation was accepted and remains stable across exact replays and asynchronous completion.
+ */
+export interface GetCreativeFeaturesSuccess {
+  /**
+   * Provider-generated identity for this evaluation. Optional in AdCP 3.x and required in AdCP 4.0. Providers SHOULD emit it in 3.x. When present, it MUST be stable across exact response replays and, for async work whose submitted acknowledgement included evaluation_id, MUST be identical to that value. Used for result provenance, consumption and provider-cost reconciliation, and support; it is not an idempotency key or task identity.
+   */
+  evaluation_id?: string;
+  /**
+   * Feature values for the evaluated creative
+   */
+  results: CreativeFeatureResult[];
+  /**
+   * URL to the vendor's full assessment report. The vendor controls what information is disclosed and access control.
+   */
+  detail_url?: string;
+  /**
+   * Non-blocking audit observations from the governance agent. Observations surface audit-worthy claims that are not verifier refutations and are not rejection grounds by themselves.
+   */
+  audit_observations?: CreativeAuditObservation[];
+  /**
+   * Which rate card pricing option was applied for this evaluation. Present when the governance agent charges for evaluations and account was provided in the request.
+   */
+  pricing_option_id?: string;
+  /**
+   * Cost incurred for this evaluation, denominated in currency.
+   */
+  vendor_cost?: number;
+  /**
+   * ISO 4217 currency code for vendor_cost.
+   */
+  currency?: string;
+  consumption?: CreativeConsumption;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
 /**
  * Non-blocking observation emitted by a creative governance agent. Audit observations surface claims that deserve human or downstream audit review but are not verifier refutations and are not rejection grounds by themselves.
  */
@@ -29023,6 +29024,46 @@ export interface CreativeAuditObservation {
   };
   ext?: ExtensionObject;
 }
+/**
+ * Error response
+ */
+export interface GetCreativeFeaturesError {
+  /**
+   * Optional provider evaluation identity when failure occurred after the evaluation was accepted. When present, it is the same value returned on the submitted acknowledgement.
+   * @minLength 1
+   */
+  evaluation_id?: string;
+  errors: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Async acknowledgement returned after the provider accepts an evaluation but cannot complete it within the response window. Exact keyed request replays return this original acknowledgement with replayed: true and the same task_id. In AdCP 3.x providers SHOULD also return evaluation_id; it becomes required in AdCP 4.0. When present, exact replays and terminal results preserve it. The caller polls get_task_status using task_id.
+ */
+export interface GetCreativeFeaturesSubmitted {
+  /**
+   * Task-level status literal that discriminates this acknowledgement from terminal success and error responses.
+   */
+  status: 'submitted';
+  /**
+   * AdCP task handle used to poll get_task_status or correlate terminal webhook delivery. Distinct from evaluation_id.
+   * @minLength 1
+   */
+  task_id: string;
+  /**
+   * Provider-generated identity allocated when the evaluation is accepted. Optional in AdCP 3.x and required in AdCP 4.0. Providers SHOULD emit it in 3.x; when present, exact replays and the terminal result MUST carry this same value. Distinct from task_id and idempotency_key.
+   * @minLength 1
+   */
+  evaluation_id?: string;
+  /**
+   * Optional human-readable explanation of why the evaluation is submitted. Plain text only; callers treat it as untrusted provider input.
+   * @maxLength 2000
+   */
+  message?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+
 
 // sync_plans parameters
 /**
@@ -32891,7 +32932,7 @@ export interface GetAdCPCapabilitiesResponse {
      */
     notifications?: AccountNotificationsSupported | AccountNotificationsUnsupported;
     /**
-     * Whether the seller exposes a durable, ordered feed of material changes to authoritative account-scoped state. This is distinct from webhook_activity transport diagnostics and from current-state reads. Sellers claiming support MUST retain changes for at least 90 days after recording and MUST produce records regardless of whether a mutation originated through AdCP, a seller surface, another authorized principal, seller automation, or a connected platform within declared coverage.
+     * Whether the seller exposes a durable, ordered feed of material changes to authoritative account-scoped state. This is distinct from webhook_activity transport diagnostics and from current-state reads. Sellers claiming support MUST retain changes for at least 90 days after recording and MUST produce records regardless of whether a mutation originated through AdCP, a seller surface, another authorized principal, seller automation, or a connected platform within declared coverage. Experimental in 3.2 (RFC #6810): sellers advertising supported: true MUST list account.change_feed in experimental_features.
      */
     change_feed?: AccountChangeFeedSupported | AccountChangeFeedUnsupported;
     /**
@@ -32907,6 +32948,10 @@ export interface GetAdCPCapabilitiesResponse {
    * Media-buy protocol capabilities. Expected when media_buy is in supported_protocols. Sellers declaring media_buy should also include account with supported_billing.
    */
   media_buy?: {
+    /**
+     * Whether this seller accepts product discovery without caller credentials. This applies to list_products and to get_products in brief or wholesale mode; it does not apply to proposal refinement or finalization, purchasing, account-scoped reads, or mutations. true means an anonymous discovery request can produce a successful response, but the response may be a public subset and may differ from results for an authenticated principal or selected account. false means these discovery calls require an authenticated principal. Absence means unspecified legacy behavior, so callers probe and handle AUTH_MISSING. A valid authenticated request is never rejected merely because credentials were supplied. true is inconsistent with account.required_for_products=true because an anonymous caller cannot select protected account context.
+     */
+    anonymous_discovery?: boolean;
     /**
      * Registry-backed seller acceptance-policy discovery. Presence means the seller publishes a versioned catalog; it does not claim that the seller evaluates acceptance_context during discovery. Discovery is advisory, exact task responses remain authoritative, and absent capability means support is unknown rather than unrestricted acceptance.
      */
@@ -33001,7 +33046,7 @@ export interface GetAdCPCapabilitiesResponse {
      */
     supports_proposals?: boolean;
     /**
-     * Whether this seller supports reverse-forecast planning: parsing criteria.outcome_target (a compact goal — a forecastable-metric delivery metric or an event-type conversion event — plus a desired volume) and solving for budget, answering with total_budget_guidance on proposals and forecasts whose points carry the goal's key in metrics. false or absent means support is unknown: buyers SHOULD express outcome goals in brief prose instead, and sellers reject a structured outcome_target with UNSUPPORTED_FEATURE rather than silently ignoring it.
+     * Whether this seller supports reverse-forecast planning: parsing criteria.outcome_target (a compact goal — a forecastable-metric delivery metric or an event-type conversion event — plus a desired volume, a cost_per target, or both) and planning against it, answering with total_budget_guidance and forecasts whose points carry the goal's key in metrics; see outcome-target.json for cost_per answers and rejections. This flag does not distinguish sellers that plan cost_per; buyers rely on the negotiated adcp_version together with features.bidding_policy. false or absent means support is unknown: buyers SHOULD express outcome goals in brief prose instead, and sellers reject a structured outcome_target on proposal requests with UNSUPPORTED_FEATURE rather than silently ignoring it (list_products ignores it for every seller).
      */
     outcome_target?: boolean;
     /**
@@ -33312,6 +33357,7 @@ export interface GetAdCPCapabilitiesResponse {
       | 'views'
       | 'completed_views'
       | 'viewed_seconds'
+      | 'viewable_rate'
       | 'attention_seconds'
       | 'attention_score'
       | 'engagements'
@@ -33462,6 +33508,10 @@ export interface GetAdCPCapabilitiesResponse {
    * Signals protocol capabilities. Only present if signals is in supported_protocols.
    */
   signals?: {
+    /**
+     * Whether this agent accepts get_signals discovery without caller credentials in brief or wholesale mode. true means an anonymous discovery request can produce a successful response, but the response may be a public subset and may differ from results for an authenticated principal or selected account. false means get_signals requires an authenticated principal. Absence means unspecified legacy behavior, so callers probe and handle AUTH_MISSING. A valid authenticated request is never rejected merely because credentials were supplied.
+     */
+    anonymous_discovery?: boolean;
     /**
      * Data provider domains this signals agent is authorized to resell. Buyers should fetch each data provider's adagents.json for published signal definitions and to verify authorization.
      */
@@ -34076,7 +34126,7 @@ export interface GetAdCPCapabilitiesResponse {
   };
 }
 /**
- * Seller honors idempotency_key replay protection on mutating requests. Replays within replay_ttl_seconds return the cached response (or IDEMPOTENCY_CONFLICT on payload divergence); replays past the window return IDEMPOTENCY_EXPIRED when the seller can still distinguish 'seen and evicted' from 'never seen'.
+ * Seller honors idempotency_key replay protection on mutating requests. Replays within replay_ttl_seconds return the cached response (or IDEMPOTENCY_CONFLICT on payload divergence); a completed key record MUST remain available until at least committed_at + replay_ttl_seconds independently of the lifecycle of any resource the request created. If the mutation committed but its affected resource was independently deleted or purged before the canonical success response could be durably recorded, exact replays return COMMITTED_RESOURCE_PURGED without re-executing the mutation. Ambiguous in-flight outcomes retain their claims until reconciled and MUST NOT be released on a handler or downstream timeout. Replays past the completed entry's window return IDEMPOTENCY_EXPIRED when the seller can still distinguish 'seen and evicted' from 'never seen'.
  */
 export interface IdempotencySupported {
   /**
@@ -34084,14 +34134,14 @@ export interface IdempotencySupported {
    */
   supported: true;
   /**
-   * How long the seller retains a canonical response for an idempotency_key. Within this window, a replay with the same key + equivalent canonical payload returns the cached response; a replay with a different canonical payload returns IDEMPOTENCY_CONFLICT; a replay past the window returns IDEMPOTENCY_EXPIRED when the seller can still distinguish 'seen and evicted' from 'never seen'. Minimum 3600 (1h); recommended 86400 (24h). Maximum 604800 (7 days) — longer windows force buyers to retain secret keys at rest for extended periods and grow the seller's cache table without bounded benefit.
+   * How long the seller retains a canonical response or committed-outcome tombstone for an idempotency_key, measured from the successful mutation's durable commit time. The completed key record and canonical request hash MUST remain available until at least committed_at + this interval, independently of the lifecycle of any resource the request created; a UNIQUE idempotency_key column on the resource row alone does not satisfy this contract. Within this window, a replay with the same key + equivalent canonical payload returns the cached response, or COMMITTED_RESOURCE_PURGED when the mutation committed but the affected resource was independently deleted or purged before the canonical success response could be durably recorded; a replay with a different canonical payload returns IDEMPOTENCY_CONFLICT. An unresolved in-flight or reconciliation-required claim is retained regardless of this completed-entry clock. A replay past a completed entry's window returns IDEMPOTENCY_EXPIRED when the seller can still distinguish 'seen and evicted' from 'never seen'. Minimum 3600 (1h); recommended 86400 (24h). Maximum 604800 (7 days) — longer windows force buyers to retain secret keys at rest for extended periods and grow the seller's cache table without bounded benefit.
    * @minimum 3600
    * @maximum 604800
    * @format int
    */
   replay_ttl_seconds: number;
   /**
-   * Maximum lifetime in seconds of an in-flight idempotency row before the seller releases it per L1/security.mdx rule 9 (treat the in-flight attempt as failed if the handler does not complete within this bound). Buyer SDKs use this value to compute a retry budget when they see `IDEMPOTENCY_IN_FLIGHT` — cap individual retry waits at this value rather than the much-wider `replay_ttl_seconds` ceiling. Optional in 3.1 (additive declaration); SDKs that don't see the field fall back to rule 9's order-of-magnitude SHOULD heuristic. Required when `supported: true` in 4.0. MUST be no greater than `replay_ttl_seconds` (a bound larger than the replay window is vacuous — any retry past the TTL hits IDEMPOTENCY_EXPIRED regardless of in-flight state); validators MUST enforce this cross-field constraint at the test layer since JSON Schema cannot express field-relative bounds. A buyer that observes top-level `error.retry_after` exceeding this value MAY treat that as a seller bug — the in-flight row cannot legitimately outlive the bound the seller declared.
+   * Maximum active execution lease in seconds before the seller stops or replaces the original handler and transitions the durable idempotency claim to reconciliation-required per L1/security.mdx rule 9. Expiry does not release or evict an unresolved claim and never permits reinvocation while commit state is ambiguous. Buyer SDKs use this value to cap an individual retry wait when they see `IDEMPOTENCY_IN_FLIGHT`, rather than using the much wider `replay_ttl_seconds` ceiling; it is not a deadline after which they may mint a fresh key. Optional in 3.1 (additive declaration); SDKs that don't see the field fall back to rule 9's order-of-magnitude SHOULD heuristic. Required when `supported: true` in 4.0. MUST be no greater than `replay_ttl_seconds`; validators MUST enforce this cross-field constraint at the test layer since JSON Schema cannot express field-relative bounds. A buyer that observes top-level `error.retry_after` exceeding this value MAY treat that as a seller bug for an actively executing attempt.
    * @minimum 1
    * @maximum 604800
    * @format int
@@ -35456,7 +35506,7 @@ export interface FailedPrincipalRead {
 
 // list_account_changes parameters
 /**
- * Read a durable, ordered feed of material changes to AdCP-visible state for one account. Use a latest checkpoint before snapshot bootstrap, then drain from that cursor to close the bootstrap race.
+ * Read a durable, ordered feed of material changes to AdCP-visible state for one account. Use a latest checkpoint before snapshot bootstrap, then drain from that cursor to close the bootstrap race. Experimental in 3.2 (RFC #6810): sellers implementing this task MUST list account.change_feed in experimental_features.
  */
 export interface ListAccountChangesRequest {
   /**
@@ -35501,7 +35551,7 @@ export interface ListAccountChangesRequest {
 
 // list_account_changes response
 /**
- * Durable account change feed page. cursor is always present, including for an empty page at the tail; ordinary pagination-response semantics do not apply.
+ * Durable account change feed page. cursor is always present, including for an empty page at the tail; ordinary pagination-response semantics do not apply. Experimental in 3.2 (RFC #6810): sellers returning this response MUST list account.change_feed in experimental_features.
  */
 export type ListAccountChangesResponse = {
   /**
@@ -36231,11 +36281,12 @@ export interface SyncAccountsSuccess {
      * Seller-assigned account identifier. Use this in subsequent create_media_buy and other account-scoped operations when the seller's account model uses account_id references. For buyer-declared accounts, this may be echoed as the seller's internal handle, but the seller MUST continue accepting the natural-key AccountRef for subsequent calls.
      */
     account_id?: string;
-    brand: BrandReference;
+    account?: AccountReference;
+    brand?: BrandReference;
     /**
      * Current canonical operator domain. When an identity change is pending or rejected, this remains the current value rather than echoing the requested value.
      */
-    operator: string;
+    operator?: string;
     operator_unit?: OperatorUnit;
     /**
      * Current account revision after this operation. Incremented by each persisted settings change, identity-change request, or identity-change disposition; not incremented by dry runs, validation failures, or exact idempotency replays. Pass this value in the next settings-update entry to prevent lost updates.
@@ -36264,9 +36315,9 @@ export interface SyncAccountsSuccess {
      */
     action: 'created' | 'updated' | 'unchanged' | 'failed';
     /**
-     * Account status. active: ready for use. pending_approval: seller reviewing (credit, legal). rejected: seller declined the account request. payment_required: credit limit reached or funds depleted. suspended: was active, now paused. closed: was active, now terminated.
+     * Account status. active: ready for use. pending_approval: seller reviewing (credit, legal). rejected: seller declined the account request. payment_required: credit limit reached or funds depleted. suspended: was active, now paused. closed: was active, now terminated. Required for every non-failed action; omitted on failed results where the seller could not reach or resolve the account far enough to know a lifecycle state (see errors).
      */
-    status: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
+    status?: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
     billing?: BillingParty;
     billing_entity?: BusinessEntity;
     /**
@@ -36309,7 +36360,7 @@ export interface SyncAccountsSuccess {
       currency: string;
     };
     /**
-     * Per-account errors (only present when action is 'failed')
+     * Per-account errors. Required and non-empty when action is 'failed'; absent otherwise.
      */
     errors?: Error[];
     /**
@@ -36990,9 +37041,13 @@ export type Viewability = {
   standard?: ViewabilityStandard;
 };
 /**
- * Completion payload to record against the task. force_task_completion supports the bounded get_products, get_signals, and create_media_buy completion union; polling and production SDKs resolve all task results through the originating task's manifest response mapping instead of embedding a global result union. The seller MUST deliver this verbatim to the buyer's push_notification_config.url, preserving caller-supplied fields. Sellers MUST emit INVALID_PARAMS when the payload does not match the original task response branch and MAY reject payloads exceeding 256 KB.
+ * Deterministic result payload. force_get_creative_features_arm uses it when arm is completed and returns it on the next matching operation call. force_task_completion records it against an existing task and supports the bounded get_products, get_signals, create_media_buy, and get_creative_features completion union; polling and production SDKs resolve all task results through the originating task's manifest response mapping instead of embedding a global result union. The seller MUST preserve caller-supplied fields. Sellers MUST emit INVALID_PARAMS when the payload does not match the required response branch and MAY reject payloads exceeding 256 KB.
  */
-export type ComplianceTaskCompletionData = GetProductsCompletion | GetSignalsCompletion | CreateMediaBuyCompletion;
+export type ComplianceTaskCompletionData =
+  | GetProductsCompletion
+  | GetSignalsCompletion
+  | CreateMediaBuyCompletion
+  | GetCreativeFeaturesCompletion;
 /**
  * Canonical response contract for get_products, including completed results, terminal failures, wholesale unchanged responses, and the structured GetProductsRejected business outcome.
  */
@@ -37278,7 +37333,7 @@ export interface ComplyTestControllerRequest {
    */
   adcp_major_version?: number;
   /**
-   * Test scenario to execute. 'list_scenarios' discovers supported scenarios. 'force_*' and 'simulate_*' trigger state transitions. 'reporting_core_lifecycle_probe' installs a caller/account-scoped Core fixture whose first elapsed obligation is visible before any report, advances its virtual clock into delayed or action_required, and can publish deterministic zero-row or non-empty revisions, restate a provisional revision, or restate one the caller already received, without waiting for wall-clock boundaries. Other scenarios provide deterministic sandbox probes for their documented lifecycle checks. Runners and sellers MUST accept unknown scenario strings - new scenarios may be added in additive releases.
+   * Test scenario to execute. 'list_scenarios' discovers supported scenarios. 'force_*' and 'simulate_*' trigger state transitions. 'reporting_core_lifecycle_probe' installs a caller/account-scoped Core fixture whose first elapsed obligation is visible before any report, advances its virtual clock into delayed or action_required, and can publish deterministic zero-row or non-empty revisions, restate a provisional revision, restate one the caller already received, or cross the consumer-status deadline and consumer-mismatch escalation boundaries, without waiting for wall-clock boundaries. Other scenarios provide deterministic sandbox probes for their documented lifecycle checks. Runners and sellers MUST accept unknown scenario strings - new scenarios may be added in additive releases.
    */
   scenario: string;
   /**
@@ -37294,7 +37349,7 @@ export interface ComplyTestControllerRequest {
      */
     account_id?: string;
     /**
-     * Media buy to transition (force_media_buy_status, simulate_delivery, simulate_budget_spend) or seed (seed_media_buy).
+     * Media buy to transition or purge (force_media_buy_status, force_media_buy_purge), simulate (simulate_delivery, simulate_budget_spend), or seed (seed_media_buy).
      */
     media_buy_id?: string;
     /**
@@ -37327,7 +37382,7 @@ export interface ComplyTestControllerRequest {
      */
     fixture?: {};
     /**
-     * Scenario-specific probe operation. catalog_item_availability_probe uses seed_inaccessible_item, query_eligibility, advance_time, and recreate_catalog. compact_product_lifecycle_probe uses prepare to make one seeded product's compact proposal, acceptance, operational-control, and MediaBuy readback path deterministic and expire_proposal to advance strictly beyond a committed proposal's stored expires_at and process the hold lapse. compact_direct_buy_lifecycle_probe uses prepare to make one seeded product's list, direct-purchase, operational-control, and readback path deterministic. reporting_core_lifecycle_probe uses prepare, advance_time, publish_zero_row, publish_nonempty, restate_snapshot, restate_after_received, and omit_obligation to exercise obligation availability, health deadlines, explicit reporting, provisional restatement, stale-received grace, and buyer-side missing-obligation detection. restate_snapshot publishes a new snapshot revision that immediately supersedes the current snapshot for the same logical slice and is invalid when the current revision is official. restate_after_received does the same restatement but only against the revision named in received_reporting_revision_id, so the stale-received grace projection can be graded live; it returns the grace deadline and advance_to positions the virtual clock inside or past it. Reliable Reporting tier probes use prepare plus publish_official_adjustment, probe_scheduler_dst, suppress_readiness, advance_within_retention, revoke_access, or publish_adjustment to seed deterministic Core-integrity, Managed Delivery, and Reconciled Billing lifecycle evidence.
+     * Scenario-specific probe operation. catalog_item_availability_probe uses seed_inaccessible_item, query_eligibility, advance_time, and recreate_catalog. compact_product_lifecycle_probe uses prepare to make one seeded product's compact proposal, acceptance, operational-control, and MediaBuy readback path deterministic and expire_proposal to advance strictly beyond a committed proposal's stored expires_at and process the hold lapse. compact_direct_buy_lifecycle_probe uses prepare to make one seeded product's list, direct-purchase, operational-control, and readback path deterministic. reporting_core_lifecycle_probe uses prepare, advance_time, publish_zero_row, publish_nonempty, restate_snapshot, restate_after_received, omit_obligation, advance_past_status_deadline, and advance_past_escalation to exercise obligation availability, health deadlines, explicit reporting, provisional restatement, stale-received grace, buyer-side missing-obligation detection, counted consumer-status silence, and consumer-mismatch escalation. advance_past_status_deadline moves the clock strictly past expected_at plus the advertised automated_recovery_window_seconds without recording any consumer status, so obligation_counts.consumer_status_pending is gradable; advance_past_escalation moves it strictly past the open CONSUMER_STATUS_MISMATCH issue opened_at plus the advertised consumer_mismatch_escalation_seconds and returns both that boundary and any still-future stale_received_grace_deadline, so the escalation precedence rule is gradable. restate_snapshot publishes a new snapshot revision that immediately supersedes the current snapshot for the same logical slice and is invalid when the current revision is official. restate_after_received does the same restatement but only against the revision named in received_reporting_revision_id, so the stale-received grace projection can be graded live; it returns the grace deadline and advance_to positions the virtual clock inside or past it. Reliable Reporting tier probes use prepare plus publish_official_adjustment, probe_scheduler_dst, suppress_readiness, advance_within_retention, revoke_access, or publish_adjustment to seed deterministic Core-integrity, Managed Delivery, and Reconciled Billing lifecycle evidence.
      */
     operation?:
       | 'seed_inaccessible_item'
@@ -37341,6 +37396,8 @@ export interface ComplyTestControllerRequest {
       | 'restate_snapshot'
       | 'restate_after_received'
       | 'omit_obligation'
+      | 'advance_past_status_deadline'
+      | 'advance_past_escalation'
       | 'publish_official_adjustment'
       | 'probe_scheduler_dst'
       | 'suppress_readiness'
@@ -37435,7 +37492,7 @@ export interface ComplyTestControllerRequest {
      */
     conversions?: number;
     /**
-     * UTC calendar date attributable to this simulated delivery batch. Used by simulate_delivery to seed deterministic date-range tests. When get_media_buy_delivery supplies start_date or end_date, dated batches are included when delivery_date is greater than or equal to start_date and strictly less than end_date. Omit to preserve cumulative, unfiltered simulation behavior.
+     * Calendar date, in the product's reporting_capabilities.timezone, attributable to this simulated delivery batch. Used by simulate_delivery to seed deterministic date-range tests. When get_media_buy_delivery supplies start_date or end_date, dated batches are included when delivery_date is greater than or equal to start_date and strictly less than end_date. Omit to preserve cumulative, unfiltered simulation behavior.
      * @format date
      */
     delivery_date?: string;
@@ -37527,16 +37584,22 @@ export interface ComplyTestControllerRequest {
      */
     spend_percentage?: number;
     /**
-     * Response arm for the next forced operation call. Used by force_create_media_buy_arm, force_get_products_arm, and force_get_signals_arm. 'submitted' is supported for all three operations; create_media_buy also supports 'input-required'; get_products also supports 'rejected'. 'completed' is covered by force_task_completion after a submitted task exists; 'working' is an out-of-band progress signal, not an initial response arm.
+     * Response arm for the next forced operation call. Used by force_create_media_buy_arm, force_get_products_arm, force_get_signals_arm, and force_get_creative_features_arm. 'submitted' is supported for all four operations; get_creative_features also supports 'completed' with a deterministic result; create_media_buy also supports 'input-required'; get_products also supports 'rejected'. Async completion after a submitted task is covered by force_task_completion; 'working' is an out-of-band progress signal, not an initial response arm.
      */
-    arm?: 'submitted' | 'input-required' | 'rejected';
+    arm?: 'submitted' | 'completed' | 'input-required' | 'rejected';
     /**
      * Deterministic task handle the seller MUST emit verbatim on the next forced operation response when arm is 'submitted'. The seller MUST accept this exact value on subsequent tasks/get or get_task_status calls within the same authenticated sandbox account + principal pair and MUST return REFERENCE_NOT_FOUND for the same task_id under any other account or principal. Sandbox task_ids are caller-opaque strings - the seller's production task-id format rules do not apply.
      * @maxLength 128
      */
     task_id?: string;
     /**
-     * Optional human-readable explanation surfaced on the next forced operation response. Used by force_create_media_buy_arm, force_get_products_arm, and force_get_signals_arm for the submitted arm. Plain text only.
+     * Deterministic provider evaluation identity the seller MUST emit on the next forced get_creative_features submitted acknowledgement and preserve on its terminal completion result.
+     * @minLength 1
+     * @maxLength 255
+     */
+    evaluation_id?: string;
+    /**
+     * Optional human-readable explanation surfaced on the next forced operation response. Used by force_create_media_buy_arm, force_get_products_arm, force_get_signals_arm, and force_get_creative_features_arm for the submitted arm. Plain text only.
      * @maxLength 2000
      */
     message?: string;
@@ -37681,6 +37744,20 @@ export interface Qualifier {
   lift_dimension?: LiftDimension;
 }
 /**
+ * Bounded get_creative_features terminal success fixture accepted by force_task_completion. It carries the result identity and optional economics exercised by conformance; production terminal artifacts validate against the full task response schema.
+ */
+export interface GetCreativeFeaturesCompletion {
+  status?: 'completed';
+  evaluation_id: string;
+  results: CreativeFeatureResult[];
+  pricing_option_id?: string;
+  vendor_cost?: number;
+  currency?: string;
+  consumption?: CreativeConsumption;
+}
+
+// comply_test_controller response
+/**
  * Response from the comply_test_controller tool. Shape varies by scenario type: list_scenarios returns available scenarios, force_* returns state transition results, simulate_* returns simulation results.
  */
 export type ComplyTestControllerResponse = {
@@ -37745,7 +37822,7 @@ export type ComplyTestControllerResponse = {
 export interface ListScenariosSuccess {
   success: true;
   /**
-   * Scenarios this seller has implemented. Runners and sellers MUST accept unknown scenario strings (open-for-extension) — new scenarios may be added in additive releases. Adopters who advertise `catalog_item_availability_probe` support deterministic cross-principal reference, eligibility-gate, expiry-clock, and catalog-generation tests for the catalog availability storyboard. Adopters who advertise `compact_product_lifecycle_probe` support deterministic synchronous list/request/finalize/decline/accept/control/readback behavior for a prepared product and strict post-deadline expiry of a committed proposal. Adopters who advertise `compact_direct_buy_lifecycle_probe` support deterministic synchronous list/buy/control/readback behavior for a prepared product. Adopters who advertise `reporting_core_lifecycle_probe` support deterministic obligation-before-report, clock-health, zero-row reporting, provisional-restatement, and post-received restatement-grace tests without wall-clock waits. `reliable_reporting_core_integrity_probe`, `reliable_reporting_managed_delivery_probe`, and `reliable_reporting_reconciled_billing_probe` seed the source-calendar/checkpoint, managed-resource, and receipt/adjustment workflows used by the Reliable Reporting tier storyboards. Adopters who advertise `force_creative_purge` opt in to deterministic creative purge coverage for account-level lifecycle webhooks. Adopters who advertise `seed_measurement_catalog` opt in to deterministic measurement-catalog fixtures used by vendor_metric precondition storyboards. Adopters who advertise `query_upstream_traffic` opt in to the upstream-traffic conformance contract; storyboards that declare `check: upstream_traffic` grade not_applicable against adopters who do not advertise it. Adopters who advertise `query_provenance_audit_observations` opt in to sandbox-only audit-observation assertions for accepted creatives. Adopters who advertise `force_upstream_unavailable` opt in to stale-cache conformance testing via the `stale_response_advisory` storyboard.
+   * Scenarios this seller has implemented. Runners and sellers MUST accept unknown scenario strings (open-for-extension) — new scenarios may be added in additive releases. Adopters who advertise `catalog_item_availability_probe` support deterministic cross-principal reference, eligibility-gate, expiry-clock, and catalog-generation tests for the catalog availability storyboard. Adopters who advertise `compact_product_lifecycle_probe` support deterministic synchronous list/request/finalize/decline/accept/control/readback behavior for a prepared product and strict post-deadline expiry of a committed proposal. Adopters who advertise `compact_direct_buy_lifecycle_probe` support deterministic synchronous list/buy/control/readback behavior for a prepared product. Adopters who advertise `reporting_core_lifecycle_probe` support deterministic obligation-before-report, clock-health, zero-row reporting, provisional-restatement, and post-received restatement-grace tests without wall-clock waits. `reliable_reporting_core_integrity_probe`, `reliable_reporting_managed_delivery_probe`, and `reliable_reporting_reconciled_billing_probe` seed the source-calendar/checkpoint, managed-resource, and receipt/adjustment workflows used by the Reliable Reporting tier storyboards. Adopters who advertise `force_creative_purge` opt in to deterministic creative purge coverage for account-level lifecycle webhooks. Adopters who advertise `force_media_buy_purge` opt in to deterministic deletion-independent idempotency replay coverage. Adopters who advertise `seed_measurement_catalog` opt in to deterministic measurement-catalog fixtures used by vendor_metric precondition storyboards. Adopters who advertise `query_upstream_traffic` opt in to the upstream-traffic conformance contract; storyboards that declare `check: upstream_traffic` grade not_applicable against adopters who do not advertise it. Adopters who advertise `query_provenance_audit_observations` opt in to sandbox-only audit-observation assertions for accepted creatives. Adopters who advertise `force_upstream_unavailable` opt in to stale-cache conformance testing via the `stale_response_advisory` storyboard.
    */
   scenarios: string[];
   context?: ContextObject;
@@ -37772,7 +37849,7 @@ export interface StateTransitionSuccess {
   ext?: ExtensionObject;
 }
 /**
- * A simulate_delivery, simulate_budget_spend, catalog_item_availability_probe, compact_product_lifecycle_probe, compact_direct_buy_lifecycle_probe, reporting_core_lifecycle_probe, or Reliable Reporting tier-probe operation succeeded. For delivery: simulated contains the metrics injected by this call (impressions/clicks/plays/reported_spend/conversions plus optional DOOH, reach, frequency, reach-window, and viewability values) and cumulative contains running totals or latest non-additive metric state. For budget: simulated contains spend_percentage/computed_spend/budget. For catalog availability: simulated reports seeded foreign identity, actual eligibility gates, processed expiry time, or delete/recreate generation rotation according to params.operation. For compact product lifecycle: simulated reports deterministic preparation through MediaBuy control/readback or strict post-deadline proposal expiry. For compact direct-buy lifecycle: simulated reports deterministic preparation. For reporting Core: simulated reports the fixed virtual time plus stable account, configuration, obligation, and revision identifiers created or advanced by the operation; prepare also reports the complete resolved configuration, period, expected_at, and recovery_deadline, restate_snapshot reports the new revision plus supersedes_reporting_revision_id, and restate_after_received additionally reports received_reporting_revision_id, restated_at, and stale_received_grace_deadline. Reliable Reporting tier probes return the exact seeded ledger IDs, checkpoints, notification order, resource lifecycle evidence, and receipt bodies required by their storyboards.
+ * A simulate_delivery, simulate_budget_spend, catalog_item_availability_probe, compact_product_lifecycle_probe, compact_direct_buy_lifecycle_probe, reporting_core_lifecycle_probe, or Reliable Reporting tier-probe operation succeeded. For delivery: simulated contains the metrics injected by this call (impressions/clicks/plays/reported_spend/conversions plus optional DOOH, reach, frequency, reach-window, and viewability values) and cumulative contains running totals or latest non-additive metric state. For budget: simulated contains spend_percentage/computed_spend/budget. For catalog availability: simulated reports seeded foreign identity, actual eligibility gates, processed expiry time, or delete/recreate generation rotation according to params.operation. For compact product lifecycle: simulated reports deterministic preparation through MediaBuy control/readback or strict post-deadline proposal expiry. For compact direct-buy lifecycle: simulated reports deterministic preparation. For reporting Core: simulated reports the fixed virtual time plus stable account, configuration, obligation, and revision identifiers created or advanced by the operation; prepare also reports the complete resolved configuration, period, expected_at, and recovery_deadline, restate_snapshot reports the new revision plus supersedes_reporting_revision_id, and restate_after_received additionally reports received_reporting_revision_id, restated_at, and stale_received_grace_deadline; advance_past_status_deadline reports expected_at, automated_recovery_window_seconds, and the crossed consumer_status_deadline; and advance_past_escalation reports issue_id, issue_opened_at, consumer_mismatch_escalation_seconds, consumer_mismatch_escalation_deadline, expected_recommended_action, and any still-future stale_received_grace_deadline. Reliable Reporting tier probes return the exact seeded ledger IDs, checkpoints, notification order, resource lifecycle evidence, and receipt bodies required by their storyboards.
  */
 export interface SimulationSuccess {
   success: true;
@@ -37800,12 +37877,18 @@ export interface ForcedDirectiveSuccess {
     /**
      * Arm the seller will emit on the next forced operation response.
      */
-    arm: 'submitted' | 'input-required' | 'rejected';
+    arm: 'submitted' | 'completed' | 'input-required' | 'rejected';
     /**
      * Echo of the registered task_id. Present only when arm is 'submitted' (the arm that emits a task envelope).
      * @maxLength 128
      */
     task_id?: string;
+    /**
+     * Echo of the provider evaluation identity registered by force_get_creative_features_arm.
+     * @minLength 1
+     * @maxLength 255
+     */
+    evaluation_id?: string;
     /**
      * Echo of the deterministic buyer-facing rejection reason. Required when arm is 'rejected'.
      * @minLength 1

@@ -43,6 +43,10 @@ jobs:
       - name: Lint GitHub Actions workflows
         run: npm run lint:workflows
 
+      # Run before the producer gates unit shards, which also discover this test.
+      - name: Test CI artifact contract
+        run: node --test test/ci-artifact-reuse.test.js
+
       - name: Sync schemas from AdCP
         id: schema-sync
         run: npm run sync-schemas:all
@@ -73,6 +77,7 @@ jobs:
             src/lib/types/v2-5/tools.generated.ts
             src/lib/agents/index.generated.ts
             src/lib/media-buy/update-fields.generated.ts
+            src/lib/media-buy/action-metadata.generated.ts
             src/lib/server/decisioning/runtime/entity-hydration.generated.ts
             src/lib/registry/types.generated.ts
             schemas/registry/registry.yaml
@@ -81,6 +86,7 @@ jobs:
             ':(glob)src/lib/types/*.generated.ts'
             src/lib/agents/index.generated.ts
             src/lib/media-buy/update-fields.generated.ts
+            src/lib/media-buy/action-metadata.generated.ts
             src/lib/server/decisioning/runtime/entity-hydration.generated.ts
           )
 
@@ -176,10 +182,25 @@ jobs:
       - name: Run TypeScript type checking
         run: npm run typecheck
 
+  # Build once from this run's checkout. Include the schema/compliance caches
+  # prepared by schemas:ensure: codegen and protocol tests read those fixtures
+  # directly, including their versioned trees and relative latest symlinks.
+  # Consumers: unit shards/slow tests and webhook/ESLint contracts use the build;
+  # adopter/example typechecks read its declarations. Network matrix cells test
+  # runtime dependencies (tsup keeps external imports), including the Undici 7
+  # packed-consumer override. Package/export checks consume the same tree.
+  # Rebuilders: this producer, package-smoke, and package-mode Node floor cells
+  # validate generation/packing under their own runtime. Example integration
+  # retains its pretest:examples build and remains an independent early lane.
+  # generated-checks and source typechecking also stay independent. Keep slow
+  # package/export validation out of the producer so it cannot delay all tests.
   library-build:
     name: Library Build
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      sha256: ${{ steps.archive.outputs.sha256 }}
+      commit: ${{ steps.archive.outputs.commit }}
 
     steps:
       - name: Checkout code
@@ -196,6 +217,88 @@ jobs:
 
       - name: Build library
         run: npm run build:lib
+
+      - name: Archive library output and emit independent digest
+        id: archive
+        shell: bash
+        run: |
+          if [[ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
+            echo "::error::Library Build checkout does not match this workflow run."
+            exit 1
+          fi
+          # Consumers read these tracked sources without rerunning generators.
+          # Fail before publication if the build would leave source/dist skew.
+          if ! git diff --exit-code -- src/lib/version.ts src/lib/server/wire-spec-fields.generated.ts; then
+            echo "::error::Commit regenerated library sources before sharing this build."
+            exit 1
+          fi
+          tar -czf "$RUNNER_TEMP/library-dist.tar.gz" dist schemas/cache compliance/cache
+          digest=$(sha256sum "$RUNNER_TEMP/library-dist.tar.gz" | cut -d ' ' -f 1)
+          echo "sha256=$digest" >> "$GITHUB_OUTPUT"
+          echo "commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Upload library output
+        uses: actions/upload-artifact@v7
+        with:
+          name: library-dist-${{ github.run_id }}
+          path: ${{ runner.temp }}/library-dist.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+          # A full rerun replaces the prior attempt. Partial reruns can reuse
+          # the successful producer's output; a missing/expired artifact fails.
+          overwrite: true
+
+  library-checks:
+    name: Library Package Checks
+    runs-on: ubuntu-latest
+    needs: library-build
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # No token, repository or run-id override: download only from this run.
+      # The digest comes from the producer job, never from inside the artifact.
+      # An absent/expired artifact fails the download itself: rerun all jobs
+      # to recreate it after the one-day retention window.
+      - name: Download library output
+        uses: actions/download-artifact@v7
+        with:
+          name: library-dist-${{ github.run_id }}
+          path: ${{ runner.temp }}/library-artifact
+
+      - name: Verify and extract library output
+        shell: bash
+        env:
+          LIBRARY_SHA256: ${{ needs.library-build.outputs.sha256 }}
+          LIBRARY_COMMIT: ${{ needs.library-build.outputs.commit }}
+        run: |
+          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" || "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
+            echo "::error::Missing library-build digest or checkout identity mismatch."
+            exit 1
+          fi
+          archive="$RUNNER_TEMP/library-artifact/library-dist.tar.gz"
+          if [[ ! -f "$archive" ]]; then
+            echo "::error::Missing library-build artifact (expires after 1 day). Use Re-run all jobs."
+            exit 1
+          fi
+          if ! echo "$LIBRARY_SHA256  $archive" | sha256sum --check --status; then
+            echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
+            exit 1
+          fi
+          rm -rf dist schemas/cache compliance/cache
+          tar -xzf "$archive"
 
       - name: Guard public Zod OpenAPI portability
         run: npm run test:zod-openapi-portability
@@ -244,7 +347,7 @@ jobs:
           if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
             # No usable base (first push, force-push, scheduled run) — run to be safe.
             echo "changed=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "$base" HEAD | grep -qE '^(ADCP_VERSION|package\.json|package-lock\.json|tsup\.config\.ts|tsconfig\.json|tsconfig\.lib\.json|tsconfig\.build\.json|scripts/(generate-dmts-declarations|generate-per-tool-types|copy-schemas-to-dist|copy-v2-projection-catalog|generate-wire-spec-fields|compact-schema-bundle)\.ts|scripts/(verify-package|check-package-size)\.mjs|src/lib/(validation/(bundled-schema-store|schema-loader)|conformance/schemaLoader|server/error-arm-tools)\.ts|\.github/workflows/ci\.yml)$'; then
+          elif git diff --name-only "$base" HEAD | grep -qE '^(ADCP_VERSION|package\.json|package-lock\.json|tsup\.config\.ts|tsconfig\.json|tsconfig\.lib\.json|tsconfig\.build\.json|scripts/(generate-dmts-declarations|generate-per-tool-types|copy-schemas-to-dist|copy-v2-projection-catalog|generate-wire-spec-fields|compact-schema-bundle)\.ts|scripts/(verify-package|check-package-size|check-publish-protocol-artifacts)\.mjs|src/lib/(validation/(bundled-schema-store|schema-loader)|conformance/schemaLoader|server/error-arm-tools)\.ts|\.github/workflows/ci\.yml)$'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -281,6 +384,7 @@ jobs:
   adopter-typechecks:
     name: Adopter Typechecks
     runs-on: ubuntu-latest
+    needs: library-build
     timeout-minutes: 15
 
     steps:
@@ -296,8 +400,33 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build library
-        run: npm run build:lib
+      - name: Download library output
+        uses: actions/download-artifact@v7
+        with:
+          name: library-dist-${{ github.run_id }}
+          path: ${{ runner.temp }}/library-artifact
+
+      - name: Verify and extract library output
+        shell: bash
+        env:
+          LIBRARY_SHA256: ${{ needs.library-build.outputs.sha256 }}
+          LIBRARY_COMMIT: ${{ needs.library-build.outputs.commit }}
+        run: |
+          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" || "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
+            echo "::error::Missing library-build digest or checkout identity mismatch."
+            exit 1
+          fi
+          archive="$RUNNER_TEMP/library-artifact/library-dist.tar.gz"
+          if [[ ! -f "$archive" ]]; then
+            echo "::error::Missing library-build artifact (expires after 1 day). Use Re-run all jobs."
+            exit 1
+          fi
+          if ! echo "$LIBRARY_SHA256  $archive" | sha256sum --check --status; then
+            echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
+            exit 1
+          fi
+          rm -rf dist schemas/cache compliance/cache
+          tar -xzf "$archive"
 
       - name: Adopter type-check (catch d.ts leaks)
         run: npm run check:adopter-types
@@ -309,6 +438,7 @@ jobs:
   example-typechecks:
     name: Example Typechecks
     runs-on: ubuntu-latest
+    needs: library-build
     timeout-minutes: 10
 
     steps:
@@ -324,8 +454,33 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build library
-        run: npm run build:lib
+      - name: Download library output
+        uses: actions/download-artifact@v7
+        with:
+          name: library-dist-${{ github.run_id }}
+          path: ${{ runner.temp }}/library-artifact
+
+      - name: Verify and extract library output
+        shell: bash
+        env:
+          LIBRARY_SHA256: ${{ needs.library-build.outputs.sha256 }}
+          LIBRARY_COMMIT: ${{ needs.library-build.outputs.commit }}
+        run: |
+          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" || "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
+            echo "::error::Missing library-build digest or checkout identity mismatch."
+            exit 1
+          fi
+          archive="$RUNNER_TEMP/library-artifact/library-dist.tar.gz"
+          if [[ ! -f "$archive" ]]; then
+            echo "::error::Missing library-build artifact (expires after 1 day). Use Re-run all jobs."
+            exit 1
+          fi
+          if ! echo "$LIBRARY_SHA256  $archive" | sha256sum --check --status; then
+            echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
+            exit 1
+          fi
+          rm -rf dist schemas/cache compliance/cache
+          tar -xzf "$archive"
 
       - name: Typecheck examples
         run: npm run typecheck:examples
@@ -339,6 +494,7 @@ jobs:
     needs:
       - typescript-typecheck
       - library-build
+      - library-checks
       - adopter-typechecks
       - example-typechecks
     if: ${{ always() }}
@@ -367,11 +523,18 @@ jobs:
   unit-tests-fast:
     name: Unit Tests Fast (${{ matrix.shard }})
     runs-on: ubuntu-latest
+    needs: library-build
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        shard: ['1/3', '2/3', '3/3']
+        include:
+          - shard: '1/3'
+            id: '1-3'
+          - shard: '2/3'
+            id: '2-3'
+          - shard: '3/3'
+            id: '3-3'
 
     steps:
       - name: Checkout code
@@ -386,19 +549,103 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build library
-        run: npm run build:lib
+      - name: Download library output
+        uses: actions/download-artifact@v7
+        with:
+          name: library-dist-${{ github.run_id }}
+          path: ${{ runner.temp }}/library-artifact
+
+      - name: Verify and extract library output
+        shell: bash
+        env:
+          LIBRARY_SHA256: ${{ needs.library-build.outputs.sha256 }}
+          LIBRARY_COMMIT: ${{ needs.library-build.outputs.commit }}
+        run: |
+          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" || "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
+            echo "::error::Missing library-build digest or checkout identity mismatch."
+            exit 1
+          fi
+          archive="$RUNNER_TEMP/library-artifact/library-dist.tar.gz"
+          if [[ ! -f "$archive" ]]; then
+            echo "::error::Missing library-build artifact (expires after 1 day). Use Re-run all jobs."
+            exit 1
+          fi
+          if ! echo "$LIBRARY_SHA256  $archive" | sha256sum --check --status; then
+            echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
+            exit 1
+          fi
+          rm -rf dist schemas/cache compliance/cache
+          tar -xzf "$archive"
+
+      # Pull requests can restore the default branch cache but never save it.
+      # A missing or invalid cache is safe: the runner uses a deterministic
+      # equal-weight fallback until a successful main run refreshes history.
+      - name: Restore trusted test timings
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/node-test-timings.json
+          key: node-test-timings-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            node-test-timings-${{ runner.os }}-
 
       - name: Run fast unit test shard
         run: node scripts/run-test-with-summary.js --title "Unit Tests Fast $TEST_SHARD" -- npm run test:node:fast:shard
         env:
           CI: true
           TEST_SHARD: ${{ matrix.shard }}
+          TEST_SHARD_MANIFEST: ${{ runner.temp }}/manifest-${{ matrix.id }}.json
+          TEST_TIMINGS_FILE: .cache/node-test-timings.json
+          TEST_TIMINGS_OUTPUT: ${{ runner.temp }}/timings-${{ matrix.id }}.json
+
+      - name: Upload test timing diagnostics
+        uses: actions/upload-artifact@v7
+        with:
+          name: node-test-timings-${{ github.run_id }}-${{ matrix.id }}
+          path: |
+            ${{ runner.temp }}/timings-${{ matrix.id }}.json
+            ${{ runner.temp }}/manifest-${{ matrix.id }}.json
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
+
+  node-test-timings:
+    name: Refresh Node Test Timings
+    runs-on: ubuntu-latest
+    needs: unit-tests-fast
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.unit-tests-fast.result == 'success'
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Download successful shard timings
+        uses: actions/download-artifact@v7
+        with:
+          pattern: node-test-timings-${{ github.run_id }}-*
+          path: ${{ runner.temp }}/node-test-timings
+          merge-multiple: true
+
+      - name: Merge test timings
+        run: |
+          mkdir -p .cache
+          node scripts/merge-node-test-timings.mjs \
+            --input "$RUNNER_TEMP/node-test-timings" \
+            --output .cache/node-test-timings.json
+
+      - name: Save trusted test timings
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/node-test-timings.json
+          key: node-test-timings-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   unit-tests-slow:
     name: Unit Tests Slow
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    needs: library-build
+    # The serialized slow lane now exceeds ten minutes on hosted runners;
+    # keep a bounded ceiling while allowing the complete suite to finish.
+    timeout-minutes: 20
 
     steps:
       - name: Checkout code
@@ -407,14 +654,41 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: '20.x'
+          # This lane exercises Changesets release tooling, which requires
+          # Node 22 or 24. The runtime matrix keeps SDK Node 20 coverage.
+          node-version: '24.x'
           cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Build library
-        run: npm run build:lib
+      - name: Download library output
+        uses: actions/download-artifact@v7
+        with:
+          name: library-dist-${{ github.run_id }}
+          path: ${{ runner.temp }}/library-artifact
+
+      - name: Verify and extract library output
+        shell: bash
+        env:
+          LIBRARY_SHA256: ${{ needs.library-build.outputs.sha256 }}
+          LIBRARY_COMMIT: ${{ needs.library-build.outputs.commit }}
+        run: |
+          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" || "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
+            echo "::error::Missing library-build digest or checkout identity mismatch."
+            exit 1
+          fi
+          archive="$RUNNER_TEMP/library-artifact/library-dist.tar.gz"
+          if [[ ! -f "$archive" ]]; then
+            echo "::error::Missing library-build artifact (expires after 1 day). Use Re-run all jobs."
+            exit 1
+          fi
+          if ! echo "$LIBRARY_SHA256  $archive" | sha256sum --check --status; then
+            echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
+            exit 1
+          fi
+          rm -rf dist schemas/cache compliance/cache
+          tar -xzf "$archive"
 
       - name: Run slow unit tests
         run: node scripts/run-test-with-summary.js --title "Unit Tests Slow" -- npm run test:node:slow
@@ -424,6 +698,7 @@ jobs:
   webhook-delivery-backends:
     name: Webhook Delivery Backends
     runs-on: ubuntu-latest
+    needs: library-build
     timeout-minutes: 10
     services:
       postgres:
@@ -462,8 +737,33 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build library
-        run: npm run build:lib
+      - name: Download library output
+        uses: actions/download-artifact@v7
+        with:
+          name: library-dist-${{ github.run_id }}
+          path: ${{ runner.temp }}/library-artifact
+
+      - name: Verify and extract library output
+        shell: bash
+        env:
+          LIBRARY_SHA256: ${{ needs.library-build.outputs.sha256 }}
+          LIBRARY_COMMIT: ${{ needs.library-build.outputs.commit }}
+        run: |
+          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" || "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
+            echo "::error::Missing library-build digest or checkout identity mismatch."
+            exit 1
+          fi
+          archive="$RUNNER_TEMP/library-artifact/library-dist.tar.gz"
+          if [[ ! -f "$archive" ]]; then
+            echo "::error::Missing library-build artifact (expires after 1 day). Use Re-run all jobs."
+            exit 1
+          fi
+          if ! echo "$LIBRARY_SHA256  $archive" | sha256sum --check --status; then
+            echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
+            exit 1
+          fi
+          rm -rf dist schemas/cache compliance/cache
+          tar -xzf "$archive"
 
       - name: Run durable webhook backend contract
         env:
@@ -490,13 +790,21 @@ jobs:
           test/server-decisioning-postgres-task-registry.test.js
           test/server-decisioning-postgres-task-settlement-intents.test.js
           test/lib/postgres-proposal-store.test.js
+          test/examples/durable-buyer-writes.test.js
           test/lib/reporting-ledger-pg.test.js
+          test/lib/reporting-managed-delivery-pg.test.js
+          test/lib/reporting-ledger-writer-fence-pg.test.js
+          test/lib/reporting-notification-activity-pg.test.js
+          test/lib/reporting-consumer-postgres.test.js
+          test/lib/reporting-webhook-activity-pg.test.js
+          test/lib/reliable-reporting-production-pg.test.js
           test/lib/reporting-status-ingest-pg.test.js
           test/reliable-reporting-lifecycle-pg.test.js
 
   eslint-plugin-tests:
     name: ESLint Plugin Tests
     runs-on: ubuntu-latest
+    needs: library-build
     timeout-minutes: 15
 
     steps:
@@ -512,8 +820,33 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build library
-        run: npm run build:lib
+      - name: Download library output
+        uses: actions/download-artifact@v7
+        with:
+          name: library-dist-${{ github.run_id }}
+          path: ${{ runner.temp }}/library-artifact
+
+      - name: Verify and extract library output
+        shell: bash
+        env:
+          LIBRARY_SHA256: ${{ needs.library-build.outputs.sha256 }}
+          LIBRARY_COMMIT: ${{ needs.library-build.outputs.commit }}
+        run: |
+          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" || "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
+            echo "::error::Missing library-build digest or checkout identity mismatch."
+            exit 1
+          fi
+          archive="$RUNNER_TEMP/library-artifact/library-dist.tar.gz"
+          if [[ ! -f "$archive" ]]; then
+            echo "::error::Missing library-build artifact (expires after 1 day). Use Re-run all jobs."
+            exit 1
+          fi
+          if ! echo "$LIBRARY_SHA256  $archive" | sha256sum --check --status; then
+            echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
+            exit 1
+          fi
+          rm -rf dist schemas/cache compliance/cache
+          tar -xzf "$archive"
 
       - name: Run ESLint plugin tests
         run: node scripts/run-test-with-summary.js --title "ESLint Plugin Tests" -- npm test --workspace=packages/eslint-plugin --if-present
@@ -603,6 +936,8 @@ jobs:
             exit 1
           fi
 
+  # Separate package and network matrices: job-level needs cannot vary by
+  # matrix.mode. Node-floor builds must start without waiting on the producer.
   node-undici-runtime-matrix:
     name: Node ${{ matrix.node }} / Undici ${{ matrix.undici }}
     runs-on: ubuntu-latest
@@ -614,15 +949,9 @@ jobs:
           - node: 20.19.0
             undici: 6.28.0
             mode: package
-          - node: 20.19.0
-            undici: 7.29.0
-            mode: network
           - node: 22.12.0
             undici: 6.28.0
             mode: package
-          - node: 24.x
-            undici: 6.28.0
-            mode: network
 
     steps:
       - name: Checkout code
@@ -655,6 +984,79 @@ jobs:
       - name: Published-package floor smoke
         if: matrix.mode == 'package'
         run: npm run verify:package
+
+  # These cells deliberately test Node-20-built output under Node 24 / Undici 7,
+  # including the packed Undici 7 override at Node 20.19.0. Build-toolchain
+  # compatibility is checked at the two Node floors in the package matrix;
+  # network cells no longer exercise code generation under their own runtime.
+  node-undici-network-matrix:
+    name: Node ${{ matrix.node }} / Undici ${{ matrix.undici }}
+    runs-on: ubuntu-latest
+    needs: library-build
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - node: 20.19.0
+            undici: 7.29.0
+            mode: network
+          - node: 24.x
+            undici: 6.28.0
+            mode: network
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Setup pnpm release-age resolver
+        uses: pnpm/action-setup@v4
+        with:
+          # verify:package exercises the SDK under pnpm's release-age policy.
+          # Pin the same Node-20-compatible resolver used by package-smoke.
+          version: 10.19.0
+
+      - name: Install dependencies with tested Undici
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false "undici@${{ matrix.undici }}"
+
+      - name: Check declared runtime policy
+        run: npm run check:runtime-compat
+
+      - name: Download library output
+        uses: actions/download-artifact@v7
+        with:
+          name: library-dist-${{ github.run_id }}
+          path: ${{ runner.temp }}/library-artifact
+
+      - name: Verify and extract library output
+        shell: bash
+        env:
+          LIBRARY_SHA256: ${{ needs.library-build.outputs.sha256 }}
+          LIBRARY_COMMIT: ${{ needs.library-build.outputs.commit }}
+        run: |
+          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" || "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
+            echo "::error::Missing library-build digest or checkout identity mismatch."
+            exit 1
+          fi
+          archive="$RUNNER_TEMP/library-artifact/library-dist.tar.gz"
+          if [[ ! -f "$archive" ]]; then
+            echo "::error::Missing library-build artifact (expires after 1 day). Use Re-run all jobs."
+            exit 1
+          fi
+          if ! echo "$LIBRARY_SHA256  $archive" | sha256sum --check --status; then
+            echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
+            exit 1
+          fi
+          rm -rf dist schemas/cache compliance/cache
+          tar -xzf "$archive"
 
       - name: Published-package Undici 7 consumer override
         if: matrix.undici == '7.29.0'
@@ -689,6 +1091,7 @@ jobs:
       - security-audit
       - package-smoke
       - node-undici-runtime-matrix
+      - node-undici-network-matrix
     if: ${{ always() }}
     timeout-minutes: 2
 

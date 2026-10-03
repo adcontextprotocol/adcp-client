@@ -24,6 +24,92 @@ accounts: {
 }
 ```
 
+For buyer setup and opt-in lifecycle management, see
+[First call to a seller](./FIRST-CALL-TO-A-SELLER.md).
+
+Account resolvers receive `ctx.provisioning`. It is false on discovery and
+negotiation (`get_products`, `list_products`, `get_signals`, and proposal
+request/refine/decline); these tasks MUST use lookup only. It is true on spend
+commitments, `activate_signal`, and `sync_*` tasks. Lazy provisioning must be
+explicitly gated:
+
+```ts
+resolve: async (ref, ctx) => {
+  const existing = await db.findAuthorizedAccount(ref, ctx?.authInfo);
+  if (existing || !ctx?.provisioning) return existing;
+  return await db.createAuthorizedAccount(ref, ctx?.authInfo);
+},
+```
+
+When `resolveAccount` is configured, a supplied unknown reference returns
+`ACCOUNT_NOT_FOUND`, even on optional account tools.
+
+### Strict account references (`strictAccountReferences`)
+
+SDK 14 keeps four compatibility behaviors that strict mode removes:
+
+- A buyer-supplied `account` still reaches a raw handler-bag seller that has
+  no reference-aware `resolveAccount`: the handler sees `params.account` and
+  `ctx.account` is undefined. An auth-only `resolveAccountFromAuth` does not
+  authorize an arbitrary reference.
+- A seller that declares `capabilities.account.requiredForProducts` still
+  serves `get_products` when the request carries no account and
+  authentication resolves none.
+- `list_accounts.account` is resolved through `resolveAccount` as the
+  request's account (an unknown or unauthorized filter returns
+  `ACCOUNT_NOT_FOUND`). Strict mode treats it as a filter instead.
+- On `createAdcpServerFromPlatform` with `resolution: 'implicit'`, an account
+  whose returned identity metadata disagrees with the supplied natural key is
+  still used.
+
+Each logs a deprecation warning once per process per warning code (through
+`logger.warn`, plus `process.emitWarning` outside `NODE_ENV=production`);
+later occurrences log at debug level. Codes:
+`ADCP_UNRESOLVED_ACCOUNT_REFERENCE`, `ADCP_REQUIRED_FOR_PRODUCTS_NOT_ENFORCED`,
+`ADCP_LIST_ACCOUNTS_FILTER_RESOLVED`, and
+`ADCP_IMPLICIT_ACCOUNT_IDENTITY_MISMATCH`.
+
+**Strict mode becomes the default in the next major release.** Opt in now:
+
+```ts
+createAdcpServer({
+  name: 'Seller',
+  version: '1.0.0',
+  strictAccountReferences: true,
+  resolveAccount: (ref, ctx) => authorizedAccounts.find(ref, ctx.authInfo),
+  mediaBuy: {
+    getProducts: (params, ctx) => catalog.forAccount(ctx.account, params),
+  },
+});
+```
+
+With `strictAccountReferences: true`:
+
+- A supplied reference on a server without `resolveAccount` fails with
+  `ACCOUNT_NOT_FOUND` before the handler runs.
+- A `requiredForProducts` seller refuses account-less `get_products` with
+  `ACCOUNT_REQUIRED`.
+- `list_accounts.account` is a filter: `resolveAccount` is not called for it
+  and `ctx.account` comes from `resolveAccountFromAuth`.
+- An implicit-mode account whose returned identity metadata (`brand`,
+  `operator`, `operator_unit`, `currency`, `timezone`, `sandbox`) disagrees
+  with the supplied natural key is refused with `ACCOUNT_NOT_FOUND`. Fields
+  your store does not return are not compared.
+
+Migration for handler-bag sellers: move account authorization out of
+individual handlers and into `resolveAccount`, then set the flag.
+`authorizedAccounts.find` must return null on an unknown reference or a
+reference owned by another principal. Public discovery may omit `account`;
+resource creation and spend commitments need an authorized account. Implicit
+stores should resolve by the complete natural key and return identity
+metadata that echoes it, or omit the metadata.
+
+`InMemoryImplicitAccountStore` matches supplied refs on the complete natural
+key, including operator unit, currency, timezone, and sandbox. It retains its
+24-hour TTL and replacement sync semantics. Set `mergeOnUpsert: true` for
+additive batches and revoke individual refs with `remove(ref, ctx)`; passing
+`delete_missing: true` in `sync_accounts` retains replacement semantics.
+
 **Each mode has exactly one spelling.** `'derived'` keeps its name even
 though [adcp#5062](https://github.com/adcontextprotocol/adcp/pull/5062)
 calls the shape an *upstream-managed account-id namespace*: `resolution` is
@@ -89,8 +175,10 @@ entity, not the ephemeral token.
 
 ### 3 · When no sync has happened
 
-Return `null` from `resolve()`. The framework emits `ACCOUNT_NOT_FOUND` to
-the buyer with `recovery: 'terminal'`.
+Return `null` from `resolve()`. When the request omitted `account`, the
+framework emits `ACCOUNT_REQUIRED` with `recovery: 'correctable'` and guidance
+to call `sync_accounts`. A buyer-supplied reference that does not resolve still
+emits `ACCOUNT_NOT_FOUND` with `recovery: 'terminal'`.
 
 **Do NOT return `AUTH_REQUIRED`, `AUTH_MISSING`, or `AUTH_INVALID`.** Those
 errors signal missing or rejected credentials — not a missing pre-sync. Buyers
@@ -101,7 +189,7 @@ receiving auth errors will refresh credentials or escalate, not call
 // ✓ Correct
 resolve: async (_ref, ctx) => {
   const account = await db.findByPrincipal(extractKey(ctx?.authInfo));
-  return account ?? null;  // null → ACCOUNT_NOT_FOUND
+  return account ?? null;  // omitted account → ACCOUNT_REQUIRED
 },
 
 // ✗ Wrong — misleads buyers about how to recover
@@ -112,9 +200,11 @@ resolve: async (_ref, ctx) => {
 },
 ```
 
-You MAY add a `details.hint` on the `ACCOUNT_NOT_FOUND` error in your error
-normalizer (SDK extension point) if your platform's documentation mentions
-it, but the error code itself must remain `ACCOUNT_NOT_FOUND`.
+Do not replace the omitted-account result with an auth error. The framework's
+`ACCOUNT_REQUIRED` suggestion tells the buyer to establish the implicit
+linkage. For buyer-supplied unknown, unauthorized, or mismatched references,
+the error code must remain `ACCOUNT_NOT_FOUND` to preserve enumeration
+resistance.
 
 ### 4 · TTL and sync-linkage staleness
 
@@ -219,7 +309,10 @@ The contract:
    `list_accounts` suggestion — a natural key is not a durable reference into
    someone else's roster.
 3. Your `resolve` **verifies** that id against what the *caller's credential*
-   can reach, and returns `null` on a miss (framework → `ACCOUNT_NOT_FOUND`).
+   can reach. A buyer-supplied miss returns `null` (framework → terminal
+   `ACCOUNT_NOT_FOUND`). On ref-less operations, zero or multiple reachable
+   accounts return `null`; account-required operations then emit correctable
+   `ACCOUNT_REQUIRED` with `list_accounts` guidance.
    `createDerivedAccountStore` does this for you. As a backstop the framework
    also refuses a resolved account whose `id` isn't the one the buyer named —
    that catches a resolver that ignores `ref`, but it can't tell whether your
@@ -281,7 +374,8 @@ accounts: {
     // (The framework also refuses a resolved account whose id isn't the one
     // the buyer named — but own the check; it's your tenant boundary.)
     if (id !== undefined) return reachable.find(a => a.id === id) ?? null;
-    // Ref-less tools: auto-select only when there is exactly one.
+    // Ref-less tools: auto-select only when there is exactly one. An
+    // account-required operation maps any other roster size to ACCOUNT_REQUIRED.
     return reachable.length === 1 ? reachable[0] : null;
   },
   // The framework does not filter or page for you: honor req.account /
@@ -416,8 +510,8 @@ accounts: {
   resolution: 'explicit',  // or omit — 'explicit' is the default
   resolve: async (ref, ctx) => {
     const id = refAccountId(ref);
-    if (id) return db.findById(id);
-    if (ref?.brand && ref?.operator) return db.findByBrandOperator(ref.brand, ref.operator);
+    if (id) return db.findForPrincipal(id, ctx.authInfo);
+    if (ref?.brand && ref?.operator) return db.findByBrandOperatorForPrincipal(ref.brand, ref.operator, ctx.authInfo);
     return null;
   },
 }
@@ -425,6 +519,9 @@ accounts: {
 
 `upsert` is optional for explicit-mode platforms. Implement it if your buyers
 need to pre-register accounts before use (e.g., credit-check gates).
+Always bind buyer-supplied account references to the authenticated principal;
+return `null` for a reference outside that principal's roster. This also applies
+to `list_creative_formats` when its optional AdCP 3.2 `account` field is supplied.
 
 For the Shape C publisher-curated pattern, prefer `createRosterAccountStore`
 over a hand-rolled store — it handles the id-arm dispatch and `list_accounts`
@@ -435,8 +532,9 @@ plumbing, and exposes `resolveWithoutRef` for the ref-less case (see
 
 ## Ref-less resolution (`list_creative_formats`, `preview_creative`, `provide_performance_feedback`)
 
-These tools send no `account` field on the wire, so the framework calls
-`accounts.resolve(undefined, ctx)`. Publisher-curated (`resolution: 'explicit'`)
+`preview_creative` and `provide_performance_feedback` send no `account` field.
+In AdCP 3.2, `list_creative_formats` may send one. When it is omitted,
+the framework calls `accounts.resolve(undefined, ctx)`. Publisher-curated (`resolution: 'explicit'`)
 platforms using `createRosterAccountStore` get `null` by default —
 `ctx.account` is `undefined` in those handlers.
 
@@ -447,7 +545,7 @@ account for these tools:
 import { createRosterAccountStore } from '@adcp/sdk/server';
 
 const accounts = createRosterAccountStore({
-  lookup: async (id, ctx) => db.findById(id),
+  lookup: async (id, ctx) => db.findForPrincipal(id, ctx?.authInfo),
   toAccount: row => ({
     id: row.id,
     name: row.name,

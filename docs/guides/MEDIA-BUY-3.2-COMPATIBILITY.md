@@ -5,7 +5,7 @@ routes it can still **call**. A 3.2 seller should make the compact lifecycle the
 obvious path for new buyers without breaking a 3.0 or 3.1 buyer that already
 calls the established names.
 
-The SDK is pinned to the signed `3.2.0-rc.3` bundle. It retains the converged
+The SDK is pinned to the signed `3.2.1` bundle. It retains the converged
 RC.0 product-identity, daypart-timezone, and flat-rate loop-position and
 slot-span surface, and adds the Reliable Reporting 1.0 core, managed-delivery,
 and reconciled-billing schema contracts. Beta.5 introduced the normative async identity,
@@ -77,10 +77,10 @@ createAdcpServerFromPlatform(platform, {
   name: 'seller',
   version: '1.0.0',
   // `adcpVersion` is the newest release explicit callers may select.
-  adcpVersion: '3.2.0-rc.3',
+  adcpVersion: '3.2.1',
   // Keep callers that omit a version on the established 3.1 contract.
   defaultAdcpVersion: '3.1.18',
-  capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.3'] },
+  capabilities: { supported_versions: ['3.1.18', '3.2.1'] },
 });
 ```
 
@@ -498,6 +498,89 @@ a shared principal-scoped execution fence before dispatch. Only a verified
 `unable` result restores that exact source snapshot; a validated successor adds
 new acceptance evidence under its own proposal ID. In-flight, malformed,
 ambiguous, disposed, and expired refinements leave the source non-executable.
+
+## Request-only Targeting Input (`null` = clear)
+
+AdCP 3.2 gives every targeting dimension **three** states on a mutation
+request, and the difference between two of them is invisible if you only read
+the type:
+
+| wire state | `create_media_buy` / `buy_products` | `update_media_buy` / `control_media_buy` |
+| --- | --- | --- |
+| dimension **omitted** | inherit the configured-product / product default | leave stored state unchanged |
+| dimension **`null`** | suppress that default | clear the stored dimension |
+| dimension **non-null** | replace the complete dimension | replace the complete dimension |
+
+`null` is a **command, not targeting state**. Discovery criteria, configured
+products, accepted commercial snapshots, mutation responses, and package
+readback all use the strict Targeting *Overlay*, whose schema forbids `null`.
+That is why codegen emits two types: `TargetingOverlayInput` (nullable
+dimensions, request-only) and `TargetingOverlay` (strict, everywhere else).
+The package root also exports operation-named `CreateTargetingInput` and
+`UpdateTargetingInput` aliases so adapter code can state its boundary without
+reaching through a generated request type. Both include whole-field omission
+and are also exported from `@adcp/sdk/server`. They name the
+`targeting_overlay` field only: update requests separately expose incremental
+keyword and negative-keyword add/remove fields.
+
+Getting this backwards fails in two directions, and neither is loud: persisting
+a request overlay verbatim writes a clear command into durable state, and
+echoing that back emits `null` on a response the schema rejects.
+
+Three helpers do the projection — exported from the package root and from
+`@adcp/sdk/server`:
+
+```ts
+import {
+  applyTargetingInput,
+  hasTargetingClears,
+  resolveTargetingInput,
+  type CreateTargetingInput,
+  type UpdateTargetingInput,
+} from '@adcp/sdk';
+
+// CREATE — merge with the selected product's strict defaults so the accepted
+// snapshot contains complete effective targeting. Null removes a default.
+const effective = applyTargetingInput(configuredProduct.targeting, purchase.targeting_overlay);
+// { geo_countries: ['US'], audience_include: null } -> { geo_countries: ['US'] }
+
+// UPDATE — three states in one call: omitted preserves, null clears, value replaces.
+const merged = applyTargetingInput(stored, patch.targeting_overlay);
+// an `undefined` patch preserves; a `null` patch clears the whole overlay
+
+// Decide whether a clear is executable before accepting the mutation.
+if (hasTargetingClears(patch.targeting_overlay)) assertProductPermitsClear(product);
+```
+
+Both projections return `undefined`, never `{}`, when no dimension survives — a
+cleared dimension is *absent* from effective readback, so omit `targeting_overlay`
+rather than echoing an empty object.
+
+`resolveTargetingInput()` is sufficient only when no configured/product
+targeting defaults need to be materialized. It removes request commands; it
+does not invent the omitted create dimensions that the selected product owns.
+
+`null` cannot remove inherent product scope. These helpers only project the
+three states; deciding whether a clear is *executable* is the seller's
+validation step, which per DR-0020 rejects a clear it cannot honor rather than
+silently retaining the default.
+
+If you use `createMediaBuyStore`, this is already handled on both the create and
+update paths — it persists and echoes strict overlays only.
+
+Adapter test suites can generate the six command-state cases for every
+supported dimension with `buildTargetingInputConformanceVectors()` from
+`@adcp/sdk/conformance`. Pass two schema-valid values per dimension, then run
+the resulting corpus through the distinct `create` and `update` callbacks
+of `runTargetingInputConformance(vectors, adapter)`. Samples share a
+multi-dimension baseline; use the canonical-readback overrides or comparator
+when the seller materializes selections or canonicalizes set ordering. The observation
+contract separately records the request at the seller/provider dispatch seam
+and strict durable/readback state, so the runner catches both a dropped `null`
+command and a leaked `null` state value. Append
+`TARGETING_GEOGRAPHY_CONFORMANCE_VECTORS` to verify that changing countries
+preserves omitted regions and rejects an incompatible combined result without
+mutating prior state.
 
 ## Buyer projection policy
 

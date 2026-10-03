@@ -81,6 +81,10 @@ export type {
   NoticeSeverity,
 } from './types';
 export { WEBHOOK_IDEMPOTENCY_KEY_PATTERN } from './types';
+// Report consumers key on `StoryboardStepResult.task`; the MCP session auth
+// probe is runner-native, so its task name ships as a constant rather than a
+// magic string operators have to copy (adcp-client#2940).
+export { MCP_SESSION_PROBE_TASK } from './types';
 
 // Cross-step assertion registry (adcontextprotocol/adcp#2639)
 export {

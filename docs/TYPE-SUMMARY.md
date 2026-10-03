@@ -1,9 +1,27 @@
 # AdCP Type Summary
 
-> Generated at: 2026-09-14
-> @adcp/sdk v14.0.0-rc.36
+> Generated at: 2026-10-01
+> @adcp/sdk v14.0.0
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
+
+## Buyer Reliable Reporting
+
+Import `reconcileReportingCoreV1`, `reconcileReporting`, `createPostgresReportingConsumerRuntimeV1`, and `createReliableReportingConsumerV1` from `@adcp/sdk/reporting/consumer`. `ReliableReportingConsumerRunResultV1` and `ReliableReportingConsumerErrorContextV1` identify a run with `consumerScope`, `accountId`, and `reason`. Retain `expectedPeriods` from buyer commitments, use a non-secret seller/principal `consumerScope`, and make post-official adjustment acceptance an explicit `evaluateAdjustment` policy decision. Verify RFC 9421 with `@adcp/sdk/signing/server` before calling `handleAuthenticatedNotification`. See [Reporting reconciliation](guides/REPORTING-RECONCILIATION.md) and the [existing-app buyer worker](../examples/reliable-reporting-buyer/README.md).
+
+## MediaBuy Action Assessment Types
+
+Use `@adcp/sdk/media-buy/actions` for pure buyer assessment and `@adcp/sdk/server` for `mediaBuyActionResolver`. See [action assessment guide](guides/MEDIA-BUY-ACTION-ASSESSMENT.md).
+
+| Type | Use |
+| --- | --- |
+| `MediaBuyTask` | Narrow routing union: `update_media_buy`, `control_media_buy`, `refine_proposals`, `sync_creatives`. |
+| `ActionAvailability` | `available_now` with optional `nonDefaultRoute`, mode and authority; or `currently_unavailable` with reason, certainty and optional compatibility/constraint detail. |
+| `ActionBuy`, `ActionProduct`, `ActionProposal` | Structural inputs for joining current accepted terms with live actions and advisory products. |
+| `LiveMediaBuyAction` | Readable canonical or legacy entry for assessment, projection and existing preflight helpers, including shared-frequency-cap package scope. |
+| `MediaBuyAvailableAction`, `MediaBuyValidAction` | Generated legacy wire entry / deprecated flat vocabulary; distinct from canonical helper entries. |
+| `MediaBuyAction`, `MediaBuyActionId` | Action identifiers accepted by assessment / mutation helpers; runtime validation preserves unknown future data. |
+| `ProposalChangeTerm`, `ChangeTermConstraints` | Negotiated term view and portable discriminated budget / flight / package-count / effective-timing constraints. |
 
 ## Client Types
 
@@ -39,11 +57,56 @@ interface TransportOptions {
 }
 
 interface TaskOptions {
+  timeout?: number;             // Absolute whole-task deadline
+  signal?: AbortSignal;         // Caller cancellation
+  // Direct A2A mutation route, bound to authenticated principal + account scope.
+  durableContinuationRecovery?: { ownerScope: string };
   // Trusted local receiver policy; snapshotted and persisted with generated
   // webhook registrations, never inferred from or sent in task arguments.
   delegatedOperatorAuthorization?: DelegatedOperatorAuthorizationContext;
   // ...deadline, cancellation, transport, and conversation options...
 }
+
+interface DeferredContinuation<T> {
+  token: string;
+  question?: string;
+  resume(input: unknown): Promise<TaskResult<T>>;
+  recovery?: { operationId: string; recoveryKey: string }; // Host-only, persist once
+}
+
+// AgentClient public direct-mutation route recovery
+agent.recoverDirectPauseContinuation<T>({ operationId, recoveryKey, ownerScope });
+
+interface ValidateAdAgentsOptions {
+  timeoutMs?: number;           // Per-request ceiling
+  signal?: AbortSignal;         // One signal/deadline across the complete discovery flow
+  maxBodyBytes?: number;
+  userAgent?: string;
+  logLevel?: LogLevel;
+  urlForDomain?: (domain: string, path: string) => string;
+}
+
+interface CapabilityEvidenceScope {
+  agentUri: string;
+  adcpVersion: string;
+  scopeKey: string;             // Opaque, client-bound authorization/transport scope
+}
+
+interface CapabilityEvidenceSnapshot {
+  scope: CapabilityEvidenceScope;
+  capabilities: AdcpCapabilities;
+  observedAt: string;
+  expiresAt: string;
+  toolSchemas?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+}
+
+type CreateTargetingInput = TargetingOverlayInput | undefined; // whole field omitted / dimension null / value
+type UpdateTargetingInput = TargetingOverlayInput | undefined; // overlay field only; keyword deltas are siblings
+
+// Constructs, scopes, and primes one exact instance before first dispatch.
+AgentClient.createWithCapabilityPreflight(agent, async ({ client, scope }) => ({
+  ...(await loadCapabilityEvidence(client, scope)), scope,
+}));
 
 interface TaskResult<T = any> {
   success: boolean;
@@ -758,7 +821,7 @@ _Request:_
   required_overlay_support: Targeting Overlay Requirements
   required_media_buy_support: Media Buy Support Requirements
   property_list: Property List Ref
-  fields: ('product_id' | 'name' | 'description' | 'publisher_properties' | 'channels' | 'video_placement_types' | 'audio_distribution_types' | 'sponsored_placement_types' | 'social_placement_surfaces' | 'format_options' | 'placements' | 'delivery_type' | 'exclusivity' | 'pricing_options' | 'forecast' | 'reporting_capabilities' | 'measurement_terms' | 'performance_standards' | 'catalog_types' | 'signal_targeting_allowed' | 'signal_targeting_rules' | 'demographic_targeting' | 'overlay_support' | 'media_buy_support' | 'audience_evidence' | 'audience_evidence_selections' | 'max_optimization_goals' | 'catalog_match' | 'list_applications' | 'brief_relevance' | 'acceptance_policy_profile_ids' | 'identity' | 'expires_at' | 'allowed_actions' | 'format_ids' | 'outcome_measurement' | 'delivery_measurement' | 'creative_policy' | 'metric_optimization' | 'conversion_tracking' | 'data_provider_signals' | 'included_signals' | 'signal_targeting_options' | 'overlay_support' | 'media_buy_support' | 'targeting_resolution' | 'collections' | 'collection_targeting_allowed' | 'installments' | 'is_custom' | 'product_card' | 'product_card_detailed' | 'enforced_policies' | 'trusted_match')[]
+  fields: ('product_id' | 'name' | 'description' | 'publisher_properties' | 'channels' | 'video_placement_types' | 'audio_distribution_types' | 'sponsored_placement_types' | 'social_placement_surfaces' | 'format_options' | 'placements' | 'delivery_type' | 'exclusivity' | 'pricing_options' | 'forecast' | 'reporting_capabilities' | 'measurement_terms' | 'performance_standards' | 'catalog_types' | 'signal_targeting_allowed' | 'signal_targeting_rules' | 'demographic_targeting' | 'overlay_support' | 'collections' | 'collection_targeting_allowed' | 'media_buy_support' | 'audience_evidence' | 'audience_evidence_selections' | 'max_optimization_goals' | 'catalog_match' | 'list_applications' | 'brief_relevance' | 'targeting_resolution' | 'acceptance_policy_profile_ids' | 'identity' | 'execution_requirements' | 'expires_at' | 'allowed_actions' | 'format_ids' | 'outcome_measurement' | 'delivery_measurement' | 'creative_policy' | 'metric_optimization' | 'conversion_tracking' | 'data_provider_signals' | 'included_signals' | 'signal_targeting_options' | 'overlay_support' | 'media_buy_support' | 'installments' | 'is_custom' | 'product_card' | 'product_card_detailed' | 'enforced_policies' | 'trusted_match')[]
   time_budget: Duration
   push_notification_config: Push Notification Config
   pagination: Pagination Request
@@ -949,6 +1012,7 @@ _Request:_
   start_time: Start Timing  // required
   end_time: string  // required
   adcp_version: string
+  name: string
   brand: Brand Key
   advertiser_industry: Advertiser Industry
   pricing_version: string
@@ -984,6 +1048,7 @@ _Request:_
   proposal_id: string  // required
   proposal_terms_digest: string  // required
   adcp_version: string
+  name: string
   total_budget: object
   daily_budget_cap: number
   budget_cap_timezone: string
@@ -1067,6 +1132,7 @@ _Request:_
   disclosure_persistence: Disclosure Persistence[]
   output_format_ids: Format Id[]
   input_format_ids: Format Id[]
+  account: Account Ref
   pagination: Pagination Request
   context: Context
 }
@@ -2371,8 +2437,10 @@ _Request:_
 ```
 {
   creative_manifest: Creative Manifest  // required
+  idempotency_key: string
   feature_ids: string[]
   account: Account Ref
+  push_notification_config: Push Notification Config
   context: Context
 }
 ```
@@ -2381,6 +2449,7 @@ _Response (success branch):_
 ```
 {
   results: Creative Feature Result[]  // required
+  evaluation_id: string
   detail_url: string
   audit_observations: Audit Observation[]
   pricing_option_id: string
@@ -2760,7 +2829,7 @@ Source of truth: `schemas/cache/{version}/brand.json` and `adagents.json` — re
 
 ## Seller Reporting Source Contract
 
-Import from `@adcp/sdk/reporting/source`. This is a provider-neutral adapter boundary; the existing buyer-side `reconcileReporting` API is separate.
+Import from `@adcp/sdk/reporting/source`. This is a provider-neutral adapter boundary; buyer reconciliation and worker APIs live at `@adcp/sdk/reporting/consumer`.
 
 ```typescript
 type ReportingSourceManifestLevelV1 = 'basic' | 'evidenced';
@@ -2774,6 +2843,14 @@ interface ReportingSourceStagedObjectReaderV1 {
 type ReportingSourceExecutorResultV1 =
   | { ok: true; response: ReportingSourceExecutionResponseV1; manifestBytes: Uint8Array }
   | { ok: false; error: ReportingSourceErrorV1 };
+type InlineReportingMetricEvidenceV1 =
+  | { constituent_id: string; metric: string; status: 'present' | 'explicit_zero'; data_through: string }
+  | { constituent_id: string; metric: string; status: 'unsupported' | 'delayed' | 'partial' | 'stale' | 'missing'; reason: string; data_through?: string };
+interface InlineReportingAvailabilityEvidenceV1 {
+  version: '1.0';
+  cells: readonly InlineReportingMetricEvidenceV1[];
+}
+// Inline callback requests include constituents: { constituent_id, media_buy_id }[]; evidence-bearing responses add availability_evidence.
 // validateReportingSourceExecutionV1({ level, capabilities, request, result, objectReader })
 // runReportingSourceReplayConformanceV1({ level, executor, request, objectReader })
 // validateReportingRevisionSequenceV1(manifests, { crossFinalityBridge })
@@ -2784,24 +2861,108 @@ type ReportingSourceExecutorResultV1 =
 
 ## Seller Reporting Ledger
 
-Import from `@adcp/sdk/reporting/ledger`.
+Ledger symbols import from `@adcp/sdk/reporting/ledger`; `createPostgresPersistentNotificationRuntime` is a server symbol and imports from `@adcp/sdk/server`.
 
 ```typescript
-const store = new PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true });
+// Build the notification path first: the store must be constructed with the
+// activity port, or lifecycle transitions record no activity and notify nobody.
+const attemptCheckpoint = createPostgresReportingNotificationAttemptCheckpoint({
+  db: pool,
+  namespace: 'seller-production',
+});
+const notifications = createPostgresPersistentNotificationRuntime({
+  db: pool,
+  publisherScope: 'seller-production',
+  checkpointDeliveryAttempt: attemptCheckpoint,
+  subscriptions: { acknowledgeIsolatedDatabase: true },
+  ...notificationOptions,
+});
+const reportingActivity = createPostgresReportingNotificationActivityRuntime({
+  db: pool,
+  notifications,
+  namespace: 'seller-production',
+  attemptCheckpoint,
+  tenantScopeForAccount: accountId => trustedTenantDirectory.tenantFor(accountId),
+});
+
+// One store, wired to the activity port, used by every participant below.
+const store = new PostgresReportingLedgerStore(pool, {
+  acknowledgeIsolatedDatabase: true,
+  notificationActivityPort: reportingActivity.port,
+});
+
+// Every migration this wiring needs, before probing.
 await pool.query(REPORTING_LEDGER_MIGRATION);
+for (const sql of notifications.migrations.all) await pool.query(sql);
+for (const sql of reportingActivity.migrations.all) await pool.query(sql);
+
 const producer = createReportingProducer({ store, source, offerings, contact });
 await producer.planObligations();
 await producer.runWorker();
 const getReportingStatus = createReportingStatusHandler(store);
 const getMediaBuyDelivery = createReportingDeliveryHandler(store); // exact reporting_revision_id reads
 
-// AdCP 3.2.0-rc.3: identity comes from authenticated transport.
+// AdCP 3.2: identity comes from authenticated transport.
 const syncReportingStatus = createSyncReportingStatusHandler(store, {
   resolveConsumerId: context => context.agent.agent_url,
+});
+
+await reportingActivity.probe();
+// Run repeatedly from a durable scheduler; this call is bounded.
+await reportingActivity.recoverOnce({ ownerToken: stableWorkerId });
+const activityPage = await reportingActivity.listActivity({
+  tenantId: trustedTenant,
+  accountId: resolvedAccountId,
+  limit: 100,
 });
 ```
 
 The store freezes configuration lineage and period-end denominators, retains immutable RFC 8785 JCS/SHA-256-bound revisions, atomically fences lifecycle projections against their revision evidence, and provides leased production plus snapshot-stable status pagination. `projectReportingObligationHealthV1` implements waiting, healthy, delayed, action_required, and complete without I/O.
+
+`ReportingLedgerNotificationActivityPortV1<TTransaction>` is the custom-store seam. Invoke it inside the authoritative transition transaction and fence both predecessor health and finality. The bundled PostgreSQL runtime persists exactly-once intent plus paginatable account activity, then projects health changes through `PersistentNotificationRuntime`; finality-only changes remain internal activity. It never owns subscriber credentials or sends webhooks itself. `listActivity()` is adopter-facing only because no public AdCP account-activity read task exists.
+
+## Reliable Reporting Service
+
+Import from `@adcp/sdk/reporting/service`. This is the adapter-first lifecycle owner over the source and ledger primitives; it does not introduce another store or transport.
+
+```typescript
+interface ReliableReportingAdapterV1 {
+  readonly sourceOffering: ReportingSourceOfferingV1;
+  readonly deliveryOffering: ReportingDeliveryOffering;
+  // Exactly one of fetchSlice or executor.
+  readonly fetchSlice?: InlineReportingDeliveryFetchV1;
+  readonly executor?: ReportingSourceWithReaderV1;
+  // Opt-in bounded replay window for the inline executor; never applied
+  // silently. A feed that outlives its replay ceiling needs this or a
+  // durable executor.
+  readonly inlineReplayRetention?: InlineReportingReplayRetentionV1;
+}
+
+const reporting = createReliableReportingService({
+  store,
+  adapters,
+  contact,
+  automatedRecoveryWindowSeconds,
+  statusRetentionDays, // enforce this commitment in the ledger database
+  resolveSource: account => ({ adapterId, sourceScope, sourceTimezone }),
+  resolveCurrency: account => currency,
+  resolveCoverage: account => ({ constituents }), // authorized media-buy/package denominator
+  resolveConsumerId, // optional; controls consumer-status handler/capability
+});
+
+await pool.query(reporting.setup.migrations[0]);
+const installedPlatform = reporting.install(platform);
+await reporting.installConfiguration(configuration, { account: ctx.account });
+await reporting.runCycle({ accountId }); // tenant-partitioned
+reporting.start({ intervalMilliseconds, deploymentWide: true }); // explicit full-ledger scan
+await reporting.stop();
+```
+
+Account identity comes only from the framework-resolved context. Trusted host callbacks derive adapter routing, credential-free `sourceScope`, source timezone, currency, and the authorized constituent denominator. A declaration cannot supply `account`, `sourceScope`, `sourceTimezone`, `contract`, `currency`, `constituents`, or `mediaBuyIds`; `mediaBuyIds` is derived from `resolveCoverage`, so a buyer cannot name another buyer's media buys on a shared upstream network. Currency is frozen into configuration and obligation lineage. Capabilities are Core-only and derived from installed adapters and handlers; managed delivery, reconciled billing, receipts, webhook activity, and notifications are not advertised. Installation requires `platform.accounts.upsert`, which owns the advertised `sync_accounts` configuration path.
+
+For complete seller production assembly, use async `createPostgresReliableReportingProductionService` from `@adcp/sdk/reporting/service`. It owns the PostgreSQL Core/Managed stores, receipts, all three reporting notifications, webhook activity, migrations, probes, recovery, and capability publication. Supply `activity.tenantScopeForAccount`; Reconciled Billing offerings also require a trusted `obligatedConsumers` roster. Its scheduler and `recoverOnce` require explicit `deploymentWide: true` because recovery scans the whole namespace. See `docs/guides/REPORTING-LEDGER.md` and `docs/guides/REPORTING-OPERATIONS.md`.
+
+Buyer production processes use `createPostgresReportingConsumerRuntimeV1` with `createReliableReportingConsumerV1` from the package root. Verify webhook signatures before passing authenticated hints, preserve seller/principal scope, and configure `evaluateAdjustment` to authorize integrity-valid post-official corrections; the default defers them. See `docs/guides/REPORTING-RECONCILIATION.md`.
 
 ## Key Enums
 

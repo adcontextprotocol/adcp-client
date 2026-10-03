@@ -183,8 +183,9 @@ export interface TenantStoreConfig<TTenant, TCtxMeta = Record<string, unknown>> 
  * - `accounts.resolve(ref, ctx)` — calls `resolveByRef(ref)` when `ref` is
  *   set, otherwise `resolveFromAuth(ctx)`. Projects via `tenantToAccount`.
  *   Returns `null` if the resolver returned `null` (framework emits
- *   `ACCOUNT_NOT_FOUND` for tools that require an account, or treats
- *   absence as "no tenant" for tools that don't). Under
+ *   `ACCOUNT_REQUIRED` for an account-required operation that omitted the
+ *   reference, preserves `ACCOUNT_NOT_FOUND` for a supplied unresolved ref,
+ *   or treats absence as "no tenant" for tools that don't require one). Under
  *   `refAccess: 'ref-routed'` this path does NOT check the caller against the
  *   ref's tenant; `refAccess: 'auth-scoped'` fails closed on a cross-tenant ref.
  *

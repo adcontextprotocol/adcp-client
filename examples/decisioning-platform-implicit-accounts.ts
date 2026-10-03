@@ -11,7 +11,8 @@
  *   1. Buyer calls `sync_accounts` → `accounts.upsert()` stores the linkage.
  *   2. Buyer calls `create_media_buy` (no ext.account_ref) →
  *      `accounts.resolve(undefined, ctx)` looks up by auth principal.
- *   3. If no prior sync: `ACCOUNT_NOT_FOUND` (not `AUTH_REQUIRED`).
+ *   3. If no prior sync: account-required operations return
+ *      `ACCOUNT_REQUIRED` (not an authentication error).
  *
  * @see docs/guides/account-resolution.md
  */

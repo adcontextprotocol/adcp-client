@@ -147,6 +147,7 @@ export function isReportingReceiptEvidence(value: unknown): boolean {
         'observed_manifest_sha256',
         'observed_native_version_ref',
         'consumer_commit_ref',
+        'supersedes_reporting_receipt_id',
         'rejection_codes',
         'received_at',
       ]
@@ -159,11 +160,15 @@ export function isReportingReceiptEvidence(value: unknown): boolean {
     value.reporting_obligation_id,
     value.reporting_revision_id,
     value.reporting_materialization_id,
-  ];
+    value.supersedes_reporting_receipt_id,
+  ].filter(id => id !== undefined);
   if (
     !ids.every(id => typeof id === 'string' && id.length >= 1 && id.length <= 255 && REPORTING_ID.test(id)) ||
     typeof value.reporting_receipt_id !== 'string' ||
     value.reporting_receipt_id.length < 16 ||
+    (value.supersedes_reporting_receipt_id !== undefined &&
+      (typeof value.supersedes_reporting_receipt_id !== 'string' ||
+        value.supersedes_reporting_receipt_id.length < 16)) ||
     !['accepted', 'rejected'].includes(String(value.status)) ||
     !['native_commit', 'manifest_checksums', 'canonical_digest'].includes(String(value.verification_profile)) ||
     !Number.isSafeInteger(value.observed_row_count) ||
@@ -204,5 +209,47 @@ export function isReportingReceiptEvidence(value: unknown): boolean {
     typeof value.observed_native_version_ref === 'string' &&
     value.observed_native_version_ref.length >= 1 &&
     value.observed_native_version_ref.length <= 512
+  );
+}
+
+export function isReportingAdjustmentReceiptEvidence(value: unknown): boolean {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(
+      value,
+      [
+        'reporting_receipt_id',
+        'reporting_adjustment_id',
+        'adjusts_reporting_revision_id',
+        'status',
+        'observed_adjustment_sha256',
+        'observed_at',
+      ],
+      ['supersedes_reporting_receipt_id', 'rejection_codes', 'received_at']
+    )
+  ) {
+    return false;
+  }
+  const receiptIds = [value.reporting_receipt_id, value.supersedes_reporting_receipt_id].filter(
+    candidate => candidate !== undefined
+  );
+  const subjectIds = [value.reporting_adjustment_id, value.adjusts_reporting_revision_id];
+  if (
+    !receiptIds.every(id => typeof id === 'string' && id.length >= 16 && id.length <= 255 && REPORTING_ID.test(id)) ||
+    !subjectIds.every(id => typeof id === 'string' && id.length >= 1 && id.length <= 255 && REPORTING_ID.test(id)) ||
+    !['accepted', 'rejected'].includes(String(value.status)) ||
+    typeof value.observed_adjustment_sha256 !== 'string' ||
+    !SHA256_HEX.test(value.observed_adjustment_sha256) ||
+    !isOffsetDateTime(value.observed_at) ||
+    (value.received_at !== undefined && !isOffsetDateTime(value.received_at))
+  ) {
+    return false;
+  }
+  if (value.status === 'accepted') return value.rejection_codes === undefined;
+  return (
+    Array.isArray(value.rejection_codes) &&
+    value.rejection_codes.length > 0 &&
+    new Set(value.rejection_codes).size === value.rejection_codes.length &&
+    value.rejection_codes.every(code => typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,127}$/.test(code))
   );
 }

@@ -23,6 +23,7 @@ import { createSigningFetchAsync } from '../signing/fetch-async';
 import type { AgentConfig } from '../types/adcp';
 import { redactArgsForLog } from '../utils/redact-args';
 import { wrapFetchWithCapture } from './rawResponseCapture';
+import { getSignedRequestRejection, wrapFetchWithSignedRequestRejection } from './signedRequestRejection';
 import { wrapFetchWithSizeLimit } from './responseSizeLimit';
 import { wrapFetchWithTransportDiagnostics } from './transportDiagnostics';
 import { DEFAULT_REQUEST_TIMEOUT_MS, resolveRequestTimeoutMs, withAbortSignal } from './abort';
@@ -530,6 +531,7 @@ function buildFetchImpl(authToken: string | undefined, agentUrl: string) {
   const networkFetch = wrapFetchWithTransportDiagnostics(
     wrapFetchWithSizeLimit((input, init) => pinnedFetch(input, init))
   );
+  const rejectionFetch = signingContext ? wrapFetchWithSignedRequestRejection(networkFetch, agentUrl) : networkFetch;
 
   // Inner fetch handles auth/header injection and 401 detection. If the
   // agent has request-signing configured, we wrap it with the AdCP signing
@@ -597,7 +599,11 @@ function buildFetchImpl(authToken: string | undefined, agentUrl: string) {
     });
 
     const response = await withAbortSignal<Response>([context?.signal, options?.signal], requestTimeoutMs, signal =>
-      networkFetch(url as any, { ...options, headers, signal })
+      rejectionFetch(url as any, {
+        ...options,
+        headers,
+        signal,
+      })
     );
 
     if (response.status === 401 && context) {
@@ -868,6 +874,9 @@ async function callA2AToolImpl(
         message: `A2A: Authentication required for ${agentUrl}`,
         timestamp: new Date().toISOString(),
       });
+
+      const signedRejection = getSignedRequestRejection(error);
+      if (signedRejection) throw signedRejection;
 
       // Re-probe to surface the WWW-Authenticate scheme on the error envelope.
       // Basic-fronted agents (Apigee/Kong/AWS API GW with a BasicAuthentication

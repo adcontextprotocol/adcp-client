@@ -13,6 +13,7 @@ import {
   type ADCPMultiAgentClient,
   type AdcpTaskName,
   type CanonicalCreateMediaBuyRequest,
+  type CanonicalCreateMediaBuyInput,
   type CanonicalCreativeResponse,
   type CanonicalFormatKind,
   type CanonicalFormatAssetSlot,
@@ -240,6 +241,45 @@ agent.createMediaBuy(canonicalCreate);
 single.createMediaBuy(canonicalCreate);
 single.createMediaBuy(canonicalCreate, undefined, { canonicalFormatLegacyResolver });
 agent.executeTask('create_media_buy', canonicalCreate);
+
+const createWithReportingPreferences = {
+  ...canonicalCreate,
+  reporting_webhook: {
+    url: undefined,
+    reporting_frequency: 'daily',
+    requested_metrics: ['impressions', 'spend'],
+  },
+} satisfies MutatingRequestInput<CanonicalCreateMediaBuyInput>;
+agent.createMediaBuy(createWithReportingPreferences);
+single.createMediaBuy(createWithReportingPreferences);
+collection.createMediaBuy(createWithReportingPreferences);
+agent.executeTask('create_media_buy', createWithReportingPreferences);
+
+const reportingAuthenticationOnly: NonNullable<CanonicalCreateMediaBuyInput['reporting_webhook']> = {
+  authentication: {
+    schemes: ['HMAC-SHA256'],
+    credentials: 'caller-supplied-secret-at-least-32-characters',
+  },
+};
+const reportingMetricsOnly: NonNullable<CanonicalCreateMediaBuyInput['reporting_webhook']> = {
+  requested_metrics: ['impressions', 'spend'],
+};
+void reportingAuthenticationOnly;
+void reportingMetricsOnly;
+
+const reportingPreferencesWithPartialAuthentication: NonNullable<CanonicalCreateMediaBuyInput['reporting_webhook']> = {
+  reporting_frequency: 'daily',
+  // @ts-expect-error Authentication is an atomic block; credentials cannot come from another source.
+  authentication: { schemes: ['HMAC-SHA256'] },
+};
+void reportingPreferencesWithPartialAuthentication;
+
+// @ts-expect-error A caller-provided URL must bring its own complete authentication block.
+const reportingPreferencesWithUntrustedUrl: NonNullable<CanonicalCreateMediaBuyInput['reporting_webhook']> = {
+  reporting_frequency: 'daily',
+  url: 'https://untrusted.example/reporting',
+};
+void reportingPreferencesWithUntrustedUrl;
 agent.executeCustomTask<{ ok: true }>('vendor_extension', {});
 single.executeCustomTask<{ ok: true }>('vendor_extension', {});
 // @ts-expect-error Extension task names must use executeCustomTask().

@@ -14,6 +14,31 @@ const client = new AdCPClient({
 });
 ```
 
+For AdCP 3.x reporting delivery, the client can complete buyer preferences with
+its callback URL and authentication when `webhookSecret` is also configured:
+
+```typescript
+const client = new AdCPClient({
+  webhookUrlTemplate: 'https://your-app.com/adcp/webhook/{task_type}/{agent_id}/{operation_id}',
+  webhookSecret: process.env.ADCP_WEBHOOK_SECRET,
+});
+
+await client.createMediaBuy({
+  // account, brand, dates, and packages omitted
+  reporting_webhook: {
+    reporting_frequency: 'daily',
+    requested_metrics: ['impressions', 'spend'],
+  },
+});
+```
+
+Without `webhookSecret`, an explicit `reporting_webhook` must include its own
+complete `authentication` block. This differs from the default RFC 9421 task
+status registration below because AdCP 3.x still requires authentication in
+the reporting webhook schema. A caller-provided reporting URL must always bring
+its own complete authentication block; the client never pairs `webhookSecret`
+with a caller-controlled endpoint.
+
 ## Wire Payload
 
 The default RFC 9421 registration has no `authentication` block:
@@ -103,9 +128,9 @@ Setting `webhookSecret` opts into the legacy shape:
 | | `push_notification_config` | `reporting_webhook` |
 |---|---|---|
 | Purpose | Task status updates (submitted, complete, failed) | Ongoing campaign delivery metrics |
-| Operations | All async operations | `create_media_buy` only |
+| Operations | All async operations | Media-buy create, update, buy, accept, and control operations |
 | Frequency | Per task lifecycle event | Hourly / daily / monthly |
-| Set by | Client auto-injects | Caller supplies in task parameters |
+| Set by | Client auto-injects | On `create_media_buy`, the client can inject URL/authentication defaults; callers can supply preferences or override the complete registration |
 
 On A2A, this AdCP registration stays in the skill parameters as
 `push_notification_config`. It is distinct from A2A's native

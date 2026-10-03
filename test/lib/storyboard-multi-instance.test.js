@@ -140,6 +140,9 @@ async function startFakeAgent({
     if (toolName === 'get_products') {
       return ok({ products, cache_scope: 'public' });
     }
+    if (toolName === 'comply_test_controller' && args.scenario === 'reset_state') {
+      return ok({ success: true });
+    }
     return notFound(`unknown tool ${toolName} on instance ${label}`);
   });
   await new Promise(r => server.listen(0, '127.0.0.1', r));
@@ -454,6 +457,29 @@ describe('runStoryboard: multi-instance multi-pass', () => {
     // Top-level `phases` exposes the first pass's phases for single-pass consumers.
     assert.strictEqual(result.phases[0].steps[0].agent_index, 1);
     assert.strictEqual(result.phases[0].steps[1].agent_index, 2);
+  });
+
+  test('resets each controller exactly once before all multi-pass executions', async () => {
+    const shared = new Map();
+    const tools = [...AGENT_TOOLS, 'comply_test_controller'];
+    agentA = await startFakeAgent({ state: shared, label: 'A', tools });
+    agentB = await startFakeAgent({ state: shared, label: 'B', tools });
+
+    const result = await runStoryboard(
+      [agentA.url, agentB.url],
+      storyboardWith([{ id: 'probe', title: 'probe', task: '__test_probe', auth: 'none', sample_request: {} }]),
+      {
+        ...RUN_OPTIONS_BASE,
+        agentTools: tools,
+        _profile: { name: 'fake', tools: tools.map(name => ({ name })) },
+        _controllerCapabilities: { detected: true, scenarios: ['reset_state'] },
+        multi_instance_strategy: 'multi-pass',
+      }
+    );
+
+    assert.strictEqual(result.passes.length, 2);
+    assert.strictEqual(agentA.requests.filter(request => request.tool === 'comply_test_controller').length, 1);
+    assert.strictEqual(agentB.requests.filter(request => request.tool === 'comply_test_controller').length, 1);
   });
 
   test('coalesces unresolved fixture evidence into one coverage gap across passes', async () => {

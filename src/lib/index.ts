@@ -282,6 +282,8 @@ export {
   UnsupportedFeatureError,
 } from './core/SingleAgentClient';
 export type {
+  CapabilityEvidenceScope,
+  CapabilityEvidenceSnapshot,
   ClientProductPropertyPolicy,
   CreativeDeliveryTaskOptions,
   SingleAgentClientConfig,
@@ -318,6 +320,7 @@ export {
 export type { DelegatedOperatorAuthorizationContext } from './signing/agent-resolver';
 export {
   AgentClient,
+  CapabilityPreflightError,
   type CanonicalGetProductsResponse,
   type CanonicalProjectionTaskOptions,
   type ProposalRefinementTaskOptions,
@@ -325,8 +328,12 @@ export {
   type TaskRequestTypeMap,
   type TaskRequestFor,
   type AdcpTaskName,
+  type CapabilityPreflightContext,
+  type CapabilityPreflightErrorCode,
+  type CapabilityPreflightLoader,
   type InProcessAgentClientConfig,
 } from './core/AgentClient';
+export * from './principal';
 export {
   MediaBuyLifecycleCoordinator,
   MediaBuyLifecycleCompatibilityError,
@@ -423,7 +430,12 @@ export {
   type CreativeAgentClientConfig,
   type LegacyCreativeFormat,
 } from './core/CreativeAgentClient';
-export { TaskExecutor } from './core/TaskExecutor';
+export {
+  TaskExecutor,
+  DeferredSettlementOwnershipError,
+  DirectContinuationRecoveryError,
+  type DirectContinuationRecoveryFailure,
+} from './core/TaskExecutor';
 export { match, attachMatch } from './core/match';
 export type { MatchHandlers, PartialMatchHandlers } from './core/match';
 export { ProtocolResponseParser, responseParser, ADCP_STATUS, type ADCPStatus } from './core/ProtocolResponseParser';
@@ -448,6 +460,8 @@ export type {
   TaskResultIntermediate,
   TaskResultFailure,
   TaskResultMetadata,
+  DeferredContinuation,
+  DirectPauseRecoveryRequest,
   TaskState,
   TaskStatus,
   ConversationConfig,
@@ -509,6 +523,7 @@ export {
   targetDeclaresLegacyGovernanceAwareness,
   validateGovernancePlan,
   verifyGovernanceAuthorization,
+  createGovernanceAgentJwksResolver,
   REGULATED_HUMAN_REVIEW_CATEGORIES,
   ANNEX_III_POLICY_IDS,
 } from './governance';
@@ -527,6 +542,7 @@ export {
   isAlwaysBlocked,
   isLikelyPrivateUrl,
   type SsrfRefusedCode,
+  type SsrfDnsLookup,
   type SsrfFetchOptions,
   type SsrfFetchResult,
 } from './net';
@@ -559,6 +575,46 @@ export {
   type FormatSchemaReferenceResult,
   type PlatformExtensionsReferenceResult,
 } from './canonical-references';
+
+// ====== ACCEPTANCE-POLICY DISCOVERY ======
+// Advisory buyer guidance from a seller's digest-pinned policy catalog.
+export {
+  assessAcceptancePolicy,
+  createAcceptancePolicyCatalogResolver,
+  resolveAcceptancePolicyCatalog,
+  resolveAcceptancePolicyProfiles,
+  resolveVerifiedAcceptancePolicyProfiles,
+  type AcceptancePolicyCatalog,
+  type AcceptancePolicyCatalogErrorCode,
+  type AcceptancePolicyCatalogFailure,
+  type AcceptancePolicyCatalogIssue,
+  type AcceptancePolicyCatalogResolver,
+  type AcceptancePolicyCatalogResult,
+  type AcceptancePolicyCatalogSuccess,
+  type AcceptancePolicyDiscoveryCapability,
+  type AcceptancePolicyProfile,
+  type AcceptancePolicyProfileResolution,
+  type AcceptancePolicyRegistryPolicy,
+  type AcceptancePolicyRegistryResolver,
+  type AcceptancePolicyReference,
+  type AcceptancePolicyRequirement,
+  type AcceptancePolicyRule,
+  type AcceptancePolicySurface,
+  type RegistryAcceptancePolicyProfileReference,
+  type ResolveAcceptancePolicyCatalogOptions,
+  type ResolveVerifiedAcceptancePolicyProfilesOptions,
+  type ResolvedAcceptancePolicyDefault,
+  type VerifiedAcceptancePolicyProfilesResult,
+  type VerifiedAcceptancePolicyProfilesSuccess,
+} from './acceptance-policy';
+export {
+  type AcceptancePolicyAssessment,
+  type AcceptancePolicyAssessmentDiagnostic,
+  type AcceptancePolicyAssessmentDiagnosticCode,
+  type AcceptancePolicyMatchedRule,
+  type AcceptancePolicyOutcome,
+  type AssessAcceptancePolicyInput,
+} from './acceptance-policy/evaluator';
 export type {
   BuildGovernanceExecutionRequestInput,
   BuildGovernanceIntentRequestInput,
@@ -588,6 +644,7 @@ export type {
   PlanBudget,
   ReallocationAutonomy,
   VerifyGovernanceAuthorizationOptions,
+  GovernanceBuyerIdentity,
 } from './governance';
 
 // ====== TASK EVENT TYPES ======
@@ -613,6 +670,7 @@ export type {
   UpdateMediaBuyStatusChangeHandler,
   SyncCreativesStatusChangeHandler,
   GetProductsStatusChangeHandler,
+  ListProductsStatusChangeHandler,
 } from './core/AsyncHandler';
 export {
   AsyncHandler,
@@ -673,6 +731,15 @@ export {
   AuthenticationRequiredError,
   FeatureUnsupportedError,
   ProtocolFeatureUnsupportedError,
+  UnsupportedBuyingModeError,
+  AccountRequiredError,
+  AccountPendingApprovalError,
+  AccountAmbiguousError,
+  BuyerSetupError,
+  AccountNotFoundError,
+  AccountSetupRequiredError,
+  AccountPaymentRequiredError,
+  AccountNotProvisionedError,
   SDK_ERROR_TO_PROTOCOL_ERROR_CODE,
   VersionUnsupportedError,
   IdempotencyConflictError,
@@ -1595,6 +1662,8 @@ export {
   closeMCPConnections,
   closeOAuthConnections,
   bundleSupportsAdcpVersionField,
+  BODY_SNIPPET_TIMEOUT_MS,
+  OBSERVER_FLUSH_TIMEOUT_MS,
   sanitizeTransportHeaders,
   sanitizeTransportUrl,
 } from './protocols';
@@ -1816,6 +1885,7 @@ export {
   type CanonicalCreativeAsset,
   type CanonicalCreativeAsset as CreativeAsset,
   type CanonicalSyncCreativeAsset,
+  type CanonicalCreateMediaBuyInput,
   type CanonicalCreateMediaBuyRequest,
   type CanonicalCreateMediaBuyRequest as CreateMediaBuyRequest,
   type CanonicalCreateMediaBuyResponse,
@@ -1948,6 +2018,7 @@ export {
   supportsPropertyListFiltering,
   supportsContentStandards,
   supportsSyncCreatives,
+  supportsBuyingMode,
   requiresOperatorAuth,
   requiresAccountForProducts,
   supportsSandbox,
@@ -1969,10 +2040,12 @@ export type {
   AdcpMajorVersion,
   AdcpProtocol,
   AccountCapabilities,
+  BuyingMode,
   MediaBuyFeatures,
   ToolInfo,
   FeatureName,
 } from './utils/capabilities';
+export type { ResolveAccountOptions, ListedAccount } from './core/account-resolution';
 
 // Buyer-side creative delivery helpers
 export { inlineCreativesForPackages, inlineCreativesForPackagesLegacy } from './utils/creative-delivery';
@@ -2299,3 +2372,30 @@ export * from './client/account-changes';
 export * from './client/account-change-subscription';
 export * from './notifications/account-change-recorded';
 export type { AccountChangeFeedCapabilities } from './utils/capabilities';
+
+export * from './media-buy/actions';
+export { mediaBuyActionResolver } from './server/media-buy-action-resolver';
+export type {
+  SellerActionDecision,
+  SellerActionResolutionOptions,
+  SellerActionResolution,
+} from './server/media-buy-action-resolver';
+
+// Authoritative supply-path evidence and the canonical registry wrapper.
+export * from './supply-path';
+export type {
+  AuthorizationCollectionSelector,
+  ProductCollectionSelector,
+  CollectionDistribution,
+  DiscoveryCollection,
+} from './discovery/types';
+
+export {
+  BuyerAccountRegistry,
+  type AccountPolicy,
+  type BuyerAccountStorage,
+  type BuyerAccountRegistryOptions,
+  type EnsureAccountOptions,
+  type ProvisionedAccount,
+} from './core/buyer-account-registry';
+export { createProductCache, ProductCache, type ProductCacheOptions } from './core/product-cache';

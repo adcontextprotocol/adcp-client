@@ -45,6 +45,27 @@ function isReportingStatusIssue(value: unknown): boolean {
   ) {
     return false;
   }
+  // rc.3 issue lifecycle. `opened_at` anchors the escalation clock and is
+  // required on CONSUMER_STATUS_MISMATCH; `issue_state` is optional and only
+  // `open` / `acknowledged` may appear, because retiring an issue removes it
+  // from the projection rather than publishing it at `resolved` / `waived`.
+  if (value.opened_at !== undefined && !isOffsetDateTime(value.opened_at)) return false;
+  if (value.code === 'CONSUMER_STATUS_MISMATCH') {
+    if (!isOffsetDateTime(value.opened_at)) return false;
+    if (!isNonEmptyString(value.reporting_status_id)) return false;
+  }
+  if (value.issue_state !== undefined && !['open', 'acknowledged'].includes(String(value.issue_state))) return false;
+  // Inert correlation text. The character class excludes whitespace and the
+  // solidus so the value cannot express a URL or a sentence; receivers display
+  // it and never dereference it.
+  if (
+    value.external_ref !== undefined &&
+    (!isNonEmptyString(value.external_ref) ||
+      value.external_ref.length > 128 ||
+      !/^[A-Za-z0-9_.:-]+$/.test(value.external_ref))
+  ) {
+    return false;
+  }
   return (
     isNonEmptyString(value.issue_id) &&
     value.issue_id.length <= 255 &&
@@ -461,15 +482,20 @@ function isSummaryResponse(value: Record<string, unknown>): boolean {
     !value.issues.every(isReportingStatusIssue) ||
     !['total', 'waiting', 'healthy', 'delayed', 'action_required', 'complete'].every(field =>
       nonnegativeInteger(obligationCounts[field])
-    )
+    ) ||
+    // Optional here because it is required only when the seller advertises
+    // consumer_status_task, which this shape check cannot observe. It counts
+    // obligations, overlaps the health counts rather than partitioning them,
+    // and is never a health input — so it is bounded by `total` and by nothing
+    // else.
+    (obligationCounts.consumer_status_pending !== undefined &&
+      (!nonnegativeInteger(obligationCounts.consumer_status_pending) ||
+        Number(obligationCounts.consumer_status_pending) > Number(obligationCounts.total)))
   ) {
     return false;
   }
   const health = String(value.health);
-  if (
-    health === 'complete' &&
-    (!value.scope.scope_closed || !value.scope.coverage_complete || value.next_expected_at !== undefined)
-  ) {
+  if (health === 'complete' && (!value.scope.scope_closed || !value.scope.coverage_complete)) {
     return false;
   }
   if (['healthy', 'waiting', 'complete'].includes(health) && value.issues.length !== 0) return false;
@@ -545,6 +571,10 @@ function isGetReportingStatusResponse(value: unknown): boolean {
     return (
       hasCompletedCommon(value) &&
       isReportingScope(value.scope) &&
+      (value.health !== 'complete' ||
+        (value.scope.scope_closed === true &&
+          value.scope.coverage_complete === true &&
+          value.next_expected_at === undefined)) &&
       Array.isArray(value.periods) &&
       value.periods.every(isReportingObligation) &&
       Array.isArray(value.revisions) &&

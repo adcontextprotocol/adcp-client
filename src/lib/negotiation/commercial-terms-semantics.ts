@@ -1,5 +1,5 @@
 /**
- * Reviewed non-JSON-Schema semantics from the 3.2 beta.8 / rc.2 / rc.3 bundles.
+ * Reviewed non-JSON-Schema semantics from the 3.2 beta.8 / rc.2 / rc.3 / rc.4 / rc.6 / rc.7 / 3.2.1 bundles.
  * These are semantic contracts, NOT a binding-field allowlist: properties and
  * comparison always come from the selected runtime schema. Additions to these
  * annotations require a deliberate implementation/review instead of AJV silently
@@ -108,6 +108,54 @@ export const ABSENT_COMMERCIAL_CONTRACTS_BY_RELEASE: Readonly<Record<string, rea
 /** rc.3 removes direct buy_products matching from the accepted snapshot contract. */
 export const COMMERCIAL_SEMANTIC_OVERRIDES_BY_RELEASE: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   '3.2.0-rc.3': {
+    'media-buy/product-purchase.json': {
+      verifier_constraints: {
+        accepted_snapshot_terms:
+          'Inside canonical-proposal.commercial_terms, each purchase MUST carry resolved start_time and end_time and MUST preserve every applicable measurement term and performance standard. Omission of measurement_terms or performance_standards means the accepted offer declared none.',
+        pricing_identity: {
+          pricing_option_id: 'equals_pricing.pricing_option_id_when_pricing_present',
+          on_violation: 'reject_before_commitment',
+        },
+      },
+    },
+  },
+  '3.2.0-rc.4': {
+    'media-buy/product-purchase.json': {
+      verifier_constraints: {
+        accepted_snapshot_terms:
+          'Inside canonical-proposal.commercial_terms, each purchase MUST carry resolved start_time and end_time and MUST preserve every applicable measurement term and performance standard. Omission of measurement_terms or performance_standards means the accepted offer declared none.',
+        pricing_identity: {
+          pricing_option_id: 'equals_pricing.pricing_option_id_when_pricing_present',
+          on_violation: 'reject_before_commitment',
+        },
+      },
+    },
+  },
+  '3.2.0-rc.6': {
+    'media-buy/product-purchase.json': {
+      verifier_constraints: {
+        accepted_snapshot_terms:
+          'Inside canonical-proposal.commercial_terms, each purchase MUST carry resolved start_time and end_time and MUST preserve every applicable measurement term and performance standard. Omission of measurement_terms or performance_standards means the accepted offer declared none.',
+        pricing_identity: {
+          pricing_option_id: 'equals_pricing.pricing_option_id_when_pricing_present',
+          on_violation: 'reject_before_commitment',
+        },
+      },
+    },
+  },
+  '3.2.0-rc.7': {
+    'media-buy/product-purchase.json': {
+      verifier_constraints: {
+        accepted_snapshot_terms:
+          'Inside canonical-proposal.commercial_terms, each purchase MUST carry resolved start_time and end_time and MUST preserve every applicable measurement term and performance standard. Omission of measurement_terms or performance_standards means the accepted offer declared none.',
+        pricing_identity: {
+          pricing_option_id: 'equals_pricing.pricing_option_id_when_pricing_present',
+          on_violation: 'reject_before_commitment',
+        },
+      },
+    },
+  },
+  '3.2.1': {
     'media-buy/product-purchase.json': {
       verifier_constraints: {
         accepted_snapshot_terms:

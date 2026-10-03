@@ -343,6 +343,9 @@ function compareBundleNamesDesc(a: string, b: string): number {
 
 interface LoaderState {
   ajv: Ajv;
+  bundledAjv: Ajv;
+  canonicalAjv?: Ajv;
+  canonicalValidators: Map<string, ValidateFunction>;
   fileIndex: Map<string, string>;
   validators: Map<string, ValidateFunction>;
   rawSchemas: Map<string, Record<string, unknown>>;
@@ -731,9 +734,21 @@ function ensureInit(version: string): LoaderState {
     allowUnionTypes: true,
   });
   addFormats(ajv);
+  // Bundled tool roots can intentionally share their canonical `$id` with
+  // modular documents registered in `ajv`. Keep them in a separate registry
+  // so getValidator compiles the file selected by fileIndex rather than
+  // accidentally reusing a modular validator with the same public id.
+  const bundledAjv = new Ajv({
+    strict: false,
+    allErrors: true,
+    allowUnionTypes: true,
+  });
+  addFormats(bundledAjv);
 
   const state: LoaderState = {
     ajv,
+    bundledAjv,
+    canonicalValidators: new Map(),
     fileIndex: buildFileIndex(root),
     validators: new Map(),
     rawSchemas: new Map(),
@@ -760,9 +775,11 @@ function ensureInit(version: string): LoaderState {
  *     referenced by `signals/activate-signal-*.json`.
  *
  * Walk every directory except `bundled/` (pre-resolved schemas with refs
- * already inlined). Response files that `buildFileIndex` registered as tools
- * are registered with `relaxResponseRoot` applied, matching `getValidator`.
- * The fileIndex check is stricter than a filename-suffix match:
+ * already inlined). Files that `buildFileIndex` registered as tools use the
+ * selected tool document, not a modular document that happens to share its
+ * canonical `$id`. Responses also receive `relaxResponseRoot`, matching
+ * `getValidator`.
+ * These checks are stricter than a filename-suffix match:
  * building-block fragments like `core/pagination-response.json` end in
  * `-response.json` but aren't tools, so suffix-matching would wrongly treat
  * them as relaxable response roots.
@@ -783,11 +800,16 @@ function ensureCoreLoaded(s: LoaderState): void {
   // unregistered, so a later compile of `create_media_buy` fails on
   // `MissingRefError: can't resolve /schemas/media-buy/package-request.json`.
   //
-  const responseToolFiles = new Map<string, Direction>();
+  const selectedToolsById = new Map<string, { file: string; response: boolean }>();
+  const responseToolFiles = new Set<string>();
   for (const [key, file] of s.fileIndex) {
-    if (key.endsWith('::request')) continue;
-    const direction = key.slice(key.indexOf('::') + 2) as Direction;
-    responseToolFiles.set(file, direction);
+    const response = !key.endsWith('::request');
+    if (response) responseToolFiles.add(file);
+    const schema = loadJson(file);
+    if (typeof schema.$id === 'string') {
+      const previous = selectedToolsById.get(schema.$id);
+      if (!previous || previous.file === file) selectedToolsById.set(schema.$id, { file, response });
+    }
   }
   const registeredIds = getAjvRegisteredIds(s.ajv);
   for (const entry of readdirSync(s.root, { withFileTypes: true })) {
@@ -795,9 +817,16 @@ function ensureCoreLoaded(s: LoaderState): void {
     if (!isRuntimeSchemaDirectory(entry.name)) continue;
     const abs = path.join(s.root, entry.name);
     for (const file of walkJsonFiles(abs)) {
-      const responseDirection = responseToolFiles.get(file);
       const schema = loadJson(file);
-      const schemaToRegister = responseDirection === undefined ? schema : relaxResponseRoot(schema);
+      const selected = typeof schema.$id === 'string' ? selectedToolsById.get(schema.$id) : undefined;
+      const selectedShadowsModular = selected !== undefined && selected.file !== file;
+      const selectedSchema = selectedShadowsModular ? loadJson(selected.file) : schema;
+      const prepared =
+        selectedShadowsModular && selected.file.includes(`${path.sep}bundled${path.sep}`)
+          ? stripNestedIds(selectedSchema)
+          : selectedSchema;
+      const isResponseTool = selected?.response ?? responseToolFiles.has(file);
+      const schemaToRegister = isResponseTool ? relaxResponseRoot(prepared) : prepared;
       if (typeof schemaToRegister.$id === 'string' && !registeredIds.has(schemaToRegister.$id)) {
         s.ajv.addSchema(schemaToRegister);
         registeredIds.add(schemaToRegister.$id);
@@ -830,18 +859,17 @@ export function getValidator(
   const file = s.fileIndex.get(cacheKey);
   if (!file) return undefined;
 
-  // Schemas that $ref into core/ and enums/ need those trees registered
-  // before compile. Async response variants always do; flat-tree domain
-  // schemas (anything outside `bundled/`) do too — their $refs weren't
-  // pre-resolved at spec-publish time.
+  // Flat-tree schemas `$ref` into separately published documents and need
+  // those trees registered before compile. Bundled schemas contain only
+  // root-local refs and compile independently.
   const fromBundled = file.includes(`${path.sep}bundled${path.sep}`);
-  if (direction === 'request' || !fromBundled) ensureCoreLoaded(s);
+  if (!fromBundled) ensureCoreLoaded(s);
 
   const rawSchema = loadJson(file);
   // Bundled files inline every referenced subschema with the original
   // canonical `$id` (e.g. `core/version-envelope.json` appears nested
-  // inside every bundled tool response). Bundled files carry NO
-  // internal `$ref`s — the spec publishes them fully resolved, see
+  // inside every bundled tool response). Bundled files carry no external
+  // `$ref`s — root-local `$defs` refs may remain — see
   // the `note: "This is a bundled schema with all $ref resolved inline"`
   // tag on every bundled file. Once `ensureCoreLoaded` has registered
   // any of those core schemas standalone (which it does for the flat-
@@ -853,8 +881,9 @@ export function getValidator(
   // every other `$id` in the tree was just metadata anyway.
   const prepared = fromBundled ? stripNestedIds(rawSchema) : rawSchema;
   const schema = direction === 'request' ? prepared : relaxResponseRoot(prepared);
-  const existing = typeof schema.$id === 'string' ? s.ajv.getSchema(schema.$id) : undefined;
-  const compiled = existing ?? s.ajv.compile(schema);
+  const ajv = fromBundled ? s.bundledAjv : s.ajv;
+  const existing = typeof schema.$id === 'string' ? ajv.getSchema(schema.$id) : undefined;
+  const compiled = existing ?? ajv.compile(schema);
   s.validators.set(cacheKey, compiled);
   return compiled;
 }
@@ -878,6 +907,15 @@ export interface ResolvedSchemaDocument {
   /** Exact protocol release recorded by the resolved bundle, when available. */
   resolvedVersion: string;
   schema: Readonly<Record<string, unknown>>;
+}
+
+function authoredToolSchemaFile(state: LoaderState, indexedFile: string): string {
+  const bundledRoot = path.join(state.root, 'bundled');
+  const relative = path.relative(bundledRoot, indexedFile);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) return indexedFile;
+
+  const authoredFile = path.join(state.root, relative);
+  return existsSync(authoredFile) ? authoredFile : indexedFile;
 }
 
 /**
@@ -977,7 +1015,8 @@ export function getSchemaDocumentByRef(
 export function getSchemaValidatorByRef(
   schemaRef: string,
   version: string = ADCP_VERSION,
-  keywords?: ReadonlyArray<KeywordDefinition>
+  keywords?: ReadonlyArray<KeywordDefinition>,
+  options: { allErrors?: boolean } = {}
 ): ValidateFunction | undefined {
   // Keep remote schema-ref validation out of the shared tool-validator AJV,
   // which intentionally collects all errors for developer diagnostics.
@@ -997,7 +1036,8 @@ export function getSchemaValidatorByRef(
     }
     cache = entry.validators;
   }
-  const cacheKey = `${stateCacheKey(bundleKey, root)}\0schema-ref::${normalized}`;
+  const allErrors = options.allErrors ?? false;
+  const cacheKey = `${stateCacheKey(bundleKey, root)}\0schema-ref::${normalized}\0all-errors::${allErrors}`;
   const cached = cache.get(cacheKey);
   if (cached) return cached;
 
@@ -1010,10 +1050,11 @@ export function getSchemaValidatorByRef(
   // shared tool-validator registry with unrelaxed response schemas.
   const ajv = new Ajv({
     strict: false,
-    // Schema-ref validators process remote webhook payloads. Fail on the
-    // first violation so deeply nested hostile input cannot amplify error
-    // collection into CPU or memory exhaustion.
-    allErrors: false,
+    // Schema-ref validators process remote webhook payloads. By default they
+    // fail on the first violation so deeply nested hostile input cannot
+    // amplify error collection into CPU or memory exhaustion. Canonical
+    // offline validators explicitly opt into complete developer diagnostics.
+    allErrors,
     allowUnionTypes: true,
   });
   addFormats(ajv);
@@ -1030,12 +1071,12 @@ export function getSchemaValidatorByRef(
     }
     if (schemaFile === file) continue;
     const schema = loadJson(schemaFile);
-    if (keywords && typeof schema.$id === 'string') {
+    if ((keywords || allErrors) && typeof schema.$id === 'string') {
       const previous = schema.$id === rawSchema.$id ? rawSchema : registeredIds.get(schema.$id);
       // Bundles intentionally mirror async-response refs. Identical copies
       // are harmless; conflicting definitions must not shadow audited files.
       if (previous && !isDeepStrictEqual(previous, schema)) {
-        throw new ConfigurationError('Schema keyword validation requires unambiguous schema identities', 'schemaRoot');
+        throw new ConfigurationError('Schema validation requires unambiguous schema identities', 'schemaRoot');
       }
       if (schema.$id === rawSchema.$id) continue;
     }
@@ -1050,6 +1091,72 @@ export function getSchemaValidatorByRef(
   const compiled = ajv.compile(rawSchema);
   cache.set(cacheKey, compiled);
   return compiled;
+}
+
+/**
+ * Compile a tool schema without the response-root relaxation used by the SDK's
+ * live-wire validator. Kept in the loader so the public schema facade does not
+ * need access to loader file-system state.
+ */
+export function getCanonicalToolValidatorForVersion(
+  toolName: string,
+  direction: Direction,
+  version: string = ADCP_VERSION
+): ValidateFunction | undefined {
+  const state = ensureInit(version);
+  const cacheKey = `${toolName}::${direction}`;
+  const cached = state.canonicalValidators.get(cacheKey);
+  if (cached) return cached;
+
+  const indexedFile = state.fileIndex.get(cacheKey);
+  if (!indexedFile) return undefined;
+  const file = authoredToolSchemaFile(state, indexedFile);
+  const rawSchema = loadJson(file);
+  const ajv = ensureCanonicalAjv(state);
+  const existing = typeof rawSchema.$id === 'string' ? ajv.getSchema(rawSchema.$id) : undefined;
+  // External/legacy schema roots may contain only self-contained bundled
+  // contracts. They have no authored graph to pre-register, so compile the
+  // strict bundled fallback lazily after removing nested metadata `$id`s.
+  const fromBundled = file.includes(`${path.sep}bundled${path.sep}`);
+  const compiled = existing ?? ajv.compile(fromBundled ? stripNestedIds(rawSchema) : rawSchema);
+  state.canonicalValidators.set(cacheKey, compiled);
+  return compiled;
+}
+
+function ensureCanonicalAjv(state: LoaderState): Ajv {
+  if (state.canonicalAjv) return state.canonicalAjv;
+
+  const ajv = new Ajv({
+    strict: false,
+    allErrors: true,
+    allowUnionTypes: true,
+  });
+  addFormats(ajv);
+
+  const schemasById = new Map<string, LoadedSchema>();
+  for (const schemaFile of walkJsonFiles(state.root)) {
+    if (schemaFile.includes(`${path.sep}bundled${path.sep}`)) continue;
+    if (
+      [...TRANSPORT_PROJECTION_DIRECTORIES].some(directory => schemaFile.includes(`${path.sep}${directory}${path.sep}`))
+    ) {
+      continue;
+    }
+
+    const schema = loadJson(schemaFile);
+    if (typeof schema.$id !== 'string') continue;
+    const previous = schemasById.get(schema.$id);
+    if (previous) {
+      if (!isDeepStrictEqual(previous, schema)) {
+        throw new ConfigurationError('Canonical validation requires unambiguous schema identities', 'schemaRoot');
+      }
+      continue;
+    }
+    schemasById.set(schema.$id, schema);
+  }
+
+  if (schemasById.size > 0) ajv.addSchema([...schemasById.values()]);
+  state.canonicalAjv = ajv;
+  return ajv;
 }
 
 function normalizeSchemaRef(schemaRef: string): string | undefined {
@@ -1112,7 +1219,8 @@ export function getRegisteredSchemaIds(version: string = ADCP_VERSION): readonly
   // Ajv 8 keeps registered schemas at `ajv.schemas` (URI → SchemaEnv). Returning
   // the keys is enough for prefix matching; we don't expose the SchemaEnv values.
   const registry = (s.ajv as unknown as { schemas?: Record<string, unknown> }).schemas;
-  return registry ? Object.keys(registry) : [];
+  const bundledRegistry = (s.bundledAjv as unknown as { schemas?: Record<string, unknown> }).schemas;
+  return [...new Set([...Object.keys(registry ?? {}), ...Object.keys(bundledRegistry ?? {})])];
 }
 
 /** Suffix used in the suffix table — exported for testing. */

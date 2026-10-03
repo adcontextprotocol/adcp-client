@@ -60,6 +60,10 @@ export interface RosterAccountStoreOptions<TRosterEntry, TCtxMeta = Record<strin
    * Called once per `resolve()` with an `account_id`-shaped reference. Wire
    * shape `{ brand, operator }` and missing refs do NOT call `lookup`; see
    * the resolve behavior below.
+   * Scope the lookup to the authenticated principal in `ctx`. The wire
+   * `account_id` is buyer supplied, including on `list_creative_formats`
+   * since AdCP rc.7, and the helper cannot infer your roster's authorization
+   * relation from the id alone.
    *
    * Throw to signal a transient upstream failure (DB outage, network blip).
    * The framework projects to `SERVICE_UNAVAILABLE`. Returning `undefined`

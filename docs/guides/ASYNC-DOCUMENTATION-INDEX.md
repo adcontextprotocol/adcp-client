@@ -4,6 +4,9 @@
 
 Complete documentation for the ADCP TypeScript client library's new async execution model introduced in PR #78. This documentation covers migration from old patterns, comprehensive developer guidance, and production-ready implementation strategies.
 
+Deploying request-scoped callers across multiple processes? Start with
+[Durable buyer writes across processes](./DURABLE-BUYER-WRITES.md).
+
 ## 📚 Documentation Structure
 
 ### 1. [Migration Guide](./ASYNC-MIGRATION-GUIDE.md)

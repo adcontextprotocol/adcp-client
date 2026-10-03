@@ -450,6 +450,7 @@ import {
 } from '@adcp/sdk/signing/server';
 
 const jwks = new BrandJsonJwksResolver('https://publisher.example/.well-known/brand.json', {
+  agentUrl: 'https://publisher.example/mcp',
   agentType: 'sales',
 });
 

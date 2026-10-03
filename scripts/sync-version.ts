@@ -123,38 +123,9 @@ function assertSafeVersion(value: string, source: string): void {
   }
 }
 
-// Pre-3.0 / pre-stable version names. Kept as a separate constant so the
-// stable patch enumerations below stay mechanical. Adding a future major
-// (4.0.0-beta.1, etc.) requires updating this list AND the major/minor gate
-// in `buildCompatibleVersions` — failing closed there is intentional, so a
-// spec move forces a human to think about which historical versions stay in
-// the compat surface.
-//
-// Keep historical versions in the compat surface. Consumers can also pin
-// `adcpVersion: '3.1-beta'` to follow the newest bundled 3.1 prerelease.
-const COMPATIBLE_PREFIX = [
-  'v2.5',
-  'v2.6',
-  'v3',
-  '3.0.0-beta.1',
-  '3.0.0-beta.3',
-  '3.1.0-beta.1',
-  '3.1.0-beta.2',
-  '3.1.0-beta.3',
-  '3.1.0-beta.5',
-  '3.1.0-beta.7',
-  '3.1.0-rc.1',
-  '3.1.0-rc.2',
-  '3.1.0-rc.3',
-  '3.1.0-rc.4',
-  '3.1.0-rc.6',
-  '3.1.0-rc.7',
-  '3.1.0-rc.8',
-  '3.1.0-rc.9',
-  '3.1.0-rc.10',
-  '3.1.0-rc.13',
-  '3.1.0-rc.14',
-] as const;
+// Legacy wire aliases. Historical protocol previews are intentionally absent:
+// only the exact current prerelease pin is advertised by buildCompatibleVersions.
+const COMPATIBLE_PREFIX = ['v2.5', 'v2.6', 'v3'] as const;
 
 const PRE_3_1_COMPATIBLE_PREFIX = COMPATIBLE_PREFIX.filter(version => !version.startsWith('3.1.')) as string[];
 
@@ -192,7 +163,9 @@ const MAX_PATCH_ENUMERATION = 500;
  * enumeration entirely.
  */
 const LAST_3_0_GA_PATCH = 25;
-const LAST_3_1_GA_PATCH = 18;
+const LAST_3_1_GA_PATCH = 24;
+/** First published AdCP 3.2 GA patch; 3.2.0 was withdrawn before GA. */
+const FIRST_3_2_GA_PATCH = 1;
 
 function withVersionAliases(versions: readonly string[]): string[] {
   const out: string[] = [];
@@ -229,7 +202,7 @@ function buildCompatibleVersions(adcpVersion: string): string[] {
   const patch = Number(semverMatch[3]);
   const prerelease = semverMatch[4];
 
-  // 3.2 prereleases are opt-in and exact. Keep every supported 3.0/3.1 GA
+  // 3.2 prereleases are exact. Keep every supported 3.0/3.1 GA
   // patch available for pinned peers, but never add a moving `3.2-beta`
   // family alias: beta.0, beta.1, and later candidates may carry different
   // wire contracts and bundles.
@@ -248,13 +221,11 @@ function buildCompatibleVersions(adcpVersion: string): string[] {
   // 3.1.0 prerelease primary pin (current 8.x line). Keep wire compat with
   // 3.0.x GA sellers — the wire is open-enum and a 3.1-pinned SDK that meets
   // a 3.0.12 seller MUST still parse the envelope. Enumerate 3.0.0..3.0.LAST_3_0_GA_PATCH
-  // plus the prerelease lineage already declared in COMPATIBLE_PREFIX.
+  // plus the exact current prerelease.
   if (major === 3 && minor === 1 && patch === 0 && /^(beta|rc)\./.test(prerelease ?? '')) {
     const range3_0_x: string[] = [];
     for (let p = 0; p <= LAST_3_0_GA_PATCH; p++) range3_0_x.push(`3.0.${p}`);
-    // COMPATIBLE_PREFIX already contains every 3.1.0-beta.N the SDK has
-    // shipped opt-in support for; the pinned version is one of those.
-    return withVersionAliases([...COMPATIBLE_PREFIX, ...range3_0_x]);
+    return withVersionAliases([...COMPATIBLE_PREFIX, ...range3_0_x, adcpVersion]);
   }
 
   if (prerelease) {
@@ -263,6 +234,36 @@ function buildCompatibleVersions(adcpVersion: string): string[] {
         `Extend buildCompatibleVersions in scripts/sync-version.ts to define compat semantics.`
     );
     process.exit(1);
+  }
+
+  // 3.2 GA line. AdCP 3.2.0 was withdrawn before GA (its June 2026 preview
+  // artifacts remain on the CDN but are not the 3.2 contract), so the stable
+  // enumeration starts at FIRST_3_2_GA_PATCH and never advertises `3.2.0`.
+  // Peers negotiate the release-precision `3.2` alias on the wire. Keep
+  // every supported 3.0/3.1 GA patch for pinned peers.
+  if (major === 3 && minor === 2) {
+    if (patch < FIRST_3_2_GA_PATCH) {
+      console.error(
+        `❌ ADCP_VERSION ${JSON.stringify(adcpVersion)} is the withdrawn AdCP 3.2.0 release. ` +
+          `Pin 3.2.${FIRST_3_2_GA_PATCH} or later.`
+      );
+      process.exit(1);
+    }
+    if (patch > MAX_PATCH_ENUMERATION) {
+      console.error(
+        `❌ ADCP_VERSION ${JSON.stringify(adcpVersion)} exceeds MAX_PATCH_ENUMERATION ` +
+          `(${MAX_PATCH_ENUMERATION}). If the spec has genuinely produced this many patches, ` +
+          `raise the constant in scripts/sync-version.ts deliberately.`
+      );
+      process.exit(1);
+    }
+    const range3_0_x: string[] = [];
+    for (let p = 0; p <= LAST_3_0_GA_PATCH; p++) range3_0_x.push(`3.0.${p}`);
+    const range3_1_x: string[] = [];
+    for (let p = 0; p <= LAST_3_1_GA_PATCH; p++) range3_1_x.push(`3.1.${p}`);
+    const range3_2_x: string[] = [];
+    for (let p = FIRST_3_2_GA_PATCH; p <= patch; p++) range3_2_x.push(`3.2.${p}`);
+    return withVersionAliases([...PRE_3_1_COMPATIBLE_PREFIX, ...range3_0_x, ...range3_1_x, ...range3_2_x]);
   }
 
   if (major === 3 && minor === 1) {

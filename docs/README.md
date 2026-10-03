@@ -27,11 +27,13 @@ tool and type inventory, use [llms.txt](./llms.txt) and the
 
 ## Upgrade from SDK 13
 
-Follow the [13-to-14 migration guide](./migration-13-to-14.md). The
+Start with the [release-bound upgrade worksheet](./migration-14.x-rc-worksheet.md),
+then follow the [13-to-14 migration guide](./migration-13-to-14.md). The
 [AdCP 3.1-to-3.2 proposal guide](./migration-adcp-3.1-to-3.2-proposals.md)
 covers lifecycle migration specifically. Compatibility internals and explicit
 loss reporting are documented in
 [Media-buy 3.2 compatibility](./guides/MEDIA-BUY-3.2-COMPATIBILITY.md).
+For an existing application, use the [thin platform recipe](./guides/EXISTING-PLATFORM.md).
 
 ## Run in production
 

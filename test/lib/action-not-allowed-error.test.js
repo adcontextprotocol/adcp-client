@@ -41,6 +41,22 @@ describe('ActionNotAllowedError', () => {
     assert.strictEqual(err.recovery.kind, 'waitForApproval');
   });
 
+  test('mode_mismatch with seller_managed survives hydration and yields waitForTask recovery', () => {
+    const typed = adcpErrorToTypedError({
+      code: 'ACTION_NOT_ALLOWED',
+      message: 'mode shifted',
+      details: {
+        attempted_action: 'extend_flight',
+        reason: 'mode_mismatch',
+        currently_available_actions: [{ action: 'extend_flight', mode: 'seller_managed' }],
+      },
+    });
+
+    assert.ok(typed instanceof ActionNotAllowedError);
+    assert.deepStrictEqual(typed.currentlyAvailableActions, [{ action: 'extend_flight', mode: 'seller_managed' }]);
+    assert.strictEqual(typed.recovery.kind, 'waitForTask');
+  });
+
   test('mode_mismatch with conditional_self_serve yields reissueAsDirect', () => {
     const err = new ActionNotAllowedError({
       attempted_action: 'pause',

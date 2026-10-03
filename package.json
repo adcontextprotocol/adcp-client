@@ -1,6 +1,6 @@
 {
   "name": "@adcp/sdk",
-  "version": "14.0.0-rc.36",
+  "version": "14.0.0",
   "description": "AdCP SDK — client, server, and compliance harnesses for the AdContext Protocol (MCP + A2A)",
   "workspaces": [
     ".",
@@ -29,6 +29,16 @@
       "require": {
         "types": "./dist/lib/client/index.d.ts",
         "default": "./dist/lib/client/index.js"
+      }
+    },
+    "./client/core": {
+      "import": {
+        "types": "./dist/lib/client/core.d.mts",
+        "default": "./dist/lib/client/core.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/client/core.d.ts",
+        "default": "./dist/lib/client/core.js"
       }
     },
     "./compliance": {
@@ -79,16 +89,6 @@
       "require": {
         "types": "./dist/lib/types/v2-5/index.d.ts",
         "default": "./dist/lib/types/v2-5/index.js"
-      }
-    },
-    "./types/v3-1-beta": {
-      "import": {
-        "types": "./dist/lib/types/v3-1-beta/index.d.mts",
-        "default": "./dist/lib/types/v3-1-beta/index.mjs"
-      },
-      "require": {
-        "types": "./dist/lib/types/v3-1-beta/index.d.ts",
-        "default": "./dist/lib/types/v3-1-beta/index.js"
       }
     },
     "./types/*": {
@@ -295,6 +295,9 @@
       }
     },
     "./compliance-fixtures/reporting-consumer-status-v1.json": "./dist/lib/compliance-fixtures/reporting-consumer-status-v1.json",
+    "./compliance-fixtures/principal.yaml": "./dist/lib/compliance-fixtures/principal.yaml",
+    "./compliance-fixtures/reporting-core.yaml": "./dist/lib/compliance-fixtures/reporting-core.yaml",
+    "./compliance-fixtures/canonical-storyboards-provenance.json": "./dist/lib/compliance-fixtures/canonical-storyboards-provenance.json",
     "./conformance": {
       "import": {
         "types": "./dist/lib/conformance/index.d.mts",
@@ -345,6 +348,16 @@
         "default": "./dist/lib/upstream-recorder/index.js"
       }
     },
+    "./reporting/consumer": {
+      "import": {
+        "types": "./dist/lib/reporting/consumer/index.d.mts",
+        "default": "./dist/lib/reporting/consumer/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/reporting/consumer/index.d.ts",
+        "default": "./dist/lib/reporting/consumer/index.js"
+      }
+    },
     "./reporting/source": {
       "import": {
         "types": "./dist/lib/reporting/source/index.d.mts",
@@ -366,6 +379,16 @@
         "default": "./dist/lib/reporting/ledger/index.js"
       }
     },
+    "./reporting/service": {
+      "import": {
+        "types": "./dist/lib/reporting/service/index.d.mts",
+        "default": "./dist/lib/reporting/service/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/reporting/service/index.d.ts",
+        "default": "./dist/lib/reporting/service/index.js"
+      }
+    },
     "./negotiation/verification": {
       "import": {
         "types": "./dist/lib/negotiation/verification.d.mts",
@@ -376,12 +399,25 @@
         "default": "./dist/lib/negotiation/verification.js"
       }
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./media-buy/actions": {
+      "import": {
+        "types": "./dist/lib/media-buy/actions.d.mts",
+        "default": "./dist/lib/media-buy/actions.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/media-buy/actions.d.ts",
+        "default": "./dist/lib/media-buy/actions.js"
+      }
+    }
   },
   "typesVersions": {
     "*": {
       "client": [
         "dist/lib/client/index.d.ts"
+      ],
+      "client/core": [
+        "dist/lib/client/core.d.ts"
       ],
       "compliance": [
         "dist/lib/compliance/index.d.ts"
@@ -394,9 +430,6 @@
       ],
       "types/v2-5": [
         "dist/lib/types/v2-5/index.d.ts"
-      ],
-      "types/v3-1-beta": [
-        "dist/lib/types/v3-1-beta/index.d.ts"
       ],
       "wholesale-feed-sync": [
         "dist/lib/wholesale-feed-sync/index.d.ts"
@@ -464,11 +497,17 @@
       "upstream-recorder": [
         "dist/lib/upstream-recorder/index.d.ts"
       ],
+      "reporting/consumer": [
+        "dist/lib/reporting/consumer/index.d.ts"
+      ],
       "reporting/source": [
         "dist/lib/reporting/source/index.d.ts"
       ],
       "reporting/ledger": [
         "dist/lib/reporting/ledger/index.d.ts"
+      ],
+      "reporting/service": [
+        "dist/lib/reporting/service/index.d.ts"
       ],
       "enums": [
         "dist/lib/enums.d.ts"
@@ -487,6 +526,9 @@
       ],
       "negotiation/verification": [
         "dist/lib/negotiation/verification.d.ts"
+      ],
+      "media-buy/actions": [
+        "dist/lib/media-buy/actions.d.ts"
       ]
     }
   },
@@ -500,12 +542,9 @@
     "bin/**/*.js",
     "skills/**/*",
     ".claude-plugin/**/*",
-    "compliance/cache/**/*",
-    "!compliance/cache/*.previous/**/*",
-    "!compliance/cache/3.2.0-beta.0/**/*",
-    "!compliance/cache/3.2.0-beta.1/**/*",
-    "!compliance/cache/3.2.0-beta.8/**/*",
-    "!compliance/cache/3.2.0-rc.1/**/*",
+    "compliance/cache/3.0.25/**/*",
+    "compliance/cache/3.1.24/**/*",
+    "compliance/cache/3.2.1/**/*",
     "ADCP_VERSION",
     "docs/README.md",
     "docs/TYPE-SUMMARY.md",
@@ -523,11 +562,18 @@
     "examples/README.md",
     "examples/CONTRIBUTING.md",
     "examples/adcp.config.json",
+    "examples/reliable-reporting-service/README.md",
+    "examples/reliable-reporting-buyer/**/*",
     "examples/seller-3.2-starter.ts",
+    "examples/supply-path-verification.ts",
+    "examples/wholesale-feed-sync.ts",
     "examples/comply-controller-seller.ts",
     "examples/seller-test-controller.ts",
     "examples/gcp-kms-signing-provider.ts",
     "examples/error-compliant-server.ts",
+    "examples/existing-platform-thin.ts",
+    "examples/durable-buyer-writes/**/*",
+    "examples/targeting-input-existing-platform.ts",
     "examples/signals-agent.ts",
     "examples/decisioning-platform-mock-seller.ts",
     "examples/decisioning-platform-broadcast-tv.ts",
@@ -548,9 +594,9 @@
   "scripts": {
     "prepare": "node scripts/install-hooks.js 2>/dev/null || true",
     "sync:agents": "node scripts/import-claude-agents.mjs",
-    "prepublishOnly": "npm run clean && npm run sync-schemas:all && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && node --test-timeout=60000 --test-force-exit --test test/lib/adcp-client.test.js test/lib/validation.test.js test/lib/zod-schemas.test.js",
+    "prepublishOnly": "npm run clean && npm run sync-schemas:all && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && npm run check:publish-protocol-artifacts && node --test-timeout=60000 --test-force-exit --test test/lib/adcp-client.test.js test/lib/validation.test.js test/lib/zod-schemas.test.js",
     "build": "npm run build:lib",
-    "build:lib": "npm run sync-version && npm run schemas:ensure && tsx scripts/generate-wire-spec-fields.ts && tsup && node --max-old-space-size=8192 ./node_modules/typescript/bin/tsc --project tsconfig.lib.json --emitDeclarationOnly && tsx scripts/copy-schemas-to-dist.ts && tsx scripts/copy-reporting-source-schemas.ts && tsx scripts/copy-reporting-consumer-status-fixtures.ts && tsx scripts/copy-v2-projection-catalog.ts && tsx scripts/generate-per-tool-types.ts && tsx scripts/generate-dmts-declarations.ts",
+    "build:lib": "npm run sync-version && npm run schemas:ensure && tsx scripts/generate-wire-spec-fields.ts && tsup && node --max-old-space-size=8192 ./node_modules/typescript/bin/tsc --project tsconfig.lib.json --emitDeclarationOnly && tsx scripts/copy-schemas-to-dist.ts && tsx scripts/copy-reporting-source-schemas.ts && tsx scripts/copy-reporting-consumer-status-fixtures.ts && tsx scripts/sync-canonical-storyboard-fixtures.ts --copy-dist && tsx scripts/copy-v2-projection-catalog.ts && tsx scripts/generate-per-tool-types.ts && tsx scripts/generate-dmts-declarations.ts",
     "build:test-agents": "npm run build:lib && tsc -p test-agents/tsconfig.json --rootDir test-agents",
     "pretest": "npm run build:lib",
     "test": "npm run test:node && npm test --workspace=packages/eslint-plugin --if-present && npm test --workspace=@adcp/reference-renderers",
@@ -567,9 +613,10 @@
     "test:examples": "NODE_ENV=test node --test-timeout=180000 --test-force-exit --test-concurrency=1 --test test/examples/*.test.js",
     "test:e2e": "node --test test/e2e/registry-live.test.js",
     "test:e2e:local-app": "node test/e2e/adcp-e2e.test.js",
+    "test:e2e:wholesale-feed-training": "node --test test/e2e/wholesale-feed-training.test.js",
     "test:protocols": "node test/run-protocol-tests.js",
     "changeset": "changeset",
-    "version": "changeset version && npm install --package-lock-only --ignore-scripts && npm run sync-version && npm run generate-agent-docs",
+    "version": "changeset version && npm install --package-lock-only --ignore-scripts && npm run sync-version && npm run generate-agent-docs && npm run generate-release-worksheet",
     "release": "tsx scripts/publish-adcp-release.ts",
     "test:protocol-compliance": "node test/run-protocol-tests.js --only compliance",
     "test:protocol-schema": "node test/run-protocol-tests.js --only schema",
@@ -579,30 +626,32 @@
     "test:status-report": "node test/utils/final-status-report.js",
     "sync-schemas": "tsx scripts/sync-schemas.ts",
     "sync-schemas:v2.5": "tsx scripts/sync-v2-5-schemas.ts",
-    "sync-schemas:3.1-beta": "tsx scripts/sync-3-1-beta-schemas.ts",
-    "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas -- 3.1.18 && npm run sync-schemas -- 3.0.25 && npm run sync-schemas:v2.5 && npm run sync-schemas:3.1-beta",
+    "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas -- 3.1.24 && npm run sync-schemas -- 3.0.25 && npm run sync-schemas:v2.5",
+    "sync:canonical-storyboard-fixtures": "tsx scripts/sync-canonical-storyboard-fixtures.ts --update",
+    "check:canonical-storyboard-fixtures": "tsx scripts/sync-canonical-storyboard-fixtures.ts --check",
     "sync-registry-schemas": "tsx scripts/generate-registry-types.ts --sync",
     "schemas:ensure": "tsx scripts/schemas-ensure.ts",
     "schema-diff": "tsx scripts/schema-diff.ts",
-    "generate-types": "tsx scripts/generate-types.ts && tsx scripts/generate-enum-arrays.ts && tsx scripts/generate-inline-enum-arrays.ts && tsx scripts/generate-manifest-derived.ts && tsx scripts/generate-entity-hydration.ts && tsx scripts/generate-media-buy-update-fields.ts",
+    "generate-types": "tsx scripts/generate-types.ts && tsx scripts/generate-enum-arrays.ts && tsx scripts/generate-inline-enum-arrays.ts && tsx scripts/generate-manifest-derived.ts && tsx scripts/generate-entity-hydration.ts && tsx scripts/generate-media-buy-update-fields.ts && tsx scripts/generate-media-buy-action-metadata.ts",
     "generate-manifest-derived": "tsx scripts/generate-manifest-derived.ts",
     "generate-entity-hydration": "tsx scripts/generate-entity-hydration.ts",
     "generate-types:v2.5": "tsx scripts/generate-v2-5-types.ts",
-    "generate-types:3.1-beta": "tsx scripts/generate-3-1-beta-types.ts",
-    "generate-types:all": "npm run generate-types && npm run generate-types:v2.5 && npm run generate-types:3.1-beta",
+    "generate-types:all": "npm run generate-types && npm run generate-types:v2.5",
     "generate-registry-types": "tsx scripts/generate-registry-types.ts",
     "generate-enum-arrays": "tsx scripts/generate-enum-arrays.ts",
     "generate-inline-enum-arrays": "tsx scripts/generate-inline-enum-arrays.ts",
     "generate-zod-schemas": "tsx scripts/generate-zod-from-ts.ts && tsx scripts/generate-inline-enum-arrays.ts",
     "generate-wellknown-schemas": "tsx scripts/generate-wellknown-schemas.ts",
     "generate-agent-docs": "tsx scripts/generate-agent-docs.ts",
+    "generate-release-worksheet": "tsx scripts/gen-release-worksheet.ts",
     "compliance:fork-matrix": "node --test --test-timeout=300000 'test/examples/hello-*.test.js' test/examples/proxy-seller-snap.test.js",
     "typecheck:skill-examples": "tsx scripts/typecheck-skill-examples.ts",
     "check:skill-sync": "tsx scripts/check-skill-sync.ts",
-    "check:package": "npm run check:runtime-compat && npm run check:packed-artifact && npm run typecheck:examples && publint --strict && node --max-old-space-size=8192 ./node_modules/@arethetypeswrong/cli/dist/index.js --pack . --exclude-entrypoints compliance-fixtures/reporting-consumer-status-v1.json",
-    "check:packed-artifact": "node scripts/check-packed-artifact.mjs",
+    "check:package": "npm run check:runtime-compat && npm run check:packed-artifact && npm run check:publish-protocol-artifacts && npm run typecheck:examples && publint --strict && node --max-old-space-size=8192 ./node_modules/@arethetypeswrong/cli/dist/index.js --pack . --exclude-entrypoints compliance-fixtures/reporting-consumer-status-v1.json compliance-fixtures/principal.yaml compliance-fixtures/reporting-core.yaml compliance-fixtures/canonical-storyboards-provenance.json",
+    "check:packed-artifact": "node scripts/check-packed-artifact.mjs && node scripts/check-reporting-consumer-package.mjs",
     "check:runtime-compat": "node scripts/check-runtime-compat.mjs",
     "check:package-size": "node scripts/check-package-size.mjs",
+    "check:publish-protocol-artifacts": "node scripts/check-publish-protocol-artifacts.mjs",
     "verify:package": "node scripts/verify-package.mjs",
     "check:adopter-types": "tsx scripts/check-adopter-types.ts",
     "check:adopter-types-narrow": "tsx scripts/check-adopter-types-narrow.ts",
@@ -621,9 +670,9 @@
     "ci:validate": "node scripts/ci-validate.js",
     "ci:quick": "npm run format:check && npm run typecheck && npm run build:lib && npm test",
     "test:zod-openapi-portability": "node --test test/lib/zod-openapi-portability.test.js",
-    "ci:schema-check": "npm run sync-schemas && npm run generate-types && npm run generate-registry-types -- --sync && git diff --exit-code -I '// Generated at:' src/lib/types/ src/lib/agents/ src/lib/registry/types.generated.ts schemas/registry/registry.yaml || (echo '⚠️  Generated files are out of sync. Run: npm run sync-schemas && npm run generate-types && npm run generate-registry-types -- --sync' && exit 1)",
+    "ci:schema-check": "npm run sync-schemas && npm run generate-types && npm run generate-registry-types -- --sync && git diff --exit-code -I '// Generated at:' src/lib/types/ src/lib/agents/ src/lib/media-buy/action-metadata.generated.ts src/lib/media-buy/update-fields.generated.ts src/lib/registry/types.generated.ts schemas/registry/registry.yaml || (echo '⚠️  Generated files are out of sync. Run: npm run sync-schemas && npm run generate-types && npm run generate-registry-types -- --sync' && exit 1)",
     "ci:codegen-strict": "tsx scripts/check-no-loose-oneof.ts",
-    "ci:docs-check": "npm run generate-agent-docs && git diff --exit-code -I '> Generated at:' docs/llms.txt docs/TYPE-SUMMARY.md || (echo '⚠️  Agent docs are out of sync. Run: npm run generate-agent-docs' && exit 1)",
+    "ci:docs-check": "npm run generate-agent-docs && npm run generate-release-worksheet && git diff --exit-code -I '> Generated at:' docs/llms.txt docs/TYPE-SUMMARY.md docs/migration-14.x-rc-worksheet.md || (echo '⚠️  Generated docs are out of sync. Run: npm run generate-agent-docs && npm run generate-release-worksheet' && exit 1)",
     "ci:doc-links": "tsx scripts/check-doc-links.ts",
     "ci:pre-push": "npm run ci:schema-check && npm run ci:codegen-strict && npm run ci:quick",
     "hooks:install": "node scripts/install-hooks.js",
@@ -664,6 +713,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/ext-apps": "2.0.0",
     "@modelcontextprotocol/node": "2.0.0",
     "@modelcontextprotocol/server": "2.0.0",
     "@types/ws": "^8.18.1",
@@ -699,7 +749,7 @@
     "@a2a-js/sdk": "^1.0.1",
     "@apidevtools/json-schema-ref-parser": "^15.5.2",
     "@arethetypeswrong/cli": "^0.18.5",
-    "@changesets/cli": "^2.31.1",
+    "@changesets/cli": "^3.0.3",
     "@commitlint/cli": "^20.5.3",
     "@commitlint/config-conventional": "^20.5.3",
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -746,7 +796,7 @@
     },
     "minimatch": "^10.2.1"
   },
-  "adcp_version": "3.2.0-rc.3",
+  "adcp_version": "3.2.1",
   "sideEffects": [
     "**/default-invariants.*"
   ]

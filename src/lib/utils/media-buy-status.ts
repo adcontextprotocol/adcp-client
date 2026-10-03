@@ -1,12 +1,14 @@
 import type { MediaBuyStatus } from '../types';
-import { MediaBuyStatusSchema } from '../types/schemas.generated';
+import { MediaBuyStatusValues } from '../types/enums.generated';
+
+const MEDIA_BUY_STATUSES: ReadonlySet<string> = new Set(MediaBuyStatusValues);
 
 /**
  * Return true when a value is one of the SDK's current media-buy lifecycle
  * statuses.
  */
 export function isMediaBuyStatus(value: unknown): value is MediaBuyStatus {
-  return MediaBuyStatusSchema.safeParse(value).success;
+  return typeof value === 'string' && MEDIA_BUY_STATUSES.has(value);
 }
 
 /**

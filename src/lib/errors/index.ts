@@ -1,4 +1,5 @@
 // Custom error classes for ADCP client library
+import { RequestSigningErrorCodeMetadata } from '../types/enums.generated';
 
 /**
  * Base class for all ADCP client errors
@@ -118,6 +119,100 @@ export class UnsupportedTaskError extends ADCPError {
   }
 }
 
+/** Seller did not declare the requested get_products buying mode. */
+export class UnsupportedBuyingModeError extends ADCPError {
+  readonly code = 'UNSUPPORTED_BUYING_MODE';
+
+  constructor(
+    public readonly requestedMode: string | undefined,
+    public readonly declaredModes: readonly string[]
+  ) {
+    const requested = requestedMode ?? 'an inferred wholesale mode';
+    const declared = declaredModes.length ? declaredModes.join(', ') : '(unknown)';
+    super(
+      `Seller does not support ${requested} buying mode. Declared modes: ${declared}. ` +
+        'Supply a brief or choose a declared buying_mode after probing get_adcp_capabilities.'
+    );
+    this.details = { requested_mode: requestedMode, declared_modes: [...declaredModes] };
+  }
+}
+
+/** A seller requires an account reference before an account-scoped request. */
+export class AccountRequiredError extends ADCPError {
+  readonly code = 'ACCOUNT_REQUIRED';
+  readonly fault = 'buyer_setup' as const;
+
+  constructor(
+    public readonly accountModel: 'explicit' | 'implicit',
+    public readonly taskName: string,
+    reason?: string
+  ) {
+    super(
+      reason ??
+        `${taskName} requires an account for this ${accountModel}-account seller. ` +
+          (accountModel === 'explicit'
+            ? 'Call resolveAccount() to discover an account_id, then pass account: { account_id }.'
+            : 'Call resolveAccount({ brand, operator }) to sync the account, then pass its natural key.')
+    );
+    this.details = { account_model: accountModel, task_name: taskName };
+  }
+}
+
+/** Account provisioning succeeded but the seller has not approved its use. */
+export class AccountPendingApprovalError extends ADCPError {
+  readonly code = 'ACCOUNT_PENDING_APPROVAL';
+  readonly fault = 'buyer_setup' as const;
+
+  constructor(
+    public readonly account: import('../types').AccountReference,
+    public readonly accountId?: string
+  ) {
+    super('The seller is reviewing this account. Wait for approval before making account-scoped requests.');
+    this.details = { status: 'pending_approval', account_id: accountId, account };
+  }
+}
+
+/** More than one active account matches the caller's selection hints. */
+export class AccountAmbiguousError extends ADCPError {
+  readonly code = 'ACCOUNT_AMBIGUOUS';
+
+  constructor(public readonly candidates: readonly string[]) {
+    super('Multiple eligible accounts. Supply brand/operator or a select callback.');
+    this.details = { candidate_count: candidates.length };
+  }
+}
+
+/** Buyer setup errors must be excluded from seller-health failure counts. */
+export abstract class BuyerSetupError extends ADCPError {
+  readonly fault = 'buyer_setup' as const;
+}
+export class AccountNotFoundError extends BuyerSetupError {
+  readonly code: string = 'ACCOUNT_NOT_FOUND';
+  constructor(message = 'The account has not been provisioned at this seller.') {
+    super(message);
+  }
+}
+export class AccountSetupRequiredError extends BuyerSetupError {
+  readonly code: string = 'ACCOUNT_SETUP_REQUIRED';
+  constructor(message = 'Complete account setup before making account-scoped requests.') {
+    super(message);
+  }
+}
+export class AccountPaymentRequiredError extends BuyerSetupError {
+  readonly code: string = 'ACCOUNT_PAYMENT_REQUIRED';
+  constructor(message = 'Complete account payment before making account-scoped requests.') {
+    super(message);
+  }
+}
+export class AccountNotProvisionedError extends AccountNotFoundError {
+  constructor(
+    public readonly account: import('../types').AccountReference,
+    public readonly taskName: string
+  ) {
+    super(`${taskName} requires an account provisioned at this seller. Call client.accounts.ensure first.`);
+  }
+}
+
 /**
  * Error thrown when protocol communication fails
  */
@@ -228,6 +323,13 @@ export interface AuthChallengeInfo {
   error_description?: string;
 }
 
+/** Diagnostics from the original HTTP response to an SDK-signed request. */
+export interface SignedRequestRejectionInfo {
+  status: number;
+  /** Untrusted seller text, already bounded and redacted by the transport. */
+  responseBody?: string;
+}
+
 /**
  * Error thrown when authentication is required to access an MCP endpoint
  *
@@ -268,19 +370,38 @@ export interface AuthChallengeInfo {
  */
 export class AuthenticationRequiredError extends ADCPError {
   readonly code = 'AUTHENTICATION_REQUIRED';
+  declare readonly signatureErrorCode?: keyof typeof RequestSigningErrorCodeMetadata;
+  declare readonly requestSigned?: boolean;
+  declare readonly status?: number;
+  /**
+   * Bounded, redacted seller diagnostic. Non-enumerable: do not forward this
+   * untrusted text to automated prompts or treat it as recovery instructions.
+   * Read it directly as `error.responseBody`; spread and JSON serialization omit it.
+   */
+  declare readonly responseBody?: string;
 
   constructor(
     public readonly agentUrl: string,
     public readonly oauthMetadata?: OAuthMetadataInfo,
     message?: string,
-    public readonly challenge?: AuthChallengeInfo
+    public readonly challenge?: AuthChallengeInfo,
+    signedRejection?: SignedRequestRejectionInfo
   ) {
-    const defaultMessage = buildAuthRequiredMessage(agentUrl, oauthMetadata, challenge);
+    const defaultMessage = buildAuthRequiredMessage(agentUrl, oauthMetadata, challenge, !!signedRejection);
     super(message || defaultMessage);
     // `details` is serialized through error envelopes; surfacing the challenge
     // here lets non-CLI consumers (LLM agents, dashboards, programmatic
     // callers) branch on the scheme without instanceof-checking.
     this.details = { agentUrl, oauthMetadata, challenge };
+    if (signedRejection) {
+      this.requestSigned = true;
+      this.status = signedRejection.status;
+      const signatureCode = getRequestSignatureRejectionCode(challenge);
+      if (signatureCode) this.signatureErrorCode = signatureCode;
+      // Seller-controlled prose must not flow into serialized error reports.
+      Object.defineProperty(this, 'responseBody', { value: signedRejection.responseBody, enumerable: false });
+      this.details = { agentUrl, challenge, requestSigned: true, status: this.status };
+    }
   }
 
   /**
@@ -359,8 +480,24 @@ function sanitizeAgentUrlForError(value: string): string {
 function buildAuthRequiredMessage(
   agentUrl: string,
   oauthMetadata: OAuthMetadataInfo | undefined,
-  challenge: AuthChallengeInfo | undefined
+  challenge: AuthChallengeInfo | undefined,
+  requestSigned = false
 ): string {
+  if (requestSigned || challenge?.scheme === 'signature') {
+    const code = getRequestSignatureRejectionCode(challenge);
+    const suggestion = code ? ` ${RequestSigningErrorCodeMetadata[code].suggestion}.` : '';
+    return (
+      `Authentication failed with HTTP 401 for ${sanitizeAgentUrlForError(agentUrl)}. ` +
+      (requestSigned ? 'The seller rejected an SDK-signed request' : 'The seller requires a valid request signature') +
+      (code ? ` (${code})` : '') +
+      '. Check signature verification and key discovery (brand_json_url → agents[] → jwks_uri).' +
+      (requestSigned && !challenge
+        ? ' No authentication challenge was returned; check configured credentials too.'
+        : '') +
+      suggestion +
+      (requestSigned ? ' A bounded seller diagnostic is available on responseBody when captured.' : '')
+    );
+  }
   if (challenge && challenge.scheme !== 'bearer') {
     if (challenge.scheme === 'basic') {
       return (
@@ -383,6 +520,13 @@ function buildAuthRequiredMessage(
     return `Authentication required for ${agentUrl}. OAuth available at: ${oauthMetadata.authorization_endpoint}`;
   }
   return `Authentication required for ${agentUrl}. No OAuth metadata available - provide auth_token in agent config.`;
+}
+
+function getRequestSignatureRejectionCode(challenge: AuthChallengeInfo | undefined) {
+  if (challenge?.scheme !== 'signature' || !challenge.error) return undefined;
+  return Object.prototype.hasOwnProperty.call(RequestSigningErrorCodeMetadata, challenge.error)
+    ? (challenge.error as keyof typeof RequestSigningErrorCodeMetadata)
+    : undefined;
 }
 
 /**
@@ -655,7 +799,7 @@ export type ActionNotAllowedAttemptedAction = string;
 
 export interface ActionNotAllowedAvailableAction {
   action: ActionNotAllowedAttemptedAction;
-  mode: 'self_serve' | 'conditional_self_serve' | 'requires_proposal' | 'requires_approval';
+  mode: 'self_serve' | 'conditional_self_serve' | 'seller_managed' | 'requires_proposal' | 'requires_approval';
   sla?: unknown;
   terms_ref?: string;
 }
@@ -663,6 +807,7 @@ export interface ActionNotAllowedAvailableAction {
 export type ActionNotAllowedRecovery =
   | { kind: 'createProposal'; message: string }
   | { kind: 'waitForApproval'; message: string }
+  | { kind: 'waitForTask'; message: string }
   | { kind: 'reissueAsDirect'; message: string };
 
 function buildActionNotAllowedMessage(details: ActionNotAllowedErrorDetails): string {
@@ -683,6 +828,11 @@ function buildModeMismatchRecovery(details: ActionNotAllowedErrorDetails): Actio
   const match = details.currently_available_actions?.find(a => a.action === details.attempted_action);
   if (!match) return undefined;
   switch (match.mode) {
+    case 'seller_managed':
+      return {
+        kind: 'waitForTask',
+        message: 'Use the declared task and follow its submitted/working/completed lifecycle.',
+      };
     case 'requires_proposal':
       return {
         kind: 'createProposal',
@@ -822,6 +972,12 @@ export function adcpErrorToTypedError(
   idempotencyKey?: string
 ): ADCPError | undefined {
   switch (adcpError.code) {
+    case 'ACCOUNT_NOT_FOUND':
+      return new AccountNotFoundError(adcpError.message);
+    case 'ACCOUNT_SETUP_REQUIRED':
+      return new AccountSetupRequiredError(adcpError.message);
+    case 'ACCOUNT_PAYMENT_REQUIRED':
+      return new AccountPaymentRequiredError(adcpError.message);
     case 'IDEMPOTENCY_CONFLICT':
       return new IdempotencyConflictError(idempotencyKey, adcpError.message);
     case 'IDEMPOTENCY_EXPIRED':
@@ -882,6 +1038,7 @@ function isActionMode(value: string): value is ActionNotAllowedAvailableAction['
   return (
     value === 'self_serve' ||
     value === 'conditional_self_serve' ||
+    value === 'seller_managed' ||
     value === 'requires_proposal' ||
     value === 'requires_approval'
   );

@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 
-import { ADCP_MAJOR_VERSION, ADCP_VERSION } from '../../version';
+import { ADCP_MAJOR_VERSION, ADCP_VERSION, toReleasePrecisionVersion } from '../../version';
 import { AdcpError } from '../../server/decisioning/async-outcome';
 import type { GetReportingStatusResponse } from '../../types';
+import type { ReportingAdjustmentReceipt, ReportingMaterialization, ReportingReceipt } from '../../types';
 import { canonicalJsonV1 } from '../source';
 import {
   evaluateReportingLedgerCoverageV1,
@@ -10,31 +11,64 @@ import {
   reportingLedgerConfigurationMatchesScope,
   reportingLedgerEffectivePeriod,
   reportingLedgerScopeClosed,
+  reportingLedgerSuccessor,
 } from './coverage';
-import { aggregateReportingHealthV1, projectReportingObligationHealthV1 } from './health';
+import {
+  aggregateReportingHealthV1,
+  assertReportingConsumerMismatchEscalation,
+  reportingEffectiveConsumerMismatchEscalationV1,
+  projectReportingConsumerStatusMismatchV1,
+  projectReportingObligationHealthV1,
+} from './health';
 import { compareReportingInstants } from './instant';
+import { reportingPeriodSchedule } from './schedule';
 import { ReportingLedgerSnapshotUnavailableError } from './types';
 import type {
+  ReportingConsumerMismatchEscalationV1,
   ReportingHealthV1,
   ReportingLedgerConfigurationV1,
+  ReportingLedgerAdjustmentSnapshotV1,
   ReportingLedgerConsumerStatementV1,
   ReportingLedgerCoverageV1,
   ReportingLedgerIssueV1,
   ReportingLedgerObligationV1,
+  ReportingLedgerRevisionSnapshotV1,
   ReportingLedgerSnapshotQueryV1,
   ReportingLedgerStore,
+  ReportingManagedDeliveryBindingV1,
   ReportingDeliveryHandlerV1,
   ReportingStatusHandlerV1,
 } from './types';
 
 export interface ReportingStatusConsumerScopeOptionsV1<TContext = unknown> {
   resolveConsumerId(context: TContext): string | Promise<string>;
+  /**
+   * Mirror of the seller's advertised `consumer_mismatch_escalation_seconds` +
+   * `operations_contact` capability block. Supply it only when the capability
+   * document actually advertises both — the projection uses it to decide when
+   * an unattended `CONSUMER_STATUS_MISMATCH` must become `action_required`
+   * with a `contact_*` action, and advertising a window the reads don't honor
+   * (or honoring one the document doesn't advertise) is worse than silence.
+   */
+  consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1;
 }
 
 export function createReportingStatusHandler<TContext = unknown>(
   store: ReportingLedgerStore,
   options?: ReportingStatusConsumerScopeOptionsV1<TContext>
 ): ReportingStatusHandlerV1 {
+  // Fail at wiring time, not on the first escalated read. Inherit the store's
+  // setting when the handler was not given one, and refuse a disagreement
+  // outright: the store applies the `health` filter while building the
+  // snapshot and the handler projects severity afterwards, so two different
+  // windows would make a filtered periods read contradict the summary.
+  const consumerMismatchEscalation = assertReportingConsumerMismatchEscalation(
+    reportingEffectiveConsumerMismatchEscalationV1(
+      options?.consumerMismatchEscalation,
+      store,
+      'createReportingStatusHandler'
+    )
+  );
   const activeReadsByAccount = new Map<string, number>();
   return async (request, context) => {
     const raw = request as unknown as Record<string, unknown>;
@@ -164,7 +198,25 @@ export function createReportingStatusHandler<TContext = unknown>(
         const persistedIssues =
           projection.health === 'delayed' || projection.health === 'action_required'
             ? page.snapshot.issues.filter(
-                issue => issue.reporting_obligation_id === obligation.reporting_obligation_id && !issue.resolvedAt
+                issue =>
+                  issue.reporting_obligation_id === obligation.reporting_obligation_id &&
+                  !issue.resolvedAt &&
+                  // A CONSUMER_STATUS_MISMATCH is caller-scoped, but the issue
+                  // store is keyed by obligation alone and carries no consumer
+                  // dimension. Republishing a persisted one would hand every
+                  // other consumer on the same obligation the causing
+                  // `reporting_status_id`, its `opened_at` (i.e. another
+                  // tenant's exact ingest timing), and any `external_ref`
+                  // ticket key — the precise cross-tenant leak the field's own
+                  // contract forbids. This projection recomputes the mismatch
+                  // from the caller's current leaf on every read, so the
+                  // persisted copy is redundant as well as unsafe.
+                  issue.code !== 'CONSUMER_STATUS_MISMATCH' &&
+                  // Retiring an issue removes it from the projection rather
+                  // than publishing it at a terminal state, which is what lets
+                  // a reader treat a nonempty `issues[]` as degradation.
+                  issue.issueState !== 'resolved' &&
+                  issue.issueState !== 'waived'
               )
             : [];
         const consumerStatusHistory = (page.snapshot.consumerStatuses ?? []).filter(value =>
@@ -176,22 +228,76 @@ export function createReportingStatusHandler<TContext = unknown>(
           []
         ).filter(value => consumerStatusMatchesObligation(value, obligation));
         const currentConsumerStatus = currentStatusLeaf(consumerStatusProjection);
-        const mismatch = consumerStatusMismatch(currentConsumerStatus, revisions, projection.health);
-        const mismatchIssue =
-          mismatch && currentConsumerStatus
-            ? consumerStatusMismatchIssue(obligation, currentConsumerStatus, page.snapshot.ledgerAsOf)
-            : undefined;
+        // Gated on the authenticated consumer like every other consumer-derived
+        // output here. The bundled store returns no statuses without a
+        // `consumer_id`, but the `ReportingLedgerStore` interface does not
+        // require that, and an unscoped custom store would otherwise publish
+        // one caller's statement id into the shared `issues[]`.
+        const mismatch =
+          consumerId === undefined
+            ? undefined
+            : projectReportingConsumerStatusMismatchV1(
+                obligation,
+                currentConsumerStatus,
+                revisions,
+                projection.health,
+                page.snapshot.ledgerAsOf,
+                consumerMismatchEscalation
+              );
+        // A buyer that owes a status and has not posted one is a counted
+        // unknown, never a conflict: it creates no issue, changes no health,
+        // and is invisible to every other caller.
+        const consumerStatusPending =
+          consumerId !== undefined &&
+          consumerStatusProjection.length === 0 &&
+          // Strictly after: the duty is to post "no later than" the deadline, so
+          // a buyer that posts at exactly that instant has met it.
+          compareReportingInstants(page.snapshot.ledgerAsOf, obligation.recoveryDeadlineAt) > 0;
+        const baseProjection = {
+          ...projection,
+          issues: uniqueIssues([...persistedIssues, ...projection.issues, ...(mismatch ? [mismatch.issue] : [])]),
+        };
+        const managed = projectManagedDelivery({
+          obligation,
+          binding: page.snapshot.managedBindings?.find(value => value.configurationId === obligation.configurationId),
+          revisions,
+          adjustments: page.snapshot.adjustments.filter(
+            value => value.reporting_obligation_id === obligation.reporting_obligation_id
+          ),
+          materializations: (page.snapshot.materializationProjection ?? page.snapshot.materializations ?? []).filter(
+            value => value.reporting_obligation_id === obligation.reporting_obligation_id
+          ),
+          materializationHistory: (
+            page.snapshot.materializationHistoryProjection ??
+            page.snapshot.materializations ??
+            []
+          ).filter(value => value.reporting_obligation_id === obligation.reporting_obligation_id),
+          receipts: page.snapshot.receiptProjection ?? page.snapshot.receipts ?? [],
+          adjustmentReceipts: page.snapshot.adjustmentReceiptProjection ?? page.snapshot.adjustmentReceipts ?? [],
+          base: baseProjection,
+          ledgerAsOf: page.snapshot.ledgerAsOf,
+          tombstonedAcceptedSubjects: page.snapshot.tombstonedAcceptedSubjects,
+          tombstonedDeliveredRevisionIds: page.snapshot.tombstonedDeliveredRevisionIds,
+        });
         return {
           obligation,
           revisions,
           consumerStatusHistory,
           consumerStatusProjection,
           currentConsumerStatus,
+          consumerStatusPending,
           projection: {
-            ...projection,
-            ...(mismatch ? { health: 'action_required' as const } : {}),
-            issues: uniqueIssues([...persistedIssues, ...projection.issues, ...(mismatchIssue ? [mismatchIssue] : [])]),
+            ...(managed?.projection ?? baseProjection),
+            ...(mismatch
+              ? {
+                  health: moreSevereReportingHealthV1(
+                    managed?.projection.health ?? baseProjection.health,
+                    mismatch.health
+                  ),
+                }
+              : {}),
           },
+          managed,
         };
       });
       const healthFilter = view === 'periods' && query.health ? new Set(query.health) : undefined;
@@ -205,6 +311,27 @@ export function createReportingStatusHandler<TContext = unknown>(
         ledger_as_of: page.snapshot.ledgerAsOf,
         account_id: accountId,
       };
+
+      // Adjustments the snapshot considers visible, under exactly the rule
+      // the store used when it built the item stream. An adjustment receipt
+      // and the adjustment it names are separate pagination items, so a small
+      // `max_results` puts them on different pages; filtering the receipt
+      // against only the adjustments that landed on its own page dropped it
+      // from every page, and the acceptance was unreadable through the API
+      // that is supposed to evidence it. The receipt still may not appear
+      // without the correction it names, so the named adjustment travels with
+      // it as context on that page. Items, not this array, are what the
+      // cursor counts, so nothing about paging changes.
+      const finality = page.snapshot.query.finality;
+      const visibleRevisionIds = new Set(
+        page.snapshot.revisions
+          .filter(value => !finality || finality.includes(value.finality))
+          .map(value => value.reporting_revision_id)
+      );
+      const visibleAdjustments = finality
+        ? page.snapshot.adjustments.filter(value => visibleRevisionIds.has(value.adjusts_reporting_revision_id))
+        : page.snapshot.adjustments;
+      const pageAdjustmentIds = new Set(page.adjustments.map(value => value.reporting_adjustment_id));
 
       if (view === 'revision') {
         const id = query.reporting_revision_id;
@@ -221,6 +348,21 @@ export function createReportingStatusHandler<TContext = unknown>(
         if (!revision) {
           return lookupUnavailable(view);
         }
+        const revisionAdjustmentIds = new Set(
+          visibleAdjustments
+            .filter(value => value.adjusts_reporting_revision_id === revision.reporting_revision_id)
+            .map(value => value.reporting_adjustment_id)
+        );
+        const revisionAdjustmentReceipts = (page.adjustmentReceipts ?? []).filter(value =>
+          revisionAdjustmentIds.has(value.reporting_adjustment_id)
+        );
+        const receiptAdjustmentIds = new Set(revisionAdjustmentReceipts.map(value => value.reporting_adjustment_id));
+        const revisionAdjustments = visibleAdjustments.filter(
+          value =>
+            value.adjusts_reporting_revision_id === revision.reporting_revision_id &&
+            (pageAdjustmentIds.has(value.reporting_adjustment_id) ||
+              receiptAdjustmentIds.has(value.reporting_adjustment_id))
+        );
         return {
           ...base,
           view: 'revision',
@@ -231,13 +373,20 @@ export function createReportingStatusHandler<TContext = unknown>(
             row_count: revision.binding.rowCount,
           },
           reporting_rows: revision.rows,
-          adjustments: page.adjustments
-            .filter(value => value.adjusts_reporting_revision_id === revision.reporting_revision_id)
-            .map(value => value.wireAdjustment),
+          adjustments: revisionAdjustments.map(value => value.wireAdjustment),
           ...(consumerId ? { consumer_statuses: (page.consumerStatuses ?? []).map(wireConsumerStatus) } : {}),
-          adjustment_receipts: [],
-          materializations: [],
-          receipts: [],
+          materializations: (page.materializations ?? []).filter(
+            value => value.reporting_revision_id === revision.reporting_revision_id
+          ),
+          receipts: (page.receipts ?? []).filter(
+            value => value.reporting_revision_id === revision.reporting_revision_id
+          ),
+          // RC3 `revision_adjustments`: "every adjustment_receipt, when
+          // supported, MUST name one of those adjustments. No unrelated status
+          // or correction may appear." Emitting the page's whole adjustment
+          // receipt set let a read of R1 return a receipt for an adjustment on
+          // R2 while `adjustments` was empty.
+          adjustment_receipts: revisionAdjustmentReceipts,
           errors: [],
           pagination: {
             has_more: page.hasMore,
@@ -250,6 +399,20 @@ export function createReportingStatusHandler<TContext = unknown>(
       if (view === 'periods') {
         const pageIds = new Set(page.obligations.map(value => value.reporting_obligation_id));
         const pageProjected = selected.filter(value => pageIds.has(value.obligation.reporting_obligation_id));
+        const selectedPageIds = new Set(selected.map(value => value.obligation.reporting_obligation_id));
+        const scopedAdjustments = visibleAdjustments.filter(value =>
+          selectedPageIds.has(value.reporting_obligation_id)
+        );
+        const scopedAdjustmentIds = new Set(scopedAdjustments.map(value => value.reporting_adjustment_id));
+        const scopedAdjustmentReceipts = (page.adjustmentReceipts ?? []).filter(value =>
+          scopedAdjustmentIds.has(value.reporting_adjustment_id)
+        );
+        const receiptAdjustmentIds = new Set(scopedAdjustmentReceipts.map(value => value.reporting_adjustment_id));
+        const pageAdjustments = scopedAdjustments.filter(
+          value =>
+            pageAdjustmentIds.has(value.reporting_adjustment_id) ||
+            receiptAdjustmentIds.has(value.reporting_adjustment_id)
+        );
         return {
           ...base,
           view: 'periods',
@@ -267,17 +430,33 @@ export function createReportingStatusHandler<TContext = unknown>(
               ).length,
               value.projection,
               value.currentConsumerStatus,
-              consumerId ? value.consumerStatusProjection.length : undefined
+              consumerId ? value.consumerStatusProjection.length : undefined,
+              value.managed
             )
           ),
           revisions: page.revisions
-            .filter(value => !query.finality || query.finality.includes(value.finality))
+            .filter(
+              value =>
+                selectedPageIds.has(value.reporting_obligation_id) &&
+                (!query.finality || query.finality.includes(value.finality))
+            )
             .map(value => value.wireRevision),
-          adjustments: page.adjustments.map(value => value.wireAdjustment),
+          adjustments: pageAdjustments.map(value => value.wireAdjustment),
           ...(consumerId ? { consumer_statuses: (page.consumerStatuses ?? []).map(wireConsumerStatus) } : {}),
-          adjustment_receipts: [],
-          materializations: [],
-          receipts: [],
+          // Same scoping rule as the revision view: a receipt may only appear
+          // beside the correction or revision it names.
+          adjustment_receipts: scopedAdjustmentReceipts,
+          // Managed evidence names a revision, so the finality filter that
+          // scopes `revisions` scopes these too — otherwise the response
+          // carries public references to a revision it does not contain.
+          materializations: (page.materializations ?? []).filter(
+            value =>
+              selectedPageIds.has(value.reporting_obligation_id) && visibleRevisionIds.has(value.reporting_revision_id)
+          ),
+          receipts: (page.receipts ?? []).filter(
+            value =>
+              selectedPageIds.has(value.reporting_obligation_id) && visibleRevisionIds.has(value.reporting_revision_id)
+          ),
           pagination: {
             has_more: page.hasMore,
             total_count: page.totalCount,
@@ -289,21 +468,28 @@ export function createReportingStatusHandler<TContext = unknown>(
       const healthValues = selected.map(value => value.projection.health);
       const issues = selected.flatMap(value => value.projection.issues);
       if (!ledgerCoverage.complete) issues.push(historyUnavailableIssue(query, page.snapshot.ledgerAsOf));
+      const summaryHealth = aggregateReportingHealthV1(healthValues, {
+        closed: reportingLedgerScopeClosed(query, page.snapshot.ledgerAsOf, ledgerCoverage.complete),
+        coverageComplete: ledgerCoverage.complete,
+      });
       return {
         ...base,
         view: 'summary',
         scope: publicScope(query, page.snapshot.configurations, page.snapshot.ledgerAsOf, ledgerCoverage),
-        health: aggregateReportingHealthV1(healthValues, {
-          closed: reportingLedgerScopeClosed(query, page.snapshot.ledgerAsOf, ledgerCoverage.complete),
-          coverageComplete: ledgerCoverage.complete,
-        }),
+        health: summaryHealth,
         coverage: aggregateReportingCoverageV1(
           selected.map(value => value.obligation.coverage),
           page.snapshot.ledgerAsOf
         ),
         data_through: aggregateDataThrough(selected),
-        ...nextExpectedAt(selected),
-        obligation_counts: counts(healthValues),
+        ...nextExpectedAt(summaryHealth, selected, query, page.snapshot.configurations, page.snapshot.ledgerAsOf),
+        obligation_counts: counts(
+          healthValues,
+          // Required whenever the seller advertises consumer_status_task, which
+          // in this handler is exactly when a consumer principal is resolved.
+          // It overlaps the health counts rather than partitioning them.
+          consumerId !== undefined ? selected.filter(value => value.consumerStatusPending).length : undefined
+        ),
         issues: issues.map(wireIssue),
       } as never;
     } finally {
@@ -423,7 +609,8 @@ function wireObligation(
   adjustmentCount: number,
   projection: ReturnType<typeof projectReportingObligationHealthV1>,
   currentConsumerStatus?: ReportingLedgerConsumerStatementV1,
-  consumerStatusCount?: number
+  consumerStatusCount?: number,
+  managed?: ReturnType<typeof projectManagedDelivery>
 ) {
   return {
     reporting_obligation_id: obligation.reporting_obligation_id,
@@ -442,20 +629,31 @@ function wireObligation(
       source_timezone: obligation.period.sourceTimezone,
     },
     expected_at: obligation.expectedAt,
-    schedule: {
-      period_duration: `PT${obligation.schedule.periodMilliseconds / 1_000}S`,
-      alignment: 'billing_cycle',
-      period_anchor: obligation.schedule.anchor,
-      period_timezone: obligation.period.sourceTimezone,
-      delivery_sla: `PT${(Date.parse(obligation.expectedAt) - Date.parse(obligation.period.end)) / 1_000}S`,
-    },
+    schedule: wireSchedule(obligation),
     required_finality: obligation.requiredFinality,
-    reconciliation_mode: 'delivery_only',
-    reconciliation_status: 'not_required',
+    reconciliation_mode: managed?.binding.reconciliation_mode ?? 'delivery_only',
+    reconciliation_status: managed?.reconciliationStatus ?? 'not_required',
     health: projection.health,
     production_status: projection.productionStatus,
     revision_count: revisionCount,
     adjustment_count: adjustmentCount,
+    ...(managed
+      ? {
+          destination_ref: managed.binding.destination_ref,
+          materialization_count: managed.materializationCount,
+          successful_materialization_count: managed.successfulMaterializationCount,
+          ...(managed.resourceRetainedUntil ? { resource_retained_until: managed.resourceRetainedUntil } : {}),
+          ...(managed.binding.reconciliation_mode === 'consumer_receipt'
+            ? {
+                receipt_count: managed.receiptCount,
+                accepted_receipt_count: managed.acceptedReceiptCount,
+                adjustment_receipt_count: managed.adjustmentReceiptCount,
+                accepted_adjustment_receipt_count: managed.acceptedAdjustmentReceiptCount,
+                pending_adjustment_count: managed.pendingAdjustmentReceiptCount,
+              }
+            : {}),
+        }
+      : {}),
     ...(consumerStatusCount !== undefined
       ? {
           consumer_status_count: consumerStatusCount,
@@ -464,6 +662,280 @@ function wireObligation(
       : {}),
     issues: projection.issues.map(wireIssue),
   };
+}
+
+export interface ProjectManagedDeliveryInputV1 {
+  obligation: ReportingLedgerObligationV1;
+  binding?: ReportingManagedDeliveryBindingV1;
+  revisions: ReportingLedgerRevisionSnapshotV1[];
+  adjustments: ReportingLedgerAdjustmentSnapshotV1[];
+  materializations: ReportingMaterialization[];
+  materializationHistory: ReportingMaterialization[];
+  receipts: ReportingReceipt[];
+  adjustmentReceipts: ReportingAdjustmentReceipt[];
+  base: ReturnType<typeof projectReportingObligationHealthV1>;
+  ledgerAsOf: string;
+  /**
+   * Subjects whose accepted receipt body has aged out of retention.
+   *
+   * An accepted leaf is terminal, so the acceptance keeps counting after the
+   * body is gone — otherwise letting evidence expire silently reopens a
+   * settled subject and the obligation degrades on its own.
+   */
+  tombstonedAcceptedSubjects?: ReadonlyArray<{
+    kind: 'revision' | 'adjustment';
+    subjectId: string;
+    consumerId?: string;
+  }>;
+  /**
+   * Revisions whose successful materialization row has been pruned.
+   *
+   * `deliveredEver` is read from history, and pruning removes that history,
+   * so without this a delivered revision reads as never delivered and an
+   * accepted subject is dragged back to `pending`.
+   */
+  tombstonedDeliveredRevisionIds?: readonly string[];
+}
+
+/** Project Managed Delivery state without positional array arguments that can be accidentally transposed. */
+export function projectManagedDelivery(input: ProjectManagedDeliveryInputV1) {
+  const {
+    obligation,
+    binding,
+    revisions,
+    adjustments,
+    materializations,
+    materializationHistory,
+    receipts,
+    adjustmentReceipts,
+    base,
+    ledgerAsOf,
+    tombstonedAcceptedSubjects = [],
+    tombstonedDeliveredRevisionIds = [],
+  } = input;
+  if (!binding) return undefined;
+  const supersededRevisionIds = new Set(
+    revisions.map(value => value.supersedes_reporting_revision_id).filter((value): value is string => Boolean(value))
+  );
+  const requiredRevision = revisions
+    .filter(value => !supersededRevisionIds.has(value.reporting_revision_id))
+    .filter(value => obligation.requiredFinality !== 'official' || value.finality === 'official')
+    .sort((left, right) => left.revisionNumber - right.revisionNumber)
+    .at(-1);
+  const successful = materializations.filter(
+    value =>
+      value.reporting_revision_id === requiredRevision?.reporting_revision_id &&
+      (value.status === 'available' || value.status === 'delivered') &&
+      value.resource !== undefined &&
+      value.verification !== undefined
+  );
+  const readable = successful.filter(
+    value => value.resource && compareReportingInstants(value.resource.expires_at, ledgerAsOf) > 0
+  );
+  const failed = materializations.filter(value => value.status === 'failed');
+  let projection = base;
+  if (requiredRevision && !readable.length) {
+    const afterExpected = compareReportingInstants(ledgerAsOf, obligation.expectedAt) >= 0;
+    // At the deadline, not after it. Core escalates on `now >= recoveryDeadline`,
+    // so a strict comparison here left the managed issue `delayed` and
+    // `wait_for_retry` at the exact instant the Core projection called the
+    // same obligation `action_required`.
+    const afterRecovery = compareReportingInstants(ledgerAsOf, obligation.recoveryDeadlineAt) >= 0;
+    const issue: ReportingLedgerIssueV1 = {
+      issueId: `reporting-issue.managed-delivery.${obligation.reporting_obligation_id}`,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      code: failed.length ? 'DELIVERY_FAILED' : successful.length ? 'RESOURCE_EXPIRED' : 'REPORT_OVERDUE',
+      severity: afterRecovery ? 'action_required' : 'delayed',
+      responsibleParty: 'seller',
+      recommendedAction: afterRecovery ? 'contact_seller' : 'wait_for_retry',
+      openedAt: successful[0]?.resource?.expires_at ?? failed[0]?.failed_at ?? obligation.expectedAt,
+      observedAt: ledgerAsOf,
+    };
+    projection = {
+      ...base,
+      // Managed delivery is an independent degradation source, exactly like the
+      // consumer-status mismatch composed at the call sites. Overwriting
+      // `base.health` let an installed managed table suppress Core degradation:
+      // an obligation with incomplete coverage (`action_required`) read before
+      // its `expectedAt` came back `waiting` while still carrying the
+      // action_required issue, which both contradicts itself and makes the
+      // period unreachable under every `health` filter.
+      health: moreSevereReportingHealthV1(
+        base.health,
+        afterExpected ? (afterRecovery ? 'action_required' : 'delayed') : 'waiting'
+      ),
+      satisfied: false,
+      issues: afterExpected ? uniqueIssues([...base.issues, issue]) : base.issues,
+    };
+  }
+
+  const relevantReceipts = requiredRevision
+    ? receipts.filter(value => value.reporting_revision_id === requiredRevision.reporting_revision_id)
+    : [];
+  // What the response actually emits for this obligation: every revision's
+  // receipts, not only the currently required one.
+  const obligationReceipts = receipts.filter(
+    value => value.reporting_obligation_id === obligation.reporting_obligation_id
+  );
+  const obligationAdjustmentReceipts = adjustmentReceipts.filter(value =>
+    adjustments.some(adjustment => adjustment.reporting_adjustment_id === value.reporting_adjustment_id)
+  );
+  const revisionLeaf = currentReceiptLeaf(relevantReceipts);
+  const adjustmentLeaves = adjustments.map(adjustment =>
+    currentAdjustmentReceiptLeaf(
+      adjustmentReceipts.filter(value => value.reporting_adjustment_id === adjustment.reporting_adjustment_id)
+    )
+  );
+  // Hoisted: the reconciliation verdict and the counters below must agree
+  // about which conclusions survived their evidence.
+  const revisionAcceptedByTombstone =
+    requiredRevision !== undefined &&
+    tombstonedAcceptedSubjects.some(
+      value => value.kind === 'revision' && value.subjectId === requiredRevision.reporting_revision_id
+    );
+  const tombstonedAdjustmentIds = new Set(
+    adjustments
+      .map(adjustment => adjustment.reporting_adjustment_id)
+      .filter(id => tombstonedAcceptedSubjects.some(value => value.kind === 'adjustment' && value.subjectId === id))
+  );
+  let reconciliationStatus: 'not_required' | 'pending' | 'accepted' | 'rejected' = 'not_required';
+  if (binding.reconciliation_mode === 'consumer_receipt' && requiredRevision) {
+    // A tombstoned acceptance is the later, terminal word on its subject. A
+    // rejection it superseded can become the live leaf again once the
+    // acceptance body is pruned — nothing live supersedes it any more — and
+    // reading that as the verdict reopened a settled subject, which the write
+    // path then refused to repair because the tombstone says terminal. The
+    // conclusion outranks the predecessor it replaced.
+    const rejectedAdjustment = adjustments.some(
+      (adjustment, index) =>
+        adjustmentLeaves[index]?.status === 'rejected' &&
+        !tombstonedAdjustmentIds.has(adjustment.reporting_adjustment_id)
+    );
+    // A receipt is durable consumer evidence about a materialization that was
+    // once verified, so the delivery that made it possible must be read from
+    // the full history rather than the authorization-filtered projection.
+    // Destination revocation rewrites live `available`/`delivered` rows to
+    // `failed`, which used to erase the receipt state: an already rejected
+    // revision reverted to `pending` while keeping only its `RECEIPT_REJECTED`
+    // issue, and an accepted one reverted to `pending` next to
+    // `accepted_receipt_count: 1`. RC3 requires a `pending` obligation to carry
+    // a `RECEIPT_REQUIRED`/`ADJUSTMENT_RECEIPT_REQUIRED` issue, so the first
+    // shape was schema-invalid on the wire. Settle the receipt verdict first,
+    // and only then fall back to "no delivery has been verified yet".
+    const deliveredEver =
+      tombstonedDeliveredRevisionIds.includes(requiredRevision.reporting_revision_id) ||
+      materializationHistory.some(
+        value =>
+          value.reporting_revision_id === requiredRevision.reporting_revision_id &&
+          (value.status === 'available' || value.status === 'delivered') &&
+          value.resource !== undefined &&
+          value.verification !== undefined
+      );
+    const missingAdjustmentAfterTombstones = adjustments.some(
+      (adjustment, index) =>
+        adjustmentLeaves[index] === undefined && !tombstonedAdjustmentIds.has(adjustment.reporting_adjustment_id)
+    );
+    const revisionAccepted = revisionLeaf?.status === 'accepted' || revisionAcceptedByTombstone;
+    const revisionRejectedNow = revisionLeaf?.status === 'rejected' && !revisionAcceptedByTombstone;
+    if (revisionRejectedNow || rejectedAdjustment) reconciliationStatus = 'rejected';
+    else if (!deliveredEver) reconciliationStatus = 'pending';
+    else if (!revisionAccepted || missingAdjustmentAfterTombstones) reconciliationStatus = 'pending';
+    else reconciliationStatus = 'accepted';
+    if (reconciliationStatus !== 'accepted') {
+      const code = revisionRejectedNow
+        ? 'RECEIPT_REJECTED'
+        : rejectedAdjustment
+          ? 'ADJUSTMENT_RECEIPT_REJECTED'
+          : !revisionAccepted
+            ? 'RECEIPT_REQUIRED'
+            : 'ADJUSTMENT_RECEIPT_REQUIRED';
+      const sellerAction = code === 'RECEIPT_REJECTED' || code === 'ADJUSTMENT_RECEIPT_REJECTED';
+      const issue: ReportingLedgerIssueV1 = {
+        issueId: `reporting-issue.${code.toLowerCase().replaceAll('_', '-')}.${obligation.reporting_obligation_id}`,
+        reporting_obligation_id: obligation.reporting_obligation_id,
+        code,
+        severity: 'action_required',
+        responsibleParty: sellerAction ? 'seller' : 'buyer',
+        recommendedAction: sellerAction ? 'contact_seller' : 'contact_buyer',
+        openedAt:
+          revisionLeaf?.received_at ??
+          adjustmentLeaves.find(value => value?.status === 'rejected')?.received_at ??
+          successful[0]?.ready_at ??
+          obligation.expectedAt,
+        observedAt: ledgerAsOf,
+      };
+      projection = {
+        ...projection,
+        health: 'action_required',
+        satisfied: false,
+        issues: uniqueIssues([...projection.issues, issue]),
+      };
+    }
+  }
+
+  return {
+    binding,
+    projection,
+    reconciliationStatus,
+    materializationCount: materializationHistory.length,
+    successfulMaterializationCount: materializationHistory.filter(
+      value => value.status === 'available' || value.status === 'delivered'
+    ).length,
+    resourceRetainedUntil: readable
+      .map(value => value.resource!.expires_at)
+      .sort(compareReportingInstants)
+      .at(-1),
+    // Tombstones move the counters as well as the verdict. RC3 requires a
+    // `consumer_receipt` obligation that reads healthy or complete to report
+    // at least one receipt, at least one accepted receipt, and zero pending
+    // adjustments — so counting only live rows emitted a schema-invalid
+    // `complete` with `receipt_count: 0` the moment an acceptance was pruned,
+    // and left a tombstoned adjustment counted as still pending.
+    // Counters describe exactly the records this response emits, nothing
+    // more and nothing less. Counting only the required revision's receipts
+    // undercounted a superseded revision's receipts, which the periods view
+    // does emit; adding tombstones overcounted records that no longer exist.
+    // Either way a buyer recomputing the association reports
+    // ASSOCIATED_HISTORY_INCOMPLETE. Tombstones keep their real job — they
+    // stop a settled subject reopening on the write path — and retention now
+    // refuses to prune a receipt whose resource is still readable, so a
+    // period can never read complete with nothing to show for it.
+    receiptCount: obligationReceipts.length,
+    acceptedReceiptCount: obligationReceipts.filter(value => value.status === 'accepted').length,
+    adjustmentReceiptCount: obligationAdjustmentReceipts.length,
+    acceptedAdjustmentReceiptCount: obligationAdjustmentReceipts.filter(value => value.status === 'accepted').length,
+    pendingAdjustmentReceiptCount: adjustments.filter(
+      (adjustment, index) =>
+        adjustmentLeaves[index]?.status !== 'accepted' &&
+        !tombstonedAdjustmentIds.has(adjustment.reporting_adjustment_id)
+    ).length,
+  };
+}
+
+function currentReceiptLeaf(receipts: ReportingReceipt[]): ReportingReceipt | undefined {
+  const superseded = new Set(
+    receipts.map(value => value.supersedes_reporting_receipt_id).filter((value): value is string => Boolean(value))
+  );
+  return receipts.find(value => !superseded.has(value.reporting_receipt_id));
+}
+
+function currentAdjustmentReceiptLeaf(receipts: ReportingAdjustmentReceipt[]): ReportingAdjustmentReceipt | undefined {
+  const superseded = new Set(
+    receipts.map(value => value.supersedes_reporting_receipt_id).filter((value): value is string => Boolean(value))
+  );
+  return receipts.find(value => !superseded.has(value.reporting_receipt_id));
+}
+
+/** Combines independent seller/consumer degradation without allowing one to hide the other. */
+export function moreSevereReportingHealthV1(left: ReportingHealthV1, right: ReportingHealthV1): ReportingHealthV1 {
+  const severity: Record<ReportingHealthV1, number> = {
+    complete: 0,
+    healthy: 0,
+    waiting: 1,
+    delayed: 2,
+    action_required: 3,
+  };
+  return severity[left] >= severity[right] ? left : right;
 }
 
 function consumerStatusMatchesObligation(
@@ -487,45 +959,6 @@ function currentStatusLeaf(
     statuses.map(value => value.supersedes_reporting_status_id).filter((value): value is string => Boolean(value))
   );
   return statuses.find(value => !superseded.has(value.reporting_status_id));
-}
-
-function consumerStatusMismatch(
-  status: ReportingLedgerConsumerStatementV1 | undefined,
-  revisions: Array<{ reporting_revision_id: string; revisionNumber: number }>,
-  sellerHealth: ReportingHealthV1
-): boolean {
-  if (!status || (sellerHealth !== 'healthy' && sellerHealth !== 'complete')) return false;
-  if (status.consumer_status !== 'received') return true;
-  const current = [...revisions].sort((left, right) => right.revisionNumber - left.revisionNumber)[0];
-  return !current || status.reporting_revision_id !== current.reporting_revision_id;
-}
-
-function consumerStatusMismatchIssue(
-  obligation: ReportingLedgerObligationV1,
-  status: ReportingLedgerConsumerStatementV1,
-  observedAt: string
-): ReportingLedgerIssueV1 {
-  const digest = createHash('sha256')
-    .update(
-      canonicalJsonV1({
-        kind: 'consumer_status_mismatch',
-        reporting_obligation_id: obligation.reporting_obligation_id,
-        reporting_status_id: status.reporting_status_id,
-      })
-    )
-    .digest('hex')
-    .slice(0, 32);
-  return {
-    issueId: `rpti_${digest}`,
-    reporting_obligation_id: obligation.reporting_obligation_id,
-    reporting_status_id: status.reporting_status_id,
-    code: 'CONSUMER_STATUS_MISMATCH',
-    severity: 'action_required',
-    responsibleParty: status.consumer_status === 'unreadable' ? 'provider' : 'seller',
-    recommendedAction: status.consumer_status === 'unreadable' ? 'repair_access' : 'contact_seller',
-    openedAt: observedAt,
-    observedAt,
-  };
 }
 
 function wireConsumerStatus(status: ReportingLedgerConsumerStatementV1) {
@@ -576,6 +1009,13 @@ function wireIssue(issue: ReportingLedgerIssueV1) {
     severity: issue.severity,
     responsible_party: issue.responsibleParty,
     recommended_action: issue.recommendedAction,
+    opened_at: issue.openedAt,
+    // Omission means `open`, so only emit a state a store actually set. A
+    // retired issue is removed from the projection rather than published at
+    // `resolved` / `waived`, which keeps "nonempty issues[] means degraded"
+    // true for readers.
+    ...(issue.issueState === 'open' || issue.issueState === 'acknowledged' ? { issue_state: issue.issueState } : {}),
+    ...(issue.externalRef ? { external_ref: issue.externalRef } : {}),
     ...(issue.reporting_status_id ? { reporting_status_id: issue.reporting_status_id } : {}),
     ...(issue.reporting_obligation_id === 'scope' ? {} : { reporting_obligation_id: issue.reporting_obligation_id }),
   };
@@ -644,16 +1084,92 @@ function aggregateDataThrough(
 }
 
 function nextExpectedAt(
-  selected: Array<{ obligation: ReportingLedgerObligationV1; projection: { satisfied: boolean } }>
+  health: ReportingHealthV1,
+  selected: Array<{ obligation: ReportingLedgerObligationV1; projection: { satisfied: boolean } }>,
+  query: ReportingLedgerSnapshotQueryV1,
+  configurations: ReportingLedgerConfigurationV1[],
+  ledgerAsOf: string
 ) {
-  const values = selected
-    .filter(value => !value.projection.satisfied)
-    .map(value => value.obligation.expectedAt)
-    .sort();
-  return values[0] ? { next_expected_at: values[0] } : {};
+  const scoped = scopedConfigurations(query, configurations, ledgerAsOf);
+  const value =
+    health === 'complete'
+      ? earliestInstant(
+          scoped.flatMap(configuration => nextActivePeriodStart(configuration, configurations, ledgerAsOf))
+        )
+      : earliestInstant([
+          ...selected.filter(value => !value.projection.satisfied).map(value => value.obligation.expectedAt),
+          ...scoped.flatMap(configuration => nextObligationDue(configuration, configurations, query, ledgerAsOf)),
+        ]);
+  return value ? { next_expected_at: value } : {};
 }
 
-function counts(values: ReportingHealthV1[]) {
+function nextActivePeriodStart(
+  configuration: ReportingLedgerConfigurationV1,
+  configurations: ReportingLedgerConfigurationV1[],
+  ledgerAsOf: string
+): string[] {
+  const asOf = Date.parse(ledgerAsOf);
+  const installed = Date.parse(configuration.installedAt);
+  const ownershipEnd = reportingLedgerConfigurationOwnershipEnd(configuration, configurations);
+  if (installed > asOf || ownershipEnd <= asOf) return [];
+  const schedule = reportingPeriodSchedule(configuration);
+  const ordinal = Math.max(0, schedule.ceil(installed), schedule.floor(asOf) + 1);
+  const start = schedule.boundary(ordinal);
+  if (start >= ownershipEnd) return [];
+  schedule.period(ordinal);
+  return [new Date(start).toISOString()];
+}
+
+function nextObligationDue(
+  configuration: ReportingLedgerConfigurationV1,
+  configurations: ReportingLedgerConfigurationV1[],
+  query: ReportingLedgerSnapshotQueryV1,
+  ledgerAsOf: string
+): string[] {
+  const schedule = reportingPeriodSchedule(configuration);
+  const installed = Date.parse(configuration.installedAt);
+  const ownershipEnd = reportingLedgerConfigurationOwnershipEnd(configuration, configurations);
+  const period = reportingLedgerEffectivePeriod(query, ledgerAsOf);
+  const periodStart = Date.parse(period.start);
+  const periodEnd = Date.parse(period.end);
+  // The protocol due time is always period.end + delivery_sla. A private
+  // official/finalization cutoff may control source readiness, but rc.4
+  // explicitly forbids using it as obligation expected_at.
+  const expectedOffset = configuration.schedule.deliverySlaMilliseconds;
+  const firstOwned = Math.max(0, schedule.ceil(installed));
+  const lastOwned = schedule.ceil(ownershipEnd) - 1;
+  if (lastOwned < firstOwned) return [];
+  const end = Number.isFinite(lastOwned) ? schedule.boundary(lastOwned + 1) : Number.POSITIVE_INFINITY;
+  const start = schedule.boundary(firstOwned);
+  if (periodStart >= end || periodEnd <= start) return [];
+  const first = Math.max(
+    firstOwned,
+    schedule.floor(Math.max(periodStart, start)),
+    schedule.floor(Math.max(start, Math.min(Date.parse(ledgerAsOf) - expectedOffset, end)))
+  );
+  const last = Math.min(lastOwned, schedule.ceil(Math.min(periodEnd, end)) - 1);
+  if (first > last) return [];
+  const periodStartAt = schedule.boundary(first);
+  if (periodStartAt >= ownershipEnd) return [];
+  return [new Date(schedule.period(first).end + expectedOffset).toISOString()];
+}
+
+function reportingLedgerConfigurationOwnershipEnd(
+  configuration: ReportingLedgerConfigurationV1,
+  configurations: ReportingLedgerConfigurationV1[]
+): number {
+  const successor = reportingLedgerSuccessor(configuration, configurations);
+  return Math.min(
+    successor ? Date.parse(successor.installedAt) : Number.POSITIVE_INFINITY,
+    configuration.supersededAt ? Date.parse(configuration.supersededAt) : Number.POSITIVE_INFINITY
+  );
+}
+
+function earliestInstant(values: string[]): string | undefined {
+  return values.sort((left, right) => Date.parse(left) - Date.parse(right))[0];
+}
+
+function counts(values: ReportingHealthV1[], consumerStatusPending?: number) {
   return {
     total: values.length,
     waiting: values.filter(value => value === 'waiting').length,
@@ -661,6 +1177,10 @@ function counts(values: ReportingHealthV1[]) {
     delayed: values.filter(value => value === 'delayed').length,
     action_required: values.filter(value => value === 'action_required').length,
     complete: values.filter(value => value === 'complete').length,
+    // Visibility count over the caller's own silence. Never a health input: it
+    // must not change health, any other count, or advertised reliability
+    // statistics, so it is computed independently of `values`.
+    ...(consumerStatusPending !== undefined ? { consumer_status_pending: consumerStatusPending } : {}),
   };
 }
 
@@ -671,9 +1191,7 @@ function publicScope(
   coverage: { complete: boolean; retainedFrom: string }
 ) {
   const { start: periodStart, end: periodEnd } = reportingLedgerEffectivePeriod(query, ledgerAsOf);
-  configurations = relevantReportingLedgerConfigurations(configurations, periodStart, periodEnd).filter(configuration =>
-    reportingLedgerConfigurationMatchesScope(query, configuration)
-  );
+  configurations = scopedConfigurations(query, configurations, ledgerAsOf);
   const generations = [
     ...new Map(
       configurations.map(value => [
@@ -700,8 +1218,19 @@ function publicScope(
   };
 }
 
+function scopedConfigurations(
+  query: ReportingLedgerSnapshotQueryV1,
+  configurations: ReportingLedgerConfigurationV1[],
+  ledgerAsOf: string
+): ReportingLedgerConfigurationV1[] {
+  const { start: periodStart, end: periodEnd } = reportingLedgerEffectivePeriod(query, ledgerAsOf);
+  return relevantReportingLedgerConfigurations(configurations, periodStart, periodEnd).filter(configuration =>
+    reportingLedgerConfigurationMatchesScope(query, configuration)
+  );
+}
+
 function wireAdcpVersion(): string {
-  return ADCP_VERSION.replace(/^(\d+\.\d+)\.0-/, '$1-');
+  return toReleasePrecisionVersion(ADCP_VERSION);
 }
 
 function uniqueIssues(issues: ReportingLedgerIssueV1[]): ReportingLedgerIssueV1[] {
@@ -743,7 +1272,11 @@ function historyUnavailableIssue(query: ReportingLedgerSnapshotQueryV1, observed
     severity: 'action_required',
     responsibleParty: 'seller',
     recommendedAction: 'contact_seller',
-    openedAt: observedAt,
+    // Anchored to the period, not the read. `issueId` is already stable across
+    // polls for one account+period, and rc.3 emits `opened_at` on the wire, so
+    // using `observedAt` here would advance a supposedly-fixed instant on every
+    // poll of the same issue.
+    openedAt: period.start,
     observedAt,
   };
 }
@@ -755,4 +1288,40 @@ function copyArray(raw: Record<string, unknown>, key: string): Record<string, un
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Project an obligation's schedule under the alignment it actually describes.
+ *
+ * `core/reporting-schedule.json` forbids `period_anchor` for every alignment
+ * except `billing_cycle`, and forbids `period_timezone` for `utc`. Reporting a
+ * spec-origin schedule as `billing_cycle` therefore both contradicts what the
+ * offering advertised at discovery and carries a field the wire rejects for the
+ * alignment the buyer was promised.
+ */
+function wireSchedule(obligation: ReportingLedgerObligationV1) {
+  // Echo the identity the configuration was installed with. A generation that
+  // predates the stored identity keeps the projection it has always emitted:
+  // deriving one from the boundaries cannot recover the installed alignment,
+  // and would silently rewrite a P1D billing_cycle schedule anchored at UTC
+  // midnight into `utc`, dropping the period_anchor and period_timezone that
+  // its immutable installed-schedule match depends on.
+  const alignment = obligation.schedule.alignment ?? 'billing_cycle';
+  const periodTimezone = obligation.schedule.periodTimezone ?? obligation.period.sourceTimezone;
+  return {
+    period_duration: obligation.schedule.periodDuration ?? `PT${obligation.schedule.periodMilliseconds / 1_000}S`,
+    alignment,
+    // reporting-schedule.json: billing_cycle requires both fields,
+    // source_timezone requires period_timezone and forbids period_anchor, and
+    // utc/account_timezone forbid both. Emitting period_timezone for
+    // account_timezone fails the whole strict get_reporting_status response.
+    ...(alignment === 'billing_cycle' ? { period_anchor: obligation.schedule.anchor } : {}),
+    ...(alignment === 'billing_cycle' || alignment === 'source_timezone' ? { period_timezone: periodTimezone } : {}),
+    // Echo the installed lexical duration. Recomputing it from expected_at
+    // would answer PT3600S where the offering advertised PT1H — the same
+    // instant, but not the same value installed_schedule_match compares.
+    delivery_sla:
+      obligation.schedule.deliverySlaDuration ??
+      `PT${(Date.parse(obligation.expectedAt) - Date.parse(obligation.period.end)) / 1_000}S`,
+  };
 }

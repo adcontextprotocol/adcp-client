@@ -47,10 +47,14 @@ import type {
   GetSignalsResponse,
   ActivateSignalRequest,
   ActivateSignalResponse,
+  GetPrincipalRequest,
+  GetPrincipalResponse,
+  SyncPrincipalRequest,
+  SyncPrincipalResponse,
 } from '../types/tools.generated';
 import type { MutatingRequestInput } from '../utils/idempotency';
 import type {
-  CanonicalCreateMediaBuyRequest,
+  CanonicalCreateMediaBuyInput,
   CanonicalCreativeResponse,
   CanonicalGetProductsRequest,
   CanonicalListCreativesRequest,
@@ -142,6 +146,24 @@ export class AgentCollection {
     return this.executeAllSettled(client => client.getProducts(params, inputHandler, options));
   }
 
+  /** Read each authenticated caller-scoped principal configuration in parallel. */
+  async getPrincipal(
+    params: GetPrincipalRequest = {},
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<GetPrincipalResponse>[]> {
+    return this.executeAllSettled(client => client.getPrincipal(params, inputHandler, options));
+  }
+
+  /** Replace selected principal configuration sections across all selected agents. */
+  async syncPrincipal(
+    params: MutatingRequestInput<SyncPrincipalRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<SyncPrincipalResponse>[]> {
+    return this.executeAllSettled(client => client.syncPrincipal(params, inputHandler, options));
+  }
+
   /** Revise/finalize proposals across every selected agent. */
   async refineProposals(
     params: RefineProposalsInput,
@@ -174,7 +196,7 @@ export class AgentCollection {
    * Note: This might not make sense for all use cases, but provided for completeness
    */
   async createMediaBuy(
-    params: MutatingRequestInput<CanonicalCreateMediaBuyRequest>,
+    params: MutatingRequestInput<CanonicalCreateMediaBuyInput>,
     inputHandler?: InputHandler,
     options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<CreateMediaBuyResponse>>[]> {

@@ -9,6 +9,13 @@
 // agents.
 
 export { WholesaleFeedSync } from './sync';
+export { registerWholesaleFeedWebhooks, WholesaleFeedWebhookRegistrationError } from './register';
+export type {
+  RegisterWholesaleFeedWebhooksOptions,
+  WholesaleFeedWebhookEventType,
+  WholesaleFeedWebhookRegistrationClient,
+  WholesaleFeedWebhookSubscriber,
+} from './register';
 export {
   normalizeWholesaleFeedWebhookNotification,
   parseWholesaleFeedWebhookNotification,
@@ -19,6 +26,8 @@ export type {
   WholesaleFeedSyncConfig,
   WholesaleFeedSyncEvents,
   WholesaleFeedSyncMode,
+  WholesaleFeedSyncPersistedState,
+  WholesaleFeedSyncPersistenceHooks,
   WholesaleFeedSyncState,
   ProductFilter,
   ResolvedCapabilities,
@@ -32,3 +41,9 @@ export type {
   WholesaleFeedWebhookNotificationErrorDetails,
   WholesaleFeedWebhookNotificationType,
 } from './webhook-notification';
+export type {
+  LegacyWholesaleFeedEvent,
+  LegacyWholesaleFeedWebhook,
+  LegacyWholesaleProduct,
+  LegacyWholesaleSignal,
+} from './protocol-types';

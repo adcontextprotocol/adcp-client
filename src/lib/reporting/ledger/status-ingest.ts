@@ -5,7 +5,7 @@ import type { ReportingConsumerStatus, SyncReportingStatusRequest, SyncReporting
 import { canonicalJsonSha256PreservingLoneSurrogates } from '../../utils/jcs';
 import { DEFAULT_UNKNOWN_ERROR_RECOVERY, getErrorRecovery, type ErrorRecovery } from '../../types/error-codes';
 import { validateSyncReportingStatusEnvelope } from '../../validation/sync-reporting-status-envelope';
-import { ADCP_MAJOR_VERSION, ADCP_VERSION } from '../../version';
+import { ADCP_MAJOR_VERSION, ADCP_VERSION, toReleasePrecisionVersion } from '../../version';
 import { isWellFormedUnicodeString } from '../../utils/well-formed-unicode';
 import {
   reportingLedgerConfigurationMatchesScope,
@@ -13,6 +13,7 @@ import {
   reportingLedgerSuccessor,
 } from './coverage';
 import { acquireAccountReadSlot, ReportingReadCapacityError } from './handler';
+import { isReportingCalendarDay, reportingPeriodSchedule } from './schedule';
 import {
   canonicalReportingInstant,
   compareReportingInstantToOffset,
@@ -27,10 +28,13 @@ import {
   ReportingConsumerStatusConflictError,
   ReportingLedgerSnapshotUnavailableError,
   type ReportingConsumerStatusLedgerStore,
+  type ReportingLedgerRevisionMetadataV1,
+  type ReportingLedgerStore,
   type ReportingConsumerStatusBatchEntryV1,
   type ReportingConsumerStatusBatchResultV1,
   type ReportingLedgerConfigurationV1,
   type ReportingLedgerConsumerStatementV1,
+  type ReportingLedgerObligationV1,
 } from './types';
 
 const statusId = z
@@ -164,6 +168,8 @@ type ReportingStatusValidationReason =
   | 'missing status precedes expected_at'
   | 'obligation mismatch'
   | 'revision mismatch'
+  | 'superseded revision'
+  | 'revision currency unverifiable'
   | 'revision binding mismatch'
   | 'snapshot provenance unavailable'
   | 'snapshot provenance mismatch';
@@ -333,27 +339,15 @@ async function validateStatus(
       value.delivery_config_version === status.delivery_config_version &&
       value.report_definition_id === status.report_definition_id
   );
-  if (
-    !configuration ||
-    configuration.account.account_id !== accountId ||
-    !isExactPeriod(configuration, configurations, status.period)
-  ) {
+  if (!configuration || configuration.account.account_id !== accountId) {
     throw new ReportingStatusValidationError('ineligible period');
   }
-  const expectedOffset =
-    configuration.requiredFinality === 'official'
-      ? (configuration.schedule.officialAfterMilliseconds ?? configuration.schedule.deliverySlaMilliseconds)
-      : configuration.schedule.deliverySlaMilliseconds;
-  if (
-    (status.consumer_status === 'obligation_missing' || status.consumer_status === 'revision_missing') &&
-    compareReportingInstantToOffset(status.status_as_of, status.period.end, expectedOffset) < 0
-  ) {
-    throw new ReportingStatusValidationError('missing status precedes expected_at');
-  }
+  let obligation: ReportingLedgerObligationV1 | null = null;
   if (status.reporting_obligation_id) {
-    const obligation = await store.getObligation(status.reporting_obligation_id, accountId);
+    obligation = await store.getObligation(status.reporting_obligation_id, accountId);
     if (
       !obligation ||
+      obligation.configurationId !== configuration.configurationId ||
       obligation.account.account_id !== accountId ||
       obligation.delivery_config_id !== status.delivery_config_id ||
       obligation.delivery_config_version !== status.delivery_config_version ||
@@ -363,6 +357,17 @@ async function validateStatus(
       obligation.period.sourceTimezone !== status.period.source_timezone
     )
       throw new ReportingStatusValidationError('obligation mismatch');
+  } else if (!isExactPeriod(configuration, configurations, status.period)) {
+    throw new ReportingStatusValidationError('ineligible period');
+  }
+  // Consumer absence is legal only at or after the protocol expected_at,
+  // which is period.end + delivery_sla for every finality.
+  const expectedOffset = configuration.schedule.deliverySlaMilliseconds;
+  if (
+    (status.consumer_status === 'obligation_missing' || status.consumer_status === 'revision_missing') &&
+    compareReportingInstantToOffset(status.status_as_of, status.period.end, expectedOffset) < 0
+  ) {
+    throw new ReportingStatusValidationError('missing status precedes expected_at');
   }
   if (status.reporting_revision_id) {
     const revision = await store.getRevisionMetadata(status.reporting_revision_id, accountId);
@@ -380,6 +385,27 @@ async function validateStatus(
         status.observed_revision_content_sha256.toLowerCase()
     )
       throw new ReportingStatusValidationError('revision binding mismatch');
+    if (status.consumer_status === 'content_mismatch') {
+      // `expected_period`: "content_mismatch is valid only against a revision
+      // the seller currently requires for that period." Existence, ownership,
+      // and a matching digest are all satisfiable by a long-superseded
+      // revision, so without this a buyer could dispute stale bytes and hold
+      // its own caller-scoped view at action_required — which the seller then
+      // may not clear while that statement is the current leaf.
+      const siblings = await listObligationRevisionMetadata(store, revision.reporting_obligation_id, accountId);
+      if (!siblings) throw new ReportingStatusValidationError('revision currency unverifiable');
+      const superseded = new Set(
+        siblings
+          .map(value => value.supersedes_reporting_revision_id)
+          .filter((value): value is string => typeof value === 'string')
+      );
+      const current = siblings
+        .filter(value => !superseded.has(value.reporting_revision_id))
+        .sort((left, right) => right.revisionNumber - left.revisionNumber)[0];
+      if (!current || current.reporting_revision_id !== revision.reporting_revision_id) {
+        throw new ReportingStatusValidationError('superseded revision');
+      }
+    }
   }
   if (status.seller_ledger_snapshot_id) {
     if (!store.readSnapshotPage) {
@@ -439,21 +465,44 @@ function isExactPeriod(
   period: ReportingConsumerStatusV1['period']
 ): boolean {
   if (period.source_timezone !== configuration.sourceTimezone) return false;
-  const duration = configuration.schedule.periodMilliseconds;
-  const scheduleAnchor = new Date(Date.parse(configuration.schedule.anchor)).toISOString();
-  const ordinal = reportingPeriodOrdinal(period.start, scheduleAnchor, duration);
-  if (ordinal === null || !reportingInstantHasDuration(period.start, period.end, duration)) return false;
-  const effectiveFrom =
-    compareReportingInstants(scheduleAnchor, configuration.installedAt) >= 0
-      ? scheduleAnchor
-      : configuration.installedAt;
-  const firstOwnedOrdinal = reportingDurationCeilOrdinal(scheduleAnchor, effectiveFrom, duration);
   const successor = reportingLedgerSuccessor(configuration, configurations);
   const generationEnds = [successor?.installedAt, configuration.supersededAt].filter((value): value is string =>
     Boolean(value)
   );
   const generationEnd = generationEnds.sort(compareReportingInstants)[0];
-  return ordinal >= firstOwnedOrdinal && (!generationEnd || compareReportingInstants(period.start, generationEnd) < 0);
+  if (generationEnd && compareReportingInstants(period.start, generationEnd) >= 0) return false;
+  const duration = configuration.schedule.periodMilliseconds;
+  const scheduleAnchor = new Date(Date.parse(configuration.schedule.anchor)).toISOString();
+  let ordinal: bigint;
+  let firstOwnedOrdinal: bigint;
+  const effectiveFrom =
+    compareReportingInstants(scheduleAnchor, configuration.installedAt) >= 0
+      ? scheduleAnchor
+      : configuration.installedAt;
+  if (compareReportingInstants(period.start, effectiveFrom) < 0) return false;
+  if (isReportingCalendarDay(configuration.schedule, configuration.sourceTimezone)) {
+    const schedule = reportingPeriodSchedule(configuration);
+    const selected = schedule.floor(Date.parse(period.start));
+    const resolved = schedule.period(selected);
+    if (
+      compareReportingInstants(period.start, new Date(resolved.start).toISOString()) !== 0 ||
+      compareReportingInstants(period.end, new Date(resolved.end).toISOString()) !== 0
+    )
+      return false;
+    ordinal = BigInt(selected);
+    const first = schedule.floor(Date.parse(effectiveFrom));
+    // Keep sub-millisecond status and ownership checks exact; Date.parse is
+    // only a candidate lookup, never the equality/eligibility decision.
+    firstOwnedOrdinal = BigInt(
+      first + (compareReportingInstants(effectiveFrom, new Date(schedule.boundary(first)).toISOString()) > 0 ? 1 : 0)
+    );
+  } else {
+    const selected = reportingPeriodOrdinal(period.start, scheduleAnchor, duration);
+    if (selected === null || !reportingInstantHasDuration(period.start, period.end, duration)) return false;
+    ordinal = selected;
+    firstOwnedOrdinal = reportingDurationCeilOrdinal(scheduleAnchor, effectiveFrom, duration);
+  }
+  return ordinal >= firstOwnedOrdinal;
 }
 
 function resolvedAccountId(context: unknown): string {
@@ -758,6 +807,31 @@ function zodIssueKeyword(
   }
 }
 
+/**
+ * Retained revisions for one obligation, or `undefined` when the store cannot
+ * enumerate them.
+ *
+ * Prefers the narrow port's `listRevisionMetadata`, and falls back to
+ * `listRevisions` so a full `ReportingLedgerStore` (including the bundled
+ * PostgreSQL one) needs no extra method. Rows are dropped either way — ingest
+ * validation must never materialize them.
+ */
+async function listObligationRevisionMetadata(
+  store: ReportingConsumerStatusLedgerStore,
+  reporting_obligation_id: string,
+  account_id: string
+): Promise<ReportingLedgerRevisionMetadataV1[] | undefined> {
+  if (typeof store.listRevisionMetadata === 'function') {
+    return store.listRevisionMetadata(reporting_obligation_id, account_id);
+  }
+  const full = store as Partial<ReportingLedgerStore>;
+  if (typeof full.listRevisions === 'function') {
+    const revisions = await full.listRevisions(reporting_obligation_id);
+    return revisions.map(({ rows: _rows, ...metadata }) => metadata);
+  }
+  return undefined;
+}
+
 function reportingStatusValidationDiagnostic(
   reason: ReportingStatusValidationReason,
   index: number
@@ -778,6 +852,19 @@ function reportingStatusValidationDiagnostic(
         message: 'Missing reporting status cannot precede the expected reporting time',
         field: `/statuses/${index}/status_as_of`,
       };
+    // Not an existence question — the caller already proved it knows this
+    // revision by matching its content digest — so a specific diagnostic here
+    // cannot become an oracle and saves the buyer a guess.
+    case 'superseded revision':
+      return {
+        message: 'content_mismatch must name the revision the seller currently requires for this period',
+        field: `/statuses/${index}/reporting_revision_id`,
+      };
+    case 'revision currency unverifiable':
+      return {
+        message: 'This seller cannot validate content_mismatch because it cannot enumerate obligation revisions',
+        field: `/statuses/${index}/consumer_status`,
+      };
     default:
       // Obligation, revision, and snapshot lookups remain deliberately
       // indistinguishable so this endpoint cannot become an existence oracle.
@@ -790,5 +877,5 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function wireAdcpVersion(): string {
-  return ADCP_VERSION.replace(/^(\d+\.\d+)\.0-/, '$1-');
+  return toReleasePrecisionVersion(ADCP_VERSION);
 }

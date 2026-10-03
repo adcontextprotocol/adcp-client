@@ -10,7 +10,8 @@
 
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
 import path from 'path';
-import { pathToFileURL } from 'url';
+
+import { parse as parseYaml } from 'yaml';
 
 const REGISTRY_SPEC_URL = 'https://agenticadvertising.org/openapi/registry.yaml';
 const SCHEMA_DIR = path.join(__dirname, '../schemas/registry');
@@ -18,6 +19,176 @@ const CACHED_SPEC = path.join(SCHEMA_DIR, 'registry.yaml');
 const OUTPUT_FILE = path.join(__dirname, '../src/lib/registry/types.generated.ts');
 const SPEC_TIMEOUT_MS = 10_000;
 const SPEC_MAX_BYTES = 1024 * 1024;
+
+/**
+ * Operations whose `requestBody` the upstream spec declares without `required: true`.
+ *
+ * OpenAPI defaults `requestBody.required` to `false`, so `openapi-typescript` emits
+ * `requestBody?:` and the generated operation admits a bodyless call even when the body
+ * schema itself lists required properties. For a mutation that is a plain spec bug.
+ *
+ * These corrections are applied to an in-memory copy of the spec, never to the cached
+ * file: `schemas/registry/registry.yaml` stays byte-identical to what AAO publishes, and
+ * the generated output is a pure function of (cached spec + this table), so re-running
+ * sync or generation is stable and no hand edit is ever needed.
+ *
+ * Remove an entry once AAO publishes the fix -- `applyUpstreamSpecCorrections` reports
+ * every entry that has become a no-op, so a stale entry cannot go unnoticed.
+ */
+const REQUEST_BODY_REQUIRED_CORRECTIONS: ReadonlyArray<{ operationId: string; reason: string }> = [
+  {
+    operationId: 'selectAgentGradingProfile',
+    reason:
+      'PUT /api/registry/agents/{encodedUrl}/grading-profile requires seven body fields ' +
+      '(organization_id, role, adcp_version, selected_profile, assessment_id, expected_revision, ' +
+      'idempotency_key) and performs a revision compare-and-swap, but omits requestBody.required.',
+  },
+];
+
+/**
+ * Response properties AAO removed upstream that SDK 14.x consumers may still read.
+ *
+ * Re-added in memory as optional `deprecated: true` properties so the generated types
+ * stay source-compatible within the SDK major; the live registry no longer sends them.
+ * Each `pointer` is a JSON Pointer into the parsed spec. A `$ref` target is wrapped in
+ * `allOf` so the shared component schema stays untouched. Remove entries in the next
+ * SDK major -- `applyDeprecatedPropertyCompat` reports any property AAO restores.
+ */
+const REMOVED_FIELD_NOTE =
+  'Deprecated: removed from the AgenticAdvertising.org registry OpenAPI and no longer sent. Retained as an ' +
+  'optional property for SDK 14.x type compatibility; it will be removed in the next major release.';
+
+const DEPRECATED_PROPERTY_COMPAT: ReadonlyArray<{
+  pointer: string;
+  reason: string;
+  properties: Record<string, Record<string, unknown>>;
+}> = [
+  {
+    pointer: '/components/schemas/AgentComplianceDetail/properties/refresh_availability',
+    reason: 'AgentComplianceDetail.refresh_availability human-refresh fence fields removed upstream (SDK 14.0 shape).',
+    properties: {
+      retryable: { type: 'boolean' },
+      scope: { type: 'string', enum: ['platform'] },
+      applies_to: { type: 'string', enum: ['human_session'] },
+      code: { type: 'string', enum: ['refresh_authorization_provenance_required'] },
+      notice: { type: 'string' },
+      alternative_action: { type: 'string', enum: ['monitoring_requeue'] },
+      alternative_description: { type: 'string' },
+    },
+  },
+  {
+    pointer:
+      '/paths/~1api~1registry~1agents~1{encodedUrl}~1refresh/post/responses/503/content/application~1json/schema',
+    reason: 'refreshAgent 503 human-refresh fence fields removed upstream (SDK 14.0 shape).',
+    properties: {
+      message: { type: 'string' },
+      code: { type: 'string', enum: ['refresh_authorization_provenance_required'] },
+      retryable: { type: 'boolean', enum: [false] },
+      scope: { type: 'string', enum: ['platform'] },
+      applies_to: { type: 'string', enum: ['human_session'] },
+      alternative_action: { type: 'string', enum: ['monitoring_requeue'] },
+      alternative_description: { type: 'string' },
+      tracking_issue: { type: 'string', format: 'uri' },
+    },
+  },
+];
+
+type MutableSchema = Record<string, unknown> & { properties?: Record<string, unknown>; $ref?: string };
+
+function resolvePointer(root: unknown, pointer: string): { parent: Record<string, unknown>; key: string } | undefined {
+  const segments = pointer
+    .split('/')
+    .slice(1)
+    .map(segment => segment.replace(/~1/g, '/').replace(/~0/g, '~'));
+  const key = segments.pop();
+  let parent: unknown = root;
+  for (const segment of segments) {
+    if (typeof parent !== 'object' || parent === null) return undefined;
+    parent = (parent as Record<string, unknown>)[segment];
+  }
+  if (key === undefined || typeof parent !== 'object' || parent === null) return undefined;
+  return { parent: parent as Record<string, unknown>, key };
+}
+
+/**
+ * Re-add removed response properties as optional deprecated fields. Returns one header
+ * line per applied entry so the generated file records why it differs from the spec.
+ */
+function applyDeprecatedPropertyCompat(spec: unknown): string[] {
+  const applied: string[] = [];
+  for (const entry of DEPRECATED_PROPERTY_COMPAT) {
+    const location = resolvePointer(spec, entry.pointer);
+    const target = location?.parent[location.key] as MutableSchema | undefined;
+    if (!location || typeof target !== 'object' || target === null) {
+      console.warn(`! ${entry.pointer}: not present in the cached spec; drop this compatibility entry.`);
+      continue;
+    }
+    const added: Record<string, unknown> = {};
+    for (const [name, schema] of Object.entries(entry.properties)) {
+      if (target.properties && name in target.properties) {
+        console.log(`= ${entry.pointer}: upstream declares ${name} again; drop it from this compatibility entry.`);
+        continue;
+      }
+      added[name] = { ...schema, deprecated: true, description: REMOVED_FIELD_NOTE };
+    }
+    if (Object.keys(added).length === 0) continue;
+    if (typeof target.$ref === 'string') {
+      location.parent[location.key] = { allOf: [target, { type: 'object', properties: added }] };
+    } else {
+      target.properties = { ...target.properties, ...added };
+    }
+    applied.push(`${entry.reason} Optional deprecated: ${Object.keys(added).join(', ')}.`);
+    console.log(`+ ${entry.pointer}: ${Object.keys(added).length} deprecated compatibility properties.`);
+  }
+  return applied;
+}
+
+type MutableRequestBody = { required?: boolean };
+type MutableOperation = { operationId?: unknown; requestBody?: MutableRequestBody };
+
+function asOperation(value: unknown): MutableOperation | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const candidate = value as MutableOperation;
+  return typeof candidate.operationId === 'string' ? candidate : undefined;
+}
+
+/**
+ * Mark the request body of each corrected operation required. Returns one header line
+ * per applied correction so the generated file records why it differs from the spec.
+ */
+function applyUpstreamSpecCorrections(spec: unknown): string[] {
+  const pending = new Map(REQUEST_BODY_REQUIRED_CORRECTIONS.map(entry => [entry.operationId, entry]));
+  const applied: string[] = [];
+  const paths =
+    typeof spec === 'object' && spec !== null ? ((spec as { paths?: unknown }).paths as unknown) : undefined;
+
+  for (const pathItem of Object.values((paths as Record<string, unknown>) ?? {})) {
+    if (typeof pathItem !== 'object' || pathItem === null) continue;
+    for (const candidate of Object.values(pathItem as Record<string, unknown>)) {
+      const operation = asOperation(candidate);
+      const entry = operation ? pending.get(operation.operationId as string) : undefined;
+      if (!operation || !entry) continue;
+      pending.delete(entry.operationId);
+
+      if (typeof operation.requestBody !== 'object' || operation.requestBody === null) {
+        console.warn(`! ${entry.operationId}: upstream declares no requestBody; drop this correction.`);
+        continue;
+      }
+      if (operation.requestBody.required === true) {
+        console.log(`= ${entry.operationId}: upstream now marks requestBody required; drop this correction.`);
+        continue;
+      }
+      operation.requestBody.required = true;
+      applied.push(`${entry.operationId}: requestBody.required = true. ${entry.reason}`);
+      console.log(`+ ${entry.operationId}: requestBody marked required.`);
+    }
+  }
+
+  for (const operationId of pending.keys()) {
+    console.warn(`! ${operationId}: not present in the cached spec; drop this correction.`);
+  }
+  return applied;
+}
 
 function writeFileIfChanged(filePath: string, newContent: string): boolean {
   const contentWithoutTimestamp = (content: string) =>
@@ -115,17 +286,28 @@ async function generate(): Promise<void> {
   const { default: openapiTS, astToString } = await import('openapi-typescript');
 
   console.log('Generating types from cached spec...');
-  const specUrl = pathToFileURL(CACHED_SPEC);
-  const ast = await openapiTS(specUrl);
+  const spec: unknown = parseYaml(readFileSync(CACHED_SPEC, 'utf8'));
+  const corrections = [...applyUpstreamSpecCorrections(spec), ...applyDeprecatedPropertyCompat(spec)];
+  const ast = await openapiTS(spec as Parameters<typeof openapiTS>[0]);
   const rawOutput = astToString(ast);
 
   // Build the output file with ergonomic re-exports
+  const correctionNotes =
+    corrections.length === 0
+      ? ''
+      : `//
+// Upstream spec corrections and SDK-major compatibility shims applied in memory by
+// scripts/generate-registry-types.ts. The cached spec is untouched; remove each entry
+// there once AAO publishes the fix or the next SDK major drops the compatibility field.
+${corrections.map(note => `//   - ${note}`).join('\n')}
+`;
+
   const header = `// Generated AdCP Registry types from OpenAPI spec
 // Generated at: ${new Date().toISOString()}
 // Source: ${REGISTRY_SPEC_URL}
 //
 // Do not edit this file manually. Run: npm run generate-registry-types
-`;
+${correctionNotes}`;
 
   const content = `${header}
 ${rawOutput}

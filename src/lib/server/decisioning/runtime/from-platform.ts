@@ -49,6 +49,8 @@
  * @public
  */
 
+import { isAccountProvisioningTask } from '../../account-provisioning';
+import { warnAccountReferenceDeprecation } from '../../account-reference-warnings';
 import { randomUUID } from 'node:crypto';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type { AdcpServer } from '../../adcp-server';
@@ -1856,6 +1858,83 @@ function accountNotFoundSuggestion(resolution: AccountResolutionMode | undefined
   }
 }
 
+const ACCOUNT_VIA_RESOURCE_TOOLS = new Set(['refine_proposals', 'decline_proposals']);
+
+function accountRequiredSuggestion(toolName: string, resolution: AccountResolutionMode | undefined): string {
+  const viaResource = ACCOUNT_VIA_RESOURCE_TOOLS.has(toolName);
+  switch (normalizeAccountResolution(resolution)) {
+    case 'implicit':
+      return 'Call sync_accounts to associate an account with this authenticated principal, then retry without an inline account_id.';
+    case 'derived':
+      return viaResource
+        ? 'Provide a context_id or proposal reference whose owning account the seller can resolve; use list_accounts to discover reachable accounts.'
+        : 'Call list_accounts to discover the accounts your credential can reach, then retry with account: { account_id }.';
+    default:
+      return viaResource
+        ? 'Provide a context_id or proposal reference whose owning account the seller can resolve.'
+        : 'Pass the account reference required by this seller; use list_accounts to discover available accounts when supported.';
+  }
+}
+
+function missingAccountError(toolName: string, resolution: AccountResolutionMode | undefined): AdcpError {
+  const asyncDiscovery = toolName === 'get_products' || toolName === 'get_signals';
+  return new AdcpError('ACCOUNT_REQUIRED', {
+    message: asyncDiscovery
+      ? `Async ${toolName} and push_notification_config require an account selection, but the request and authentication did not identify one`
+      : `${toolName} requires an account selection, but the request and referenced resources did not identify one`,
+    recovery: 'correctable',
+    field: ACCOUNT_VIA_RESOURCE_TOOLS.has(toolName) ? 'context_id' : 'account',
+    suggestion: accountRequiredSuggestion(toolName, resolution),
+  });
+}
+
+/**
+ * Per-server policy for the implicit-mode identity-metadata check below.
+ * `strict` mirrors `strictAccountReferences`; the compatibility default warns
+ * and keeps the SDK 14.0 behavior of trusting the store's returned account.
+ */
+interface ImplicitIdentityPolicy {
+  readonly strict: boolean;
+}
+
+/** Fail-closed default for call sites that never see an implicit natural key. */
+const STRICT_IMPLICIT_IDENTITY_POLICY: ImplicitIdentityPolicy = Object.freeze({ strict: true });
+
+/** Names the first natural-key field whose returned identity metadata disagrees with the request. */
+function implicitIdentityMismatch(
+  identity: Partial<Extract<AccountReference, { brand: unknown }>>,
+  ref: Extract<AccountReference, { brand: unknown }>
+): string | undefined {
+  // Missing identity metadata remains compatible with existing custom stores;
+  // every identity field they do return must agree with the requested key.
+  if (identity.brand && identity.brand.domain !== ref.brand.domain) return 'brand.domain';
+  if (
+    identity.brand?.brand_id !== undefined &&
+    ref.brand.brand_id !== undefined &&
+    identity.brand.brand_id !== ref.brand.brand_id
+  )
+    return 'brand.brand_id';
+  if (
+    identity.brand?.countries !== undefined &&
+    ref.brand.countries !== undefined &&
+    [...identity.brand.countries].sort().join('\0') !== [...ref.brand.countries].sort().join('\0')
+  )
+    return 'brand.countries';
+  if (identity.operator !== undefined && identity.operator !== ref.operator) return 'operator';
+  if (
+    identity.operator_unit !== undefined &&
+    ref.operator_unit !== undefined &&
+    identity.operator_unit.id !== ref.operator_unit.id
+  )
+    return 'operator_unit';
+  if (identity.currency !== undefined && ref.currency !== undefined && identity.currency !== ref.currency)
+    return 'currency';
+  if (identity.timezone !== undefined && ref.timezone !== undefined && identity.timezone !== ref.timezone)
+    return 'timezone';
+  if (identity.sandbox !== undefined && identity.sandbox !== (ref.sandbox === true)) return 'sandbox';
+  return undefined;
+}
+
 /**
  * Defense in depth for `resolution: 'derived'`: the account a resolver hands
  * back for a buyer-named `{ account_id }` MUST be that account.
@@ -1872,14 +1951,38 @@ function accountNotFoundSuggestion(resolution: AccountResolutionMode | undefined
  * `ACCOUNT_NOT_FOUND` envelope — no signal about whether the named account
  * exists. `createDerivedAccountStore` already fails closed here; this makes
  * hand-rolled stores fail closed too.
+ *
+ * For `resolution: 'implicit'` natural keys (#3091), returned identity
+ * metadata that disagrees with the supplied key is refused only under
+ * `strictAccountReferences`. Custom stores that canonicalize identity (brand
+ * aliases, case, sandbox-only fleets) were accepted in SDK 14.0, so the
+ * compatibility default warns instead.
  */
 function assertResolvedAccountMatchesRef<T extends { id: string }>(
   resolution: AccountResolutionMode | undefined,
   ref: AccountReference | undefined,
   account: T | null,
-  logger: AdcpLogger
+  logger: AdcpLogger,
+  implicitIdentity: ImplicitIdentityPolicy = STRICT_IMPLICIT_IDENTITY_POLICY
 ): T | null {
   if (account == null) return null;
+  if (normalizeAccountResolution(resolution) === 'implicit' && ref && 'brand' in ref) {
+    const field = implicitIdentityMismatch(account as T & Partial<Extract<AccountReference, { brand: unknown }>>, ref);
+    if (field === undefined) return account;
+    if (implicitIdentity.strict) return null;
+    // Server-side only: the mismatched account id goes to the adopter's logger
+    // metadata, never into a buyer-facing response.
+    warnAccountReferenceDeprecation(
+      logger,
+      'ADCP_IMPLICIT_ACCOUNT_IDENTITY_MISMATCH',
+      `[adcp/sdk] DEPRECATED: accounts.resolve returned an account whose ${field} does not match the supplied ` +
+        `natural key on a resolution: 'implicit' platform. The account was accepted for compatibility; the next ` +
+        `major release (or strictAccountReferences: true) refuses it with ACCOUNT_NOT_FOUND. Resolve by the ` +
+        `complete natural key and return identity metadata that matches it.`,
+      { field, accountId: account.id }
+    );
+    return account;
+  }
   if (normalizeAccountResolution(resolution) !== 'derived') return account;
   const requestedId = refAccountId(ref);
   if (requestedId === undefined || account.id === requestedId) return account;
@@ -2531,6 +2634,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // the platform's exact account type on the public migration seam while
   // keeping that historical internal boundary localized here.
   const runtimeOpts = opts as unknown as CreateAdcpServerFromPlatformOptions<Account>;
+  const implicitIdentityPolicy: ImplicitIdentityPolicy = { strict: runtimeOpts.strictAccountReferences === true };
   const runtimeLegacyHandlers = legacyHandlers as unknown as LegacyDecisioningHandlerGroups<Account>;
   validatePlatform(platform, {
     creative: legacyHandlers.creative,
@@ -2755,6 +2859,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // empty support list as a positive 3.1 metric-optimization declaration.
   const som = somCandidate != null && somCandidate.length > 0 ? somCandidate : undefined;
   const fc = platform.capabilities.frequency_capping;
+  const reportingDelivery = platform.reporting?.capabilities;
   const targeting = platform.capabilities.targeting
     ? normalizeTargetingCapabilities(platform.capabilities.targeting)
     : undefined;
@@ -2776,6 +2881,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     cs != null ||
     som != null ||
     fc != null ||
+    reportingDelivery != null ||
     targeting != null ||
     supportsProposals !== undefined;
   // App `version` / capability `build_version` are deployment metadata and
@@ -2789,6 +2895,34 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       `Configured AdCP version '${configuredAdcpVersion}' is not a valid release identifier`
     );
   }
+  if (reportingDelivery && !isAdcpVersionAtLeast(configuredAdcpVersion, '3.2.0-rc.4')) {
+    throw new PlatformConfigError('Reliable Reporting Core requires an AdCP 3.2.0-rc.4 or newer schema pin');
+  }
+  // Reliable Reporting renders one frozen protocol contract. A multi-release
+  // server may continue serving older releases for its other tools, but it
+  // must not advertise the mounted reporting composition on those releases:
+  // the reporting handler, capability declaration, and validator all share
+  // `configuredAdcpVersion`. Bind the reporting-only tools to that exact pin.
+  // `get_media_buy_delivery` stays multi-release when a live sales/lifecycle
+  // implementation owns cumulative reads; the reporting ledger then handles
+  // only the exact-revision arm available on its pinned schema.
+  const liveMediaBuyDelivery = platform.mediaBuyLifecycle?.getMediaBuyDelivery ?? platform.sales?.getMediaBuyDelivery;
+  const exactReportingRange = { min: configuredAdcpVersion, max: configuredAdcpVersion } as const;
+  const effectiveToolVersions = reportingDelivery
+    ? {
+        ...runtimeOpts.toolVersions,
+        get_reporting_status: exactReportingRange,
+        ...(platform.reporting?.syncReportingStatus !== undefined && {
+          sync_reporting_status: exactReportingRange,
+        }),
+        ...(platform.reporting?.syncReportingReceipts !== undefined && {
+          sync_reporting_receipts: exactReportingRange,
+        }),
+        ...(liveMediaBuyDelivery === undefined && {
+          get_media_buy_delivery: exactReportingRange,
+        }),
+      }
+    : runtimeOpts.toolVersions;
   for (const advertisedVersion of platform.capabilities.supported_versions ?? []) {
     const advertisedRelease = parseAdcpRelease(advertisedVersion);
     if (!advertisedRelease) {
@@ -2817,6 +2951,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     ...(cs != null && { content_standards: cs }),
     ...(som != null && { supported_optimization_metrics: som }),
     ...(fc != null && { frequency_capping: fc }),
+    ...(reportingDelivery != null && { reporting_delivery: reportingDelivery }),
     ...(targeting != null && { execution: { targeting } }),
     ...(supportsProposals !== undefined && { supports_proposals: supportsProposals }),
     features: {
@@ -2999,6 +3134,19 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const adopterExtensionsSupported = platform.capabilities.extensions_supported;
   const adopterCapabilityExt = platform.capabilities.ext;
   const adopterOverrides = platform.capabilities.overrides;
+  const adopterExperimentalFeatures = (adopterOverrides?.experimental_features ?? []) as readonly string[];
+  if (
+    reportingDelivery &&
+    !adopterExperimentalFeatures.includes('media_buy.reporting_delivery') &&
+    adopterExperimentalFeatures.length >= 32
+  ) {
+    throw new PlatformConfigError(
+      'Reliable Reporting Core cannot be added because experimental_features already contains 32 entries'
+    );
+  }
+  const experimentalFeatures = reportingDelivery
+    ? Array.from(new Set([...adopterExperimentalFeatures, 'media_buy.reporting_delivery']))
+    : adopterOverrides?.experimental_features;
   const adopterSupportedVersions = platform.capabilities.supported_versions;
   const hasOverridesObject = hasOverridesProjection || adopterOverrides !== undefined;
 
@@ -3033,6 +3181,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         }),
         ...(hasComplianceTestingProjection &&
           complianceTestingOverrides != null && { compliance_testing: complianceTestingOverrides }),
+        ...(experimentalFeatures !== undefined && { experimental_features: experimentalFeatures }),
       },
     }),
   };
@@ -3103,6 +3252,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
 
   const config: AdcpServerConfig<Account> = {
     ...runtimeOpts,
+    ...(effectiveToolVersions !== undefined && { toolVersions: effectiveToolVersions }),
     requireCompactMutationAccountScope: true,
     taskRegistry,
     ...(autoSeedStore != null && { testController: makeAutoSeedBridge(autoSeedStore) }),
@@ -3134,6 +3284,19 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     // cross-credential collisions without reopening a duplicate-buy window
     // on create_media_buy/update_media_buy. Explicit adopter resolvers still
     // win for every tool.
+    // A service-installed reporting platform names the consumer a receipt is
+    // deposited for; scope that tool's replay by the same value rather than by
+    // the caller's credential, which two operator seats can share.
+    ...((opts.resolveReportingConsumerId ?? platform.reporting?.resolveConsumerId)
+      ? {
+          resolveReportingConsumerId:
+            opts.resolveReportingConsumerId ??
+            ((ctx, params) =>
+              platform.reporting!.resolveConsumerId!(
+                ctxFor(ctx as HandlerContext<Account>, params) as RequestContext<Account>
+              )),
+        }
+      : {}),
     resolveIdempotencyPrincipal:
       opts.resolveIdempotencyPrincipal ??
       ((ctx, _params, toolName) =>
@@ -3157,7 +3320,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           platform.accounts.resolution,
           ref,
           await platform.accounts.resolve(ref, toResolveCtx(ctx, ctx.toolName, ctx.input)),
-          fwLogger
+          fwLogger,
+          implicitIdentityPolicy
         );
         resolved = account != null;
         resolvedAccountId = account?.id;
@@ -3180,9 +3344,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         );
       }
     },
-    // Auth-derived path: framework calls this for tools whose wire request
-    // doesn't carry an `account` field (`provide_performance_feedback`,
-    // `list_creative_formats`, `tasks_get`). The platform's resolver runs
+    // Auth-derived path: framework calls this when the request omits
+    // `account` (`provide_performance_feedback`, `list_creative_formats`,
+    // `tasks_get`). The platform's resolver runs
     // with `undefined` ref + `authInfo` available — adopters of any
     // `resolution` mode can return a non-null Account here:
     //
@@ -3196,20 +3360,41 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     //     regardless of declared `resolution` mode; only adopters who
     //     intentionally don't model these tools return null.
     //
-    // A `null` return is legal — handler runs with `ctx.account`
-    // undefined. Appropriate for tools that don't need tenant scoping
-    // (publisher-wide format catalogs).
+    // A `null` return is legal for tools that don't need tenant scoping
+    // (publisher-wide format catalogs). Authenticated compact mutations
+    // instead get the mode-aware ACCOUNT_REQUIRED envelope below; anonymous
+    // calls fall through so the dispatcher's AUTH_MISSING gate keeps priority.
     resolveAccountFromAuth: async ctx => {
       const start = Date.now();
       let resolved = false;
       let resolvedAccountId: string | undefined;
+      const compactAccountRequired =
+        COMPACT_MEDIA_BUY_MUTATION_TOOLS.has(ctx.toolName) && authenticatedPrincipalFor(ctx) !== undefined;
       try {
         const account = await platform.accounts.resolve(undefined, toResolveCtx(ctx, ctx.toolName, ctx.input));
         resolved = account != null;
         resolvedAccountId = account?.id;
+        if (account == null && compactAccountRequired) {
+          throw missingAccountError(ctx.toolName, platform.accounts.resolution);
+        }
         return account;
       } catch (err) {
-        if (err instanceof AccountNotFoundError) return null;
+        if (err instanceof AccountNotFoundError) {
+          if (compactAccountRequired) {
+            throw missingAccountError(ctx.toolName, platform.accounts.resolution);
+          }
+          return null;
+        }
+        if (
+          err instanceof AdcpError &&
+          err.code === 'ACCOUNT_NOT_FOUND' &&
+          COMPACT_MEDIA_BUY_MUTATION_TOOLS.has(ctx.toolName)
+        ) {
+          if (compactAccountRequired) {
+            throw missingAccountError(ctx.toolName, platform.accounts.resolution);
+          }
+          return null;
+        }
         throw err;
       } finally {
         safeFire(
@@ -3265,7 +3450,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       ),
       'mediaBuy',
       mergeOpts,
-      defaultCreativeWireMode
+      defaultCreativeWireMode,
+      platform.mediaBuyLifecycle?.getMediaBuyDelivery !== undefined || platform.sales?.getMediaBuyDelivery !== undefined
     ),
     proposalNegotiation: platformProposalNegotiation ?? opts.proposalNegotiation,
     creative: mergeHandlers(
@@ -3319,7 +3505,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       mergeOpts
     ),
     accounts: (() => {
-      const platformAccountHandlers = buildAccountHandlers(platform, ctxFor, fwLogger);
+      const platformAccountHandlers = buildAccountHandlers(platform, ctxFor, fwLogger, implicitIdentityPolicy);
       const merged = mergeHandlers(opts.accounts, platformAccountHandlers, 'accounts', mergeOpts);
       return guardDerivedSyncGovernance(
         guardAdopterSyncAccounts(merged, platform, platformAccountHandlers, fwLogger),
@@ -3343,7 +3529,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         platform.agentRegistry,
         fwLogger,
         runtimeOpts.resolveSessionKey,
-        opts.credentialPolicy
+        opts.credentialPolicy,
+        implicitIdentityPolicy
       );
       return {
         ...opts.customTools,
@@ -3644,20 +3831,32 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           const refFromContext = (input.context as { account?: AccountReference } | undefined)?.account;
           const accountRef = refFromTop ?? refFromContext;
 
-          // Same per-mode reference-shape contract the buyer-facing
-          // dispatchers enforce. Outside the try below on purpose: a refused
-          // reference is a buyer-fixable INVALID_REQUEST, not a resolver
-          // failure to swallow. This call site historically skipped the
-          // check; with `'derived'` now accepting `{ account_id }`, the
-          // controller must not be the one path where a reference bypasses
-          // it.
-          enforceAccountRefShapeForResolution(platform.accounts.resolution, accountRef);
+          if (accountRef !== undefined && (typeof accountRef !== 'object' || Array.isArray(accountRef))) {
+            return adcpError('INVALID_REQUEST', { message: 'account must be an object' });
+          }
 
+          // Enforce the same per-mode reference shape as buyer dispatch. The
+          // check runs inside the try so its typed INVALID_REQUEST becomes a
+          // structured AdCP error rather than a raw MCP exception.
+          // The controller's account_id arm also carries a sandbox assertion.
+          // It is not part of the core AccountReference accepted by account
+          // stores; the resolved account mode remains the authority.
+          const requestedAccountId = refAccountId(accountRef);
+          if (
+            requestedAccountId !== undefined &&
+            (typeof requestedAccountId !== 'string' ||
+              requestedAccountId.length === 0 ||
+              (accountRef !== undefined && ('brand' in accountRef || 'operator' in accountRef)))
+          ) {
+            return adcpError('INVALID_REQUEST', { message: 'Invalid account_id reference' });
+          }
+          const resolverRef = requestedAccountId === undefined ? accountRef : { account_id: requestedAccountId };
           let resolvedAccount: Account | null = null;
           const agent = principalAuthority.agent;
           try {
+            enforceAccountRefShapeForResolution(platform.accounts.resolution, accountRef);
             resolvedAccount = await platform.accounts.resolve(
-              accountRef,
+              resolverRef,
               toResolveCtx(
                 {
                   ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
@@ -3670,16 +3869,24 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
                 input
               )
             );
-          } catch {
-            // Resolver failures fall through to the wire-ref / env fallbacks.
-            // Treat as "no account resolved" — fail-closed by default unless a
-            // fallback admits.
+          } catch (err) {
+            if (err instanceof AccountNotFoundError || (err instanceof AdcpError && err.code === 'ACCOUNT_NOT_FOUND')) {
+              resolvedAccount = null;
+            } else if (err instanceof AdcpError) {
+              return adcpError(err.code, err.toStructuredError());
+            } else {
+              fwLogger.error?.('Account resolution failed during comply controller dispatch', {
+                error_type: err instanceof Error ? err.name : typeof err,
+              });
+              return adcpError('SERVICE_UNAVAILABLE', { message: 'Account resolution failed' });
+            }
           }
           resolvedAccount = assertResolvedAccountMatchesRef(
             platform.accounts.resolution,
             accountRef,
             resolvedAccount,
-            fwLogger
+            fwLogger,
+            implicitIdentityPolicy
           );
 
           // Record the resolved account's explicit mode (if any). Used by the
@@ -3694,8 +3901,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           // resolver wins. The buyer's wire claim never overrides a
           // resolved live account.
           //
-          // The fallback is scoped to refs that name no account: a buyer who
-          // DID name an account and had it refused by the resolver must not
+          // The fallback uses the original accountRef and is scoped to refs
+          // that name no account. A buyer who named an account and had it
+          // refused by the resolver must not
           // re-admit themselves by asserting `sandbox: true` alongside it.
           // Fail-closed resolvers (`createDerivedAccountStore` and any
           // verified `'derived'` store) make `resolvedAccount == null`
@@ -3920,7 +4128,8 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
   agentRegistry: BuyerAgentRegistry | undefined,
   logger: AdcpLogger,
   resolveSessionKey: AdcpServerConfig<Account>['resolveSessionKey'] | undefined,
-  credentialPolicy: CredentialPolicy | undefined
+  credentialPolicy: CredentialPolicy | undefined,
+  implicitIdentityPolicy: ImplicitIdentityPolicy
 ) {
   const credentialPolicyPatterns =
     credentialPolicy === undefined || typeof credentialPolicy === 'string' ? undefined : credentialPolicy.patterns;
@@ -4109,7 +4318,8 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
             platform.accounts.resolution,
             ref as AccountReference,
             await platform.accounts.resolve(ref as AccountReference, resolveCtx),
-            logger
+            logger,
+            implicitIdentityPolicy
           );
           if (resolved) {
             resolvedAccountId = resolved.id;
@@ -4147,6 +4357,15 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
             resolvedAccount = resolved;
           }
         } catch (err) {
+          if (err instanceof AdcpError && err.code === 'ACCOUNT_NOT_FOUND') {
+            const missing = missingAccountError('tasks_get', platform.accounts.resolution);
+            return adcpError(missing.code, {
+              message: missing.message,
+              recovery: missing.recovery,
+              field: missing.field,
+              suggestion: missing.suggestion,
+            });
+          }
           if (!(err instanceof AccountNotFoundError)) {
             logger.error?.('Auth-derived account resolution failed during tasks_get poll', {
               error: err instanceof Error ? err.message : String(err),
@@ -4180,9 +4399,12 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
       }
 
       if (resolvedAccountId === undefined) {
-        return adcpError('REFERENCE_NOT_FOUND', {
-          message: `Task ${args.task_id} not found`,
-          field: 'task_id',
+        const missing = missingAccountError('tasks_get', platform.accounts.resolution);
+        return adcpError(missing.code, {
+          message: missing.message,
+          recovery: missing.recovery,
+          field: missing.field,
+          suggestion: missing.suggestion,
         });
       }
       const ownerCtx: HandlerContext<Account> = withImmutableServedAdcpVersion(
@@ -4352,7 +4574,11 @@ function mergeHandlers<T extends object>(
   custom: T | undefined,
   platform: T | undefined,
   domain: string,
-  opts: { mode: MergeSeamMode; logger: AdcpLogger }
+  opts: { mode: MergeSeamMode; logger: AdcpLogger },
+  // Keys the caller composes into a single routed handler instead of letting
+  // one side shadow the other. They are not a migration-seam collision, so
+  // strict mode must not reject them.
+  composedKeys: ReadonlySet<string> = new Set()
 ): T | undefined {
   if (!custom && !platform) return undefined;
   if (!custom) return platform;
@@ -4361,6 +4587,7 @@ function mergeHandlers<T extends object>(
   if (opts.mode !== 'silent') {
     const collisions: string[] = [];
     for (const key of Object.keys(platform)) {
+      if (composedKeys.has(key)) continue;
       if (key in (custom as Record<string, unknown>)) collisions.push(key);
     }
     if (collisions.length > 0) {
@@ -4402,12 +4629,43 @@ function mergeMediaBuyHandlers(
   platform: MediaBuyHandlers<Account> | undefined,
   domain: string,
   opts: { mode: MergeSeamMode; logger: AdcpLogger },
-  fallbackWireMode: 'canonical' | 'legacy'
+  fallbackWireMode: 'canonical' | 'legacy',
+  platformServesCumulativeDelivery: boolean
 ): MediaBuyHandlers<Account> | undefined {
-  const merged = mergeHandlers(custom, platform, domain, opts);
+  // Decide the composition first so collision enforcement can see it: a
+  // reporting-only platform contributes `getMediaBuyDelivery` solely for exact
+  // revision reads, which is a deliberate split of one tool across two owners
+  // rather than an un-migrated override for strict mode to reject.
+  const composesDelivery =
+    !platformServesCumulativeDelivery &&
+    typeof custom?.getMediaBuyDelivery === 'function' &&
+    typeof platform?.getMediaBuyDelivery === 'function';
+  const merged = mergeHandlers(
+    custom,
+    platform,
+    domain,
+    opts,
+    composesDelivery ? new Set(['getMediaBuyDelivery']) : undefined
+  );
   if (!custom || !platform || !merged) return merged;
 
   const routed = { ...merged } as Record<string, unknown>;
+  // Installing reporting makes the platform emit `getMediaBuyDelivery` purely to
+  // serve exact revision reads. On a reporting-only platform that key would
+  // otherwise shadow an adopter's still-current cumulative handler and answer
+  // UNSUPPORTED_FEATURE, so route unbound reads back to the adopter. The custom
+  // handler keeps receiving the raw HandlerContext it is written against.
+  const customDelivery = custom.getMediaBuyDelivery;
+  const platformDelivery = platform.getMediaBuyDelivery;
+  if (composesDelivery && typeof customDelivery === 'function' && typeof platformDelivery === 'function') {
+    routed.getMediaBuyDelivery = (...args: unknown[]) => {
+      const revisionId = (args[0] as { reporting_revision_id?: unknown } | undefined)?.reporting_revision_id;
+      const exactRevisionRead = typeof revisionId === 'string' && revisionId.length > 0;
+      return exactRevisionRead
+        ? Reflect.apply(platformDelivery, platform, args)
+        : Reflect.apply(customDelivery, custom, args);
+    };
+  }
   for (const key of ['createMediaBuy', 'updateMediaBuy', 'getMediaBuys'] as const) {
     const customHandler = (custom as Record<string, unknown>)[key];
     const platformHandler = (platform as Record<string, unknown>)[key];
@@ -4880,7 +5138,7 @@ function taskOwnerScopeFor(ctx: HandlerContext<Account>, accountId: string): str
   return `account:${accountId}`;
 }
 
-function authenticatedPrincipalFor(ctx: HandlerContext<Account>): string | undefined {
+function authenticatedPrincipalFor(ctx: Pick<HandlerContext<Account>, 'agent' | 'authInfo'>): string | undefined {
   if (ctx.agent?.agent_url) return `agent:${ctx.agent.agent_url}`;
   const credential = ctx.authInfo?.credential;
   if (credential?.kind === 'http_sig') return `http_sig:${credential.agent_url}`;
@@ -5505,6 +5763,7 @@ function toResolveCtx(
     {
       ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
       ...(toolName !== undefined && { toolName }),
+      provisioning: isAccountProvisioningTask(toolName),
       ...(ctx.agent != null && { agent: ctx.agent }),
       ...(input != null && { input }),
     },
@@ -6295,10 +6554,7 @@ function buildProposalNegotiationHandlers<P extends DecisioningPlatform<any, any
     resolveScope: ctx => {
       const accountId = ctx.account?.id;
       if (!accountId) {
-        throw new AdcpError('ACCOUNT_NOT_FOUND', {
-          message: 'refine_proposals requires an authenticated account scope',
-          recovery: 'correctable',
-        });
+        throw missingAccountError('refine_proposals', platform.accounts.resolution);
       }
       const principalId = authenticatedPrincipalFor(ctx);
       if (!principalId) {
@@ -6313,10 +6569,7 @@ function buildProposalNegotiationHandlers<P extends DecisioningPlatform<any, any
       const request = params as unknown as Readonly<Record<string, unknown>>;
       const reqCtx = ctxFor(ctx, request);
       if (!reqCtx.account?.id) {
-        throw new AdcpError('ACCOUNT_NOT_FOUND', {
-          message: 'refine_proposals requires an authenticated account scope',
-          recovery: 'correctable',
-        });
+        throw missingAccountError('refine_proposals', platform.accounts.resolution);
       }
       return projectSync(
         async () => {
@@ -6371,12 +6624,14 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
 ): MediaBuyHandlers<Account> | undefined {
   const sales = platform.sales;
   const lifecycle = platform.mediaBuyLifecycle;
-  const getMediaBuyDelivery = lifecycle?.getMediaBuyDelivery ?? sales?.getMediaBuyDelivery;
+  const reporting = platform.reporting;
+  const liveMediaBuyDelivery = lifecycle?.getMediaBuyDelivery ?? sales?.getMediaBuyDelivery;
+  const getMediaBuyDelivery = liveMediaBuyDelivery ?? reporting?.getMediaBuyDelivery;
   const getMediaBuys = lifecycle?.getMediaBuys ?? sales?.getMediaBuys;
   const proposalManager = (platform as { proposalManager?: import('../proposal').ProposalManager }).proposalManager;
   // Without a legacy sales surface, compact lifecycle, or proposal manager,
   // there's nothing to dispatch.
-  if (!sales && !lifecycle && !proposalManager) return undefined;
+  if (!sales && !lifecycle && !proposalManager && !reporting) return undefined;
 
   const dispatchCompactMutation = async <TResult>(
     tool: string,
@@ -6394,10 +6649,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         }
         const accountId = ctx.account?.id;
         if (!accountId) {
-          throw new AdcpError('ACCOUNT_NOT_FOUND', {
-            message: `${tool} requires a resolved account scope`,
-            recovery: 'correctable',
-          });
+          throw missingAccountError(tool, platform.accounts.resolution);
         }
         const principalId = authenticatedPrincipalFor(ctx);
         if (!principalId) {
@@ -6437,6 +6689,21 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       },
       value => value
     );
+  };
+
+  const reportingContext = (
+    tool: 'get_media_buy_delivery' | 'get_reporting_status' | 'sync_reporting_status' | 'sync_reporting_receipts',
+    params: Readonly<Record<string, unknown>>,
+    ctx: HandlerContext<Account>
+  ): RequestContext<Account> => {
+    if (ctx.authInfo === undefined && ctx.agent === undefined) {
+      throw new AdcpError('AUTH_MISSING', {
+        message: `${tool} requires an authenticated buyer principal`,
+        recovery: 'correctable',
+      });
+    }
+    if (!ctx.account?.id) throw missingAccountError(tool, platform.accounts.resolution);
+    return ctxFor(ctx, params);
   };
 
   // Core lifecycle methods are optional on the SalesPlatform interface
@@ -6681,11 +6948,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             }
             const accountId = reqCtx.account?.id;
             if (accountId === undefined) {
-              throw new AdcpError('INVALID_REQUEST', {
-                message: 'Async get_products and push_notification_config require account-scoped discovery.',
-                field: 'account',
-                recovery: 'correctable',
-              });
+              throw missingAccountError('get_products', platform.accounts.resolution);
             }
             return routeIfHandoff(
               taskRegistry,
@@ -7030,7 +7293,20 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         ...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['getMediaBuyDelivery']>>
       ) => {
         const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
-        const reqCtx = ctxFor(ctx, params);
+        const requestedRevisionId = (params as { reporting_revision_id?: unknown }).reporting_revision_id;
+        // One predicate decides routing, auth scope, and the raw-passthrough
+        // gate. Routing on mere presence sent `reporting_revision_id: null` to
+        // the ledger as if it were an exact read — where it is not one — so a
+        // cumulative request answered SERVICE_UNAVAILABLE wherever request
+        // validation is off. It also must not rest on handler identity alone:
+        // an adopter may wire one function into both the sales and reporting
+        // slots, and an unbound read would inherit the exact-revision bypass.
+        const exactRevisionRead = typeof requestedRevisionId === 'string' && requestedRevisionId.length > 0;
+        const exactRevisionRequested = exactRevisionRead;
+        const reportingRevisionRequested = exactRevisionRequested && reporting !== undefined;
+        const reqCtx = reportingRevisionRequested
+          ? reportingContext('get_media_buy_delivery', params, ctx)
+          : ctxFor(ctx, params);
         // v1.5 seam: hydrate ctx.recipes for delivery reads. Per
         // Resolutions §5, recipe-driven delivery aggregation needs the
         // same recipe view the originating createMediaBuy used.
@@ -7053,7 +7329,32 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         }
         return projectSync(
           async () => {
-            const result = await getMediaBuyDelivery(asValidatedDomainRequest(params), reqCtx);
+            const selectedDelivery = exactRevisionRequested
+              ? (reporting?.getMediaBuyDelivery ?? liveMediaBuyDelivery)
+              : liveMediaBuyDelivery;
+            if (!selectedDelivery) {
+              throw new AdcpError('UNSUPPORTED_FEATURE', {
+                message: 'This reporting-only platform does not provide cumulative delivery reads',
+                recovery: 'correctable',
+              });
+            }
+            const servedByReportingLedger =
+              exactRevisionRead &&
+              reporting?.getMediaBuyDelivery !== undefined &&
+              selectedDelivery === reporting.getMediaBuyDelivery;
+            const result = await selectedDelivery(asValidatedDomainRequest(params), reqCtx);
+            if (servedByReportingLedger) {
+              // An exact reporting revision is hash-bound: its rows are an
+              // opaque payload carried under the revision's RFC 8785 JCS
+              // SHA-256 digest, not creative-bearing media-buy delivery.
+              // Creative-format projection would rewrite row content without
+              // updating that digest, and it rejects a perfectly legitimate
+              // row whose columns happen to be named `creative_id` and
+              // `format_kind` with INVALID_REQUEST. Return the bytes the
+              // ledger bound. `projectSync` still applies the ctx_metadata /
+              // implementation_config leak strip around this.
+              return result;
+            }
             warnIfTruncatedMultiIdResponse(
               'getMediaBuyDelivery',
               'media_buy_ids',
@@ -7072,6 +7373,36 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           actuals => actuals
         );
       },
+    }),
+
+    ...(reporting?.getReportingStatus && {
+      getReportingStatus: async (
+        ...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['getReportingStatus']>>
+      ) =>
+        projectSync(
+          () => reporting.getReportingStatus(params, reportingContext('get_reporting_status', params, ctx)),
+          value => value
+        ),
+    }),
+
+    ...(reporting?.syncReportingStatus && {
+      syncReportingStatus: async (
+        ...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['syncReportingStatus']>>
+      ) =>
+        projectSync(
+          () => reporting.syncReportingStatus!(params, reportingContext('sync_reporting_status', params, ctx)),
+          value => value
+        ),
+    }),
+
+    ...(reporting?.syncReportingReceipts && {
+      syncReportingReceipts: async (
+        ...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['syncReportingReceipts']>>
+      ) =>
+        projectSync(
+          () => reporting.syncReportingReceipts!(params, reportingContext('sync_reporting_receipts', params, ctx)),
+          value => value
+        ),
     }),
 
     // Optional methods — return UNSUPPORTED_FEATURE when the platform omits
@@ -7174,7 +7505,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       ) => {
         const reqCtx = ctxFor(ctx, params);
         return projectSync(
-          () => sales!.listCreativeFormatsLegacy!(params, reqCtx),
+          () => sales!.listCreativeFormatsLegacy!(asValidatedDomainRequest(params), reqCtx),
           r => r
         );
       },
@@ -7311,9 +7642,9 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       );
     },
 
-    // No-account tool — `list_creative_formats` request schema doesn't carry
-    // `account`. The framework's `resolveAccountFromAuth` runs and accepts a
-    // null return; the platform method receives `ctx.account` possibly
+    // Optional-account tool — `list_creative_formats` may carry `account`
+    // in rc.7. With no account, `resolveAccountFromAuth` accepts a null
+    // return; the platform method receives `ctx.account` possibly
     // undefined per `NoAccountCtx`. Wired identically on both
     // `CreativeBuilderPlatform` and `CreativeAdServerPlatform`.
     listCreativeFormats: async (params, ctx) => {
@@ -7327,7 +7658,8 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       }
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => (creative as CreativeBuilderPlatform).listCreativeFormatsLegacy!(params, reqCtx),
+        () =>
+          (creative as CreativeBuilderPlatform).listCreativeFormatsLegacy!(asValidatedDomainRequest(params), reqCtx),
         r => r
       );
     },
@@ -7582,11 +7914,7 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
           }
           const accountId = reqCtx.account?.id;
           if (accountId === undefined) {
-            throw new AdcpError('INVALID_REQUEST', {
-              message: 'Async get_signals and push_notification_config require account-scoped discovery.',
-              field: 'account',
-              recovery: 'correctable',
-            });
+            throw missingAccountError('get_signals', platform.accounts.resolution);
           }
           return routeIfHandoff(
             taskRegistry,
@@ -8681,7 +9009,8 @@ function enforceSyncAccountsCommercialPolicy<P extends DecisioningPlatform<any, 
 function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
   platform: P,
   ctxFor: CtxForFn,
-  logger: AdcpLogger = DEFAULT_FRAMEWORK_LOGGER
+  logger: AdcpLogger = DEFAULT_FRAMEWORK_LOGGER,
+  implicitIdentityPolicy: ImplicitIdentityPolicy = STRICT_IMPLICIT_IDENTITY_POLICY
 ): AccountHandlers<Account> {
   const accounts = platform.accounts;
 
@@ -8777,16 +9106,22 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       // assertions for every adopter, regardless of `CursorPage` output.
       // See adcontextprotocol/adcp#5723 for the reproduction from a 3.1 seller.
       return projectSync(
-        () => accounts.list!(filter, resolveCtx),
-        page => ({
-          status: 'completed' as const,
-          accounts: page.items.map(toWireAccount),
-          pagination: {
-            has_more: page.nextCursor != null,
-            ...(page.nextCursor != null && { cursor: page.nextCursor }),
-            ...(page.totalCount !== undefined && { total_count: page.totalCount }),
-          },
-        })
+        async () => {
+          const page = await accounts.list!(filter, resolveCtx);
+          const response = {
+            status: 'completed' as const,
+            accounts: page.items.map(toWireAccount),
+            pagination: {
+              has_more: page.nextCursor != null,
+              ...(page.nextCursor != null && { cursor: page.nextCursor }),
+              ...(page.totalCount !== undefined && { total_count: page.totalCount }),
+            },
+          };
+          return platform.reporting?.projectListAccounts
+            ? platform.reporting.projectListAccounts(filter, response, resolveCtx)
+            : response;
+        },
+        response => response
       );
     };
   }
@@ -8801,7 +9136,8 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
         accounts.resolution,
         accountRef,
         await accounts.resolve(accountRef, resolveCtx),
-        logger
+        logger,
+        implicitIdentityPolicy
       );
       if (!resolved) {
         const suggestion = accountNotFoundSuggestion(accounts.resolution);
@@ -8844,7 +9180,8 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
         accounts.resolution,
         accountRef,
         await accounts.resolve(accountRef, resolveCtx),
-        logger
+        logger,
+        implicitIdentityPolicy
       );
       if (!resolved) {
         const suggestion = accountNotFoundSuggestion(accounts.resolution);

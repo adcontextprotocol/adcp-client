@@ -1,0 +1,48 @@
+{
+  "contract": "canonical_json_utf8_v1",
+  "provenance": "Shared by the TypeScript and Python AdCP SDK conformance suites",
+  "vectors": [
+    {
+      "name": "published_cross_language_vector",
+      "value": { "z": "line\n", "é": "é", "😀": "😀", "a": 1 },
+      "canonical_utf8_hex": "7b2261223a312c227a223a226c696e655c6e222c22c3a9223a22c3a9222c22f09f9880223a22f09f9880227d",
+      "sha256": "57d672581e912835bbb3b06dca5d2529559d186fa1981b7c36288f497b8806d5"
+    },
+    {
+      "name": "utf16_code_unit_key_order",
+      "value": { "": 1, "😀": 2, "�": 3 },
+      "canonical_utf8_hex": "7b22f09f9880223a322c22ee8080223a312c22efbfbd223a337d",
+      "sha256": "3c52a84a91c6732bf05ce94e8e17b53674b1582a6e3f0aa7197e69291dedd4bf"
+    },
+    {
+      "name": "control_character_escaping",
+      "value": { "k": "\u0000\u0001\b\t\n\f\r\u001f a" },
+      "canonical_utf8_hex": "7b226b223a225c75303030305c75303030315c625c745c6e5c665c725c753030316620617f227d",
+      "sha256": "f1b2424fff75aaedfab04df35be8030ef5a01b44d578edbe2f5c24db6fb5f9db"
+    },
+    {
+      "name": "nested_objects_and_arrays_retain_array_order",
+      "value": { "b": [1, { "d": null, "c": true }], "a": { "é": 0 } },
+      "canonical_utf8_hex": "7b2261223a7b22c3a9223a307d2c2262223a5b312c7b2263223a747275652c2264223a6e756c6c7d5d7d",
+      "sha256": "177efdc3094fa4b46fa5bc25cff2b58729ce0994dd821131cfaef0d6367d8fe9"
+    },
+    {
+      "name": "line_and_paragraph_separators_stay_raw",
+      "value": { "s": "  " },
+      "canonical_utf8_hex": "7b2273223a22e280a8e280a9227d",
+      "sha256": "37291683554efe5b232ef434c7f2ed8b3f39ce37f4a2d8db100eb4224e48edcd"
+    },
+    {
+      "name": "safe_integer_bounds",
+      "value": { "n": -9007199254740991, "z": 0, "p": 9007199254740991 },
+      "canonical_utf8_hex": "7b226e223a2d393030373139393235343734303939312c2270223a393030373139393235343734303939312c227a223a307d",
+      "sha256": "7896c9d28d3df71d7c4f8d8484a845d0c0281d57e09cda95b33910eb7de6d679"
+    },
+    {
+      "name": "quote_and_backslash_escaping_in_keys_and_values",
+      "value": { "q\"k": "back\\slash \"quoted\"" },
+      "canonical_utf8_hex": "7b22715c226b223a226261636b5c5c736c617368205c2271756f7465645c22227d",
+      "sha256": "c2e234e6a78aecd021be90eb2f5e23b2b27e224cf3eb01c07b8614161668f66e"
+    }
+  ]
+}

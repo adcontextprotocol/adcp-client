@@ -7,7 +7,7 @@
 [![API Documentation](https://img.shields.io/badge/API-Documentation-blue.svg)](https://adcontextprotocol.github.io/adcp-client/api/)
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/adcontextprotocol/adcp-client/ci.yml?branch=main)](https://github.com/adcontextprotocol/adcp-client/actions)
 
-Official TypeScript/JavaScript client for the **Ad Context Protocol (AdCP)**. Build distributed advertising operations that work synchronously OR asynchronously with the same code.
+Official TypeScript/JavaScript SDK for the **Ad Context Protocol (AdCP)**. Use its buyer client to call agents, server framework to build them, and conformance tools to test them. The SDK supports MCP and A2A, with both immediate and asynchronous task results.
 
 ## For AI Agents
 
@@ -29,12 +29,12 @@ AdCP operations are **distributed and asynchronous by default**. An agent might:
 ## Installation
 
 ```bash
-npm install @adcp/sdk@adcp-3.0   # 7.x, AdCP 3.0
-npm install @adcp/sdk             # 13.x, maintained AdCP 3.1 stable line
-npm install '@adcp/sdk@^14.0.0-0' # newest 14.x prerelease, AdCP 3.2 beta
+npm install @adcp/sdk              # 14.x, AdCP 3.2
+npm install @adcp/sdk@adcp-3.1     # 13.x, maintained AdCP 3.1 line
+npm install @adcp/sdk@adcp-3.0     # 7.11.x, AdCP 3.0
 ```
 
-Trying the v14 prerelease? Read the [14.0.0 prerelease notes](./docs/releases/14.0.0-beta.0.md), then use the [13-to-14](./docs/migration-13-to-14.md) or [12-to-14](./docs/migration-12-to-14.md) migration guide. The npm `latest` tag remains on v13 for the maintained AdCP 3.1 stable line. SDK 14 requires Node.js `^20.19.0 || >=22.12.0`. Older paths: [12-to-13](./docs/migration-12-to-13.md), **[MIGRATION-v8.md](./MIGRATION-v8.md)**, and [8.0-to-8.1](./docs/migration-8.0-to-8.1.md).
+Upgrading to SDK 14? Read the [release-bound upgrade worksheet](./docs/migration-14.x-rc-worksheet.md), then use the [13-to-14](./docs/migration-13-to-14.md) or [12-to-14](./docs/migration-12-to-14.md) migration guide. The [prerelease history](./docs/releases/14.0.0-beta.0.md) covers changes made during the 14.0 beta cycle. The npm `latest` tag tracks SDK 14 (AdCP 3.2); SDK 13 stays available on `adcp-3.1` as the maintained AdCP 3.1 line. SDK 14 requires Node.js `^20.19.0 || >=22.12.0`. Older paths: [12-to-13](./docs/migration-12-to-13.md), **[MIGRATION-v8.md](./MIGRATION-v8.md)**, and [8.0-to-8.1](./docs/migration-8.0-to-8.1.md).
 
 ### Narrow type imports (`@adcp/sdk/types/<tool>`)
 
@@ -59,6 +59,19 @@ Large workspaces should keep the generated schema surface out of the default typ
 | Runtime Zod schemas and tool schema maps      | `@adcp/sdk/schemas`                                                                     |
 | Broad generated protocol type barrel          | `@adcp/sdk/types`                                                                       |
 
+### Focused client runtime (`@adcp/sdk/client/core`)
+
+Applications that only call AdCP agents can avoid evaluating the SDK's server,
+compliance, testing, and unrelated protocol surfaces:
+
+```ts
+import { ADCPMultiAgentClient, InMemoryWebhookRegistrationStore } from '@adcp/sdk/client/core';
+```
+
+The existing `@adcp/sdk/client` path remains an alias of the package root for
+compatibility. Use `/client/core` when cold import and test-worker startup time
+matter.
+
 For application monorepos, keep `skipLibCheck: true` unless you are intentionally auditing SDK declarations. If a package only needs request/response types for a few tools, prefer the per-tool slices over importing generated types through the root package or the broad `@adcp/sdk/types` barrel.
 
 ## Quick Start: AdCP 3.2
@@ -76,6 +89,7 @@ Start with the persona guide that matches your job:
 - [Call a seller](./docs/guides/BUYER-QUICKSTART-3.2.md)
 - [Adopt the account change feed](./docs/migration-account-change-feed.md)
 - [Upgrade from SDK 13](./docs/migration-13-to-14.md)
+- [Add AdCP to an existing platform](./docs/guides/EXISTING-PLATFORM.md)
 - [Run in production](./docs/guides/PRODUCTION-DURABILITY.md)
 
 ```typescript
@@ -1049,3 +1063,5 @@ Apache 2.0 License - see [LICENSE](LICENSE) file for details.
 - **Documentation**: [docs.adcontextprotocol.org](https://docs.adcontextprotocol.org)
 - **Issues**: [GitHub Issues](https://github.com/adcontextprotocol/adcp-client/issues)
 - **Protocol Spec**: [AdCP Specification](https://github.com/adcontextprotocol/adcp)
+
+Supply-path verification: use `verifySupplyPath` for authoritative evidence or the canonical registry verdict, and opt into external collection discovery annotations. See [the supply-path guide](docs/guides/SUPPLY-PATH-VERIFICATION.md).

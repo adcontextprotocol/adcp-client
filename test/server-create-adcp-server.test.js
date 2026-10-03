@@ -9,6 +9,7 @@ const { getSdkServer } = require('../dist/lib/server/adcp-server');
 const { InMemoryStateStore } = require('../dist/lib/server/state-store');
 const { InMemoryTaskStore } = require('../dist/lib/server/tasks');
 const { createInMemoryTaskRegistry } = require('../dist/lib/server/decisioning/runtime/task-registry');
+const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
 const { adcpError } = require('../dist/lib/server/errors');
 const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/idempotency');
 const { ADCP_MIRRORED_STRUCTURED_CONTENT_META_KEY } = require('../dist/lib/server/structured-content-fallback');
@@ -106,9 +107,9 @@ describe('createAdcpServer', () => {
     const server = createAdcpServer({
       name: 'Dual-version seller',
       version: '1.0.0',
-      adcpVersion: '3.2.0-rc.3',
+      adcpVersion: '3.2.1',
       defaultAdcpVersion: '3.1.18',
-      capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.3'] },
+      capabilities: { supported_versions: ['3.1.18', '3.2.1'] },
       resolveAccountFromAuth: async context => {
         accountResolverContexts.push(context);
         return undefined;
@@ -147,23 +148,23 @@ describe('createAdcpServer', () => {
       responseEnhancer: (_response, context) => enhancedContexts.push(context),
     });
 
-    assert.strictEqual(server.getAdcpVersion(), '3.2.0-rc.3');
+    assert.strictEqual(server.getAdcpVersion(), '3.2.1');
     assert.strictEqual(server.getDefaultAdcpVersion(), '3.1.18');
 
     const defaultProducts = await callTool(server, 'get_products', {});
-    const modernProducts = await callTool(server, 'get_products', { adcp_version: '3.2.0-rc.3' });
+    const modernProducts = await callTool(server, 'get_products', { adcp_version: '3.2.1' });
     assert.strictEqual(defaultProducts.adcp_version, '3.1');
-    assert.strictEqual(modernProducts.adcp_version, '3.2-rc.3');
+    assert.strictEqual(modernProducts.adcp_version, '3.2');
     assert.deepStrictEqual(
       standardContexts.map(context => context.version),
-      ['3.1', '3.2-rc.3']
+      ['3.1', '3.2']
     );
     assert.ok(standardContexts.every(context => context.descriptor?.writable === false));
     for (const contexts of [accountResolverContexts, sessionResolverContexts]) {
       const getProductsContexts = contexts.filter(context => context.toolName === 'get_products');
       assert.deepStrictEqual(
         getProductsContexts.map(context => context.servedAdcpVersion),
-        ['3.1', '3.2-rc.3']
+        ['3.1', '3.2']
       );
       assert.ok(
         getProductsContexts.every(
@@ -173,31 +174,31 @@ describe('createAdcpServer', () => {
     }
 
     await callTool(server, 'version_probe', {});
-    await callTool(server, 'version_probe', { adcp_version: '3.2.0-rc.3' });
+    await callTool(server, 'version_probe', { adcp_version: '3.2.1' });
     assert.deepStrictEqual(
       customContexts.map(context => context.version),
-      ['3.1', '3.2-rc.3']
+      ['3.1', '3.2']
     );
     assert.ok(customContexts.every(context => context.descriptor?.writable === false));
 
     const defaultCapabilities = await callTool(server, 'get_adcp_capabilities', {});
     const modernCapabilities = await callTool(server, 'get_adcp_capabilities', {
-      adcp_version: '3.2.0-rc.3',
+      adcp_version: '3.2.1',
     });
     assert.strictEqual(defaultCapabilities.adcp_version, '3.1');
     assert.strictEqual(defaultCapabilities.media_buy.lifecycle_tools, undefined);
-    assert.strictEqual(modernCapabilities.adcp_version, '3.2-rc.3');
+    assert.strictEqual(modernCapabilities.adcp_version, '3.2');
     assert.deepStrictEqual(modernCapabilities.media_buy.lifecycle_tools, ['list_products']);
 
     const defaultTools = await server.dispatchTestRequest({ method: 'tools/list' });
     const modernTools = await server.dispatchTestRequest({
       method: 'tools/list',
-      params: { _meta: { adcp_version: '3.2.0-rc.3' } },
+      params: { _meta: { adcp_version: '3.2.1' } },
     });
     assert.strictEqual(defaultTools._meta.adcp_version, '3.1.18');
     assert.ok(defaultTools.tools.some(tool => tool.name === 'get_products'));
     assert.ok(!defaultTools.tools.some(tool => tool.name === 'list_products'));
-    assert.strictEqual(modernTools._meta.adcp_version, '3.2.0-rc.3');
+    assert.strictEqual(modernTools._meta.adcp_version, '3.2.1');
     assert.ok(modernTools.tools.some(tool => tool.name === 'list_products'));
     assert.ok(!modernTools.tools.some(tool => tool.name === 'get_products'));
 
@@ -213,9 +214,9 @@ describe('createAdcpServer', () => {
         createAdcpServer({
           name: 'Bad default',
           version: '1.0.0',
-          adcpVersion: '3.2.0-rc.3',
+          adcpVersion: '3.2.1',
           defaultAdcpVersion: '3.1.18',
-          capabilities: { supported_versions: ['3.2.0-rc.3'] },
+          capabilities: { supported_versions: ['3.2.1'] },
         }),
       /defaultAdcpVersion .*must be present/
     );
@@ -225,7 +226,7 @@ describe('createAdcpServer', () => {
           name: 'Newer default',
           version: '1.0.0',
           adcpVersion: '3.1.18',
-          defaultAdcpVersion: '3.2.0-rc.3',
+          defaultAdcpVersion: '3.2.1',
         }),
       /defaultAdcpVersion .*must not be newer/
     );
@@ -392,8 +393,8 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Profile projection seller',
         version: '1.0.0',
-        adcpVersion: '3.2.0-rc.3',
-        capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.3'] },
+        adcpVersion: '3.2.1',
+        capabilities: { supported_versions: ['3.1.18', '3.2.1'] },
         mediaBuy: {
           ...compactHandlers,
           getProducts: async () => ({ products: [], cache_scope: 'public' }),
@@ -425,8 +426,8 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Profile seller',
         version: '1.0.0',
-        adcpVersion: '3.2.0-rc.3',
-        capabilities: { supported_versions: ['3.0.25', '3.1.18', '3.2.0-rc.3'] },
+        adcpVersion: '3.2.1',
+        capabilities: { supported_versions: ['3.0.25', '3.1.18', '3.2.1'] },
         mediaBuy: {
           ...compactHandlers,
           getProducts: async params => {
@@ -463,10 +464,10 @@ describe('createAdcpServer', () => {
       assert.ok(!names.includes('update_media_buy'), 'deprecated update alias should not be advertised');
       assert.ok(!names.includes('build_creative'), 'creative-builder tools are outside the media-buy role profile');
       assert.deepStrictEqual(listed._meta, {
-        adcp_version: '3.2.0-rc.3',
+        adcp_version: '3.2.1',
         adcp_profile: 'media-buy',
       });
-      assert.strictEqual(listed.tools[0]._meta.adcp_version, '3.2.0-rc.3');
+      assert.strictEqual(listed.tools[0]._meta.adcp_version, '3.2.1');
       const requestProposalsTool = listed.tools.find(tool => tool.name === 'request_proposals');
       const officialRequestSchema = JSON.parse(
         readFileSync(
@@ -519,7 +520,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Migration seller',
         version: '1.0.0',
-        adcpVersion: '3.2.0-rc.3',
+        adcpVersion: '3.2.1',
         mcpToolProfile: 'all',
         mediaBuy: {
           ...compactHandlers,
@@ -805,13 +806,17 @@ describe('createAdcpServer', () => {
         statuses: [{ reporting_status_id: 'reporting-status-invalid-0001', extra }],
       });
 
-      const first = await callToolRaw(server, 'sync_reporting_status', request('\ud800'));
+      // The tool refuses a caller with no canonical identity before the
+      // idempotency lookup, so this payload-hashing case authenticates.
+      const consumer = { authInfo: { clientId: 'reporting-consumer-1' } };
+
+      const first = await callToolRaw(server, 'sync_reporting_status', request('\ud800'), consumer);
       assert.notEqual(first.isError, true);
 
-      const replayed = await callToolRaw(server, 'sync_reporting_status', request('\ud800'));
+      const replayed = await callToolRaw(server, 'sync_reporting_status', request('\ud800'), consumer);
       assert.equal(replayed.structuredContent.replayed, true);
 
-      const conflict = await callToolRaw(server, 'sync_reporting_status', request('\ud801'));
+      const conflict = await callToolRaw(server, 'sync_reporting_status', request('\ud801'), consumer);
       assert.equal(conflict.isError, true);
       assert.equal(conflict.structuredContent.adcp_error.code, 'IDEMPOTENCY_CONFLICT');
       assert.equal(calls, 1);
@@ -938,6 +943,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         accounts: {
           listAccountChanges: async params => {
             calls += 1;
@@ -999,6 +1005,510 @@ describe('createAdcpServer', () => {
     });
   });
 
+  describe('compact account-selection envelope', () => {
+    it('rejects an explicit creative-formats account without an authorizing resolver', async () => {
+      let calls = 0;
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        resolveAccountFromAuth: async () => ({ account_id: 'auth-account' }),
+        creative: {
+          listCreativeFormats: async () => {
+            calls++;
+            return { formats: [] };
+          },
+        },
+      });
+      const explicit = await callToolRaw(server, 'list_creative_formats', {
+        account: { account_id: 'other-account' },
+      });
+      assert.strictEqual(explicit.structuredContent.adcp_error.code, 'ACCOUNT_NOT_FOUND');
+      assert.strictEqual(calls, 0);
+
+      await callTool(server, 'list_creative_formats', {});
+      assert.strictEqual(calls, 1);
+    });
+
+    it('preserves ACCOUNT_NOT_FOUND when a buyer supplies a reference but no resolver is configured', async () => {
+      let calls = 0;
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        adcpVersion: '3.2.1',
+        requireCompactMutationAccountScope: true,
+        resolveAccountFromAuth: async () => null,
+        mediaBuy: {
+          requestProposals: async () => {
+            calls += 1;
+            return { outcome: 'declined', reason: 'not available' };
+          },
+        },
+      });
+      const extra = {
+        authInfo: {
+          token: 'redacted',
+          clientId: 'buyer-1',
+          scopes: [],
+          credential: { kind: 'api_key', key_id: 'buyer-key-1' },
+        },
+      };
+
+      const omitted = await callToolRaw(
+        server,
+        'request_proposals',
+        { idempotency_key: 'proposal-omitted-0001', brief: 'test' },
+        extra
+      );
+      assert.strictEqual(omitted.structuredContent.adcp_error.code, 'ACCOUNT_REQUIRED');
+
+      const supplied = await callToolRaw(
+        server,
+        'request_proposals',
+        {
+          idempotency_key: 'proposal-supplied-0001',
+          brief: 'test',
+          account: { account_id: 'missing-account' },
+        },
+        extra
+      );
+      assert.strictEqual(supplied.structuredContent.adcp_error.code, 'ACCOUNT_NOT_FOUND');
+      assert.strictEqual(supplied.structuredContent.adcp_error.recovery, 'terminal');
+      assert.strictEqual(calls, 0);
+
+      for (const missingError of [
+        adcpError('ACCOUNT_NOT_FOUND', { message: 'no auth-derived account' }),
+        new AdcpError('ACCOUNT_NOT_FOUND', { message: 'no auth-derived account' }),
+      ]) {
+        const throwingServer = createAdcpServer({
+          name: 'Test',
+          version: '1.0.0',
+          adcpVersion: '3.2.1',
+          requireCompactMutationAccountScope: true,
+          resolveAccountFromAuth: async () => {
+            throw missingError;
+          },
+          mediaBuy: {
+            requestProposals: async () => {
+              calls += 1;
+              return { outcome: 'declined', reason: 'not available' };
+            },
+          },
+        });
+        const unauthenticated = await callToolRaw(throwingServer, 'request_proposals', {
+          idempotency_key: `proposal-anonymous-${missingError instanceof Error ? 'class' : 'envelope'}-0001`,
+          brief: 'test',
+        });
+        assert.strictEqual(unauthenticated.structuredContent.adcp_error.code, 'AUTH_MISSING');
+      }
+      assert.strictEqual(calls, 0);
+    });
+  });
+
+  describe('caller-scoped reporting receipts', () => {
+    it("does not replay one caller's reporting receipt for another on the same account", async () => {
+      // An agent registry resolves several callers onto one account. Scoping
+      // replay by account alone let caller B's identical request return A's
+      // cached response before B's consumer was resolved, so B's receipt was
+      // never deposited.
+      const { createIdempotencyStore: createStore, memoryBackend: backend } = require('../dist/lib/server/idempotency');
+      const callers = [];
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        idempotency: createStore({ backend: backend({ sweepIntervalMs: 0 }) }),
+        // An agent registry that resolves every caller on this account to the
+        // same principal — the shape that made the replay namespace collide.
+        resolveSessionKey: () => 'principal-account-shared',
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingStatus: async (params, ctx) => {
+            callers.push(ctx.authInfo?.credential?.key_id ?? ctx.authInfo?.credential?.client_id);
+            return {
+              status: 'completed',
+              results: params.statuses.map(status => ({
+                result: 'created',
+                reporting_status_id: status.reporting_status_id,
+              })),
+            };
+          },
+        },
+      });
+      const params = {
+        account: { account_id: 'account-shared' },
+        idempotency_key: 'reporting-status-shared-key-0001',
+        statuses: [{ reporting_status_id: 'reporting-status-shared-0001' }],
+      };
+
+      for (const key_id of ['consumer-a', 'consumer-b']) {
+        const response = await callToolRaw(server, 'sync_reporting_status', params, {
+          authInfo: { credential: { kind: 'api_key', key_id } },
+        });
+        assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
+      }
+      assert.deepStrictEqual(callers, ['consumer-a', 'consumer-b'], 'each caller must reach the handler');
+
+      // OAuth callers carry their identity on credential.client_id, not
+      // key_id or a top-level clientId, so that is the field the replay
+      // namespace has to read.
+      for (const client_id of ['oauth-a', 'oauth-b']) {
+        const response = await callToolRaw(server, 'sync_reporting_status', params, {
+          authInfo: { credential: { kind: 'oauth', client_id, scopes: [], expires_at: null } },
+        });
+        assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
+      }
+      assert.strictEqual(callers.length, 4, 'two OAuth callers differing only by client_id must not collide');
+
+      // A caller whose principal cannot be derived at all must be refused
+      // before the idempotency lookup: collapsing such callers into one null
+      // namespace would serve the first caller's cached response to the next
+      // and never record its receipt.
+      const anonymous = await callToolRaw(server, 'sync_reporting_status', params);
+      assert.strictEqual(anonymous.isError, true);
+      assert.strictEqual(anonymous.structuredContent.adcp_error.code, 'AUTH_MISSING');
+      assert.strictEqual(callers.length, 4, 'an underivable principal must not reach the handler');
+
+      // The same caller repeating its own key still replays, so the namespace
+      // is narrowed by caller rather than simply disabled.
+      const replay = await callToolRaw(server, 'sync_reporting_status', params, {
+        authInfo: { credential: { kind: 'api_key', key_id: 'consumer-a' } },
+      });
+      assert.notStrictEqual(replay.isError, true, JSON.stringify(replay.structuredContent));
+      assert.strictEqual(callers.length, 4, 'a caller replaying its own key must not re-run');
+    });
+
+    it('requires a consumer identity however the idempotency principal is resolved', async () => {
+      // `createAdcpServerFromPlatform` always installs a default
+      // `resolveIdempotencyPrincipal`, so gating the identity requirement on
+      // the resolver being absent disabled it for every platform-built server.
+      // That default falls back to sessionKey and then account.id -- shared by
+      // every consumer on the account -- and is `undefined` for an anonymous
+      // caller, whose request would then be answered from another consumer's
+      // cache entry without depositing a receipt.
+      const { createIdempotencyStore: createStore, memoryBackend: backend } = require('../dist/lib/server/idempotency');
+      let handled = 0;
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        idempotency: createStore({ backend: backend({ sweepIntervalMs: 0 }) }),
+        resolveIdempotencyPrincipal: () => 'shared-platform-principal',
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingStatus: async params => {
+            handled += 1;
+            return {
+              status: 'completed',
+              results: params.statuses.map(status => ({
+                result: 'created',
+                reporting_status_id: status.reporting_status_id,
+              })),
+            };
+          },
+        },
+      });
+      const params = {
+        account: { account_id: 'account-resolver' },
+        idempotency_key: 'reporting-status-resolver-key-0001',
+        statuses: [{ reporting_status_id: 'reporting-status-resolver-0001' }],
+      };
+
+      const anonymous = await callToolRaw(server, 'sync_reporting_status', params);
+      assert.strictEqual(anonymous.isError, true);
+      assert.strictEqual(anonymous.structuredContent.adcp_error.code, 'AUTH_MISSING');
+      assert.strictEqual(handled, 0, 'an underivable consumer must not reach the handler');
+
+      // A real consumer still works, and its own repeat still replays, so the
+      // gate narrows rather than disables.
+      const caller = { authInfo: { credential: { kind: 'api_key', key_id: 'consumer-a' } } };
+      assert.notStrictEqual(
+        (await callToolRaw(server, 'sync_reporting_status', params, caller)).isError,
+        true,
+        'an identified consumer is admitted'
+      );
+      await callToolRaw(server, 'sync_reporting_status', params, caller);
+      assert.strictEqual(handled, 1, 'the same consumer repeating its own key replays');
+    });
+
+    it('scopes sync_reporting_receipts replay by authenticated consumer identity', async () => {
+      const { createIdempotencyStore: createStore, memoryBackend: backend } = require('../dist/lib/server/idempotency');
+      const callers = [];
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        idempotency: createStore({ backend: backend({ sweepIntervalMs: 0 }) }),
+        resolveIdempotencyPrincipal: () => 'shared-platform-principal',
+        resolveSessionKey: ctx => ctx.authInfo?.credential?.key_id,
+        resolveReportingConsumerId: ctx => ctx.authInfo?.credential?.key_id,
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingReceipts: async (params, ctx) => {
+            callers.push(ctx.authInfo.credential.key_id);
+            return {
+              status: 'completed',
+              results: params.adjustment_receipts.map(receipt => ({
+                result: 'recorded',
+                adjustment_receipt: { ...receipt, received_at: '2026-09-02T01:01:00Z' },
+              })),
+            };
+          },
+        },
+      });
+      const params = {
+        account: { account_id: 'account-receipts' },
+        idempotency_key: 'reporting-receipts-scope-key-0001',
+        adjustment_receipts: [
+          {
+            reporting_receipt_id: 'adjustment-receipt-scope-0001',
+            reporting_adjustment_id: 'adjustment-scope-1',
+            adjusts_reporting_revision_id: 'revision-scope-1',
+            status: 'accepted',
+            observed_adjustment_sha256: 'a'.repeat(64),
+            observed_at: '2026-09-02T01:00:00Z',
+          },
+        ],
+      };
+      const caller = key_id => ({ authInfo: { credential: { kind: 'api_key', key_id } } });
+
+      for (const key of ['consumer-a', 'consumer-b']) {
+        const response = await callToolRaw(server, 'sync_reporting_receipts', params, caller(key));
+        assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
+      }
+      await callToolRaw(server, 'sync_reporting_receipts', params, caller('consumer-a'));
+      assert.deepStrictEqual(callers, ['consumer-a', 'consumer-b']);
+
+      const anonymous = await callToolRaw(server, 'sync_reporting_receipts', params);
+      assert.strictEqual(anonymous.isError, true);
+      assert.strictEqual(anonymous.structuredContent.adcp_error.code, 'AUTH_MISSING');
+    });
+
+    it('scopes replay by the resolved reporting consumer, not the credential', async () => {
+      // Two operator seats inside one buyer agent present the same OAuth
+      // client_id and resolve to the same account, but the deployment maps
+      // them to different reporting consumers. Keying replay by
+      // `oauth:<client_id>` put both in one cache entry, so the second seat
+      // was served the first's response and its receipt was never deposited.
+      const { createIdempotencyStore: createStore, memoryBackend: backend } = require('../dist/lib/server/idempotency');
+      const consumers = [];
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        idempotency: createStore({ backend: backend({ sweepIntervalMs: 0 }) }),
+        // The identity the receipt handler records under.
+        resolveReportingConsumerId: ctx => `consumer-${ctx.authInfo.operator}`,
+        // Shared across both seats, exactly as the credential is: only the
+        // resolved consumer separates them.
+        resolveSessionKey: () => 'shared-oauth-client',
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingStatus: async (params, ctx) => {
+            consumers.push(ctx.authInfo?.operator);
+            return {
+              status: 'completed',
+              results: params.statuses.map(status => ({
+                result: 'created',
+                reporting_status_id: status.reporting_status_id,
+              })),
+            };
+          },
+        },
+      });
+      const params = {
+        account: { account_id: 'account-operator-shared' },
+        idempotency_key: 'reporting-status-operator-key-0001',
+        statuses: [{ reporting_status_id: 'reporting-status-operator-0001' }],
+      };
+      const seat = operator => ({
+        authInfo: {
+          operator,
+          credential: { kind: 'oauth', client_id: 'shared-oauth-client', scopes: [], expires_at: null },
+        },
+      });
+
+      for (const operator of ['seat-a', 'seat-b']) {
+        const response = await callToolRaw(server, 'sync_reporting_status', params, seat(operator));
+        assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
+      }
+      assert.deepStrictEqual(
+        consumers,
+        ['seat-a', 'seat-b'],
+        'one OAuth client_id mapped to two reporting consumers must not share a receipt namespace'
+      );
+
+      // The same consumer repeating its own key still replays, so the
+      // namespace is narrowed by consumer rather than simply disabled.
+      const replay = await callToolRaw(server, 'sync_reporting_status', params, seat('seat-a'));
+      assert.notStrictEqual(replay.isError, true, JSON.stringify(replay.structuredContent));
+      assert.strictEqual(consumers.length, 2, 'a consumer replaying its own key must not re-run');
+    });
+
+    it('lets a custom authenticator name the consumer without a canonical credential', async () => {
+      // A custom `authenticate` callback may identify its consumer entirely
+      // through `authInfo.operator` or `authInfo.extra`, carrying no credential
+      // kind, no clientId and no registered agent. Requiring the canonical
+      // credential identity before the resolver ran rejected exactly the
+      // deployments that had told the framework how to name the consumer --
+      // AUTH_MISSING for an authenticated caller. The resolver is the
+      // authoritative mapping, so an authenticated caller is enough; an
+      // anonymous one is still refused.
+      const { createIdempotencyStore: createStore, memoryBackend: backend } = require('../dist/lib/server/idempotency');
+      const consumers = [];
+      const resolved = [];
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        idempotency: createStore({ backend: backend({ sweepIntervalMs: 0 }) }),
+        resolveReportingConsumerId: ctx => {
+          const id = `consumer-${ctx.authInfo.operator}-${ctx.authInfo.extra.tenant}`;
+          resolved.push(id);
+          return id;
+        },
+        resolveSessionKey: () => 'custom-auth-session',
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingStatus: async (params, ctx) => {
+            consumers.push(`${ctx.authInfo.operator}/${ctx.authInfo.extra.tenant}`);
+            return {
+              status: 'completed',
+              results: params.statuses.map(status => ({
+                result: 'created',
+                reporting_status_id: status.reporting_status_id,
+              })),
+            };
+          },
+        },
+      });
+      const params = {
+        account: { account_id: 'account-custom-auth' },
+        idempotency_key: 'reporting-status-custom-auth-0001',
+        statuses: [{ reporting_status_id: 'reporting-status-custom-0001' }],
+      };
+      // No credential, no clientId, no agent: nothing the canonical identity
+      // reads, and yet unambiguously authenticated.
+      const caller = (operator, tenant) => ({ authInfo: { operator, extra: { tenant } } });
+
+      const first = await callToolRaw(server, 'sync_reporting_status', params, caller('seat-a', 'tenant-1'));
+      assert.notStrictEqual(first.isError, true, JSON.stringify(first.structuredContent));
+      assert.deepStrictEqual(resolved, ['consumer-seat-a-tenant-1'], 'the resolver must run for a custom identity');
+      assert.deepStrictEqual(consumers, ['seat-a/tenant-1'], 'the receipt must reach the handler');
+
+      // A second custom identity is a distinct consumer, not a cache hit.
+      const second = await callToolRaw(server, 'sync_reporting_status', params, caller('seat-a', 'tenant-2'));
+      assert.notStrictEqual(second.isError, true, JSON.stringify(second.structuredContent));
+      assert.deepStrictEqual(
+        consumers,
+        ['seat-a/tenant-1', 'seat-a/tenant-2'],
+        'two custom identities must not share a receipt namespace'
+      );
+
+      // The same custom identity repeating its own key still replays.
+      await callToolRaw(server, 'sync_reporting_status', params, caller('seat-a', 'tenant-1'));
+      assert.strictEqual(consumers.length, 2, 'a consumer replaying its own key must not re-run');
+
+      // Anonymous is still refused before the resolver is consulted.
+      const asked = resolved.length;
+      const anonymous = await callToolRaw(server, 'sync_reporting_status', params);
+      assert.strictEqual(anonymous.isError, true);
+      assert.strictEqual(anonymous.structuredContent.adcp_error.code, 'AUTH_MISSING');
+      assert.strictEqual(resolved.length, asked, 'an anonymous caller must not reach the resolver');
+      assert.strictEqual(consumers.length, 2, 'an anonymous caller must not reach the handler');
+    });
+
+    it('refuses the tool when the reporting consumer cannot be resolved', async () => {
+      const { createIdempotencyStore: createStore, memoryBackend: backend } = require('../dist/lib/server/idempotency');
+      let handled = 0;
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        idempotency: createStore({ backend: backend({ sweepIntervalMs: 0 }) }),
+        resolveReportingConsumerId: () => {
+          throw new Error('consumer directory is unreachable');
+        },
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingStatus: async () => {
+            handled += 1;
+            return { status: 'completed', results: [] };
+          },
+        },
+      });
+
+      const response = await callToolRaw(
+        server,
+        'sync_reporting_status',
+        {
+          account: { account_id: 'account-unresolvable' },
+          idempotency_key: 'reporting-status-unresolvable-0001',
+          statuses: [{ reporting_status_id: 'reporting-status-unresolvable-0001' }],
+        },
+        { authInfo: { credential: { kind: 'api_key', key_id: 'consumer-a' } } }
+      );
+      assert.strictEqual(response.isError, true);
+      assert.strictEqual(response.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
+      assert.strictEqual(handled, 0, 'an unresolvable consumer must not reach the handler');
+    });
+
+    it('does not collapse two consumers behind one registered buyer agent', async () => {
+      // A registry resolves every caller on this deployment to the same
+      // buyer agent, and the canonical principal preferred `agent:<url>` over
+      // the presented credential. Two consumers then shared one replay
+      // namespace, and the second was served the first's cached response
+      // without depositing its own receipt.
+      const { createIdempotencyStore: createStore, memoryBackend: backend } = require('../dist/lib/server/idempotency');
+      const callers = [];
+      const agent = {
+        agent_url: 'https://buyer.example/agent',
+        display_name: 'Shared Buyer Agent',
+        status: 'active',
+        billing_capabilities: new Set(['operator']),
+      };
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        idempotency: createStore({ backend: backend({ sweepIntervalMs: 0 }) }),
+        agentRegistry: { resolve: async () => agent },
+        // One session key for the whole deployment: the outer principal is
+        // shared, so only the caller-scoped namespace separates consumers.
+        resolveSessionKey: () => 'shared-agent-session',
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingStatus: async (params, ctx) => {
+            callers.push(ctx.authInfo?.credential?.key_id);
+            return {
+              status: 'completed',
+              results: params.statuses.map(status => ({
+                result: 'created',
+                reporting_status_id: status.reporting_status_id,
+              })),
+            };
+          },
+        },
+      });
+      const params = {
+        account: { account_id: 'account-agent-shared' },
+        idempotency_key: 'reporting-status-agent-key-0001',
+        statuses: [{ reporting_status_id: 'reporting-status-agent-0001' }],
+      };
+
+      for (const key_id of ['agent-consumer-a', 'agent-consumer-b']) {
+        const response = await callToolRaw(server, 'sync_reporting_status', params, {
+          authInfo: { credential: { kind: 'api_key', key_id } },
+        });
+        assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
+      }
+      assert.deepStrictEqual(
+        callers,
+        ['agent-consumer-a', 'agent-consumer-b'],
+        'one registered agent must not merge two consumers into one receipt namespace'
+      );
+    });
+  });
+
   describe('caller-scoped 3.2 mutations', () => {
     const capabilityChanges = {
       capabilities_version: 'caps-v1',
@@ -1010,7 +1520,7 @@ describe('createAdcpServer', () => {
       },
     };
 
-    it('requires scope resolvers when sensitive mutation handlers are registered', () => {
+    it('requires dedicated scope resolvers for sensitive protocol and governance handlers', () => {
       assert.throws(
         () =>
           createAdcpServer({
@@ -1020,6 +1530,15 @@ describe('createAdcpServer', () => {
             capabilities: { capability_changes: capabilityChanges },
           }),
         /protocol\.resolveScope is required/
+      );
+      assert.throws(
+        () =>
+          createAdcpServer({
+            name: 'Test',
+            version: '1.0.0',
+            protocol: { getPrincipal: async () => ({ result: { kind: 'unconfigured' } }) },
+          }),
+        /protocol\.resolvePrincipalScope is required/
       );
       assert.throws(
         () =>
@@ -1121,6 +1640,133 @@ describe('createAdcpServer', () => {
       }
       assert.strictEqual(executions, 2);
     });
+
+    it('resolves principal scope before reads and idempotency replay', async () => {
+      let executions = 0;
+      const seen = [];
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        idempotency: createIdempotencyStore({ backend: memoryBackend() }),
+        resolveIdempotencyPrincipal: () => 'intentionally-shared',
+        protocol: {
+          resolvePrincipalScope: ctx => ({
+            tenant_id: 'tenant-principal',
+            principal_id: ctx.authInfo.credential.key_id,
+            principal_kind: 'buyer_agent',
+          }),
+          getPrincipal: async (_params, ctx) => {
+            seen.push(ctx.callerMutationScope);
+            return { result: { kind: 'unconfigured' } };
+          },
+          syncPrincipal: async (_params, ctx) => {
+            executions++;
+            seen.push(ctx.callerMutationScope);
+            return {
+              result: {
+                kind: 'applied',
+                action: 'cleared',
+                dry_run: false,
+                principal_id: `record-${ctx.callerMutationScope.principal_id}`,
+                principal_kind: 'buyer_agent',
+                configuration_version: `version-${executions}`,
+                configuration: {},
+              },
+            };
+          },
+        },
+      });
+
+      for (const toolName of ['get_principal', 'sync_principal']) {
+        const unauthenticated = await callToolRaw(
+          server,
+          toolName,
+          toolName === 'get_principal'
+            ? {}
+            : { idempotency_key: 'principal-scope-key-0001', configuration: { declarations: {} } }
+        );
+        assert.strictEqual(unauthenticated.isError, true);
+        assert.strictEqual(unauthenticated.structuredContent.adcp_error.code, 'AUTH_MISSING');
+      }
+
+      const params = {
+        idempotency_key: 'principal-scope-key-0001',
+        configuration: { declarations: {} },
+      };
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const response = await callToolRaw(server, 'sync_principal', params, {
+          authInfo: { credential: { kind: 'api_key', key_id: 'buyer-a' } },
+        });
+        assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
+        assert.strictEqual(response.structuredContent.replayed, attempt === 0 ? undefined : true);
+      }
+      const other = await callToolRaw(server, 'sync_principal', params, {
+        authInfo: { credential: { kind: 'api_key', key_id: 'buyer-b' } },
+      });
+      assert.notStrictEqual(other.isError, true, JSON.stringify(other.structuredContent));
+      assert.strictEqual(other.structuredContent.replayed, undefined);
+      assert.strictEqual(executions, 2);
+
+      const read = await callToolRaw(
+        server,
+        'get_principal',
+        {},
+        {
+          authInfo: { credential: { kind: 'api_key', key_id: 'buyer-a' } },
+        }
+      );
+      assert.notStrictEqual(read.isError, true, JSON.stringify(read.structuredContent));
+      assert.strictEqual(seen.at(-1).principal_id, 'buyer-a');
+      assert.strictEqual(seen.at(-1).principal_kind, 'buyer_agent');
+    });
+
+    it('resolves exact principal replays before applying the expected kind fence', async () => {
+      let executions = 0;
+      let principalKind = 'buyer_agent';
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        idempotency: createIdempotencyStore({ backend: memoryBackend() }),
+        protocol: {
+          resolvePrincipalScope: () => ({
+            tenant_id: 'tenant-principal',
+            principal_id: 'stable-subject',
+            principal_kind: principalKind,
+            principal_record_id: 'record-stable-subject',
+          }),
+          syncPrincipal: async () => {
+            executions++;
+            return {
+              result: {
+                kind: 'applied',
+                action: 'cleared',
+                dry_run: false,
+                principal_id: 'record-stable-subject',
+                principal_kind: principalKind,
+                configuration_version: `version-${executions}`,
+                configuration: {},
+              },
+            };
+          },
+        },
+      });
+      const params = {
+        idempotency_key: 'principal-reclassification-key',
+        expected_principal_kind: 'buyer_agent',
+        configuration: { declarations: {} },
+      };
+      const first = await callToolRaw(server, 'sync_principal', params, {
+        authInfo: { credential: { kind: 'api_key', key_id: 'buyer-a' } },
+      });
+      assert.notStrictEqual(first.isError, true, JSON.stringify(first.structuredContent));
+      principalKind = 'operator';
+      const second = await callToolRaw(server, 'sync_principal', params, {
+        authInfo: { credential: { kind: 'api_key', key_id: 'buyer-a' } },
+      });
+      assert.strictEqual(second.structuredContent.result.kind, 'applied');
+      assert.strictEqual(second.structuredContent.replayed, true);
+      assert.strictEqual(executions, 1);
+    });
   });
 
   describe('customTools', () => {
@@ -1146,7 +1792,7 @@ describe('createAdcpServer', () => {
         const server = createAdcpServer({
           name: `push-config-guard-${label}`,
           version: '1.0.0',
-          adcpVersion: '3.2.0-rc.3',
+          adcpVersion: '3.2.1',
           validation: { requests: 'off', responses: 'off' },
           mediaBuy: {
             getProducts: async () => {
@@ -1422,6 +2068,45 @@ describe('createAdcpServer', () => {
   });
 
   describe('MCP App resources', () => {
+    it('normalizes nested and legacy MCP App tool metadata on the legacy path', async () => {
+      const handler = async () => ({ content: [{ type: 'text', text: 'opened' }] });
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        resources: [
+          {
+            name: 'creative_upload',
+            uri: 'ui://creative/upload',
+            handler: async () => '<!doctype html><html></html>',
+          },
+        ],
+        customTools: {
+          nested_app: {
+            _meta: { ui: { resourceUri: 'ui://creative/upload' } },
+            handler,
+          },
+          legacy_app: {
+            _meta: { 'ui/resourceUri': 'ui://creative/upload' },
+            handler,
+          },
+          non_app_metadata: {
+            _meta: {},
+            handler,
+          },
+        },
+      });
+
+      const listed = await server.dispatchTestRequest({ method: 'tools/list' });
+      const tools = Object.fromEntries(listed.tools.map(tool => [tool.name, tool]));
+      const expected = {
+        ui: { resourceUri: 'ui://creative/upload' },
+        'ui/resourceUri': 'ui://creative/upload',
+      };
+      assert.deepStrictEqual(tools.nested_app._meta, expected);
+      assert.deepStrictEqual(tools.legacy_app._meta, expected);
+      assert.deepStrictEqual(tools.non_app_metadata._meta, {});
+    });
+
     it('lists and reads a typed ui:// HTML resource on the legacy MCP path', async () => {
       let seen;
       const resourceMeta = {
@@ -1742,7 +2427,7 @@ describe('createAdcpServer', () => {
           acceptProposal: async () => ({}),
         },
       });
-      const modern = await callTool(server, 'get_adcp_capabilities', { adcp_version: '3.2-rc.3' });
+      const modern = await callTool(server, 'get_adcp_capabilities', { adcp_version: '3.2' });
       assert.deepStrictEqual(modern.media_buy.lifecycle_tools, [
         'list_products',
         'request_proposals',
@@ -1918,6 +2603,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         mediaBuy: {
           getProducts: async () => ({ products: [] }),
         },
@@ -1938,6 +2624,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         mediaBuy: {
           getProducts: async () => ({ products: [] }),
           createMediaBuy: async () => ({ media_buy_id: 'mb_1', packages: [] }),
@@ -2030,6 +2717,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         mediaBuy: {
           getProducts: async () => ({ products: [] }),
           createMediaBuy: async () => ({ media_buy_id: 'mb_1', packages: [], status: 'active' }),
@@ -2113,6 +2801,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         mediaBuy: {
           createMediaBuy: async () => ({
             errors: [{ code: 'PRODUCT_NOT_FOUND', message: 'no such product', field: 'packages[0].product_id' }],
@@ -2138,6 +2827,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         mediaBuy: {
           createMediaBuy: async () => ({
             status: 'submitted',
@@ -2165,6 +2855,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         creative: {
           syncCreatives: async () => ({
             errors: [{ code: 'AUTHENTICATION_FAILED', message: 'bad token' }],
@@ -2185,6 +2876,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         validation: { responses: 'strict' },
         creative: {
           syncCreatives: async () => ({
@@ -2207,6 +2899,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         mediaBuy: {
           createMediaBuy: async () => ({ media_buy_id: 'mb_1', packages: [] }),
         },
@@ -2229,6 +2922,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         creative: {
           syncCreatives: async () => ({
             status: 'submitted',
@@ -2253,6 +2947,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         mediaBuy: {
           createMediaBuy: async () => ({
             errors: [{ code: 'PRODUCT_NOT_FOUND', message: 'gone' }],
@@ -2279,6 +2974,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         mediaBuy: {
           createMediaBuy: async () => ({ errors: [] }),
         },
@@ -2302,6 +2998,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         mediaBuy: {
           createMediaBuy: async () => ({
             errors: [{ code: 'WARNING', message: 'partial success' }],
@@ -3220,7 +3917,7 @@ describe('createAdcpServer', () => {
       assert.strictEqual(status.task_type, 'sync_creatives');
       assert.strictEqual(status.protocol, 'media-buy');
       assert.strictEqual(status.has_webhook, true);
-      assert.strictEqual(status.adcp_version, '3.2-rc.3');
+      assert.strictEqual(status.adcp_version, '3.2');
       assert.deepStrictEqual(status.result, { creatives: [{ creative_id: 'cr_1' }] });
       assert.deepStrictEqual(status.context, { trace_id: 'trace_1' });
 
@@ -3270,7 +3967,7 @@ describe('createAdcpServer', () => {
       assert.strictEqual(listed.tasks[0].task_type, 'sync_creatives');
       assert.strictEqual(listed.tasks[0].has_webhook, true);
       assert.strictEqual(listed.pagination.total_count, 1);
-      assert.strictEqual(listed.adcp_version, '3.2-rc.3');
+      assert.strictEqual(listed.adcp_version, '3.2');
 
       const buyerTwoList = await callTool(
         server,
@@ -3284,7 +3981,7 @@ describe('createAdcpServer', () => {
       const badCursor = await callToolRaw(server, 'list_tasks', { pagination: { cursor: 'not-a-number' } }, buyerOne);
       assert.strictEqual(badCursor.isError, true);
       assert.strictEqual(badCursor.structuredContent.adcp_error.code, 'INVALID_REQUEST');
-      assert.strictEqual(badCursor.structuredContent.adcp_version, '3.2-rc.3');
+      assert.strictEqual(badCursor.structuredContent.adcp_version, '3.2');
 
       const opaqueTaskId = 'opaque_' + 'x'.repeat(160);
       const opaque = await taskRegistry.create({
@@ -3793,12 +4490,12 @@ describe('createAdcpServer', () => {
       const status = await callToolRaw(server, 'get_task_status', { task_id: owned.taskId }, extra);
       assert.strictEqual(status.isError, true);
       assert.strictEqual(status.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
-      assert.strictEqual(status.structuredContent.adcp_version, '3.2-rc.3');
+      assert.strictEqual(status.structuredContent.adcp_version, '3.2');
 
       const listed = await callToolRaw(server, 'list_tasks', {}, extra);
       assert.strictEqual(listed.isError, true);
       assert.strictEqual(listed.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
-      assert.strictEqual(listed.structuredContent.adcp_version, '3.2-rc.3');
+      assert.strictEqual(listed.structuredContent.adcp_version, '3.2');
 
       const contextLeak = await callToolRaw(
         server,
@@ -3831,6 +4528,45 @@ describe('createAdcpServer', () => {
 
       const listed = await callTool(server, 'list_tasks', { filters: { task_ids: [owned.taskId, other.taskId] } });
       assert.deepStrictEqual(listed.tasks, []);
+    });
+
+    it('returns ACCOUNT_REQUIRED when auth-derived task scope cannot select an account', async () => {
+      const taskRegistry = createInMemoryTaskRegistry();
+      const owned = await taskRegistry.create({ tool: 'sync_creatives', accountId: 'acct_1' });
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        taskRegistry,
+        stateStore: new InMemoryStateStore(),
+        resolveAccountFromAuth: async () => null,
+      });
+
+      const status = await callToolRaw(server, 'get_task_status', { task_id: owned.taskId });
+      assert.strictEqual(status.isError, true);
+      assert.strictEqual(status.structuredContent.adcp_error.code, 'ACCOUNT_REQUIRED');
+      assert.strictEqual(status.structuredContent.adcp_error.recovery, 'correctable');
+      assert.strictEqual(status.structuredContent.adcp_error.field, 'account');
+      assert.match(status.structuredContent.adcp_error.suggestion, /list_accounts|pass account/i);
+
+      const listed = await callToolRaw(server, 'list_tasks', {});
+      assert.strictEqual(listed.isError, true);
+      assert.strictEqual(listed.structuredContent.adcp_error.code, 'ACCOUNT_REQUIRED');
+      assert.strictEqual(listed.structuredContent.adcp_error.recovery, 'correctable');
+      assert.strictEqual(listed.structuredContent.adcp_error.field, 'account');
+      assert.match(listed.structuredContent.adcp_error.suggestion, /list_accounts|pass account/i);
+
+      const throwingServer = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        taskRegistry,
+        stateStore: new InMemoryStateStore(),
+        resolveAccountFromAuth: async () => {
+          throw adcpError('ACCOUNT_NOT_FOUND', { message: 'credential did not select an account' });
+        },
+      });
+      const projected = await callToolRaw(throwingServer, 'get_task_status', { task_id: owned.taskId });
+      assert.strictEqual(projected.structuredContent.adcp_error.code, 'ACCOUNT_REQUIRED');
+      assert.strictEqual(projected.structuredContent.adcp_error.field, 'account');
     });
 
     it('returns ACCOUNT_NOT_FOUND for explicit nonexistent task-query accounts', async () => {
@@ -3987,6 +4723,20 @@ describe('createAdcpServer', () => {
       const tool = registeredTool(server, 'sync_creatives');
       assert.strictEqual(tool.annotations.idempotentHint, true);
     });
+
+    it('does not advertise keyless get_creative_features calls as idempotent', () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        governance: {
+          getCreativeFeatures: async () => ({ features: [] }),
+        },
+      });
+      const tool = registeredTool(server, 'get_creative_features');
+      assert.strictEqual(tool.annotations.readOnlyHint, false);
+      assert.strictEqual(tool.annotations.destructiveHint, false);
+      assert.strictEqual(tool.annotations.idempotentHint, undefined);
+    });
   });
 
   describe('unknown handler key warning', () => {
@@ -4058,6 +4808,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         stateStore: store,
         mediaBuy: {
           createMediaBuy: async (params, ctx) => {

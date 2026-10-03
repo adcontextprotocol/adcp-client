@@ -26,6 +26,7 @@ const {
   listValidatorKeys,
   resolveBundleKey,
   hasSchemaBundle,
+  withExternalSchemaRoot,
   _resetValidationLoader,
 } = require('../../dist/lib/validation/schema-loader.js');
 const { ADCP_VERSION } = require('../../dist/lib/version.js');
@@ -80,12 +81,15 @@ function runPrereleaseSortFixture() {
       [
         '-e',
         `
-const { getValidator } = require(${JSON.stringify(loaderPath)});
+const { getCanonicalToolValidatorForVersion, getValidator } = require(${JSON.stringify(loaderPath)});
 const validator = getValidator('get_products', 'request', ${JSON.stringify(PRERELEASE_SORT_FAMILY)});
+const canonical = getCanonicalToolValidatorForVersion('get_products', 'request', ${JSON.stringify(PRERELEASE_SORT_FAMILY)});
 console.log(JSON.stringify({
   hasValidator: !!validator,
   acceptsNew: validator ? validator({ sentinel: 'new' }) : false,
   acceptsOld: validator ? validator({ sentinel: 'old' }) : false,
+  canonicalAcceptsNew: canonical ? canonical({ sentinel: 'new' }) : false,
+  canonicalAcceptsOld: canonical ? canonical({ sentinel: 'old' }) : false,
   errors: validator?.errors ?? null,
 }));
 `,
@@ -240,6 +244,8 @@ describe('schema-loader per-version state', () => {
     assert.strictEqual(result.hasValidator, true, `${PRERELEASE_SORT_FAMILY} get_products::request must compile`);
     assert.strictEqual(result.acceptsNew, true, 'rc.10 must sort newer than rc.9');
     assert.strictEqual(result.acceptsOld, false, 'rc.9 must not win lexicographically over rc.10');
+    assert.strictEqual(result.canonicalAcceptsNew, true, 'bundled-only canonical fallbacks must compile strictly');
+    assert.strictEqual(result.canonicalAcceptsOld, false, 'the canonical fallback must use the selected bundle');
   });
 
   test('resolveBundleKey rejects prerelease tags with non-SemVer chars (path-traversal hardening)', () => {
@@ -284,15 +290,13 @@ describe('schema-loader per-version state', () => {
     assert.strictEqual(resolveBundleKey('v2.6'), 'v2.6');
   });
 
-  test(`${ADCP_VERSION} opt-in bundle compiles and accepts wholesale-feed request fields`, () => {
-    // Runtime guard for the 3.1 prerelease opt-in: a consumer pinning the
-    // current prerelease gets a compiled validator that accepts the wholesale-feed
-    // request fields (if_wholesale_feed_version / if_pricing_version) the type
-    // surface exposes via `@adcp/sdk/types/v3-1-beta`. Without this, the
-    // type-side worked but the wire-side could regress silently.
+  test(`${ADCP_VERSION} primary bundle compiles and accepts wholesale-feed request fields`, () => {
+    // Runtime guard for the exact current prerelease: its compiled validator
+    // accepts the wholesale-feed request fields exposed by the primary type
+    // surface. Without this, type generation and wire validation could drift.
     _resetValidationLoader(ADCP_VERSION);
     const v = getValidator('get_products', 'request', ADCP_VERSION);
-    assert.ok(v, '3.1 prerelease get_products::request must compile from the opt-in bundle');
+    assert.ok(v, `${ADCP_VERSION} get_products::request must compile from the primary bundle`);
     const ok = v({
       adcp_version: ADCP_RELEASE_PRECISION,
       brief: 'wholesale catalog mirror probe',
@@ -368,32 +372,93 @@ describe('schema-loader per-version state', () => {
     );
   });
 
-  test('ensureCoreLoaded narrowing keeps v3 bundled-path validators intact', () => {
+  test('ensureCoreLoaded narrowing keeps v3 bundled validators intact when canonical ids overlap', () => {
     // Regression guard for the v2.5-schemas branch: when ensureCoreLoaded was
     // narrowed from "skip all fileIndex entries" to "skip only response tool
     // files" so v2.5 flat-tree fragments register, v3's bundled-path
-    // validators must still resolve through getValidator unchanged. Bundled
-    // and flat-tree request schemas have distinct $ids (bundled has
-    // `/schemas/<v>/bundled/...` vs flat `/schemas/<v>/...`), so no
-    // AJV-side collision; this test pins that invariant. Targets the
-    // currently-shipped bundle (ADCP_VERSION); on 3.0.x it pinned '3.0.1'.
+    // validators must still resolve through getValidator unchanged. Current
+    // protocol bundles deliberately give bundled and modular documents the
+    // same canonical $id, so preloading the modular tree must not shadow the
+    // selected, fully resolved bundle. Targets the currently-shipped bundle
+    // (ADCP_VERSION); on 3.0.x it pinned '3.0.1'.
     _resetValidationLoader(ADCP_VERSION);
     const v = getValidator('create_media_buy', 'request', ADCP_VERSION);
     assert.ok(v, 'v3 create_media_buy::request must compile after narrowing');
-    // Schema reference should point at the bundled file (the path the loader
-    // selects when the bundled tree exists).
+    // The selected bundled document has the canonical id plus the bundle-only
+    // marker and definitions. The modular document shares the id, so the id
+    // alone cannot prove which document AJV compiled.
     const schema = v.schema;
-    assert.match(
+    assert.strictEqual(
       schema.$id,
-      /\/bundled\//,
-      `expected bundled $id, got: ${schema.$id} — bundled-path priority must survive ensureCoreLoaded narrowing`
+      `https://adcontextprotocol.org/schemas/${ADCP_VERSION}/media-buy/create-media-buy-request.json`
     );
+    assert.ok(
+      schema._bundled && typeof schema._bundled === 'object',
+      'selected tool schema must retain the bundle marker'
+    );
+    assert.ok(
+      schema.$defs && Object.keys(schema.$defs).length > 0,
+      'selected tool schema must retain bundled definitions'
+    );
+  });
+
+  test('canonical bundled response ids preserve response-root relaxation', () => {
+    const version = '8.8.0';
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-schema-loader-canonical-id-'));
+    const bundledDir = path.join(tempRoot, 'bundled', 'media-buy');
+    const modularDir = path.join(tempRoot, 'media-buy');
+    const responseId = `/schemas/${version}/media-buy/list-products-response.json`;
+    fs.mkdirSync(bundledDir, { recursive: true });
+    fs.mkdirSync(modularDir, { recursive: true });
+
+    const responseSchema = {
+      $id: responseId,
+      type: 'object',
+      properties: { outcome: { const: 'listed' } },
+      required: ['outcome'],
+      additionalProperties: false,
+    };
+    fs.writeFileSync(
+      path.join(bundledDir, 'list-products-request.json'),
+      JSON.stringify({
+        $id: `/schemas/${version}/media-buy/list-products-request.json`,
+        type: 'object',
+        additionalProperties: false,
+      })
+    );
+    fs.writeFileSync(path.join(bundledDir, 'list-products-response.json'), JSON.stringify(responseSchema));
+    fs.writeFileSync(path.join(modularDir, 'list-products-response.json'), JSON.stringify(responseSchema));
+
+    try {
+      withExternalSchemaRoot(version, tempRoot, () => {
+        _resetValidationLoader(version);
+        const request = getValidator('list_products', 'request', version);
+        assert.ok(request, 'request validator must compile and trigger core schema registration');
+        assert.strictEqual(request({}), true, JSON.stringify(request.errors));
+
+        const response = getValidator('list_products', 'sync', version);
+        assert.ok(response, 'response validator must compile');
+        assert.strictEqual(
+          response({ outcome: 'listed', envelope_extension: true }),
+          true,
+          `response root must remain extensible when modular and bundled schemas share ${responseId}: ${JSON.stringify(response.errors)}`
+        );
+      });
+    } finally {
+      _resetValidationLoader(version);
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   test('getSchemaValidatorByRef compiles MCP webhook payload schema with nested refs', () => {
     _resetValidationLoader(ADCP_VERSION);
     const validate = getSchemaValidatorByRef('core/mcp-webhook-payload.json', ADCP_VERSION);
+    const collectAll = getSchemaValidatorByRef('core/mcp-webhook-payload.json', ADCP_VERSION, undefined, {
+      allErrors: true,
+    });
     assert.ok(validate, 'MCP webhook payload schema must compile');
+    assert.ok(collectAll, 'all-errors MCP webhook payload schema must compile');
+    assert.notStrictEqual(validate, collectAll, 'all-errors validators must use a separate cache entry');
 
     const ok = validate({
       idempotency_key: 'evt_schema_ref_0000001',
@@ -418,5 +483,18 @@ describe('schema-loader per-version state', () => {
       result: { status: 'completed', media_buy_id: 'mb_1', packages: [] },
     });
     assert.strictEqual(missingEnvelopeFields, false, 'schema should reject missing operation_id and timestamp');
+    assert.strictEqual(validate.errors.length, 1, 'the default remote-payload validator must remain fail-fast');
+
+    assert.strictEqual(
+      collectAll({
+        idempotency_key: 'evt_schema_ref_0000001',
+        task_id: 'task_schema_ref',
+        task_type: 'create_media_buy',
+        status: 'completed',
+        result: { status: 'completed', media_buy_id: 'mb_1', packages: [] },
+      }),
+      false
+    );
+    assert.ok(collectAll.errors.length >= 2, 'the opt-in validator must collect multiple errors');
   });
 });

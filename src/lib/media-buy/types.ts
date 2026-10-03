@@ -16,21 +16,27 @@ export type {
 
 import type { MediaBuyAvailableAction, MediaBuyValidAction } from '../types/core.generated';
 import type { SLAWindow } from '../types/core.generated';
+import type { ControlMediaBuyRequest } from '../types/tools.generated';
 import type { MediaBuyUpdateFieldAction } from './update-fields.generated';
+import type { CANONICAL_ACTION_TASKS } from './action-metadata.generated';
 
 /**
  * Every action id the structured `available_actions[].action` surface can
  * carry. Derived from the generated wire type plus the generated
- * `update_media_buy` dispatch table, so it is exactly the legacy
- * `MediaBuyValidAction` enum on schema pins that predate
+ * `update_media_buy` dispatch table, preserving the legacy vocabulary on schema pins that predate
  * `core/media-buy-available-action-id.json` (AdCP <= 3.2.0-rc.2) and widens
  * to include structured-only ids such as `update_media_buy_frequency_cap`
- * once the pin picks that schema up. Use this — not `MediaBuyValidAction` —
+ * once the pin picks that schema up. Canonical task metadata keeps the union
+ * narrow even when a generated oneOf wire type flattens action to string.
+ * Use this — not `MediaBuyValidAction` —
  * wherever code reads `available_actions[].action`, `allowed_actions[].action`,
  * or `ACTION_NOT_ALLOWED.attempted_action`. `MediaBuyValidAction` remains the
  * correct type for the deprecated flat `valid_actions[]` list only.
  */
-export type MediaBuyActionId = MediaBuyAvailableAction['action'] | MediaBuyUpdateFieldAction;
+export type MediaBuyActionId =
+  | MediaBuyAvailableAction['action']
+  | MediaBuyUpdateFieldAction
+  | keyof typeof CANONICAL_ACTION_TASKS;
 
 /**
  * @deprecated Use `SLAWindow`. Kept as an import-compatibility alias for the
@@ -61,17 +67,28 @@ export type LegacyCoarseAction = (typeof LEGACY_COARSE_ACTIONS)[number];
  * fields are required by the helpers themselves.
  */
 export interface MediaBuyActionContext {
+  accepted_proposal?: import('./action-types').ActionProposal;
+  accepted_proposal_id?: string;
   media_buy_id?: string;
   status?: string;
   start_time?: string;
   end_time?: string;
+  revision?: number;
+  currency?: string;
+  total_budget?: number | { amount: number; currency: string };
+  daily_budget_cap?: number | null;
   packages?: ReadonlyArray<{
     package_id?: string;
     budget?: number;
     start_time?: string;
     end_time?: string;
+    canceled?: boolean;
+    paused?: boolean;
+    status?: string;
+    daily_budget_cap?: number | null;
+    min_spend_target?: number | null;
   }>;
-  available_actions?: MediaBuyAvailableAction[];
+  available_actions?: readonly import('./action-types').LiveMediaBuyAction[];
   valid_actions?: MediaBuyValidAction[];
 }
 
@@ -82,6 +99,23 @@ export interface MediaBuyActionContext {
  * resolver signature.
  */
 export interface UpdateMediaBuyRequestLike {
+  media_buy_id?: string;
+  account?: unknown;
+  context?: unknown;
+  governance_context?: unknown;
+  push_notification_config?: unknown;
+  ext?: unknown;
+  budget_cap_timezone?: string | null;
+  invoice_recipient?: unknown;
+  revision?: number;
+  idempotency_key?: string;
+  name?: string;
+  total_budget?: { amount: number; currency: string };
+  daily_budget_cap?: number | null;
+  budget_allocation?: unknown;
+  pacing?: unknown;
+  bidding?: unknown;
+  reporting_webhook?: unknown;
   paused?: boolean;
   canceled?: true;
   cancellation_reason?: string;
@@ -92,13 +126,26 @@ export interface UpdateMediaBuyRequestLike {
   new_packages?: ReadonlyArray<unknown>;
   packages?: ReadonlyArray<{
     package_id: string;
-    budget?: number;
+    context?: unknown;
+    ext?: unknown;
+    cancellation_reason?: string;
+    catalogs?: unknown;
+    catalog_ids?: readonly string[];
+    bid_price?: number;
+    optimization_goals?: unknown;
+    impressions?: number;
+    budget?: number | null;
+    daily_budget_cap?: number | null;
+    min_spend_target?: number | null;
+    bidding?: unknown;
     pacing?: unknown;
     start_time?: string;
     end_time?: string;
     paused?: boolean;
     canceled?: true;
-    targeting_overlay?: { frequency_cap?: unknown; [k: string]: unknown };
+    targeting_overlay?:
+      | NonNullable<ControlMediaBuyRequest['packages']>[number]['targeting_overlay']
+      | { frequency_cap?: unknown; [k: string]: unknown };
     keyword_targets_add?: unknown;
     keyword_targets_remove?: unknown;
     negative_keywords_add?: unknown;

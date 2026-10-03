@@ -865,11 +865,32 @@ describe('requires_capability `contains:` matcher (#1817)', () => {
       null,
       'object key order must not affect membership'
     );
+    assert.equal(
+      evaluateCapabilityPredicate(storyboard.requires_capability, [
+        { task: 'activate_signal', modes: ['signed_context', 'online_execution_check'] },
+      ]),
+      null,
+      'a seller combines all supported modes for one task, so requested modes match as a subset'
+    );
     assert.ok(
       evaluateCapabilityPredicate(storyboard.requires_capability, [
         { task: 'activate_signal', modes: ['unsigned_context'] },
       ])?.includes('must contain'),
       'nested array values remain significant'
+    );
+    assert.ok(
+      evaluateCapabilityPredicate(
+        { path: 'adcp.governance_enforcement.tasks', contains: { ...governanceTask, min_version: '3.2' } },
+        [{ task: 'activate_signal', modes: ['signed_context'] }]
+      )?.includes('must contain'),
+      'unknown predicate keys must not be silently ignored'
+    );
+    assert.ok(
+      evaluateCapabilityPredicate(
+        { path: 'adcp.governance_enforcement.tasks', contains: { task: 'activate_signal', modes: [] } },
+        [{ task: 'activate_signal', modes: ['signed_context'] }]
+      )?.includes('must contain'),
+      'an empty modes predicate must not match every declaration'
     );
   });
 });
@@ -898,6 +919,12 @@ describe('requires_capability `not_contains:` matcher', () => {
       evaluateCapabilityPredicate(notContainsObject, [
         { modes: ['signed_context'], task: 'activate_signal' },
       ])?.includes('must not contain')
+    );
+    assert.ok(
+      evaluateCapabilityPredicate(notContainsObject, [
+        { task: 'activate_signal', modes: ['signed_context', 'online_execution_check'] },
+      ])?.includes('must not contain'),
+      'negative governance membership also recognizes a subset of declared modes'
     );
   });
 });

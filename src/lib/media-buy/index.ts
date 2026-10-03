@@ -15,6 +15,9 @@ export type {
 } from './types';
 export { LEGACY_COARSE_ACTIONS } from './types';
 
+/** Readable result of getAvailableActions; MediaBuyAvailableAction remains the narrower legacy wire type. */
+export type { LiveMediaBuyAction } from './action-types';
+
 export type { AvailableActionsResult, AvailableActionsSource } from './available-actions';
 export {
   findAvailableAction,
@@ -82,6 +85,7 @@ export type {
   StructuredOnlyMediaBuyAction,
   UpdateFieldEntry,
 } from './update-fields.generated';
+/** Legacy coarse update-field metadata. Use decomposeUpdateMediaBuy for current accepted-term action mapping. */
 export {
   ACTIONS_BY_FIELD,
   STRUCTURED_ONLY_MEDIA_BUY_ACTIONS,
@@ -90,7 +94,10 @@ export {
 
 export { applyTargetingInput, hasTargetingClears, resolveTargetingInput } from './targeting-input';
 export type { ResolvedTargetingInput, TargetingInputFor } from './targeting-input';
+export type { CreateTargetingInput, UpdateTargetingInput } from '../types';
 
 export * from './compatibility';
 export * from './established-proposal-store';
 export * from './legacy-purchase-continuation';
+
+export * from './actions';

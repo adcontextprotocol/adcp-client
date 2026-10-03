@@ -171,9 +171,10 @@ const EXPLICIT_CODE_POLICY: Partial<Record<ErrorCode, CodePolicy>> = {
   GOVERNANCE_UNAVAILABLE: { action: 'escalate', escalateReason: 'governance_unreachable' },
   CAMPAIGN_SUSPENDED: { action: 'escalate', escalateReason: 'governance_unreachable' },
 
-  // Resource-not-found — re-discover and retry. attemptCap: 3 so a buyer with
+  // Account selection / resource-not-found — re-discover and retry. attemptCap: 3 so a buyer with
   // a stale cache can list, mutate, list-again-on-second-staleness, and still
   // succeed before escalation.
+  ACCOUNT_REQUIRED: { action: 'mutate-and-retry', attemptCap: 3, reason: 'redirect', baseDelayMs: 250 },
   ACCOUNT_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 3, reason: 'redirect', baseDelayMs: 250 },
   MEDIA_BUY_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 3, reason: 'redirect', baseDelayMs: 250 },
   PACKAGE_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 3, reason: 'redirect', baseDelayMs: 250 },

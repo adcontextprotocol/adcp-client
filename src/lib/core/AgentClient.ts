@@ -2,7 +2,8 @@
 
 import type { Client as MCPClient } from '@modelcontextprotocol/sdk/client/index.js';
 import { randomUUID } from 'node:crypto';
-import type { AgentConfig } from '../types';
+import type { AccountReference, AgentConfig } from '../types';
+import type { ResolveAccountOptions } from './account-resolution';
 import type {
   MCPWebhookPayload,
   GetBrandIdentityRequest,
@@ -19,6 +20,8 @@ import type {
 import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 import {
   SingleAgentClient,
+  type CapabilityEvidenceScope,
+  type CapabilityEvidenceSnapshot,
   type CanonicalReadTaskOptions,
   type CreativeDeliveryTaskOptions,
   type SingleAgentClientConfig,
@@ -28,7 +31,14 @@ import {
   type WebhookParseResult,
   type WebhookRequestContext,
 } from './SingleAgentClient';
-import type { InputHandler, TaskOptions, TaskResult, TaskInfo, Message } from './ConversationTypes';
+import type {
+  InputHandler,
+  TaskOptions,
+  TaskResult,
+  TaskInfo,
+  Message,
+  DirectPauseRecoveryRequest,
+} from './ConversationTypes';
 import type {
   BeforeProtocolDispatchHook,
   ExternalTaskSettlementObservation,
@@ -37,11 +47,11 @@ import type {
 import { assertNativeRequestProposalsTask, guardNativeRequestProposalsCompletion } from './request-proposals-guard';
 import type { AdcpCapabilities } from '../utils/capabilities';
 import type { WebhookHeaderValue } from '../webhooks';
+import type { ListProductsResponseWithSupplyPath } from '../supply-path';
 import type {
   GetProductsRequest,
   GetProductsResponse,
   ListProductsRequest,
-  ListProductsResponse,
   RequestProposalsRequest,
   RequestProposalsResponse,
   DeclineProposalsRequest,
@@ -136,9 +146,13 @@ import type {
   ListTransformersResponse,
   SyncAgentNotificationConfigsRequest,
   SyncAgentNotificationConfigsResponse,
+  GetPrincipalRequest,
+  GetPrincipalResponse,
+  SyncPrincipalRequest,
+  SyncPrincipalResponse,
 } from '../types/tools.generated';
 import type { MutatingRequestInput } from '../utils/idempotency';
-import { MediaBuyLifecycleCoordinator, type MediaBuyLifecycleCoordinatorOptions } from '../media-buy/compatibility';
+import type { MediaBuyLifecycleCoordinator, MediaBuyLifecycleCoordinatorOptions } from '../media-buy/compatibility';
 import { buildRefineProposalsRequest } from '../negotiation/buyer';
 import { assertRefineProposalsResponse } from '../negotiation/verification';
 import type {
@@ -150,7 +164,7 @@ import type { V1Product } from '../v2/projection/types';
 import type { LegacyFormatConverter } from '../v2/projection/v1-to-v2';
 import type { ProjectionCatalogSnapshot } from '../v2/projection/catalog-snapshot';
 import type {
-  CanonicalCreateMediaBuyRequest,
+  CanonicalCreateMediaBuyInput,
   CanonicalCreativeResponse,
   CanonicalGetProductsRequest,
   CanonicalGetProductsResponse,
@@ -205,7 +219,7 @@ export type V2AugmentedGetProductsResponse = CanonicalGetProductsResponse;
  */
 export type TaskResponseTypeMap = {
   get_products: CanonicalGetProductsResponse;
-  list_products: ListProductsResponse;
+  list_products: ListProductsResponseWithSupplyPath;
   request_proposals: RequestProposalsResponse;
   refine_proposals: RefineProposalsResponse;
   decline_proposals: DeclineProposalsResponse;
@@ -248,6 +262,8 @@ export type TaskResponseTypeMap = {
   context_match: ContextMatchResponse;
   identity_match: IdentityMatchResponseRouterPublisher;
   sync_agent_notification_configs: SyncAgentNotificationConfigsResponse;
+  get_principal: GetPrincipalResponse;
+  sync_principal: SyncPrincipalResponse;
 };
 
 /**
@@ -265,7 +281,7 @@ export type TaskRequestTypeMap = {
   buy_products: MutatingRequestInput<BuyProductsRequest>;
   accept_proposal: MutatingRequestInput<AcceptProposalRequest>;
   control_media_buy: MutatingRequestInput<ControlMediaBuyRequest>;
-  create_media_buy: MutatingRequestInput<CanonicalCreateMediaBuyRequest>;
+  create_media_buy: MutatingRequestInput<CanonicalCreateMediaBuyInput>;
   update_media_buy: MutatingRequestInput<CanonicalUpdateMediaBuyRequest>;
   sync_creatives: MutatingRequestInput<CanonicalSyncCreativesRequest>;
   list_creatives: CanonicalListCreativesRequest;
@@ -301,6 +317,8 @@ export type TaskRequestTypeMap = {
   context_match: ContextMatchRequest;
   identity_match: IdentityMatchRequest;
   sync_agent_notification_configs: MutatingRequestInput<SyncAgentNotificationConfigsRequest>;
+  get_principal: GetPrincipalRequest;
+  sync_principal: MutatingRequestInput<SyncPrincipalRequest>;
 };
 
 export type TaskRequestFor<K extends AdcpTaskName> = TaskRequestTypeMap[K];
@@ -352,6 +370,33 @@ export type InProcessAgentClientConfig = Pick<
   agentId?: string;
 };
 
+/** Context passed to {@link AgentClient.createWithCapabilityPreflight}. */
+export interface CapabilityPreflightContext {
+  /** The exact client instance that will be returned by the factory. */
+  client: AgentClient;
+  /** Opaque authorization/transport scope the returned snapshot must carry. */
+  scope: CapabilityEvidenceScope;
+}
+
+/** Load or perform capability discovery for one newly constructed client. */
+export type CapabilityPreflightLoader = (
+  context: CapabilityPreflightContext
+) => CapabilityEvidenceSnapshot | Promise<CapabilityEvidenceSnapshot>;
+
+export type CapabilityPreflightErrorCode = 'scoped_transport' | 'scope_rotated' | 'invalid_evidence';
+
+/** Actionable factory failure without weakening the same-instance invariant. */
+export class CapabilityPreflightError extends Error {
+  override readonly name = 'CapabilityPreflightError';
+
+  constructor(
+    readonly code: CapabilityPreflightErrorCode,
+    message: string
+  ) {
+    super(message);
+  }
+}
+
 /**
  * Task result states where the server is still holding the task open. While
  * the last response was in one of these states the AgentClient retains the
@@ -395,6 +440,10 @@ interface PendingTaskHandle {
 }
 
 export class AgentClient {
+  get accounts() {
+    return this.client.accounts;
+  }
+
   private client: SingleAgentClient;
   private currentContextId?: string;
   private pendingTask?: PendingTaskHandle;
@@ -407,6 +456,46 @@ export class AgentClient {
   ) {
     this.client = new SingleAgentClient(agent, config);
     this._isInProcess = agent._inProcessMcpClient !== undefined;
+  }
+
+  /**
+   * Construct and prime one client before exposing it for task dispatch.
+   *
+   * Capability evidence is intentionally bound to a client instance. This
+   * factory gives application factories the instance and its opaque scope
+   * before the first task can be sent, then installs the callback's snapshot
+   * on that same instance. Evidence from an otherwise identical client is
+   * rejected rather than silently falling back to redundant discovery.
+   */
+  static async createWithCapabilityPreflight(
+    agent: AgentConfig,
+    loadEvidence: CapabilityPreflightLoader,
+    config: SingleAgentClientConfig = {}
+  ): Promise<AgentClient> {
+    const client = new AgentClient(agent, config);
+    if (config.transport?.trustedFetchFn || config.transport?.fetchFn) {
+      throw new CapabilityPreflightError(
+        'scoped_transport',
+        'AgentClient.createWithCapabilityPreflight cannot prime a client configured with transport.trustedFetchFn. ' +
+          'Keep the scoped transport: construct AgentClient normally so capability discovery runs inside that transport scope.'
+      );
+    }
+    const scope = client.getCapabilityEvidenceScope();
+    const snapshot = await loadEvidence({ client, scope });
+    if (!client.primeCapabilities(snapshot)) {
+      const currentScope = client.getCapabilityEvidenceScope();
+      const scopeRotated =
+        currentScope.scopeKey !== scope.scopeKey && snapshot?.scope?.scopeKey !== currentScope.scopeKey;
+      throw new CapabilityPreflightError(
+        scopeRotated ? 'scope_rotated' : 'invalid_evidence',
+        scopeRotated
+          ? 'AgentClient.createWithCapabilityPreflight: authorization changed while capability evidence was loading. ' +
+              "Repeat preflight with the client's current scope, or construct normally to perform cold discovery."
+          : 'AgentClient.createWithCapabilityPreflight: evidence was stale, malformed, missing tool evidence, or scoped to another client. ' +
+              'Return a fresh snapshot carrying the callback scope; otherwise construct normally to perform cold discovery.'
+      );
+    }
+    return client;
   }
 
   /**
@@ -496,6 +585,16 @@ export class AgentClient {
     return this.client.recoverDeferredTaskForOperation(operationId, recoveryKey, publishTerminalTaskStatus);
   }
 
+  /**
+   * Recover the current A2A pause generation for a direct mutation that opted
+   * into `TaskOptions.durableContinuationRecovery`.
+   */
+  async recoverDirectPauseContinuation<T>(request: DirectPauseRecoveryRequest): Promise<TaskResult<T>> {
+    const result = await this.client.recoverDirectPauseContinuation<T>(request);
+    this.retainSession(result);
+    return result;
+  }
+
   /** Bridge a store-recovered callback into the deferred terminal checkpoint. @internal */
   checkpointExternalDeferredSettlement<T>(
     token: string,
@@ -545,6 +644,7 @@ export class AgentClient {
   async negotiateMediaBuyLifecycle(
     options: MediaBuyLifecycleCoordinatorOptions = {}
   ): Promise<MediaBuyLifecycleCoordinator> {
+    const { MediaBuyLifecycleCoordinator } = await import('../media-buy/compatibility');
     return MediaBuyLifecycleCoordinator.negotiate(this, options);
   }
 
@@ -803,7 +903,7 @@ export class AgentClient {
     params: ListProductsRequest,
     inputHandler?: InputHandler,
     options?: TaskOptions
-  ): Promise<TaskResult<ListProductsResponse>> {
+  ): Promise<TaskResult<ListProductsResponseWithSupplyPath>> {
     const result = await this.client.executeTask(
       'list_products',
       params,
@@ -923,6 +1023,28 @@ export class AgentClient {
       inputHandler,
       this.withSession('sync_agent_notification_configs', options)
     );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Read the authenticated caller's durable principal configuration. */
+  async getPrincipal(
+    params: GetPrincipalRequest = {},
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<GetPrincipalResponse>> {
+    const result = await this.client.getPrincipal(params, inputHandler, this.withSession('get_principal', options));
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Atomically replace selected sections of the authenticated caller's principal configuration. */
+  async syncPrincipal(
+    params: MutatingRequestInput<SyncPrincipalRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<SyncPrincipalResponse>> {
+    const result = await this.client.syncPrincipal(params, inputHandler, this.withSession('sync_principal', options));
     this.retainSession(result);
     return result;
   }
@@ -1065,7 +1187,7 @@ export class AgentClient {
    * into `createMediaBuyLegacy()` explicitly.
    */
   async createMediaBuy(
-    params: MutatingRequestInput<CanonicalCreateMediaBuyRequest>,
+    params: MutatingRequestInput<CanonicalCreateMediaBuyInput>,
     inputHandler?: InputHandler,
     options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<CreateMediaBuyResponse>>> {
@@ -1360,6 +1482,16 @@ export class AgentClient {
     return this.client.getCapabilities(options);
   }
 
+  /** Scope token for a tenant-bound, application-owned capability preflight. */
+  getCapabilityEvidenceScope(): import('./SingleAgentClient').CapabilityEvidenceScope {
+    return this.client.getCapabilityEvidenceScope();
+  }
+
+  /** Install fresh capability evidence without making a redundant probe. */
+  primeCapabilities(snapshot: import('./SingleAgentClient').CapabilityEvidenceSnapshot): boolean {
+    return this.client.primeCapabilities(snapshot);
+  }
+
   /**
    * Return the seller's declared `adcp.idempotency.replay_ttl_seconds`, or
    * throw when a v3 seller omits the (required) declaration.
@@ -1454,6 +1586,13 @@ export class AgentClient {
     });
     this.retainSession(result);
     return result;
+  }
+
+  /** Resolve the seller's account contract into a reusable wire account reference. */
+  async resolveAccount(hints: ResolveAccountOptions = {}, options?: TaskOptions): Promise<AccountReference> {
+    return this.client.resolveAccount(hints, this.withSession('resolve_account', options), result =>
+      this.retainSession(result)
+    );
   }
 
   /**
@@ -1970,7 +2109,7 @@ export class AgentClient {
         )) as TaskResult<unknown>;
       case 'create_media_buy':
         return (await this.createMediaBuy(
-          params as MutatingRequestInput<CanonicalCreateMediaBuyRequest>,
+          params as MutatingRequestInput<CanonicalCreateMediaBuyInput>,
           inputHandler,
           options
         )) as TaskResult<unknown>;
@@ -1994,6 +2133,10 @@ export class AgentClient {
         return this.getMediaBuyDelivery(params as GetMediaBuyDeliveryRequest, inputHandler, options);
       case 'get_creative_delivery':
         return this.getCreativeDelivery(params as GetCreativeDeliveryRequest, inputHandler, options);
+      case 'get_principal':
+        return this.getPrincipal(params as GetPrincipalRequest, inputHandler, options);
+      case 'sync_principal':
+        return this.syncPrincipal(params as MutatingRequestInput<SyncPrincipalRequest>, inputHandler, options);
     }
     const result = await this.client.executeTaskLegacy(taskName, params, inputHandler, {
       ...this.withSession(taskName, options),

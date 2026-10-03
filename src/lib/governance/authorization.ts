@@ -19,6 +19,13 @@ import { canonicalize } from '../utils/jcs';
 import type { JwksResolver } from '../signing/jwks';
 import type { ReplayStore } from '../signing/replay';
 import type { RevocationStore } from '../signing/revocation';
+import { HttpsJwksResolver, type HttpsJwksResolverOptions } from '../signing/jwks-https';
+import {
+  relyingPartyAgentRecord,
+  selectAgentByUrl,
+  agentJwksUri,
+  canonicalAgentUrl,
+} from '../signing/agent-resolver/select-agent';
 import { parseStrictJson } from '../signing/agent-resolver/strict-json';
 
 export const GOVERNANCE_AUTHORIZATION_CRITICAL_CLAIMS = Object.freeze([
@@ -207,6 +214,57 @@ export interface GovernanceRevocationResolver {
   resolve(issuer: string, kid: string, jti: string): GovernanceRevocationStatus | Promise<GovernanceRevocationStatus>;
 }
 
+/** Authenticated buyer context, never the JWS payload or a sibling brand's record. */
+export interface GovernanceBuyerIdentity {
+  /** For signed buyers, pass AgentResolution.brandJson without refetching its host. */
+  brandJson: unknown;
+  /** Domain of the governed request's brand; portfolio brands require an exact URL hostname match (including www). */
+  brandDomain: string;
+  /** Trusted resolver factory; implementations may cache by canonical JWKS URI. */
+  jwksForUri?: (jwksUri: string) => JwksResolver;
+  /** Reuse this options object across requests to share its bounded resolver cache. */
+  jwksOptions?: HttpsJwksResolverOptions;
+}
+
+/** Resolve the issuer only within the buyer's applicable brand collection. */
+const governanceDefaultResolvers = new Map<string, HttpsJwksResolver>();
+const governanceConfiguredResolvers = new WeakMap<HttpsJwksResolverOptions, Map<string, HttpsJwksResolver>>();
+
+export function createGovernanceAgentJwksResolver(issuer: string, buyer: GovernanceBuyerIdentity): JwksResolver {
+  const record = relyingPartyAgentRecord(buyer.brandJson, buyer.brandDomain);
+  const entry = selectAgentByUrl(record, issuer, { agentType: 'governance' });
+  const uri = agentJwksUri(entry);
+  if (buyer.jwksForUri) return buyer.jwksForUri(uri);
+  const key = canonicalAgentUrl(uri);
+  let cache = governanceDefaultResolvers;
+  if (buyer.jwksOptions) {
+    const existing = governanceConfiguredResolvers.get(buyer.jwksOptions);
+    cache = existing ?? new Map();
+    if (!existing) governanceConfiguredResolvers.set(buyer.jwksOptions, cache);
+  }
+  let resolver = cache.get(key);
+  if (!resolver) {
+    const maxAge = buyer.jwksOptions?.maxAgeSeconds ?? 1800;
+    const minCooldown = buyer.jwksOptions?.minCooldownSeconds ?? 30;
+    if (!Number.isFinite(maxAge) || maxAge <= 0) {
+      throw new TypeError('Governance maxAgeSeconds must be a finite positive number');
+    }
+    if (!Number.isFinite(minCooldown) || minCooldown < 0) {
+      throw new TypeError('Governance minCooldownSeconds must be a finite non-negative number');
+    }
+    resolver = new HttpsJwksResolver(uri, {
+      ...buyer.jwksOptions,
+      maxAgeSeconds: Math.min(maxAge, 1800),
+      minCooldownSeconds: Math.max(minCooldown, 30),
+      minCacheAgeSeconds: 60,
+      failClosed: true,
+    });
+    if (cache.size >= 512) cache.delete(cache.keys().next().value!);
+    cache.set(key, resolver);
+  }
+  return resolver;
+}
+
 export interface VerifyGovernanceAuthorizationOptions {
   token: unknown;
   expectedIssuer: string;
@@ -217,7 +275,9 @@ export interface VerifyGovernanceAuthorizationOptions {
   actualCommitment: GovernanceCommitment;
   /** Defaults to `intent`, the phase accepted by a downstream service. */
   expectedPhase?: 'intent';
-  jwks: JwksResolver;
+  jwks?: JwksResolver;
+  /** When supplied, discover keys from this exact authenticated buyer record. */
+  buyerIdentity?: GovernanceBuyerIdentity;
   replayStore: GovernanceReplayStore;
   /** Optional governance-key revocation source. */
   revocationStore?: RevocationStore;
@@ -510,7 +570,12 @@ export async function verifyGovernanceAuthorization(
     return reject('governance_token_invalid', 'authorized_task and authorized_payload_hash must appear together');
   }
 
-  if (typeof decodedClaims.iss !== 'string' || decodedClaims.iss !== options.expectedIssuer) {
+  let canonicalIssuer: string;
+  try {
+    if (typeof decodedClaims.iss !== 'string') throw new TypeError('Missing issuer');
+    canonicalIssuer = canonicalAgentUrl(decodedClaims.iss);
+    if (canonicalIssuer !== canonicalAgentUrl(options.expectedIssuer)) throw new TypeError('Issuer mismatch');
+  } catch {
     return reject('governance_token_invalid', 'Governance token issuer mismatch');
   }
   const kid = typeof protectedHeader.kid === 'string' ? protectedHeader.kid : '';
@@ -518,7 +583,11 @@ export async function verifyGovernanceAuthorization(
 
   let jwk;
   try {
-    jwk = await options.jwks.resolve(kid);
+    const resolver = options.buyerIdentity
+      ? createGovernanceAgentJwksResolver(canonicalIssuer, options.buyerIdentity)
+      : options.jwks;
+    if (!resolver) return reject('governance_key_unknown', 'No governance key resolver or buyer identity configured');
+    jwk = await resolver.resolve(kid);
   } catch {
     return reject('governance_key_unknown', 'Governance signing key could not be resolved');
   }
@@ -553,7 +622,7 @@ export async function verifyGovernanceAuthorization(
     if (
       options.isJtiRevoked &&
       typeof decodedClaims.jti === 'string' &&
-      (await options.isJtiRevoked(decodedClaims.iss, decodedClaims.jti))
+      (await options.isJtiRevoked(canonicalIssuer, decodedClaims.jti))
     ) {
       return reject('governance_token_revoked', 'Governance token is revoked');
     }
@@ -627,9 +696,9 @@ export async function verifyGovernanceAuthorization(
   let hasFreshCombinedRevocation = false;
   if (options.revocationResolver) {
     try {
-      const status = await options.revocationResolver.resolve(decodedClaims.iss, kid, decodedClaims.jti);
+      const status = await options.revocationResolver.resolve(canonicalIssuer, kid, decodedClaims.jti);
       if (
-        status.issuer !== decodedClaims.iss ||
+        canonicalAgentUrl(status.issuer) !== canonicalIssuer ||
         typeof status.keyRevoked !== 'boolean' ||
         typeof status.jtiRevoked !== 'boolean' ||
         !Number.isFinite(status.nextUpdate) ||
@@ -692,7 +761,7 @@ export async function verifyGovernanceAuthorization(
     const idempotencyKey =
       typeof options.payload.idempotency_key === 'string' ? options.payload.idempotency_key : undefined;
     replayResult = await options.replayStore.consume(
-      decodedClaims.iss,
+      canonicalIssuer,
       decodedClaims.aud,
       decodedClaims.jti,
       decodedClaims.exp + skew,
@@ -738,6 +807,7 @@ export class GovernanceAuthorizationError extends Error {
 
 export interface GovernanceEnforcementMiddlewareInput {
   token: unknown;
+  buyerIdentity?: GovernanceBuyerIdentity;
   authenticatedCaller: string;
   task: string;
   payload: Record<string, unknown>;
@@ -774,6 +844,7 @@ export function createGovernanceEnforcementMiddleware(
       payload: input.payload,
       actualCommitment: input.actualCommitment,
       expectedPhase: input.expectedPhase,
+      ...(input.buyerIdentity !== undefined && { buyerIdentity: input.buyerIdentity }),
     });
     if (!result.ok) throw new GovernanceAuthorizationError(result);
     return next(result);

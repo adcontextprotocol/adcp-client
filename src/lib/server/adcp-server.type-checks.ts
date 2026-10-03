@@ -63,6 +63,10 @@ const _validMcpAppMeta: McpAppMeta = {
   ui: { resourceUri: 'ui://creative/upload', visibility: ['model', 'app'] },
 };
 
+const _legacyMcpAppMeta: McpAppMeta = {
+  'ui/resourceUri': 'ui://creative/upload',
+};
+
 const _customToolWithMcpAppMeta: AdcpCustomToolConfig = {
   _meta: _validMcpAppMeta,
   handler: async () => ({ content: [] }),
@@ -122,6 +126,7 @@ export const _references = [
   _adcpServerCallSitesStillWork,
   _legacy_media_buy_handlers_accept_payload_returns,
   _validMcpAppMeta,
+  _legacyMcpAppMeta,
   _customToolWithMcpAppMeta,
   _invalidMcpAppMeta,
   _flatMcpAppMeta,

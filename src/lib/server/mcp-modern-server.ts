@@ -12,7 +12,6 @@ import {
   createMcpHandler,
   isLegacyRequest,
   type AuthInfo as ModernAuthInfo,
-  type ResourceMetadata,
   type RegisteredTool as ModernRegisteredTool,
   type StandardSchemaWithJSON,
   type ServerContext,
@@ -38,7 +37,13 @@ import {
   type RegisteredToolDefinition,
 } from './adcp-server';
 import { ADCP_INSTRUCTIONS_RESOLVER, MEDIA_BUY_MCP_TOOL_PROFILE } from './create-adcp-server';
-import { mcpAppResourceMetadata, readMcpAppResource } from './mcp-app';
+import {
+  isMcpAppToolMeta,
+  mcpAppResourceUri,
+  readMcpAppResource,
+  registerMcpAppResource,
+  registerMcpAppTool,
+} from './mcp-app';
 import { getMcpToolSchema, getMcpToolSummary, getToolSchemaDocument } from '../validation/schema-loader';
 import { isAdcpVersionAtLeast } from '../utils/adcp-version-config';
 import type { StructuredContentTextFallbackContext } from './structured-content-fallback';
@@ -78,13 +83,6 @@ function structuredContentFallbackContext(ctx: ServerContext): StructuredContent
         clientCapabilities: clientCapabilities as Record<string, unknown>,
       }),
   };
-}
-
-function linkedMcpAppResourceUri(tool: { _meta?: Record<string, unknown> }): string | undefined {
-  const ui = tool._meta?.['ui'];
-  if (ui === null || typeof ui !== 'object') return undefined;
-  const resourceUri = (ui as Record<string, unknown>)['resourceUri'];
-  return typeof resourceUri === 'string' ? resourceUri : undefined;
 }
 
 let warnedAboutCustomSchemaJsonConversion = false;
@@ -248,16 +246,33 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
           });
 
         if (tool.inputSchema !== undefined) {
+          const toolConfig = { ...config, inputSchema: tool.inputSchema };
           registeredTools.set(
             tool.name,
-            modern.registerTool(tool.name, { ...config, inputSchema: tool.inputSchema }, async (args, ctx) =>
-              invoke((args ?? {}) as Record<string, unknown>, ctx)
-            )
+            isMcpAppToolMeta(tool._meta)
+              ? registerMcpAppTool(
+                  modern,
+                  tool.name,
+                  toolConfig as Parameters<typeof registerMcpAppTool>[2],
+                  (async (args, ctx) => invoke((args ?? {}) as Record<string, unknown>, ctx)) as Parameters<
+                    typeof registerMcpAppTool
+                  >[3]
+                )
+              : modern.registerTool(tool.name, toolConfig, async (args, ctx) =>
+                  invoke((args ?? {}) as Record<string, unknown>, ctx)
+                )
           );
         } else {
           registeredTools.set(
             tool.name,
-            modern.registerTool(tool.name, config, async ctx => invoke({}, ctx))
+            isMcpAppToolMeta(tool._meta)
+              ? registerMcpAppTool(
+                  modern,
+                  tool.name,
+                  config as Parameters<typeof registerMcpAppTool>[2],
+                  (async ctx => invoke({}, ctx)) as Parameters<typeof registerMcpAppTool>[3]
+                )
+              : modern.registerTool(tool.name, config, async ctx => invoke({}, ctx))
           );
         }
       }
@@ -328,16 +343,12 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
       // so resources must be registered inside the factory rather than once
       // when the opaque AdCP server is created.
       for (const resource of listMcpAppResources(agentServer)) {
-        const linkedTools = toolDefinitions.filter(tool => linkedMcpAppResourceUri(tool) === resource.uri);
+        const linkedTools = toolDefinitions.filter(tool => mcpAppResourceUri(tool._meta) === resource.uri);
         if (linkedTools.length > 0 && !linkedTools.some(tool => toolVisibility.get(tool.name) === true)) continue;
-        modern.registerResource(
-          resource.name,
-          resource.uri,
-          mcpAppResourceMetadata(resource) as ResourceMetadata,
-          async (uri, ctx) =>
-            readMcpAppResource(resource, uri, {
-              signal: ctx.mcpReq.signal,
-            })
+        registerMcpAppResource(modern, resource, async (uri, ctx) =>
+          readMcpAppResource(resource, uri, {
+            signal: ctx.mcpReq.signal,
+          })
         );
       }
 

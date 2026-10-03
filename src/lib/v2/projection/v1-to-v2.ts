@@ -59,7 +59,6 @@ import { forwardLookupByGlob, forwardLookupByStructural } from './registry';
 import { lookupUniqueV1FormatById, lookupV1Format, type V1FormatDefinition } from './catalog';
 import { AAO_CANONICAL_AGENT_URL } from './constants';
 import { LIBRARY_VERSION } from '../../version';
-import { ProductFormatDeclarationSchema } from '../../types/schemas.generated';
 import { legacyFormatConverterFromCatalogSnapshots, type ProjectionCatalogSnapshot } from './catalog-snapshot';
 import { canonicalizeAgentUrl } from '../../discovery/resolve-agent-properties';
 import { isLikelyPrivateUrl } from '../../net/address-guards';
@@ -92,7 +91,7 @@ function formatIdentityDisambiguator(identity: string): string {
  * `format_ids` array could otherwise make a persisted canonical selection
  * resolve to a different legacy format on the next discovery refresh.
  */
-function migratedFormatOptionId(fid: V1FormatId): string {
+export function migratedFormatOptionId(fid: V1FormatId): string {
   const identity = JSON.stringify([
     fid.agent_url,
     fid.id,
@@ -336,6 +335,8 @@ function projectWithLegacyConverter(
     ) {
       throw new Error('custom conversions require format_option_id');
     }
+    const { ProductFormatDeclarationSchema } =
+      require('../../types/schemas.generated') as typeof import('../../types/schemas.generated');
     const parsed = ProductFormatDeclarationSchema.safeParse(completed);
     if (!parsed.success) {
       throw new Error('converter returned an invalid canonical format declaration');

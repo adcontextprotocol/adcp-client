@@ -64,6 +64,7 @@ export { createSigningFetchAsync } from './fetch-async';
 export type { SigningProvider } from './provider';
 export {
   RequestSignatureError,
+  RequestSigningErrorCodeMetadata,
   type RequestSignatureErrorCode,
   ResponseSignatureError,
   type ResponseSignatureErrorCode,

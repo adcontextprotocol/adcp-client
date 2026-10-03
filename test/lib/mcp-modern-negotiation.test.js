@@ -599,8 +599,10 @@ test('modern serving returns structured AdCP validation errors while advertising
     () =>
       createAdcpServer({
         name: 'modern-validation-test',
+        resolveAccount: ref =>
+          ref?.account_id === 'acct-modern-validation' ? { account_id: ref.account_id } : undefined,
         version: '1.0.0',
-        adcpVersion: '3.2.0-rc.3',
+        adcpVersion: '3.2.1',
         mcpToolProfile: 'all',
         stateStore: new InMemoryStateStore(),
         validation: { requests: 'off', responses: 'off' },
@@ -685,7 +687,7 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
         createAdcpServer({
           name: 'modern-profile-test',
           version: '1.0.0',
-          adcpVersion: '3.2.0-rc.3',
+          adcpVersion: '3.2.1',
           idempotency: 'disabled',
           ...(mcpToolProfile !== undefined && { mcpToolProfile }),
           stateStore: new InMemoryStateStore(),
@@ -708,6 +710,11 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
             buildCreative: async () => ({ creative_manifest: { manifest_id: 'mf-1', assets: [] } }),
           },
           protocol: {
+            resolvePrincipalScope: () => ({
+              tenant_id: 'modern-profile-tenant',
+              principal_id: 'modern-profile-principal',
+              principal_kind: 'buyer_agent',
+            }),
             getPrincipal: async () => ({}),
             syncPrincipal: async () => ({}),
           },
@@ -766,7 +773,7 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
     compactNames.every(name => MEDIA_BUY_MCP_TOOL_PROFILE.includes(name)),
     compactNames.join(', ')
   );
-  assert.equal(compact._meta.adcp_version, '3.2.0-rc.3');
+  assert.equal(compact._meta.adcp_version, '3.2.1');
   assert.equal(compact._meta.adcp_profile, 'media-buy');
   assert.equal(
     compact.tools.find(tool => tool.name === 'list_products').description,
@@ -811,7 +818,7 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
     'https://json-schema.org/draft/2020-12/schema'
   );
   assert.doesNotMatch(all.tools.find(tool => tool.name === 'request_proposals').inputSchema.$id, /\/profiles\//);
-  assert.equal(all._meta.adcp_version, '3.2.0-rc.3');
+  assert.equal(all._meta.adcp_version, '3.2.1');
   assert.equal(all._meta.adcp_profile, 'all');
 });
 
@@ -883,7 +890,7 @@ test('modern serving preserves explicitly registered custom schemas and descript
       return { content: [{ type: 'text', text: 'unused' }] };
     }
   );
-  const adapter = createModernMcpServerAdapter(wrapMcpServer(legacy, undefined, '3.2.0-rc.3'));
+  const adapter = createModernMcpServerAdapter(wrapMcpServer(legacy, undefined, '3.2.1'));
   const httpServer = createServer((req, res) => void adapter.handle(req, res));
   const url = await listen(httpServer);
   const client = new Client(
@@ -948,6 +955,15 @@ test('modern serving forwards portable MCP App metadata for custom tools', async
             _meta: { ui: { resourceUri: 'ui://creative/upload' } },
             handler: result('opened'),
           },
+          legacy_upload_creative_asset: {
+            description: 'Open the portable creative upload app from legacy metadata',
+            _meta: { 'ui/resourceUri': 'ui://creative/upload' },
+            handler: result('opened-legacy'),
+          },
+          non_app_metadata: {
+            _meta: {},
+            handler: result('plain'),
+          },
           prepare_creative_upload: {
             _meta: appOnlyMeta,
             handler: result('prepared'),
@@ -990,7 +1006,13 @@ test('modern serving forwards portable MCP App metadata for custom tools', async
   const tools = Object.fromEntries(listed.tools.map(tool => [tool.name, tool]));
   assert.deepEqual(tools.upload_creative_asset._meta, {
     ui: { resourceUri: 'ui://creative/upload' },
+    'ui/resourceUri': 'ui://creative/upload',
   });
+  assert.deepEqual(tools.legacy_upload_creative_asset._meta, {
+    ui: { resourceUri: 'ui://creative/upload' },
+    'ui/resourceUri': 'ui://creative/upload',
+  });
+  assert.deepEqual(tools.non_app_metadata._meta, {});
   assert.deepEqual(tools.prepare_creative_upload._meta, appOnlyMeta);
   assert.deepEqual(tools.finalize_creative_upload._meta, appOnlyMeta);
 
@@ -1095,4 +1117,72 @@ test('modern serving honors per-request tool visibility', async t => {
   assert.deepEqual(resources.resources, [], 'resources linked only from hidden tools must also be hidden');
   await assert.rejects(() => client.callTool({ name: 'get_adcp_capabilities', arguments: {} }));
   await assert.rejects(() => client.readResource({ uri: 'ui://private/app' }));
+});
+
+test('modern MCP signed 401 preserves Signature diagnostics without auth probes', async t => {
+  const { createMcpHandler, McpServer } = require('@modelcontextprotocol/server');
+  const { toNodeHandler } = require('@modelcontextprotocol/node');
+  const { ProtocolClient } = require('../../dist/lib/protocols');
+  const { generateKeyPairSync } = require('node:crypto');
+  const handler = createMcpHandler(
+    () => {
+      const server = new McpServer({ name: 'signed-rejection-modern', version: '1.0.0' });
+      server.registerTool('get_adcp_capabilities', {}, async () => ({
+        content: [
+          { type: 'text', text: JSON.stringify({ adcp: { major_versions: [3] }, supported_protocols: ['media_buy'] }) },
+        ],
+      }));
+      server.registerTool('echo', {}, async () => ({ content: [{ type: 'text', text: 'ok' }] }));
+      return server;
+    },
+    { legacy: 'reject' }
+  );
+  const nodeHandler = toNodeHandler(handler);
+  let rejections = 0;
+  const httpServer = createServer(async (req, res) => {
+    if (req.headers.signature) {
+      for await (const [] of req) {
+        /* Drain the signed tool request. */
+      }
+      rejections++;
+      res.writeHead(401, {
+        'content-type': 'application/json',
+        'www-authenticate': 'Signature error="request_signature_jwks_untrusted"',
+      });
+      res.end(JSON.stringify({ error: 'JWKS URI failed SSRF check' }));
+      return;
+    }
+    void nodeHandler(req, res);
+  });
+  const url = await listen(httpServer);
+  t.after(async () => {
+    await closeMCPConnections();
+    await handler.close();
+    await closeServer(httpServer);
+  });
+  const agent = {
+    id: 'modern-signed-rejection',
+    name: 'Modern seller',
+    protocol: 'mcp',
+    agent_uri: url,
+    request_signing: {
+      kid: 'modern-test',
+      alg: 'ed25519',
+      private_key: {
+        ...generateKeyPairSync('ed25519').privateKey.export({ format: 'jwk' }),
+        adcp_use: 'request-signing',
+      },
+      agent_url: 'https://buyer.example',
+      always_sign: ['echo'],
+    },
+  };
+  await assert.rejects(ProtocolClient.callTool(agent, 'echo', {}), error => {
+    const { AuthenticationRequiredError } = require('../../dist/lib/errors');
+    assert.ok(error instanceof AuthenticationRequiredError);
+    assert.equal(error.status, 401);
+    assert.equal(error.signatureErrorCode, 'request_signature_jwks_untrusted');
+    assert.match(error.responseBody, /JWKS URI failed SSRF check/);
+    return true;
+  });
+  assert.equal(rejections, 1);
 });

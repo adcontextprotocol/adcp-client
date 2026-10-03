@@ -316,18 +316,53 @@ writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify(cases.map(value => G
   }
 }
 
-test('current reporting-status guard accepts the rc.2 consumer mismatch issue', () => {
-  const mismatch = response();
-  mismatch.periods[0].issues = [
-    {
-      issue_id: 'consumer_status_mismatch_1',
-      code: 'CONSUMER_STATUS_MISMATCH',
-      severity: 'action_required',
-      responsible_party: 'seller',
-      recommended_action: 'contact_seller',
-    },
-  ];
-  assert.deepEqual(currentResponseOutcomes([mismatch]), [true]);
+const consumerMismatchIssue = (overrides = {}) => ({
+  issue_id: 'consumer_status_mismatch_1',
+  code: 'CONSUMER_STATUS_MISMATCH',
+  severity: 'action_required',
+  responsible_party: 'seller',
+  recommended_action: 'contact_seller',
+  // rc.3 requires both on this code: `opened_at` anchors the escalation clock
+  // and `reporting_status_id` names the statement that caused the conflict.
+  opened_at: '2026-03-09T02:00:00Z',
+  reporting_status_id: 'consumer-status.revision-received.0001',
+  ...overrides,
+});
+
+const withIssues = issues => {
+  const value = response();
+  value.periods[0].issues = issues;
+  return value;
+};
+
+test('current reporting-status guard accepts the rc.3 consumer mismatch issue', () => {
+  assert.deepEqual(
+    currentResponseOutcomes([
+      withIssues([consumerMismatchIssue()]),
+      // The delayed arm of the stale-received grace window.
+      withIssues([consumerMismatchIssue({ severity: 'delayed', recommended_action: 'wait_for_retry' })]),
+      withIssues([consumerMismatchIssue({ issue_state: 'acknowledged', external_ref: 'OPS-1421' })]),
+    ]),
+    [true, true, true]
+  );
+});
+
+test('current reporting-status guard rejects an unanchored or unattributed consumer mismatch', () => {
+  assert.deepEqual(
+    currentResponseOutcomes([
+      withIssues([consumerMismatchIssue({ opened_at: undefined })]),
+      withIssues([consumerMismatchIssue({ reporting_status_id: undefined })]),
+      // Retiring an issue removes it from the projection; it is never published
+      // at a terminal state, so a reader can keep treating a nonempty issues[]
+      // as degradation.
+      withIssues([consumerMismatchIssue({ issue_state: 'resolved' })]),
+      withIssues([consumerMismatchIssue({ issue_state: 'waived' })]),
+      // Inert correlation text cannot express a URL or a sentence.
+      withIssues([consumerMismatchIssue({ external_ref: 'https://tracker.example/OPS-1421' })]),
+      withIssues([consumerMismatchIssue({ external_ref: 'see the ops channel' })]),
+    ]),
+    [false, false, false, false, false, false]
+  );
 });
 
 test('current reporting-status guard accepts source-timezone schedule alignment', () => {
@@ -354,6 +389,28 @@ test('current reporting-status guard accepts direct-Core obligations without opt
   }
   assert.deepEqual(generatedOutcomes([directCore]), [true]);
   assert.deepEqual(currentResponseOutcomes([directCore]), [true]);
+});
+
+test('rc.4 permits a frozen future expectation with complete health without weakening complete-scope guards', async () => {
+  const completeWithFutureExpectation = summaryResponse();
+  completeWithFutureExpectation.health = 'complete';
+  completeWithFutureExpectation.next_expected_at = '2026-10-01T00:00:00Z';
+
+  const openScope = structuredClone(completeWithFutureExpectation);
+  openScope.scope.scope_closed = false;
+  const incompleteCoverage = structuredClone(completeWithFutureExpectation);
+  incompleteCoverage.scope.coverage_complete = false;
+  const periodsWithFutureExpectation = response();
+  periodsWithFutureExpectation.health = 'complete';
+  periodsWithFutureExpectation.next_expected_at = completeWithFutureExpectation.next_expected_at;
+
+  const cases = [completeWithFutureExpectation, openScope, incompleteCoverage, periodsWithFutureExpectation];
+  const validate = await authoritativeValidator();
+  const authoritative = cases.map(value => validate(value));
+
+  assert.deepEqual(authoritative, [true, false, false, false]);
+  assert.deepEqual(generatedOutcomes(cases), authoritative);
+  assert.deepEqual(currentResponseOutcomes(cases), authoritative);
 });
 
 test('generated reporting-status Zod matches authoritative required and closed evidence boundaries for every view', async () => {

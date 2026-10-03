@@ -1,0 +1,101 @@
+{
+  "media_buy_seller/governance_approved/split": {
+    "selected": ["sync_plans", "get_products_brief"],
+    "skipped": [
+      ["sync_accounts", "missing_tool"],
+      ["sync_governance", "missing_tool"],
+      ["create_media_buy", "missing_tool"]
+    ],
+    "failed": ["sync_plans", "get_products_brief"]
+  },
+  "media_buy_seller/governance_approved/complete": {
+    "selected": ["sync_plans", "get_products_brief"],
+    "skipped": [
+      ["sync_accounts", "prerequisite_failed"],
+      ["sync_governance", "prerequisite_failed"],
+      ["create_media_buy", "prerequisite_failed"]
+    ],
+    "failed": ["sync_plans", "sync_accounts", "sync_governance", "get_products_brief", "create_media_buy"]
+  },
+  "media_buy_seller/governance_conditions/split": {
+    "selected": ["sync_plans", "get_products_brief"],
+    "skipped": [
+      ["sync_accounts", "missing_tool"],
+      ["sync_governance", "missing_tool"],
+      ["create_media_buy_conditions", "missing_tool"]
+    ],
+    "failed": ["sync_plans", "get_products_brief"]
+  },
+  "media_buy_seller/governance_conditions/complete": {
+    "selected": ["sync_plans", "get_products_brief"],
+    "skipped": [
+      ["sync_accounts", "prerequisite_failed"],
+      ["sync_governance", "prerequisite_failed"],
+      ["create_media_buy_conditions", "prerequisite_failed"]
+    ],
+    "failed": ["sync_plans", "sync_accounts", "sync_governance", "get_products_brief", "create_media_buy_conditions"]
+  },
+  "media_buy_seller/provenance_audit_observation/split": {
+    "selected": ["get_products_with_accepted_verifiers"],
+    "skipped": [
+      ["sync_creatives_carveout_claim", "missing_tool"],
+      ["query_directed_audit_observation", "missing_test_controller"],
+      ["query_edited_audit_observation", "missing_test_controller"]
+    ],
+    "failed": ["get_products_with_accepted_verifiers"]
+  },
+  "media_buy_seller/provenance_audit_observation/complete": {
+    "selected": ["get_products_with_accepted_verifiers", "sync_creatives_carveout_claim"],
+    "skipped": [
+      ["query_directed_audit_observation", "prerequisite_failed"],
+      ["query_edited_audit_observation", "prerequisite_failed"]
+    ],
+    "failed": [
+      "get_products_with_accepted_verifiers",
+      "sync_creatives_carveout_claim",
+      "query_directed_audit_observation",
+      "query_edited_audit_observation"
+    ]
+  },
+  "media_buy_seller/provenance_enforcement/split": {
+    "selected": ["get_products_with_disclosure_policy"],
+    "skipped": [
+      ["sync_creatives_no_provenance", "missing_tool"],
+      ["sync_creatives_no_digital_source_type", "missing_tool"],
+      ["sync_creatives_off_list_verifier", "missing_tool"],
+      ["sync_creatives_missing_disclosure", "missing_tool"],
+      ["sync_creatives_with_disclosure", "missing_tool"]
+    ],
+    "failed": ["get_products_with_disclosure_policy"]
+  },
+  "media_buy_seller/provenance_enforcement/complete": {
+    "selected": ["get_products_with_disclosure_policy", "sync_creatives_no_provenance"],
+    "skipped": [
+      ["sync_creatives_no_digital_source_type", "prerequisite_failed"],
+      ["sync_creatives_off_list_verifier", "prerequisite_failed"],
+      ["sync_creatives_missing_disclosure", "prerequisite_failed"],
+      ["sync_creatives_with_disclosure", "prerequisite_failed"]
+    ],
+    "failed": [
+      "get_products_with_disclosure_policy",
+      "sync_creatives_no_provenance",
+      "sync_creatives_no_digital_source_type",
+      "sync_creatives_off_list_verifier",
+      "sync_creatives_missing_disclosure",
+      "sync_creatives_with_disclosure"
+    ]
+  },
+  "media_buy_seller/provenance_truth_of_claim/split": {
+    "selected": ["get_products_with_accepted_verifiers"],
+    "skipped": [
+      ["sync_creatives_contradicted", "missing_tool"],
+      ["sync_creatives_consistent", "missing_tool"]
+    ],
+    "failed": ["get_products_with_accepted_verifiers"]
+  },
+  "media_buy_seller/provenance_truth_of_claim/complete": {
+    "selected": ["get_products_with_accepted_verifiers", "sync_creatives_contradicted"],
+    "skipped": [["sync_creatives_consistent", "prerequisite_failed"]],
+    "failed": ["get_products_with_accepted_verifiers", "sync_creatives_contradicted", "sync_creatives_consistent"]
+  }
+}

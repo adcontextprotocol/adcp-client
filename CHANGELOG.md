@@ -1,5 +1,2333 @@
 # Changelog
 
+## 14.0.0
+
+### Major Changes
+
+- e0d722b: Add the AdCP 3.2 beta surface, including compact media-buy lifecycle tools, plan-adjustment reporting, agent notification configuration, version-aware request signing, regenerated types and schemas, and mixed-version compatibility for AdCP 3.0 and 3.1 peers.
+- c860b2d: Repair AdCP 3.2 compliance execution across webhook proof-of-control, wholesale signal account overlays, account/principal/tenant-scoped task storage, governance delivery requests, transformer JSON values, creative variant responses, and dual creative selector routes. TaskRegistry lifecycle methods and DecisioningAdcpServer task accessors now require an explicit scope.
+- ae6bdc1: Harden legacy purchase continuations by snapshotting caller input before
+  asynchronous work, binding callbacks and polling to trusted discovered
+  identities, and recovering durable settlement safely across races, restarts,
+  and replicas.
+
+  Migration checklist:
+  - Custom legacy-purchase stores: implement the six callback/publication methods
+    together, including owner-fenced publication and retained acknowledgement proof.
+  - Custom deferred stores: implement atomic `putIfAbsent`, `replaceIfVersion`,
+    `takeIfVersion`, and the three committed-operation route methods with the
+    documented TTL, generation, and crash-recovery semantics.
+  - Idempotency backends: provide owner-fenced replace/delete, retain records through
+    clock skew, and configure replica-safe key/table namespaces.
+  - Buyer clients: persist deferred state for callback-capable committed purchases
+    and resume restart tokens through the same client/coordinator route.
+  - Operators: run backend migrations and readiness probes before serving traffic.
+
+  Breaking for custom continuation stores: they must use write-once seller-task binding and handle
+  the `complete()` outcomes `completed`, `pending_completed`, `duplicate`, and `conflict`.
+  They must atomically cross-check pending callback and bound seller task IDs, and
+  promote an earlier pending terminal winner from `complete()` without replacing it.
+  That promotion must atomically install the pending callback's `serverTaskId` as
+  the completed operation's seller-task binding when one was not already present.
+  Implement the callback lookup, pending-settlement inbox, publication
+  acknowledgement, and deferred-task-token binding methods together for
+  replica-safe webhooks, or none of them for the polling-only fallback.
+  Publication acknowledgement must atomically replace the pending entry with a
+  stable, nonempty `acknowledgedSettlementFingerprint`, retain that proof through
+  the operation replay fence, and return it from both callback-capable lookup
+  methods. Exact acknowledgement retries must validate the same proof. This
+  prevents duplicate completion-handler publication when the legacy ACK succeeds
+  but deferred-checkpoint finalization must be retried. When an exact completed
+  result has no pending outbox entry, acknowledgement installs the proof after
+  successful publication. Custom stores should use the exported
+  `legacyPurchaseSettlementFingerprint()` helper for the enforced canonical
+  proof.
+  Callback-capable stores also implement renewable, owner-fenced
+  `claimPendingSettlementPublication` and
+  `releasePendingSettlementPublication` operations. They make SDK-observed
+  polling completion reclaimable after a crash while excluding healthy
+  concurrent publishers; pending acknowledgement requires the exact owner and
+  handlers remain idempotent across lease expiry.
+  Sender callback writes still stop at the operation replay deadline, while an
+  SDK-owned polling/inline publication fence may be installed later for already
+  dispatched seller work and remains retained until exact-owner acknowledgement.
+  Every accepted sender or SDK terminal outbox starts a fresh seven-day recovery
+  horizon so handler retry and cross-store finalization cannot outlive the
+  durable callback route.
+  That acknowledgement extends the completed replay fence by at least seven days
+  so a crash before a separate deferred-checkpoint ACK can still recover the
+  publication proof.
+  Deferred-token binding is generation-fenced: nested pauses compare-and-swap
+  the exact prior token rather than allowing a stale continuation to overwrite
+  the callback recovery route. Restarted/public resumes persist the replacement
+  checkpoint, atomically rebind that exact coordinator route, and only then
+  consume the prior checkpoint or return the replacement; a failed handoff leaves
+  A fenced and B operation-indexed so an exact retry can finish linking B without
+  redispatch. Callback-capable committed deferred records also
+  require the owning durable coordinator to authorize the exact current,
+  unexpired claimed token before sending seller continuation input. Already
+  pending or terminal checkpoints remain recoverable without redispatch.
+  Because the default reference continuation store is callback-capable, a
+  committed A2A pause now also requires configured deferred storage. Without it,
+  the pause fails closed instead of exposing a callback-racy in-process resume.
+  Polling-only stores that omit all six callback methods retain live in-process
+  pause behavior.
+  Durably stored deferred tokens are bearer capabilities and must be generated
+  with a cryptographically secure random source. The SDK accepts UUIDv4 tokens
+  or 43–256 character URL-safe opaque tokens and rejects weaker or malformed
+  tokens before any storage read or write.
+  Completed-operation replay retention now has a seven-day minimum, independent
+  of shorter unresolved-operation monitoring settings. Handler-less A2A pauses retain an exact-task resume closure only
+  for a live paused A2A transport Task; MCP and terminal/identity-less A2A pauses are
+  returned without one. Durable account and seller-session bindings are stored as
+  hashes, and continuation redemption accepts only the SDK's fixed base64url token
+  shape.
+
+  The v0 server A2A adapter returns handler-produced `input-required` and
+  `auth-required` arms as completed, nonresumable artifact results. It no longer
+  leaves a live task that would route continuation-only input through the normal
+  mutation and idempotency pipeline. Client-side continuations remain available
+  for sellers that provide a real live A2A task continuation.
+
+  `AsyncHandler.handleWebhook()` now returns `handled`, `already_handled`, or
+  `in_progress`. Typed handler and activity failures propagate so webhook HTTP
+  helpers can return a retryable failure instead of acknowledging work that was
+  not published. Sender deduplication claims that lease before durable settlement
+  recovery and retain it through handler publication and durable acknowledgement,
+  so an exact callback retry cannot re-enter settlement side effects. Dedup
+  processing claims use a renewable, owner-fenced lease and
+  default to the full dedup retention window, so a renewal failure cannot permit
+  automatic concurrent handler execution. Setting a shorter
+  `inFlightTtlSeconds` is an explicit at-least-once liveness tradeoff that
+  requires idempotent application-side effects. Completed deliveries retain the
+  configured full dedup TTL. During upgrade, the receiver also reads the
+  unexpired raw-agent scoped v1 marker written by the previous SDK so an already
+  handled callback is not dispatched a second time under the new hashed-agent
+  key. New claims and completions are written only to the distinct v2 hashed
+  namespace, preventing a hash-shaped raw agent ID from aliasing another sender.
+  This namespace cutover requires a drained, all-at-once receiver upgrade: stop
+  webhook traffic, drain in-flight handlers, upgrade every replica, and then
+  restart traffic. Mixed old/new receivers are unsupported because they claim
+  different namespaces and can dispatch the same callback once each; the legacy
+  read preserves completed fences but does not coordinate mixed-version claims.
+
+  Custom deferred-task storage is now typed as `DeferredTaskStorage` and must
+  provide atomic `putIfAbsent()` and generation-fenced `replaceIfVersion()` and
+  `takeIfVersion()` operations. It must also atomically create and resolve an
+  initial committed operation route and move that route from exact generation A
+  to nested generation B. This closes process-exit windows before the lifecycle
+  store binds or returns the opaque token: exact operation retries rediscover the
+  current generation without resending seller input. `StorageFactory.createStorage('tokens')` now
+  exposes that exact contract instead of the weaker generic storage surface.
+  Resume atomically
+  transitions the stored generation to a claimed fence with a fresh dispatch
+  lease without making the token physically absent; cleanup removes only that
+  exact claimed generation. Committed continuations use a renewable admission
+  lease during route authorization and trusted-agent resolution, then atomically
+  enter a non-reclaimable dispatch-committed phase immediately before the seller
+  call. This lets a callback win before dispatch while preventing input replay
+  after an uncertain dispatch. Callback-first terminal winners also converge
+  when the seller's direct continuation response is still working or submitted,
+  and retained terminal observations recover a missing metadata task ID from the
+  checkpoint's validated seller-work binding. A
+  seller that pauses again publishes a fresh persisted continuation before it is
+  returned. `DeferredTaskState` now
+  matches the durable runtime shape, including required A2A task identity,
+  the original `serverVersion`, trusted `agentId`, numeric creation/expiry
+  timestamps, and restart-safe conversation state. An opaque serializable client
+  context is round-tripped so public-client resumes reapply response
+  normalization, product policy, canonical creative projection/routing, preview
+  association, and completion handlers, including when the seller pauses again.
+  Linked callback checkpoint read outages now
+  remain typed, retryable ownership failures without leaking backend details, and
+  MCP input/auth-required responses read clarification fields from
+  `structuredContent` rather than falling back to a generic prompt.
+  Serializable per-call projection catalogs are retained across recovery, and
+  non-serializable per-call legacy converter functions now fail before dispatch
+  when durable continuation storage is enabled. Resumed legacy product discovery
+  also restores the concealed product-to-format route cache needed by a later
+  canonical purchase.
+  Committed mutation pauses retain their trusted settlement operation identity;
+  after restart, resume refuses before seller dispatch unless the reconstructed
+  durable coordinator is available. Terminal observations are persisted before
+  recovery and retried without redispatching the seller mutation; task completion
+  is published only after durable settlement, response finalization, and completion
+  handlers succeed. The finalized public result is then durably marked so exact
+  retries do not rerun seller dispatch, settlement recovery, or completion
+  handlers. A renewable generation-fenced finalization lease excludes healthy
+  concurrent replicas from the same checkpoint; failed finalization releases the
+  checkpoint and crashed-owner leases expire. Recovery callbacks and completion
+  handlers must remain idempotent because a replacement owner cannot stop a
+  partitioned or event-loop-stalled former owner after its lease expires.
+  Committed resumes that remain working/submitted retain their seller work handle
+  under the same durable token, so restart reconstructs polling without sending
+  the human input again. Only seller-authoritative terminal polling results can
+  replace that pending route; local observation failures remain retryable, and a
+  terminal `track()` observation is checkpointed for token-based finalization.
+  Seller-authoritative `input-required` and `auth-required` polling transitions
+  remain explicit but nonresumable because an AdCP polling handle is not an A2A
+  transport task ID. The pending route remains available for later polling
+  without fabricating a fresh mutation or a false continuation.
+  Admitted claims and terminal checkpoints receive an
+  independent safety horizon that cannot be shortened by the human continuation
+  TTL; they remain as exact-replay fences through that safety horizon, avoiding
+  token-cleanup ABA races.
+  Persisted records no longer contain agent credentials; secret-shaped request,
+  conversation, and client-context fields are recursively redacted before
+  durable storage. Secret-shaped containers are removed as a whole and
+  over-depth subtrees are truncated rather than persisted unvisited. Authenticated
+  request property lists that require buyer-side verification fail before seller
+  dispatch when durable storage is configured, because their credential cannot
+  be safely reconstructed after restart. Continuation tokens are omitted from
+  public error messages and are non-enumerable on deferred errors so ordinary
+  JSON and structured logging do not serialize them. Shipped examples treat
+  these tokens as bearer capabilities: they use cryptographically random values,
+  store them only through approved secret-bearing paths, and expose non-secret
+  approval references to logs and UIs. Restart recovery resolves the current agent through
+  `resolveDeferredAgent`.
+  `SingleAgentClientConfig` exposes the storage, resolver, and token TTL directly,
+  and `SingleAgentClient.resumeDeferredTask(token, input)` resumes the exact
+  persisted A2A task after restart. Handler-issued deferrals without durable
+  storage retain a same-process exact-task closure.
+  `AgentClient.resumeDeferredTask(token, input)` delegates through its owned
+  single-agent client so a reconstructed media-buy compatibility coordinator's
+  settlement recoverer, exact-token authorizer, response finalization, completion
+  handlers, and session bookkeeping remain on the public restart path.
+  Custom `IdempotencyBackend` implementations must add atomic
+  `putIfAbsent()`, `replaceIfPayloadHash()`,
+  `replaceIfPayloadHashAndExpired()`, and `deleteIfPayloadHash()` operations;
+  these fence
+  webhook and request claim completion/release across replicas. Request-side
+  `check()` misses now return a `claimToken` that is required by `save()`,
+  `saveTransientError()`, and `release()`. With `webhookDedup` configured,
+  missing MCP idempotency keys and every malformed present key fail closed before
+  handler dispatch. Configured dedup now also requires the key on A2A deliveries;
+  older A2A senders must leave receiver dedup disabled.
+  `putIfAbsent()` is now strictly absent-only; custom backends must use the
+  backend-time `replaceIfPayloadHashAndExpired()` predicate for every logical
+  expiry takeover so stale absent reads and same-token renewals cannot erase a
+  newer claim.
+  Canonical request equivalence now excludes the write-only
+  `authentication.credentials` value from both `push_notification_config` and
+  `reporting_webhook`, so secret rotation does not false-conflict. URL, scheme,
+  token, reporting frequency, requested metrics, and every other routing or
+  request-semantic field remain hashed.
+  `replaceIfPayloadHashAndExpired()` must atomically require the exact payload
+  hash and backend-time logical expiry (strictly expired; equality stays live).
+  Read-then-CAS expiry takeover is not conforming because it permits renewal and
+  completed-marker ABA races. Custom `IdempotencyStore`
+  implementations must also provide owner-fenced `renew()` for long-running
+  mutation claims.
+  Backend entries must also preserve the new absolute `retainUntil` horizon so
+  physical cleanup cannot remove a completed mutation inside the configured
+  clock-skew replay window. The PostgreSQL migration adds the matching
+  `retain_until` column and cleanup index. Active request claims now bind the
+  canonical request hash as well as their owner generation, so a different
+  payload reusing an in-flight key conflicts immediately. Failed non-mutating
+  handlers with optional idempotency now transition their owner claim to a fenced
+  retryable marker instead of deleting the record: an exact retry can proceed,
+  while changed payloads remain bound to the original key and conflict. Once a
+  mutating handler is invoked, non-transient typed rejections thrown directly by the
+  handler are cached as its durable outcome; transient typed exceptions, unknown
+  exceptions, and post-handler failures become a full-window ambiguity fence so
+  an exact retry cannot repeat a side effect that may already have committed. A
+  shortened processing lease does not shorten
+  that payload binding: the active event fingerprint remains retained through
+  the full dedup TTL, and only an exact retry may reclaim an expired lease.
+  PostgreSQL keeps `retain_until` nullable for rolling compatibility with old
+  writers. Reads use the greater of `retain_until` and
+  `expires_at + legacyRetentionGraceSeconds`; cleanup uses the mathematically
+  equivalent raw-column predicate so its immutable index remains usable. An old
+  writer that advances `expires_at` therefore cannot leave a stale
+  physical-retention timestamp behind. The
+  backend's legacy grace must be at least the store's `clockSkewSeconds`; unsafe
+  configurations fail at construction. Redis retains the complete equality second
+  at the physical horizon, matching the store and SQL cleanup boundary. Redis
+  derives relative expiry from the absolute retention horizon using Redis server
+  time for direct writes, first-owner claims, and owner-fenced replacements, so
+  an ahead-skewed application clock cannot evict the replay fence early.
+  Built-in request claims now use the full advertised replay window as their
+  base fence and renew while the handler runs. A transient renewal outage cannot
+  therefore reopen a live mutation after the 120-second working-response window;
+  the safety tradeoff is that a crashed handler keeps the key in-flight until the
+  replay window expires.
+  Idempotency cache publication and release failures now fail closed with
+  `SERVICE_UNAVAILABLE` after handler execution instead of returning an
+  unreplayable success, and servers without a runtime idempotency store advertise
+  `supported: false` even if a capability TTL override was supplied. With a
+  wired store, the advertised replay window always uses that store's real TTL.
+  Runtime-cast capability overrides can no longer replace framework-owned AdCP
+  idempotency declarations.
+  Webhook dedup completion atomically replaces the owned processing claim with
+  the handled marker, preventing a stale handler from publishing after lease
+  loss.
+  Outside development and test, Redis idempotency, replay, and context-metadata
+  backends require a deployment-unique `keyPrefix` unless the operator explicitly
+  acknowledges that the selected Redis database is isolated. Warning suppression
+  is not an isolation acknowledgement. Servers with mutating tools likewise
+  refuse to start without a runtime idempotency store outside development and
+  test; the existing explicit disabled mode remains the acknowledged escape
+  hatch.
+
+- 5582908: **Breaking (correction inside the unreleased v14):** `AccountStore.resolution: 'derived'` is now an upstream-managed account-id namespace, matching the account-reference model settled in [adcp#5062](https://github.com/adcontextprotocol/adcp/pull/5062). The previous wire semantics were inverted and unusable for the adapters the mode exists for — buyers who called `list_accounts` got ids that every subsequent call rejected.
+
+  Wire contract:
+  - `{ account_id }` is the durable reference for `'derived'` and is now **accepted** (it was refused with `INVALID_REQUEST`); the `{ brand, operator }` natural-key arm is now **refused** with `INVALID_REQUEST` (`field: 'account.brand'`) and a `list_accounts` suggestion.
+  - `list_accounts` is **required** for `'derived'` — `createAdcpServerFromPlatform` throws `PlatformConfigError` when neither `accounts.list` nor `opts.accounts.listAccounts` is wired. It is the discovery contract for a namespace the agent doesn't own; credential-bound singletons expose one row.
+  - `sync_accounts` is not categorically blocked: natural-key provisioning entries fail per-row with `UNSUPPORTED_PROVISIONING`, natural-key _references_ fail per-row with `INVALID_REQUEST`, and `account: { account_id }` settings-update entries pass through.
+  - A declared `'derived'` resolution projects `account.require_operator_auth: true` on `get_adcp_capabilities`, like a declared `'explicit'`.
+
+  Tenant-isolation hardening (`'derived'` only):
+  - `accounts.resolve` must verify buyer-supplied ids; the framework backstops it — a resolved account whose `id` isn't the one the buyer named is refused with `ACCOUNT_NOT_FOUND` (with a dev-mode warning), so an un-migrated resolver that ignores `ref` fails closed instead of cross-serving.
+  - `sync_accounts` and `sync_governance` entries — the two account references that never passed through `accounts.resolve` — are now resolved against the caller's reachable set before any write, on both the platform and merge-seam wirings.
+  - The `comply_test_controller` sandbox gate no longer accepts a wire `sandbox: true` claim alongside an `account_id` the resolver refused.
+
+  API:
+  - `createDerivedAccountStore` verifies buyer-supplied `account_id` against what the caller's credential can reach (fail closed → `ACCOUNT_NOT_FOUND`), auto-selects the account on ref-less tools only when exactly one is reachable, and wires a filtered, paged `list_accounts`. New `listAccounts` / `lookupAccount` options support credentials that reach many accounts; `toAccount` keeps its signature for the single-account case.
+  - Added `AccountResolutionMode` / `CanonicalAccountResolutionMode` types and the `normalizeAccountResolution()`, `isAccountResolutionMode()`, `refHasNaturalKey()` helpers. An unrecognized `resolution` value is now a `PlatformConfigError` rather than silently inheriting another mode's enforcement. No alias spelling is introduced — `'derived'` stays the single name.
+
+  Migration: [13 → 14 § derived account resolution](https://github.com/adcontextprotocol/adcp-client/blob/main/docs/migration-13-to-14.md#derived-account-resolution-is-now-an-upstream-managed-account-id-namespace). Fixes #1647 and #1628.
+
+- 8df7d0b: Push-enabled `TaskHandoff` responses now fail closed with `UNSUPPORTED_FEATURE`
+  when no terminal task-webhook delivery path is configured. Configure framework
+  `webhooks` or remove `push_notification_config` for polling-only tasks. The
+  same rule applies to external settlement, which is polling-only even if a
+  framework emitter is configured.
+
+  Supplied malformed `push_notification_config` values now return precise
+  `INVALID_REQUEST` errors at the configuration, `url`, or `token` field even
+  when request validation is disabled. Omitted or explicitly `undefined`
+  configuration remains polling-only. Custom durable task registries used for
+  external settlement must expose a stable non-empty `registryId` and return
+  that exact identity from `create()`.
+
+- f47b004: Harden legacy media-buy continuation dispatch, durable settlement, task correlation, replay-loss reporting, and projection validation across AdCP 3.0–3.2.
+
+  This is a breaking prerelease correction. `RequestProposalsResponse` now exposes the complete `products_available` and `legacy_create` branch types instead of collapsing them to `{}`. Callers using legacy sellers that do not return a stable context ID must now configure `legacyPurchaseSellerSessionScope` from authenticated, restart-stable seller-session identity before issuing continuations.
+
+  Custom durable `webhookRegistrationStore` implementations must implement `markRequiresDurableSettlement` so mutation callbacks remain fail-closed across restarts and replicas.
+
+  Recordless legacy HMAC webhook fallback is now limited to explicitly read-only tools. Mutations, unknown extensions, and `get_products` callbacks require live registration provenance.
+
+- d4bd0d6: Move AdCP 3.2's A2A transport to the official A2A 1.0 SDK and normative profile extension, while retaining wire compatibility with 0.3 agents through the 1.0 SDK's compatibility layer. This replaces the `@a2a-js/sdk` 0.3 peer range with 1.x; adopters must upgrade that peer dependency. Refresh core runtime and development dependencies to current Node 20-compatible releases, including the latest MCP 1.x SDK, fast-check 4, and Redis 6 support.
+- 17c912b: Define a seven-day minimum retention and pruning contract for established-proposal completion tombstones, and allow production webhook publishers to bind trusted tenant scope after emitter construction.
+
+  Production servers that previously relied on the implicit `single-tenant` webhook namespace must now configure `webhooks.tenantScope` or resolve trusted account, session, or authentication scope for each request. Unscoped production emission fails before durable checkpointing or network delivery.
+
+- 238796c: Sync the AAO registry OpenAPI and generated registry types for exact badge-scope grading profiles: the `selectAgentGradingProfile` operation, `selected_grading_statuses`, and the `grading_profile` badge field.
+
+  **Breaking:** `grading_profile` is now a required property of `VerificationBadge`, which is reachable from the package-root `AgentComplianceDetail` through `verified_badges`. Code that constructs a badge literal -- a test fixture, a mock registry response -- no longer compiles without it (`TS2741`). Reading badges is unaffected. The upstream AAO spec lists `grading_profile` in that schema's `required` set, so the generated type is faithful to the published contract and is not relaxed to optional; add the field, or read the badge through the generated type rather than restating it. `selected_grading_statuses` is additive and optional.
+
+  `operations['selectAgentGradingProfile']` now requires `requestBody`. The upstream spec declares seven required body fields for that compare-and-swap mutation but omits `requestBody.required: true`, which OpenAPI defaults to false, so the generated operation previously admitted a bodyless call. `scripts/generate-registry-types.ts` corrects the flag on an in-memory copy of the spec before generation and records it in the generated header; the cached spec stays byte-identical to what AAO publishes, and the entry is removed once AAO ships the fix.
+
+- 8e47a8c: Harden PostgreSQL-backed server state: record and enforce MCP task ownership while preserving globally unique task IDs, deny unsafe unscoped task access by default (with an explicit trusted-worker/single-tenant opt-in), let authenticated stateless `serve()` deployments bind tasks to a server-controlled principal with `taskScope`, serialize replay-cache inserts per key and scope so concurrent requests cannot exceed the configured cap, and keep raw database failures out of public idempotency readiness errors.
+
+  Before deploying, stop task writers, drain active tasks, and rerun both `getMcpTasksMigration()` and `getReplayStoreMigration()`; both migrations are idempotent. Stopping writers avoids blocking application traffic while PostgreSQL builds the new ownership index. Pre-upgrade tasks have no recoverable session owner and remain available only through a separate store configured for the trusted task-ID-only worker path. Stateless single-tenant servers and trusted worker stores must explicitly set `allowUnscopedAccess: true`; authenticated multi-tenant `serve()` deployments should supply the PostgreSQL store and use `taskScopeFromPrincipal`, which stores a fixed-length digest of the canonical endpoint/principal tuple rather than raw principal material. Other client-facing integrations must pass a non-empty, server-controlled scope to every TaskStore operation. `taskScope` now fails fast without authentication, an explicit scope-enforcing store, or when combined with `reuseAgent`.
+
+  Principal-scoped tasks also require an allowed canonical host and a server built by `createAdcpServer()` or `createTaskCapableServer()`. They fail closed for raw, directly constructed `McpServer` instances whose queue state cannot be verified, and cannot be combined with `TaskMessageQueue` until queued messages carry the same principal ownership scope. Canonical public URLs now require HTTPS (except loopback development URLs), reject embedded credentials, and preserve an explicitly configured non-default public port in replay and ownership scopes.
+
+  Low-level transports that bypass `serve()` must use a distinct PostgreSQL idempotency `tableName` per agent or include an equivalent trusted canonical endpoint in `resolveIdempotencyPrincipal` when multiple hosted agents intentionally share a store. The canonical `serve()` MCP mount now rejects query strings because it routes only by pathname while replay protection scopes by the full signed target URI; accepting query variants would allow unbounded replay-cache scope creation.
+
+  `serve()` now automatically prefixes resolved idempotency principals with its canonical endpoint, preventing shared pooled tables from replaying cached responses across hosted agents. Existing cached entries use the pre-upgrade key shape and will not replay after upgrade. A safe rollout must stop mutations, drain in-flight work, wait at least the full configured replay TTL after the last accepted mutation (or migrate/dual-read the old keyspace), and then upgrade all instances without mixing old and new binaries. Low-level transports that bypass `serve()` still need distinct per-agent tables or an equivalent trusted endpoint discriminator.
+
+- 445b675: Harden task-registry cutover and out-of-process settlement. Task creation now
+  returns a serializable scoped handle, lifecycle writes report applied,
+  already-terminal, or scoped-miss outcomes, and trusted workers can settle using
+  ref-based helpers. Split PostgreSQL bootstrap from a phased operator-run scope
+  upgrade with preflight, bounded locks, concurrent indexes, verification, and
+  rollback guidance. Require Node 20.19+ on the Node 20 line or Node 22.12+ so
+  CommonJS consumers can load the SDK's ESM dependency graph, and document and
+  continuously test both boundaries in the supported Node/Undici runtime matrix,
+  including the Undici 7 consumer-override fixture.
+
+### Minor Changes
+
+- 807d8cf: Release SDK 14 as stable on the signed AdCP 3.2.1 GA bundle.
+
+  AdCP 3.2.1 is the 3.2 general-availability release (3.2.0 was withdrawn before
+  GA and is never advertised). The SDK now pins `ADCP_VERSION` to `3.2.1`, ships
+  the signed 3.2.1 schema and compliance bundles in place of 3.2.0-rc.7, and
+  negotiates the release-precision `3.2` wire version. `COMPATIBLE_ADCP_VERSIONS`
+  keeps every supported 3.0.x and 3.1.x GA patch and adds `3.2.1` and `3.2`; it no
+  longer advertises any 3.2 prerelease pin. Callers pinned to `3.2-rc.7` or
+  `3.2.0-rc.7` should switch to `3.2`. The packaged `universal/principal` and
+  `universal/reporting-core` storyboards are rebound to the signed 3.2.1 bundle.
+
+  npm dist-tags: `latest` and `adcp-3.2` point at 14.x; `adcp-3.1` stays on the
+  13.x maintenance line and `adcp-3.0` on 7.11.x.
+
+- 8542be7: Adopt the signed AdCP 3.2.0-rc.4 schema and compliance bundles as the default wire release.
+
+  The generated capability types now expose per-product `anonymous_discovery`, and the
+  verification-token schemas expose the new `spec` and `live` token modes. The regenerated
+  media-buy and Reliable Reporting contracts also include rc.4's frequency-cap negotiation
+  and consumer-status refinements.
+
+  Bundled validators now compile in an isolated AJV registry, preserving rich union and
+  discriminator diagnostics when an rc.4 bundle shares its canonical `$id` with the modular schema.
+
+  As with earlier 3.2 prereleases, rc.4 replaces rc.3 in
+  `COMPATIBLE_ADCP_VERSIONS`; consumers can continue to pin `adcpVersion: '3.2-rc'` to
+  follow the release candidate carried by a particular SDK build.
+
+- 03fe08b: Adopt the signed AdCP 3.2.0-rc.7 schema and compliance bundles as the default
+  wire release.
+
+  The generated types and validators now include the `viewable_rate` optimization
+  metric and optional account-scoped creative-format discovery. Account resolvers
+  must authorize any buyer-supplied `account_id`, including this new discovery
+  path. Reporting schemas retain their rc.6 wire shape; the shipped consumer-status
+  golden fixture remains byte-exact at rc.6. The packaged principal and
+  reporting-core storyboards are rebound to the signed rc.7 bundle. As with earlier 3.2
+  prereleases, rc.7 replaces rc.6 in the advertised compatible versions;
+  communicating peers should upgrade together or select the exact `3.2-rc.7`
+  alias.
+
+- 1910f0d: Adopt the signed AdCP 3.2.0-rc.6 schema and compliance bundles as the default wire release.
+
+  The generated surface adds the `sales-exchange`, `sales-retail-media`, and
+  `sales-streaming-tv` specialisms; retry-safe asynchronous `get_creative_features` contracts;
+  request-signing error codes; seller-policy decline reasons; and the terminal
+  `COMMITTED_RESOURCE_PURGED` idempotency outcome. Compact buy and proposal-acceptance
+  requests can also carry the new optional media-buy `name`.
+
+  As with earlier 3.2 prereleases, rc.6 replaces rc.4 in
+  `COMPATIBLE_ADCP_VERSIONS`; communicating peers should upgrade together or use the
+  `3.2-rc.6` release-precision alias carried by this SDK build.
+
+- ecf1c74: Adopt the signed AdCP 3.2.0-rc.3 schema and compliance bundles as the default wire release.
+
+  Moving the pin activates the `content_mismatch` consumer status and its closed
+  `mismatch_code` across the published `ReportingConsumerStatusSchema` /
+  `SyncReportingStatusRequestSchema` exports and the seller ledger's consumer-status types.
+  The machinery that keeps those two in step with the bundle landed separately in #2911,
+  which derives both the ledger statement type and the Zod conditional arms from the pinned
+  schema; this pin is what supplies the rc.3 arms it reads. Verified: the regenerated
+  validator requires the obligation id, the revision id, the recomputed
+  `observed_revision_content_sha256`, and `mismatch_code` for `content_mismatch`, forbids
+  `failure_code` there, and forbids `mismatch_code` on the four pre-existing statuses.
+
+  rc.3 also publishes `core/media-buy-available-action-id.json`, so the generated
+  `update_media_buy` dispatch table gains the structured-only
+  `update_media_buy_frequency_cap` action and its `frequency_cap` field binding. Media-buy
+  preflight already resolved that binding from the generated table, so the shared
+  media-buy frequency cap becomes dispatchable with no adopter change.
+
+  3.2 prereleases remain exact pins: rc.3 replaces rc.2 in `COMPATIBLE_ADCP_VERSIONS` and
+  only the current prerelease's schema bundle ships. Pin `adcpVersion: '3.2-rc'` to follow
+  whichever 3.2 release candidate a given SDK build carries.
+
+- f4d7abc: Adopt the signed AdCP 3.2.0-rc.2 schema and compliance bundles as the default wire release.
+  Idempotency fingerprints now preserve distinct malformed lone-surrogate payloads, so a
+  durable record created from such a payload may correctly conflict instead of replaying a
+  previous colliding response; well-formed request fingerprints remain unchanged.
+- 913711b: Add `assessAcceptancePolicy()` for conservative buyer preflight across verified seller-default and product profiles. The advisory assessment matches typed context, scope, region aliases, and rule time windows; composes prohibitions and requirements restrictively with per-rule provenance; and preserves `unknown` for partial coverage, unresolved or conflicting profiles, and omitted buyer facts.
+- 47e7958: Return authoritative compliance bundle verdicts and expose structured versions on unsupported compliance-cache errors.
+- c0c01e8: Add a production buyer reporting worker with durable incremental repair, fenced multi-replica execution, polling, authenticated webhook hints, bounded concurrency, and graceful shutdown.
+- 027377f: Adopt the official MCP Apps v2 server helpers for tool metadata normalization and resource MIME defaults, including legacy `ui/resourceUri` interoperability.
+- 32d570f: Add `registerWholesaleFeedWebhooks` for safely updating account-scoped wholesale feed subscribers without dropping sibling notification configs or unrelated event selections.
+- e749c9d: Make compliance timeout truncation structurally visible and scale the CLI's default budget, forward exact wire pins through `ADCPMultiAgentClient.simple()`, bridge auto-wired RFC 9421 signer identity into handler auth and buyer-agent resolution, and complete seller-aware AdCP 3.1-to-3.0 discovery request adaptation across MCP and A2A.
+- e3e8c6d: Bind delegated-operator brand, scope, and country policy to each durable webhook registration, including bounded resolver caches, replay-budget, restart, and expiry enforcement. Custom registration stores must preserve the versioned context with immediate read-your-writes consistency; automatic discovery rejects legacy unbound RFC 9421 rows.
+- 3f7921c: Adopt the signed AdCP 3.2.0-beta.4 schemas, add durable products-only legacy purchase continuations, and refresh the maintained 3.0/3.1 compatibility bundles. Legacy continuation mutations now claim immediately before dispatch, share bounded submitted-task polling, and fence unstructured terminal failures as ambiguous instead of replaying them. Public product projection helpers now accept the SDK's generated product types, and observation-free error-handling storyboards no longer grade as silent.
+- b482282: Make the AdCP 3.2 compact media-buy lifecycle first-class on `DecisioningPlatform`, advertise the active media-buy MCP role profile with exact request discovery schemas by default, enforce trusted mutation/proposal scopes, and retain callable AdCP 3.0/3.1 compatibility routes with mixed-version regression coverage.
+- 9636cad: Add buyer-side reporting ledger reconciliation with stable pagination, SDK-managed manifest and file inspection, expected-period completeness checks, durable receipt submission, and revision-deduplicated totals. Generate operational wire allowlists from canonical schemas rather than security-reduced MCP projections.
+- c0c01e8: Add durable, principal-scoped reporting webhook activity for list_accounts, pre-POST reservations, sanitized diagnostics, retention, and async-safe emitter observers.
+- 39469e6: Honor seller-declared buying modes and account requirements before get_products dispatch. Calls without a brief no longer assume wholesale unless the seller declares it. Add a public account resolver that selects a single active seller-assigned account or syncs a buyer-declared natural key, and use it in media-buy storyboards.
+- 888d48f: Expose a focused `@adcp/sdk/reporting/consumer` buyer entrypoint and publish an
+  existing-application worker example with PostgreSQL persistence, signed webhook
+  intake, buyer-retained expectations, and explicit adjustment policy. Include
+  seller/principal scope and run reason in buyer worker results and error context;
+  emit a credential-safe structured warning when background errors have no
+  observer. Result objects now include `consumerScope`, and an omitted or failed
+  error observer produces a structured warning on stderr.
+- d4d6780: Return correctable `ACCOUNT_REQUIRED` when an account-scoped server operation omits `account` and authentication cannot select one, including compact lifecycle mutations, async discovery, and task polling. Buyer retry policy re-discovers the account before retrying. Buyer-supplied unknown, unauthorized, or mismatched account references continue to return terminal `ACCOUNT_NOT_FOUND`.
+- a4052ce: Preserve static bearer and header credential rejections instead of misclassifying them as interactive OAuth, and require validated MCP protected-resource metadata before raising `NeedsAuthorizationError`.
+- 8ef18a3: Add an `EstablishedProposalStore` contract and in-memory reference implementation so 3.0/3.1 proposal snapshots, atomic mutation reservations, async task identity, ambiguity, expiry, and terminal fences can survive fresh clients and horizontally scaled buyer workers.
+- 46eb301: Accept the pinned AdCP 3.2 proposal-refinement frequency-cap, outcome-target,
+  and acceptance-context fields in buyer preflight, including remove-only shared
+  frequency-cap revisions, fail closed on invalid or contradictory cap removal,
+  and publicly expose their exact schema-derived supporting types.
+- ceb2edf: Project representable compact catalog filters onto established sellers and expose durable purchase continuations for eligible tokenless legacy listings.
+- 7d06862: Add versioned persistence hooks to `WholesaleFeedSync` so mirrors can restore cached entities, feed versions, pricing versions, and webhook cursors across process restarts.
+- e423e51: Bound long-lived client and server caches and add a 60-second default deadline plus a 2 MiB response-body cap to `createUpstreamHttpClient`. Canonical-reference resolvers now use a count- and byte-bounded LRU by default, A2A client discovery and multi-host metadata caches evict least-recent entries, and upstream calls accept per-client/per-call `requestTimeoutMs`, `maxResponseBytes`, and caller cancellation. Set either numeric option to `0` to disable that bound.
+- 6dd9d45: Add a durable PostgreSQL task-settlement intent queue for atomically recording application outcomes before SDK task and webhook settlement. The queue provides immutable scoped bindings, caller-owned transaction participation, leased and fenced recovery, bounded retries and dead letters, payload sanitization, startup probing, and an explicit idempotent settlement callback.
+- c0c01e8: Emit durable transactional `reporting.ledger_changed` and `reporting.delivery_ready` notifications alongside status changes.
+- 4cce3c2: Adopt the canonical universal-macro translation fixture. `translateUniversalMacros` now reports literal consent mappings in `frozen_consent_macros` and throws the exported `UnsafeNativeMappingError` when any native mapping contains an ASCII C0 control character or DEL, including unused mapping entries.
+- 6fbf207: Verify inbound task-status webhooks with the authentication mode selected at registration time. The client now persists secretless callback provenance before seller dispatch, verifies those registrations with RFC 9421 using seller keys resolved through `brand.json`, rejects HMAC/RFC mode substitution, binds signatures to raw bytes and the trusted public callback URL, and provides injectable registration, replay, revocation, and JWKS stores for durable deployments. Legacy HMAC receivers remain compatible and never persist secret-derived material.
+- b3a4a5c: Add canonical `previewCreative` client and decisioning-platform APIs for capability, manifest, and creative-library preview routes while retaining `previewCreativeLegacy` for `format_id` compatibility.
+- 381920d: Add a schema-bundle-derived buyer verifier for proposal commercial terms. It checks the proposal digest before recursively comparing every binding field, returns typed JSON Pointer mismatches, and fails closed for unavailable or unsupported schema bundles.
+- 3f9901b: Add a transactional PostgreSQL reporting lifecycle activity bridge: the authoritative status transition, its issue projection, its account activity row and its notification intent all commit in one ledger transaction, and delivery starts only from a post-commit recovery worker. Health changes project schema-conformant `reporting.status_changed` webhooks through the existing persistent notification and webhook outbox runtimes; finality-only changes stay internal activity, because the AdCP webhook is health-only.
+
+  **Wiring.** Build `createPostgresReportingNotificationAttemptCheckpoint()` first, pass it to `createPostgresPersistentNotificationRuntime` as `checkpointDeliveryAttempt`, and pass the same object to `createPostgresReportingNotificationActivityRuntime` as `attemptCheckpoint`. The checkpoint is bound to the exact queryable, namespace and table it writes to, and the activity runtime verifies it — by identity against the runtime's own `deliveryAttemptCheckpoint` where that is exposed, otherwise against the declared binding. A mismatched pair checkpoints nothing and would lose every notification silently, so both construction and `probe()` fail closed.
+
+  **Exactly-once intent, at-least-once delivery.** Delivery itself stays at-least-once: an ambiguous retry may repeat a POST, but only to the same recipient and under the same `idempotency_key`, so a receiver dedupes it. What is exactly-once is the intent — one activity row and one recipient set per transition, created with the transition itself. Recipients are frozen before any external send and tracked per recipient in `<activity_table>_recipients`. A recipient with no durable pre-POST checkpoint provably never received a POST and is replaced when it goes stale; a checkpointed one is pinned by subscriber, so a replacement generation is never addressed for a notification that subscriber already received. Projection requires every stored recipient to have reached a terminal disposition, so an outcome that never reached a subscriber cannot settle the activity as delivered. `notificationSuppressionDisposition` separates deliberate suppression from operational failure; a retryable suppression releases its outbox entry rather than terminalizing it. Every recipient mutation locks the parent activity row `FOR UPDATE` in a `MATERIALIZED` CTE and is gated on a live matching lease, so lease authority and recipient mutation serialize atomically.
+
+  **Bounds.** `maxRecipients` bounds one emission's fanout and must be at least the notification runtime's `maxFanoutCandidates`; `maxRetainedRecipients` bounds every stored row and defaults to twice that. Settled history compacts to one row per subscriber. A claim that cannot succeed is abandoned after `maxAttempts` (default 100) instead of retrying forever and exhausting `maxPendingPerTenant`; abandoned activity is retained, surfaced as `notificationAbandonedAt`, and never recorded as delivered.
+
+  **Lifecycle finality.** Transitions carry their observed finality. Pre-v14 rows resolve their baseline through `ReportingLedgerStore.resolveTransitionFinalityBaseline`, which persists `none` rather than reconstructing one — no stored timestamp can prove which revisions had committed when such a row was written, and guessing suppresses a real snapshot-to-official change permanently. `REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION` installs a `NOT VALID` check that permits historical rows and rejects new finality-less transitions, making the one-redundant-event-per-obligation upgrade bound enforceable against a pre-v14 writer surviving a rolling deploy. A custom store implementing neither the baseline port nor the optional finality fields writes no finality-only transitions at all, rather than one on every tick.
+
+  **Retry delays.** `WebhookRetryOptions.initialDelayMs` and `maxDelayMs` are normalized to a whole millisecond from 0 through 604800000, the range every durable recovery backend accepts for a retry-after; a fractional or out-of-range value used to make releasing a lease throw, holding the delivery until the lease expired. `maxAttempts` normalizes differently, because an attempt bound has nothing to saturate to: a finite value floors and clamps up to 1, and a non-finite one falls back to the default 5 — `NaN` used to run zero attempts and re-queue the delivery forever without ever posting.
+
+  **Compatibility.** `PersistentNotificationRuntime.hasDeliveryAttemptCheckpoint` and `deliveryAttemptCheckpoint` are optional, so existing custom implementations still satisfy the interface; an emission owner treats an absent flag as unproven and fails closed. Migrations are idempotent in place — re-running one does not drop and re-add constraints or rebuild indexes.
+
+- 63ce4b5: Add an adapter-first Reliable Reporting Core service that composes trusted account and currency routing, the existing source executor and ledger, bounded scheduling, native decisioning-platform handlers, truthful capabilities, and a reusable conformance helper. Media-buy and package lineage is trusted: declarations cannot supply `constituents` or `mediaBuyIds`, and a required `resolveCoverage` callback derives the authorized denominator from the resolved account. Exact hash-bound reporting revisions bypass response creative-format projection so their rows reach the wire byte-identical to the bytes the ledger bound; that bypass requires the exact-read request shape, so a platform wiring one function into both the sales and reporting delivery slots still projects its unbound reads. Install refuses schedule semantics the inline executor cannot satisfy — unsupported alignments, anchors off source-local midnight, an advertised period timezone that is not the resolved source timezone, and zones whose UTC offset changes anywhere between the anchor and the periods being generated now, which fails closed for anchors older than the verifiable horizon. The exact installed schedule identity is preserved and echoed through configuration, obligation, and status so `installed_schedule_match` holds — `P1D` stays `P1D`, `PT1H` is never echoed back as `PT3600S`, and a `source_timezone` schedule is never reported as `utc` — and an offering the service could never install is refused at construction rather than advertised — whether that is an unsupported alignment, an invalid conditional field shape, a duration the service cannot express, a period that is not a whole source-local day, snapshot finality on an authoritative source, or a delivery SLA shorter than the source's own worst-case availability lag for snapshot as well as official delivery. Delivery metadata is validated against the executor offering that actually routes, with contract identity required so an injected executor cannot answer a declared ID with a different definition, each route binds to its own adapter instance rather than a shared offering ID, and construction additionally binds grain, pinned timezone identity, and a non-empty unique supported finality. A pinned zone must hold one UTC offset from the protocol origin, so zones whose grid drifted after 1970 — Asia/Singapore, Asia/Kathmandu — are no longer advertised with no installable anchor. The inline executor plans every reclamation before mutating anything and reclaims an execution together with its staged evidence and byte accounting, so a refused admission never destroys retained replay state and a single admission never charges two victims. Producer schedule anchors must sit on the protocol origin grid for every alignment that does not carry its own anchor on the wire, a zone whose UTC offset moves is refused because fixed-length periods cannot express its days, and an emitted delivery SLA must describe the offset its obligations are actually due at, so producer and consumer boundaries cannot diverge. `sync_reporting_status` is namespaced by the canonical authenticated caller, so OAuth callers differing only by `client_id` do not collide so a registry resolving several callers onto one account cannot replay one caller's receipt for another, a null `reporting_revision_id` routes as the cumulative read it is, and byte pressure reclaims settled evidence under an explicit retention policy instead of terminalizing well below the execution ceiling, planning count and byte reclamation as one admission transaction that commits only at staging, so a slice refused by a later check never destroys retained replay, choosing global victims from whichever scope holds the total budget while per-scope pressure still reclaims in place, advancing past zero-byte victims, crediting the bytes a count reservation will release, and never deleting evidence a concurrent replay has already been served, with reservations carrying the identity of the transaction holding them so a stale commit cannot claim a revoked credit or delete another transaction's victim, and a revoked claim is replaced by a bounded search for equivalent count and bytes drawn only from entries nobody else holds — refusing the slice outright when that capacity cannot be reacquired, and the variable-offset refusal spans today as well as the anchor so a future-dated generation is still probed. Producer schedule-identity inputs are validated against the boundaries they claim to describe. Timezone feasibility is decided at construction whenever the zone is pinned — against the same operational horizon installation uses, so a zone that ran DST decades ago but still observes its schedule-origin offset stays advertisable — coverage is bounded by the per-slice constituent-metric product rather than the constituent count alone, timezone validation spans the window obligations are actually generated in rather than history the planner never reaches, installed recovery windows must equal the advertised one so buyer-facing pending signals match the deadline the capability promises, and install-time validation scans the whole span from the anchor so a zone that changed and changed back cannot pass. Obligation status projects only the fields each alignment allows and keeps a legacy generation's installed identity rather than re-deriving one, the inline executor accepts an explicit `replayRetention` policy so a long-lived feed need not terminalize at its replay ceiling, the scheduler sleeps safely across intervals beyond the platform timer ceiling, and an adapter may supply a durable `executor` in place of the bounded inline one for feeds that outlive its replay table. Official SLA feasibility is measured against the source's worst-case availability lag, the configured period is validated against the executor's per-request window ceiling, a future-dated anchor is still scanned for offset changes, deployment-wide scheduling rotates tenants under the producer's default cap as well as explicit budgets, and the reporting/legacy delivery split composes under strict merge-seam mode instead of being reported as a collision. schedule validation follows the protocol's 1970 local-midnight origins instead of an arbitrary recent anchor, official offerings must advertise a delivery SLA their source can actually finalize within, deployment-wide scheduling applies the per-account budgets per tenant with rotation, a keyless generation is refused rather than replayed into a multi-adapter deployment it cannot route in, `resolveCoverage` rejects constituent lineage that contradicts its product binding, the routed offering exposes the inline executor's narrowed `media_buy` applicability, installing reporting no longer shadows a `legacyHandlers.mediaBuy.getMediaBuyDelivery` cumulative read, and `install()` preserves the caller's platform type so specialism enforcement survives. Cycles fail closed on an unscoped account instead of widening to a deployment-wide scan, official configurations must name the delivery SLA their offering advertises, pre-service configuration generations replay without tripping generation immutability, and one account's failed cycle no longer starves the accounts scheduled behind it.
+- 37afa81: Expose canonical offline tool validators and immutable schema-document lookup from `@adcp/sdk/schemas`.
+- def6389: Add the provider-neutral reporting source executor contract, basic and evidenced manifests, conformance harness, canonical JSON golden vectors, and published JSON Schemas.
+- a239627: Make SDK 14 adoption 3.2-first: ship a compact seller starter and persona-based
+  documentation, verify packed docs and examples, export exact task-settlement
+  intent application, provide an opinionated PostgreSQL webhook runtime with
+  normalized recovery outcomes and ready-to-wire server configuration, and add a
+  secret-safe `adcp init seller` plus catalog- and migration-aware `adcp doctor`.
+- dd96794: Export the protocol-authored AdCP 3.2.0-rc.3 universal principal and reporting-core storyboards with immutable provenance and drift-checked loaders.
+- 6e7ad48: Add crash-safe PostgreSQL settlement for push-enabled decisioning tasks. The
+  new coordinator commits terminal task state and the durable webhook outbox in
+  one transaction, reports task compatibility separately from delivery state,
+  protects task-webhook validation tokens at rest, and withholds the submitted
+  response until the external producer's durable queue write succeeds.
+- 5591b93: Bound transport-diagnostics body capture and observer flushing so observability cannot stall request completion. Preserve postal-country fallback validation for countries outside the registered system list, add whole-operation cancellation to `validateAdAgents`, and expose client-scoped capability evidence priming for applications that already perform a trusted preflight. Add generated release upgrade guidance and a compiling thin existing-platform integration recipe.
+- 42215e6: Align the public proposal negotiation types with the canonical generated proposal and purchase fields, and export canonical delivery forecast types.
+- 5067771: Pin the signed AdCP 3.2.0-beta.2 bundle and ship complete compact proposal and direct-buy lifecycle storyboard coverage through the public runner and CLI.
+- 0de0f08: Preserve preview-renderer provenance while normalizing preview responses, and add a pure helper for resolving seller, publisher-placement, community-reference, and manifest preview authority without fetching or executing renderer code.
+- 796ca0e: Fix public Zod schema portability and restore protocol-authored integer, numeric-bound, string-length, pattern, and date-time validation on canonical shared schemas.
+- b051298: Add `ComplyOptions.routeStoryboard`, a per-storyboard routing hook so hosted graders can run `requires: [multi_agent]` storyboards inside `comply()` (adcontextprotocol/adcp#7758). The hook receives each applicable storyboard plus `{ agent_url, profile }` (the profile is agent-reported, untrusted input). It may return `undefined` (unchanged single-URL run), `{ agents, default_agent, context?, storyboard? }` (routed `runStoryboard('', storyboard, { ...runOptions, agents, default_agent, context })`; the result flows into tracks, failures, `storyboards_executed` and `bundle_results`), or `{ skip: reason }` (recorded as the same whole-storyboard `requirement_unmet` row an unrouted `multi_agent` storyboard gets, with the sanitized reason as `skip.detail`, so the bundle stays `partial`). Storyboards whose root capability predicate the agent under test does not satisfy are not passed to the hook and stay `not_applicable`.
+
+  Routed results are graded against the agent under test only: a failed step or discovery failure on another routed agent becomes a `prerequisite_failed` coverage gap (`partial`, never `failing`), and a routed storyboard with no passing step served by the agent under test cannot reach `passing`.
+
+  `comply()` enforces credential and network isolation for routed runs: `default_agent` must be the agent under test; every entry that sets `auth` must set a real credential object, and only an agent-under-test entry may omit it (the run-level credential is pinned onto that entry and dropped from the shared routed options); routing is refused while run-level `headers` are set; a replacement storyboard must keep its id and grading shape; storyboards that would send `$test_kit.auth` / `from_test_kit` credentials through a step not pinned to the agent under test are recorded as skips; run-level `transport` (including `trustedFetchFn`) is shared by every routed agent. New exported types: `ComplyStoryboardRoute`, `ComplyStoryboardSkip`, `ComplyStoryboardRouting`, `ComplyRouteStoryboardContext`.
+
+- 712e984: comply: add `storyboard_start_offset` to distribute coverage across budget-limited runs (adcontextprotocol/adcp#6632). When `timeout_ms` truncates a run, execution previously always started from the same list head, so consecutive truncated runs re-graded the same prefix while tail storyboards were never exercised. The new option rotates the runnable storyboard list (modulo length, relative order preserved) so callers can vary the starting point between runs. The timeout-budget observation now also lists `storyboards_not_started` ids so per-run coverage gaps are inspectable, not just countable.
+- 238796c: Add versioned per-constituent, per-metric availability evidence to `createInlineReportingSourceExecutor`.
+
+  The delivery request handed to an inline fetch handler now carries a required `constituents` array of frozen `{ constituent_id, media_buy_id }` pairs. Handlers that only read the existing request fields are unaffected; use `constituent_id` to key the cells of an `availability_evidence` envelope. Row arrays, `null`, and delivery response objects that omit `availability_evidence` keep their current derived-availability behavior, and `reporting_rows` / `media_buy_deliveries` are still read through the ordinary property channel, so class instances, prototype-inherited values, and accessor-backed slots continue to be accepted.
+
+  Evidence-bearing responses can represent mixed present, zero, delayed, unsupported, partial, stale, and missing metric cells. Rows that claim one metric twice with contradictory values now fail closed with `INTEGRITY_FAILED` instead of silently preferring the direct value, and repeated claims are reconciled as exact decimal quantities, so a number printed in exponent notation agrees with the equivalent plain-decimal string while neither claim is rounded. A row proves every constituent that names its `media_buy_id`, so constituents sharing one media buy are each checked against it rather than only the last one declared.
+
+  Every field of the delivery response -- and of each row inside it -- is observed exactly once, including each period boundary, a collection's declared length, a `totals` that aliases its own row, and any requested metric or dimension named after one of the adapter's own row fields; only that capture is validated, so a response cannot pass a check on one observation and a later check on another. Every verdict the response `status` decides is settled from a single read before any other response field or row collection is touched, and each remaining response field is read at most once and only when a check needs it, so a field no check reaches cannot decide the outcome; preserving the retryable verdict a reported failure or a not-ready state has always produced, and a present-but-non-string status is an unreadable response rather than an absent one. A row's own status is likewise settled before any other field of that row is observed, `partial_data` included. Evidence envelope and cell fields are bounded in length before they reach validation, so an unbounded value cannot be walked in full by a validator that will reject it anyway. Without availability evidence the auxiliary collection is observed for its `media_buy_id` alone, so its unread metric and dimension fields are neither billed nor able to fail an otherwise valid response. A control field that is present but malformed is treated as the partial or invalid evidence it is rather than narrowed into an absent one. Row collections are copied by index against the length they declare rather than spread, so an iterator that disagrees with `length` cannot materialize past the row cap. The evidence envelope and its cells are restricted to their declared fields as own data properties, checked against that allowlist before any descriptor is read. Each delivery row is observed exactly once and every later decision -- work budgeting, scope and currency checks, availability validation, projection and the staged bytes -- reads that capture, so a row whose fields answer differently on a second read cannot be priced as one shape and processed as another. Every semantic verdict -- row scope, requested-cell completeness, duplicate-claim reconciliation, evidence reconciliation across both row collections, temporal evidence, and the coverage and finality roll-ups -- is settled before the response is projected, so an incomplete, contradictory or out-of-scope response returns its own verdict instead of exhausting the staging budget first. The auxiliary collection is validated but never projected or staged, so its size does not spend the budget the source rows need. Availability verification is bounded by 5,000,000 work units, where one unit is one requested metric or dimension checked against one row for one constituent; metric breadth, dimension breadth and constituent fanout are priced together, and each row visit performs exactly the checks it is charged for. A second budget caps the characters validation may scan at one staged object's worth, counted per occurrence, so a long value reused across rows or restated under `totals` cannot force unbounded scanning at negligible cost; numbers are charged the width they canonicalize to rather than one character each, and each of the byte-width, zero and canonical passes a claim costs is charged and computed at most once. A third bound holds the captured claims to the per-object staging ceiling, and claims live in one value array and one flag array shared by every row, so holding a response for validation stays proportionate to writing it out; the ceiling is the per-object limit rather than the per-scope one because the held-byte estimate is an upper bound while that limit governs written bytes, and held against it reports the staging cap admits were refused. `media_buy_id` may be requested as a metric as well as a dimension, and the row identity proves it either way. Direct-over-totals precedence short-circuits: without evidence a valid direct value settles its metric, and a row whose every requested metric is settled that way has its `totals` slot left unobserved entirely rather than read and discarded. The slot is observed once per row, the first time a fallback or reconciliation needs it. With evidence both claims are always read so a duplicate claim is reconciled. A number is charged the width it expands to only where a duplicate claim is actually canonicalized; measuring one costs a constant check. Row status and row currency are settled in streaming passes before that capture, restoring the short-circuit on the first row that decides the outcome, and an over-long status is never case-folded. Exact-decimal reconciliation is unchanged.
+
+  `availability_evidence` must be supplied as a plain own data property. The slot is classified from a single bounded descriptor observation and validated from a snapshot of that same observation, so a slot or envelope that restates itself when it is looked at again cannot downgrade the response to derived availability, and a cyclic or endlessly regenerated prototype chain fails closed instead of spinning.
+
+- 7c1d551: Add seller-version result provenance, version-aware tool JSON Schema lookup,
+  legacy forecast timestamp normalization, and asynchronous server-side custom
+  format resolution.
+- 22223b6: Add stock P1D source-timezone planning with civil-day boundaries and fixed-time SLAs. Use the same schedule for producer planning, source feasibility, coverage, deadline projection and consumer-status eligibility, while preserving numeric schedules and requiring a new generation when stored fixed boundaries would change.
+- 606243e: Stop a scenario the agent's own capability declaration puts outside its surface from capping that agent's compliance bundle. `buildComplianceBundleResults` now grades a storyboard whose result is the root applicability skip as `not_applicable`, and a bundle reaches `passing` when every graded storyboard passes (adcontextprotocol/adcp-client#2945).
+
+  `storyboard-schema.yaml` > "Applicability order" makes the consequence normative: capability predicates are evaluated before `requires`, an unsatisfied predicate emits `not_applicable` and "MUST NOT report a missing runtime requirement", and "only an agent that selected the storyboard by satisfying every authored capability predicate can receive `requirement_unmet`" — which "keeps optional capability storyboards out of the coverage totals of agents that never claimed the capability".
+
+  Scope is every **authored non-`compliance_testing` root capability predicate in an AdCP 3.2 or later bundle** — not only the governance scenarios that surfaced it. In the pinned 3.2 cache that is 156 of the 170 root capability-gated scenario files; the remaining 14 gate on `compliance_testing.*` and are excluded, matched on **normalized dotted-path segments** so a padded or nested namespace (`adcp.compliance_testing.scenarios`) cannot slip past. All three census numbers are asserted against the cache. Protocol and specialism bundles beyond `media_buy` (for example `creative`) are in scope, and a real-bundle aggregate regression pins both the eligible and the excluded halves.
+
+  Agent-declaration-driven is what keeps it sound: a seller that does **not** claim a gated capability has the scenario graded not-applicable and reaches `passing` on its own surface, while a seller that **does** claim it clears the capability gate, proceeds to whatever `requires:` the scenario declares, and stays capped — never credited for a capability it never exercised.
+
+  Version-scoped and fail-closed. The storyboard's loader-injected `adcp_version` must be a **string** parsing to 3.2 or later, because the "Applicability order" rule arrived in AdCP 3.2; an absent version (a hand-built or caller-supplied storyboard) or a pre-3.2 bundle keeps capping. Because the grader is exported, a non-string version a JavaScript caller can reach it with — `null`, a number, an object — also fails closed rather than throwing out of the rollup. Without the version gate the rule was version-agnostic: 33 of the 34 capability-gated scenarios selected from the 3.1.18 bundle flipped `partial` to `passing`.
+
+  `buildComplianceBundleResults` is exported, so the shape check is a public grading boundary rather than an internal invariant. Neutralization requires the complete root synthetic result and nothing else, enforced as a **positive whitelist at all three levels** — result, phase and step — of exactly the keys `buildCapabilityUnsupportedResult` emits plus the `notices` its call sites spread in, so a field that carries execution evidence (`response_record`, a non-zero `strict_validation_summary`) or anything a future release adds at any level is refused without having to be enumerated. On top of the key checks: `overall_passed: true`, exact counts, an unobservable all-zero strict-validation summary, exactly one expected phase and one expected step, the canonical `not_applicable` reason with a non-blank detail, no `skip.requirement`, and no validation evidence on the row. Twenty-nine adversarial mutations are pinned, each required not to reach `passing`.
+
+  Everything else still caps or fails: every `requirement_unmet` value including `multi_agent`, the `required_any_of_tools` family gate, step-scope `missing_tool` / `missing_test_controller` / `prerequisite_failed` / `not_applicable`, zero-observation evidence, ungradable validations, untested or failing siblings, and a result carrying both the skip and a failure row. A version-excluded storyboard (`options.notApplicable`, from the agent's declared `major_versions`) keeps capping, including when every executed sibling was neutralized; a wholly version-excluded bundle still reports `not_applicable` as before. A bundle of nothing but inapplicable scenarios reports `not_applicable`, never `passing`.
+
+  AdCP 3.1.x is untouched: that bundle's copy of the governance scenario declares no machine-readable capability predicate, so its governance row still grades `missing_tool`. Backporting the 3.2 declarations is an upstream ask.
+
+  Routed runs also no longer mislabel an unmet runtime requirement as a capability gap. The routed preflight folded an unmet `request_signer` into the same channel as an authored capability failure, so the storyboard reported `capability_unsupported` with no `skip.requirement` — claiming the authored predicate had evaluated false when the agent had in fact satisfied it, and diverging from a non-routed run of the same agent. The two provenances now have separate channels, and the routed verdict is handed to the ordered `requires` gate rather than returned ahead of it, so an earlier unmet gate — a missing `controller`, or an unknown forward-compatible value — still wins in routed mode exactly as it does non-routed. Per-step partial coverage keeps its existing `not_applicable` plus `skip.requirement` behaviour.
+
+  Requirement reporting is now identical in routed and non-routed mode. `checkRequires` reports the first unmet gate in **declared order**, with no requirement class reordered and no class overriding another — the earlier attempts to move `multi_agent` last and to let an unrecognized value override a precomputed routed verdict are both removed. What varies by mode is only which gates are assessable when the pre-flight runs, and the runner now makes the answer independent of that: a requirement the pre-flight cannot settle defers **together with every requirement declared after it**, so the post-discovery pass always resolves the same declared-first gate.
+  - **no root capability predicate:** the pre-flight answers the statically decidable prefix — `multi_agent`, the receiver/runner harness gates, unrecognized forward-compat values — and stops at the first `controller` / `request_signer` it cannot settle in this mode. A topology gate declared before one of those therefore still reports `requirement_unmet` instead of letting the run proceed into a discovery failure; one declared after it is answered post-discovery, where the earlier gate has finally been assessed and may win.
+  - **with a root capability predicate:** AdCP 3.2's applicability order puts the capability verdict first, so the whole list defers until after discovery, and the routed `controller` / `request_signer` verdicts — which `checkRequires` cannot recompute without a run-level profile — are consumed at their declared positions.
+
+  Routed mode settles both agent-dependent requirements in the routing pre-flight and hands the verdict to the ordered gate as `met`, `unmet` or `unknown`, rather than filtering the requirement out of the list. Filtering was the bug: it let a later gate answer while an earlier one was still unknown. The `unknown` status also keeps `checkRequires` from falling back to its own inputs, which in routed mode means the cross-tenant tool union — see the separate routed-controller-provenance entry.
+
+  The parity matrix is ten cells — both predicate states and both declared orders — across **three** columns: non-routed, non-routed with `_profile` + `agentTools` threaded through (the exact shape a real `comply()` run produces, per `comply.ts`), and routed. The third column is what the last review turned up: `comply()`'s non-routed pre-flight CAN settle a declared-first `controller`, so filtering `controller` out of the routed pre-flight made the two modes disagree for precisely the shape `comply()` produces. `origin/main` diverges on six of the thirty cells. All thirty agree now, and no cell regressed.
+
+- fd9958b: Add first-party Redis and PostgreSQL webhook registration stores for restart-safe, multi-replica callback verification, with atomic provenance binding, backend-clock expiry, durable settlement markers, migration/probe helpers, cleanup, deployment-isolation safeguards, and method/URL binding for registered legacy HMAC callbacks.
+- a8960a5: Expose the AdCP 3.2 `error.buyer_reason` sub-object on the client-facing error surfaces.
+  - `AdcpErrorInfo.buyer_reason` and `ExtractedAdcpError.buyer_reason` now carry the buyer-safe `{ code, message }` when the producer populated it. `buildExtracted`, `extractAdcpErrorInfo`, and `extractAdcpErrorFromMcp` / `extractAdcpErrorFromTransport` all forward it; partial payloads (missing `code` or `message`, empty strings, non-object values) are dropped rather than surfaced as half-typed values a caller might render to a buyer.
+  - `AdcpStructuredError.buyer_reason` and `AdcpError` constructor option added so seller-side adopters can throw a coarse top-level code with a specific buyer-actionable classification. `adcpError()` (via `AdcpErrorOptions`) now accepts and emits `buyer_reason`; the framework's sync-throw projection (`projectThrownAdcpError`) and the two-layer error dispatcher (`sanitizePayloadError`, `PAYLOAD_ERROR_FIELDS`) both carry the field through to the wire. `BuyerRetryPolicy` overrides receive the field on the `error` argument and can key retry decisions on `error.buyer_reason?.code`; the default policy is unchanged — routing on `buyer_reason` is opt-in via override.
+  - `NormalizedError` and `normalizeError()` (`@adcp/sdk/server`) now carry `buyer_reason` too, so adopters projecting per-row batch errors through `normalizeErrors()` (`sync_creatives`, `sync_audiences`, `sync_accounts`, `report_usage`, `acquire_rights`) don't silently lose the field between their row objects and the wire.
+  - The `IDEMPOTENCY_CONFLICT` / `IDEMPOTENCY_IN_FLIGHT` envelope allowlists still strip `buyer_reason` — those wire-shape-restricted codes intentionally never carry a buyer-actionable classification.
+
+- 8446c55: Make the structured-content text fallback a marked, per-client transport-edge decoration while keeping canonical cached responses and A2A artifacts clean.
+- bb9b137: Restore required reporting-status view fields and strict closed reporting evidence validation in generated Zod schemas. Extra fields in source-closed reporting evidence are now rejected. Preserve the deprecated registry `ResolvedBrand.provenance` type for SDK callers while syncing the authoritative registry OpenAPI.
+- 404c5cb: Complete caller-supplied `reporting_webhook` preferences with the client's configured webhook URL and authentication before validating canonical `create_media_buy` requests.
+- 8c19826: Separate nullable targeting input aliases from strict targeting state during type generation. All schema-defined input clears are accepted by TypeScript, while proposal snapshots reject clear commands. Preserve array cardinality and construct the starter's accepted purchase from its supported fields after rejecting targeting overlays.
+
+  This corrects the existing AdCP 3.2.0-rc.3 contract, with a minor changeset for its public typing and validation impact. `ProposalPurchase['targeting_overlay']` no longer permits `null` for `geo_metros`, `language`, `keyword_targets`, or `negative_keywords`; downstream code assigning those clear commands to proposal snapshots must change. The root `TargetingOverlay` export was already strict and remains so. Put clears in the request-side `TargetingOverlayInput` or `BuyProductsRequest` types. `TargetingOverlayInputSchema` from `@adcp/sdk/schemas` accepts these schema-valid null inputs. Both public targeting Zod schemas now enforce the pinned protocol's cardinality, scalar, and nested-object constraints, so previously accepted but wire-invalid targeting values may be rejected. Persist and echo resolved targeting state, without clear commands.
+
+- c61a8df: Support private development-network server URLs, container-reachable storyboard webhook receivers with optional direct TLS, and a public bounded brand.json fetch helper with typed HTTP status errors. Plain-HTTP proxy receiver URLs now require the explicit `allowHttp` or `--allow-http` local-development opt-in.
+- 367c69f: Sign ordinary sandbox storyboard requests with the existing compliance test
+  key when the bundled `signed-requests-runner` contract enables functional
+  dispatch. Capability-driven signing covers required and supported operations,
+  preserves existing transport authentication, and leaves older bundles on the
+  explicit `not_applicable` compatibility path.
+- 04b19d9: Accept unknown comply-test-controller scenario names and include the AdCP error shape in self-contained per-tool type declarations.
+- 1e24deb: Restore structural compatibility for generated nested open-object types while preserving historical generated-module exports.
+- 80d46a1: Grade the request-signing 3.2 profile vectors when selected, including their negative mutations and storyboard steps. Keep the missing-content-digest refusal gradable for agents that require digest coverage.
+- 7fb42cb: Expose verified request authentication to native decisioning handlers, preserve resolved account generics across legacy migration handlers, and add framework-owned per-tool AdCP version availability across MCP, A2A, dispatch, validation, projection, and capability discovery.
+
+  Ship a durable PostgreSQL proposal lifecycle store with scoped atomic transitions, bounded database-time cleanup, readiness probing, and migration helpers. Align generated creative asset schemas with their public TypeScript interfaces, including nested provenance-bearing image assets.
+
+- 16ad91d: Allow callers to inject DNS lookup into SSRF-safe fetches and signing resolvers while preserving address validation and connection pinning.
+- a671e05: Add `createInlineReportingSourceExecutor` for adapting synchronous or promise-returning delivery handlers to a conforming basic reporting source.
+- cbe5f33: Add opt-in seller-side Reliable Reporting Managed Delivery and Reconciled Billing with additive PostgreSQL persistence, fenced workers, retained verified resources, authenticated idempotent receipt ingestion, append-only adjustment reconciliation, fail-closed destination revocation, and operational capability gating.
+- bf09c77: Verify MCP auth for agents that advertise none of `PROBE_TASK_ALLOWLIST`, and say so honestly when it cannot be verified (adcp-client#2940).
+
+  `$test_kit.auth.probe_task` resolved to `undefined` for those agents, so every credential probe skipped `not_applicable`, no phase could contribute `auth_mechanism_verified`, and the **required** `unauth_rejection` phase was never exercised either.
+
+  ## Which agents this fixes, and which it only explains
+
+  The runner now falls back to a `mcp_session_probe` sentinel that calls a **canonical AdCP read task** the agent advertises — parameter-free, never public-tier, never mutating. Two outcomes:
+  - **Agent advertises a canonical protected read outside the allowlist** (`get_principal`, `list_tasks`, `list_transformers`, `get_plan_audit_logs`, …) ⇒ auth is now verified through it, and `security_baseline` contributes `auth_mechanism_verified` instead of reporting `[]`.
+  - **Agent advertises only its own non-AdCP tool names** — the shape in the original #2940 report ⇒ the step is **explicitly `session_probe_ungradable`** with an adopter remedy, not certified. Only canonical AdCP tasks are eligible: an agent that named a tool `get_probe_target`, enforced credentials on that one, and left the real surface open would otherwise be certified by its own vocabulary. Remedy: advertise one allowlisted read tool, or serve RFC 9728 metadata and run with `--oauth`.
+
+  What the probe establishes is bounded: the agent enforced its auth mechanism **at the tool that was graded**. It is not a claim that every tool enforces auth, and it verifies no cryptographic property of the credential or its issuer.
+
+  ## What adopters see
+  - **A new `mcp_session_probe` task in reports** when your read surface is outside the allowlist. It is not an AdCP tool; it is the runner calling a protected tool of yours through the official MCP SDK client. The step note records which tool was graded — `MCP session probe graded get_principal at tools/call (HTTP 401)`.
+  - **A new skip reason, `session_probe_ungradable`** (canonical `not_applicable`). The CLI prints `   Skipped (not_applicable / session_probe_ungradable)` followed by the runner's detail on its own line, and JUnit emits `<skipped message="session_probe_ungradable: …"/>` — runner-authored skip messages now carry that detail, length-capped and XML 1.0-sanitised.
+  - **`MCP_SESSION_PROBE_TASK` is exported from `@adcp/sdk/testing`** so report consumers key on a constant rather than a magic string.
+  - **Diagnostics are distinguishable**: `is inconclusive` (nothing was proved), `refuses this as auth evidence` (you are fail-open, or a valid credential failed), and `could not run` (a protocol/wire-version/response-shape problem that says nothing about credentials).
+  - **Every remedy names the same eight tools**, rendered from one constant, so the probe's diagnostic, the runner's skip detail and the docs cannot drift. See `skills/cross-cutting.md` § "Advertise one allowlisted read tool".
+
+  ## How it works
+
+  `selectProbeTask` resolves the sentinel only on an explicit `protocol: 'mcp'`; `comply()` normalises an unset transport to `mcp` at its entry boundary, which is the transport it has always used on the wire. A storyboard that names the sentinel directly on a run with no declared transport is refused rather than served MCP.
+
+  Target selection is **runner-ordered**, never the agent's advertisement order: allowlisted tools first (allowlist order), then canonical parameter-free reads with `get_principal` preferred. A shape refusal on the first target retries the next candidate; if all refuse the shape, the step is inconclusive rather than graded.
+
+  The lifecycle is the official `@modelcontextprotocol/sdk` client throughout — `Client.connect()`, `Client.callTool(target, {})`, `StreamableHTTPClientTransport.terminateSession()` — so response-id correlation, result-schema validation and version negotiation are the SDK's. `tools/list` is never graded evidence: MCP discovery is not an AdCP protected task. Raw status and `WWW-Authenticate` come from two SDK-supported seams: the transport's `fetch` option (carrying the repo's SSRF-guarded `createAgentTransportFetch`) and `withRawResponseCapture`.
+
+  Evidence rules, all enforced in the probe primitive rather than the authored YAML:
+  - **Rejection** = 401/403 at `initialize` or the protected call, or an AdCP `AUTH_MISSING` / `AUTH_INVALID` / `AUTH_REQUIRED` code in a recognised error envelope. A bare 400 is _not_ a rejection unless it carries `WWW-Authenticate` or one of those codes — otherwise a parameter complaint would certify an agent that never read the credential.
+  - **Fail-open** = a successful tenant-scoped payload for a bad or absent credential.
+  - **Inconclusive** = a schema/param refusal (`INVALID_REQUEST` / JSON-RPC `-32602`), a bare `isError: true` with no recognised code, or no mechanism-matched valid credential to control against. Never a pass or a fail.
+  - **Controls are mechanism-matched and use the same target.** `oauth_bearer` requires an OAuth access token — a static key cannot certify the OAuth branch. The control sends both `Authorization: Bearer` and `x-adcp-auth`, matching `createMCPAuthHeaders`; `auth: none` sends neither.
+  - **Signed runs fail closed.** When the run signs functional dispatch and the agent declares the probe's only targets under `request_signing.required_for` / `supported_for`, the step is `session_probe_ungradable`: the probe mints no RFC 9421 signatures, and a signature refusal is not a credential verdict.
+
+  Hardening: a streaming response-body cap that applies to SSE and aborts the request, with the capture recorder's own body cap raised to match so a legitimate multi-MiB read page reaches the grader as parseable JSON instead of truncated text; `reconnectionOptions.maxRetries: 0` on both transports plus opt-in capture count/byte ceilings on `withRawResponseCapture`, so a hostile `retry: 0` SSE stream cannot amplify one probe into thousands of requests (overflow marks the result unusable rather than truncating evidence silently); **one** request / byte / wall-clock budget shared by every lifecycle a probe runs, and at most three candidate targets, so a tarpitting agent cannot multiply the cost by the length of its own tool list; the run `AbortSignal` and a bounded per-request deadline applied at the fetch boundary; session termination detached from a cancelled run signal so an aborted run still sends exactly one DELETE with the session id and negotiated protocol version; credential scrubbing by value across body, headers and error, reading every credential-bearing header name case-insensitively (`Authorization`, `x-adcp-auth`, `x-api-key`) — including decoded Basic `user:password`, the password alone, short tokens and `options.headers` values, but never a Basic _username_ on its own, which is an account identifier that belongs in a realm and in diagnostics — failing closed at its traversal limits; routing headers by explicit allowlist, sent exactly once (an operator's own `x-test-session-id` wins over the runner-derived one rather than being emitted twice); and OAuth tokens read from the live agent config, only when that config's `agent_uri` is the agent under test.
+
+  **Upstream follow-up (adcp-client#2940 stays open):** certifying the static-credential branches for a no-allowlist agent, and letting `security_baseline` accept an operation-level auth refusal, both need changes to the storyboard contract in the `adcontextprotocol/adcp` spec repo rather than SDK-side reinterpretation.
+
+- 10134ca: Merge structured-only media-buy action metadata into the generated `update_media_buy` field dispatch table. `scripts/generate-media-buy-update-fields.ts` now reads `enumMetadata` from both `enums/media-buy-valid-action.json` and `core/media-buy-available-action-id.json` (AdCP 3.2, adcontextprotocol/adcp#7449), so `UPDATE_FIELDS_BY_ACTION` / `ACTIONS_BY_FIELD` pick up `update_media_buy_frequency_cap -> ["frequency_cap"]` as soon as the schema pin ships that file, while `update_frequency_caps -> ["packages[].targeting_overlay.frequency_cap"]` is unchanged. Shared keys must agree (legacy block wins; a conflict aborts generation) and caches that predate the id schema still regenerate a legacy-only table.
+
+  Adds `MediaBuyActionId` (every structured `available_actions[].action` id; equal to `MediaBuyValidAction` until the pin includes the id schema) and widens the preflight, rollup, and `ACTION_NOT_ALLOWED` helper signatures from the legacy enum to it. `decomposeUpdateMediaBuy` / `preflightUpdateMediaBuy` map the MediaBuy-level `frequency_cap` request field through the generated table. New exports: `MediaBuyActionId`, `MediaBuyUpdateFieldAction`, `StructuredOnlyMediaBuyAction`, `STRUCTURED_ONLY_MEDIA_BUY_ACTIONS`.
+
+  Codegen: `MediaBuyAvailableAction` and `ProductAllowedAction` are now owned by `core.generated.ts` as priority canonical schemas (tool types import and re-export them). json-schema-to-typescript otherwise degrades later occurrences of the `anyOf [legacy enum, const]` id alias to the legacy enum alone, which would have dropped `update_media_buy_frequency_cap` from `available_actions[].action` and `allowed_actions[].action` once the pin moves. Under the current pin this only relocates the declarations; `ProductAllowedAction.modes` / `allowed_statuses` now type as plain arrays rather than non-empty tuples (Zod validators are unchanged and still enforce `minItems: 1`).
+
+- 39b0714: Expose the standalone proposal commercial-terms verifier through `@adcp/sdk/negotiation/verification` with ESM/CJS types. Fail closed on unsupported schema keywords, cross-bundle references, and changed validation contracts throughout the commercial-terms schema graph. Preserve digest-first exhaustive comparison and legacy opaque contract-reference behavior, and document runtime schema coupling and upstream shim retirement.
+
+  Enforce schema-declared targeting disjointness, geographic label membership, language-tag grammar, and IANA timezone annotations before comparing terms, with validators isolated from ordinary SDK schema validation. Pin extensible-enum annotations while preserving explicit enum membership for binding snapshots.
+
+- 3a5edd3: Add account change webhook normalization, branded advisory/checkpoint cursor types, and an acknowledged async drain with snapshot bootstrap and structured CURSOR_EXPIRED recovery. Expose the existing change-feed declaration in normalized capabilities and provide a subscriber-preserving account notification registration builder. Include packed MCP schema/type regressions, training-seller integration and runner support for persistent account-change webhook observations and an adopter migration guide. Durable storage, projection transactions and subscription runtime remain adopter/server responsibilities.
+- 609ab27: Expose an opt-out for the official A2A SDK's v0.3 compatibility layer on client and server paths while preserving the existing enabled default.
+- e3342af: Expose framework-resolved account, agent, authentication, and task scope to comply-controller adapters, and keep webhook secret protection outside PostgreSQL settlement transactions.
+- ff6ad10: Add owner-bound, operation-routed crash recovery for direct A2A mutation continuations. Custom deferred stores must round-trip the new route-kind and ownership digest fields, implement all operation-route methods, and preserve the atomic route when deleting a superseded generation. Deploy updated readers across a shared store before enabling the opt-in on writers. The route covers pause generations only: persist the initial recovery pair before relying on restart recovery, and reconcile terminal or submitted uncertainty through the host operation record without redispatching the mutation.
+- d4daa92: Expose a scoped proof that a terminal push task has its deterministic durable
+  webhook checkpoint, allowing adopters to recover safely after deleting secrets.
+- 5b109e7: Separate a server's default served AdCP release from its maximum supported release, and expose the immutable selected release across handler contexts.
+- 93535bf: Add non-breaking business-rejection settlement for decisioning tasks. `TaskRegistry.reject?()`, `taskCtx.reject(result, reason)`, and `rejectScopedTask()` record a `rejected` terminal artifact with an optional buyer-visible reason, distinct from structured execution failures. PostgreSQL registries and `rejectScopedPushTask()` preserve the same scoped, idempotent, atomic task/outbox protections as complete and fail settlement.
+
+  New PostgreSQL bootstraps accept all nine AdCP task statuses. Before using rejection on a table created by an earlier SDK, run `getDecisioningTaskRegistryStatusWidenV61Migration()` during a maintenance window. The idempotent helper uses bounded lock and statement timeouts, but its `ALTER TABLE` takes an `ACCESS EXCLUSIVE` lock and can briefly block task reads and writes.
+
+- 092dfa3: Harden the rc.3 buyer consumer-status loop against seller-supplied data that could abort a reconcile,
+  silence a conformant seller, or walk past the buyer's own memory ceiling.
+
+  **A single seller number could abort the whole run.** `JSON.parse('1e999')` is `Infinity`, which
+  RFC 8785 cannot represent, so `canonicalize` threw `TypeError` — and the digest guard rethrew
+  anything that was not a `RangeError`, out of a call site with no `catch`. The throw escaped
+  `reconcileReporting` after receipts had already been synced, losing the caller's record of durable
+  work. Canonicalization failures are now classified: a `RangeError` is a size failure and stays silent
+  as the buyer's own budget, anything else is `unreadable` / `reader_incompatible`, which is what that
+  code means — carrying the canonicalizer's own bounded message in the local `reason` so a genuine
+  defect stays visible.
+
+  **A conformant seller could be silenced permanently.** `expected_at` was validated against a stricter
+  pattern than the `format: date-time` check this SDK uses on the seller's own payloads, so a lowercase
+  `t`/`z`, a `+hhmm` offset or a space separator — all accepted by `ajv-formats` — yielded no deadline
+  and no statement, forever. The pattern now matches what the SDK itself accepts, and the instant is
+  **normalized rather than echoed**, and calendar-validated on its literal fields: `Date.parse`
+  silently rolls `2026-02-30` forward, and re-emitting the seller's bytes would put that contradiction
+  on a statement the buyer signs. Validating the literal fields rather than the parsed result matters
+  because the two are indistinguishable once an offset is involved — the check now holds for
+  `2026-02-30T00:00:00+01:00` as well as the `Z` form. A sixtieth second is accepted only where a leap
+  second can occur. A `expected_at` that is present but unreadable derives nothing at all: the seller has a real deadline
+  the buyer cannot read, so any derived one disagrees with it and the statement is refused on every run
+  forever. When `expected_at` is **absent** the buyer falls through to its own
+  `deliverySlaSeconds` / `officialAfterSeconds` pin, and only then to the seller's
+  `obligation.schedule.delivery_sla`. That order matters: `schedule` is as seller-controlled as
+  `expected_at`, so consulting it ahead of the pin let a seller that had published nothing omit
+  `expected_at`, advertise `delivery_sla: "P10Y"`, and push its own deadline a decade out — the period
+  never went overdue and the `revision_missing` recording the non-delivery was never posted. The pin is
+  the buyer's independent answer and outranks it. As a last resort for a buyer with no pin, the
+  schedule resolution is **calendar-aware**, because the schema permits `Y` and `M` on `delivery_sla`
+  and names `period_timezone` as the zone its "calendar arithmetic" happens in: `P1M` is a calendar
+  month in that zone, clamping to month end, with a nonexistent local time advancing by the DST gap and
+  an ambiguous one taking the earlier offset, exactly as `period_generation` specifies. A duration with
+  no calendar component stays exact elapsed time — that is the only shape this SDK's own seller emits,
+  and routing it through wall-clock conversion lost sub-second precision and shifted `PT0S` by an hour
+  across an ambiguous local hour. An unrecognized `period_timezone`, an unresolvable zone, or a
+  duration whose result falls outside the RFC 3339 year range derives nothing rather than a guess.
+
+  **Row size accounting is bounded by work, not by depth.** The estimate charged an unexamined subtree
+  a flat constant, which cut both ways: too small and nesting walked past the ceiling
+  (`{a:{b:{c:{d:{…1 MB…}}}}}` measured 200 bytes), and a deeply nested row could be used to suppress a
+  period that should have carried a `content_mismatch`. It now walks a bounded number
+  of nodes per row and charges each for what it holds, which closes the bypass. Values are charged against
+  retained heap rather than wire bytes — an empty string previously charged zero, which is how hundreds
+  of megabytes of them slipped past the ceiling — and the figures land within about 2x of measured heap
+  in both directions. A row too deep or too intricate for the estimator to walk is reported as the
+  buyer's own limit, not as an unreadable revision: the walk bound is the buyer's, and a durable
+  `unreadable` would pin the seller's view at `action_required` for a row — a per-SKU retail-media
+  breakdown, say — that is entirely conformant.
+
+  **An unrecognized `period.source_timezone` suppresses rather than substituting.** The value is part
+  of the consumer-status chain's logical key and the seller compares it strictly, so falling back to
+  `'UTC'` produced a statement refused on every run forever — and `iana_timezone` forbids that
+  substitution by name. The period now comes back `suppressed: 'period_identity_unknown'`, a new arm of
+  the exported union. With nothing declared at all, `'UTC'` remains the buyer's own default.
+
+  `usableLeafInstant` normalizes the superseded leaf's `status_as_of` through the same path, so a leaf
+  recorded by an older SDK with a `+00:00` or lowercase spelling now produces the same monotonicity
+  floor as its canonical form — which feeds `reporting_status_id`, so a chain can see one id shift
+  across this upgrade.
+
+  A further adopter-observable change: `ExpectedReportingPeriod.periodSourceTimezone` now outranks the seller's
+  echo — that value is inside the consumer-status chain key and the `reporting_status_id` derivation,
+  so an adopter whose pin disagreed with the seller's echo will see the chain key change once on
+  upgrade. And a `expected_at` that is present but not a string (rather than merely malformed) now
+  suppresses instead of falling through to the pin.
+
+  `suppressed` gains `posting_unavailable`, widening that exported union — an adopter switching
+  exhaustively on it will see a new arm. Concretely: with no `client.syncReportingStatus` wired, a plan used to
+  come back live, due and unsuppressed while silently going nowhere.
+
+  **A deadline that overflows the representable range names the field that overflowed**, rather than
+  being reported as a pin the adopter forgot to record. `officialAfterSeconds` is preferred for
+  official-finality generations and falls back to `deliverySlaSeconds`, because
+  `reporting-schedule.json` defines only `delivery_sla` and `official_after` is an SDK-local extension.
+
+  **A seller deadline far past the buyer's pinned expectation is recorded on `plan.deadlineBeyondPin`.**
+  It is still honoured, but previously it left the period at `overdue: false` with nothing set —
+  indistinguishable from "not yet due", and usable by a seller as a silent opt-out of the whole loop.
+
+  **A row nested deeper than the reader walks is `unreadable` / `reader_incompatible`, not silence.**
+  No conformant tabular reporting row has that shape, and suppressing let an under-delivering seller
+  escape a `content_mismatch` for the price of one small row. Breadth remains the buyer's own limit.
+
+  **A replayed pending statement is verified before it is posted** — the recomputed digest, the
+  recomputed `reporting_status_id`, a non-future `status_as_of` and no unexpected keys — and the result
+  reports the values actually sent. Without those checks a compromised store could make the buyer
+  attest a consumption it never performed.
+
+  **Malformed ledger payloads no longer abort a reconcile that already synced receipts.** A non-array
+  `issues`, a null entry in it, or a missing `period` from a client that does not schema-validate its
+  responses used to throw out of `reconcileReporting` after receipts had gone to the seller, losing the
+  caller's record of durable work.
+
+  Diagnostics are honest about whose field failed: the `deadline_unknown` reason named a field that
+  does not exist on `ExpectedReportingPeriod` and said a value "was not recorded" when it had been
+  recorded and merely could not be read. `chain_indeterminate` now distinguishes a forked chain from a
+  head naming an undisclosed predecessor, rather than claiming no head resolved in both cases.
+
+- f4d7abc: Add `sync_reporting_status` consumer-status ingest, exact-leaf chain storage,
+  caller-isolated readback, mismatch projection, adapter identity primitives, and
+  published portable acceptance vectors for AdCP 3.2.0-rc.2.
+- ff08c84: Add the Reliable Reporting lifecycle reference harness and its compliance probe control.
+- 35fae2b: Add the AdCP 3.2.0-rc.3 buyer-side consumer-status loop to `reconcileReporting`.
+
+  **`content_mismatch` detection.** `detectReportingContentMismatch` decides the closed
+  `mismatch_code` — `scope_media_buy_missing`, `coverage_short`, `metric_missing`,
+  `schema_nonconformant`, `currency_mismatch`, `period_mismatch`.
+
+  Four of the six are **row-level** predicates that obligation and revision _metadata_ cannot decide,
+  and they stay silent unless the caller passes `ReportingRowEvidenceV1` describing what it actually
+  read. `scope_media_buy_missing` in particular cannot be decided from `media_buy_ids`, which
+  `reporting-revision.json` defines as the denominator "inherited from the obligation, including buys
+  with zero rows" — comparing those sets is a tautology against a conformant seller, and the real
+  condition is a buy with no rows and no explicit zero row. `metric_missing` likewise compares against
+  metrics observed in rows, not against `control_totals`, which are profile-defined aggregates scoped
+  to the covered packages. Only `coverage_short` and `currency_mismatch` are decidable from metadata.
+  A false `content_mismatch` forces the caller's view to `action_required` and the seller may not
+  clear it while the statement is the current leaf, so not accusing is the safe default. It is deliberately incapable of firing on a delivered value
+  the buyer merely disagrees with: that is a measurement dispute for `measurement_terms` /
+  `makegood_policy`, and routing one through this operational channel would put a commercial argument
+  somewhere the seller can neither resolve nor ignore. Precedence follows the spec on the one pair it
+  pins (`metric_missing` before `schema_nonconformant`) and is otherwise most-structural-first and
+  stable, so the code does not flap between reads of the same bytes.
+
+  **`received` is earned, not echoed.** `observed_revision_content_sha256` is defined as the binding
+  digest _"independently recomputed from the exact consumed Core revision binding"_. The reconciler
+  now pages `reporting_rows` for the exact revision through a new optional
+  `ReportingReconciliationClient.getMediaBuyDelivery`, concatenates them in cursor order, and
+  recomputes SHA-256 of RFC 8785 JCS over `{reporting_revision_id,row_count,control_totals,reporting_rows}`
+  itself. A read that fails, returns no exact-revision binding, or does not hash to the digest the
+  seller published becomes `unreadable` with the matching `failure_code` rather than a `received`
+  — and a digest that did not verify is never attached to anything. `content_mismatch` requires the
+  same recomputed binding, so it too only fires on bytes the buyer actually read. Without the client
+  method nothing is attested and nothing is posted for those two statuses
+  (`suppressed: 'consumption_unavailable'`): attesting a consumption that did not happen is the one
+  outcome worse than silence. `status_as_of` is the buyer's own consumption instant, floored by the
+  superseded leaf's `status_as_of` so a chain never moves backwards.
+
+  **Posting against the deadline.** `ReportingReconciliationResult.consumerStatuses` plans a status for
+  every expected period with its `expected_at` + `automated_recovery_window_seconds` deadline and an
+  `overdue` flag. `expected_at` comes from the obligation when there is one, and otherwise from
+  `period.end` plus a new optional `ExpectedReportingPeriod.deliverySlaSeconds` pin — `obligation_missing`
+  exists precisely when no obligation is there to read it from, and `expected_period` makes that
+  statement valid only at or after `expected_at`, so dating it from the period end has a conformant
+  seller reject every one. The recovery window is advertised on the delivery **capabilities**, not on
+  the obligation, so it comes from `ExpectedReportingPeriod.automatedRecoveryWindowSeconds`. Missing
+  either pin marks nothing overdue and posts nothing, because posting on a guessed clock would churn
+  the status chain.
+
+  **Identity that survives a retry.** `reporting_status_id` is derived from the whole wire statement,
+  `status_as_of` included, so an ID can never come back identical with a different body — which the
+  spec reads as an idempotency conflict, not a replay. Retry stability comes from the new optional
+  `pendingConsumerStatusStore` instead: it remembers a statement that has been built but not confirmed
+  and replays it verbatim. `status_as_of` for `received` is buyer-attributed arrival evidence the spec
+  refuses to let a seller substitute publication time for, so it is irreducibly stateful — a stateless
+  reconciler cannot reproduce it. Without the store a re-plan is simply a new, valid statement, and
+  the chain still ends with exactly one.
+
+  `idempotency_key` is likewise derived from the batch body rather than minted per attempt: it is
+  documented as _"Exact retries reuse the key and body"_, and a fresh key made the seller's batch
+  replay unreachable by construction. Both hashes use RFC 8785 JCS rather than the module's local
+  canonical-form helper, whose `localeCompare` key ordering is ICU-dependent and so would not
+  reproduce byte-identically in another process. The leaf stays in the ID derivation on purpose — it
+  is stable across attempts at the same claim, and it keeps a claim that genuinely recurs later in a
+  chain (`received`, then `unreadable` after a flaky read, then `received` again) from colliding with
+  the earlier identical one.
+
+  **Row-level mismatch codes are reachable.** Detection runs a second time once the rows are in hand,
+  so `metric_missing` and the other row-gated codes can fire through the reconciler at all. Only
+  `observedMetricNames` is derived, only when the buyer pinned `committedMetrics`, and a metric counts
+  as present if any row carries it at top level or under `totals` or the revision declares a control
+  total for it — the remaining row predicates would need the profile's own row shape, and guessing at
+  them risks exactly the false accusation the row gating exists to prevent.
+
+  **Saying nothing when there is nothing to say.** Each plan names the caller's current leaf in
+  `supersedes_reporting_status_id` — resolved from the caller's own append-only history, now loaded
+  onto `ReportingLedger.consumerStatuses`, so the chain is named even before any obligation exists.
+  When that leaf already carries the same claim, the plan comes back `suppressed: 'unchanged'` and is
+  not posted: `immutability` allows a new ID only for changed status, and re-posting would supersede a
+  statement with its own duplicate on every reconcile, which `retention_and_limits` calls pathological
+  churn. A leaf the seller names but does not disclose suppresses the post too, rather than guessing.
+
+  When the client supplies the new optional `syncReportingStatus`, overdue, unsuppressed, attested
+  statuses are posted — the rc.3 duty is that clock, not scope close. `postedConsumerStatuses` reports
+  what the seller actually recorded, and the new `failedConsumerStatuses` carries item-local
+  rejections with the errors the seller returned, so a partial-success batch never loses one silently.
+  Without the client method the reconciler still plans everything and reports it, so existing adopters
+  are unaffected.
+
+  **Wiring order.** Four optional pieces each independently decide whether anything is posted:
+  1. `ExpectedReportingPeriod.automatedRecoveryWindowSeconds` — without it nothing is ever `overdue`.
+  2. `ExpectedReportingPeriod.deliverySlaSeconds` — needed to date `obligation_missing`, where there is
+     no obligation to read `expected_at` from. Add `officialAfterSeconds` for official-finality
+     generations against a seller that advertises one.
+  3. `client.getMediaBuyDelivery` — without it `received` / `content_mismatch` come back
+     `suppressed: 'consumption_unavailable'`.
+  4. `client.syncReportingStatus` — without it nothing posts.
+
+  Anything planned but not posted says why in `suppressed` and `reason`, so a misconfiguration reads
+  as a misconfiguration rather than as a quiet steady state.
+
+  **Failures stay data, not exceptions.** A batch write that fails records every statement in it on
+  `failedConsumerStatuses` and stops posting, rather than throwing: a throw from the second batch
+  discarded the record of everything the first had already appended, and those statements are durably
+  the caller's current leaves whether or not the call returns. And when the buyer's own read budget
+  runs out mid-run, the remaining revisions come back `suppressed: 'local_budget_exhausted'` instead of
+  `unreadable` / `transport_failed` — a limit the buyer set is not evidence that the seller published
+  bytes it could not consume, and a self-inflicted negative claim pins the caller's own view at
+  `action_required`.
+
+  **Compile-visible changes.** Behaviour is additive for existing callers, but `ReportingLedger` gains
+  an optional `consumerStatuses` and `ReportingConsumerStatusPlanV1.statusAsOf` is now optional —
+  anyone reading that field off a plan they did not attest needs a narrowing check.
+
+  **Surfacing.** `consumerStatusPending` carries the seller's own count of obligations past the buyer's
+  deadline with no current status; a failed read leaves it `undefined` rather than failing
+  reconciliation, because it is visibility rather than evidence. `escalations` flattens seller issues
+  with `openedAt` / `issueState` / `externalRef` and the advertised `operationsContact`, plus
+  `requiresHumanContact` for the `contact_*` family, so an SDK user can page someone without
+  re-reading the capability document. `operationsContact` is inert display metadata — never
+  dereference it.
+
+  `ExpectedReportingPeriod` gains optional `committedMetrics` and `metricUnits`. Omitting either
+  disables its check rather than guessing: a buyer that never recorded the metric list must not claim
+  a promised metric is absent.
+
+- 537f193: Implement the AdCP 3.2.0-rc.3 Reliable Reporting consumer-status hardening in the seller ledger.
+
+  **`content_mismatch` projection.** The fifth consumer status conflicts with a healthy/complete seller
+  projection like the other negative statuses and is immediately `action_required`. It is a
+  contract-fact disagreement naming the exact bytes the consumer read, never a measurement dispute.
+
+  **Stale-`received` grace.** A `received` statement made stale _only_ by a seller restatement now
+  projects the caller-scoped view as `delayed` — with `wait_for_retry` — until a bounded re-read
+  deadline, then `action_required`. The deadline is the `created_at` of the first revision that
+  superseded the one the consumer named plus the generation's `delivery_sla`, falling back to
+  `automated_recovery_window_seconds` when that SLA is zero. Later restatements supersede later
+  revisions and cannot restart it. Previously every conflict escalated immediately.
+
+  **Escalation.** `createReportingStatusHandler` accepts `consumerMismatchEscalation`
+  (`escalationSeconds` + `operationsContact`, mirroring the capability block's both-or-neither rule).
+  Past `opened_at` plus that window an open mismatch becomes `action_required` with a `contact_*`
+  action naming the diagnosed party; `wait_for_retry` and `repair_access` do not survive the boundary,
+  and escalation takes precedence over an open grace window.
+
+  **Issue lifecycle.** Issues emit `opened_at`, fixed at first emission and carried unchanged across
+  re-emission and across the `delayed` → `action_required` transition under one stable `issue_id`. It
+  is derived from immutable ledger facts, not the read time, so polling cannot reset the escalation
+  clock. `issue_state` (`open` / `acknowledged`) and `external_ref` are optional and now validated at
+  the response boundary. `projectReportingConsumerStatusMismatchV1` is exported so a custom store can
+  reuse the exact projection.
+
+  **`obligation_counts.consumer_status_pending`.** Emitted on the summary view whenever a consumer
+  principal is resolved. Counts obligations past `expected_at` plus the recovery window with an empty
+  status chain for the caller. Never a health input; overlaps the health counts rather than
+  partitioning them.
+
+  **Reserved `authoritative_party`.** `assertSupportedReportingAuthoritativeParty` refuses
+  `'consumer'` with `UNSUPPORTED_FEATURE` instead of coercing it to `'seller'`, and
+  `installConfiguration` applies it before any other validation. Call it from `sync_accounts` too.
+
+  The lifecycle harness (`examples/reliable-reporting-lifecycle`) gains a `restate_after_received`
+  probe operation mirroring the comply controller's: it restates only against the revision the caller
+  currently reports as `received`, returns `stale_received_grace_deadline`, and is convergent on repeat.
+
+  **Cross-tenant fix.** A persisted `CONSUMER_STATUS_MISMATCH` issue is no longer republished. The
+  issue store is keyed by obligation and carries no consumer dimension, so echoing a persisted one
+  handed every other consumer on that obligation the causing `reporting_status_id`, its `opened_at`
+  (another tenant's exact ingest timing), and any `external_ref` ticket key. The projection recomputes
+  the mismatch from the caller's own current leaf on every read, so the persisted copy was redundant
+  as well as unsafe. Retired (`resolved` / `waived`) issues are dropped from the projection rather
+  than emitted with the state elided.
+
+  **Health-filter fix.** `PostgresReportingLedgerStore` applies the `health` query filter while
+  building the snapshot, and it carried a second copy of the mismatch rule that hardcoded
+  `action_required`. With rc.3's `delayed` grace window that made a stale-`received` obligation
+  unreachable under _every_ filter — excluded from the snapshot when the caller asked for `delayed`,
+  dropped by the handler when they asked for `action_required`. Both now call one shared projection in
+  `./health`, and the store accepts `consumerMismatchEscalation` so the two cannot disagree.
+
+  `opened_at` is now the later of the first supersession and the causing statement's `recorded_at`; a
+  buyer that posts `received` naming an already-superseded revision no longer gets an issue dated
+  before the seller could have observed it, which with a short escalation window would have been born
+  already escalated. Grace and escalation comparisons use the ledger's exact instant comparators
+  instead of `Date.parse`, which floors sub-millisecond fractions and returns `NaN` for the leap
+  seconds this module accepts. Persisted issues preserve their `openedAt` across re-upsert, and
+  `HISTORY_UNAVAILABLE` is anchored to its period rather than the read time.
+
+  `UnsupportedReportingFeatureError` extends `AdcpError` so the framework maps it to
+  `UNSUPPORTED_FEATURE`/`terminal`; as a plain `Error` it would have been projected to
+  `SERVICE_UNAVAILABLE`/`transient`, telling the buyer to retry the request it refuses.
+  `assertSupportedReportingAuthoritativeParty` is exported from the package root, rejects a
+  wrong-shaped argument instead of silently passing, treats an explicit `null` as a request rather
+  than absence, and reports buyer-supplied values as bounded structured details.
+  `consumerMismatchEscalation` is validated at wiring time — `NaN` silently disabled escalation and a
+  negative window escalated everything.
+
+  `reportingConsumerStatusCapabilityV1(escalation)` projects the same option into the capability
+  document's `consumer_mismatch_escalation_seconds` + `operations_contact`, so the advertised window
+  and the window the reads enforce come from one value and cannot drift.
+
+  **Ingest rejects a `content_mismatch` against a superseded revision.** `expected_period` makes it
+  _"valid only against a revision the seller currently requires for that period"_, but existence,
+  account ownership, obligation membership, and a matching content digest are all satisfiable by a
+  long-superseded revision — so a buyer could dispute stale bytes and pin its own caller-scoped view
+  at `action_required`, which the seller may then not clear while that statement is the leaf.
+  Deciding currency needs the sibling revision set, so `ReportingConsumerStatusLedgerStore` gains an
+  optional `listRevisionMetadata`; `ReportingLedgerStore` implementors are already covered through
+  `listRevisions`. A store that can do neither now **rejects** `content_mismatch` rather than
+  accepting a statement it cannot validate — the other four statuses are unaffected, and
+  `content_mismatch` is new in rc.3 so no existing adapter regresses.
+
+  `consumer_status_pending` now starts strictly _after_ the deadline, since the duty is to post "no
+  later than" it. A negative-status issue's `opened_at` takes the later of the statement's
+  `recorded_at` and the earliest qualifying revision, so a statement filed during a seller outage no
+  longer surfaces on recovery already past its escalation boundary. And
+  `createReportingStatusHandler` inherits `consumerMismatchEscalation` from the store and throws on a
+  disagreement, so a health-filtered periods read cannot contradict the summary.
+
+- fe71201: Add capability-driven full assessments for multi-agent routing maps, including topology-wide storyboard selection and tenant/cross-tenant JSON and JUnit grouping.
+- f3562ac: Seed storyboard fixtures through the routed agent that owns each fixture's state. A read-only peer no longer needs a test controller, and routed runs preserve each selected agent's auth and controller capabilities during pre-flight seeding.
+- c0c01e8: Harden Reliable Reporting tenant isolation, webhook recovery auditing, receipt replay scope, optional pagination compatibility, buyer deadlines and dynamic rosters, durable lease fencing, fair recovery, and bounded production database work. Buyer reconciliation now independently verifies post-official adjustments and durably submits adjustment receipts. Pending consumer-status stores require seller/principal scope, checkpoint identities include a versioned immutable-context fingerprint, production notification installation requires `accounts.list`, authenticated notification routing requires `consumerScope`, and subscriber IDs enforce the protocol's 64-character identifier grammar. Exact-revision reads now default to a configurable 32 MiB decoded-byte ceiling (`maxRevisionBytes`; use 256 MiB for pre-14 behavior). Webhook attempt observers are now awaitable and time-bounded, and signing plus each POST has a configurable 30 second default deadline; failures remain isolated through `onAttemptObserverError`. Reporting webhook attempt ordinals are allocated only at the final durable pre-POST barrier, remain dense across retryable authorization failures and restarts, and age out with their activity retention window.
+- 3cc7b86: Add a hardened buyer resolver for digest-pinned seller acceptance-policy catalogs, including schema and local reference integrity checks, explicit unresolved registry pins, product-profile classification, and capability-lifetime caching. URL credentials are now rejected by the shared SSRF-safe fetch boundary. Canonical references now reject malformed UTF-8 and duplicate JSON keys, and documents deeper than 256 JSON levels return the new `document_too_deep` error instead of being cloned.
+- 8a90149: Enforce active, scoped cross-origin operator delegations during signing-key discovery and cap JWKS caches at delegation expiry. Preserve strict official modern MCP discovery schemas while routing AdCP input failures through the structured framework error envelope.
+- c0c01e8: Project Reliable Reporting webhook activity through the real `list_accounts`
+  runtime using trusted authenticated scope, publish shared Python/TypeScript
+  canonical JSON fixtures, and add production parity and operations runbooks.
+- fdef3ea: Add the seller-side reporting ledger, PostgreSQL store, leased producer, pure health projection, lifecycle transitions, and `get_reporting_status` handler.
+- d29fe80: Fix three release-blocking request-signing conformance bugs.
+
+  Bump rationale: `minor`, not `patch`. The fixes themselves are bug fixes, but they land additive public surface — `ComplyOptions.request_signing` (a typed option on a barrel-exported interface), `probe_passed` as a member of `StoryboardValidationCheck`, a new `signing_transport_unavailable` value on the detailed `skip_reason` field that report consumers can switch on (the contract-enumerated `skip.reason` stays `not_applicable`, with the sub-reason token as `skip.detail`), and three `storyboard run` flags — which is what the repo's own guideline calls a minor. They also change grading verdicts (see below), so a reader comparing two runs deserves more than a patch's worth of warning.
+
+  One exported rule carries the verdict: `signingCoverage` in the storyboard runner answers whether any request-signing vector reached the agent, and the storyboard verdict, the compliance track rollup, the compliance report and the CLI exit contract all consume it (the CLI through `dist`). It replaces four hand-written copies of the same question, two of which had already drifted — one into a false CI failure on an all-green report. The public additions above are pinned by compile-time assertions in `src/lib/testing/compliance/types.type-checks.ts` that import through `@adcp/sdk/testing` rather than a deep path. Note the new `signing_transport_unavailable` literal appears on the SDK's detailed `skip_reason`, not on the contract-enumerated `skip.reason`.
+
+  Two upstream registrations remain open, and both are external blockers rather than SDK work (this change emits the already-registered _shape_ in each case, so registration will not move any behavior here):
+  1. `canonical_detail_sub_reasons.not_applicable.signing_transport_unavailable` in `runner-output-contract.yaml`, alongside the shipped `rate_limit_not_triggered` precedent, with `spec_source: test-kits/signed-requests-runner.yaml`.
+  2. `probe_passed` under that contract's runner-synthesized grading codes (today: `capture_path_not_resolvable`, `unresolved_substitution`). It fails closed in this runner — a `probe_passed` check without a probe result is a hard step failure, and a failed grade always carries a diagnostic — but a report consumer will not recognise the check kind until it is registered.
+  - **A2A runs no longer dispatch signed-request vectors as MCP** (#2954). `resolveVectorTransport` reads the resolved protocol. This runner implements two vector dispatches — verbatim REST replay (`raw`) and an MCP `tools/call` re-frame (`mcp`) — and neither is an A2A request, so an A2A run with no explicit `request_signing.transport` skips each affected vector as `signing_transport_unavailable`. Three things follow, each of which was a false-assurance path in review: the `signed_requests` storyboard reports `overall_passed: false` rather than passing off the back of an SDK self-check; `computeTrackStatus` grades the track `partial` **before** its all-skipped check, so an entirely unverified track can no longer evaporate into `skip` and let sibling tracks carry the run to `passing`; and the gate is per-vector rather than per-storyboard, so a routed `agents` run pairing a top-level `a2a` protocol with an MCP seller still grades. Only the in-library `jwks_override` negatives still grade on A2A — they touch no transport. **Adopter consequence to plan for:** an agent that honestly advertises `request_signing.supported: true` and is reached over A2A now exits nonzero with no agent-side remedy; the outs are grading the MCP or REST binding, `--signing-transport` when that binding answers at the same URL, or `--soft-fail`.
+    Vector `028` is **not** replayed raw at an A2A endpoint. That is a gap in this runner, not a client limitation — `@a2a-js/sdk` issues `tasks/cancel` fine; what is missing is a signing probe wired through it, plus an upstream answer for how a verifier scopes `required_for` over A2A methods. RFC 9421 conformance needs byte-level control of the request, which the builder has for the two bindings AdCP defines for these fixtures; picking a third here would be the SDK inventing one.
+    The skip is emitted in the output contract's registered shape: canonical `not_applicable` with `skip.detail` set to the `signing_transport_unavailable` token exactly, empty validations, no pass/fail counter movement — the same shape as the contract's `rate_limit_not_triggered` entry. Deliberately **not** `fixture_unavailable`, whose contract text mandates a `creative_asset_fixture_unavailable:` detail prefix and says the storyboard grades `not_applicable` with no verdict movement. The gap stays visible through coverage instead of through the reason, and the operator-facing remedy rides on the probe result where the renderers read it.
+  - **Exclusions are decided before the protocol gate** (#2954). Operator selection (`onlyVectors`/`skipVectors`), then exclusions that belong to the vector itself, then the transport gate. A vector no HTTP binding can carry (`026-non-ascii-host`) reports `transport_ungradable` on A2A exactly as it does on MCP, instead of being counted as this protocol's missing coverage.
+  - **Vector 028 is now gated on the agent's advertised capability — a behavior change on MCP runs too, not only A2A** (#2954). `028-unsigned-protocol-method-required` reports `capability_profile_mismatch` unless the agent advertises `request_signing.protocol_methods_required_for`, which is the gate `signed-requests.yaml` specifies ("the runner skips when the agent does not declare the bucket, and FAILs when it declares it but doesn't enforce"). Previously the storyboard dispatched 028 at every agent, so an agent that never claimed the JSON-RPC bucket could fail it. Two consequences worth stating plainly: a non-claiming agent now sees one fewer graded vector on an ordinary MCP run, and a claiming agent's behavior is unchanged. This also makes the storyboard path **diverge from `adcp grade request-signing`**, which compares against an operator-supplied `--covers-content-digest` / `agentCapability` profile rather than a live advertisement and therefore still dispatches 028 unless the operator says otherwise; the shared helper (`semanticVectorExclusion`) covers the rule, not the input.
+    Only that one field is read, and only from a schema-valid declaration. The capabilities schema requires just `supported`, so demanding `covers_content_digest`/`required_for` would fail a schema-legal `{ supported: true }` agent on a vector it never claimed; conversely a declaration that the line's own schema rejects — `null`, `[""]`, `["tasks/cancel "]`, a bare string, a non-string entry, or a name outside the line's wire-name grammar — is discarded rather than read as "not declared", because reading it that way lets a server that accepts an unsigned `tasks/cancel` suppress the vector and report `overall_passed: true`. The grammar is keyed to the run's own compliance line, and the differences matter in both directions: 3.2 allows A2A 1.0 PascalCase names and multi-segment paths, caps names at 256 characters, and forbids `tools/call`; 3.1 allows a single lowercase pair, forbids nothing, and declares **no** length cap — so an over-long name is rejected only on 3.2, and a 258-character name stays honoured on 3.1 rather than failing a vector that agent never claimed. Both lines are pinned against their shipped schema by test, including the absence of a 3.1 cap. Nothing else is read from a live advertisement — the rest of a vector's `verifier_capability` describes an operator-selected grading profile, and comparing it to an advertisement would exclude 39 of 40 vectors. Both exclusions carry the grader's diagnostic so an operator can audit an agent that under-declares.
+  - **A broken vector cache fails instead of skipping** (#2954). A load error (or a vector id missing from the loaded set) now surfaces as a probe error. It used to be swallowed, leaving the transport gate to report an unreadable compliance cache as `signing_transport_unavailable` — a skip-shaped verdict that could never fail a run.
+  - **`jwks_override` vectors grade on their real verdict** (#2955). New `probe_passed` validation check; `synthesizeNegativeStep` emits it for vectors the grader decides in-library (vector 025), which report `http_status: 0` by contract. The old synthesized `http_status: 401` failed a step the grader had passed and no implementation could move it. Their step title now says `SDK verifier self-check, agent not contacted`, because JUnit keeps titles and drops narratives. Non-`jwks_override` negatives keep their 401 assertion.
+  - **`storyboard run` exposes the request-signing knobs** (#2956). New `--signing-transport raw|mcp`, `--signing-skip-vectors <ids>`, and `--signing-skip-rate-abuse`, threaded into `request_signing` on every storyboard-run path (single, `--file`, multi-instance, agents-routed, local-agent, `storyboard step`), with `ComplyOptions.request_signing` destructured and re-spread like its siblings. Omitting the transport infers it from the resolved protocol. Both new value flags are validated: an unknown vector id is rejected with the nearest real ids (a typo used to skip nothing, silently), and `--signing-skip-rate-abuse=false` is rejected rather than read as "on". Also corrects the stale `BuildOptions.transport` JSDoc that advertised `'raw' (default)`.
+  - **A run that graded no verifier exits nonzero** (#2956). Skipped steps are `passed: true`, so `adcp storyboard step … && echo ok` used to print `ok` for a vector nothing verified. That command now exits 3 when the runner could not dispatch the step — and honours `--soft-fail`, which it previously advertised and ignored. The full assessment exits 3 when a storyboard's request-signing coverage went unverified, whatever removed the vectors: keying only on the transport reason left `--signing-skip-vectors`/`onlyVectors` exiting 0 with the in-library self-check as the only green step. `signingCoverage` names which of the four happened — `probe_errored` (the handshake or connection failed), `transport_unverified` (no dispatch shape for this protocol), `scope_excluded` (the run's own selection removed every vector), `self_check_only` (only the in-library SDK check ran) — and each gets its own remedy, because telling an operator to drop `--signing-skip-vectors` when the agent was unreachable sends them the wrong way. The rule is evaluated per storyboard, not per scenario: compliance scenarios are per phase, and a per-phase rule failed runs whose positives graded fine. Everything else is untouched — other `partial` runs, legacy `fixture_unavailable` gaps and single steps the operator excluded all keep exit 0.
+
+  Reporting: skipped steps print their reason and detail in `storyboard run`'s human output, runner-owned gaps print as `COVERAGE UNAVAILABLE` with the remedy (once per invocation — the ~550-character remedy used to repeat per vector), the canonical compliance report names each storyboard whose signing coverage went unverified and why, and the detailed reason joins the compliance summary's skip-cause block. Skip details are read from the redacted probe result on both probe branches so an agent-supplied URL cannot reach report surface unredacted, and the report sink strips control characters.
+
+  Published-3.0-line note: the `adcp-3.0` dist-tag (`@adcp/sdk@7.11.x`) predates the `'mcp'` vector-transport default and these CLI flags. It needs its own backport on `backport-2114-adcp-3.0`; this change does not reach it.
+
+- fd414ba: Add AdCP 3.2 cross-role governance authorization builders, capability-gated buyer middleware, compact-JWS service verification, and the published conformance vectors.
+
+  Governance adapter transport or malformed-response failures now throw `GovernanceAdapterError` instead of returning a denial-shaped result, so sellers can distinguish unavailable governance infrastructure from an authoritative policy denial. Authoritative adapter denials now use the AdCP 3.2 `CheckGovernanceResponse` fields (`verdict`, `check_type`, and `findings`) and no longer expose the legacy `status`, `binding`, or `plan_id` response members.
+
+  Governed calls now fail closed instead of forwarding receiver credentials from `push_notification_config`, `reporting_webhook`, or `artifact_webhook` to the governance agent. For an SDK-injected task-status webhook, retry with `{ disableWebhook: true }` and poll, or use A2A task-status notifications. Credential-bearing reporting and artifact callbacks must be omitted from governed requests. Legacy condition re-checks preserve and persist the response `governance_context` continuation token.
+
+- 9ad0e0f: Restore generated Zod input ergonomics, expose legacy product-response normalization for custom task recovery, and let native product handlers provide SDK-owned MCP response summaries.
+- 43b949f: Add a Core-only buyer reporting reconciler that derives the five reporting
+  health states from obligations, revisions, scope closure, and clocks without
+  managed-delivery or receipt dependencies.
+- 61815f4: Add a durable persistent notification subscription runtime with caller/account isolation, generation-fenced declarative replacement, exact-tuple activation proof, staged immutable write-only credential bindings, PostgreSQL storage and migrations, bounded concurrent anchor-safe fanout, timed adopter callbacks, and live authorization on every webhook attempt and recovered retry.
+- d5b016e: Grade request-signing vectors over A2A by signing the request the official `@a2a-js/sdk` client emits.
+
+  An A2A run previously reported every signed-request vector as
+  `signing_transport_unavailable` — correct as a fail-closed stop-gap (#2958), but it means no
+  A2A agent's verifier is ever graded. This wires the dispatch the stop-gap stood in for.
+
+  The request is not framed here. `ClientFactory` resolves the agent card and builds the call;
+  the request is captured at the SDK's own `fetchImpl` seam and those exact bytes are signed,
+  so the endpoint, the JSON-RPC method name, the `a2a-version` header and the proto-JSON
+  encoding are all the official client's decisions.
+
+  Fail-closed behaviour is preserved rather than replaced: `resolveVectorTransport` still
+  returns no framing for A2A, and the availability decision moved to the async dispatcher.
+  An agent whose card does not resolve to a JSONRPC interface keeps the existing
+  `signing_transport_unavailable` reporting and its guardrails.
+
+  Agent Card discovery uses the runner's DNS-pinned, redirect-checked transport
+  with a deadline, supports modern, path-scoped, and genuine v0.3 cards, and
+  reports the card-selected endpoint as the probe provenance.
+
+- 15c8ee8: Add Public Suffix List-backed BrandRef domain validation with explicit, narrow development-domain exceptions.
+- c0c01e8: Harden the Reliable Reporting buyer runtime with durable notification deduplication and authenticated seller/principal scope binding.
+- e9be090: Expose typed storyboard agent-profile reuse so repeated matrix runs can skip redundant capability discovery while preserving tool gates.
+- ecf1c74: Add request-only Targeting Input helpers for the AdCP 3.2 null-clear semantics (DR-0020) and stop
+  `createMediaBuyStore` from persisting a clear command.
+
+  `resolveTargetingInput`, `applyTargetingInput`, and `hasTargetingClears` are exported from the root
+  and `@adcp/sdk/server`. They project between the request-only Targeting Input — where a dimension may
+  be `null` to suppress a product default on create or clear stored state on update — and the strict
+  Targeting Overlay used by discovery criteria, accepted commercial snapshots, mutation responses, and
+  package readback, which must not contain `null`.
+
+  Two fixes in `createMediaBuyStore`, both reachable only once rc.3 makes the nullable input types
+  real: `persistFromCreate` fell back to the request overlay verbatim when the seller's response did
+  not echo one, and the `new_packages` arm of `mergeFromUpdate` assigned the incoming overlay directly.
+  Either path could write a `null` clear command into durable state, which `backfill` would then echo
+  into a `get_media_buys` response whose schema forbids null. Both now resolve clears away, and a patch
+  that clears the last surviving dimension drops the tracked overlay instead of persisting `{}`.
+
+  The store's `CreateMediaBuyInputForStore` / `UpdateMediaBuyInputForStore` input types widen from the
+  strict overlay to the request shape, so passing a real `create_media_buy` / `update_media_buy`
+  payload typechecks. Persisted and echoed values remain strict.
+
+  Codegen fix: `TargetingOverlayInput.device_platform` and `.device_type` were emitted as the scalar
+  `DevicePlatform` / `DeviceType` enums instead of arrays. `core/targeting-input.json` reaches those
+  dimensions through a JSON-pointer `$ref` into `core/targeting.json#/properties/<dimension>`, and for
+  an array with no `title` of its own json-schema-to-typescript names the result after the items'
+  canonical `$ref`. Both types now match the wire.
+
+- 30ca089: Add a durable server-side principal lifecycle with atomic section replacement, reporting-destination generations, declaration negotiation, and recoverable `principal.changed` delivery.
+
+  Principal handlers now require the dedicated authenticated `protocol.resolvePrincipalScope` resolver. Adopters already exposing `getPrincipal` or `syncPrincipal` must rename their principal resolver from `resolveScope` to `resolvePrincipalScope`; `resolveScope` remains the notification-only resolver for `syncAgentNotificationConfigs`.
+
+- ae9a8fc: Add `lintPackageFormatSelectorDimensions` to `@adcp/sdk/v2/projection` for incomplete or conflicting fixed-size image dimensions across canonical package selectors and deprecated legacy format IDs.
+- e03a901: Add a compact-first media-buy lifecycle coordinator that negotiates compact or established seller tools, returns runtime-validated typed lifecycle-neutral product and proposal outcomes, preserves mutation retry keys, isolates bounded proposal and pending-mutation state by authenticated principal, and rejects unadvertised tools or unrepresentable guarantees before dispatch unless the caller opts into an exact named loss. Preserve the full canonical proposal shape and completed-response requirements in generated refine-proposal TypeScript and Zod schemas.
+- a68bc96: Propagate compact product, proposal, and media-buy identifiers between storyboard steps while atomically replacing stale lifecycle aliases.
+- f884156: Project standard `extensions_supported` and top-level capability `ext` fields through both server construction APIs, and document Zod `safeExtend` migration for refined public schemas.
+- aad43d5: Adopt the AdCP 3.2 beta.1 schemas and compliance bundle, expose its compact
+  proposal, decline, and expiry lifecycle storyboards through the SDK runner and
+  CLI, and preserve beta.1's closed placement-presentation validation boundary.
+- c0c01e8: Add a probed PostgreSQL production composer for Reliable Reporting, including Managed Delivery, all notification types, webhook activity, recovery workers, and receipt routing.
+- 318bdbf: Add typed, multi-dimension targeting command-state conformance vectors and operation-named input aliases; provide a same-instance capability-preflight factory with typed refusal reasons and cold-discovery guidance; and make bounded response-preview capture asynchronous while skipping SSE, non-text, and explicitly over-limit bodies with `responseBodyTruncated: true`. Text bodies without a usable length are captured through the same size- and time-bounded reader.
+
+  Recognize the unpublished legacy `requires_proposal` action mode without granting mutation authority: local preflight returns `mode_mismatch` with a proposal-lifecycle recovery hint, while seller errors omit the legacy action echo to remain valid against the current wire schema.
+
+- 2d76193: Add optional `TaskHandoffOptions.ext` and `TaskRecord.ext` so adopters can attach a vendor-namespaced `ext` object to the submitted task envelope and have it projected on `get_task_status`, `tasks_get` and `list_tasks` reads.
+- 5a55112: Add PostgreSQL and Redis webhook delivery stores plus durable, lease-fenced outbox recovery backends, secret-reference adapters, migrations, and a reusable recovery polling API.
+- 508d669: Fix public Zod array projection so complex `minItems: 1` arrays no longer render as tuples with an incorrect OpenAPI `minItems: 2`, and collapse bounded homogeneous tuple unions that caused `ProductSchema` OpenAPI documents to grow to roughly 99 MB. Generated public array inference is widened from tuple types to ordinary arrays in line with the documented relaxed-cardinality contract.
+- a4a269c: Add unified product, proposal, and live MediaBuy action assessment, portable change-constraint preflight, canonical task routing, and an explicit seller change-right resolver. Preserve opaque legacy references and unknown conditions without granting negotiated rights. Add a tree-shakeable browser entry point at `@adcp/sdk/media-buy/actions` and retain existing legacy preflight compatibility.
+
+  Existing `preflightUpdateMediaBuy` now enforces accepted change terms when that snapshot is supplied, including unmapped-field and whole-request task checks. An explicitly empty `available_actions` array takes precedence over legacy `valid_actions` hints. The public action union includes canonical and rc.3 actions, and mode recovery adds `waitForTask` for `seller_managed`; exhaustive consumers should handle the additive variants.
+
+  The existing update facade can subsume advertised compact tasks, including atomic mixed targeting and assignment changes; explicitly attempted compact tasks must still match. Seller package lifecycle projections narrow mixed scopes to packages whose current state supports the action.
+
+  Compatibility preflight also rejects unknown sibling mutations and unknown structured modes, and honors explicit package scopes and compact route restrictions without an accepted snapshot. Separately supplied proposal snapshots require accepted status and a current MediaBuy/proposal identity link.
+
+  Flat legacy `update_name` hints no longer authorize metadata changes; sellers must advertise explicit structured live authority for naming updates.
+
+  Explicit negotiated status scope can admit pause/resume while pending, including clearing a create-time hold. Existing packages default an omitted `paused` flag to false; missing packages, unknown lifecycle statuses, and terminal states remain unavailable. A structured naming grant no longer requires hydrating an accepted proposal snapshot, while supplied snapshot identities remain checked.
+
+  Direct and unified availability stay unknown for unmapped request fields, including opaque new-package extensions. Both preflight paths enforce the served-version ceiling for rc.3 shared caps and package scope, including legacy snapshots without embedded terms.
+
+  Known action IDs use closed canonical metadata. Readable live entries preserve unknown wire IDs as strings without granting them authority.
+  Accordingly, `getAvailableActions().actions` and preflight echoes expose readable string IDs, and action-context snapshots accept readonly arrays. Exhaustive consumers should handle unknown wire IDs and copy snapshots before mutating them.
+
+  Modern term-linked live entries require the accepted snapshot for preflight/assertion; missing terms cannot silently downgrade to legacy compatibility. Legacy opaque references retain the existing compatibility path.
+
+  Package holds operate independently on active or paused buys; pending buy states require explicit negotiated status scope.
+
+  Explicit local pending package status takes precedence over both pause-flag values. A live resume grant cannot override it in buyer assessment, either preflight, seller assertion, or seller projection; negotiated MediaBuy-level pending scope remains separate.
+
+  Legacy package controls also require current operational package and buy state, and unlinked structured grants must use a compatible canonical task. Served versions before 3.2.0-beta.9 cannot emit or execute modern term identities or seller-managed modes. Explicit current product policies constrain the final emitted processing SLA, including tighter seller-selected commitments.
+
+- 2db30b4: Make the acceptance-policy discovery storyboard verify the advertised catalog bytes, digest, schema, seller defaults, and every product profile. Compliance failures now retain distinct safe resolver codes for unsafe URLs, fetches, digest or schema mismatches, registry pin failures, and unresolved references. Registry verification is cancellable, batches large selections under one deadline, and bootstraps the catalog prerequisite for standalone product-step runs.
+- 555c73f: Add `resolveVerifiedAcceptancePolicyProfiles`, registry-resolution options and public resolver/result types. Registry profiles become usable only after exact policy, version, canonical policy digest, embedded profile identity, and profile digest verification; failures remain explicitly unresolved with structured diagnostics.
+
+  Allow `RegistryClient.resolvePolicy()` callers to pass an `AbortSignal`, enabling bounded batch resolution without replacing the client's internal request timeout.
+
+  `ResolvedAcceptancePolicyDefault` now includes a `source: 'registry', resolution: 'resolved'` member, so exhaustive consumers should handle the verified registry case.
+
+- e184366: Add supply-path verification with a typed canonical registry wrapper and a live authoritative mode that checks owner/host adagents.json declarations and ads.txt/app-ads.txt evidence. Return per-leg diagnostics and auditable fetch provenance, with DNS-pinned SSRF protection, bounded fetching and fail-closed handling of malformed or unresolved authorization constraints.
+
+  Add opt-in external collection path annotations for product discovery, public selector/distribution types, and an explicit distinction between authorization bulk grants and product selectors that require concrete collection IDs.
+
+  Support explicit publisher attribution on shared collection declarations, bounded process-local authority admission, durable tenant-scoped stores, and independent authority migration confirmation. Establish first-use pins only after successful manifest validation, with a read-only precheck and atomic successful-observation commit.
+
+  Persist parsed revocations before later fetch or authority-store failures, preserving their seven-day hold through failed affirmative verification.
+
+- 6902f14: Add typed principal read/sync client methods and a bounded buyer lifecycle helper for guarded replacement, destination setup polling, and declaration negotiation readback.
+- 79d6a93: Add a vendor-neutral `compileUniversalMacroTemplate` helper that compiles caller-supplied, evidence-backed source mappings into canonical AdCP macros with explicit built-in or custom dialect scanners, runtime registry and requirement validation, retained offsets and provenance, and fail-closed diagnostics.
+
+### Patch Changes
+
+- d5b016e: Name the A2A dispatch's `legacyCompat` policy once, with the measurement that justifies it.
+
+  `request-signing/a2a-dispatch.ts` set `{ enabled: true }` at two call sites. Measured against `@a2a-js/sdk`, that is the card-following setting: a `1.0` card emits `CancelTask`/`a2a-version: 1.0` whether it is on or off, while a `0.3.0` card emits `tasks/cancel`/`0.3` with it on and `CancelTask`/`1.0` with it off. Turning it off does not refuse a 0.3 card, it speaks 1.0 at one — so a conformance run must leave it on. Folded from adcontextprotocol/adcp-client#2973.
+
+- 3674123: Add the `adcp storyboard run --parallel-dispatch` opt-in for process-local parallel dispatch conformance grading.
+- e223146: Restore `Pick`, `Omit`, and structural-assignment compatibility for generated named open-object types while preserving explicit extension-map index signatures.
+- 38266d0: Regenerate agent documentation after Changesets updates the package version in release pull requests.
+- 5d51dab: Adopt the signed AdCP 3.2.0-beta.8 protocol bundle, regenerate the public types and runtime schemas, and keep annotation-only protocol metadata from collapsing generated response types.
+- 3826420: Preserve canonical currency, price, CPV threshold, and DOOH bounds in generated runtime schemas.
+- c1d1f9a: Preserve resolved reporting delivery configuration state in server account projections.
+- d8f9da8: Teach the storyboard runner's `impairment.coherence` invariant to observe successful `force_audience_status` controller transitions, including audience suspension and recovery, without adding a protocol-visible audience read task.
+- 956a61b: Preserve audio VAST exclusions and non-negative integer duration bounds in the generated runtime schema.
+- 9c53b29: Complete the AdCP 3.2.0-beta.6 adoption with updated migration guidance,
+  consistent prerelease fixtures, and A2A 1.0 request-signing method coverage.
+- 0cd041c: Add `@adcp/sdk/client/core`, a focused entrypoint for buyer-side client runtimes that avoids loading the package's server, compliance, testing, and eager generated-schema surfaces. Client schema validation and media-buy compatibility modules now load on demand for both the focused entrypoint and existing root imports.
+- 0601153: Preserve account scope and conditional-feed context across packaged wholesale product storyboards.
+- 10a7eb3: Exclude MCP prompt projections from generated wire-field allowlists so intentionally reduced model-context schemas cannot conflict with canonical request contracts.
+- f6ada8e: Expose placement presentation reference and document validators from the package root, publish their types from the root, schemas, and types entrypoints, and document secure digest-pinned validation.
+- a950bf9: Restore composable product discovery schema declarations and relax the compatible `tldts` dependency floor for release-age-gated consumers.
+- 7a1e985: Adopt the signed AdCP 3.2.0-rc.0 bundle, including product identity and daypart timezone support.
+- 8524e4d: Canonicalize agent URL identity fields before storyboard runner comparisons so schema-conformant URL forms grade equivalently without changing resource URL assertions.
+- 5ee3ecf: Allow `list_accounts` as the lowest-priority security-baseline authentication probe, and skip ordinary storyboard tool calls whose required test-kit contract is not configured.
+- 8f53265: Normalize SDK-local request-schema rejections for explicitly schema-invalid storyboard steps to synthetic `INVALID_REQUEST` results.
+- 1d42629: Prevent capability-gated storyboard phases from dispatching dependent requests with unavailable context and keep those applicability skips neutral in compliance bundle scoring.
+- 6e11406: Add a packed existing-platform example for translating nullable targeting commands into provider operations and strict accepted state.
+- b50aff2: Mirror final MCP `structuredContent` into a serialized text block so text-only clients retain complete AdCP results.
+- 20d0971: Stop transport diagnostics scopes from waiting for asynchronous response-body capture. The `response_received` activity still fires when capture completes, but may now arrive after `withTransportDiagnostics()` resolves.
+- c7152fa: Report HITL task webhook availability only when both a buyer URL and delivery emitter are configured.
+- f6cda54: Harden SSRF address classification by refusing additional non-routable and special-purpose IPv6 ranges. Globally reachable IETF protocol assignments remain allowed, while IPv6 metadata endpoints and unsafe translation or tunnel prefixes that cannot exclude metadata targets remain blocked even with private-network opt-in.
+- 24b217a: Restore complete list-creatives assignment rows and typed, composable public Zod object schemas.
+- f654876: Fix generated `SignalTargetingExpression` types and validators so categorical values remain non-empty, numeric bounds remain required and ordered, and unrelated objects cannot satisfy the union.
+- 6663833: Preserve inline `sync_creatives` result fields in the public core generated types and drain large CLI `--json` payloads before exit.
+- 1801914: Deduplicate repeated Product format and placement validators so adopter OpenAPI documents stay compact when extending `ProductSchema`.
+- bfe15cc: Reduce install size by publishing compact offline schema bundles and omitting source maps.
+- ab47b6c: Honor explicit account IDs and operators in account, creative, and reporting controller storyboard steps while forcing sandbox routing and keeping the run brand. Exact reporting-revision delivery reads keep their authored account, so they query the revision that the controller published. Media-buy simulations and seeding retain their create/read account scope, sandbox-only hints fall back to the resolved account, and `seed_account` keeps the authorized caller scope.
+- a1c50b9: Keep `serve()` connections open while a client validates schemas between MCP calls, avoiding half-closed sockets in multi-step flows.
+- 9f07e94: Make external schema roots authoritative for storyboard request and response validation, including `latest` schema IDs pinned by a matching schema index, so pre-publish protocol builds are not rejected by the SDK's generated validator snapshot.
+- b229519: storyboard runner: resolve a storyboard's declared `prerequisites.test_kit` from a caller-selected or trusted-loader compliance cache into `options.test_kit` (caller-supplied kits win), and hard-fail steps whose `auth.from_test_kit` resolves no credential instead of silently sending an unauthenticated probe (adcontextprotocol/adcp#6735). Previously the declaration was decorative: runs without an explicit kit degraded credential-keyed steps (comply_controller_mode_gate) to no-auth probes, grading conformant sellers FAIL. Ad-hoc `--file` runs authorize cache-relative kits only with an explicit `--compliance-dir`; `--compliance-version` selects protocol/schema data without granting credential-read authority, and callers can instead pass `--test-kit`. Targeted `storyboard step --test-kit` reruns now preserve the same explicit override. Declared kit paths are containment-checked against the cache root; a declared kit missing from the cache is tolerated at load time (only steps that actually need the credential fail, with an explicit configuration error).
+- a1548f4: Allow immutable canonical storyboard fixtures to retain their own protocol provenance while validating a newer AdCP release candidate.
+- c0c01e8: Make deployment-wide Managed Delivery planning durably fair across reporting accounts. PostgreSQL now persists a round-robin cursor and gives each selected account a bounded first-pass share before a hot tenant can consume spare capacity, so later and newly added accounts cannot be starved by the lexically first account.
+- a9811e2: Grade explicit payload-level failures as expected errors in compliance storyboards, including live-account controller denials returned through successful MCP calls.
+- 5de8733: fix(client): stop `stripLegacyCreativeIdentity` masking seller error text as `[legacy creative identity]` (#3060)
+
+  The canonical creative boundary treated the SDK-synthesized `_message` (the seller's text part) as a source of legacy identity tokens, so the seller's whole error sentence was scrubbed from `result.error`, `result.adcpError.message`, and `result.data.adcp_error.message` on failed `get_products` (and other canonical creative) calls. `_message` is still dropped from canonical output, but its prose is no longer tokenized. Error text is only masked where it actually carries a legacy creative identity (`format_id`, `v1_format_ref`, `agent_url`, or a value/URL collected from a real identity field).
+
+- b43d3b6: Preserve branch-specific required fields in generated union types and export
+  the compact media-buy lifecycle request and response types from
+  `@adcp/sdk/types`. Sync the registry policy-publication fields from the
+  authoritative OpenAPI snapshot.
+- b42d757: `isLikelyPrivateUrl` now recognizes Kubernetes service DNS names (`.cluster.local` suffix) as private. Callers connecting to a managed internal agent whose URI ends in `.svc.cluster.local` (with or without the trailing FQDN dot) are granted `allowPrivateIp` automatically, without needing `ADCP_ALLOW_PRIVATE_AGENT_URL=1`.
+- 105ba59: Generate JSON Schema arrays with non-exact `maxItems` constraints as ordinary TypeScript arrays while enforcing the bounds in generated Zod runtime schemas.
+- d7c5d64: Fix self-contained per-tool declarations so protocol errors do not resolve to the JavaScript global `Error` type.
+- 6e6f656: Fix schema-sync version updates for prerelease SDK builds so beta and RC
+  versions advance their numeric prerelease identifier instead of producing an
+  invalid `NaN` patch version.
+- 3d8c3df: Align Reliable Reporting with the AdCP 3.2.0-rc.4 public timing and view contracts.
+
+  Complete summaries now forecast the nearest future active period start, while
+  open summaries and obligations use `period.end + delivery_sla`. Private source
+  finality cutoffs no longer replace the public due time in production, status
+  ingest, or buyer reconciliation. Complete periods continue to reject
+  `next_expected_at` without weakening complete-scope guards.
+
+  Reporting tool discovery is bound to the mounted protocol pin, and canonical
+  schema loading retains the selected bundled document when modular and bundled
+  schemas share an authored `$id`.
+
+- 8ba12c2: Preserve the canonical reporting consumer status contract when regenerating from protocol bundles that include `content_mismatch`. Derive ledger wire fields and status-specific validation from the pinned schema, and, when regenerated from those bundles, retain `mismatch_code` through ingest and readback and verify the consumed revision binding for content mismatches. Existing statuses remain supported; the protocol version pin and release process are unchanged.
+- 431e2f5: Preserve the `test-pricing` compliance sentinel when seeded pricing options are not present in storyboard runner context.
+- 1f5c731: Preserve a trailing empty query delimiter in default request target URI canonicalization and authorized-agent URL matching, so signatures and URL checks distinguish `/p?` from `/p`. Older SDK verifiers that collapse the marker will reject signatures over `/p?`; update both peers for these URLs. Signing fetch wrappers now reject signed URLs with a terminal empty query marker because Fetch implementations disagree on whether they transmit it.
+- deaaf82: Use an agent's discovered `covers_content_digest` policy to exclude only the mutually exclusive request-signing refusal vectors 007 and 018 when they do not apply. When running the 3.0 or 3.1 compliance line, capability blocks that omit the field now use the protocol's effective `either` default.
+- 00f6ba6: Adopt the signed AdCP 3.2.0-beta.9 bundle and package the corrected sales-guaranteed and sales-non-guaranteed compliance tracks.
+- b0cf238: Adopt the signed AdCP 3.2.0-beta.10 bundle, including principal discovery, reporting-delivery contracts and server handler wiring, and DOOH schema updates.
+- ae6bdc1: Adopt the signed AdCP 3.2.0-beta.5 schema and compliance bundle, including the
+  webhook delivery retry horizon and normative async identity, convergence, and
+  continuation-generation contract. Webhook publishers now advertise and enforce
+  their retry horizon, atomically bind each SDK-local `delivery_id` to one
+  I-JSON canonical payload and delivery key within trusted publisher/tenant
+  scopes, retain an un-rebindable tombstone after expiry, and keep that identity
+  separate from the AdCP `operation_id` carried in the payload. Production
+  emitters require both a durable binding store and a durable delivery-recovery
+  outbox, and synchronous terminal responses remain silent on the task-webhook
+  channel even when the deprecated compatibility flag is supplied.
+- 9cf1ef1: Fix decisioning account notification types to accept current AdCP 3.2 reporting events.
+- 13b374b: Adopt the signed AdCP 3.2.0-beta.11 bundle, including `get_principal` in the media-buy MCP profile.
+- c771bc2: Give lazy capability probes their own operation IDs so webhook registration cannot conflict with the mutation that triggered discovery, while preserving caller cancellation, transport safeguards, webhook suppression, and delegated callback authorization.
+- f327a32: Evaluate storyboard phase `skip_if` guards against accumulated runtime context, preserve test-kit guards, and reject unsupported expressions before dispatch.
+- 8033eb4: Restore beta conformance and compatibility behavior for structured business rejections, storyboard applicability, safe auth-probe selection, natural-key account operators, AdCP 3.0 capability projection, and portfolio-shaped brand JWKS discovery.
+- 3cc739d: Keep legacy `get_products` responses usable when a canonical catalog also contains formats that have no legacy representation. The server now omits only unrepresentable products and reports their projection diagnostics in `errors[]` instead of failing the entire catalog response.
+- 1d16869: Adopt the signed AdCP 3.2.0-beta.6 schema and compliance bundle, including
+  delivery metric leaf identities, sortable transactional metrics,
+  `time_based_views`, qualifier-aware vendor metric rows, requested metric
+  narrowing, and negotiated delivery breakdown sorting and completeness echoes.
+- 85f8b35: Fail closed around compliance-only test surfaces. Seeded test-controller fixtures now require a trusted resolved sandbox or mock account, including for account-less tools.
+
+  `createComplyController(...).register(server)` previously warned but still exposed the controller when `sandboxGate` was omitted. It now throws unless the process is both `NODE_ENV=test|development` and explicitly acknowledged with `ADCP_COMPLY_CONTROLLER_UNGATED=1`. Existing direct registrations must add a gate that closes over trusted server-side deployment/auth state; per-principal adopters should use `createAdcpServerFromPlatform(platform, { complyTest })` for its resolved-account gate.
+
+- 3e0425e: Preserve sanitized transport response headers when fetch implementations use a different Undici `Headers` constructor than Node's global fetch.
+- 5379f22: Route A2A storyboard auth-override probes through the official A2A SDK and record A2A request and response transport metadata.
+- d70b652: Preserve primitive string validation for generated macro-bearing URL aliases used by creative asset schemas.
+- 93d2ddc: Grade missing `parallel_dispatch_runner` contracts as canonically `not_applicable` while keeping required phases non-failing when they mix that skip with other unavailable test-kit contracts.
+- cc267d2: Keep framework-resolved account authority stable across async storyboard operations, controller directives, and task reconciliation while preserving authored natural operators.
+- 8c01d10: Align `gradeRequestSigning`/`gradeOneVector` transport defaults to `'mcp'`, matching the storyboard runner behavior intended for the 13.0 release. Direct API callers against MCP agents no longer need to pass `transport: 'mcp'` explicitly (the raw REST replay 404s on MCP agents by construction). REST-binding callers must now pass `transport: 'raw'` or `--transport raw`. The MCP path now completes the official initialize lifecycle, carries the negotiated protocol version, and accurately skips URL-only vectors whose coverage cannot survive MCP reshaping.
+- fc1a0ec: Send schema-invalid storyboard requests to sellers and grade only seller-authored responses, while treating any residual locally synthesized response as not applicable.
+- 2466113: Harden diagnostic parsing, Markdown escaping, OAuth logging, credential-derived MCP cache identifiers, and structured logger metadata against CodeQL-identified security risks. Logger handlers now receive credential-redacted, non-mutating metadata copies by default; custom handlers that provide equivalent protection can opt out with `redactCredentials: false`.
+- 5a7c443: Adopt the signed AdCP 3.2.0-beta.3 bundle, preserve inherited request fields in wire-safe fan-out helpers, validate the complete compact proposal and direct-buy lifecycle storyboards against the new protocol pin, and enforce AND-composed `requires_all_capabilities` storyboard gates.
+- 1e01639: Preserve live `AbortSignal` identity in native decisioning request authentication context so provider work observes host cancellation after dispatch begins.
+- cbe5f33: Fix eight seller Managed Delivery and Reconciled Billing review blockers.
+  - Managed delivery no longer overwrites Core obligation health, so an installed managed table cannot downgrade an `action_required` coverage failure to `waiting` or `delayed` while keeping its issue.
+  - Destination revocation no longer erases a consumer receipt verdict. `reconciliation_status` is settled from the append-only receipt chain and the full materialization history, which also removes a schema-invalid `pending` obligation carrying only a `RECEIPT_REJECTED` issue.
+  - Receipt evidence honours the obligation's own `required_finality`, so a snapshot-finality `consumer_receipt` contract can reconcile instead of having every receipt refused.
+  - `runManagedDeliveryWorker` enforces the advertised `authorization_revocation_seconds`: cleanup attempts are clipped to the promised instant, retry leases never outlast the window, and a breached grant is reported as `revocationsOverdue`.
+  - The receipt idempotency cache stores a compact per-entry verdict and rehydrates bodies from the append-only receipt table, with a 30-day retention sweep so a consumer at the batch cap is throttled rather than permanently locked out.
+  - `canonical_adjustment_sha256` follows the pinned canonicalization contract instead of changing wire content for every Core adopter, and revisions or adjustments stored before the canonical digests existed replay without a false immutability conflict.
+  - `sync_reporting_receipts` applies the RC3 per-array caps of 100 `receipts` and 100 `adjustment_receipts` independently rather than an invented combined cap, while still refusing a batch that exceeds the 100-entry combined bound RC3 states in `x-adcp-validation.batch_identity`.
+  - `installConfiguration` enforces the RC3 rule that a `billing` feed requires `required_finality: official`, which was never checked and was only accidentally covered by the receipt store's hard-coded finality.
+  - Lifecycle reconciliation projects managed health and issues through the same projection the read path uses, so persisted transitions and webhooks agree with `get_reporting_status`.
+
+  Lifecycle reconciliation folds consumer receipt severity into obligation health but never persists the receipt issues themselves, because the issue store has no consumer dimension and `get_reporting_status` republishes persisted issues to whichever consumer is reading. Seller-side managed delivery issues are still persisted and notified.
+
+  Additional review-blocker fixes: the materialization and revocation leases are issued from the database clock that already fences their settlement, so host clock skew can no longer strand a pending row or drive unbounded redelivery; an adjustment rejection whose digests agree is accepted, as RC3's `acceptance_match` requires for a semantic disagreement; `installBinding` recomputes the semantic fingerprint before any comparison, and `reportingManagedDeliveryBindingV1` derives it from semantic content so spreading an existing binding cannot smuggle a stale value; `get_reporting_status` scopes `adjustment_receipts` to the adjustments the view actually returns per RC3 `revision_adjustments`, and periods-view receipts to the obligations it returns; `sync_reporting_receipts` refuses malformed or empty batches with a typed `VALIDATION_ERROR` envelope and never reflects an unusable receipt id into the pattern-constrained response field; and lifecycle aggregation runs over an obligated consumer roster so a silent authorized consumer cannot vanish when another accepts.
+
+  Adds `PostgresReportingLedgerStoreOptions.obligatedConsumers` so a seller whose authorization layer knows which principals owe a receipt can supply the roster and get accurate reconciled lifecycle transitions; without it the store stays conservative. Because that conservative default holds a Reconciled Billing obligation at `action_required` while the per-consumer receipt issues are deliberately not persisted, the reconciler now restates the state once per obligation as an issue anchored to the obligation's own `expected_at`, so a degraded persisted health and its webhook are never unexplained.
+
+  The `obligatedConsumers` callback is invoked outside the store's transaction and under a deadline, so an adopter's authorization lookup cannot hold a pooled connection or a transaction snapshot open — the managed store shares the Core pool, so that would have drained Core reads with it.
+
+  Closes six further review blockers. The lifecycle compare-and-set now fences managed state through a `managedStateVersion` token, so a revocation, receipt, adjustment or settled materialization landing between projection and apply cannot be overwritten by a stale health, and a refused apply is retried immediately rather than waiting for a deadline sweep. The advertised revocation window no longer scales the cleanup lease, so a schema-valid `authorizationRevocationSeconds: 0` can still settle durably instead of producing an uncommittable 1 ms lease. Receipt `received_at` is taken from the database clock and stored in both the wire body and the ordering column, and the lifecycle projection reads receipts by `recorded_at`, so a skewed host cannot make the status read and the lifecycle projection disagree. `PostgresReportingManagedDeliveryStore` accepts `evidenceRetentionDays`, which makes the per-account and per-consumer caps active-scope and enables `pruneExpiredEvidence`, so those lifetime caps can no longer permanently brick an account. An exact same-key receipt replay now returns the original response after the destination authorization is revoked, instead of downgrading to `failed`. And `automatedRecoveryWindowSeconds` is validated as an agent-wide upper bound over installed Core windows rather than required to equal each of them, which supports heterogeneous tenants behind one agent, rounds sub-second existing generations up, and starts with no managed binding installed.
+
+  Closes a final round of review blockers. The managed lifecycle projection and its `managedStateVersion` are now read in one `REPEATABLE READ` snapshot, so a settle committing between the projection's reads and the digest can no longer pair a stale health with a token the apply would accept. A refused CAS re-projects against a fresh cutoff, never a backwards one, and mutable managed state is placed at that cutoff — `changed_at` after it means the row was still pending, and a revocation counts only from `revoked_at` — so a later settlement cannot be backdated into an earlier transition. A failed provider cleanup releases its lease immediately instead of holding it as a backoff, keeping the grant reclaimable and its elapsed SLA visible; ordering by cleanup lease generation still prevents starvation. Evidence retention is floored at the receipt replay retention and at the advertised `statusRetentionDays`, and pruning never removes a receipt a surviving replay row references or a materialization whose resource is still readable. The agent-wide recovery-window bound is enforced on the authoritative `installBinding` path, not only at startup, so a binding installed later cannot widen the deployment past what the capability document publishes.
+
+  Closes the consolidated final review round. Managed lifecycle cutoffs no longer carry host `Date` precision: the store resolves an authoritative microsecond instant when the caller does not pin one, every comparison against it runs in SQL, and the cutoff and digest describe one snapshot. Managed-only changes — settlement, revocation, receipt, consumer status, roster change and resource expiry — now make an obligation a lifecycle candidate, so a persisted `complete` cannot outlive a degraded live status. The state token covers consumer statuses, and the external obligated-consumer roster is versioned and re-checked immediately before the apply. The advertised recovery window and status retention are registered durably in the database rather than per process, enforced inside the authoritative install transaction, and required rather than optional. `releaseRevocation` is required; revocation SLA facts come from the database clock with the exact boundary counting as overdue, and a crashed worker's lease is reclaimable at that boundary under generation fencing. Pruning writes permanent identity tombstones, so a pruned receipt ID cannot bind new content and a terminal subject cannot reopen once its body expires.
+
+  Closes the final persona review. Lifecycle cutoffs are compared losslessly rather than through millisecond-truncating `Date.parse`. Policy adoption is awaited before capabilities are published, and advertised status retention is registered as well as the recovery window. An authoritative obligated-consumer roster excludes principals it does not list, and the projection and the pre-apply re-check hash the same set so an unversioned roster converges. Adjustments and external-roster changes are lifecycle candidates, measured against a per-obligation watermark written on every reconcile so a no-op cannot keep an obligation due forever or starve a fair-ordered page. Sweeps isolate failures per obligation. A rejected managed-readiness probe is retried rather than cached. Revocation and authorization instants come from the committing database, a settle cannot publish a resource the database already considers expired, and an overdue grant is reclaimed only after its holder has had a full attempt — so workers no longer thrash generations and leave cleanup uncommitted. Pruning deletes and tombstones atomically against one frozen cutoff, the read projection consults receipt tombstones, materialization attempt history survives pruning, and a billing binding without consumer-receipt reconciliation is refused at install.
+
+  Closes the last review round. The lifecycle watermark is stamped with the projection's cutoff rather than the commit instant, so work recorded between the two stays due. Policy adoption, binding install and pruning serialize on one registry lock. Pruned conclusions — an accepted subject and a succeeded delivery — are folded into the live, filtered and lifecycle projections, so retention cannot reopen settled work. External roster versions are published on every read and a difference from the last reconciled version re-arms the obligation. The lifecycle fold applies authoritative roster exclusivity exactly as the live projection does. Failed reconciles record an exponential backoff cursor so a page of failing tenants cannot monopolise a sweep, without advancing the watermark. Required resource retention is judged in SQL against the database clock and a refused settle is terminalized instead of left pending. A failed revocation backs off rather than being reclaimable inside the same worker tick. A billing binding revalidates its Core configuration's official finality atomically at install. And duplicate receipt IDs are rejected over the submitted batch before any filtering, so a valid entry cannot share an ID with a malformed sibling and still mutate state.
+
+  Closes the seven remaining expert-review blockers. Receipt tombstones carry the consumer that gave the acceptance, so one consumer's pruned acceptance cannot settle the obligation for another. The registry lock is held to commit inside the pruning transaction rather than released beforehand. Sweeps refresh external roster versions before selecting, breaking the circularity where a roster change could only be noticed by a reconcile it was supposed to trigger. Sweeps take their cutoff from the ledger's clock rather than the worker host, so a fast host cannot bury database-timestamped work, while a simulated-time driver still supplies a fallback. Tombstoned acceptances move the wire counters as well as the reconciliation verdict, so a settled period no longer emits a schema-invalid `complete` with zero receipts. `installConfiguration` resolves an exact replay before validating, so an immutable generation predating a later rule reinstalls instead of throwing. And exhausting the compare-and-set retry budget records a backoff rather than returning quietly, so a contended obligation cannot starve the tenants behind it.
+
+  Closes a further eight blockers. The anonymous fail-safe consumer no longer inherits every consumer's tombstones. The roster refresh pages on its own advancing cursor instead of the reconciliation watermark, so obligations beyond the first page can re-arm. Obligation counters describe exactly the records the response emits — superseded revisions' receipts included, tombstones excluded — and retention holds an acceptance while the resource it accepts is still readable, so a `complete` period always has records to show. Managed store locks are taken in one order (policy, account, binding) so pruning and binding install cannot deadlock, pruning selects before taking the account lock, and the replay-cache containment scan is indexed. A settle that loses its lease now terminalizes, claims count toward the delivery-attempt cap, and an exhausted materialization is failed rather than left pending and invisible. Direct settlement defaults to the binding's own retention promise and refuses a negative one. And `installConfiguration` resolves an immutable stored generation before it resolves the offering, so reinstalling one whose offering has been withdrawn returns the stored row.
+
+  Closes a further six blockers. Pruning now selects before taking the account lock for real, and asks which receipts a live replay row still names by expanding those rows once instead of a per-candidate JSONB containment test that no index could serve. The worker invokes `failExhaustedMaterializations` before planning, so a row that used every delivery attempt is failed rather than left pending and unplannable. Roster refresh is bounded per sweep and advances its cursor on failure as well as success, so a failing tenant cannot occupy the only slot. An explicit `minimum_resource_retention_days` may tighten the binding's promise but never undercut it. The issue-resolution sweep covers managed codes, so a `DELIVERY_FAILED` cleared by a successful redelivery stops being published. And the advertised recovery window is validated inside the transaction that would persist it, so a refused startup leaves no durable policy behind to poison the correct restart.
+
+  Managed Delivery capability adoption now durably registers all four recovery, status-retention, resource-retention, and authorization-revocation promises in one binding-fenced transaction. Replicas monotonically retain the strongest maximum-delay and minimum-retention values, and PostgreSQL enforces those effective resource and revocation policies even for direct-store calls. The additive migration upgrades an existing two-column policy registry in place.
+
+  Closes a further three blockers. Pruning revalidates every selected victim under the account lock before deleting it — the unlocked selection that keeps the lock short is now a proposal, so a replay, receipt or resource that commits in the gap keeps its evidence alive. The exhausted-delivery sweep re-checks pending and exhausted eligibility against the row it finally locked, so a settlement committing while the sweep waits on that row is no longer overwritten with `DELIVERY_ATTEMPTS_EXHAUSTED`. And the per-consumer receipt cap is applied at the point a row would be inserted, after the immutable existing-receipt resolution, so an exact resubmission that stores nothing replays as `unchanged` at the cap instead of failing on the row count.
+
+  Closes a further eight blockers. Lifecycle cutoffs are clamped to the ledger's own clock end to end — the producer passes its host instant as a fallback clock rather than pinning it, the reconciler will not honour a pin ahead of the store, and the watermark is clamped again in SQL — so a fast host can no longer bury database-timestamped work behind a future watermark and leave a `complete` transition standing over it. A pruned receipt keeps the chain position its body held, so the successor of a pruned rejected leaf is admitted and a fresh root carrying the same content is not. The retention hold that keeps an acceptance alive while the resource it accepts is readable now matches adjustment receipts, which name the revision they correct rather than a materialization. `failExhaustedMaterializations` takes the canonical account lock, so it cannot commit `pending` -> `failed` inside the lifecycle apply's compare-and-set window. The apply fences the obligated-consumer roster version as well, locking the lifecycle row and never writing its own observation over a newer one, so a concurrent refresh's re-arm is not dropped. A batch entry that resolves to an already-stored receipt is resolved before the duplicate-subject rule, so a consumer can submit an existing rejected receipt together with its own correction. An empty batch is refused with a typed error before any per-entry refusal, which previously answered a wrong-account empty request with a schema-invalid `results: []`. And an adapter `read` that throws synchronously is sanitised like an async rejection instead of leaking the provider's endpoint or credential detail.
+
+  Closes a further five blockers. A compare-and-set retry no longer restores a caller's future cutoff: a store with its own clock uses that clock on every retry, so the clamp the first attempt applied cannot be undone by the retry that follows it. Successive prunes demote the tombstones they supersede, so a subject has exactly one tombstone claiming to be its leaf and the successor of a twice-pruned chain is admitted deterministically. The exhausted-delivery sweep mutates only the accounts it locked, so a lease expiring while it waits on another account's lock is left for the next sweep instead of being failed unfenced. An adjustment receipt stays readable when paging separates it from the adjustment it names — the named adjustment travels with it — so an acceptance can no longer be invisible on every page at small `max_results`. And the lifecycle projection reads each receipt chain's current leaf rather than its whole history, so a subject repaired more times than a snapshot page may carry — a state the receipt store admits — no longer makes an obligation permanently unreconcilable; `runWorker` reports an unpublished projection as `reconcilesDeferred` instead of aborting the sweep behind it.
+
+  Closes a further three blockers. The lifecycle projection resolves each receipt chain's leaf as of the cutoff rather than taking today's current row and then filtering by the cutoff — at a cutoff between a rejection and the acceptance that repaired it, the first saw neither and persisted `RECEIPT_REQUIRED` over a rejection the buyer had already filed. A store with no clock of its own honours a first-attempt backdated cutoff again, because there is nothing there to clamp a pin against and clamping reconciled a moment the caller never asked about. And the projection's bound is now one leaf per (consumer, subject) rather than a flat snapshot-page count that a valid cross-product — 101 consumers against 100 subjects — already exceeded; crossing it truncates at a deterministic consumer boundary and reports `receiptEvidenceComplete: false`, which the fold treats as an unproven roster, instead of throwing an error no retry could clear.
+
+  Closes a further eight blockers. Receipt instants are written at database precision instead of through a millisecond `Date`, so a row can no longer be durably older than the watermark taken from the same clock. Adjustments are scoped to the reconcile's cutoff like receipts, and pruned conclusions record when they concluded, so a historical reconcile neither demands a receipt for a correction that did not exist yet nor settles on an acceptance or delivery that had not happened. A store's resolved instant is what the transition and watermark use, per the documented contract. Oversized rosters and conclusion sets truncate deterministically and report `receiptEvidenceComplete: false` instead of throwing, and a truncated conclusion set no longer silently reopens settled subjects. A receipt whose successor has been pruned is no longer a leaf, so retention cannot hand a settled subject back to the rejection its acceptance replaced. A finality filter hides managed evidence along with the revision it names. And lifecycle receipt reads are driven from the obligation's subjects into a new subject index rather than scanning the global receipt table once per due obligation.
+
+  Closes a further four blockers. Cutoff membership for adjustments is decided by the store's own ordering column rather than the producer-authored `createdAt` on the body, so a producer clock running ahead can no longer hide a committed correction from the lifecycle while the public read keeps demanding a receipt for it. A tombstoned acceptance outranks the rejection it superseded on the read path too, so `reconciliation_status` cannot report `rejected` for a subject the lifecycle considers settled once the accepted body is pruned. `assertMaterializationOutcome` no longer re-checks the retention horizon against the worker's clock — the database already enforces it and terminalizes on failure — so a worker running ahead stops turning a good delivery into `DELIVERY_FAILED`. And `sync_reporting_receipts` refuses a request that carries the server-assigned `received_at` instead of stripping it before validation, which had let a payload the request schema forbids be silently repaired and stored.
+
+  Closes a further six findings. Projection revisions are scoped to the cutoff like the managed evidence beside them, so a revision committed after it no longer reads as a premature `RECEIPT_REQUIRED`; the compare-and-set still fences on the full set. Re-presenting a pruned receipt byte-identically answers `unchanged` with the tombstoned instant instead of recreating the row with a fresh one. The managed state digest — read under the account lock — is driven from indexed subjects and consumer statuses gain an `obligation_id` index, so an apply no longer scans two global tables with that lock held. Only a failed settlement is exempt from the retention window; a successful one must name an expiry the database can check, closing a path where a direct store caller persisted a permanently unreadable materialization. Resource locations refuse URL query, fragment and userinfo delimiters on the raw string, so a presigned relative path or a `user:secret@host` form can no longer survive a failed URL parse. And managed delivery escalates at the recovery deadline rather than strictly after it, matching Core.
+
+  Closes a further seven findings, most of them about what a tombstone means. A same-key replay of a receipt that has since been pruned rehydrates its answer from the tombstone instead of degrading a committed `unchanged` into `failed`; a tombstoned match counts as already-resolved for the batch's duplicate-subject rule, so a pruned rejection and its own correction can arrive together; and an entry's own tombstone is resolved before any rule about its subject, so an exact re-presentation is not refused as new content once both leaves of a chain have been pruned. Resource-location validation moved to the seam that persists, so a caller driving `settleMaterialization` directly can no longer store a presigned URL that `get_reporting_status` publishes, and the rule itself is scheme-aware: query and fragment are refused outright, userinfo only as a credential pair or on `http(s)`, so an ADLS container and a Snowflake stage reference are no longer rejected. The obligated-consumer roster read is driven from obligation subjects through the subject index, and the permanent materialization tombstones gain an `(obligation_id, reached_success, reached_success_at)` index.
+
+  Managed Delivery runtime policy adoption is now atomic at the store boundary. Recovery-window and status-retention constraints are validated under one PostgreSQL lock and committed in one transaction, so a rejected startup cannot persist only one advertised promise or poison a corrected restart. The separate adoption hooks remain available to direct-store integrations, while the runtime factory requires the combined atomic hook.
+
+- 636abe2: Pick the most constrained legacy format ref when a legacy-format seller lists more than one for a canonical creative's kind.
+
+  `projectCreativeForDelivery` used to throw `the seller advertised N legacy refs for canonical kind ...` whenever several legacy refs of the creative's kind survived the package-level filters, even when the creative's own `format_parameters` named exactly one size. Sellers that list two spellings of one slot (`display_html` carrying width and height next to `display_300x250_html`) therefore rejected every create_media_buy that carried a canonical creative. Candidates are now narrowed by the creative's `format_parameters`, refs that pin those dimensions win over refs that leave them open, and among refs imposing identical constraints the legacy id whose own registry declaration pins that size wins over a generic parametrized id. Refs that still differ in their constraints for a creative that declares none keep failing closed.
+
+- f3d197d: Grade every A2A compliance route in unconditional native 1.0 mode while preserving the SDK's backwards-compatible adopter default. This can expose agents that only publish the legacy v0.3 interface. Also normalize standalone-step transport options and add a trusted scoped-fetch override to `rawA2aProbe`.
+- b1be4c6: Select the unique official reporting revision ahead of retained snapshots, even when it has no supersession link or its managed materialization is still pending. Join revisions by their owned logical slice as well as artifact references, preserve all retained history, and reject forks, cycles, multiple officials, and attempts to supersede a terminal official. Reconciliation still requires the selected official's own finality evidence, materialization, and any required consumer receipt.
+- 5d2cc73: Match a creative pinned to a `format_option_ref` against the legacy ref its option was minted from, and use a single narrowed legacy candidate.
+
+  A pinned creative facing a legacy-only container (bare `format_ids`, no `format_options`) lost every candidate in `selectLegacyRef`, because candidates derived from `format_ids` carry no option ref to compare against; the fallthrough then discarded the single candidate left after narrowing and threw `did not provide one unambiguous legacy format reference`. The pin is now matched exactly by re-deriving the synthetic option id from each legacy ref (`migratedFormatOptionId`, exported from `v1-to-v2`), a single remaining candidate is returned for an unpinned creative, and a pin that names none of the product's legacy refs still fails closed with a reason that names the pin.
+
+- 807d8cf: Report the release-precision wire pin in capabilities-probe `VERSION_UNSUPPORTED`
+  diagnostics. When a seller rejected the probe without echoing the canonical
+  `adcp_version` / `requested_version` (adcp Python sellers echo
+  `claimed_version`), the storyboard runner and `comply()` reported the internal
+  bundle id (`requested "3.2.1"`) even though the wire carried `"3.2"`. The probe
+  now names the value it actually sent (`3.2.1` -> `3.2`, `3.2.0-rc.7` ->
+  `3.2-rc.7`, `3.1.24` -> `3.1`) and reads a string `claimed_version` echo.
+- 5f1fffe: Improve gap-schema type generation performance while preserving deterministic output.
+- e223146: Exercise the AdCP 3.2 compact media-buy lifecycle through conformance schema fuzzing, compact direct-buy fixture seeding, and public SDK buyer wrappers in storyboard runs while retaining the legacy media-buy coverage.
+- ccb2b3b: Preserve the AdCP 3.2 beta.5 canonical proposal `total_budget_guidance` object shape and `forecast` reference in generated TypeScript types.
+- ec56a9b: Resolve specialism scenario dependencies from one compliance-cache index instead of reparsing the entire cache for every required scenario.
+- 9f93091: Keep `validateAdAgents` cancellation in its structured-result contract, and avoid cloning diagnostic response bodies without a finite declared size.
+- c07b727: Drain pending webhook storyboard waits during shutdown and stop capture limits from trapping retry senders in a 5xx loop.
+- 6512011: Allow legacy `get_signals` handlers to satisfy signal-specialism platform validation during incremental SDK 14 migrations.
+- 207d9c6: Honor `validation.logSchemaViolations: false` for console output and identify the AdCP schema version in enabled validation diagnostics.
+- 06c685f: Document the AdCP 3.2 request-only Targeting Input three-state semantics for seller adopters.
+
+  `docs/guides/MEDIA-BUY-3.2-COMPATIBILITY.md` gains a section with the omitted / `null` / value table for
+  both create and update, worked `resolveTargetingInput` / `applyTargetingInput` / `hasTargetingClears`
+  snippets, and the two silent failure modes — persisting a request overlay verbatim writes a clear
+  command into durable state, and echoing it back emits `null` on a response shape whose schema forbids
+  it. `skills/build-seller-agent/` gets the short form under its shape-gotchas section, since a seller
+  agent generated from that skill is exactly the code that gets this wrong.
+
+  The helpers shipped without a doc or skill entry, so the only worked example was in a starter that is
+  being reworked to reject supplied overlays outright.
+
+- f235280: Refresh registry client types with public and owner-scoped compliance eligibility fields.
+- 9952a00: Refresh registry types to include the exchange, retail media, and streaming TV sales specialisms.
+- ee8cfa8: Fix the reporting delivery Zod union to use the reporting file-transfer schema instead of the audience-activation file-transfer schema.
+- f5a4764: Storyboard runner: a negative request-signing vector that expects `request_signature_required` and whose `verifier_capability.required_for` names an operation the agent does not declare in its own `request_signing.required_for` now skips `capability_profile_mismatch` instead of failing — the third advertisement axis after content-digest policy and `protocol_methods_required_for`. A 3.x shadow-posture agent (`supported: true`, `required_for: []`) was failing `negative/001-no-signature-header` on every run although the grader's `capabilityMismatch()` already knew to skip it; the storyboard dispatch never fed it the agent's `required_for`. The new `declaredRequiredFor()` reader is fail-closed like `declaredProtocolMethodCoverage()` (absent or malformed declarations grade the vector), and `gradeOneVector` accepts the same narrow `agentRequiredFor` option. The gate is narrow: vectors expecting any other refusal stay graded even though their fixtures list `create_media_buy`, so under-declaring cannot shrink coverage. Agents declaring `required_for: ["create_media_buy"]` are unchanged.
+- ee404ed: Reset advertised sandbox controller state before each compliance storyboard so seeded seller fixtures cannot leak between tests.
+- cccb3ea: Retire the obsolete AdCP 3.1 beta type side-bundle before the 14.0 GA release. The beta-only `@adcp/sdk/types/v3-1-beta` subpath and its schema/codegen pipeline are removed; use the primary `@adcp/sdk/types` 3.2 surface for current protocol types. For the legacy `get_products` mirror shape, import `LegacyWholesaleProduct` from `@adcp/sdk/wholesale-feed-sync` (or derive `NonNullable<GetProductsResponse['products']>[number]`) rather than using the canonical root `Product`. Wholesale feed sync keeps its documented legacy product-view behavior through current, narrowed types. Publishing now fails closed if a superseded protocol beta/RC cache, type bundle, export, or compatibility alias enters the npm artifact.
+
+  Refresh the generated registry OpenAPI declarations to match the current registry schema.
+
+- 606243e: Answer a routed storyboard's `controller` requirement from the route that owns the state it exercises, instead of the cross-tenant tool union.
+
+  `runStoryboard` builds a union of every tenant's advertised tools so a `required_tools` ANY-OF family gate passes when any tenant in the map serves any member — disjunctive by design. The `controller` gate read that same union, which is the opposite question: a peer tenant's `comply_test_controller` cannot seed another tenant's state. A seller advertising no controller, mapped alongside an unrelated signals peer that advertises one, therefore cleared `requires: [controller]`, executed its steps against unseeded state and graded green — while a non-routed run of the same seller correctly reported `missing_test_controller`. The runner already asserts this invariant one screen away, where routed fixture resolution refuses to let "a union member authorize a selected agent's operation".
+
+  The gate is now unmet only when **no route serving a state-exercising step advertises its own** `comply_test_controller`. That is deliberately narrower than requiring one per callable route: a route that is only read from — a signals peer serving static marketplace data — is no fixture target and needs no controller, and a storyboard mixing a seeded seller with such a peer still runs. A single control plane genuinely fronting two tenants has to be declared rather than inferred from a union; per-tenant seed dispatch is the follow-up already tracked where routed plus `prerequisites.controller_seeding: true` fail-fasts.
+
+  Three things decide which routes are in that set, and each is a case the first cut got wrong:
+  - **Route identity is the exact `agents` key, never the URL.** Two keys may legitimately share one `url` with different `auth` — one tenant per bearer against a shared control plane. Mapping a selected agent back to its key by URL collapsed those keys onto whichever the map listed first, so the last step to dispatch overwrote the other's tool list: the verdict flipped with step order (a false negative for a seller that does advertise a controller, a false green when an out-of-scope tenant's list won), and the operator-facing detail named the wrong tenant. Dispatch now carries the resolved key on the step assignment and the provenance keys on that.
+  - **A route the storyboard's own capability predicate excludes exercises no state.** Root predicates were already honoured; the **phase** predicate was not, so a controller-bearing route that executes nothing could still satisfy the gate for the route that does. A route whose `request_signer` verdict came back unmet is deliberately _not_ excluded — it is in declared scope and merely lacks a runtime capability, so declared order, not exclusion order, decides which gate is reported.
+  - **An empty state-exercising set falls back to every in-scope route.** A storyboard whose only callable steps _are_ `comply_test_controller` calls left that set empty and the gate was silently dropped — the run then dialed the back-channel on a route that does not serve it. The fallback keeps it fail-closed.
+
+  The verdict is established per route during the routing preflight and handed to the ordered `requires` gate as `met`, `unmet` or `unknown`, so it answers at its **declared position** — an earlier unmet requirement still wins, and a routing failure downgrades it to `unknown` and so still outranks it. `unknown` also stops `checkRequires` falling back to `options.agentTools`, which in routed mode is the union. Declared-order parity between routed and non-routed runs is unchanged.
+
+  Scope is routed runs only. Non-routed runs already read the agent's own tool list and are untouched in both directions. The disjunctive `required_any_of_tools` union keeps its existing behaviour. Controller seeding's own missing-controller applicability check now takes the same selected-route provenance; that path is defence in depth rather than a live fix, because a routed run cannot reach it today.
+
+  Pinned by executed regressions over live MCP agents: the reported topology now reports `missing_test_controller` with `skip.requirement: controller` and **no step reaches the wire**; the controller on the route under test still runs; a read-only peer without one does not skip the storyboard; a phase-excluded controller route does not vouch for the route that does execute, while the same peer brought into the phase's scope does (the negative control against over-skipping); a storyboard of nothing but controller steps stays fail-closed, and runs when its route advertises one; two tenants behind one shared URL with different bearers stay distinct routes in either step order and in either phase order, with the detail naming the exact key; routed and non-routed agree about the same seller in both directions; the ANY-OF union still passes with the tool on one tenant only; routed plus `controller_seeding: true` still fail-fasts; and non-routed seeding still grades from the agent's own tools. The union behaviour predates this release and reproduces on `main`.
+
+- f3bee47: Correct applicability and execution evidence in routed storyboard runs (`runStoryboard('', storyboard, { agents })` and `adcp storyboard run --agents-map`). Re-baseline routed CI expectations: these corrections can change previously passing, failing, or skipped results.
+  - Each step uses its selected route's discovered tools and capabilities. Remove run-level `agentTools` or `_profile` overrides in routed mode; discovery is authoritative. Per-entry auth/transport overrides still inherit caller-supplied defaults, including shared headers and signing configuration.
+  - OAuth/JWKS evidence stays within its route, including entries sharing a URL with different credentials. A probe can now fail if it previously borrowed another route's metadata.
+  - Capability-unavailable producers and their dependent context/state consumers skip neutrally. Negative vectors no longer pass by sending missing context; successful alternate producers still restore execution.
+  - Missing-tool/controller and failed-route producers also block consumers of their absent declared outputs with hard prerequisite skips; intentional unrelated negative vectors and successfully restored outputs still execute.
+  - Unrescued missing tools and real failures take precedence over capability-only cascades. Failed required phases prevent an overall passing result without counting skipped rows as executed failures. Optional phases, branch regrading, and fixture/no-phase dispositions retain their existing rules.
+  - Unresolved or failed routes are hard failures. Repair the agents map, an explicit step agent, or the default agent as indicated by the routing error.
+  - Capability prerequisite skips display their reason in CLI output. Fixture-routing exceptions close the runner-owned webhook listener.
+
+  Storyboard-level required-tool applicability remains any-of across the discovered union. Single-agent and replica routing remain unchanged; the required-phase rollup and CLI diagnostics also correct these shared runner paths. Legacy controller seeding still requires external provisioning and `skip_controller_seeding: true`; declared fixture resolution routes each operation.
+
+- 73bddbb: Make task-settlement intent migrations upgrade queues created by earlier SDK betas, use a statement-stable tombstone expiry boundary, and keep task identifiers out of conflict errors.
+- e223146: Accept 3.2 prerelease response versions when verifying `refine_proposals` results and report the rejected value in version diagnostics.
+- fcf85c0: Request signing now signs A2A 1.0 requests. `extractAdcpOperation` recognised only A2A 0.3 bodies (`message/send` with `kind: "data"` parts), so the `SendMessage` bodies the A2A client sends to A2A 1.0 agents yielded no operation and went out unsigned, even when the seller listed the operation in `request_signing.required_for`. It now also reads `SendMessage` / `SendStreamingMessage` and data parts without `kind`. Fixes #3081.
+- e223146: Accept canonical array-valued asset slots across every generated format schema, including hosted audio.
+- 93d9cbe: Restore RFC 9421 verifier and storyboard interoperability with frozen AdCP 3.0 and 3.1 signing vectors while enforcing the pinned 3.2 Content-Digest contract for body-bearing and empty-body requests.
+- 95ff79a: Refresh the maintained AdCP 3.1 compatibility schema and compliance bundle to 3.1.24, and advertise compatibility through the latest 3.1 patch.
+- 1172a01: Support digest-verified, commit-addressed protocol PR bundles in schema sync and generated-code CI.
+- 7ab0bdc: Evaluate routed storyboard capability gates against the default agent when set, keeping route-specific applicability without a default, match governance task modes as subsets, and keep AdCP 3.2 governed requests identical to the payload approved by check_governance. The approved payload now includes the wire version envelope, fixture bindings, and run-scoped brand and sandbox fields. Governed requests use the raw wire route and bypass buyer normalization, creative wire hints, and seller-schema field stripping after approval; canonical creative methods reject the internal preservation option before they can reshape approved arguments. A missing approved idempotency key fails its storyboard step before dispatch. AdCP 3.1 governance retains its existing runner defaults. Routed storyboard applicability can change when governance steps use a separate agent.
+- 0daacec: Keep content-digest acceptance, mismatch, and malformed-header vectors graded
+  when the selected request-signing verifier profile allows either covered or
+  uncovered requests. Only vectors whose expected outcome depends on a stricter
+  content-digest policy are skipped.
+- 08dee7d: Project account ID controller targets to core account references before resolution. Resolvers no longer receive the controller-only `sandbox` assertion on ID refs. Unexpected resolver failures now return a safe `SERVICE_UNAVAILABLE` error and never admit through the sandbox fallback; return `null` or throw `AccountNotFoundError` for missing accounts. The sandbox authority gate remains fail closed.
+- 64b4400: Reject unknown properties in the public reporting file manifest Zod schema wherever the normative manifest contract is closed.
+- 65bb5a7: fix(signing): reject Base64URL sf-binary under the AdCP 3.2 request-signing profile (#3073).
+
+  A verifier pinned to AdCP 3.2 (`adcpVersion`, or the `createAdcpServer` auto-wired verifier on a 3.2 server) now parses `Signature` and `Content-Digest` only as RFC 8941 padded standard Base64, regardless of `covers_content_digest`. A Base64URL `Signature` fails with `request_signature_header_malformed` at checklist step 1, before the window and crypto checks, so `profile-3.2/negative/001-base64url-sf-binary` passes even when graded at a live clock. A Base64URL or unpadded `Content-Digest` fails with `request_signature_header_malformed` instead of `request_signature_digest_mismatch`. The whole `Signature` dictionary is parsed strictly, and standard Base64 whose byte length needs no `=` padding is now accepted.
+
+  This removes the SDK 14 rolling-upgrade fallback in which a 3.2-pinned verifier with internal `covers_content_digest: 'either'` also accepted SDK 13 Base64URL signatures. The spec forbids a 3.2 verifier from retrying a legacy token. Serve legacy signers from an endpoint pinned to 3.0/3.1 instead. Verifiers pinned to 3.0/3.1 and unpinned verifiers keep accepting both serializations. Endpoints that advertise 3.2 must pass a trusted `adcpVersion`: an unpinned verifier cannot tell a legacy request from the 3.2 negative vector.
+
+- ff37e9b: Make SDK test clients, including `createTestClient`, and authored storyboard response-schema checks grade strict JSON Schema verdicts by default so local CLI and programmatic preflight results match hosted compliance grading. Add `strictResponseSchemaValidation: false` as a packaged-schema diagnostic migration escape hatch, and preserve implementation-specific strings in `compliance_testing.scenarios`.
+- 3d11a65: Expose registry runner capability versions and refresh-restoration tracking issue metadata.
+- fd68fed: Preserve concrete Product schema fields through consumer `safeExtend` composition.
+- 3bbf434: Treat AdCP 3.2 `get_products` structured rejection responses as successful business outcomes in client and storyboard result classification.
+- 21caf2e: Sync the AAO registry OpenAPI and generated registry types for newly verified buyer and orchestrator specialisms.
+- 2018caf: Fix generated creative runtime schemas so manifest and library assets validate their declared asset variants, canonical and legacy identities remain mutually exclusive, and whitespace-padded legacy agent URLs fail validation instead of throwing from a Zod intersection.
+- 968d9df: Preserve base fields and required values in generated creative-approval and postal-area types and schemas, and surface exact-version capability failures instead of silently downgrading storyboard discovery.
+- e223146: Enforce AdCP 3.2 bidding-policy and canonical budget-allocation invariants in the public runtime leaf schemas.
+- 7c1d551: Derive server `supported_protocols` from registered domain handler groups so overlapping creative/media-buy tool names and utility handlers cannot advertise unsupported domains.
+- a65f946: Adopt the signed AdCP 3.2.0-rc.1 bundle.
+- 15e2710: Restore composable product discovery Zod schemas and align their parse results with the public SDK request and product types.
+- cfab37e: Preserve extensible response envelopes when bundled and modular tool schemas share a canonical root `$id`.
+- da2e818: Route `sync_creatives` task lifecycle records through the spec-defined media-buy protocol domain.
+- f4be30d: Accept SDK-stamped version envelope fields when validating compact media-buy commitment responses.
+- 1c2778b: Reduce the published package size by sharing the exact generated schema declarations between ESM and CommonJS consumers.
+- c0c01e8: Add durable PostgreSQL buyer reporting checkpoints, pending status statements, change cursors, and fenced work leases.
+- cfab7f8: Describe the SDK's buyer, server, and conformance surfaces in the npm README.
+- 08e19ce: Resolve type-generation schema references from the verified local AdCP bundle instead of the live schema host, preventing nondeterministic generated output during release checks.
+- e223146: Preserve exact official AdCP input schemas in modern MCP `tools/list` at the supported Zod 4.1 peer floor, apply the server's resolved media-buy tool profile, and keep default discovery under a 1 MiB context budget without bundling full MCP response projections.
+- c617404: Add a compile-gated wholesale-feed mirror quickstart covering persistence, webhook registration, RFC 9421 verification, and automatic repair.
+- 3618dac: Complete AdCP 3.2.0-beta.5 async adoption: carry buyer operation IDs in
+  application-layer webhook registration across MCP and A2A, reject malformed
+  beta.5 registrations before seller dispatch, converge terminal re-emissions
+  across delivery keys, and preserve failed or rejected task artifacts when
+  polling with `include_result`.
+- 04bc269: Wire the `sales-dooh` specialism (AdCP 3.1.19, adcp#6619) into the decisioning platform contract. `RequiredPlatformsFor<'sales-dooh'>` now resolves to the core sales requirement, and `validatePlatform` enforces `platform.sales` or a compact `mediaBuyLifecycle` for `sales-dooh` claimers, matching `sales-guaranteed` / `sales-non-guaranteed` / `sales-broadcast-tv`. Previously the enum value was accepted but carried no compile-time or runtime platform-shape enforcement.
+- f7d2bac: Run ordinary local Node test discovery in bounded fresh-process batches so test heap usage is reclaimed between batches while focused runs and CI shards retain their existing execution shape.
+- 2a3d87f: Keep canonical projection declarations type-safe for AdCP 3.2 sample-render URLs and creative locale policies.
+
+## 14.0.0-rc.53
+
+### Minor Changes
+
+- b051298: Add `ComplyOptions.routeStoryboard`, a per-storyboard routing hook so hosted graders can run `requires: [multi_agent]` storyboards inside `comply()` (adcontextprotocol/adcp#7758). The hook receives each applicable storyboard plus `{ agent_url, profile }` (the profile is agent-reported, untrusted input). It may return `undefined` (unchanged single-URL run), `{ agents, default_agent, context?, storyboard? }` (routed `runStoryboard('', storyboard, { ...runOptions, agents, default_agent, context })`; the result flows into tracks, failures, `storyboards_executed` and `bundle_results`), or `{ skip: reason }` (recorded as the same whole-storyboard `requirement_unmet` row an unrouted `multi_agent` storyboard gets, with the sanitized reason as `skip.detail`, so the bundle stays `partial`). Storyboards whose root capability predicate the agent under test does not satisfy are not passed to the hook and stay `not_applicable`.
+
+  Routed results are graded against the agent under test only: a failed step or discovery failure on another routed agent becomes a `prerequisite_failed` coverage gap (`partial`, never `failing`), and a routed storyboard with no passing step served by the agent under test cannot reach `passing`.
+
+  `comply()` enforces credential and network isolation for routed runs: `default_agent` must be the agent under test; every entry that sets `auth` must set a real credential object, and only an agent-under-test entry may omit it (the run-level credential is pinned onto that entry and dropped from the shared routed options); routing is refused while run-level `headers` are set; a replacement storyboard must keep its id and grading shape; storyboards that would send `$test_kit.auth` / `from_test_kit` credentials through a step not pinned to the agent under test are recorded as skips; run-level `transport` (including `trustedFetchFn`) is shared by every routed agent. New exported types: `ComplyStoryboardRoute`, `ComplyStoryboardSkip`, `ComplyStoryboardRouting`, `ComplyRouteStoryboardContext`.
+
+### Patch Changes
+
+- 65bb5a7: fix(signing): reject Base64URL sf-binary under the AdCP 3.2 request-signing profile (#3073).
+
+  A verifier pinned to AdCP 3.2 (`adcpVersion`, or the `createAdcpServer` auto-wired verifier on a 3.2 server) now parses `Signature` and `Content-Digest` only as RFC 8941 padded standard Base64, regardless of `covers_content_digest`. A Base64URL `Signature` fails with `request_signature_header_malformed` at checklist step 1, before the window and crypto checks, so `profile-3.2/negative/001-base64url-sf-binary` passes even when graded at a live clock. A Base64URL or unpadded `Content-Digest` fails with `request_signature_header_malformed` instead of `request_signature_digest_mismatch`. The whole `Signature` dictionary is parsed strictly, and standard Base64 whose byte length needs no `=` padding is now accepted.
+
+  This removes the SDK 14 rolling-upgrade fallback in which a 3.2-pinned verifier with internal `covers_content_digest: 'either'` also accepted SDK 13 Base64URL signatures. The spec forbids a 3.2 verifier from retrying a legacy token. Serve legacy signers from an endpoint pinned to 3.0/3.1 instead. Verifiers pinned to 3.0/3.1 and unpinned verifiers keep accepting both serializations. Endpoints that advertise 3.2 must pass a trusted `adcpVersion`: an unpinned verifier cannot tell a legacy request from the 3.2 negative vector.
+
+## 14.0.0-rc.52
+
+### Patch Changes
+
+- 57594b4: Describe the SDK's buyer, server, and conformance surfaces in the npm README.
+
+## 14.0.0-rc.51
+
+### Minor Changes
+
+- 39469e6: Honor seller-declared buying modes and account requirements before get_products dispatch. Calls without a brief no longer assume wholesale unless the seller declares it. Add a public account resolver that selects a single active seller-assigned account or syncs a buyer-declared natural key, and use it in media-buy storyboards.
+
+### Patch Changes
+
+- 7ab0bdc: Evaluate routed storyboard capability gates against the default agent when set, keeping route-specific applicability without a default, match governance task modes as subsets, and keep AdCP 3.2 governed requests identical to the payload approved by check_governance. The approved payload now includes the wire version envelope, fixture bindings, and run-scoped brand and sandbox fields. Governed requests use the raw wire route and bypass buyer normalization, creative wire hints, and seller-schema field stripping after approval; canonical creative methods reject the internal preservation option before they can reshape approved arguments. A missing approved idempotency key fails its storyboard step before dispatch. AdCP 3.1 governance retains its existing runner defaults. Routed storyboard applicability can change when governance steps use a separate agent.
+
+## 14.0.0-rc.50
+
+### Minor Changes
+
+- 80d46a1: Grade the request-signing 3.2 profile vectors when selected, including their negative mutations and storyboard steps. Keep the missing-content-digest refusal gradable for agents that require digest coverage.
+- f3562ac: Seed storyboard fixtures through the routed agent that owns each fixture's state. A read-only peer no longer needs a test controller, and routed runs preserve each selected agent's auth and controller capabilities during pre-flight seeding.
+
+### Patch Changes
+
+- ab47b6c: Honor explicit account IDs and operators in account, creative, and reporting controller storyboard steps while forcing sandbox routing and keeping the run brand. Exact reporting-revision delivery reads keep their authored account, so they query the revision that the controller published. Media-buy simulations and seeding retain their create/read account scope, sandbox-only hints fall back to the resolved account, and `seed_account` keeps the authorized caller scope.
+- a1c50b9: Keep `serve()` connections open while a client validates schemas between MCP calls, avoiding half-closed sockets in multi-step flows.
+- 95ff79a: Refresh the maintained AdCP 3.1 compatibility schema and compliance bundle to 3.1.24, and advertise compatibility through the latest 3.1 patch.
+- 08dee7d: Project account ID controller targets to core account references before resolution. Resolvers no longer receive the controller-only `sandbox` assertion on ID refs. Unexpected resolver failures now return a safe `SERVICE_UNAVAILABLE` error and never admit through the sandbox fallback; return `null` or throw `AccountNotFoundError` for missing accounts. The sandbox authority gate remains fail closed.
+- 08e19ce: Resolve type-generation schema references from the verified local AdCP bundle instead of the live schema host, preventing nondeterministic generated output during release checks.
+
+## 14.0.0-rc.49
+
+### Minor Changes
+
+- 03fe08b: Adopt the signed AdCP 3.2.0-rc.7 schema and compliance bundles as the default
+  wire release.
+
+  The generated types and validators now include the `viewable_rate` optimization
+  metric and optional account-scoped creative-format discovery. Account resolvers
+  must authorize any buyer-supplied `account_id`, including this new discovery
+  path. Reporting schemas retain their rc.6 wire shape; the shipped consumer-status
+  golden fixture remains byte-exact at rc.6. The packaged principal and
+  reporting-core storyboards are rebound to the signed rc.7 bundle. As with earlier 3.2
+  prereleases, rc.7 replaces rc.6 in the advertised compatible versions;
+  communicating peers should upgrade together or select the exact `3.2-rc.7`
+  alias.
+
+- 888d48f: Expose a focused `@adcp/sdk/reporting/consumer` buyer entrypoint and publish an
+  existing-application worker example with PostgreSQL persistence, signed webhook
+  intake, buyer-retained expectations, and explicit adjustment policy. Include
+  seller/principal scope and run reason in buyer worker results and error context;
+  emit a credential-safe structured warning when background errors have no
+  observer. Result objects now include `consumerScope`, and an omitted or failed
+  error observer produces a structured warning on stderr.
+
+## 14.0.0-rc.48
+
+### Minor Changes
+
+- c0c01e8: Add a production buyer reporting worker with durable incremental repair, fenced multi-replica execution, polling, authenticated webhook hints, bounded concurrency, and graceful shutdown.
+- c0c01e8: Add durable, principal-scoped reporting webhook activity for list_accounts, pre-POST reservations, sanitized diagnostics, retention, and async-safe emitter observers.
+- c0c01e8: Emit durable transactional `reporting.ledger_changed` and `reporting.delivery_ready` notifications alongside status changes.
+- c0c01e8: Harden Reliable Reporting tenant isolation, webhook recovery auditing, receipt replay scope, optional pagination compatibility, buyer deadlines and dynamic rosters, durable lease fencing, fair recovery, and bounded production database work. Buyer reconciliation now independently verifies post-official adjustments and durably submits adjustment receipts. Pending consumer-status stores require seller/principal scope, checkpoint identities include a versioned immutable-context fingerprint, production notification installation requires `accounts.list`, authenticated notification routing requires `consumerScope`, and subscriber IDs enforce the protocol's 64-character identifier grammar. Exact-revision reads now default to a configurable 32 MiB decoded-byte ceiling (`maxRevisionBytes`; use 256 MiB for pre-14 behavior). Webhook attempt observers are now awaitable and time-bounded, and signing plus each POST has a configurable 30 second default deadline; failures remain isolated through `onAttemptObserverError`. Reporting webhook attempt ordinals are allocated only at the final durable pre-POST barrier, remain dense across retryable authorization failures and restarts, and age out with their activity retention window.
+- c0c01e8: Project Reliable Reporting webhook activity through the real `list_accounts`
+  runtime using trusted authenticated scope, publish shared Python/TypeScript
+  canonical JSON fixtures, and add production parity and operations runbooks.
+- c0c01e8: Harden the Reliable Reporting buyer runtime with durable notification deduplication and authenticated seller/principal scope binding.
+- c0c01e8: Add a probed PostgreSQL production composer for Reliable Reporting, including Managed Delivery, all notification types, webhook activity, recovery workers, and receipt routing.
+
+### Patch Changes
+
+- c0c01e8: Make deployment-wide Managed Delivery planning durably fair across reporting accounts. PostgreSQL now persists a round-robin cursor and gives each selected account a bounded first-pass share before a hot tenant can consume spare capacity, so later and newly added accounts cannot be starved by the lexically first account.
+- 3d11a65: Expose registry runner capability versions and refresh-restoration tracking issue metadata.
+- c0c01e8: Add durable PostgreSQL buyer reporting checkpoints, pending status statements, change cursors, and fenced work leases.
+
+## 14.0.0-rc.47
+
+### Minor Changes
+
+- 1910f0d: Adopt the signed AdCP 3.2.0-rc.6 schema and compliance bundles as the default wire release.
+
+  The generated surface adds the `sales-exchange`, `sales-retail-media`, and
+  `sales-streaming-tv` specialisms; retry-safe asynchronous `get_creative_features` contracts;
+  request-signing error codes; seller-policy decline reasons; and the terminal
+  `COMMITTED_RESOURCE_PURGED` idempotency outcome. Compact buy and proposal-acceptance
+  requests can also carry the new optional media-buy `name`.
+
+  As with earlier 3.2 prereleases, rc.6 replaces rc.4 in
+  `COMPATIBLE_ADCP_VERSIONS`; communicating peers should upgrade together or use the
+  `3.2-rc.6` release-precision alias carried by this SDK build.
+
+- 22223b6: Add stock P1D source-timezone planning with civil-day boundaries and fixed-time SLAs. Use the same schedule for producer planning, source feasibility, coverage, deadline projection and consumer-status eligibility, while preserving numeric schedules and requiring a new generation when stored fixed boundaries would change.
+- 404c5cb: Complete caller-supplied `reporting_webhook` preferences with the client's configured webhook URL and authentication before validating canonical `create_media_buy` requests.
+
+## 14.0.0-rc.46
+
+### Patch Changes
+
+- 3e0425e: Preserve sanitized transport response headers when fetch implementations use a different Undici `Headers` constructor than Node's global fetch.
+- ec56a9b: Resolve specialism scenario dependencies from one compliance-cache index instead of reparsing the entire cache for every required scenario.
+
+## 14.0.0-rc.45
+
+### Patch Changes
+
+- b1be4c6: Select the unique official reporting revision ahead of retained snapshots, even when it has no supersession link or its managed materialization is still pending. Join revisions by their owned logical slice as well as artifact references, preserve all retained history, and reject forks, cycles, multiple officials, and attempts to supersede a terminal official. Reconciliation still requires the selected official's own finality evidence, materialization, and any required consumer receipt.
+- 5d2cc73: Match a creative pinned to a `format_option_ref` against the legacy ref its option was minted from, and use a single narrowed legacy candidate.
+
+  A pinned creative facing a legacy-only container (bare `format_ids`, no `format_options`) lost every candidate in `selectLegacyRef`, because candidates derived from `format_ids` carry no option ref to compare against; the fallthrough then discarded the single candidate left after narrowing and threw `did not provide one unambiguous legacy format reference`. The pin is now matched exactly by re-deriving the synthetic option id from each legacy ref (`migratedFormatOptionId`, exported from `v1-to-v2`), a single remaining candidate is returned for an unpinned creative, and a pin that names none of the product's legacy refs still fails closed with a reason that names the pin.
+
+- 9f93091: Keep `validateAdAgents` cancellation in its structured-result contract, and avoid cloning diagnostic response bodies without a finite declared size.
+- 9952a00: Refresh registry types to include the exchange, retail media, and streaming TV sales specialisms.
+
+## 14.0.0-rc.44
+
+### Minor Changes
+
+- 913711b: Add `assessAcceptancePolicy()` for conservative buyer preflight across verified seller-default and product profiles. The advisory assessment matches typed context, scope, region aliases, and rule time windows; composes prohibitions and requirements restrictively with per-rule provenance; and preserves `unknown` for partial coverage, unresolved or conflicting profiles, and omitted buyer facts.
+- 16ad91d: Allow callers to inject DNS lookup into SSRF-safe fetches and signing resolvers while preserving address validation and connection pinning.
+- 2db30b4: Make the acceptance-policy discovery storyboard verify the advertised catalog bytes, digest, schema, seller defaults, and every product profile. Compliance failures now retain distinct safe resolver codes for unsafe URLs, fetches, digest or schema mismatches, registry pin failures, and unresolved references. Registry verification is cancellable, batches large selections under one deadline, and bootstraps the catalog prerequisite for standalone product-step runs.
+
+### Patch Changes
+
+- 20d0971: Stop transport diagnostics scopes from waiting for asynchronous response-body capture. The `response_received` activity still fires when capture completes, but may now arrive after `withTransportDiagnostics()` resolves.
+- deaaf82: Use an agent's discovered `covers_content_digest` policy to exclude only the mutually exclusive request-signing refusal vectors 007 and 018 when they do not apply. When running the 3.0 or 3.1 compliance line, capability blocks that omit the field now use the protocol's effective `either` default.
+- 636abe2: Pick the most constrained legacy format ref when a legacy-format seller lists more than one for a canonical creative's kind.
+
+  `projectCreativeForDelivery` used to throw `the seller advertised N legacy refs for canonical kind ...` whenever several legacy refs of the creative's kind survived the package-level filters, even when the creative's own `format_parameters` named exactly one size. Sellers that list two spellings of one slot (`display_html` carrying width and height next to `display_300x250_html`) therefore rejected every create_media_buy that carried a canonical creative. Candidates are now narrowed by the creative's `format_parameters`, refs that pin those dimensions win over refs that leave them open, and among refs imposing identical constraints the legacy id whose own registry declaration pins that size wins over a generic parametrized id. Refs that still differ in their constraints for a creative that declares none keep failing closed.
+
+- f235280: Refresh registry client types with public and owner-scoped compliance eligibility fields.
+
+## 14.0.0-rc.43
+
+### Minor Changes
+
+- 027377f: Adopt the official MCP Apps v2 server helpers for tool metadata normalization and resource MIME defaults, including legacy `ui/resourceUri` interoperability.
+- 32d570f: Add `registerWholesaleFeedWebhooks` for safely updating account-scoped wholesale feed subscribers without dropping sibling notification configs or unrelated event selections.
+- 7d06862: Add versioned persistence hooks to `WholesaleFeedSync` so mirrors can restore cached entities, feed versions, pricing versions, and webhook cursors across process restarts.
+- fe71201: Add capability-driven full assessments for multi-agent routing maps, including topology-wide storyboard selection and tenant/cross-tenant JSON and JUnit grouping.
+- 3cc7b86: Add a hardened buyer resolver for digest-pinned seller acceptance-policy catalogs, including schema and local reference integrity checks, explicit unresolved registry pins, product-profile classification, and capability-lifetime caching. URL credentials are now rejected by the shared SSRF-safe fetch boundary. Canonical references now reject malformed UTF-8 and duplicate JSON keys, and documents deeper than 256 JSON levels return the new `document_too_deep` error instead of being cloned.
+- 43b949f: Add a Core-only buyer reporting reconciler that derives the five reporting
+  health states from obligations, revisions, scope closure, and clocks without
+  managed-delivery or receipt dependencies.
+- 30ca089: Add a durable server-side principal lifecycle with atomic section replacement, reporting-destination generations, declaration negotiation, and recoverable `principal.changed` delivery.
+
+  Principal handlers now require the dedicated authenticated `protocol.resolvePrincipalScope` resolver. Adopters already exposing `getPrincipal` or `syncPrincipal` must rename their principal resolver from `resolveScope` to `resolvePrincipalScope`; `resolveScope` remains the notification-only resolver for `syncAgentNotificationConfigs`.
+
+- 555c73f: Add `resolveVerifiedAcceptancePolicyProfiles`, registry-resolution options and public resolver/result types. Registry profiles become usable only after exact policy, version, canonical policy digest, embedded profile identity, and profile digest verification; failures remain explicitly unresolved with structured diagnostics.
+
+  Allow `RegistryClient.resolvePolicy()` callers to pass an `AbortSignal`, enabling bounded batch resolution without replacing the client's internal request timeout.
+
+  `ResolvedAcceptancePolicyDefault` now includes a `source: 'registry', resolution: 'resolved'` member, so exhaustive consumers should handle the verified registry case.
+
+- 6902f14: Add typed principal read/sync client methods and a bounded buyer lifecycle helper for guarded replacement, destination setup polling, and declaration negotiation readback.
+
+### Patch Changes
+
+- 0cd041c: Add `@adcp/sdk/client/core`, a focused entrypoint for buyer-side client runtimes that avoids loading the package's server, compliance, testing, and eager generated-schema surfaces. Client schema validation and media-buy compatibility modules now load on demand for both the focused entrypoint and existing root imports.
+- c617404: Add a compile-gated wholesale-feed mirror quickstart covering persistence, webhook registration, RFC 9421 verification, and automatic repair.
+
+## 14.0.0-rc.42
+
+### Minor Changes
+
+- d5b016e: Grade request-signing vectors over A2A by signing the request the official `@a2a-js/sdk` client emits.
+
+  An A2A run previously reported every signed-request vector as
+  `signing_transport_unavailable` — correct as a fail-closed stop-gap (#2958), but it means no
+  A2A agent's verifier is ever graded. This wires the dispatch the stop-gap stood in for.
+
+  The request is not framed here. `ClientFactory` resolves the agent card and builds the call;
+  the request is captured at the SDK's own `fetchImpl` seam and those exact bytes are signed,
+  so the endpoint, the JSON-RPC method name, the `a2a-version` header and the proto-JSON
+  encoding are all the official client's decisions.
+
+  Fail-closed behaviour is preserved rather than replaced: `resolveVectorTransport` still
+  returns no framing for A2A, and the availability decision moved to the async dispatcher.
+  An agent whose card does not resolve to a JSONRPC interface keeps the existing
+  `signing_transport_unavailable` reporting and its guardrails.
+
+  Agent Card discovery uses the runner's DNS-pinned, redirect-checked transport
+  with a deadline, supports modern, path-scoped, and genuine v0.3 cards, and
+  reports the card-selected endpoint as the probe provenance.
+
+- 318bdbf: Add typed, multi-dimension targeting command-state conformance vectors and operation-named input aliases; provide a same-instance capability-preflight factory with typed refusal reasons and cold-discovery guidance; and make bounded response-preview capture asynchronous while skipping SSE, non-text, and explicitly over-limit bodies with `responseBodyTruncated: true`. Text bodies without a usable length are captured through the same size- and time-bounded reader.
+
+  Recognize the unpublished legacy `requires_proposal` action mode without granting mutation authority: local preflight returns `mode_mismatch` with a proposal-lifecycle recovery hint, while seller errors omit the legacy action echo to remain valid against the current wire schema.
+
+### Patch Changes
+
+- d5b016e: Name the A2A dispatch's `legacyCompat` policy once, with the measurement that justifies it.
+
+  `request-signing/a2a-dispatch.ts` set `{ enabled: true }` at two call sites. Measured against `@a2a-js/sdk`, that is the card-following setting: a `1.0` card emits `CancelTask`/`a2a-version: 1.0` whether it is on or off, while a `0.3.0` card emits `tasks/cancel`/`0.3` with it on and `CancelTask`/`1.0` with it off. Turning it off does not refuse a 0.3 card, it speaks 1.0 at one — so a conformance run must leave it on. Folded from adcontextprotocol/adcp-client#2973.
+
+- 3d8c3df: Align Reliable Reporting with the AdCP 3.2.0-rc.4 public timing and view contracts.
+
+  Complete summaries now forecast the nearest future active period start, while
+  open summaries and obligations use `period.end + delivery_sla`. Private source
+  finality cutoffs no longer replace the public due time in production, status
+  ingest, or buyer reconciliation. Complete periods continue to reject
+  `next_expected_at` without weakening complete-scope guards.
+
+  Reporting tool discovery is bound to the mounted protocol pin, and canonical
+  schema loading retains the selected bundled document when modular and bundled
+  schemas share an authored `$id`.
+
+## 14.0.0-rc.41
+
+### Minor Changes
+
+- 8542be7: Adopt the signed AdCP 3.2.0-rc.4 schema and compliance bundles as the default wire release.
+
+  The generated capability types now expose per-product `anonymous_discovery`, and the
+  verification-token schemas expose the new `spec` and `live` token modes. The regenerated
+  media-buy and Reliable Reporting contracts also include rc.4's frequency-cap negotiation
+  and consumer-status refinements.
+
+  Bundled validators now compile in an isolated AJV registry, preserving rich union and
+  discriminator diagnostics when an rc.4 bundle shares its canonical `$id` with the modular schema.
+
+  As with earlier 3.2 prereleases, rc.4 replaces rc.3 in
+  `COMPATIBLE_ADCP_VERSIONS`; consumers can continue to pin `adcpVersion: '3.2-rc'` to
+  follow the release candidate carried by a particular SDK build.
+
+### Patch Changes
+
+- f3d197d: Grade every A2A compliance route in unconditional native 1.0 mode while preserving the SDK's backwards-compatible adopter default. This can expose agents that only publish the legacy v0.3 interface. Also normalize standalone-step transport options and add a trusted scoped-fetch override to `rawA2aProbe`.
+
+## 14.0.0-rc.40
+
+### Minor Changes
+
+- e184366: Add supply-path verification with a typed canonical registry wrapper and a live authoritative mode that checks owner/host adagents.json declarations and ads.txt/app-ads.txt evidence. Return per-leg diagnostics and auditable fetch provenance, with DNS-pinned SSRF protection, bounded fetching and fail-closed handling of malformed or unresolved authorization constraints.
+
+  Add opt-in external collection path annotations for product discovery, public selector/distribution types, and an explicit distinction between authorization bulk grants and product selectors that require concrete collection IDs.
+
+  Support explicit publisher attribution on shared collection declarations, bounded process-local authority admission, durable tenant-scoped stores, and independent authority migration confirmation. Establish first-use pins only after successful manifest validation, with a read-only precheck and atomic successful-observation commit.
+
+  Persist parsed revocations before later fetch or authority-store failures, preserving their seven-day hold through failed affirmative verification.
+
+### Patch Changes
+
+- 0daacec: Keep content-digest acceptance, mismatch, and malformed-header vectors graded
+  when the selected request-signing verifier profile allows either covered or
+  uncovered requests. Only vectors whose expected outcome depends on a stricter
+  content-digest policy are skipped.
+- cfab37e: Preserve extensible response envelopes when bundled and modular tool schemas share a canonical root `$id`.
+
+## 14.0.0-rc.39
+
+### Major Changes
+
+- 238796c: Sync the AAO registry OpenAPI and generated registry types for exact badge-scope grading profiles: the `selectAgentGradingProfile` operation, `selected_grading_statuses`, and the `grading_profile` badge field.
+
+  **Breaking:** `grading_profile` is now a required property of `VerificationBadge`, which is reachable from the package-root `AgentComplianceDetail` through `verified_badges`. Code that constructs a badge literal -- a test fixture, a mock registry response -- no longer compiles without it (`TS2741`). Reading badges is unaffected. The upstream AAO spec lists `grading_profile` in that schema's `required` set, so the generated type is faithful to the published contract and is not relaxed to optional; add the field, or read the badge through the generated type rather than restating it. `selected_grading_statuses` is additive and optional.
+
+  `operations['selectAgentGradingProfile']` now requires `requestBody`. The upstream spec declares seven required body fields for that compare-and-swap mutation but omits `requestBody.required: true`, which OpenAPI defaults to false, so the generated operation previously admitted a bodyless call. `scripts/generate-registry-types.ts` corrects the flag on an in-memory copy of the spec before generation and records it in the generated header; the cached spec stays byte-identical to what AAO publishes, and the entry is removed once AAO ships the fix.
+
+### Minor Changes
+
+- 3f9901b: Add a transactional PostgreSQL reporting lifecycle activity bridge: the authoritative status transition, its issue projection, its account activity row and its notification intent all commit in one ledger transaction, and delivery starts only from a post-commit recovery worker. Health changes project schema-conformant `reporting.status_changed` webhooks through the existing persistent notification and webhook outbox runtimes; finality-only changes stay internal activity, because the AdCP webhook is health-only.
+
+  **Wiring.** Build `createPostgresReportingNotificationAttemptCheckpoint()` first, pass it to `createPostgresPersistentNotificationRuntime` as `checkpointDeliveryAttempt`, and pass the same object to `createPostgresReportingNotificationActivityRuntime` as `attemptCheckpoint`. The checkpoint is bound to the exact queryable, namespace and table it writes to, and the activity runtime verifies it — by identity against the runtime's own `deliveryAttemptCheckpoint` where that is exposed, otherwise against the declared binding. A mismatched pair checkpoints nothing and would lose every notification silently, so both construction and `probe()` fail closed.
+
+  **Exactly-once intent, at-least-once delivery.** Delivery itself stays at-least-once: an ambiguous retry may repeat a POST, but only to the same recipient and under the same `idempotency_key`, so a receiver dedupes it. What is exactly-once is the intent — one activity row and one recipient set per transition, created with the transition itself. Recipients are frozen before any external send and tracked per recipient in `<activity_table>_recipients`. A recipient with no durable pre-POST checkpoint provably never received a POST and is replaced when it goes stale; a checkpointed one is pinned by subscriber, so a replacement generation is never addressed for a notification that subscriber already received. Projection requires every stored recipient to have reached a terminal disposition, so an outcome that never reached a subscriber cannot settle the activity as delivered. `notificationSuppressionDisposition` separates deliberate suppression from operational failure; a retryable suppression releases its outbox entry rather than terminalizing it. Every recipient mutation locks the parent activity row `FOR UPDATE` in a `MATERIALIZED` CTE and is gated on a live matching lease, so lease authority and recipient mutation serialize atomically.
+
+  **Bounds.** `maxRecipients` bounds one emission's fanout and must be at least the notification runtime's `maxFanoutCandidates`; `maxRetainedRecipients` bounds every stored row and defaults to twice that. Settled history compacts to one row per subscriber. A claim that cannot succeed is abandoned after `maxAttempts` (default 100) instead of retrying forever and exhausting `maxPendingPerTenant`; abandoned activity is retained, surfaced as `notificationAbandonedAt`, and never recorded as delivered.
+
+  **Lifecycle finality.** Transitions carry their observed finality. Pre-v14 rows resolve their baseline through `ReportingLedgerStore.resolveTransitionFinalityBaseline`, which persists `none` rather than reconstructing one — no stored timestamp can prove which revisions had committed when such a row was written, and guessing suppresses a real snapshot-to-official change permanently. `REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION` installs a `NOT VALID` check that permits historical rows and rejects new finality-less transitions, making the one-redundant-event-per-obligation upgrade bound enforceable against a pre-v14 writer surviving a rolling deploy. A custom store implementing neither the baseline port nor the optional finality fields writes no finality-only transitions at all, rather than one on every tick.
+
+  **Retry delays.** `WebhookRetryOptions.initialDelayMs` and `maxDelayMs` are normalized to a whole millisecond from 0 through 604800000, the range every durable recovery backend accepts for a retry-after; a fractional or out-of-range value used to make releasing a lease throw, holding the delivery until the lease expired. `maxAttempts` normalizes differently, because an attempt bound has nothing to saturate to: a finite value floors and clamps up to 1, and a non-finite one falls back to the default 5 — `NaN` used to run zero attempts and re-queue the delivery forever without ever posting.
+
+  **Compatibility.** `PersistentNotificationRuntime.hasDeliveryAttemptCheckpoint` and `deliveryAttemptCheckpoint` are optional, so existing custom implementations still satisfy the interface; an emission owner treats an absent flag as unproven and fails closed. Migrations are idempotent in place — re-running one does not drop and re-add constraints or rebuild indexes.
+
+- 63ce4b5: Add an adapter-first Reliable Reporting Core service that composes trusted account and currency routing, the existing source executor and ledger, bounded scheduling, native decisioning-platform handlers, truthful capabilities, and a reusable conformance helper. Media-buy and package lineage is trusted: declarations cannot supply `constituents` or `mediaBuyIds`, and a required `resolveCoverage` callback derives the authorized denominator from the resolved account. Exact hash-bound reporting revisions bypass response creative-format projection so their rows reach the wire byte-identical to the bytes the ledger bound; that bypass requires the exact-read request shape, so a platform wiring one function into both the sales and reporting delivery slots still projects its unbound reads. Install refuses schedule semantics the inline executor cannot satisfy — unsupported alignments, anchors off source-local midnight, an advertised period timezone that is not the resolved source timezone, and zones whose UTC offset changes anywhere between the anchor and the periods being generated now, which fails closed for anchors older than the verifiable horizon. The exact installed schedule identity is preserved and echoed through configuration, obligation, and status so `installed_schedule_match` holds — `P1D` stays `P1D`, `PT1H` is never echoed back as `PT3600S`, and a `source_timezone` schedule is never reported as `utc` — and an offering the service could never install is refused at construction rather than advertised — whether that is an unsupported alignment, an invalid conditional field shape, a duration the service cannot express, a period that is not a whole source-local day, snapshot finality on an authoritative source, or a delivery SLA shorter than the source's own worst-case availability lag for snapshot as well as official delivery. Delivery metadata is validated against the executor offering that actually routes, with contract identity required so an injected executor cannot answer a declared ID with a different definition, each route binds to its own adapter instance rather than a shared offering ID, and construction additionally binds grain, pinned timezone identity, and a non-empty unique supported finality. A pinned zone must hold one UTC offset from the protocol origin, so zones whose grid drifted after 1970 — Asia/Singapore, Asia/Kathmandu — are no longer advertised with no installable anchor. The inline executor plans every reclamation before mutating anything and reclaims an execution together with its staged evidence and byte accounting, so a refused admission never destroys retained replay state and a single admission never charges two victims. Producer schedule anchors must sit on the protocol origin grid for every alignment that does not carry its own anchor on the wire, a zone whose UTC offset moves is refused because fixed-length periods cannot express its days, and an emitted delivery SLA must describe the offset its obligations are actually due at, so producer and consumer boundaries cannot diverge. `sync_reporting_status` is namespaced by the canonical authenticated caller, so OAuth callers differing only by `client_id` do not collide so a registry resolving several callers onto one account cannot replay one caller's receipt for another, a null `reporting_revision_id` routes as the cumulative read it is, and byte pressure reclaims settled evidence under an explicit retention policy instead of terminalizing well below the execution ceiling, planning count and byte reclamation as one admission transaction that commits only at staging, so a slice refused by a later check never destroys retained replay, choosing global victims from whichever scope holds the total budget while per-scope pressure still reclaims in place, advancing past zero-byte victims, crediting the bytes a count reservation will release, and never deleting evidence a concurrent replay has already been served, with reservations carrying the identity of the transaction holding them so a stale commit cannot claim a revoked credit or delete another transaction's victim, and a revoked claim is replaced by a bounded search for equivalent count and bytes drawn only from entries nobody else holds — refusing the slice outright when that capacity cannot be reacquired, and the variable-offset refusal spans today as well as the anchor so a future-dated generation is still probed. Producer schedule-identity inputs are validated against the boundaries they claim to describe. Timezone feasibility is decided at construction whenever the zone is pinned — against the same operational horizon installation uses, so a zone that ran DST decades ago but still observes its schedule-origin offset stays advertisable — coverage is bounded by the per-slice constituent-metric product rather than the constituent count alone, timezone validation spans the window obligations are actually generated in rather than history the planner never reaches, installed recovery windows must equal the advertised one so buyer-facing pending signals match the deadline the capability promises, and install-time validation scans the whole span from the anchor so a zone that changed and changed back cannot pass. Obligation status projects only the fields each alignment allows and keeps a legacy generation's installed identity rather than re-deriving one, the inline executor accepts an explicit `replayRetention` policy so a long-lived feed need not terminalize at its replay ceiling, the scheduler sleeps safely across intervals beyond the platform timer ceiling, and an adapter may supply a durable `executor` in place of the bounded inline one for feeds that outlive its replay table. Official SLA feasibility is measured against the source's worst-case availability lag, the configured period is validated against the executor's per-request window ceiling, a future-dated anchor is still scanned for offset changes, deployment-wide scheduling rotates tenants under the producer's default cap as well as explicit budgets, and the reporting/legacy delivery split composes under strict merge-seam mode instead of being reported as a collision. schedule validation follows the protocol's 1970 local-midnight origins instead of an arbitrary recent anchor, official offerings must advertise a delivery SLA their source can actually finalize within, deployment-wide scheduling applies the per-account budgets per tenant with rotation, a keyless generation is refused rather than replayed into a multi-adapter deployment it cannot route in, `resolveCoverage` rejects constituent lineage that contradicts its product binding, the routed offering exposes the inline executor's narrowed `media_buy` applicability, installing reporting no longer shadows a `legacyHandlers.mediaBuy.getMediaBuyDelivery` cumulative read, and `install()` preserves the caller's platform type so specialism enforcement survives. Cycles fail closed on an unscoped account instead of widening to a deployment-wide scan, official configurations must name the delivery SLA their offering advertises, pre-service configuration generations replay without tripping generation immutability, and one account's failed cycle no longer starves the accounts scheduled behind it.
+- 238796c: Add versioned per-constituent, per-metric availability evidence to `createInlineReportingSourceExecutor`.
+
+  The delivery request handed to an inline fetch handler now carries a required `constituents` array of frozen `{ constituent_id, media_buy_id }` pairs. Handlers that only read the existing request fields are unaffected; use `constituent_id` to key the cells of an `availability_evidence` envelope. Row arrays, `null`, and delivery response objects that omit `availability_evidence` keep their current derived-availability behavior, and `reporting_rows` / `media_buy_deliveries` are still read through the ordinary property channel, so class instances, prototype-inherited values, and accessor-backed slots continue to be accepted.
+
+  Evidence-bearing responses can represent mixed present, zero, delayed, unsupported, partial, stale, and missing metric cells. Rows that claim one metric twice with contradictory values now fail closed with `INTEGRITY_FAILED` instead of silently preferring the direct value, and repeated claims are reconciled as exact decimal quantities, so a number printed in exponent notation agrees with the equivalent plain-decimal string while neither claim is rounded. A row proves every constituent that names its `media_buy_id`, so constituents sharing one media buy are each checked against it rather than only the last one declared.
+
+  Every field of the delivery response -- and of each row inside it -- is observed exactly once, including each period boundary, a collection's declared length, a `totals` that aliases its own row, and any requested metric or dimension named after one of the adapter's own row fields; only that capture is validated, so a response cannot pass a check on one observation and a later check on another. Every verdict the response `status` decides is settled from a single read before any other response field or row collection is touched, and each remaining response field is read at most once and only when a check needs it, so a field no check reaches cannot decide the outcome; preserving the retryable verdict a reported failure or a not-ready state has always produced, and a present-but-non-string status is an unreadable response rather than an absent one. A row's own status is likewise settled before any other field of that row is observed, `partial_data` included. Evidence envelope and cell fields are bounded in length before they reach validation, so an unbounded value cannot be walked in full by a validator that will reject it anyway. Without availability evidence the auxiliary collection is observed for its `media_buy_id` alone, so its unread metric and dimension fields are neither billed nor able to fail an otherwise valid response. A control field that is present but malformed is treated as the partial or invalid evidence it is rather than narrowed into an absent one. Row collections are copied by index against the length they declare rather than spread, so an iterator that disagrees with `length` cannot materialize past the row cap. The evidence envelope and its cells are restricted to their declared fields as own data properties, checked against that allowlist before any descriptor is read. Each delivery row is observed exactly once and every later decision -- work budgeting, scope and currency checks, availability validation, projection and the staged bytes -- reads that capture, so a row whose fields answer differently on a second read cannot be priced as one shape and processed as another. Every semantic verdict -- row scope, requested-cell completeness, duplicate-claim reconciliation, evidence reconciliation across both row collections, temporal evidence, and the coverage and finality roll-ups -- is settled before the response is projected, so an incomplete, contradictory or out-of-scope response returns its own verdict instead of exhausting the staging budget first. The auxiliary collection is validated but never projected or staged, so its size does not spend the budget the source rows need. Availability verification is bounded by 5,000,000 work units, where one unit is one requested metric or dimension checked against one row for one constituent; metric breadth, dimension breadth and constituent fanout are priced together, and each row visit performs exactly the checks it is charged for. A second budget caps the characters validation may scan at one staged object's worth, counted per occurrence, so a long value reused across rows or restated under `totals` cannot force unbounded scanning at negligible cost; numbers are charged the width they canonicalize to rather than one character each, and each of the byte-width, zero and canonical passes a claim costs is charged and computed at most once. A third bound holds the captured claims to the per-object staging ceiling, and claims live in one value array and one flag array shared by every row, so holding a response for validation stays proportionate to writing it out; the ceiling is the per-object limit rather than the per-scope one because the held-byte estimate is an upper bound while that limit governs written bytes, and held against it reports the staging cap admits were refused. `media_buy_id` may be requested as a metric as well as a dimension, and the row identity proves it either way. Direct-over-totals precedence short-circuits: without evidence a valid direct value settles its metric, and a row whose every requested metric is settled that way has its `totals` slot left unobserved entirely rather than read and discarded. The slot is observed once per row, the first time a fallback or reconciliation needs it. With evidence both claims are always read so a duplicate claim is reconciled. A number is charged the width it expands to only where a duplicate claim is actually canonicalized; measuring one costs a constant check. Row status and row currency are settled in streaming passes before that capture, restoring the short-circuit on the first row that decides the outcome, and an over-long status is never case-folded. Exact-decimal reconciliation is unchanged.
+
+  `availability_evidence` must be supplied as a plain own data property. The slot is classified from a single bounded descriptor observation and validated from a snapshot of that same observation, so a slot or envelope that restates itself when it is looked at again cannot downgrade the response to derived availability, and a cyclic or endlessly regenerated prototype chain fails closed instead of spinning.
+
+- 606243e: Stop a scenario the agent's own capability declaration puts outside its surface from capping that agent's compliance bundle. `buildComplianceBundleResults` now grades a storyboard whose result is the root applicability skip as `not_applicable`, and a bundle reaches `passing` when every graded storyboard passes (adcontextprotocol/adcp-client#2945).
+
+  `storyboard-schema.yaml` > "Applicability order" makes the consequence normative: capability predicates are evaluated before `requires`, an unsatisfied predicate emits `not_applicable` and "MUST NOT report a missing runtime requirement", and "only an agent that selected the storyboard by satisfying every authored capability predicate can receive `requirement_unmet`" — which "keeps optional capability storyboards out of the coverage totals of agents that never claimed the capability".
+
+  Scope is every **authored non-`compliance_testing` root capability predicate in an AdCP 3.2 or later bundle** — not only the governance scenarios that surfaced it. In the pinned 3.2 cache that is 156 of the 170 root capability-gated scenario files; the remaining 14 gate on `compliance_testing.*` and are excluded, matched on **normalized dotted-path segments** so a padded or nested namespace (`adcp.compliance_testing.scenarios`) cannot slip past. All three census numbers are asserted against the cache. Protocol and specialism bundles beyond `media_buy` (for example `creative`) are in scope, and a real-bundle aggregate regression pins both the eligible and the excluded halves.
+
+  Agent-declaration-driven is what keeps it sound: a seller that does **not** claim a gated capability has the scenario graded not-applicable and reaches `passing` on its own surface, while a seller that **does** claim it clears the capability gate, proceeds to whatever `requires:` the scenario declares, and stays capped — never credited for a capability it never exercised.
+
+  Version-scoped and fail-closed. The storyboard's loader-injected `adcp_version` must be a **string** parsing to 3.2 or later, because the "Applicability order" rule arrived in AdCP 3.2; an absent version (a hand-built or caller-supplied storyboard) or a pre-3.2 bundle keeps capping. Because the grader is exported, a non-string version a JavaScript caller can reach it with — `null`, a number, an object — also fails closed rather than throwing out of the rollup. Without the version gate the rule was version-agnostic: 33 of the 34 capability-gated scenarios selected from the 3.1.18 bundle flipped `partial` to `passing`.
+
+  `buildComplianceBundleResults` is exported, so the shape check is a public grading boundary rather than an internal invariant. Neutralization requires the complete root synthetic result and nothing else, enforced as a **positive whitelist at all three levels** — result, phase and step — of exactly the keys `buildCapabilityUnsupportedResult` emits plus the `notices` its call sites spread in, so a field that carries execution evidence (`response_record`, a non-zero `strict_validation_summary`) or anything a future release adds at any level is refused without having to be enumerated. On top of the key checks: `overall_passed: true`, exact counts, an unobservable all-zero strict-validation summary, exactly one expected phase and one expected step, the canonical `not_applicable` reason with a non-blank detail, no `skip.requirement`, and no validation evidence on the row. Twenty-nine adversarial mutations are pinned, each required not to reach `passing`.
+
+  Everything else still caps or fails: every `requirement_unmet` value including `multi_agent`, the `required_any_of_tools` family gate, step-scope `missing_tool` / `missing_test_controller` / `prerequisite_failed` / `not_applicable`, zero-observation evidence, ungradable validations, untested or failing siblings, and a result carrying both the skip and a failure row. A version-excluded storyboard (`options.notApplicable`, from the agent's declared `major_versions`) keeps capping, including when every executed sibling was neutralized; a wholly version-excluded bundle still reports `not_applicable` as before. A bundle of nothing but inapplicable scenarios reports `not_applicable`, never `passing`.
+
+  AdCP 3.1.x is untouched: that bundle's copy of the governance scenario declares no machine-readable capability predicate, so its governance row still grades `missing_tool`. Backporting the 3.2 declarations is an upstream ask.
+
+  Routed runs also no longer mislabel an unmet runtime requirement as a capability gap. The routed preflight folded an unmet `request_signer` into the same channel as an authored capability failure, so the storyboard reported `capability_unsupported` with no `skip.requirement` — claiming the authored predicate had evaluated false when the agent had in fact satisfied it, and diverging from a non-routed run of the same agent. The two provenances now have separate channels, and the routed verdict is handed to the ordered `requires` gate rather than returned ahead of it, so an earlier unmet gate — a missing `controller`, or an unknown forward-compatible value — still wins in routed mode exactly as it does non-routed. Per-step partial coverage keeps its existing `not_applicable` plus `skip.requirement` behaviour.
+
+  Requirement reporting is now identical in routed and non-routed mode. `checkRequires` reports the first unmet gate in **declared order**, with no requirement class reordered and no class overriding another — the earlier attempts to move `multi_agent` last and to let an unrecognized value override a precomputed routed verdict are both removed. What varies by mode is only which gates are assessable when the pre-flight runs, and the runner now makes the answer independent of that: a requirement the pre-flight cannot settle defers **together with every requirement declared after it**, so the post-discovery pass always resolves the same declared-first gate.
+  - **no root capability predicate:** the pre-flight answers the statically decidable prefix — `multi_agent`, the receiver/runner harness gates, unrecognized forward-compat values — and stops at the first `controller` / `request_signer` it cannot settle in this mode. A topology gate declared before one of those therefore still reports `requirement_unmet` instead of letting the run proceed into a discovery failure; one declared after it is answered post-discovery, where the earlier gate has finally been assessed and may win.
+  - **with a root capability predicate:** AdCP 3.2's applicability order puts the capability verdict first, so the whole list defers until after discovery, and the routed `controller` / `request_signer` verdicts — which `checkRequires` cannot recompute without a run-level profile — are consumed at their declared positions.
+
+  Routed mode settles both agent-dependent requirements in the routing pre-flight and hands the verdict to the ordered gate as `met`, `unmet` or `unknown`, rather than filtering the requirement out of the list. Filtering was the bug: it let a later gate answer while an earlier one was still unknown. The `unknown` status also keeps `checkRequires` from falling back to its own inputs, which in routed mode means the cross-tenant tool union — see the separate routed-controller-provenance entry.
+
+  The parity matrix is ten cells — both predicate states and both declared orders — across **three** columns: non-routed, non-routed with `_profile` + `agentTools` threaded through (the exact shape a real `comply()` run produces, per `comply.ts`), and routed. The third column is what the last review turned up: `comply()`'s non-routed pre-flight CAN settle a declared-first `controller`, so filtering `controller` out of the routed pre-flight made the two modes disagree for precisely the shape `comply()` produces. `origin/main` diverges on six of the thirty cells. All thirty agree now, and no cell regressed.
+
+- 8c19826: Separate nullable targeting input aliases from strict targeting state during type generation. All schema-defined input clears are accepted by TypeScript, while proposal snapshots reject clear commands. Preserve array cardinality and construct the starter's accepted purchase from its supported fields after rejecting targeting overlays.
+
+  This corrects the existing AdCP 3.2.0-rc.3 contract, with a minor changeset for its public typing and validation impact. `ProposalPurchase['targeting_overlay']` no longer permits `null` for `geo_metros`, `language`, `keyword_targets`, or `negative_keywords`; downstream code assigning those clear commands to proposal snapshots must change. The root `TargetingOverlay` export was already strict and remains so. Put clears in the request-side `TargetingOverlayInput` or `BuyProductsRequest` types. `TargetingOverlayInputSchema` from `@adcp/sdk/schemas` accepts these schema-valid null inputs. Both public targeting Zod schemas now enforce the pinned protocol's cardinality, scalar, and nested-object constraints, so previously accepted but wire-invalid targeting values may be rejected. Persist and echo resolved targeting state, without clear commands.
+
+- cbe5f33: Add opt-in seller-side Reliable Reporting Managed Delivery and Reconciled Billing with additive PostgreSQL persistence, fenced workers, retained verified resources, authenticated idempotent receipt ingestion, append-only adjustment reconciliation, fail-closed destination revocation, and operational capability gating.
+- bf09c77: Verify MCP auth for agents that advertise none of `PROBE_TASK_ALLOWLIST`, and say so honestly when it cannot be verified (adcp-client#2940).
+
+  `$test_kit.auth.probe_task` resolved to `undefined` for those agents, so every credential probe skipped `not_applicable`, no phase could contribute `auth_mechanism_verified`, and the **required** `unauth_rejection` phase was never exercised either.
+
+  ## Which agents this fixes, and which it only explains
+
+  The runner now falls back to a `mcp_session_probe` sentinel that calls a **canonical AdCP read task** the agent advertises — parameter-free, never public-tier, never mutating. Two outcomes:
+  - **Agent advertises a canonical protected read outside the allowlist** (`get_principal`, `list_tasks`, `list_transformers`, `get_plan_audit_logs`, …) ⇒ auth is now verified through it, and `security_baseline` contributes `auth_mechanism_verified` instead of reporting `[]`.
+  - **Agent advertises only its own non-AdCP tool names** — the shape in the original #2940 report ⇒ the step is **explicitly `session_probe_ungradable`** with an adopter remedy, not certified. Only canonical AdCP tasks are eligible: an agent that named a tool `get_probe_target`, enforced credentials on that one, and left the real surface open would otherwise be certified by its own vocabulary. Remedy: advertise one allowlisted read tool, or serve RFC 9728 metadata and run with `--oauth`.
+
+  What the probe establishes is bounded: the agent enforced its auth mechanism **at the tool that was graded**. It is not a claim that every tool enforces auth, and it verifies no cryptographic property of the credential or its issuer.
+
+  ## What adopters see
+  - **A new `mcp_session_probe` task in reports** when your read surface is outside the allowlist. It is not an AdCP tool; it is the runner calling a protected tool of yours through the official MCP SDK client. The step note records which tool was graded — `MCP session probe graded get_principal at tools/call (HTTP 401)`.
+  - **A new skip reason, `session_probe_ungradable`** (canonical `not_applicable`). The CLI prints `   Skipped (not_applicable / session_probe_ungradable)` followed by the runner's detail on its own line, and JUnit emits `<skipped message="session_probe_ungradable: …"/>` — runner-authored skip messages now carry that detail, length-capped and XML 1.0-sanitised.
+  - **`MCP_SESSION_PROBE_TASK` is exported from `@adcp/sdk/testing`** so report consumers key on a constant rather than a magic string.
+  - **Diagnostics are distinguishable**: `is inconclusive` (nothing was proved), `refuses this as auth evidence` (you are fail-open, or a valid credential failed), and `could not run` (a protocol/wire-version/response-shape problem that says nothing about credentials).
+  - **Every remedy names the same eight tools**, rendered from one constant, so the probe's diagnostic, the runner's skip detail and the docs cannot drift. See `skills/cross-cutting.md` § "Advertise one allowlisted read tool".
+
+  ## How it works
+
+  `selectProbeTask` resolves the sentinel only on an explicit `protocol: 'mcp'`; `comply()` normalises an unset transport to `mcp` at its entry boundary, which is the transport it has always used on the wire. A storyboard that names the sentinel directly on a run with no declared transport is refused rather than served MCP.
+
+  Target selection is **runner-ordered**, never the agent's advertisement order: allowlisted tools first (allowlist order), then canonical parameter-free reads with `get_principal` preferred. A shape refusal on the first target retries the next candidate; if all refuse the shape, the step is inconclusive rather than graded.
+
+  The lifecycle is the official `@modelcontextprotocol/sdk` client throughout — `Client.connect()`, `Client.callTool(target, {})`, `StreamableHTTPClientTransport.terminateSession()` — so response-id correlation, result-schema validation and version negotiation are the SDK's. `tools/list` is never graded evidence: MCP discovery is not an AdCP protected task. Raw status and `WWW-Authenticate` come from two SDK-supported seams: the transport's `fetch` option (carrying the repo's SSRF-guarded `createAgentTransportFetch`) and `withRawResponseCapture`.
+
+  Evidence rules, all enforced in the probe primitive rather than the authored YAML:
+  - **Rejection** = 401/403 at `initialize` or the protected call, or an AdCP `AUTH_MISSING` / `AUTH_INVALID` / `AUTH_REQUIRED` code in a recognised error envelope. A bare 400 is _not_ a rejection unless it carries `WWW-Authenticate` or one of those codes — otherwise a parameter complaint would certify an agent that never read the credential.
+  - **Fail-open** = a successful tenant-scoped payload for a bad or absent credential.
+  - **Inconclusive** = a schema/param refusal (`INVALID_REQUEST` / JSON-RPC `-32602`), a bare `isError: true` with no recognised code, or no mechanism-matched valid credential to control against. Never a pass or a fail.
+  - **Controls are mechanism-matched and use the same target.** `oauth_bearer` requires an OAuth access token — a static key cannot certify the OAuth branch. The control sends both `Authorization: Bearer` and `x-adcp-auth`, matching `createMCPAuthHeaders`; `auth: none` sends neither.
+  - **Signed runs fail closed.** When the run signs functional dispatch and the agent declares the probe's only targets under `request_signing.required_for` / `supported_for`, the step is `session_probe_ungradable`: the probe mints no RFC 9421 signatures, and a signature refusal is not a credential verdict.
+
+  Hardening: a streaming response-body cap that applies to SSE and aborts the request, with the capture recorder's own body cap raised to match so a legitimate multi-MiB read page reaches the grader as parseable JSON instead of truncated text; `reconnectionOptions.maxRetries: 0` on both transports plus opt-in capture count/byte ceilings on `withRawResponseCapture`, so a hostile `retry: 0` SSE stream cannot amplify one probe into thousands of requests (overflow marks the result unusable rather than truncating evidence silently); **one** request / byte / wall-clock budget shared by every lifecycle a probe runs, and at most three candidate targets, so a tarpitting agent cannot multiply the cost by the length of its own tool list; the run `AbortSignal` and a bounded per-request deadline applied at the fetch boundary; session termination detached from a cancelled run signal so an aborted run still sends exactly one DELETE with the session id and negotiated protocol version; credential scrubbing by value across body, headers and error, reading every credential-bearing header name case-insensitively (`Authorization`, `x-adcp-auth`, `x-api-key`) — including decoded Basic `user:password`, the password alone, short tokens and `options.headers` values, but never a Basic _username_ on its own, which is an account identifier that belongs in a realm and in diagnostics — failing closed at its traversal limits; routing headers by explicit allowlist, sent exactly once (an operator's own `x-test-session-id` wins over the runner-derived one rather than being emitted twice); and OAuth tokens read from the live agent config, only when that config's `agent_uri` is the agent under test.
+
+  **Upstream follow-up (adcp-client#2940 stays open):** certifying the static-credential branches for a no-allowlist agent, and letting `security_baseline` accept an operation-level auth refusal, both need changes to the storyboard contract in the `adcontextprotocol/adcp` spec repo rather than SDK-side reinterpretation.
+
+- ff6ad10: Add owner-bound, operation-routed crash recovery for direct A2A mutation continuations. Custom deferred stores must round-trip the new route-kind and ownership digest fields, implement all operation-route methods, and preserve the atomic route when deleting a superseded generation. Deploy updated readers across a shared store before enabling the opt-in on writers. The route covers pause generations only: persist the initial recovery pair before relying on restart recovery, and reconcile terminal or submitted uncertainty through the host operation record without redispatching the mutation.
+- d29fe80: Fix three release-blocking request-signing conformance bugs.
+
+  Bump rationale: `minor`, not `patch`. The fixes themselves are bug fixes, but they land additive public surface — `ComplyOptions.request_signing` (a typed option on a barrel-exported interface), `probe_passed` as a member of `StoryboardValidationCheck`, a new `signing_transport_unavailable` value on the detailed `skip_reason` field that report consumers can switch on (the contract-enumerated `skip.reason` stays `not_applicable`, with the sub-reason token as `skip.detail`), and three `storyboard run` flags — which is what the repo's own guideline calls a minor. They also change grading verdicts (see below), so a reader comparing two runs deserves more than a patch's worth of warning.
+
+  One exported rule carries the verdict: `signingCoverage` in the storyboard runner answers whether any request-signing vector reached the agent, and the storyboard verdict, the compliance track rollup, the compliance report and the CLI exit contract all consume it (the CLI through `dist`). It replaces four hand-written copies of the same question, two of which had already drifted — one into a false CI failure on an all-green report. The public additions above are pinned by compile-time assertions in `src/lib/testing/compliance/types.type-checks.ts` that import through `@adcp/sdk/testing` rather than a deep path. Note the new `signing_transport_unavailable` literal appears on the SDK's detailed `skip_reason`, not on the contract-enumerated `skip.reason`.
+
+  Two upstream registrations remain open, and both are external blockers rather than SDK work (this change emits the already-registered _shape_ in each case, so registration will not move any behavior here):
+  1. `canonical_detail_sub_reasons.not_applicable.signing_transport_unavailable` in `runner-output-contract.yaml`, alongside the shipped `rate_limit_not_triggered` precedent, with `spec_source: test-kits/signed-requests-runner.yaml`.
+  2. `probe_passed` under that contract's runner-synthesized grading codes (today: `capture_path_not_resolvable`, `unresolved_substitution`). It fails closed in this runner — a `probe_passed` check without a probe result is a hard step failure, and a failed grade always carries a diagnostic — but a report consumer will not recognise the check kind until it is registered.
+  - **A2A runs no longer dispatch signed-request vectors as MCP** (#2954). `resolveVectorTransport` reads the resolved protocol. This runner implements two vector dispatches — verbatim REST replay (`raw`) and an MCP `tools/call` re-frame (`mcp`) — and neither is an A2A request, so an A2A run with no explicit `request_signing.transport` skips each affected vector as `signing_transport_unavailable`. Three things follow, each of which was a false-assurance path in review: the `signed_requests` storyboard reports `overall_passed: false` rather than passing off the back of an SDK self-check; `computeTrackStatus` grades the track `partial` **before** its all-skipped check, so an entirely unverified track can no longer evaporate into `skip` and let sibling tracks carry the run to `passing`; and the gate is per-vector rather than per-storyboard, so a routed `agents` run pairing a top-level `a2a` protocol with an MCP seller still grades. Only the in-library `jwks_override` negatives still grade on A2A — they touch no transport. **Adopter consequence to plan for:** an agent that honestly advertises `request_signing.supported: true` and is reached over A2A now exits nonzero with no agent-side remedy; the outs are grading the MCP or REST binding, `--signing-transport` when that binding answers at the same URL, or `--soft-fail`.
+    Vector `028` is **not** replayed raw at an A2A endpoint. That is a gap in this runner, not a client limitation — `@a2a-js/sdk` issues `tasks/cancel` fine; what is missing is a signing probe wired through it, plus an upstream answer for how a verifier scopes `required_for` over A2A methods. RFC 9421 conformance needs byte-level control of the request, which the builder has for the two bindings AdCP defines for these fixtures; picking a third here would be the SDK inventing one.
+    The skip is emitted in the output contract's registered shape: canonical `not_applicable` with `skip.detail` set to the `signing_transport_unavailable` token exactly, empty validations, no pass/fail counter movement — the same shape as the contract's `rate_limit_not_triggered` entry. Deliberately **not** `fixture_unavailable`, whose contract text mandates a `creative_asset_fixture_unavailable:` detail prefix and says the storyboard grades `not_applicable` with no verdict movement. The gap stays visible through coverage instead of through the reason, and the operator-facing remedy rides on the probe result where the renderers read it.
+  - **Exclusions are decided before the protocol gate** (#2954). Operator selection (`onlyVectors`/`skipVectors`), then exclusions that belong to the vector itself, then the transport gate. A vector no HTTP binding can carry (`026-non-ascii-host`) reports `transport_ungradable` on A2A exactly as it does on MCP, instead of being counted as this protocol's missing coverage.
+  - **Vector 028 is now gated on the agent's advertised capability — a behavior change on MCP runs too, not only A2A** (#2954). `028-unsigned-protocol-method-required` reports `capability_profile_mismatch` unless the agent advertises `request_signing.protocol_methods_required_for`, which is the gate `signed-requests.yaml` specifies ("the runner skips when the agent does not declare the bucket, and FAILs when it declares it but doesn't enforce"). Previously the storyboard dispatched 028 at every agent, so an agent that never claimed the JSON-RPC bucket could fail it. Two consequences worth stating plainly: a non-claiming agent now sees one fewer graded vector on an ordinary MCP run, and a claiming agent's behavior is unchanged. This also makes the storyboard path **diverge from `adcp grade request-signing`**, which compares against an operator-supplied `--covers-content-digest` / `agentCapability` profile rather than a live advertisement and therefore still dispatches 028 unless the operator says otherwise; the shared helper (`semanticVectorExclusion`) covers the rule, not the input.
+    Only that one field is read, and only from a schema-valid declaration. The capabilities schema requires just `supported`, so demanding `covers_content_digest`/`required_for` would fail a schema-legal `{ supported: true }` agent on a vector it never claimed; conversely a declaration that the line's own schema rejects — `null`, `[""]`, `["tasks/cancel "]`, a bare string, a non-string entry, or a name outside the line's wire-name grammar — is discarded rather than read as "not declared", because reading it that way lets a server that accepts an unsigned `tasks/cancel` suppress the vector and report `overall_passed: true`. The grammar is keyed to the run's own compliance line, and the differences matter in both directions: 3.2 allows A2A 1.0 PascalCase names and multi-segment paths, caps names at 256 characters, and forbids `tools/call`; 3.1 allows a single lowercase pair, forbids nothing, and declares **no** length cap — so an over-long name is rejected only on 3.2, and a 258-character name stays honoured on 3.1 rather than failing a vector that agent never claimed. Both lines are pinned against their shipped schema by test, including the absence of a 3.1 cap. Nothing else is read from a live advertisement — the rest of a vector's `verifier_capability` describes an operator-selected grading profile, and comparing it to an advertisement would exclude 39 of 40 vectors. Both exclusions carry the grader's diagnostic so an operator can audit an agent that under-declares.
+  - **A broken vector cache fails instead of skipping** (#2954). A load error (or a vector id missing from the loaded set) now surfaces as a probe error. It used to be swallowed, leaving the transport gate to report an unreadable compliance cache as `signing_transport_unavailable` — a skip-shaped verdict that could never fail a run.
+  - **`jwks_override` vectors grade on their real verdict** (#2955). New `probe_passed` validation check; `synthesizeNegativeStep` emits it for vectors the grader decides in-library (vector 025), which report `http_status: 0` by contract. The old synthesized `http_status: 401` failed a step the grader had passed and no implementation could move it. Their step title now says `SDK verifier self-check, agent not contacted`, because JUnit keeps titles and drops narratives. Non-`jwks_override` negatives keep their 401 assertion.
+  - **`storyboard run` exposes the request-signing knobs** (#2956). New `--signing-transport raw|mcp`, `--signing-skip-vectors <ids>`, and `--signing-skip-rate-abuse`, threaded into `request_signing` on every storyboard-run path (single, `--file`, multi-instance, agents-routed, local-agent, `storyboard step`), with `ComplyOptions.request_signing` destructured and re-spread like its siblings. Omitting the transport infers it from the resolved protocol. Both new value flags are validated: an unknown vector id is rejected with the nearest real ids (a typo used to skip nothing, silently), and `--signing-skip-rate-abuse=false` is rejected rather than read as "on". Also corrects the stale `BuildOptions.transport` JSDoc that advertised `'raw' (default)`.
+  - **A run that graded no verifier exits nonzero** (#2956). Skipped steps are `passed: true`, so `adcp storyboard step … && echo ok` used to print `ok` for a vector nothing verified. That command now exits 3 when the runner could not dispatch the step — and honours `--soft-fail`, which it previously advertised and ignored. The full assessment exits 3 when a storyboard's request-signing coverage went unverified, whatever removed the vectors: keying only on the transport reason left `--signing-skip-vectors`/`onlyVectors` exiting 0 with the in-library self-check as the only green step. `signingCoverage` names which of the four happened — `probe_errored` (the handshake or connection failed), `transport_unverified` (no dispatch shape for this protocol), `scope_excluded` (the run's own selection removed every vector), `self_check_only` (only the in-library SDK check ran) — and each gets its own remedy, because telling an operator to drop `--signing-skip-vectors` when the agent was unreachable sends them the wrong way. The rule is evaluated per storyboard, not per scenario: compliance scenarios are per phase, and a per-phase rule failed runs whose positives graded fine. Everything else is untouched — other `partial` runs, legacy `fixture_unavailable` gaps and single steps the operator excluded all keep exit 0.
+
+  Reporting: skipped steps print their reason and detail in `storyboard run`'s human output, runner-owned gaps print as `COVERAGE UNAVAILABLE` with the remedy (once per invocation — the ~550-character remedy used to repeat per vector), the canonical compliance report names each storyboard whose signing coverage went unverified and why, and the detailed reason joins the compliance summary's skip-cause block. Skip details are read from the redacted probe result on both probe branches so an agent-supplied URL cannot reach report surface unredacted, and the report sink strips control characters.
+
+  Published-3.0-line note: the `adcp-3.0` dist-tag (`@adcp/sdk@7.11.x`) predates the `'mcp'` vector-transport default and these CLI flags. It needs its own backport on `backport-2114-adcp-3.0`; this change does not reach it.
+
+- a4a269c: Add unified product, proposal, and live MediaBuy action assessment, portable change-constraint preflight, canonical task routing, and an explicit seller change-right resolver. Preserve opaque legacy references and unknown conditions without granting negotiated rights. Add a tree-shakeable browser entry point at `@adcp/sdk/media-buy/actions` and retain existing legacy preflight compatibility.
+
+  Existing `preflightUpdateMediaBuy` now enforces accepted change terms when that snapshot is supplied, including unmapped-field and whole-request task checks. An explicitly empty `available_actions` array takes precedence over legacy `valid_actions` hints. The public action union includes canonical and rc.3 actions, and mode recovery adds `waitForTask` for `seller_managed`; exhaustive consumers should handle the additive variants.
+
+  The existing update facade can subsume advertised compact tasks, including atomic mixed targeting and assignment changes; explicitly attempted compact tasks must still match. Seller package lifecycle projections narrow mixed scopes to packages whose current state supports the action.
+
+  Compatibility preflight also rejects unknown sibling mutations and unknown structured modes, and honors explicit package scopes and compact route restrictions without an accepted snapshot. Separately supplied proposal snapshots require accepted status and a current MediaBuy/proposal identity link.
+
+  Flat legacy `update_name` hints no longer authorize metadata changes; sellers must advertise explicit structured live authority for naming updates.
+
+  Explicit negotiated status scope can admit pause/resume while pending, including clearing a create-time hold. Existing packages default an omitted `paused` flag to false; missing packages, unknown lifecycle statuses, and terminal states remain unavailable. A structured naming grant no longer requires hydrating an accepted proposal snapshot, while supplied snapshot identities remain checked.
+
+  Direct and unified availability stay unknown for unmapped request fields, including opaque new-package extensions. Both preflight paths enforce the served-version ceiling for rc.3 shared caps and package scope, including legacy snapshots without embedded terms.
+
+  Known action IDs use closed canonical metadata. Readable live entries preserve unknown wire IDs as strings without granting them authority.
+  Accordingly, `getAvailableActions().actions` and preflight echoes expose readable string IDs, and action-context snapshots accept readonly arrays. Exhaustive consumers should handle unknown wire IDs and copy snapshots before mutating them.
+
+  Modern term-linked live entries require the accepted snapshot for preflight/assertion; missing terms cannot silently downgrade to legacy compatibility. Legacy opaque references retain the existing compatibility path.
+
+  Package holds operate independently on active or paused buys; pending buy states require explicit negotiated status scope.
+
+  Explicit local pending package status takes precedence over both pause-flag values. A live resume grant cannot override it in buyer assessment, either preflight, seller assertion, or seller projection; negotiated MediaBuy-level pending scope remains separate.
+
+  Legacy package controls also require current operational package and buy state, and unlinked structured grants must use a compatible canonical task. Served versions before 3.2.0-beta.9 cannot emit or execute modern term identities or seller-managed modes. Explicit current product policies constrain the final emitted processing SLA, including tighter seller-selected commitments.
+
+### Patch Changes
+
+- 6e11406: Add a packed existing-platform example for translating nullable targeting commands into provider operations and strict accepted state.
+- a1548f4: Allow immutable canonical storyboard fixtures to retain their own protocol provenance while validating a newer AdCP release candidate.
+- cbe5f33: Fix eight seller Managed Delivery and Reconciled Billing review blockers.
+  - Managed delivery no longer overwrites Core obligation health, so an installed managed table cannot downgrade an `action_required` coverage failure to `waiting` or `delayed` while keeping its issue.
+  - Destination revocation no longer erases a consumer receipt verdict. `reconciliation_status` is settled from the append-only receipt chain and the full materialization history, which also removes a schema-invalid `pending` obligation carrying only a `RECEIPT_REJECTED` issue.
+  - Receipt evidence honours the obligation's own `required_finality`, so a snapshot-finality `consumer_receipt` contract can reconcile instead of having every receipt refused.
+  - `runManagedDeliveryWorker` enforces the advertised `authorization_revocation_seconds`: cleanup attempts are clipped to the promised instant, retry leases never outlast the window, and a breached grant is reported as `revocationsOverdue`.
+  - The receipt idempotency cache stores a compact per-entry verdict and rehydrates bodies from the append-only receipt table, with a 30-day retention sweep so a consumer at the batch cap is throttled rather than permanently locked out.
+  - `canonical_adjustment_sha256` follows the pinned canonicalization contract instead of changing wire content for every Core adopter, and revisions or adjustments stored before the canonical digests existed replay without a false immutability conflict.
+  - `sync_reporting_receipts` applies the RC3 per-array caps of 100 `receipts` and 100 `adjustment_receipts` independently rather than an invented combined cap, while still refusing a batch that exceeds the 100-entry combined bound RC3 states in `x-adcp-validation.batch_identity`.
+  - `installConfiguration` enforces the RC3 rule that a `billing` feed requires `required_finality: official`, which was never checked and was only accidentally covered by the receipt store's hard-coded finality.
+  - Lifecycle reconciliation projects managed health and issues through the same projection the read path uses, so persisted transitions and webhooks agree with `get_reporting_status`.
+
+  Lifecycle reconciliation folds consumer receipt severity into obligation health but never persists the receipt issues themselves, because the issue store has no consumer dimension and `get_reporting_status` republishes persisted issues to whichever consumer is reading. Seller-side managed delivery issues are still persisted and notified.
+
+  Additional review-blocker fixes: the materialization and revocation leases are issued from the database clock that already fences their settlement, so host clock skew can no longer strand a pending row or drive unbounded redelivery; an adjustment rejection whose digests agree is accepted, as RC3's `acceptance_match` requires for a semantic disagreement; `installBinding` recomputes the semantic fingerprint before any comparison, and `reportingManagedDeliveryBindingV1` derives it from semantic content so spreading an existing binding cannot smuggle a stale value; `get_reporting_status` scopes `adjustment_receipts` to the adjustments the view actually returns per RC3 `revision_adjustments`, and periods-view receipts to the obligations it returns; `sync_reporting_receipts` refuses malformed or empty batches with a typed `VALIDATION_ERROR` envelope and never reflects an unusable receipt id into the pattern-constrained response field; and lifecycle aggregation runs over an obligated consumer roster so a silent authorized consumer cannot vanish when another accepts.
+
+  Adds `PostgresReportingLedgerStoreOptions.obligatedConsumers` so a seller whose authorization layer knows which principals owe a receipt can supply the roster and get accurate reconciled lifecycle transitions; without it the store stays conservative. Because that conservative default holds a Reconciled Billing obligation at `action_required` while the per-consumer receipt issues are deliberately not persisted, the reconciler now restates the state once per obligation as an issue anchored to the obligation's own `expected_at`, so a degraded persisted health and its webhook are never unexplained.
+
+  The `obligatedConsumers` callback is invoked outside the store's transaction and under a deadline, so an adopter's authorization lookup cannot hold a pooled connection or a transaction snapshot open — the managed store shares the Core pool, so that would have drained Core reads with it.
+
+  Closes six further review blockers. The lifecycle compare-and-set now fences managed state through a `managedStateVersion` token, so a revocation, receipt, adjustment or settled materialization landing between projection and apply cannot be overwritten by a stale health, and a refused apply is retried immediately rather than waiting for a deadline sweep. The advertised revocation window no longer scales the cleanup lease, so a schema-valid `authorizationRevocationSeconds: 0` can still settle durably instead of producing an uncommittable 1 ms lease. Receipt `received_at` is taken from the database clock and stored in both the wire body and the ordering column, and the lifecycle projection reads receipts by `recorded_at`, so a skewed host cannot make the status read and the lifecycle projection disagree. `PostgresReportingManagedDeliveryStore` accepts `evidenceRetentionDays`, which makes the per-account and per-consumer caps active-scope and enables `pruneExpiredEvidence`, so those lifetime caps can no longer permanently brick an account. An exact same-key receipt replay now returns the original response after the destination authorization is revoked, instead of downgrading to `failed`. And `automatedRecoveryWindowSeconds` is validated as an agent-wide upper bound over installed Core windows rather than required to equal each of them, which supports heterogeneous tenants behind one agent, rounds sub-second existing generations up, and starts with no managed binding installed.
+
+  Closes a final round of review blockers. The managed lifecycle projection and its `managedStateVersion` are now read in one `REPEATABLE READ` snapshot, so a settle committing between the projection's reads and the digest can no longer pair a stale health with a token the apply would accept. A refused CAS re-projects against a fresh cutoff, never a backwards one, and mutable managed state is placed at that cutoff — `changed_at` after it means the row was still pending, and a revocation counts only from `revoked_at` — so a later settlement cannot be backdated into an earlier transition. A failed provider cleanup releases its lease immediately instead of holding it as a backoff, keeping the grant reclaimable and its elapsed SLA visible; ordering by cleanup lease generation still prevents starvation. Evidence retention is floored at the receipt replay retention and at the advertised `statusRetentionDays`, and pruning never removes a receipt a surviving replay row references or a materialization whose resource is still readable. The agent-wide recovery-window bound is enforced on the authoritative `installBinding` path, not only at startup, so a binding installed later cannot widen the deployment past what the capability document publishes.
+
+  Closes the consolidated final review round. Managed lifecycle cutoffs no longer carry host `Date` precision: the store resolves an authoritative microsecond instant when the caller does not pin one, every comparison against it runs in SQL, and the cutoff and digest describe one snapshot. Managed-only changes — settlement, revocation, receipt, consumer status, roster change and resource expiry — now make an obligation a lifecycle candidate, so a persisted `complete` cannot outlive a degraded live status. The state token covers consumer statuses, and the external obligated-consumer roster is versioned and re-checked immediately before the apply. The advertised recovery window and status retention are registered durably in the database rather than per process, enforced inside the authoritative install transaction, and required rather than optional. `releaseRevocation` is required; revocation SLA facts come from the database clock with the exact boundary counting as overdue, and a crashed worker's lease is reclaimable at that boundary under generation fencing. Pruning writes permanent identity tombstones, so a pruned receipt ID cannot bind new content and a terminal subject cannot reopen once its body expires.
+
+  Closes the final persona review. Lifecycle cutoffs are compared losslessly rather than through millisecond-truncating `Date.parse`. Policy adoption is awaited before capabilities are published, and advertised status retention is registered as well as the recovery window. An authoritative obligated-consumer roster excludes principals it does not list, and the projection and the pre-apply re-check hash the same set so an unversioned roster converges. Adjustments and external-roster changes are lifecycle candidates, measured against a per-obligation watermark written on every reconcile so a no-op cannot keep an obligation due forever or starve a fair-ordered page. Sweeps isolate failures per obligation. A rejected managed-readiness probe is retried rather than cached. Revocation and authorization instants come from the committing database, a settle cannot publish a resource the database already considers expired, and an overdue grant is reclaimed only after its holder has had a full attempt — so workers no longer thrash generations and leave cleanup uncommitted. Pruning deletes and tombstones atomically against one frozen cutoff, the read projection consults receipt tombstones, materialization attempt history survives pruning, and a billing binding without consumer-receipt reconciliation is refused at install.
+
+  Closes the last review round. The lifecycle watermark is stamped with the projection's cutoff rather than the commit instant, so work recorded between the two stays due. Policy adoption, binding install and pruning serialize on one registry lock. Pruned conclusions — an accepted subject and a succeeded delivery — are folded into the live, filtered and lifecycle projections, so retention cannot reopen settled work. External roster versions are published on every read and a difference from the last reconciled version re-arms the obligation. The lifecycle fold applies authoritative roster exclusivity exactly as the live projection does. Failed reconciles record an exponential backoff cursor so a page of failing tenants cannot monopolise a sweep, without advancing the watermark. Required resource retention is judged in SQL against the database clock and a refused settle is terminalized instead of left pending. A failed revocation backs off rather than being reclaimable inside the same worker tick. A billing binding revalidates its Core configuration's official finality atomically at install. And duplicate receipt IDs are rejected over the submitted batch before any filtering, so a valid entry cannot share an ID with a malformed sibling and still mutate state.
+
+  Closes the seven remaining expert-review blockers. Receipt tombstones carry the consumer that gave the acceptance, so one consumer's pruned acceptance cannot settle the obligation for another. The registry lock is held to commit inside the pruning transaction rather than released beforehand. Sweeps refresh external roster versions before selecting, breaking the circularity where a roster change could only be noticed by a reconcile it was supposed to trigger. Sweeps take their cutoff from the ledger's clock rather than the worker host, so a fast host cannot bury database-timestamped work, while a simulated-time driver still supplies a fallback. Tombstoned acceptances move the wire counters as well as the reconciliation verdict, so a settled period no longer emits a schema-invalid `complete` with zero receipts. `installConfiguration` resolves an exact replay before validating, so an immutable generation predating a later rule reinstalls instead of throwing. And exhausting the compare-and-set retry budget records a backoff rather than returning quietly, so a contended obligation cannot starve the tenants behind it.
+
+  Closes a further eight blockers. The anonymous fail-safe consumer no longer inherits every consumer's tombstones. The roster refresh pages on its own advancing cursor instead of the reconciliation watermark, so obligations beyond the first page can re-arm. Obligation counters describe exactly the records the response emits — superseded revisions' receipts included, tombstones excluded — and retention holds an acceptance while the resource it accepts is still readable, so a `complete` period always has records to show. Managed store locks are taken in one order (policy, account, binding) so pruning and binding install cannot deadlock, pruning selects before taking the account lock, and the replay-cache containment scan is indexed. A settle that loses its lease now terminalizes, claims count toward the delivery-attempt cap, and an exhausted materialization is failed rather than left pending and invisible. Direct settlement defaults to the binding's own retention promise and refuses a negative one. And `installConfiguration` resolves an immutable stored generation before it resolves the offering, so reinstalling one whose offering has been withdrawn returns the stored row.
+
+  Closes a further six blockers. Pruning now selects before taking the account lock for real, and asks which receipts a live replay row still names by expanding those rows once instead of a per-candidate JSONB containment test that no index could serve. The worker invokes `failExhaustedMaterializations` before planning, so a row that used every delivery attempt is failed rather than left pending and unplannable. Roster refresh is bounded per sweep and advances its cursor on failure as well as success, so a failing tenant cannot occupy the only slot. An explicit `minimum_resource_retention_days` may tighten the binding's promise but never undercut it. The issue-resolution sweep covers managed codes, so a `DELIVERY_FAILED` cleared by a successful redelivery stops being published. And the advertised recovery window is validated inside the transaction that would persist it, so a refused startup leaves no durable policy behind to poison the correct restart.
+
+  Managed Delivery capability adoption now durably registers all four recovery, status-retention, resource-retention, and authorization-revocation promises in one binding-fenced transaction. Replicas monotonically retain the strongest maximum-delay and minimum-retention values, and PostgreSQL enforces those effective resource and revocation policies even for direct-store calls. The additive migration upgrades an existing two-column policy registry in place.
+
+  Closes a further three blockers. Pruning revalidates every selected victim under the account lock before deleting it — the unlocked selection that keeps the lock short is now a proposal, so a replay, receipt or resource that commits in the gap keeps its evidence alive. The exhausted-delivery sweep re-checks pending and exhausted eligibility against the row it finally locked, so a settlement committing while the sweep waits on that row is no longer overwritten with `DELIVERY_ATTEMPTS_EXHAUSTED`. And the per-consumer receipt cap is applied at the point a row would be inserted, after the immutable existing-receipt resolution, so an exact resubmission that stores nothing replays as `unchanged` at the cap instead of failing on the row count.
+
+  Closes a further eight blockers. Lifecycle cutoffs are clamped to the ledger's own clock end to end — the producer passes its host instant as a fallback clock rather than pinning it, the reconciler will not honour a pin ahead of the store, and the watermark is clamped again in SQL — so a fast host can no longer bury database-timestamped work behind a future watermark and leave a `complete` transition standing over it. A pruned receipt keeps the chain position its body held, so the successor of a pruned rejected leaf is admitted and a fresh root carrying the same content is not. The retention hold that keeps an acceptance alive while the resource it accepts is readable now matches adjustment receipts, which name the revision they correct rather than a materialization. `failExhaustedMaterializations` takes the canonical account lock, so it cannot commit `pending` -> `failed` inside the lifecycle apply's compare-and-set window. The apply fences the obligated-consumer roster version as well, locking the lifecycle row and never writing its own observation over a newer one, so a concurrent refresh's re-arm is not dropped. A batch entry that resolves to an already-stored receipt is resolved before the duplicate-subject rule, so a consumer can submit an existing rejected receipt together with its own correction. An empty batch is refused with a typed error before any per-entry refusal, which previously answered a wrong-account empty request with a schema-invalid `results: []`. And an adapter `read` that throws synchronously is sanitised like an async rejection instead of leaking the provider's endpoint or credential detail.
+
+  Closes a further five blockers. A compare-and-set retry no longer restores a caller's future cutoff: a store with its own clock uses that clock on every retry, so the clamp the first attempt applied cannot be undone by the retry that follows it. Successive prunes demote the tombstones they supersede, so a subject has exactly one tombstone claiming to be its leaf and the successor of a twice-pruned chain is admitted deterministically. The exhausted-delivery sweep mutates only the accounts it locked, so a lease expiring while it waits on another account's lock is left for the next sweep instead of being failed unfenced. An adjustment receipt stays readable when paging separates it from the adjustment it names — the named adjustment travels with it — so an acceptance can no longer be invisible on every page at small `max_results`. And the lifecycle projection reads each receipt chain's current leaf rather than its whole history, so a subject repaired more times than a snapshot page may carry — a state the receipt store admits — no longer makes an obligation permanently unreconcilable; `runWorker` reports an unpublished projection as `reconcilesDeferred` instead of aborting the sweep behind it.
+
+  Closes a further three blockers. The lifecycle projection resolves each receipt chain's leaf as of the cutoff rather than taking today's current row and then filtering by the cutoff — at a cutoff between a rejection and the acceptance that repaired it, the first saw neither and persisted `RECEIPT_REQUIRED` over a rejection the buyer had already filed. A store with no clock of its own honours a first-attempt backdated cutoff again, because there is nothing there to clamp a pin against and clamping reconciled a moment the caller never asked about. And the projection's bound is now one leaf per (consumer, subject) rather than a flat snapshot-page count that a valid cross-product — 101 consumers against 100 subjects — already exceeded; crossing it truncates at a deterministic consumer boundary and reports `receiptEvidenceComplete: false`, which the fold treats as an unproven roster, instead of throwing an error no retry could clear.
+
+  Closes a further eight blockers. Receipt instants are written at database precision instead of through a millisecond `Date`, so a row can no longer be durably older than the watermark taken from the same clock. Adjustments are scoped to the reconcile's cutoff like receipts, and pruned conclusions record when they concluded, so a historical reconcile neither demands a receipt for a correction that did not exist yet nor settles on an acceptance or delivery that had not happened. A store's resolved instant is what the transition and watermark use, per the documented contract. Oversized rosters and conclusion sets truncate deterministically and report `receiptEvidenceComplete: false` instead of throwing, and a truncated conclusion set no longer silently reopens settled subjects. A receipt whose successor has been pruned is no longer a leaf, so retention cannot hand a settled subject back to the rejection its acceptance replaced. A finality filter hides managed evidence along with the revision it names. And lifecycle receipt reads are driven from the obligation's subjects into a new subject index rather than scanning the global receipt table once per due obligation.
+
+  Closes a further four blockers. Cutoff membership for adjustments is decided by the store's own ordering column rather than the producer-authored `createdAt` on the body, so a producer clock running ahead can no longer hide a committed correction from the lifecycle while the public read keeps demanding a receipt for it. A tombstoned acceptance outranks the rejection it superseded on the read path too, so `reconciliation_status` cannot report `rejected` for a subject the lifecycle considers settled once the accepted body is pruned. `assertMaterializationOutcome` no longer re-checks the retention horizon against the worker's clock — the database already enforces it and terminalizes on failure — so a worker running ahead stops turning a good delivery into `DELIVERY_FAILED`. And `sync_reporting_receipts` refuses a request that carries the server-assigned `received_at` instead of stripping it before validation, which had let a payload the request schema forbids be silently repaired and stored.
+
+  Closes a further six findings. Projection revisions are scoped to the cutoff like the managed evidence beside them, so a revision committed after it no longer reads as a premature `RECEIPT_REQUIRED`; the compare-and-set still fences on the full set. Re-presenting a pruned receipt byte-identically answers `unchanged` with the tombstoned instant instead of recreating the row with a fresh one. The managed state digest — read under the account lock — is driven from indexed subjects and consumer statuses gain an `obligation_id` index, so an apply no longer scans two global tables with that lock held. Only a failed settlement is exempt from the retention window; a successful one must name an expiry the database can check, closing a path where a direct store caller persisted a permanently unreadable materialization. Resource locations refuse URL query, fragment and userinfo delimiters on the raw string, so a presigned relative path or a `user:secret@host` form can no longer survive a failed URL parse. And managed delivery escalates at the recovery deadline rather than strictly after it, matching Core.
+
+  Closes a further seven findings, most of them about what a tombstone means. A same-key replay of a receipt that has since been pruned rehydrates its answer from the tombstone instead of degrading a committed `unchanged` into `failed`; a tombstoned match counts as already-resolved for the batch's duplicate-subject rule, so a pruned rejection and its own correction can arrive together; and an entry's own tombstone is resolved before any rule about its subject, so an exact re-presentation is not refused as new content once both leaves of a chain have been pruned. Resource-location validation moved to the seam that persists, so a caller driving `settleMaterialization` directly can no longer store a presigned URL that `get_reporting_status` publishes, and the rule itself is scheme-aware: query and fragment are refused outright, userinfo only as a credential pair or on `http(s)`, so an ADLS container and a Snowflake stage reference are no longer rejected. The obligated-consumer roster read is driven from obligation subjects through the subject index, and the permanent materialization tombstones gain an `(obligation_id, reached_success, reached_success_at)` index.
+
+  Managed Delivery runtime policy adoption is now atomic at the store boundary. Recovery-window and status-retention constraints are validated under one PostgreSQL lock and committed in one transaction, so a rejected startup cannot persist only one advertised promise or poison a corrected restart. The separate adoption hooks remain available to direct-store integrations, while the runtime factory requires the combined atomic hook.
+
+- ee404ed: Reset advertised sandbox controller state before each compliance storyboard so seeded seller fixtures cannot leak between tests.
+- cccb3ea: Retire the obsolete AdCP 3.1 beta type side-bundle before the 14.0 GA release. The beta-only `@adcp/sdk/types/v3-1-beta` subpath and its schema/codegen pipeline are removed; use the primary `@adcp/sdk/types` 3.2 surface for current protocol types. For the legacy `get_products` mirror shape, import `LegacyWholesaleProduct` from `@adcp/sdk/wholesale-feed-sync` (or derive `NonNullable<GetProductsResponse['products']>[number]`) rather than using the canonical root `Product`. Wholesale feed sync keeps its documented legacy product-view behavior through current, narrowed types. Publishing now fails closed if a superseded protocol beta/RC cache, type bundle, export, or compatibility alias enters the npm artifact.
+
+  Refresh the generated registry OpenAPI declarations to match the current registry schema.
+
+- 606243e: Answer a routed storyboard's `controller` requirement from the route that owns the state it exercises, instead of the cross-tenant tool union.
+
+  `runStoryboard` builds a union of every tenant's advertised tools so a `required_tools` ANY-OF family gate passes when any tenant in the map serves any member — disjunctive by design. The `controller` gate read that same union, which is the opposite question: a peer tenant's `comply_test_controller` cannot seed another tenant's state. A seller advertising no controller, mapped alongside an unrelated signals peer that advertises one, therefore cleared `requires: [controller]`, executed its steps against unseeded state and graded green — while a non-routed run of the same seller correctly reported `missing_test_controller`. The runner already asserts this invariant one screen away, where routed fixture resolution refuses to let "a union member authorize a selected agent's operation".
+
+  The gate is now unmet only when **no route serving a state-exercising step advertises its own** `comply_test_controller`. That is deliberately narrower than requiring one per callable route: a route that is only read from — a signals peer serving static marketplace data — is no fixture target and needs no controller, and a storyboard mixing a seeded seller with such a peer still runs. A single control plane genuinely fronting two tenants has to be declared rather than inferred from a union; per-tenant seed dispatch is the follow-up already tracked where routed plus `prerequisites.controller_seeding: true` fail-fasts.
+
+  Three things decide which routes are in that set, and each is a case the first cut got wrong:
+  - **Route identity is the exact `agents` key, never the URL.** Two keys may legitimately share one `url` with different `auth` — one tenant per bearer against a shared control plane. Mapping a selected agent back to its key by URL collapsed those keys onto whichever the map listed first, so the last step to dispatch overwrote the other's tool list: the verdict flipped with step order (a false negative for a seller that does advertise a controller, a false green when an out-of-scope tenant's list won), and the operator-facing detail named the wrong tenant. Dispatch now carries the resolved key on the step assignment and the provenance keys on that.
+  - **A route the storyboard's own capability predicate excludes exercises no state.** Root predicates were already honoured; the **phase** predicate was not, so a controller-bearing route that executes nothing could still satisfy the gate for the route that does. A route whose `request_signer` verdict came back unmet is deliberately _not_ excluded — it is in declared scope and merely lacks a runtime capability, so declared order, not exclusion order, decides which gate is reported.
+  - **An empty state-exercising set falls back to every in-scope route.** A storyboard whose only callable steps _are_ `comply_test_controller` calls left that set empty and the gate was silently dropped — the run then dialed the back-channel on a route that does not serve it. The fallback keeps it fail-closed.
+
+  The verdict is established per route during the routing preflight and handed to the ordered `requires` gate as `met`, `unmet` or `unknown`, so it answers at its **declared position** — an earlier unmet requirement still wins, and a routing failure downgrades it to `unknown` and so still outranks it. `unknown` also stops `checkRequires` falling back to `options.agentTools`, which in routed mode is the union. Declared-order parity between routed and non-routed runs is unchanged.
+
+  Scope is routed runs only. Non-routed runs already read the agent's own tool list and are untouched in both directions. The disjunctive `required_any_of_tools` union keeps its existing behaviour. Controller seeding's own missing-controller applicability check now takes the same selected-route provenance; that path is defence in depth rather than a live fix, because a routed run cannot reach it today.
+
+  Pinned by executed regressions over live MCP agents: the reported topology now reports `missing_test_controller` with `skip.requirement: controller` and **no step reaches the wire**; the controller on the route under test still runs; a read-only peer without one does not skip the storyboard; a phase-excluded controller route does not vouch for the route that does execute, while the same peer brought into the phase's scope does (the negative control against over-skipping); a storyboard of nothing but controller steps stays fail-closed, and runs when its route advertises one; two tenants behind one shared URL with different bearers stay distinct routes in either step order and in either phase order, with the detail naming the exact key; routed and non-routed agree about the same seller in both directions; the ANY-OF union still passes with the tool on one tenant only; routed plus `controller_seeding: true` still fail-fasts; and non-routed seeding still grades from the agent's own tools. The union behaviour predates this release and reproduces on `main`.
+
+- f3bee47: Correct applicability and execution evidence in routed storyboard runs (`runStoryboard('', storyboard, { agents })` and `adcp storyboard run --agents-map`). Re-baseline routed CI expectations: these corrections can change previously passing, failing, or skipped results.
+  - Each step uses its selected route's discovered tools and capabilities. Remove run-level `agentTools` or `_profile` overrides in routed mode; discovery is authoritative. Per-entry auth/transport overrides still inherit caller-supplied defaults, including shared headers and signing configuration.
+  - OAuth/JWKS evidence stays within its route, including entries sharing a URL with different credentials. A probe can now fail if it previously borrowed another route's metadata.
+  - Capability-unavailable producers and their dependent context/state consumers skip neutrally. Negative vectors no longer pass by sending missing context; successful alternate producers still restore execution.
+  - Missing-tool/controller and failed-route producers also block consumers of their absent declared outputs with hard prerequisite skips; intentional unrelated negative vectors and successfully restored outputs still execute.
+  - Unrescued missing tools and real failures take precedence over capability-only cascades. Failed required phases prevent an overall passing result without counting skipped rows as executed failures. Optional phases, branch regrading, and fixture/no-phase dispositions retain their existing rules.
+  - Unresolved or failed routes are hard failures. Repair the agents map, an explicit step agent, or the default agent as indicated by the routing error.
+  - Capability prerequisite skips display their reason in CLI output. Fixture-routing exceptions close the runner-owned webhook listener.
+
+  Storyboard-level required-tool applicability remains any-of across the discovered union. Single-agent and replica routing remain unchanged; the required-phase rollup and CLI diagnostics also correct these shared runner paths. Legacy controller seeding still requires external provisioning and `skip_controller_seeding: true`; declared fixture resolution routes each operation.
+
+## 14.0.0-rc.38
+
+### Minor Changes
+
+- 37afa81: Expose canonical offline tool validators and immutable schema-document lookup from `@adcp/sdk/schemas`.
+- 092dfa3: Harden the rc.3 buyer consumer-status loop against seller-supplied data that could abort a reconcile,
+  silence a conformant seller, or walk past the buyer's own memory ceiling.
+
+  **A single seller number could abort the whole run.** `JSON.parse('1e999')` is `Infinity`, which
+  RFC 8785 cannot represent, so `canonicalize` threw `TypeError` — and the digest guard rethrew
+  anything that was not a `RangeError`, out of a call site with no `catch`. The throw escaped
+  `reconcileReporting` after receipts had already been synced, losing the caller's record of durable
+  work. Canonicalization failures are now classified: a `RangeError` is a size failure and stays silent
+  as the buyer's own budget, anything else is `unreadable` / `reader_incompatible`, which is what that
+  code means — carrying the canonicalizer's own bounded message in the local `reason` so a genuine
+  defect stays visible.
+
+  **A conformant seller could be silenced permanently.** `expected_at` was validated against a stricter
+  pattern than the `format: date-time` check this SDK uses on the seller's own payloads, so a lowercase
+  `t`/`z`, a `+hhmm` offset or a space separator — all accepted by `ajv-formats` — yielded no deadline
+  and no statement, forever. The pattern now matches what the SDK itself accepts, and the instant is
+  **normalized rather than echoed**, and calendar-validated on its literal fields: `Date.parse`
+  silently rolls `2026-02-30` forward, and re-emitting the seller's bytes would put that contradiction
+  on a statement the buyer signs. Validating the literal fields rather than the parsed result matters
+  because the two are indistinguishable once an offset is involved — the check now holds for
+  `2026-02-30T00:00:00+01:00` as well as the `Z` form. A sixtieth second is accepted only where a leap
+  second can occur. A `expected_at` that is present but unreadable derives nothing at all: the seller has a real deadline
+  the buyer cannot read, so any derived one disagrees with it and the statement is refused on every run
+  forever. When `expected_at` is **absent** the buyer falls through to its own
+  `deliverySlaSeconds` / `officialAfterSeconds` pin, and only then to the seller's
+  `obligation.schedule.delivery_sla`. That order matters: `schedule` is as seller-controlled as
+  `expected_at`, so consulting it ahead of the pin let a seller that had published nothing omit
+  `expected_at`, advertise `delivery_sla: "P10Y"`, and push its own deadline a decade out — the period
+  never went overdue and the `revision_missing` recording the non-delivery was never posted. The pin is
+  the buyer's independent answer and outranks it. As a last resort for a buyer with no pin, the
+  schedule resolution is **calendar-aware**, because the schema permits `Y` and `M` on `delivery_sla`
+  and names `period_timezone` as the zone its "calendar arithmetic" happens in: `P1M` is a calendar
+  month in that zone, clamping to month end, with a nonexistent local time advancing by the DST gap and
+  an ambiguous one taking the earlier offset, exactly as `period_generation` specifies. A duration with
+  no calendar component stays exact elapsed time — that is the only shape this SDK's own seller emits,
+  and routing it through wall-clock conversion lost sub-second precision and shifted `PT0S` by an hour
+  across an ambiguous local hour. An unrecognized `period_timezone`, an unresolvable zone, or a
+  duration whose result falls outside the RFC 3339 year range derives nothing rather than a guess.
+
+  **Row size accounting is bounded by work, not by depth.** The estimate charged an unexamined subtree
+  a flat constant, which cut both ways: too small and nesting walked past the ceiling
+  (`{a:{b:{c:{d:{…1 MB…}}}}}` measured 200 bytes), and a deeply nested row could be used to suppress a
+  period that should have carried a `content_mismatch`. It now walks a bounded number
+  of nodes per row and charges each for what it holds, which closes the bypass. Values are charged against
+  retained heap rather than wire bytes — an empty string previously charged zero, which is how hundreds
+  of megabytes of them slipped past the ceiling — and the figures land within about 2x of measured heap
+  in both directions. A row too deep or too intricate for the estimator to walk is reported as the
+  buyer's own limit, not as an unreadable revision: the walk bound is the buyer's, and a durable
+  `unreadable` would pin the seller's view at `action_required` for a row — a per-SKU retail-media
+  breakdown, say — that is entirely conformant.
+
+  **An unrecognized `period.source_timezone` suppresses rather than substituting.** The value is part
+  of the consumer-status chain's logical key and the seller compares it strictly, so falling back to
+  `'UTC'` produced a statement refused on every run forever — and `iana_timezone` forbids that
+  substitution by name. The period now comes back `suppressed: 'period_identity_unknown'`, a new arm of
+  the exported union. With nothing declared at all, `'UTC'` remains the buyer's own default.
+
+  `usableLeafInstant` normalizes the superseded leaf's `status_as_of` through the same path, so a leaf
+  recorded by an older SDK with a `+00:00` or lowercase spelling now produces the same monotonicity
+  floor as its canonical form — which feeds `reporting_status_id`, so a chain can see one id shift
+  across this upgrade.
+
+  A further adopter-observable change: `ExpectedReportingPeriod.periodSourceTimezone` now outranks the seller's
+  echo — that value is inside the consumer-status chain key and the `reporting_status_id` derivation,
+  so an adopter whose pin disagreed with the seller's echo will see the chain key change once on
+  upgrade. And a `expected_at` that is present but not a string (rather than merely malformed) now
+  suppresses instead of falling through to the pin.
+
+  `suppressed` gains `posting_unavailable`, widening that exported union — an adopter switching
+  exhaustively on it will see a new arm. Concretely: with no `client.syncReportingStatus` wired, a plan used to
+  come back live, due and unsuppressed while silently going nowhere.
+
+  **A deadline that overflows the representable range names the field that overflowed**, rather than
+  being reported as a pin the adopter forgot to record. `officialAfterSeconds` is preferred for
+  official-finality generations and falls back to `deliverySlaSeconds`, because
+  `reporting-schedule.json` defines only `delivery_sla` and `official_after` is an SDK-local extension.
+
+  **A seller deadline far past the buyer's pinned expectation is recorded on `plan.deadlineBeyondPin`.**
+  It is still honoured, but previously it left the period at `overdue: false` with nothing set —
+  indistinguishable from "not yet due", and usable by a seller as a silent opt-out of the whole loop.
+
+  **A row nested deeper than the reader walks is `unreadable` / `reader_incompatible`, not silence.**
+  No conformant tabular reporting row has that shape, and suppressing let an under-delivering seller
+  escape a `content_mismatch` for the price of one small row. Breadth remains the buyer's own limit.
+
+  **A replayed pending statement is verified before it is posted** — the recomputed digest, the
+  recomputed `reporting_status_id`, a non-future `status_as_of` and no unexpected keys — and the result
+  reports the values actually sent. Without those checks a compromised store could make the buyer
+  attest a consumption it never performed.
+
+  **Malformed ledger payloads no longer abort a reconcile that already synced receipts.** A non-array
+  `issues`, a null entry in it, or a missing `period` from a client that does not schema-validate its
+  responses used to throw out of `reconcileReporting` after receipts had gone to the seller, losing the
+  caller's record of durable work.
+
+  Diagnostics are honest about whose field failed: the `deadline_unknown` reason named a field that
+  does not exist on `ExpectedReportingPeriod` and said a value "was not recorded" when it had been
+  recorded and merely could not be read. `chain_indeterminate` now distinguishes a forked chain from a
+  head naming an undisclosed predecessor, rather than claiming no head resolved in both cases.
+
+- 35fae2b: Add the AdCP 3.2.0-rc.3 buyer-side consumer-status loop to `reconcileReporting`.
+
+  **`content_mismatch` detection.** `detectReportingContentMismatch` decides the closed
+  `mismatch_code` — `scope_media_buy_missing`, `coverage_short`, `metric_missing`,
+  `schema_nonconformant`, `currency_mismatch`, `period_mismatch`.
+
+  Four of the six are **row-level** predicates that obligation and revision _metadata_ cannot decide,
+  and they stay silent unless the caller passes `ReportingRowEvidenceV1` describing what it actually
+  read. `scope_media_buy_missing` in particular cannot be decided from `media_buy_ids`, which
+  `reporting-revision.json` defines as the denominator "inherited from the obligation, including buys
+  with zero rows" — comparing those sets is a tautology against a conformant seller, and the real
+  condition is a buy with no rows and no explicit zero row. `metric_missing` likewise compares against
+  metrics observed in rows, not against `control_totals`, which are profile-defined aggregates scoped
+  to the covered packages. Only `coverage_short` and `currency_mismatch` are decidable from metadata.
+  A false `content_mismatch` forces the caller's view to `action_required` and the seller may not
+  clear it while the statement is the current leaf, so not accusing is the safe default. It is deliberately incapable of firing on a delivered value
+  the buyer merely disagrees with: that is a measurement dispute for `measurement_terms` /
+  `makegood_policy`, and routing one through this operational channel would put a commercial argument
+  somewhere the seller can neither resolve nor ignore. Precedence follows the spec on the one pair it
+  pins (`metric_missing` before `schema_nonconformant`) and is otherwise most-structural-first and
+  stable, so the code does not flap between reads of the same bytes.
+
+  **`received` is earned, not echoed.** `observed_revision_content_sha256` is defined as the binding
+  digest _"independently recomputed from the exact consumed Core revision binding"_. The reconciler
+  now pages `reporting_rows` for the exact revision through a new optional
+  `ReportingReconciliationClient.getMediaBuyDelivery`, concatenates them in cursor order, and
+  recomputes SHA-256 of RFC 8785 JCS over `{reporting_revision_id,row_count,control_totals,reporting_rows}`
+  itself. A read that fails, returns no exact-revision binding, or does not hash to the digest the
+  seller published becomes `unreadable` with the matching `failure_code` rather than a `received`
+  — and a digest that did not verify is never attached to anything. `content_mismatch` requires the
+  same recomputed binding, so it too only fires on bytes the buyer actually read. Without the client
+  method nothing is attested and nothing is posted for those two statuses
+  (`suppressed: 'consumption_unavailable'`): attesting a consumption that did not happen is the one
+  outcome worse than silence. `status_as_of` is the buyer's own consumption instant, floored by the
+  superseded leaf's `status_as_of` so a chain never moves backwards.
+
+  **Posting against the deadline.** `ReportingReconciliationResult.consumerStatuses` plans a status for
+  every expected period with its `expected_at` + `automated_recovery_window_seconds` deadline and an
+  `overdue` flag. `expected_at` comes from the obligation when there is one, and otherwise from
+  `period.end` plus a new optional `ExpectedReportingPeriod.deliverySlaSeconds` pin — `obligation_missing`
+  exists precisely when no obligation is there to read it from, and `expected_period` makes that
+  statement valid only at or after `expected_at`, so dating it from the period end has a conformant
+  seller reject every one. The recovery window is advertised on the delivery **capabilities**, not on
+  the obligation, so it comes from `ExpectedReportingPeriod.automatedRecoveryWindowSeconds`. Missing
+  either pin marks nothing overdue and posts nothing, because posting on a guessed clock would churn
+  the status chain.
+
+  **Identity that survives a retry.** `reporting_status_id` is derived from the whole wire statement,
+  `status_as_of` included, so an ID can never come back identical with a different body — which the
+  spec reads as an idempotency conflict, not a replay. Retry stability comes from the new optional
+  `pendingConsumerStatusStore` instead: it remembers a statement that has been built but not confirmed
+  and replays it verbatim. `status_as_of` for `received` is buyer-attributed arrival evidence the spec
+  refuses to let a seller substitute publication time for, so it is irreducibly stateful — a stateless
+  reconciler cannot reproduce it. Without the store a re-plan is simply a new, valid statement, and
+  the chain still ends with exactly one.
+
+  `idempotency_key` is likewise derived from the batch body rather than minted per attempt: it is
+  documented as _"Exact retries reuse the key and body"_, and a fresh key made the seller's batch
+  replay unreachable by construction. Both hashes use RFC 8785 JCS rather than the module's local
+  canonical-form helper, whose `localeCompare` key ordering is ICU-dependent and so would not
+  reproduce byte-identically in another process. The leaf stays in the ID derivation on purpose — it
+  is stable across attempts at the same claim, and it keeps a claim that genuinely recurs later in a
+  chain (`received`, then `unreadable` after a flaky read, then `received` again) from colliding with
+  the earlier identical one.
+
+  **Row-level mismatch codes are reachable.** Detection runs a second time once the rows are in hand,
+  so `metric_missing` and the other row-gated codes can fire through the reconciler at all. Only
+  `observedMetricNames` is derived, only when the buyer pinned `committedMetrics`, and a metric counts
+  as present if any row carries it at top level or under `totals` or the revision declares a control
+  total for it — the remaining row predicates would need the profile's own row shape, and guessing at
+  them risks exactly the false accusation the row gating exists to prevent.
+
+  **Saying nothing when there is nothing to say.** Each plan names the caller's current leaf in
+  `supersedes_reporting_status_id` — resolved from the caller's own append-only history, now loaded
+  onto `ReportingLedger.consumerStatuses`, so the chain is named even before any obligation exists.
+  When that leaf already carries the same claim, the plan comes back `suppressed: 'unchanged'` and is
+  not posted: `immutability` allows a new ID only for changed status, and re-posting would supersede a
+  statement with its own duplicate on every reconcile, which `retention_and_limits` calls pathological
+  churn. A leaf the seller names but does not disclose suppresses the post too, rather than guessing.
+
+  When the client supplies the new optional `syncReportingStatus`, overdue, unsuppressed, attested
+  statuses are posted — the rc.3 duty is that clock, not scope close. `postedConsumerStatuses` reports
+  what the seller actually recorded, and the new `failedConsumerStatuses` carries item-local
+  rejections with the errors the seller returned, so a partial-success batch never loses one silently.
+  Without the client method the reconciler still plans everything and reports it, so existing adopters
+  are unaffected.
+
+  **Wiring order.** Four optional pieces each independently decide whether anything is posted:
+  1. `ExpectedReportingPeriod.automatedRecoveryWindowSeconds` — without it nothing is ever `overdue`.
+  2. `ExpectedReportingPeriod.deliverySlaSeconds` — needed to date `obligation_missing`, where there is
+     no obligation to read `expected_at` from. Add `officialAfterSeconds` for official-finality
+     generations against a seller that advertises one.
+  3. `client.getMediaBuyDelivery` — without it `received` / `content_mismatch` come back
+     `suppressed: 'consumption_unavailable'`.
+  4. `client.syncReportingStatus` — without it nothing posts.
+
+  Anything planned but not posted says why in `suppressed` and `reason`, so a misconfiguration reads
+  as a misconfiguration rather than as a quiet steady state.
+
+  **Failures stay data, not exceptions.** A batch write that fails records every statement in it on
+  `failedConsumerStatuses` and stops posting, rather than throwing: a throw from the second batch
+  discarded the record of everything the first had already appended, and those statements are durably
+  the caller's current leaves whether or not the call returns. And when the buyer's own read budget
+  runs out mid-run, the remaining revisions come back `suppressed: 'local_budget_exhausted'` instead of
+  `unreadable` / `transport_failed` — a limit the buyer set is not evidence that the seller published
+  bytes it could not consume, and a self-inflicted negative claim pins the caller's own view at
+  `action_required`.
+
+  **Compile-visible changes.** Behaviour is additive for existing callers, but `ReportingLedger` gains
+  an optional `consumerStatuses` and `ReportingConsumerStatusPlanV1.statusAsOf` is now optional —
+  anyone reading that field off a plan they did not attest needs a narrowing check.
+
+  **Surfacing.** `consumerStatusPending` carries the seller's own count of obligations past the buyer's
+  deadline with no current status; a failed read leaves it `undefined` rather than failing
+  reconciliation, because it is visibility rather than evidence. `escalations` flattens seller issues
+  with `openedAt` / `issueState` / `externalRef` and the advertised `operationsContact`, plus
+  `requiresHumanContact` for the `contact_*` family, so an SDK user can page someone without
+  re-reading the capability document. `operationsContact` is inert display metadata — never
+  dereference it.
+
+  `ExpectedReportingPeriod` gains optional `committedMetrics` and `metricUnits`. Omitting either
+  disables its check rather than guessing: a buyer that never recorded the metric list must not claim
+  a promised metric is absent.
+
+### Patch Changes
+
+- 06c685f: Document the AdCP 3.2 request-only Targeting Input three-state semantics for seller adopters.
+
+  `docs/guides/MEDIA-BUY-3.2-COMPATIBILITY.md` gains a section with the omitted / `null` / value table for
+  both create and update, worked `resolveTargetingInput` / `applyTargetingInput` / `hasTargetingClears`
+  snippets, and the two silent failure modes — persisting a request overlay verbatim writes a clear
+  command into durable state, and echoing it back emits `null` on a response shape whose schema forbids
+  it. `skills/build-seller-agent/` gets the short form under its shape-gotchas section, since a seller
+  agent generated from that skill is exactly the code that gets this wrong.
+
+  The helpers shipped without a doc or skill entry, so the only worked example was in a starter that is
+  being reworked to reject supplied overlays outright.
+
+## 14.0.0-rc.37
+
+### Major Changes
+
+- 5582908: **Breaking (correction inside the unreleased v14):** `AccountStore.resolution: 'derived'` is now an upstream-managed account-id namespace, matching the account-reference model settled in [adcp#5062](https://github.com/adcontextprotocol/adcp/pull/5062). The previous wire semantics were inverted and unusable for the adapters the mode exists for — buyers who called `list_accounts` got ids that every subsequent call rejected.
+
+  Wire contract:
+  - `{ account_id }` is the durable reference for `'derived'` and is now **accepted** (it was refused with `INVALID_REQUEST`); the `{ brand, operator }` natural-key arm is now **refused** with `INVALID_REQUEST` (`field: 'account.brand'`) and a `list_accounts` suggestion.
+  - `list_accounts` is **required** for `'derived'` — `createAdcpServerFromPlatform` throws `PlatformConfigError` when neither `accounts.list` nor `opts.accounts.listAccounts` is wired. It is the discovery contract for a namespace the agent doesn't own; credential-bound singletons expose one row.
+  - `sync_accounts` is not categorically blocked: natural-key provisioning entries fail per-row with `UNSUPPORTED_PROVISIONING`, natural-key _references_ fail per-row with `INVALID_REQUEST`, and `account: { account_id }` settings-update entries pass through.
+  - A declared `'derived'` resolution projects `account.require_operator_auth: true` on `get_adcp_capabilities`, like a declared `'explicit'`.
+
+  Tenant-isolation hardening (`'derived'` only):
+  - `accounts.resolve` must verify buyer-supplied ids; the framework backstops it — a resolved account whose `id` isn't the one the buyer named is refused with `ACCOUNT_NOT_FOUND` (with a dev-mode warning), so an un-migrated resolver that ignores `ref` fails closed instead of cross-serving.
+  - `sync_accounts` and `sync_governance` entries — the two account references that never passed through `accounts.resolve` — are now resolved against the caller's reachable set before any write, on both the platform and merge-seam wirings.
+  - The `comply_test_controller` sandbox gate no longer accepts a wire `sandbox: true` claim alongside an `account_id` the resolver refused.
+
+  API:
+  - `createDerivedAccountStore` verifies buyer-supplied `account_id` against what the caller's credential can reach (fail closed → `ACCOUNT_NOT_FOUND`), auto-selects the account on ref-less tools only when exactly one is reachable, and wires a filtered, paged `list_accounts`. New `listAccounts` / `lookupAccount` options support credentials that reach many accounts; `toAccount` keeps its signature for the single-account case.
+  - Added `AccountResolutionMode` / `CanonicalAccountResolutionMode` types and the `normalizeAccountResolution()`, `isAccountResolutionMode()`, `refHasNaturalKey()` helpers. An unrecognized `resolution` value is now a `PlatformConfigError` rather than silently inheriting another mode's enforcement. No alias spelling is introduced — `'derived'` stays the single name.
+
+  Migration: [13 → 14 § derived account resolution](https://github.com/adcontextprotocol/adcp-client/blob/main/docs/migration-13-to-14.md#derived-account-resolution-is-now-an-upstream-managed-account-id-namespace). Fixes #1647 and #1628.
+
+### Minor Changes
+
+- ecf1c74: Adopt the signed AdCP 3.2.0-rc.3 schema and compliance bundles as the default wire release.
+
+  Moving the pin activates the `content_mismatch` consumer status and its closed
+  `mismatch_code` across the published `ReportingConsumerStatusSchema` /
+  `SyncReportingStatusRequestSchema` exports and the seller ledger's consumer-status types.
+  The machinery that keeps those two in step with the bundle landed separately in #2911,
+  which derives both the ledger statement type and the Zod conditional arms from the pinned
+  schema; this pin is what supplies the rc.3 arms it reads. Verified: the regenerated
+  validator requires the obligation id, the revision id, the recomputed
+  `observed_revision_content_sha256`, and `mismatch_code` for `content_mismatch`, forbids
+  `failure_code` there, and forbids `mismatch_code` on the four pre-existing statuses.
+
+  rc.3 also publishes `core/media-buy-available-action-id.json`, so the generated
+  `update_media_buy` dispatch table gains the structured-only
+  `update_media_buy_frequency_cap` action and its `frequency_cap` field binding. Media-buy
+  preflight already resolved that binding from the generated table, so the shared
+  media-buy frequency cap becomes dispatchable with no adopter change.
+
+  3.2 prereleases remain exact pins: rc.3 replaces rc.2 in `COMPATIBLE_ADCP_VERSIONS` and
+  only the current prerelease's schema bundle ships. Pin `adcpVersion: '3.2-rc'` to follow
+  whichever 3.2 release candidate a given SDK build carries.
+
+- d4d6780: Return correctable `ACCOUNT_REQUIRED` when an account-scoped server operation omits `account` and authentication cannot select one, including compact lifecycle mutations, async discovery, and task polling. Buyer retry policy re-discovers the account before retrying. Buyer-supplied unknown, unauthorized, or mismatched account references continue to return terminal `ACCOUNT_NOT_FOUND`.
+- 46eb301: Accept the pinned AdCP 3.2 proposal-refinement frequency-cap, outcome-target,
+  and acceptance-context fields in buyer preflight, including remove-only shared
+  frequency-cap revisions, fail closed on invalid or contradictory cap removal,
+  and publicly expose their exact schema-derived supporting types.
+- dd96794: Export the protocol-authored AdCP 3.2.0-rc.3 universal principal and reporting-core storyboards with immutable provenance and drift-checked loaders.
+- 5591b93: Bound transport-diagnostics body capture and observer flushing so observability cannot stall request completion. Preserve postal-country fallback validation for countries outside the registered system list, add whole-operation cancellation to `validateAdAgents`, and expose client-scoped capability evidence priming for applications that already perform a trusted preflight. Add generated release upgrade guidance and a compiling thin existing-platform integration recipe.
+- 39b0714: Expose the standalone proposal commercial-terms verifier through `@adcp/sdk/negotiation/verification` with ESM/CJS types. Fail closed on unsupported schema keywords, cross-bundle references, and changed validation contracts throughout the commercial-terms schema graph. Preserve digest-first exhaustive comparison and legacy opaque contract-reference behavior, and document runtime schema coupling and upstream shim retirement.
+
+  Enforce schema-declared targeting disjointness, geographic label membership, language-tag grammar, and IANA timezone annotations before comparing terms, with validators isolated from ordinary SDK schema validation. Pin extensible-enum annotations while preserving explicit enum membership for binding snapshots.
+
+- 3a5edd3: Add account change webhook normalization, branded advisory/checkpoint cursor types, and an acknowledged async drain with snapshot bootstrap and structured CURSOR_EXPIRED recovery. Expose the existing change-feed declaration in normalized capabilities and provide a subscriber-preserving account notification registration builder. Include packed MCP schema/type regressions, training-seller integration and runner support for persistent account-change webhook observations and an adopter migration guide. Durable storage, projection transactions and subscription runtime remain adopter/server responsibilities.
+- 537f193: Implement the AdCP 3.2.0-rc.3 Reliable Reporting consumer-status hardening in the seller ledger.
+
+  **`content_mismatch` projection.** The fifth consumer status conflicts with a healthy/complete seller
+  projection like the other negative statuses and is immediately `action_required`. It is a
+  contract-fact disagreement naming the exact bytes the consumer read, never a measurement dispute.
+
+  **Stale-`received` grace.** A `received` statement made stale _only_ by a seller restatement now
+  projects the caller-scoped view as `delayed` — with `wait_for_retry` — until a bounded re-read
+  deadline, then `action_required`. The deadline is the `created_at` of the first revision that
+  superseded the one the consumer named plus the generation's `delivery_sla`, falling back to
+  `automated_recovery_window_seconds` when that SLA is zero. Later restatements supersede later
+  revisions and cannot restart it. Previously every conflict escalated immediately.
+
+  **Escalation.** `createReportingStatusHandler` accepts `consumerMismatchEscalation`
+  (`escalationSeconds` + `operationsContact`, mirroring the capability block's both-or-neither rule).
+  Past `opened_at` plus that window an open mismatch becomes `action_required` with a `contact_*`
+  action naming the diagnosed party; `wait_for_retry` and `repair_access` do not survive the boundary,
+  and escalation takes precedence over an open grace window.
+
+  **Issue lifecycle.** Issues emit `opened_at`, fixed at first emission and carried unchanged across
+  re-emission and across the `delayed` → `action_required` transition under one stable `issue_id`. It
+  is derived from immutable ledger facts, not the read time, so polling cannot reset the escalation
+  clock. `issue_state` (`open` / `acknowledged`) and `external_ref` are optional and now validated at
+  the response boundary. `projectReportingConsumerStatusMismatchV1` is exported so a custom store can
+  reuse the exact projection.
+
+  **`obligation_counts.consumer_status_pending`.** Emitted on the summary view whenever a consumer
+  principal is resolved. Counts obligations past `expected_at` plus the recovery window with an empty
+  status chain for the caller. Never a health input; overlaps the health counts rather than
+  partitioning them.
+
+  **Reserved `authoritative_party`.** `assertSupportedReportingAuthoritativeParty` refuses
+  `'consumer'` with `UNSUPPORTED_FEATURE` instead of coercing it to `'seller'`, and
+  `installConfiguration` applies it before any other validation. Call it from `sync_accounts` too.
+
+  The lifecycle harness (`examples/reliable-reporting-lifecycle`) gains a `restate_after_received`
+  probe operation mirroring the comply controller's: it restates only against the revision the caller
+  currently reports as `received`, returns `stale_received_grace_deadline`, and is convergent on repeat.
+
+  **Cross-tenant fix.** A persisted `CONSUMER_STATUS_MISMATCH` issue is no longer republished. The
+  issue store is keyed by obligation and carries no consumer dimension, so echoing a persisted one
+  handed every other consumer on that obligation the causing `reporting_status_id`, its `opened_at`
+  (another tenant's exact ingest timing), and any `external_ref` ticket key. The projection recomputes
+  the mismatch from the caller's own current leaf on every read, so the persisted copy was redundant
+  as well as unsafe. Retired (`resolved` / `waived`) issues are dropped from the projection rather
+  than emitted with the state elided.
+
+  **Health-filter fix.** `PostgresReportingLedgerStore` applies the `health` query filter while
+  building the snapshot, and it carried a second copy of the mismatch rule that hardcoded
+  `action_required`. With rc.3's `delayed` grace window that made a stale-`received` obligation
+  unreachable under _every_ filter — excluded from the snapshot when the caller asked for `delayed`,
+  dropped by the handler when they asked for `action_required`. Both now call one shared projection in
+  `./health`, and the store accepts `consumerMismatchEscalation` so the two cannot disagree.
+
+  `opened_at` is now the later of the first supersession and the causing statement's `recorded_at`; a
+  buyer that posts `received` naming an already-superseded revision no longer gets an issue dated
+  before the seller could have observed it, which with a short escalation window would have been born
+  already escalated. Grace and escalation comparisons use the ledger's exact instant comparators
+  instead of `Date.parse`, which floors sub-millisecond fractions and returns `NaN` for the leap
+  seconds this module accepts. Persisted issues preserve their `openedAt` across re-upsert, and
+  `HISTORY_UNAVAILABLE` is anchored to its period rather than the read time.
+
+  `UnsupportedReportingFeatureError` extends `AdcpError` so the framework maps it to
+  `UNSUPPORTED_FEATURE`/`terminal`; as a plain `Error` it would have been projected to
+  `SERVICE_UNAVAILABLE`/`transient`, telling the buyer to retry the request it refuses.
+  `assertSupportedReportingAuthoritativeParty` is exported from the package root, rejects a
+  wrong-shaped argument instead of silently passing, treats an explicit `null` as a request rather
+  than absence, and reports buyer-supplied values as bounded structured details.
+  `consumerMismatchEscalation` is validated at wiring time — `NaN` silently disabled escalation and a
+  negative window escalated everything.
+
+  `reportingConsumerStatusCapabilityV1(escalation)` projects the same option into the capability
+  document's `consumer_mismatch_escalation_seconds` + `operations_contact`, so the advertised window
+  and the window the reads enforce come from one value and cannot drift.
+
+  **Ingest rejects a `content_mismatch` against a superseded revision.** `expected_period` makes it
+  _"valid only against a revision the seller currently requires for that period"_, but existence,
+  account ownership, obligation membership, and a matching content digest are all satisfiable by a
+  long-superseded revision — so a buyer could dispute stale bytes and pin its own caller-scoped view
+  at `action_required`, which the seller may then not clear while that statement is the leaf.
+  Deciding currency needs the sibling revision set, so `ReportingConsumerStatusLedgerStore` gains an
+  optional `listRevisionMetadata`; `ReportingLedgerStore` implementors are already covered through
+  `listRevisions`. A store that can do neither now **rejects** `content_mismatch` rather than
+  accepting a statement it cannot validate — the other four statuses are unaffected, and
+  `content_mismatch` is new in rc.3 so no existing adapter regresses.
+
+  `consumer_status_pending` now starts strictly _after_ the deadline, since the duty is to post "no
+  later than" it. A negative-status issue's `opened_at` takes the later of the statement's
+  `recorded_at` and the earliest qualifying revision, so a statement filed during a seller outage no
+  longer surfaces on recovery already past its escalation boundary. And
+  `createReportingStatusHandler` inherits `consumerMismatchEscalation` from the store and throws on a
+  disagreement, so a health-filtered periods read cannot contradict the summary.
+
+- ecf1c74: Add request-only Targeting Input helpers for the AdCP 3.2 null-clear semantics (DR-0020) and stop
+  `createMediaBuyStore` from persisting a clear command.
+
+  `resolveTargetingInput`, `applyTargetingInput`, and `hasTargetingClears` are exported from the root
+  and `@adcp/sdk/server`. They project between the request-only Targeting Input — where a dimension may
+  be `null` to suppress a product default on create or clear stored state on update — and the strict
+  Targeting Overlay used by discovery criteria, accepted commercial snapshots, mutation responses, and
+  package readback, which must not contain `null`.
+
+  Two fixes in `createMediaBuyStore`, both reachable only once rc.3 makes the nullable input types
+  real: `persistFromCreate` fell back to the request overlay verbatim when the seller's response did
+  not echo one, and the `new_packages` arm of `mergeFromUpdate` assigned the incoming overlay directly.
+  Either path could write a `null` clear command into durable state, which `backfill` would then echo
+  into a `get_media_buys` response whose schema forbids null. Both now resolve clears away, and a patch
+  that clears the last surviving dimension drops the tracked overlay instead of persisting `{}`.
+
+  The store's `CreateMediaBuyInputForStore` / `UpdateMediaBuyInputForStore` input types widen from the
+  strict overlay to the request shape, so passing a real `create_media_buy` / `update_media_buy`
+  payload typechecks. Persisted and echoed values remain strict.
+
+  Codegen fix: `TargetingOverlayInput.device_platform` and `.device_type` were emitted as the scalar
+  `DevicePlatform` / `DeviceType` enums instead of arrays. `core/targeting-input.json` reaches those
+  dimensions through a JSON-pointer `$ref` into `core/targeting.json#/properties/<dimension>`, and for
+  an array with no `title` of its own json-schema-to-typescript names the result after the items'
+  canonical `$ref`. Both types now match the wire.
+
+### Patch Changes
+
+- 8ba12c2: Preserve the canonical reporting consumer status contract when regenerating from protocol bundles that include `content_mismatch`. Derive ledger wire fields and status-specific validation from the pinned schema, and, when regenerated from those bundles, retain `mismatch_code` through ingest and readback and verify the consumed revision binding for content mismatches. Existing statuses remain supported; the protocol version pin and release process are unchanged.
+
 ## 14.0.0-rc.36
 
 ### Minor Changes

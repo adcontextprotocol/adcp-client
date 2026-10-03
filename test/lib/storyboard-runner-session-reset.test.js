@@ -47,6 +47,22 @@ function spyClient() {
   };
 }
 
+function controllerClient(response = { success: true }) {
+  const calls = [];
+  return {
+    calls,
+    getAgentInfo: async () => ({ name: 'Test', tools: ['comply_test_controller'] }),
+    resetContext() {},
+    async executeTask(name, params) {
+      calls.push({ name, params });
+      return {
+        success: true,
+        data: { content: [{ type: 'text', text: JSON.stringify(response) }] },
+      };
+    },
+  };
+}
+
 describe('runStoryboard: per-storyboard session reset (regression for #1585)', () => {
   it('clears retained A2A session state on the shared `_client` before any step runs', async () => {
     const client = spyClient();
@@ -79,5 +95,82 @@ describe('runStoryboard: per-storyboard session reset (regression for #1585)', (
         _profile: FAKE_PROFILE,
       })
     );
+  });
+
+  it('requests seller-side state reset before a storyboard when the controller is advertised', async () => {
+    const client = controllerClient();
+
+    await runStoryboard(FAKE_AGENT_URL, emptyStoryboard(), {
+      protocol: 'mcp',
+      allow_http: true,
+      _client: client,
+      _profile: { name: 'Test', tools: ['comply_test_controller'] },
+      agentTools: ['comply_test_controller'],
+      _controllerCapabilities: { detected: true, scenarios: ['reset_state'] },
+    });
+
+    assert.deepStrictEqual(client.calls, [
+      {
+        name: 'comply_test_controller',
+        params: {
+          account: {
+            brand: { domain: 'test.example' },
+            operator: 'test.example',
+            sandbox: true,
+          },
+          scenario: 'reset_state',
+          context: { correlation_id: 'session_reset_sb--__reset_state__' },
+        },
+      },
+    ]);
+  });
+
+  it('keeps older controllers compatible when reset_state is unknown', async () => {
+    const client = controllerClient({ success: false, error: 'UNKNOWN_SCENARIO' });
+    const result = await runStoryboard(FAKE_AGENT_URL, emptyStoryboard(), {
+      protocol: 'mcp',
+      allow_http: true,
+      _client: client,
+      _profile: { name: 'Test', tools: ['comply_test_controller'] },
+      agentTools: ['comply_test_controller'],
+      _controllerCapabilities: { detected: true, scenarios: ['reset_state'] },
+    });
+
+    assert.strictEqual(result.overall_passed, true);
+  });
+
+  it('does not call reset_state when an older controller does not advertise it', async () => {
+    const client = controllerClient();
+    const result = await runStoryboard(FAKE_AGENT_URL, emptyStoryboard(), {
+      protocol: 'mcp',
+      allow_http: true,
+      _client: client,
+      _profile: { name: 'Test', tools: ['comply_test_controller'] },
+      agentTools: ['comply_test_controller'],
+      _controllerCapabilities: { detected: true, scenarios: ['seed_product'] },
+    });
+
+    assert.strictEqual(result.overall_passed, true);
+    assert.deepStrictEqual(client.calls, []);
+  });
+
+  it('fails the storyboard when seller-side state cannot be reset', async () => {
+    const client = controllerClient({
+      success: false,
+      error: 'RESET_FAILED',
+      error_detail: 'fixture store unavailable',
+    });
+    const result = await runStoryboard(FAKE_AGENT_URL, emptyStoryboard(), {
+      protocol: 'mcp',
+      allow_http: true,
+      _client: client,
+      _profile: { name: 'Test', tools: ['comply_test_controller'] },
+      agentTools: ['comply_test_controller'],
+      _controllerCapabilities: { detected: true, scenarios: ['reset_state'] },
+    });
+
+    assert.strictEqual(result.overall_passed, false);
+    assert.strictEqual(result.phases[0].phase_id, 'discovery_failed');
+    assert.match(result.phases[0].steps[0].error, /fixture store unavailable/);
   });
 });

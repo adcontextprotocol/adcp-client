@@ -1,4 +1,9 @@
-import type { BinaryEncodingPredicate, CoverContentDigestPredicate, SigningFetchOptions } from './fetch';
+import {
+  assertFetchTargetCanBeSigned,
+  type BinaryEncodingPredicate,
+  type CoverContentDigestPredicate,
+  type SigningFetchOptions,
+} from './fetch';
 import type { SigningProvider } from './provider';
 import type { SignRequestOptions } from './signer';
 import { signRequestAsync } from './signer-async';
@@ -45,6 +50,7 @@ export function createSigningFetchAsync(
         'createSigningFetchAsync does not accept Request objects (the body would be consumed out from under the signer). Pass a URL string and a separate init.'
       );
     }
+    assertFetchTargetCanBeSigned(url, 'createSigningFetchAsync');
 
     const headers = headersToRecord(init?.headers);
     for (const name of Object.keys(headers)) {

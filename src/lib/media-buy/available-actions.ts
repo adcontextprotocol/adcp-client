@@ -1,3 +1,4 @@
+import type { LiveMediaBuyAction as MediaBuyAvailableAction } from './action-types';
 // Compat shim between the legacy `valid_actions[]` flat shape and the
 // 3.1 `available_actions[]` structured shape (RFC #4480).
 //
@@ -6,7 +7,7 @@
 // authoritative source and surfaces a deprecation hint when only the
 // legacy field is populated.
 
-import type { MediaBuyActionContext, MediaBuyActionId, MediaBuyAvailableAction, MediaBuyValidAction } from './types';
+import type { MediaBuyActionContext, MediaBuyActionId, MediaBuyValidAction } from './types';
 
 /**
  * Source the normalized `available_actions[]` came from. Callers branch on
@@ -25,6 +26,27 @@ export interface AvailableActionsResult {
    * to the developer.
    */
   deprecationHint?: string;
+}
+
+/** Unpublished pre-GA mode retained only to route persisted data to recovery. */
+export const LEGACY_REQUIRES_PROPOSAL_MODE = 'requires_proposal' as const;
+export type LegacyRequiresProposalAction = Omit<MediaBuyAvailableAction, 'mode'> & {
+  mode: typeof LEGACY_REQUIRES_PROPOSAL_MODE;
+};
+export type RuntimeCompatibleAvailableAction = MediaBuyAvailableAction | LegacyRequiresProposalAction;
+
+const RUNTIME_RECOGNIZED_MODES = new Set<string>([
+  'self_serve',
+  'conditional_self_serve',
+  'seller_managed',
+  'requires_approval',
+  LEGACY_REQUIRES_PROPOSAL_MODE,
+]);
+
+export function isLegacyRequiresProposalAction(
+  entry: RuntimeCompatibleAvailableAction
+): entry is LegacyRequiresProposalAction {
+  return entry.mode === LEGACY_REQUIRES_PROPOSAL_MODE;
 }
 
 const DEPRECATION_HINT =
@@ -64,7 +86,7 @@ export function getAvailableActions(
   buy: MediaBuyActionContext,
   options: { silent?: boolean } = {}
 ): AvailableActionsResult {
-  if (buy.available_actions && buy.available_actions.length > 0) {
+  if (buy.available_actions !== undefined) {
     return { actions: [...buy.available_actions], source: 'available_actions' };
   }
   if (buy.valid_actions && buy.valid_actions.length > 0) {
@@ -96,15 +118,19 @@ export function findAvailableAction(
   buy: MediaBuyActionContext,
   action: MediaBuyActionId,
   options: { silent?: boolean } = {}
-): { entry: MediaBuyAvailableAction; result: AvailableActionsResult } | undefined {
+): { entry: RuntimeCompatibleAvailableAction; result: AvailableActionsResult } | undefined {
   const result = getAvailableActions(buy, options);
   const direct = result.actions.find(a => a.action === action);
-  if (direct) return { entry: direct, result };
+  // Future opaque modes carry no executable authority. `requires_proposal`
+  // is an unpublished pre-GA value retained for one compatibility cycle so
+  // persisted adopter data can reach the proposal-lifecycle recovery path.
+  const knownMode = (entry: MediaBuyAvailableAction) => RUNTIME_RECOGNIZED_MODES.has(entry.mode as string);
+  if (direct) return knownMode(direct) ? { entry: direct, result } : undefined;
 
   const rollupParent = ROLLUP_PARENT_OF[action];
   if (rollupParent) {
     const parent = result.actions.find(a => a.action === rollupParent);
-    if (parent) return { entry: parent, result };
+    if (parent && knownMode(parent)) return { entry: parent, result };
   }
   return undefined;
 }

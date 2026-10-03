@@ -41,6 +41,18 @@ describe('reporting source contract V1', () => {
     assert.throws(() => canonicalJsonV1({ value: undefined }), /does not permit/);
   });
 
+  test('matches the shared Python/TypeScript canonical JSON contract fixtures', async () => {
+    const fixture = JSON.parse(
+      await readFile(path.join(__dirname, '../fixtures/reporting-interop/canonical-json-v1.json'), 'utf8')
+    );
+    assert.equal(fixture.contract, 'canonical_json_utf8_v1');
+    for (const vector of fixture.vectors) {
+      const bytes = Buffer.from(canonicalJsonV1(vector.value), 'utf8');
+      assert.equal(bytes.toString('hex'), vector.canonical_utf8_hex, vector.name);
+      assert.equal(createHash('sha256').update(bytes).digest('hex'), vector.sha256, vector.name);
+    }
+  });
+
   test('validates replay at both manifest strictness levels', async () => {
     for (const level of ['basic', 'evidenced']) {
       const request = redactedReportingSourceRequestV1({

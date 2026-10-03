@@ -1,5 +1,7 @@
 # Build an AdCP 3.2 seller in 15 minutes
 
+Use the [MediaBuy action resolver](./MEDIA-BUY-ACTION-ASSESSMENT.md#seller-builder) to materialize explicitly accepted product templates and project accepted rights through current status, authorization, governance, and seller policy.
+
 The compact lifecycle is the SDK 14 starting point. Use Node.js
 `^20.19.0 || >=22.12.0`:
 
@@ -11,7 +13,7 @@ list_products → buy_products → control_media_buy
 Scaffold the PostgreSQL-backed path and run its diagnostics:
 
 ```bash
-npx --package '@adcp/sdk@^14.0.0-0' adcp init seller \
+npx --package @adcp/sdk@latest adcp init seller \
   --specialism sales-non-guaranteed --backend postgres --dir my-seller
 cd my-seller
 npm install
@@ -39,7 +41,7 @@ real canonical products from `PRODUCT_CATALOG_JSON`; an absent catalog produces
 an honest empty list, never fallback inventory.
 
 ```bash
-npm install '@adcp/sdk@^14.0.0-0'
+npm install @adcp/sdk
 export ADCP_AUTH_TOKEN='replace-with-a-secret'
 export ADCP_ACCOUNT_ID='replace-with-the-authorized-account'
 # Supply canonical products from your catalog; [] is an honest empty response,

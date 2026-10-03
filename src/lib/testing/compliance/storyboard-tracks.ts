@@ -9,6 +9,7 @@
 import type { TestResult, TestStepResult, AgentProfile } from '../types';
 import type { ComplianceTrack, TrackResult, TrackStatus, AdvisoryObservation } from './types';
 import type { AssertionResult, StoryboardResult, StoryboardStepResult } from '../storyboard/types';
+import { signingCoverageUnverified } from '../storyboard/runner';
 
 export interface DetachedAssertionFailure {
   assertion: AssertionResult;
@@ -248,19 +249,40 @@ function computeTrackStatus(results: StoryboardResult[]): TrackStatus {
   const totalSteps = totalPassed + totalFailed + totalSkipped;
   const hasAssertionFailure = results.some(result => collectDetachedAssertionFailures(result).length > 0);
 
+  const stepsOf = (result: StoryboardResult): StoryboardStepResult[] =>
+    (result.passes?.flatMap(pass => pass.phases) ?? result.phases).flatMap(phase => phase.steps);
+  const hasFixtureUnavailable = results.some(result =>
+    stepsOf(result).some(step => step.skip?.reason === 'fixture_unavailable')
+  );
+  // Scoped to request-signing probe steps, and decided by the runner's own
+  // rule so the track and the storyboard verdict can't disagree. Narrower
+  // than `hasFixtureUnavailable` in what it looks at: the legacy producers of
+  // that canonical reason (seeding unsupported, fixture ladder exhausted,
+  // creative-asset gap) keep their long-standing position below the
+  // all-skipped check, because an all-skipped track of that kind has always
+  // graded `skip` and reclassifying it here would move verdicts for tracks
+  // that have nothing to do with signing.
+  const hasUnverifiedSigningCoverage = results.some(result => signingCoverageUnverified(stepsOf(result)));
+
   if (totalSteps === 0) return 'skip';
   if (totalFailed > 0) return totalPassed === 0 ? 'fail' : 'partial';
   if (hasAssertionFailure) return totalPassed === 0 ? 'fail' : 'partial';
+  // Ordered ahead of the all-skipped check (adcp-client#2954): a track whose
+  // signing vectors never reached the agent — no framing for this protocol,
+  // or every vector excluded by the operator — is not an inapplicable track,
+  // it is an unverified one. Letting it grade `skip` erases it from
+  // `computeOverallStatus`'s `attempted` count, so sibling tracks alone could
+  // carry the run to `passing` while this track verified nothing.
+  if (hasUnverifiedSigningCoverage) return 'partial';
   if (totalSteps === totalSkipped) return 'skip';
   // Storyboard-scoped assertions are not steps, so their failures correctly
   // leave failed_count at zero. The runner's overall verdict is authoritative:
   // some steps passed, but the cross-step invariant did not.
   if (results.some(result => !result.overall_passed)) return 'partial';
-  const hasFixtureUnavailable = results.some(result =>
-    (result.passes?.flatMap(pass => pass.phases) ?? result.phases).some(phase =>
-      phase.steps.some(step => step.skip?.reason === 'fixture_unavailable')
-    )
-  );
+  // Legacy canonical gaps keep their long-standing position and meaning: a
+  // mixed track carrying one is coverage-incomplete (`partial`), an
+  // all-skipped one already returned `skip` above. Only the signing reason
+  // is promoted ahead of that all-skipped check.
   if (hasFixtureUnavailable) return 'partial';
 
   // No failures. Demote to `silent` when every observation-bearing

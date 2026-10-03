@@ -112,9 +112,18 @@ void factoryTokenStorage.replaceIfVersion;
 void factoryConversationStorage.get;
 
 declare const agentClient: AgentClient;
+declare const operationId: string;
+declare const recoveryKey: string;
 const resumedPurchase = agentClient.resumeDeferredTask<{ media_buy_id: string }>('durable-token', {
   approved: true,
 });
+
+const recoveredDirectPause = agentClient.recoverDirectPauseContinuation<{ media_buy_id: string }>({
+  operationId,
+  recoveryKey,
+  ownerScope: 'principal:buyer-1/account:account-1',
+});
+void recoveredDirectPause.then(result => result.deferred?.resume({ approved: true }));
 void resumedPurchase.then(result => {
   if (result.status === 'completed') {
     const mediaBuyId: string = result.data.media_buy_id;

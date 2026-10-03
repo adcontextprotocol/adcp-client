@@ -233,20 +233,6 @@ describe('runStoryboard entry guards for `agents` map', () => {
       /pass.*""/i
     );
   });
-
-  test('rejects controller_seeding storyboard without skip_controller_seeding', async () => {
-    const seedingStoryboard = {
-      ...makeStoryboard([{ id: 's1', title: 't', task: 'get_signals' }]),
-      prerequisites: { controller_seeding: true },
-    };
-    await assert.rejects(
-      () =>
-        runStoryboard('', seedingStoryboard, {
-          agents: { signals: { url: 'https://signals.example/mcp' } },
-        }),
-      /controller_seeding.*not yet supported.*skip_controller_seeding/i
-    );
-  });
 });
 
 describe('agent-routing: bearer scrub', () => {

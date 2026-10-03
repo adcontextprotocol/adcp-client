@@ -179,7 +179,7 @@ serve(() => createAdcpServerFromPlatform(platform, { name: 'My Publisher', versi
 - **Compile-time specialism enforcement** via `RequiredPlatformsFor<S>` — claim `'sales-non-guaranteed'` and the typechecker requires `SalesCorePlatform & SalesIngestionPlatform` on `sales` (`SalesPlatform` was split in 6.7 with all methods individually optional; per-specialism enforcement moves up to the type-level).
 - **Auto-generates `get_adcp_capabilities`** from registered platform methods — no manual capability declaration.
 - **Auto-applies response builders** — return raw data, the framework wraps them in MCP `CallToolResult` with `structuredContent`.
-- **Resolves accounts** — `accounts.resolve(ref, ctx)` runs before your platform method, the resolved account lands at `ctx.account`. Returns `ACCOUNT_NOT_FOUND` envelope if resolution returns null. `accounts.resolution: 'implicit'` enforces inline-`{account_id}` refusal at the framework boundary (post-6.7 — pre-6.7 the docstring was aspirational).
+- **Resolves accounts** — `accounts.resolve(ref, ctx)` runs before your platform method, and the resolved account lands at `ctx.account`. A buyer-supplied unknown, unauthorized, or mismatched ref returns terminal `ACCOUNT_NOT_FOUND`; an account-required operation with no supplied or auth-derived selection returns correctable `ACCOUNT_REQUIRED`. `accounts.resolution: 'implicit'` enforces inline-`{account_id}` refusal at the framework boundary (post-6.7 — pre-6.7 the docstring was aspirational).
 - **Idempotency, signing, async tasks, status normalization, lifecycle state** are framework-owned. Synchronous terminal responses do not emit completion webhooks by default; the inline result is authoritative. Adopters write the business decisions.
 - **Catches handler errors** — unhandled exceptions return `SERVICE_UNAVAILABLE` instead of crashing. Throw a typed error class (see § "Returning errors from handlers") to surface a structured envelope.
 
@@ -308,6 +308,12 @@ removes the v0.3 interface from the agent card and disables the SDK's legacy
 JSON-RPC and card handlers; it does not introduce a separate protocol
 implementation.
 
+Compliance storyboards are stricter than ordinary adopter calls: A2A runs use
+native 1.0 mode unconditionally, including per-agent routes in a multi-agent
+run. An agent that publishes only the v0.3 compatibility interface can remain
+reachable by normal SDK clients but will fail A2A compliance grading until it
+publishes its native 1.0 card and JSON-RPC interface.
+
 `tokenStore.lookup` represents your real credential verifier or identity provider. Returning a fixed principal for any
 non-empty bearer is an authentication bypass, not a safe example simplification.
 
@@ -426,7 +432,7 @@ mediaBuy: {
 
 ### Account Resolution
 
-`AccountStore.resolve(ref, ctx)` runs before every platform method. The resolved account lands at `ctx.account`. If `resolve` returns `null`, the framework responds with `ACCOUNT_NOT_FOUND` and your method never runs.
+`AccountStore.resolve(ref, ctx)` runs before every platform method. The resolved account lands at `ctx.account`. If a supplied ref resolves to `null`, the framework responds with terminal `ACCOUNT_NOT_FOUND`. If no ref was supplied and auth-derived resolution cannot select an account, account-required operations respond with correctable `ACCOUNT_REQUIRED`; account-optional operations may still run without `ctx.account`.
 
 ```typescript
 import { definePlatform, refAccountId, AccountNotFoundError } from '@adcp/sdk/server';
@@ -447,7 +453,7 @@ const platform = definePlatform({
       if (ctx?.authInfo?.credential?.client_id) {
         return db.findByClient(ctx.authInfo.credential.client_id);
       }
-      return null; // → ACCOUNT_NOT_FOUND
+      return null; // account-required operation → ACCOUNT_REQUIRED
     },
   },
   sales: defineSalesCorePlatform({
@@ -665,7 +671,7 @@ import {
   requireAuthenticatedOrSigned,
   mcpToolNameResolver,
 } from '@adcp/sdk/server';
-import { BrandJsonJwksResolver } from '@adcp/sdk/signing/server';
+import { ResolvedAgentJwksResolver } from '@adcp/sdk/signing/server';
 
 serve(
   () =>
@@ -686,7 +692,7 @@ serve(
     authenticate: requireAuthenticatedOrSigned({
       signature: verifySignatureAsAuthenticator({
         capability: { supported: true, required_for: ['create_media_buy', 'update_media_buy'], covers_content_digest: 'either' },
-        jwks: new BrandJsonJwksResolver(),
+        jwks: new ResolvedAgentJwksResolver('https://buyer.example/mcp', 'mcp'),
         resolveOperation: mcpToolNameResolver,
       }),
       fallback: verifyApiKey({ keys: { sk_live_abc: { principal: 'acct_42' } } }),
@@ -750,10 +756,7 @@ MCP connections and every modern per-request server reconstruction; the same
 configuration therefore works in compliant Claude, ChatGPT, and future hosts.
 
 ```typescript
-import {
-  createAdcpServerFromPlatform,
-  MCP_APP_RESOURCE_MIME_TYPE,
-} from '@adcp/sdk/server';
+import { createAdcpServerFromPlatform } from '@adcp/sdk/server';
 
 const server = createAdcpServerFromPlatform(platform, {
   name: 'My Publisher',
@@ -762,7 +765,6 @@ const server = createAdcpServerFromPlatform(platform, {
     {
       name: 'creative_upload',
       uri: 'ui://creative/upload',
-      mimeType: MCP_APP_RESOURCE_MIME_TYPE,
       _meta: {
         ui: {
           csp: {
@@ -801,6 +803,12 @@ MCP App resources always use a `ui://` URI and
 reject other shapes. The resource `_meta.ui` object carries CSP domains,
 permissions, a dedicated host domain, and border preference, and is emitted
 consistently by both `resources/list` and `resources/read`.
+
+Registration delegates to the official MCP Apps v2 server helpers. New code
+should use `_meta.ui.resourceUri`; the helpers also mirror the deprecated
+`_meta['ui/resourceUri']` key for older hosts and accept that key from legacy
+configurations during migration. The resource MIME type defaults to the MCP
+Apps value, so it normally does not need to be specified.
 
 `ui.visibility` is host routing metadata, not an authorization boundary.
 App-only handlers must still authenticate and authorize every request, and

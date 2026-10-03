@@ -47,17 +47,23 @@ describe('COMPATIBLE_ADCP_VERSIONS self-consistency', () => {
     }
   });
 
-  test('preserves the pre-3.0 legacy aliases (COMPATIBLE_PREFIX)', () => {
-    // Belt-and-suspenders against a regression that drops legacy entries
-    // while keeping 3.0.x intact (e.g. a future "clean up old aliases" PR
-    // that loses them silently). Catches that class without coupling to
-    // the exact prefix membership — adopters that pinned `v2.5` /
-    // `v2.6` / `v3` legacy aliases must keep matching.
-    for (const legacy of ['v2.5', 'v2.6', 'v3', '3.0.0-beta.1', '3.0.0-beta.3']) {
+  test('preserves maintained stable legacy aliases without superseded previews', () => {
+    // Belt-and-suspenders against a regression that drops maintained stable
+    // aliases while keeping 3.0.x intact. Retired beta/RC aliases must not be
+    // reintroduced alongside the single current primary prerelease.
+    for (const legacy of ['v2.5', 'v2.6', 'v3']) {
       assert.ok(
         COMPATIBLE_ADCP_VERSIONS.includes(legacy),
         `Legacy alias ${legacy} dropped from COMPATIBLE_ADCP_VERSIONS — would break ` +
           `adopters who pinned the alias as their adcpVersion option.`
+      );
+    }
+
+    for (const retiredPreview of ['3.0.0-beta.1', '3.0.0-beta.3']) {
+      assert.equal(
+        COMPATIBLE_ADCP_VERSIONS.includes(retiredPreview),
+        false,
+        `Retired preview ${retiredPreview} must not be advertised as compatible.`
       );
     }
   });

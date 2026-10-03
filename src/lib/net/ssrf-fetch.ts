@@ -30,7 +30,7 @@
  * Returns a fully-buffered result. Callers that need streaming or large bodies
  * should extend this primitive rather than bypass it.
  */
-import { type LookupAddress, type LookupOptions } from 'dns';
+import { type LookupAddress, type LookupAllOptions, type LookupOptions } from 'dns';
 import { lookup as dnsLookupAsync } from 'dns/promises';
 import { isIP } from 'node:net';
 import { Agent, fetch as undiciFetch } from 'undici';
@@ -42,6 +42,7 @@ const ALLOWED_SCHEMES = new Set(['https:', 'http:']);
 
 export type SsrfRefusedCode =
   | 'invalid_url'
+  | 'url_credentials'
   | 'scheme_not_allowed'
   | 'non_https_without_opt_in'
   | 'dns_lookup_failed'
@@ -108,6 +109,9 @@ export class SsrfRefusedError extends Error {
   }
 }
 
+/** Async DNS lookup used by the guarded fetch path. */
+export type SsrfDnsLookup = (hostname: string, options: LookupAllOptions) => Promise<LookupAddress[]>;
+
 export interface SsrfFetchOptions {
   method?: string;
   /** Lowercased keys preferred; values preserved verbatim. */
@@ -121,6 +125,12 @@ export interface SsrfFetchOptions {
   maxBodyBytes?: number;
   /** Caller-provided abort signal, composed with the internal timeout. */
   signal?: AbortSignal;
+  /**
+   * DNS resolver override for dependency injection. Every returned address is
+   * still classified by the SSRF policy, and the selected address is still
+   * pinned into the undici dispatcher. Defaults to `dns/promises.lookup`.
+   */
+  lookup?: SsrfDnsLookup;
   /**
    * Declarative client-authentication material for a runner-owned HTTPS
    * connection. Certificate verification remains enabled and SNI is always
@@ -180,18 +190,32 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
   } catch {
     throw new SsrfRefusedError('invalid_url', `Invalid URL: ${url}`, { url });
   }
-  const checkedUrl = parsed.href;
-  // From this point onward use the immutable serialization that was checked.
-  // This also prevents stateful string coercion in untyped JavaScript callers
-  // from presenting a different target to diagnostics or result metadata.
-  url = checkedUrl;
-
   // `URL.hostname` wraps IPv6 literals in brackets (`https://[::1]/` →
   // `[::1]`). `dns.lookup` and the address classifier both want the bare
   // form; strip brackets here so IPv6 localhost URLs work under
   // `allowPrivateIp` and so bracketed literals can't slip past classification
   // on a future Node release that tolerates them.
   const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
+
+  // URL credentials can be exfiltrated through redirects, proxy logs, or
+  // diagnostics and have no place in a counterparty-controlled discovery
+  // reference. Reject them before serializing the checked URL. The error
+  // carries a redacted URL so callers cannot accidentally log the secret.
+  if (parsed.username !== '' || parsed.password !== '') {
+    const redacted = new URL(parsed.href);
+    redacted.username = '';
+    redacted.password = '';
+    throw new SsrfRefusedError('url_credentials', 'Refusing URL with embedded credentials', {
+      url: redacted.href,
+      hostname,
+    });
+  }
+
+  const checkedUrl = parsed.href;
+  // From this point onward use the immutable serialization that was checked.
+  // This also prevents stateful string coercion in untyped JavaScript callers
+  // from presenting a different target to diagnostics or result metadata.
+  url = checkedUrl;
 
   if (!ALLOWED_SCHEMES.has(parsed.protocol)) {
     throw new SsrfRefusedError(
@@ -240,6 +264,7 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
   if (options.signal?.aborted) onExternalAbort();
   const timer = setTimeout(() => ac.abort(new Error('ssrf-fetch: timeout')), timeoutMs);
   let dispatcher: Agent | undefined;
+  let cancelBody: (() => void) | undefined;
   let pinned: { address: string; family: number } | undefined;
   let pinnedFamily: 4 | 6 | undefined;
 
@@ -247,7 +272,8 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
     if (!options.trustedFetchFn) {
       let addresses: { address: string; family: number }[];
       try {
-        addresses = await raceWithAbort(dnsLookupAsync(hostname, { all: true }), ac.signal);
+        const lookup: SsrfDnsLookup = options.lookup ?? dnsLookupAsync;
+        addresses = await raceWithAbort(lookup(hostname, { all: true }), ac.signal);
       } catch (err) {
         throwIfSignalAborted(ac.signal);
         throw new SsrfRefusedError(
@@ -317,22 +343,25 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
       });
     }
 
-    const res = options.trustedFetchFn
-      ? await options.trustedFetchFn(checkedUrl, {
-          method: options.method ?? 'GET',
-          redirect: 'manual',
-          signal: ac.signal,
-          headers: options.headers,
-          ...(options.body !== undefined && { body: options.body as BodyInit }),
-        })
-      : await undiciFetch(checkedUrl, {
-          method: options.method ?? 'GET',
-          redirect: 'manual',
-          signal: ac.signal,
-          headers: options.headers,
-          dispatcher,
-          ...(options.body !== undefined && { body: options.body }),
-        });
+    const res = await raceWithAbort<Response | Awaited<ReturnType<typeof undiciFetch>>>(
+      options.trustedFetchFn
+        ? options.trustedFetchFn(checkedUrl, {
+            method: options.method ?? 'GET',
+            redirect: 'manual',
+            signal: ac.signal,
+            headers: options.headers,
+            ...(options.body !== undefined && { body: options.body as BodyInit }),
+          })
+        : undiciFetch(checkedUrl, {
+            method: options.method ?? 'GET',
+            redirect: 'manual',
+            signal: ac.signal,
+            headers: options.headers,
+            dispatcher,
+            ...(options.body !== undefined && { body: options.body }),
+          }),
+      ac.signal
+    );
 
     const headers: Record<string, string> = {};
     res.headers.forEach((v, k) => {
@@ -351,14 +380,17 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
       };
     }
 
+    cancelBody = () => {
+      void reader.cancel().catch(() => {});
+    };
     const chunks: Uint8Array[] = [];
     let bytes = 0;
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await raceWithAbort(reader.read(), ac.signal);
       if (done) break;
       bytes += value.byteLength;
       if (bytes > maxBodyBytes) {
-        await reader.cancel();
+        void reader.cancel().catch(() => {});
         throw new SsrfRefusedError('body_exceeds_limit', `Response body exceeded ${maxBodyBytes} bytes`, {
           url,
           hostname: parsed.hostname,
@@ -386,7 +418,10 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
   } finally {
     clearTimeout(timer);
     options.signal?.removeEventListener('abort', onExternalAbort);
-    await dispatcher?.close().catch(() => {});
+    if (ac.signal.aborted) {
+      cancelBody?.();
+      await dispatcher?.destroy().catch(() => {});
+    } else await dispatcher?.close().catch(() => {});
   }
 }
 
@@ -397,11 +432,24 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
  * branch has already won the race.
  */
 function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
-  throwIfSignalAborted(signal);
   return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(signalAbortError(signal));
-    signal.addEventListener('abort', onAbort, { once: true });
-    operation.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    const onAbort = () => {
+      cleanup();
+      reject(signalAbortError(signal));
+    };
+    operation.then(
+      value => {
+        cleanup();
+        resolve(value);
+      },
+      error => {
+        cleanup();
+        reject(error);
+      }
+    );
+    if (signal.aborted) onAbort();
+    else signal.addEventListener('abort', onAbort, { once: true });
   });
 }
 

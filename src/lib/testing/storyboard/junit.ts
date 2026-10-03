@@ -10,14 +10,63 @@ import type { StoryboardResult, StoryboardStepResult, StoryboardStepHint } from 
 import { collectDetachedAssertionFailures } from '../compliance/storyboard-tracks';
 import { randomBytes } from 'node:crypto';
 
+/**
+ * Escape a value for XML **and** neutralise what XML 1.0 cannot represent.
+ *
+ * Markup-significant characters are entity-encoded as usual. C0/C1 controls
+ * (other than tab/LF/CR) and the XML 1.0 noncharacters U+FDD0–FDEF, U+FFFE and
+ * U+FFFF are illegal in an XML 1.0 document *even as numeric references*, so
+ * emitting one produces a report a strict CI parser rejects outright. Every
+ * attribute and body in this formatter carries runner- or agent-supplied text
+ * (failure messages, skip details, advisory findings, assertion details), so
+ * the sanitisation lives here rather than at twelve call sites.
+ */
 function xmlEscape(s: unknown): string {
-  return String(s ?? '')
+  return xmlSafeText(String(s ?? ''))
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
 }
+
+/** Replace characters XML 1.0 cannot represent with a printable escape. */
+function xmlSafeText(value: string): string {
+  return (
+    value
+      // C0/C1 controls other than tab, LF and CR.
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, escapeCodeUnit)
+      // XML 1.0 noncharacters.
+      .replace(/[\uFDD0-\uFDEF\uFFFE\uFFFF]/g, escapeCodeUnit)
+  );
+}
+
+function escapeCodeUnit(char: string): string {
+  return `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`;
+}
+
+/**
+ * Trust boundary for a skip detail.
+ *
+ * Only runner-authored reasons carry their detail into the report; other
+ * details can contain raw seller diagnostics, and JUnit is a shared CI
+ * artifact that gets archived, diffed and re-parsed long after the run.
+ *
+ * The terminal is intentionally more permissive: `formatStepSkipLines`
+ * (`bin/adcp-storyboard-summary.js`) prefers the probe's own remedy and will
+ * print a seller-authored `skip.detail` when that is all there is, because an
+ * operator reading their own run wants the detail and the CLI escapes control
+ * characters at print time. This gate is the stricter of the two, not a
+ * mirror of it. Length is capped so one long remedy cannot dominate the
+ * document.
+ */
+const RUNNER_AUTHORED_SKIP_REASONS: ReadonlySet<string> = new Set([
+  'capability_prerequisite_unavailable',
+  'session_probe_ungradable',
+  'fixture_unsatisfied',
+]);
+
+const MAX_SKIP_DETAIL_CHARS = 400;
 
 function hintLines(hints: readonly StoryboardStepHint[] | undefined): string[] {
   if (!hints || hints.length === 0) return [];
@@ -62,7 +111,44 @@ function formatAdvisoryFinding(validation: { description: string; error?: string
  * `.d.ts`; the runtime module is still present in `dist/` for the CLI
  * (`bin/adcp.js`) to `require()` directly.
  */
-export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): string {
+/**
+ * Skip message for a per-step `<skipped>` element. The detailed reason alone is
+ * often not actionable (`session_probe_ungradable`, `fixture_unsatisfied`), so
+ * the runner-authored detail is appended when present — JUnit consumers are
+ * frequently the only surface a CI reviewer reads.
+ */
+function stepSkipMessage(step: { skip_reason?: string; skip?: { detail?: string } }): string {
+  const reason = step.skip_reason || 'skipped';
+  const raw = step.skip?.detail;
+  if (raw === undefined || !RUNNER_AUTHORED_SKIP_REASONS.has(step.skip_reason ?? '')) return reason;
+  const clipped = raw.length > MAX_SKIP_DETAIL_CHARS ? `${raw.slice(0, MAX_SKIP_DETAIL_CHARS)}…` : raw;
+  return `${reason}: ${clipped}`;
+}
+
+/** @internal CLI report options; not part of the SDK's public surface. */
+export interface StoryboardJUnitOptions {
+  /** Storyboard id → routed tenant/topology group. */
+  suite_groups?: Readonly<Record<string, string>>;
+}
+
+/** @internal Attribute a routed result to one tenant, or to the synthetic topology group. */
+export function routedStoryboardResultGroup(result: StoryboardResult): string {
+  const agentKeys = Object.keys(result.agent_map ?? {});
+  const phases = result.passes?.length ? result.passes.flatMap(pass => pass.phases) : result.phases;
+  const touched = new Set<string>();
+  for (const step of phases.flatMap(phase => phase.steps)) {
+    const key = step.agent_index === undefined ? undefined : agentKeys[step.agent_index - 1];
+    if (key) touched.add(key);
+  }
+  if (touched.size === 1) return [...touched][0]!;
+  return 'cross-tenant-topology';
+}
+
+/** @internal CLI report formatter; not part of the SDK's public surface. */
+export function formatStoryboardResultsAsJUnit(
+  results: StoryboardResult[],
+  options: StoryboardJUnitOptions = {}
+): string {
   let totalTests = 0;
   let totalFailures = 0;
   let totalSkipped = 0;
@@ -70,6 +156,8 @@ export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): str
   const suites: string[] = [];
 
   for (const sb of results) {
+    const suiteGroup = options.suite_groups?.[sb.storyboard_id];
+    const suiteClassname = suiteGroup ? `${suiteGroup}.${sb.storyboard_id}` : sb.storyboard_id;
     const suiteCases: string[] = [];
     let suiteFailures = sb.failed_count;
     let representedSkipped = 0;
@@ -86,8 +174,8 @@ export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): str
             representedSkipped += 1;
             totalSkipped += 1;
             suiteCases.push(
-              `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="${xmlEscape(name)}" time="${time}">\n` +
-                `      <skipped message="${xmlEscape(step.skip_reason || 'skipped')}"/>\n` +
+              `    <testcase classname="${xmlEscape(suiteClassname)}" name="${xmlEscape(name)}" time="${time}">\n` +
+                `      <skipped message="${xmlEscape(stepSkipMessage(step))}"/>\n` +
                 `    </testcase>`
             );
             continue;
@@ -115,7 +203,7 @@ export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): str
             // under the #883 widened hint gate.
             const message = step.error || firstHintMessage(step) || 'validation failed';
             suiteCases.push(
-              `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="${xmlEscape(name)}" time="${time}">\n` +
+              `    <testcase classname="${xmlEscape(suiteClassname)}" name="${xmlEscape(name)}" time="${time}">\n` +
                 `      <failure message="${xmlEscape(message)}" type="StoryboardFailure">${xmlEscape(failureDetails)}</failure>\n` +
                 `    </testcase>`
             );
@@ -127,10 +215,10 @@ export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): str
             .join('\n');
           suiteCases.push(
             advisoryFindings
-              ? `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="${xmlEscape(name)}" time="${time}">\n` +
+              ? `    <testcase classname="${xmlEscape(suiteClassname)}" name="${xmlEscape(name)}" time="${time}">\n` +
                   `      <system-out>${xmlEscape(advisoryFindings)}</system-out>\n` +
                   `    </testcase>`
-              : `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="${xmlEscape(name)}" time="${time}"/>`
+              : `    <testcase classname="${xmlEscape(suiteClassname)}" name="${xmlEscape(name)}" time="${time}"/>`
           );
         }
       }
@@ -141,7 +229,7 @@ export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): str
       totalTests += 1;
       totalSkipped += 1;
       suiteCases.push(
-        `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="Fixture resolution" time="0.000">\n` +
+        `    <testcase classname="${xmlEscape(suiteClassname)}" name="Fixture resolution" time="0.000">\n` +
           `      <skipped message="${xmlEscape(fixtureGap.detail)}"/>\n` +
           `    </testcase>`
       );
@@ -154,7 +242,7 @@ export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): str
       const message = assertion.error ?? assertion.description;
       const details = `${assertion.assertion_id}: ${assertion.description}${assertion.error ? `\n${assertion.error}` : ''}`;
       suiteCases.push(
-        `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="${xmlEscape(`${passLabel}Assertion › ${assertion.assertion_id}`)}" time="0.000">\n` +
+        `    <testcase classname="${xmlEscape(suiteClassname)}" name="${xmlEscape(`${passLabel}Assertion › ${assertion.assertion_id}`)}" time="0.000">\n` +
           `      <failure message="${xmlEscape(message)}" type="StoryboardAssertionFailure">${xmlEscape(details)}</failure>\n` +
           `    </testcase>`
       );
@@ -162,7 +250,7 @@ export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): str
     totalDuration += sb.total_duration_ms || 0;
     const suiteTests = suiteCases.length;
     suites.push(
-      `  <testsuite name="${xmlEscape(sb.storyboard_title)}" tests="${suiteTests}" failures="${suiteFailures}" skipped="${sb.skipped_count}" time="${((sb.total_duration_ms || 0) / 1000).toFixed(3)}" timestamp="${sb.tested_at || new Date().toISOString()}">\n` +
+      `  <testsuite name="${xmlEscape(suiteGroup ? `${suiteGroup} › ${sb.storyboard_title}` : sb.storyboard_title)}"${suiteGroup ? ` package="${xmlEscape(`adcp.${suiteGroup}`)}"` : ''} tests="${suiteTests}" failures="${suiteFailures}" skipped="${sb.skipped_count}" time="${((sb.total_duration_ms || 0) / 1000).toFixed(3)}" timestamp="${sb.tested_at || new Date().toISOString()}">\n` +
         suiteCases.join('\n') +
         `\n  </testsuite>`
     );

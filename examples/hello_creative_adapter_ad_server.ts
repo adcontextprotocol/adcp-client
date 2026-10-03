@@ -98,6 +98,7 @@ assertNoExampleTlds(
   { allowIn: ['test', 'development'], checklistPath: 'examples/hello_creative_adapter_ad_server.ts' }
 );
 const SANDBOX_ID_PREFIX = 'sandbox_';
+const SEEDED_ACCOUNTS = new Map<string, Record<string, unknown>>();
 
 // ---------------------------------------------------------------------------
 // Upstream client — SWAP for production.
@@ -424,13 +425,22 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
         // `account_id → network_code` directory persisted from
         // `sync_accounts`, and MUST NOT stamp `mode: 'sandbox'` — that
         // flag exists exclusively for sandboxed test traffic.
-        const network = await upstream.lookupNetwork('acmeoutdoor.example');
+        const fixture = SEEDED_ACCOUNTS.get(ref.account_id);
+        const fixtureBrand = fixture?.['brand'];
+        const fixtureDomain =
+          fixtureBrand != null && typeof fixtureBrand === 'object'
+            ? (fixtureBrand as { domain?: unknown }).domain
+            : undefined;
+        const network = await upstream.lookupNetwork(
+          typeof fixtureDomain === 'string' ? fixtureDomain : 'acmeoutdoor.example'
+        );
         if (!network) return null;
         return {
           id: ref.account_id,
           name: network.display_name,
           status: 'active',
-          mode: 'sandbox',
+          mode: fixture?.['sandbox'] === false ? 'live' : 'sandbox',
+          ...(typeof fixture?.['operator'] === 'string' && { operator: fixture['operator'] }),
           brand: { domain: network.adcp_publisher },
           ctx_metadata: { network_code: network.network_code, publisher_domain: network.adcp_publisher },
         };
@@ -820,6 +830,9 @@ serve(
       },
       complyTest: {
         seed: {
+          account: ({ account_id, fixture }) => {
+            SEEDED_ACCOUNTS.set(account_id, fixture);
+          },
           creative: async ({ creative_id, fixture }) => {
             await seedCreativeOnUpstream(creative_id, fixture);
           },

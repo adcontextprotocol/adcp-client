@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "protocol_version": "3.2.1",
+  "source_repository": "adcontextprotocol/adcp",
+  "source_tag": "v3.2.1",
+  "source_commit": "c32bd78c5389753e3b8f3ffd8a1c04b777854d83",
+  "bundle_sha256": "00b682c32a36dcc439ccc5e4f5a842f1e08e7b71c85dbbb033a5544365f90287",
+  "files": {
+    "principal": {
+      "source_path": "static/compliance/source/universal/principal.yaml",
+      "package_path": "principal.yaml",
+      "git_blob_sha1": "ff82be518f63deb4e2d5f3508b88e4e990f6709f",
+      "sha256": "cb16beb0a38220abef54d84d7dc61119743874728c01a83e43e68a07953a6331",
+      "size_bytes": 24917
+    },
+    "reporting_core": {
+      "source_path": "static/compliance/source/universal/reporting-core.yaml",
+      "package_path": "reporting-core.yaml",
+      "git_blob_sha1": "684b1ce594760bd934ff7ba6fb46f78473c4bc3a",
+      "sha256": "0209f91aa87b204f8980a95031ddc1c0787ba70c5aecac39d06f2955e93e5621",
+      "size_bytes": 45675
+    }
+  }
+}

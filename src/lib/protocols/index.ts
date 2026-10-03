@@ -63,6 +63,7 @@ import {
 import { hasValidatedMcpAuthorizationRequirements } from '../auth/oauth/authorization-required';
 import { getNonInteractiveOAuthProvider } from '../auth/oauth/provider-cache';
 import { AuthenticationCredentialsRejectedError, is401Error } from '../errors';
+import { getSignedRequestRejection } from './signedRequestRejection';
 import { isLikelyPrivateUrl } from '../net';
 import { validateAgentUrl } from '../validation';
 import { withSpan } from '../observability/tracing';
@@ -79,6 +80,8 @@ import {
 } from './transportDiagnostics';
 
 export {
+  BODY_SNIPPET_TIMEOUT_MS,
+  OBSERVER_FLUSH_TIMEOUT_MS,
   sanitizeTransportHeaders,
   sanitizeTransportUrl,
   withTransportDiagnostics,
@@ -737,7 +740,14 @@ export class ProtocolClient {
                   // something out-of-band. Force a fresh exchange and retry once
                   // before surfacing the error. Bounded (single retry) so we don't
                   // loop if the credentials are genuinely wrong.
-                  if (agent.oauth_client_credentials && is401Error(err)) {
+                  // A bare 401 is ambiguous when a bearer is present. Keep
+                  // the existing single refresh; explicit Signature failures
+                  // cannot be repaired by exchanging an OAuth token.
+                  if (
+                    agent.oauth_client_credentials &&
+                    is401Error(err) &&
+                    getSignedRequestRejection(err)?.challenge?.scheme !== 'signature'
+                  ) {
                     const ccStorage = getAgentStorage(agent);
                     const allowPrivateIp = transport?.allowPrivateIp ?? isLikelyPrivateUrl(agent.agent_uri);
                     await ensureClientCredentialsTokens(agent, {
@@ -769,6 +779,13 @@ export class ProtocolClient {
                         }
                       );
                     } catch (retryErr) {
+                      // Reconnecting can fail on an unsigned initialize before
+                      // the signed tool retry. Keep the original seller reason
+                      // when that authentication failure has no signed evidence.
+                      const rejection =
+                        getSignedRequestRejection(retryErr) ??
+                        (is401Error(retryErr) ? getSignedRequestRejection(err) : undefined);
+                      if (rejection) throw rejection;
                       await rethrowAsNeedsAuthorization(
                         retryErr,
                         agent.agent_uri,
@@ -813,7 +830,14 @@ export class ProtocolClient {
                   // MCP path above. Kept symmetric so A2A CC agents aren't a
                   // second-class experience — including the NeedsAuthorizationError
                   // rewrap on a retry that still 401s.
-                  if (agent.oauth_client_credentials && is401Error(err)) {
+                  // A bare 401 is ambiguous when a bearer is present. Keep
+                  // the existing single refresh; explicit Signature failures
+                  // cannot be repaired by exchanging an OAuth token.
+                  if (
+                    agent.oauth_client_credentials &&
+                    is401Error(err) &&
+                    getSignedRequestRejection(err)?.challenge?.scheme !== 'signature'
+                  ) {
                     const ccStorage = getAgentStorage(agent);
                     const allowPrivateIp = transport?.allowPrivateIp ?? isLikelyPrivateUrl(agent.agent_uri);
                     await ensureClientCredentialsTokens(agent, {
@@ -842,6 +866,10 @@ export class ProtocolClient {
                         transport?.legacyCompat
                       );
                     } catch (retryErr) {
+                      const rejection =
+                        getSignedRequestRejection(retryErr) ??
+                        (is401Error(retryErr) ? getSignedRequestRejection(err) : undefined);
+                      if (rejection) throw rejection;
                       await rethrowAsNeedsAuthorization(
                         retryErr,
                         agent.agent_uri,
@@ -890,6 +918,8 @@ async function rethrowAsNeedsAuthorization(
   configuredAllowPrivateIp?: boolean,
   recoveryMode: AuthorizationRecoveryMode = 'discover'
 ): Promise<void> {
+  const signedRejection = getSignedRequestRejection(err);
+  if (signedRejection) throw signedRejection;
   if (err instanceof NeedsAuthorizationError) throw err;
   if (!is401Error(err)) return;
   if (recoveryMode === 'static') {

@@ -5,8 +5,6 @@ on:
     branches:
       - main
 
-concurrency: ${{ github.workflow }}-${{ github.ref }}
-
 permissions:
   contents: read
 
@@ -20,6 +18,11 @@ jobs:
   release:
     name: Release
     needs: reference-seller-interop
+    concurrency:
+      # npm publishing and dist-tag updates mutate package-global state.
+      # Serialize those mutations across main and maintenance releases.
+      group: npm-release-dist-tags
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     env:
       ADCP_REQUIRE_SIGNATURE: '1'
@@ -64,12 +67,13 @@ jobs:
 
       - name: Create Release Pull Request or Publish to npm
         id: changesets
-        uses: changesets/action@v1
+        uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
-          version: npm run version
-          publish: npm run release
-          title: 'chore: release package'
-          commit: 'chore: release package'
+          github-token: ${{ steps.app-token.outputs.token }}
+          version-script: npm run version
+          publish-script: npm run release
+          pr-title: 'chore: release package'
+          commit-message: 'chore: release package'
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           NPM_CONFIG_PROVENANCE: true

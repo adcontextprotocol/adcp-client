@@ -14,6 +14,7 @@ const { runStoryboard } = require('../dist/lib/testing/storyboard/runner');
 
 function createAdcpServer(config) {
   return _createAdcpServer({
+    resolveAccount: ref => (ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined),
     ...config,
     stateStore: config?.stateStore ?? new InMemoryStateStore(),
     validation: { requests: 'off', responses: 'off', ...(config?.validation ?? {}) },
@@ -25,6 +26,9 @@ async function startConformantA2aFixture(handlers) {
   const app = express();
   app.use(express.json());
   const server = app.listen(0);
+  // Cold schema loading can outlast the default idle socket timeout between
+  // consecutive sends; this fixture exercises context continuity.
+  server.keepAliveTimeout = 0;
   await new Promise(resolve => server.once('listening', resolve));
   const { port } = server.address();
   const cardUrl = `http://127.0.0.1:${port}/a2a`;
@@ -61,13 +65,16 @@ async function startRegressedA2aFixture() {
   const baseUrl = `http://127.0.0.1:${port}`;
   let sendCount = 0;
 
-  app.get('/.well-known/agent-card.json', (_req, res) => {
+  app.get('/.well-known/agent.json', (_req, res) => {
     res.json({
       name: 'Regressed Seller',
       description: 'stamps own contextId, ignores buyer-supplied',
       url: baseUrl,
       version: '1.0.0',
-      protocolVersion: '0.3.0',
+      // Declare the native contract so the compliance runner reaches the
+      // context-continuity regression this fixture is intended to isolate.
+      protocolVersion: '1.0.0',
+      supportedInterfaces: [{ url: baseUrl, protocolBinding: 'JSONRPC', protocolVersion: '1.0', tenant: '' }],
       defaultInputModes: ['application/json'],
       defaultOutputModes: ['application/json'],
       capabilities: { streaming: false, pushNotifications: false },
@@ -80,7 +87,7 @@ async function startRegressedA2aFixture() {
   });
   app.post('/', (req, res) => {
     const { id, method, params } = req.body ?? {};
-    if (method !== 'message/send') {
+    if (method !== 'SendMessage') {
       res.json({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' } });
       return;
     }
@@ -204,7 +211,7 @@ describe('a2a_context_continuity (runner integration, #962)', () => {
         invariants: DISABLE_DEFAULT_INVARIANTS,
       });
       const followUp = result.phases.flatMap(p => p.steps).find(s => s.step_id === 'second_send');
-      assert.ok(followUp, 'follow-up step ran');
+      assert.ok(followUp, `follow-up step ran: ${JSON.stringify(result)}`);
       const continuityCheck = followUp.validations.find(v => v.check === 'a2a_context_continuity');
       assert.ok(continuityCheck, 'continuity validator ran');
       assert.strictEqual(
@@ -234,10 +241,14 @@ describe('a2a_context_continuity (runner integration, #962)', () => {
         validation: { responses: 'strict' },
       });
       const followUp = result.phases.flatMap(p => p.steps).find(s => s.step_id === 'second_send');
-      assert.ok(followUp, 'follow-up step ran');
+      assert.ok(followUp, `follow-up step ran: ${JSON.stringify(result)}`);
       const continuityCheck = followUp.validations.find(v => v.check === 'a2a_context_continuity');
       assert.ok(continuityCheck, 'continuity validator ran');
-      assert.strictEqual(continuityCheck.passed, false, 'regressed adapter must fail continuity');
+      assert.strictEqual(
+        continuityCheck.passed,
+        false,
+        `regressed adapter must fail continuity: ${JSON.stringify(continuityCheck)}`
+      );
       assert.strictEqual(continuityCheck.json_pointer, '/result/contextId');
       assert.match(continuityCheck.error, /diverged across steps/);
     } finally {

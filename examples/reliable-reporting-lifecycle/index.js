@@ -103,8 +103,98 @@ function createReportingLifecycleReference({ pool, source = createSimulatedRepor
   });
   const controls = {
     scenarios: ['reporting_core_lifecycle_probe'],
+    /**
+     * Restate the revision the caller already reported as `received`, so the
+     * rc.3 stale-received grace projection is exercisable without waiting on a
+     * publication boundary.
+     *
+     * Mirrors the comply controller's `restate_after_received` operation. The
+     * restatement is bound to a *named prior read*: restating into a vacuum
+     * would not exercise stale-received at all, because the grace deadline is
+     * anchored to the first revision that superseded the one the buyer named.
+     * Repeating the operation is convergent — it reports the committed
+     * restatement and the same deadline rather than stacking another one, so a
+     * seller cannot hold a mismatch below `action_required` by restating on a
+     * timer.
+     */
+    async restateAfterReceived(input) {
+      const receivedRevisionId = input?.received_reporting_revision_id;
+      if (typeof receivedRevisionId !== 'string' || !receivedRevisionId) {
+        throw new TypeError('restate_after_received requires received_reporting_revision_id');
+      }
+      const advanceTo = input.advance_to ?? 'within_grace';
+      if (!['within_grace', 'past_grace'].includes(advanceTo)) {
+        throw new RangeError('restate_after_received advance_to must be within_grace or past_grace');
+      }
+      const obligations = await store.listObligations(input.account_id);
+      const obligation =
+        obligations.find(candidate => candidate.reporting_obligation_id === input.reporting_obligation_id) ??
+        obligations[0];
+      if (!obligation) throw new Error('Prepare the reporting fixture before restating a received revision');
+
+      const revisions = await store.listRevisions(obligation.reporting_obligation_id);
+      const current = [...revisions].sort((left, right) => right.revisionNumber - left.revisionNumber)[0];
+      if (!current) throw new Error('Publish a revision before restating it');
+      // Accept either the revision still current, or — on a convergent retry —
+      // the one this control already superseded.
+      const alreadyRestated = revisions.some(
+        revision => revision.supersedes_reporting_revision_id === receivedRevisionId
+      );
+      if (!alreadyRestated && current.reporting_revision_id !== receivedRevisionId) {
+        throw new Error(
+          'received_reporting_revision_id must name the revision this caller currently reports as received'
+        );
+      }
+
+      if (!alreadyRestated) {
+        source.restate(input.rows ?? source.state.rows);
+        await producer.runWorker({ maxIterations: 4 });
+      }
+
+      const afterRestatement = await store.listRevisions(obligation.reporting_obligation_id);
+      const firstSuperseding = afterRestatement
+        .filter(revision => revision.supersedes_reporting_revision_id === receivedRevisionId)
+        .sort(
+          (left, right) =>
+            Date.parse(left.createdAt) - Date.parse(right.createdAt) || left.revisionNumber - right.revisionNumber
+        )[0];
+      if (!firstSuperseding) throw new Error('The restated revision is not readable in the fixture ledger');
+
+      // Frozen on the obligation, so later restatements cannot move it.
+      const graceMilliseconds =
+        obligation.schedule.deliverySlaMilliseconds > 0
+          ? obligation.schedule.deliverySlaMilliseconds
+          : obligation.schedule.recoveryWindowMilliseconds;
+      const graceDeadline = new Date(Date.parse(firstSuperseding.createdAt) + graceMilliseconds).toISOString();
+      return {
+        success: true,
+        simulated: {
+          account_id: obligation.account.account_id,
+          reporting_obligation_id: obligation.reporting_obligation_id,
+          received_reporting_revision_id: receivedRevisionId,
+          reporting_revision_id: firstSuperseding.reporting_revision_id,
+          supersedes_reporting_revision_id: firstSuperseding.supersedes_reporting_revision_id,
+          revision_content_sha256: firstSuperseding.binding.sha256,
+          restated_at: firstSuperseding.createdAt,
+          stale_received_grace_deadline: graceDeadline,
+          // The instant a grader should project the caller-scoped view at to
+          // observe each side of the boundary. The store reads `ledger_as_of`
+          // from the database clock, so the harness reports the boundary rather
+          // than moving the clock underneath a live read.
+          project_at:
+            advanceTo === 'past_grace'
+              ? new Date(Date.parse(graceDeadline) + 1_000).toISOString()
+              : firstSuperseding.createdAt,
+          expected_mismatch_severity: advanceTo === 'past_grace' ? 'action_required' : 'delayed',
+        },
+      };
+    },
     async reportingCoreLifecycleProbe(input) {
       if (!input || typeof input !== 'object') throw new TypeError('probe input must be an object');
+      if (input.operation === 'restate_after_received') return controls.restateAfterReceived(input);
+      if (input.operation !== undefined && input.operation !== 'restate_after_received') {
+        throw new RangeError('probe operation control is invalid');
+      }
       if (
         input.source !== undefined &&
         !['not-ready', 'failure', 'zero', 'ready', 'restate', 'official'].includes(input.source)
