@@ -1,0 +1,143 @@
+{
+  "date": "2026-10-03",
+  "scope": "One GA Python wheel installed in two isolated Python environments against published SDK 14.0.0 and unpublished packed SDK 14.1.0. Four independent PostgreSQL cells; no Python version-skew or published 14.1.0 claim.",
+  "protocol": "3.2.1",
+  "release_pr": 3101,
+  "release_pr_head": "9687b459d594fca674cd224ce8d951d76a5ccb01",
+  "python_harness_commit": "63bfadb4e1b3ef7c20c24dc7ba5c654642ac9a1c",
+  "contract_sha256": "4aadb67b21db63caa577bbc836db5373583cbd4de7c67e1aad0e55d438bd57cd",
+  "artifacts": {
+    "python": {
+      "stable": {
+        "package": "adcp",
+        "version": "8.0.0",
+        "protocol": "3.2.1",
+        "wheel_url": "https://files.pythonhosted.org/packages/8a/78/861204ee7d89f57baccdeb932d84c612f937c640e1134d1ad560769a80ae/adcp-8.0.0-py3-none-any.whl",
+        "wheel_sha256": "d862687ab71f1aa411887d20dc7faba66547e68a319d29c0a8f568e8f88dd8fb",
+        "wheel_bytes": 41602902,
+        "sdk_member_count": 4684,
+        "sdk_member_manifest_sha256": "4926c566024991818e2fb7c2849a39ea8fd995d7a87605bd1b29d4bb2e637205",
+        "build_kind": "published_pypi_release"
+      },
+      "candidate": {
+        "package": "adcp",
+        "version": "8.0.0",
+        "protocol": "3.2.1",
+        "wheel_url": "https://files.pythonhosted.org/packages/8a/78/861204ee7d89f57baccdeb932d84c612f937c640e1134d1ad560769a80ae/adcp-8.0.0-py3-none-any.whl",
+        "wheel_sha256": "d862687ab71f1aa411887d20dc7faba66547e68a319d29c0a8f568e8f88dd8fb",
+        "wheel_bytes": 41602902,
+        "sdk_member_count": 4684,
+        "sdk_member_manifest_sha256": "4926c566024991818e2fb7c2849a39ea8fd995d7a87605bd1b29d4bb2e637205",
+        "build_kind": "published_pypi_release"
+      }
+    },
+    "typescript": {
+      "stable": {
+        "package": "@adcp/sdk",
+        "version": "14.0.0",
+        "protocol": "3.2.1",
+        "tarball_sha256": "7acdbb882f2e3b689723eb3c696770156ffa5a90dd183fc947c7a5629114d2e0",
+        "tarball_bytes": 19937599,
+        "integrity": "sha512-Rq57cvtVmZX0A+UBy9doQzpNvjMsARAInNcKC/QTp4oOcz1z7tJAl5FvwAvNHOth8pFLM73jXoxH3N942kxPEg==",
+        "package_lock_sha256": "5131be8ccaafeee514ec8675736cde5c5f36200b40152364d9ee114f6bbd8066",
+        "installed_member_count": 6323,
+        "installed_member_manifest_sha256": "23558d629722fb084e8c7c02e6b0e26d8b9934a62a2a2693f6acf384f1b39b64",
+        "executable_harness_input": true,
+        "build_kind": "published_npm_release"
+      },
+      "candidate": {
+        "package": "@adcp/sdk",
+        "version": "14.1.0",
+        "protocol": "3.2.1",
+        "tarball_sha256": "c3d8b0376eeb30695626554aa16cd2652fc99971bb033a25d448fb77ce4ab96a",
+        "tarball_bytes": 20004540,
+        "integrity": "sha512-o2wnyqFHIO2NcImemPxB8TuByJRHp9IdLLmpzTcYavii6qcZTn42Qo/zS4iLmrXu/bPj5DY17+9mA9+G38wbYg==",
+        "package_lock_sha256": "b4ce8810ea2e31a33cf6527b3440b48e7dc0443de7aa0a510e665fe8655a0474",
+        "installed_member_count": 6365,
+        "installed_member_manifest_sha256": "79fdfed284a9e965122d39947dc9f4fcdc8c2ffac0112a23472c49cdd5cf6953",
+        "executable_harness_input": true,
+        "build_kind": "unpublished_packed_release_pr_candidate"
+      }
+    }
+  },
+  "runtime": {
+    "node": "22.12.0",
+    "python": "3.10.21",
+    "postgresql": "16.14"
+  },
+  "core": {
+    "run_id": "06951ca653e3",
+    "status": "acceptance_passed",
+    "positive_cells": [
+      "python-stable__typescript-stable",
+      "python-stable__typescript-candidate",
+      "python-candidate__typescript-stable",
+      "python-candidate__typescript-candidate"
+    ],
+    "cross_cell_isolation_errors": [],
+    "entrypoints": {
+      "buyer": {
+        "path": "scripts/ci/reporting_interop/ts_core_buyer.cjs",
+        "sha256": "a9a80c869da7e405f951c7fbdb270aefd5aef595fda056bbdb37881cc75c90e2"
+      },
+      "seller": {
+        "path": "scripts/ci/reporting_interop/python_core_server.py",
+        "sha256": "b37b98bfcef8718a23b92e50ed9919419d9ba8331fb58996a6bd097ef967539f"
+      }
+    }
+  },
+  "full_lifecycle": {
+    "run_id": "2b75b272fb00",
+    "status": "passed",
+    "cells": [
+      {
+        "id": "python-stable__typescript-stable",
+        "positive_full_lifecycle": true,
+        "issues": []
+      },
+      {
+        "id": "python-stable__typescript-candidate",
+        "positive_full_lifecycle": true,
+        "issues": []
+      },
+      {
+        "id": "python-candidate__typescript-stable",
+        "positive_full_lifecycle": true,
+        "issues": []
+      },
+      {
+        "id": "python-candidate__typescript-candidate",
+        "positive_full_lifecycle": true,
+        "issues": []
+      }
+    ],
+    "cross_cell_isolation_errors": [],
+    "entrypoints": {
+      "buyer": {
+        "bytes": 10976,
+        "path": "scripts/ci/reporting_interop/ts_mcp_buyer.cjs",
+        "sha256": "bc8b9fcda207c0c442c954a9344a54a42b809cec02362873165f5f5c38e9e359"
+      },
+      "receipt": {
+        "bytes": 5971,
+        "path": "scripts/ci/reporting_interop/ts_full_receipt.cjs",
+        "sha256": "b987cfb2cc933ef2becaefcdc602118b4fe0be9e0b653c9674399fef7f4abff5"
+      },
+      "scenario": {
+        "bytes": 2584,
+        "path": "scripts/ci/reporting_interop/full_scenario.json",
+        "sha256": "c12fb44687440b167d8c472aceaea8651600fa4bc7f6e38d452dd3c762958249"
+      },
+      "seller": {
+        "bytes": 10981,
+        "path": "scripts/ci/reporting_interop/python_full_server.py",
+        "sha256": "70edec110457399fb7817685072776b2ca6c82eaf7676c17040629a6dd078c3a"
+      }
+    }
+  },
+  "limits": [
+    "Candidate SDK 14.1.0 was packed from the release PR, not published to npm. Repeat against the exact published artifact after release.",
+    "The same GA Python wheel was installed twice for independent PostgreSQL cell isolation; this does not establish Python version-skew support.",
+    "Topology is Python producer to TypeScript consumer; reverse-direction proof and shared adjustment/receipt fixtures remain tracked by #3027."
+  ]
+}

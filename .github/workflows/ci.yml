@@ -43,6 +43,9 @@ jobs:
       - name: Lint GitHub Actions workflows
         run: npm run lint:workflows
 
+      - name: Test GitHub release note limits
+        run: node --test .github/scripts/create-package-releases.test.cjs
+
       # Run before the producer gates unit shards, which also discover this test.
       - name: Test CI artifact contract
         run: node --test test/ci-artifact-reuse.test.js

@@ -13,6 +13,32 @@ receipt checkpoints. Exact buyer-adjustment parity remains a Python-side
 follow-up; the rows below distinguish shared proof from TypeScript-only proof
 instead of treating an unimplemented peer capability as verified.
 
+## 2026-10-03 SDK 14.1 release candidate qualification
+
+The installed-artifact PostgreSQL reporting harness passed **Core 4/4** and
+**full lifecycle 4/4**, with no cell isolation errors, against the signed
+AdCP **3.2.1 GA** bundle. The inputs were the published Python `adcp==8.0.0`
+wheel, the published TypeScript `@adcp/sdk@14.0.0` archive, and an unpublished
+`@adcp/sdk@14.1.0` archive packed from release PR #3101 head
+`9687b459d594fca674cd224ce8d951d76a5ccb01`. Node 22.12.0, Python 3.10.21,
+and PostgreSQL 16.14 were used.
+
+Both Python roles use the same GA wheel, installed into separate environments.
+Each cell owns a fresh database and seller process. This qualifies the GA
+Python producer against the stable and candidate TypeScript consumers;
+it does not establish Python version-skew support. The full lifecycle cells
+exercise Managed Delivery, Reconciled Billing, exact revisions, accepted
+receipts, and signed webhook retry/replay. The upstream harness source is
+Python commit `63bfadb4e1b3ef7c20c24dc7ba5c654642ac9a1c`, with its artifact
+and protocol input pins repointed to these actual inputs.
+
+The [qualification record](reporting-14.1-qualification.json) retains archive
+hashes, installed-member manifests, harness entrypoint hashes, and cell results.
+Repeat this gate against the exact published 14.1.0 artifact after release.
+Issue #3027 remains open for the reverse producer/consumer direction and shared
+adjustment/receipt fixture work; this candidate qualification does not claim
+complete bidirectional parity.
+
 ## 2026-09-27 interoperability checkpoint
 
 The [published Python `adcp==8.0.0b16` wheel](https://pypi.org/project/adcp/8.0.0b16/) (SHA-256
@@ -59,8 +85,8 @@ See the [#1199 acceptance record](https://github.com/adcontextprotocol/adcp-clie
 That matrix does not include the current TypeScript `rc.49` artifact, the
 strict controller fix, or the final AdCP 3.2 bundle. Final SDK 14 release
 qualification must rerun the installed-artifact matrix on the exact release
-candidate and the Python release-PR merge commit. Python #1199 remains open
-for that final gate.
+candidate and the Python release-PR merge commit. Python #1199 subsequently
+closed after the rc1 merge-commit rerun, still using the prerelease inputs.
 
 | Contract | Python implementation | TypeScript implementation | Shared proof |
 | --- | --- | --- | --- |
