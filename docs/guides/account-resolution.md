@@ -42,19 +42,32 @@ resolve: async (ref, ctx) => {
 ```
 
 When `resolveAccount` is configured, a supplied unknown reference returns
-`ACCOUNT_NOT_FOUND`, even on optional account tools. `requiredForProducts` is
-enforced by the framework: a seller that declares it refuses `get_products`
-with `ACCOUNT_REQUIRED` when the request carries no account and authentication
-resolves none. `list_accounts.account` remains a filter.
+`ACCOUNT_NOT_FOUND`, even on optional account tools.
 
 ### Strict account references (`strictAccountReferences`)
 
-SDK 14 still lets a buyer-supplied `account` reach a raw handler-bag seller
-that has no reference-aware `resolveAccount`: the handler sees
-`params.account`, `ctx.account` is undefined, and the framework logs a
-one-time deprecation warning per server (through `logger.warn`, and also
-`process.emitWarning` outside `NODE_ENV=production`). An auth-only
-`resolveAccountFromAuth` does not authorize an arbitrary reference.
+SDK 14 keeps four compatibility behaviors that strict mode removes:
+
+- A buyer-supplied `account` still reaches a raw handler-bag seller that has
+  no reference-aware `resolveAccount`: the handler sees `params.account` and
+  `ctx.account` is undefined. An auth-only `resolveAccountFromAuth` does not
+  authorize an arbitrary reference.
+- A seller that declares `capabilities.account.requiredForProducts` still
+  serves `get_products` when the request carries no account and
+  authentication resolves none.
+- `list_accounts.account` is resolved through `resolveAccount` as the
+  request's account (an unknown or unauthorized filter returns
+  `ACCOUNT_NOT_FOUND`). Strict mode treats it as a filter instead.
+- On `createAdcpServerFromPlatform` with `resolution: 'implicit'`, an account
+  whose returned identity metadata disagrees with the supplied natural key is
+  still used.
+
+Each logs a deprecation warning once per process per warning code (through
+`logger.warn`, plus `process.emitWarning` outside `NODE_ENV=production`);
+later occurrences log at debug level. Codes:
+`ADCP_UNRESOLVED_ACCOUNT_REFERENCE`, `ADCP_REQUIRED_FOR_PRODUCTS_NOT_ENFORCED`,
+`ADCP_LIST_ACCOUNTS_FILTER_RESOLVED`, and
+`ADCP_IMPLICIT_ACCOUNT_IDENTITY_MISMATCH`.
 
 **Strict mode becomes the default in the next major release.** Opt in now:
 
@@ -74,11 +87,13 @@ With `strictAccountReferences: true`:
 
 - A supplied reference on a server without `resolveAccount` fails with
   `ACCOUNT_NOT_FOUND` before the handler runs.
-- On `createAdcpServerFromPlatform` with `resolution: 'implicit'`, an account
-  whose returned identity metadata (`brand`, `operator`, `operator_unit`,
-  `currency`, `timezone`, `sandbox`) disagrees with the supplied natural key
-  is refused with `ACCOUNT_NOT_FOUND`. Without the flag, each mismatch logs a
-  deprecation warning and the account is still used, as in SDK 14.0. Fields
+- A `requiredForProducts` seller refuses account-less `get_products` with
+  `ACCOUNT_REQUIRED`.
+- `list_accounts.account` is a filter: `resolveAccount` is not called for it
+  and `ctx.account` comes from `resolveAccountFromAuth`.
+- An implicit-mode account whose returned identity metadata (`brand`,
+  `operator`, `operator_unit`, `currency`, `timezone`, `sandbox`) disagrees
+  with the supplied natural key is refused with `ACCOUNT_NOT_FOUND`. Fields
   your store does not return are not compared.
 
 Migration for handler-bag sellers: move account authorization out of

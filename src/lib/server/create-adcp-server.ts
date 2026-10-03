@@ -192,6 +192,7 @@ function hasIdempotencyClearAll(store: IdempotencyStore): boolean {
 // mutation.
 const IDEMPOTENCY_CLAIM_RENEW_INTERVAL_MS = 60_000;
 import { isAccountProvisioningTask } from './account-provisioning';
+import { warnAccountReferenceDeprecation } from './account-reference-warnings';
 import { isMutatingTask, requestUsesIdempotency, IDEMPOTENCY_KEY_PATTERN, MUTATING_TASKS } from '../utils/idempotency';
 import { STATUS_FREE_SYNC_RESPONSE_TOOLS } from '../utils/envelope-status-compat';
 import { validateRequest, validateResponse, formatIssues, type ValidationIssue } from '../validation/schema-validator';
@@ -1840,18 +1841,22 @@ export interface AdcpServerConfig<TAccount = unknown> {
    *   fails with `ACCOUNT_NOT_FOUND` instead of reaching the handler
    *   unverified. An auth-only `resolveAccountFromAuth` does not authorize an
    *   arbitrary reference.
+   * - A seller that declares `capabilities.account.requiredForProducts`
+   *   refuses `get_products` with `ACCOUNT_REQUIRED` when the request carries
+   *   no account and authentication resolves none.
+   * - `list_accounts.account` is treated as a filter: `resolveAccount` is not
+   *   called for it, and `ctx.account` comes from `resolveAccountFromAuth`.
    * - On `createAdcpServerFromPlatform` with `accounts.resolution: 'implicit'`,
    *   an account whose returned identity metadata (`brand`, `operator`,
    *   `operator_unit`, `currency`, `timezone`, `sandbox`) disagrees with the
    *   supplied natural key is refused with `ACCOUNT_NOT_FOUND`.
    *
-   * When `false` (default), both cases log a deprecation warning — once per
-   * server for the unresolved pass-through, and a `logger.warn` per identity
-   * mismatch — and keep the SDK 14.0 behavior. Outside `NODE_ENV=production`
-   * the warning is also emitted through `process.emitWarning`. Configure a
-   * reference-aware `resolveAccount` that returns `null` for unknown or
-   * unauthorized references, then set this flag. See
-   * `docs/guides/account-resolution.md`.
+   * When `false` (default), each case keeps the SDK 14.0 behavior and logs a
+   * deprecation warning once per process per warning code (`logger.warn`, plus
+   * `process.emitWarning` outside `NODE_ENV=production`); later occurrences
+   * log at debug level. Configure a reference-aware `resolveAccount` that
+   * returns `null` for unknown or unauthorized references, then set this
+   * flag. See `docs/guides/account-resolution.md`.
    */
   strictAccountReferences?: boolean;
 
@@ -5213,30 +5218,6 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     logger.warn(message);
   }
 
-  // Compatibility window for raw handler-bag sellers without a reference-aware
-  // `resolveAccount`: a supplied `account` still reaches the handler
-  // unverified, as in SDK 14.0. Warn once per server; `strictAccountReferences`
-  // (default in the next major) refuses it instead.
-  let unresolvedAccountReferenceWarned = false;
-  const warnUnresolvedAccountReference = (toolName: string): void => {
-    if (unresolvedAccountReferenceWarned) return;
-    unresolvedAccountReferenceWarned = true;
-    const message =
-      `[adcp/createAdcpServer] DEPRECATED: ${toolName} received a buyer-supplied account reference, but no ` +
-      'resolveAccount is configured. The reference reached the handler unverified (ctx.account is undefined). ' +
-      'The next major release refuses it with ACCOUNT_NOT_FOUND. Configure a reference-aware resolveAccount ' +
-      'that returns null for unknown or unauthorized references, then set strictAccountReferences: true. ' +
-      'See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/account-resolution.md';
-    logger.warn(message, { tool: toolName, code: 'ADCP_UNRESOLVED_ACCOUNT_REFERENCE' });
-    if (process.env.NODE_ENV !== 'production') {
-      try {
-        process.emitWarning(message, { type: 'DeprecationWarning', code: 'ADCP_UNRESOLVED_ACCOUNT_REFERENCE' });
-      } catch {
-        // `--throw-deprecation` must not turn a compatibility warning into a request failure.
-      }
-    }
-  };
-
   // Pre-resolve credential-policy patterns once. The patterns config is
   // a stable property of `CredentialPolicyConfig`; pulling it out here
   // keeps the per-call hot path (`scanArgsForCredentials`) free of the
@@ -6788,12 +6769,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               idempotencyDisabled && requestIsStateChanging
                 ? outcome.issues.filter(i => !(i.keyword === 'required' && i.pointer === '/idempotency_key'))
                 : outcome.issues;
-            if (toolName === 'sync_accounts') {
+            if (toolName === 'sync_accounts' && effectiveFrameworkRequestValidationMode === 'strict') {
               const eventIssues = issues.filter(isAccountNotificationEventIssue);
               // Do not construct account identities from otherwise malformed
-              // entries. Strict mode rejects the remaining issues below;
-              // warn mode passes those malformed requests to the handler.
-              // Sole event-type failures become account rows in either mode.
+              // entries; strict mode rejects the remaining issues below. Sole
+              // event-type failures become account rows instead of a
+              // request-level rejection. Warn mode stays advisory, as in 14.0:
+              // the full request reaches the handler with a logged warning.
               if (eventIssues.length > 0 && eventIssues.length === issues.length) {
                 const failedRows = accountNotificationFailureRows(
                   params.accounts,
@@ -6841,7 +6823,21 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
         // --- Account resolution ---
         let unresolvedAccountPassThrough = false;
-        if (hasAccount && toolName !== 'list_accounts' && params.account != null && resolveAccount) {
+        // `list_accounts.account` is a filter. Strict mode treats it as one;
+        // the SDK 14.0 default still resolves it as the request's account.
+        const suppliedAccountRef =
+          hasAccount && params.account != null && !(strictAccountReferences && toolName === 'list_accounts');
+        if (suppliedAccountRef && toolName === 'list_accounts') {
+          warnAccountReferenceDeprecation(
+            logger,
+            'ADCP_LIST_ACCOUNTS_FILTER_RESOLVED',
+            '[adcp/createAdcpServer] DEPRECATED: list_accounts.account is resolved as the request account ' +
+              '(SDK 14.0 behavior). The next major release, or strictAccountReferences: true, treats it as a ' +
+              'filter: resolveAccount is not called for it and ctx.account comes from resolveAccountFromAuth.',
+            { tool: toolName }
+          );
+        }
+        if (suppliedAccountRef && resolveAccount) {
           try {
             const account = await resolveAccount(
               params.account,
@@ -6889,7 +6885,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               })
             );
           }
-        } else if (hasAccount && toolName !== 'list_accounts' && params.account != null) {
+        } else if (suppliedAccountRef) {
           // An auth-derived resolver cannot authorize an arbitrary
           // buyer-supplied reference. The rc.7 `list_creative_formats`
           // selector has always been refused; other tools keep the SDK 14.0
@@ -6904,9 +6900,21 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               })
             );
           }
-          warnUnresolvedAccountReference(toolName);
+          if (toolName !== 'list_accounts') {
+            warnAccountReferenceDeprecation(
+              logger,
+              'ADCP_UNRESOLVED_ACCOUNT_REFERENCE',
+              '[adcp/createAdcpServer] DEPRECATED: a request carried a buyer-supplied account reference, but no ' +
+                'resolveAccount is configured. The reference reached the handler unverified (ctx.account is ' +
+                'undefined). The next major release refuses it with ACCOUNT_NOT_FOUND. Configure a ' +
+                'reference-aware resolveAccount that returns null for unknown or unauthorized references, then ' +
+                'set strictAccountReferences: true. See ' +
+                'https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/account-resolution.md',
+              { tool: toolName }
+            );
+          }
           unresolvedAccountPassThrough = true;
-        } else if ((!hasAccount || params.account == null || toolName === 'list_accounts') && resolveAccountFromAuth) {
+        } else if (!suppliedAccountRef && resolveAccountFromAuth) {
           // Auth-derived path for tools without a supplied `account` field
           // (provide_performance_feedback, list_creative_formats, the
           // `tasks/get` polling path). Single-tenant agents return their
@@ -6966,13 +6974,24 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // handler satisfies the seller's declared requirement.
           !unresolvedAccountPassThrough
         ) {
-          return finalize(
-            adcpError('ACCOUNT_REQUIRED', {
-              message: 'This seller requires an account for product discovery',
-              field: 'account',
-              suggestion: 'Provision an account with sync_accounts or discover one with list_accounts',
-            })
-          );
+          if (!strictAccountReferences) {
+            warnAccountReferenceDeprecation(
+              logger,
+              'ADCP_REQUIRED_FOR_PRODUCTS_NOT_ENFORCED',
+              '[adcp/createAdcpServer] DEPRECATED: this seller declares account.required_for_products, but ' +
+                `${toolName} ran without an account (SDK 14.0 behavior). The next major release, or ` +
+                'strictAccountReferences: true, refuses it with ACCOUNT_REQUIRED.',
+              { tool: toolName }
+            );
+          } else {
+            return finalize(
+              adcpError('ACCOUNT_REQUIRED', {
+                message: 'This seller requires an account for product discovery',
+                field: 'account',
+                suggestion: 'Provision an account with sync_accounts or discover one with list_accounts',
+              })
+            );
+          }
         }
 
         // --- Sandbox-only enforcement (Phase 1.5 of #1269) ---

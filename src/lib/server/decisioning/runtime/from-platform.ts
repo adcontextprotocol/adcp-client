@@ -50,6 +50,7 @@
  */
 
 import { isAccountProvisioningTask } from '../../account-provisioning';
+import { warnAccountReferenceDeprecation } from '../../account-reference-warnings';
 import { randomUUID } from 'node:crypto';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type { AdcpServer } from '../../adcp-server';
@@ -1894,11 +1895,10 @@ function missingAccountError(toolName: string, resolution: AccountResolutionMode
  */
 interface ImplicitIdentityPolicy {
   readonly strict: boolean;
-  warned: boolean;
 }
 
 /** Fail-closed default for call sites that never see an implicit natural key. */
-const STRICT_IMPLICIT_IDENTITY_POLICY: ImplicitIdentityPolicy = { strict: true, warned: true };
+const STRICT_IMPLICIT_IDENTITY_POLICY: ImplicitIdentityPolicy = Object.freeze({ strict: true });
 
 /** Names the first natural-key field whose returned identity metadata disagrees with the request. */
 function implicitIdentityMismatch(
@@ -1970,20 +1970,17 @@ function assertResolvedAccountMatchesRef<T extends { id: string }>(
     const field = implicitIdentityMismatch(account as T & Partial<Extract<AccountReference, { brand: unknown }>>, ref);
     if (field === undefined) return account;
     if (implicitIdentity.strict) return null;
-    const message =
-      `[adcp/sdk] DEPRECATED: accounts.resolve returned account '${account.id}' whose ${field} does not match ` +
-      `the supplied natural key on a resolution: 'implicit' platform. The account was accepted for ` +
-      `compatibility; the next major release (or strictAccountReferences: true) refuses it with ` +
-      `ACCOUNT_NOT_FOUND. Resolve by the complete natural key and return identity metadata that matches it.`;
-    logger.warn(message, { field, accountId: account.id, code: 'ADCP_IMPLICIT_ACCOUNT_IDENTITY_MISMATCH' });
-    if (!implicitIdentity.warned && process.env.NODE_ENV !== 'production') {
-      implicitIdentity.warned = true;
-      try {
-        process.emitWarning(message, { type: 'DeprecationWarning', code: 'ADCP_IMPLICIT_ACCOUNT_IDENTITY_MISMATCH' });
-      } catch {
-        // `--throw-deprecation` must not turn a compatibility warning into a request failure.
-      }
-    }
+    // Server-side only: the mismatched account id goes to the adopter's logger
+    // metadata, never into a buyer-facing response.
+    warnAccountReferenceDeprecation(
+      logger,
+      'ADCP_IMPLICIT_ACCOUNT_IDENTITY_MISMATCH',
+      `[adcp/sdk] DEPRECATED: accounts.resolve returned an account whose ${field} does not match the supplied ` +
+        `natural key on a resolution: 'implicit' platform. The account was accepted for compatibility; the next ` +
+        `major release (or strictAccountReferences: true) refuses it with ACCOUNT_NOT_FOUND. Resolve by the ` +
+        `complete natural key and return identity metadata that matches it.`,
+      { field, accountId: account.id }
+    );
     return account;
   }
   if (normalizeAccountResolution(resolution) !== 'derived') return account;
@@ -2637,10 +2634,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // the platform's exact account type on the public migration seam while
   // keeping that historical internal boundary localized here.
   const runtimeOpts = opts as unknown as CreateAdcpServerFromPlatformOptions<Account>;
-  const implicitIdentityPolicy: ImplicitIdentityPolicy = {
-    strict: runtimeOpts.strictAccountReferences === true,
-    warned: false,
-  };
+  const implicitIdentityPolicy: ImplicitIdentityPolicy = { strict: runtimeOpts.strictAccountReferences === true };
   const runtimeLegacyHandlers = legacyHandlers as unknown as LegacyDecisioningHandlerGroups<Account>;
   validatePlatform(platform, {
     creative: legacyHandlers.creative,

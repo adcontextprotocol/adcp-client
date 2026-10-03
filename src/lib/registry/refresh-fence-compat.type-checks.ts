@@ -1,6 +1,8 @@
-// Type-only regression tests: SDK 14.0 consumers of the former human-refresh
-// fence fields keep compiling within the SDK 14 major. The fields are optional
-// and deprecated because the live registry no longer sends them.
+// Type-only regression tests for the former human-refresh fence fields. The
+// live registry no longer returns them, so they are optional and deprecated:
+// reading, comparing, and narrowing on them still compiles, but code that
+// assigned them to required (non-undefined) types needs a fallback. They are
+// removed from the types in the next major release.
 //
 // Run with `npm run typecheck`. The library build excludes `*.type-checks.ts`.
 
@@ -9,7 +11,7 @@ import type { AgentComplianceDetail, operations } from './types';
 declare const detail: AgentComplianceDetail;
 const availability = detail.refresh_availability;
 if (availability && !availability.available) {
-  // SDK 14.0 read-side usage of the removed fence metadata.
+  // Optional reads and comparisons from SDK 14.0 code still compile.
   const fenced: boolean = availability.code === 'refresh_authorization_provenance_required';
   const retryable: boolean | undefined = availability.retryable;
   const scope: 'platform' | undefined = availability.scope;
@@ -24,7 +26,7 @@ type RefreshUnavailable = operations['refreshAgent']['responses']['503']['conten
 declare const unavailable: RefreshUnavailable;
 // The standard registry Error shape is the supported contract.
 const errorCode: string = unavailable.error;
-// SDK 14.0 narrowing on the former fence arms still compiles.
+// Narrowing on the former fence arms still compiles; values may be undefined.
 if (unavailable.error === 'admin_authorization_unavailable') {
   const message: string | undefined = unavailable.message;
   void message;
