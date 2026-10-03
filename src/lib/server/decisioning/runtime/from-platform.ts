@@ -50,6 +50,7 @@
  */
 
 import { isAccountProvisioningTask } from '../../account-provisioning';
+import { warnAccountReferenceDeprecation } from '../../account-reference-warnings';
 import { randomUUID } from 'node:crypto';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type { AdcpServer } from '../../adcp-server';
@@ -1888,6 +1889,53 @@ function missingAccountError(toolName: string, resolution: AccountResolutionMode
 }
 
 /**
+ * Per-server policy for the implicit-mode identity-metadata check below.
+ * `strict` mirrors `strictAccountReferences`; the compatibility default warns
+ * and keeps the SDK 14.0 behavior of trusting the store's returned account.
+ */
+interface ImplicitIdentityPolicy {
+  readonly strict: boolean;
+}
+
+/** Fail-closed default for call sites that never see an implicit natural key. */
+const STRICT_IMPLICIT_IDENTITY_POLICY: ImplicitIdentityPolicy = Object.freeze({ strict: true });
+
+/** Names the first natural-key field whose returned identity metadata disagrees with the request. */
+function implicitIdentityMismatch(
+  identity: Partial<Extract<AccountReference, { brand: unknown }>>,
+  ref: Extract<AccountReference, { brand: unknown }>
+): string | undefined {
+  // Missing identity metadata remains compatible with existing custom stores;
+  // every identity field they do return must agree with the requested key.
+  if (identity.brand && identity.brand.domain !== ref.brand.domain) return 'brand.domain';
+  if (
+    identity.brand?.brand_id !== undefined &&
+    ref.brand.brand_id !== undefined &&
+    identity.brand.brand_id !== ref.brand.brand_id
+  )
+    return 'brand.brand_id';
+  if (
+    identity.brand?.countries !== undefined &&
+    ref.brand.countries !== undefined &&
+    [...identity.brand.countries].sort().join('\0') !== [...ref.brand.countries].sort().join('\0')
+  )
+    return 'brand.countries';
+  if (identity.operator !== undefined && identity.operator !== ref.operator) return 'operator';
+  if (
+    identity.operator_unit !== undefined &&
+    ref.operator_unit !== undefined &&
+    identity.operator_unit.id !== ref.operator_unit.id
+  )
+    return 'operator_unit';
+  if (identity.currency !== undefined && ref.currency !== undefined && identity.currency !== ref.currency)
+    return 'currency';
+  if (identity.timezone !== undefined && ref.timezone !== undefined && identity.timezone !== ref.timezone)
+    return 'timezone';
+  if (identity.sandbox !== undefined && identity.sandbox !== (ref.sandbox === true)) return 'sandbox';
+  return undefined;
+}
+
+/**
  * Defense in depth for `resolution: 'derived'`: the account a resolver hands
  * back for a buyer-named `{ account_id }` MUST be that account.
  *
@@ -1903,35 +1951,36 @@ function missingAccountError(toolName: string, resolution: AccountResolutionMode
  * `ACCOUNT_NOT_FOUND` envelope — no signal about whether the named account
  * exists. `createDerivedAccountStore` already fails closed here; this makes
  * hand-rolled stores fail closed too.
+ *
+ * For `resolution: 'implicit'` natural keys (#3091), returned identity
+ * metadata that disagrees with the supplied key is refused only under
+ * `strictAccountReferences`. Custom stores that canonicalize identity (brand
+ * aliases, case, sandbox-only fleets) were accepted in SDK 14.0, so the
+ * compatibility default warns instead.
  */
 function assertResolvedAccountMatchesRef<T extends { id: string }>(
   resolution: AccountResolutionMode | undefined,
   ref: AccountReference | undefined,
   account: T | null,
-  logger: AdcpLogger
+  logger: AdcpLogger,
+  implicitIdentity: ImplicitIdentityPolicy = STRICT_IMPLICIT_IDENTITY_POLICY
 ): T | null {
   if (account == null) return null;
   if (normalizeAccountResolution(resolution) === 'implicit' && ref && 'brand' in ref) {
-    const identity = account as T & Partial<Extract<AccountReference, { brand: unknown }>>;
-    // Missing identity metadata remains compatible with existing custom stores;
-    // every identity field they do return must agree with the requested key.
-    if (
-      (identity.brand && identity.brand.domain !== ref.brand.domain) ||
-      (identity.brand?.brand_id !== undefined &&
-        ref.brand.brand_id !== undefined &&
-        identity.brand.brand_id !== ref.brand.brand_id) ||
-      (identity.brand?.countries !== undefined &&
-        ref.brand.countries !== undefined &&
-        [...identity.brand.countries].sort().join('\0') !== [...ref.brand.countries].sort().join('\0')) ||
-      (identity.operator !== undefined && identity.operator !== ref.operator) ||
-      (identity.operator_unit !== undefined &&
-        ref.operator_unit !== undefined &&
-        identity.operator_unit.id !== ref.operator_unit.id) ||
-      (identity.currency !== undefined && ref.currency !== undefined && identity.currency !== ref.currency) ||
-      (identity.timezone !== undefined && ref.timezone !== undefined && identity.timezone !== ref.timezone) ||
-      (identity.sandbox !== undefined && identity.sandbox !== (ref.sandbox === true))
-    )
-      return null;
+    const field = implicitIdentityMismatch(account as T & Partial<Extract<AccountReference, { brand: unknown }>>, ref);
+    if (field === undefined) return account;
+    if (implicitIdentity.strict) return null;
+    // Server-side only: the mismatched account id goes to the adopter's logger
+    // metadata, never into a buyer-facing response.
+    warnAccountReferenceDeprecation(
+      logger,
+      'ADCP_IMPLICIT_ACCOUNT_IDENTITY_MISMATCH',
+      `[adcp/sdk] DEPRECATED: accounts.resolve returned an account whose ${field} does not match the supplied ` +
+        `natural key on a resolution: 'implicit' platform. The account was accepted for compatibility; the next ` +
+        `major release (or strictAccountReferences: true) refuses it with ACCOUNT_NOT_FOUND. Resolve by the ` +
+        `complete natural key and return identity metadata that matches it.`,
+      { field, accountId: account.id }
+    );
     return account;
   }
   if (normalizeAccountResolution(resolution) !== 'derived') return account;
@@ -2585,6 +2634,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // the platform's exact account type on the public migration seam while
   // keeping that historical internal boundary localized here.
   const runtimeOpts = opts as unknown as CreateAdcpServerFromPlatformOptions<Account>;
+  const implicitIdentityPolicy: ImplicitIdentityPolicy = { strict: runtimeOpts.strictAccountReferences === true };
   const runtimeLegacyHandlers = legacyHandlers as unknown as LegacyDecisioningHandlerGroups<Account>;
   validatePlatform(platform, {
     creative: legacyHandlers.creative,
@@ -3270,7 +3320,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           platform.accounts.resolution,
           ref,
           await platform.accounts.resolve(ref, toResolveCtx(ctx, ctx.toolName, ctx.input)),
-          fwLogger
+          fwLogger,
+          implicitIdentityPolicy
         );
         resolved = account != null;
         resolvedAccountId = account?.id;
@@ -3454,7 +3505,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       mergeOpts
     ),
     accounts: (() => {
-      const platformAccountHandlers = buildAccountHandlers(platform, ctxFor, fwLogger);
+      const platformAccountHandlers = buildAccountHandlers(platform, ctxFor, fwLogger, implicitIdentityPolicy);
       const merged = mergeHandlers(opts.accounts, platformAccountHandlers, 'accounts', mergeOpts);
       return guardDerivedSyncGovernance(
         guardAdopterSyncAccounts(merged, platform, platformAccountHandlers, fwLogger),
@@ -3478,7 +3529,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         platform.agentRegistry,
         fwLogger,
         runtimeOpts.resolveSessionKey,
-        opts.credentialPolicy
+        opts.credentialPolicy,
+        implicitIdentityPolicy
       );
       return {
         ...opts.customTools,
@@ -3833,7 +3885,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
             platform.accounts.resolution,
             accountRef,
             resolvedAccount,
-            fwLogger
+            fwLogger,
+            implicitIdentityPolicy
           );
 
           // Record the resolved account's explicit mode (if any). Used by the
@@ -4075,7 +4128,8 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
   agentRegistry: BuyerAgentRegistry | undefined,
   logger: AdcpLogger,
   resolveSessionKey: AdcpServerConfig<Account>['resolveSessionKey'] | undefined,
-  credentialPolicy: CredentialPolicy | undefined
+  credentialPolicy: CredentialPolicy | undefined,
+  implicitIdentityPolicy: ImplicitIdentityPolicy
 ) {
   const credentialPolicyPatterns =
     credentialPolicy === undefined || typeof credentialPolicy === 'string' ? undefined : credentialPolicy.patterns;
@@ -4264,7 +4318,8 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
             platform.accounts.resolution,
             ref as AccountReference,
             await platform.accounts.resolve(ref as AccountReference, resolveCtx),
-            logger
+            logger,
+            implicitIdentityPolicy
           );
           if (resolved) {
             resolvedAccountId = resolved.id;
@@ -8954,7 +9009,8 @@ function enforceSyncAccountsCommercialPolicy<P extends DecisioningPlatform<any, 
 function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
   platform: P,
   ctxFor: CtxForFn,
-  logger: AdcpLogger = DEFAULT_FRAMEWORK_LOGGER
+  logger: AdcpLogger = DEFAULT_FRAMEWORK_LOGGER,
+  implicitIdentityPolicy: ImplicitIdentityPolicy = STRICT_IMPLICIT_IDENTITY_POLICY
 ): AccountHandlers<Account> {
   const accounts = platform.accounts;
 
@@ -9080,7 +9136,8 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
         accounts.resolution,
         accountRef,
         await accounts.resolve(accountRef, resolveCtx),
-        logger
+        logger,
+        implicitIdentityPolicy
       );
       if (!resolved) {
         const suggestion = accountNotFoundSuggestion(accounts.resolution);
@@ -9123,7 +9180,8 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
         accounts.resolution,
         accountRef,
         await accounts.resolve(accountRef, resolveCtx),
-        logger
+        logger,
+        implicitIdentityPolicy
       );
       if (!resolved) {
         const suggestion = accountNotFoundSuggestion(accounts.resolution);

@@ -517,12 +517,20 @@ test('validation off on unforced dispatch retains handler-owned account validati
   assert.equal(response.structuredContent.accounts[0].action, 'updated');
 });
 
-test('warn validation reports sole event-type failures per account and otherwise retains advisory dispatch', async t => {
-  const { call, calls } = fixture(t, { validation: { requests: 'warn', responses: 'strict' } });
+test('warn validation keeps 14.0 advisory dispatch for event-type and other schema failures', async t => {
+  const warnings = [];
+  const logger = { debug() {}, info() {}, warn: (message, meta) => warnings.push({ message, meta }), error() {} };
+  const { call, calls } = fixture(t, { logger, validation: { requests: 'warn', responses: 'strict' } });
+  const invalid = entry();
   const valid = entry(['product.updated'], 'valid');
-  const response = await call(request([entry(), valid]));
-  assertRejected(response);
-  assert.deepEqual(calls[0].accounts, [valid]);
+  const response = await call(request([invalid, valid]));
+  assert.notEqual(response.isError, true, JSON.stringify(response.structuredContent));
+  assert.deepEqual(calls[0].accounts, [invalid, valid]);
+  assert.deepEqual(
+    response.structuredContent.accounts.map(row => row.action),
+    ['updated', 'updated']
+  );
+  assert.ok(warnings.some(entry => /Schema validation warning \(request\) for sync_accounts/.test(entry.message)));
   const malformed = { ...entry(), billing: 'invalid' };
   const advisory = await call(request([malformed], { idempotency_key: 'notification-event-scope-warn-malformed' }));
   assert.equal(advisory.structuredContent.accounts[0].action, 'updated');

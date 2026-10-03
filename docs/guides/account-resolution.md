@@ -41,24 +41,41 @@ resolve: async (ref, ctx) => {
 },
 ```
 
-A supplied unknown reference returns `ACCOUNT_NOT_FOUND`, even on optional
-account tools. Account-carrying tools without a resolver refuse supplied
-references and warn at construction in development. Existing handler-bag
-servers that configured only `resolveAccountFromAuth` must add a ref-aware
-`resolveAccount`: it must look the supplied reference up within the caller's
-authorized roster and return null on a miss. An auth-only resolver cannot
-authorize an arbitrary reference. `requiredForProducts`
-is enforced by the framework when neither the request nor authentication
-resolves an account. `list_accounts.account` remains a filter.
+When `resolveAccount` is configured, a supplied unknown reference returns
+`ACCOUNT_NOT_FOUND`, even on optional account tools.
 
-Migration for handler-bag sellers: move account authorization out of individual
-handlers and into the resolver before upgrading. This intentionally tightens
-the old behavior that let unchecked references reach handlers:
+### Strict account references (`strictAccountReferences`)
+
+SDK 14 keeps four compatibility behaviors that strict mode removes:
+
+- A buyer-supplied `account` still reaches a raw handler-bag seller that has
+  no reference-aware `resolveAccount`: the handler sees `params.account` and
+  `ctx.account` is undefined. An auth-only `resolveAccountFromAuth` does not
+  authorize an arbitrary reference.
+- A seller that declares `capabilities.account.requiredForProducts` still
+  serves `get_products` when the request carries no account and
+  authentication resolves none.
+- `list_accounts.account` is resolved through `resolveAccount` as the
+  request's account (an unknown or unauthorized filter returns
+  `ACCOUNT_NOT_FOUND`). Strict mode treats it as a filter instead.
+- On `createAdcpServerFromPlatform` with `resolution: 'implicit'`, an account
+  whose returned identity metadata disagrees with the supplied natural key is
+  still used.
+
+Each logs a deprecation warning once per process per warning code (through
+`logger.warn`, plus `process.emitWarning` outside `NODE_ENV=production`);
+later occurrences log at debug level. Codes:
+`ADCP_UNRESOLVED_ACCOUNT_REFERENCE`, `ADCP_REQUIRED_FOR_PRODUCTS_NOT_ENFORCED`,
+`ADCP_LIST_ACCOUNTS_FILTER_RESOLVED`, and
+`ADCP_IMPLICIT_ACCOUNT_IDENTITY_MISMATCH`.
+
+**Strict mode becomes the default in the next major release.** Opt in now:
 
 ```ts
 createAdcpServer({
   name: 'Seller',
   version: '1.0.0',
+  strictAccountReferences: true,
   resolveAccount: (ref, ctx) => authorizedAccounts.find(ref, ctx.authInfo),
   mediaBuy: {
     getProducts: (params, ctx) => catalog.forAccount(ctx.account, params),
@@ -66,9 +83,26 @@ createAdcpServer({
 });
 ```
 
+With `strictAccountReferences: true`:
+
+- A supplied reference on a server without `resolveAccount` fails with
+  `ACCOUNT_NOT_FOUND` before the handler runs.
+- A `requiredForProducts` seller refuses account-less `get_products` with
+  `ACCOUNT_REQUIRED`.
+- `list_accounts.account` is a filter: `resolveAccount` is not called for it
+  and `ctx.account` comes from `resolveAccountFromAuth`.
+- An implicit-mode account whose returned identity metadata (`brand`,
+  `operator`, `operator_unit`, `currency`, `timezone`, `sandbox`) disagrees
+  with the supplied natural key is refused with `ACCOUNT_NOT_FOUND`. Fields
+  your store does not return are not compared.
+
+Migration for handler-bag sellers: move account authorization out of
+individual handlers and into `resolveAccount`, then set the flag.
 `authorizedAccounts.find` must return null on an unknown reference or a
 reference owned by another principal. Public discovery may omit `account`;
-resource creation and spend commitments need an authorized account.
+resource creation and spend commitments need an authorized account. Implicit
+stores should resolve by the complete natural key and return identity
+metadata that echoes it, or omit the metadata.
 
 `InMemoryImplicitAccountStore` matches supplied refs on the complete natural
 key, including operator unit, currency, timezone, and sandbox. It retains its

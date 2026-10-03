@@ -256,7 +256,7 @@ import {
 } from '../errors';
 import { BuyerAccountRegistry, type AccountPolicy, type BuyerAccountStorage } from './buyer-account-registry';
 import type { ProductCache } from './product-cache';
-import { selectListedAccount, type ResolveAccountOptions } from './account-resolution';
+import { sameCountrySet, selectListedAccount, type ResolveAccountOptions } from './account-resolution';
 
 import { normalizeRequestParams } from '../utils/request-normalizer';
 import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
@@ -1903,6 +1903,20 @@ export class SingleAgentClient {
         },
       }
     ));
+  }
+
+  /**
+   * The memoized registry backs `resolveAccount()` only when the caller opts
+   * in with an account policy or registry configuration. Otherwise
+   * `resolveAccount()` keeps the SDK 14.0 sync-on-every-call behavior.
+   */
+  private accountRegistryOptedIn(): boolean {
+    return (
+      (this.config.accountPolicy ?? 'off') !== 'off' ||
+      this.config.accountStorage !== undefined ||
+      this.config.accountRegistryScope !== undefined ||
+      this.config.accountRegistryMaxEntries !== undefined
+    );
   }
 
   private accountRegistryContext(
@@ -5074,7 +5088,8 @@ export class SingleAgentClient {
     )[DEFERRED_SETTLEMENT_ACK];
     const taskType = context.taskType;
     if (
-      context.accountRegistry?.scope === this.accountScope() &&
+      context.accountRegistry !== undefined &&
+      context.accountRegistry.scope === this.accountScope() &&
       result.success &&
       result.status === 'completed' &&
       result.data &&
@@ -6589,12 +6604,15 @@ export class SingleAgentClient {
         !this.config.handlers?.onGetProductsStatusChange
           ? this.config.productCache
           : undefined;
-      const cacheScope = JSON.stringify([
-        this.accountScope(),
-        this.resolvedAdcpVersion,
-        this.capabilityEvidenceScopeKey,
-        effectiveOptions.contextId,
-      ]);
+      // Scope derivation hashes credential material; only pay for it with an opt-in cache.
+      const cacheScope = cache
+        ? JSON.stringify([
+            this.accountScope(),
+            this.resolvedAdcpVersion,
+            this.capabilityEvidenceScopeKey,
+            effectiveOptions.contextId,
+          ])
+        : '';
       const cacheParams = request as unknown as Record<string, unknown>;
       const skipCacheRead = (options as CanonicalReadTaskOptions & { [SKIP_PRODUCT_CACHE]?: boolean })?.[
         SKIP_PRODUCT_CACHE
@@ -7778,6 +7796,56 @@ export class SingleAgentClient {
           'resolveAccount',
           `Choose a supported billing party for sync_accounts (seller supports: ${supportedBilling.join(', ') || '(none)'}).`
         );
+      }
+      if (!this.accountRegistryOptedIn()) {
+        // SDK 14.0 behavior: sync on every call so callers observe the
+        // seller's current status. The memoized registry path is opt-in.
+        const result = await this.syncAccounts(
+          {
+            accounts: [
+              {
+                ...account,
+                billing,
+                ...(hints.paymentTerms !== undefined && { payment_terms: hints.paymentTerms }),
+                ...(hints.billingEntity !== undefined && { billing_entity: hints.billingEntity }),
+              },
+            ],
+          } as MutatingRequestInput<SyncAccountsRequest>,
+          undefined,
+          effectiveOptions
+        );
+        onTaskResult?.(result);
+        if (
+          !result.success ||
+          result.status !== 'completed' ||
+          !result.data ||
+          !('accounts' in result.data) ||
+          !Array.isArray(result.data.accounts)
+        ) {
+          throw new Error('sync_accounts did not return a completed account result.');
+        }
+        const syncedRow = result.data.accounts.find(
+          row =>
+            row.brand?.domain === hints.brand!.domain &&
+            row.operator === hints.operator &&
+            (!hints.brand!.brand_id || row.brand.brand_id === hints.brand!.brand_id) &&
+            sameCountrySet(hints.brand!.countries, row.brand.countries) &&
+            (!hints.operatorUnit || row.operator_unit?.id === hints.operatorUnit.id) &&
+            (!hints.currency || row.currency === hints.currency) &&
+            (!hints.timezone || row.timezone === hints.timezone) &&
+            (row.sandbox === undefined || (row.sandbox === true) === (hints.sandbox === true))
+        );
+        if (syncedRow?.status === 'pending_approval') {
+          throw new AccountPendingApprovalError(account, syncedRow.account_id);
+        }
+        if (!syncedRow || syncedRow.action === 'failed' || syncedRow.status !== 'active') {
+          throw new AccountRequiredError(
+            'implicit',
+            'resolveAccount',
+            'sync_accounts did not establish an active account for the requested brand and operator.'
+          );
+        }
+        return account;
       }
       let synced;
       try {

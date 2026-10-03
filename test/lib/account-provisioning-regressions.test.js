@@ -152,18 +152,6 @@ function seller(options = {}) {
     ...options,
   });
 }
-test('a supplied unresolved account never falls through to public products (#3094)', async () => {
-  const server = seller();
-  const response = await call(server, 'get_products', { account: a, brief: 'catalog' });
-  assert.equal(response.structuredContent.adcp_error.code, 'ACCOUNT_NOT_FOUND');
-  await server.close();
-});
-test('required_for_products is enforced by the framework (#3094)', async () => {
-  const server = seller({ capabilities: { account: { requiredForProducts: true } } });
-  const response = await call(server, 'get_products', { brief: 'catalog' });
-  assert.equal(response.structuredContent.adcp_error.code, 'ACCOUNT_REQUIRED');
-  await server.close();
-});
 test('discovery passes provisioning=false to lookup and never creates an account (#3094)', async () => {
   let created = 0;
   const server = seller({
@@ -211,21 +199,6 @@ test('thrown and non-terminal refreshes preserve a good mirror (#3092)', async (
   assert.equal(sync.products.count, 1);
   sync.stop();
 });
-test('list_accounts account references remain filters even on a server with a resolver (#3094)', async () => {
-  let resolved = false;
-  const server = seller({
-    resolveAccount: async () => {
-      resolved = true;
-      return null;
-    },
-    accounts: { listAccounts: async () => ({ accounts: [] }) },
-  });
-  const result = await call(server, 'list_accounts', { account: { account_id: 'filter' } });
-  assert.notEqual(result.isError, true);
-  assert.equal(resolved, false);
-  await server.close();
-});
-
 test('auto-poll retries an initial thrown bootstrap while start still rejects (#3092)', async t => {
   const client = feedClient();
   const good = client.getProducts;
