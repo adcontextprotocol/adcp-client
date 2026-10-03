@@ -10,7 +10,6 @@ const {
   ResolvedAgentJwksResolver,
   BrandJsonJwksResolver,
   BrandJsonResolverError,
-  AgentResolverError,
   createWebhookVerifier,
   StaticJwksResolver,
   verifyRequestSignature,
