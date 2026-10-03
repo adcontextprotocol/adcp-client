@@ -5,7 +5,9 @@ import {
 } from '../supply-path/products';
 // Main ADCP Client - Type-safe conversation-aware client for AdCP agents
 
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID, scryptSync } from 'node:crypto';
+const SKIP_PRODUCT_CACHE = Symbol('adcp.skipProductCache');
+const SKIP_ACCOUNT_REGISTRY_OBSERVATION = Symbol('adcp.skipAccountRegistryObservation');
 import type { AccountReference, AgentConfig } from '../types';
 import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
 import { parseAdcpMajorVersion, toReleasePrecisionVersion, type AdcpVersion } from '../version';
@@ -243,8 +245,18 @@ import {
   assertValidIdempotencyReplayTtlSeconds,
   supportsBuyingMode,
 } from '../utils/capabilities';
-import { AccountPendingApprovalError, AccountRequiredError, UnsupportedBuyingModeError } from '../errors';
-import { sameCountrySet, selectListedAccount, type ResolveAccountOptions } from './account-resolution';
+import {
+  AccountPendingApprovalError,
+  AccountRequiredError,
+  AccountNotProvisionedError,
+  AccountNotFoundError,
+  AccountSetupRequiredError,
+  AccountPaymentRequiredError,
+  UnsupportedBuyingModeError,
+} from '../errors';
+import { BuyerAccountRegistry, type AccountPolicy, type BuyerAccountStorage } from './buyer-account-registry';
+import type { ProductCache } from './product-cache';
+import { selectListedAccount, type ResolveAccountOptions } from './account-resolution';
 
 import { normalizeRequestParams } from '../utils/request-normalizer';
 import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
@@ -559,6 +571,13 @@ interface DeferredClientFinalizationContext {
   readonly routingSnapshot?: CanonicalCreativeRoutingSnapshot;
   readonly optionTaskId?: string;
   readonly optionContextId?: string;
+  readonly accountRegistry?: {
+    scope: string;
+    refs?: AccountReference[];
+    dryRun?: boolean;
+    knownOnly?: boolean;
+    observationEpoch?: number;
+  };
 }
 
 function isDeferredClientFinalizationContext(value: unknown): value is DeferredClientFinalizationContext {
@@ -1329,6 +1348,13 @@ const MCP_WEBHOOK_REQUIRED_FIELDS = ['idempotency_key', 'task_id', 'task_type', 
  * Configuration for SingleAgentClient (and multi-agent client)
  */
 export interface SingleAgentClientConfig extends ConversationConfig {
+  /** Default off preserves existing wire requests; auto/strict use the provisioning registry. */
+  accountPolicy?: AccountPolicy;
+  accountStorage?: BuyerAccountStorage;
+  accountRegistryMaxEntries?: number;
+  /** Trusted stable caller identity for durable registry partitioning. Default is credential fingerprint. */
+  accountRegistryScope?: string;
+  productCache?: ProductCache;
   /** Durable storage for restart-safe A2A human continuations. */
   deferredStorage?: DeferredTaskStorage;
   /** Resolve current trusted agent configuration for a persisted continuation. */
@@ -1760,6 +1786,216 @@ function propertyListResolutionErrorCode(err: unknown): string {
 }
 
 export class SingleAgentClient {
+  private _accounts?: BuyerAccountRegistry;
+  private accountRegistryExplicitlyAccessed = false;
+  private initialOAuthGrantMaterial?: string;
+  private accountCredentialMaterial?: string;
+  private accountCredentialScope?: string;
+
+  private credentialScope(material: string): string {
+    if (this.accountCredentialMaterial !== material) {
+      this.accountCredentialScope = scryptSync(material, 'adcp-sdk/account-registry-scope/v1', 32).toString('hex');
+      this.accountCredentialMaterial = material;
+    }
+    return this.accountCredentialScope!;
+  }
+
+  private accountScope(): string {
+    const agent = this.normalizedAgent ?? this.agent;
+    const cc = agent.oauth_client_credentials;
+    if (!cc && agent.oauth_tokens && !this.initialOAuthGrantMaterial)
+      this.initialOAuthGrantMaterial = JSON.stringify(agent.oauth_tokens);
+    const oauthIdentity = cc
+      ? { client_id: cc.client_id, token_endpoint: cc.token_endpoint, scope: cc.scope, resource: cc.resource }
+      : this.initialOAuthGrantMaterial;
+    const signing = agent.request_signing;
+    const signingIdentity = signing
+      ? signing.kind === 'provider'
+        ? {
+            keyid: signing.provider.keyid,
+            algorithm: signing.provider.algorithm,
+            fingerprint: signing.provider.fingerprint,
+            purpose: signing.provider.adcpUse,
+          }
+        : { keyid: signing.kid, algorithm: signing.alg, key: signing.private_key }
+      : undefined;
+    const credential =
+      this.config.accountRegistryScope ??
+      this.credentialScope(
+        JSON.stringify({
+          token: agent.auth_token,
+          oauth: oauthIdentity,
+          oauthClient: agent.oauth_client?.client_id,
+          oauthResource: agent.oauth_resource,
+          headers: agent.headers,
+          signing: signingIdentity,
+        })
+      );
+    return JSON.stringify([this.agent.agent_uri, this.agent.protocol, credential]);
+  }
+
+  get accounts(): BuyerAccountRegistry {
+    this.accountRegistryExplicitlyAccessed = true;
+    return this.getAccountRegistry();
+  }
+
+  private getAccountRegistry(): BuyerAccountRegistry {
+    return (this._accounts ??= new BuyerAccountRegistry(
+      () => this.accountScope(),
+      async (account, options, taskOptions) => {
+        const caps = await this.getCapabilities(taskOptions);
+        const supported = caps.account?.supportedBilling ?? [];
+        const billing =
+          options.billing ?? caps.account?.defaultBilling ?? (supported.length === 1 ? supported[0] : undefined);
+        if (!billing || (supported.length && !supported.includes(billing))) {
+          throw new AccountRequiredError(
+            'implicit',
+            'sync_accounts',
+            'Choose a supported billing party before provisioning.'
+          );
+        }
+        return this.syncAccounts(
+          {
+            accounts: [
+              {
+                ...account,
+                billing,
+                ...(options.paymentTerms !== undefined && { payment_terms: options.paymentTerms }),
+                ...(options.billingEntity !== undefined && { billing_entity: options.billingEntity }),
+              },
+            ],
+          } as MutatingRequestInput<SyncAccountsRequest>,
+          undefined,
+          taskOptions
+        );
+      },
+      this.config.accountStorage,
+      async (accountId, options) => {
+        const rows: ListAccountsResponse['accounts'] = [];
+        const cursors = new Set<string>();
+        let cursor: string | undefined;
+        for (let page = 0; page < 100; page++) {
+          const result = await this.listAccounts(
+            { account: { account_id: accountId }, ...(cursor && { pagination: { cursor } }) },
+            undefined,
+            { ...options, [SKIP_ACCOUNT_REGISTRY_OBSERVATION]: true } as TaskOptions
+          );
+          if (!result.success || result.status !== 'completed' || !result.data || !('accounts' in result.data))
+            throw new Error('Account status reconciliation failed.');
+          rows.push(...result.data.accounts);
+          if (rows.some(row => row.account_id === accountId) || !result.data.pagination?.has_more)
+            return rows.filter(row => row.account_id === accountId);
+          const next = result.data.pagination.cursor;
+          if (!next || cursors.has(next)) break;
+          cursors.add(next);
+          cursor = next;
+        }
+        throw new Error('Account status reconciliation could not complete pagination.');
+      },
+      {
+        maxEntries: this.config.accountRegistryMaxEntries,
+        normalizeOptions: async (options, taskOptions) => {
+          if (options.billing) return options;
+          const caps = await this.getCapabilities(taskOptions);
+          const supported = caps.account?.supportedBilling ?? [];
+          const billing = caps.account?.defaultBilling ?? (supported.length === 1 ? supported[0] : undefined);
+          return { ...options, ...(billing && { billing }) };
+        },
+      }
+    ));
+  }
+
+  private accountRegistryContext(
+    task: string,
+    params: any,
+    options?: TaskOptions
+  ): DeferredClientFinalizationContext['accountRegistry'] {
+    const knownOnly =
+      !this.accountRegistryExplicitlyAccessed &&
+      (this.config.accountPolicy ?? 'off') === 'off' &&
+      !this.config.accountStorage;
+    if (knownOnly && !this._accounts) return undefined;
+    if (
+      (options as TaskOptions & { [SKIP_ACCOUNT_REGISTRY_OBSERVATION]?: boolean })?.[SKIP_ACCOUNT_REGISTRY_OBSERVATION]
+    )
+      return undefined;
+    if (task !== 'sync_accounts' && task !== 'list_accounts') return undefined;
+    return {
+      scope: this.accountScope(),
+      ...(knownOnly && { knownOnly: true }),
+      observationEpoch: this.getAccountRegistry().captureObservation(),
+      ...(task === 'list_accounts' && params.account && { refs: [params.account] }),
+      ...(task === 'sync_accounts' && {
+        refs: Array.isArray(params.accounts)
+          ? params.accounts.flatMap((value: unknown) => {
+              const ref = canonicalAccountRoutingSnapshot(value);
+              return ref ? [ref as AccountReference] : [];
+            })
+          : [],
+        dryRun: params.dry_run === true,
+      }),
+    };
+  }
+
+  private async applyAccountPolicy(task: string, params: any, options?: TaskOptions): Promise<any> {
+    const policy = this.config.accountPolicy ?? 'off';
+    const ref =
+      params?.account ?? (typeof params?.account_id === 'string' ? { account_id: params.account_id } : undefined);
+    if (
+      policy === 'off' ||
+      options?.skipAccountValidation ||
+      options?.preserveGovernedPayload ||
+      !ref ||
+      task === 'list_accounts'
+    )
+      return params;
+    if (
+      typeof ref !== 'object' ||
+      ref === null ||
+      (!('account_id' in ref) && (typeof ref.brand?.domain !== 'string' || typeof ref.operator !== 'string'))
+    )
+      return params; // Let normal request validation report malformed references.
+    const known = await this.getAccountRegistry().get(ref);
+    if (known && !['unknown', 'provisioning', 'failed_provisioning'].includes(known.status)) {
+      if (
+        ['create_media_buy', 'buy_products', 'accept_proposal', 'activate_signal', 'acquire_rights'].includes(task) &&
+        known.status !== 'active'
+      ) {
+        if (known.status === 'pending_approval') throw new AccountPendingApprovalError(ref, known.account_id);
+        if (known.status === 'payment_required') throw new AccountPaymentRequiredError();
+        throw new AccountSetupRequiredError(
+          `Account status is ${known.status}. Refresh it with client.accounts.applyStatusChange or complete seller setup.`
+        );
+      }
+      return params;
+    }
+    if (
+      policy === 'strict' ||
+      ![
+        'get_products',
+        'list_products',
+        'get_signals',
+        'request_proposals',
+        'refine_proposals',
+        'decline_proposals',
+      ].includes(task)
+    ) {
+      throw new AccountNotProvisionedError(ref, task);
+    }
+    const caps = await this.getCapabilities(options);
+    if (
+      caps._synthetic ||
+      (['get_products', 'list_products'].includes(task) && caps.account?.requiredForProducts) ||
+      params.push_notification_config ||
+      !schemaAllowsTopLevelField(task, 'brand')
+    ) {
+      throw new AccountNotProvisionedError(ref, task);
+    }
+    if (!('brand' in ref)) throw new AccountNotProvisionedError(ref, task);
+    const { account, ...publicRequest } = params;
+    return { ...publicRequest, brand: params.brand ?? ref.brand };
+  }
+
   private executor: TaskExecutor;
   private asyncHandler?: AsyncHandler;
   private normalizedAgent: InternalAgentConfig;
@@ -1855,6 +2091,9 @@ export class SingleAgentClient {
 
     // Normalize agent URL for MCP protocol
     this.normalizedAgent = this.normalizeAgentConfig(this.agent);
+    // Pin this client's configured OAuth grant, retaining caller isolation across automatic token refreshes.
+    if (this.normalizedAgent.oauth_tokens && !this.normalizedAgent.oauth_client_credentials)
+      this.initialOAuthGrantMaterial = JSON.stringify(this.normalizedAgent.oauth_tokens);
     this.capabilityEvidenceAuthMaterial = this.currentCapabilityEvidenceAuthMaterial();
 
     this.executor = new TaskExecutor({
@@ -4596,6 +4835,7 @@ export class SingleAgentClient {
     throwIfAborted(options?.signal);
     const canonicalCreativeInvocation =
       CANONICAL_CREATIVE_ACTIVITY_TASKS.has(taskType) || canonicalRequest !== undefined;
+    params = await this.applyAccountPolicy(taskType, params, options);
     // Normalize params for backwards compatibility before validation
     let normalizedParams = options?.preserveGovernedPayload
       ? params
@@ -4741,6 +4981,7 @@ export class SingleAgentClient {
         serverVersionSynthetic: capabilityDiscoveryContext.capabilities._synthetic,
       }),
       productPolicyRequest: productPolicyRequestSnapshot(normalizedParams),
+      accountRegistry: this.accountRegistryContext(taskType, normalizedParams, effectiveOptions),
       ...(projectionCatalogs !== undefined && { projectionCatalogs }),
       ...(routingSnapshot !== undefined && { routingSnapshot }),
       ...(effectiveOptions?.taskId !== undefined && { optionTaskId: effectiveOptions.taskId }),
@@ -4832,6 +5073,69 @@ export class SingleAgentClient {
       }
     )[DEFERRED_SETTLEMENT_ACK];
     const taskType = context.taskType;
+    if (
+      context.accountRegistry?.scope === this.accountScope() &&
+      result.success &&
+      result.status === 'completed' &&
+      result.data &&
+      typeof result.data === 'object' &&
+      'accounts' in result.data &&
+      Array.isArray(result.data.accounts)
+    ) {
+      try {
+        const registry = this.getAccountRegistry();
+        let refs = context.accountRegistry.refs ?? [];
+        let rows: readonly unknown[] = result.data.accounts;
+        if (context.accountRegistry.knownOnly) {
+          refs = (await Promise.all(refs.map(async ref => ((await registry.get(ref)) ? ref : undefined)))).filter(
+            (ref): ref is AccountReference => ref !== undefined
+          );
+          if (taskType === 'list_accounts') {
+            rows = (
+              await Promise.all(
+                result.data.accounts.map(async row => {
+                  const ref = canonicalAccountRoutingSnapshot(row);
+                  if (ref && (await registry.get(ref as AccountReference))) return row;
+                  const natural = canonicalAccountRoutingSnapshot({ ...row, account_id: undefined });
+                  return natural && (await registry.get(natural as AccountReference)) ? row : undefined;
+                })
+              )
+            ).filter(row => row !== undefined);
+          }
+        }
+        if (context.accountRegistry.scope !== this.accountScope()) return result;
+        if (taskType === 'sync_accounts')
+          await registry.observeSync(
+            refs,
+            rows,
+            context.accountRegistry.dryRun,
+            context.accountRegistry.observationEpoch
+          );
+        if (taskType === 'list_accounts') {
+          const ref = refs[0];
+          await registry.observeList(
+            rows,
+            ref &&
+              'account_id' in ref &&
+              (!(result.data as unknown as ListAccountsResponse).pagination?.has_more ||
+                result.data.accounts.some(row => (row as { account_id?: string }).account_id === ref.account_id))
+              ? ref.account_id
+              : undefined,
+            context.accountRegistry.observationEpoch
+          );
+        }
+      } catch {
+        result.debug_logs = [
+          ...(result.debug_logs ?? []),
+          {
+            level: 'warn',
+            timestamp: new Date().toISOString(),
+            message:
+              'Account registry observation failed. The seller operation completed; reconcile with listAccounts before relying on the registry.',
+          },
+        ];
+      }
+    }
     const resumedOptions: TaskOptions = {
       ...(options ?? {}),
       ...(context.optionTaskId !== undefined && { taskId: context.optionTaskId }),
@@ -6221,7 +6525,7 @@ export class SingleAgentClient {
     );
     return withTaskDeadline(snapshotTaskOptions(taskOptions), async effectiveOptions => {
       this.assertRequestSupportedByConfiguredVersion('get_products', params, effectiveOptions);
-      let request = params;
+      let request = await this.applyAccountPolicy('get_products', params, effectiveOptions);
       const legacyAccountId = (request as { account_id?: unknown }).account_id;
       const accountReference =
         request.account ??
@@ -6276,10 +6580,53 @@ export class SingleAgentClient {
         request = { ...request, buying_mode: 'wholesale' };
       }
       const account = canonicalAccountRoutingSnapshot(accountReference);
-      return this.executeAndHandle<CanonicalGetProductsResponse>(
+      const cache =
+        !effectiveOptions.skipRequestValidation &&
+        !effectiveOptions.preserveGovernedPayload &&
+        !inputHandler &&
+        !request.push_notification_config &&
+        !this.config.webhookUrlTemplate &&
+        !this.config.handlers?.onGetProductsStatusChange
+          ? this.config.productCache
+          : undefined;
+      const cacheScope = JSON.stringify([
+        this.accountScope(),
+        this.resolvedAdcpVersion,
+        this.capabilityEvidenceScopeKey,
+        effectiveOptions.contextId,
+      ]);
+      const cacheParams = request as unknown as Record<string, unknown>;
+      const skipCacheRead = (options as CanonicalReadTaskOptions & { [SKIP_PRODUCT_CACHE]?: boolean })?.[
+        SKIP_PRODUCT_CACHE
+      ];
+      if (
+        cache &&
+        !skipCacheRead &&
+        cacheParams.if_wholesale_feed_version === undefined &&
+        cacheParams.if_pricing_version === undefined
+      ) {
+        const hit = cache.read<CanonicalGetProductsResponse>(cacheScope, cacheParams);
+        if (hit) {
+          throwIfAborted(effectiveOptions.signal);
+          if (hit.success && hit.status === 'completed')
+            this.rememberCanonicalProductRoutes(hit.data.products ?? [], account, hit.data.products ?? []);
+          return attachMatch(
+            await this.applyProductPropertyPolicy(
+              hit,
+              'get_products',
+              productPolicyRequestSnapshot(request),
+              effectiveOptions.signal
+            )
+          );
+        }
+      }
+      const conditionalSnapshot = skipCacheRead
+        ? undefined
+        : cache?.read<CanonicalGetProductsResponse>(cacheScope, cacheParams, true);
+      const result = await this.executeAndHandle<CanonicalGetProductsResponse>(
         'get_products',
         'onGetProductsStatusChange',
-        request,
+        cache && !skipCacheRead ? cache.conditionalParams(cacheScope, cacheParams) : request,
         inputHandler,
         effectiveOptions,
         data => {
@@ -6299,6 +6646,45 @@ export class SingleAgentClient {
         undefined,
         projectionCatalogs
       );
+      const finishCache = async (
+        completed: TaskResult<CanonicalGetProductsResponse>
+      ): Promise<TaskResult<CanonicalGetProductsResponse>> => {
+        if (!cache) return completed;
+        const cachedResult = cache.write(cacheScope, cacheParams, completed, conditionalSnapshot);
+        if (cachedResult.success && cachedResult.status === 'completed') {
+          if (
+            !skipCacheRead &&
+            cacheParams.if_wholesale_feed_version === undefined &&
+            cacheParams.if_pricing_version === undefined &&
+            (cachedResult.data as { unchanged?: boolean }).unchanged === true
+          ) {
+            // A missing/mismatched conditional snapshot needs a real unconditional read.
+            return this.getProducts(params, inputHandler, {
+              ...options,
+              ...effectiveOptions,
+              [SKIP_PRODUCT_CACHE]: true,
+            } as CanonicalReadTaskOptions);
+          }
+          this.rememberCanonicalProductRoutes(
+            cachedResult.data.products ?? [],
+            account,
+            cachedResult.data.products ?? []
+          );
+        }
+        if (cachedResult.submitted) {
+          const submitted = cachedResult.submitted;
+          cachedResult.submitted = {
+            ...submitted,
+            waitForCompletion: (interval, signal) => submitted.waitForCompletion(interval, signal).then(finishCache),
+          };
+        }
+        if (cachedResult.deferred) {
+          const deferred = cachedResult.deferred;
+          cachedResult.deferred = { ...deferred, resume: input => deferred.resume(input).then(finishCache) };
+        }
+        return attachMatch(cachedResult);
+      };
+      return finishCache(result);
     });
   }
 
@@ -7393,49 +7779,26 @@ export class SingleAgentClient {
           `Choose a supported billing party for sync_accounts (seller supports: ${supportedBilling.join(', ') || '(none)'}).`
         );
       }
-      const result = await this.syncAccounts(
-        {
-          accounts: [
-            {
-              ...account,
-              billing,
-            },
-          ],
-        },
-        undefined,
-        effectiveOptions
-      );
-      onTaskResult?.(result);
-      if (
-        !result.success ||
-        result.status !== 'completed' ||
-        !result.data ||
-        !('accounts' in result.data) ||
-        !Array.isArray(result.data.accounts)
-      ) {
-        throw new Error('sync_accounts did not return a completed account result.');
-      }
-      const synced = result.data.accounts.find(
-        row =>
-          row.brand?.domain === hints.brand!.domain &&
-          row.operator === hints.operator &&
-          (!hints.brand!.brand_id || row.brand.brand_id === hints.brand!.brand_id) &&
-          sameCountrySet(hints.brand!.countries, row.brand.countries) &&
-          (!hints.operatorUnit || row.operator_unit?.id === hints.operatorUnit.id) &&
-          (!hints.currency || row.currency === hints.currency) &&
-          (!hints.timezone || row.timezone === hints.timezone) &&
-          (row.sandbox === undefined || (row.sandbox === true) === (hints.sandbox === true))
-      );
-      if (synced?.status === 'pending_approval') {
-        throw new AccountPendingApprovalError(account, synced.account_id);
-      }
-      if (!synced || synced.action === 'failed' || synced.status !== 'active') {
-        throw new AccountRequiredError(
-          'implicit',
-          'resolveAccount',
-          'sync_accounts did not establish an active account for the requested brand and operator.'
+      let synced;
+      try {
+        synced = await this.getAccountRegistry().ensure(
+          account,
+          {
+            billing,
+            paymentTerms: hints.paymentTerms,
+            billingEntity: hints.billingEntity,
+          },
+          effectiveOptions,
+          onTaskResult
         );
+      } catch (error) {
+        if (error instanceof AccountNotFoundError)
+          throw new AccountRequiredError('implicit', 'resolveAccount', error.message);
+        throw error;
       }
+      if (synced.status === 'pending_approval') throw new AccountPendingApprovalError(account, synced.account_id);
+      if (synced.status !== 'active')
+        throw new AccountRequiredError('implicit', 'resolveAccount', 'The account is not active.');
       return account;
     });
   }
@@ -7843,6 +8206,7 @@ export class SingleAgentClient {
     const startTime = Date.now();
     let detectedServerVersion: 'v2' | 'v3' | undefined;
     let detectedServerVersionSynthetic: boolean | undefined;
+    params = await this.applyAccountPolicy(taskName, params, options);
     try {
       const normalizedParams = options?.preserveGovernedPayload
         ? params
@@ -7931,6 +8295,7 @@ export class SingleAgentClient {
           serverVersionSynthetic: capabilityDiscoveryContext.capabilities._synthetic,
         }),
         productPolicyRequest: productPolicyRequestSnapshot(normalizedParams),
+        accountRegistry: this.accountRegistryContext(taskName, normalizedParams, effectiveOptions),
         ...(effectiveOptions?.taskId !== undefined && { optionTaskId: effectiveOptions.taskId }),
         ...(effectiveOptions?.contextId !== undefined && { optionContextId: effectiveOptions.contextId }),
       };

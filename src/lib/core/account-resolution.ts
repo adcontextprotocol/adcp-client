@@ -24,6 +24,8 @@ export interface ResolveAccountOptions {
   forTask?: string;
   /** Billing party for buyer-declared accounts when the seller has no default. */
   billing?: 'operator' | 'agent' | 'advertiser';
+  paymentTerms?: import('../types/tools.generated').PaymentTerms;
+  billingEntity?: import('../types/tools.generated').BusinessEntity;
   /** An account_id or a callback choosing one of the eligible list_accounts rows. */
   select?: string | ((accounts: readonly ListedAccount[]) => string);
 }

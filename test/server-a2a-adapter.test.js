@@ -21,6 +21,7 @@ const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/id
 // same rationale as server-create-adcp-server.test.js.
 function createAdcpServer(config) {
   return _createAdcpServer({
+    resolveAccount: ref => (ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined),
     ...config,
     stateStore: config?.stateStore ?? new InMemoryStateStore(),
     validation: { requests: 'off', responses: 'off', ...(config?.validation ?? {}) },

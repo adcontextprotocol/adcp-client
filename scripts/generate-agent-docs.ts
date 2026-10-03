@@ -628,6 +628,9 @@ function generateLlmsTxt(
   );
   ln(`- **Buyer** (calling a seller): read \`docs/guides/BUYER-QUICKSTART-3.2.md\` first.`);
   ln(
+    `- **Account setup and first discovery:** read \`docs/guides/FIRST-CALL-TO-A-SELLER.md\` for the provisioning registry, account policies, billing terms, and product cache.`
+  );
+  ln(
     `- **Buyer Reliable Reporting**: import reconciliation, PostgreSQL persistence, and the worker from \`@adcp/sdk/reporting/consumer\`; see \`docs/guides/REPORTING-RECONCILIATION.md\`.`
   );
   ln(

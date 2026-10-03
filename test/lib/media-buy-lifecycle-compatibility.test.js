@@ -29,6 +29,7 @@ async function withDualSurfaceSeller(serverAdcpVersion, buyerAdcpVersion, run, o
     return true;
   });
   const server = createAdcpServer({
+    resolveAccount: ref => (ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined),
     name: 'dual-surface-seller',
     version: '1.0.0',
     adcpVersion: serverAdcpVersion,

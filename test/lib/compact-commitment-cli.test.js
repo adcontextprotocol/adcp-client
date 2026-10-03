@@ -94,6 +94,8 @@ before(async () => {
   server = serve(
     () =>
       createAdcpServer({
+        resolveAccount: ref =>
+          ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined,
         name: 'Compact commitment seller',
         version: '1.0.0',
         adcpVersion: '3.2.1',

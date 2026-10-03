@@ -382,6 +382,8 @@ export interface ResolvedAuthInfo {
 }
 
 export interface ResolveContext {
+  /** True only for provisioning tasks. Discovery/negotiation MUST use lookup only. */
+  readonly provisioning?: boolean;
   /** Authenticated principal extracted by `serve({ authenticate })`. Undefined when no `authenticate` is configured. */
   authInfo?: ResolvedAuthInfo;
   /** Tool the buyer is calling — useful for tool-aware tenant routing. */

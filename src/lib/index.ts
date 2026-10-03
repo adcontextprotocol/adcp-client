@@ -733,6 +733,11 @@ export {
   AccountRequiredError,
   AccountPendingApprovalError,
   AccountAmbiguousError,
+  BuyerSetupError,
+  AccountNotFoundError,
+  AccountSetupRequiredError,
+  AccountPaymentRequiredError,
+  AccountNotProvisionedError,
   SDK_ERROR_TO_PROTOCOL_ERROR_CODE,
   VersionUnsupportedError,
   IdempotencyConflictError,
@@ -2382,3 +2387,13 @@ export type {
   CollectionDistribution,
   DiscoveryCollection,
 } from './discovery/types';
+
+export {
+  BuyerAccountRegistry,
+  type AccountPolicy,
+  type BuyerAccountStorage,
+  type BuyerAccountRegistryOptions,
+  type EnsureAccountOptions,
+  type ProvisionedAccount,
+} from './core/buyer-account-registry';
+export { createProductCache, ProductCache, type ProductCacheOptions } from './core/product-cache';

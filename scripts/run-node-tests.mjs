@@ -28,6 +28,9 @@ export const SLOW_NODE_TESTS = new Set([
   'test/examples/hello-seller-adapter-guaranteed.test.js',
   'test/lib/cli-auth-scheme.test.js',
   'test/lib/cli-removed-flags.test.js',
+  // Repeated CLI scaffolding, compile checks and PostgreSQL doctor probes
+  // exceed the fast lane's 60s file limit when schema-heavy files run alongside.
+  'test/lib/cli-project-dx.test.js',
   'test/lib/cli-soft-fail.test.js',
   // Spawns the CLI fifteen times while repairing and validating compliance
   // bundles. It takes ~41s standing alone, leaving too little margin under the

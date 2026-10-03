@@ -415,16 +415,8 @@ test('async discovery operations and controller arms use trusted context scope',
     { account: { account_id: 'fixture_signals_account' }, discovery_mode: 'brief', signal_spec: 'scope test' },
     {}
   );
-  assert.deepStrictEqual(productsOpaque.account, {
-    brand: BRAND,
-    operator: BRAND.domain,
-    sandbox: true,
-  });
-  assert.deepStrictEqual(signalsOpaque.account, {
-    brand: BRAND,
-    operator: BRAND.domain,
-    sandbox: true,
-  });
+  assert.deepStrictEqual(productsOpaque.account, { account_id: 'fixture_products_account' });
+  assert.deepStrictEqual(signalsOpaque.account, { account_id: 'fixture_signals_account' });
 
   const wholesaleAccount = {
     brand: { domain: 'wholesale-scope.example' },

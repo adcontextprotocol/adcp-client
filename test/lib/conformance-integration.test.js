@@ -37,6 +37,8 @@ function makeSignalsServer() {
   return serve(
     () =>
       createAdcpServer({
+        resolveAccount: ref =>
+          ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined,
         name: 'Conformance Test Signals Agent',
         version: '1.0.0',
         signals: {
@@ -169,6 +171,8 @@ describe('conformance: integration', { concurrency: false }, () => {
     const brokenServer = serve(
       () =>
         createAdcpServer({
+          resolveAccount: ref =>
+            ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined,
           name: 'Broken Agent',
           version: '1.0.0',
           signals: {
@@ -208,6 +212,8 @@ describe('conformance: integration', { concurrency: false }, () => {
     const creativeServer = serve(
       () =>
         createAdcpServer({
+          resolveAccount: ref =>
+            ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined,
           name: 'Creative Fixture Agent',
           version: '1.0.0',
           creative: {

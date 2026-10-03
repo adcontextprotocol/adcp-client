@@ -69,6 +69,8 @@ describe('createAdcpServer + webhook emitter: full-stack publisher E2E', () => {
 
     const emitted = [];
     const server = createAdcpServer({
+      resolveAccount: ref =>
+        ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined,
       name: 'e2e-publisher',
       version: '1.0.0',
       webhooks: { signerKey, fetch: loopbackFetch },
@@ -150,6 +152,8 @@ describe('createAdcpServer + webhook emitter: full-stack publisher E2E', () => {
   test('ctx.emitWebhook is undefined when webhooks config is omitted', async () => {
     let seenEmitWebhook;
     const server = createAdcpServer({
+      resolveAccount: ref =>
+        ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined,
       name: 'no-webhooks',
       version: '1.0.0',
       mediaBuy: {
@@ -196,6 +200,7 @@ describe('createAdcpServer + webhook emitter: full-stack publisher E2E', () => {
     let server;
     try {
       server = createAdcpServer({
+        resolveAccount: () => ({}),
         name: 'production-publisher',
         version: '1.0.0',
         stateStore: new InMemoryStateStore(),
@@ -267,6 +272,7 @@ describe('createAdcpServer + webhook emitter: full-stack publisher E2E', () => {
     let server;
     try {
       server = createAdcpServer({
+        resolveAccount: () => ({}),
         name: 'unscoped-production-publisher',
         version: '1.0.0',
         stateStore: new InMemoryStateStore(),
@@ -328,6 +334,8 @@ describe('createAdcpServer + webhook emitter: full-stack publisher E2E', () => {
       assert.throws(
         () =>
           createAdcpServer({
+            resolveAccount: ref =>
+              ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined,
             name: 'invalid-tenant-scope',
             version: '1.0.0',
             stateStore: new InMemoryStateStore(),
@@ -354,6 +362,8 @@ describe('createAdcpServer + webhook emitter: full-stack publisher E2E', () => {
       assert.throws(
         () =>
           createAdcpServer({
+            resolveAccount: ref =>
+              ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined,
             name: 'durability-required',
             version: '1.0.0',
             stateStore: new InMemoryStateStore(),
@@ -375,6 +385,8 @@ describe('createAdcpServer + webhook emitter: full-stack publisher E2E', () => {
       assert.throws(
         () =>
           createAdcpServer({
+            resolveAccount: ref =>
+              ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined,
             name: 'durability-required-explicit',
             version: '1.0.0',
             stateStore: new InMemoryStateStore(),
@@ -397,6 +409,8 @@ describe('createAdcpServer + webhook emitter: full-stack publisher E2E', () => {
       assert.throws(
         () =>
           createAdcpServer({
+            resolveAccount: ref =>
+              ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined,
             name: 'recovery-required',
             version: '1.0.0',
             stateStore: new InMemoryStateStore(),
@@ -413,6 +427,8 @@ describe('createAdcpServer + webhook emitter: full-stack publisher E2E', () => {
   test('3.1 capability projection omits the 3.2 retry-horizon field', async () => {
     const { signerKey } = makeSignerKey();
     const server = createAdcpServer({
+      resolveAccount: ref =>
+        ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined,
       name: 'legacy-capability-projection',
       version: '1.0.0',
       adcpVersion: '3.1.18',
@@ -433,6 +449,8 @@ describe('createAdcpServer + webhook emitter: full-stack publisher E2E', () => {
 
     const emittedKeys = [];
     const server = createAdcpServer({
+      resolveAccount: ref =>
+        ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined,
       name: 'stability-publisher',
       version: '1.0.0',
       webhooks: { signerKey, fetch: loopbackFetch },

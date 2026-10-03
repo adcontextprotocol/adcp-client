@@ -1,3 +1,4 @@
+import type { AdcpErrorInfo } from '../core/ConversationTypes';
 import { EventEmitter } from 'node:events';
 import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
@@ -29,11 +30,13 @@ type FeedMetadata = {
   cacheScope: 'public' | 'account';
 };
 type BootstrapFeedResult<T> = {
+  failure?: { error: Error; adcpError?: AdcpErrorInfo };
   cancelled: boolean;
   unchanged: boolean;
   items: Map<string, T>;
   metadata: FeedMetadata;
 };
+const bootstrapReadFailures = new WeakSet<Error>();
 
 const DEFAULT_PROBE_INTERVAL_MS = 600_000;
 const DEFAULT_CAPABILITY_REFRESH_INTERVAL_MS = 86_400_000;
@@ -227,12 +230,13 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     const epoch = this.lifecycleEpoch;
     if (!(await this.restorePersistedState(epoch))) return;
     if (!(await this.resolveMode(epoch))) return;
-    if (!(await this.bootstrap({ epoch }))) return;
-    if (this._mode === 'auto-poll') {
-      this.scheduleProbe(epoch);
-    }
-    if (this.capabilityRefreshIntervalMs > 0) {
-      this.scheduleCapabilityRefresh(epoch);
+    try {
+      await this.bootstrap({ epoch });
+    } finally {
+      if (this.isLifecycleCurrent(epoch)) {
+        if (this._mode === 'auto-poll') this.scheduleProbe(epoch);
+        if (this.capabilityRefreshIntervalMs > 0) this.scheduleCapabilityRefresh(epoch);
+      }
     }
   }
 
@@ -243,7 +247,8 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     if (this.capabilityTimer) clearTimeout(this.capabilityTimer);
     this.probeTimer = null;
     this.capabilityTimer = null;
-    if (this._state === 'syncing' || this._state === 'bootstrapping') this.setState('idle');
+    if (this._state === 'syncing' || this._state === 'bootstrapping' || this._state === 'degraded')
+      this.setState('idle');
   }
 
   /**
@@ -278,7 +283,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   async refresh(): Promise<void> {
     const epoch = this.lifecycleEpoch;
     this.emit('resyncing', { reason: 'manual' });
-    await this.bootstrap({ emitDiffs: true, epoch });
+    await this.bootstrap({ emitDiffs: true, epoch, propagateFailure: true });
   }
 
   /**
@@ -354,8 +359,10 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       try {
         if (!(await this.recoverFromBulkChange(event, epoch))) return;
       } catch (err) {
-        await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
-        this.rememberLastWebhookEventId(event.event_id);
+        if (!(err instanceof Error && bootstrapReadFailures.has(err))) {
+          await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
+          this.rememberLastWebhookEventId(event.event_id);
+        }
         throw err;
       }
       await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
@@ -455,11 +462,18 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   // ====== Private: bootstrap (wholesale enumeration) ======
 
   private async bootstrap(
-    options: { emitDiffs?: boolean; entities?: 'products' | 'signals' | 'all'; epoch?: number } = {}
+    options: {
+      emitDiffs?: boolean;
+      entities?: 'products' | 'signals' | 'all';
+      epoch?: number;
+      propagateFailure?: boolean;
+    } = {}
   ): Promise<boolean> {
     const epoch = options.epoch ?? this.lifecycleEpoch;
     if (!this.isLifecycleCurrent(epoch)) return false;
     this.setState('bootstrapping');
+    const previousLastSyncedAt = this._lastSyncedAt;
+    let reportedFailure: Error | undefined;
     try {
       // Build into local maps and atomically swap on success. The previous
       // implementation cleared the live indexes BEFORE fetching, so an
@@ -481,10 +495,32 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       if (refreshProducts) {
         productResult = await this.bootstrapProducts(epoch);
         if (productResult.cancelled) return false;
+        if (productResult.failure) {
+          const failure = productResult.failure;
+          reportedFailure = failure.error;
+          this.handleBootstrapFailure(failure);
+          if (options.propagateFailure) {
+            bootstrapReadFailures.add(failure.error);
+            if (failure.adcpError) Object.assign(failure.error, { adcpError: failure.adcpError });
+            throw failure.error;
+          }
+          return false;
+        }
       }
       if (refreshSignals) {
         signalResult = await this.bootstrapSignals(epoch);
         if (signalResult.cancelled) return false;
+        if (signalResult.failure) {
+          const failure = signalResult.failure;
+          reportedFailure = failure.error;
+          this.handleBootstrapFailure(failure);
+          if (options.propagateFailure) {
+            bootstrapReadFailures.add(failure.error);
+            if (failure.adcpError) Object.assign(failure.error, { adcpError: failure.adcpError });
+            throw failure.error;
+          }
+          return false;
+        }
       }
 
       if (!this.isLifecycleCurrent(epoch)) return false;
@@ -527,12 +563,23 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       return true;
     } catch (err) {
       if (!this.isLifecycleCurrent(epoch)) return false;
-      this.setState('error');
+      if (err === reportedFailure) throw err; // Already reported with its structured failure.
+      this._lastSyncedAt = previousLastSyncedAt;
+      this.setState(this._lastSyncedAt ? 'degraded' : 'error');
       const error = err instanceof Error ? err : new Error(String(err));
       this.errorHandler?.(error);
-      this.emit('error', { error });
+      if (this.listenerCount('error') > 0) this.emit('error', { error });
+      if (options.propagateFailure) bootstrapReadFailures.add(error);
       throw error;
     }
+  }
+
+  private handleBootstrapFailure(failure: { error: Error; adcpError?: AdcpErrorInfo }): false {
+    this.setState(this._lastSyncedAt ? 'degraded' : 'error');
+    this.errorHandler?.(failure.error);
+    // TaskResult failures are non-exceptional even when no error listener is installed.
+    if (this.listenerCount('error') > 0) this.emit('error', failure);
+    return false;
   }
 
   /** Returns `true` when the seller short-circuited with `unchanged: true`. */
@@ -554,11 +601,34 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
         if (metadata.pricingVersion) params.if_pricing_version = metadata.pricingVersion;
       }
       const result = (await this.client.getProducts(params as never)) as {
+        status?: string;
+        success?: boolean;
+        error?: string;
+        adcpError?: AdcpErrorInfo;
         data?: GetProductsResponse;
       };
       if (!this.isLifecycleCurrent(epoch)) return { cancelled: true, unchanged: false, items: into, metadata };
+      if (
+        result.success === false ||
+        (result.status !== undefined && result.status !== 'completed' && result.status !== 'success')
+      ) {
+        return {
+          cancelled: false,
+          unchanged: false,
+          items: into,
+          metadata,
+          failure: { error: new Error(result.error ?? 'Product bootstrap failed'), adcpError: result.adcpError },
+        };
+      }
       const body = result.data;
-      if (!body) return { cancelled: false, unchanged: false, items: into, metadata };
+      if (!body)
+        return {
+          cancelled: false,
+          unchanged: false,
+          items: into,
+          metadata,
+          failure: { error: new Error('Product bootstrap did not return a completed catalog') },
+        };
       if (body.unchanged) {
         // Echo any newer pricing_version / cache_scope the seller
         // returned alongside the unchanged signal, then tell the caller
@@ -592,11 +662,34 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
         if (metadata.pricingVersion) params.if_pricing_version = metadata.pricingVersion;
       }
       const result = (await this.client.getSignals(params as never)) as {
+        status?: string;
+        success?: boolean;
+        error?: string;
+        adcpError?: AdcpErrorInfo;
         data?: GetSignalsResponse;
       };
       if (!this.isLifecycleCurrent(epoch)) return { cancelled: true, unchanged: false, items: into, metadata };
+      if (
+        result.success === false ||
+        (result.status !== undefined && result.status !== 'completed' && result.status !== 'success')
+      ) {
+        return {
+          cancelled: false,
+          unchanged: false,
+          items: into,
+          metadata,
+          failure: { error: new Error(result.error ?? 'Signal bootstrap failed'), adcpError: result.adcpError },
+        };
+      }
       const body = result.data;
-      if (!body) return { cancelled: false, unchanged: false, items: into, metadata };
+      if (!body)
+        return {
+          cancelled: false,
+          unchanged: false,
+          items: into,
+          metadata,
+          failure: { error: new Error('Signal bootstrap did not return a completed catalog') },
+        };
       if (body.unchanged) {
         metadata = mergeFeedMetadata(metadata, body);
         return { cancelled: false, unchanged: true, items: into, metadata };
@@ -621,7 +714,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       );
     }
     const entities = affected === 'product' ? 'products' : 'signals';
-    return this.bootstrap({ emitDiffs: true, entities, epoch });
+    return this.bootstrap({ emitDiffs: true, entities, epoch, propagateFailure: true });
   }
 
   private async recoverFromVersionMismatch(
@@ -631,7 +724,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     this.emit('resyncing', { reason: 'version_mismatch' });
     const beforeVersion = this.currentWholesaleFeedVersionForEvent(event);
     for (let attempt = 1; attempt <= VERSION_MISMATCH_RECOVERY_ATTEMPTS; attempt++) {
-      const recovered = await this.bootstrap({ emitDiffs: true, epoch });
+      const recovered = await this.bootstrap({ emitDiffs: true, epoch, propagateFailure: true });
       if (!recovered) return false;
       const afterVersion = this.currentWholesaleFeedVersionForEvent(event);
       if (afterVersion !== beforeVersion) return true;
@@ -660,11 +753,17 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       await this.probeVersion(epoch);
     } catch (err) {
       if (!this.isLifecycleCurrent(epoch)) return;
-      const error = err instanceof Error ? err : new Error(String(err));
-      this.emit('error', { error });
-      this.errorHandler?.(error);
+      // bootstrap already publishes failures; avoid duplicate events for thrown failures.
+      if (this._state !== 'degraded' && this._state !== 'error') {
+        const error = err instanceof Error ? err : new Error(String(err));
+        this.handleBootstrapFailure({ error });
+      }
     }
-    if (this.isLifecycleCurrent(epoch) && this._state === 'syncing' && this._mode === 'auto-poll') {
+    if (
+      this.isLifecycleCurrent(epoch) &&
+      (this._state === 'syncing' || this._state === 'degraded' || this._state === 'error') &&
+      this._mode === 'auto-poll'
+    ) {
       this.scheduleProbe(epoch);
     }
   }
@@ -696,7 +795,11 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       this.emit('error', { error });
       this.errorHandler?.(error);
     }
-    if (this.isLifecycleCurrent(epoch) && this._state === 'syncing' && this.capabilityRefreshIntervalMs > 0) {
+    if (
+      this.isLifecycleCurrent(epoch) &&
+      (this._state === 'syncing' || this._state === 'degraded' || this._state === 'error') &&
+      this.capabilityRefreshIntervalMs > 0
+    ) {
       this.scheduleCapabilityRefresh(epoch);
     }
   }

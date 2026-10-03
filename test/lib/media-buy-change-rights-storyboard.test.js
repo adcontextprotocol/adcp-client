@@ -38,6 +38,8 @@ test('matching change-rights compliance storyboard runs through the seller resol
       idempotency,
       resolveIdempotencyPrincipal: () => 'change-rights-buyer',
       stateStore,
+      resolveAccount: ref =>
+        ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined,
       validation: { requests: 'strict', responses: 'strict' },
       mediaBuy: {
         async getMediaBuys(request) {

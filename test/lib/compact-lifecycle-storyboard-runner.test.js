@@ -343,6 +343,7 @@ async function createLifecycleServer() {
   };
 
   const adcpServer = createAdcpServer({
+    resolveAccount: ref => (ref ? { account_id: ref.account_id ?? JSON.stringify(ref), status: 'active' } : undefined),
     name: 'Compact lifecycle wire seller',
     version: '1.0.0',
     adcpVersion: ADCP_VERSION,

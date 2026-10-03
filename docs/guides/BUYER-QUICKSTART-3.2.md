@@ -1,5 +1,7 @@
 # Call a seller with AdCP 3.2
 
+For a new seller, start with [account setup and public discovery](./FIRST-CALL-TO-A-SELLER.md).
+
 For product possibility, accepted change rights, and current execution routes, use the [MediaBuy action assessment helpers](./MEDIA-BUY-ACTION-ASSESSMENT.md).
 
 Requires Node.js `^20.19.0 || >=22.12.0`. Install SDK 14

@@ -943,6 +943,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         accounts: {
           listAccountChanges: async params => {
             calls += 1;
@@ -2602,6 +2603,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         mediaBuy: {
           getProducts: async () => ({ products: [] }),
         },
@@ -2622,6 +2624,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         mediaBuy: {
           getProducts: async () => ({ products: [] }),
           createMediaBuy: async () => ({ media_buy_id: 'mb_1', packages: [] }),
@@ -2714,6 +2717,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         mediaBuy: {
           getProducts: async () => ({ products: [] }),
           createMediaBuy: async () => ({ media_buy_id: 'mb_1', packages: [], status: 'active' }),
@@ -2797,6 +2801,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         mediaBuy: {
           createMediaBuy: async () => ({
             errors: [{ code: 'PRODUCT_NOT_FOUND', message: 'no such product', field: 'packages[0].product_id' }],
@@ -2822,6 +2827,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         mediaBuy: {
           createMediaBuy: async () => ({
             status: 'submitted',
@@ -2849,6 +2855,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         creative: {
           syncCreatives: async () => ({
             errors: [{ code: 'AUTHENTICATION_FAILED', message: 'bad token' }],
@@ -2869,6 +2876,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         validation: { responses: 'strict' },
         creative: {
           syncCreatives: async () => ({
@@ -2891,6 +2899,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         mediaBuy: {
           createMediaBuy: async () => ({ media_buy_id: 'mb_1', packages: [] }),
         },
@@ -2913,6 +2922,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         creative: {
           syncCreatives: async () => ({
             status: 'submitted',
@@ -2937,6 +2947,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         mediaBuy: {
           createMediaBuy: async () => ({
             errors: [{ code: 'PRODUCT_NOT_FOUND', message: 'gone' }],
@@ -2963,6 +2974,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         mediaBuy: {
           createMediaBuy: async () => ({ errors: [] }),
         },
@@ -2986,6 +2998,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         mediaBuy: {
           createMediaBuy: async () => ({
             errors: [{ code: 'WARNING', message: 'partial success' }],
@@ -4795,6 +4808,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
+        resolveAccount: async ref => ({ id: ref.account_id }),
         stateStore: store,
         mediaBuy: {
           createMediaBuy: async (params, ctx) => {
