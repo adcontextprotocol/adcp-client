@@ -5,9 +5,8 @@
  *
  *   `request_signature_key_origin_mismatch` — the resolved `jwks_uri` host
  *     does not match the operator's declared `identity.key_origins.{purpose}`
- *     value. Skipped only for the specific (agent, purpose, role) tuple
- *     whose JWKS source was a publisher `adagents.json signing_keys` pin —
- *     operator-side use of the same purpose is still checked.
+ *     value. Publisher pins never skip this check because they only narrow
+ *     keys in the operator's JWKS.
  *
  *   `request_signature_key_origin_missing` — the agent's capabilities
  *     declare a signing posture for a purpose (e.g. `request_signing.supported_for`
@@ -41,31 +40,24 @@ export interface KeyOriginMissing {
 
 export type ConsistencyResult = { ok: true } | KeyOriginMismatch | KeyOriginMissing;
 
-/**
- * Inputs for the per-purpose origin check. The caller is responsible for
- * deciding whether `publisherPinned` is true — the carve-out applies only
- * to (agent, webhook-signing, sell-side) tuples whose JWKS came from an
- * `adagents.json signing_keys` pin. For request-signing, governance-signing,
- * TMP-signing, and buyer-side webhook receivers, `publisherPinned` MUST
- * always be false.
- */
+/** Inputs for the per-purpose origin check. Publisher pin markers are ignored. */
 export interface OriginCheckInput {
   purpose: IdentityKeyOriginPurpose;
   declaredOrigin: string | undefined;
   resolvedJwksUri: string;
-  publisherPinned: boolean;
+  /** @deprecated Pins narrow JWKS keys and never bypass origin checks. */
+  publisherPinned?: boolean;
 }
 
 /**
  * Check origin consistency for a single (purpose, jwksUri) pair against the
  * declared `identity.key_origins.{purpose}` value. Returns `{ ok: true }`
- * when the check passes or is skipped (publisher pin); a typed mismatch
+ * when the check passes; a typed mismatch
  * result on failure. `key_origin_missing` is NOT raised here — that is a
  * separate check (`checkRequiredOrigins`) because it depends on which
  * purposes the agent has declared signing for.
  */
 export function checkOriginConsistency(input: OriginCheckInput): ConsistencyResult {
-  if (input.publisherPinned) return { ok: true };
   if (!input.declaredOrigin) return { ok: true };
   let expected: string;
   let actual: string;

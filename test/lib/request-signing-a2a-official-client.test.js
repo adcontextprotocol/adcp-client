@@ -476,7 +476,7 @@ test('brand.json matching uses the PROTOCOL ENDPOINT, not the card base', async 
     ],
   };
   // The base the runner is handed for card discovery matches nothing — this is the bug.
-  assert.throws(() => selectAgentByUrl(brand, 'https://seller.example:8443/'), /byte-equal/i);
+  assert.throws(() => selectAgentByUrl(brand, 'https://seller.example:8443/'), /canonical URL/i);
   // The card-resolved protocol endpoint matches exactly one.
   const agent = selectAgentByUrl(brand, 'https://seller.example:8443/a2a');
   assert.strictEqual(agent.jwks_uri, 'https://seller.example:8443/.well-known/jwks.json');

@@ -1,32 +1,13 @@
-/**
- * Receiver-side ergonomic: resolve a sender's JWKS by fetching their
- * `brand.json`, extracting the `jwks_uri` for the agent whose webhooks we're
- * verifying, and delegating to {@link HttpsJwksResolver}.
- *
- * Hand the resulting instance to `verifyWebhookSignature.jwks` (or
- * `verifyRequestSignature.jwks`) and the receiver never has to know where the
- * sender hosts their keys — brand.json is the single source of truth.
- *
- * Follows the two documented redirect variants of `brand.json`
- * (`authoritative_location` and `house`) up to a caller-configurable hop
- * depth. When the selected agent has no `jwks_uri`, falls back to
- * `/.well-known/jwks.json` on the origin of the agent's `url` — but only
- * when that origin matches the final brand.json origin. The spec's
- * well-known fallback exists so publishers hosting brand.json and their
- * agents on the same origin can skip the explicit `jwks_uri`; accepting a
- * cross-origin fallback would let an attacker pivot the trust anchor to a
- * controlled host with a permissive JWKS.
- *
- * Caching is stacked with the inner {@link HttpsJwksResolver}: brand.json
- * honors its own `Cache-Control`/`ETag` (bounded by `maxAgeSeconds`), and
- * unknown-kid refreshes cascade — first to the JWKS endpoint, then (if the
- * JWKS still doesn't have the kid and the brand.json cooldown has elapsed) to
- * brand.json itself, in case the sender rotated `jwks_uri`.
- */
+/** Capability-confirmed sender key discovery and SSRF-safe brand.json fetching. */
 import { ssrfSafeFetch, type SsrfDnsLookup } from '../net';
 import type { JwksResolver } from './jwks';
-import { HttpsJwksResolver, type HttpsJwksResolverOptions } from './jwks-https';
+import { type HttpsJwksResolverOptions } from './jwks-https';
 import type { AdcpJsonWebKey } from './types';
+import { ResolvedAgentJwksResolver } from './agent-resolver/resolved-agent-jwks';
+import type { AgentProtocol, FetchCapabilitiesFn } from './agent-resolver/resolve-agent';
+import { parseStrictJson } from './agent-resolver/strict-json';
+import type { JwksResolution } from './jwks';
+import { canonicalAgentUrl } from './agent-resolver/select-agent';
 
 export type BrandAgentType =
   | 'brand'
@@ -74,21 +55,19 @@ export class BrandJsonResolverError extends Error {
 }
 
 export interface BrandJsonJwksResolverOptions {
+  /** Expected agent URL. Prefer supplying it; legacy configurations infer one onboarding URL, then confirm it through capabilities and canonical matching. */
+  agentUrl?: string;
+  protocol?: AgentProtocol;
+  /** Enable the 3.x webhook-only domain-derived fallback. Default false. */
+  legacyWebhookFallback?: boolean;
+  fetchCapabilities?: FetchCapabilitiesFn;
   /** Functional role of the agent whose keys we want to resolve. */
   agentType: BrandAgentType;
   /**
-   * Agent id from `agents[].id`. Required when brand.json declares more than
-   * one agent of the requested type (otherwise the selector is ambiguous).
-   * Optional when the type is unique.
+   * Agent id from `agents[].id`, used only to narrow canonical URL matches.
    */
   agentId?: string;
-  /**
-   * Brand id within a house portfolio (`brands[].id`). When omitted on a
-   * portfolio brand.json, the resolver looks at `house.agents[]`. When set,
-   * the resolver looks at `brands[brandId].agents[]` first and falls back to
-   * `house.agents[]` if no agent of the requested type is declared on the
-   * brand itself.
-   */
+  /** @deprecated Used only to infer an onboarding URL when agentUrl is absent. Canonical verification searches all operator collections. */
   brandId?: string;
   /**
    * Minimum seconds between brand.json refetches. Mirrors the JWKS cooldown
@@ -102,11 +81,7 @@ export interface BrandJsonJwksResolverOptions {
    * allow longer. Default 3600s (1 hour).
    */
   maxAgeSeconds?: number;
-  /**
-   * Maximum redirect hops to follow through `authoritative_location` /
-   * `house` variants. Default 3 — enough for `authoritative_location → house
-   * → portfolio` without inviting loops.
-   */
+  /** @deprecated Only controls legacy onboarding indirection. Explicit capability URLs allow no redirects; webhook fallback allows one document hop. */
   maxRedirects?: number;
   /**
    * Allow `http://` / private-IP brand.json and JWKS URLs (dev loops only).
@@ -119,173 +94,128 @@ export interface BrandJsonJwksResolverOptions {
    * address remains subject to SSRF classification and connection pinning.
    */
   lookup?: SsrfDnsLookup;
-  /**
-   * Forwarded to the inner {@link HttpsJwksResolver} constructor.
-   * `allowPrivateIp`, `lookup`, and `now` are set from the outer options and
-   * should not be passed here.
-   */
+  /** Existing settings remain accepted. maxAgeSeconds/minCooldownSeconds configure caching; protocol floors and fail-closed behavior replace other settings. */
   jwksOptions?: Omit<HttpsJwksResolverOptions, 'allowPrivateIp' | 'lookup' | 'now'>;
   /** Clock override for deterministic tests. Returns epoch seconds. */
   now?: () => number;
 }
 
-interface BrandSnapshot {
-  /** The JWKS URL we resolved from the brand.json agent entry. */
-  jwksUri: string;
-  /** The agent's `url` — stable result attribution for verified webhooks. */
-  agentUrl: string;
-  etag?: string;
-  fetchedAt: number;
-  expiresAt: number;
-}
-
-interface SelectedAgent {
-  url: string;
-  jwksUri: string;
-}
-
 const DEFAULT_MIN_COOLDOWN_SECONDS = 30;
 const DEFAULT_MAX_AGE_SECONDS = 3600;
 const DEFAULT_MAX_REDIRECTS = 3;
-
-// Bare hostname pattern: lowercase labels separated by dots, no userinfo,
-// no path, no control characters. Matches the `house` domain regex used in
-// the brand.json schema (`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]…)*$`).
 const BARE_HOSTNAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
 
 /**
- * JWKS resolver backed by a sender's `brand.json`. Construct one per
- * counterparty (or keyed by `brand.json` URL + agent selector) and hand it to
- * the webhook/request verifier as the `jwks` dependency.
+ * Confirmed operator mapping. The supplied brand.json URL must agree with
+ * capabilities on every cache refresh. Prefer ResolvedAgentJwksResolver
+ * when the application's onboarding record holds only the seller URL.
  */
 export class BrandJsonJwksResolver implements JwksResolver {
-  private readonly url: string;
-  private readonly selector: {
-    agentType: BrandAgentType;
-    agentId?: string;
-    brandId?: string;
-  };
-  private readonly minCooldown: number;
-  private readonly maxAge: number;
-  private readonly maxRedirects: number;
-  private readonly allowPrivateIp: boolean;
-  private readonly lookup: SsrfDnsLookup | undefined;
-  private readonly jwksOptions: Omit<HttpsJwksResolverOptions, 'allowPrivateIp' | 'lookup' | 'now'>;
-  private readonly now: () => number;
-  private snapshot: BrandSnapshot | undefined;
-  private inner: HttpsJwksResolver | undefined;
-  private inFlight: Promise<void> | undefined;
-
-  constructor(brandJsonUrl: string, options: BrandJsonJwksResolverOptions) {
-    this.url = brandJsonUrl;
-    this.selector = {
+  private resolver?: ResolvedAgentJwksResolver;
+  private onboarding?: Promise<ResolvedAgentJwksResolver>;
+  private lastOnboardingAttempt = Number.NEGATIVE_INFINITY;
+  constructor(
+    private readonly brandJsonUrl: string,
+    private readonly options: BrandJsonJwksResolverOptions
+  ) {
+    if (options.agentUrl !== undefined) this.resolver = this.createResolver(options.agentUrl, brandJsonUrl);
+  }
+  private createResolver(agentUrl: string, operatorUrl: string): ResolvedAgentJwksResolver {
+    const options = this.options;
+    return new ResolvedAgentJwksResolver(agentUrl, options.protocol ?? 'mcp', {
       agentType: options.agentType,
-      ...(options.agentId !== undefined && { agentId: options.agentId }),
-      ...(options.brandId !== undefined && { brandId: options.brandId }),
-    };
-    this.minCooldown = options.minCooldownSeconds ?? DEFAULT_MIN_COOLDOWN_SECONDS;
-    this.maxAge = options.maxAgeSeconds ?? DEFAULT_MAX_AGE_SECONDS;
-    this.maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
-    this.allowPrivateIp = options.allowPrivateIp ?? false;
-    this.lookup = options.lookup;
-    this.jwksOptions = options.jwksOptions ?? {};
-    this.now = options.now ?? (() => Math.floor(Date.now() / 1000));
+      agentId: options.agentId,
+      expectedBrandJsonUrl: operatorUrl,
+      fetchCapabilities: options.fetchCapabilities,
+      legacyWebhookFallback: options.legacyWebhookFallback,
+      allowPrivateIp: options.allowPrivateIp,
+      lookup: options.lookup,
+      now: options.now,
+      cacheTtlSeconds: Math.min(
+        options.maxAgeSeconds ?? DEFAULT_MAX_AGE_SECONDS,
+        options.jwksOptions?.maxAgeSeconds ?? 1800
+      ),
+      unknownKidCooldownSeconds:
+        options.minCooldownSeconds ?? options.jwksOptions?.minCooldownSeconds ?? DEFAULT_MIN_COOLDOWN_SECONDS,
+    });
   }
-
-  /**
-   * Resolve a JWK by `kid`. On a cold cache, fetches brand.json first; on an
-   * expired brand.json snapshot, refreshes respecting the cooldown. Unknown
-   * kids cascade: first ask the inner HttpsJwksResolver (which will refetch
-   * its own URL if cooldown has elapsed); if still unknown, refresh
-   * brand.json in case `jwks_uri` rotated.
-   */
+  private async confirmedResolver(): Promise<ResolvedAgentJwksResolver> {
+    if (this.resolver) return this.resolver;
+    if (this.onboarding) return this.onboarding;
+    const now = this.options.now?.() ?? Date.now() / 1000;
+    // Negative onboarding attempts use the fixed protocol backoff, independently
+    // of the configurable positive-cache and unknown-kid refresh intervals.
+    if (now - this.lastOnboardingAttempt < 30)
+      throw new BrandJsonResolverError('fetch_failed', 'Operator onboarding discovery is in its retry cooldown.');
+    this.lastOnboardingAttempt = now;
+    this.onboarding = (async () => {
+      const record = await fetchBrandJson({
+        startUrl: this.brandJsonUrl,
+        maxRedirects: this.options.maxRedirects,
+        allowPrivateIp: this.options.allowPrivateIp,
+        lookup: this.options.lookup,
+      });
+      // This is an onboarding shortcut from trusted configuration, not a key
+      // selector. No key from this document is accepted until resolveAgent
+      // confirms the agent -> operator mapping and canonical URL match.
+      const agentUrl = inferOnboardingAgentUrl(record.data, this.options);
+      const resolver = this.createResolver(agentUrl, record.finalUrl);
+      await resolver.forceRefresh();
+      this.resolver = resolver;
+      return resolver;
+    })().finally(() => {
+      this.onboarding = undefined;
+    });
+    return this.onboarding;
+  }
   async resolve(keyid: string): Promise<AdcpJsonWebKey | null> {
-    if (!this.snapshot || !this.inner) {
-      await this.refresh();
-    } else if (this.now() > this.snapshot.expiresAt && this.now() - this.snapshot.fetchedAt >= this.minCooldown) {
-      await this.refresh().catch(() => {
-        /* keep stale on transient failure */
-      });
-    }
-    if (!this.inner) return null;
-
-    const hit = await this.inner.resolve(keyid);
-    if (hit) return hit;
-
-    if (this.snapshot && this.now() - this.snapshot.fetchedAt >= this.minCooldown) {
-      await this.refresh().catch(() => {
-        /* keep stale on transient failure */
-      });
-      return this.inner ? this.inner.resolve(keyid) : null;
-    }
-    return null;
+    return (await this.confirmedResolver()).resolve(keyid);
   }
-
-  /**
-   * The agent URL we resolved `jwks_uri` from. Populated after the first
-   * successful refresh; useful for verifier result attribution
-   * (`VerifyWebhookOptions.agentUrlForKeyid`).
-   */
+  async resolveWithMetadata(keyid: string): Promise<JwksResolution> {
+    return (await this.confirmedResolver()).resolveWithMetadata(keyid);
+  }
   get agentUrl(): string | undefined {
-    return this.snapshot?.agentUrl;
+    return this.resolver?.resolvedAgentUrl;
   }
-
-  /** Force a refetch of both brand.json and the inner JWKS, bypassing the cooldown. */
   async forceRefresh(): Promise<void> {
-    this.snapshot = undefined;
-    this.inner = undefined;
-    await this.refresh();
+    if (this.resolver) await this.resolver.forceRefresh();
+    else await this.confirmedResolver();
   }
+}
 
-  private async refresh(): Promise<void> {
-    if (this.inFlight) {
-      await this.inFlight;
-      return;
+/** Preserve legacy onboarding selectors, then pin their unique canonical URL. */
+function inferOnboardingAgentUrl(document: unknown, selector: BrandJsonJwksResolverOptions): string {
+  const record = document as Record<string, unknown>;
+  const candidates = (agents: unknown): string[] =>
+    !Array.isArray(agents)
+      ? []
+      : agents
+          .filter(
+            entry =>
+              entry?.type === selector.agentType &&
+              (selector.agentId === undefined || entry.id === selector.agentId) &&
+              typeof entry.url === 'string'
+          )
+          .map(entry => canonicalAgentUrl(entry.url));
+  let urls: string[];
+  if (isPortfolioHouse(record.house)) {
+    const house = record.house as Record<string, unknown>;
+    urls = [];
+    if (selector.brandId !== undefined && Array.isArray(record.brands)) {
+      const brands = record.brands.filter(brand => brand?.id === selector.brandId);
+      if (brands.length > 1)
+        throw new BrandJsonResolverError('agent_ambiguous', 'Onboarding brand selector is ambiguous.');
+      urls = candidates(brands[0]?.agents);
     }
-    this.inFlight = this.doRefresh().finally(() => {
-      this.inFlight = undefined;
-    });
-    await this.inFlight;
-  }
-
-  private async doRefresh(): Promise<void> {
-    const fetched = await fetchBrandJson({
-      startUrl: this.url,
-      currentEtag: this.snapshot?.etag,
-      maxRedirects: this.maxRedirects,
-      allowPrivateIp: this.allowPrivateIp,
-      lookup: this.lookup,
-    });
-
-    // 304 on the entry URL: extend the lifetime, keep the inner resolver.
-    if (fetched.status === 'not_modified' && this.snapshot) {
-      this.snapshot = {
-        ...this.snapshot,
-        ...(fetched.etag && { etag: fetched.etag }),
-        fetchedAt: this.now(),
-        expiresAt: this.now() + computeLifetime(fetched.cacheControl, this.maxAge),
-      };
-      return;
-    }
-
-    const agent = selectAgent(fetched.data, fetched.finalUrl, this.selector);
-
-    if (!this.inner || this.snapshot?.jwksUri !== agent.jwksUri) {
-      this.inner = new HttpsJwksResolver(agent.jwksUri, {
-        ...this.jwksOptions,
-        allowPrivateIp: this.allowPrivateIp,
-        lookup: this.lookup,
-        now: this.now,
-      });
-    }
-    this.snapshot = {
-      jwksUri: agent.jwksUri,
-      agentUrl: agent.url,
-      ...(fetched.etag && { etag: fetched.etag }),
-      fetchedAt: this.now(),
-      expiresAt: this.now() + computeLifetime(fetched.cacheControl, this.maxAge),
-    };
-  }
+    if (urls.length === 0) urls = candidates(house.agents);
+  } else urls = candidates(record.agents);
+  const unique = [...new Set(urls)];
+  if (unique.length !== 1)
+    throw new BrandJsonResolverError(
+      unique.length === 0 ? 'agent_not_found' : 'agent_ambiguous',
+      'Onboarding must identify exactly one agent URL; supply agentUrl explicitly.'
+    );
+  return unique[0]!;
 }
 
 export interface FetchedBrandJson {
@@ -301,6 +231,8 @@ export interface FetchBrandJsonOptions {
   startUrl: string;
   /** ETag sent only to the entry URL for cache revalidation. */
   currentEtag?: string;
+  /** Initial domain-derived fetch may redirect only between host and exact www counterpart. */
+  domainDerived?: boolean;
   /** Maximum JSON-level `authoritative_location` / `house` hops. Default 3, hard maximum 10. */
   maxRedirects?: number;
   /** Permit HTTP and private addresses for controlled development environments. */
@@ -349,6 +281,8 @@ export async function fetchBrandJson(args: FetchBrandJsonOptions): Promise<Fetch
   const seen = new Set<string>();
   let url = canonicalizeUrl(args.startUrl, allowPrivateIp);
 
+  const initial = new URL(url);
+  let httpRedirects = 0;
   for (let hop = 0; hop <= maxRedirects; hop++) {
     if (seen.has(url)) {
       throw new BrandJsonResolverError('redirect_loop', `brand.json redirect loop detected`);
@@ -377,6 +311,25 @@ export async function fetchBrandJson(args: FetchBrandJsonOptions): Promise<Fetch
       throw new BrandJsonResolverError('fetch_failed', 'Unable to fetch brand.json', { cause });
     }
 
+    if (args.domainDerived && hop === 0 && [301, 302, 303, 307, 308].includes(res.status)) {
+      const location = res.headers.location;
+      if (!location || httpRedirects++ >= 3)
+        throw new BrandJsonResolverError('fetch_failed', 'Invalid domain-derived redirect');
+      const target = new URL(location, url);
+      const baseHost = initial.hostname.startsWith('www.') ? initial.hostname.slice(4) : initial.hostname;
+      if (
+        (target.hostname !== baseHost && target.hostname !== `www.${baseHost}`) ||
+        target.port !== initial.port ||
+        target.protocol !== initial.protocol ||
+        target.username ||
+        target.password
+      ) {
+        throw new BrandJsonResolverError('invalid_url', 'brand.json redirect leaves its original host/www boundary');
+      }
+      url = canonicalizeUrl(target.href, allowPrivateIp);
+      hop--;
+      continue;
+    }
     if (hop === 0 && res.status === 304) {
       return {
         status: 'not_modified',
@@ -395,7 +348,7 @@ export async function fetchBrandJson(args: FetchBrandJsonOptions): Promise<Fetch
     const text = Buffer.from(res.body).toString('utf8');
     let parsed: unknown;
     try {
-      parsed = JSON.parse(text);
+      parsed = parseStrictJson(text);
     } catch {
       throw new BrandJsonResolverError('invalid_body', `brand.json response is not valid JSON`);
     }
@@ -531,116 +484,4 @@ interface AgentEntry {
   url?: string;
   id?: string;
   jwks_uri?: string;
-}
-
-function selectAgent(
-  data: unknown,
-  finalBrandUrl: string,
-  selector: { agentType: BrandAgentType; agentId?: string; brandId?: string }
-): SelectedAgent {
-  if (!data || typeof data !== 'object') {
-    throw new BrandJsonResolverError(
-      'agent_not_found',
-      `brand.json has no agent matching ${describeSelector(selector)}`
-    );
-  }
-  const obj = data as Record<string, unknown>;
-
-  let picked: SelectedAgent | undefined;
-  if (isPortfolioHouse(obj.house)) {
-    const house = obj.house as Record<string, unknown>;
-    if (selector.brandId !== undefined) {
-      const brands = Array.isArray(obj.brands) ? (obj.brands as Record<string, unknown>[]) : [];
-      const brand = brands.find(b => b && b.id === selector.brandId);
-      if (brand) picked = pickAgent(brand.agents, finalBrandUrl, selector);
-    }
-    picked ??= pickAgent(house.agents, finalBrandUrl, selector);
-  } else {
-    picked = pickAgent(obj.agents, finalBrandUrl, selector);
-  }
-
-  if (!picked) {
-    throw new BrandJsonResolverError(
-      'agent_not_found',
-      `brand.json has no agent matching ${describeSelector(selector)}`
-    );
-  }
-  return picked;
-}
-
-function pickAgent(
-  agents: unknown,
-  finalBrandUrl: string,
-  selector: { agentType: BrandAgentType; agentId?: string }
-): SelectedAgent | undefined {
-  if (!Array.isArray(agents)) return undefined;
-  const matches = agents.filter((a): a is AgentEntry => {
-    if (!a || typeof a !== 'object') return false;
-    const e = a as AgentEntry;
-    if (e.type !== selector.agentType) return false;
-    if (selector.agentId !== undefined && e.id !== selector.agentId) return false;
-    return typeof e.url === 'string';
-  });
-  if (matches.length === 0) return undefined;
-  if (matches.length > 1 && selector.agentId === undefined) {
-    throw new BrandJsonResolverError(
-      'agent_ambiguous',
-      `brand.json declares ${matches.length} agents of type "${selector.agentType}"; ` +
-        `pass \`agentId\` to disambiguate (choices: ${matches.map(m => m.id ?? '<no-id>').join(', ')})`
-    );
-  }
-  const agent = matches[0]!;
-  const url = agent.url!;
-  const jwksUri = agent.jwks_uri ?? defaultJwksUri(url, finalBrandUrl);
-  return { url, jwksUri };
-}
-
-/**
- * Spec fallback: "When absent, verifiers MUST default to /.well-known/jwks.json
- * on the origin of `url`." We strip any path/query/fragment from the agent
- * URL and replace it with the well-known path.
- *
- * Security: require the agent origin to match the final brand.json origin.
- * Without this check, an attacker-controlled brand.json could set
- * `agent.url: "https://victim-internal.example/"` and force the verifier to
- * treat that origin's JWKS as authoritative — a cross-origin trust pivot.
- * Publishers that genuinely host their agent on a different origin from
- * their brand.json MUST declare an explicit `jwks_uri` (and that URI is
- * validated at fetch time by the inner HttpsJwksResolver, not here).
- */
-function defaultJwksUri(agentUrl: string, finalBrandUrl: string): string {
-  let agent: URL;
-  try {
-    agent = new URL(agentUrl);
-  } catch {
-    throw new BrandJsonResolverError('invalid_url', `agent.url is not a valid URL`);
-  }
-  const brand = new URL(finalBrandUrl);
-  if (agent.origin !== brand.origin) {
-    throw new BrandJsonResolverError(
-      'jwks_origin_mismatch',
-      `agent.url origin (${agent.origin}) does not match brand.json origin (${brand.origin}); ` +
-        `publisher must declare an explicit jwks_uri for cross-origin agents`
-    );
-  }
-  return `${agent.origin}/.well-known/jwks.json`;
-}
-
-function describeSelector(selector: { agentType: BrandAgentType; agentId?: string; brandId?: string }): string {
-  const parts = [`type=${selector.agentType}`];
-  if (selector.agentId !== undefined) parts.push(`id=${selector.agentId}`);
-  if (selector.brandId !== undefined) parts.push(`brand=${selector.brandId}`);
-  return parts.join(' ');
-}
-
-function computeLifetime(cacheControl: string | undefined, maxAge: number): number {
-  if (!cacheControl) return maxAge;
-  const lower = cacheControl.toLowerCase();
-  if (/\bno-store\b|\bno-cache\b/.test(lower)) return 0;
-  const match = /max-age\s*=\s*(\d+)/.exec(lower);
-  if (match) {
-    const serverMax = Number(match[1]);
-    if (Number.isFinite(serverMax)) return Math.min(serverMax, maxAge);
-  }
-  return maxAge;
 }

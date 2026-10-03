@@ -1208,6 +1208,12 @@ export type WebhookParseErrorCode =
   | 'webhook_verification_unavailable';
 
 export interface WebhookVerificationConfig {
+  /** Applicable pins from persisted media-buy records. Reuse refresh callbacks bound to the seller/publisher/tenant across deliveries to share their cooldown. Never use webhook payload fields. */
+  publisherPins?: (
+    registration: Readonly<WebhookRegistration>
+  ) => Promise<readonly import('../signing/publisher-pins').PublisherSigningKeyPin[]>;
+  /** Local diagnostics for request_signature_* discovery causes. */
+  onKeyResolutionError?: (error: unknown) => void;
   /** Deterministic/custom key source. Defaults to resolveAgent brand.json discovery. */
   jwks?: JwksResolver;
   /** Shared nonce replay store. Defaults to one process-local store per client. */
@@ -2352,6 +2358,7 @@ export class SingleAgentClient {
     } = configuredResolverOptions ?? {};
     const resolver = new ResolvedAgentJwksResolver(registration.agentUrl, registration.protocol, {
       ...resolverOptionsWithoutOperatorContext,
+      legacyWebhookFallback: configuredResolverOptions?.legacyWebhookFallback ?? true,
       ...(delegatedOperatorAuthorization?.brand !== undefined && {
         requiredOperatorBrand: delegatedOperatorAuthorization.brand,
       }),
@@ -3792,6 +3799,8 @@ export class SingleAgentClient {
           },
           {
             jwks: this.webhookJwksFor(registration),
+            publisherPins: await this.config.webhookVerification?.publisherPins?.(registration),
+            onKeyResolutionError: this.config.webhookVerification?.onKeyResolutionError,
             replayStore: this.webhookReplayStore,
             revocationStore: this.webhookRevocationStore,
             ...(this.config.webhookVerification?.now && { now: this.config.webhookVerification.now }),
@@ -3806,6 +3815,13 @@ export class SingleAgentClient {
         );
       } catch (cause) {
         if (cause instanceof WebhookSignatureError) {
+          if (cause.retryable)
+            return {
+              ok: false,
+              code: 'webhook_verification_unavailable',
+              message: 'Seller signing keys could not be resolved for webhook verification.',
+              cause,
+            };
           return { ok: false, code: cause.code, message: cause.message, cause };
         }
         if (

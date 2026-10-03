@@ -523,6 +523,7 @@ export {
   targetDeclaresLegacyGovernanceAwareness,
   validateGovernancePlan,
   verifyGovernanceAuthorization,
+  createGovernanceAgentJwksResolver,
   REGULATED_HUMAN_REVIEW_CATEGORIES,
   ANNEX_III_POLICY_IDS,
 } from './governance';
@@ -643,6 +644,7 @@ export type {
   PlanBudget,
   ReallocationAutonomy,
   VerifyGovernanceAuthorizationOptions,
+  GovernanceBuyerIdentity,
 } from './governance';
 
 // ====== TASK EVENT TYPES ======

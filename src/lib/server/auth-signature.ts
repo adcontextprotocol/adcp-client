@@ -183,6 +183,7 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
     const signer: VerifiedSigner = {
       keyid: result.keyid,
       verified_at: result.verified_at,
+      ...(result.operatorRecord !== undefined && { operatorRecord: result.operatorRecord }),
       ...(result.agent_url !== undefined ? { agent_url: result.agent_url } : {}),
     };
     const principal = principalForVerifiedSigner(signer, options.makePrincipal);

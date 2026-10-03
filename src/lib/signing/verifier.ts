@@ -30,6 +30,7 @@ import {
   REQUEST_SIGNING_TAG,
   type VerifierCapability,
   type VerifyResult,
+  type VerifiedSigner,
 } from './types';
 
 export interface VerifyRequestOptions {
@@ -64,7 +65,8 @@ export async function verifyRequestSignature(
   request: RequestLike,
   options: VerifyRequestOptions
 ): Promise<VerifyResult> {
-  const now = options.now ? options.now() : Math.floor(Date.now() / 1000);
+  const currentTime = options.now ?? (() => Math.floor(Date.now() / 1000));
+  const now = currentTime();
   const pinnedBinaryEncoding =
     options.adcpVersion !== undefined ? requestSigningEncodingForVersion(options.adcpVersion) : undefined;
   const sigInputHeader = getHeaderValue(request.headers, 'Signature-Input');
@@ -186,13 +188,37 @@ export async function verifyRequestSignature(
 
   // Step 7: resolve keyid.
   let jwk;
+  let resolvedAgentUrl: string | undefined;
+  let authorizationValidUntil: number | undefined;
+  let operatorRecord: VerifiedSigner['operatorRecord'];
   try {
-    jwk = await options.jwks.resolve(parsedInput.params.keyid);
+    if (options.jwks.resolveWithMetadata) {
+      const resolution = await options.jwks.resolveWithMetadata(parsedInput.params.keyid);
+      if (resolution.legacyWebhookFallback)
+        throw new AgentResolverError(
+          'request_signature_brand_json_url_missing',
+          'Legacy discovery is limited to webhook verification',
+          {}
+        );
+      jwk = resolution.jwk;
+      resolvedAgentUrl = resolution.agentUrl;
+      operatorRecord = resolution.operatorRecord;
+      authorizationValidUntil = resolution.operatorAuthorizationValidUntil;
+    } else {
+      jwk = await options.jwks.resolve(parsedInput.params.keyid);
+    }
   } catch (err) {
     if (err instanceof AgentResolverError) {
       throw new RequestSignatureError(err.code, 7, err.message, err.detail);
     }
     throw err;
+  }
+  if (authorizationValidUntil !== undefined && currentTime() >= authorizationValidUntil) {
+    throw new RequestSignatureError(
+      'request_signature_brand_origin_mismatch',
+      7,
+      'Delegated operator authorization expired before verification'
+    );
   }
   if (!jwk) {
     throw new RequestSignatureError(
@@ -328,6 +354,14 @@ export async function verifyRequestSignature(
     }
   }
 
+  if (authorizationValidUntil !== undefined && currentTime() >= authorizationValidUntil) {
+    throw new RequestSignatureError(
+      'request_signature_brand_origin_mismatch',
+      7,
+      'Delegated operator authorization expired during verification'
+    );
+  }
+
   // Step 12: commit the (keyid, nonce) into the replay cache now that all
   // prior checks have passed. Floor the TTL at one max-window + skew so a
   // signer minting tiny validity windows can't replay outside the configured
@@ -350,8 +384,22 @@ export async function verifyRequestSignature(
     );
   }
 
-  const agent_url = options.agentUrlForKeyid?.(jwk.kid);
-  return { status: 'verified', keyid: jwk.kid, agent_url, verified_at: now };
+  if (authorizationValidUntil !== undefined && currentTime() >= authorizationValidUntil) {
+    throw new RequestSignatureError(
+      'request_signature_brand_origin_mismatch',
+      7,
+      'Delegated operator authorization expired before acceptance'
+    );
+  }
+
+  const agent_url = resolvedAgentUrl ?? options.agentUrlForKeyid?.(jwk.kid);
+  return {
+    status: 'verified',
+    keyid: jwk.kid,
+    agent_url,
+    verified_at: now,
+    ...(operatorRecord !== undefined && { operatorRecord }),
+  };
 }
 
 function signatureEncodingCandidates(

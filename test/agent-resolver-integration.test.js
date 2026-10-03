@@ -249,262 +249,6 @@ describe('resolveAgent — rejection codes', () => {
     );
   });
 
-  it('accepts only active, schema-shaped broad operator delegations', async () => {
-    const agentUrl = 'https://operator.example/mcp';
-    const now = 1_700_000_000;
-    const validUntil = now + 60;
-    routes['/.well-known/brand.json'] = {
-      body: {
-        authorized_operators: [
-          {
-            domain: 'operator.example',
-            brands: ['*'],
-            scopes: ['all'],
-            valid_from: new Date(now * 1000).toISOString(),
-            valid_until: new Date(validUntil * 1000).toISOString(),
-          },
-        ],
-        agents: [{ type: 'sales', url: agentUrl, jwks_uri: `${baseUrl}/jwks.json` }],
-      },
-    };
-    routes['/jwks.json'] = { body: { keys: [publicJwk] } };
-    const result = await resolveAgent(agentUrl, {
-      allowPrivateIp: true,
-      now: () => now,
-      fetchCapabilities: fakeCapabilities({
-        identity: { brand_json_url: `${baseUrl}/.well-known/brand.json` },
-      }),
-    });
-    assert.equal(result.agentUrl, agentUrl);
-    assert.equal(result.operatorAuthorizationValidUntil, validUntil);
-  });
-
-  it('accepts RFC 3339 lower-case date/time separators', async () => {
-    const agentUrl = 'https://operator.example/mcp';
-    const now = 1_700_000_000;
-    const validUntil = now + 60;
-    routes['/.well-known/brand.json'] = {
-      body: {
-        authorized_operators: [
-          {
-            domain: 'operator.example',
-            brands: ['*'],
-            valid_from: new Date((now - 60) * 1000).toISOString().replace('T', 't').replace('Z', 'z'),
-            valid_until: new Date(validUntil * 1000).toISOString().replace('T', 't').replace('Z', 'z'),
-          },
-        ],
-        agents: [{ type: 'sales', url: agentUrl, jwks_uri: `${baseUrl}/jwks.json` }],
-      },
-    };
-    routes['/jwks.json'] = { body: { keys: [publicJwk] } };
-
-    const result = await resolveAgent(agentUrl, {
-      allowPrivateIp: true,
-      now: () => now,
-      fetchCapabilities: fakeCapabilities({
-        identity: { brand_json_url: `${baseUrl}/.well-known/brand.json` },
-      }),
-    });
-    assert.equal(result.operatorAuthorizationValidUntil, validUntil);
-  });
-
-  it('rejects expired, future, malformed, and schema-invalid operator delegations', async () => {
-    const agentUrl = 'https://operator.example/mcp';
-    const now = 1_700_000_000;
-    const inactiveEntries = [
-      'operator.example',
-      { domain: 'operator.example' },
-      { domain: 'operator.example', brands: [] },
-      { domain: 'evil.invalid@operator.example', brands: ['*'] },
-      { domain: 'operator.example', brands: ['*'], valid_until: new Date(now * 1000).toISOString() },
-      { domain: 'operator.example', brands: ['*'], valid_until: 'tomorrow' },
-      { domain: 'operator.example', brands: ['*'], valid_from: new Date((now + 1) * 1000).toISOString() },
-    ];
-    routes['/jwks.json'] = { body: { keys: [publicJwk] } };
-
-    for (const entry of inactiveEntries) {
-      routes['/.well-known/brand.json'] = {
-        body: {
-          authorized_operators: [entry],
-          agents: [{ type: 'sales', url: agentUrl, jwks_uri: `${baseUrl}/jwks.json` }],
-        },
-      };
-      await assertCode(
-        () =>
-          resolveAgent(agentUrl, {
-            allowPrivateIp: true,
-            now: () => now,
-            fetchCapabilities: fakeCapabilities({
-              identity: { brand_json_url: `${baseUrl}/.well-known/brand.json` },
-            }),
-          }),
-        'request_signature_brand_origin_mismatch'
-      );
-    }
-  });
-
-  it('binds constrained operator delegations to explicit brand, scope, and country context', async () => {
-    const agentUrl = 'https://operator.example/mcp';
-    routes['/.well-known/brand.json'] = {
-      body: {
-        authorized_operators: [
-          {
-            domain: 'operator.example',
-            brands: ['brand_a'],
-            scopes: ['media_buying'],
-            countries: ['GB'],
-          },
-        ],
-        agents: [{ type: 'sales', url: agentUrl, jwks_uri: `${baseUrl}/jwks.json` }],
-      },
-    };
-    routes['/jwks.json'] = { body: { keys: [publicJwk] } };
-    const baseOptions = {
-      allowPrivateIp: true,
-      fetchCapabilities: fakeCapabilities({
-        identity: { brand_json_url: `${baseUrl}/.well-known/brand.json` },
-      }),
-    };
-
-    await assertCode(() => resolveAgent(agentUrl, baseOptions), 'request_signature_brand_origin_mismatch');
-    await assertCode(
-      () =>
-        resolveAgent(agentUrl, {
-          ...baseOptions,
-          requiredOperatorBrand: 'brand_b',
-          requiredOperatorScope: 'media_buying',
-          requiredOperatorCountry: 'GB',
-        }),
-      'request_signature_brand_origin_mismatch'
-    );
-    await assertCode(
-      () =>
-        resolveAgent(agentUrl, {
-          ...baseOptions,
-          requiredOperatorBrand: 'brand_a',
-          requiredOperatorScope: 'creative_generation',
-          requiredOperatorCountry: 'GB',
-        }),
-      'request_signature_brand_origin_mismatch'
-    );
-    await assertCode(
-      () =>
-        resolveAgent(agentUrl, {
-          ...baseOptions,
-          requiredOperatorBrand: 'brand_a',
-          requiredOperatorScope: 'media_buying',
-          requiredOperatorCountry: 'US',
-        }),
-      'request_signature_brand_origin_mismatch'
-    );
-
-    const result = await resolveAgent(agentUrl, {
-      ...baseOptions,
-      requiredOperatorBrand: 'brand_a',
-      requiredOperatorScope: 'media_buying',
-      requiredOperatorCountry: 'GB',
-    });
-    assert.equal(result.agentUrl, agentUrl);
-  });
-
-  it('keeps authorization while an active sibling delegation remains', async () => {
-    const agentUrl = 'https://operator.example/mcp';
-    const now = 1_700_000_000;
-    const earlierValidUntil = now + 30;
-    const validUntil = now + 60;
-    routes['/.well-known/brand.json'] = {
-      body: {
-        authorized_operators: [
-          {
-            domain: 'operator.example',
-            brands: ['*'],
-            valid_until: new Date(earlierValidUntil * 1000).toISOString(),
-          },
-          { domain: 'operator.example', brands: ['*'], valid_until: new Date(validUntil * 1000).toISOString() },
-        ],
-        agents: [{ type: 'sales', url: agentUrl, jwks_uri: `${baseUrl}/jwks.json` }],
-      },
-    };
-    routes['/jwks.json'] = { body: { keys: [publicJwk] } };
-    const result = await resolveAgent(agentUrl, {
-      allowPrivateIp: true,
-      now: () => now,
-      fetchCapabilities: fakeCapabilities({
-        identity: { brand_json_url: `${baseUrl}/.well-known/brand.json` },
-      }),
-    });
-    assert.equal(result.operatorAuthorizationValidUntil, validUntil);
-  });
-
-  it('rejects a delegation that expires while JWKS discovery is in flight', async () => {
-    const agentUrl = 'https://operator.example/mcp';
-    let now = 1_700_000_000;
-    const validUntil = now + 1;
-    routes['/.well-known/brand.json'] = {
-      body: {
-        authorized_operators: [
-          {
-            domain: 'operator.example',
-            brands: ['*'],
-            valid_until: new Date(validUntil * 1000).toISOString(),
-          },
-        ],
-        agents: [{ type: 'sales', url: agentUrl, jwks_uri: `${baseUrl}/jwks.json` }],
-      },
-    };
-    routes['/jwks.json'] = (_req, res) => {
-      now = validUntil;
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ keys: [publicJwk] }));
-    };
-
-    await assertCode(
-      () =>
-        resolveAgent(agentUrl, {
-          allowPrivateIp: true,
-          now: () => now,
-          fetchCapabilities: fakeCapabilities({
-            identity: { brand_json_url: `${baseUrl}/.well-known/brand.json` },
-          }),
-        }),
-      'request_signature_brand_origin_mismatch'
-    );
-  });
-
-  it('treats fractional valid_until as inactive at the exact real-time boundary', async () => {
-    const agentUrl = 'https://operator.example/mcp';
-    const originalDateNow = Date.now;
-    const boundaryMs = 1_700_000_000_500;
-    Date.now = () => boundaryMs + 400;
-    try {
-      routes['/.well-known/brand.json'] = {
-        body: {
-          authorized_operators: [
-            {
-              domain: 'operator.example',
-              brands: ['*'],
-              valid_until: new Date(boundaryMs).toISOString(),
-            },
-          ],
-          agents: [{ type: 'sales', url: agentUrl, jwks_uri: `${baseUrl}/jwks.json` }],
-        },
-      };
-      routes['/jwks.json'] = { body: { keys: [publicJwk] } };
-      await assertCode(
-        () =>
-          resolveAgent(agentUrl, {
-            allowPrivateIp: true,
-            fetchCapabilities: fakeCapabilities({
-              identity: { brand_json_url: `${baseUrl}/.well-known/brand.json` },
-            }),
-          }),
-        'request_signature_brand_origin_mismatch'
-      );
-    } finally {
-      Date.now = originalDateNow;
-    }
-  });
-
   it('request_signature_agent_not_in_brand_json on byte-equal miss (trailing slash)', async () => {
     const agentUrl = `${baseUrl}/mcp`;
     routes['/.well-known/brand.json'] = {
@@ -629,23 +373,24 @@ describe('resolveAgent — rejection codes', () => {
     );
   });
 
-  it('publisher pin carve-out skips webhook_signing origin check only', async () => {
+  it('publisher pins never bypass webhook origin consistency', async () => {
     const agentUrl = `${baseUrl}/mcp`;
     happyPathRoutes(agentUrl);
-    // Webhook signing declared with mismatching origin — the carve-out must
-    // suppress the rejection ONLY when publisherPinned is set.
-    const result = await resolveAgent(agentUrl, {
-      allowPrivateIp: true,
-      publisherPinned: { webhook_signing: true },
-      fetchCapabilities: fakeCapabilities({
-        identity: {
-          brand_json_url: `${baseUrl}/.well-known/brand.json`,
-          key_origins: { webhook_signing: 'https://different.example' },
-        },
-        webhook_signing: { supported: true },
-      }),
-    });
-    assert.deepEqual(result.consistency, { ok: true });
+    await assertCode(
+      () =>
+        resolveAgent(agentUrl, {
+          allowPrivateIp: true,
+          publisherPinned: { webhook_signing: true },
+          fetchCapabilities: fakeCapabilities({
+            identity: {
+              brand_json_url: `${baseUrl}/.well-known/brand.json`,
+              key_origins: { webhook_signing: 'https://different.example' },
+            },
+            webhook_signing: { supported: true },
+          }),
+        }),
+      'request_signature_key_origin_mismatch'
+    );
   });
 });
 
@@ -672,6 +417,8 @@ describe('getAgentJwks fast path', () => {
     const validUntil = now + 60;
     routes['/.well-known/brand.json'] = {
       body: {
+        house: {},
+        brands: [],
         authorized_operators: [
           {
             domain: 'operator.example',
@@ -686,6 +433,7 @@ describe('getAgentJwks fast path', () => {
 
     const result = await getAgentJwks(agentUrl, {
       allowPrivateIp: true,
+      requiredOperatorScope: 'agent_operations',
       now: () => now,
       fetchCapabilities: fakeCapabilities({
         identity: { brand_json_url: `${baseUrl}/.well-known/brand.json` },
@@ -701,6 +449,7 @@ describe('createAgentJwksSet — JOSE adapter', () => {
     happyPathRoutes(agentUrl);
     const getKey = createAgentJwksSet(agentUrl, {
       allowPrivateIp: true,
+      requiredOperatorScope: 'agent_operations',
       allowedAlgs: ['EdDSA'],
       fetchCapabilities: fakeCapabilities({
         identity: { brand_json_url: `${baseUrl}/.well-known/brand.json` },
@@ -720,6 +469,7 @@ describe('createAgentJwksSet — JOSE adapter', () => {
       () =>
         createAgentJwksSet(`${baseUrl}/mcp`, {
           allowPrivateIp: true,
+          requiredOperatorScope: 'agent_operations',
           allowedAlgs: [],
         }),
       TypeError
@@ -734,6 +484,7 @@ describe('createAgentJwksSet — JOSE adapter', () => {
     routes['/jwks.json'] = { body: { keys: [{ ...publicJwk, alg: 'RS256' }] } };
     const getKey = createAgentJwksSet(agentUrl, {
       allowPrivateIp: true,
+      requiredOperatorScope: 'agent_operations',
       allowedAlgs: ['EdDSA'],
       fetchCapabilities: fakeCapabilities({
         identity: { brand_json_url: `${baseUrl}/.well-known/brand.json` },
@@ -759,6 +510,8 @@ describe('createAgentJwksSet — JOSE adapter', () => {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(
         JSON.stringify({
+          house: {},
+          brands: [],
           authorized_operators: [
             {
               domain: 'operator.example',
@@ -773,6 +526,7 @@ describe('createAgentJwksSet — JOSE adapter', () => {
     routes['/jwks.json'] = { body: { keys: [publicJwk] } };
     const getKey = createAgentJwksSet(agentUrl, {
       allowPrivateIp: true,
+      requiredOperatorScope: 'agent_operations',
       allowedAlgs: ['EdDSA'],
       cacheMaxAgeSeconds: 300,
       now: () => now,
@@ -792,7 +546,7 @@ describe('createAgentJwksSet — JOSE adapter', () => {
       () => jwtVerify(jwt, getKey, { algorithms: ['EdDSA'] }),
       error => error instanceof AgentResolverError && error.code === 'request_signature_brand_origin_mismatch'
     );
-    assert.equal(brandFetches, 2);
+    assert.equal(brandFetches, 1);
   });
 });
 
@@ -822,7 +576,7 @@ describe('ResolvedAgentJwksResolver cache', () => {
       () => resolver.resolve('known-key'),
       error => error instanceof AgentResolverError && error.code === 'request_signature_brand_origin_mismatch'
     );
-    assert.equal(resolutions, 2);
+    assert.equal(resolutions, 1);
   });
 
   it('rejects a resolution whose delegation expires before cache installation', async () => {

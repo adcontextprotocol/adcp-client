@@ -75,12 +75,12 @@ verify before parsing or re-serializing.
 ## Recommended RFC 9421 Setup
 
 Create one verifier per expected sending agent. The resolver is bound to that
-agent's `brand.json` and selector, so a webhook for one seller cannot be
+agent's canonical URL and protocol, so a webhook for one seller cannot be
 verified with another seller's keys.
 
 ```ts
 import {
-  BrandJsonJwksResolver,
+  ResolvedAgentJwksResolver,
   createWebhookVerifier,
   type BrandAgentType,
   type RequestLike,
@@ -89,24 +89,26 @@ import {
 const verifiers = new Map<string, ReturnType<typeof createWebhookVerifier>>();
 
 type SenderRecord = {
+  operationId: string;
+  agentUrl: string;
+  protocol: 'mcp' | 'a2a';
   agentId: string;
+  publisherPins?: readonly import('@adcp/sdk/signing/server').PublisherSigningKeyPin[];
   agentType: BrandAgentType;
-  brandJsonUrl: string;
-  brandId?: string;
   webhookAuth: 'rfc9421' | 'legacy-hmac';
   legacyHmacSecret?: string;
 };
 
 function verifierFor(sender: SenderRecord) {
-  const cacheKey = `${sender.brandJsonUrl}#${sender.brandId ?? '-'}#${sender.agentType}:${sender.agentId}`;
+  const cacheKey = `${sender.operationId}#${sender.agentUrl}#${sender.agentType}:${sender.agentId}`;
   let verifier = verifiers.get(cacheKey);
   if (!verifier) {
-    const jwks = new BrandJsonJwksResolver(sender.brandJsonUrl, {
+    const jwks = new ResolvedAgentJwksResolver(sender.agentUrl, sender.protocol, {
       agentType: sender.agentType,
       agentId: sender.agentId,
-      ...(sender.brandId ? { brandId: sender.brandId } : {}),
+      legacyWebhookFallback: true,
     });
-    verifier = createWebhookVerifier({ jwks });
+    verifier = createWebhookVerifier({ jwks, publisherPins: sender.publisherPins });
     verifiers.set(cacheKey, verifier);
   }
   return verifier;
@@ -117,13 +119,50 @@ async function verifyRfc9421Webhook(sender: SenderRecord, request: RequestLike) 
 }
 ```
 
+Discovery fetches the seller's `get_adcp_capabilities` through the official
+protocol client and uses its `identity.brand_json_url`. Canonical URL matching
+selects the agent; type and id only narrow that match. `key_origins` is checked
+for pinned keys too. Cached mappings are re-confirmed within the brand.json
+cache lifetime. The explicitly enabled 3.x fallback uses the agent host's
+`/.well-known/brand.json`, then its eTLD+1 only when the host serves no record.
+A present `brand_json_url` is always used, including when it is invalid or unreachable.
+
+Populate `publisherPins` from your **own stored media-buy inventory**, including
+every applicable publisher. Never choose publishers from the incoming payload.
+A key must be published in the agent JWKS and match every applicable pin by
+RFC 7638 thumbprint; a matching `kid` alone is insufficient. Each pin's `refresh`
+callback must bypass the publisher's adagents.json cache and throw on failure.
+Reuse each callback bound to its seller and tenant context across deliveries;
+concurrent refreshes and retries share a 30-second cooldown.
+Return `null` only when a successful authoritative fetch confirms removal of the
+pin. Cache verifier instances per operation because different buys may have
+different publishers, and remove them when the operation is retired.
+
+```ts
+const publisherPins = mediaBuy.publisherAuthorizations.map(authorization => ({
+  publisher: authorization.publisherDomain,
+  signingKeys: authorization.signingKeys,
+  refresh: async () => {
+    const current = await publisherStore.refreshAgentAuthorization(
+      authorization.publisherDomain, sender.agentUrl, { bypassCache: true }
+    );
+    return current.signingKeys ?? null;
+  },
+}));
+```
+
+`mediaBuy` and `publisherStore` are application-owned trusted records and a
+publisher-document fetcher. Pin misses force-refresh before final rejection,
+after signature authentication, and fail with `webhook_signature_key_unknown`.
+Use `onKeyResolutionError` to log the specific `request_signature_*` cause locally.
+
 `createWebhookVerifier` defaults replay and revocation stores once at factory
 creation time. That is safe for a single process. It is not enough behind a
 load balancer.
 
 `SenderRecord`, `lookupSenderForOperation()`, and `processWebhook()` are
 application-owned. Persist the expected `agentId`, `agentType`,
-`brandJsonUrl`, optional `brandId`, and exact `webhookAuth` mode when you
+`agentUrl`, protocol, and exact `webhookAuth` mode when you
 initiate or register the operation. The webhook receiver should read that
 state by operation ID before looking at any signature header.
 
@@ -234,7 +273,7 @@ Postgres:
 ```ts
 import { Pool } from 'pg';
 import {
-  BrandJsonJwksResolver,
+  ResolvedAgentJwksResolver,
   PostgresReplayStore,
   createWebhookVerifier,
   getReplayStoreMigration,
@@ -249,12 +288,13 @@ const replayStore = new PostgresReplayStore(pool);
 
 function buildVerifier(sender: SenderRecord) {
   return createWebhookVerifier({
-    jwks: new BrandJsonJwksResolver(sender.brandJsonUrl, {
+    jwks: new ResolvedAgentJwksResolver(sender.agentUrl, sender.protocol, {
       agentType: sender.agentType,
       agentId: sender.agentId,
-      ...(sender.brandId ? { brandId: sender.brandId } : {}),
+      legacyWebhookFallback: true,
     }),
     replayStore,
+    publisherPins: sender.publisherPins,
   });
 }
 ```
@@ -263,7 +303,7 @@ Redis:
 
 ```ts
 import { createClient } from 'redis';
-import { BrandJsonJwksResolver, RedisReplayStore, createWebhookVerifier } from '@adcp/sdk/signing/server';
+import { ResolvedAgentJwksResolver, RedisReplayStore, createWebhookVerifier } from '@adcp/sdk/signing/server';
 
 const redis = createClient({ url: process.env.REDIS_URL });
 await redis.connect();
@@ -275,12 +315,13 @@ const replayStore = new RedisReplayStore(redis, {
 
 function buildVerifier(sender: SenderRecord) {
   return createWebhookVerifier({
-    jwks: new BrandJsonJwksResolver(sender.brandJsonUrl, {
+    jwks: new ResolvedAgentJwksResolver(sender.agentUrl, sender.protocol, {
       agentType: sender.agentType,
       agentId: sender.agentId,
-      ...(sender.brandId ? { brandId: sender.brandId } : {}),
+      legacyWebhookFallback: true,
     }),
     replayStore,
+    publisherPins: sender.publisherPins,
   });
 }
 ```

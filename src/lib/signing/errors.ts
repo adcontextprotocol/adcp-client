@@ -62,11 +62,20 @@ export type WebhookSignatureErrorCode =
 export class WebhookSignatureError extends ADCPError {
   readonly code: WebhookSignatureErrorCode;
   readonly failedStep: number;
+  /** Local retry signal; the wire error code stays in the webhook vocabulary. */
+  readonly retryable: boolean;
 
-  constructor(code: WebhookSignatureErrorCode, failedStep: number, message: string, details?: unknown) {
+  constructor(
+    code: WebhookSignatureErrorCode,
+    failedStep: number,
+    message: string,
+    details?: unknown,
+    retryable = false
+  ) {
     super(message, details);
     this.code = code;
     this.failedStep = failedStep;
+    this.retryable = retryable;
   }
 }
 

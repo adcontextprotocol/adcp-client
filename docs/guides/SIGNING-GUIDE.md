@@ -53,7 +53,7 @@ Your domain (e.g., agent.example.com)
         -> /.well-known/jwks.json      # JSON Web Key Set with public keys
 ```
 
-`@adcp/sdk` provides `BrandJsonJwksResolver` which handles this entire chain automatically, with caching and refresh.
+`@adcp/sdk` provides `ResolvedAgentJwksResolver` which handles this entire chain automatically, with caching and refresh.
 
 ## Step 1: Generate a Signing Key
 
@@ -435,13 +435,13 @@ import {
   requireAuthenticatedOrSigned,
   mcpToolNameResolver,
 } from '@adcp/sdk/server';
-import { BrandJsonJwksResolver } from '@adcp/sdk/signing/server';
+import { ResolvedAgentJwksResolver } from '@adcp/sdk/signing/server';
 
 serve(createAgent, {
   authenticate: requireAuthenticatedOrSigned({
     signature: verifySignatureAsAuthenticator({
       capability: { supported: true, required_for: ['create_media_buy'], covers_content_digest: 'either' },
-      jwks: new BrandJsonJwksResolver(),
+      jwks: new ResolvedAgentJwksResolver(expectedBuyerAgentUrl, 'mcp'),
       resolveOperation: mcpToolNameResolver,
     }),
     fallback: verifyApiKey({ keys: { 'sk_live_abc': { principal: 'acct_42' } } }),
@@ -459,7 +459,8 @@ Set `requiredFor` to the AdCP operations you want to gate behind signatures — 
 |---|---|
 | `StaticJwksResolver` | Fixed set of known buyer keys. Good for dev/testing. |
 | `HttpsJwksResolver` | Fetches JWKS from a URL with caching and refresh. |
-| `BrandJsonJwksResolver` | Full discovery chain: brand.json -> jwks_uri -> JWKS. Production recommended. |
+| `ResolvedAgentJwksResolver` | Capability-bound discovery from an expected agent URL. Production recommended. |
+| `BrandJsonJwksResolver` | Confirms an operator mapping against capabilities; accepts an explicit `agentUrl` or infers a unique onboarding URL from existing configuration. |
 
 ## Step 5: Verify Inbound Webhooks (Buyer / Orchestrator)
 
@@ -468,16 +469,18 @@ When sellers send webhooks, verify the signature to confirm authenticity:
 ```typescript
 import {
   verifyWebhookSignature,
-  BrandJsonJwksResolver,
+  ResolvedAgentJwksResolver,
   InMemoryReplayStore,
+  InMemoryRevocationStore,
 } from '@adcp/sdk/signing/server';
 
-const jwks = new BrandJsonJwksResolver();
+const jwks = new ResolvedAgentJwksResolver(expectedSellerAgentUrl, 'mcp', { legacyWebhookFallback: true });
 const replayStore = new InMemoryReplayStore();
+const revocationStore = new InMemoryRevocationStore();
 
 app.post('/webhook', async (req, res) => {
   try {
-    await verifyWebhookSignature(req, { jwks, replayStore });
+    await verifyWebhookSignature(req, { jwks, replayStore, revocationStore });
   } catch (err) {
     return res.status(401).json({ error: 'invalid webhook signature' });
   }

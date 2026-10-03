@@ -671,7 +671,7 @@ import {
   requireAuthenticatedOrSigned,
   mcpToolNameResolver,
 } from '@adcp/sdk/server';
-import { BrandJsonJwksResolver } from '@adcp/sdk/signing/server';
+import { ResolvedAgentJwksResolver } from '@adcp/sdk/signing/server';
 
 serve(
   () =>
@@ -692,7 +692,7 @@ serve(
     authenticate: requireAuthenticatedOrSigned({
       signature: verifySignatureAsAuthenticator({
         capability: { supported: true, required_for: ['create_media_buy', 'update_media_buy'], covers_content_digest: 'either' },
-        jwks: new BrandJsonJwksResolver(),
+        jwks: new ResolvedAgentJwksResolver('https://buyer.example/mcp', 'mcp'),
         resolveOperation: mcpToolNameResolver,
       }),
       fallback: verifyApiKey({ keys: { sk_live_abc: { principal: 'acct_42' } } }),
