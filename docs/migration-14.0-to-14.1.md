@@ -25,7 +25,7 @@ and signature verification rejects identities or keys it cannot confirm.
 | Repairs wholesale mirrors from webhook deliveries | Acknowledge only after `refresh()` or repair succeeds. Failed catalog reads now reject, preserving the mirror and leaving the delivery eligible for retry. |
 
 For the complete list of newly optional registry fields, see the
-[14.1.0 changelog](../CHANGELOG.md#1410).
+[14.1.0 changelog](https://github.com/adcontextprotocol/adcp-client/blob/main/CHANGELOG.md#1410).
 
 ## Security behavior to verify
 
