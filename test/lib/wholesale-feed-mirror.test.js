@@ -111,19 +111,66 @@ test('slow success and slow failure cannot overwrite a newer refresh', async () 
     assert.equal((await store.read(scope)).error, undefined);
   }
 });
-test('paginated catalog changes and stalled cursors preserve the prior snapshot', async () => {
-  const store = new InMemoryWholesaleFeedMirrorStore();
-  await refreshWholesaleFeed(options(store, async () => result([product])));
-  let page = 0;
-  const outcome = await refreshWholesaleFeed(
-    options(store, async () => {
-      const response = result([{ ...product, product_id: `p${++page}` }], page === 1 ? 'v2' : 'v3');
-      if (page === 1) response.data.pagination = { has_more: true, cursor: 'next' };
-      return response;
-    })
-  );
-  assert.equal(outcome.outcome, 'degraded');
-  assert.deepEqual((await store.read(scope)).items, [product]);
+test('continuation pages can omit tokens without losing the first page metadata', async () => {
+  for (const entity of ['product', 'signal']) {
+    const store = new InMemoryWholesaleFeedMirrorStore();
+    const feedScope = { ...scope, entity };
+    const rowsKey = entity === 'product' ? 'products' : 'signals';
+    const idKey = entity === 'product' ? 'product_id' : 'signal_agent_segment_id';
+    let page = 0;
+    const client = {
+      [entity === 'product' ? 'getProducts' : 'getSignals']: async params => {
+        if (page === 3) {
+          assert.equal(params.if_wholesale_feed_version, 'v1');
+          assert.equal(params.if_pricing_version, 'price1');
+          return {
+            data: { unchanged: true, wholesale_feed_version: 'v1', pricing_version: 'price1' },
+          };
+        }
+        page++;
+        assert.equal(params.pagination.cursor, page === 1 ? undefined : `page${page}`);
+        return {
+          data: {
+            [rowsKey]: [{ [idKey]: `row${page}`, name: `Row ${page}`, pricing_options: [] }],
+            ...(page === 1 && {
+              wholesale_feed_version: 'v1',
+              pricing_version: 'price1',
+              cache_scope: 'account',
+            }),
+            pagination: { has_more: page < 3, ...(page < 3 && { cursor: `page${page + 1}` }) },
+          },
+        };
+      },
+    };
+    const opts = { store, scope: feedScope, account, client };
+    const first = await refreshWholesaleFeed(opts);
+    assert.equal(first.outcome, 'applied');
+    assert.equal(first.snapshot.items.length, 3);
+    assert.equal(first.snapshot.wholesaleFeedVersion, 'v1');
+    assert.equal(first.snapshot.pricingVersion, 'price1');
+    assert.equal(first.snapshot.cacheScope, 'account');
+    assert.equal((await refreshWholesaleFeed(opts)).outcome, 'unchanged');
+  }
+});
+test('present but conflicting pagination metadata preserves the prior snapshot', async () => {
+  for (const changed of [{ wholesale_feed_version: 'v3' }, { pricing_version: 'price3' }, { cache_scope: 'public' }]) {
+    const store = new InMemoryWholesaleFeedMirrorStore();
+    await refreshWholesaleFeed(options(store, async () => result([product])));
+    let page = 0;
+    const outcome = await refreshWholesaleFeed(
+      options(store, async () => {
+        const response = result([{ ...product, product_id: `p${++page}` }], 'v2');
+        if (page === 1) response.data.pagination = { has_more: true, cursor: 'next' };
+        else Object.assign(response.data, changed);
+        return response;
+      })
+    );
+    assert.equal(outcome.outcome, 'degraded');
+    const preserved = await store.read(scope);
+    assert.deepEqual(preserved.items, [product]);
+    assert.equal(preserved.wholesaleFeedVersion, 'v1');
+    assert.equal(preserved.pricingVersion, 'price1');
+  }
 });
 test('webhook deltas use CAS and version mismatch repairs instead of applying stale data', async () => {
   const store = new InMemoryWholesaleFeedMirrorStore();

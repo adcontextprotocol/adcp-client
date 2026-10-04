@@ -204,14 +204,14 @@ async function refreshMirror(
       }
       if (
         page > 1 &&
-        (body.wholesale_feed_version !== wholesaleFeedVersion ||
-          body.pricing_version !== pricingVersion ||
+        ((body.wholesale_feed_version !== undefined && body.wholesale_feed_version !== wholesaleFeedVersion) ||
+          (body.pricing_version !== undefined && body.pricing_version !== pricingVersion) ||
           (body.cache_scope ?? cacheScope) !== cacheScope)
       ) {
         throw new Error('Wholesale feed versions changed during pagination.');
       }
-      wholesaleFeedVersion = body.wholesale_feed_version;
-      pricingVersion = body.pricing_version;
+      wholesaleFeedVersion = body.wholesale_feed_version ?? wholesaleFeedVersion;
+      pricingVersion = body.pricing_version ?? pricingVersion;
       cacheScope = body.cache_scope ?? cacheScope;
       if (unchanged) break;
       const rows = scope.entity === 'product' ? body.products : body.signals;

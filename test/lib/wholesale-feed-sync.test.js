@@ -219,6 +219,41 @@ describe('WholesaleFeedSync legacy-view wholesale feed flow', () => {
     sync.stop();
   });
 
+  test('bootstraps continuation pages that omit version tokens and keeps conditional probes', async () => {
+    const { client, calls } = makeStubClient({
+      capabilities: { wholesale_feed_versioning: { supported: true } },
+      getProducts: (params, callNumber) => {
+        if (callNumber === 1) {
+          return makeProductsResult([makeProduct('p1')], {
+            wholesale_feed_version: 'products-v1',
+            pricing_version: 'products-price-v1',
+            pagination: { has_more: true, cursor: 'next' },
+          });
+        }
+        if (callNumber === 2) {
+          assert.strictEqual(params.pagination.cursor, 'next');
+          return makeProductsResult([makeProduct('p2')]);
+        }
+        assert.strictEqual(params.if_wholesale_feed_version, 'products-v1');
+        assert.strictEqual(params.if_pricing_version, 'products-price-v1');
+        return makeUnchangedResult({
+          wholesale_feed_version: 'products-v1',
+          pricing_version: 'products-price-v1',
+        });
+      },
+    });
+    const sync = new WholesaleFeedSync({ client, account });
+    try {
+      await sync.start();
+      assert.strictEqual(sync.products.count, 2);
+      await sync.refresh();
+      assert.strictEqual(sync.products.count, 2);
+      assert.strictEqual(calls.getProducts.length, 3);
+    } finally {
+      sync.stop();
+    }
+  });
+
   test('restores a persisted mirror before the first conditional bootstrap', async () => {
     const persisted = {
       version: 1,
