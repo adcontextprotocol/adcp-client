@@ -1,5 +1,41 @@
 # Changelog
 
+## 14.1.0
+
+### Minor Changes
+
+- e2eed2c: Add a seller/caller-scoped buyer account registry with memoized provisioning, optional storage, account status repair, billing terms, and `auto`/`strict` account policies (#3093). The default policy remains `off` for existing callers: `resolveAccount()` keeps the 14.0 behavior of sending `sync_accounts` on every call and returning the natural key, and the memoized registry backs it only when you set `accountPolicy`, `accountStorage`, `accountRegistryScope`, or `accountRegistryMaxEntries`. Add typed buyer-setup errors and an opt-in product cache that stores cache scope and feed/pricing versions together. Preserve `resolveAccount` pending-approval behavior.
+- bed05b8: Align signature verification with the AdCP 3.3 agent-resolution algorithm. Match canonical agent URLs, discover webhook keys from capability-selected operator records, and accept publisher-pinned webhook keys only when the agent JWKS also publishes the same public key. Pins apply to every publisher in the verifier's own media-buy record and are refreshed before rejection.
+
+  `BrandJsonJwksResolver` adds an optional `agentUrl`. Existing type/id/brand configurations infer a unique onboarding URL, then confirm the agent's capabilities-selected operator record and canonical match before accepting keys. Ambiguous or unconfirmed mappings fail closed. Canonical operator verification covers every portfolio collection; legacy `brandId` and redirect-depth settings apply only to onboarding. Existing JWKS option types remain accepted. `BrandJsonJwksResolver` and `SingleAgentClient` enable `legacyWebhookFallback` by default for 3.x webhooks and permit disabling it. A2A standalone integrations must specify `protocol: 'a2a'`. Cross-domain onboarding must agree with capabilities, and legacy webhook discovery requires the agent-origin well-known record. These security corrections ship as a minor release while preserving existing constructor signatures. See `docs/migration-agent-resolution-3.3.md` for cache bounds, canonical identity and governance replay/revocation index updates.
+
+  Add per-request governance buyer identity and expose the exact selected operator record on verified signed requests. Explicit receiver account-authorization requirements remain enforced separately from origin binding.
+
+  `HttpsJwksResolver` now throttles failed initial fetches and failed refreshes using its configured cooldown, and rejects non-finite or negative cache options. Governance enforces a minimum 30-second cooldown and refuses keys at or past cache expiry. Brand resolver configuration errors fail at construction, before onboarding fetches.
+
+- 4694424: Sync generated registry types with the live AgenticAdvertising.org OpenAPI, adding `AgentComplianceDetail.latest_attempt` and current AdCP release examples. Registry runtime behavior in the SDK is unchanged.
+
+  Type change: the former human-refresh fence fields on `AgentComplianceDetail.refresh_availability` (`retryable`, `scope`, `applies_to`, `code`, `notice`, `alternative_action`, `alternative_description`) and on the `refreshAgent` 503 response (`message`, `code`, `retryable`, `scope`, `applies_to`, `alternative_action`, `alternative_description`, `tracking_issue`) are now optional and `@deprecated`. This mirrors a change in the live registry API, which no longer returns them; the SDK did not remove them. Code that reads these fields as required values (for example, assigning `refresh_availability.code` or `notice` to a `string`) now needs a fallback for `undefined`. The fields will be removed from the types in the next major release.
+
+- e2eed2c: Preserve product and signal mirrors when wholesale refreshes fail, emit typed AdCP error details, and retry degraded mirrors during polling (#3092). `WholesaleFeedSyncState` now includes `degraded`. TypeScript code with an exhaustive `switch` over the state (for example, one ending in an `assertNever`/`never` check) needs a `degraded` case to compile.
+
+  Manual refresh and webhook repair reject failed catalog reads, preserving the mirror and leaving failed deliveries eligible for retry.
+
+- e2eed2c: Expose `ctx.provisioning` to account resolvers (#3094) and add an opt-in `strictAccountReferences` server option. Strict mode becomes the default in the next major release. With `strictAccountReferences: true`:
+  - a buyer-supplied account reference on a server without a reference-aware `resolveAccount` fails with `ACCOUNT_NOT_FOUND`;
+  - a seller that declares `account.required_for_products` refuses account-less `get_products` with `ACCOUNT_REQUIRED`;
+  - `list_accounts.account` is treated as a filter instead of being resolved as the request's account;
+  - an implicit-mode account whose returned identity metadata disagrees with the supplied natural key is refused (#3091).
+
+  Deprecation: by default each case keeps the 14.0 behavior and logs a deprecation warning once per process per warning code (`logger.warn`, plus `process.emitWarning` outside production; later occurrences log at debug level). Move account authorization into `resolveAccount`, then opt in; see `docs/guides/account-resolution.md`.
+
+### Patch Changes
+
+- e2eed2c: Stop synthesizing unprovisioned accounts on storyboard discovery and negotiation requests, including the security baseline signals probe (#3095). Preserve explicitly authored and provisioned context accounts.
+- 10067cd: Return schema-enforced `sync_accounts` notification event-type failures per account, as required by AdCP, instead of rejecting the whole request. When strict request validation (the non-production default) finds only these event-type failures, invalid accounts are withheld from the handler; valid siblings are processed in order, and replay retains the full original request and combined result. When `delete_missing` is true, reject every entry without dispatching the roster so invalid accounts cannot be deactivated as omitted. Failed settings updates leave account lifecycle status unknown. Submitted acknowledgements report rejected rows immediately while preserving the task handle for accepted entries; adopters still own their eventual task results. Default response text also reports the rejection count, and adopter-formatted guidance is preserved. If an older response schema cannot represent a failed account identity, keep existing request validation before dispatching any writes. Other schema errors retain request-level rejection in strict mode. Warn mode stays advisory for every schema issue, including event-type failures: the full request reaches the handler with a logged warning, as in 14.0. Disabling request validation preserves handler-owned validation. Whole-operation handler errors take precedence over per-account results.
+- e2eed2c: Resolve implicit accounts by their complete natural key and refuse unsynced references (#3091). Add opt-in additive `mergeOnUpsert` with `remove(ref, ctx)` and `delete_missing` support. Keep the 24-hour TTL and replacement default for compatibility.
+- 4694424: Preserve HTTP 401 diagnostics for SDK-signed A2A and MCP requests instead of suggesting bearer tokens or OAuth. AuthenticationRequiredError carries the original status and signatureErrorCode, with protocol repair guidance and a bounded, redacted, non-enumerable responseBody for seller diagnostics. Explicit Signature-challenge rejections skip unsigned authentication probes and credential refresh retries. Bare signed 401s preserve the existing single client-credentials refresh before surfacing a persistent rejection; explicit gateway challenges retain existing authentication recovery. Unsigned Signature challenges also receive signing guidance.
+
 ## 14.0.0
 
 ### Major Changes
