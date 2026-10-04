@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { AccountReference, BusinessEntity, PaymentTerms, SyncAccountsResponse } from '../types/tools.generated';
 import type { TaskOptions, TaskResult } from './ConversationTypes';
 import { accountReferenceKey } from './account-key';
@@ -7,12 +7,15 @@ import { sameCountrySet } from './account-resolution';
 import { adcpErrorToTypedError, AccountNotFoundError, AccountSetupRequiredError } from '../errors';
 import { isAbortOrTimeoutError, MAX_TIMER_DELAY_MS, throwIfAborted, withAbortSignal } from '../protocols/abort';
 import { withTaskDeadline } from './task-deadline';
+import { isValidIdempotencyKey } from '../utils/idempotency';
 
 export type AccountPolicy = 'auto' | 'strict' | 'off';
 export interface EnsureAccountOptions {
   billing?: 'operator' | 'agent' | 'advertiser';
   paymentTerms?: PaymentTerms;
   billingEntity?: BusinessEntity;
+  /** Caller-owned retry identity. Settle ambiguous dispatches explicitly with this key; the registry never rotates it. */
+  idempotencyKey?: string;
 }
 export interface ProvisionedAccount {
   account: AccountReference;
@@ -23,13 +26,37 @@ export interface ProvisionedAccount {
   setupTerms?: Partial<Record<keyof EnsureAccountOptions, string>>;
   /** Stored reference aliases for authoritative repair after restart. */
   aliases?: AccountReference[];
+  /** Monotonically increasing row revision when compareAndSet is implemented. */
+  revision?: number;
+  /** Durable claim. Reconcile an uncertain dispatch explicitly before provisioning again. */
+  dispatch?: { idempotencyKey: string; startedAt: string };
 }
 /** Partitioned by seller and caller scope. Implementations must provide read-your-writes. */
 export interface BuyerAccountStorage {
   get(key: string): Promise<ProvisionedAccount | undefined>;
   set(key: string, account: ProvisionedAccount): Promise<void>;
+  /** Atomically insert (undefined revision) or replace. Store the supplied new revision. Required for multi-process safety. */
+  compareAndSet?(key: string, expectedRevision: number | undefined, account: ProvisionedAccount): Promise<boolean>;
+}
+export interface BuyerAccountDispatch {
+  storageKey: string;
+  account: AccountReference;
+  idempotencyKey: string;
+}
+export interface BuyerAccountProvisioningDispatch {
+  idempotencyKey: string;
+  /** @internal Legacy sellers can omit idempotency only when no durability or caller key was requested. */
+  requireIdempotencyKey?: boolean;
+  /** Invoke immediately before the transport receives the mutation. */
+  beforeDispatch(): Promise<void>;
 }
 export interface BuyerAccountRegistryOptions {
+  /** Awaited before dispatch; rejection prevents the mutation. */
+  onDispatchStart?: (dispatch: BuyerAccountDispatch) => Promise<void>;
+  /** Awaited for each seller result before account writes. Rejection preserves the claim for caller reconciliation. */
+  onResult?: (dispatch: BuyerAccountDispatch & { result: TaskResult<unknown> }) => Promise<void>;
+  /** @internal The provision callback invokes beforeDispatch at its transport boundary. */
+  provisionOwnsDispatchBoundary?: boolean;
   maxEntries?: number;
   normalizeOptions?: (options: EnsureAccountOptions, taskOptions?: TaskOptions) => Promise<EnsureAccountOptions>;
 }
@@ -52,12 +79,24 @@ function setupTerms(options: EnsureAccountOptions): ProvisionedAccount['setupTer
           )
         : value;
   return Object.fromEntries(
-    Object.entries(options).map(([key, value]) => [
-      key,
-      createHash('sha256')
-        .update(JSON.stringify(stable(value)))
-        .digest('hex'),
-    ])
+    Object.entries(options)
+      .filter(([key]) => key !== 'idempotencyKey')
+      .map(([key, value]) => [
+        key,
+        createHash('sha256')
+          .update(JSON.stringify(stable(value)))
+          .digest('hex'),
+      ])
+  );
+}
+
+/** Synthetic transport/protocol errors do not establish the seller mutation's outcome. */
+function isDefinitiveRejection(result: TaskResult<unknown>): boolean {
+  return Boolean(
+    result.adcpError &&
+    !result.adcpError.synthetic &&
+    !result.adcpError.code.startsWith('IDEMPOTENCY_') &&
+    ['terminal', 'correctable'].includes(result.adcpError.recovery ?? '')
   );
 }
 
@@ -78,14 +117,15 @@ export class BuyerAccountRegistry {
     private provision: (
       key: AccountReference,
       options: EnsureAccountOptions,
-      taskOptions?: TaskOptions
+      taskOptions?: TaskOptions,
+      dispatch?: BuyerAccountProvisioningDispatch
     ) => Promise<TaskResult<SyncAccountsResponse>>,
     private storage?: BuyerAccountStorage,
     private repair?: (accountId: string, taskOptions?: TaskOptions) => Promise<readonly unknown[]>,
-    options: BuyerAccountRegistryOptions = {}
+    private readonly registryOptions: BuyerAccountRegistryOptions = {}
   ) {
-    this.maxEntries = options.maxEntries ?? 10_000;
-    this.normalizeOptions = options.normalizeOptions;
+    this.maxEntries = registryOptions.maxEntries ?? 10_000;
+    this.normalizeOptions = registryOptions.normalizeOptions;
     if (!Number.isSafeInteger(this.maxEntries) || this.maxEntries < 2)
       throw new Error('Account registry maxEntries must be an integer >= 2.');
   }
@@ -115,13 +155,15 @@ export class BuyerAccountRegistry {
   }
   async get(account: AccountReference): Promise<ProvisionedAccount | undefined> {
     const key = this.key(account);
-    let entry = this.entries.get(key);
-    if (!entry) {
+    let entry = this.storage?.compareAndSet ? await this.storage.get(key) : this.entries.get(key);
+    if (!entry && !this.storage?.compareAndSet) {
       const persisted = await this.storage?.get(key);
       entry = this.entries.get(key) ?? persisted; // A setup may have settled while storage was reading.
     }
     if (key !== this.key(account) || (entry && accountReferenceKey(entry.account) !== accountReferenceKey(account)))
       return undefined;
+    if (entry && this.storage?.compareAndSet && (!Number.isSafeInteger(entry.revision) || entry.revision! < 1))
+      throw new Error('CAS account storage must return a positive integer revision.');
     if (entry) this.remember(key, entry);
     if (entry?.account_id && this.invalidatedHandles.has(this.key({ account_id: entry.account_id })))
       return { ...structuredClone(entry), status: 'unknown' };
@@ -142,6 +184,8 @@ export class BuyerAccountRegistry {
     account = structuredClone(account);
     if (this.normalizeOptions) options = await this.normalizeOptions(structuredClone(options), taskOptions);
     options = structuredClone(Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)));
+    if (options.idempotencyKey !== undefined && !isValidIdempotencyKey(options.idempotencyKey))
+      throw new TypeError('idempotencyKey must match [A-Za-z0-9_.:-]{16,255}.');
     const scope = this.scope();
     const key = this.key(account, scope);
     const current = await this.get(account);
@@ -154,7 +198,9 @@ export class BuyerAccountRegistry {
       );
     if (shared) {
       if (!isDeepStrictEqual(shared.options, options))
-        throw new AccountSetupRequiredError('Provisioning is already in progress with different billing terms.');
+        throw new AccountSetupRequiredError(
+          'Provisioning is already in progress with different billing terms or idempotency keys.'
+        );
       const entry = await wait(shared.promise);
       if (shared.result) onTaskResult?.(shared.result);
       return entry;
@@ -201,6 +247,10 @@ export class BuyerAccountRegistry {
         throw new AccountNotFoundError(
           'Reconcile this account with listAccounts or explicitly reestablish it with syncAccounts.'
         );
+      if (current.status === 'provisioning' && current.dispatch)
+        throw new AccountSetupRequiredError(
+          `Provisioning is claimed or in doubt in durable storage.${current.pendingTaskId ? ` Recover task ${current.pendingTaskId}.` : ''} Reconcile the recorded idempotency key and observeSync before retrying.`
+        );
       if (current.status === 'provisioning' && current.pendingTaskId)
         throw new AccountSetupRequiredError(
           `Reconcile pending sync_accounts task ${current.pendingTaskId} and observe its completed account rows before provisioning again.`
@@ -232,49 +282,110 @@ export class BuyerAccountRegistry {
     // Provisioning may commit spend/terms. Each caller cancels its wait; the one seller operation continues.
     const operationOptions = { ...taskOptions, signal: undefined, timeout: undefined };
     const observationEpoch = this.captureObservation();
-    const request = this.provision(structuredClone(account), pending.options, operationOptions).then(async initial => {
+    const idempotencyKey = options.idempotencyKey ?? randomUUID();
+    const dispatch: BuyerAccountDispatch = { storageKey: key, account: structuredClone(account), idempotencyKey };
+    let claimRevision: number | undefined;
+    let dispatched = false;
+    const releaseClaim = async () => {
+      if (!this.storage?.compareAndSet || claimRevision === undefined) return;
+      const latest = await this.storage.get(key);
+      if (latest?.revision !== claimRevision || latest.dispatch?.idempotencyKey !== idempotencyKey) return;
+      await this.write({ ...latest, status: 'failed_provisioning', dispatch: undefined }, scope);
+    };
+    const beforeDispatch = async () => {
+      if (scope !== this.scope()) throw new AccountNotFoundError('Caller credentials changed before dispatch.');
+      if (this.storage?.compareAndSet) {
+        await this.write(
+          {
+            account,
+            status: 'provisioning',
+            setupTerms: terms,
+            revision: current?.revision,
+            dispatch: { idempotencyKey, startedAt: new Date().toISOString() },
+          },
+          scope
+        );
+        claimRevision = (current?.revision ?? 0) + 1;
+      }
+      await this.registryOptions.onDispatchStart?.(structuredClone(dispatch));
+      if (scope !== this.scope()) throw new AccountNotFoundError('Caller credentials changed before dispatch.');
+      dispatched = true;
+    };
+    const request = (async () => {
+      try {
+        if (!this.registryOptions.provisionOwnsDispatchBoundary) await beforeDispatch();
+        return await this.provision(structuredClone(account), pending.options, operationOptions, {
+          idempotencyKey,
+          beforeDispatch,
+          requireIdempotencyKey: Boolean(
+            options.idempotencyKey ||
+            this.storage?.compareAndSet ||
+            this.registryOptions.onDispatchStart ||
+            this.registryOptions.onResult
+          ),
+        });
+      } catch (error) {
+        if (!dispatched) await releaseClaim();
+        throw error;
+      }
+    })().then(async initial => {
       let result = initial;
       pending.result = result;
+      if (dispatched) await this.registryOptions.onResult?.({ ...structuredClone(dispatch), result });
       notify(result);
       if (this.key(account) !== key) throw new AccountNotFoundError('Caller credentials changed during provisioning.');
-      if (!result.success)
+      if (!result.success) {
+        // A typed correctable/terminal rejection is definitive; unknown transport outcomes retain the claim.
+        if (!dispatched || isDefinitiveRejection(result)) await releaseClaim();
         throw (
           adcpErrorToTypedError(result.adcpError ?? { code: 'ACCOUNT_NOT_FOUND', message: result.error }) ??
           new Error(result.error)
         );
+      }
       if (result.status !== 'completed') {
         const provisional: ProvisionedAccount = {
           account: structuredClone(account),
           status: 'provisioning',
           setupTerms: current?.setupTerms ?? terms,
-          ...(result.metadata.taskId && { pendingTaskId: result.metadata.taskId }),
+          ...((result.metadata.serverTaskId ?? result.metadata.taskId) && {
+            pendingTaskId: result.metadata.serverTaskId ?? result.metadata.taskId,
+          }),
         };
         await this.enqueue(async () => {
           const latest = await this.get(account);
           if (
-            !latest ||
-            latest.status === 'failed_provisioning' ||
-            (latest.status === current?.status && latest.account_id === current?.account_id)
-          )
-            await this.write(provisional, scope);
+            this.storage?.compareAndSet
+              ? latest?.revision === claimRevision && latest?.dispatch?.idempotencyKey === idempotencyKey
+              : !latest ||
+                latest.status === 'failed_provisioning' ||
+                (latest.status === current?.status && latest.account_id === current?.account_id)
+          ) {
+            await this.write({ ...provisional, revision: latest?.revision, dispatch: latest?.dispatch }, scope);
+            if (claimRevision !== undefined) claimRevision = (latest?.revision ?? 0) + 1;
+          }
         });
         if (!result.submitted) return provisional;
         result = await result.submitted.waitForCompletion();
         pending.result = result;
+        await this.registryOptions.onResult?.({ ...structuredClone(dispatch), result });
         notify(result);
         if (!result.success) {
-          await this.enqueue(async () => {
-            const latest = await this.get(account);
-            if (!latest || latest.status === 'provisioning')
-              await this.write(
-                {
-                  account: structuredClone(account),
-                  status: 'failed_provisioning',
-                  setupTerms: current?.setupTerms ?? terms,
-                },
-                scope
-              );
-          });
+          if (this.storage?.compareAndSet) {
+            if (isDefinitiveRejection(result)) await releaseClaim();
+          } else {
+            await this.enqueue(async () => {
+              const latest = await this.get(account);
+              if (!latest || latest.status === 'provisioning')
+                await this.write(
+                  {
+                    account: structuredClone(account),
+                    status: 'failed_provisioning',
+                    setupTerms: current?.setupTerms ?? terms,
+                  },
+                  scope
+                );
+            });
+          }
           throw (
             adcpErrorToTypedError(result.adcpError ?? { code: 'ACCOUNT_SETUP_REQUIRED', message: result.error }) ??
             new Error(result.error)
@@ -286,22 +397,20 @@ export class BuyerAccountRegistry {
         throw new AccountSetupRequiredError(
           'sync_accounts has not completed; observe its completion before provisioning again.'
         );
-      await this.observeSync([account], result.data.accounts, false, observationEpoch);
+      await this.observeSync([account], result.data.accounts, false, observationEpoch, claimRevision);
       const entry = await this.get(account);
       if (scope !== this.scope()) throw new AccountNotFoundError('Caller credentials changed during provisioning.');
       if (!entry || entry.status === 'provisioning' || entry.status === 'failed_provisioning') {
-        await this.enqueue(async () => {
-          const latest = await this.get(account);
-          if (!latest || ['provisioning', 'failed_provisioning'].includes(latest.status))
-            await this.write(
-              {
-                account,
-                status: 'failed_provisioning',
-                setupTerms: current?.setupTerms ?? terms,
-              },
-              scope
-            );
-        });
+        if (this.storage?.compareAndSet) await releaseClaim();
+        else
+          await this.enqueue(async () => {
+            const latest = await this.get(account);
+            if (!latest || ['provisioning', 'failed_provisioning'].includes(latest.status))
+              await this.write(
+                { account, status: 'failed_provisioning', setupTerms: current?.setupTerms ?? terms },
+                scope
+              );
+          });
         const failed = result.data.accounts.find(row => row.action === 'failed');
         const error = failed?.errors?.[0];
         throw (
@@ -309,15 +418,21 @@ export class BuyerAccountRegistry {
           new AccountNotFoundError('sync_accounts did not establish the requested account.')
         );
       }
+      if (claimRevision !== undefined && entry.revision !== claimRevision + 1) return entry;
       let settled = entry;
       await this.enqueue(async () => {
         const latest = await this.get(account);
         if (scope !== this.scope()) throw new AccountNotFoundError('Caller credentials changed during provisioning.');
         if (!latest) throw new AccountNotFoundError('The provisioned account is no longer registered.');
         settled = latest;
-        if (latest.account_id !== entry.account_id) return; // An explicit sync replaced this handle.
+        if (
+          latest.account_id !== entry.account_id ||
+          (this.storage?.compareAndSet && latest.revision !== entry.revision)
+        )
+          return; // An explicit sync replaced this handle.
         settled = { ...latest, setupTerms: setupTerms(options) };
         await this.write(settled, scope);
+        settled = (await this.get(account)) ?? settled;
         if (settled.account_id && !('account_id' in account)) {
           const idEntry = await this.get({ account_id: settled.account_id });
           if (scope !== this.scope()) throw new AccountNotFoundError('Caller credentials changed during provisioning.');
@@ -339,15 +454,23 @@ export class BuyerAccountRegistry {
   private async write(entry: ProvisionedAccount, scope: string, isCurrent: () => boolean = () => true): Promise<void> {
     if (!isCurrent()) return;
     const key = this.key(entry.account, scope);
+    if (this.storage?.compareAndSet) {
+      const revision = entry.revision;
+      entry = { ...entry, revision: (revision ?? 0) + 1 };
+      if (!(await this.storage.compareAndSet(key, revision, structuredClone(entry))))
+        throw new AccountSetupRequiredError('Account storage revision changed. Reload and reconcile before retrying.');
+    } else {
+      await this.storage?.set(key, structuredClone(entry));
+    }
     if (scope === this.scope()) this.remember(key, entry);
-    await this.storage?.set(key, structuredClone(entry));
   }
   private async record(
     ref: AccountReference,
     row: AccountRow,
     scope: string,
     preserveTerms = false,
-    isCurrent: () => boolean = () => true
+    isCurrent: () => boolean = () => true,
+    expectedRevision?: number
   ): Promise<void> {
     const entry: ProvisionedAccount = {
       account: structuredClone(ref),
@@ -355,6 +478,7 @@ export class BuyerAccountRegistry {
       ...(row.account_id && { account_id: row.account_id }),
     };
     const prior = await this.get(ref);
+    if (expectedRevision !== undefined && prior?.revision !== expectedRevision) return;
     if (scope !== this.scope() || !isCurrent()) return;
     const idRef = row.account_id && !('account_id' in ref) ? { account_id: row.account_id } : undefined;
     const priorId = idRef ? await this.get(idRef) : undefined;
@@ -376,6 +500,7 @@ export class BuyerAccountRegistry {
         );
       }
     }
+    entry.revision = prior?.revision;
     if (preserveTerms && prior?.setupTerms) entry.setupTerms = prior.setupTerms;
     if ('account_id' in ref) {
       if (prior?.aliases) entry.aliases = prior.aliases;
@@ -385,6 +510,7 @@ export class BuyerAccountRegistry {
     await this.write(
       {
         account: idRef,
+        revision: priorId?.revision,
         account_id: row.account_id,
         status: row.status!,
         aliases: [...aliases.values()],
@@ -403,7 +529,8 @@ export class BuyerAccountRegistry {
     refs: readonly AccountReference[],
     rows: readonly unknown[],
     dryRun = false,
-    observationEpoch?: number
+    observationEpoch?: number,
+    expectedRevision?: number
   ): Promise<void> {
     if (dryRun) return;
     const scope = this.scope();
@@ -445,7 +572,7 @@ export class BuyerAccountRegistry {
           repairedBinding = true;
         }
         const isCurrent = () => scope === this.scope() && this.observationIsCurrent(row.account_id, rowEpoch, scope);
-        await this.record(ref, row, scope, false, isCurrent);
+        await this.record(ref, row, scope, false, isCurrent, expectedRevision);
         if (!isCurrent() || repairedBinding) continue;
         for (const id of [row.account_id])
           if (id) {

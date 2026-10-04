@@ -71,7 +71,9 @@ from authoritative `list_accounts`. The notification's status is not trusted as
 a snapshot, which avoids reordered deliveries overwriting current state.
 
 The registry is in memory by default. Set `accountStorage` to an adapter with
-`get(key)` and `set(key, entry)` for persistence. Keys partition by seller URI,
+`get(key)` and `set(key, entry)` for persistence. For multiple processes, add
+revision-checked `compareAndSet` writes and dispatch ledger hooks; see
+[buyer storage and scheduling](BUYER-STORAGE.md). Keys partition by seller URI,
 protocol, and caller scope. Client-credentials OAuth uses the stable client ID, token endpoint, scopes, and resource. Authorization-code OAuth pins this client's initial grant fingerprint, keeping distinct user grants apart while automatic refreshes preserve its partition. Create a new client when switching users. Other credential modes fingerprint credentials;
 for continuity across token rotations, supply `accountRegistryScope` from a
 trusted stable principal identifier. Never share that scope between tenants.

@@ -25,7 +25,7 @@
 
 import { buildSignatureBase, canonicalTargetUri, getHeaderValue } from './canonicalize';
 import { contentDigestMatches } from './content-digest';
-import { RequestSignatureError, WebhookSignatureError, RequestSigningErrorCodeMetadata } from './errors';
+import { RequestSignatureError, WebhookSignatureError } from './errors';
 import { AgentResolverError } from './agent-resolver/errors';
 import { BrandJsonResolverError } from './brand-jwks';
 import { parseSignature, parseSignatureInput, type ParsedSignatureInput } from './parser';
@@ -37,8 +37,8 @@ import { InMemoryRevocationStore, type RevocationStore } from './revocation';
 import { ALLOWED_ALGS, CLOCK_SKEW_TOLERANCE_SECONDS, MAX_SIGNATURE_WINDOW_SECONDS } from './types';
 
 function keyDiscoveryRetryable(error: unknown): boolean {
-  if (error instanceof AgentResolverError) return RequestSigningErrorCodeMetadata[error.code].recovery === 'transient';
-  if (error instanceof BrandJsonResolverError) return error.code === 'fetch_failed';
+  if (error instanceof AgentResolverError) return error.recovery === 'transient';
+  if (error instanceof BrandJsonResolverError) return error.recovery === 'transient';
   return true;
 }
 

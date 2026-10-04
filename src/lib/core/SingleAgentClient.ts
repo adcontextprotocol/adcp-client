@@ -1358,6 +1358,10 @@ export interface SingleAgentClientConfig extends ConversationConfig {
   accountPolicy?: AccountPolicy;
   accountStorage?: BuyerAccountStorage;
   accountRegistryMaxEntries?: number;
+  accountRegistryOptions?: Pick<
+    import('./buyer-account-registry').BuyerAccountRegistryOptions,
+    'onDispatchStart' | 'onResult'
+  >;
   /** Trusted stable caller identity for durable registry partitioning. Default is credential fingerprint. */
   accountRegistryScope?: string;
   productCache?: ProductCache;
@@ -1848,7 +1852,7 @@ export class SingleAgentClient {
   private getAccountRegistry(): BuyerAccountRegistry {
     return (this._accounts ??= new BuyerAccountRegistry(
       () => this.accountScope(),
-      async (account, options, taskOptions) => {
+      async (account, options, taskOptions, dispatch) => {
         const caps = await this.getCapabilities(taskOptions);
         const supported = caps.account?.supportedBilling ?? [];
         const billing =
@@ -1862,6 +1866,7 @@ export class SingleAgentClient {
         }
         return this.syncAccounts(
           {
+            ...(dispatch && { idempotency_key: dispatch.idempotencyKey }),
             accounts: [
               {
                 ...account,
@@ -1872,7 +1877,8 @@ export class SingleAgentClient {
             ],
           } as MutatingRequestInput<SyncAccountsRequest>,
           undefined,
-          taskOptions
+          { ...taskOptions, [SKIP_ACCOUNT_REGISTRY_OBSERVATION]: true } as TaskOptions,
+          dispatch
         );
       },
       this.config.accountStorage,
@@ -1899,6 +1905,8 @@ export class SingleAgentClient {
         throw new Error('Account status reconciliation could not complete pagination.');
       },
       {
+        ...this.config.accountRegistryOptions,
+        provisionOwnsDispatchBoundary: true,
         maxEntries: this.config.accountRegistryMaxEntries,
         normalizeOptions: async (options, taskOptions) => {
           if (options.billing) return options;
@@ -1921,7 +1929,8 @@ export class SingleAgentClient {
       (this.config.accountPolicy ?? 'off') !== 'off' ||
       this.config.accountStorage !== undefined ||
       this.config.accountRegistryScope !== undefined ||
-      this.config.accountRegistryMaxEntries !== undefined
+      this.config.accountRegistryMaxEntries !== undefined ||
+      this.config.accountRegistryOptions !== undefined
     );
   }
 
@@ -7893,8 +7902,27 @@ export class SingleAgentClient {
   async syncAccounts(
     params: MutatingRequestInput<SyncAccountsRequest>,
     inputHandler?: InputHandler,
-    options?: TaskOptions
+    options?: TaskOptions,
+    /** @internal Registry-owned final dispatch boundary. */
+    dispatch?: import('./buyer-account-registry').BuyerAccountProvisioningDispatch
   ): Promise<TaskResult<SyncAccountsResponse>> {
+    if (dispatch)
+      return this.executeTaskUnprojected<SyncAccountsResponse>(
+        'sync_accounts',
+        params,
+        inputHandler,
+        options,
+        'onSyncAccountsStatusChange',
+        Object.assign(
+          async (effectiveParams: Record<string, unknown>) => {
+            if (dispatch.requireIdempotencyKey !== false && effectiveParams.idempotency_key !== dispatch.idempotencyKey)
+              throw new ConfigurationError('Account provisioning idempotency key changed before dispatch.');
+            await dispatch.beforeDispatch();
+            return { action: 'dispatch_ready' as const };
+          },
+          { terminalSettlement: 'executor' as const }
+        )
+      );
     return this.executeAndHandle<SyncAccountsResponse>(
       'sync_accounts',
       'onSyncAccountsStatusChange',

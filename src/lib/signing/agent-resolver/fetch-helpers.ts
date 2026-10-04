@@ -9,7 +9,15 @@
  * (internal-topology leak). We surface the `code` only.
  */
 
-import { ssrfSafeFetch, SsrfRefusedError, type SsrfDnsLookup, type SsrfFetchOptions } from '../../net';
+import {
+  ssrfSafeFetch,
+  SsrfRefusedError,
+  SSRF_TRANSIENT_CODES,
+  type SsrfDnsLookup,
+  type SsrfFetchOptions,
+} from '../../net';
+
+import { AgentTransportPolicyError } from '../../net/agent-transport-fetch';
 
 import { parseStrictJson, StrictJsonError } from './strict-json';
 
@@ -67,7 +75,15 @@ export async function safeFetchJson(
     res = await ssrfSafeFetch(url, fetchOpts);
   } catch (err) {
     if (err instanceof SsrfRefusedError) {
-      throw new SafeFetchError(kind, 'ssrf_refused', `${kind} fetch refused: ${err.code}`);
+      throw new SafeFetchError(
+        kind,
+        SSRF_TRANSIENT_CODES.has(err.code)
+          ? err.code === 'body_exceeds_limit'
+            ? 'body_cap'
+            : 'dns_error'
+          : 'ssrf_refused',
+        `${kind} fetch refused: ${err.code}`
+      );
     }
     const message = err instanceof Error ? err.message : String(err);
     if (/abort|timed?\s*out/i.test(message)) {
@@ -97,4 +113,53 @@ export async function safeFetchJson(
     headers: res.headers,
     fetchedAt: Math.floor(Date.now() / 1000),
   };
+}
+
+/** Coarse causes only: never expose messages, resolved addresses, or topology. */
+export function classifyDiscoveryFailure(error: unknown): {
+  dns_error: SafeFetchError['transport'];
+  http_status?: number;
+} {
+  const seen = new Set<unknown>();
+  for (let depth = 0; error && typeof error === 'object' && depth < 8 && !seen.has(error); depth++) {
+    seen.add(error);
+    if (error instanceof SafeFetchError)
+      return { dns_error: error.transport, ...(error.httpStatus !== undefined && { http_status: error.httpStatus }) };
+    if (error instanceof AgentTransportPolicyError) return { dns_error: 'ssrf_refused' };
+    if (error instanceof SsrfRefusedError)
+      return {
+        dns_error: SSRF_TRANSIENT_CODES.has(error.code)
+          ? error.code === 'body_exceeds_limit'
+            ? 'body_cap'
+            : 'dns_error'
+          : 'ssrf_refused',
+      };
+    const obj = error as {
+      status?: unknown;
+      statusCode?: unknown;
+      httpStatus?: unknown;
+      code?: unknown;
+      cause?: unknown;
+      name?: unknown;
+    };
+    const status = obj.httpStatus ?? obj.status ?? obj.statusCode;
+    if (typeof status === 'number' && status >= 400 && status <= 599)
+      return { dns_error: 'fetch_failed', http_status: status };
+    if (obj.code === 'ENOTFOUND' || obj.code === 'EAI_AGAIN') return { dns_error: 'dns_error' };
+    if (
+      obj.name === 'AbortError' ||
+      obj.name === 'TimeoutError' ||
+      obj.code === 'ETIMEDOUT' ||
+      (typeof obj.code === 'string' && obj.code.startsWith('UND_ERR_') && obj.code.endsWith('_TIMEOUT'))
+    )
+      return { dns_error: 'timeout' };
+    error = obj.cause;
+  }
+  return { dns_error: 'fetch_failed' };
+}
+export function isPermanentDiscoveryFailure(detail: { dns_error?: string; http_status?: number }): boolean {
+  return (
+    detail.dns_error === 'ssrf_refused' ||
+    (detail.http_status !== undefined && detail.http_status >= 400 && detail.http_status < 500)
+  );
 }

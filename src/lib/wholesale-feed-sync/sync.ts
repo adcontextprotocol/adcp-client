@@ -1,8 +1,7 @@
 import type { AdcpErrorInfo } from '../core/ConversationTypes';
 import { EventEmitter } from 'node:events';
 import { isDeepStrictEqual } from 'node:util';
-import { randomUUID } from 'node:crypto';
-import type { AccountReference, GetProductsResponse, GetSignalsResponse } from '../types';
+import type { AccountReference } from '../types';
 import type {
   LegacyWholesaleFeedEvent,
   LegacyWholesaleFeedWebhook,
@@ -20,6 +19,12 @@ import type {
   SignalFilter,
   WholesaleFeedSyncPersistedState,
 } from './types';
+import {
+  refreshWholesaleFeed,
+  InMemoryWholesaleFeedMirrorStore,
+  applyWholesaleFeedEvent,
+  diffWholesaleFeed,
+} from './mirror';
 import { assertLegacyWholesaleFeedRepresentation } from './webhook-notification';
 
 type Product = LegacyWholesaleProduct;
@@ -37,21 +42,21 @@ type BootstrapFeedResult<T> = {
   metadata: FeedMetadata;
 };
 const bootstrapReadFailures = new WeakSet<Error>();
+function supersededRepairError(): Error {
+  const error = new Error('WholesaleFeedSync: repair superseded repeatedly; retry webhook delivery.');
+  bootstrapReadFailures.add(error);
+  return error;
+}
 
 const DEFAULT_PROBE_INTERVAL_MS = 600_000;
 const DEFAULT_CAPABILITY_REFRESH_INTERVAL_MS = 86_400_000;
 const DEFAULT_PERSISTENCE_TIMEOUT_MS = 30_000;
-const DEFAULT_BOOTSTRAP_PAGE_LIMIT = 100;
 const VERSION_MISMATCH_RECOVERY_ATTEMPTS = 3;
 const VERSION_MISMATCH_RECOVERY_BACKOFF_MS = 5;
 
 /**
- * In-memory mirror of an AdCP agent's wholesale product and signal feeds.
- *
- * Discovers the agent's wholesale-feed capabilities at `start()`, picks the
- * highest-capability sync strategy the agent supports, and maintains a
- * local index for zero-latency lookups. Falls back gracefully to manual
- * bootstrap when the agent does not advertise conditional-fetch tokens.
+ * In-memory wholesale product/signal mirror. `start()` discovers capabilities;
+ * versioned sellers use auto-poll, others require manual refresh.
  *
  * @example
  * ```ts
@@ -113,12 +118,11 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   private probeTimer: ReturnType<typeof setTimeout> | null = null;
   private capabilityTimer: ReturnType<typeof setTimeout> | null = null;
   private lifecycleEpoch = 0;
+  private mirrorRevision = 0;
 
   /**
-   * Read-only view of the in-memory product index. The `mode` reflects the
-   * sync strategy for product events specifically — in mixed-capability
-   * agents (products-feed + signals-wholesale-only, or vice versa) this
-   * may differ from `signals.mode`.
+   * Product index view. `mode` identifies the product sync strategy and may
+   * differ from `signals.mode` for agents with mixed feed capabilities.
    */
   readonly products = {
     list: (): Product[] => [...this.productIndex.values()],
@@ -158,20 +162,13 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     },
     _mode: 'manual' as WholesaleFeedSyncMode,
     /**
-     * `true` when the agent supports `discovery_mode: 'wholesale'` on
-     * `get_signals` (i.e., signals are browsable). When `false`, the
-     * agent only supports brief-mode discovery — `signals.list()` will
-     * be empty until adopters call into the agent with their own briefs.
+     * True when `get_signals` supports `discovery_mode: 'wholesale'`.
+     * Otherwise `list()` is empty; use client brief discovery instead.
      */
     queryable: true,
   };
 
-  /**
-   * One-shot console warning when adopters call `signals.list()` or
-   * `signals.search()` against an agent that doesn't support wholesale
-   * signal enumeration. Without this, empty results read as "no signals
-   * match" rather than "the agent doesn't browse, only briefs."
-   */
+  // Warn once when empty signal results reflect missing wholesale support.
   private warnIfSignalsNotQueryable(): void {
     if (this.signals.queryable || this.signalsQueryableWarned) return;
     if (this._state === 'idle' || this._state === 'bootstrapping') return; // pre-start; nothing to warn about
@@ -203,14 +200,9 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   // ====== Lifecycle ======
 
   /**
-   * Probe the agent's capabilities, pick a sync mode, and bootstrap the
-   * in-memory replica via wholesale enumeration. In `'auto-poll'` mode
-   * starts the conditional wholesale-feed version probe loop.
-   *
-   * Safe to call repeatedly — concurrent calls await the in-flight
-   * bootstrap and return when it completes (no duplicate bootstrap, no
-   * silent drop). Sequential calls re-probe capabilities and re-bootstrap,
-   * equivalent to calling `refresh()` after a mode upgrade.
+   * Discover capabilities, bootstrap the mirror, and schedule auto-poll probes
+   * for versioned sellers. Concurrent calls share the bootstrap; sequential
+   * calls re-probe capabilities and refresh the mirror.
    */
   async start(): Promise<void> {
     if (this.startPromise && this.startPromiseEpoch === this.lifecycleEpoch) return this.startPromise;
@@ -231,7 +223,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     if (!(await this.restorePersistedState(epoch))) return;
     if (!(await this.resolveMode(epoch))) return;
     try {
-      await this.bootstrap({ epoch });
+      await this.bootstrapWithRetries({ epoch });
     } finally {
       if (this.isLifecycleCurrent(epoch)) {
         if (this._mode === 'auto-poll') this.scheduleProbe(epoch);
@@ -257,6 +249,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
    */
   async reset(): Promise<void> {
     this.stop();
+    ++this.mirrorRevision;
     this.productIndex.clear();
     this.signalIndex.clear();
     this.productWholesaleFeedVersion = undefined;
@@ -283,7 +276,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   async refresh(): Promise<void> {
     const epoch = this.lifecycleEpoch;
     this.emit('resyncing', { reason: 'manual' });
-    await this.bootstrap({ emitDiffs: true, epoch, propagateFailure: true });
+    await this.bootstrapWithRetries({ emitDiffs: true, epoch, propagateFailure: true });
   }
 
   /**
@@ -343,6 +336,11 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
       this.rememberLastWebhookEventId(event.event_id);
       throw err;
+    }
+    if (!this._lastSyncedAt && event.event_type !== 'wholesale_feed.bulk_change') {
+      if (!(await this.recoverFromVersionMismatch(event, epoch))) return;
+      await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
+      return;
     }
     if (
       webhook.previous_wholesale_feed_version &&
@@ -461,19 +459,37 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
 
   // ====== Private: bootstrap (wholesale enumeration) ======
 
+  private async bootstrapWithRetries(options: {
+    epoch: number;
+    emitDiffs?: boolean;
+    propagateFailure?: boolean;
+  }): Promise<void> {
+    for (let attempt = 0; attempt < VERSION_MISMATCH_RECOVERY_ATTEMPTS; attempt++) {
+      const revision = this.mirrorRevision;
+      if (await this.bootstrap({ ...options, conditional: attempt === 0 ? undefined : false })) return;
+      if (!this.isLifecycleCurrent(options.epoch) || revision === this.mirrorRevision) return;
+    }
+    const error = new Error('WholesaleFeedSync: refresh superseded repeatedly; retry start or refresh.');
+    this.handleBootstrapFailure({ error });
+    throw error;
+  }
+
   private async bootstrap(
     options: {
       emitDiffs?: boolean;
       entities?: 'products' | 'signals' | 'all';
       epoch?: number;
       propagateFailure?: boolean;
+      conditional?: boolean;
     } = {}
   ): Promise<boolean> {
     const epoch = options.epoch ?? this.lifecycleEpoch;
     if (!this.isLifecycleCurrent(epoch)) return false;
     this.setState('bootstrapping');
     const previousLastSyncedAt = this._lastSyncedAt;
+    const expectedRevision = this.mirrorRevision;
     let reportedFailure: Error | undefined;
+    let committed = false;
     try {
       // Build into local maps and atomically swap on success. The previous
       // implementation cleared the live indexes BEFORE fetching, so an
@@ -493,8 +509,12 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       const refreshSignals = entities !== 'products' && this.signals.queryable;
 
       if (refreshProducts) {
-        productResult = await this.bootstrapProducts(epoch);
+        productResult = await this.bootstrapProducts(epoch, options.conditional);
         if (productResult.cancelled) return false;
+        if (this.mirrorRevision !== expectedRevision) {
+          this.setState(this._lastSyncedAt ? 'syncing' : 'idle');
+          return false;
+        }
         if (productResult.failure) {
           const failure = productResult.failure;
           reportedFailure = failure.error;
@@ -508,8 +528,12 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
         }
       }
       if (refreshSignals) {
-        signalResult = await this.bootstrapSignals(epoch);
+        signalResult = await this.bootstrapSignals(epoch, options.conditional);
         if (signalResult.cancelled) return false;
+        if (this.mirrorRevision !== expectedRevision) {
+          this.setState(this._lastSyncedAt ? 'syncing' : 'idle');
+          return false;
+        }
         if (signalResult.failure) {
           const failure = signalResult.failure;
           reportedFailure = failure.error;
@@ -525,6 +549,12 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
 
       if (!this.isLifecycleCurrent(epoch)) return false;
 
+      if (this.mirrorRevision !== expectedRevision) {
+        this.setState(this._lastSyncedAt ? 'syncing' : 'idle');
+        return false;
+      }
+      ++this.mirrorRevision;
+      committed = true;
       if (refreshProducts && productResult) {
         this.commitProductMetadata(productResult.metadata);
         if (!productResult.unchanged) {
@@ -563,6 +593,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       return true;
     } catch (err) {
       if (!this.isLifecycleCurrent(epoch)) return false;
+      if (!committed && this.mirrorRevision !== expectedRevision && err !== reportedFailure) return false;
       if (err === reportedFailure) throw err; // Already reported with its structured failure.
       this._lastSyncedAt = previousLastSyncedAt;
       this.setState(this._lastSyncedAt ? 'degraded' : 'error');
@@ -582,127 +613,80 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     return false;
   }
 
-  /** Returns `true` when the seller short-circuited with `unchanged: true`. */
-  private async bootstrapProducts(epoch: number): Promise<BootstrapFeedResult<Product>> {
-    let cursor: string | undefined;
-    const into = new Map<string, Product>();
-    let metadata = this.currentProductMetadata();
-    do {
-      const params: Record<string, unknown> = {
-        buying_mode: 'wholesale',
-        pagination: { max_results: DEFAULT_BOOTSTRAP_PAGE_LIMIT, ...(cursor && { cursor }) },
-        ...(this.account && { account: this.account }),
-      };
-      // Conditional fetch on the page-0 call when we already have a cached
-      // version. Per the spec, the seller short-circuits with
-      // `unchanged: true` and no payload — caller keeps the previous index.
-      if (!cursor && metadata.wholesaleFeedVersion && this._capabilities.wholesaleFeedVersioning) {
-        params.if_wholesale_feed_version = metadata.wholesaleFeedVersion;
-        if (metadata.pricingVersion) params.if_pricing_version = metadata.pricingVersion;
-      }
-      const result = (await this.client.getProducts(params as never)) as {
-        status?: string;
-        success?: boolean;
-        error?: string;
-        adcpError?: AdcpErrorInfo;
-        data?: GetProductsResponse;
-      };
-      if (!this.isLifecycleCurrent(epoch)) return { cancelled: true, unchanged: false, items: into, metadata };
-      if (
-        result.success === false ||
-        (result.status !== undefined && result.status !== 'completed' && result.status !== 'success')
-      ) {
-        return {
-          cancelled: false,
-          unchanged: false,
-          items: into,
-          metadata,
-          failure: { error: new Error(result.error ?? 'Product bootstrap failed'), adcpError: result.adcpError },
-        };
-      }
-      const body = result.data;
-      if (!body)
-        return {
-          cancelled: false,
-          unchanged: false,
-          items: into,
-          metadata,
-          failure: { error: new Error('Product bootstrap did not return a completed catalog') },
-        };
-      if (body.unchanged) {
-        // Echo any newer pricing_version / cache_scope the seller
-        // returned alongside the unchanged signal, then tell the caller
-        // to keep the existing index.
-        metadata = mergeFeedMetadata(metadata, body);
-        return { cancelled: false, unchanged: true, items: into, metadata };
-      }
-      const products = Array.isArray(body.products) ? body.products : [];
-      for (const product of products) {
-        const id = (product as { product_id?: string }).product_id;
-        if (typeof id === 'string') into.set(id, product as Product);
-      }
-      metadata = mergeFeedMetadata(metadata, body);
-      cursor = body.pagination?.has_more ? body.pagination?.cursor : undefined;
-    } while (cursor);
-    return { cancelled: false, unchanged: false, items: into, metadata };
+  private bootstrapProducts(epoch: number, conditional?: boolean): Promise<BootstrapFeedResult<Product>> {
+    return this.bootstrapFeed('product', epoch, conditional) as Promise<BootstrapFeedResult<Product>>;
   }
-
-  private async bootstrapSignals(epoch: number): Promise<BootstrapFeedResult<Signal>> {
-    let cursor: string | undefined;
-    const into = new Map<string, Signal>();
-    let metadata = this.currentSignalMetadata();
-    do {
-      const params: Record<string, unknown> = {
-        discovery_mode: 'wholesale',
-        pagination: { max_results: DEFAULT_BOOTSTRAP_PAGE_LIMIT, ...(cursor && { cursor }) },
-        ...(this.account && { account: this.account }),
+  private bootstrapSignals(epoch: number, conditional?: boolean): Promise<BootstrapFeedResult<Signal>> {
+    return this.bootstrapFeed('signal', epoch, conditional) as Promise<BootstrapFeedResult<Signal>>;
+  }
+  private async bootstrapFeed(
+    entity: 'product' | 'signal',
+    epoch: number,
+    conditional?: boolean
+  ): Promise<BootstrapFeedResult<Product | Signal>> {
+    // Stage each entity in memory. The shell swaps both only after all reads succeed.
+    const store = new InMemoryWholesaleFeedMirrorStore();
+    const scope = { agentUrl: 'shell', accountKey: 'shell', entity };
+    const metadata = entity === 'product' ? this.currentProductMetadata() : this.currentSignalMetadata();
+    const previous = entity === 'product' ? [...this.productIndex.values()] : [...this.signalIndex.values()];
+    store.restore(scope, { revision: 0, items: previous, ...metadata });
+    // Preserve the shell's exception contract while the core records degraded outcomes.
+    let readException: Error | undefined;
+    const read = async <T>(call: () => Promise<T>): Promise<T> => {
+      try {
+        return await call();
+      } catch (cause) {
+        readException = cause instanceof Error ? cause : new Error(String(cause));
+        throw cause;
+      }
+    };
+    const outcome = await refreshWholesaleFeed({
+      client: {
+        getAdcpCapabilities: this.client.getAdcpCapabilities.bind(this.client),
+        getProducts: params => read(() => this.client.getProducts(params)),
+        getSignals: params => read(() => this.client.getSignals(params)),
+      },
+      store,
+      scope,
+      account: this.account,
+      conditional: conditional ?? this._capabilities.wholesaleFeedVersioning,
+      isCurrent: () => this.isLifecycleCurrent(epoch),
+    });
+    if (outcome.outcome === 'superseded') return { cancelled: true, unchanged: false, items: new Map(), metadata };
+    if (outcome.outcome === 'degraded') {
+      if (readException) throw readException;
+      return {
+        cancelled: false,
+        unchanged: false,
+        items: new Map(),
+        metadata,
+        failure: {
+          error: new Error(
+            `${entity === 'product' ? 'Product' : 'Signal'} bootstrap failed: ${outcome.cause.message}`,
+            {
+              cause: outcome.cause,
+            }
+          ),
+          adcpError: outcome.error,
+        },
       };
-      if (!cursor && metadata.wholesaleFeedVersion && this._capabilities.wholesaleFeedVersioning) {
-        params.if_wholesale_feed_version = metadata.wholesaleFeedVersion;
-        if (metadata.pricingVersion) params.if_pricing_version = metadata.pricingVersion;
-      }
-      const result = (await this.client.getSignals(params as never)) as {
-        status?: string;
-        success?: boolean;
-        error?: string;
-        adcpError?: AdcpErrorInfo;
-        data?: GetSignalsResponse;
-      };
-      if (!this.isLifecycleCurrent(epoch)) return { cancelled: true, unchanged: false, items: into, metadata };
-      if (
-        result.success === false ||
-        (result.status !== undefined && result.status !== 'completed' && result.status !== 'success')
-      ) {
-        return {
-          cancelled: false,
-          unchanged: false,
-          items: into,
-          metadata,
-          failure: { error: new Error(result.error ?? 'Signal bootstrap failed'), adcpError: result.adcpError },
-        };
-      }
-      const body = result.data;
-      if (!body)
-        return {
-          cancelled: false,
-          unchanged: false,
-          items: into,
-          metadata,
-          failure: { error: new Error('Signal bootstrap did not return a completed catalog') },
-        };
-      if (body.unchanged) {
-        metadata = mergeFeedMetadata(metadata, body);
-        return { cancelled: false, unchanged: true, items: into, metadata };
-      }
-      const signals = Array.isArray(body.signals) ? body.signals : [];
-      for (const signal of signals) {
-        const id = (signal as { signal_agent_segment_id?: string }).signal_agent_segment_id;
-        if (typeof id === 'string') into.set(id, signal as Signal);
-      }
-      metadata = mergeFeedMetadata(metadata, body);
-      cursor = body.pagination?.has_more ? body.pagination?.cursor : undefined;
-    } while (cursor);
-    return { cancelled: false, unchanged: false, items: into, metadata };
+    }
+    const snapshot = outcome.snapshot;
+    return {
+      cancelled: false,
+      unchanged: outcome.outcome === 'unchanged',
+      items: new Map(
+        snapshot.items.map(item => [
+          entity === 'product' ? (item as Product).product_id : (item as Signal).signal_agent_segment_id,
+          item,
+        ])
+      ),
+      metadata: {
+        wholesaleFeedVersion: snapshot.wholesaleFeedVersion,
+        pricingVersion: snapshot.pricingVersion,
+        cacheScope: snapshot.cacheScope,
+      },
+    };
   }
 
   private async recoverFromBulkChange(event: LegacyWholesaleFeedEvent, epoch = this.lifecycleEpoch): Promise<boolean> {
@@ -714,7 +698,11 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       );
     }
     const entities = affected === 'product' ? 'products' : 'signals';
-    return this.bootstrap({ emitDiffs: true, entities, epoch, propagateFailure: true });
+    for (let attempt = 0; attempt < VERSION_MISMATCH_RECOVERY_ATTEMPTS; attempt++) {
+      if (await this.bootstrap({ emitDiffs: true, entities, epoch, propagateFailure: true })) return true;
+      if (!this.isLifecycleCurrent(epoch)) return false;
+    }
+    throw supersededRepairError();
   }
 
   private async recoverFromVersionMismatch(
@@ -725,7 +713,11 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     const beforeVersion = this.currentWholesaleFeedVersionForEvent(event);
     for (let attempt = 1; attempt <= VERSION_MISMATCH_RECOVERY_ATTEMPTS; attempt++) {
       const recovered = await this.bootstrap({ emitDiffs: true, epoch, propagateFailure: true });
-      if (!recovered) return false;
+      if (!recovered) {
+        if (!this.isLifecycleCurrent(epoch)) return false;
+        if (attempt === VERSION_MISMATCH_RECOVERY_ATTEMPTS) throw supersededRepairError();
+        continue;
+      }
       const afterVersion = this.currentWholesaleFeedVersionForEvent(event);
       if (afterVersion !== beforeVersion) return true;
       if (attempt < VERSION_MISMATCH_RECOVERY_ATTEMPTS) {
@@ -916,80 +908,16 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   }
 
   private applyEvent(event: LegacyWholesaleFeedEvent): void {
-    switch (event.event_type) {
-      case 'product.created':
-      case 'product.updated': {
-        const payload = event.payload as {
-          product_id: string;
-          product?: Product;
-          changed_fields?: string[];
-          [k: string]: unknown;
-        };
-        if (typeof payload.product_id !== 'string') return;
-        if (payload.product) {
-          // Full denorm — replace the entry entirely.
-          this.productIndex.set(payload.product_id, payload.product);
-          return;
-        }
-        return;
-      }
-      case 'product.priced': {
-        const payload = event.payload as {
-          product_id: string;
-          pricing_options?: unknown[];
-        };
-        const existing = this.productIndex.get(payload.product_id);
-        if (existing && Array.isArray(payload.pricing_options)) {
-          this.productIndex.set(payload.product_id, {
-            ...existing,
-            pricing_options: payload.pricing_options as Product['pricing_options'],
-          });
-        }
-        return;
-      }
-      case 'product.removed': {
-        const payload = event.payload as { product_id: string };
-        if (typeof payload.product_id === 'string') this.productIndex.delete(payload.product_id);
-        return;
-      }
-      case 'signal.created':
-      case 'signal.updated': {
-        const payload = event.payload as {
-          signal_agent_segment_id: string;
-          signal?: Signal;
-        };
-        if (typeof payload.signal_agent_segment_id !== 'string') return;
-        if (payload.signal) {
-          this.signalIndex.set(payload.signal_agent_segment_id, payload.signal);
-        }
-        return;
-      }
-      case 'signal.priced': {
-        const payload = event.payload as {
-          signal_agent_segment_id: string;
-          pricing_options?: unknown[];
-        };
-        const existing = this.signalIndex.get(payload.signal_agent_segment_id);
-        if (existing && Array.isArray(payload.pricing_options)) {
-          this.signalIndex.set(payload.signal_agent_segment_id, {
-            ...existing,
-            pricing_options: payload.pricing_options as Signal['pricing_options'],
-          });
-        }
-        return;
-      }
-      case 'signal.removed': {
-        const payload = event.payload as { signal_agent_segment_id: string };
-        if (typeof payload.signal_agent_segment_id === 'string') {
-          this.signalIndex.delete(payload.signal_agent_segment_id);
-        }
-        return;
-      }
-      case 'wholesale_feed.bulk_change':
-        // Bulk change events trigger re-bootstrap in applyWebhook before
-        // reaching this method.
-        return;
-    }
+    ++this.mirrorRevision;
+    const entity = event.event_type.startsWith('product.') ? 'product' : 'signal';
+    const items = applyWholesaleFeedEvent(
+      entity,
+      entity === 'product' ? [...this.productIndex.values()] : [...this.signalIndex.values()],
+      event
+    );
+    if (!items) return;
+    if (entity === 'product') this.productIndex = new Map((items as Product[]).map(item => [item.product_id, item]));
+    else this.signalIndex = new Map((items as Signal[]).map(item => [item.signal_agent_segment_id, item]));
   }
 
   private emitTypedEvent(event: LegacyWholesaleFeedEvent): void {
@@ -1029,114 +957,23 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   // ====== Private: diff emission (auto-poll / manual refresh) ======
 
   private emitDiffs(previousProducts: Map<string, Product>, previousSignals: Map<string, Signal>): void {
-    const now = new Date().toISOString();
-    const makeEvent = (
-      event_type: LegacyWholesaleFeedEvent['event_type'],
-      entity_type: LegacyWholesaleFeedEvent['entity_type'],
-      entity_id: string,
-      payload: object
-    ): LegacyWholesaleFeedEvent =>
-      ({
-        // crypto.randomUUID() emits a v4 UUID, NOT v7. Synthetic events
-        // are flagged via `synthetic: true` on the emit envelope so
-        // adopters writing event_ids to a dedupe table know not to
-        // treat the ID as seller-authored. Real webhook events carry the
-        // agent's authoritative event_id.
-        event_id: randomUUID(),
-        event_type,
-        entity_type,
-        entity_id,
-        created_at: now,
-        payload,
-      }) as LegacyWholesaleFeedEvent;
-    const emit = (channel: keyof WholesaleFeedSyncEvents, event: LegacyWholesaleFeedEvent): void => {
+    const events = [
+      ...diffWholesaleFeed(
+        'product',
+        [...previousProducts.values()],
+        [...this.productIndex.values()],
+        this.productCacheScope
+      ),
+      ...diffWholesaleFeed(
+        'signal',
+        [...previousSignals.values()],
+        [...this.signalIndex.values()],
+        this.signalCacheScope
+      ),
+    ];
+    for (const event of events) {
       this.emit('event', { event, synthetic: true });
-      this.emit(channel as 'product.created', { event, synthetic: true });
-    };
-
-    for (const [id, product] of this.productIndex) {
-      const prev = previousProducts.get(id);
-      if (!prev) {
-        emit(
-          'product.created',
-          makeEvent('product.created', 'product', id, {
-            product_id: id,
-            product,
-            applies_to: { scope: this.productCacheScope },
-          })
-        );
-      } else if (priceChanged(prev, product)) {
-        emit(
-          'product.priced',
-          makeEvent('product.priced', 'product', id, {
-            product_id: id,
-            pricing_options: product.pricing_options ?? [],
-            applies_to: { scope: this.productCacheScope },
-          })
-        );
-      } else if (!isDeepStrictEqual(prev, product)) {
-        emit(
-          'product.updated',
-          makeEvent('product.updated', 'product', id, {
-            product_id: id,
-            product,
-            applies_to: { scope: this.productCacheScope },
-          })
-        );
-      }
-    }
-    for (const [id] of previousProducts) {
-      if (!this.productIndex.has(id)) {
-        emit(
-          'product.removed',
-          makeEvent('product.removed', 'product', id, {
-            product_id: id,
-            applies_to: { scope: this.productCacheScope },
-          })
-        );
-      }
-    }
-    for (const [id, signal] of this.signalIndex) {
-      const prev = previousSignals.get(id);
-      if (!prev) {
-        emit(
-          'signal.created',
-          makeEvent('signal.created', 'signal', id, {
-            signal_agent_segment_id: id,
-            signal,
-            applies_to: { scope: this.signalCacheScope },
-          })
-        );
-      } else if (signalPriceChanged(prev, signal)) {
-        emit(
-          'signal.priced',
-          makeEvent('signal.priced', 'signal', id, {
-            signal_agent_segment_id: id,
-            pricing_options: (signal as { pricing_options?: unknown[] }).pricing_options ?? [],
-            applies_to: { scope: this.signalCacheScope },
-          })
-        );
-      } else if (!isDeepStrictEqual(prev, signal)) {
-        emit(
-          'signal.updated',
-          makeEvent('signal.updated', 'signal', id, {
-            signal_agent_segment_id: id,
-            signal,
-            applies_to: { scope: this.signalCacheScope },
-          })
-        );
-      }
-    }
-    for (const [id] of previousSignals) {
-      if (!this.signalIndex.has(id)) {
-        emit(
-          'signal.removed',
-          makeEvent('signal.removed', 'signal', id, {
-            signal_agent_segment_id: id,
-            applies_to: { scope: this.signalCacheScope },
-          })
-        );
-      }
+      this.emit(event.event_type as 'product.created', { event, synthetic: true });
     }
   }
 
@@ -1361,20 +1198,6 @@ function parsePersistedDate(value: string | undefined): Date | undefined {
   return value === undefined ? undefined : new Date(value);
 }
 
-// ====== Diff helpers ======
-
-function priceChanged(prev: Product, next: Product): boolean {
-  const a = (prev as { pricing_options?: unknown[] }).pricing_options;
-  const b = (next as { pricing_options?: unknown[] }).pricing_options;
-  return !isDeepStrictEqual(a, b);
-}
-
-function signalPriceChanged(prev: Signal, next: Signal): boolean {
-  const a = (prev as { pricing_options?: unknown[] }).pricing_options;
-  const b = (next as { pricing_options?: unknown[] }).pricing_options;
-  return !isDeepStrictEqual(a, b);
-}
-
 function isUuidV7(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
@@ -1384,22 +1207,6 @@ function compareUuidV7(a: string, b: string): number {
   const normalizedA = a.toLowerCase();
   const normalizedB = b.toLowerCase();
   return normalizedA === normalizedB ? 0 : normalizedA > normalizedB ? 1 : -1;
-}
-
-function mergeFeedMetadata(
-  current: FeedMetadata,
-  body: {
-    wholesale_feed_version?: unknown;
-    pricing_version?: unknown;
-    cache_scope?: unknown;
-  }
-): FeedMetadata {
-  return {
-    wholesaleFeedVersion:
-      typeof body.wholesale_feed_version === 'string' ? body.wholesale_feed_version : current.wholesaleFeedVersion,
-    pricingVersion: typeof body.pricing_version === 'string' ? body.pricing_version : current.pricingVersion,
-    cacheScope: body.cache_scope === 'public' || body.cache_scope === 'account' ? body.cache_scope : current.cacheScope,
-  };
 }
 
 async function sleep(ms: number): Promise<void> {

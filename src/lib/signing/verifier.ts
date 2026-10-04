@@ -209,7 +209,7 @@ export async function verifyRequestSignature(
     }
   } catch (err) {
     if (err instanceof AgentResolverError) {
-      throw new RequestSignatureError(err.code, 7, err.message, err.detail);
+      throw new RequestSignatureError(err.code, 7, err.message, err.detail, err.recovery);
     }
     throw err;
   }

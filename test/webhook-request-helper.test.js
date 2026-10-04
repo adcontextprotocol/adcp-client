@@ -1,4 +1,4 @@
-const { describe, it } = require('node:test');
+const { describe, it, test } = require('node:test');
 const assert = require('node:assert');
 const crypto = require('node:crypto');
 
@@ -206,4 +206,40 @@ describe('verifyWebhookRequest', () => {
     assert.strictEqual(result.ok, false);
     assert.strictEqual(result.reason, 'bad_signature');
   });
+});
+
+const { preflightWebhookRequest } = require('../dist/lib/webhooks');
+test('secret-less preflight shares header and timestamp failures with verification', () => {
+  const cases = [
+    [{}, 'missing_headers'],
+    [{ signature: ['a', 'b'], timestamp: now }, 'ambiguous_headers'],
+    [{ signature: sign('{}'), timestamp: 'bad' }, 'invalid_timestamp'],
+    [{ signature: sign('{}'), timestamp: now - 301 }, 'stale_timestamp'],
+    [{ signature: 'sha256=bad', timestamp: now }, 'malformed_signature'],
+  ];
+  for (const [request, reason] of cases) {
+    assert.strictEqual(preflightWebhookRequest(request, { now: () => now }).reason, reason);
+    assert.strictEqual(verifyWebhookRequest({ ...request, rawBody: '{}', now: () => now }).reason, reason);
+  }
+  const request = { signature: sign('{}'), timestamp: now };
+  assert.strictEqual(preflightWebhookRequest(request, { now: () => now }).ok, true);
+  assert.strictEqual(verifyWebhookRequest({ ...request, rawBody: '{}', now: () => now }).reason, 'missing_secret');
+  assert.strictEqual(preflightWebhookRequest(request, { now: () => NaN }).reason, 'invalid_timestamp');
+  assert.strictEqual(
+    preflightWebhookRequest({ ...request, timestamp: now - 10 }, { now: () => now, maxSkewSeconds: 9 }).reason,
+    'stale_timestamp'
+  );
+});
+
+test('preflight and verification share both timestamp-skew option names', () => {
+  const now = 1000;
+  const request = { signature: `sha256=${'0'.repeat(64)}`, timestamp: now - 10 };
+  for (const skew of [{ skewSeconds: 9 }, { maxSkewSeconds: 9 }]) {
+    const options = { ...skew, now: () => now };
+    assert.equal(preflightWebhookRequest(request, options).reason, 'stale_timestamp');
+    assert.equal(
+      verifyWebhookRequest({ ...request, ...options, rawBody: '', secret: 'secret' }).reason,
+      'stale_timestamp'
+    );
+  }
 });

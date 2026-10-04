@@ -1,3 +1,4 @@
+import { classifyDiscoveryFailure, isPermanentDiscoveryFailure } from './agent-resolver/fetch-helpers';
 /** Capability-confirmed sender key discovery and SSRF-safe brand.json fetching. */
 import { ssrfSafeFetch, type SsrfDnsLookup } from '../net';
 import type { JwksResolver } from './jwks';
@@ -38,6 +39,7 @@ export type BrandJsonResolverErrorCode =
  */
 export class BrandJsonResolverError extends Error {
   readonly code: BrandJsonResolverErrorCode;
+  readonly recovery: 'terminal' | 'transient';
   override readonly cause?: unknown;
   /** HTTP status for `fetch_failed` responses, when a response was received. */
   readonly httpStatus?: number;
@@ -51,6 +53,8 @@ export class BrandJsonResolverError extends Error {
     this.code = code;
     this.httpStatus = details.httpStatus;
     this.cause = details.cause;
+    this.recovery =
+      code !== 'fetch_failed' || isPermanentDiscoveryFailure(classifyDiscoveryFailure(this)) ? 'terminal' : 'transient';
   }
 }
 
@@ -115,6 +119,7 @@ export class BrandJsonJwksResolver implements JwksResolver {
   private resolver?: ResolvedAgentJwksResolver;
   private onboarding?: Promise<ResolvedAgentJwksResolver>;
   private lastOnboardingAttempt = Number.NEGATIVE_INFINITY;
+  private lastOnboardingError?: unknown;
   constructor(
     private readonly brandJsonUrl: string,
     private readonly options: BrandJsonJwksResolverOptions
@@ -155,7 +160,10 @@ export class BrandJsonJwksResolver implements JwksResolver {
     // Negative onboarding attempts use the fixed protocol backoff, independently
     // of the configurable positive-cache and unknown-kid refresh intervals.
     if (now - this.lastOnboardingAttempt < 30)
-      throw new BrandJsonResolverError('fetch_failed', 'Operator onboarding discovery is in its retry cooldown.');
+      throw (
+        this.lastOnboardingError ??
+        new BrandJsonResolverError('fetch_failed', 'Operator onboarding discovery is in its retry cooldown.')
+      );
     this.lastOnboardingAttempt = now;
     this.onboarding = (async () => {
       const record = await fetchBrandJson({
@@ -171,10 +179,16 @@ export class BrandJsonJwksResolver implements JwksResolver {
       const resolver = this.createResolver(agentUrl, record.finalUrl);
       await resolver.forceRefresh();
       this.resolver = resolver;
+      this.lastOnboardingError = undefined;
       return resolver;
-    })().finally(() => {
-      this.onboarding = undefined;
-    });
+    })()
+      .catch(error => {
+        this.lastOnboardingError = error;
+        throw error;
+      })
+      .finally(() => {
+        this.onboarding = undefined;
+      });
     return this.onboarding;
   }
   async resolve(keyid: string): Promise<AdcpJsonWebKey | null> {
