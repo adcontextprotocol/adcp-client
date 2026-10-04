@@ -25,6 +25,12 @@ Use the [buyer quick start](./guides/BUYER-QUICKSTART-3.2.md). For the complete
 tool and type inventory, use [llms.txt](./llms.txt) and the
 [type summary](./TYPE-SUMMARY.md).
 
+## Upgrade from SDK 14.0
+
+Use the [14.0-to-14.1 upgrade checklist](./migration-14.0-to-14.1.md) for
+required changes, opt-in features, and stricter signature verification. SDK
+14.1.0 continues to use AdCP 3.2.1 on the wire.
+
 ## Upgrade from SDK 13
 
 Start with the [release-bound upgrade worksheet](./migration-14.x-rc-worksheet.md),
