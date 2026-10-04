@@ -55,12 +55,8 @@ const VERSION_MISMATCH_RECOVERY_ATTEMPTS = 3;
 const VERSION_MISMATCH_RECOVERY_BACKOFF_MS = 5;
 
 /**
- * In-memory mirror of an AdCP agent's wholesale product and signal feeds.
- *
- * Discovers the agent's wholesale-feed capabilities at `start()`, picks the
- * highest-capability sync strategy the agent supports, and maintains a
- * local index for zero-latency lookups. Falls back gracefully to manual
- * bootstrap when the agent does not advertise conditional-fetch tokens.
+ * In-memory wholesale product/signal mirror. `start()` discovers capabilities;
+ * versioned sellers use auto-poll, others require manual refresh.
  *
  * @example
  * ```ts
@@ -125,10 +121,8 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   private mirrorRevision = 0;
 
   /**
-   * Read-only view of the in-memory product index. The `mode` reflects the
-   * sync strategy for product events specifically — in mixed-capability
-   * agents (products-feed + signals-wholesale-only, or vice versa) this
-   * may differ from `signals.mode`.
+   * Product index view. `mode` identifies the product sync strategy and may
+   * differ from `signals.mode` for agents with mixed feed capabilities.
    */
   readonly products = {
     list: (): Product[] => [...this.productIndex.values()],
@@ -168,20 +162,13 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     },
     _mode: 'manual' as WholesaleFeedSyncMode,
     /**
-     * `true` when the agent supports `discovery_mode: 'wholesale'` on
-     * `get_signals` (i.e., signals are browsable). When `false`, the
-     * agent only supports brief-mode discovery — `signals.list()` will
-     * be empty until adopters call into the agent with their own briefs.
+     * True when `get_signals` supports `discovery_mode: 'wholesale'`.
+     * Otherwise `list()` is empty; use client brief discovery instead.
      */
     queryable: true,
   };
 
-  /**
-   * One-shot console warning when adopters call `signals.list()` or
-   * `signals.search()` against an agent that doesn't support wholesale
-   * signal enumeration. Without this, empty results read as "no signals
-   * match" rather than "the agent doesn't browse, only briefs."
-   */
+  // Warn once when empty signal results reflect missing wholesale support.
   private warnIfSignalsNotQueryable(): void {
     if (this.signals.queryable || this.signalsQueryableWarned) return;
     if (this._state === 'idle' || this._state === 'bootstrapping') return; // pre-start; nothing to warn about
@@ -213,14 +200,9 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   // ====== Lifecycle ======
 
   /**
-   * Probe the agent's capabilities, pick a sync mode, and bootstrap the
-   * in-memory replica via wholesale enumeration. In `'auto-poll'` mode
-   * starts the conditional wholesale-feed version probe loop.
-   *
-   * Safe to call repeatedly — concurrent calls await the in-flight
-   * bootstrap and return when it completes (no duplicate bootstrap, no
-   * silent drop). Sequential calls re-probe capabilities and re-bootstrap,
-   * equivalent to calling `refresh()` after a mode upgrade.
+   * Discover capabilities, bootstrap the mirror, and schedule auto-poll probes
+   * for versioned sellers. Concurrent calls share the bootstrap; sequential
+   * calls re-probe capabilities and refresh the mirror.
    */
   async start(): Promise<void> {
     if (this.startPromise && this.startPromiseEpoch === this.lifecycleEpoch) return this.startPromise;
@@ -648,8 +630,22 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     const metadata = entity === 'product' ? this.currentProductMetadata() : this.currentSignalMetadata();
     const previous = entity === 'product' ? [...this.productIndex.values()] : [...this.signalIndex.values()];
     store.restore(scope, { revision: 0, items: previous, ...metadata });
+    // Preserve the shell's exception contract while the core records degraded outcomes.
+    let readException: Error | undefined;
+    const read = async <T>(call: () => Promise<T>): Promise<T> => {
+      try {
+        return await call();
+      } catch (cause) {
+        readException = cause instanceof Error ? cause : new Error(String(cause));
+        throw cause;
+      }
+    };
     const outcome = await refreshWholesaleFeed({
-      client: this.client,
+      client: {
+        getAdcpCapabilities: this.client.getAdcpCapabilities.bind(this.client),
+        getProducts: params => read(() => this.client.getProducts(params)),
+        getSignals: params => read(() => this.client.getSignals(params)),
+      },
       store,
       scope,
       account: this.account,
@@ -657,14 +653,24 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       isCurrent: () => this.isLifecycleCurrent(epoch),
     });
     if (outcome.outcome === 'superseded') return { cancelled: true, unchanged: false, items: new Map(), metadata };
-    if (outcome.outcome === 'degraded')
+    if (outcome.outcome === 'degraded') {
+      if (readException) throw readException;
       return {
         cancelled: false,
         unchanged: false,
         items: new Map(),
         metadata,
-        failure: { error: outcome.cause, adcpError: outcome.error },
+        failure: {
+          error: new Error(
+            `${entity === 'product' ? 'Product' : 'Signal'} bootstrap failed: ${outcome.cause.message}`,
+            {
+              cause: outcome.cause,
+            }
+          ),
+          adcpError: outcome.error,
+        },
       };
+    }
     const snapshot = outcome.snapshot;
     return {
       cancelled: false,
