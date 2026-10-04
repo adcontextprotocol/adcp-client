@@ -52,6 +52,8 @@ export interface VerifyWebhookRequestOptions {
   timestamp?: WebhookHeaderValue;
   /** Allowed absolute timestamp skew in seconds. Defaults to 300. */
   skewSeconds?: number;
+  /** Alias shared with preflight; takes precedence when both are provided. */
+  maxSkewSeconds?: number;
   /** Current unix time in seconds. Defaults to `Date.now() / 1000`. */
   now?: () => number;
 }
@@ -78,39 +80,17 @@ export type VerifyWebhookRequestResult =
  * `@adcp/sdk/signing/server`.
  */
 export function verifyWebhookRequest(options: VerifyWebhookRequestOptions): VerifyWebhookRequestResult {
+  const preflight = preflightWebhookRequest(options, {
+    now: options.now,
+    maxSkewSeconds: options.maxSkewSeconds ?? options.skewSeconds,
+  });
+  if (!preflight.ok) return preflight;
   const secret = options.secret ?? options.globalSecret;
   if (!secret) {
     return fail('missing_secret', 'A webhook HMAC secret is required.');
   }
 
-  const signature = resolveHeader('x-adcp-signature', options.signature, options.headers);
-  if (signature.reason) return fail(signature.reason, signature.message);
-
-  const timestamp = resolveHeader('x-adcp-timestamp', options.timestamp, options.headers);
-  if (timestamp.reason) return fail(timestamp.reason, timestamp.message);
-
-  if (!signature.value || !timestamp.value) {
-    return fail('missing_headers', 'Webhook is missing x-adcp-signature or x-adcp-timestamp.');
-  }
-
-  const parsedTimestamp = parseTimestamp(timestamp.value);
-  if (parsedTimestamp === undefined) {
-    return fail('invalid_timestamp', 'x-adcp-timestamp must be an integer unix timestamp in seconds.');
-  }
-
-  const now = options.now ? Math.floor(options.now()) : Math.floor(Date.now() / 1000);
-  const skewSeconds = options.skewSeconds ?? 300;
-  if (!Number.isFinite(skewSeconds) || skewSeconds < 0) {
-    return fail('invalid_timestamp', 'skewSeconds must be a non-negative number.');
-  }
-  if (Math.abs(now - parsedTimestamp) > skewSeconds) {
-    return fail('stale_timestamp', `Webhook timestamp is outside the allowed ${skewSeconds}s skew window.`);
-  }
-
-  if (!/^sha256=[a-f0-9]{64}$/.test(signature.value)) {
-    return fail('malformed_signature', 'x-adcp-signature must match sha256=<64 lowercase hex chars>.');
-  }
-
+  const { signature, timestamp: parsedTimestamp, checkedAt: now } = preflight;
   const hmac = createHmac('sha256', secret);
   hmac.update(String(parsedTimestamp), 'utf8');
   hmac.update('.', 'utf8');
@@ -118,17 +98,76 @@ export function verifyWebhookRequest(options: VerifyWebhookRequestOptions): Veri
   const expected = `sha256=${hmac.digest('hex')}`;
 
   const expectedBytes = Buffer.from(expected, 'utf8');
-  const actualBytes = Buffer.from(signature.value, 'utf8');
+  const actualBytes = Buffer.from(signature, 'utf8');
   if (actualBytes.length !== expectedBytes.length || !timingSafeEqual(actualBytes, expectedBytes)) {
     return fail('bad_signature', 'Webhook HMAC signature does not match the request body and timestamp.');
   }
 
   return {
     ok: true,
-    signature: signature.value,
+    signature,
     timestamp: parsedTimestamp,
     verifiedAt: now,
   };
+}
+
+/** Input for a secret-less check of the deprecated HMAC webhook profile. */
+export type PreflightWebhookRequest = Pick<VerifyWebhookRequestOptions, 'headers' | 'signature' | 'timestamp'>;
+export interface PreflightWebhookRequestOptions {
+  /** Current unix time in seconds. */
+  now?: () => number;
+  /** Allowed absolute timestamp skew; defaults to 300 seconds. */
+  maxSkewSeconds?: number;
+  /** Alias shared with verifyWebhookRequest. */
+  skewSeconds?: number;
+}
+export type PreflightWebhookRequestResult =
+  | { ok: true; signature: string; timestamp: number; checkedAt: number }
+  | { ok: false; reason: Exclude<VerifyWebhookFailureReason, 'missing_secret' | 'bad_signature'>; message: string };
+
+/** Validate headers and freshness before looking up a secret. Success does not authenticate the request. */
+export function preflightWebhookRequest(
+  request: PreflightWebhookRequest,
+  options: PreflightWebhookRequestOptions = {}
+): PreflightWebhookRequestResult {
+  const signature = resolveHeader('x-adcp-signature', request.signature, request.headers);
+  if (signature.reason) return { ok: false, reason: signature.reason, message: signature.message };
+  const timestamp = resolveHeader('x-adcp-timestamp', request.timestamp, request.headers);
+  if (timestamp.reason) return { ok: false, reason: timestamp.reason, message: timestamp.message };
+  if (!signature.value || !timestamp.value)
+    return {
+      ok: false,
+      reason: 'missing_headers',
+      message: 'Webhook is missing x-adcp-signature or x-adcp-timestamp.',
+    };
+  const parsedTimestamp = parseTimestamp(timestamp.value);
+  if (parsedTimestamp === undefined)
+    return {
+      ok: false,
+      reason: 'invalid_timestamp',
+      message: 'x-adcp-timestamp must be an integer unix timestamp in seconds.',
+    };
+  const now = Math.floor(options.now ? options.now() : Date.now() / 1000);
+  const skewSeconds = options.maxSkewSeconds ?? options.skewSeconds ?? 300;
+  if (!Number.isFinite(now) || !Number.isFinite(skewSeconds) || skewSeconds < 0)
+    return {
+      ok: false,
+      reason: 'invalid_timestamp',
+      message: 'Clock and skew must be finite; skew must be non-negative.',
+    };
+  if (Math.abs(now - parsedTimestamp) > skewSeconds)
+    return {
+      ok: false,
+      reason: 'stale_timestamp',
+      message: `Webhook timestamp is outside the allowed ${skewSeconds}s skew window.`,
+    };
+  if (!/^sha256=[a-f0-9]{64}$/.test(signature.value))
+    return {
+      ok: false,
+      reason: 'malformed_signature',
+      message: 'x-adcp-signature must match sha256=<64 lowercase hex chars>.',
+    };
+  return { ok: true, signature: signature.value, timestamp: parsedTimestamp, checkedAt: now };
 }
 
 function fail(reason: VerifyWebhookFailureReason, message: string): VerifyWebhookRequestResult {
@@ -149,9 +188,9 @@ function resolveHeader(
   name: string,
   explicit: WebhookHeaderValue,
   headers: WebhookHeadersLike | undefined
-): { value?: string; reason?: VerifyWebhookFailureReason; message: string } {
+): { value?: string; reason?: 'missing_headers' | 'ambiguous_headers'; message: string } {
   const explicitValue = normalizeHeaderValue(explicit);
-  const headerValue: { value?: string; reason?: VerifyWebhookFailureReason; message: string } = headers
+  const headerValue: { value?: string; reason?: 'missing_headers' | 'ambiguous_headers'; message: string } = headers
     ? readHeader(headers, name)
     : { message: '' };
 
@@ -169,7 +208,7 @@ function resolveHeader(
 function readHeader(
   headers: WebhookHeadersLike,
   name: string
-): { value?: string; reason?: VerifyWebhookFailureReason; message: string } {
+): { value?: string; reason?: 'missing_headers' | 'ambiguous_headers'; message: string } {
   if (isHeaders(headers)) {
     const value = headers.get(name);
     if (value?.includes(',')) {
@@ -205,7 +244,7 @@ function readHeader(
 
 function normalizeHeaderValue(value: WebhookHeaderValue): {
   value?: string;
-  reason?: VerifyWebhookFailureReason;
+  reason?: 'missing_headers' | 'ambiguous_headers';
   message: string;
 } {
   if (value == null) return { message: '' };

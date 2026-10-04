@@ -387,3 +387,7 @@ debug sink with redaction.
 - [ ] Multi-replica deployments use Redis or Postgres replay storage.
 - [ ] Signature failure never falls back to another auth scheme.
 - [ ] JSON parsing and side effects happen only after verification succeeds.
+
+Legacy HMAC receivers can call `preflightWebhookRequest({ headers }, { maxSkewSeconds: 300 })`
+from `@adcp/sdk/webhooks` before secret lookup. Success checks syntax/freshness;
+then authenticate with `verifyWebhookRequest` using the secret and exact raw body.

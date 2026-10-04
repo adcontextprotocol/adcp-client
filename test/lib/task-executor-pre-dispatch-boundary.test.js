@@ -2595,3 +2595,31 @@ describe('TaskExecutor pre-dispatch boundary', () => {
     assert.deepEqual(handlerCalls[0], { media_buy_id: 'race-winner' });
   });
 });
+
+test('notification-only dispatch hooks leave push completion and task retention with the executor', async () => {
+  ProtocolClient.callTool = async () => ({ status: 'submitted', task_id: 'seller-task' });
+  const executor = new TaskExecutor({ strictSchemaValidation: false });
+  let starts = 0;
+  const hook = Object.assign(
+    async () => {
+      starts++;
+      return { action: 'dispatch_ready' };
+    },
+    { terminalSettlement: 'executor' }
+  );
+  const result = await executor.executeTask(
+    AGENT,
+    'sync_accounts',
+    { idempotency_key: 'dispatch-ready-key-01', accounts: [] },
+    undefined,
+    {},
+    'v3',
+    undefined,
+    hook
+  );
+  assert.equal(starts, 1);
+  assert.equal(executor.hasExternalTaskSettlementRoute(result.metadata.taskId), false);
+  const completion = await executor.observeExternalTaskStatus(result.metadata.taskId, 'completed', { accounts: [] });
+  assert.equal(completion.queued, undefined);
+  assert.equal(executor.deferredTerminalPublicationTaskIds.size, 0);
+});

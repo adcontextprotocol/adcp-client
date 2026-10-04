@@ -1,3 +1,6 @@
+import { isPermanentDiscoveryFailure } from './fetch-helpers';
+import { RequestSigningErrorCodeMetadata } from '../../types/enums.generated';
+
 /**
  * Typed errors surfaced by `resolveAgent`. Codes mirror the
  * `request_signature_*` taxonomy from security.mdx §"Discovering an
@@ -60,6 +63,8 @@ export interface AgentResolverErrorDetail {
 export class AgentResolverError extends Error {
   readonly code: AgentResolverErrorCode;
   readonly detail: AgentResolverErrorDetail;
+  /** Local, cause-aware recovery. Wire codes retain the protocol taxonomy. */
+  readonly recovery: 'transient' | 'correctable' | 'terminal';
   readonly [ATTACKER_INFLUENCED]: ReadonlyArray<keyof AgentResolverErrorDetail>;
 
   constructor(
@@ -72,6 +77,10 @@ export class AgentResolverError extends Error {
     this.name = 'AgentResolverError';
     this.code = code;
     this.detail = detail;
+    const discovery =
+      code === 'request_signature_capabilities_unreachable' || code === 'request_signature_brand_json_unreachable';
+    this.recovery =
+      discovery && isPermanentDiscoveryFailure(detail) ? 'terminal' : RequestSigningErrorCodeMetadata[code].recovery;
     this[ATTACKER_INFLUENCED] = attackerInfluencedFields;
   }
 }

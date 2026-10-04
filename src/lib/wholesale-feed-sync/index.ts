@@ -47,3 +47,15 @@ export type {
   LegacyWholesaleProduct,
   LegacyWholesaleSignal,
 } from './protocol-types';
+
+export { refreshWholesaleFeed, applyWholesaleFeedWebhook, InMemoryWholesaleFeedMirrorStore } from './mirror';
+export type {
+  WholesaleFeedMirrorStore,
+  WholesaleFeedMirrorScope,
+  WholesaleFeedMirrorItem,
+  WholesaleFeedMirrorSnapshot,
+  WholesaleFeedMirrorCommit,
+  WholesaleFeedRefreshOutcome,
+  RefreshWholesaleFeedOptions,
+  ApplyWholesaleFeedWebhookOptions,
+} from './mirror';

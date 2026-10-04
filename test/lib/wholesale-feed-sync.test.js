@@ -1143,3 +1143,62 @@ test('failed webhook repair rejects and leaves the delivery available for retry 
   assert.equal(repairs, 3, 'successful retry is deduplicated');
   sync.stop();
 });
+
+test('a webhook during initial bootstrap cannot leave a partial catalog', async () => {
+  let finishFirst;
+  const { client, calls } = makeStubClient({
+    getProducts: (params, call) =>
+      call === 1
+        ? new Promise(resolve => {
+            finishFirst = resolve;
+          })
+        : makeProductsResult([makeProduct('p1'), makeProduct('p2'), makeProduct('p3')], {
+            wholesale_feed_version: 'v2',
+          }),
+  });
+  const sync = new WholesaleFeedSync({ client, account: { account_id: 'acc_acme' } });
+  const starting = sync.start();
+  await waitFor(() => finishFirst, 'first full catalog request');
+  await sync.applyWebhook(
+    makeWebhook(
+      makeEvent('product.updated', 'product', 'p1', {
+        product_id: 'p1',
+        product: makeProduct('p1'),
+        applies_to: { scope: 'public' },
+      })
+    )
+  );
+  finishFirst(
+    makeProductsResult([makeProduct('p1'), makeProduct('p2'), makeProduct('p3')], { wholesale_feed_version: 'v1' })
+  );
+  await starting;
+  assert.equal(sync.products.count, 3);
+  assert.ok(calls.getProducts.length >= 2);
+  assert.equal(calls.getProducts.at(-1).if_wholesale_feed_version, undefined);
+  sync.stop();
+});
+
+test('a repeatedly superseded bulk repair leaves the delivery available for retry', async () => {
+  const { client } = makeStubClient({
+    getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' }),
+  });
+  const sync = new WholesaleFeedSync({ client, account: { account_id: 'acc_acme' } });
+  await sync.start();
+  const delivery = makeWebhook(
+    makeEvent('wholesale_feed.bulk_change', 'feed', 'bulk-contention', {
+      affected_entity_type: 'product',
+      affected_count: 1,
+      summary: 'refresh',
+      applies_to: { scope: 'public' },
+    })
+  );
+  const bootstrap = sync.bootstrap;
+  sync.bootstrap = async () => false;
+  await assert.rejects(sync.applyWebhook(delivery), /superseded repeatedly/);
+  sync.bootstrap = bootstrap;
+  let retries = 0;
+  sync.on('resyncing', () => retries++);
+  await sync.applyWebhook(delivery);
+  assert.equal(retries, 1);
+  sync.stop();
+});

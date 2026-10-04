@@ -115,8 +115,9 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // (+4 files); byte budgets stay fixed.
 // The 14.0-to-14.1 upgrade checklist adds one packaged Markdown guide (+1);
 // every byte budget stays fixed.
+// Storage-independent wholesale mirrors add one module set and one buyer guide (+5 files).
 const MAX_PACKED_FILE_COUNT =
-  6_135 + 34 + 4 + 10 + 4 + 4 + 4 + 9 + 16 + 4 + 1 + 5 + 8 + 4 + 4 + 11 + 4 + 13 + 6 + 4 + 39 + 4 + 21 + 4 + 13 + 1;
+  6_135 + 34 + 4 + 10 + 4 + 4 + 4 + 9 + 16 + 4 + 1 + 5 + 8 + 4 + 4 + 11 + 4 + 13 + 6 + 4 + 39 + 4 + 21 + 4 + 13 + 1 + 5;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

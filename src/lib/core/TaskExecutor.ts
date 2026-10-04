@@ -221,6 +221,7 @@ export async function rejectDeferredSettlement(result: TaskResult<any>): Promise
 
 /** Supporting contract for the internal pre-dispatch boundary. */
 export type BeforeProtocolDispatchHookResult<T> =
+  | { action: 'dispatch_ready' }
   | {
       action: 'dispatch_committed';
       /** Require the owning durable coordinator to authorize every seller-input continuation. */
@@ -288,10 +289,13 @@ interface ExternalTaskSettlementInFlight {
 }
 
 /** Hook used by higher-level SDK coordinators at the final dispatch boundary. */
-export type BeforeProtocolDispatchHook<T> = (
+export type BeforeProtocolDispatchHook<T> = ((
   effectiveParams: any,
   context: BeforeProtocolDispatchContext
-) => Promise<BeforeProtocolDispatchHookResult<T>>;
+) => Promise<BeforeProtocolDispatchHookResult<T>>) & {
+  /** @internal A notification-only hook leaves task settlement with the executor. */
+  terminalSettlement?: 'executor';
+};
 
 /** Keeps internal dispatch-boundary failures out of the normal TaskResult error projection. */
 /** @internal */
@@ -1566,19 +1570,22 @@ export class TaskExecutor {
       throwIfAborted(options.signal);
       if (beforeProtocolDispatch) {
         let decision: BeforeProtocolDispatchHookResult<T>;
-        dispatchBoundaryOwnsTerminalState = true;
+        const ownsSettlement = beforeProtocolDispatch.terminalSettlement !== 'executor';
+        dispatchBoundaryOwnsTerminalState = ownsSettlement;
         try {
-          this.compactClosedExternalTaskSettlementFences();
-          if (
-            this.liveExternalTaskSettlementCount() + this.settlementCapacityReservations.size >=
-            COMPACTED_TASK_STATE_LIMIT
-          ) {
-            throw new Error('The durable task-settlement capacity is exhausted; no mutation claim was attempted.');
-          }
-          this.settlementCapacityReservations.add(taskId);
-          if (webhookRegistrationPersisted) {
-            await this.config.onDurableSettlementRequired?.(taskId);
-            throwIfAborted(options.signal);
+          if (ownsSettlement) {
+            this.compactClosedExternalTaskSettlementFences();
+            if (
+              this.liveExternalTaskSettlementCount() + this.settlementCapacityReservations.size >=
+              COMPACTED_TASK_STATE_LIMIT
+            ) {
+              throw new Error('The durable task-settlement capacity is exhausted; no mutation claim was attempted.');
+            }
+            this.settlementCapacityReservations.add(taskId);
+            if (webhookRegistrationPersisted) {
+              await this.config.onDurableSettlementRequired?.(taskId);
+              throwIfAborted(options.signal);
+            }
           }
           decision = await beforeProtocolDispatch(preparedCall.args, {
             operationId: taskId,
@@ -1588,6 +1595,7 @@ export class TaskExecutor {
             registerExternalTaskSettlement: handler => this.registerExternalTaskSettlement(taskId, handler),
           });
           if (decision.action === 'dispatch_committed') {
+            if (!ownsSettlement) throw new Error('An executor-settled dispatch hook cannot claim durable settlement.');
             if (
               decision.requireDeferredSettlementResumeAuthorization === true &&
               this.config.deferredStorage !== undefined
@@ -1618,8 +1626,8 @@ export class TaskExecutor {
           }
           return attachMatch(earlyResult);
         }
-        dispatchCommitted = true;
-        dispatchSettlement = decision;
+        dispatchCommitted = decision.action === 'dispatch_committed';
+        dispatchSettlement = decision.action === 'dispatch_committed' ? decision : undefined;
       }
 
       // A claim that completes after the caller deadline must be fenced, not

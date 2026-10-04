@@ -1,7 +1,7 @@
 import { fetchBrandJson, BrandJsonResolverError } from '../brand-jwks';
 import type { SsrfDnsLookup } from '../../net';
 import { eTldPlusOne } from './etld';
-import { SafeFetchError } from './fetch-helpers';
+import { SafeFetchError, classifyDiscoveryFailure } from './fetch-helpers';
 
 /** 3.x webhook compatibility only; explicit capability URLs never use this path. */
 export async function fetchLegacyBrandJson(
@@ -25,7 +25,7 @@ export async function fetchLegacyBrandJson(
   } catch (err) {
     throw new SafeFetchError(
       'brand.json',
-      'fetch_failed',
+      classifyDiscoveryFailure(err).dns_error,
       err instanceof BrandJsonResolverError && err.code === 'invalid_body'
         ? 'brand.json body failed strict-JSON parse'
         : 'Legacy brand.json discovery failed',

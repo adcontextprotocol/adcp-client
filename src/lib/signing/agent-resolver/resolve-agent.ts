@@ -29,12 +29,14 @@
  */
 
 import { parse as parseTld } from 'tldts';
+import { isIP } from 'node:net';
 
 import { createA2AClient, createMCPClient } from '../../protocols';
 import { isDevelopmentBrandDomain } from '../../brand/domain';
 import type { IdentityKeyOriginPurpose, IdentityPosture } from './capabilities-types';
 import { readBrandJsonUrl, readIdentityPosture } from './capabilities-types';
-import type { SsrfDnsLookup } from '../../net';
+import { isAlwaysBlocked, isPrivateIp, type SsrfDnsLookup } from '../../net';
+import { AgentTransportPolicyError, createAgentTransportFetch } from '../../net/agent-transport-fetch';
 import { checkDelegatedOperatorAuthorization } from './operator-authorization';
 import { fetchLegacyBrandJson } from './legacy-brand';
 import {
@@ -45,7 +47,14 @@ import {
 } from './consistency';
 import { AgentResolverError, type AgentResolverErrorDetail } from './errors';
 import { eTldPlusOne, sameEtldPlusOne } from './etld';
-import { MAX_BRAND_JSON_BYTES, MAX_JWKS_BYTES, safeFetchJson, SafeFetchError } from './fetch-helpers';
+import {
+  MAX_BRAND_JSON_BYTES,
+  MAX_JWKS_BYTES,
+  safeFetchJson,
+  SafeFetchError,
+  classifyDiscoveryFailure,
+  isPermanentDiscoveryFailure,
+} from './fetch-helpers';
 import { unwrapProtocolResponse } from '../protocol-response';
 import { type AgentEntry, selectAgentByUrl, agentJwksUri, AgentSelectorError, canonicalAgentUrl } from './select-agent';
 
@@ -197,7 +206,9 @@ export async function resolveAgent(agentUrl: string, options: ResolveAgentOption
   const jwksCap = caps.jwksBytes ?? MAX_JWKS_BYTES;
 
   // ─── Step 1: fetch capabilities at the protocol layer ─────────────────
-  const fetchCapabilities = options.fetchCapabilities ?? defaultFetchCapabilities(agentUrl, options.protocol ?? 'mcp');
+  const fetchCapabilities =
+    options.fetchCapabilities ??
+    defaultFetchCapabilities(agentUrl, options.protocol ?? 'mcp', allowPrivateIp, timeoutMs);
   let capabilitiesPayload: unknown;
   let capabilitiesFetchedAt: number;
   try {
@@ -214,7 +225,7 @@ export async function resolveAgent(agentUrl: string, options: ResolveAgentOption
   } catch (err) {
     const detail: AgentResolverErrorDetail = {
       agent_url: agentUrl,
-      dns_error: err instanceof SafeFetchError ? err.transport : 'fetch_failed',
+      ...classifyDiscoveryFailure(err),
       last_attempt_at: now(),
     };
     pushTrace(trace, { step: 1, name: 'fetch_capabilities', ok: false, url: agentUrl, detail });
@@ -599,10 +610,71 @@ function checkAllowPrivateIp(requested: boolean): boolean {
   );
 }
 
-function defaultFetchCapabilities(agentUrl: string, protocol: AgentProtocol): FetchCapabilitiesFn {
+function defaultFetchCapabilities(
+  agentUrl: string,
+  protocol: AgentProtocol,
+  allowPrivateIp: boolean,
+  timeoutMs: number
+): FetchCapabilitiesFn {
   return async () => {
-    const client = protocol === 'a2a' ? createA2AClient(agentUrl) : createMCPClient(agentUrl);
-    return client.callTool('get_adcp_capabilities', {});
+    const url = new URL(agentUrl);
+    const hostname = url.hostname.replace(/^\[|\]$/g, '');
+    if (
+      (!allowPrivateIp && url.protocol !== 'https:') ||
+      (isIP(hostname) && (isAlwaysBlocked(hostname) || (!allowPrivateIp && isPrivateIp(hostname))))
+    )
+      throw new AgentTransportPolicyError('Signing discovery URL refused by address or HTTPS policy.');
+    let failure: Pick<AgentResolverErrorDetail, 'dns_error' | 'http_status'> | undefined;
+    const upstream = createAgentTransportFetch(agentUrl, {
+      allowPrivateIp,
+      allowPrivateInitialOrigin: false,
+      requireHttps: true,
+    });
+    let postSucceeded = false;
+    const trustedFetchFn: typeof fetch = async (input, init) => {
+      const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
+      try {
+        const response = await upstream(input, init);
+        // Optional MCP GETs cannot change a successful POST's discovery cause.
+        const isGet = method.toUpperCase() === 'GET';
+        const observed =
+          response.status >= 400 ? { dns_error: 'fetch_failed' as const, http_status: response.status } : undefined;
+        if (protocol === 'mcp' && method.toUpperCase() === 'POST' && response.ok) postSucceeded = true;
+        if (
+          !(protocol === 'mcp' && isGet && (postSucceeded || response.status === 405)) &&
+          !(
+            isGet &&
+            observed &&
+            failure &&
+            !isPermanentDiscoveryFailure(failure) &&
+            isPermanentDiscoveryFailure(observed)
+          )
+        )
+          failure = observed;
+        return response;
+      } catch (error) {
+        if (!(protocol === 'mcp' && method.toUpperCase() === 'GET' && postSucceeded))
+          failure = classifyDiscoveryFailure(error);
+        throw error;
+      }
+    };
+    const transport = { trustedFetchFn, requestTimeoutMs: timeoutMs };
+    const client =
+      protocol === 'a2a'
+        ? createA2AClient(agentUrl, undefined, undefined, undefined, undefined, transport)
+        : createMCPClient(agentUrl, undefined, undefined, undefined, undefined, transport);
+    try {
+      return await client.callTool('get_adcp_capabilities', {});
+    } catch (error) {
+      if (failure)
+        throw new SafeFetchError(
+          'capabilities',
+          failure.dns_error as SafeFetchError['transport'],
+          'Capabilities fetch failed',
+          failure.http_status
+        );
+      throw error;
+    }
   };
 }
 

@@ -2165,7 +2165,14 @@ export {
   VERSION_INFO,
 } from './version';
 export type { AdcpVersion } from './version';
-export { listBundledAdcpVersions, resolveAdcpVersion } from './utils/adcp-version-config';
+export {
+  listBundledAdcpVersions,
+  resolveAdcpVersion,
+  isAdcpVersionAtLeast,
+  sellerAdvertises31,
+  shouldOmit31Fields,
+} from './utils/adcp-version-config';
+export { redactSecrets } from './utils/redact-secrets';
 
 // ====== OBSERVABILITY ======
 // OpenTelemetry tracing utilities (no-op if @opentelemetry/api not installed)
@@ -2395,6 +2402,8 @@ export {
   type AccountPolicy,
   type BuyerAccountStorage,
   type BuyerAccountRegistryOptions,
+  type BuyerAccountDispatch,
+  type BuyerAccountProvisioningDispatch,
   type EnsureAccountOptions,
   type ProvisionedAccount,
 } from './core/buyer-account-registry';

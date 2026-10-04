@@ -12,6 +12,14 @@ import { isIP } from 'node:net';
 import { Agent, fetch as undiciFetch } from 'undici';
 import { isAlwaysBlocked, isLikelyPrivateUrl, isPrivateIp } from './address-guards';
 
+export class AgentTransportPolicyError extends TypeError {
+  readonly code = 'agent_transport_policy_refused';
+  constructor(message: string) {
+    super(message);
+    this.name = 'AgentTransportPolicyError';
+  }
+}
+
 type ResolvedAddress = { address: string; family: number };
 
 export interface AgentTransportFetchOptions {
@@ -24,6 +32,10 @@ export interface AgentTransportFetchOptions {
   /** Test seam for deterministic DNS answers. */
   lookup?: (hostname: string) => Promise<ResolvedAddress[]>;
   maxRedirects?: number;
+  /** @internal Metadata discovery must explicitly authorize private origins. */
+  allowPrivateInitialOrigin?: boolean;
+  /** @internal Require HTTPS on every hop unless private-address opt-in is set. */
+  requireHttps?: boolean;
 }
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -35,9 +47,10 @@ export function createAgentTransportFetch(agentUrl: string, options: AgentTransp
   const initialUrl = new URL(agentUrl);
   const allowPrivateEverywhere =
     options.allowPrivateIp === true ||
-    process.env.ADCP_ALLOW_INTERNAL_PROBES === '1' ||
-    process.env.ADCP_ALLOW_PRIVATE_AGENT_URL === '1';
-  const allowPrivateInitialOrigin = isLikelyPrivateUrl(initialUrl.toString());
+    (options.allowPrivateInitialOrigin !== false &&
+      (process.env.ADCP_ALLOW_INTERNAL_PROBES === '1' || process.env.ADCP_ALLOW_PRIVATE_AGENT_URL === '1'));
+  const allowPrivateInitialOrigin =
+    options.allowPrivateInitialOrigin !== false && isLikelyPrivateUrl(initialUrl.toString());
   const dispatchers = new Map<string, Promise<Agent>>();
   const privateIpAllowedFor = (url: URL): boolean =>
     allowPrivateEverywhere || (allowPrivateInitialOrigin && url.origin === initialUrl.origin);
@@ -66,6 +79,8 @@ export function createAgentTransportFetch(agentUrl: string, options: AgentTransp
 
     for (let redirects = 0; ; redirects++) {
       assertTransportScheme(url);
+      if (options.requireHttps && url.protocol !== 'https:' && !options.allowPrivateIp)
+        throw new AgentTransportPolicyError('Signing discovery requires HTTPS.');
       const hostname = url.hostname.replace(/^\[|\]$/g, '');
       if (isIP(hostname) !== 0) assertAgentAddressAllowed(hostname, hostname, privateIpAllowedFor(url), false);
       const headerRecord: Record<string, string> = {};
@@ -152,18 +167,20 @@ function assertAgentAddressAllowed(
 ): void {
   const relationship = resolved ? 'resolves to' : 'is';
   if (isAlwaysBlocked(address)) {
-    throw new Error(`Agent host ${hostname} ${relationship} an always-blocked address`);
+    throw new AgentTransportPolicyError(`Agent host ${hostname} ${relationship} an always-blocked address`);
   }
   if (!allowPrivateIp && isPrivateIp(address)) {
     const guidance = resolved
       ? 'set transport.allowPrivateIp=true for an explicitly trusted private agent, or provide a trustedFetchFn that enforces its own hostname address policy'
       : 'set transport.allowPrivateIp=true for an explicitly trusted private agent';
-    throw new Error(`Agent host ${hostname} ${relationship} a private or loopback address; ` + guidance);
+    throw new AgentTransportPolicyError(
+      `Agent host ${hostname} ${relationship} a private or loopback address; ` + guidance
+    );
   }
 }
 
 function assertTransportScheme(url: URL): void {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new TypeError(`Agent transport does not allow ${url.protocol} URLs`);
+    throw new AgentTransportPolicyError(`Agent transport does not allow ${url.protocol} URLs`);
   }
 }
