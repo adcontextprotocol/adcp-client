@@ -2,12 +2,16 @@
 
 ## 14.1.0
 
+Start with the [14.0-to-14.1 upgrade checklist](docs/migration-14.0-to-14.1.md)
+for required changes, optional features, and security behavior to verify.
+SDK 14.1.0 continues to use **AdCP 3.2.1 on the wire**.
+
 ### Minor Changes
 
 - e2eed2c: Add a seller/caller-scoped buyer account registry with memoized provisioning, optional storage, account status repair, billing terms, and `auto`/`strict` account policies (#3093). The default policy remains `off` for existing callers: `resolveAccount()` keeps the 14.0 behavior of sending `sync_accounts` on every call and returning the natural key, and the memoized registry backs it only when you set `accountPolicy`, `accountStorage`, `accountRegistryScope`, or `accountRegistryMaxEntries`. Add typed buyer-setup errors and an opt-in product cache that stores cache scope and feed/pricing versions together. Preserve `resolveAccount` pending-approval behavior.
-- bed05b8: Align signature verification with the AdCP 3.3 agent-resolution algorithm. Match canonical agent URLs, discover webhook keys from capability-selected operator records, and accept publisher-pinned webhook keys only when the agent JWKS also publishes the same public key. Pins apply to every publisher in the verifier's own media-buy record and are refreshed before rejection.
+- bed05b8: Align signature verification with the AdCP 3.3 agent-resolution algorithm, without changing the AdCP 3.2.1 wire protocol. Match canonical agent URLs, discover webhook keys from capability-selected operator records, and accept publisher-pinned webhook keys only when the agent JWKS also publishes the same public key. Pins apply to every publisher in the verifier's own media-buy record and are refreshed before rejection.
 
-  `BrandJsonJwksResolver` adds an optional `agentUrl`. Existing type/id/brand configurations infer a unique onboarding URL, then confirm the agent's capabilities-selected operator record and canonical match before accepting keys. Ambiguous or unconfirmed mappings fail closed. Canonical operator verification covers every portfolio collection; legacy `brandId` and redirect-depth settings apply only to onboarding. Existing JWKS option types remain accepted. `BrandJsonJwksResolver` and `SingleAgentClient` enable `legacyWebhookFallback` by default for 3.x webhooks and permit disabling it. A2A standalone integrations must specify `protocol: 'a2a'`. Cross-domain onboarding must agree with capabilities, and legacy webhook discovery requires the agent-origin well-known record. These security corrections ship as a minor release while preserving existing constructor signatures. See `docs/migration-agent-resolution-3.3.md` for cache bounds, canonical identity and governance replay/revocation index updates.
+  `BrandJsonJwksResolver` adds an optional `agentUrl`. Existing type/id/brand configurations infer a unique onboarding URL, then confirm the agent's capabilities-selected operator record and canonical match before accepting keys. Ambiguous or unconfirmed mappings fail closed. Canonical operator verification covers every portfolio collection; legacy `brandId` and redirect-depth settings apply only to onboarding. Existing JWKS option types remain accepted. `BrandJsonJwksResolver` and `SingleAgentClient` enable `legacyWebhookFallback` by default for 3.x webhooks and permit disabling it. A2A standalone integrations must specify `protocol: 'a2a'`. Cross-domain onboarding must agree with capabilities, and legacy webhook discovery requires the agent-origin well-known record. These security corrections ship as a minor release while preserving existing constructor signatures. See the [signature migration guide](docs/migration-agent-resolution-3.3.md) for cache bounds, canonical identity and governance replay/revocation index updates.
 
   Add per-request governance buyer identity and expose the exact selected operator record on verified signed requests. Explicit receiver account-authorization requirements remain enforced separately from origin binding.
 
@@ -27,7 +31,7 @@
   - `list_accounts.account` is treated as a filter instead of being resolved as the request's account;
   - an implicit-mode account whose returned identity metadata disagrees with the supplied natural key is refused (#3091).
 
-  Deprecation: by default each case keeps the 14.0 behavior and logs a deprecation warning once per process per warning code (`logger.warn`, plus `process.emitWarning` outside production; later occurrences log at debug level). Move account authorization into `resolveAccount`, then opt in; see `docs/guides/account-resolution.md`.
+  Deprecation: by default each case keeps the 14.0 behavior and logs a deprecation warning once per process per warning code (`logger.warn`, plus `process.emitWarning` outside production; later occurrences log at debug level). Move account authorization into `resolveAccount`, then opt in; see the [account resolution guide](docs/guides/account-resolution.md).
 
 ### Patch Changes
 

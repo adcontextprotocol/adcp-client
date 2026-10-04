@@ -1,8 +1,10 @@
 # Agent resolution and publisher pins
 
-The SDK follows the shared AdCP 3.3 agent-resolution algorithm for request,
-webhook and governance signatures. The protocol alignment changes key discovery
-and verification; it does not change the SDK's configured wire protocol version.
+SDK 14.1 follows the shared AdCP 3.3 agent-resolution algorithm for request,
+webhook and governance signatures. SDK 14.1.0 still uses **AdCP 3.2.1 on the
+wire**: this alignment changes key discovery and verification, not the configured
+wire protocol version. Start with the [14.0-to-14.1 upgrade checklist](./migration-14.0-to-14.1.md)
+for required changes and opt-in features outside signature verification.
 
 ## Expected agent URLs
 

@@ -26,6 +26,8 @@ accounts: {
 
 For buyer setup and opt-in lifecycle management, see
 [First call to a seller](./FIRST-CALL-TO-A-SELLER.md).
+For upgrading an existing integration, use the
+[14.0-to-14.1 checklist](../migration-14.0-to-14.1.md).
 
 Account resolvers receive `ctx.provisioning`. It is false on discovery and
 negotiation (`get_products`, `list_products`, `get_signals`, and proposal
@@ -133,28 +135,52 @@ construction, not a silent fallback.
 
 ### 1 · How it works
 
-1. Buyer calls `sync_accounts` with `AccountReference[]`.
+1. Buyer calls `sync_accounts` with natural-key provisioning entries.
 2. Framework calls your `accounts.upsert()` — you create/find accounts and
    store the `authPrincipal → accounts` mapping.
-3. Buyer calls any tool (e.g. `create_media_buy`) without `ext.account_ref`.
-4. Framework calls `accounts.resolve(undefined, ctx)` — you look up the
-   account by `ctx.authInfo`.
+3. On subsequent account-scoped calls, the buyer supplies top-level
+   `account: { brand, operator, ... }`. The framework calls
+   `accounts.resolve(ref, ctx)` with that natural key. Look it up within the
+   authenticated caller's synced roster; do not substitute another account.
+4. When a request omits `account`, the framework instead calls
+   `accounts.resolve(undefined, ctx)`. This is a separate auth-derived lookup
+   path. A null result is allowed for account-optional tools and yields
+   `ACCOUNT_REQUIRED` for account-required operations.
+
+Implicit sellers refuse the `{ account_id }` reference arm. A seller handle
+returned by `sync_accounts` does not replace the natural key on later calls.
 
 ### 2 · Key derivation
 
 Extract the principal key from `ctx.authInfo.credential`:
 
 ```ts
-resolve: async (_ref, ctx) => {
+resolve: async (ref, ctx) => {
   const cred = ctx?.authInfo?.credential;
   const key = cred?.kind === 'oauth'    ? `oauth:${cred.client_id}`
             : cred?.kind === 'api_key'  ? `api_key:${cred.key_id}`
             : cred?.kind === 'http_sig' ? `http_sig:${cred.agent_url}`
             : undefined;
   if (!key) return null;
+  if (ref !== undefined) {
+    // Match the full natural key within THIS principal's synced roster.
+    // An unknown or unauthorized ref returns null, without a fallback.
+    return await db.findSyncedAccountByNaturalKey(key, ref);
+  }
+  // Account omitted: use your existing auth-derived selection policy.
   return await db.findAccountByPrincipalKey(key);
 },
 ```
+
+The `db` methods above are operations you implement in your own store.
+`findSyncedAccountByNaturalKey` must compare the complete brand identity
+(domain, optional brand ID and countries), operator, operator-unit ID,
+currency, timezone, and sandbox within the principal's roster. Use consistent
+normalization at sync and lookup, including country ordering and omitted/false
+sandbox. It must not create an account or match on brand/operator alone.
+`findAccountByPrincipalKey` handles only the omitted-reference path according
+to your documented selection policy. The built-in `InMemoryImplicitAccountStore`
+keeps its historical first-account selection for that path.
 
 **Why `credential.client_id`, not `authInfo.sub`?**
 
@@ -187,14 +213,24 @@ receiving auth errors will refresh credentials or escalate, not call
 
 ```ts
 // ✓ Correct
-resolve: async (_ref, ctx) => {
-  const account = await db.findByPrincipal(extractKey(ctx?.authInfo));
-  return account ?? null;  // omitted account → ACCOUNT_REQUIRED
+resolve: async (ref, ctx) => {
+  const key = extractKey(ctx?.authInfo);
+  if (!key) return null;
+  const account = ref === undefined
+    ? await db.findAccountByPrincipalKey(key)
+    : await db.findSyncedAccountByNaturalKey(key, ref);
+  // Missing: supplied account → ACCOUNT_NOT_FOUND;
+  // omitted account on an account-required operation → ACCOUNT_REQUIRED.
+  return account ?? null;
 },
 
 // ✗ Wrong — misleads buyers about how to recover
-resolve: async (_ref, ctx) => {
-  const account = await db.findByPrincipal(extractKey(ctx?.authInfo));
+resolve: async (ref, ctx) => {
+  const key = extractKey(ctx?.authInfo);
+  if (!key) return null;
+  const account = ref === undefined
+    ? await db.findAccountByPrincipalKey(key)
+    : await db.findSyncedAccountByNaturalKey(key, ref);
   if (!account) throw new AdcpError('AUTH_MISSING', { message: 'call sync_accounts first' });
   return account;
 },
