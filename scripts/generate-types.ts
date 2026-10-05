@@ -3253,7 +3253,13 @@ export function widenMediaBuyFeaturesIndexSignature(typeDefinitions: string): st
       )
         return [];
       const type = member.type.getText(source);
-      const additions = included.has(type) ? [] : [`(${type})`];
+      const needsGrouping =
+        ts.isUnionTypeNode(member.type) ||
+        ts.isIntersectionTypeNode(member.type) ||
+        ts.isFunctionTypeNode(member.type) ||
+        ts.isConstructorTypeNode(member.type) ||
+        ts.isConditionalTypeNode(member.type);
+      const additions = included.has(type) ? [] : [needsGrouping ? `(${type})` : type];
       included.add(type);
       if (member.questionToken && !included.has('undefined')) {
         additions.push('undefined');
@@ -3265,7 +3271,9 @@ export function widenMediaBuyFeaturesIndexSignature(typeDefinitions: string): st
     edits.push({
       start: index.type.getStart(source),
       end: index.type.end,
-      replacement: `${existing} | ${namedTypes.join(' | ')}`,
+      replacement: existing.endsWith(' | undefined')
+        ? `${existing.slice(0, -' | undefined'.length)} | ${namedTypes.join(' | ')} | undefined`
+        : `${existing} | ${namedTypes.join(' | ')}`,
     });
   }
 

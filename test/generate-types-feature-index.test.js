@@ -59,6 +59,9 @@ import { widenMediaBuyFeaturesIndexSignature } from ${JSON.stringify(path.join(r
 const source = readFileSync(${JSON.stringify(input)}, 'utf8');
 const result = widenMediaBuyFeaturesIndexSignature(source);
 if (widenMediaBuyFeaturesIndexSignature(result) !== result) throw new Error('not idempotent');
+const legacy = 'export interface MediaBuyFeatures { bidding_policy?: BiddingPolicyCapability; [k: string]: boolean | undefined; }';
+const expected = legacy.replace('boolean | undefined', 'boolean | BiddingPolicyCapability | undefined');
+if (widenMediaBuyFeaturesIndexSignature(legacy) !== expected) throw new Error('legacy output drift');
 writeFileSync(${JSON.stringify(output)}, result);
 `
   );
