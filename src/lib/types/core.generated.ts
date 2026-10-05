@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.2.1
-// Generated at: 2026-09-30T20:17:14.543Z
+// Generated at: 2026-10-05T10:11:38.565Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -8344,6 +8344,18 @@ export interface PackageSignalTargetingGroup {
  */
 export interface DemographicTargetingIntent {
   age: DemographicAgeRange & {
+    /**
+     * User-level age determination bases the buyer permits for this predicate. Sellers MUST use only these bases or reject the request; they MUST NOT silently fall back to another basis. When omitted, the buyer imposes no determination-basis constraint beyond product capability and any age_restriction. population_estimate is structurally unavailable because aggregate evidence cannot identify an eligible user.
+     *
+     * @minItems 1
+     */
+    accepted_bases?: [AgeDeterminationBasis, ...AgeDeterminationBasis[]];
+    /**
+     * Verification methods acceptable when verified is an accepted basis. This field narrows verified demographic execution; age_restriction.accepted_methods independently governs legal eligibility and the two sets are intersected when both are present.
+     *
+     * @minItems 1
+     */
+    accepted_verification_methods?: [AgeVerificationMethod, ...AgeVerificationMethod[]];
   };
 }
 /**

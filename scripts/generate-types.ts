@@ -1183,7 +1183,7 @@ export function nameTargetingInputForCodegen(schema: any): any {
   return namedSchema;
 }
 
-/** Ensure referenced targeting input gets the same names as an inline root. */
+/** Ensure referenced schemas receive the same emit projections as inline roots. */
 export function codegenRefResolvers(refResolver: any, readTargetingInput = loadCachedSchema) {
   return {
     // The built-in HTTP resolver runs at order 200. A custom resolver with no
@@ -1192,7 +1192,21 @@ export function codegenRefResolvers(refResolver: any, readTargetingInput = loadC
     // a reference is absent from the verified local cache.
     http: false,
     file: false,
-    cache: { ...refResolver, order: 2 },
+    cache: {
+      ...refResolver,
+      order: 2,
+      read: async (file: { url: string }) => {
+        const schema = await refResolver.read(file);
+        // jsts drops age's sibling properties when its inline allOf member
+        // also carries conditional allOf validation (#3115). Normalize this
+        // referenced document just as we normalize direct compilation roots.
+        // Keep minItems here so the accepted constraints remain non-empty.
+        // Runtime validation still reads the untouched verified schema.
+        return schemaRefToCacheRelativePath(file.url) === 'core/demographic-targeting-intent.json'
+          ? enforceStrictSchema(schema)
+          : schema;
+      },
+    },
     targetingInput: {
       order: 1,
       canRead: (file: { url: string }) => schemaRefToCacheRelativePath(file.url) === 'core/targeting-input.json',

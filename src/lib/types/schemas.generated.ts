@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-30T20:18:06.689Z
+// Generated at: 2026-10-05T10:12:51.468Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1825,7 +1825,10 @@ export const PackageSignalTargetingSchema = SignalTargetingExpressionSchema.and(
 }).passthrough());
 
 export const DemographicTargetingIntentSchema = z.object({
-    age: DemographicAgeRangeSchema.and(z.object({}).passthrough())
+    age: DemographicAgeRangeSchema.and(z.object({
+        accepted_bases: z.array(AgeDeterminationBasisSchema).optional(),
+        accepted_verification_methods: z.array(AgeVerificationMethodSchema).optional()
+    }).passthrough())
 }).passthrough();
 
 export const SellerAgentReferenceSchema = z.object({
