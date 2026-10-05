@@ -3229,6 +3229,10 @@ function widenPostalAreaSupportIndexSignature(typeDefinitions: string): string {
 export function widenMediaBuyFeaturesIndexSignature(typeDefinitions: string): string {
   const source = ts.createSourceFile('features.ts', typeDefinitions, ts.ScriptTarget.Latest, true);
   const edits: { start: number; end: number; replacement: string }[] = [];
+  const normalizedType = (type: ts.TypeNode): string => {
+    while (ts.isParenthesizedTypeNode(type)) type = type.type;
+    return type.getText(source);
+  };
 
   for (const declaration of source.statements) {
     if (
@@ -3241,9 +3245,7 @@ export function widenMediaBuyFeaturesIndexSignature(typeDefinitions: string): st
     if (!index?.type) continue;
     const existing = index.type.getText(source);
     const alternatives = ts.isUnionTypeNode(index.type) ? index.type.types : [index.type];
-    const included = new Set(
-      alternatives.map(type => (ts.isParenthesizedTypeNode(type) ? type.type : type).getText(source))
-    );
+    const included = new Set(alternatives.map(normalizedType));
     const namedTypes = declaration.members.flatMap(member => {
       if (
         !ts.isPropertySignature(member) ||
@@ -3253,14 +3255,15 @@ export function widenMediaBuyFeaturesIndexSignature(typeDefinitions: string): st
       )
         return [];
       const type = member.type.getText(source);
+      const normalized = normalizedType(member.type);
       const needsGrouping =
         ts.isUnionTypeNode(member.type) ||
         ts.isIntersectionTypeNode(member.type) ||
         ts.isFunctionTypeNode(member.type) ||
         ts.isConstructorTypeNode(member.type) ||
         ts.isConditionalTypeNode(member.type);
-      const additions = included.has(type) ? [] : [needsGrouping ? `(${type})` : type];
-      included.add(type);
+      const additions = included.has(normalized) ? [] : [needsGrouping ? `(${type})` : type];
+      included.add(normalized);
       if (member.questionToken && !included.has('undefined')) {
         additions.push('undefined');
         included.add('undefined');

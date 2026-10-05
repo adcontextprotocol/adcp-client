@@ -20,6 +20,7 @@ export interface MediaBuyFeatures {
   catalog_management?: boolean;
   bidding_policy?: BiddingPolicyCapability;
   catalog_ingestion?: CatalogIngestionCapability;
+  grouped_capability?: ((BiddingPolicyCapability | CatalogIngestionCapability));
   [k: string]: boolean | undefined;
 }
 export interface ExternalCore2CanonicalMediaBuyFeatures {
