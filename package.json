@@ -541,6 +541,7 @@
     "!dist/lib/schemas-data/*/bundled/**/*",
     "bin/**/*.js",
     "skills/**/*",
+    "!skills/*.previous/**/*",
     ".claude-plugin/**/*",
     "compliance/cache/3.0.25/**/*",
     "compliance/cache/3.1.24/**/*",

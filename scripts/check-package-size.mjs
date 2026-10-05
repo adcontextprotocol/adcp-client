@@ -20,8 +20,11 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // Canonical agent resolution adds three dual-format module/declaration sets
 // and one migration guide (+13 files). The measured tarball is 20,004,504
 // bytes; allow 25 KB above the existing 20 MB target for these artifacts and
-// compressor variance. All other byte budgets remain unchanged.
-const MAX_PACKED_TARBALL_BYTES = 20_025_000;
+// compressor variance. Restoring age-provenance declarations adds about 5 KB
+// compressed (20,022,298 bytes on main versus 20,027,281 with the fix), without
+// adding published files. Allow that growth while retaining the same margin;
+// schema-sync skill snapshots are excluded and all other budgets stay fixed.
+const MAX_PACKED_TARBALL_BYTES = 20_030_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -187,6 +190,12 @@ export function checkPackageSize(repoRoot) {
   const sourceMaps = packageInfo.files.filter(file => file.path.endsWith('.map'));
   if (sourceMaps.length > 0) {
     throw new Error(`packed package contains ${sourceMaps.length} source map files`);
+  }
+  const skillSnapshots = packageInfo.files.filter(
+    file => file.path.startsWith('skills/') && file.path.split('/').some(part => part.endsWith('.previous'))
+  );
+  if (skillSnapshots.length > 0) {
+    throw new Error(`packed package contains ${skillSnapshots.length} schema-sync skill snapshot files`);
   }
   const rawBundledSchemas = packageInfo.files.filter(
     file => file.path.includes('/schemas-data/') && file.path.includes('/bundled/') && file.path.endsWith('.json')
