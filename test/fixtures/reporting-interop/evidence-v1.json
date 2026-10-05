@@ -1,0 +1,522 @@
+{
+  "contract": "reporting_evidence_interop_v1",
+  "version": 1,
+  "adcp_schema_version": "3.2.1",
+  "provenance": "SDK interoperability test vectors; resource bytes and contract hashes are pinned by resources/fixture.json",
+  "observed_at": "2026-09-02T02:00:00Z",
+  "scope": {
+    "seller_identity": "https://seller.example/agent",
+    "account_id": "account-1",
+    "consumer_id": "https://buyer.example/adcp",
+    "reporting_obligation_id": "obligation-billing"
+  },
+  "obligation": {
+    "reporting_obligation_id": "obligation-billing",
+    "delivery_config_id": "billing-feed",
+    "delivery_config_version": 1,
+    "report_definition_id": "billing-v1",
+    "feed_purpose": "billing",
+    "reporting_profile": "billing-v1",
+    "account_id": "account-1",
+    "media_buy_ids": ["buy-1", "buy-2"],
+    "scope_resolved_at": "2026-09-01T00:00:00Z",
+    "coverage": {
+      "status": "full",
+      "evaluated_at": "2026-09-01T00:00:00Z",
+      "media_buy_ids": ["buy-1", "buy-2"],
+      "fully_covered_media_buy_ids": ["buy-1", "buy-2"],
+      "partially_covered_media_buy_ids": [],
+      "unsupported_media_buy_ids": [],
+      "unknown_media_buy_ids": [],
+      "package_ids": ["package-1", "package-2"],
+      "covered_package_ids": ["package-1", "package-2"],
+      "unsupported_package_ids": [],
+      "unknown_package_ids": [],
+      "limitations": []
+    },
+    "period": {
+      "start": "2026-08-01T00:00:00Z",
+      "end": "2026-09-01T00:00:00Z",
+      "source_timezone": "UTC"
+    },
+    "expected_at": "2026-09-02T00:00:00Z",
+    "schedule": {
+      "period_duration": "P1M",
+      "alignment": "billing_cycle",
+      "period_anchor": "2026-01-01T00:00:00Z",
+      "period_timezone": "UTC",
+      "delivery_sla": "P1D"
+    },
+    "destination_ref": "destination-obligation-billing",
+    "required_finality": "official",
+    "reconciliation_mode": "consumer_receipt",
+    "reconciliation_status": "pending",
+    "health": "waiting",
+    "production_status": "published",
+    "revision_count": 1,
+    "materialization_count": 1,
+    "successful_materialization_count": 1,
+    "receipt_count": 0,
+    "accepted_receipt_count": 0,
+    "issues": [],
+    "resource_retained_until": "2026-12-01T00:00:00Z"
+  },
+  "revision": {
+    "reporting_revision_id": "revision-august-official",
+    "revision_content_sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017",
+    "report_definition_id": "billing-v1",
+    "report_definition_uri": "https://schemas.fixture.example.net/report-definition.json",
+    "report_definition_sha256": "e76fd773afe79938b17db11fd07f1274db311f842d8ae94586168229d38d9086",
+    "reporting_profile": "billing-v1",
+    "schema_version": "1",
+    "schema_uri": "https://schemas.fixture.example.net/row-schema.json",
+    "schema_sha256": "12aa838388ed6f73682cce5303c713dd95069e0479500462906fe0c861f0a472",
+    "schema_dialect": "https://json-schema.org/draft/2020-12/schema",
+    "schema_ref_policy": "local_fragment_only",
+    "account_id": "account-1",
+    "media_buy_ids": ["buy-1", "buy-2"],
+    "coverage": {
+      "status": "full",
+      "evaluated_at": "2026-09-01T00:00:00Z",
+      "media_buy_ids": ["buy-1", "buy-2"],
+      "fully_covered_media_buy_ids": ["buy-1", "buy-2"],
+      "partially_covered_media_buy_ids": [],
+      "unsupported_media_buy_ids": [],
+      "unknown_media_buy_ids": [],
+      "package_ids": ["package-1", "package-2"],
+      "covered_package_ids": ["package-1", "package-2"],
+      "unsupported_package_ids": [],
+      "unknown_package_ids": [],
+      "limitations": []
+    },
+    "period": {
+      "start": "2026-08-01T00:00:00Z",
+      "end": "2026-09-01T00:00:00Z",
+      "source_timezone": "UTC"
+    },
+    "finality": "official",
+    "finality_basis": "contractual_cutoff",
+    "finality_policy_id": "billing-close-v1",
+    "finalized_at": "2026-09-02T00:00:00Z",
+    "observed_at": "2026-09-02T00:00:00Z",
+    "data_through": "2026-09-01T00:00:00Z",
+    "data_through_precision": "exact",
+    "row_count": 2,
+    "control_totals": [
+      {
+        "name": "impressions",
+        "value": "5",
+        "value_type": "integer",
+        "unit": "impressions"
+      },
+      {
+        "name": "spend",
+        "value": "8",
+        "value_type": "decimal",
+        "unit": "USD"
+      }
+    ],
+    "canonical_content_digest": {
+      "algorithm": "sha256",
+      "value": "bcd079902f3c8edb4315dbbdaf9b4e37f6fd5af33c80d1fe6ac8c655581342d4",
+      "canonicalization_id": "billing-rows-v1",
+      "canonicalization_uri": "https://schemas.fixture.example.net/canonicalization.json",
+      "canonicalization_sha256": "653373f3d7db3e130675959b4c491c332730e82174fa7652024f14d45cd98c19"
+    },
+    "created_at": "2026-09-02T00:00:00Z"
+  },
+  "materialization": {
+    "reporting_materialization_id": "materialization-billing",
+    "reporting_revision_id": "revision-august-official",
+    "reporting_obligation_id": "obligation-billing",
+    "delivery_config_id": "billing-feed",
+    "delivery_config_version": 1,
+    "destination_ref": "destination-obligation-billing",
+    "feed_purpose": "billing",
+    "method": "file_transfer",
+    "transport": "https",
+    "attempt": 1,
+    "status": "available",
+    "ready_at": "2026-09-02T00:00:05Z",
+    "resource": {
+      "resource_ref": "fixture-resource",
+      "kind": "manifest",
+      "location": "https://bucket.fixture.example.net/reporting/manifest.json",
+      "manifest_version": "1.0",
+      "manifest_sha256": "e50959c9297a15669578f88102533626a9f991a6feeb8f8bb5fab0ae0fde978c",
+      "immutability": "immutable_location",
+      "expires_at": "2026-12-01T00:00:00Z"
+    },
+    "verification": {
+      "verified_at": "2026-09-02T00:00:05Z",
+      "verification_path": "representative_consumer",
+      "verification_profile": "canonical_digest",
+      "row_count": 2,
+      "control_totals": [
+        {
+          "name": "impressions",
+          "value": "5",
+          "value_type": "integer",
+          "unit": "impressions"
+        },
+        {
+          "name": "spend",
+          "value": "8",
+          "value_type": "decimal",
+          "unit": "USD"
+        }
+      ],
+      "canonical_content_digest": {
+        "algorithm": "sha256",
+        "value": "bcd079902f3c8edb4315dbbdaf9b4e37f6fd5af33c80d1fe6ac8c655581342d4",
+        "canonicalization_id": "billing-rows-v1",
+        "canonicalization_uri": "https://schemas.fixture.example.net/canonicalization.json",
+        "canonicalization_sha256": "653373f3d7db3e130675959b4c491c332730e82174fa7652024f14d45cd98c19"
+      },
+      "physical_checksums": [
+        {
+          "object_ref": "rows.jsonl",
+          "algorithm": "sha256",
+          "value": "735610f303d6d91aa618df3aa6d7f18bcf5dfa52bdbd9ef551293e6bd14c92d9"
+        }
+      ]
+    },
+    "created_at": "2026-09-02T00:00:01Z"
+  },
+  "expected": {
+    "deliveryConfigId": "billing-feed",
+    "deliveryConfigVersion": 1,
+    "reportDefinitionId": "billing-v1",
+    "feedPurpose": "billing",
+    "reportingProfile": "billing-v1",
+    "mediaBuyIds": ["buy-1", "buy-2"],
+    "destinationRef": "destination-obligation-billing",
+    "deliveryMethod": "file_transfer",
+    "requiredFinality": "official",
+    "reconciliationMode": "consumer_receipt",
+    "coverageRequirement": "full",
+    "coverage": {
+      "status": "full",
+      "media_buy_ids": ["buy-1", "buy-2"],
+      "fully_covered_media_buy_ids": ["buy-1", "buy-2"],
+      "partially_covered_media_buy_ids": [],
+      "unsupported_media_buy_ids": [],
+      "unknown_media_buy_ids": [],
+      "package_ids": ["package-1", "package-2"],
+      "covered_package_ids": ["package-1", "package-2"],
+      "unsupported_package_ids": [],
+      "unknown_package_ids": []
+    },
+    "reportDefinitionUri": "https://schemas.fixture.example.net/report-definition.json",
+    "reportDefinitionSha256": "e76fd773afe79938b17db11fd07f1274db311f842d8ae94586168229d38d9086",
+    "schemaVersion": "1",
+    "schemaUri": "https://schemas.fixture.example.net/row-schema.json",
+    "schemaSha256": "12aa838388ed6f73682cce5303c713dd95069e0479500462906fe0c861f0a472",
+    "schemaDialect": "https://json-schema.org/draft/2020-12/schema",
+    "schemaRefPolicy": "local_fragment_only",
+    "officialFinality": {
+      "policyId": "billing-close-v1",
+      "basis": "contractual_cutoff"
+    },
+    "verificationProfile": "canonical_digest",
+    "canonicalization": {
+      "id": "billing-rows-v1",
+      "uri": "https://schemas.fixture.example.net/canonicalization.json",
+      "sha256": "653373f3d7db3e130675959b4c491c332730e82174fa7652024f14d45cd98c19",
+      "primaryKeys": ["media_buy_id", "date"]
+    },
+    "periodStart": "2026-08-01T00:00:00Z",
+    "periodEnd": "2026-09-01T00:00:00Z"
+  },
+  "adjustments": [
+    {
+      "id": "integer_delta",
+      "adjustment": {
+        "reporting_adjustment_id": "adjustment-integer_delta",
+        "adjusts_reporting_revision_id": "revision-august-official",
+        "reason_code": "source_correction",
+        "accounting_period": {
+          "start": "2026-08-01T00:00:00Z",
+          "end": "2026-09-01T00:00:00Z"
+        },
+        "control_total_deltas": [
+          {
+            "name": "impressions",
+            "value": "12",
+            "value_type": "integer",
+            "unit": "impressions"
+          }
+        ],
+        "correction_observed_at": "2026-09-02T01:00:00Z",
+        "created_at": "2026-09-02T01:00:01Z",
+        "canonical_adjustment_sha256": "30845b6f9c3534c3f04458cbf3dbfc87162b9f7e7e0097c38bfa98a622d66767"
+      },
+      "canonical_utf8_hex": "7b226163636f756e74696e675f706572696f64223a7b22656e64223a22323032362d30392d30315430303a30303a30305a222c227374617274223a22323032362d30382d30315430303a30303a30305a227d2c2261646a757374735f7265706f7274696e675f7265766973696f6e5f6964223a227265766973696f6e2d6175677573742d6f6666696369616c222c22636f6e74726f6c5f746f74616c5f64656c746173223a5b7b226e616d65223a22696d7072657373696f6e73222c22756e6974223a22696d7072657373696f6e73222c2276616c7565223a223132222c2276616c75655f74797065223a22696e7465676572227d5d2c22636f7272656374696f6e5f6f627365727665645f6174223a22323032362d30392d30325430313a30303a30305a222c22637265617465645f6174223a22323032362d30392d30325430313a30303a30315a222c22726561736f6e5f636f6465223a22736f757263655f636f7272656374696f6e222c227265706f7274696e675f61646a7573746d656e745f6964223a2261646a7573746d656e742d696e74656765725f64656c7461227d",
+      "sha256": "30845b6f9c3534c3f04458cbf3dbfc87162b9f7e7e0097c38bfa98a622d66767",
+      "expected_receipt": {
+        "reporting_receipt_id": "receipt-integer_delta",
+        "reporting_adjustment_id": "adjustment-integer_delta",
+        "adjusts_reporting_revision_id": "revision-august-official",
+        "status": "accepted",
+        "observed_adjustment_sha256": "30845b6f9c3534c3f04458cbf3dbfc87162b9f7e7e0097c38bfa98a622d66767",
+        "observed_at": "2026-09-02T02:00:00Z"
+      }
+    },
+    {
+      "id": "exact_decimal",
+      "adjustment": {
+        "reporting_adjustment_id": "adjustment-exact_decimal",
+        "adjusts_reporting_revision_id": "revision-august-official",
+        "reason_code": "source_correction",
+        "accounting_period": {
+          "start": "2026-08-01T00:00:00Z",
+          "end": "2026-09-01T00:00:00Z"
+        },
+        "control_total_deltas": [
+          {
+            "name": "spend",
+            "value": "9007199254740993.123456789012345678",
+            "value_type": "decimal",
+            "unit": "USD"
+          }
+        ],
+        "correction_observed_at": "2026-09-02T01:00:00Z",
+        "created_at": "2026-09-02T01:00:01Z",
+        "canonical_adjustment_sha256": "77c51bb22dd3a95b4bb0ade5c9834d86936999f403667f9ca7d47bb51b7f4e06"
+      },
+      "canonical_utf8_hex": "7b226163636f756e74696e675f706572696f64223a7b22656e64223a22323032362d30392d30315430303a30303a30305a222c227374617274223a22323032362d30382d30315430303a30303a30305a227d2c2261646a757374735f7265706f7274696e675f7265766973696f6e5f6964223a227265766973696f6e2d6175677573742d6f6666696369616c222c22636f6e74726f6c5f746f74616c5f64656c746173223a5b7b226e616d65223a227370656e64222c22756e6974223a22555344222c2276616c7565223a22393030373139393235343734303939332e313233343536373839303132333435363738222c2276616c75655f74797065223a22646563696d616c227d5d2c22636f7272656374696f6e5f6f627365727665645f6174223a22323032362d30392d30325430313a30303a30305a222c22637265617465645f6174223a22323032362d30392d30325430313a30303a30315a222c22726561736f6e5f636f6465223a22736f757263655f636f7272656374696f6e222c227265706f7274696e675f61646a7573746d656e745f6964223a2261646a7573746d656e742d65786163745f646563696d616c227d",
+      "sha256": "77c51bb22dd3a95b4bb0ade5c9834d86936999f403667f9ca7d47bb51b7f4e06",
+      "expected_receipt": {
+        "reporting_receipt_id": "receipt-exact_decimal",
+        "reporting_adjustment_id": "adjustment-exact_decimal",
+        "adjusts_reporting_revision_id": "revision-august-official",
+        "status": "accepted",
+        "observed_adjustment_sha256": "77c51bb22dd3a95b4bb0ade5c9834d86936999f403667f9ca7d47bb51b7f4e06",
+        "observed_at": "2026-09-02T02:00:00Z"
+      }
+    },
+    {
+      "id": "negative_zero",
+      "adjustment": {
+        "reporting_adjustment_id": "adjustment-negative_zero",
+        "adjusts_reporting_revision_id": "revision-august-official",
+        "reason_code": "source_correction",
+        "accounting_period": {
+          "start": "2026-08-01T00:00:00Z",
+          "end": "2026-09-01T00:00:00Z"
+        },
+        "control_total_deltas": [
+          {
+            "name": "spend",
+            "value": "-0.00",
+            "value_type": "decimal",
+            "unit": "USD"
+          }
+        ],
+        "correction_observed_at": "2026-09-02T01:00:00Z",
+        "created_at": "2026-09-02T01:00:01Z",
+        "canonical_adjustment_sha256": "a195b2e24913c2cf4e7b7b4c1af05280745f92f1c76ab99f018e64505860221c"
+      },
+      "canonical_utf8_hex": "7b226163636f756e74696e675f706572696f64223a7b22656e64223a22323032362d30392d30315430303a30303a30305a222c227374617274223a22323032362d30382d30315430303a30303a30305a227d2c2261646a757374735f7265706f7274696e675f7265766973696f6e5f6964223a227265766973696f6e2d6175677573742d6f6666696369616c222c22636f6e74726f6c5f746f74616c5f64656c746173223a5b7b226e616d65223a227370656e64222c22756e6974223a22555344222c2276616c7565223a222d302e3030222c2276616c75655f74797065223a22646563696d616c227d5d2c22636f7272656374696f6e5f6f627365727665645f6174223a22323032362d30392d30325430313a30303a30305a222c22637265617465645f6174223a22323032362d30392d30325430313a30303a30315a222c22726561736f6e5f636f6465223a22736f757263655f636f7272656374696f6e222c227265706f7274696e675f61646a7573746d656e745f6964223a2261646a7573746d656e742d6e656761746976655f7a65726f227d",
+      "sha256": "a195b2e24913c2cf4e7b7b4c1af05280745f92f1c76ab99f018e64505860221c",
+      "expected_receipt": {
+        "reporting_receipt_id": "receipt-negative_zero",
+        "reporting_adjustment_id": "adjustment-negative_zero",
+        "adjusts_reporting_revision_id": "revision-august-official",
+        "status": "accepted",
+        "observed_adjustment_sha256": "a195b2e24913c2cf4e7b7b4c1af05280745f92f1c76ab99f018e64505860221c",
+        "observed_at": "2026-09-02T02:00:00Z"
+      }
+    },
+    {
+      "id": "unicode_composed",
+      "adjustment": {
+        "reporting_adjustment_id": "adjustment-unicode_composed",
+        "adjusts_reporting_revision_id": "revision-august-official",
+        "reason_code": "source_correction",
+        "accounting_period": {
+          "start": "2026-08-01T00:00:00Z",
+          "end": "2026-09-01T00:00:00Z"
+        },
+        "control_total_deltas": [
+          {
+            "name": "impressions",
+            "value": "0",
+            "value_type": "integer",
+            "unit": "impressions"
+          }
+        ],
+        "correction_observed_at": "2026-09-02T01:00:00Z",
+        "created_at": "2026-09-02T01:00:01Z",
+        "reason_detail": "café 😀",
+        "canonical_adjustment_sha256": "6845f6daeb2d1193c937144ec1850351c0325dd6e09c8cd1e12e493a39d631af"
+      },
+      "canonical_utf8_hex": "7b226163636f756e74696e675f706572696f64223a7b22656e64223a22323032362d30392d30315430303a30303a30305a222c227374617274223a22323032362d30382d30315430303a30303a30305a227d2c2261646a757374735f7265706f7274696e675f7265766973696f6e5f6964223a227265766973696f6e2d6175677573742d6f6666696369616c222c22636f6e74726f6c5f746f74616c5f64656c746173223a5b7b226e616d65223a22696d7072657373696f6e73222c22756e6974223a22696d7072657373696f6e73222c2276616c7565223a2230222c2276616c75655f74797065223a22696e7465676572227d5d2c22636f7272656374696f6e5f6f627365727665645f6174223a22323032362d30392d30325430313a30303a30305a222c22637265617465645f6174223a22323032362d30392d30325430313a30303a30315a222c22726561736f6e5f636f6465223a22736f757263655f636f7272656374696f6e222c22726561736f6e5f64657461696c223a22636166c3a920f09f9880222c227265706f7274696e675f61646a7573746d656e745f6964223a2261646a7573746d656e742d756e69636f64655f636f6d706f736564227d",
+      "sha256": "6845f6daeb2d1193c937144ec1850351c0325dd6e09c8cd1e12e493a39d631af",
+      "expected_receipt": {
+        "reporting_receipt_id": "receipt-unicode_composed",
+        "reporting_adjustment_id": "adjustment-unicode_composed",
+        "adjusts_reporting_revision_id": "revision-august-official",
+        "status": "accepted",
+        "observed_adjustment_sha256": "6845f6daeb2d1193c937144ec1850351c0325dd6e09c8cd1e12e493a39d631af",
+        "observed_at": "2026-09-02T02:00:00Z"
+      }
+    },
+    {
+      "id": "unicode_decomposed",
+      "adjustment": {
+        "reporting_adjustment_id": "adjustment-unicode_decomposed",
+        "adjusts_reporting_revision_id": "revision-august-official",
+        "reason_code": "source_correction",
+        "accounting_period": {
+          "start": "2026-08-01T00:00:00Z",
+          "end": "2026-09-01T00:00:00Z"
+        },
+        "control_total_deltas": [
+          {
+            "name": "impressions",
+            "value": "0",
+            "value_type": "integer",
+            "unit": "impressions"
+          }
+        ],
+        "correction_observed_at": "2026-09-02T01:00:00Z",
+        "created_at": "2026-09-02T01:00:01Z",
+        "reason_detail": "café 😀",
+        "canonical_adjustment_sha256": "607894bdf2ac7452cd6abe1554764d7de243f1ffab5889b75d28a2c0f3c1e0c2"
+      },
+      "canonical_utf8_hex": "7b226163636f756e74696e675f706572696f64223a7b22656e64223a22323032362d30392d30315430303a30303a30305a222c227374617274223a22323032362d30382d30315430303a30303a30305a227d2c2261646a757374735f7265706f7274696e675f7265766973696f6e5f6964223a227265766973696f6e2d6175677573742d6f6666696369616c222c22636f6e74726f6c5f746f74616c5f64656c746173223a5b7b226e616d65223a22696d7072657373696f6e73222c22756e6974223a22696d7072657373696f6e73222c2276616c7565223a2230222c2276616c75655f74797065223a22696e7465676572227d5d2c22636f7272656374696f6e5f6f627365727665645f6174223a22323032362d30392d30325430313a30303a30305a222c22637265617465645f6174223a22323032362d30392d30325430313a30303a30315a222c22726561736f6e5f636f6465223a22736f757263655f636f7272656374696f6e222c22726561736f6e5f64657461696c223a2263616665cc8120f09f9880222c227265706f7274696e675f61646a7573746d656e745f6964223a2261646a7573746d656e742d756e69636f64655f6465636f6d706f736564227d",
+      "sha256": "607894bdf2ac7452cd6abe1554764d7de243f1ffab5889b75d28a2c0f3c1e0c2",
+      "expected_receipt": {
+        "reporting_receipt_id": "receipt-unicode_decomposed",
+        "reporting_adjustment_id": "adjustment-unicode_decomposed",
+        "adjusts_reporting_revision_id": "revision-august-official",
+        "status": "accepted",
+        "observed_adjustment_sha256": "607894bdf2ac7452cd6abe1554764d7de243f1ffab5889b75d28a2c0f3c1e0c2",
+        "observed_at": "2026-09-02T02:00:00Z"
+      }
+    },
+    {
+      "id": "tampered_digest",
+      "adjustment": {
+        "reporting_adjustment_id": "adjustment-tampered_digest",
+        "adjusts_reporting_revision_id": "revision-august-official",
+        "reason_code": "source_correction",
+        "accounting_period": {
+          "start": "2026-08-01T00:00:00Z",
+          "end": "2026-09-01T00:00:00Z"
+        },
+        "control_total_deltas": [
+          {
+            "name": "impressions",
+            "value": "12",
+            "value_type": "integer",
+            "unit": "impressions"
+          }
+        ],
+        "correction_observed_at": "2026-09-02T01:00:00Z",
+        "created_at": "2026-09-02T01:00:01Z",
+        "canonical_adjustment_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "canonical_utf8_hex": "7b226163636f756e74696e675f706572696f64223a7b22656e64223a22323032362d30392d30315430303a30303a30305a222c227374617274223a22323032362d30382d30315430303a30303a30305a227d2c2261646a757374735f7265706f7274696e675f7265766973696f6e5f6964223a227265766973696f6e2d6175677573742d6f6666696369616c222c22636f6e74726f6c5f746f74616c5f64656c746173223a5b7b226e616d65223a22696d7072657373696f6e73222c22756e6974223a22696d7072657373696f6e73222c2276616c7565223a223132222c2276616c75655f74797065223a22696e7465676572227d5d2c22636f7272656374696f6e5f6f627365727665645f6174223a22323032362d30392d30325430313a30303a30305a222c22637265617465645f6174223a22323032362d30392d30325430313a30303a30315a222c22726561736f6e5f636f6465223a22736f757263655f636f7272656374696f6e222c227265706f7274696e675f61646a7573746d656e745f6964223a2261646a7573746d656e742d74616d70657265645f646967657374227d",
+      "sha256": "cf3c404a8bed471eb82605cdaf979fce5914f16ea7e2c0add1e55d4c09448e04",
+      "expected_receipt": {
+        "reporting_receipt_id": "receipt-tampered_digest",
+        "reporting_adjustment_id": "adjustment-tampered_digest",
+        "adjusts_reporting_revision_id": "revision-august-official",
+        "status": "rejected",
+        "observed_adjustment_sha256": "cf3c404a8bed471eb82605cdaf979fce5914f16ea7e2c0add1e55d4c09448e04",
+        "rejection_codes": ["CANONICAL_ADJUSTMENT_DIGEST_MISMATCH"],
+        "observed_at": "2026-09-02T02:00:00Z"
+      },
+      "expected_python_receipt": {
+        "reporting_receipt_id": "receipt-tampered_digest",
+        "reporting_adjustment_id": "adjustment-tampered_digest",
+        "adjusts_reporting_revision_id": "revision-august-official",
+        "status": "rejected",
+        "observed_adjustment_sha256": "cf3c404a8bed471eb82605cdaf979fce5914f16ea7e2c0add1e55d4c09448e04",
+        "rejection_codes": ["ADJUSTMENT_DIGEST_MISMATCH"],
+        "observed_at": "2026-09-02T02:00:00Z"
+      }
+    },
+    {
+      "id": "rejected_leaf_supersession",
+      "adjustment": {
+        "reporting_adjustment_id": "adjustment-rejected_leaf_supersession",
+        "adjusts_reporting_revision_id": "revision-august-official",
+        "reason_code": "source_correction",
+        "accounting_period": {
+          "start": "2026-08-01T00:00:00Z",
+          "end": "2026-09-01T00:00:00Z"
+        },
+        "control_total_deltas": [
+          {
+            "name": "impressions",
+            "value": "12",
+            "value_type": "integer",
+            "unit": "impressions"
+          }
+        ],
+        "correction_observed_at": "2026-09-02T01:00:00Z",
+        "created_at": "2026-09-02T01:00:01Z",
+        "canonical_adjustment_sha256": "dc59e78c4bbd001c6213491ebe2b679d77dd10aca1303ccf66d3e39c0a101e06"
+      },
+      "canonical_utf8_hex": "7b226163636f756e74696e675f706572696f64223a7b22656e64223a22323032362d30392d30315430303a30303a30305a222c227374617274223a22323032362d30382d30315430303a30303a30305a227d2c2261646a757374735f7265706f7274696e675f7265766973696f6e5f6964223a227265766973696f6e2d6175677573742d6f6666696369616c222c22636f6e74726f6c5f746f74616c5f64656c746173223a5b7b226e616d65223a22696d7072657373696f6e73222c22756e6974223a22696d7072657373696f6e73222c2276616c7565223a223132222c2276616c75655f74797065223a22696e7465676572227d5d2c22636f7272656374696f6e5f6f627365727665645f6174223a22323032362d30392d30325430313a30303a30305a222c22637265617465645f6174223a22323032362d30392d30325430313a30303a30315a222c22726561736f6e5f636f6465223a22736f757263655f636f7272656374696f6e222c227265706f7274696e675f61646a7573746d656e745f6964223a2261646a7573746d656e742d72656a65637465645f6c6561665f737570657273657373696f6e227d",
+      "sha256": "dc59e78c4bbd001c6213491ebe2b679d77dd10aca1303ccf66d3e39c0a101e06",
+      "current_receipt": {
+        "reporting_receipt_id": "previous-rejected-adjustment-receipt",
+        "reporting_adjustment_id": "adjustment-rejected_leaf_supersession",
+        "adjusts_reporting_revision_id": "revision-august-official",
+        "status": "rejected",
+        "observed_adjustment_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "rejection_codes": ["ADJUSTMENT_DIGEST_MISMATCH"],
+        "observed_at": "2026-09-02T01:30:00Z"
+      },
+      "expected_receipt": {
+        "reporting_receipt_id": "receipt-rejected_leaf_supersession",
+        "reporting_adjustment_id": "adjustment-rejected_leaf_supersession",
+        "adjusts_reporting_revision_id": "revision-august-official",
+        "supersedes_reporting_receipt_id": "previous-rejected-adjustment-receipt",
+        "status": "accepted",
+        "observed_adjustment_sha256": "dc59e78c4bbd001c6213491ebe2b679d77dd10aca1303ccf66d3e39c0a101e06",
+        "observed_at": "2026-09-02T02:00:00Z"
+      }
+    }
+  ],
+  "revision_binding": {
+    "value": {
+      "reporting_revision_id": "revision-august-official",
+      "row_count": 2,
+      "control_totals": [
+        {
+          "name": "impressions",
+          "value": "5",
+          "value_type": "integer",
+          "unit": "impressions"
+        },
+        {
+          "name": "spend",
+          "value": "8",
+          "value_type": "decimal",
+          "unit": "USD"
+        }
+      ],
+      "reporting_rows": [
+        {
+          "date": "2026-08-26",
+          "impressions": "2",
+          "media_buy_id": "buy-1",
+          "spend": "3.50"
+        },
+        {
+          "date": "2026-08-26",
+          "impressions": "3",
+          "media_buy_id": "buy-2",
+          "spend": "4.50"
+        }
+      ]
+    },
+    "canonical_utf8_hex": "7b22636f6e74726f6c5f746f74616c73223a5b7b226e616d65223a22696d7072657373696f6e73222c22756e6974223a22696d7072657373696f6e73222c2276616c7565223a2235222c2276616c75655f74797065223a22696e7465676572227d2c7b226e616d65223a227370656e64222c22756e6974223a22555344222c2276616c7565223a2238222c2276616c75655f74797065223a22646563696d616c227d5d2c227265706f7274696e675f7265766973696f6e5f6964223a227265766973696f6e2d6175677573742d6f6666696369616c222c227265706f7274696e675f726f7773223a5b7b2264617465223a22323032362d30382d3236222c22696d7072657373696f6e73223a2232222c226d656469615f6275795f6964223a226275792d31222c227370656e64223a22332e3530227d2c7b2264617465223a22323032362d30382d3236222c22696d7072657373696f6e73223a2233222c226d656469615f6275795f6964223a226275792d32222c227370656e64223a22342e3530227d5d2c22726f775f636f756e74223a327d",
+    "sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017"
+  }
+}

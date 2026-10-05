@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "date": {
+      "type": "string",
+      "format": "date"
+    },
+    "impressions": {
+      "type": "string"
+    },
+    "media_buy_id": {
+      "type": "string"
+    },
+    "spend": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "date",
+    "impressions",
+    "media_buy_id",
+    "spend"
+  ],
+  "additionalProperties": false
+}

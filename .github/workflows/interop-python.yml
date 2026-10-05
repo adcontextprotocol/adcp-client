@@ -89,6 +89,105 @@ jobs:
           if-no-files-found: error
           path: ${{ runner.temp }}/adcp-sdk-pack/*.tgz
 
+  reporting-evidence-and-reverse-runtime:
+    name: Reporting evidence and reverse runtime (Node ${{ matrix.node }})
+    # Historical runner probes remain available; this gate qualifies the checkout.
+    if: inputs.runner_package_ref == ''
+    needs: pack-sdk-runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20.19.0', '24']
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout interoperability gate
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Checkout pinned Python harness
+        uses: actions/checkout@v5
+        with:
+          repository: adcontextprotocol/adcp-client-python
+          ref: 68345b5043b1cd8bae973c3d2ba0c0e7e53b6294
+          path: .context/reporting-python-harness
+          sparse-checkout: scripts/ci/reporting_interop
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Download packed SDK
+        uses: actions/download-artifact@v7
+        with:
+          name: adcp-sdk-runner-tarball
+          path: ${{ runner.temp }}/reporting-sdk
+
+      - name: Install pinned SDK artifacts and record resolved dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          task_dir="$RUNNER_TEMP/reporting-sdk"
+          mapfile -t archives < <(find "$task_dir" -maxdepth 1 -name '*.tgz' -type f)
+          test "${#archives[@]}" -eq 1
+          npm install --prefix "$task_dir/install" --ignore-scripts --no-audit --no-fund "${archives[0]}" pg
+          python - "$task_dir" <<'PY'
+          import hashlib, json, sys, urllib.request
+          from pathlib import Path
+          pins = json.loads(Path('scripts/reporting-interop/pins.json').read_bytes())
+          with urllib.request.urlopen(pins['python_wheel_url'], timeout=60) as response:
+              body = response.read()
+          if hashlib.sha256(body).hexdigest() != pins['python_wheel_sha256']:
+              raise SystemExit('Python wheel digest differs from immutable pin')
+          wheel = Path(sys.argv[1]) / 'adcp-8.0.0-py3-none-any.whl'
+          wheel.write_bytes(body)
+          PY
+          python -m venv "$task_dir/python"
+          "$task_dir/python/bin/python" -m pip install "$task_dir/adcp-8.0.0-py3-none-any.whl" 'psycopg[binary,pool]' pytest pytest-asyncio
+          echo "REPORTING_TS_ARCHIVE=${archives[0]}" >> "$GITHUB_ENV"
+
+      - name: Verify both evidence directions and TypeScript seller with Python buyer
+        env:
+          REPORTING_INTEROP_PG_URL: postgresql://postgres@127.0.0.1:5432/postgres
+        run: |
+          node scripts/reporting-interop/run.mjs \
+            "$RUNNER_TEMP/reporting-sdk/python/bin/python" \
+            "$RUNNER_TEMP/reporting-sdk/install" \
+            "$REPORTING_TS_ARCHIVE" \
+            "$RUNNER_TEMP/reporting-sdk/adcp-8.0.0-py3-none-any.whl" \
+            "$GITHUB_WORKSPACE/.context/reporting-python-harness" \
+            "$RUNNER_TEMP/reporting-evidence"
+
+      - name: Upload reporting evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reporting-evidence-node-${{ matrix.node }}
+          if-no-files-found: error
+          path: ${{ runner.temp }}/reporting-evidence
+
   reference-seller-matrix:
     name: ${{ matrix.language }} reference seller
     needs: pack-sdk-runner

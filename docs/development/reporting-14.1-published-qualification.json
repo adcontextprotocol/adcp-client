@@ -1,0 +1,633 @@
+{
+  "qualified_at": "2026-10-04",
+  "status": "partial; complete published manifest gate fails",
+  "protocol_version": "3.2.1",
+  "scope": "exact published TypeScript 14.1.0 and stable 14.0.0 with published Python 8.0.0; runtime controls plus independent manifest negative result",
+  "python_roles": "same GA wheel in separate installations; no Python version-skew claim",
+  "runtime": {
+    "node": "22.12.0 (Python seller matrix); 24.19.0 (reverse runtime)",
+    "python": "3.10.21",
+    "postgres": "16.14"
+  },
+  "artifacts": {
+    "python": {
+      "package": "adcp",
+      "version": "8.0.0",
+      "protocol": "3.2.1",
+      "wheel_url": "https://files.pythonhosted.org/packages/8a/78/861204ee7d89f57baccdeb932d84c612f937c640e1134d1ad560769a80ae/adcp-8.0.0-py3-none-any.whl",
+      "wheel_sha256": "d862687ab71f1aa411887d20dc7faba66547e68a319d29c0a8f568e8f88dd8fb",
+      "wheel_bytes": 41602902,
+      "sdk_member_count": 4684,
+      "sdk_member_manifest_sha256": "4926c566024991818e2fb7c2849a39ea8fd995d7a87605bd1b29d4bb2e637205"
+    },
+    "typescript_stable": {
+      "package": "@adcp/sdk",
+      "version": "14.0.0",
+      "protocol": "3.2.1",
+      "tarball_url": "https://registry.npmjs.org/@adcp/sdk/-/sdk-14.0.0.tgz",
+      "tarball_sha256": "7acdbb882f2e3b689723eb3c696770156ffa5a90dd183fc947c7a5629114d2e0",
+      "tarball_bytes": 19937599,
+      "integrity": "sha512-Rq57cvtVmZX0A+UBy9doQzpNvjMsARAInNcKC/QTp4oOcz1z7tJAl5FvwAvNHOth8pFLM73jXoxH3N942kxPEg==",
+      "package_lock_sha256": "6a2710c1c81bb8d37739030920536b8bee9c21f77827307a88779a568d6f74c7",
+      "tarball_members": 6323,
+      "installed_member_count": 6323,
+      "installed_member_manifest_sha256": "23558d629722fb084e8c7c02e6b0e26d8b9934a62a2a2693f6acf384f1b39b64",
+      "executable_harness_input": true
+    },
+    "typescript_candidate": {
+      "package": "@adcp/sdk",
+      "version": "14.1.0",
+      "protocol": "3.2.1",
+      "tarball_url": "https://registry.npmjs.org/@adcp/sdk/-/sdk-14.1.0.tgz",
+      "tarball_sha256": "b1eff48755e6a5c97642e4ee1a5f9b3252d79e873f9d69166365c6e189bc91b4",
+      "tarball_bytes": 20004541,
+      "integrity": "sha512-bD2AuFOPfIu+Pi9Eu9hd3N6bJN/NOvkT/1cSz3VLgkP7yzqZSQv4SX3nOJE3ZyGHugAzh90T++IWPXDFRvOpcg==",
+      "package_lock_sha256": "78b1debc2c3d5836e2ab311e0eb6a705183524c03dfc1c8354400cf46d87d113",
+      "tarball_members": 6365,
+      "installed_member_count": 6365,
+      "installed_member_manifest_sha256": "867a61238729a2013a68e3707f9cf212b3ca60cfd5fad444173200063d571421",
+      "executable_harness_input": true
+    }
+  },
+  "harness": {
+    "commit": "68345b5043b1cd8bae973c3d2ba0c0e7e53b6294",
+    "dirty": true,
+    "modified_input_files": [
+      "scripts/ci/reporting_interop/installed_artifact_cells.json",
+      "scripts/ci/reporting_interop/pins.json"
+    ],
+    "entrypoint_sha256": {
+      "applicability.json": "6b95864d9744180cbfc3159bc9890730bbd4fd6975f96f5a8df60ca17d8e5532",
+      "controller-operation-map.json": "ec422f06c42bfd05e44c7dc3ac8815111aa8de40437cc0f13d5d7d30f6e48187",
+      "core_scenario.json": "1b98db9ee04f7a003115340727dfb630c07648f13e89105c65c7d5ae6ad67493",
+      "corpus.json": "6665957f0633524066a1a4ff7712107e548248b4141181d14d203c2bfd751f98",
+      "full_scenario.json": "c12fb44687440b167d8c472aceaea8651600fa4bc7f6e38d452dd3c762958249",
+      "installed_artifact_cells.json": "e08c4fc081fa81536a10ed056525caa11be9df136e22acf7e060a7626b60ef50",
+      "pins.json": "6046cda2a9cfea163ce966cecdd7edc5235dc6aeea7fc7fc0d159073d429569c",
+      "python_core_client.py": "22d339ee3b3857004257dba6a848f540af1160176912f17c8ea68842aa859582",
+      "python_core_server.py": "b37b98bfcef8718a23b92e50ed9919419d9ba8331fb58996a6bd097ef967539f",
+      "python_dependency_floor_probe.py": "a45d63e88f3022dc02259311e1c96e1509165e947017cf012bb998fa29dff059",
+      "python_full_server.py": "70edec110457399fb7817685072776b2ca6c82eaf7676c17040629a6dd078c3a",
+      "run_foundation_matrix.py": "6c45885a3a0b29dfaddbee4171b9fea8a6806cb39953b2cca63461b070a7f7ed",
+      "run_full_installed_artifact_matrix.py": "cd5a7b37d87bd3686c3771cfd8d0b747c9aa1b12cd482f1c67448aa77ce481a9",
+      "run_installed_artifact_matrix.py": "572d4e15e87eea1fef56216c16520f84b56ded5a998965005ef9b4d58fb7db4a",
+      "storyboard_orchestration.py": "df64493b656dc0edc4218cf0f13d0c15b1b62b245237af979eeea252c870f3fd",
+      "ts_adcp_version.cjs": "bd4aaae8bdd015284ff9184c8627a18efeb47834c6039494931ee4040a61b314",
+      "ts_controlled_reporting_fixture.cjs": "eb7c7828a0210557df87e983048f3db3543e10fc6e4e4b78b70d9c7c7e218fcf",
+      "ts_controlled_reporting_http_probe.cjs": "6bb6f5515c106aa6988ddcf9a8767f82b6cba92609b82a82352182c2e25f4ebe",
+      "ts_controlled_reporting_probe.cjs": "dbf5949de1969ff2361227f950e8ee0e68518f25e12f6f921ee7aed7b8be6ab3",
+      "ts_controlled_reporting_server.cjs": "25ab6dba1f654f3998718ed5eb011c01e9de7504031b11575305a6611de6545d",
+      "ts_core_buyer.cjs": "a9a80c869da7e405f951c7fbdb270aefd5aef595fda056bbdb37881cc75c90e2",
+      "ts_core_server.cjs": "664ed0af6c26f56c368cf967ff8a839d810172e6188ab104e667831ec6241f22",
+      "ts_full_receipt.cjs": "b987cfb2cc933ef2becaefcdc602118b4fe0be9e0b653c9674399fef7f4abff5",
+      "ts_managed_reporting_fixture.cjs": "beb6d7df7379b9faddc1e5d2f86ae2e61cfd2494e1b6c0ba79365304b9a28145",
+      "ts_managed_reporting_http_probe.cjs": "6ef4d1db35580a98dc666f5a4ae401fef3a86766edd0df4fb9a2ab5e3ba8c83c",
+      "ts_managed_reporting_probe.cjs": "0f981d36a4d4d824551a9ec0a79514b29bc265ccb9ed46aaa7d856b06a5686ae",
+      "ts_managed_reporting_server.cjs": "98c1ce2d739f39d00cf3738cd7927bc6aafbda676018619b6e29533e24dc3329",
+      "ts_mcp_buyer.cjs": "bc8b9fcda207c0c442c954a9344a54a42b809cec02362873165f5f5c38e9e359",
+      "ts_package_probe.cjs": "2e60593d7ff7dedc944681fc03de34846b322b6364c8caca6f13b8b6ea11ebb0",
+      "ts_primary_facade_gap.cjs": "aa8cabdca827e782ff619d3a87928345bc85d9d5d78a3c51ae09bde4d0f2fbbe",
+      "ts_private_inputs.cjs": "765d2d55e5f3a2c1705c70d32615d1b25aefeb6603b08f47404bb02c7d42e34e",
+      "ts_probe_abort.cjs": "5e1e6ed4c70add86eea15910223bd74c7b5d29240f2dd100ef229f45891ca022",
+      "ts_reporting_controller_probe.cjs": "8a5ff2dba59b2124c142d5bb4426f0449720c55278b52f3753bd71ad8c7c4d13",
+      "ts_storyboard_inventory.cjs": "bd3bbf8c39b832276e46e338c62c2a112c9dc4682c7619a5beb7457e5382f0c5"
+    },
+    "input_pin_change": "only artifact/protocol input JSON repointed; executable harness source unchanged",
+    "protocol_input": {
+      "version": "3.2.1",
+      "status": "GA installed-artifact qualification; input pin repointed from the original RC harness"
+    }
+  },
+  "core": {
+    "status": "acceptance_passed",
+    "passed": 4,
+    "failed": 0,
+    "cross_cell_isolation_errors": [],
+    "cells": [
+      {
+        "id": "python-stable__typescript-stable",
+        "positive_semantic": true,
+        "fresh_database": true,
+        "fresh_seller_process": true
+      },
+      {
+        "id": "python-stable__typescript-candidate",
+        "positive_semantic": true,
+        "fresh_database": true,
+        "fresh_seller_process": true
+      },
+      {
+        "id": "python-candidate__typescript-stable",
+        "positive_semantic": true,
+        "fresh_database": true,
+        "fresh_seller_process": true
+      },
+      {
+        "id": "python-candidate__typescript-candidate",
+        "positive_semantic": true,
+        "fresh_database": true,
+        "fresh_seller_process": true
+      }
+    ],
+    "result_sha256": "88ef82ff286f54f36a3f502aef7e2242e585aa8a997cf8081497cfae8cbec173"
+  },
+  "python_seller_lifecycle": {
+    "status": "passed",
+    "passed": 4,
+    "failed": 0,
+    "cross_cell_isolation_errors": [],
+    "cells": [
+      {
+        "id": "python-stable__typescript-stable",
+        "positive_full_lifecycle": true,
+        "issues": [],
+        "receipt": {
+          "accepted_receipt_count": 1,
+          "canonical_content_digest": "735b4e44e790e89556016ceffb9c0a070456d6f2d94f851d0674bca12b90de87",
+          "exact_revision_read": true,
+          "package_version": "14.0.0",
+          "reconciliation_status": "accepted",
+          "reporting_materialization_id": "rpm_d952f80c666a4bfebb22ffa6328870a0",
+          "reporting_revision_id": "production-revision",
+          "status": "passed"
+        },
+        "webhook": {
+          "attempt_count": 2,
+          "body_unchanged": true,
+          "idempotency_key_unchanged": true,
+          "signature_generations": [
+            1,
+            2
+          ],
+          "verified_signature_count": 2
+        }
+      },
+      {
+        "id": "python-stable__typescript-candidate",
+        "positive_full_lifecycle": true,
+        "issues": [],
+        "receipt": {
+          "accepted_receipt_count": 1,
+          "canonical_content_digest": "735b4e44e790e89556016ceffb9c0a070456d6f2d94f851d0674bca12b90de87",
+          "exact_revision_read": true,
+          "package_version": "14.1.0",
+          "reconciliation_status": "accepted",
+          "reporting_materialization_id": "rpm_c77151e728d44f48b7d30bda121fe7bb",
+          "reporting_revision_id": "production-revision",
+          "status": "passed"
+        },
+        "webhook": {
+          "attempt_count": 2,
+          "body_unchanged": true,
+          "idempotency_key_unchanged": true,
+          "signature_generations": [
+            1,
+            2
+          ],
+          "verified_signature_count": 2
+        }
+      },
+      {
+        "id": "python-candidate__typescript-stable",
+        "positive_full_lifecycle": true,
+        "issues": [],
+        "receipt": {
+          "accepted_receipt_count": 1,
+          "canonical_content_digest": "735b4e44e790e89556016ceffb9c0a070456d6f2d94f851d0674bca12b90de87",
+          "exact_revision_read": true,
+          "package_version": "14.0.0",
+          "reconciliation_status": "accepted",
+          "reporting_materialization_id": "rpm_7cba031740024b31b6074133f5168ada",
+          "reporting_revision_id": "production-revision",
+          "status": "passed"
+        },
+        "webhook": {
+          "attempt_count": 2,
+          "body_unchanged": true,
+          "idempotency_key_unchanged": true,
+          "signature_generations": [
+            1,
+            2
+          ],
+          "verified_signature_count": 2
+        }
+      },
+      {
+        "id": "python-candidate__typescript-candidate",
+        "positive_full_lifecycle": true,
+        "issues": [],
+        "receipt": {
+          "accepted_receipt_count": 1,
+          "canonical_content_digest": "735b4e44e790e89556016ceffb9c0a070456d6f2d94f851d0674bca12b90de87",
+          "exact_revision_read": true,
+          "package_version": "14.1.0",
+          "reconciliation_status": "accepted",
+          "reporting_materialization_id": "rpm_8fcb4386ce5f448d8c71605c731f065e",
+          "reporting_revision_id": "production-revision",
+          "status": "passed"
+        },
+        "webhook": {
+          "attempt_count": 2,
+          "body_unchanged": true,
+          "idempotency_key_unchanged": true,
+          "signature_generations": [
+            1,
+            2
+          ],
+          "verified_signature_count": 2
+        }
+      }
+    ],
+    "result_sha256": "6d98f6c2ee08d8d50429e8392999243c7311493e2382f610c6c4edcd0c7e21d3",
+    "limitation": "receipt construction uses producer verification evidence; no independent file-manifest inspection by the TypeScript consumer; signed webhook retry/replay is verified by the Python seller fixture, without cross-SDK webhook-consumer signature proof"
+  },
+  "published_manifest": {
+    "status": "failed",
+    "failed_step": "typescript-producer",
+    "error_code": "CANONICALIZATION_INVALID",
+    "reason": "published TypeScript 14.1.0 rejects protocol named golden vectors",
+    "typescript_archive_sha256": "b1eff48755e6a5c97642e4ee1a5f9b3252d79e873f9d69166365c6e189bc91b4",
+    "installed_artifacts": {
+      "typescript_members": 6365,
+      "python_members": 4684,
+      "typescript_member_manifest_sha256": "867a61238729a2013a68e3707f9cf212b3ca60cfd5fad444173200063d571421",
+      "python_member_manifest_sha256": "4926c566024991818e2fb7c2849a39ea8fd995d7a87605bd1b29d4bb2e637205",
+      "python_dependencies": [
+        [
+          "PyJWT",
+          "2.15.1"
+        ],
+        [
+          "a2a-sdk",
+          "1.0.1"
+        ],
+        [
+          "adcp",
+          "8.0.0"
+        ],
+        [
+          "aiologic",
+          "0.17.1"
+        ],
+        [
+          "annotated-types",
+          "0.8.0"
+        ],
+        [
+          "anyio",
+          "4.15.1"
+        ],
+        [
+          "attrs",
+          "26.1.0"
+        ],
+        [
+          "certifi",
+          "2026.7.22"
+        ],
+        [
+          "cffi",
+          "2.1.1"
+        ],
+        [
+          "charset-normalizer",
+          "3.5.2"
+        ],
+        [
+          "click",
+          "8.5.0"
+        ],
+        [
+          "cryptography",
+          "50.0.2"
+        ],
+        [
+          "culsans",
+          "0.11.0"
+        ],
+        [
+          "dnspython",
+          "2.8.0"
+        ],
+        [
+          "email-validator",
+          "2.3.0"
+        ],
+        [
+          "exceptiongroup",
+          "1.3.1"
+        ],
+        [
+          "filelock",
+          "4.0.10"
+        ],
+        [
+          "google-api-core",
+          "2.40.0"
+        ],
+        [
+          "google-auth",
+          "2.59.1"
+        ],
+        [
+          "googleapis-common-protos",
+          "1.75.5"
+        ],
+        [
+          "h11",
+          "0.16.0"
+        ],
+        [
+          "httpcore",
+          "1.0.9"
+        ],
+        [
+          "httpcore2",
+          "2.13.1"
+        ],
+        [
+          "httpx",
+          "0.28.1"
+        ],
+        [
+          "httpx-sse",
+          "0.4.3"
+        ],
+        [
+          "httpx2",
+          "2.13.1"
+        ],
+        [
+          "idna",
+          "3.20"
+        ],
+        [
+          "json-rpc",
+          "1.15.0"
+        ],
+        [
+          "jsonschema",
+          "4.26.0"
+        ],
+        [
+          "jsonschema-specifications",
+          "2025.9.1"
+        ],
+        [
+          "mcp",
+          "2.3.0"
+        ],
+        [
+          "mcp-types",
+          "2.3.0"
+        ],
+        [
+          "opentelemetry-api",
+          "1.45.0"
+        ],
+        [
+          "packaging",
+          "26.3"
+        ],
+        [
+          "proto-plus",
+          "1.29.0"
+        ],
+        [
+          "protobuf",
+          "7.36.2"
+        ],
+        [
+          "psycopg",
+          "3.3.6"
+        ],
+        [
+          "psycopg-binary",
+          "3.3.6"
+        ],
+        [
+          "psycopg-pool",
+          "3.3.3"
+        ],
+        [
+          "pyasn1",
+          "0.6.4"
+        ],
+        [
+          "pyasn1_modules",
+          "0.4.2"
+        ],
+        [
+          "pycparser",
+          "3.0"
+        ],
+        [
+          "pydantic",
+          "2.13.5"
+        ],
+        [
+          "pydantic_core",
+          "2.46.5"
+        ],
+        [
+          "python-multipart",
+          "0.0.32"
+        ],
+        [
+          "referencing",
+          "0.37.0"
+        ],
+        [
+          "requests",
+          "2.34.2"
+        ],
+        [
+          "requests-file",
+          "3.0.1"
+        ],
+        [
+          "rfc8785",
+          "0.1.4"
+        ],
+        [
+          "rpds-py",
+          "0.30.0"
+        ],
+        [
+          "sniffio",
+          "1.3.1"
+        ],
+        [
+          "sse-starlette",
+          "3.5.0"
+        ],
+        [
+          "starlette",
+          "1.7.0"
+        ],
+        [
+          "tldextract",
+          "5.4.0"
+        ],
+        [
+          "truststore",
+          "0.10.4"
+        ],
+        [
+          "typing-inspection",
+          "0.4.4"
+        ],
+        [
+          "typing_extensions",
+          "4.16.0"
+        ],
+        [
+          "urllib3",
+          "2.8.0"
+        ],
+        [
+          "uvicorn",
+          "0.54.0"
+        ],
+        [
+          "wrapt",
+          "2.5.0"
+        ]
+      ]
+    },
+    "fixture_sha256": "bcd6166676ba9bc51cdbef5eefd59ae5d3572884a69205f91176534e0d6b037e",
+    "result_sha256": "f4eb78aebc2bb1499dfaa1f367c7ca858109d308373973b14e8f0a2c5de26b0c"
+  },
+  "typescript_seller_runtime": {
+    "managed": {
+      "status": "passed",
+      "mode": "managed",
+      "postgres_version": "16.14",
+      "seller_version": "14.1.0",
+      "buyer": {
+        "status": "passed",
+        "mode": "managed",
+        "python_version": "8.0.0",
+        "exact_revision_read": true,
+        "independent_manifest_inspection": true,
+        "resource_reads": 7,
+        "canonical_digest_verified": false,
+        "tampered_delivered_file_rejected": true,
+        "accepted_receipt_count": 0,
+        "lost_response_repaired": false,
+        "duplicate_receipt_count": 0,
+        "revoked_resource_unreadable": true,
+        "historical_metadata_retained": true
+      }
+    },
+    "billing": {
+      "status": "passed",
+      "mode": "billing",
+      "postgres_version": "16.14",
+      "seller_version": "14.1.0",
+      "buyer": {
+        "status": "passed",
+        "mode": "billing",
+        "python_version": "8.0.0",
+        "exact_revision_read": true,
+        "independent_manifest_inspection": true,
+        "resource_reads": 13,
+        "canonical_digest_verified": true,
+        "tampered_delivered_file_rejected": true,
+        "accepted_receipt_count": 1,
+        "lost_response_repaired": true,
+        "duplicate_receipt_count": 0,
+        "revoked_resource_unreadable": true,
+        "historical_metadata_retained": true
+      }
+    }
+  },
+  "remaining_scope": [
+    "reverse signed notification retry/replay",
+    "Python durable buyer adjustment checkpoints",
+    "network object-store provider authentication/integration",
+    "published release containing the manifest fix",
+    "TypeScript webhook consumer verification of Python seller signatures"
+  ],
+  "reverse_signed_notification": {
+    "node": "v24.19.0",
+    "typescript_archive_sha256": "b1eff48755e6a5c97642e4ee1a5f9b3252d79e873f9d69166365c6e189bc91b4",
+    "python_wheel_sha256": "d862687ab71f1aa411887d20dc7faba66547e68a319d29c0a8f568e8f88dd8fb",
+    "installed_member_verification_sha256": "43e5b306f6c34b0bf0bdd35272ce53f17b771614b0db048cf3654e46464e3d03",
+    "result_sha256": "76046e860e0a0bf743d1eb350e0a1fbd0db492498338b692dc2d8c76016e8bae",
+    "entrypoints": {
+      "notification.py": "fc07d7241eaa26407df625890551ff95baf8f05eeaa73ba6c363cf2d20e23b49",
+      "notification-seller.cjs": "e9e5619655bb92abaa4d21de58d6a229503cba256d09b52bb0ca0b76d81cb1b8",
+      "managed.py": "da49f8ada6070c69389b1863671e38b52f97865f7a9a0a93a3ddbc3b167ba817",
+      "pins.json": "0b11aad7c775d78a14c33d375eac8d93754ca39098f6373b6807d302e18def0a"
+    },
+    "result": {
+      "status": "passed",
+      "python_version": "8.0.0",
+      "postgres_version": "16.14",
+      "process_restart": true,
+      "transport": "owned loopback route for fixed HTTPS signature target",
+      "fixture_adapters": [
+        "proof",
+        "delivery_authorization",
+        "destination_validation",
+        "fetch_routing",
+        "trusted_jwk"
+      ],
+      "attempts": [
+        {
+          "body_sha256": "644c193ad57facaee0551ee2d9466fee0317ae769d281181a0bb7b745531e340",
+          "canonical_body_sha256": "2a0a12f4e843e3468ed49e107d09247dc3cfc286778204a3e0faba7e574aedbd",
+          "idempotency_key": "evt_a5939556971f4b27af38e031",
+          "notification_id": "revision-test",
+          "signature_input": "sig1=(\"@method\" \"@target-uri\" \"@authority\" \"content-type\" \"content-digest\");created=1791149231;expires=1791149531;nonce=\"x6cdLmIkIWBfNTAHTm9QbQ\";keyid=\"reverse-notification-key\";alg=\"ed25519\";tag=\"adcp/webhook-signing/v1\"",
+          "tampered_body_code": "webhook_signature_digest_mismatch",
+          "wrong_target_code": "webhook_signature_invalid",
+          "forged_digest_code": "webhook_signature_invalid",
+          "wrong_origin_code": "webhook_signature_invalid",
+          "fixture_route_code": "webhook_signature_invalid",
+          "wrong_purpose_code": "webhook_signature_key_purpose_invalid",
+          "unknown_key_code": "webhook_signature_key_unknown",
+          "replay_code": "webhook_signature_replayed"
+        },
+        {
+          "body_sha256": "fed03629355880adf382c0b376e83b9dd31ad8a8b460417409ea291b6123fc8c",
+          "canonical_body_sha256": "2a0a12f4e843e3468ed49e107d09247dc3cfc286778204a3e0faba7e574aedbd",
+          "idempotency_key": "evt_a5939556971f4b27af38e031",
+          "notification_id": "revision-test",
+          "signature_input": "sig1=(\"@method\" \"@target-uri\" \"@authority\" \"content-type\" \"content-digest\");created=1791149232;expires=1791149532;nonce=\"9VX77Ff5WF2fGQ28cv0Gag\";keyid=\"reverse-notification-key\";alg=\"ed25519\";tag=\"adcp/webhook-signing/v1\"",
+          "tampered_body_code": "webhook_signature_digest_mismatch",
+          "wrong_target_code": "webhook_signature_invalid",
+          "forged_digest_code": "webhook_signature_invalid",
+          "wrong_origin_code": "webhook_signature_invalid",
+          "fixture_route_code": "webhook_signature_invalid",
+          "wrong_purpose_code": "webhook_signature_key_purpose_invalid",
+          "unknown_key_code": "webhook_signature_key_unknown",
+          "replay_code": "webhook_signature_replayed"
+        }
+      ],
+      "phases": [
+        {
+          "status": "passed",
+          "phase": "emit",
+          "generation": "cfg_14c2aa39-476d-469d-8930-07097ae29971"
+        },
+        {
+          "status": "passed",
+          "phase": "recover",
+          "generation": "cfg_14c2aa39-476d-469d-8930-07097ae29971",
+          "recovered": {
+            "claimed": 1,
+            "settled": 1,
+            "released": 0
+          },
+          "drained": {
+            "claimed": 0,
+            "settled": 0,
+            "released": 0
+          }
+        }
+      ]
+    }
+  }
+}

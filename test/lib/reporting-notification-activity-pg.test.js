@@ -109,6 +109,8 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       db: pool,
       publisherScope: 'reporting-activity-tests',
       webhooks: {
+        deliveries: { acknowledgeIsolatedDatabase: true },
+        outbox: { acknowledgeIsolatedDatabase: true },
         signerKey: signerKey(),
         fetch: async (url, init) => {
           const body = JSON.parse(init.body);
@@ -142,6 +144,8 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       db: pool,
       publisherScope: 'reporting-activity-tests',
       webhooks: {
+        deliveries: { acknowledgeIsolatedDatabase: true },
+        outbox: { acknowledgeIsolatedDatabase: true },
         signerKey: signerKey(),
         fetch: async (url, init) => {
           const body = JSON.parse(init.body);
@@ -2648,6 +2652,8 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
         checkpointDeliveryAttempt: docsAttemptCheckpoint,
         subscriptions: { acknowledgeIsolatedDatabase: true },
         webhooks: {
+          deliveries: { acknowledgeIsolatedDatabase: true },
+          outbox: { acknowledgeIsolatedDatabase: true },
           signerKey: signerKey(),
           fetch: async (url, init) => {
             docsFetches.push({ url, body: JSON.parse(init.body) });
@@ -2752,6 +2758,8 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       checkpointDeliveryAttempt: runtimeCheckpoint,
       subscriptions: { acknowledgeIsolatedDatabase: true },
       webhooks: {
+        deliveries: { acknowledgeIsolatedDatabase: true },
+        outbox: { acknowledgeIsolatedDatabase: true },
         signerKey: signerKey(),
         fetch: async () => ({ status: 204, headers: { get: () => undefined } }),
         retries: { maxAttempts: 1, initialDelayMs: 0, maxDelayMs: 0, jitter: 0 },

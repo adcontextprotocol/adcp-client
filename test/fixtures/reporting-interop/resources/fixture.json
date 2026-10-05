@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "files": {
+    "manifest.json": {
+      "size_bytes": 918,
+      "sha256": "e50959c9297a15669578f88102533626a9f991a6feeb8f8bb5fab0ae0fde978c"
+    },
+    "rows.jsonl": {
+      "size_bytes": 156,
+      "sha256": "735610f303d6d91aa618df3aa6d7f18bcf5dfa52bdbd9ef551293e6bd14c92d9"
+    },
+    "row-schema.json": {
+      "size_bytes": 439,
+      "sha256": "12aa838388ed6f73682cce5303c713dd95069e0479500462906fe0c861f0a472"
+    },
+    "report-definition.json": {
+      "size_bytes": 902,
+      "sha256": "e76fd773afe79938b17db11fd07f1274db311f842d8ae94586168229d38d9086"
+    },
+    "canonicalization.json": {
+      "size_bytes": 1285,
+      "sha256": "653373f3d7db3e130675959b4c491c332730e82174fa7652024f14d45cd98c19"
+    }
+  },
+  "expected": {
+    "row_count": 2,
+    "control_totals": [
+      {
+        "name": "impressions",
+        "value": "5",
+        "value_type": "integer",
+        "unit": "impressions"
+      },
+      {
+        "name": "spend",
+        "value": "8",
+        "value_type": "decimal",
+        "unit": "USD"
+      }
+    ],
+    "canonical_content_sha256": "bcd079902f3c8edb4315dbbdaf9b4e37f6fd5af33c80d1fe6ac8c655581342d4"
+  }
+}

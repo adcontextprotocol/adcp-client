@@ -2606,6 +2606,53 @@ test('bounds a custom manifest reader with the aggregate inspection deadline', a
   );
 });
 
+test('an expired deadline never starts a failing decoder or leaks its rejection', async () => {
+  const raw = fixtureLedgerResponse();
+  const base = fixtureReader();
+  const realNow = Date.now;
+  let clock = realNow();
+  let decoderCalls = 0;
+  const inspect = createReportingManifestInspector({
+    reader: {
+      async read(request) {
+        const result = await base.read(request);
+        if (request.role === 'object') clock += 100_001;
+        return result;
+      },
+    },
+    credentialProvider: {
+      async getCredentials() {
+        return { token: 'fixture-reader-token' };
+      },
+    },
+    referenceResolver: fixtureResolver(),
+    referenceAllowedOrigins: ['https://schemas.fixture.example.net'],
+    maxInspectionMs: 100_000,
+    compressionDecoders: {
+      none() {
+        decoderCalls += 1;
+        throw new Error('decoder must never start');
+      },
+    },
+  });
+  try {
+    Date.now = () => clock;
+    await assert.rejects(
+      inspect({
+        obligation: raw.periods[0],
+        revision: raw.revisions[0],
+        materialization: raw.materializations[0],
+        expected: fixtureExpectedPeriod(),
+      }),
+      error => error instanceof ReportingInspectionError && error.code === 'INSPECTION_TIMEOUT'
+    );
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(decoderCalls, 0);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 test('enforces the decoded-byte cap after a custom decompressor returns', async () => {
   const raw = fixtureLedgerResponse();
   const inspect = createReportingManifestInspector({
@@ -2630,6 +2677,404 @@ test('enforces the decoded-byte cap after a custom decompressor returns', async 
     }),
     error => error instanceof ReportingInspectionError && error.code === 'RESOURCE_TOO_LARGE'
   );
+});
+
+test('rejects invalid byte, row, and file budgets before any reader work', () => {
+  for (const name of [
+    'maxManifestBytes',
+    'maxObjectBytes',
+    'maxTotalBytes',
+    'maxRows',
+    'maxFiles',
+    'maxDecodedObjectBytes',
+    'maxDecodedTotalBytes',
+    'maxRowBytes',
+  ]) {
+    for (const value of [NaN, Infinity, 0, -1, 0.5]) {
+      assert.throws(
+        () =>
+          createReportingManifestInspector({
+            reader: {
+              async read() {
+                assert.fail('invalid budgets must fail before reading');
+              },
+            },
+            referenceAllowedOrigins: [],
+            [name]: value,
+          }),
+        { name: 'TypeError' },
+        `${name}=${value}`
+      );
+    }
+  }
+});
+
+test('does not forward resolver diagnostic text into reporting inspection errors', async () => {
+  const raw = fixtureLedgerResponse();
+  const inspect = createReportingManifestInspector({
+    reader: {
+      async read() {
+        return { body: fixtureBytes('manifest.json') };
+      },
+    },
+    referenceResolver: {
+      cache: { get() {}, set() {} },
+      async resolve() {
+        return { ok: false, error: { code: 'FETCH_FAILED', retryable: false, message: 'private-credential-marker' } };
+      },
+    },
+    referenceAllowedOrigins: ['https://schemas.fixture.example.net'],
+  });
+  await assert.rejects(
+    inspect({
+      obligation: raw.periods[0],
+      revision: raw.revisions[0],
+      materialization: raw.materializations[0],
+      expected: fixtureExpectedPeriod(),
+    }),
+    error => {
+      assert.equal(error.code, 'ROW_SCHEMA_FETCH_FAILED');
+      assert.ok(!error.message.includes('private-credential-marker'));
+      return true;
+    }
+  );
+});
+
+async function inspectWithOverrides(overrides = {}, mutateDefinition = () => {}, mutateContext = () => {}) {
+  const raw = fixtureLedgerResponse();
+  const expected = fixtureExpectedPeriod();
+  mutateContext(raw, expected);
+  const definition = JSON.parse(fixtureBytes('report-definition.json'));
+  mutateDefinition(definition);
+  const body = Buffer.from(JSON.stringify(definition));
+  const hash = crypto.createHash('sha256').update(body).digest('hex');
+  raw.revisions[0].report_definition_sha256 = hash;
+  expected.reportDefinitionSha256 = hash;
+  const resolver = fixtureResolver();
+  const inspect = createReportingManifestInspector({
+    reader: fixtureReader(),
+    credentialProvider: {
+      async getCredentials() {
+        return { token: 'fixture-reader-token' };
+      },
+    },
+    referenceResolver: {
+      cache: resolver.cache,
+      async resolve(ref) {
+        if (ref.uri !== raw.revisions[0].report_definition_uri) return resolver.resolve(ref);
+        return {
+          ok: true,
+          status: 'resolved',
+          kind: 'generic',
+          ref,
+          cacheKey: ref.uri,
+          fromCache: false,
+          document: definition,
+          body,
+          text: body.toString('utf8'),
+          contentType: 'application/vnd.adcp.reporting-definition+json',
+          httpStatus: 200,
+        };
+      },
+    },
+    referenceAllowedOrigins: ['https://schemas.fixture.example.net'],
+    ...overrides,
+  });
+  return inspect({
+    obligation: raw.periods[0],
+    revision: raw.revisions[0],
+    materialization: raw.materializations[0],
+    expected,
+  });
+}
+
+test('rejects ambiguous metric definitions and declared control-total unit conflicts', async () => {
+  await assert.rejects(
+    inspectWithOverrides({}, definition => {
+      definition.metrics.push({ ...definition.metrics[1], unit: 'EUR' });
+    }),
+    error => error.code === 'REPORT_DEFINITION_INVALID'
+  );
+  await assert.rejects(
+    inspectWithOverrides({}, definition => {
+      definition.metrics[1].unit = 'EUR';
+    }),
+    error => error.code === 'CONTROL_TOTAL_MISMATCH'
+  );
+});
+
+test('rejects a synchronous calculator overrun before calling the consumer commit callback', async () => {
+  const realNow = Date.now;
+  let clock = realNow();
+  let commitCalls = 0;
+  try {
+    Date.now = () => clock;
+    await assert.rejects(
+      inspectWithOverrides(
+        {
+          maxInspectionMs: 100_000,
+          controlTotalCalculator(_rows, totals) {
+            clock += 100_001;
+            return totals;
+          },
+          consumerCommitRef() {
+            commitCalls += 1;
+            return 'should-not-commit';
+          },
+        },
+        () => {},
+        (_raw, expected) => {
+          expected.verificationProfile = 'manifest_checksums';
+        }
+      ),
+      error => error instanceof ReportingInspectionError && error.code === 'INSPECTION_TIMEOUT'
+    );
+    assert.equal(commitCalls, 0);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('accepts optional control-total units supplied by the immutable definition', async () => {
+  const raw = structuredClone(fixtureLedgerResponse());
+  for (const total of raw.revisions[0].control_totals) delete total.unit;
+  const manifest = JSON.parse(fixtureBytes('manifest.json'));
+  for (const total of manifest.control_totals) delete total.unit;
+  const body = Buffer.from(JSON.stringify(manifest));
+  raw.materializations[0].resource.manifest_sha256 = crypto.createHash('sha256').update(body).digest('hex');
+  const base = fixtureReader();
+  const inspect = createReportingManifestInspector({
+    reader: {
+      async read(request) {
+        return request.role === 'manifest' ? { body } : base.read(request);
+      },
+    },
+    credentialProvider: {
+      async getCredentials() {
+        return { token: 'fixture-reader-token' };
+      },
+    },
+    referenceResolver: fixtureResolver(),
+    referenceAllowedOrigins: ['https://schemas.fixture.example.net'],
+  });
+  const observed = await inspect({
+    obligation: raw.periods[0],
+    revision: raw.revisions[0],
+    materialization: raw.materializations[0],
+    expected: fixtureExpectedPeriod(),
+  });
+  assert.deepEqual(observed.controlTotals, raw.revisions[0].control_totals);
+});
+
+test('retries a plain transient reader exception before committing the inspected receipt', async () => {
+  const base = fixtureReader();
+  let attempts = 0;
+  const raw = fixtureLedgerResponse();
+  const recorded = [];
+  const inspect = createReportingManifestInspector({
+    reader: {
+      async read(request) {
+        if (++attempts === 1) throw new Error('private-network-marker');
+        return base.read(request);
+      },
+    },
+    credentialProvider: {
+      async getCredentials() {
+        return { token: 'fixture-reader-token' };
+      },
+    },
+    referenceResolver: fixtureResolver(),
+    referenceAllowedOrigins: ['https://schemas.fixture.example.net'],
+  });
+  const result = await reconcileReporting({
+    client: {
+      async getReportingStatus() {
+        return fixtureLedgerResponse(structuredClone(recorded));
+      },
+      async syncReportingReceipts(request) {
+        recorded.push(...request.receipts);
+        return {
+          status: 'completed',
+          results: request.receipts.map(receipt => ({
+            result: 'recorded',
+            reporting_receipt_id: receipt.reporting_receipt_id,
+            reporting_materialization_id: receipt.reporting_materialization_id,
+            receipt,
+          })),
+        };
+      },
+    },
+    request: { account: { account_id: raw.account_id } },
+    expectedPeriods: [fixtureExpectedPeriod()],
+    inspect,
+    maxInspectionAttempts: 2,
+    inspectionRetryBaseDelayMs: 0,
+    now: new Date('2026-09-02T00:00:02Z'),
+  });
+  assert.equal(result.definitive, true);
+  assert.equal(result.submittedReceipts.length, 1);
+  assert.equal(attempts, 3);
+});
+
+test('rejects malformed adapter results before trusting byte or row budgets', async () => {
+  for (const [overrides, code] of [
+    [
+      {
+        reader: {
+          async read() {
+            return {};
+          },
+        },
+      },
+      'RESOURCE_READ_FAILED',
+    ],
+    [
+      {
+        compressionDecoders: {
+          none() {
+            return [1, 2];
+          },
+        },
+      },
+      'MANIFEST_INVALID',
+    ],
+    [
+      {
+        formatDecoders: {
+          jsonl() {
+            return null;
+          },
+        },
+      },
+      'MANIFEST_INVALID',
+    ],
+    [
+      {
+        controlTotalCalculator() {
+          return {};
+        },
+      },
+      'CONTROL_TOTAL_UNSUPPORTED',
+    ],
+    [
+      {
+        consumerCommitRef() {
+          return {};
+        },
+      },
+      'CONSUMER_COMMIT_FAILED',
+    ],
+  ]) {
+    await assert.rejects(
+      inspectWithOverrides(overrides),
+      error => error instanceof ReportingInspectionError && error.code === code && !error.retryable
+    );
+  }
+});
+
+test('rejects scalar decoder rows and non-JSON member values with stable errors', async () => {
+  for (const row of [null, 123, new Date()]) {
+    await assert.rejects(
+      inspectWithOverrides({
+        formatDecoders: {
+          jsonl() {
+            return [row];
+          },
+        },
+      }),
+      error => error instanceof ReportingInspectionError && error.code === 'MANIFEST_INVALID'
+    );
+  }
+  for (const value of [1n, undefined, Symbol('non-json'), () => {}, new Date()]) {
+    await assert.rejects(
+      inspectWithOverrides({
+        formatDecoders: {
+          jsonl(body) {
+            const rows = Buffer.from(body)
+              .toString('utf8')
+              .trim()
+              .split('\n')
+              .map(line => JSON.parse(line));
+            rows[0].non_json = value;
+            return rows;
+          },
+        },
+      }),
+      error => error instanceof ReportingInspectionError && error.code === 'CANONICALIZATION_INVALID'
+    );
+  }
+});
+
+test('contains malformed resolver results before reading status or error metadata', async () => {
+  for (const value of [undefined, { ok: false }, { ok: true, body: [] }]) {
+    await assert.rejects(
+      inspectWithOverrides({
+        referenceResolver: {
+          cache: { get() {}, set() {} },
+          async resolve() {
+            return value;
+          },
+        },
+      }),
+      error => error instanceof ReportingInspectionError && error.code === 'ROW_SCHEMA_FETCH_FAILED' && !error.retryable
+    );
+  }
+});
+
+test('rejects malformed producer checksums without invoking invalid digest algorithms', async () => {
+  for (const invalid of [{ algorithm: 'private-checksum-marker' }, { value: null }]) {
+    await assert.rejects(
+      inspectWithOverrides(
+        {},
+        () => {},
+        raw => {
+          Object.assign(raw.materializations[0].verification.physical_checksums[0], invalid);
+        }
+      ),
+      error =>
+        error instanceof ReportingInspectionError &&
+        error.code === 'OBJECT_DIGEST_MISMATCH' &&
+        !error.message.includes('private-checksum-marker')
+    );
+  }
+});
+
+test('contains thrown adapter diagnostics and causes without losing inspection codes', async () => {
+  const fail = () => {
+    throw new Error('private-credential-marker');
+  };
+  for (const overrides of [
+    { credentialProvider: { getCredentials: fail } },
+    { reader: { read: fail } },
+    { referenceResolver: { cache: { get() {}, set() {} }, resolve: fail } },
+    { compressionDecoders: { none: fail } },
+    { formatDecoders: { jsonl: fail } },
+    { controlTotalCalculator: fail },
+    { consumerCommitRef: fail },
+    {
+      reader: {
+        read() {
+          throw new ReportingInspectionError(
+            'RESOURCE_NOT_READY',
+            'private-credential-marker',
+            true,
+            undefined,
+            { cause: new Error('private-credential-marker') },
+            { rowCount: 1, controlTotals: [], consumerCommitRef: 'private-credential-marker' }
+          );
+        },
+      },
+    },
+  ]) {
+    await assert.rejects(inspectWithOverrides(overrides), error => {
+      assert.ok(error instanceof ReportingInspectionError);
+      assert.ok(!error.message.includes('private-credential-marker'));
+      assert.equal(error.cause, undefined);
+      assert.equal(error.observation, undefined);
+      if (error.code === 'RESOURCE_NOT_READY') assert.equal(error.retryable, true);
+      return true;
+    });
+  }
 });
 
 test('requires the seller acknowledgement to echo the exact immutable receipt', async () => {
@@ -2724,6 +3169,171 @@ test('compares SHA-256 evidence by bytes regardless of hex casing', async () => 
 
   assert.equal(receipt.status, 'accepted');
 });
+
+async function inspectNamedCanonicalization(mutate = () => {}) {
+  const raw = fixtureLedgerResponse();
+  const contract = JSON.parse(fixtureBytes('canonicalization.json'));
+  contract.golden_vectors = {
+    empty_report: { ...contract.golden_vectors[0], purpose: 'empty_report' },
+    ordering_encoding: { ...contract.golden_vectors[1], purpose: 'ordering_encoding' },
+  };
+  contract.golden_vectors.ordering_encoding.input_rows = contract.golden_vectors.ordering_encoding.input_rows.map(row =>
+    Object.fromEntries(Object.entries(row).reverse())
+  );
+  mutate(contract.golden_vectors);
+  const body = Buffer.from(JSON.stringify(contract));
+  const hash = crypto.createHash('sha256').update(body).digest('hex');
+  raw.revisions[0].canonical_content_digest.canonicalization_sha256 = hash;
+  raw.materializations[0].verification.canonical_content_digest.canonicalization_sha256 = hash;
+  const expected = fixtureExpectedPeriod();
+  expected.canonicalization.sha256 = hash;
+  const originalResolver = fixtureResolver();
+  const inspect = createReportingManifestInspector({
+    reader: {
+      async read(request) {
+        return { body: request.role === 'manifest' ? fixtureBytes('manifest.json') : fixtureBytes('rows.jsonl') };
+      },
+    },
+    referenceResolver: {
+      cache: originalResolver.cache,
+      async resolve(ref) {
+        if (ref.uri !== raw.revisions[0].canonical_content_digest.canonicalization_uri) {
+          return originalResolver.resolve(ref);
+        }
+        assert.equal(ref.digest, `sha256:${hash}`);
+        return {
+          ok: true,
+          status: 'resolved',
+          kind: 'generic',
+          ref,
+          cacheKey: ref.uri,
+          fromCache: false,
+          document: contract,
+          body,
+          text: body.toString('utf8'),
+          contentType: 'application/vnd.adcp.reporting-canonicalization+json',
+          httpStatus: 200,
+        };
+      },
+    },
+    referenceAllowedOrigins: ['https://schemas.fixture.example.net'],
+  });
+  return inspect({
+    obligation: raw.periods[0],
+    revision: raw.revisions[0],
+    materialization: raw.materializations[0],
+    expected,
+  });
+}
+
+test('inspects the AdCP named canonicalization vectors and optional additional cases', async () => {
+  const observed = await inspectNamedCanonicalization(golden => {
+    golden.additional = [{ ...golden.ordering_encoding, name: 'additional-ordering', purpose: 'additional' }];
+  });
+  assert.equal(observed.rowCount, reportingFixture.expected.row_count);
+  assert.equal(observed.canonicalContentDigest.value, reportingFixture.expected.canonical_content_sha256);
+});
+
+for (const [name, mutate] of [
+  [
+    'missing empty_report',
+    golden => {
+      delete golden.empty_report;
+    },
+  ],
+  [
+    'missing purpose',
+    golden => {
+      delete golden.empty_report.purpose;
+    },
+  ],
+  [
+    'swapped purposes',
+    golden => {
+      golden.empty_report.purpose = 'ordering_encoding';
+    },
+  ],
+  [
+    'nonempty empty_report',
+    golden => {
+      golden.empty_report.input_rows = [{ media_buy_id: 'buy-1', date: '2026-08-01' }];
+    },
+  ],
+  [
+    'trivial ordering_encoding',
+    golden => {
+      golden.ordering_encoding.input_rows = [];
+    },
+  ],
+  [
+    'unknown named slot',
+    golden => {
+      golden.extra = golden.empty_report;
+    },
+  ],
+  [
+    'trailing high surrogate in a row value',
+    golden => {
+      golden.ordering_encoding.input_rows[0].spend = 'private\ud800';
+    },
+  ],
+  [
+    'trailing high surrogate in a member name',
+    golden => {
+      golden.ordering_encoding.input_rows[0]['private\ud800'] = 'value';
+    },
+  ],
+  [
+    'canonical input row order',
+    golden => {
+      golden.ordering_encoding.input_rows.reverse();
+    },
+  ],
+  [
+    'canonical input member order',
+    golden => {
+      golden.ordering_encoding.input_rows = golden.ordering_encoding.input_rows.map(row =>
+        Object.fromEntries(Object.entries(row).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)))
+      );
+    },
+  ],
+  [
+    'malformed additional collection',
+    golden => {
+      golden.additional = {};
+    },
+  ],
+  [
+    'wrong additional purpose',
+    golden => {
+      golden.additional = [golden.empty_report];
+    },
+  ],
+  [
+    'duplicate names',
+    golden => {
+      golden.ordering_encoding.name = golden.empty_report.name;
+    },
+  ],
+  [
+    'corrupt additional digest',
+    golden => {
+      golden.additional = [
+        { ...golden.ordering_encoding, name: 'bad-additional', purpose: 'additional', sha256: '0'.repeat(64) },
+      ];
+    },
+  ],
+  [
+    'corrupt empty bytes',
+    golden => {
+      golden.empty_report.canonical_utf8_base64 = 'e30=';
+    },
+  ],
+]) {
+  test(`rejects named canonicalization vectors: ${name}`, async () => {
+    await assert.rejects(inspectNamedCanonicalization(mutate), error => error.code === 'CANONICALIZATION_INVALID');
+  });
+}
 
 for (const scenario of reportingFixture.scenarios.filter(item => item.expected_error)) {
   test(`portable inspection fixture: ${scenario.id}`, async () => {
