@@ -3,6 +3,7 @@
 import { writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { compile } from 'json-schema-to-typescript';
 import path from 'path';
+import ts from 'typescript';
 import { injectJsdocConstraints, removeArrayLengthConstraints } from './schema-utils';
 import { resolveSchemaRefInCache, schemaRefToCacheRelativePath } from './schema-cache-ref';
 import { relaxArrayCardinalityTypes } from './typescript-array-cardinality';
@@ -3218,12 +3219,61 @@ function widenPostalAreaSupportIndexSignature(typeDefinitions: string): string {
   );
 }
 
-/** Widen boolean feature maps for the one structured 3.2 capability value. */
-function widenMediaBuyFeaturesIndexSignature(typeDefinitions: string): string {
-  return typeDefinitions.replace(
-    /(export interface (?:ExternalCore1)?(?:Canonical)?MediaBuyFeatures \{[\s\S]*?bidding_policy\?: (\w*BiddingPolicyCapability);[\s\S]*?)\[k: string\]: boolean \| undefined;/g,
-    '$1[k: string]: boolean | $2 | undefined;'
-  );
+/**
+ * JSON Schema's boolean additionalProperties excludes named feature fields.
+ * TypeScript's index signature includes them, so include each structured field's
+ * own type in its union, including capabilities emitted inline.
+ * The source additionalProperties rule stays unchanged; TypeScript alone cannot
+ * express the named-field exemption.
+ */
+export function widenMediaBuyFeaturesIndexSignature(typeDefinitions: string): string {
+  const source = ts.createSourceFile('features.ts', typeDefinitions, ts.ScriptTarget.Latest, true);
+  const edits: { start: number; end: number; replacement: string }[] = [];
+
+  for (const declaration of source.statements) {
+    if (
+      !ts.isInterfaceDeclaration(declaration) ||
+      !/^(?:ExternalCore\d+)?(?:Canonical)?MediaBuyFeatures\d*$/.test(declaration.name.text)
+    )
+      continue;
+
+    const index = declaration.members.find(ts.isIndexSignatureDeclaration);
+    if (!index?.type) continue;
+    const existing = index.type.getText(source);
+    const alternatives = ts.isUnionTypeNode(index.type) ? index.type.types : [index.type];
+    const included = new Set(
+      alternatives.map(type => (ts.isParenthesizedTypeNode(type) ? type.type : type).getText(source))
+    );
+    const namedTypes = declaration.members.flatMap(member => {
+      if (
+        !ts.isPropertySignature(member) ||
+        !member.type ||
+        member.type.kind === ts.SyntaxKind.BooleanKeyword ||
+        !(ts.isIdentifier(member.name) || ts.isStringLiteral(member.name))
+      )
+        return [];
+      const type = member.type.getText(source);
+      const additions = included.has(type) ? [] : [`(${type})`];
+      included.add(type);
+      if (member.questionToken && !included.has('undefined')) {
+        additions.push('undefined');
+        included.add('undefined');
+      }
+      return additions;
+    });
+    if (!namedTypes.length) continue;
+    edits.push({
+      start: index.type.getStart(source),
+      end: index.type.end,
+      replacement: `${existing} | ${namedTypes.join(' | ')}`,
+    });
+  }
+
+  let result = typeDefinitions;
+  for (const edit of edits.reverse()) {
+    result = result.slice(0, edit.start) + edit.replacement + result.slice(edit.end);
+  }
+  return result;
 }
 
 /**
