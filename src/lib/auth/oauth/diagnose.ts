@@ -17,6 +17,7 @@ import { ssrfSafeFetch, decodeBodyAsJsonOrText, SsrfRefusedError } from '../../n
 import type { AgentConfig } from './types';
 import { decodeAccessTokenClaims, parseWWWAuthenticate, validateTokenAudience } from './diagnostics';
 import type { DecodedAccessToken } from './diagnostics';
+import { assertOAuthCredentialIssuers, validatedOAuthIssuer } from './issuer';
 
 /**
  * Options for {@link runAuthDiagnosis}. Most callers pass an `AgentConfig` and
@@ -184,37 +185,53 @@ export async function runAuthDiagnosis(
         error: 'No saved oauth_client.client_id — cannot attempt refresh without it',
       });
     } else {
-      const refreshCapture = await attemptTokenRefresh({
-        tokenEndpoint,
-        clientId,
-        clientSecret: agent.oauth_client?.client_secret,
-        refreshToken: agent.oauth_tokens.refresh_token,
-        resource,
-        allowPrivateIp,
-        timeoutMs: options.timeoutMs,
-      });
-      // Capture the raw access_token string BEFORE redaction so we can still
-      // decode claims for H2 analysis. The report body itself uses the
-      // redacted capture unless includeTokens is set.
-      if (refreshCapture.status === 200 && refreshCapture.body && typeof refreshCapture.body === 'object') {
-        const body = refreshCapture.body as Record<string, unknown>;
-        if (typeof body.access_token === 'string') {
-          refreshedAccessToken = body.access_token;
-          refreshedDecoded = decodeAccessTokenClaims(refreshedAccessToken);
-        }
-      }
-      steps.push({
-        name: 'token_refresh_attempt',
-        http: includeTokens ? refreshCapture : redactTokenMaterial(refreshCapture),
-      });
-      if (refreshedAccessToken) {
+      let refreshAllowed = true;
+      try {
+        const metadata = asCapture.body as { issuer?: unknown } | null;
+        const issuer = validatedOAuthIssuer(extractIssuer(prmCapture), metadata?.issuer);
+        assertOAuthCredentialIssuers(agent, issuer);
+      } catch {
         steps.push({
-          name: 'decode_refreshed_token',
-          decodedToken: refreshedDecoded,
-          notes: refreshedDecoded
-            ? [`Decoded refreshed JWT with claims: ${Object.keys(refreshedDecoded.claims).join(', ')}`]
-            : ['Refreshed access_token is opaque (not a JWT)'],
+          name: 'token_refresh_attempt',
+          error:
+            'OAuth issuer binding is missing or mismatched; owner reauthorization or an independently trusted issuer is required before refresh.',
         });
+        // Other non-mutating diagnostics remain useful; never send the grant.
+        refreshAllowed = false;
+      }
+      if (refreshAllowed) {
+        const refreshCapture = await attemptTokenRefresh({
+          tokenEndpoint,
+          clientId,
+          clientSecret: agent.oauth_client?.client_secret,
+          refreshToken: agent.oauth_tokens.refresh_token,
+          resource,
+          allowPrivateIp,
+          timeoutMs: options.timeoutMs,
+        });
+        // Capture the raw access_token string BEFORE redaction so we can still
+        // decode claims for H2 analysis. The report body itself uses the
+        // redacted capture unless includeTokens is set.
+        if (refreshCapture.status === 200 && refreshCapture.body && typeof refreshCapture.body === 'object') {
+          const body = refreshCapture.body as Record<string, unknown>;
+          if (typeof body.access_token === 'string') {
+            refreshedAccessToken = body.access_token;
+            refreshedDecoded = decodeAccessTokenClaims(refreshedAccessToken);
+          }
+        }
+        steps.push({
+          name: 'token_refresh_attempt',
+          http: includeTokens ? refreshCapture : redactTokenMaterial(refreshCapture),
+        });
+        if (refreshedAccessToken) {
+          steps.push({
+            name: 'decode_refreshed_token',
+            decodedToken: refreshedDecoded,
+            notes: refreshedDecoded
+              ? [`Decoded refreshed JWT with claims: ${Object.keys(refreshedDecoded.claims).join(', ')}`]
+              : ['Refreshed access_token is opaque (not a JWT)'],
+          });
+        }
       }
     }
   }

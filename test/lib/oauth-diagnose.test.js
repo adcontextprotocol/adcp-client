@@ -385,7 +385,8 @@ describe('runAuthDiagnosis: H2 refresh grant ignoring resource', () => {
     setHandlers({
       '/.well-known/oauth-protected-resource/mcp': (req, res) =>
         jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [issuer()] }),
-      '/.well-known/oauth-authorization-server': (req, res) => jsonRes(res, 200, { token_endpoint: tokenEndpoint() }),
+      '/.well-known/oauth-authorization-server': (req, res) =>
+        jsonRes(res, 200, { issuer: issuer(), token_endpoint: tokenEndpoint() }),
       '/oauth/token': (req, res, body) => {
         const params = new URLSearchParams(body);
         if (params.get('resource')) refreshCallSawResource = true;
@@ -410,8 +411,8 @@ describe('runAuthDiagnosis: H2 refresh grant ignoring resource', () => {
         name: 'test',
         agent_uri: agentUrl(),
         protocol: 'mcp',
-        oauth_tokens: { access_token: makeJWT({ aud: agentUrl() }), refresh_token: 'rt-1' },
-        oauth_client: { client_id: 'test-client', redirect_uris: [] },
+        oauth_tokens: { issuer: issuer(), access_token: makeJWT({ aud: agentUrl() }), refresh_token: 'rt-1' },
+        oauth_client: { issuer: issuer(), client_id: 'test-client', redirect_uris: [] },
       },
       { allowPrivateIp: true, skipToolCall: true }
     );
@@ -427,7 +428,8 @@ describe('runAuthDiagnosis: token redaction', () => {
     setHandlers({
       '/.well-known/oauth-protected-resource/mcp': (req, res) =>
         jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [issuer()] }),
-      '/.well-known/oauth-authorization-server': (req, res) => jsonRes(res, 200, { token_endpoint: tokenEndpoint() }),
+      '/.well-known/oauth-authorization-server': (req, res) =>
+        jsonRes(res, 200, { issuer: issuer(), token_endpoint: tokenEndpoint() }),
       '/oauth/token': (req, res) =>
         jsonRes(res, 200, {
           access_token: makeJWT({ aud: agentUrl() }),
@@ -449,8 +451,8 @@ describe('runAuthDiagnosis: token redaction', () => {
         name: 'test',
         agent_uri: agentUrl(),
         protocol: 'mcp',
-        oauth_tokens: { access_token: makeJWT({ aud: agentUrl() }), refresh_token: 'rt-1' },
-        oauth_client: { client_id: 'c', redirect_uris: [] },
+        oauth_tokens: { issuer: issuer(), access_token: makeJWT({ aud: agentUrl() }), refresh_token: 'rt-1' },
+        oauth_client: { issuer: issuer(), client_id: 'c', redirect_uris: [] },
       },
       { allowPrivateIp: true, skipToolCall: true }
     );
@@ -470,7 +472,8 @@ describe('runAuthDiagnosis: token redaction', () => {
     setHandlers({
       '/.well-known/oauth-protected-resource/mcp': (req, res) =>
         jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [issuer()] }),
-      '/.well-known/oauth-authorization-server': (req, res) => jsonRes(res, 200, { token_endpoint: tokenEndpoint() }),
+      '/.well-known/oauth-authorization-server': (req, res) =>
+        jsonRes(res, 200, { issuer: issuer(), token_endpoint: tokenEndpoint() }),
       '/oauth/token': (req, res) =>
         jsonRes(res, 200, {
           access_token: realAccessToken,
@@ -488,8 +491,8 @@ describe('runAuthDiagnosis: token redaction', () => {
         name: 'test',
         agent_uri: agentUrl(),
         protocol: 'mcp',
-        oauth_tokens: { access_token: makeJWT({ aud: agentUrl() }), refresh_token: 'rt-1' },
-        oauth_client: { client_id: 'c', redirect_uris: [] },
+        oauth_tokens: { issuer: issuer(), access_token: makeJWT({ aud: agentUrl() }), refresh_token: 'rt-1' },
+        oauth_client: { issuer: issuer(), client_id: 'c', redirect_uris: [] },
       },
       { allowPrivateIp: true, skipToolCall: true, includeTokens: true }
     );
@@ -505,7 +508,8 @@ describe('runAuthDiagnosis: report shape', () => {
     setHandlers({
       '/.well-known/oauth-protected-resource/mcp': (req, res) =>
         jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [issuer()] }),
-      '/.well-known/oauth-authorization-server': (req, res) => jsonRes(res, 200, { token_endpoint: tokenEndpoint() }),
+      '/.well-known/oauth-authorization-server': (req, res) =>
+        jsonRes(res, 200, { issuer: issuer(), token_endpoint: tokenEndpoint() }),
       '/oauth/token': (req, res) =>
         jsonRes(res, 200, {
           access_token: makeJWT({ aud: agentUrl(), iss: issuer() }),
@@ -525,8 +529,8 @@ describe('runAuthDiagnosis: report shape', () => {
         name: 'test',
         agent_uri: agentUrl(),
         protocol: 'mcp',
-        oauth_tokens: { access_token: makeJWT({ aud: agentUrl() }), refresh_token: 'rt-1' },
-        oauth_client: { client_id: 'test-client', redirect_uris: [] },
+        oauth_tokens: { issuer: issuer(), access_token: makeJWT({ aud: agentUrl() }), refresh_token: 'rt-1' },
+        oauth_client: { issuer: issuer(), client_id: 'test-client', redirect_uris: [] },
       },
       { allowPrivateIp: true }
     );

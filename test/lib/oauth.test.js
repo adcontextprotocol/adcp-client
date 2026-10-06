@@ -453,6 +453,7 @@ describe('MCPOAuthProvider', () => {
     agent.oauth_code_verifier = 'verifier';
 
     const provider = new MCPOAuthProvider({
+      allowInteractiveAuthorization: true,
       agent,
       flowHandler: mockFlowHandler,
       clientMetadata: {
@@ -473,6 +474,7 @@ describe('MCPOAuthProvider', () => {
     agent.oauth_client = { client_id: 'client' };
 
     const provider = new MCPOAuthProvider({
+      allowInteractiveAuthorization: true,
       agent,
       flowHandler: mockFlowHandler,
       clientMetadata: {

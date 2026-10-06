@@ -94,7 +94,8 @@ function makeAgent(overrides = {}) {
     name: 'Test Agent',
     agent_uri: agentUrl(),
     protocol: 'mcp',
-    oauth_client: { client_id: 'pre-registered-client' },
+    // Independently configured fixture issuer, not inferred from discovery.
+    oauth_client: { client_id: 'pre-registered-client', issuer: origin() },
     ...overrides,
   };
 }

@@ -85,6 +85,12 @@ export interface OAuthFlowHandler {
  * Configuration for creating an OAuth provider
  */
 export interface OAuthProviderConfig {
+  /**
+   * Explicitly permit new interactive authorization/registration and automatic
+   * credential invalidation. Default false; CLI factories opt in. Background
+   * clients require owner reauthorization instead of clearing or replacing a grant.
+   */
+  allowInteractiveAuthorization?: boolean;
   /** Agent configuration (tokens will be stored here) */
   agent: AgentConfig;
 
@@ -165,6 +171,7 @@ export class OAuthTimeoutError extends OAuthError {
  */
 export function toMCPTokens(tokens: AgentOAuthTokens): OAuthTokens {
   return {
+    ...(tokens.issuer !== undefined ? { issuer: tokens.issuer } : {}),
     access_token: tokens.access_token,
     refresh_token: tokens.refresh_token,
     token_type: tokens.token_type || 'Bearer',
@@ -178,6 +185,7 @@ export function toMCPTokens(tokens: AgentOAuthTokens): OAuthTokens {
  */
 export function fromMCPTokens(tokens: OAuthTokens): AgentOAuthTokens {
   const result: AgentOAuthTokens = {
+    ...(tokens.issuer !== undefined ? { issuer: tokens.issuer } : {}),
     access_token: tokens.access_token,
     token_type: tokens.token_type,
     scope: tokens.scope,
@@ -201,6 +209,7 @@ export function fromMCPTokens(tokens: OAuthTokens): AgentOAuthTokens {
  */
 export function toMCPClientInfo(client: AgentOAuthClient): OAuthClientInformation {
   return {
+    ...(client.issuer !== undefined ? { issuer: client.issuer } : {}),
     client_id: client.client_id,
     client_secret: client.client_secret,
     client_secret_expires_at: client.client_secret_expires_at,
@@ -212,6 +221,7 @@ export function toMCPClientInfo(client: AgentOAuthClient): OAuthClientInformatio
  */
 export function fromMCPClientInfo(info: OAuthClientInformationFull): AgentOAuthClient {
   return {
+    ...(info.issuer !== undefined ? { issuer: info.issuer } : {}),
     client_id: info.client_id,
     client_secret: info.client_secret,
     client_secret_expires_at: info.client_secret_expires_at,

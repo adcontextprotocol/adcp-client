@@ -199,6 +199,8 @@ export interface DayParting {
  * OAuth tokens for agent authentication
  */
 export interface AgentOAuthTokens {
+  /** Independently trusted authorization-server issuer; preserved on every OAuth save. */
+  issuer?: string;
   /** OAuth access token */
   access_token: string;
   /** OAuth refresh token (for token renewal) */
@@ -217,6 +219,8 @@ export interface AgentOAuthTokens {
  * OAuth client information (from dynamic registration)
  */
 export interface AgentOAuthClient {
+  /** Authorization-server issuer this registration belongs to, including preconfigured clients. */
+  issuer?: string;
   /** OAuth client ID */
   client_id: string;
   /** OAuth client secret (for confidential clients) */

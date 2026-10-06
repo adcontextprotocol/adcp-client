@@ -28,7 +28,7 @@ function createRefreshProvider(issuer) {
       };
     },
     async clientInformation() {
-      return { client_id: 'scoped-fetch-client' };
+      return { client_id: 'scoped-fetch-client', issuer };
     },
     async tokens() {
       return tokens;
@@ -59,7 +59,7 @@ function createOAuthAgent(url, issuer, id = 'scoped-fetch-agent') {
       token_type: 'Bearer',
       issuer,
     },
-    oauth_client: { client_id: 'scoped-fetch-client' },
+    oauth_client: { client_id: 'scoped-fetch-client', issuer },
   };
 }
 
@@ -447,7 +447,7 @@ test('storyboard runner uses the scoped fetcher for OAuth refresh and tool calls
         auth: {
           type: 'oauth',
           tokens: createOAuthAgent(server.url, server.state.origin).oauth_tokens,
-          client: { client_id: 'scoped-fetch-client' },
+          client: { client_id: 'scoped-fetch-client', issuer: server.state.origin },
         },
         transport: { fetchFn },
       });

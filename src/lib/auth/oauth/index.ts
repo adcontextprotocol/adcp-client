@@ -5,7 +5,8 @@
  *
  * @example
  * ```typescript
- * import { MCPOAuthProvider, CLIFlowHandler } from '@adcp/sdk';
+ * import { MCPOAuthProvider, CLIFlowHandler, DEFAULT_CLIENT_METADATA } from '@adcp/sdk/auth';
+ * import type { AgentConfig } from '@adcp/sdk';
  *
  * // Agent config - tokens will be stored here
  * const agent: AgentConfig = {
@@ -13,14 +14,15 @@
  *   name: 'My Agent',
  *   agent_uri: 'https://agent.example.com/mcp',
  *   protocol: 'mcp',
- *   // After OAuth flow completes:
- *   // oauth_tokens: { access_token: '...', refresh_token: '...' }
+ *   // A fresh interactive flow saves issuer-bound tokens here.
  * };
  *
  * // Create provider with CLI flow handler
  * const provider = new MCPOAuthProvider({
+ *   allowInteractiveAuthorization: true,
  *   agent,
  *   flowHandler: new CLIFlowHandler(),
+ *   clientMetadata: DEFAULT_CLIENT_METADATA,
  *   storage: myConfigStorage  // Optional: persists tokens to file/db
  * });
  *
@@ -173,6 +175,7 @@ export function createCLIOAuthProvider(
   };
 
   return new MCPOAuthProvider({
+    allowInteractiveAuthorization: true,
     agent,
     flowHandler,
     storage: options?.storage,
@@ -188,9 +191,10 @@ export function createCLIOAuthProvider(
  * runs, scheduled jobs, and other non-interactive contexts where you've
  * already saved tokens via `createCLIOAuthProvider`.
  *
- * If refresh fails (e.g., the refresh_token is revoked or expired), the
- * MCP SDK will throw `UnauthorizedError` at call time — the caller should
- * treat that as a signal to run `adcp --save-auth <alias> --oauth` and retry.
+ * A failed grant can throw `OAuthError` with `owner_reauthorization_required`;
+ * missing or mismatched issuer bindings throw `oauth_issuer_binding_required`.
+ * The owner can run `adcp <alias> --clear-oauth`, then
+ * `adcp --save-auth <alias> --oauth` to start a fresh browser sign-in.
  */
 export function createNonInteractiveOAuthProvider(
   agent: AgentConfig,
@@ -219,6 +223,7 @@ export function createNonInteractiveOAuthProvider(
   };
 
   return new MCPOAuthProvider({
+    allowInteractiveAuthorization: false,
     agent,
     flowHandler,
     storage: options?.storage,
@@ -264,9 +269,9 @@ export function hasValidOAuthTokens(agent: AgentConfig): boolean {
  * Clear OAuth tokens from an agent config
  */
 export function clearOAuthTokens(agent: AgentConfig): void {
-  delete agent.oauth_tokens;
-  delete agent.oauth_client;
-  delete agent.oauth_code_verifier;
+  agent.oauth_tokens = undefined;
+  agent.oauth_client = undefined;
+  agent.oauth_code_verifier = undefined;
 }
 
 /**

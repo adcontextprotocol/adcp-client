@@ -193,3 +193,9 @@ not use it in production — restarts lose every in-flight flow.
   PRM/agent-URL discovery and clear the persisted `agent.oauth_resource` after
   successful authorization. Omitting `resourceOverride` preserves and reuses
   an existing persisted override.
+
+## Authorization-server issuer bindings
+
+See [OAuth authorization-server binding](OAUTH-ISSUER-BINDING.md) for required
+token/client issuer preservation, pending-flow serialization and the explicit
+owner recovery path for credentials saved before issuer binding was available.
