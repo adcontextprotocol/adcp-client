@@ -4,6 +4,9 @@ const { createServer } = require('node:http');
 const { mkdtemp, rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 
 const { callMCPToolWithOAuth, connectMCP } = require('../../dist/lib/advanced.js');
 const { AdCPClient } = require('../../dist/lib/index.js');
@@ -17,6 +20,7 @@ const {
   createFileOAuthStorage,
   createNonInteractiveOAuthProvider,
 } = require('../../dist/lib/auth/oauth');
+const { createTestClient } = require('../../dist/lib/testing/client.js');
 
 function createRefreshProvider(issuer) {
   let tokens = {
@@ -128,7 +132,7 @@ async function closeServer(server) {
   await new Promise(resolve => server.close(resolve));
 }
 
-async function startOAuthServer(era) {
+async function startOAuthServer(era, refreshToken = 'refresh-token') {
   const state = {
     origin: '',
     tokenCalls: 0,
@@ -208,7 +212,7 @@ async function startOAuthServer(era) {
       }
       json(res, 200, {
         access_token: 'fresh-token',
-        refresh_token: 'refresh-token',
+        refresh_token: refreshToken,
         token_type: 'Bearer',
         expires_in: 3600,
       });
@@ -626,6 +630,88 @@ test('AdCPClient tools/list and OAuth refresh use the scoped fetcher instead of 
   } finally {
     await closeMCPConnections();
     await server.stop();
+  }
+});
+
+test('testing discovery awaits refreshed-token persistence and a fresh background client uses the saved grant', async () => {
+  await closeMCPConnections();
+  const server = await startOAuthServer('modern', 'rotated-synthetic-refresh');
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'testing-oauth-storage-'));
+  const configPath = path.join(directory, 'agent.json');
+  let releaseSave;
+  const saveBarrier = new Promise(resolve => {
+    releaseSave = resolve;
+  });
+  let enterSave;
+  const saveEntered = new Promise(resolve => {
+    enterSave = resolve;
+  });
+  const storage = {
+    async loadAgent(id) {
+      assert.equal(id, 'test');
+      return JSON.parse(await fs.readFile(configPath, 'utf8'));
+    },
+    async saveAgent(agent) {
+      assert.equal(agent.id, 'test');
+      assert.equal(agent.agent_uri, server.url);
+      assert.equal(agent.oauth_client.client_id, 'scoped-fetch-client');
+      // The official provider can persist issuer metadata before refreshing.
+      // Allow that existing grant write; the fresh-token save must still block.
+      if (agent.oauth_tokens.access_token === 'expired-token') {
+        assert.equal(agent.oauth_tokens.refresh_token, 'refresh-token');
+        await fs.writeFile(configPath, JSON.stringify(agent));
+        return;
+      }
+      assert.equal(agent.oauth_tokens.access_token, 'fresh-token');
+      assert.equal(agent.oauth_tokens.refresh_token, 'rotated-synthetic-refresh');
+      enterSave();
+      await saveBarrier;
+      await fs.writeFile(configPath, JSON.stringify(agent));
+    },
+  };
+  try {
+    await withGlobalFetchGuard(async (fetchFn, fetchedUrls) => {
+      const agent = createOAuthAgent(server.url, server.state.origin, 'test');
+      const client = createTestClient(server.url, 'mcp', {
+        auth: { type: 'oauth', tokens: agent.oauth_tokens, client: agent.oauth_client, storage },
+        transport: { trustedFetchFn: fetchFn },
+      });
+      let completed = false;
+      const discovery = client.getAgentInfo().then(result => {
+        completed = true;
+        return result;
+      });
+      await Promise.race([
+        saveEntered,
+        discovery.then(() => {
+          throw new Error('discovery completed without awaiting OAuth storage');
+        }),
+      ]);
+      assert.equal(completed, false, 'discovery must await durable save');
+      releaseSave();
+      const info = await discovery;
+      assert.ok(info.tools.some(tool => tool.name === 'ping'));
+      const saved = await storage.loadAgent('test');
+      assert.equal(saved.oauth_tokens.refresh_token, 'rotated-synthetic-refresh');
+      const next = createTestClient(server.url, 'mcp', {
+        auth: { type: 'oauth', tokens: saved.oauth_tokens, client: saved.oauth_client, storage },
+        transport: { trustedFetchFn: fetchFn },
+      });
+      const result = await next.executeCustomTask('ping', {});
+      assert.equal(result.success, true, JSON.stringify(result.error));
+      assert.equal(result.data.ok, true);
+      assert.ok(fetchedUrls.some(url => url.endsWith('/token')));
+      assert.equal(
+        server.state.refreshCalls,
+        1,
+        'independent client must use persisted access without spending old refresh'
+      );
+    });
+  } finally {
+    releaseSave();
+    await closeMCPConnections();
+    await server.stop();
+    await fs.rm(directory, { recursive: true, force: true });
   }
 });
 

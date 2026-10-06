@@ -174,6 +174,15 @@ export interface TestOptions {
         type: 'oauth';
         tokens: import('../types/adcp').AgentOAuthTokens;
         client?: import('../types/adcp').AgentOAuthClient;
+        /**
+         * Trusted runtime storage for refreshed OAuth configuration. Bound before
+         * client normalization; never sent to the agent. The adapter receives
+         * the testing client's ID (`test`), so capture any database context or
+         * tenant identity in the adapter itself. Shared clients require the
+         * same adapter object. Persistence alone does not coordinate concurrent
+         * refreshes of a rotating grant.
+         */
+        storage?: import('../auth/oauth/types').OAuthConfigStorage;
       }
     | {
         type: 'oauth_client_credentials';
