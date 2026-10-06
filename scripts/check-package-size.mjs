@@ -24,7 +24,10 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // compressed (20,022,298 bytes on main versus 20,027,281 with the fix), without
 // adding published files. Allow that growth while retaining the same margin;
 // schema-sync skill snapshots are excluded and all other budgets stay fixed.
-const MAX_PACKED_TARBALL_BYTES = 20_030_000;
+// Bounded validation diagnostics add two internal module/declaration sets and
+// enlarge the shared dispatcher bundles. The measured tarball is 20,032,303
+// bytes; allow 10 KB for this change and compressor variance.
+const MAX_PACKED_TARBALL_BYTES = 20_040_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -119,8 +122,37 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // The 14.0-to-14.1 upgrade checklist adds one packaged Markdown guide (+1);
 // every byte budget stays fixed.
 // Storage-independent wholesale mirrors add one module set and one buyer guide (+5 files).
+// Shared JSONPath translation and bounded validation diagnostics add two
+// internal module/declaration sets (+8 files).
 const MAX_PACKED_FILE_COUNT =
-  6_135 + 34 + 4 + 10 + 4 + 4 + 4 + 9 + 16 + 4 + 1 + 5 + 8 + 4 + 4 + 11 + 4 + 13 + 6 + 4 + 39 + 4 + 21 + 4 + 13 + 1 + 5;
+  6_135 +
+  34 +
+  4 +
+  10 +
+  4 +
+  4 +
+  4 +
+  9 +
+  16 +
+  4 +
+  1 +
+  5 +
+  8 +
+  4 +
+  4 +
+  11 +
+  4 +
+  13 +
+  6 +
+  4 +
+  39 +
+  4 +
+  21 +
+  4 +
+  13 +
+  1 +
+  5 +
+  8;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
