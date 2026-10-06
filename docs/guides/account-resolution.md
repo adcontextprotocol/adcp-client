@@ -71,7 +71,7 @@ later occurrences log at debug level. Codes:
 `ADCP_LIST_ACCOUNTS_FILTER_RESOLVED`, and
 `ADCP_IMPLICIT_ACCOUNT_IDENTITY_MISMATCH`.
 
-**Strict mode becomes the default in the next major release.** Opt in now:
+**Strict mode remains an explicit opt-in in SDK 15.** Set `strictAccountReferences: true`:
 
 ```ts
 createAdcpServer({

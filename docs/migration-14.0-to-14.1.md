@@ -56,7 +56,7 @@ single client-credentials refresh attempt.
 |---|---|
 | Buyer account registry | `accountPolicy` remains `'off'`. Set `'auto'` or `'strict'` to enforce setup, or configure registry storage/scope/capacity to opt into memoized `resolveAccount()`. Without opt-in, that helper still sends `sync_accounts` on each call. See [first call to a seller](./guides/FIRST-CALL-TO-A-SELLER.md). |
 | Product cache | Opt in with `createProductCache`. Public and account-scoped responses stay separate; missing `cache_scope` prevents caching. See [buyer setup and caching](./guides/FIRST-CALL-TO-A-SELLER.md). |
-| Strict seller account references | `strictAccountReferences` remains false; compatibility paths warn. Move reference authorization into `resolveAccount`, then set it to true. It becomes the default in the next major release. See [strict account references](./guides/account-resolution.md#strict-account-references-strictaccountreferences). |
+| Strict seller account references | `strictAccountReferences` remains false by default in SDK 15; compatibility paths warn. Move reference authorization into `resolveAccount`, then set it to true to opt in. See [strict account references](./guides/account-resolution.md#strict-account-references-strictaccountreferences). |
 | Additive implicit account sync | `InMemoryImplicitAccountStore` keeps replacement sync semantics and its 24-hour TTL. Set `mergeOnUpsert: true` for additive batches; `delete_missing: true` still requests replacement. Use `remove(ref, ctx)` for individual revocation. |
 
 Account resolvers now receive `ctx.provisioning`. Discovery and negotiation

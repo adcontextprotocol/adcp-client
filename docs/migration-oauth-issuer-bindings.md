@@ -6,7 +6,7 @@ SDK 14.4 upgrades MCP client/server/core to 2.2.0 and requires the legacy
 The transport rejects vulnerable legacy peers even if installation checks were bypassed.
 Node requirements remain `^20.19.0 || >=22.12.0`.
 
-The next major changes direct providers to background by default (explicit
+SDK 15 changes direct providers to background by default (explicit
 interactive opt-in). Adapters built for 14.4's authoritative-absence contract
 must switch tokens, client, verifier and discovery to omission-preserves /
 own-undefined-clears.

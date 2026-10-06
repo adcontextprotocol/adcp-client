@@ -25,9 +25,9 @@ const requiredPeers = Object.entries(pkg.peerDependencies ?? {})
       `| \`${name}\` | \`${range}\` | ${pkg.peerDependenciesMeta?.[name]?.optional === true ? 'Optional' : 'Required'} |`
   )
   .join('\n');
-const document = `# SDK 14 release-bound upgrade worksheet
+const document = `# SDK release-bound upgrade worksheet
 
-This page joins the release facts that adopters need before changing a production pin. It is generated from package and version metadata with \`npm run generate-release-worksheet\`; migration decisions remain documented in [Migrating from 13.x to 14](./migration-13-to-14.md).
+This page joins the release facts that adopters need before changing a production pin. It is generated from package and version metadata with \`npm run generate-release-worksheet\`. Before upgrading to SDK 15, review the [OAuth migration](./migration-oauth-issuer-bindings.md) and [issuer-binding and storage contract](./guides/OAUTH-ISSUER-BINDING.md). The [13.x → 14 migration](./migration-13-to-14.md) remains historical guidance.
 
 ## Release represented by this checkout
 
@@ -43,7 +43,7 @@ below as the publication/deployment gate.
 | Node.js runtime | \`${pkg.engines?.node ?? 'not declared'}\` |
 | Default AdCP wire release | \`${pkg.adcp_version}\` |
 | Maintained wire releases | ${compatibleVersions.map(version => `\`${version}\``).join(', ')} |
-| Canonical migration notes | [13.x → 14](./migration-13-to-14.md) |
+| Canonical migration notes | [SDK 15 OAuth](./migration-oauth-issuer-bindings.md), [issuer-binding and storage](./guides/OAUTH-ISSUER-BINDING.md); historical [13.x → 14](./migration-13-to-14.md) |
 
 Install exact production inputs rather than a moving range or dist-tag:
 

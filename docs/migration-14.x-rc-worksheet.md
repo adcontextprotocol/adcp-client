@@ -1,6 +1,6 @@
-# SDK 14 release-bound upgrade worksheet
+# SDK release-bound upgrade worksheet
 
-This page joins the release facts that adopters need before changing a production pin. It is generated from package and version metadata with `npm run generate-release-worksheet`; migration decisions remain documented in [Migrating from 13.x to 14](./migration-13-to-14.md).
+This page joins the release facts that adopters need before changing a production pin. It is generated from package and version metadata with `npm run generate-release-worksheet`. Before upgrading to SDK 15, review the [OAuth migration](./migration-oauth-issuer-bindings.md) and [issuer-binding and storage contract](./guides/OAUTH-ISSUER-BINDING.md). The [13.x → 14 migration](./migration-13-to-14.md) remains historical guidance.
 
 ## Release represented by this checkout
 
@@ -16,7 +16,7 @@ below as the publication/deployment gate.
 | Node.js runtime | `^20.19.0 || >=22.12.0` |
 | Default AdCP wire release | `3.2.1` |
 | Maintained wire releases | `v2.5`, `v2.6`, `v3`, `3.0.0`, `3.0`, `3.0.1`, `3.0.2`, `3.0.3`, `3.0.4`, `3.0.5`, `3.0.6`, `3.0.7`, `3.0.8`, `3.0.9`, `3.0.10`, `3.0.11`, `3.0.12`, `3.0.13`, `3.0.14`, `3.0.15`, `3.0.16`, `3.0.17`, `3.0.18`, `3.0.19`, `3.0.20`, `3.0.21`, `3.0.22`, `3.0.23`, `3.0.24`, `3.0.25`, `3.1.0`, `3.1`, `3.1.1`, `3.1.2`, `3.1.3`, `3.1.4`, `3.1.5`, `3.1.6`, `3.1.7`, `3.1.8`, `3.1.9`, `3.1.10`, `3.1.11`, `3.1.12`, `3.1.13`, `3.1.14`, `3.1.15`, `3.1.16`, `3.1.17`, `3.1.18`, `3.1.19`, `3.1.20`, `3.1.21`, `3.1.22`, `3.1.23`, `3.1.24`, `3.2.1`, `3.2` |
-| Canonical migration notes | [13.x → 14](./migration-13-to-14.md) |
+| Canonical migration notes | [SDK 15 OAuth](./migration-oauth-issuer-bindings.md), [issuer-binding and storage](./guides/OAUTH-ISSUER-BINDING.md); historical [13.x → 14](./migration-13-to-14.md) |
 
 Install exact production inputs rather than a moving range or dist-tag:
 
