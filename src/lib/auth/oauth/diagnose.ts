@@ -15,6 +15,7 @@
  */
 import { ssrfSafeFetch, decodeBodyAsJsonOrText, SsrfRefusedError } from '../../net';
 import type { AgentConfig } from './types';
+import { assertOAuthCredentialIssuer, assertOAuthServerIssuer, OAuthError } from './types';
 import { decodeAccessTokenClaims, parseWWWAuthenticate, validateTokenAudience } from './diagnostics';
 import type { DecodedAccessToken } from './diagnostics';
 
@@ -168,6 +169,18 @@ export async function runAuthDiagnosis(
   if (!options.skipRefresh && agent.oauth_tokens?.refresh_token) {
     const tokenEndpoint = extractTokenEndpoint(asCapture);
     const clientId = agent.oauth_client?.client_id;
+    let issuerError: string | undefined;
+    if (tokenEndpoint && clientId) {
+      try {
+        const issuer = new URL(extractIssuer(prmCapture) ?? '').toString();
+        assertOAuthServerIssuer(asCapture.body as { issuer?: unknown } | undefined, issuer);
+        assertOAuthCredentialIssuer(agent.oauth_tokens, issuer, true);
+        assertOAuthCredentialIssuer(agent.oauth_client!, issuer, !!agent.oauth_client?.client_secret);
+      } catch (error) {
+        issuerError =
+          error instanceof OAuthError ? error.message : 'Authorization-server issuer could not be validated';
+      }
+    }
     // Always request the agent URL as the resource indicator, even if PRM
     // advertises something different — a well-behaved client sends what it
     // actually wants to talk to, and using PRM.resource here would cause H2
@@ -183,6 +196,8 @@ export async function runAuthDiagnosis(
         name: 'token_refresh_attempt',
         error: 'No saved oauth_client.client_id — cannot attempt refresh without it',
       });
+    } else if (issuerError) {
+      steps.push({ name: 'token_refresh_attempt', error: issuerError });
     } else {
       const refreshCapture = await attemptTokenRefresh({
         tokenEndpoint,

@@ -371,11 +371,13 @@ describe('MCPOAuthProvider', () => {
     await provider.saveClientInformation({
       client_id: 'test-client-id',
       client_secret: 'test-secret',
+      issuer: 'https://auth.example.com',
     });
 
     const info = await provider.clientInformation();
     assert.strictEqual(info.client_id, 'test-client-id');
     assert.strictEqual(agent.oauth_client.client_id, 'test-client-id');
+    assert.strictEqual(info.issuer, 'https://auth.example.com');
   });
 
   test('returns undefined for tokens when not authenticated', async () => {
@@ -407,12 +409,14 @@ describe('MCPOAuthProvider', () => {
     await provider.saveTokens({
       access_token: 'test-access-token',
       refresh_token: 'test-refresh-token',
+      issuer: 'https://auth.example.com',
       token_type: 'Bearer',
       expires_in: 3600,
     });
 
     const tokens = await provider.tokens();
     assert.strictEqual(tokens.access_token, 'test-access-token');
+    assert.strictEqual(tokens.issuer, 'https://auth.example.com');
     assert.strictEqual(agent.oauth_tokens.access_token, 'test-access-token');
     assert.strictEqual(agent.oauth_code_verifier, undefined); // Cleaned up
   });
@@ -940,6 +944,43 @@ describe('discoverOAuthMetadata', () => {
     assert.strictEqual(metadata, null);
     assert.ok(fetched.length > 0);
     assert.ok(fetched.every(url => new URL(url).hostname === 'example.com'));
+  });
+});
+
+describe('OAuth issuer bindings', () => {
+  test('round-trips token and client issuer through configuration conversions', () => {
+    const tokens = {
+      access_token: 'at',
+      refresh_token: 'rt',
+      token_type: 'Bearer',
+      issuer: 'https://as.example/tenant',
+    };
+    assert.strictEqual(toMCPTokens(fromMCPTokens(tokens)).issuer, tokens.issuer);
+    const client = { client_id: 'cid', client_secret: 'secret', issuer: tokens.issuer };
+    assert.strictEqual(toMCPClientInfo(fromMCPClientInfo(client)).issuer, client.issuer);
+  });
+
+  test('refuses legacy unbound refresh tokens and confidential clients', async () => {
+    const provider = new MCPOAuthProvider({
+      agent: {
+        id: 'legacy',
+        name: 'Legacy',
+        agent_uri: 'https://agent.example/mcp',
+        protocol: 'mcp',
+        oauth_tokens: { access_token: 'at', refresh_token: 'rt' },
+        oauth_client: { client_id: 'cid', client_secret: 'secret' },
+      },
+      flowHandler: {},
+      clientMetadata: DEFAULT_CLIENT_METADATA,
+    });
+    await assert.rejects(
+      () => provider.tokens(),
+      error => error.code === 'oauth_issuer_required'
+    );
+    await assert.rejects(
+      () => provider.clientInformation(),
+      error => error.code === 'oauth_issuer_required'
+    );
   });
 });
 

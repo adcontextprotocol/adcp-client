@@ -39,8 +39,8 @@ describe('createFileOAuthStorage', () => {
       name: 'my-agent',
       agent_uri: 'https://agent.example.com/mcp',
       protocol: 'mcp',
-      oauth_tokens: { access_token: 'at', refresh_token: 'rt', expires_in: 3600 },
-      oauth_client: { client_id: 'cid', redirect_uris: ['http://localhost/cb'] },
+      oauth_tokens: { access_token: 'at', refresh_token: 'rt', expires_in: 3600, issuer: 'https://auth.example.com' },
+      oauth_client: { client_id: 'cid', redirect_uris: ['http://localhost/cb'], issuer: 'https://auth.example.com' },
       oauth_resource: 'https://platform.example.com/',
     });
     const loaded = await storage.loadAgent('my-agent');
@@ -48,6 +48,8 @@ describe('createFileOAuthStorage', () => {
     assert.strictEqual(loaded.agent_uri, 'https://agent.example.com/mcp');
     assert.strictEqual(loaded.oauth_tokens.access_token, 'at');
     assert.strictEqual(loaded.oauth_client.client_id, 'cid');
+    assert.strictEqual(loaded.oauth_tokens.issuer, 'https://auth.example.com');
+    assert.strictEqual(loaded.oauth_client.issuer, 'https://auth.example.com');
     assert.strictEqual(loaded.oauth_resource, 'https://platform.example.com/');
   });
 

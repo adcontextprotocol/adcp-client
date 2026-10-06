@@ -50,7 +50,15 @@ import type {
 } from '@modelcontextprotocol/sdk/shared/auth.js';
 
 import type { AgentConfig, OAuthConfigStorage } from './types';
-import { DEFAULT_CLIENT_METADATA, fromMCPClientInfo, fromMCPTokens, OAuthError, toMCPClientInfo } from './types';
+import {
+  DEFAULT_CLIENT_METADATA,
+  fromMCPClientInfo,
+  fromMCPTokens,
+  OAuthError,
+  toMCPClientInfo,
+  assertOAuthCredentialIssuer,
+  assertOAuthServerIssuer,
+} from './types';
 import { validateOAuthResourceUrl } from './resource-url';
 import { ssrfSafeFetch } from '../../net/ssrf-fetch';
 
@@ -385,6 +393,7 @@ export async function startWebOAuthFlow(opts: StartWebFlowOptions): Promise<Star
   if (!asMetadata) {
     throw new OAuthError(`No OAuth metadata at ${asUrl.toString()}`, 'no_authorization_server_metadata', agent.id);
   }
+  assertOAuthServerIssuer(asMetadata, asUrl.toString());
 
   const resource = resourceOverride
     ? new URL(resourceOverride)
@@ -499,6 +508,12 @@ export async function completeWebOAuthFlow(opts: CompleteWebFlowOptions): Promis
   const asMetadata = await discoverAuthorizationServerMetadata(flow.authorizationServerUrl, {
     fetchFn: guardedFetch,
   });
+  assertOAuthServerIssuer(asMetadata, flow.authorizationServerUrl);
+  assertOAuthCredentialIssuer(
+    flow.clientInformation,
+    flow.authorizationServerUrl,
+    !!flow.clientInformation.client_secret
+  );
 
   let tokens: OAuthTokens;
   try {
@@ -511,6 +526,8 @@ export async function completeWebOAuthFlow(opts: CompleteWebFlowOptions): Promis
       resource: flow.resource ? new URL(flow.resource) : undefined,
       fetchFn: guardedFetch,
     });
+    // The trusted discovery identity binds the result, never a token-response field.
+    tokens = { ...tokens, issuer: flow.authorizationServerUrl };
   } catch (err) {
     throw wrapTokenExchangeError(err);
   }
@@ -783,6 +800,7 @@ async function resolveClientInformation(args: {
   const { agent, agentStorage, asUrl, asMetadata, clientMetadata, fetchFn, allowConfidentialClient } = args;
 
   if (agent.oauth_client) {
+    assertOAuthCredentialIssuer(agent.oauth_client, asUrl.toString(), !!agent.oauth_client.client_secret);
     return toMCPClientInfo(agent.oauth_client);
   }
 
@@ -794,11 +812,12 @@ async function resolveClientInformation(args: {
     );
   }
 
-  const registered: OAuthClientInformationFull = await registerClient(asUrl.toString(), {
+  const registration = await registerClient(asUrl.toString(), {
     metadata: asMetadata,
     clientMetadata,
     fetchFn,
   });
+  const registered: OAuthClientInformationFull = { ...registration, issuer: asUrl.toString() };
 
   if (registered.client_secret && !allowConfidentialClient) {
     throw new ConfidentialClientNotAllowedError(agent.id);

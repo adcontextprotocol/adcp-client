@@ -165,6 +165,7 @@ export class OAuthTimeoutError extends OAuthError {
  */
 export function toMCPTokens(tokens: AgentOAuthTokens): OAuthTokens {
   return {
+    ...(tokens.issuer !== undefined && { issuer: tokens.issuer }),
     access_token: tokens.access_token,
     refresh_token: tokens.refresh_token,
     token_type: tokens.token_type || 'Bearer',
@@ -178,6 +179,7 @@ export function toMCPTokens(tokens: AgentOAuthTokens): OAuthTokens {
  */
 export function fromMCPTokens(tokens: OAuthTokens): AgentOAuthTokens {
   const result: AgentOAuthTokens = {
+    ...(tokens.issuer !== undefined && { issuer: tokens.issuer }),
     access_token: tokens.access_token,
     token_type: tokens.token_type,
     scope: tokens.scope,
@@ -201,6 +203,7 @@ export function fromMCPTokens(tokens: OAuthTokens): AgentOAuthTokens {
  */
 export function toMCPClientInfo(client: AgentOAuthClient): OAuthClientInformation {
   return {
+    ...(client.issuer !== undefined && { issuer: client.issuer }),
     client_id: client.client_id,
     client_secret: client.client_secret,
     client_secret_expires_at: client.client_secret_expires_at,
@@ -212,8 +215,67 @@ export function toMCPClientInfo(client: AgentOAuthClient): OAuthClientInformatio
  */
 export function fromMCPClientInfo(info: OAuthClientInformationFull): AgentOAuthClient {
   return {
+    ...(info.issuer !== undefined && { issuer: info.issuer }),
     client_id: info.client_id,
     client_secret: info.client_secret,
     client_secret_expires_at: info.client_secret_expires_at,
   };
+}
+
+function isOAuthIssuer(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0) return false;
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === 'https:' || url.protocol === 'http:') &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Internal credential-binding guard; old secrets must be migrated from trusted configuration. */
+export function assertOAuthCredentialIssuer(
+  credential: { issuer?: unknown },
+  expectedIssuer?: string,
+  requireIssuer = false
+): void {
+  const issuer = credential.issuer;
+  if (issuer === undefined && !requireIssuer) return;
+  if (!isOAuthIssuer(issuer)) {
+    throw new OAuthError(
+      'Saved OAuth credentials need a valid issuer. Clear them and sign in again, or set their issuer from trusted configuration.',
+      'oauth_issuer_required'
+    );
+  }
+  if (
+    expectedIssuer !== undefined &&
+    issuer !== expectedIssuer &&
+    !(issuer.endsWith('/') && issuer.slice(0, -1) === expectedIssuer) &&
+    !(expectedIssuer.endsWith('/') && expectedIssuer.slice(0, -1) === issuer)
+  ) {
+    throw new OAuthError('OAuth credentials belong to a different authorization server.', 'oauth_issuer_mismatch');
+  }
+}
+
+/** Internal metadata guard, matching the modern MCP SDK's asymmetric issuer-echo rule. */
+export function assertOAuthServerIssuer(
+  metadata: { issuer?: unknown } | undefined,
+  authorizationServerUrl: string
+): void {
+  const issuer = metadata?.issuer;
+  if (
+    !isOAuthIssuer(issuer) ||
+    (issuer !== authorizationServerUrl &&
+      !(authorizationServerUrl.endsWith('/') && issuer === authorizationServerUrl.slice(0, -1)))
+  ) {
+    throw new OAuthError(
+      'Authorization-server metadata does not match the discovered issuer.',
+      'oauth_issuer_mismatch'
+    );
+  }
 }

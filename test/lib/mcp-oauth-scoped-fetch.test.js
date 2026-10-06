@@ -6,6 +6,7 @@ const { callMCPToolWithOAuth, connectMCP } = require('../../dist/lib/advanced.js
 const { AdCPClient } = require('../../dist/lib/index.js');
 const { closeMCPConnections } = require('../../dist/lib/protocols/mcp.js');
 const { runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner.js');
+const { createNonInteractiveOAuthProvider } = require('../../dist/lib/auth/oauth');
 
 function createRefreshProvider(issuer) {
   let tokens = {
@@ -118,7 +119,7 @@ async function closeServer(server) {
 }
 
 async function startOAuthServer(era) {
-  const state = { origin: '', refreshCalls: 0, clientCredentialsCalls: 0, lastRefreshResource: null };
+  const state = { origin: '', tokenCalls: 0, refreshCalls: 0, clientCredentialsCalls: 0, lastRefreshResource: null };
   let modernHandler;
   let closeModernHandler = async () => {};
 
@@ -162,6 +163,7 @@ async function startOAuthServer(era) {
       return;
     }
     if (path === '/token' && req.method === 'POST') {
+      state.tokenCalls++;
       const body = new URLSearchParams(await readBody(req));
       if (body.get('grant_type') === 'refresh_token') {
         assert.equal(body.get('refresh_token'), 'refresh-token');
@@ -285,6 +287,32 @@ async function withGlobalFetchGuard(run) {
     await run(fetchFn, fetchedUrls);
   } finally {
     global.fetch = originalFetch;
+  }
+}
+
+for (const era of ['modern', 'legacy']) {
+  for (const issuer of [undefined, 'https://original-as.example']) {
+    test(`${era} does not forward ${issuer ? 'differently bound' : 'unbound'} stored secrets to a discovered server`, async () => {
+      await closeMCPConnections();
+      const server = await startOAuthServer(era);
+      const agent = createOAuthAgent(server.url, issuer);
+      agent.oauth_client = { client_id: 'scoped-fetch-client', client_secret: 'saved-secret', issuer };
+      const authProvider = createNonInteractiveOAuthProvider(agent, { allowHttp: true });
+      try {
+        await assert.rejects(async () => {
+          if (era === 'modern') {
+            await callMCPToolWithOAuth({ agentUrl: server.url, toolName: 'ping', args: {}, authProvider });
+          } else {
+            const { client } = await connectMCP({ agentUrl: server.url, authProvider });
+            await client.close();
+          }
+        });
+        assert.equal(server.state.tokenCalls, 0, 'no secret-bearing token request may reach the discovered server');
+      } finally {
+        await closeMCPConnections();
+        await server.stop();
+      }
+    });
   }
 }
 

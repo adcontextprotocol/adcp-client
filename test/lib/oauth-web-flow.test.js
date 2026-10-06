@@ -1055,6 +1055,95 @@ describe('PendingWebFlowStore contract (run against any implementation)', () => 
   runContract('InMemoryPendingFlowStore', async () => new InMemoryPendingFlowStore());
 });
 
+describe('web OAuth issuer isolation', () => {
+  test('rejects unbound or differently bound confidential clients before starting a flow', async () => {
+    installStandardASHandlers();
+    for (const issuer of [undefined, 'https://different-as.example']) {
+      await assert.rejects(
+        () =>
+          startWebOAuthFlow({
+            agent: makeAgent({ oauth_client: { client_id: 'cid', client_secret: 'saved-secret', issuer } }),
+            redirectUri: 'http://localhost/callback',
+            pendingFlowStore: new InMemoryPendingFlowStore(),
+          }),
+        error => error.code === (issuer ? 'oauth_issuer_mismatch' : 'oauth_issuer_required')
+      );
+    }
+    assert.strictEqual(state.lastTokenRequest, null);
+    assert.strictEqual(state.lastRegisterRequest, null);
+  });
+
+  test('rejects metadata claiming another issuer before using saved secrets', async () => {
+    installStandardASHandlers();
+    state.handlers['/.well-known/oauth-authorization-server'] = (req, res) =>
+      jsonRes(res, 200, {
+        issuer: 'https://legitimate-as.example',
+        authorization_endpoint: `${origin()}/oauth/authorize`,
+        token_endpoint: `${origin()}/oauth/token`,
+        response_types_supported: ['code'],
+      });
+    await assert.rejects(
+      () =>
+        startWebOAuthFlow({
+          agent: makeAgent({
+            oauth_client: { client_id: 'cid', client_secret: 'saved-secret', issuer: 'https://legitimate-as.example' },
+          }),
+          redirectUri: 'http://localhost/callback',
+          pendingFlowStore: new InMemoryPendingFlowStore(),
+        }),
+      error => error.code === 'oauth_issuer_mismatch'
+    );
+    assert.strictEqual(state.lastTokenRequest, null);
+  });
+
+  test('rejects unbound or differently bound pending clients before direct token exchange', async () => {
+    installStandardASHandlers();
+    for (const issuer of [undefined, 'https://different-as.example']) {
+      const store = new InMemoryPendingFlowStore();
+      const started = await startWebOAuthFlow({
+        agent: makeAgent(),
+        redirectUri: 'http://localhost/callback',
+        pendingFlowStore: store,
+      });
+      const flow = await store.consume(started.state);
+      flow.clientInformation = { client_id: 'cid', client_secret: 'saved-secret', issuer };
+      await store.put(flow);
+      await assert.rejects(
+        () => completeWebOAuthFlow({ state: started.state, code: 'auth-code', pendingFlowStore: store }),
+        error => error.code === (issuer ? 'oauth_issuer_mismatch' : 'oauth_issuer_required')
+      );
+    }
+    assert.strictEqual(state.lastTokenRequest, null);
+  });
+
+  test('binds registered clients and returned tokens to the discovered server', async () => {
+    installStandardASHandlers({
+      registrationEndpoint: true,
+      registrationResponse: { issuer: 'https://wrong-as.example' },
+    });
+    state.handlers['/oauth/token'] = (req, res) =>
+      jsonRes(res, 200, {
+        access_token: 'issued-access',
+        refresh_token: 'issued-refresh',
+        token_type: 'Bearer',
+        issuer: 'https://wrong-as.example',
+      });
+    const agent = makeAgent({ oauth_client: undefined });
+    const storage = { loadAgent: async () => agent, saveAgent: async () => {} };
+    const store = new InMemoryPendingFlowStore();
+    const started = await startWebOAuthFlow({
+      agent,
+      agentStorage: storage,
+      redirectUri: 'http://localhost/callback',
+      pendingFlowStore: store,
+    });
+    assert.strictEqual(agent.oauth_client.issuer, `${origin()}/`);
+    const completed = await completeWebOAuthFlow({ state: started.state, code: 'auth-code', pendingFlowStore: store });
+    assert.strictEqual(completed.tokens.issuer, `${origin()}/`);
+    assert.strictEqual(completed.tokens.refresh_token, 'issued-refresh');
+  });
+});
+
 describe('safeReturnTo', () => {
   test('accepts simple absolute paths', () => {
     assert.strictEqual(safeReturnTo('/dashboard'), '/dashboard');

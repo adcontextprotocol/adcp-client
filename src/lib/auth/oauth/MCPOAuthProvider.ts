@@ -16,7 +16,14 @@ import type {
   OAuthConfigStorage,
   AgentConfig,
 } from './types';
-import { DEFAULT_CLIENT_METADATA, toMCPTokens, fromMCPTokens, toMCPClientInfo, fromMCPClientInfo } from './types';
+import {
+  DEFAULT_CLIENT_METADATA,
+  toMCPTokens,
+  fromMCPTokens,
+  toMCPClientInfo,
+  fromMCPClientInfo,
+  assertOAuthCredentialIssuer,
+} from './types';
 import { randomBytes } from 'crypto';
 import { validateOAuthResourceUrl } from './resource-url';
 
@@ -141,6 +148,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
    */
   async clientInformation(): Promise<OAuthClientInformation | undefined> {
     if (this.agent.oauth_client) {
+      assertOAuthCredentialIssuer(this.agent.oauth_client, undefined, !!this.agent.oauth_client.client_secret);
       return toMCPClientInfo(this.agent.oauth_client);
     }
     return undefined;
@@ -159,6 +167,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
    */
   async tokens(): Promise<OAuthTokens | undefined> {
     if (this.agent.oauth_tokens) {
+      assertOAuthCredentialIssuer(this.agent.oauth_tokens, undefined, !!this.agent.oauth_tokens.refresh_token);
       return toMCPTokens(this.agent.oauth_tokens);
     }
     return undefined;
