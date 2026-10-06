@@ -58,6 +58,8 @@ import type { ValidateFunction } from 'ajv';
 import { resolveAdcpVersion } from '../utils/adcp-version-config';
 
 export * from '../types/schemas.generated';
+export { AgentOAuthClientCredentialsSchema } from '../auth/oauth/client-credentials-schema';
+export type { AgentOAuthClientCredentials } from '../types/adcp';
 export type { PlacementPresentationDocument, PlacementPresentationReference } from '../types/core.generated';
 
 type LooseObjectShapeFor<T extends object> = {

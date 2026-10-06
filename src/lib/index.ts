@@ -1644,6 +1644,7 @@ export {
   type ExchangeClientCredentialsOptions,
   type EnsureClientCredentialsOptions,
   type AgentOAuthClientCredentials,
+  AgentOAuthClientCredentialsSchema,
 } from './auth/oauth';
 
 // ====== VALIDATION ======

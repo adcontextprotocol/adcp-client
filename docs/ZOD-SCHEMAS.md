@@ -41,6 +41,25 @@ if (result.success) {
 
 ## Common Use Cases
 
+### OAuth Client Credentials Configuration
+
+`AgentOAuthClientCredentialsSchema` validates SDK configuration accepted by an API. It is available from `@adcp/sdk`, `@adcp/sdk/auth`, and `@adcp/sdk/schemas`.
+
+```typescript
+import { AgentOAuthClientCredentialsSchema } from '@adcp/sdk/schemas';
+
+const credentials = AgentOAuthClientCredentialsSchema.parse({
+  token_endpoint: 'https://auth.example.com/oauth/token',
+  client_id: 'client-id',
+  client_secret: '$ENV:ADCP_CLIENT_SECRET',
+  scope: 'adcp',
+  resource: ['https://agent.example.com'],
+  auth_method: 'basic',
+});
+```
+
+The schema requires a valid `token_endpoint` URL and non-empty `client_id` and `client_secret` strings. Optional fields are `scope`, `resource` (a string or string array), `audience`, and `auth_method` (`'basic'` or `'body'`). Parsing preserves `$ENV:VAR_NAME` references and leaves omitted fields unset. Token exchange resolves secrets and enforces HTTPS, URL userinfo, and private-address restrictions; this schema validates the configuration shape.
+
 ### API Request Validation
 
 ```typescript

@@ -360,6 +360,7 @@ export {
 // Type re-export — the credentials struct itself lives in the ADCP core types
 // module alongside `AgentOAuthTokens` / `AgentOAuthClient`.
 export type { AgentOAuthClientCredentials } from '../../types/adcp';
+export { AgentOAuthClientCredentialsSchema } from './client-credentials-schema';
 
 // Per-agent storage binding — the bridge that lets `callTool` pick up the
 // caller's chosen `OAuthConfigStorage` without a signature change.

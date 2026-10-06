@@ -27,7 +27,11 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // Bounded validation diagnostics add two internal module/declaration sets and
 // enlarge the shared dispatcher bundles. The measured tarball is 20,032,303
 // bytes; allow 10 KB for this change and compressor variance.
-const MAX_PACKED_TARBALL_BYTES = 20_040_000;
+// AgentOAuthClientCredentialsSchema publishes auth/oauth/client-credentials-schema
+// as CJS + ESM + both declaration flavours (four artifacts, 3,354 unpacked bytes).
+// The measured tarball is 20,040,986 bytes; allow 5 KB for these artifacts and
+// compressor variance. File-count, unpacked, and schema budgets stay fixed.
+const MAX_PACKED_TARBALL_BYTES = 20_045_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
