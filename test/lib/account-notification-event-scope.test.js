@@ -140,6 +140,24 @@ test('mixed batches reject every invalid account and preserve accepted row order
   }
 });
 
+test('diagnostic limits preserve per-account failures beyond 100 invalid entries', async t => {
+  const { call, calls } = fixture(t);
+  const invalid = Array.from({ length: 150 }, (_, index) => entry(['scheduled'], `invalid-${index}`));
+  const valid = entry(['product.updated'], 'valid-sibling');
+  const response = await call(request([...invalid, valid]));
+  assert.notEqual(response.isError, true, JSON.stringify(response.structuredContent));
+  assert.equal(response.structuredContent.accounts.length, 151);
+  for (let index = 0; index < invalid.length; index++) {
+    const row = response.structuredContent.accounts[index];
+    assert.equal(row.brand.domain, invalid[index].brand.domain);
+    assert.equal(row.action, 'failed');
+    assert.equal(row.errors[0].code, 'VALIDATION_ERROR');
+    assert.equal(row.errors[0].field, 'notification_configs[0].event_types[0]');
+  }
+  assert.equal(response.structuredContent.accounts[150].action, 'updated');
+  assert.deepEqual(calls[0].accounts, [valid]);
+});
+
 test('settings-update account references and original event indexes survive rejection', async t => {
   const { call, calls } = fixture(t);
   const account = entry(['product.updated', 'scheduled', 'capabilities.changed']);

@@ -790,7 +790,7 @@
     "js-yaml": "^4.1.1",
     "@apidevtools/json-schema-ref-parser@^15.0.0": {
       ".": "$@apidevtools/json-schema-ref-parser",
-      "js-yaml": "^5.2.2"
+      "js-yaml": "^5.4.3"
     },
     "@changesets/parse": {
       "js-yaml": "^3.15.2"

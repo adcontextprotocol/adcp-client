@@ -5,6 +5,8 @@
 
 import { ValidationError } from '../errors';
 import { formatDiscriminator, type ValidationIssue } from './schema-validator';
+import { jsonPointerToJsonPathLite } from '../utils/pointer-utils';
+import { boundValidationIssues, validationDiagnosticsTruncated } from './diagnostic-limits';
 
 /**
  * Build the `(schema: …; discriminator: …)` suffix for a single issue's
@@ -28,8 +30,9 @@ export interface ValidationErrorDetails {
   tool: string;
   /** Which side of the exchange — request (outgoing) or response (incoming). */
   side: 'request' | 'response';
-  /** All failures, each with a JSON Pointer to the bad field. */
+  /** Bounded failures, each with a JSON Pointer to the bad field. */
   issues: ValidationIssue[];
+  issues_truncated?: boolean;
 }
 
 /**
@@ -43,13 +46,19 @@ export function buildValidationError(
   side: 'request' | 'response',
   issues: ValidationIssue[]
 ): ValidationError {
+  issues = boundValidationIssues(issues);
   const first = issues[0];
   const field = first?.pointer ?? '/';
   const constraint = first
     ? `${first.keyword}: ${first.message}${buildIssueProseSuffix(first, undefined)}`
     : 'schema validation failed';
   const err = new ValidationError(field, undefined, `${tool} ${side}: ${constraint}`);
-  err.details = { tool, side, issues } satisfies ValidationErrorDetails;
+  err.details = {
+    tool,
+    side,
+    issues,
+    ...(validationDiagnosticsTruncated(issues) && { issues_truncated: true }),
+  } satisfies ValidationErrorDetails;
   return err;
 }
 
@@ -66,6 +75,7 @@ export interface AdcpValidationErrorDetails {
   tool: string;
   side: 'request' | 'response';
   issues: Array<Omit<ValidationIssue, 'schemaPath'> & { schemaPath?: string }>;
+  issues_truncated?: boolean;
 }
 
 /**
@@ -98,6 +108,7 @@ export function buildAdcpValidationErrorPayload(
   issues: Array<Omit<ValidationIssue, 'schemaPath'> & { schemaPath?: string }>;
   details: Record<string, unknown>;
 } {
+  issues = boundValidationIssues(issues);
   const first = issues[0];
   let message: string;
   if (first != null) {
@@ -140,11 +151,14 @@ export function buildAdcpValidationErrorPayload(
   } = {
     message,
     issues: emittedIssues,
-    details: { tool, side, issues: emittedIssues } satisfies AdcpValidationErrorDetails as unknown as Record<
-      string,
-      unknown
-    >,
+    details: {
+      tool,
+      side,
+      issues: emittedIssues,
+      ...(validationDiagnosticsTruncated(issues) && { issues_truncated: true }),
+    } satisfies AdcpValidationErrorDetails as unknown as Record<string, unknown>,
   };
-  if (first?.pointer) payload.field = first.pointer;
+  const field = first && jsonPointerToJsonPathLite(first.pointer);
+  if (field !== undefined) payload.field = field;
   return payload;
 }
