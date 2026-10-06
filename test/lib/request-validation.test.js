@@ -5,7 +5,7 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
 // Import from built dist
-const { AdCPClient, ProtocolClient } = require('../../dist/lib/index.js');
+const { AdCPClient, ProtocolClient, ADCPValidationError } = require('../../dist/lib/index.js');
 
 describe('SingleAgentClient Request Validation', () => {
   const mockAgent = {
@@ -23,6 +23,7 @@ describe('SingleAgentClient Request Validation', () => {
       await assert.rejects(
         async () => {
           await agent.syncCreatives({
+            account: { account_id: 'test-account' },
             creatives: [
               {
                 creative_id: 'test',
@@ -40,9 +41,16 @@ describe('SingleAgentClient Request Validation', () => {
           });
         },
         err => {
-          return err.message.includes('Request validation failed for sync_creatives');
+          return (
+            err instanceof ADCPValidationError &&
+            err.code === 'VALIDATION_ERROR' &&
+            err.field === 'creatives.0.assets' &&
+            err.value === undefined &&
+            err.message.includes('Request validation failed for sync_creatives') &&
+            err.message.includes('assets')
+          );
         },
-        'Should throw validation error for assets as array'
+        'Should throw a structured validation error for assets as array'
       );
     });
 
@@ -102,9 +110,16 @@ describe('SingleAgentClient Request Validation', () => {
           });
         },
         err => {
-          return err.message.includes('Request validation failed for create_media_buy');
+          return (
+            err instanceof ADCPValidationError &&
+            err.code === 'VALIDATION_ERROR' &&
+            err.field === 'end_time' &&
+            err.value === undefined &&
+            err.message.includes('Request validation failed for create_media_buy') &&
+            err.message.includes('end_time')
+          );
         },
-        'Should throw validation error when end_time is missing'
+        'Should throw a structured validation error when end_time is missing'
       );
     });
 

@@ -140,6 +140,7 @@ import {
   FeatureUnsupportedError,
   ProtocolFeatureUnsupportedError,
   TaskTimeoutError,
+  ValidationError,
   VersionUnsupportedError,
   is401Error,
 } from '../errors';
@@ -10162,7 +10163,12 @@ export class SingleAgentClient {
     const result = schema.safeParse(params);
     if (!result.success) {
       const issues = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
-      throw new Error(`Request validation failed for ${taskType}: ${issues}`);
+      const field = result.error.issues[0]?.path.join('.') || taskType;
+      const error = new ValidationError(field, undefined, `${taskType}: ${issues}`);
+      // Preserve the existing message contract for callers while adding a
+      // stable error class and code that do not require parsing this text.
+      error.message = `Request validation failed for ${taskType}: ${issues}`;
+      throw error;
     }
   }
 
