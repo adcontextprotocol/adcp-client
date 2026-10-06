@@ -387,35 +387,49 @@ for (const era of ['modern', 'legacy']) {
     }
   });
 
-  test(`${era} rediscovery recovers after a rejected noninteractive AS change`, async () => {
-    const server = await startOAuthServer(era);
-    const attacker = await startOAuthServer(era);
-    const directory = await mkdtemp(join(tmpdir(), 'adcp-issuer-recovery-'));
-    const storage = createFileOAuthStorage({ configPath: join(directory, 'agents.json') });
-    const agent = createOAuthAgent(server.url, server.state.origin, 'issuer-recovery');
-    try {
-      await storage.saveAgent(agent);
-      server.state.authorizationServer = attacker.state.origin;
-      await assert.rejects(
-        () => callWithSavedProvider(era, server, agent, storage),
-        error => error.code === 'interactive_required'
-      );
-      assert.equal(attacker.state.tokenCalls, 0);
-      let reloaded = await storage.loadAgent(agent.id);
-      assert.equal(reloaded.oauth_discovery_state, undefined);
-      assert.equal(reloaded.oauth_code_verifier, undefined);
-      assert.equal(reloaded.oauth_code_verifier, undefined);
-      delete server.state.authorizationServer;
-      assert.equal((await callWithSavedProvider(era, server, reloaded, storage)).content[0].text, 'pong');
-      assert.equal(server.state.refreshCalls, 1);
-      assert.equal(attacker.state.tokenCalls, 0);
-    } finally {
-      await closeMCPConnections();
-      await server.stop();
-      await attacker.stop();
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
+  for (const confidential of [false, true]) {
+    test(`${era} rediscovery recovers after a rejected ${confidential ? 'confidential' : 'public'} AS change`, async () => {
+      const server = await startOAuthServer(era);
+      const attacker = await startOAuthServer(era);
+      const directory = await mkdtemp(join(tmpdir(), 'adcp-issuer-recovery-'));
+      const storage = createFileOAuthStorage({ configPath: join(directory, 'agents.json') });
+      const agent = createOAuthAgent(server.url, server.state.origin, 'issuer-recovery');
+      if (confidential)
+        agent.oauth_client = {
+          client_id: 'scoped-fetch-client',
+          client_secret: 'original-secret',
+          issuer: server.state.origin,
+        };
+      const originalClient = structuredClone(agent.oauth_client);
+      try {
+        await storage.saveAgent(agent);
+        server.state.authorizationServer = attacker.state.origin;
+        await assert.rejects(
+          () => callWithSavedProvider(era, server, agent, storage),
+          error => error.code === 'oauth_issuer_mismatch'
+        );
+        assert.equal(attacker.state.tokenCalls, 0);
+        let reloaded = await storage.loadAgent(agent.id);
+        assert.equal(reloaded.oauth_discovery_state, undefined);
+        assert.equal(reloaded.oauth_code_verifier, undefined);
+        assert.equal(reloaded.oauth_tokens.refresh_token, 'refresh-token');
+        assert.deepEqual(reloaded.oauth_client, originalClient);
+        delete server.state.authorizationServer;
+        assert.equal((await callWithSavedProvider(era, server, reloaded, storage)).content[0].text, 'pong');
+        assert.equal(server.state.refreshCalls, 1);
+        assert.equal(attacker.state.tokenCalls, 0);
+        assert.equal(attacker.state.registrationCalls, 0);
+        const finalClient = (await storage.loadAgent(agent.id)).oauth_client;
+        assert.equal(finalClient.client_id, originalClient.client_id);
+        if (confidential) assert.equal(finalClient.client_secret, originalClient.client_secret);
+      } finally {
+        await closeMCPConnections();
+        await server.stop();
+        await attacker.stop();
+        await rm(directory, { recursive: true, force: true });
+      }
+    });
+  }
 }
 
 for (const era of ['modern', 'legacy']) {
@@ -441,7 +455,7 @@ for (const era of ['modern', 'legacy']) {
                 await client.close();
               }
             },
-            error => error.code === (issuer ? 'interactive_required' : 'oauth_issuer_required')
+            error => error.code === (issuer ? 'oauth_issuer_mismatch' : 'oauth_issuer_required')
           );
           assert.equal(server.state.tokenCalls, 0, 'no secret-bearing token request may reach the discovered server');
         } finally {

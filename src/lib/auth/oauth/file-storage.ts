@@ -70,8 +70,10 @@ export interface FileOAuthStorageOptions {
  *
  * Does NOT touch fields outside the OAuth envelope (`auth_token`, custom
  * fields) when saving — the MCP provider only mutates `oauth_tokens`,
- * `oauth_client`, `oauth_resource`, and `oauth_code_verifier`, and we preserve
- * everything else.
+ * `oauth_client`, `oauth_resource`, `oauth_code_verifier`, and `oauth_discovery_state`.
+ * Those fields are authoritative: an absent value deletes the stored value.
+ * Load the complete agent before constructing a provider; partial snapshots
+ * cannot preserve omitted OAuth fields. Other fields keep merge semantics.
  *
  * @example
  * ```ts

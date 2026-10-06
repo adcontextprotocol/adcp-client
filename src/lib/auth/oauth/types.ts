@@ -24,6 +24,8 @@ export type { AgentConfig, AgentOAuthTokens, AgentOAuthClient };
  * Agent config storage interface
  *
  * Implement this to persist OAuth tokens back to agent configuration.
+ * Round-trip pending `oauth_code_verifier` and `oauth_discovery_state` verbatim,
+ * and remove OAuth fields absent from the authoritative agent snapshot.
  * This allows different storage backends (file, database, memory)
  * while keeping tokens in the agent config structure.
  */

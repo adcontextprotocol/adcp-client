@@ -18,6 +18,13 @@ resource discovery changes while the browser is away. Custom `OAuthConfigStorage
 implementations must preserve `oauth_discovery_state` alongside `oauth_code_verifier`. Web flows
 validate the discovered server's metadata issuer before registration and
 token exchange; diagnostic refreshes validate it before sending credentials.
+The provider refuses a changed authorization server before replacing a trusted
+confidential registration or reusing a refresh token. Clear credentials explicitly
+if an independently verified server migration requires a fresh registration.
+
+File storage saves the OAuth fields as an authoritative snapshot: omitted tokens,
+client, verifier, or discovery state are deleted. Load the complete agent from
+storage before creating a provider; keep unrelated persisted fields as before.
 
 ## Existing saved credentials
 

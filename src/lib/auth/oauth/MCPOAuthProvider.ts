@@ -47,7 +47,8 @@ export function assertLegacyOAuthSdk(): void {
         'mcp_oauth_sdk_upgrade_required'
       );
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof OAuthError) throw error;
     throw new OAuthError(
       'Cannot verify a patched legacy MCP SDK. Install @modelcontextprotocol/sdk ^1.31.0 and keep it external when bundling.',
       'mcp_oauth_sdk_upgrade_required'
@@ -230,6 +231,14 @@ export class MCPOAuthProvider implements OAuthClientProvider {
 
   /** Persist the authorization-server identity across the callback leg. */
   async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
+    const issuer = String(state.authorizationServerUrl);
+    // Refuse a changed AS before upstream can replace a trusted registration.
+    if (this.agent.oauth_tokens?.refresh_token) {
+      assertOAuthCredentialIssuer(this.agent.oauth_tokens, issuer, true);
+    }
+    if (this.agent.oauth_client?.client_secret) {
+      assertOAuthCredentialIssuer(this.agent.oauth_client, issuer, true);
+    }
     this.agent.oauth_discovery_state = state;
     await this.persistAgent();
   }
