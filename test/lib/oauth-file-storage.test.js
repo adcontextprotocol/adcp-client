@@ -12,7 +12,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
 
-const { createFileOAuthStorage } = require('../../dist/lib/auth/oauth');
+const { MCPOAuthProvider, createFileOAuthStorage } = require('../../dist/lib/auth/oauth');
 
 let tmpDir;
 let configPath;
@@ -69,6 +69,30 @@ describe('createFileOAuthStorage', () => {
     const loaded = await storage.loadAgent('my-agent');
     assert.strictEqual(loaded.oauth_resource, undefined);
   });
+
+  for (const scope of ['all', 'tokens', 'client', 'verifier', 'discovery']) {
+    test(`provider invalidation of ${scope} survives a file reload`, async () => {
+      const storage = createFileOAuthStorage({ configPath });
+      const agent = {
+        id: 'clear-agent',
+        name: 'Clear agent',
+        agent_uri: 'https://agent.example/mcp',
+        protocol: 'mcp',
+        oauth_tokens: { access_token: 'at', refresh_token: 'rt', issuer: 'https://auth.example' },
+        oauth_client: { client_id: 'cid', client_secret: 'secret', issuer: 'https://auth.example' },
+        oauth_code_verifier: 'verifier',
+        oauth_discovery_state: { authorizationServerUrl: 'https://auth.example' },
+      };
+      await storage.saveAgent(agent);
+      const provider = new MCPOAuthProvider({ agent, storage, flowHandler: {}, clientMetadata: {} });
+      if (scope === 'all') await provider.clearAuth();
+      else await provider.invalidateCredentials(scope);
+      const loaded = await storage.loadAgent(agent.id);
+      for (const key of ['oauth_tokens', 'oauth_client', 'oauth_code_verifier', 'oauth_discovery_state']) {
+        assert.deepStrictEqual(loaded[key], agent[key], `${key} must match after durable invalidation`);
+      }
+    });
+  }
 
   test('preserves unrelated fields (e.g. auth_token) across saves', async () => {
     // Pre-seed the file with a saved agent that has a static auth_token.

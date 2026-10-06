@@ -35,14 +35,21 @@ import { validateOAuthResourceUrl } from './resource-url';
 let legacyOAuthSdkChecked = false;
 export function assertLegacyOAuthSdk(): void {
   if (legacyOAuthSdkChecked) return;
-  const clientPath = createRequire(resolve(__dirname, 'MCPOAuthProvider.js')).resolve(
-    '@modelcontextprotocol/sdk/client/index.js'
-  );
-  const { version } = JSON.parse(readFileSync(resolve(dirname(clientPath), '../../../package.json'), 'utf8'));
-  const match = typeof version === 'string' && /^1\.(\d+)\.\d+$/.exec(version);
-  if (!match || Number(match[1]) < 31) {
+  try {
+    const clientPath = createRequire(resolve(__dirname, 'MCPOAuthProvider.js')).resolve(
+      '@modelcontextprotocol/sdk/client/index.js'
+    );
+    const { version } = JSON.parse(readFileSync(resolve(dirname(clientPath), '../../../package.json'), 'utf8'));
+    const match = typeof version === 'string' && /^1\.(\d+)\.\d+$/.exec(version);
+    if (!match || Number(match[1]) < 31) {
+      throw new OAuthError(
+        'Legacy MCP OAuth requires @modelcontextprotocol/sdk >=1.31.0 within major 1. Upgrade the installed peer dependency.',
+        'mcp_oauth_sdk_upgrade_required'
+      );
+    }
+  } catch {
     throw new OAuthError(
-      'Legacy MCP OAuth requires @modelcontextprotocol/sdk >=1.31.0 within major 1. Upgrade the installed peer dependency.',
+      'Cannot verify a patched legacy MCP SDK. Install @modelcontextprotocol/sdk ^1.31.0 and keep it external when bundling.',
       'mcp_oauth_sdk_upgrade_required'
     );
   }
@@ -213,7 +220,12 @@ export class MCPOAuthProvider implements OAuthClientProvider {
    * Redirect user to authorization URL
    */
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
-    await this.flowHandler.redirectToAuthorization(authorizationUrl);
+    try {
+      await this.flowHandler.redirectToAuthorization(authorizationUrl);
+    } catch (error) {
+      await this.invalidateCredentials('verifier');
+      throw error;
+    }
   }
 
   /** Persist the authorization-server identity across the callback leg. */
@@ -223,7 +235,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
-    return this.agent.oauth_discovery_state;
+    return this.agent.oauth_code_verifier ? this.agent.oauth_discovery_state : undefined;
   }
 
   /**
@@ -252,7 +264,9 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   /**
    * Invalidate credentials when server indicates they're invalid
    */
-  async invalidateCredentials(scope: 'all' | 'client' | 'tokens' | 'verifier'): Promise<void> {
+  async invalidateCredentials(
+    scope: Parameters<NonNullable<OAuthClientProvider['invalidateCredentials']>>[0]
+  ): Promise<void> {
     switch (scope) {
       case 'all':
         delete this.agent.oauth_discovery_state;
@@ -266,6 +280,9 @@ export class MCPOAuthProvider implements OAuthClientProvider {
       case 'client':
         delete this.agent.oauth_discovery_state;
         delete this.agent.oauth_client;
+        break;
+      case 'discovery':
+        delete this.agent.oauth_discovery_state;
         break;
       case 'verifier':
         delete this.agent.oauth_discovery_state;

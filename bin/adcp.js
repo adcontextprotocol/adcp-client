@@ -1386,9 +1386,7 @@ async function ensureOAuthTokensForAlias(alias, url, { quiet = false, allowHttp 
     return existing;
   }
 
-  // Spread the in-flight PKCE verifier too: if a prior attempt crashed mid-
-  // flow the verifier lives on the saved record, and without it the MCP SDK
-  // throws "No PKCE code verifier found" when the AS redirects back.
+  // A fresh login starts a new PKCE leg and rediscovers the authorization server.
   const tempAgent = {
     id: alias,
     name: alias,
@@ -1396,8 +1394,6 @@ async function ensureOAuthTokensForAlias(alias, url, { quiet = false, allowHttp 
     protocol: 'mcp',
     ...(existing?.oauth_client && { oauth_client: existing.oauth_client }),
     ...(existing?.oauth_tokens && { oauth_tokens: existing.oauth_tokens }),
-    ...(existing?.oauth_code_verifier && { oauth_code_verifier: existing.oauth_code_verifier }),
-    ...(existing?.oauth_discovery_state && { oauth_discovery_state: existing.oauth_discovery_state }),
   };
 
   const { Client: MCPClient } = require('@modelcontextprotocol/sdk/client/index.js');

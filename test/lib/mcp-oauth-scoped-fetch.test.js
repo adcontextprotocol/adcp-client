@@ -10,6 +10,9 @@ const { AdCPClient } = require('../../dist/lib/index.js');
 const { closeMCPConnections } = require('../../dist/lib/protocols/mcp.js');
 const { runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner.js');
 const {
+  startWebOAuthFlow,
+  completeWebOAuthFlow,
+  InMemoryPendingFlowStore,
   MCPOAuthProvider,
   createFileOAuthStorage,
   createNonInteractiveOAuthProvider,
@@ -320,6 +323,101 @@ async function withGlobalFetchGuard(run) {
   }
 }
 
+async function callWithSavedProvider(era, server, agent, storage) {
+  const authProvider = createNonInteractiveOAuthProvider(agent, { storage, allowHttp: true });
+  if (era === 'modern')
+    return callMCPToolWithOAuth({
+      agentUrl: server.url,
+      toolName: 'ping',
+      args: {},
+      authProvider,
+      allowPrivateIp: true,
+    });
+  const { client } = await connectMCP({ agentUrl: server.url, authProvider, allowPrivateIp: true });
+  try {
+    return await client.callTool({ name: 'ping', arguments: {} });
+  } finally {
+    await client.close();
+  }
+}
+
+for (const era of ['modern', 'legacy']) {
+  test(`${era} refreshes web-flow credentials with a trailing-slash issuer`, async () => {
+    const server = await startOAuthServer(era);
+    const directory = await mkdtemp(join(tmpdir(), 'adcp-web-issuer-'));
+    const storage = createFileOAuthStorage({ configPath: join(directory, 'agents.json') });
+    const agent = {
+      id: 'web-refresh',
+      name: 'Web refresh',
+      protocol: 'mcp',
+      agent_uri: server.url,
+      oauth_client: { client_id: 'web-client' },
+    };
+    const pendingFlowStore = new InMemoryPendingFlowStore();
+    try {
+      await storage.saveAgent(agent);
+      const flow = await startWebOAuthFlow({
+        agent,
+        agentStorage: storage,
+        pendingFlowStore,
+        redirectUri: 'http://127.0.0.1/oauth/callback',
+        allowHttp: true,
+      });
+      await completeWebOAuthFlow({
+        state: flow.state,
+        expectedState: flow.state,
+        code: 'authorization-code',
+        agentStorage: storage,
+        pendingFlowStore,
+        allowHttp: true,
+      });
+      let reloaded = await storage.loadAgent(agent.id);
+      assert.equal(reloaded.oauth_tokens.issuer, `${server.state.origin}/`);
+      reloaded.oauth_tokens.access_token = 'expired-token';
+      await storage.saveAgent(reloaded);
+      assert.equal((await callWithSavedProvider(era, server, reloaded, storage)).content[0].text, 'pong');
+      assert.equal(server.state.refreshCalls, 1);
+      reloaded = await storage.loadAgent(agent.id);
+      assert.equal((await callWithSavedProvider(era, server, reloaded, storage)).content[0].text, 'pong');
+      assert.equal(server.state.refreshCalls, 1);
+    } finally {
+      await closeMCPConnections();
+      await server.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test(`${era} rediscovery recovers after a rejected noninteractive AS change`, async () => {
+    const server = await startOAuthServer(era);
+    const attacker = await startOAuthServer(era);
+    const directory = await mkdtemp(join(tmpdir(), 'adcp-issuer-recovery-'));
+    const storage = createFileOAuthStorage({ configPath: join(directory, 'agents.json') });
+    const agent = createOAuthAgent(server.url, server.state.origin, 'issuer-recovery');
+    try {
+      await storage.saveAgent(agent);
+      server.state.authorizationServer = attacker.state.origin;
+      await assert.rejects(
+        () => callWithSavedProvider(era, server, agent, storage),
+        error => error.code === 'interactive_required'
+      );
+      assert.equal(attacker.state.tokenCalls, 0);
+      let reloaded = await storage.loadAgent(agent.id);
+      assert.equal(reloaded.oauth_discovery_state, undefined);
+      assert.equal(reloaded.oauth_code_verifier, undefined);
+      assert.equal(reloaded.oauth_code_verifier, undefined);
+      delete server.state.authorizationServer;
+      assert.equal((await callWithSavedProvider(era, server, reloaded, storage)).content[0].text, 'pong');
+      assert.equal(server.state.refreshCalls, 1);
+      assert.equal(attacker.state.tokenCalls, 0);
+    } finally {
+      await closeMCPConnections();
+      await server.stop();
+      await attacker.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+}
+
 for (const era of ['modern', 'legacy']) {
   for (const confidential of [false, true]) {
     for (const issuer of [undefined, 'https://original-as.example']) {
@@ -420,6 +518,7 @@ for (const era of ['modern', 'legacy']) {
       assert.equal(new URL(reloaded.oauth_tokens.issuer).origin, server.state.origin);
       assert.equal(reloaded.oauth_tokens.access_token, 'fresh-token');
       assert.equal(reloaded.oauth_discovery_state, undefined);
+      assert.equal(reloaded.oauth_code_verifier, undefined);
       assert.equal((await call(reloaded)).content[0].text, 'pong');
       assert.equal(server.state.refreshCalls, 1);
       assert.equal(server.state.tokenCalls, 2);

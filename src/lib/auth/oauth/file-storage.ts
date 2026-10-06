@@ -149,6 +149,9 @@ export function createFileOAuthStorage(options: FileOAuthStorageOptions): OAuthC
           : {}),
         ...(agent.oauth_code_verifier !== undefined ? { oauth_code_verifier: agent.oauth_code_verifier } : {}),
       };
+      if (agent.oauth_tokens === undefined) delete next.oauth_tokens;
+      if (agent.oauth_client === undefined) delete next.oauth_client;
+      if (agent.oauth_code_verifier === undefined) delete next.oauth_code_verifier;
       if (agent.oauth_discovery_state === undefined) delete next.oauth_discovery_state;
       else next.oauth_discovery_state = agent.oauth_discovery_state;
       if (agent.oauth_resource === undefined) delete next.oauth_resource;

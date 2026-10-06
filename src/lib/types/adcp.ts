@@ -480,7 +480,7 @@ export interface AgentConfig {
    */
   oauth_code_verifier?: string;
 
-  /** Authorization-server discovery paired with the pending PKCE verifier. @internal */
+  /** Opaque discovery state paired with the pending PKCE verifier; persist and return verbatim. */
   oauth_discovery_state?: import('@modelcontextprotocol/sdk/client/auth.js').OAuthDiscoveryState;
 
   /**
