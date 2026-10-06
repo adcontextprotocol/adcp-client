@@ -5,6 +5,7 @@ const { spawnSync } = require('node:child_process');
 const path = require('node:path');
 
 const ROOT = path.resolve(__dirname, '../..');
+const SDK_MAJOR = Number(JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version.split('.')[0]);
 const CLI = path.join(ROOT, 'bin', 'adcp.js');
 const TEST_TMP_ROOT = path.join(ROOT, 'tmp');
 
@@ -427,7 +428,7 @@ test('memory scaffold doctor succeeds with explicit development warnings', () =>
     assert.equal(initialized.status, 0, initialized.stderr || initialized.stdout);
     const installedSdkDir = path.join(dir, 'node_modules', '@adcp', 'sdk');
     mkdirSync(installedSdkDir, { recursive: true });
-    writeFileSync(path.join(installedSdkDir, 'package.json'), JSON.stringify({ version: '14.0.0-rc.1' }));
+    writeFileSync(path.join(installedSdkDir, 'package.json'), JSON.stringify({ version: `${SDK_MAJOR}.0.0-rc.1` }));
     const result = run(['doctor', '--dir', dir, '--json'], {
       ADCP_AUTH_TOKEN: 'local-test-token',
       ADCP_ACCOUNT_ID: 'local-test-account',
@@ -436,6 +437,11 @@ test('memory scaffold doctor succeeds with explicit development warnings', () =>
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const report = JSON.parse(result.stdout);
     assert.equal(report.ok, true);
+    assert.equal(report.checks.find(check => check.name === 'SDK schema drift').status, 'pass');
+    assert.equal(
+      report.checks.find(check => check.name === 'SDK installation').detail,
+      `@adcp/sdk ${SDK_MAJOR}.0.0-rc.1`
+    );
     assert.ok(report.checks.some(check => check.name === 'product catalog' && check.status === 'warn'));
     assert.ok(report.checks.some(check => check.name === 'durable backend' && check.status === 'warn'));
   } finally {
