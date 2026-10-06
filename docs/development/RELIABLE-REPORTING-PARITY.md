@@ -76,6 +76,41 @@ network object-store authentication or provider integration. The historical
 fixture gets a per-run recovery window so PostgreSQL's current clock does not
 make an immutable report overdue before its receipt can be submitted.
 
+The [2026-10-06 GCS supplement](reporting-gcs-qualification.json) records twelve
+additional passing native HTTPS reader/inspector checks: positive inspection,
+physical object tampering, and retained-token IAM revocation, each in TypeScript
+on Node `20.19.0` and `24.19.0` and in installed Python SDK `adcp==8.0.0` against both
+namespaces. All contracts, manifests, and rows travel over real GCS public
+TLS/DNS. A keyless service account has conditional read-only access to the test
+prefix; anonymous reads and reads of an owner-verified sibling-prefix object
+are denied with 403. An operator-owned Cloud Storage client also observes write
+denial for the read-only identity.
+Both inspectors verify the canonical row digest, construct an accepted receipt,
+and reject changed GCS row bytes; the SDK HTTPS readers enforce byte limits.
+Removing the reader's
+bucket grant denies its unchanged, unexpired token for all five objects in each
+namespace while the owner can still read their original bytes. The operator's
+observed revocation latency is one measurement,
+not a production SLA. The temporary bucket and reader identity are removed.
+
+This supplements the archived local runtime gates; it does not replace their
+inputs or exercise a managed-runtime GCS transfer adapter, seller write-generation
+fencing, production deployment isolation, or a published TypeScript release.
+The optional [GCS inspection controls](../../scripts/reporting-interop/GCS.md)
+describe the private inputs and phase sequencing; they do not provision cloud
+resources or run in ordinary CI.
+
+TypeScript fetches private contract references through a worker-supplied resolver
+over the SDK HTTPS reader; that resolver checks their hashes. Python's inspector
+performs those contract-hash checks itself. The TypeScript default canonical
+reference resolver does not accept reporting credentials, so its authenticated
+contract path remains unqualified. Manifest, physical row, and canonical row
+digests are checked by the SDK inspectors in both languages. For HTTP 403,
+TypeScript reports `RESOURCE_READ_FAILED` and Python reports `RESOURCE_UNAVAILABLE`.
+The TypeScript origin control checks credential binding; Python checks refusal
+of an untrusted origin (`UNSAFE_RESOURCE`). These controls exercise different
+origin policies and report distinct local error codes.
+
 The billing buyer drops the response after an actual receipt commit, closes its
 client, and repairs through a fresh official client reading authoritative seller
 state. The integrated adjustment control additionally composes Python's separate
