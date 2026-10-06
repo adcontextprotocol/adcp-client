@@ -1,5 +1,35 @@
 # Changelog
 
+## 14.3.0
+
+### Minor Changes
+
+- d403f99: Accept AdCP's named canonicalization golden vectors when independently inspecting Reliable Reporting manifests, while retaining existing array-shaped contracts. Add installed-artifact Python/TypeScript evidence checks and a PostgreSQL TypeScript-seller/Python-buyer Core, Managed Delivery, and Reconciled Billing interoperability gate.
+
+  Reject duplicate golden-vector names in both contract forms, and require named ordering/encoding cases to exercise row and object-member ordering.
+
+  Reject lone trailing Unicode surrogates and invalid inspection budgets, and avoid including resource references, resolver diagnostics, or numeric row values in inspection errors. Inspection deadlines are cooperative for synchronous work.
+
+  Reject duplicate metric names and conflicts between declared metric units and control-total units. Contain adapter exceptions with stable inspection diagnostics and preserve retry classification without retaining private causes.
+
+  Preserve retries for transient reader, credential, and reference-resolution failures. Skip adapters after the inspection deadline and observe already-started operations so late failures cannot become unhandled rejections. Allow optional control-total units to be supplied by the immutable report definition.
+
+  Reject malformed adapter byte, row, total, and commit-reference results with stable errors. Apply deadlines after synchronous adapters return and sanitize consumer commit-reference failures as `CONSUMER_COMMIT_FAILED`.
+
+  Validate resolver results and checksum algorithms before reading their metadata, and reject non-JSON custom decoder values.
+
+### Patch Changes
+
+- e01ecd8: Name forbidden fields individually when validation rejects a `not.anyOf` presence guard, so buyers can repair package updates. These failures now produce one issue per forbidden field instead of one opaque issue.
+
+  Correct `VALIDATION_ERROR.field` from RFC 6901 to the protocol-required JSONPath-lite notation. Consumers parsing `field` as a JSON Pointer should read `issues[].pointer` instead. Cap each serialized issue list at 100 issues and 64 KiB, and each issue at 8 KiB. Preserve the first omitted failure's schema keyword and bounded pointer, and signal truncation through `details.issues_truncated`. Preserve the full internal `sync_accounts` diagnostic set so valid sibling accounts still succeed in large batches.
+
+  Refresh vulnerable fast-uri, markdown-it, proxy-addr, and nested js-yaml dependencies.
+
+- 932021d: Keep the body-bound request-signing corpus selected for AdCP 3.2 and later, and register the remaining unsigned and malformed-header negative builders. Reject received signed URLs containing raw non-ASCII host bytes with the normative `request_target_uri_malformed` code in every signing profile, before key resolution or replay state changes. Correct the historical vector 026 error-code metadata in a narrowly pinned test assertion without changing published cache bytes. The retained diagnostic step 1 identifies SDK-local raw-authority parsing; checklist step numbering is informational and does not classify this URI failure as malformed signature headers. Preserve signer IDNA normalization and the documented HTTP transport exclusion for the raw U-label fixture.
+
+  Refresh the development and test-server lockfile's Express dependency proxy-addr to 2.0.8 to fix critical IP spoofing through IPv4-mapped IPv6 trust subnets (GHSA-jqcg-44mw-7w3h). Add spoofing regressions with valid IPv4 and IPv6 trust controls. Adopters running Express must update proxy-addr in their own lockfile; the published SDK does not include this lockfile.
+
 ## 14.2.0
 
 ### Minor Changes
