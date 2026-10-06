@@ -398,6 +398,7 @@ describe('MCPOAuthProvider', () => {
     agent.oauth_code_verifier = 'test-verifier';
 
     const provider = new MCPOAuthProvider({
+      allowInteractiveAuthorization: true,
       agent,
       flowHandler: mockFlowHandler,
       clientMetadata: {
@@ -423,6 +424,7 @@ describe('MCPOAuthProvider', () => {
 
   test('saves and retrieves code verifier', async () => {
     const provider = new MCPOAuthProvider({
+      allowInteractiveAuthorization: true,
       agent,
       flowHandler: mockFlowHandler,
       clientMetadata: {
@@ -440,6 +442,7 @@ describe('MCPOAuthProvider', () => {
 
   test('throws when code verifier not saved', async () => {
     const provider = new MCPOAuthProvider({
+      allowInteractiveAuthorization: true,
       agent,
       flowHandler: mockFlowHandler,
       clientMetadata: {
@@ -457,6 +460,7 @@ describe('MCPOAuthProvider', () => {
     agent.oauth_code_verifier = 'verifier';
 
     const provider = new MCPOAuthProvider({
+      allowInteractiveAuthorization: true,
       agent,
       flowHandler: mockFlowHandler,
       clientMetadata: {
@@ -477,6 +481,7 @@ describe('MCPOAuthProvider', () => {
     agent.oauth_client = { client_id: 'client' };
 
     const provider = new MCPOAuthProvider({
+      allowInteractiveAuthorization: true,
       agent,
       flowHandler: mockFlowHandler,
       clientMetadata: {
@@ -664,6 +669,7 @@ describe('MCPOAuthProvider', () => {
     };
 
     const provider = new MCPOAuthProvider({
+      allowInteractiveAuthorization: true,
       agent,
       flowHandler: mockFlowHandler,
       storage: mockStorage,

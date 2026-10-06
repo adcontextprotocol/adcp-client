@@ -1,75 +1,49 @@
-# Web (server-side) OAuth flow
+# Web OAuth
 
-`@adcp/sdk` provides three OAuth flow shapes:
+Use `startWebOAuthFlow` / `completeWebOAuthFlow` in application routes when start
+and callback can hit different processes. `CLIFlowHandler` implements
+`OAuthFlowHandler` for single-process localhost:8766 sign-in;
+`NonInteractiveFlowHandler` is refresh-only for jobs. Web flows span two
+requests and are not an `MCPOAuthProvider` handler.
 
-| Helper                                       | Shape                | When to use                                                                  |
-| -------------------------------------------- | -------------------- | ---------------------------------------------------------------------------- |
-| `CLIFlowHandler`                             | class (`OAuthFlowHandler`) | Single-process loopback (`localhost:8766`) — CLIs and dev tools.       |
-| `NonInteractiveFlowHandler`                  | class (`OAuthFlowHandler`) | Refresh-only contexts — storyboard runs, scheduled jobs, cron.         |
-| `startWebOAuthFlow` / `completeWebOAuthFlow` | standalone functions | **Web servers** where `/oauth/start` and `/oauth/callback` may hit different processes. |
+See [issuer binding](OAUTH-ISSUER-BINDING.md) for credential preservation,
+pending-flow migration and explicit owner recovery.
 
-The web flow is **not** a class implementing `OAuthFlowHandler` — its
-contract spans two HTTP requests and (typically) two processes, which the
-flow-handler interface cannot model. Pass it to your router, not to
-`MCPOAuthProvider`.
+## SDK behavior
 
-## What the SDK handles
-
-1. PRM (`/.well-known/oauth-protected-resource{path}`) discovery.
-2. AS resolution: `prm.authorization_servers[0]` falling back to the agent
-   origin when PRM is genuinely absent (404 — RFC 9728 §3 marks the
-   metadata document as optional). Connection / parse / 5xx errors are
-   surfaced as `ProtectedResourceMetadataError`; we do **not** silently
-   downgrade to local guessing on a transient failure.
-3. Resource indicator: caller `resourceOverride` > `prm.resource` (validated
-   against the agent origin when no trusted override is supplied) >
-   `resourceUrlFromServerUrl(agent.agent_uri)`. Never guessed locally
-   when PRM is present. An explicit override is forwarded during authorization,
-   code exchange, and later refreshes.
-4. Scope: caller `scopeHint` > `prm.scopes_supported` > `clientMetadata.scope`.
-5. Dynamic client registration when the agent has no `oauth_client` and
-   the AS advertises `registration_endpoint`. By default we **reject**
-   registrations that return `client_secret` (i.e. confidential clients);
-   pass `allowConfidentialClient: true` if you intend to persist a
-   long-lived AS credential to your agent storage.
-6. PKCE generation, authorization URL construction, and token exchange via
-   the MCP SDK's `client/auth.js` primitives. Refresh runs through
-   `MCPOAuthProvider` on the next agent call and forwards `resource`
-   automatically.
+- Discover PRM at `/.well-known/oauth-protected-resource{path}`. Use its first
+  authorization server; fall back to agent origin only on absent PRM (404,
+  RFC 9728 §3). Network, parse and other HTTP failures raise
+  `ProtectedResourceMetadataError`, without guessing another server.
+- Resource: `resourceOverride` > validated `prm.resource` >
+  `resourceUrlFromServerUrl(agent.agent_uri)`. Present PRM is authoritative;
+  its resource origin must match the agent unless an explicit or persisted override applies.
+  Forward resource through authorization, exchange and refresh.
+- Scope: `scopeHint` > `prm.scopes_supported` > `clientMetadata.scope`.
+- Register when no client exists and AS advertises `registration_endpoint`.
+  Confidential DCR responses require explicit `allowConfidentialClient: true`
+  and safe secret storage; otherwise pre-register a public client.
+- PKCE, authorization and exchange use official MCP primitives. Provider refresh
+  runs on later agent calls.
 
 ## Express integration
 
 ```ts
-import {
-  startWebOAuthFlow,
-  completeWebOAuthFlow,
-  safeReturnTo,
-  type PendingWebFlowStore,
-} from '@adcp/sdk';
+import { startWebOAuthFlow, completeWebOAuthFlow, safeReturnTo } from '@adcp/sdk/auth';
 
-// Generate a session-bound state cookie at /start, verify at /callback.
-// Without this, the state we store in the pending row is replay-protected
-// but not browser-bound — anyone with the link can finish your flow.
 const STATE_COOKIE = 'adcp_oauth_state';
-
 router.get('/oauth/start', async (req, res) => {
-  const agent = await loadAgent(String(req.query.agent_id)); // adopter's agent loader
+  const agent = await loadAgent(String(req.query.agent_id));
   const { authorizationUrl, state } = await startWebOAuthFlow({
     agent,
     redirectUri: `${baseUrl}/oauth/callback`,
-    pendingFlowStore: pgPendingFlowStore, // your PendingWebFlowStore
-    agentStorage: pgAgentStorage, // your OAuthConfigStorage (optional)
+    pendingFlowStore: pgPendingFlowStore,
+    agentStorage: pgAgentStorage,
     carry: { user_id: req.user.id, return_to: req.query.return_to },
-    // Optional: forward the scope hint from a prior 401 challenge (SEP-835).
-    // scopeHint: req.query.scope,
-    // Optional operator escape hatch for legacy/non-conformant integrations:
-    // resourceOverride: agent.oauth_resource,
-    // audience: integration.oauthAudience, // Auth0 compatibility; /authorize only
   });
   res.cookie(STATE_COOKIE, state, { httpOnly: true, secure: true, sameSite: 'lax' });
   res.redirect(authorizationUrl);
 });
-
 router.get('/oauth/callback', async (req, res) => {
   try {
     const { carry } = await completeWebOAuthFlow({
@@ -77,119 +51,65 @@ router.get('/oauth/callback', async (req, res) => {
       code: String(req.query.code),
       pendingFlowStore: pgPendingFlowStore,
       agentStorage: pgAgentStorage,
-      // Browser-binding: the state we set on the cookie at /start MUST
-      // match the state the AS sends back to /callback.
       expectedState: req.cookies[STATE_COOKIE],
     });
     res.clearCookie(STATE_COOKIE);
-    // safeReturnTo defaults to path-only redirects; pass allowedReturnHosts
-    // if you need to support absolute URLs against an allowlist.
     res.redirect(safeReturnTo(carry?.return_to) ?? '/');
-  } catch (err) {
-    res.redirect(`/oauth-failed?reason=${encodeURIComponent(err.code ?? 'oauth_error')}`);
+  } catch {
+    res.redirect('/oauth-failed?reason=oauth_error');
   }
 });
 ```
 
-## What you bring
+The application authorizes `loadAgent` and binds state to its browser session.
+Pending state alone is replay-protected, not browser-bound. Set it at start and
+pass it as `expectedState` at callback; omission fails closed. Only deliberate
+non-browser compatibility flows should set `allowUnboundState: true`.
+Validate attacker-influenced `carry`; `safeReturnTo` defaults to path-only
+redirects, with `allowedReturnHosts` for explicitly allowlisted absolute URLs.
 
-- **`loadAgent(agentId)`** — your code; not provided by the SDK. The
-  `/start` route uses it to look up the `AgentConfig`. The `/callback`
-  route does not need it: `agentId` is round-tripped in the pending row,
-  and `completeWebOAuthFlow` will call `agentStorage.loadAgent(agentId)`
-  itself when persisting tokens.
+Start accepts `scopeHint` from a prior 401 challenge (SEP-835), an operator
+`resourceOverride`, and Auth0-compatible `audience` for authorization only.
+With storage, resource override persists for refresh; omission reuses it.
+Pass `resourceOverride: null` to clear it after successful authorization and
+return to PRM/agent discovery. DIY refresh must forward resource itself.
 
-- **`pendingFlowStore`** — implements `PendingWebFlowStore`. Two methods:
-  `put(flow)` and `consume(state)`. `consume` MUST be a single atomic
-  operation; canonical implementations:
+## Storage
 
-  Postgres:
+`PendingWebFlowStore` implements `put(flow)` and atomic `consume(state)`.
+Example PostgreSQL operations:
 
-  ```sql
-  -- put
-  INSERT INTO pending_oauth_flows (state, payload, expires_at)
-    VALUES ($1, $2::jsonb, $3);
+```sql
+INSERT INTO pending_oauth_flows (state, payload, expires_at)
+  VALUES ($1, $2::jsonb, $3);
+DELETE FROM pending_oauth_flows
+  WHERE state = $1 AND expires_at > now()
+  RETURNING payload;
+```
 
-  -- consume (atomic — DELETE … RETURNING)
-  DELETE FROM pending_oauth_flows
-    WHERE state = $1 AND expires_at > now()
-    RETURNING payload;
-  ```
+Redis can use `SET pending:flow:<state> <payload> EX 600 NX` and `GETDEL`.
+Separate SELECT/DELETE permits replay and fails the contract. The contract
+tests in `test/lib/oauth-web-flow.test.js` can exercise your store. Default
+TTL is `DEFAULT_WEB_FLOW_TTL_MS` (10 minutes); shorten as needed.
+`InMemoryPendingFlowStore` is for tests/dev; restarts lose flows. Encrypt
+PKCE verifiers at rest across trust boundaries.
 
-  Redis:
-
-  ```
-  SET pending:flow:<state> <payload> EX 600 NX     # put
-  GETDEL pending:flow:<state>                      # consume
-  ```
-
-  A `SELECT` followed by a separate `DELETE` is a replay vulnerability and
-  DOES NOT satisfy this contract. The SDK ships a `PendingWebFlowStore`
-  contract test (`describe('PendingWebFlowStore contract …')` in
-  `test/lib/oauth-web-flow.test.js`) you can run against your store.
-
-- **`agentStorage`** (optional) — implements `OAuthConfigStorage` (the
-  same interface used by `MCPOAuthProvider`). Omit it if you'd rather
-  handle persistence yourself; `completeWebOAuthFlow` returns the issued
-  tokens and a `persisted: false` flag in that case.
-
-`InMemoryPendingFlowStore` ships for tests and single-instance dev. Do
-not use it in production — restarts lose every in-flight flow.
+Optional `agentStorage` implements `OAuthConfigStorage`; callback loads the
+pending row's agent ID itself. Without storage, completion returns tokens with
+`persisted: false` for application persistence. The issuer guide describes the
+required consistent client-bearing view and partial-save contract.
 
 ## Errors
 
-- `InvalidOrExpiredFlowError` — `state` not present or past TTL. Treat as
-  user-recoverable: prompt to re-authorize.
-- `StateMismatchError` — caller passed `expectedState` and it didn't
-  match the AS-supplied `state`. Almost always CSRF or a stale cookie.
-- `BrowserBindingRequiredError` — `expectedState` was omitted. Browser callbacks
-  fail closed by default; only non-browser compatibility flows should set
-  `allowUnboundState: true`.
-- `TokenExchangeError` — AS rejected the code exchange. Carries
-  `oauthErrorCode` (`invalid_grant`, `invalid_client`, …), `status`, and
-  a redacted `body` for diagnostics. Treat `body` as sensitive — do not
-  reflect it to the browser or write it to access logs unredacted.
-- `ProtectedResourceMetadataError` — PRM fetch failed (network / parse /
-  non-404 HTTP) or PRM advertised a `resource` whose origin does not
-  match the agent. Either is a configuration bug worth surfacing.
-- `AgentVanishedDuringFlowError` — `agentStorage.loadAgent(agentId)`
-  returned undefined after a successful token exchange. The user's auth
-  succeeded but you have no agent to attach it to; usually an
-  inter-process delete race.
-- `AgentChangedDuringFlowError` — the agent URI or OAuth resource configuration
-  changed while authorization was pending. Reload the current agent
-  configuration and restart authorization; the SDK does not persist tokens
-  against a stale or replacement agent record.
-- `ConfidentialClientNotAllowedError` — DCR returned a `client_secret`
-  and you did not opt into `allowConfidentialClient: true`. Either flip
-  the flag (and store the secret carefully) or pre-register a public
-  client and put the result in `agent.oauth_client`.
-- `OAuthError` — generic catch-all; check `err.code` for the discriminator.
-
-## Operational notes
-
-- **TTL.** Defaults to `DEFAULT_WEB_FLOW_TTL_MS` (10 minutes). Lower if
-  you want a tighter recovery window; do not raise without a reason.
-- **PKCE verifier is a secret.** Encrypt it at rest if your store crosses
-  a trust boundary.
-- **Atomic consume is load-bearing.** Without it, a replayed callback
-  (e.g. user double-clicks the AS redirect) can mint two tokens and
-  burn the authorization code on the second attempt.
-- **CSRF.** `expectedState` binds the flow to the user's browser. The
-  SDK cannot do this for you because it can't see your session
-  middleware — you stash `state` in a cookie at `/start` and pass it
-  back in at `/callback`. Omission throws by default.
-- **`carry` is attacker-influenced.** It's whatever the caller of
-  `/oauth/start` put in the request. Always validate before reflecting
-  (use `safeReturnTo` for redirect targets).
-- **Refresh is not this module's job.** Once `oauth_tokens` are
-  persisted, `MCPOAuthProvider` handles refresh on the next agent call
-  and forwards `resource` into the refresh request automatically. An explicit
-  `resourceOverride` is persisted as `agent.oauth_resource` when `agentStorage`
-  is supplied so the automatic refresh path retains it.
-  Callers who DIY refresh against `oauth_tokens` are responsible for
-  forwarding `resource` themselves.
-- **Removing an override.** Pass `resourceOverride: null` to explicitly use
-  PRM/agent-URL discovery and clear the persisted `agent.oauth_resource` after
-  successful authorization. Omitting `resourceOverride` preserves and reuses
-  an existing persisted override.
+- `InvalidOrExpiredFlowError`: missing/expired state; restart sign-in.
+- `StateMismatchError`: cookie/state mismatch, usually CSRF or a stale cookie.
+- `BrowserBindingRequiredError`: missing `expectedState`.
+- `TokenExchangeError`: AS rejected exchange; `oauthErrorCode`, `status` and
+  redacted `body` are diagnostic only. Never reflect sensitive body data to
+  browsers or access logs.
+- `ProtectedResourceMetadataError`: failed PRM or mismatched resource origin.
+- `AgentVanishedDuringFlowError`: agent removed during registration/exchange.
+- `AgentChangedDuringFlowError`: URI, resource or client changed; reload and
+  restart rather than saving against a replacement record.
+- `ConfidentialClientNotAllowedError`: DCR returned a secret without opt-in.
+- `OAuthError`: inspect `code` for other controlled failures.

@@ -6659,7 +6659,12 @@ credential material — never sync or commit.
     }
 
     const agentConfig = getAgent(alias);
-    if (!agentConfig.oauth_tokens) {
+    if (
+      !agentConfig.oauth_tokens &&
+      !agentConfig.oauth_client &&
+      !agentConfig.oauth_code_verifier &&
+      !agentConfig.oauth_discovery_state
+    ) {
       console.log(`\nAgent '${alias}' has no OAuth tokens to clear.\n`);
       process.exit(0);
     }

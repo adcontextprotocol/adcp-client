@@ -24,7 +24,7 @@ export interface NonInteractiveFlowHandlerConfig {
 
   /**
    * Optional hint shown in the error message when a browser flow is
-   * attempted — e.g., the alias name to pass to `adcp --save-auth`.
+   * attempted — e.g., the saved alias for `adcp <alias> --oauth`.
    */
   agentHint?: string;
 }
@@ -43,9 +43,7 @@ export class NonInteractiveFlowHandler implements OAuthFlowHandler {
   }
 
   async redirectToAuthorization(): Promise<void> {
-    const target = this.agentHint
-      ? `adcp --save-auth ${this.agentHint} --oauth`
-      : 'adcp --save-auth <alias> <url> --oauth';
+    const target = this.agentHint ? `adcp ${this.agentHint} --oauth` : 'adcp --save-auth <alias> <url> --oauth';
     throw new OAuthError(
       `OAuth authorization required but this context is non-interactive. ` +
         `Run \`${target}\` from a terminal with a browser, then retry.`,

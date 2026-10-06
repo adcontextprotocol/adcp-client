@@ -13,7 +13,7 @@ describe('NonInteractiveFlowHandler', () => {
     const h = new NonInteractiveFlowHandler({ agentHint: 'test-agent' });
     await assert.rejects(
       () => h.redirectToAuthorization(new URL('https://auth.example/authorize')),
-      err => err.code === 'interactive_required' && /adcp --save-auth test-agent --oauth/.test(err.message)
+      err => err.code === 'interactive_required' && /adcp test-agent --oauth/.test(err.message)
     );
   });
 

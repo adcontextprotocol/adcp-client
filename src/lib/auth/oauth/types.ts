@@ -24,8 +24,10 @@ export type { AgentConfig, AgentOAuthTokens, AgentOAuthClient };
  * Agent config storage interface
  *
  * Implement this to persist OAuth tokens back to agent configuration.
- * Round-trip pending `oauth_code_verifier` and `oauth_discovery_state` verbatim,
- * and remove OAuth fields absent from the authoritative agent snapshot.
+ * Round-trip pending `oauth_code_verifier` and `oauth_discovery_state` verbatim.
+ * For oauth_tokens, oauth_client, oauth_code_verifier and oauth_discovery_state,
+ * an own undefined property clears; omission preserves the saved field.
+ * Resource overrides and other fields retain the storage backend's semantics.
  * This allows different storage backends (file, database, memory)
  * while keeping tokens in the agent config structure.
  */
@@ -95,6 +97,11 @@ export interface OAuthProviderConfig {
 
   /** Authorization flow handler */
   flowHandler: OAuthFlowHandler;
+  /**
+   * Explicitly allow fresh registration, PKCE work, redirects and automatic
+   * credential invalidation. Defaults to false; CLI factories opt in.
+   */
+  allowInteractiveAuthorization?: boolean;
 
   /** OAuth client metadata (required - use DEFAULT_CLIENT_METADATA as base) */
   clientMetadata: OAuthClientMetadata;
@@ -225,11 +232,13 @@ export function fromMCPClientInfo(info: OAuthClientInformationFull): AgentOAuthC
 }
 
 function isOAuthIssuer(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length === 0) return false;
+  if (typeof value !== 'string' || !value || /[\u0000-\u0020\u007f\\]/.test(value)) return false;
   try {
     const url = new URL(value);
+    const rawAuthority = value.match(/^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i)?.[1];
     return (
       (url.protocol === 'https:' || url.protocol === 'http:') &&
+      !rawAuthority?.includes('@') &&
       !url.username &&
       !url.password &&
       !url.search &&

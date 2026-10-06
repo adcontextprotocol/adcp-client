@@ -84,7 +84,14 @@ describe('createFileOAuthStorage', () => {
         oauth_discovery_state: { authorizationServerUrl: 'https://auth.example' },
       };
       await storage.saveAgent(agent);
-      const provider = new MCPOAuthProvider({ agent, storage, flowHandler: {}, clientMetadata: {} });
+      const provider = new MCPOAuthProvider({
+        agent,
+        storage,
+        flowHandler: {},
+        clientMetadata: {},
+        // These are explicit interactive invalidation/owner-clear controls.
+        allowInteractiveAuthorization: true,
+      });
       if (scope === 'all') await provider.clearAuth();
       else await provider.invalidateCredentials(scope);
       const loaded = await storage.loadAgent(agent.id);
