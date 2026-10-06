@@ -160,7 +160,7 @@ export interface TestOptions {
    * - `basic`: cleartext `username` and `password`, encoded internally.
    * - `oauth`: saved OAuth tokens (access_token + refresh_token). MCP only.
    *   The library auto-refreshes on 401. Obtain tokens interactively via
-   *   `adcp --save-auth <alias> --oauth`, then pass the saved blob here for
+   *   `adcp --save-auth <alias> <url> --oauth`, then pass the saved blob here for
    *   non-interactive reuse.
    * - `oauth_client_credentials`: RFC 6749 §4.4 machine-to-machine flow.
    *   The library exchanges the secret for a fresh access token before each
