@@ -154,12 +154,13 @@ describe('forbidden-field validation diagnostics (#3114)', () => {
       name: 'escaped-diagnostics',
       version: '0.0.1',
       stateStore: new InMemoryStateStore(),
+      idempotency: 'disabled',
       validation: { requests: 'off', responses: 'off' },
-      mediaBuy: { getProducts: async () => adcpError('VALIDATION_ERROR', payload) },
+      mediaBuy: { updateMediaBuy: async () => adcpError('VALIDATION_ERROR', payload) },
     });
     const frame = await server.dispatchTestRequest({
       method: 'tools/call',
-      params: { name: 'get_products', arguments: {} },
+      params: { name: 'update_media_buy', arguments: request([{ package_id: 'package-1', paused: true }]) },
     });
     assert.equal(frame.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
     assert.ok(frame.structuredContent.errors[0].issues.length > 0);
