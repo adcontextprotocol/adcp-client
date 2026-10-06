@@ -1,0 +1,2724 @@
+{
+  "qualified_at": "2026-10-05",
+  "scope": "portable manifest/revision/adjustment evidence, reverse PostgreSQL Core/Managed/Billing, signed shared-replay and committed notification/activity recovery, integrated reference Python durable mixed-receipt submission with a TypeScript seller, and standalone Python submission controls",
+  "typescript_artifact_kind": "unpublished archive packed after library build; qualification harness and documentation retained separately; distinct from published SDK 14.1.0",
+  "source_parent_commit": "594ceb81ae59a37b25628fb2d2d1b19bb0d3f6ea",
+  "source_is_uncommitted": true,
+  "unit_tests": {
+    "executed": 181,
+    "passed": 181,
+    "failed": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "log_sha256": "9efc7c995b19f2ced734bc2a8ae726558df4b5d86a448f5043f0d0a9f05b3958"
+  },
+  "reviews": {
+    "status": "Parallel Claude DX/protocol/code/security and Codex protocol/code/security source reviews completed; actionable runtime findings corrected and execution-verified; proof claims narrowed to assertions actually exercised.",
+    "fresh_review_during_takeover": true,
+    "claude_personas": [
+      "DX",
+      "protocol",
+      "code",
+      "security"
+    ],
+    "codex_personas": [
+      "protocol",
+      "code",
+      "security"
+    ],
+    "codex_mode": "source snapshot review; initial filesystem sandbox failed to start",
+    "resolved_findings": [
+      "independent Core database cleanup callbacks",
+      "transient I/O retry defaults",
+      "expired deadline callback scheduling and late rejection handling",
+      "post-synchronous-operation deadline checks",
+      "contained consumer commit-reference exceptions",
+      "optional control-total units",
+      "typed byte, row, total, resolver, and commit-reference results",
+      "non-JSON decoder values and malformed checksum evidence",
+      "fresh rebuilt archive and current entrypoint hashes",
+      "retained safe child failure stage diagnostics",
+      "blob-verified scripts/tests-only harness export",
+      "disabled Git replacement objects",
+      "isolated installed-wheel children and explicit pytest plugin",
+      "owned descendant process-group cleanup",
+      "receiver header/body timeout and duplicate-header rejection",
+      "recomputed forged Content-Digest signature rejection",
+      "case-insensitive forged-digest replacement",
+      "exact durable control identities",
+      "recursive binary-safe log scrubbing including escaped private values",
+      "bounded readiness polling of the real seller",
+      "canonical seller-observed arguments checked against persisted Python plan chunks",
+      "concurrent reservation and send controls with one frozen plan",
+      "decoded official MCP adjustment and exact-revision evidence before reporting model parsing",
+      "SQL inventory verifies every consumer and correction generation",
+      "earlier accepted receipt bodies preserved across later corrections",
+      "bounded monotonic recovery wait for actual retry eligibility",
+      "fixture resource member digests retained",
+      "explicit isolated-database acknowledgement in PostgreSQL activity tests"
+    ],
+    "decisions": [
+      "legacy array vectors remain supported for deployed immutable contracts",
+      "shared cross-language fixture uses named AdCP 3.2.1 vectors",
+      "argv additions occur in the seller process and do not add credentials to OS process arguments",
+      "SDK diagnostics/cause data remain sanitized",
+      "Current Python verifier accepts request-signing JWKs; encryption-purpose key rejection verified.",
+      "CPython 3.10 subprocess.run catches interruption, kills child, and waits; source inspection and actual SIGTERM probe verified.",
+      "Pinned upstream children inherit the owned process group without creating new sessions.",
+      "Git replacement objects disabled; trusted Git object store and execution environment remain assumptions.",
+      "Concurrency is a reservation/send outcome control; internal SQL overlap and confirmation contention are not forced.",
+      "Recipient checkpoint presence is verified on retry; timestamp advancement on retry is not asserted.",
+      "The cross-language fixture checks tenant isolation for notification activity and principal isolation for HTTP attempts; production service/store tests are recorded separately.",
+      "181 JavaScript tests and 65 PostgreSQL tests executed with zero skips, independently recorded.",
+      "Adapter ingress, SQL and private canonical-plan bytes are pinned test instrumentation rather than a general adopter integration API.",
+      "Original HTTP spelling and duplicate JSON keys before official MCP decoding are outside mapping evidence."
+    ],
+    "limitations": [
+      "source reviews do not replace execution verification",
+      "integer-like JSON member names do not preserve raw ordering after JavaScript parsing",
+      "transitive dependency resolution is recorded rather than hash-locked"
+    ],
+    "integrated_review_outputs_sha256": {
+      "adjustment-reviews/dx-expert.log": "6c3f9e87ed57286a3766bcc6e304ad1f270d5f2ea7d2055f85def64e4be52d69",
+      "adjustment-reviews/ad-tech-protocol-expert.log": "097c0af9f8c819cfaa1926270f722e7cb719949611fbabf869526fe23b253604",
+      "adjustment-reviews/code-reviewer.log": "98e8220dfce16387244924039e46d6f0f214647e6718bcf238010cf7eef55020",
+      "adjustment-reviews/security-reviewer.log": "cb470c2bc3e5323f6dc07b2f06fc7d4a87141f4c9402f596c84078eb55266167",
+      "adjustment-reviews/codex-summary.log": "5124cdab3c743ce2b88e79dd76d07a4d4977daa401a4573f0393e5b4d50367d4",
+      "adjustment-reviews/snapshot.txt": "a0a6b24f68343034d9bf46ed542c980b01949e871c6c3b76285d95b986c6d7ad",
+      "integrated-final-reviews/dx-expert.log": "c1df5cac596e258ee67fe88ccfd6c51d7c47f79c1f8b8eb5daaf06514c6503d2",
+      "integrated-final-reviews/ad-tech-protocol-expert.log": "a8738e244a43cb9d9961b2d8625818a462e1237dc90eef5a94da0f021a558a1c",
+      "integrated-final-reviews/code-reviewer.log": "d61c9af66382410bdaad0e4ef3429dd40b2d4440005715943da78576d9fa04b5",
+      "integrated-final-reviews/security-reviewer.log": "8edf29966790e6d41767c5d760caba6545c179818d648f7e80d84664e075dab3",
+      "integrated-final-reviews/codex-summary.log": "5389fd25d1e816683d36dbb8d04020f3f82e891282bef07183e489be02cef30e",
+      "integrated-final-reviews/snapshot.txt": "f57b31efc14be8eeb55b9da3a286ef875c4b8acfa831c996f4123066d68bc476",
+      "integrated-followup-reviews/dx-expert.log": "b8d440252fd355f26afeb6469e1db17993fdf61524d2a21ec9195aa102e2b016",
+      "integrated-followup-reviews/ad-tech-protocol-expert.log": "b347ece5c41d4b4f751de1e97a9d6802852f00ada215cf19046615458cdf0e43",
+      "integrated-followup-reviews/code-reviewer.log": "5a1f41712c06b43295848ee99e1fc2e4ccf318b33486644987ad7bcb250fecd5",
+      "integrated-followup-reviews/security-reviewer.log": "d6136aded7efeb1295478f5dd4f8209b6a1a7fdddf5376ed95df396866c0f327",
+      "integrated-followup-reviews/codex-summary.log": "caa9bda06c5ae3a816e45deb5cff0be1483fe5277a994f1dbb67aa14cdb56ba5",
+      "integrated-followup-reviews/snapshot.txt": "95fbd6687874ba75d681e896864baab22475bad2511778e3b28a0a856e565d0f"
+    }
+  },
+  "recovery": {
+    "original_source_parent": "e8596ff1",
+    "recovered_file_count": 22,
+    "fixture_matches_original_sha256": true
+  },
+  "runs": [
+    {
+      "contract": "reporting_evidence_interop_v1",
+      "fixture_version": 1,
+      "adcp_schema_version": "3.2.1",
+      "node": "v20.19.0",
+      "python_version": "8.0.0",
+      "python_harness_commit": "68345b5043b1cd8bae973c3d2ba0c0e7e53b6294",
+      "python_wheel_sha256": "d862687ab71f1aa411887d20dc7faba66547e68a319d29c0a8f568e8f88dd8fb",
+      "typescript_archive_sha256": "d87bc48e5263dd6393de2e6218ce3bf31dc1b3e90e42f75a35ca2dd06aaf24de",
+      "typescript_package_lock_sha256": "8e6f51a276ebaa178c693c01debd5c7a79880ee8bbde80703b3386ec5fef9186",
+      "fixture_sha256": "bcd6166676ba9bc51cdbef5eefd59ae5d3572884a69205f91176534e0d6b037e",
+      "gate_entrypoints": {
+        "adjustment-buyer.py": "ddf6de5d23a6da3eba4d71832d0e7659caf98803a74f6cb5fe7c830339b32b07",
+        "adjustment-seller.cjs": "41a5ddeaa2d46fe88b2c80165b76c2906aec45ee59788dde5b3e4b40905b201f",
+        "adjustment.py": "72de733a1e72b9ad9996b5527bb100750c028ca779f24246b0add6beb0a425a7",
+        "buyer-submissions.py": "85df0cb01113c802f7c89ea52c9fd5edc8e90b328d154933244ec6878ee6c243",
+        "core.py": "7374bcc24fbd3aeb317f7958cb6632cb97b1a1556d2cb61c808ecaa37908e748",
+        "export.py": "df12c96e900e72acdbaafde91c844675a6966672612e326f83a4f331689d8b2c",
+        "managed-buyer.py": "5d456229471353536a15177dafc2a74917d5100bcd52916eb2418e9ca1e2c009",
+        "managed-seller.cjs": "72a28614a8d8ec9068498e7ea70a14fc6501f4539be43f3356456cdccafc7009",
+        "managed.py": "da49f8ada6070c69389b1863671e38b52f97865f7a9a0a93a3ddbc3b167ba817",
+        "notification-replay.py": "8a43ccaa49e1efe2dccb338a4d1d3c3e4a8173288c56aa1b6420616e19518639",
+        "notification-seller.cjs": "7f157a5bec03b805df81a0499c2f9de84ff2d2dd8b1dbe28753c405fe51f3341",
+        "notification.py": "5566607c6d49c2820ac5c6edb68b233fd189a8442976d4a586ea81c17fde6394",
+        "pins.json": "0b11aad7c775d78a14c33d375eac8d93754ca39098f6373b6807d302e18def0a",
+        "python.py": "f91daf1ac79fa215136321aa874778a86913bfa044b123263e7bb260a793db61",
+        "run.mjs": "4b7bee320c4ce2d39870d7f1164c4a2091cc8ec2005040bfaca8f5f62be8fba8",
+        "typescript.cjs": "17e5073ae9dd1aaf9456ffddb53bc75f3426a82562141c84c2983af84f619ced",
+        "verify.py": "dee421cc82eef498d70c20c4a49aebc87b5ea24ae721fd4de61f778b8f59a718"
+      },
+      "checks": [
+        {
+          "name": "typescript-producer",
+          "sha256": "fb8c0f26f9cc6c636d9e8d7f1a73e953e58da3c7a3a74d474fefaa450ded5001"
+        },
+        {
+          "name": "python-producer",
+          "sha256": "c033050de94179ec67b004e9534d5dfbe78d075c38c583a957abbbc2e6c835b4"
+        },
+        {
+          "name": "python-consumes-typescript",
+          "sha256": "c033050de94179ec67b004e9534d5dfbe78d075c38c583a957abbbc2e6c835b4"
+        },
+        {
+          "name": "typescript-consumes-python",
+          "sha256": "fb8c0f26f9cc6c636d9e8d7f1a73e953e58da3c7a3a74d474fefaa450ded5001"
+        },
+        {
+          "name": "typescript-seller-python-buyer-core",
+          "sha256": "c94e4fb889fed4411decb15ce8e06ee08d502f878b070b2f9c4b16f7bf8c9963"
+        },
+        {
+          "name": "typescript-seller-python-buyer-managed",
+          "sha256": "b60b9c5a11c239f4ad4c9414a5efcf40e135bbc29482b99bb04d5336d3ef0b41"
+        },
+        {
+          "name": "typescript-seller-python-buyer-billing",
+          "sha256": "958cdc9cd1e92b510da634dbb2997b728f3d7fb1f9f578de156e28aee6300fd6"
+        },
+        {
+          "name": "typescript-sender-python-verifier-notification",
+          "sha256": "8240ab0dd9e697ccc1b537f3e3e39a049fd64f71592e64f238e59a68bc8a1b12"
+        },
+        {
+          "name": "typescript-reporting-activity-python-durable-verifier",
+          "sha256": "e5c6b9f17be146259feffd4309c9e6d8ff0472126f730ecfcb8ecb200509efd5"
+        },
+        {
+          "name": "typescript-seller-python-durable-adjustment-loop",
+          "sha256": "b6153bea6a3109a3aca4bee3bb97fddcaaa5700183820a3f1ba4485a3acca223"
+        },
+        {
+          "name": "python-durable-mixed-receipt-submissions",
+          "sha256": "cab4822edb7936c6b1d0b1198f23d97556d88fe3f84686a4b9946b6d398d7b35"
+        }
+      ],
+      "status": "passed",
+      "fixture_inputs_sha256": {
+        "evidence-v1.json": "bcd6166676ba9bc51cdbef5eefd59ae5d3572884a69205f91176534e0d6b037e",
+        "canonical-json-v1.json": "b097761cc3884183f185be1806cc7e904c7aba9be3a85880408cad3cb3a0ad8a",
+        "resources/canonicalization.json": "653373f3d7db3e130675959b4c491c332730e82174fa7652024f14d45cd98c19",
+        "resources/fixture.json": "ba8eb40fd1d3318850b7052784ca0af591a5b8e3f022a69bb2964a5819192a5b",
+        "resources/manifest.json": "e50959c9297a15669578f88102533626a9f991a6feeb8f8bb5fab0ae0fde978c",
+        "resources/report-definition.json": "e76fd773afe79938b17db11fd07f1274db311f842d8ae94586168229d38d9086",
+        "resources/row-schema.json": "12aa838388ed6f73682cce5303c713dd95069e0479500462906fe0c861f0a472",
+        "resources/rows.jsonl": "735610f303d6d91aa618df3aa6d7f18bcf5dfa52bdbd9ef551293e6bd14c92d9"
+      },
+      "harness_export": {
+        "sha256": "4a7d97b83f970eb3cd959eecb2a67b2622c3cd00c3888da2df000f6e5b80961b",
+        "members": 960,
+        "scope": [
+          "scripts",
+          "tests"
+        ],
+        "sdk_source_excluded": true,
+        "git_blob_identities_verified": true
+      },
+      "installed_artifacts": {
+        "typescript_members": 6371,
+        "python_members": 4684,
+        "typescript_member_manifest_sha256": "48f7c4c261cf15916ada63d8aa0b1a4c17844eb49b3528c5e483084630349aba",
+        "python_member_manifest_sha256": "4926c566024991818e2fb7c2849a39ea8fd995d7a87605bd1b29d4bb2e637205",
+        "python_dependencies": [
+          [
+            "PyJWT",
+            "2.15.1"
+          ],
+          [
+            "Pygments",
+            "2.21.0"
+          ],
+          [
+            "a2a-sdk",
+            "1.0.1"
+          ],
+          [
+            "adcp",
+            "8.0.0"
+          ],
+          [
+            "aiologic",
+            "0.17.1"
+          ],
+          [
+            "annotated-types",
+            "0.8.0"
+          ],
+          [
+            "anyio",
+            "4.15.1"
+          ],
+          [
+            "attrs",
+            "26.1.0"
+          ],
+          [
+            "backports.asyncio.runner",
+            "1.2.0"
+          ],
+          [
+            "certifi",
+            "2026.7.22"
+          ],
+          [
+            "cffi",
+            "2.1.1"
+          ],
+          [
+            "charset-normalizer",
+            "3.5.2"
+          ],
+          [
+            "click",
+            "8.5.0"
+          ],
+          [
+            "cryptography",
+            "50.0.2"
+          ],
+          [
+            "culsans",
+            "0.11.0"
+          ],
+          [
+            "dnspython",
+            "2.8.0"
+          ],
+          [
+            "email-validator",
+            "2.3.0"
+          ],
+          [
+            "exceptiongroup",
+            "1.3.1"
+          ],
+          [
+            "filelock",
+            "4.0.10"
+          ],
+          [
+            "google-api-core",
+            "2.40.0"
+          ],
+          [
+            "google-auth",
+            "2.59.1"
+          ],
+          [
+            "googleapis-common-protos",
+            "1.75.5"
+          ],
+          [
+            "h11",
+            "0.16.0"
+          ],
+          [
+            "httpcore",
+            "1.0.9"
+          ],
+          [
+            "httpcore2",
+            "2.13.1"
+          ],
+          [
+            "httpx",
+            "0.28.1"
+          ],
+          [
+            "httpx-sse",
+            "0.4.3"
+          ],
+          [
+            "httpx2",
+            "2.13.1"
+          ],
+          [
+            "idna",
+            "3.20"
+          ],
+          [
+            "iniconfig",
+            "2.3.0"
+          ],
+          [
+            "json-rpc",
+            "1.15.0"
+          ],
+          [
+            "jsonschema",
+            "4.26.0"
+          ],
+          [
+            "jsonschema-specifications",
+            "2025.9.1"
+          ],
+          [
+            "mcp",
+            "2.3.0"
+          ],
+          [
+            "mcp-types",
+            "2.3.0"
+          ],
+          [
+            "opentelemetry-api",
+            "1.45.0"
+          ],
+          [
+            "packaging",
+            "26.3"
+          ],
+          [
+            "pluggy",
+            "1.6.0"
+          ],
+          [
+            "proto-plus",
+            "1.29.0"
+          ],
+          [
+            "protobuf",
+            "7.36.2"
+          ],
+          [
+            "psycopg",
+            "3.3.6"
+          ],
+          [
+            "psycopg-binary",
+            "3.3.6"
+          ],
+          [
+            "psycopg-pool",
+            "3.3.3"
+          ],
+          [
+            "pyasn1",
+            "0.6.4"
+          ],
+          [
+            "pyasn1_modules",
+            "0.4.2"
+          ],
+          [
+            "pycparser",
+            "3.0"
+          ],
+          [
+            "pydantic",
+            "2.13.5"
+          ],
+          [
+            "pydantic_core",
+            "2.46.5"
+          ],
+          [
+            "pytest",
+            "9.1.1"
+          ],
+          [
+            "pytest-asyncio",
+            "1.4.0"
+          ],
+          [
+            "python-multipart",
+            "0.0.32"
+          ],
+          [
+            "referencing",
+            "0.37.0"
+          ],
+          [
+            "requests",
+            "2.34.2"
+          ],
+          [
+            "requests-file",
+            "3.0.1"
+          ],
+          [
+            "rfc8785",
+            "0.1.4"
+          ],
+          [
+            "rpds-py",
+            "0.30.0"
+          ],
+          [
+            "sniffio",
+            "1.3.1"
+          ],
+          [
+            "sse-starlette",
+            "3.5.0"
+          ],
+          [
+            "starlette",
+            "1.7.0"
+          ],
+          [
+            "tldextract",
+            "5.4.0"
+          ],
+          [
+            "tomli",
+            "2.4.1"
+          ],
+          [
+            "truststore",
+            "0.10.4"
+          ],
+          [
+            "typing-inspection",
+            "0.4.4"
+          ],
+          [
+            "typing_extensions",
+            "4.16.0"
+          ],
+          [
+            "urllib3",
+            "2.8.0"
+          ],
+          [
+            "uvicorn",
+            "0.54.0"
+          ],
+          [
+            "wrapt",
+            "2.5.0"
+          ]
+        ]
+      },
+      "reverse_core": {
+        "status": "passed",
+        "database": "adcp_reverse_2b3966d1e4f715ac",
+        "postgres_version": "16.14",
+        "accounts": [
+          {
+            "account": "interop-account-a",
+            "result": {
+              "definitive": true,
+              "kind": "python_core_semantic_probe",
+              "obligations": [
+                {
+                  "definitive": true,
+                  "reasons": [],
+                  "reporting_revision_id": "rrev_2594d401e767da93eaf760ccf6c08c24"
+                }
+              ],
+              "package": {
+                "name": "adcp",
+                "version": "8.0.0"
+              },
+              "protocol": "3.2.1",
+              "submitted_receipts": 0,
+              "typed_status": "completed"
+            }
+          },
+          {
+            "account": "interop-account-b",
+            "result": {
+              "definitive": true,
+              "kind": "python_core_semantic_probe",
+              "obligations": [
+                {
+                  "definitive": true,
+                  "reasons": [],
+                  "reporting_revision_id": "rrev_2f2edba8d636aba3c676990cfcf5a365"
+                }
+              ],
+              "package": {
+                "name": "adcp",
+                "version": "8.0.0"
+              },
+              "protocol": "3.2.1",
+              "submitted_receipts": 0,
+              "typed_status": "completed"
+            }
+          }
+        ]
+      },
+      "reverse_runtime": {
+        "managed": {
+          "status": "passed",
+          "mode": "managed",
+          "postgres_version": "16.14",
+          "seller_version": "14.1.0",
+          "buyer": {
+            "status": "passed",
+            "mode": "managed",
+            "python_version": "8.0.0",
+            "exact_revision_read": true,
+            "independent_manifest_inspection": true,
+            "resource_reads": 7,
+            "canonical_digest_verified": false,
+            "tampered_delivered_file_rejected": true,
+            "accepted_receipt_count": 0,
+            "lost_response_repaired": false,
+            "duplicate_receipt_count": 0,
+            "revoked_resource_unreadable": true,
+            "historical_metadata_retained": true
+          }
+        },
+        "billing": {
+          "status": "passed",
+          "mode": "billing",
+          "postgres_version": "16.14",
+          "seller_version": "14.1.0",
+          "buyer": {
+            "status": "passed",
+            "mode": "billing",
+            "python_version": "8.0.0",
+            "exact_revision_read": true,
+            "independent_manifest_inspection": true,
+            "resource_reads": 13,
+            "canonical_digest_verified": true,
+            "tampered_delivered_file_rejected": true,
+            "accepted_receipt_count": 1,
+            "lost_response_repaired": true,
+            "duplicate_receipt_count": 0,
+            "revoked_resource_unreadable": true,
+            "historical_metadata_retained": true
+          }
+        }
+      },
+      "reverse_notification": {
+        "status": "passed",
+        "python_version": "8.0.0",
+        "postgres_version": "16.14",
+        "process_restart": true,
+        "transport": "owned loopback route for fixed HTTPS signature target",
+        "fixture_adapters": [
+          "proof",
+          "delivery_authorization",
+          "destination_validation",
+          "fetch_routing",
+          "trusted_jwk"
+        ],
+        "mode": "standalone",
+        "reporting_activity_integration": false,
+        "attempts": [
+          {
+            "body_sha256": "e17565facdaa41f89c068e74086af4201f08bab245ca52046246d6b0c336829b",
+            "canonical_body_sha256": "43fabe4697cec213cb08df913f3e18f85eef81321d038bddc91624a2129093c4",
+            "idempotency_key": "evt_78902ff524a74893b753ae8b",
+            "notification_id": "revision-test",
+            "signature_input": "sig1=(\"@method\" \"@target-uri\" \"@authority\" \"content-type\" \"content-digest\");created=1791200828;expires=1791201128;nonce=\"OxOObxRK3Y8RNGZcBn0Bmg\";keyid=\"reverse-notification-key\";alg=\"ed25519\";tag=\"adcp/webhook-signing/v1\"",
+            "tampered_body_code": "webhook_signature_digest_mismatch",
+            "wrong_target_code": "webhook_signature_invalid",
+            "forged_digest_code": "webhook_signature_invalid",
+            "wrong_origin_code": "webhook_signature_invalid",
+            "fixture_route_code": "webhook_signature_invalid",
+            "wrong_purpose_code": "webhook_signature_key_purpose_invalid",
+            "unknown_key_code": "webhook_signature_key_unknown",
+            "replay_code": "webhook_signature_replayed"
+          },
+          {
+            "body_sha256": "e7b5fcc8e6b090de32c3931c20f6aa5601f1d345d3c32c799a2f1abe407484a3",
+            "canonical_body_sha256": "43fabe4697cec213cb08df913f3e18f85eef81321d038bddc91624a2129093c4",
+            "idempotency_key": "evt_78902ff524a74893b753ae8b",
+            "notification_id": "revision-test",
+            "signature_input": "sig1=(\"@method\" \"@target-uri\" \"@authority\" \"content-type\" \"content-digest\");created=1791200830;expires=1791201130;nonce=\"ZE4GC46AUF0kqDQt5nRogw\";keyid=\"reverse-notification-key\";alg=\"ed25519\";tag=\"adcp/webhook-signing/v1\"",
+            "tampered_body_code": "webhook_signature_digest_mismatch",
+            "wrong_target_code": "webhook_signature_invalid",
+            "forged_digest_code": "webhook_signature_invalid",
+            "wrong_origin_code": "webhook_signature_invalid",
+            "fixture_route_code": "webhook_signature_invalid",
+            "wrong_purpose_code": "webhook_signature_key_purpose_invalid",
+            "unknown_key_code": "webhook_signature_key_unknown",
+            "replay_code": "webhook_signature_replayed"
+          }
+        ],
+        "phases": [
+          {
+            "status": "passed",
+            "phase": "emit",
+            "generation": "cfg_14a03b11-d1c6-4b3a-b276-c962f053f6e3"
+          },
+          {
+            "status": "passed",
+            "phase": "recover",
+            "generation": "cfg_14a03b11-d1c6-4b3a-b276-c962f053f6e3",
+            "recovered": {
+              "claimed": 1,
+              "settled": 1,
+              "released": 0
+            },
+            "drained": {
+              "claimed": 0,
+              "settled": 0,
+              "released": 0
+            }
+          }
+        ],
+        "shared_postgres_replay_store": true,
+        "fresh_verifier_processes": [
+          {
+            "status": "passed",
+            "code": "webhook_signature_replayed",
+            "live_nonce_count": 1,
+            "installed_replay_store_sha256": "8fa7dd36037356f624d944b2a16d9b85507fb44c121526abfcaceed4b25d9e5e"
+          },
+          {
+            "status": "passed",
+            "code": "webhook_signature_replayed",
+            "live_nonce_count": 2,
+            "installed_replay_store_sha256": "8fa7dd36037356f624d944b2a16d9b85507fb44c121526abfcaceed4b25d9e5e"
+          }
+        ]
+      },
+      "reporting_notification_activity": {
+        "status": "passed",
+        "python_version": "8.0.0",
+        "postgres_version": "16.14",
+        "process_restart": true,
+        "transport": "owned loopback route for fixed HTTPS signature target",
+        "fixture_adapters": [
+          "proof",
+          "delivery_authorization",
+          "destination_validation",
+          "fetch_routing",
+          "trusted_jwk"
+        ],
+        "mode": "activity",
+        "reporting_activity_integration": true,
+        "attempts": [
+          {
+            "body_sha256": "db1b778b6458bd254666d81c6d45efeccdd05b8c384850962d23554edbde8378",
+            "canonical_body_sha256": "eadbae55a5b2eceb4066b5e2e27af10ec19284c08707f5fe6df1c9d48c7f29a0",
+            "idempotency_key": "evt_ffde44adc052441da7260026",
+            "notification_id": "reporting-event:b431f08f89929328030cf24c88f09782383e34c972db1530ec1f18746178cafb",
+            "signature_input": "sig1=(\"@method\" \"@target-uri\" \"@authority\" \"content-type\" \"content-digest\");created=1791200855;expires=1791201155;nonce=\"9VM9DWnSLvJkMxgtc289og\";keyid=\"reverse-notification-key\";alg=\"ed25519\";tag=\"adcp/webhook-signing/v1\"",
+            "tampered_body_code": "webhook_signature_digest_mismatch",
+            "wrong_target_code": "webhook_signature_invalid",
+            "forged_digest_code": "webhook_signature_invalid",
+            "wrong_origin_code": "webhook_signature_invalid",
+            "fixture_route_code": "webhook_signature_invalid",
+            "wrong_purpose_code": "webhook_signature_key_purpose_invalid",
+            "unknown_key_code": "webhook_signature_key_unknown",
+            "replay_code": "webhook_signature_replayed"
+          },
+          {
+            "body_sha256": "db1b778b6458bd254666d81c6d45efeccdd05b8c384850962d23554edbde8378",
+            "canonical_body_sha256": "eadbae55a5b2eceb4066b5e2e27af10ec19284c08707f5fe6df1c9d48c7f29a0",
+            "idempotency_key": "evt_ffde44adc052441da7260026",
+            "notification_id": "reporting-event:b431f08f89929328030cf24c88f09782383e34c972db1530ec1f18746178cafb",
+            "signature_input": "sig1=(\"@method\" \"@target-uri\" \"@authority\" \"content-type\" \"content-digest\");created=1791200859;expires=1791201159;nonce=\"eO8fyStHMrL3Rxw0zvx5YA\";keyid=\"reverse-notification-key\";alg=\"ed25519\";tag=\"adcp/webhook-signing/v1\"",
+            "tampered_body_code": "webhook_signature_digest_mismatch",
+            "wrong_target_code": "webhook_signature_invalid",
+            "forged_digest_code": "webhook_signature_invalid",
+            "wrong_origin_code": "webhook_signature_invalid",
+            "fixture_route_code": "webhook_signature_invalid",
+            "wrong_purpose_code": "webhook_signature_key_purpose_invalid",
+            "unknown_key_code": "webhook_signature_key_unknown",
+            "replay_code": "webhook_signature_replayed"
+          }
+        ],
+        "phases": [
+          {
+            "status": "passed",
+            "phase": "emit",
+            "generation": "cfg_758126e1-49c2-422f-8b18-07eaffe62824",
+            "committed_revision": "revision-august-official",
+            "activity": {
+              "claimed": 1,
+              "matched": 1,
+              "projected": 0,
+              "retried": 1,
+              "leaseLost": 0,
+              "abandoned": 0
+            },
+            "recipient_attempt_checkpointed": true,
+            "webhook_attempts": [
+              {
+                "idempotency_key": "evt_ffde44adc052441da7260026",
+                "notification_id": "reporting-event:b431f08f89929328030cf24c88f09782383e34c972db1530ec1f18746178cafb",
+                "subscriber_id": "python-buyer",
+                "fired_at": "2026-10-05T11:47:35.988Z",
+                "completed_at": "2026-10-05T11:47:36.029Z",
+                "notification_type": "reporting.ledger_changed",
+                "attempt": 1,
+                "status": "failed",
+                "url": "https://buyer.example.test/redacted",
+                "http_status_code": 503,
+                "response_time_ms": 38,
+                "payload_size_bytes": 409,
+                "error_message": "HTTP non-success response"
+              }
+            ]
+          },
+          {
+            "status": "passed",
+            "phase": "recover",
+            "generation": "cfg_758126e1-49c2-422f-8b18-07eaffe62824",
+            "activity": {
+              "claimed": 1,
+              "matched": 1,
+              "projected": 1,
+              "retried": 0,
+              "leaseLost": 0,
+              "abandoned": 0
+            },
+            "drained": {
+              "claimed": 0,
+              "matched": 0,
+              "projected": 0,
+              "retried": 0,
+              "leaseLost": 0,
+              "abandoned": 0
+            },
+            "tenant_isolation": true,
+            "recipient_settled": true,
+            "webhook_attempts": [
+              {
+                "idempotency_key": "evt_ffde44adc052441da7260026",
+                "notification_id": "reporting-event:b431f08f89929328030cf24c88f09782383e34c972db1530ec1f18746178cafb",
+                "subscriber_id": "python-buyer",
+                "fired_at": "2026-10-05T11:47:39.095Z",
+                "completed_at": "2026-10-05T11:47:39.154Z",
+                "notification_type": "reporting.ledger_changed",
+                "attempt": 2,
+                "status": "success",
+                "url": "https://buyer.example.test/redacted",
+                "http_status_code": 204,
+                "response_time_ms": 55,
+                "payload_size_bytes": 409,
+                "error_message": null
+              },
+              {
+                "idempotency_key": "evt_ffde44adc052441da7260026",
+                "notification_id": "reporting-event:b431f08f89929328030cf24c88f09782383e34c972db1530ec1f18746178cafb",
+                "subscriber_id": "python-buyer",
+                "fired_at": "2026-10-05T11:47:35.988Z",
+                "completed_at": "2026-10-05T11:47:36.029Z",
+                "notification_type": "reporting.ledger_changed",
+                "attempt": 1,
+                "status": "failed",
+                "url": "https://buyer.example.test/redacted",
+                "http_status_code": 503,
+                "response_time_ms": 38,
+                "payload_size_bytes": 409,
+                "error_message": "HTTP non-success response"
+              }
+            ],
+            "principal_isolation": true,
+            "list_accounts_projection_helper": true
+          }
+        ],
+        "shared_postgres_replay_store": true,
+        "fresh_verifier_processes": [
+          {
+            "status": "passed",
+            "code": "webhook_signature_replayed",
+            "live_nonce_count": 1,
+            "installed_replay_store_sha256": "8fa7dd36037356f624d944b2a16d9b85507fb44c121526abfcaceed4b25d9e5e"
+          },
+          {
+            "status": "passed",
+            "code": "webhook_signature_replayed",
+            "live_nonce_count": 2,
+            "installed_replay_store_sha256": "8fa7dd36037356f624d944b2a16d9b85507fb44c121526abfcaceed4b25d9e5e"
+          }
+        ]
+      },
+      "integrated_adjustment_loop": {
+        "status": "passed",
+        "seller_version": "14.1.0",
+        "python_version": "8.0.0",
+        "postgres_version": "16.14",
+        "scope": "reference composition of installed Python APIs with TypeScript seller",
+        "ingress_evidence_kind": "official MCP decoded mapping before reporting model parsing",
+        "process_death_controls": [
+          {
+            "point": "before_intent",
+            "before": {
+              "plans": [],
+              "receipts": 0,
+              "batches": 0
+            },
+            "after": {
+              "plans": [
+                {
+                  "sha256": "0b22d8d2464ae903fbb94b2c9c894318ee63322b7ec7abb1fd4147519e0450c0",
+                  "pending": false,
+                  "request_sha256": {
+                    "reporting-buyer:2a74679ca896eb0f66b5578689f80c9504f9b2ff2efb82d696f922957b0fe401:0": "f053c2b420f3520b0ee809647c7594236ccc19285c3f9e199e9bc288f92e74cc"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "result": {
+              "point": "done",
+              "pending": false,
+              "proposal_deferred": false,
+              "submission_id": "reporting-submission:2a74679ca896eb0f66b5578689f80c9504f9b2ff2efb82d696f922957b0fe401",
+              "plan_sha256": "0b22d8d2464ae903fbb94b2c9c894318ee63322b7ec7abb1fd4147519e0450c0",
+              "outcomes": [
+                "recorded",
+                "recorded",
+                "recorded"
+              ],
+              "calls": [
+                {
+                  "sha256": "f053c2b420f3520b0ee809647c7594236ccc19285c3f9e199e9bc288f92e74cc",
+                  "idempotency_key": "reporting-buyer:2a74679ca896eb0f66b5578689f80c9504f9b2ff2efb82d696f922957b0fe401:0"
+                }
+              ],
+              "evidence_sha256": {
+                "adjustment-integer_delta": "30845b6f9c3534c3f04458cbf3dbfc87162b9f7e7e0097c38bfa98a622d66767",
+                "adjustment-exact_decimal": "77c51bb22dd3a95b4bb0ade5c9834d86936999f403667f9ca7d47bb51b7f4e06"
+              },
+              "installed_modules": {
+                "adcp.reporting.adjustment_evidence": "5cc47de0b3e9a86a1b715612b2386969aebc253a84d42649dfd845d9566c1982",
+                "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+                "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+                "adcp.reporting_inspection": "d3bef1342a1cc42dffbf90f39706dd35104e46011666af1180bb854ad4a5f20a",
+                "adcp.protocols.mcp": "169d391b81c7f6ce51b2f4d6a1eab32fc492d628b37a01c88599de467d0ebefc"
+              },
+              "revision_sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017",
+              "reconciliation_status": "accepted"
+            }
+          },
+          {
+            "point": "intent_committed",
+            "before": {
+              "plans": [
+                {
+                  "sha256": "14f87cf447a23ae25a8301cbc9aea76516ae33544c046dbec8914930b6be9177",
+                  "pending": true,
+                  "request_sha256": {
+                    "reporting-buyer:ce64e10390bbbb99d4b7d61ad52c87c065f36651042fc1eb53a09a596cd07dc4:0": "26a87a150775a52bfe3353abf5b56f5bc5c8484a83086dce95d56a37aa94df35"
+                  }
+                }
+              ],
+              "receipts": 0,
+              "batches": 0
+            },
+            "after": {
+              "plans": [
+                {
+                  "sha256": "14f87cf447a23ae25a8301cbc9aea76516ae33544c046dbec8914930b6be9177",
+                  "pending": false,
+                  "request_sha256": {
+                    "reporting-buyer:ce64e10390bbbb99d4b7d61ad52c87c065f36651042fc1eb53a09a596cd07dc4:0": "26a87a150775a52bfe3353abf5b56f5bc5c8484a83086dce95d56a37aa94df35"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "result": {
+              "point": "done",
+              "pending": false,
+              "proposal_deferred": false,
+              "submission_id": "reporting-submission:ce64e10390bbbb99d4b7d61ad52c87c065f36651042fc1eb53a09a596cd07dc4",
+              "plan_sha256": "14f87cf447a23ae25a8301cbc9aea76516ae33544c046dbec8914930b6be9177",
+              "outcomes": [
+                "recorded",
+                "recorded",
+                "recorded"
+              ],
+              "calls": [
+                {
+                  "sha256": "26a87a150775a52bfe3353abf5b56f5bc5c8484a83086dce95d56a37aa94df35",
+                  "idempotency_key": "reporting-buyer:ce64e10390bbbb99d4b7d61ad52c87c065f36651042fc1eb53a09a596cd07dc4:0"
+                }
+              ],
+              "evidence_sha256": {},
+              "installed_modules": {
+                "adcp.reporting.adjustment_evidence": "5cc47de0b3e9a86a1b715612b2386969aebc253a84d42649dfd845d9566c1982",
+                "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+                "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+                "adcp.reporting_inspection": "d3bef1342a1cc42dffbf90f39706dd35104e46011666af1180bb854ad4a5f20a",
+                "adcp.protocols.mcp": "169d391b81c7f6ce51b2f4d6a1eab32fc492d628b37a01c88599de467d0ebefc"
+              },
+              "revision_sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017",
+              "reconciliation_status": "accepted"
+            }
+          },
+          {
+            "point": "before_seller",
+            "before": {
+              "plans": [
+                {
+                  "sha256": "f36bb46867bdf5d26f1ceeca28a7083595f9e085829ece021a3c7d4bda880269",
+                  "pending": true,
+                  "request_sha256": {
+                    "reporting-buyer:68b6ba8d031a718eebd14ba864fd8973ee3928adee83b65a0181df4b52d664b6:0": "bac48c510542769f1996f121183b63a6c9a88f798e40f79da965e6659438cd5b"
+                  }
+                }
+              ],
+              "receipts": 0,
+              "batches": 0
+            },
+            "after": {
+              "plans": [
+                {
+                  "sha256": "f36bb46867bdf5d26f1ceeca28a7083595f9e085829ece021a3c7d4bda880269",
+                  "pending": false,
+                  "request_sha256": {
+                    "reporting-buyer:68b6ba8d031a718eebd14ba864fd8973ee3928adee83b65a0181df4b52d664b6:0": "bac48c510542769f1996f121183b63a6c9a88f798e40f79da965e6659438cd5b"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "result": {
+              "point": "done",
+              "pending": false,
+              "proposal_deferred": false,
+              "submission_id": "reporting-submission:68b6ba8d031a718eebd14ba864fd8973ee3928adee83b65a0181df4b52d664b6",
+              "plan_sha256": "f36bb46867bdf5d26f1ceeca28a7083595f9e085829ece021a3c7d4bda880269",
+              "outcomes": [
+                "recorded",
+                "recorded",
+                "recorded"
+              ],
+              "calls": [
+                {
+                  "sha256": "bac48c510542769f1996f121183b63a6c9a88f798e40f79da965e6659438cd5b",
+                  "idempotency_key": "reporting-buyer:68b6ba8d031a718eebd14ba864fd8973ee3928adee83b65a0181df4b52d664b6:0"
+                }
+              ],
+              "evidence_sha256": {},
+              "installed_modules": {
+                "adcp.reporting.adjustment_evidence": "5cc47de0b3e9a86a1b715612b2386969aebc253a84d42649dfd845d9566c1982",
+                "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+                "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+                "adcp.reporting_inspection": "d3bef1342a1cc42dffbf90f39706dd35104e46011666af1180bb854ad4a5f20a",
+                "adcp.protocols.mcp": "169d391b81c7f6ce51b2f4d6a1eab32fc492d628b37a01c88599de467d0ebefc"
+              },
+              "revision_sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017",
+              "reconciliation_status": "accepted"
+            }
+          },
+          {
+            "point": "seller_committed",
+            "before": {
+              "plans": [
+                {
+                  "sha256": "66079b7350db7de94f8d9d517fd9cff22025de3ce4efb5e58baa84316ae2b350",
+                  "pending": true,
+                  "request_sha256": {
+                    "reporting-buyer:b0c3031374b18316464534e975f8e3cc79503c9a56e0b854899df3b715c83713:0": "0b8f5691c9daa57cb4a72892ed2e5e36d1252cee1c6cc2e094fdbd6e8b6b633f"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "after": {
+              "plans": [
+                {
+                  "sha256": "66079b7350db7de94f8d9d517fd9cff22025de3ce4efb5e58baa84316ae2b350",
+                  "pending": false,
+                  "request_sha256": {
+                    "reporting-buyer:b0c3031374b18316464534e975f8e3cc79503c9a56e0b854899df3b715c83713:0": "0b8f5691c9daa57cb4a72892ed2e5e36d1252cee1c6cc2e094fdbd6e8b6b633f"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "result": {
+              "point": "done",
+              "pending": false,
+              "proposal_deferred": false,
+              "submission_id": "reporting-submission:b0c3031374b18316464534e975f8e3cc79503c9a56e0b854899df3b715c83713",
+              "plan_sha256": "66079b7350db7de94f8d9d517fd9cff22025de3ce4efb5e58baa84316ae2b350",
+              "outcomes": [
+                "recorded",
+                "recorded",
+                "recorded"
+              ],
+              "calls": [
+                {
+                  "sha256": "0b8f5691c9daa57cb4a72892ed2e5e36d1252cee1c6cc2e094fdbd6e8b6b633f",
+                  "idempotency_key": "reporting-buyer:b0c3031374b18316464534e975f8e3cc79503c9a56e0b854899df3b715c83713:0"
+                }
+              ],
+              "evidence_sha256": {},
+              "installed_modules": {
+                "adcp.reporting.adjustment_evidence": "5cc47de0b3e9a86a1b715612b2386969aebc253a84d42649dfd845d9566c1982",
+                "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+                "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+                "adcp.reporting_inspection": "d3bef1342a1cc42dffbf90f39706dd35104e46011666af1180bb854ad4a5f20a",
+                "adcp.protocols.mcp": "169d391b81c7f6ce51b2f4d6a1eab32fc492d628b37a01c88599de467d0ebefc"
+              },
+              "revision_sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017",
+              "reconciliation_status": "accepted"
+            }
+          },
+          {
+            "point": "confirmation_row",
+            "before": {
+              "plans": [
+                {
+                  "sha256": "ecbf3a42fee162ad0de8cbf4ec088e3bc1e2a756aff7f1511b3127e73fa82bfd",
+                  "pending": true,
+                  "request_sha256": {
+                    "reporting-buyer:f6d93e34a246171855f400ae839a5aec3183ac20180f8008f5789fb9c6a8a0dd:0": "ca5e540815bdae3c3e2a1f143fe7018e0b3435024e7bb37d3bcc594d37a3e474"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "after": {
+              "plans": [
+                {
+                  "sha256": "ecbf3a42fee162ad0de8cbf4ec088e3bc1e2a756aff7f1511b3127e73fa82bfd",
+                  "pending": false,
+                  "request_sha256": {
+                    "reporting-buyer:f6d93e34a246171855f400ae839a5aec3183ac20180f8008f5789fb9c6a8a0dd:0": "ca5e540815bdae3c3e2a1f143fe7018e0b3435024e7bb37d3bcc594d37a3e474"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "result": {
+              "point": "done",
+              "pending": false,
+              "proposal_deferred": false,
+              "submission_id": "reporting-submission:f6d93e34a246171855f400ae839a5aec3183ac20180f8008f5789fb9c6a8a0dd",
+              "plan_sha256": "ecbf3a42fee162ad0de8cbf4ec088e3bc1e2a756aff7f1511b3127e73fa82bfd",
+              "outcomes": [
+                "recorded",
+                "recorded",
+                "recorded"
+              ],
+              "calls": [
+                {
+                  "sha256": "ca5e540815bdae3c3e2a1f143fe7018e0b3435024e7bb37d3bcc594d37a3e474",
+                  "idempotency_key": "reporting-buyer:f6d93e34a246171855f400ae839a5aec3183ac20180f8008f5789fb9c6a8a0dd:0"
+                }
+              ],
+              "evidence_sha256": {},
+              "installed_modules": {
+                "adcp.reporting.adjustment_evidence": "5cc47de0b3e9a86a1b715612b2386969aebc253a84d42649dfd845d9566c1982",
+                "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+                "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+                "adcp.reporting_inspection": "d3bef1342a1cc42dffbf90f39706dd35104e46011666af1180bb854ad4a5f20a",
+                "adcp.protocols.mcp": "169d391b81c7f6ce51b2f4d6a1eab32fc492d628b37a01c88599de467d0ebefc"
+              },
+              "revision_sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017",
+              "reconciliation_status": "accepted"
+            }
+          },
+          {
+            "point": "confirmation_committed",
+            "before": {
+              "plans": [
+                {
+                  "sha256": "a0e1c5a7c6f1ae93fb89e8e0981be578e7281c4c1572e5aab35e6d7681231483",
+                  "pending": false,
+                  "request_sha256": {
+                    "reporting-buyer:0db99dd14479885186c2c88bac2dfa3b1b9992b43a7f4c52fca42574c8a8f30a:0": "ec63b56e13090382a21677d44f599ab4b167718e6f5db28b091c6cd3cfac82c9"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "after": {
+              "plans": [
+                {
+                  "sha256": "a0e1c5a7c6f1ae93fb89e8e0981be578e7281c4c1572e5aab35e6d7681231483",
+                  "pending": false,
+                  "request_sha256": {
+                    "reporting-buyer:0db99dd14479885186c2c88bac2dfa3b1b9992b43a7f4c52fca42574c8a8f30a:0": "ec63b56e13090382a21677d44f599ab4b167718e6f5db28b091c6cd3cfac82c9"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "result": {
+              "point": "done",
+              "pending": false,
+              "proposal_deferred": false,
+              "submission_id": "reporting-submission:0db99dd14479885186c2c88bac2dfa3b1b9992b43a7f4c52fca42574c8a8f30a",
+              "plan_sha256": "a0e1c5a7c6f1ae93fb89e8e0981be578e7281c4c1572e5aab35e6d7681231483",
+              "outcomes": [
+                "recorded",
+                "recorded",
+                "recorded"
+              ],
+              "calls": [],
+              "evidence_sha256": {},
+              "installed_modules": {
+                "adcp.reporting.adjustment_evidence": "5cc47de0b3e9a86a1b715612b2386969aebc253a84d42649dfd845d9566c1982",
+                "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+                "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+                "adcp.reporting_inspection": "d3bef1342a1cc42dffbf90f39706dd35104e46011666af1180bb854ad4a5f20a",
+                "adcp.protocols.mcp": "169d391b81c7f6ce51b2f4d6a1eab32fc492d628b37a01c88599de467d0ebefc"
+              },
+              "revision_sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017",
+              "reconciliation_status": "accepted"
+            }
+          },
+          {
+            "point": "returned",
+            "before": {
+              "plans": [
+                {
+                  "sha256": "8b16324dbfeeeda5e588d03d70dc6ad89cdb4ac7cd1bf7280e8eba3d64c64b29",
+                  "pending": false,
+                  "request_sha256": {
+                    "reporting-buyer:23891d9d378b81b61d9bf95ae1011eb0658fdebb16ecf5969d23e495a2f2ff3e:0": "13e90f97c41f3d8aa82284875d3d04bbd69de260b7f7dfb699fa67af6fcc0fb4"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "after": {
+              "plans": [
+                {
+                  "sha256": "8b16324dbfeeeda5e588d03d70dc6ad89cdb4ac7cd1bf7280e8eba3d64c64b29",
+                  "pending": false,
+                  "request_sha256": {
+                    "reporting-buyer:23891d9d378b81b61d9bf95ae1011eb0658fdebb16ecf5969d23e495a2f2ff3e:0": "13e90f97c41f3d8aa82284875d3d04bbd69de260b7f7dfb699fa67af6fcc0fb4"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "result": {
+              "point": "done",
+              "pending": false,
+              "proposal_deferred": false,
+              "submission_id": "reporting-submission:23891d9d378b81b61d9bf95ae1011eb0658fdebb16ecf5969d23e495a2f2ff3e",
+              "plan_sha256": "8b16324dbfeeeda5e588d03d70dc6ad89cdb4ac7cd1bf7280e8eba3d64c64b29",
+              "outcomes": [
+                "recorded",
+                "recorded",
+                "recorded"
+              ],
+              "calls": [],
+              "evidence_sha256": {},
+              "installed_modules": {
+                "adcp.reporting.adjustment_evidence": "5cc47de0b3e9a86a1b715612b2386969aebc253a84d42649dfd845d9566c1982",
+                "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+                "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+                "adcp.reporting_inspection": "d3bef1342a1cc42dffbf90f39706dd35104e46011666af1180bb854ad4a5f20a",
+                "adcp.protocols.mcp": "169d391b81c7f6ce51b2f4d6a1eab32fc492d628b37a01c88599de467d0ebefc"
+              },
+              "revision_sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017",
+              "reconciliation_status": "accepted"
+            }
+          }
+        ],
+        "concurrent_buyers": {
+          "first": {
+            "point": "done",
+            "pending": false,
+            "proposal_deferred": true,
+            "submission_id": "reporting-submission:2aba0a3b2e43a875c195ba9ea770f9106c55ba22f433d68604aada7fbf1c89d8",
+            "plan_sha256": "edbd1483ce0f9bab310897bc75034659565c903132a90ee99e6d98d5ec17af34",
+            "outcomes": [
+              "recorded",
+              "recorded",
+              "recorded"
+            ],
+            "calls": [
+              {
+                "sha256": "70a2b929bf7bf488044ca996d4827d4f47b0859b3da4e8e23010849314e5ac50",
+                "idempotency_key": "reporting-buyer:2aba0a3b2e43a875c195ba9ea770f9106c55ba22f433d68604aada7fbf1c89d8:0"
+              }
+            ],
+            "evidence_sha256": {
+              "adjustment-integer_delta": "30845b6f9c3534c3f04458cbf3dbfc87162b9f7e7e0097c38bfa98a622d66767",
+              "adjustment-exact_decimal": "77c51bb22dd3a95b4bb0ade5c9834d86936999f403667f9ca7d47bb51b7f4e06"
+            },
+            "installed_modules": {
+              "adcp.reporting.adjustment_evidence": "5cc47de0b3e9a86a1b715612b2386969aebc253a84d42649dfd845d9566c1982",
+              "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+              "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+              "adcp.reporting_inspection": "d3bef1342a1cc42dffbf90f39706dd35104e46011666af1180bb854ad4a5f20a",
+              "adcp.protocols.mcp": "169d391b81c7f6ce51b2f4d6a1eab32fc492d628b37a01c88599de467d0ebefc"
+            },
+            "revision_sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017",
+            "reconciliation_status": "accepted"
+          },
+          "second": {
+            "point": "done",
+            "pending": false,
+            "proposal_deferred": false,
+            "submission_id": "reporting-submission:2aba0a3b2e43a875c195ba9ea770f9106c55ba22f433d68604aada7fbf1c89d8",
+            "plan_sha256": "edbd1483ce0f9bab310897bc75034659565c903132a90ee99e6d98d5ec17af34",
+            "outcomes": [
+              "recorded",
+              "recorded",
+              "recorded"
+            ],
+            "calls": [
+              {
+                "sha256": "70a2b929bf7bf488044ca996d4827d4f47b0859b3da4e8e23010849314e5ac50",
+                "idempotency_key": "reporting-buyer:2aba0a3b2e43a875c195ba9ea770f9106c55ba22f433d68604aada7fbf1c89d8:0"
+              }
+            ],
+            "evidence_sha256": {
+              "adjustment-integer_delta": "30845b6f9c3534c3f04458cbf3dbfc87162b9f7e7e0097c38bfa98a622d66767",
+              "adjustment-exact_decimal": "77c51bb22dd3a95b4bb0ade5c9834d86936999f403667f9ca7d47bb51b7f4e06"
+            },
+            "installed_modules": {
+              "adcp.reporting.adjustment_evidence": "5cc47de0b3e9a86a1b715612b2386969aebc253a84d42649dfd845d9566c1982",
+              "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+              "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+              "adcp.reporting_inspection": "d3bef1342a1cc42dffbf90f39706dd35104e46011666af1180bb854ad4a5f20a",
+              "adcp.protocols.mcp": "169d391b81c7f6ce51b2f4d6a1eab32fc492d628b37a01c88599de467d0ebefc"
+            },
+            "revision_sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017",
+            "reconciliation_status": "accepted"
+          },
+          "seller": {
+            "plans": [
+              {
+                "sha256": "edbd1483ce0f9bab310897bc75034659565c903132a90ee99e6d98d5ec17af34",
+                "pending": false,
+                "request_sha256": {
+                  "reporting-buyer:2aba0a3b2e43a875c195ba9ea770f9106c55ba22f433d68604aada7fbf1c89d8:0": "70a2b929bf7bf488044ca996d4827d4f47b0859b3da4e8e23010849314e5ac50"
+                }
+              }
+            ],
+            "receipts": 3,
+            "batches": 1
+          }
+        },
+        "later_adjustment": {
+          "point": "done",
+          "pending": false,
+          "proposal_deferred": false,
+          "submission_id": "reporting-submission:89737e0a64b6d0e832d88cbbe35874440afdd8bc192ef4f64a0b46f09655a01a",
+          "plan_sha256": "8bb294497a31b11be9adcbbae15b24cf0c60bdf09a9e6f705ea725fc5d0be93b",
+          "outcomes": [
+            "recorded"
+          ],
+          "calls": [
+            {
+              "sha256": "c3fa4319d1da38661491dd5a0dd21741cc9afb305091f00130e22af22bff1e79",
+              "idempotency_key": "reporting-buyer:89737e0a64b6d0e832d88cbbe35874440afdd8bc192ef4f64a0b46f09655a01a:0"
+            }
+          ],
+          "evidence_sha256": {
+            "adjustment-integer_delta": "30845b6f9c3534c3f04458cbf3dbfc87162b9f7e7e0097c38bfa98a622d66767",
+            "adjustment-exact_decimal": "77c51bb22dd3a95b4bb0ade5c9834d86936999f403667f9ca7d47bb51b7f4e06",
+            "adjustment-unicode_composed": "6845f6daeb2d1193c937144ec1850351c0325dd6e09c8cd1e12e493a39d631af"
+          },
+          "installed_modules": {
+            "adcp.reporting.adjustment_evidence": "5cc47de0b3e9a86a1b715612b2386969aebc253a84d42649dfd845d9566c1982",
+            "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+            "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+            "adcp.reporting_inspection": "d3bef1342a1cc42dffbf90f39706dd35104e46011666af1180bb854ad4a5f20a",
+            "adcp.protocols.mcp": "169d391b81c7f6ce51b2f4d6a1eab32fc492d628b37a01c88599de467d0ebefc"
+          },
+          "revision_sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017",
+          "reconciliation_status": "accepted"
+        },
+        "observed_receipt_requests": 12,
+        "seller_observed_exact_reserved_requests": true,
+        "duplicate_receipts": 0,
+        "seller_request_evidence": "decoded MCP request after official schema validation",
+        "concurrent_reservation_race": true,
+        "facade_integration": false
+      },
+      "python_durable_submissions": {
+        "status": "passed",
+        "python_version": "8.0.0",
+        "scope": "standalone Python durable mixed revision/adjustment receipt submission",
+        "seller": "installed Python PostgreSQL ingestion",
+        "process_death_controls": 10,
+        "concurrent_buyer_controls": 1,
+        "pytest_version": "9.1.1",
+        "pytest_asyncio_version": "1.4.0",
+        "sdk_source_excluded": true,
+        "pytest_plugin_autoload_disabled": true,
+        "installed_modules": {
+          "adcp.reporting.submissions": "4b3795d9d7f6104517e59dab8c150999774cf9c1e99c2544fceeac9073e18abb",
+          "adcp.reporting.submissions.models": "9e4c4200d76720cd8b3b1d28a34cd626c598fdf07ab2c2241f8abe4ec4ba47dd",
+          "adcp.reporting.submissions.store": "74485629d97235eac631a545f9b8d6aabf36748b9c5ff610e070fd6f3230449c",
+          "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+          "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+          "adcp.reporting.receipts.pg": "63ec1f9bcb2deda00b0c23251d53af61773cae75f72e337dc2f192c90dc542e8"
+        },
+        "test_cases": [
+          "test_process_death_preserves_exact_requests_and_confirmed_outcomes[before_intent]",
+          "test_process_death_preserves_exact_requests_and_confirmed_outcomes[scope_row]",
+          "test_process_death_preserves_exact_requests_and_confirmed_outcomes[intent_row]",
+          "test_process_death_preserves_exact_requests_and_confirmed_outcomes[intent_committed]",
+          "test_process_death_preserves_exact_requests_and_confirmed_outcomes[before_seller]",
+          "test_process_death_preserves_exact_requests_and_confirmed_outcomes[seller_committed]",
+          "test_process_death_preserves_exact_requests_and_confirmed_outcomes[response_delivered]",
+          "test_process_death_preserves_exact_requests_and_confirmed_outcomes[confirmation_row]",
+          "test_process_death_preserves_exact_requests_and_confirmed_outcomes[confirmation_committed]",
+          "test_process_death_preserves_exact_requests_and_confirmed_outcomes[returned]",
+          "test_independent_concurrent_buyers_replay_one_reserved_seller_request"
+        ]
+      },
+      "aggregate_sha256": "bb8c81f9d50438837af4d2906228a46a30a38694966df4d3e2787ecf9baad606"
+    },
+    {
+      "contract": "reporting_evidence_interop_v1",
+      "fixture_version": 1,
+      "adcp_schema_version": "3.2.1",
+      "node": "v24.19.0",
+      "python_version": "8.0.0",
+      "python_harness_commit": "68345b5043b1cd8bae973c3d2ba0c0e7e53b6294",
+      "python_wheel_sha256": "d862687ab71f1aa411887d20dc7faba66547e68a319d29c0a8f568e8f88dd8fb",
+      "typescript_archive_sha256": "d87bc48e5263dd6393de2e6218ce3bf31dc1b3e90e42f75a35ca2dd06aaf24de",
+      "typescript_package_lock_sha256": "8e6f51a276ebaa178c693c01debd5c7a79880ee8bbde80703b3386ec5fef9186",
+      "fixture_sha256": "bcd6166676ba9bc51cdbef5eefd59ae5d3572884a69205f91176534e0d6b037e",
+      "gate_entrypoints": {
+        "adjustment-buyer.py": "ddf6de5d23a6da3eba4d71832d0e7659caf98803a74f6cb5fe7c830339b32b07",
+        "adjustment-seller.cjs": "41a5ddeaa2d46fe88b2c80165b76c2906aec45ee59788dde5b3e4b40905b201f",
+        "adjustment.py": "72de733a1e72b9ad9996b5527bb100750c028ca779f24246b0add6beb0a425a7",
+        "buyer-submissions.py": "85df0cb01113c802f7c89ea52c9fd5edc8e90b328d154933244ec6878ee6c243",
+        "core.py": "7374bcc24fbd3aeb317f7958cb6632cb97b1a1556d2cb61c808ecaa37908e748",
+        "export.py": "df12c96e900e72acdbaafde91c844675a6966672612e326f83a4f331689d8b2c",
+        "managed-buyer.py": "5d456229471353536a15177dafc2a74917d5100bcd52916eb2418e9ca1e2c009",
+        "managed-seller.cjs": "72a28614a8d8ec9068498e7ea70a14fc6501f4539be43f3356456cdccafc7009",
+        "managed.py": "da49f8ada6070c69389b1863671e38b52f97865f7a9a0a93a3ddbc3b167ba817",
+        "notification-replay.py": "8a43ccaa49e1efe2dccb338a4d1d3c3e4a8173288c56aa1b6420616e19518639",
+        "notification-seller.cjs": "7f157a5bec03b805df81a0499c2f9de84ff2d2dd8b1dbe28753c405fe51f3341",
+        "notification.py": "5566607c6d49c2820ac5c6edb68b233fd189a8442976d4a586ea81c17fde6394",
+        "pins.json": "0b11aad7c775d78a14c33d375eac8d93754ca39098f6373b6807d302e18def0a",
+        "python.py": "f91daf1ac79fa215136321aa874778a86913bfa044b123263e7bb260a793db61",
+        "run.mjs": "4b7bee320c4ce2d39870d7f1164c4a2091cc8ec2005040bfaca8f5f62be8fba8",
+        "typescript.cjs": "17e5073ae9dd1aaf9456ffddb53bc75f3426a82562141c84c2983af84f619ced",
+        "verify.py": "dee421cc82eef498d70c20c4a49aebc87b5ea24ae721fd4de61f778b8f59a718"
+      },
+      "checks": [
+        {
+          "name": "typescript-producer",
+          "sha256": "fb8c0f26f9cc6c636d9e8d7f1a73e953e58da3c7a3a74d474fefaa450ded5001"
+        },
+        {
+          "name": "python-producer",
+          "sha256": "c033050de94179ec67b004e9534d5dfbe78d075c38c583a957abbbc2e6c835b4"
+        },
+        {
+          "name": "python-consumes-typescript",
+          "sha256": "c033050de94179ec67b004e9534d5dfbe78d075c38c583a957abbbc2e6c835b4"
+        },
+        {
+          "name": "typescript-consumes-python",
+          "sha256": "fb8c0f26f9cc6c636d9e8d7f1a73e953e58da3c7a3a74d474fefaa450ded5001"
+        },
+        {
+          "name": "typescript-seller-python-buyer-core",
+          "sha256": "7ee5e4dddeadc371be978889b388c0e8ad5fd0291ae0eb323f953281ff827f80"
+        },
+        {
+          "name": "typescript-seller-python-buyer-managed",
+          "sha256": "b60b9c5a11c239f4ad4c9414a5efcf40e135bbc29482b99bb04d5336d3ef0b41"
+        },
+        {
+          "name": "typescript-seller-python-buyer-billing",
+          "sha256": "958cdc9cd1e92b510da634dbb2997b728f3d7fb1f9f578de156e28aee6300fd6"
+        },
+        {
+          "name": "typescript-sender-python-verifier-notification",
+          "sha256": "dc8ae2a3d21d61e756546e22b9053b96edcc200ff2de456ff25b61be12bf052c"
+        },
+        {
+          "name": "typescript-reporting-activity-python-durable-verifier",
+          "sha256": "f8f1a4b2f27306f999ef7a7d6b468ac060d85634e73a37ff5e35c7317f41bae3"
+        },
+        {
+          "name": "typescript-seller-python-durable-adjustment-loop",
+          "sha256": "38cf5f4189485375c9b0c39cadac191c216a06b93e1758dc3b6199dbe5176aea"
+        },
+        {
+          "name": "python-durable-mixed-receipt-submissions",
+          "sha256": "cab4822edb7936c6b1d0b1198f23d97556d88fe3f84686a4b9946b6d398d7b35"
+        }
+      ],
+      "status": "passed",
+      "fixture_inputs_sha256": {
+        "evidence-v1.json": "bcd6166676ba9bc51cdbef5eefd59ae5d3572884a69205f91176534e0d6b037e",
+        "canonical-json-v1.json": "b097761cc3884183f185be1806cc7e904c7aba9be3a85880408cad3cb3a0ad8a",
+        "resources/canonicalization.json": "653373f3d7db3e130675959b4c491c332730e82174fa7652024f14d45cd98c19",
+        "resources/fixture.json": "ba8eb40fd1d3318850b7052784ca0af591a5b8e3f022a69bb2964a5819192a5b",
+        "resources/manifest.json": "e50959c9297a15669578f88102533626a9f991a6feeb8f8bb5fab0ae0fde978c",
+        "resources/report-definition.json": "e76fd773afe79938b17db11fd07f1274db311f842d8ae94586168229d38d9086",
+        "resources/row-schema.json": "12aa838388ed6f73682cce5303c713dd95069e0479500462906fe0c861f0a472",
+        "resources/rows.jsonl": "735610f303d6d91aa618df3aa6d7f18bcf5dfa52bdbd9ef551293e6bd14c92d9"
+      },
+      "harness_export": {
+        "sha256": "4a7d97b83f970eb3cd959eecb2a67b2622c3cd00c3888da2df000f6e5b80961b",
+        "members": 960,
+        "scope": [
+          "scripts",
+          "tests"
+        ],
+        "sdk_source_excluded": true,
+        "git_blob_identities_verified": true
+      },
+      "installed_artifacts": {
+        "typescript_members": 6371,
+        "python_members": 4684,
+        "typescript_member_manifest_sha256": "48f7c4c261cf15916ada63d8aa0b1a4c17844eb49b3528c5e483084630349aba",
+        "python_member_manifest_sha256": "4926c566024991818e2fb7c2849a39ea8fd995d7a87605bd1b29d4bb2e637205",
+        "python_dependencies": [
+          [
+            "PyJWT",
+            "2.15.1"
+          ],
+          [
+            "Pygments",
+            "2.21.0"
+          ],
+          [
+            "a2a-sdk",
+            "1.0.1"
+          ],
+          [
+            "adcp",
+            "8.0.0"
+          ],
+          [
+            "aiologic",
+            "0.17.1"
+          ],
+          [
+            "annotated-types",
+            "0.8.0"
+          ],
+          [
+            "anyio",
+            "4.15.1"
+          ],
+          [
+            "attrs",
+            "26.1.0"
+          ],
+          [
+            "backports.asyncio.runner",
+            "1.2.0"
+          ],
+          [
+            "certifi",
+            "2026.7.22"
+          ],
+          [
+            "cffi",
+            "2.1.1"
+          ],
+          [
+            "charset-normalizer",
+            "3.5.2"
+          ],
+          [
+            "click",
+            "8.5.0"
+          ],
+          [
+            "cryptography",
+            "50.0.2"
+          ],
+          [
+            "culsans",
+            "0.11.0"
+          ],
+          [
+            "dnspython",
+            "2.8.0"
+          ],
+          [
+            "email-validator",
+            "2.3.0"
+          ],
+          [
+            "exceptiongroup",
+            "1.3.1"
+          ],
+          [
+            "filelock",
+            "4.0.10"
+          ],
+          [
+            "google-api-core",
+            "2.40.0"
+          ],
+          [
+            "google-auth",
+            "2.59.1"
+          ],
+          [
+            "googleapis-common-protos",
+            "1.75.5"
+          ],
+          [
+            "h11",
+            "0.16.0"
+          ],
+          [
+            "httpcore",
+            "1.0.9"
+          ],
+          [
+            "httpcore2",
+            "2.13.1"
+          ],
+          [
+            "httpx",
+            "0.28.1"
+          ],
+          [
+            "httpx-sse",
+            "0.4.3"
+          ],
+          [
+            "httpx2",
+            "2.13.1"
+          ],
+          [
+            "idna",
+            "3.20"
+          ],
+          [
+            "iniconfig",
+            "2.3.0"
+          ],
+          [
+            "json-rpc",
+            "1.15.0"
+          ],
+          [
+            "jsonschema",
+            "4.26.0"
+          ],
+          [
+            "jsonschema-specifications",
+            "2025.9.1"
+          ],
+          [
+            "mcp",
+            "2.3.0"
+          ],
+          [
+            "mcp-types",
+            "2.3.0"
+          ],
+          [
+            "opentelemetry-api",
+            "1.45.0"
+          ],
+          [
+            "packaging",
+            "26.3"
+          ],
+          [
+            "pluggy",
+            "1.6.0"
+          ],
+          [
+            "proto-plus",
+            "1.29.0"
+          ],
+          [
+            "protobuf",
+            "7.36.2"
+          ],
+          [
+            "psycopg",
+            "3.3.6"
+          ],
+          [
+            "psycopg-binary",
+            "3.3.6"
+          ],
+          [
+            "psycopg-pool",
+            "3.3.3"
+          ],
+          [
+            "pyasn1",
+            "0.6.4"
+          ],
+          [
+            "pyasn1_modules",
+            "0.4.2"
+          ],
+          [
+            "pycparser",
+            "3.0"
+          ],
+          [
+            "pydantic",
+            "2.13.5"
+          ],
+          [
+            "pydantic_core",
+            "2.46.5"
+          ],
+          [
+            "pytest",
+            "9.1.1"
+          ],
+          [
+            "pytest-asyncio",
+            "1.4.0"
+          ],
+          [
+            "python-multipart",
+            "0.0.32"
+          ],
+          [
+            "referencing",
+            "0.37.0"
+          ],
+          [
+            "requests",
+            "2.34.2"
+          ],
+          [
+            "requests-file",
+            "3.0.1"
+          ],
+          [
+            "rfc8785",
+            "0.1.4"
+          ],
+          [
+            "rpds-py",
+            "0.30.0"
+          ],
+          [
+            "sniffio",
+            "1.3.1"
+          ],
+          [
+            "sse-starlette",
+            "3.5.0"
+          ],
+          [
+            "starlette",
+            "1.7.0"
+          ],
+          [
+            "tldextract",
+            "5.4.0"
+          ],
+          [
+            "tomli",
+            "2.4.1"
+          ],
+          [
+            "truststore",
+            "0.10.4"
+          ],
+          [
+            "typing-inspection",
+            "0.4.4"
+          ],
+          [
+            "typing_extensions",
+            "4.16.0"
+          ],
+          [
+            "urllib3",
+            "2.8.0"
+          ],
+          [
+            "uvicorn",
+            "0.54.0"
+          ],
+          [
+            "wrapt",
+            "2.5.0"
+          ]
+        ]
+      },
+      "reverse_core": {
+        "status": "passed",
+        "database": "adcp_reverse_2c49097b25787c37",
+        "postgres_version": "16.14",
+        "accounts": [
+          {
+            "account": "interop-account-a",
+            "result": {
+              "definitive": true,
+              "kind": "python_core_semantic_probe",
+              "obligations": [
+                {
+                  "definitive": true,
+                  "reasons": [],
+                  "reporting_revision_id": "rrev_2594d401e767da93eaf760ccf6c08c24"
+                }
+              ],
+              "package": {
+                "name": "adcp",
+                "version": "8.0.0"
+              },
+              "protocol": "3.2.1",
+              "submitted_receipts": 0,
+              "typed_status": "completed"
+            }
+          },
+          {
+            "account": "interop-account-b",
+            "result": {
+              "definitive": true,
+              "kind": "python_core_semantic_probe",
+              "obligations": [
+                {
+                  "definitive": true,
+                  "reasons": [],
+                  "reporting_revision_id": "rrev_2f2edba8d636aba3c676990cfcf5a365"
+                }
+              ],
+              "package": {
+                "name": "adcp",
+                "version": "8.0.0"
+              },
+              "protocol": "3.2.1",
+              "submitted_receipts": 0,
+              "typed_status": "completed"
+            }
+          }
+        ]
+      },
+      "reverse_runtime": {
+        "managed": {
+          "status": "passed",
+          "mode": "managed",
+          "postgres_version": "16.14",
+          "seller_version": "14.1.0",
+          "buyer": {
+            "status": "passed",
+            "mode": "managed",
+            "python_version": "8.0.0",
+            "exact_revision_read": true,
+            "independent_manifest_inspection": true,
+            "resource_reads": 7,
+            "canonical_digest_verified": false,
+            "tampered_delivered_file_rejected": true,
+            "accepted_receipt_count": 0,
+            "lost_response_repaired": false,
+            "duplicate_receipt_count": 0,
+            "revoked_resource_unreadable": true,
+            "historical_metadata_retained": true
+          }
+        },
+        "billing": {
+          "status": "passed",
+          "mode": "billing",
+          "postgres_version": "16.14",
+          "seller_version": "14.1.0",
+          "buyer": {
+            "status": "passed",
+            "mode": "billing",
+            "python_version": "8.0.0",
+            "exact_revision_read": true,
+            "independent_manifest_inspection": true,
+            "resource_reads": 13,
+            "canonical_digest_verified": true,
+            "tampered_delivered_file_rejected": true,
+            "accepted_receipt_count": 1,
+            "lost_response_repaired": true,
+            "duplicate_receipt_count": 0,
+            "revoked_resource_unreadable": true,
+            "historical_metadata_retained": true
+          }
+        }
+      },
+      "reverse_notification": {
+        "status": "passed",
+        "python_version": "8.0.0",
+        "postgres_version": "16.14",
+        "process_restart": true,
+        "transport": "owned loopback route for fixed HTTPS signature target",
+        "fixture_adapters": [
+          "proof",
+          "delivery_authorization",
+          "destination_validation",
+          "fetch_routing",
+          "trusted_jwk"
+        ],
+        "mode": "standalone",
+        "reporting_activity_integration": false,
+        "attempts": [
+          {
+            "body_sha256": "a23a19ec9d210417b09f95f3d0f3640f8b7749a760dcc3415f1f69ad894b93a2",
+            "canonical_body_sha256": "f9666474685fddf93c204165d0dad334115597f9bac8778569f0172b8e064057",
+            "idempotency_key": "evt_b054cfb1c4c94fe2a691b93d",
+            "notification_id": "revision-test",
+            "signature_input": "sig1=(\"@method\" \"@target-uri\" \"@authority\" \"content-type\" \"content-digest\");created=1791200826;expires=1791201126;nonce=\"Nb5w2UZjjOsOY1-7su2u_g\";keyid=\"reverse-notification-key\";alg=\"ed25519\";tag=\"adcp/webhook-signing/v1\"",
+            "tampered_body_code": "webhook_signature_digest_mismatch",
+            "wrong_target_code": "webhook_signature_invalid",
+            "forged_digest_code": "webhook_signature_invalid",
+            "wrong_origin_code": "webhook_signature_invalid",
+            "fixture_route_code": "webhook_signature_invalid",
+            "wrong_purpose_code": "webhook_signature_key_purpose_invalid",
+            "unknown_key_code": "webhook_signature_key_unknown",
+            "replay_code": "webhook_signature_replayed"
+          },
+          {
+            "body_sha256": "0a14aba1f24aa83bbd8c189f0f9a0bf77208a54540d6a9ba92886028fb7b4686",
+            "canonical_body_sha256": "f9666474685fddf93c204165d0dad334115597f9bac8778569f0172b8e064057",
+            "idempotency_key": "evt_b054cfb1c4c94fe2a691b93d",
+            "notification_id": "revision-test",
+            "signature_input": "sig1=(\"@method\" \"@target-uri\" \"@authority\" \"content-type\" \"content-digest\");created=1791200828;expires=1791201128;nonce=\"wz_ivbNzu-xr018NG_EhwA\";keyid=\"reverse-notification-key\";alg=\"ed25519\";tag=\"adcp/webhook-signing/v1\"",
+            "tampered_body_code": "webhook_signature_digest_mismatch",
+            "wrong_target_code": "webhook_signature_invalid",
+            "forged_digest_code": "webhook_signature_invalid",
+            "wrong_origin_code": "webhook_signature_invalid",
+            "fixture_route_code": "webhook_signature_invalid",
+            "wrong_purpose_code": "webhook_signature_key_purpose_invalid",
+            "unknown_key_code": "webhook_signature_key_unknown",
+            "replay_code": "webhook_signature_replayed"
+          }
+        ],
+        "phases": [
+          {
+            "status": "passed",
+            "phase": "emit",
+            "generation": "cfg_2fa09502-51a1-4d98-8e03-da632aed93d4"
+          },
+          {
+            "status": "passed",
+            "phase": "recover",
+            "generation": "cfg_2fa09502-51a1-4d98-8e03-da632aed93d4",
+            "recovered": {
+              "claimed": 1,
+              "settled": 1,
+              "released": 0
+            },
+            "drained": {
+              "claimed": 0,
+              "settled": 0,
+              "released": 0
+            }
+          }
+        ],
+        "shared_postgres_replay_store": true,
+        "fresh_verifier_processes": [
+          {
+            "status": "passed",
+            "code": "webhook_signature_replayed",
+            "live_nonce_count": 1,
+            "installed_replay_store_sha256": "8fa7dd36037356f624d944b2a16d9b85507fb44c121526abfcaceed4b25d9e5e"
+          },
+          {
+            "status": "passed",
+            "code": "webhook_signature_replayed",
+            "live_nonce_count": 2,
+            "installed_replay_store_sha256": "8fa7dd36037356f624d944b2a16d9b85507fb44c121526abfcaceed4b25d9e5e"
+          }
+        ]
+      },
+      "reporting_notification_activity": {
+        "status": "passed",
+        "python_version": "8.0.0",
+        "postgres_version": "16.14",
+        "process_restart": true,
+        "transport": "owned loopback route for fixed HTTPS signature target",
+        "fixture_adapters": [
+          "proof",
+          "delivery_authorization",
+          "destination_validation",
+          "fetch_routing",
+          "trusted_jwk"
+        ],
+        "mode": "activity",
+        "reporting_activity_integration": true,
+        "attempts": [
+          {
+            "body_sha256": "532942ec61fc4cdd995638bcd88038b213480743c03e4db67ea02cb7f5ecddfd",
+            "canonical_body_sha256": "8c59db46a3d35790b0c389ae01d0e4ca85bb38281831d1e4ca8941540b4a2086",
+            "idempotency_key": "evt_736436a054164d7c9f4d8252",
+            "notification_id": "reporting-event:b431f08f89929328030cf24c88f09782383e34c972db1530ec1f18746178cafb",
+            "signature_input": "sig1=(\"@method\" \"@target-uri\" \"@authority\" \"content-type\" \"content-digest\");created=1791200850;expires=1791201150;nonce=\"9-m0hOlsK58eYwSRsiJfyQ\";keyid=\"reverse-notification-key\";alg=\"ed25519\";tag=\"adcp/webhook-signing/v1\"",
+            "tampered_body_code": "webhook_signature_digest_mismatch",
+            "wrong_target_code": "webhook_signature_invalid",
+            "forged_digest_code": "webhook_signature_invalid",
+            "wrong_origin_code": "webhook_signature_invalid",
+            "fixture_route_code": "webhook_signature_invalid",
+            "wrong_purpose_code": "webhook_signature_key_purpose_invalid",
+            "unknown_key_code": "webhook_signature_key_unknown",
+            "replay_code": "webhook_signature_replayed"
+          },
+          {
+            "body_sha256": "532942ec61fc4cdd995638bcd88038b213480743c03e4db67ea02cb7f5ecddfd",
+            "canonical_body_sha256": "8c59db46a3d35790b0c389ae01d0e4ca85bb38281831d1e4ca8941540b4a2086",
+            "idempotency_key": "evt_736436a054164d7c9f4d8252",
+            "notification_id": "reporting-event:b431f08f89929328030cf24c88f09782383e34c972db1530ec1f18746178cafb",
+            "signature_input": "sig1=(\"@method\" \"@target-uri\" \"@authority\" \"content-type\" \"content-digest\");created=1791200852;expires=1791201152;nonce=\"N9ZjJjqo3OK8xgaHKfZNCg\";keyid=\"reverse-notification-key\";alg=\"ed25519\";tag=\"adcp/webhook-signing/v1\"",
+            "tampered_body_code": "webhook_signature_digest_mismatch",
+            "wrong_target_code": "webhook_signature_invalid",
+            "forged_digest_code": "webhook_signature_invalid",
+            "wrong_origin_code": "webhook_signature_invalid",
+            "fixture_route_code": "webhook_signature_invalid",
+            "wrong_purpose_code": "webhook_signature_key_purpose_invalid",
+            "unknown_key_code": "webhook_signature_key_unknown",
+            "replay_code": "webhook_signature_replayed"
+          }
+        ],
+        "phases": [
+          {
+            "status": "passed",
+            "phase": "emit",
+            "generation": "cfg_61cebe73-c0ed-42f4-af78-beab9d320c89",
+            "committed_revision": "revision-august-official",
+            "activity": {
+              "claimed": 1,
+              "matched": 1,
+              "projected": 0,
+              "retried": 1,
+              "leaseLost": 0,
+              "abandoned": 0
+            },
+            "recipient_attempt_checkpointed": true,
+            "webhook_attempts": [
+              {
+                "idempotency_key": "evt_736436a054164d7c9f4d8252",
+                "notification_id": "reporting-event:b431f08f89929328030cf24c88f09782383e34c972db1530ec1f18746178cafb",
+                "subscriber_id": "python-buyer",
+                "fired_at": "2026-10-05T11:47:30.533Z",
+                "completed_at": "2026-10-05T11:47:30.578Z",
+                "notification_type": "reporting.ledger_changed",
+                "attempt": 1,
+                "status": "failed",
+                "url": "https://buyer.example.test/redacted",
+                "http_status_code": 503,
+                "response_time_ms": 42,
+                "payload_size_bytes": 409,
+                "error_message": "HTTP non-success response"
+              }
+            ]
+          },
+          {
+            "status": "passed",
+            "phase": "recover",
+            "generation": "cfg_61cebe73-c0ed-42f4-af78-beab9d320c89",
+            "activity": {
+              "claimed": 1,
+              "matched": 1,
+              "projected": 1,
+              "retried": 0,
+              "leaseLost": 0,
+              "abandoned": 0
+            },
+            "drained": {
+              "claimed": 0,
+              "matched": 0,
+              "projected": 0,
+              "retried": 0,
+              "leaseLost": 0,
+              "abandoned": 0
+            },
+            "tenant_isolation": true,
+            "recipient_settled": true,
+            "webhook_attempts": [
+              {
+                "idempotency_key": "evt_736436a054164d7c9f4d8252",
+                "notification_id": "reporting-event:b431f08f89929328030cf24c88f09782383e34c972db1530ec1f18746178cafb",
+                "subscriber_id": "python-buyer",
+                "fired_at": "2026-10-05T11:47:32.606Z",
+                "completed_at": "2026-10-05T11:47:32.643Z",
+                "notification_type": "reporting.ledger_changed",
+                "attempt": 2,
+                "status": "success",
+                "url": "https://buyer.example.test/redacted",
+                "http_status_code": 204,
+                "response_time_ms": 34,
+                "payload_size_bytes": 409,
+                "error_message": null
+              },
+              {
+                "idempotency_key": "evt_736436a054164d7c9f4d8252",
+                "notification_id": "reporting-event:b431f08f89929328030cf24c88f09782383e34c972db1530ec1f18746178cafb",
+                "subscriber_id": "python-buyer",
+                "fired_at": "2026-10-05T11:47:30.533Z",
+                "completed_at": "2026-10-05T11:47:30.578Z",
+                "notification_type": "reporting.ledger_changed",
+                "attempt": 1,
+                "status": "failed",
+                "url": "https://buyer.example.test/redacted",
+                "http_status_code": 503,
+                "response_time_ms": 42,
+                "payload_size_bytes": 409,
+                "error_message": "HTTP non-success response"
+              }
+            ],
+            "principal_isolation": true,
+            "list_accounts_projection_helper": true
+          }
+        ],
+        "shared_postgres_replay_store": true,
+        "fresh_verifier_processes": [
+          {
+            "status": "passed",
+            "code": "webhook_signature_replayed",
+            "live_nonce_count": 1,
+            "installed_replay_store_sha256": "8fa7dd36037356f624d944b2a16d9b85507fb44c121526abfcaceed4b25d9e5e"
+          },
+          {
+            "status": "passed",
+            "code": "webhook_signature_replayed",
+            "live_nonce_count": 2,
+            "installed_replay_store_sha256": "8fa7dd36037356f624d944b2a16d9b85507fb44c121526abfcaceed4b25d9e5e"
+          }
+        ]
+      },
+      "integrated_adjustment_loop": {
+        "status": "passed",
+        "seller_version": "14.1.0",
+        "python_version": "8.0.0",
+        "postgres_version": "16.14",
+        "scope": "reference composition of installed Python APIs with TypeScript seller",
+        "ingress_evidence_kind": "official MCP decoded mapping before reporting model parsing",
+        "process_death_controls": [
+          {
+            "point": "before_intent",
+            "before": {
+              "plans": [],
+              "receipts": 0,
+              "batches": 0
+            },
+            "after": {
+              "plans": [
+                {
+                  "sha256": "cc2c1e061fa537f7088581fde11c9ec7925e92f21938463a3c486a8dccfe9e76",
+                  "pending": false,
+                  "request_sha256": {
+                    "reporting-buyer:5dc7532a433bc37dc1c09f6aad92ba8853661d8b6fda27413f68454d49bceef1:0": "47f3c5f919285fcb519990309331eddd1e5a9cdedce13c7bc2a2975d58ae389d"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "result": {
+              "point": "done",
+              "pending": false,
+              "proposal_deferred": false,
+              "submission_id": "reporting-submission:5dc7532a433bc37dc1c09f6aad92ba8853661d8b6fda27413f68454d49bceef1",
+              "plan_sha256": "cc2c1e061fa537f7088581fde11c9ec7925e92f21938463a3c486a8dccfe9e76",
+              "outcomes": [
+                "recorded",
+                "recorded",
+                "recorded"
+              ],
+              "calls": [
+                {
+                  "sha256": "47f3c5f919285fcb519990309331eddd1e5a9cdedce13c7bc2a2975d58ae389d",
+                  "idempotency_key": "reporting-buyer:5dc7532a433bc37dc1c09f6aad92ba8853661d8b6fda27413f68454d49bceef1:0"
+                }
+              ],
+              "evidence_sha256": {
+                "adjustment-integer_delta": "30845b6f9c3534c3f04458cbf3dbfc87162b9f7e7e0097c38bfa98a622d66767",
+                "adjustment-exact_decimal": "77c51bb22dd3a95b4bb0ade5c9834d86936999f403667f9ca7d47bb51b7f4e06"
+              },
+              "installed_modules": {
+                "adcp.reporting.adjustment_evidence": "5cc47de0b3e9a86a1b715612b2386969aebc253a84d42649dfd845d9566c1982",
+                "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+                "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+                "adcp.reporting_inspection": "d3bef1342a1cc42dffbf90f39706dd35104e46011666af1180bb854ad4a5f20a",
+                "adcp.protocols.mcp": "169d391b81c7f6ce51b2f4d6a1eab32fc492d628b37a01c88599de467d0ebefc"
+              },
+              "revision_sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017",
+              "reconciliation_status": "accepted"
+            }
+          },
+          {
+            "point": "intent_committed",
+            "before": {
+              "plans": [
+                {
+                  "sha256": "3da7e899c6946aafdeb5c8619fb4996a51f1cc0bf596b2da8647f007457920af",
+                  "pending": true,
+                  "request_sha256": {
+                    "reporting-buyer:3073c7e9ab825f694c12d9518312b4f3e4970f54a032951436e5b5ebe281fd1e:0": "2ec8761be2b9d957de0bbc9a9ca73a9510b452f21f755b7b60e3a0e4dbbd1d0c"
+                  }
+                }
+              ],
+              "receipts": 0,
+              "batches": 0
+            },
+            "after": {
+              "plans": [
+                {
+                  "sha256": "3da7e899c6946aafdeb5c8619fb4996a51f1cc0bf596b2da8647f007457920af",
+                  "pending": false,
+                  "request_sha256": {
+                    "reporting-buyer:3073c7e9ab825f694c12d9518312b4f3e4970f54a032951436e5b5ebe281fd1e:0": "2ec8761be2b9d957de0bbc9a9ca73a9510b452f21f755b7b60e3a0e4dbbd1d0c"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "result": {
+              "point": "done",
+              "pending": false,
+              "proposal_deferred": false,
+              "submission_id": "reporting-submission:3073c7e9ab825f694c12d9518312b4f3e4970f54a032951436e5b5ebe281fd1e",
+              "plan_sha256": "3da7e899c6946aafdeb5c8619fb4996a51f1cc0bf596b2da8647f007457920af",
+              "outcomes": [
+                "recorded",
+                "recorded",
+                "recorded"
+              ],
+              "calls": [
+                {
+                  "sha256": "2ec8761be2b9d957de0bbc9a9ca73a9510b452f21f755b7b60e3a0e4dbbd1d0c",
+                  "idempotency_key": "reporting-buyer:3073c7e9ab825f694c12d9518312b4f3e4970f54a032951436e5b5ebe281fd1e:0"
+                }
+              ],
+              "evidence_sha256": {},
+              "installed_modules": {
+                "adcp.reporting.adjustment_evidence": "5cc47de0b3e9a86a1b715612b2386969aebc253a84d42649dfd845d9566c1982",
+                "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+                "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+                "adcp.reporting_inspection": "d3bef1342a1cc42dffbf90f39706dd35104e46011666af1180bb854ad4a5f20a",
+                "adcp.protocols.mcp": "169d391b81c7f6ce51b2f4d6a1eab32fc492d628b37a01c88599de467d0ebefc"
+              },
+              "revision_sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017",
+              "reconciliation_status": "accepted"
+            }
+          },
+          {
+            "point": "before_seller",
+            "before": {
+              "plans": [
+                {
+                  "sha256": "bd39ac9f3ffce76e6e3615f27fbf5579a5b84d12a61bb7a8e083028c0eccc091",
+                  "pending": true,
+                  "request_sha256": {
+                    "reporting-buyer:e94fea4ca1844070e37a903e4a010b19bddbe73eef6fc666cf33ea44a4eac248:0": "50353e7adb0f5f3dbfc33a5064789de11716f35eec7621abf66b868f50dd5a2c"
+                  }
+                }
+              ],
+              "receipts": 0,
+              "batches": 0
+            },
+            "after": {
+              "plans": [
+                {
+                  "sha256": "bd39ac9f3ffce76e6e3615f27fbf5579a5b84d12a61bb7a8e083028c0eccc091",
+                  "pending": false,
+                  "request_sha256": {
+                    "reporting-buyer:e94fea4ca1844070e37a903e4a010b19bddbe73eef6fc666cf33ea44a4eac248:0": "50353e7adb0f5f3dbfc33a5064789de11716f35eec7621abf66b868f50dd5a2c"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "result": {
+              "point": "done",
+              "pending": false,
+              "proposal_deferred": false,
+              "submission_id": "reporting-submission:e94fea4ca1844070e37a903e4a010b19bddbe73eef6fc666cf33ea44a4eac248",
+              "plan_sha256": "bd39ac9f3ffce76e6e3615f27fbf5579a5b84d12a61bb7a8e083028c0eccc091",
+              "outcomes": [
+                "recorded",
+                "recorded",
+                "recorded"
+              ],
+              "calls": [
+                {
+                  "sha256": "50353e7adb0f5f3dbfc33a5064789de11716f35eec7621abf66b868f50dd5a2c",
+                  "idempotency_key": "reporting-buyer:e94fea4ca1844070e37a903e4a010b19bddbe73eef6fc666cf33ea44a4eac248:0"
+                }
+              ],
+              "evidence_sha256": {},
+              "installed_modules": {
+                "adcp.reporting.adjustment_evidence": "5cc47de0b3e9a86a1b715612b2386969aebc253a84d42649dfd845d9566c1982",
+                "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+                "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+                "adcp.reporting_inspection": "d3bef1342a1cc42dffbf90f39706dd35104e46011666af1180bb854ad4a5f20a",
+                "adcp.protocols.mcp": "169d391b81c7f6ce51b2f4d6a1eab32fc492d628b37a01c88599de467d0ebefc"
+              },
+              "revision_sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017",
+              "reconciliation_status": "accepted"
+            }
+          },
+          {
+            "point": "seller_committed",
+            "before": {
+              "plans": [
+                {
+                  "sha256": "5e13242409dda698f92227e9a5bdd9f2f35fa6c4f9ddf94ec35c86dcd639ef1f",
+                  "pending": true,
+                  "request_sha256": {
+                    "reporting-buyer:05c90c04267fc8e0a7c4facca0338e35191de577f8e9580601dc21668820b12e:0": "fddc14fa6b6542ecf93e25be52b50300abf2a329d5d86d565345d30238b9b571"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "after": {
+              "plans": [
+                {
+                  "sha256": "5e13242409dda698f92227e9a5bdd9f2f35fa6c4f9ddf94ec35c86dcd639ef1f",
+                  "pending": false,
+                  "request_sha256": {
+                    "reporting-buyer:05c90c04267fc8e0a7c4facca0338e35191de577f8e9580601dc21668820b12e:0": "fddc14fa6b6542ecf93e25be52b50300abf2a329d5d86d565345d30238b9b571"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "result": {
+              "point": "done",
+              "pending": false,
+              "proposal_deferred": false,
+              "submission_id": "reporting-submission:05c90c04267fc8e0a7c4facca0338e35191de577f8e9580601dc21668820b12e",
+              "plan_sha256": "5e13242409dda698f92227e9a5bdd9f2f35fa6c4f9ddf94ec35c86dcd639ef1f",
+              "outcomes": [
+                "recorded",
+                "recorded",
+                "recorded"
+              ],
+              "calls": [
+                {
+                  "sha256": "fddc14fa6b6542ecf93e25be52b50300abf2a329d5d86d565345d30238b9b571",
+                  "idempotency_key": "reporting-buyer:05c90c04267fc8e0a7c4facca0338e35191de577f8e9580601dc21668820b12e:0"
+                }
+              ],
+              "evidence_sha256": {},
+              "installed_modules": {
+                "adcp.reporting.adjustment_evidence": "5cc47de0b3e9a86a1b715612b2386969aebc253a84d42649dfd845d9566c1982",
+                "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+                "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+                "adcp.reporting_inspection": "d3bef1342a1cc42dffbf90f39706dd35104e46011666af1180bb854ad4a5f20a",
+                "adcp.protocols.mcp": "169d391b81c7f6ce51b2f4d6a1eab32fc492d628b37a01c88599de467d0ebefc"
+              },
+              "revision_sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017",
+              "reconciliation_status": "accepted"
+            }
+          },
+          {
+            "point": "confirmation_row",
+            "before": {
+              "plans": [
+                {
+                  "sha256": "08eaed19acb3d331b541a504b7f8e4f4c7aba1442b75208a7f914649072d82d4",
+                  "pending": true,
+                  "request_sha256": {
+                    "reporting-buyer:d2cdc21da3bc92c0eae0f6b1462cf23901ce95fef57b29fc3b6167ee1ca51857:0": "76109892197314c7d2d875e76568127f11cc0d0ce2ae1dd9f4086ecf71e4232b"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "after": {
+              "plans": [
+                {
+                  "sha256": "08eaed19acb3d331b541a504b7f8e4f4c7aba1442b75208a7f914649072d82d4",
+                  "pending": false,
+                  "request_sha256": {
+                    "reporting-buyer:d2cdc21da3bc92c0eae0f6b1462cf23901ce95fef57b29fc3b6167ee1ca51857:0": "76109892197314c7d2d875e76568127f11cc0d0ce2ae1dd9f4086ecf71e4232b"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "result": {
+              "point": "done",
+              "pending": false,
+              "proposal_deferred": false,
+              "submission_id": "reporting-submission:d2cdc21da3bc92c0eae0f6b1462cf23901ce95fef57b29fc3b6167ee1ca51857",
+              "plan_sha256": "08eaed19acb3d331b541a504b7f8e4f4c7aba1442b75208a7f914649072d82d4",
+              "outcomes": [
+                "recorded",
+                "recorded",
+                "recorded"
+              ],
+              "calls": [
+                {
+                  "sha256": "76109892197314c7d2d875e76568127f11cc0d0ce2ae1dd9f4086ecf71e4232b",
+                  "idempotency_key": "reporting-buyer:d2cdc21da3bc92c0eae0f6b1462cf23901ce95fef57b29fc3b6167ee1ca51857:0"
+                }
+              ],
+              "evidence_sha256": {},
+              "installed_modules": {
+                "adcp.reporting.adjustment_evidence": "5cc47de0b3e9a86a1b715612b2386969aebc253a84d42649dfd845d9566c1982",
+                "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+                "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+                "adcp.reporting_inspection": "d3bef1342a1cc42dffbf90f39706dd35104e46011666af1180bb854ad4a5f20a",
+                "adcp.protocols.mcp": "169d391b81c7f6ce51b2f4d6a1eab32fc492d628b37a01c88599de467d0ebefc"
+              },
+              "revision_sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017",
+              "reconciliation_status": "accepted"
+            }
+          },
+          {
+            "point": "confirmation_committed",
+            "before": {
+              "plans": [
+                {
+                  "sha256": "8cd4ca64f7d103e02a144458a6f3713ead27ec20bd1db200cc329042612eccb7",
+                  "pending": false,
+                  "request_sha256": {
+                    "reporting-buyer:8c071fcb84b8531b894d2d57a342a229541f6a378418ad76f07c746776a051b4:0": "8d69a9bb22cdb7b73d69dfde1675fbf9f07d41b8b8f4da4ac08054fc7a96c40e"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "after": {
+              "plans": [
+                {
+                  "sha256": "8cd4ca64f7d103e02a144458a6f3713ead27ec20bd1db200cc329042612eccb7",
+                  "pending": false,
+                  "request_sha256": {
+                    "reporting-buyer:8c071fcb84b8531b894d2d57a342a229541f6a378418ad76f07c746776a051b4:0": "8d69a9bb22cdb7b73d69dfde1675fbf9f07d41b8b8f4da4ac08054fc7a96c40e"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "result": {
+              "point": "done",
+              "pending": false,
+              "proposal_deferred": false,
+              "submission_id": "reporting-submission:8c071fcb84b8531b894d2d57a342a229541f6a378418ad76f07c746776a051b4",
+              "plan_sha256": "8cd4ca64f7d103e02a144458a6f3713ead27ec20bd1db200cc329042612eccb7",
+              "outcomes": [
+                "recorded",
+                "recorded",
+                "recorded"
+              ],
+              "calls": [],
+              "evidence_sha256": {},
+              "installed_modules": {
+                "adcp.reporting.adjustment_evidence": "5cc47de0b3e9a86a1b715612b2386969aebc253a84d42649dfd845d9566c1982",
+                "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+                "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+                "adcp.reporting_inspection": "d3bef1342a1cc42dffbf90f39706dd35104e46011666af1180bb854ad4a5f20a",
+                "adcp.protocols.mcp": "169d391b81c7f6ce51b2f4d6a1eab32fc492d628b37a01c88599de467d0ebefc"
+              },
+              "revision_sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017",
+              "reconciliation_status": "accepted"
+            }
+          },
+          {
+            "point": "returned",
+            "before": {
+              "plans": [
+                {
+                  "sha256": "4ef14a62e62b1b765480f788f75a864790dcdb53e9869561ce841f07ef999f34",
+                  "pending": false,
+                  "request_sha256": {
+                    "reporting-buyer:46faf9e7a236e85e16b590e1054e684ee4c1244a24f80d8c134dcf3c95a59040:0": "a11bb268647a4734c64ce61558db72cea06cb6bd65f7c359b7f5e95541004071"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "after": {
+              "plans": [
+                {
+                  "sha256": "4ef14a62e62b1b765480f788f75a864790dcdb53e9869561ce841f07ef999f34",
+                  "pending": false,
+                  "request_sha256": {
+                    "reporting-buyer:46faf9e7a236e85e16b590e1054e684ee4c1244a24f80d8c134dcf3c95a59040:0": "a11bb268647a4734c64ce61558db72cea06cb6bd65f7c359b7f5e95541004071"
+                  }
+                }
+              ],
+              "receipts": 3,
+              "batches": 1
+            },
+            "result": {
+              "point": "done",
+              "pending": false,
+              "proposal_deferred": false,
+              "submission_id": "reporting-submission:46faf9e7a236e85e16b590e1054e684ee4c1244a24f80d8c134dcf3c95a59040",
+              "plan_sha256": "4ef14a62e62b1b765480f788f75a864790dcdb53e9869561ce841f07ef999f34",
+              "outcomes": [
+                "recorded",
+                "recorded",
+                "recorded"
+              ],
+              "calls": [],
+              "evidence_sha256": {},
+              "installed_modules": {
+                "adcp.reporting.adjustment_evidence": "5cc47de0b3e9a86a1b715612b2386969aebc253a84d42649dfd845d9566c1982",
+                "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+                "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+                "adcp.reporting_inspection": "d3bef1342a1cc42dffbf90f39706dd35104e46011666af1180bb854ad4a5f20a",
+                "adcp.protocols.mcp": "169d391b81c7f6ce51b2f4d6a1eab32fc492d628b37a01c88599de467d0ebefc"
+              },
+              "revision_sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017",
+              "reconciliation_status": "accepted"
+            }
+          }
+        ],
+        "concurrent_buyers": {
+          "first": {
+            "point": "done",
+            "pending": false,
+            "proposal_deferred": false,
+            "submission_id": "reporting-submission:9b34564f24251e495a25578cb90efd7e31ff4ca9a4fc88bd11929ef75b4b997b",
+            "plan_sha256": "cd3f626c6d8c00e075aff43c34270a160f8f66224e2093fa26b7d2a80e1b486a",
+            "outcomes": [
+              "recorded",
+              "recorded",
+              "recorded"
+            ],
+            "calls": [
+              {
+                "sha256": "6773413cc131e1e6e61c44d85983224e42fe706861e8f334aa96b48a17344e68",
+                "idempotency_key": "reporting-buyer:9b34564f24251e495a25578cb90efd7e31ff4ca9a4fc88bd11929ef75b4b997b:0"
+              }
+            ],
+            "evidence_sha256": {
+              "adjustment-integer_delta": "30845b6f9c3534c3f04458cbf3dbfc87162b9f7e7e0097c38bfa98a622d66767",
+              "adjustment-exact_decimal": "77c51bb22dd3a95b4bb0ade5c9834d86936999f403667f9ca7d47bb51b7f4e06"
+            },
+            "installed_modules": {
+              "adcp.reporting.adjustment_evidence": "5cc47de0b3e9a86a1b715612b2386969aebc253a84d42649dfd845d9566c1982",
+              "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+              "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+              "adcp.reporting_inspection": "d3bef1342a1cc42dffbf90f39706dd35104e46011666af1180bb854ad4a5f20a",
+              "adcp.protocols.mcp": "169d391b81c7f6ce51b2f4d6a1eab32fc492d628b37a01c88599de467d0ebefc"
+            },
+            "revision_sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017",
+            "reconciliation_status": "accepted"
+          },
+          "second": {
+            "point": "done",
+            "pending": false,
+            "proposal_deferred": true,
+            "submission_id": "reporting-submission:9b34564f24251e495a25578cb90efd7e31ff4ca9a4fc88bd11929ef75b4b997b",
+            "plan_sha256": "cd3f626c6d8c00e075aff43c34270a160f8f66224e2093fa26b7d2a80e1b486a",
+            "outcomes": [
+              "recorded",
+              "recorded",
+              "recorded"
+            ],
+            "calls": [
+              {
+                "sha256": "6773413cc131e1e6e61c44d85983224e42fe706861e8f334aa96b48a17344e68",
+                "idempotency_key": "reporting-buyer:9b34564f24251e495a25578cb90efd7e31ff4ca9a4fc88bd11929ef75b4b997b:0"
+              }
+            ],
+            "evidence_sha256": {
+              "adjustment-integer_delta": "30845b6f9c3534c3f04458cbf3dbfc87162b9f7e7e0097c38bfa98a622d66767",
+              "adjustment-exact_decimal": "77c51bb22dd3a95b4bb0ade5c9834d86936999f403667f9ca7d47bb51b7f4e06"
+            },
+            "installed_modules": {
+              "adcp.reporting.adjustment_evidence": "5cc47de0b3e9a86a1b715612b2386969aebc253a84d42649dfd845d9566c1982",
+              "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+              "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+              "adcp.reporting_inspection": "d3bef1342a1cc42dffbf90f39706dd35104e46011666af1180bb854ad4a5f20a",
+              "adcp.protocols.mcp": "169d391b81c7f6ce51b2f4d6a1eab32fc492d628b37a01c88599de467d0ebefc"
+            },
+            "revision_sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017",
+            "reconciliation_status": "accepted"
+          },
+          "seller": {
+            "plans": [
+              {
+                "sha256": "cd3f626c6d8c00e075aff43c34270a160f8f66224e2093fa26b7d2a80e1b486a",
+                "pending": false,
+                "request_sha256": {
+                  "reporting-buyer:9b34564f24251e495a25578cb90efd7e31ff4ca9a4fc88bd11929ef75b4b997b:0": "6773413cc131e1e6e61c44d85983224e42fe706861e8f334aa96b48a17344e68"
+                }
+              }
+            ],
+            "receipts": 3,
+            "batches": 1
+          }
+        },
+        "later_adjustment": {
+          "point": "done",
+          "pending": false,
+          "proposal_deferred": false,
+          "submission_id": "reporting-submission:5fea5aaf7790c0b1ae62fbad25250512fd41b014a940e3092886807e06699e5d",
+          "plan_sha256": "520c92cecd80580b6807d010d38d354594b707b5e0dfe2a2293348d5a51fc075",
+          "outcomes": [
+            "recorded"
+          ],
+          "calls": [
+            {
+              "sha256": "db0b5e5757be45908a777d92ca9fb56c690e31aa7c6141f67be58d9f590ce4ee",
+              "idempotency_key": "reporting-buyer:5fea5aaf7790c0b1ae62fbad25250512fd41b014a940e3092886807e06699e5d:0"
+            }
+          ],
+          "evidence_sha256": {
+            "adjustment-integer_delta": "30845b6f9c3534c3f04458cbf3dbfc87162b9f7e7e0097c38bfa98a622d66767",
+            "adjustment-exact_decimal": "77c51bb22dd3a95b4bb0ade5c9834d86936999f403667f9ca7d47bb51b7f4e06",
+            "adjustment-unicode_composed": "6845f6daeb2d1193c937144ec1850351c0325dd6e09c8cd1e12e493a39d631af"
+          },
+          "installed_modules": {
+            "adcp.reporting.adjustment_evidence": "5cc47de0b3e9a86a1b715612b2386969aebc253a84d42649dfd845d9566c1982",
+            "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+            "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+            "adcp.reporting_inspection": "d3bef1342a1cc42dffbf90f39706dd35104e46011666af1180bb854ad4a5f20a",
+            "adcp.protocols.mcp": "169d391b81c7f6ce51b2f4d6a1eab32fc492d628b37a01c88599de467d0ebefc"
+          },
+          "revision_sha256": "8290fcc985378e9af50d62f8e1f7ef2230dd2ae7e28eaae8db02ac317975e017",
+          "reconciliation_status": "accepted"
+        },
+        "observed_receipt_requests": 12,
+        "seller_observed_exact_reserved_requests": true,
+        "duplicate_receipts": 0,
+        "seller_request_evidence": "decoded MCP request after official schema validation",
+        "concurrent_reservation_race": true,
+        "facade_integration": false
+      },
+      "python_durable_submissions": {
+        "status": "passed",
+        "python_version": "8.0.0",
+        "scope": "standalone Python durable mixed revision/adjustment receipt submission",
+        "seller": "installed Python PostgreSQL ingestion",
+        "process_death_controls": 10,
+        "concurrent_buyer_controls": 1,
+        "pytest_version": "9.1.1",
+        "pytest_asyncio_version": "1.4.0",
+        "sdk_source_excluded": true,
+        "pytest_plugin_autoload_disabled": true,
+        "installed_modules": {
+          "adcp.reporting.submissions": "4b3795d9d7f6104517e59dab8c150999774cf9c1e99c2544fceeac9073e18abb",
+          "adcp.reporting.submissions.models": "9e4c4200d76720cd8b3b1d28a34cd626c598fdf07ab2c2241f8abe4ec4ba47dd",
+          "adcp.reporting.submissions.store": "74485629d97235eac631a545f9b8d6aabf36748b9c5ff610e070fd6f3230449c",
+          "adcp.reporting.submissions.pg": "0c0ed4b44e2708353a78efe7d8aa47d32e69826d28cf16495d6ffab6d2c1ce3b",
+          "adcp.reporting.submissions.submit": "e939c4a5171ed15f3203541d3e3f24a57a884218d2eb73294f4f9eef16ecc01c",
+          "adcp.reporting.receipts.pg": "63ec1f9bcb2deda00b0c23251d53af61773cae75f72e337dc2f192c90dc542e8"
+        },
+        "test_cases": [
+          "test_process_death_preserves_exact_requests_and_confirmed_outcomes[before_intent]",
+          "test_process_death_preserves_exact_requests_and_confirmed_outcomes[scope_row]",
+          "test_process_death_preserves_exact_requests_and_confirmed_outcomes[intent_row]",
+          "test_process_death_preserves_exact_requests_and_confirmed_outcomes[intent_committed]",
+          "test_process_death_preserves_exact_requests_and_confirmed_outcomes[before_seller]",
+          "test_process_death_preserves_exact_requests_and_confirmed_outcomes[seller_committed]",
+          "test_process_death_preserves_exact_requests_and_confirmed_outcomes[response_delivered]",
+          "test_process_death_preserves_exact_requests_and_confirmed_outcomes[confirmation_row]",
+          "test_process_death_preserves_exact_requests_and_confirmed_outcomes[confirmation_committed]",
+          "test_process_death_preserves_exact_requests_and_confirmed_outcomes[returned]",
+          "test_independent_concurrent_buyers_replay_one_reserved_seller_request"
+        ]
+      },
+      "aggregate_sha256": "2c110f22cc9b5c78d03266ae475c31f7c8e49e6f488b301d191eddf86b18f0c9"
+    }
+  ],
+  "remaining_scope": [
+    "production managed-runtime network object-store adapter transfer and seller write-generation fencing; native HTTPS GCS evidence-reader qualification is recorded separately; first-class TypeScript credentialed canonical reference resolution remains an adopter gap",
+    "public webhook TLS/DNS/JWK-discovery and deployed seller/consumer provider authorization beyond the scoped GCS reader fixture",
+    "automatic Python reconciliation-facade adjustment integration, general pagination/policy and consumer-status orchestration",
+    "host/power-loss and least-privilege database-role deployment proof",
+    "merge/release containing the manifest fix and exact published-artifact rerun"
+  ],
+  "library_source_sha256": "729e2a5209a6ed986ce1522731470e5dc111cae86f343aa16801f2f7b9703e10",
+  "build_passed": true,
+  "typecheck_passed": true,
+  "cleanup_failure_test": {
+    "passed": true,
+    "scenario": "seller startup failure plus injected scrub exception; actual owned PostgreSQL database still dropped"
+  },
+  "extended_controls": {
+    "process_group_cleanup": {
+      "passed": true,
+      "leader_terminated": true,
+      "descendant_not_running": true
+    },
+    "subprocess_run_SIGTERM": {
+      "passed": true,
+      "child_killed": true,
+      "cleanup_reached": true
+    },
+    "pinned_export_integrity": {
+      "passed": true,
+      "clean_export_verified": true,
+      "local_export_ignore_rejected": true
+    },
+    "review_adjudications": [
+      "Current Python verifier accepts request-signing JWKs; encryption-purpose key rejection verified.",
+      "CPython 3.10 subprocess.run catches interruption, kills child, and waits; source inspection and actual SIGTERM probe verified.",
+      "Pinned upstream children inherit the owned process group without creating new sessions.",
+      "Git replacement objects disabled; trusted Git object store and execution environment remain assumptions."
+    ]
+  },
+  "postgres_notification_activity_tests": {
+    "executed": 65,
+    "passed": 65,
+    "failed": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "log_sha256": "d9e60ade37f105516ac7600fcab31c1cf84a03133041bbdae6c02f939ddffb73",
+    "fixture_correction": "Four runtime setups now explicitly acknowledge their owned isolated schema/search_path for deliveries and outbox; subscription acknowledgements already existed."
+  },
+  "package_validation": {
+    "passed": true,
+    "installed_cjs_esm_and_types": true,
+    "shipped_typescript_examples": 30,
+    "log_sha256": "a658af7aefccee251d866f252c008bf7f83e312f0288373671ee04f9a7415f27",
+    "packed_tarball_bytes": 20025964,
+    "packed_size_budget_bytes": 20030000
+  },
+  "additional_checks": {
+    "build": {
+      "passed": true,
+      "log_sha256": "be5c0e2b1f0683fd7295fdacc5075b7d6b97692182e5c0f60b8c9a7a55873525"
+    },
+    "typecheck": {
+      "passed": true,
+      "log_sha256": "fe3c6dbf4bf0a7f0123ea856105d12661af5d36cb09c740be97563417607601d"
+    },
+    "workflow_lint": {
+      "passed": true,
+      "log_sha256": "b67e0eb248fda17d3c5a25b3db51472fb61a162013ffcea2e29c8ecb003fbde1"
+    },
+    "documentation_links": {
+      "passed": true,
+      "log_sha256": "147986c880834b574f2e8b2814daf85baeb9e15a02e30f123c8d3a7df42551fa"
+    },
+    "generated_documentation": {
+      "passed": true,
+      "log_sha256": "f616038b898eef2967707c8c1604ee9d6da8fdd2bf159cbd7df75ecc242427e8"
+    },
+    "formatting": {
+      "passed": true,
+      "log_sha256": "f4b7a94386f459bf3da25a4ba977c569db4dab354f4c66830a4849b5b4c4f3fe"
+    },
+    "package_size": {
+      "passed": true,
+      "log_sha256": "bdb48c7b97047a308466ae10d331ce559c478451a51ee231afc67e1dbbf08333"
+    }
+  },
+  "post_rebase_validation": {
+    "base_commit": "279d86b3a8d6aeb067512aded9ad787198086250",
+    "reason": "main merged an age-targeting provenance type fix and excluded schema-sync skill snapshots",
+    "reporting_inspection_source_unchanged": true,
+    "interop_entrypoints_and_fixture_inputs_unchanged": true,
+    "reporting_tests": {
+      "executed": 181,
+      "passed": 181,
+      "failed": 0,
+      "skipped": 0,
+      "log_sha256": "fb593a374840f2dd14eff9d3241005821bdbe6f71cbf0f1edb93872ca7eaa918"
+    },
+    "checks": {
+      "build": {
+        "passed": true,
+        "log_sha256": "4603f08cc3cc0ce3de72522768ce20a9997d1104b12350d6e8486e95dcdc3025"
+      },
+      "typecheck": {
+        "passed": true,
+        "log_sha256": "fe3c6dbf4bf0a7f0123ea856105d12661af5d36cb09c740be97563417607601d"
+      },
+      "package_size": {
+        "passed": true,
+        "log_sha256": "fd45591da3919ce0cd1212aecb9afb37a4a1c4140449dc04691fd4751a2f82f5"
+      },
+      "workflow_lint": {
+        "passed": true,
+        "log_sha256": "16c410d0740ee663fcc9c8227f16150e6637c46a4670b4cab7cbd07b152ec061"
+      }
+    },
+    "ci_database": "isolated PostgreSQL test service uses trust authentication as in existing CI jobs, without a hardcoded password",
+    "artifact_scope": "the retained full local interoperability runs still bind the archive built on source_parent_commit; CI qualifies the packed rebased checkout"
+  },
+  "external_provider_supplement": {
+    "record": "reporting-gcs-qualification.json",
+    "scope": "real GCS TLS/DNS authenticated evidence inspection, prefix-scoped read-only IAM and retained-token revocation; supplements the local fixture gates without replacing their archived inputs"
+  }
+}

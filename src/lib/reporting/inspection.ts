@@ -18,6 +18,7 @@ import type {
 const Ajv2020 = require('ajv/dist/2020') as typeof import('ajv/dist/2020').default;
 
 export type ReportingInspectionErrorCode =
+  | 'CONSUMER_COMMIT_FAILED'
   | 'UNSUPPORTED_RESOURCE'
   | 'RESOURCE_READ_FAILED'
   | 'RESOURCE_NOT_READY'
@@ -232,6 +233,7 @@ interface ReportingCanonicalizationContract {
   primary_keys: string[];
   golden_vectors: Array<{
     name: string;
+    purpose?: 'empty_report' | 'ordering_encoding' | 'additional';
     input_rows: Record<string, unknown>[];
     canonical_utf8_base64: string;
     sha256: string;
@@ -281,9 +283,9 @@ export interface ReportingManifestInspectorOptions<TCredential = unknown> {
   maxFiles?: number;
   maxRows?: number;
   maxRowBytes?: number;
-  /** Hard wall-clock budget for one inspection attempt, including custom adapters. */
+  /** Aggregate deadline for async work, checked cooperatively during synchronous work. Synchronous callbacks cannot be preempted. */
   maxInspectionMs?: number;
-  /** Maximum wall-clock time permitted for synchronous row-schema compilation. */
+  /** Reject synchronous schema compilation overruns after compilation returns. */
   maxSchemaCompileMs?: number;
 }
 
@@ -317,6 +319,38 @@ export function createReportingManifestInspector<TCredential = unknown>(
     'maxSchemaCompileMs',
     60_000
   );
+  const maxManifestBytes = boundedPositiveInteger(
+    options.maxManifestBytes ?? DEFAULT_MAX_MANIFEST_BYTES,
+    'maxManifestBytes',
+    Number.MAX_SAFE_INTEGER
+  );
+  const maxObjectBytes = boundedPositiveInteger(
+    options.maxObjectBytes ?? DEFAULT_MAX_OBJECT_BYTES,
+    'maxObjectBytes',
+    Number.MAX_SAFE_INTEGER
+  );
+  const maxTotalBytes = boundedPositiveInteger(
+    options.maxTotalBytes ?? DEFAULT_MAX_TOTAL_BYTES,
+    'maxTotalBytes',
+    Number.MAX_SAFE_INTEGER
+  );
+  const maxRows = boundedPositiveInteger(options.maxRows ?? DEFAULT_MAX_ROWS, 'maxRows', Number.MAX_SAFE_INTEGER);
+  const maxFiles = boundedPositiveInteger(options.maxFiles ?? DEFAULT_MAX_FILES, 'maxFiles', Number.MAX_SAFE_INTEGER);
+  const maxDecodedObjectBytes = boundedPositiveInteger(
+    options.maxDecodedObjectBytes ?? maxObjectBytes,
+    'maxDecodedObjectBytes',
+    Number.MAX_SAFE_INTEGER
+  );
+  const maxDecodedTotalBytes = boundedPositiveInteger(
+    options.maxDecodedTotalBytes ?? maxTotalBytes,
+    'maxDecodedTotalBytes',
+    Number.MAX_SAFE_INTEGER
+  );
+  const maxRowBytes = boundedPositiveInteger(
+    options.maxRowBytes ?? DEFAULT_MAX_ROW_BYTES,
+    'maxRowBytes',
+    Number.MAX_SAFE_INTEGER
+  );
   const resolver = options.referenceResolver ?? createCanonicalReferenceResolver();
   const formatDecoders: Partial<Record<ReportingFileFormat, ReportingFormatDecoder>> = {
     jsonl: decodeJsonLines,
@@ -337,20 +371,32 @@ export function createReportingManifestInspector<TCredential = unknown>(
     }
 
     const credential = options.credentialProvider
-      ? await withinInspectionDeadline(options.credentialProvider.getCredentials(context), deadline)
+      ? await invokeInspectionAdapter(
+          () => options.credentialProvider!.getCredentials(context),
+          deadline,
+          'RESOURCE_READ_FAILED',
+          'Reporting credentials could not be resolved',
+          true
+        )
       : undefined;
-    const maxManifestBytes = options.maxManifestBytes ?? DEFAULT_MAX_MANIFEST_BYTES;
-    const manifestRead = await withinInspectionDeadline(
-      options.reader.read({
-        role: 'manifest',
-        location: resource.location,
-        maxBytes: maxManifestBytes,
-        credential,
-        context,
-        signal: deadlineSignal(deadline),
-      }),
-      deadline
+    const manifestRead = await invokeInspectionAdapter(
+      () =>
+        options.reader.read({
+          role: 'manifest',
+          location: resource.location,
+          maxBytes: maxManifestBytes,
+          credential,
+          context,
+          signal: deadlineSignal(deadline),
+        }),
+      deadline,
+      'RESOURCE_READ_FAILED',
+      'Reporting manifest could not be read',
+      true
     );
+    if (!isRecord(manifestRead) || !(manifestRead.body instanceof Uint8Array)) {
+      throw inspectionError('RESOURCE_READ_FAILED', 'Reporting manifest reader returned invalid bytes');
+    }
     if (manifestRead.body.byteLength > maxManifestBytes) {
       throw inspectionError('RESOURCE_TOO_LARGE', 'Reporting manifest exceeds the configured byte budget');
     }
@@ -364,13 +410,10 @@ export function createReportingManifestInspector<TCredential = unknown>(
     const manifest = parseManifest(manifestRead.body);
     validateManifestBinding(manifest, context);
 
-    const maxObjectBytes = options.maxObjectBytes ?? DEFAULT_MAX_OBJECT_BYTES;
-    const maxTotalBytes = options.maxTotalBytes ?? DEFAULT_MAX_TOTAL_BYTES;
-    const maxRows = options.maxRows ?? DEFAULT_MAX_ROWS;
     if (
       manifest.total_size_bytes > maxTotalBytes ||
       manifest.files.some(file => file.size_bytes > maxObjectBytes) ||
-      manifest.files.length > (options.maxFiles ?? DEFAULT_MAX_FILES) ||
+      manifest.files.length > maxFiles ||
       manifest.row_count > maxRows
     ) {
       throw inspectionError(
@@ -398,6 +441,14 @@ export function createReportingManifestInspector<TCredential = unknown>(
     const manifestObjectRefs = new Set(manifest.files.map(file => file.object_ref));
     const evidenceKeys = new Set<string>();
     for (const checksum of context.materialization.verification?.physical_checksums ?? []) {
+      if (
+        !isRecord(checksum) ||
+        !['sha256', 'sha512'].includes(checksum.algorithm) ||
+        typeof checksum.value !== 'string' ||
+        !(checksum.algorithm === 'sha256' ? /^[a-fA-F0-9]{64}$/ : /^[a-fA-F0-9]{128}$/).test(checksum.value)
+      ) {
+        throw inspectionError('OBJECT_DIGEST_MISMATCH', 'Producer checksum evidence is invalid');
+      }
       const key = `${checksum.object_ref}\0${checksum.algorithm}`;
       if (!manifestObjectRefs.has(checksum.object_ref) || evidenceKeys.has(key)) {
         throw inspectionError(
@@ -417,27 +468,31 @@ export function createReportingManifestInspector<TCredential = unknown>(
       totalBytes += file.size_bytes;
       if (totalBytes > maxTotalBytes) throw inspectionError('RESOURCE_TOO_LARGE', 'Manifest exceeds total byte budget');
       assertInspectionDeadline(deadline);
-      const read = await withinInspectionDeadline(
-        options.reader.read({
-          role: 'object',
-          location: resource.location,
-          objectRef: file.object_ref,
-          expectedSizeBytes: file.size_bytes,
-          maxBytes: Math.min(maxObjectBytes, file.size_bytes + 1),
-          credential,
-          context,
-          signal: deadlineSignal(deadline),
-        }),
-        deadline
+      const read = await invokeInspectionAdapter(
+        () =>
+          options.reader.read({
+            role: 'object',
+            location: resource.location,
+            objectRef: file.object_ref,
+            expectedSizeBytes: file.size_bytes,
+            maxBytes: Math.min(maxObjectBytes, file.size_bytes + 1),
+            credential,
+            context,
+            signal: deadlineSignal(deadline),
+          }),
+        deadline,
+        'RESOURCE_READ_FAILED',
+        'Reporting object could not be read',
+        true
       );
+      if (!isRecord(read) || !(read.body instanceof Uint8Array)) {
+        throw inspectionError('RESOURCE_READ_FAILED', 'Reporting object reader returned invalid bytes');
+      }
       if (read.body.byteLength !== file.size_bytes) {
-        throw inspectionError('OBJECT_SIZE_MISMATCH', `Object ${file.object_ref} size does not match the manifest`);
+        throw inspectionError('OBJECT_SIZE_MISMATCH', 'Object size does not match the manifest');
       }
       if (!constantTimeHexEqual(sha256(read.body), file.sha256)) {
-        throw inspectionError(
-          'OBJECT_DIGEST_MISMATCH',
-          `Object ${file.object_ref} checksum does not match the manifest`
-        );
+        throw inspectionError('OBJECT_DIGEST_MISMATCH', 'Object checksum does not match the manifest');
       }
       for (const producerChecksum of context.materialization.verification?.physical_checksums?.filter(
         checksum => checksum.object_ref === file.object_ref
@@ -449,55 +504,56 @@ export function createReportingManifestInspector<TCredential = unknown>(
         ) {
           throw inspectionError(
             'OBJECT_DIGEST_MISMATCH',
-            `Producer checksum evidence for ${file.object_ref} does not match the delivered object`
+            'Producer checksum evidence does not match the delivered object'
           );
         }
       }
       let decoded: Uint8Array;
       try {
-        decoded = await withinInspectionDeadline(
-          Promise.resolve(decompress(read.body, options.maxDecodedObjectBytes ?? maxObjectBytes)),
-          deadline
+        decoded = await invokeInspectionAdapter(
+          () => decompress(read.body, maxDecodedObjectBytes),
+          deadline,
+          'MANIFEST_INVALID',
+          'Could not decode the compressed reporting object'
         );
       } catch (error) {
         if (error instanceof ReportingInspectionError) throw error;
-        throw inspectionError(
-          'MANIFEST_INVALID',
-          `Could not decode ${manifest.compression} object ${file.object_ref}`,
-          false,
-          error
-        );
+        throw inspectionError('MANIFEST_INVALID', 'Could not decode the compressed reporting object', false, error);
       }
-      if (decoded.byteLength > (options.maxDecodedObjectBytes ?? maxObjectBytes)) {
-        throw inspectionError('RESOURCE_TOO_LARGE', `Decoded object ${file.object_ref} exceeds the byte budget`);
+      if (!(decoded instanceof Uint8Array)) {
+        throw inspectionError('MANIFEST_INVALID', 'Reporting decompressor returned invalid bytes');
+      }
+      if (decoded.byteLength > maxDecodedObjectBytes) {
+        throw inspectionError('RESOURCE_TOO_LARGE', 'Decoded reporting object exceeds the byte budget');
       }
       totalDecodedBytes += decoded.byteLength;
-      if (totalDecodedBytes > (options.maxDecodedTotalBytes ?? maxTotalBytes)) {
+      if (totalDecodedBytes > maxDecodedTotalBytes) {
         throw inspectionError('RESOURCE_TOO_LARGE', 'Decoded reporting data exceeds the aggregate byte budget');
       }
       let fileRows: Record<string, unknown>[];
       try {
-        fileRows = await withinInspectionDeadline(
-          Promise.resolve(
+        fileRows = await invokeInspectionAdapter(
+          () =>
             decoder(decoded, {
               format: manifest.format,
               objectRef: file.object_ref,
               rowSchema: schema,
               inspection: context,
               maxRows: maxRows - rows.length,
-            })
-          ),
-          deadline
+            }),
+          deadline,
+          'MANIFEST_INVALID',
+          'Could not parse the reporting object'
         );
       } catch (error) {
         if (error instanceof ReportingInspectionError) throw error;
-        throw inspectionError('MANIFEST_INVALID', `Could not parse ${manifest.format} object ${file.object_ref}`);
+        throw inspectionError('MANIFEST_INVALID', 'Could not parse the reporting object');
+      }
+      if (!Array.isArray(fileRows) || !fileRows.every(isRecord)) {
+        throw inspectionError('MANIFEST_INVALID', 'Reporting decoder returned invalid rows');
       }
       if (fileRows.length !== file.row_count) {
-        throw inspectionError(
-          'OBJECT_ROW_COUNT_MISMATCH',
-          `Object ${file.object_ref} row count does not match the manifest`
-        );
+        throw inspectionError('OBJECT_ROW_COUNT_MISMATCH', 'Object row count does not match the manifest');
       }
       if (fileRows.length > maxRows - rows.length) {
         throw inspectionError('RESOURCE_TOO_LARGE', 'Reporting row count exceeds the configured inspection budget');
@@ -509,7 +565,7 @@ export function createReportingManifestInspector<TCredential = unknown>(
       if (index % 256 === 0) assertInspectionDeadline(deadline);
       assertBoundedJsonData(rows[index], 'ROW_SCHEMA_VIOLATION');
       assertIJson(rows[index]);
-      if (Buffer.byteLength(canonicalize(rows[index])) > (options.maxRowBytes ?? DEFAULT_MAX_ROW_BYTES)) {
+      if (Buffer.byteLength(canonicalize(rows[index])) > maxRowBytes) {
         throw inspectionError('RESOURCE_TOO_LARGE', `Row ${index} exceeds the configured byte budget`);
       }
       if (!validateRow(rows[index])) {
@@ -525,11 +581,16 @@ export function createReportingManifestInspector<TCredential = unknown>(
       }
     }
     const observedTotals = options.controlTotalCalculator
-      ? await withinInspectionDeadline(
-          Promise.resolve(options.controlTotalCalculator(rows, context.revision.control_totals, context)),
-          deadline
+      ? await invokeInspectionAdapter(
+          () => options.controlTotalCalculator!(rows, context.revision.control_totals, context),
+          deadline,
+          'CONTROL_TOTAL_UNSUPPORTED',
+          'Reporting control totals could not be calculated'
         )
       : calculateNamedControlTotals(rows, context.revision.control_totals, reportDefinition, deadline);
+    if (!Array.isArray(observedTotals) || !observedTotals.every(isControlTotal)) {
+      throw inspectionError('CONTROL_TOTAL_UNSUPPORTED', 'Reporting calculator returned invalid control totals');
+    }
     const expectedCanonicalDigest = context.revision.canonical_content_digest;
     let canonicalContentDigest: ReportingCanonicalDigestEvidence | undefined;
     if (expectedCanonicalDigest && context.expected.verificationProfile === 'canonical_digest') {
@@ -575,8 +636,21 @@ export function createReportingManifestInspector<TCredential = unknown>(
       }
     }
 
+    assertInspectionDeadline(deadline);
+    const consumerCommitRef = options.consumerCommitRef;
     const commitRef =
-      typeof options.consumerCommitRef === 'function' ? options.consumerCommitRef(context) : options.consumerCommitRef;
+      typeof consumerCommitRef === 'function'
+        ? await invokeInspectionAdapter(
+            () => consumerCommitRef(context),
+            deadline,
+            'CONSUMER_COMMIT_FAILED',
+            'Reporting consumer commit reference could not be resolved'
+          )
+        : consumerCommitRef;
+    if (commitRef !== undefined && typeof commitRef !== 'string') {
+      throw inspectionError('CONSUMER_COMMIT_FAILED', 'Reporting consumer commit reference is invalid');
+    }
+    assertInspectionDeadline(deadline);
     return {
       rowCount: rows.length,
       controlTotals: observedTotals,
@@ -594,17 +668,27 @@ async function resolveRowSchema(
   deadline: number
 ): Promise<Record<string, unknown>> {
   assertAllowedReferenceOrigin(context.revision.schema_uri, allowedOrigins, 'ROW_SCHEMA_FETCH_FAILED');
-  const result = await withinInspectionDeadline(
-    resolver.resolve({
-      uri: context.revision.schema_uri,
-      digest: `sha256:${context.revision.schema_sha256.toLowerCase()}`,
-    }),
-    deadline
+  const result = await invokeInspectionAdapter(
+    () =>
+      resolver.resolve({
+        uri: context.revision.schema_uri,
+        digest: `sha256:${context.revision.schema_sha256.toLowerCase()}`,
+      }),
+    deadline,
+    'ROW_SCHEMA_FETCH_FAILED',
+    'Pinned row schema could not be resolved',
+    true
   );
+  assertReferenceResult(result, 'ROW_SCHEMA_FETCH_FAILED');
   if (!result.ok) {
-    throw new ReportingInspectionError('ROW_SCHEMA_FETCH_FAILED', result.error.message, result.error.retryable, {
-      referenceCode: result.error.code,
-    });
+    throw new ReportingInspectionError(
+      'ROW_SCHEMA_FETCH_FAILED',
+      'Pinned row schema could not be resolved',
+      result.error.retryable,
+      {
+        referenceCode: result.error.code,
+      }
+    );
   }
   requireContentType(result.contentType, ['application/schema+json', 'application/json'], 'ROW_SCHEMA_INVALID');
   const document = parsePinnedJson(result.body, 'ROW_SCHEMA_INVALID');
@@ -680,7 +764,7 @@ function rejectReferenceCycles(schema: Record<string, unknown>, refs: ReadonlySe
         : ref.startsWith('#/')
           ? resolveJsonPointer(schema, ref.slice(1))
           : anchors.get(ref.slice(1));
-    if (target === undefined) throw inspectionError('ROW_SCHEMA_INVALID', `Row schema reference ${ref} is unresolved`);
+    if (target === undefined) throw inspectionError('ROW_SCHEMA_INVALID', 'Row schema reference is unresolved');
     const childRefs = new Set<string>();
     collectRefs(target, childRefs);
     edges.set(ref, childRefs);
@@ -754,17 +838,27 @@ async function validateReportDefinition(
     allowedOrigins,
     'REPORT_DEFINITION_FETCH_FAILED'
   );
-  const result = await withinInspectionDeadline(
-    resolver.resolve({
-      uri: context.revision.report_definition_uri!,
-      digest: `sha256:${context.revision.report_definition_sha256!.toLowerCase()}`,
-    }),
-    deadline
+  const result = await invokeInspectionAdapter(
+    () =>
+      resolver.resolve({
+        uri: context.revision.report_definition_uri!,
+        digest: `sha256:${context.revision.report_definition_sha256!.toLowerCase()}`,
+      }),
+    deadline,
+    'REPORT_DEFINITION_FETCH_FAILED',
+    'Pinned report definition could not be resolved',
+    true
   );
+  assertReferenceResult(result, 'REPORT_DEFINITION_FETCH_FAILED');
   if (!result.ok) {
-    throw new ReportingInspectionError('REPORT_DEFINITION_FETCH_FAILED', result.error.message, result.error.retryable, {
-      referenceCode: result.error.code,
-    });
+    throw new ReportingInspectionError(
+      'REPORT_DEFINITION_FETCH_FAILED',
+      'Pinned report definition could not be resolved',
+      result.error.retryable,
+      {
+        referenceCode: result.error.code,
+      }
+    );
   }
   requireContentType(
     result.contentType,
@@ -807,17 +901,27 @@ async function recomputeCanonicalDigest(
 ): Promise<ReportingCanonicalDigestEvidence> {
   const expected = context.revision.canonical_content_digest!;
   assertAllowedReferenceOrigin(expected.canonicalization_uri, allowedOrigins, 'CANONICALIZATION_FETCH_FAILED');
-  const result = await withinInspectionDeadline(
-    resolver.resolve({
-      uri: expected.canonicalization_uri,
-      digest: `sha256:${expected.canonicalization_sha256.toLowerCase()}`,
-    }),
-    deadline
+  const result = await invokeInspectionAdapter(
+    () =>
+      resolver.resolve({
+        uri: expected.canonicalization_uri,
+        digest: `sha256:${expected.canonicalization_sha256.toLowerCase()}`,
+      }),
+    deadline,
+    'CANONICALIZATION_FETCH_FAILED',
+    'Pinned canonicalization contract could not be resolved',
+    true
   );
+  assertReferenceResult(result, 'CANONICALIZATION_FETCH_FAILED');
   if (!result.ok) {
-    throw new ReportingInspectionError('CANONICALIZATION_FETCH_FAILED', result.error.message, result.error.retryable, {
-      referenceCode: result.error.code,
-    });
+    throw new ReportingInspectionError(
+      'CANONICALIZATION_FETCH_FAILED',
+      'Pinned canonicalization contract could not be resolved',
+      result.error.retryable,
+      {
+        referenceCode: result.error.code,
+      }
+    );
   }
   requireContentType(
     result.contentType,
@@ -841,6 +945,16 @@ async function recomputeCanonicalDigest(
     assertInspectionDeadline(deadline);
     const body = canonicalRows(vector.input_rows, contract.primary_keys, deadline);
     if (
+      vector.purpose === 'ordering_encoding' &&
+      (Buffer.from(body).toString('utf8') === canonicalize(vector.input_rows) ||
+        !vector.input_rows.some(row => JSON.stringify(row) !== canonicalize(row)))
+    ) {
+      throw inspectionError(
+        'CANONICALIZATION_INVALID',
+        'Ordering/encoding vector must exercise both row ordering and object member ordering'
+      );
+    }
+    if (
       Buffer.from(body).toString('base64') !== vector.canonical_utf8_base64 ||
       !constantTimeHexEqual(sha256(body), vector.sha256)
     ) {
@@ -863,19 +977,48 @@ function parseCanonicalizationContract(document: unknown, schemaSha256: string):
     !Array.isArray(document.primary_keys) ||
     document.primary_keys.length === 0 ||
     !document.primary_keys.every(item => typeof item === 'string' && item.length > 0 && item.length <= 128) ||
-    new Set(document.primary_keys).size !== document.primary_keys.length ||
-    !Array.isArray(document.golden_vectors) ||
-    document.golden_vectors.length < 2
+    new Set(document.primary_keys).size !== document.primary_keys.length
   ) {
     throw inspectionError(
       'CANONICALIZATION_INVALID',
       'Pinned canonicalization contract is invalid or not bound to the row schema'
     );
   }
-  for (const vector of document.golden_vectors) {
+  // AdCP uses named vectors. Retain the original SDK array form for pinned
+  // contracts already deployed by adopters; both forms undergo byte checks.
+  const named = !Array.isArray(document.golden_vectors);
+  let vectors: unknown[];
+  if (named) {
+    const golden = document.golden_vectors;
+    if (
+      !isRecord(golden) ||
+      !hasOnlyKeys(golden, ['empty_report', 'ordering_encoding', 'additional']) ||
+      !isRecord(golden.empty_report) ||
+      golden.empty_report.purpose !== 'empty_report' ||
+      !Array.isArray(golden.empty_report.input_rows) ||
+      golden.empty_report.input_rows.length !== 0 ||
+      !isRecord(golden.ordering_encoding) ||
+      golden.ordering_encoding.purpose !== 'ordering_encoding' ||
+      !Array.isArray(golden.ordering_encoding.input_rows) ||
+      golden.ordering_encoding.input_rows.length < 2 ||
+      (golden.additional !== undefined &&
+        (!Array.isArray(golden.additional) ||
+          !golden.additional.every(vector => isRecord(vector) && vector.purpose === 'additional')))
+    ) {
+      throw inspectionError('CANONICALIZATION_INVALID', 'Canonicalization contract contains invalid named vectors');
+    }
+    vectors = [golden.empty_report, golden.ordering_encoding, ...(golden.additional ?? [])];
+  } else {
+    vectors = document.golden_vectors;
+  }
+  if (vectors.length < 2) {
+    throw inspectionError('CANONICALIZATION_INVALID', 'Canonicalization contract requires at least two golden vectors');
+  }
+  const names = new Set<string>();
+  for (const vector of vectors) {
     if (
       !isRecord(vector) ||
-      !hasOnlyKeys(vector, ['name', 'input_rows', 'canonical_utf8_base64', 'sha256']) ||
+      !hasOnlyKeys(vector, ['name', 'input_rows', 'canonical_utf8_base64', 'sha256', ...(named ? ['purpose'] : [])]) ||
       typeof vector.name !== 'string' ||
       !/^[A-Za-z0-9_.:-]{1,128}$/.test(vector.name) ||
       !Array.isArray(vector.input_rows) ||
@@ -883,22 +1026,24 @@ function parseCanonicalizationContract(document: unknown, schemaSha256: string):
       typeof vector.canonical_utf8_base64 !== 'string' ||
       !isCanonicalBase64(vector.canonical_utf8_base64) ||
       typeof vector.sha256 !== 'string' ||
-      !/^[a-fA-F0-9]{64}$/.test(vector.sha256)
+      !/^[a-fA-F0-9]{64}$/.test(vector.sha256) ||
+      names.has(vector.name)
     ) {
       throw inspectionError('CANONICALIZATION_INVALID', 'Canonicalization contract contains an invalid golden vector');
     }
+    names.add(vector.name);
     assertBoundedJsonData(vector.input_rows, 'CANONICALIZATION_INVALID');
   }
   if (
-    !document.golden_vectors.some(vector => vector.input_rows.length === 0) ||
-    !document.golden_vectors.some(vector => vector.input_rows.length >= 2)
+    !vectors.some(vector => isRecord(vector) && vector.input_rows.length === 0) ||
+    !vectors.some(vector => isRecord(vector) && vector.input_rows.length >= 2)
   ) {
     throw inspectionError(
       'CANONICALIZATION_INVALID',
       'Canonicalization vectors must include empty-report and ordering/encoding cases'
     );
   }
-  return document as unknown as ReportingCanonicalizationContract;
+  return { ...document, golden_vectors: vectors } as unknown as ReportingCanonicalizationContract;
 }
 
 function canonicalRows(
@@ -929,6 +1074,18 @@ function canonicalRows(
     }
   }
   return Buffer.from(`[${encoded.map(item => item.row).join(',')}]`, 'utf8');
+}
+
+function assertReferenceResult(value: unknown, code: ReportingInspectionErrorCode): void {
+  if (
+    !isRecord(value) ||
+    (value.ok !== true && value.ok !== false) ||
+    (value.ok
+      ? !(value.body instanceof Uint8Array)
+      : !isRecord(value.error) || typeof value.error.retryable !== 'boolean')
+  ) {
+    throw inspectionError(code, 'Pinned reference resolver returned an invalid result');
+  }
 }
 
 function parsePinnedJson(body: Uint8Array, code: ReportingInspectionErrorCode): unknown {
@@ -1122,6 +1279,9 @@ function calculateNamedControlTotals(
         `Control total ${total.name} needs a custom calculator for its declared aggregation`
       );
     }
+    if (total.unit !== undefined && metric.unit !== undefined && metric.unit !== total.unit) {
+      throw inspectionError('CONTROL_TOTAL_MISMATCH', 'Control-total unit does not match the pinned report definition');
+    }
     let sum: Decimal = { coefficient: 0n, scale: 0 };
     for (let index = 0; index < rows.length; index += 1) {
       if (index % 256 === 0) assertInspectionDeadline(deadline);
@@ -1159,6 +1319,9 @@ function deadlineSignal(deadline: number): AbortSignal {
 }
 
 async function withinInspectionDeadline<T>(operation: Promise<T>, deadline: number): Promise<T> {
+  // Observe an already-started operation even if the deadline check throws.
+  // Its eventual rejection must not escape as an unhandled process error.
+  void operation.catch(() => {});
   assertInspectionDeadline(deadline);
   const remaining = deadline - Date.now();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1188,7 +1351,7 @@ function parseDecimal(value: string | number): Decimal {
     throw inspectionError('CONTROL_TOTAL_UNSUPPORTED', 'Control-total decimal exceeds the precision bound');
   }
   const match = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(text);
-  if (!match) throw inspectionError('CONTROL_TOTAL_UNSUPPORTED', `Non-decimal control value ${text}`);
+  if (!match) throw inspectionError('CONTROL_TOTAL_UNSUPPORTED', 'Control-total value is not a decimal');
   const fraction = match[3] ?? '';
   const exponent = Number(match[4] ?? 0);
   if (!Number.isSafeInteger(exponent) || Math.abs(exponent) > 1024 || match[2]!.length + fraction.length > 1024) {
@@ -1256,7 +1419,7 @@ function assertIJson(value: unknown, seen = new Set<object>()): void {
       const code = value.charCodeAt(index);
       if (code >= 0xd800 && code <= 0xdbff) {
         const next = value.charCodeAt(index + 1);
-        if (next < 0xdc00 || next > 0xdfff)
+        if (!Number.isFinite(next) || next < 0xdc00 || next > 0xdfff)
           throw inspectionError('CANONICALIZATION_INVALID', 'Lone Unicode surrogate is not I-JSON');
         index += 1;
       } else if (code >= 0xdc00 && code <= 0xdfff) {
@@ -1265,9 +1428,13 @@ function assertIJson(value: unknown, seen = new Set<object>()): void {
     }
     return;
   }
-  if (typeof value === 'number' && !Number.isFinite(value))
-    throw inspectionError('CANONICALIZATION_INVALID', 'Non-finite number is not I-JSON');
-  if (!value || typeof value !== 'object') return;
+  if (value === null || typeof value === 'boolean') return;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw inspectionError('CANONICALIZATION_INVALID', 'Non-finite number is not I-JSON');
+    return;
+  }
+  if (typeof value !== 'object' || (!Array.isArray(value) && !isRecord(value)))
+    throw inspectionError('CANONICALIZATION_INVALID', 'Reporting values must be JSON data');
   if (seen.has(value)) throw inspectionError('CANONICALIZATION_INVALID', 'Cyclic row is not JSON');
   seen.add(value);
   if (Array.isArray(value)) value.forEach(child => assertIJson(child, seen));
@@ -1359,6 +1526,7 @@ function isValidReportDefinition(value: unknown): value is Record<string, any> {
         (metric.unit === undefined ||
           (typeof metric.unit === 'string' && metric.unit.length > 0 && metric.unit.length <= 64))
     ) ||
+    new Set(value.metrics.map(metric => metric.name)).size !== value.metrics.length ||
     !Array.isArray(value.dimensions) ||
     !value.dimensions.every(
       dimension => typeof dimension === 'string' && dimension.length > 0 && dimension.length <= 128
@@ -1554,7 +1722,7 @@ function requireContentType(
 ): void {
   const mediaType = raw?.split(';', 1)[0]?.trim().toLowerCase();
   if (!mediaType || !allowed.includes(mediaType)) {
-    throw inspectionError(code, `Pinned document returned unsupported content type ${mediaType ?? '<missing>'}`);
+    throw inspectionError(code, 'Pinned document returned an unsupported content type');
   }
 }
 
@@ -1587,9 +1755,41 @@ function inspectionError(
   code: ReportingInspectionErrorCode,
   message: string,
   retryable = false,
-  cause?: unknown
+  _cause?: unknown
 ): ReportingInspectionError {
-  return new ReportingInspectionError(code, message, retryable, undefined, cause === undefined ? undefined : { cause });
+  // Underlying parser/provider exceptions may contain row contents or secrets.
+  return new ReportingInspectionError(code, message, retryable);
+}
+
+async function invokeInspectionAdapter<T>(
+  callback: () => Promise<T> | T,
+  deadline: number,
+  code: ReportingInspectionErrorCode,
+  message: string,
+  retryable = false
+): Promise<T> {
+  try {
+    assertInspectionDeadline(deadline);
+    const result = await withinInspectionDeadline(
+      Promise.resolve().then(() => {
+        assertInspectionDeadline(deadline);
+        return callback();
+      }),
+      deadline
+    );
+    // Synchronous adapters can finish before timers run while still exceeding
+    // the budget. Reject that overrun before using the returned evidence.
+    assertInspectionDeadline(deadline);
+    return result;
+  } catch (error) {
+    throw error instanceof ReportingInspectionError
+      ? new ReportingInspectionError(
+          error.code,
+          error.code === 'INSPECTION_TIMEOUT' ? 'Reporting inspection exceeded its configured deadline' : message,
+          error.retryable
+        )
+      : inspectionError(code, message, retryable);
+  }
 }
 
 function inspectionMismatch(

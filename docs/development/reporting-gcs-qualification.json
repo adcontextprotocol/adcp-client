@@ -1,0 +1,381 @@
+{
+  "status": "passed",
+  "checks": [
+    {
+      "paired_runtime": "node20",
+      "status": "passed",
+      "language": "typescript",
+      "node": "v20.19.0",
+      "typescript_sdk_version": "14.1.0",
+      "typescript_install_relative_path": "node_modules/@adcp/sdk",
+      "reader_credential_file_sha256": "50415fc392bde624551e22e8f64b032314223985279a9f2a51a600b09c6814e5",
+      "phase": "positive",
+      "authenticated_network_inspection": true,
+      "canonical_digest_verified": true,
+      "accepted_receipt": true,
+      "response_byte_limit_enforced": true,
+      "anonymous_access_denied_403": true,
+      "outside_prefix_denied_403": true,
+      "credential_origin_boundary": true,
+      "contract_digest_checks": "worker_reference_resolver_over_sdk_https_reader"
+    },
+    {
+      "paired_runtime": "node20",
+      "status": "passed",
+      "language": "python",
+      "python_sdk_version": "8.0.0",
+      "python": "3.10.21",
+      "reader_credential_file_sha256": "50415fc392bde624551e22e8f64b032314223985279a9f2a51a600b09c6814e5",
+      "phase": "positive",
+      "authenticated_network_inspection": true,
+      "canonical_digest_verified": true,
+      "accepted_receipt": true,
+      "response_byte_limit_enforced": true,
+      "anonymous_access_denied_403": true,
+      "outside_prefix_denied_403": true,
+      "untrusted_origin_refused": true,
+      "contract_digest_checks": "sdk_builtin_inspector"
+    },
+    {
+      "paired_runtime": "node24",
+      "status": "passed",
+      "language": "typescript",
+      "node": "v24.19.0",
+      "typescript_sdk_version": "14.1.0",
+      "typescript_install_relative_path": "node_modules/@adcp/sdk",
+      "reader_credential_file_sha256": "50415fc392bde624551e22e8f64b032314223985279a9f2a51a600b09c6814e5",
+      "phase": "positive",
+      "authenticated_network_inspection": true,
+      "canonical_digest_verified": true,
+      "accepted_receipt": true,
+      "response_byte_limit_enforced": true,
+      "anonymous_access_denied_403": true,
+      "outside_prefix_denied_403": true,
+      "credential_origin_boundary": true,
+      "contract_digest_checks": "worker_reference_resolver_over_sdk_https_reader"
+    },
+    {
+      "paired_runtime": "node24",
+      "status": "passed",
+      "language": "python",
+      "python_sdk_version": "8.0.0",
+      "python": "3.10.21",
+      "reader_credential_file_sha256": "50415fc392bde624551e22e8f64b032314223985279a9f2a51a600b09c6814e5",
+      "phase": "positive",
+      "authenticated_network_inspection": true,
+      "canonical_digest_verified": true,
+      "accepted_receipt": true,
+      "response_byte_limit_enforced": true,
+      "anonymous_access_denied_403": true,
+      "outside_prefix_denied_403": true,
+      "untrusted_origin_refused": true,
+      "contract_digest_checks": "sdk_builtin_inspector"
+    },
+    {
+      "paired_runtime": "node20",
+      "status": "passed",
+      "language": "typescript",
+      "node": "v20.19.0",
+      "typescript_sdk_version": "14.1.0",
+      "typescript_install_relative_path": "node_modules/@adcp/sdk",
+      "reader_credential_file_sha256": "50415fc392bde624551e22e8f64b032314223985279a9f2a51a600b09c6814e5",
+      "phase": "tampered",
+      "network_object_tampering_rejected": true
+    },
+    {
+      "paired_runtime": "node20",
+      "status": "passed",
+      "language": "python",
+      "python_sdk_version": "8.0.0",
+      "python": "3.10.21",
+      "reader_credential_file_sha256": "50415fc392bde624551e22e8f64b032314223985279a9f2a51a600b09c6814e5",
+      "phase": "tampered",
+      "network_object_tampering_rejected": true
+    },
+    {
+      "paired_runtime": "node24",
+      "status": "passed",
+      "language": "typescript",
+      "node": "v24.19.0",
+      "typescript_sdk_version": "14.1.0",
+      "typescript_install_relative_path": "node_modules/@adcp/sdk",
+      "reader_credential_file_sha256": "50415fc392bde624551e22e8f64b032314223985279a9f2a51a600b09c6814e5",
+      "phase": "tampered",
+      "network_object_tampering_rejected": true
+    },
+    {
+      "paired_runtime": "node24",
+      "status": "passed",
+      "language": "python",
+      "python_sdk_version": "8.0.0",
+      "python": "3.10.21",
+      "reader_credential_file_sha256": "50415fc392bde624551e22e8f64b032314223985279a9f2a51a600b09c6814e5",
+      "phase": "tampered",
+      "network_object_tampering_rejected": true
+    },
+    {
+      "paired_runtime": "node20",
+      "status": "passed",
+      "language": "typescript",
+      "node": "v20.19.0",
+      "typescript_sdk_version": "14.1.0",
+      "typescript_install_relative_path": "node_modules/@adcp/sdk",
+      "reader_credential_file_sha256": "50415fc392bde624551e22e8f64b032314223985279a9f2a51a600b09c6814e5",
+      "phase": "revoked",
+      "revoked_retained_token_denied_403": true,
+      "token_unexpired": true,
+      "revoked_objects_denied_403": [
+        "manifest.json",
+        "rows.jsonl",
+        "row-schema.json",
+        "report-definition.json",
+        "canonicalization.json"
+      ]
+    },
+    {
+      "paired_runtime": "node20",
+      "status": "passed",
+      "language": "python",
+      "python_sdk_version": "8.0.0",
+      "python": "3.10.21",
+      "reader_credential_file_sha256": "50415fc392bde624551e22e8f64b032314223985279a9f2a51a600b09c6814e5",
+      "phase": "revoked",
+      "revoked_retained_token_denied_403": true,
+      "token_unexpired": true,
+      "revoked_objects_denied_403": [
+        "manifest.json",
+        "rows.jsonl",
+        "row-schema.json",
+        "report-definition.json",
+        "canonicalization.json"
+      ]
+    },
+    {
+      "paired_runtime": "node24",
+      "status": "passed",
+      "language": "typescript",
+      "node": "v24.19.0",
+      "typescript_sdk_version": "14.1.0",
+      "typescript_install_relative_path": "node_modules/@adcp/sdk",
+      "reader_credential_file_sha256": "50415fc392bde624551e22e8f64b032314223985279a9f2a51a600b09c6814e5",
+      "phase": "revoked",
+      "revoked_retained_token_denied_403": true,
+      "token_unexpired": true,
+      "revoked_objects_denied_403": [
+        "manifest.json",
+        "rows.jsonl",
+        "row-schema.json",
+        "report-definition.json",
+        "canonicalization.json"
+      ]
+    },
+    {
+      "paired_runtime": "node24",
+      "status": "passed",
+      "language": "python",
+      "python_sdk_version": "8.0.0",
+      "python": "3.10.21",
+      "reader_credential_file_sha256": "50415fc392bde624551e22e8f64b032314223985279a9f2a51a600b09c6814e5",
+      "phase": "revoked",
+      "revoked_retained_token_denied_403": true,
+      "token_unexpired": true,
+      "revoked_objects_denied_403": [
+        "manifest.json",
+        "rows.jsonl",
+        "row-schema.json",
+        "report-definition.json",
+        "canonicalization.json"
+      ]
+    }
+  ],
+  "provider": "google_cloud_storage",
+  "location": "US-CENTRAL1",
+  "public_access_prevention": "enforced",
+  "uniform_bucket_level_access": true,
+  "reader": "keyless_impersonated_service_account",
+  "reader_permission": "conditional roles/storage.objectViewer on qualified/ prefix",
+  "project_iam_modified": false,
+  "service_account_keys_created": false,
+  "typescript_artifact_status": "unpublished_packed_checkout",
+  "python_sdk_version": "8.0.0",
+  "typescript_archive_sha256": "d87bc48e5263dd6393de2e6218ce3bf31dc1b3e90e42f75a35ca2dd06aaf24de",
+  "python_wheel_sha256": "d862687ab71f1aa411887d20dc7faba66547e68a319d29c0a8f568e8f88dd8fb",
+  "fixture_sha256": "bcd6166676ba9bc51cdbef5eefd59ae5d3572884a69205f91176534e0d6b037e",
+  "gate_sources_sha256": {
+    "gcs-inspect.cjs": "21cc4b4f18cd47c56cbe045f66a03fdfb705830059ff3f25a4e0ab7334c52a35",
+    "gcs-inspect.py": "5a2019597a69c3d767f4875bfb460dd66bb2d4ebacaf96af6d98514d62ea23ba"
+  },
+  "google_cloud_storage_python_version": "3.16.0",
+  "google_auth_python_version": "2.60.0",
+  "outside_prefix_control_object": {
+    "generation": 1791246779753256,
+    "owner_verified_sha256": "735610f303d6d91aa618df3aa6d7f18bcf5dfa52bdbd9ef551293e6bd14c92d9",
+    "size_bytes": 156
+  },
+  "fixture_source": "test/fixtures/reporting-interop/evidence-v1.json",
+  "reader_write_denied_403": true,
+  "physical_mutations": [
+    {
+      "paired_runtime": "node20",
+      "previous_generation": 1791246832741350,
+      "tampered_generation": 1791247039893462,
+      "tampered_sha256": "9690f270085535ae823f880eb605aeda9787c4954677d9994b77f15da92d0700",
+      "restored_generation": 1791247062265356,
+      "restored_sha256": "735610f303d6d91aa618df3aa6d7f18bcf5dfa52bdbd9ef551293e6bd14c92d9",
+      "restoration_verified": true
+    },
+    {
+      "paired_runtime": "node24",
+      "previous_generation": 1791246832970233,
+      "tampered_generation": 1791247040154304,
+      "tampered_sha256": "9690f270085535ae823f880eb605aeda9787c4954677d9994b77f15da92d0700",
+      "restored_generation": 1791247062532776,
+      "restored_sha256": "735610f303d6d91aa618df3aa6d7f18bcf5dfa52bdbd9ef551293e6bd14c92d9",
+      "restoration_verified": true
+    }
+  ],
+  "provider_grant_revoked": true,
+  "observed_revocation_seconds": 1.29,
+  "same_unexpired_token_across_phases": true,
+  "original_objects_retained_for_owner_after_reader_revocation": [
+    {
+      "object": "qualified/node20/manifest.json",
+      "owner_verified_sha256": "48ad8397055d4091db603df478ae7753889ed8077985640666fada73cd0d090c"
+    },
+    {
+      "object": "qualified/node20/rows.jsonl",
+      "owner_verified_sha256": "735610f303d6d91aa618df3aa6d7f18bcf5dfa52bdbd9ef551293e6bd14c92d9"
+    },
+    {
+      "object": "qualified/node20/row-schema.json",
+      "owner_verified_sha256": "12aa838388ed6f73682cce5303c713dd95069e0479500462906fe0c861f0a472"
+    },
+    {
+      "object": "qualified/node20/report-definition.json",
+      "owner_verified_sha256": "e76fd773afe79938b17db11fd07f1274db311f842d8ae94586168229d38d9086"
+    },
+    {
+      "object": "qualified/node20/canonicalization.json",
+      "owner_verified_sha256": "653373f3d7db3e130675959b4c491c332730e82174fa7652024f14d45cd98c19"
+    },
+    {
+      "object": "qualified/node24/manifest.json",
+      "owner_verified_sha256": "48ad8397055d4091db603df478ae7753889ed8077985640666fada73cd0d090c"
+    },
+    {
+      "object": "qualified/node24/rows.jsonl",
+      "owner_verified_sha256": "735610f303d6d91aa618df3aa6d7f18bcf5dfa52bdbd9ef551293e6bd14c92d9"
+    },
+    {
+      "object": "qualified/node24/row-schema.json",
+      "owner_verified_sha256": "12aa838388ed6f73682cce5303c713dd95069e0479500462906fe0c861f0a472"
+    },
+    {
+      "object": "qualified/node24/report-definition.json",
+      "owner_verified_sha256": "e76fd773afe79938b17db11fd07f1274db311f842d8ae94586168229d38d9086"
+    },
+    {
+      "object": "qualified/node24/canonicalization.json",
+      "owner_verified_sha256": "653373f3d7db3e130675959b4c491c332730e82174fa7652024f14d45cd98c19"
+    }
+  ],
+  "scope_limits": [
+    "Exercises the installed SDK native HTTPS evidence readers and inspectors with controlled pinned report vectors.",
+    "GCS contracts, manifests and rows use real public TLS/DNS without fetch routing overrides.",
+    "TypeScript private contract reads use a worker-supplied reference resolver over the native SDK HTTPS reader; the worker checks contract hashes. The default SDK canonical reference resolver is not qualified for authenticated GCS contract reads. Python uses its built-in inspector contract-hash checks.",
+    "This provider supplement does not exercise managed-runtime GCS transfer adapters, MCP ledger orchestration or shared-database recovery; those remain in separate local fixture gates.",
+    "Observed IAM revocation latency is one measurement, not a production revocation SLA.",
+    "Does not prove seller write-generation fencing, deployment least privilege beyond this scoped reader, host failure, public webhook deployment, or published TypeScript artifact qualification.",
+    "typescript_sdk_version is the packed checkout package.json version, shared with published 14.1.0; typescript_archive_sha256 identifies this unpublished build."
+  ],
+  "provenance": {
+    "worker_checks": "checks[] are directly parsed worker JSON; worker credential-file hashes prove identical retained input across phases",
+    "operator_attested_fields": [
+      "cleanup",
+      "fixture_sha256",
+      "fixture_source",
+      "gate_sources_sha256",
+      "google_auth_python_version",
+      "google_cloud_storage_python_version",
+      "installed_member_verification",
+      "location",
+      "observed_revocation_seconds",
+      "original_objects_retained_for_owner_after_reader_revocation",
+      "outside_prefix_control_object",
+      "physical_mutations",
+      "project_iam_modified",
+      "provider",
+      "provider_grant_revoked",
+      "public_access_prevention",
+      "python_sdk_version",
+      "python_wheel_sha256",
+      "reader",
+      "reader_permission",
+      "reader_write_denied_403",
+      "same_unexpired_token_across_phases",
+      "sanitized_error_controls",
+      "scope_limits",
+      "service_account_keys_created",
+      "started_at",
+      "typescript_archive_sha256",
+      "typescript_artifact_status",
+      "uniform_bucket_level_access",
+      "reviews"
+    ],
+    "operator_source_sha256": {
+      "bucket.py": "ccf4fb9f0c3da43026611de05f41d3c13cdc4f611c1b61d86310c953e8daa435",
+      "iam.py": "3d5008b17fefb26bb5a48cc99b9e4973c4c7e471d2f10989b9eb86dd7c0ecf82",
+      "prepare.py": "f393b99a2883c0974e1541c64e3378f60705501ec565ed8bf15d8489f7051b92",
+      "qualify.py": "4fc0cb33c049486aae95329df3133fb1e545c2014bc3a3c8b785d85b86bba3f7"
+    },
+    "operator_sources": "local workspace orchestration; not part of the tracked inspection workers",
+    "artifact_binding": "operator member-by-member archive verification and retained hashes",
+    "sanitized_error_controls": "operator ran each worker against a deliberately malformed copy of the actual private token file and checked stderr and stdout for absence of the actual token",
+    "namespace_binding": "The uploaded canonical manifests contain a relative rows.jsonl object_ref; namespace-specific manifest and contract URIs are supplied in the operator-owned per-runtime inspection context."
+  },
+  "same_token_continuity_evidence": "identical reader_credential_file_sha256 in all twelve worker results, additionally checked against retained private input by the operator",
+  "sanitized_error_controls": [
+    {
+      "language": "typescript",
+      "status": "passed",
+      "malformed_private_token_file_rejected_without_token_output": true,
+      "error_type": "SyntaxError"
+    },
+    {
+      "language": "python",
+      "status": "passed",
+      "malformed_private_token_file_rejected_without_token_output": true,
+      "error_type": "JSONDecodeError"
+    }
+  ],
+  "installed_member_verification": {
+    "typescript_members": 6371,
+    "python_members": 4684,
+    "typescript_member_manifest_sha256": "48f7c4c261cf15916ada63d8aa0b1a4c17844eb49b3528c5e483084630349aba",
+    "python_member_manifest_sha256": "4926c566024991818e2fb7c2849a39ea8fd995d7a87605bd1b29d4bb2e637205",
+    "verified_against_archives": true
+  },
+  "cleanup": {
+    "temporary_bucket_deleted_and_not_found": true,
+    "temporary_reader_service_account_deleted": true,
+    "retained_reader_token_file_deleted": true,
+    "project_iam_modified": false,
+    "service_account_keys_created": false
+  },
+  "started_at": "2026-10-06T00:36:58.897943+00:00",
+  "reviews": {
+    "claude": [
+      "dx-expert",
+      "ad-tech-protocol-expert",
+      "code-reviewer",
+      "security-reviewer"
+    ],
+    "codex": [
+      "protocol",
+      "code",
+      "security"
+    ],
+    "result": "no blocking findings; scope/provenance, error sanitization and expiry findings addressed, final capture reviewed",
+    "review_access": "credential-free supplied source and final record snapshots; Codex filesystem sandbox unavailable, so reviewers received complete public contents via stdin"
+  }
+}
