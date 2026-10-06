@@ -42,6 +42,7 @@ describe('createNonInteractiveOAuthProvider', () => {
         access_token: 'at_123',
         refresh_token: 'rt_456',
         token_type: 'Bearer',
+        issuer: 'https://auth.example',
       },
       oauth_client: { client_id: 'client_abc' },
     };
@@ -50,6 +51,7 @@ describe('createNonInteractiveOAuthProvider', () => {
     const tokens = await provider.tokens();
     assert.strictEqual(tokens?.access_token, 'at_123');
     assert.strictEqual(tokens?.refresh_token, 'rt_456');
+    assert.strictEqual(tokens?.issuer, 'https://auth.example');
 
     await assert.rejects(
       () => provider.redirectToAuthorization(new URL('https://auth.example/authorize')),
@@ -71,7 +73,7 @@ describe('createTestClient auth.type=oauth plumbing', () => {
     const client = createTestClient('https://example.com/mcp', 'mcp', {
       auth: {
         type: 'oauth',
-        tokens: { access_token: 'at_1', refresh_token: 'rt_1', token_type: 'Bearer' },
+        tokens: { access_token: 'at_1', refresh_token: 'rt_1', token_type: 'Bearer', issuer: 'https://auth.example' },
         client: { client_id: 'client_abc' },
       },
     });
