@@ -9,6 +9,7 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import { hkdfSync, randomBytes } from 'node:crypto';
+import { assertLegacyOAuthSdk } from '../auth/oauth/MCPOAuthProvider';
 import { createMCPRequestHeaders } from '../auth';
 import { is401Error } from '../errors';
 import type { DebugLogEntry } from '../types/adcp';
@@ -1147,6 +1148,7 @@ export async function connectMCP(options: {
     fetchFn,
     allowPrivateIp,
   } = options;
+  if (authProvider) assertLegacyOAuthSdk();
   const baseUrl = new URL(agentUrl);
 
   debugLogs.push({

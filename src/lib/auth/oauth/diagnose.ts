@@ -15,9 +15,9 @@
  */
 import { ssrfSafeFetch, decodeBodyAsJsonOrText, SsrfRefusedError } from '../../net';
 import type { AgentConfig } from './types';
+import { assertOAuthCredentialIssuer, assertOAuthServerIssuer, OAuthError } from './types';
 import { decodeAccessTokenClaims, parseWWWAuthenticate, validateTokenAudience } from './diagnostics';
 import type { DecodedAccessToken } from './diagnostics';
-import { assertOAuthCredentialIssuers, validatedOAuthIssuer } from './issuer';
 
 /**
  * Options for {@link runAuthDiagnosis}. Most callers pass an `AgentConfig` and
@@ -169,6 +169,18 @@ export async function runAuthDiagnosis(
   if (!options.skipRefresh && agent.oauth_tokens?.refresh_token) {
     const tokenEndpoint = extractTokenEndpoint(asCapture);
     const clientId = agent.oauth_client?.client_id;
+    let issuerError: string | undefined;
+    if (tokenEndpoint && clientId) {
+      try {
+        const issuer = new URL(extractIssuer(prmCapture) ?? '').toString();
+        assertOAuthServerIssuer(asCapture.body as { issuer?: unknown } | undefined, issuer);
+        assertOAuthCredentialIssuer(agent.oauth_tokens, issuer, true);
+        assertOAuthCredentialIssuer(agent.oauth_client!, issuer, !!agent.oauth_client?.client_secret);
+      } catch (error) {
+        issuerError =
+          error instanceof OAuthError ? error.message : 'Authorization-server issuer could not be validated';
+      }
+    }
     // Always request the agent URL as the resource indicator, even if PRM
     // advertises something different — a well-behaved client sends what it
     // actually wants to talk to, and using PRM.resource here would cause H2
@@ -184,54 +196,40 @@ export async function runAuthDiagnosis(
         name: 'token_refresh_attempt',
         error: 'No saved oauth_client.client_id — cannot attempt refresh without it',
       });
+    } else if (issuerError) {
+      steps.push({ name: 'token_refresh_attempt', error: issuerError });
     } else {
-      let refreshAllowed = true;
-      try {
-        const metadata = asCapture.body as { issuer?: unknown } | null;
-        const issuer = validatedOAuthIssuer(extractIssuer(prmCapture), metadata?.issuer);
-        assertOAuthCredentialIssuers(agent, issuer);
-      } catch {
-        steps.push({
-          name: 'token_refresh_attempt',
-          error:
-            'OAuth issuer binding is missing or mismatched; owner reauthorization or an independently trusted issuer is required before refresh.',
-        });
-        // Other non-mutating diagnostics remain useful; never send the grant.
-        refreshAllowed = false;
+      const refreshCapture = await attemptTokenRefresh({
+        tokenEndpoint,
+        clientId,
+        clientSecret: agent.oauth_client?.client_secret,
+        refreshToken: agent.oauth_tokens.refresh_token,
+        resource,
+        allowPrivateIp,
+        timeoutMs: options.timeoutMs,
+      });
+      // Capture the raw access_token string BEFORE redaction so we can still
+      // decode claims for H2 analysis. The report body itself uses the
+      // redacted capture unless includeTokens is set.
+      if (refreshCapture.status === 200 && refreshCapture.body && typeof refreshCapture.body === 'object') {
+        const body = refreshCapture.body as Record<string, unknown>;
+        if (typeof body.access_token === 'string') {
+          refreshedAccessToken = body.access_token;
+          refreshedDecoded = decodeAccessTokenClaims(refreshedAccessToken);
+        }
       }
-      if (refreshAllowed) {
-        const refreshCapture = await attemptTokenRefresh({
-          tokenEndpoint,
-          clientId,
-          clientSecret: agent.oauth_client?.client_secret,
-          refreshToken: agent.oauth_tokens.refresh_token,
-          resource,
-          allowPrivateIp,
-          timeoutMs: options.timeoutMs,
-        });
-        // Capture the raw access_token string BEFORE redaction so we can still
-        // decode claims for H2 analysis. The report body itself uses the
-        // redacted capture unless includeTokens is set.
-        if (refreshCapture.status === 200 && refreshCapture.body && typeof refreshCapture.body === 'object') {
-          const body = refreshCapture.body as Record<string, unknown>;
-          if (typeof body.access_token === 'string') {
-            refreshedAccessToken = body.access_token;
-            refreshedDecoded = decodeAccessTokenClaims(refreshedAccessToken);
-          }
-        }
+      steps.push({
+        name: 'token_refresh_attempt',
+        http: includeTokens ? refreshCapture : redactTokenMaterial(refreshCapture),
+      });
+      if (refreshedAccessToken) {
         steps.push({
-          name: 'token_refresh_attempt',
-          http: includeTokens ? refreshCapture : redactTokenMaterial(refreshCapture),
+          name: 'decode_refreshed_token',
+          decodedToken: refreshedDecoded,
+          notes: refreshedDecoded
+            ? [`Decoded refreshed JWT with claims: ${Object.keys(refreshedDecoded.claims).join(', ')}`]
+            : ['Refreshed access_token is opaque (not a JWT)'],
         });
-        if (refreshedAccessToken) {
-          steps.push({
-            name: 'decode_refreshed_token',
-            decodedToken: refreshedDecoded,
-            notes: refreshedDecoded
-              ? [`Decoded refreshed JWT with claims: ${Object.keys(refreshedDecoded.claims).join(', ')}`]
-              : ['Refreshed access_token is opaque (not a JWT)'],
-          });
-        }
       }
     }
   }

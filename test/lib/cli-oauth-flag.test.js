@@ -47,7 +47,7 @@ test('storyboard run --oauth --json with a raw URL emits structured error and ex
   assert.match(payload.message, /Save first:/);
 });
 
-for (const field of ['oauth_client', 'oauth_code_verifier']) {
+for (const field of ['oauth_client', 'oauth_code_verifier', 'oauth_discovery_state']) {
   test(`explicit --clear-oauth clears a ${field}-only record and preserves unrelated configuration`, () => {
     const configRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sdk-cli-oauth-clear-'));
     try {
@@ -68,7 +68,12 @@ for (const field of ['oauth_client', 'oauth_code_verifier']) {
         agents: {
           fixture: {
             ...preserved,
-            [field]: field === 'oauth_client' ? { client_id: 'unstamped-client' } : 'synthetic-verifier',
+            [field]:
+              field === 'oauth_client'
+                ? { client_id: 'unstamped-client' }
+                : field === 'oauth_discovery_state'
+                  ? { authorizationServerUrl: 'https://identity.example/' }
+                  : 'synthetic-verifier',
           },
           unrelated: { url: 'https://other.example/mcp', auth_token: 'other-synthetic-token' },
         },

@@ -295,6 +295,7 @@ test('ProtocolClient default OAuth path reuses the stateful MCP session across w
     oauth_tokens: {
       access_token: 'tok_default',
       refresh_token: 'rt_default',
+      issuer: new URL(server.url).origin,
       token_type: 'Bearer',
     },
     oauth_client: { client_id: 'client_default' },
@@ -348,6 +349,7 @@ test('SingleAgentClient default OAuth path reuses the stateful MCP session after
       oauth_tokens: {
         access_token: 'tok_single_agent',
         refresh_token: 'rt_single_agent',
+        issuer: new URL(server.url).origin,
         token_type: 'Bearer',
       },
       oauth_client: { client_id: 'client_single_agent' },

@@ -32,7 +32,7 @@ Install the peer packages used by your application at versions satisfying these 
 | Peer | Supported range | Installation |
 | --- | --- | --- |
 | `@a2a-js/sdk` | `^1.0.1` | Required |
-| `@modelcontextprotocol/sdk` | `^1.24.0` | Required |
+| `@modelcontextprotocol/sdk` | `^1.31.0` | Required |
 | `@opentelemetry/api` | `^1.0.0` | Optional |
 | `redis` | `^4.6.0 || ^5.0.0 || ^6.0.0` | Optional |
 | `zod` | `^4.1.5` | Required |

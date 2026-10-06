@@ -76,6 +76,10 @@ async function fixture() {
           issuer: `${state.origin}/forged-wire-issuer`,
         });
       }
+      if (state.tokenGate) {
+        state.tokenEntered?.();
+        await state.tokenGate;
+      }
       if (state.invalidGrant) return json(400, { error: 'invalid_grant' });
       return json(200, {
         access_token: 'fresh-synthetic-access',
@@ -625,6 +629,10 @@ test('file-backed client-credentials refresh preserves omitted authorization-cod
     const agent = f.agent();
     agent.auth_token = 'synthetic-static-bearer';
     agent.oauth_code_verifier = 'synthetic-verifier';
+    agent.oauth_discovery_state = {
+      authorizationServerUrl: `${f.state.origin}/owner`,
+      authorizationServerMetadata: { issuer: `${f.state.origin}/owner` },
+    };
     agent.oauth_client_credentials = {
       client_id: 'synthetic-cc-client',
       client_secret: 'synthetic-cc-secret',
@@ -649,6 +657,7 @@ test('file-backed client-credentials refresh preserves omitted authorization-cod
     assert.equal(saved.oauth_tokens.access_token, 'fresh-synthetic-access');
     assert.deepEqual(saved.oauth_client, agent.oauth_client);
     assert.equal(saved.oauth_code_verifier, agent.oauth_code_verifier);
+    assert.deepEqual(saved.oauth_discovery_state, agent.oauth_discovery_state);
     assert.deepEqual(saved.oauth_client_credentials, agent.oauth_client_credentials);
     assert.equal(saved.auth_token, agent.auth_token);
     assert.equal(saved.url, agent.agent_uri);
@@ -667,7 +676,7 @@ test('file-backed provider token save explicitly clears a completed PKCE verifie
     const agent = f.agent();
     agent.oauth_code_verifier = 'synthetic-verifier';
     await storage.saveAgent(agent);
-    const provider = createNonInteractiveOAuthProvider(agent, { storage, allowHttp: true });
+    const provider = createCLIOAuthProvider(agent, { storage, allowHttp: true });
     await provider.saveTokens({
       access_token: 'fresh-synthetic-access',
       token_type: 'Bearer',
@@ -738,6 +747,432 @@ test('file-backed public owner clear removes persisted tokens, client and verifi
     assert.equal(saved.auth_token, agent.auth_token);
     assert.equal(saved.url, agent.agent_uri);
   } finally {
+    await f.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('background discovery validation never saves metadata-only owner mutations', async () => {
+  const f = await fixture();
+  try {
+    const agent = f.agent();
+    const original = structuredClone(agent);
+    let saves = 0;
+    const provider = createNonInteractiveOAuthProvider(agent, {
+      allowHttp: true,
+      storage: {
+        async saveAgent() {
+          saves++;
+        },
+      },
+    });
+    await provider.saveDiscoveryState({
+      authorizationServerUrl: `${f.state.origin}/owner`,
+      authorizationServerMetadata: { issuer: `${f.state.origin}/owner` },
+    });
+    assert.equal(saves, 0);
+    assert.deepEqual(agent, original);
+  } finally {
+    await f.close();
+  }
+});
+
+test('restored legacy PKCE discovery refuses a forged metadata issuer without mutation', async () => {
+  const f = await fixture();
+  try {
+    const agent = f.agent();
+    agent.oauth_code_verifier = 'synthetic-verifier';
+    agent.oauth_discovery_state = {
+      authorizationServerUrl: `${f.state.origin}/owner`,
+      authorizationServerMetadata: {
+        issuer: `${f.state.origin}/attacker`,
+        token_endpoint: `${f.state.origin}/attacker/token`,
+      },
+    };
+    const original = structuredClone(agent);
+    let saves = 0;
+    const provider = createCLIOAuthProvider(agent, {
+      storage: {
+        async saveAgent() {
+          saves++;
+        },
+      },
+      allowHttp: true,
+    });
+    await assert.rejects(provider.discoveryState(), error => error.code === 'oauth_issuer_mismatch');
+    assert.deepEqual(agent, original);
+    assert.equal(saves, 0);
+    assert.equal(f.state.posts.length, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test('legacy no-context credential reads retain the validated discovery binding after a shared-agent edit', async () => {
+  const f = await fixture();
+  try {
+    const agent = f.agent();
+    const provider = createNonInteractiveOAuthProvider(agent, { allowHttp: true });
+    await provider.saveDiscoveryState({
+      authorizationServerUrl: `${f.state.origin}/owner`,
+      authorizationServerMetadata: { issuer: `${f.state.origin}/owner` },
+    });
+    agent.oauth_client.issuer = `${f.state.origin}/attacker`;
+    await assert.rejects(provider.clientInformation(), error => error.code === 'oauth_issuer_mismatch');
+    agent.oauth_client.issuer = `${f.state.origin}/owner`;
+    agent.oauth_tokens.issuer = `${f.state.origin}/attacker`;
+    await assert.rejects(provider.tokens(), error => error.code === 'oauth_issuer_mismatch');
+    assert.equal(f.state.posts.length, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test('file-backed interactive discovery survives reconstruction and explicit discovery cleanup', async () => {
+  const f = await fixture();
+  const directory = await mkdtemp(path.join(tmpdir(), 'sdk-interactive-discovery-'));
+  try {
+    const storage = createFileOAuthStorage({ configPath: path.join(directory, 'config.json') });
+    const agent = f.agent();
+    const provider = new MCPOAuthProvider({
+      agent,
+      storage,
+      flowHandler: {},
+      clientMetadata: DEFAULT_CLIENT_METADATA,
+      allowInteractiveAuthorization: true,
+    });
+    const state = {
+      authorizationServerUrl: `${f.state.origin}/owner`,
+      authorizationServerMetadata: {
+        issuer: `${f.state.origin}/owner`,
+        token_endpoint: `${f.state.origin}/owner/token`,
+      },
+    };
+    await provider.saveDiscoveryState(state);
+    await provider.saveCodeVerifier('synthetic-verifier');
+    const loaded = await storage.loadAgent(agent.id);
+    const reader = new MCPOAuthProvider({
+      agent: loaded,
+      storage,
+      flowHandler: {},
+      clientMetadata: DEFAULT_CLIENT_METADATA,
+      allowInteractiveAuthorization: true,
+    });
+    const returned = await reader.discoveryState();
+    assert.deepEqual(returned, state);
+    returned.authorizationServerMetadata.issuer = `${f.state.origin}/attacker`;
+    assert.deepEqual(await reader.discoveryState(), state);
+    await reader.invalidateCredentials('discovery');
+    const cleared = await storage.loadAgent(agent.id);
+    assert.equal(cleared.oauth_discovery_state, undefined);
+    assert.deepEqual(cleared.oauth_client, loaded.oauth_client);
+    assert.deepEqual(cleared.oauth_tokens, loaded.oauth_tokens);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    await f.close();
+  }
+});
+
+function ownerPendingDiscovery(f) {
+  return {
+    authorizationServerUrl: `${f.state.origin}/owner`,
+    authorizationServerMetadata: {
+      issuer: `${f.state.origin}/owner`,
+      authorization_endpoint: `${f.state.origin}/owner/authorize`,
+      token_endpoint: `${f.state.origin}/owner/token`,
+      registration_endpoint: `${f.state.origin}/owner/register`,
+      response_types_supported: ['code'],
+      grant_types_supported: ['authorization_code', 'refresh_token'],
+      token_endpoint_auth_methods_supported: ['client_secret_post', 'none'],
+    },
+  };
+}
+
+for (const era of ['modern', 'legacy']) {
+  test(`${era} background registered client without a grant preserves pending owner PKCE before refusing sign-in`, async () => {
+    const f = await fixture();
+    try {
+      const agent = f.agent();
+      delete agent.oauth_tokens;
+      agent.oauth_code_verifier = 'existing-owner-verifier';
+      agent.oauth_discovery_state = ownerPendingDiscovery(f);
+      const original = structuredClone(agent);
+      let saves = 0;
+      const provider = createNonInteractiveOAuthProvider(agent, {
+        allowHttp: true,
+        storage: {
+          async saveAgent() {
+            saves++;
+          },
+        },
+      });
+      const auth =
+        era === 'modern'
+          ? require('@modelcontextprotocol/client').auth
+          : (await import('@modelcontextprotocol/sdk/client/auth.js')).auth;
+      const [outcome] = await Promise.allSettled([auth(provider, { serverUrl: agent.agent_uri })]);
+      assert.equal(saves, 0, 'unsupported sign-in must refuse before any owner persistence');
+      assert.deepEqual(agent, original);
+      assert.equal(f.state.posts.length, 0);
+      assert.equal(outcome.status, 'rejected');
+      assert.equal(outcome.reason.code, 'owner_reauthorization_required');
+    } finally {
+      await f.close();
+    }
+  });
+
+  test(`${era} background matching refresh preserves an independently pending owner PKCE flow`, async () => {
+    const f = await fixture();
+    try {
+      const agent = f.agent();
+      agent.oauth_code_verifier = 'existing-owner-verifier';
+      agent.oauth_discovery_state = ownerPendingDiscovery(f);
+      const original = structuredClone(agent);
+      const saved = [];
+      const provider = createNonInteractiveOAuthProvider(agent, {
+        allowHttp: true,
+        storage: {
+          async saveAgent(a) {
+            saved.push(structuredClone(a));
+          },
+        },
+      });
+      const auth =
+        era === 'modern'
+          ? require('@modelcontextprotocol/client').auth
+          : (await import('@modelcontextprotocol/sdk/client/auth.js')).auth;
+      assert.equal(await auth(provider, { serverUrl: agent.agent_uri }), 'AUTHORIZED');
+      assert.equal(f.state.posts.length, 1);
+      assert.equal(f.state.posts[0].path, '/owner/token');
+      assert.equal(saved.length, 1);
+      assert.equal(saved[0].oauth_tokens.refresh_token, 'rotated-synthetic-refresh');
+      assert.equal(saved[0].oauth_tokens.issuer, `${f.state.origin}/owner`);
+      assert.equal(Object.hasOwn(saved[0], 'oauth_code_verifier'), false);
+      assert.equal(Object.hasOwn(saved[0], 'oauth_discovery_state'), false);
+      assert.equal(agent.oauth_code_verifier, original.oauth_code_verifier);
+      assert.deepEqual(agent.oauth_discovery_state, original.oauth_discovery_state);
+      assert.deepEqual(saved[0].oauth_client, original.oauth_client);
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+for (const scope of ['discovery', 'verifier']) {
+  test(`background ${scope} invalidation clears only private discovery and preserves owner pending state`, async () => {
+    const f = await fixture();
+    try {
+      const agent = f.agent();
+      agent.oauth_code_verifier = 'existing-owner-verifier';
+      agent.oauth_discovery_state = ownerPendingDiscovery(f);
+      const original = structuredClone(agent);
+      let saves = 0;
+      const provider = createNonInteractiveOAuthProvider(agent, {
+        allowHttp: true,
+        storage: {
+          async saveAgent() {
+            saves++;
+          },
+        },
+      });
+      await provider.saveDiscoveryState(ownerPendingDiscovery(f));
+      await provider.invalidateCredentials(scope);
+      assert.equal(saves, 0);
+      assert.deepEqual(agent, original);
+      assert.equal(
+        await provider.discoveryState(),
+        undefined,
+        'a cleared private cache cannot borrow owner PKCE state'
+      );
+      assert.equal(f.state.posts.length, 0);
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+test('background PKCE access and writes refuse before borrowing or overwriting owner state', async () => {
+  const f = await fixture();
+  try {
+    const agent = f.agent();
+    agent.oauth_code_verifier = 'existing-owner-verifier';
+    agent.oauth_discovery_state = ownerPendingDiscovery(f);
+    const original = structuredClone(agent);
+    let saves = 0;
+    const provider = createNonInteractiveOAuthProvider(agent, {
+      allowHttp: true,
+      storage: {
+        async saveAgent() {
+          saves++;
+        },
+      },
+    });
+    await assert.rejects(
+      provider.saveCodeVerifier('replacement-verifier'),
+      error => error.code === 'owner_reauthorization_required'
+    );
+    await assert.rejects(provider.codeVerifier(), error => error.code === 'owner_reauthorization_required');
+    assert.deepEqual(agent, original);
+    assert.equal(saves, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+for (const era of ['modern', 'legacy']) {
+  test(`${era} file-backed background refresh preserves owner PKCE created during the token request`, async () => {
+    const f = await fixture();
+    const directory = await mkdtemp(path.join(tmpdir(), 'sdk-issuer-background-inflight-'));
+    let releaseToken;
+    try {
+      const storage = createFileOAuthStorage({ configPath: path.join(directory, 'config.json') });
+      const original = f.agent();
+      await storage.saveAgent(original);
+      const staleAgent = await storage.loadAgent(original.id);
+      assert.equal(Object.hasOwn(staleAgent, 'oauth_code_verifier'), true);
+      assert.equal(staleAgent.oauth_code_verifier, undefined);
+      assert.equal(Object.hasOwn(staleAgent, 'oauth_discovery_state'), true);
+      assert.equal(staleAgent.oauth_discovery_state, undefined);
+      const entered = new Promise(resolve => {
+        f.state.tokenEntered = resolve;
+      });
+      f.state.tokenGate = new Promise(resolve => {
+        releaseToken = resolve;
+      });
+      const provider = createNonInteractiveOAuthProvider(staleAgent, { storage, allowHttp: true });
+      const auth =
+        era === 'modern'
+          ? require('@modelcontextprotocol/client').auth
+          : (await import('@modelcontextprotocol/sdk/client/auth.js')).auth;
+      const operation = auth(provider, { serverUrl: staleAgent.agent_uri });
+      await entered;
+      const owner = await storage.loadAgent(original.id);
+      owner.oauth_code_verifier = 'new-owner-verifier';
+      owner.oauth_discovery_state = ownerPendingDiscovery(f);
+      await storage.saveAgent(owner);
+      releaseToken();
+      assert.equal(await operation, 'AUTHORIZED');
+      const saved = await storage.loadAgent(original.id);
+      assert.equal(f.state.posts.length, 1);
+      assert.equal(f.state.posts[0].path, '/owner/token');
+      assert.equal(saved.oauth_tokens.refresh_token, 'rotated-synthetic-refresh');
+      assert.equal(saved.oauth_tokens.issuer, `${f.state.origin}/owner`);
+      assert.equal(saved.oauth_code_verifier, owner.oauth_code_verifier);
+      assert.deepEqual(saved.oauth_discovery_state, owner.oauth_discovery_state);
+      assert.deepEqual(saved.oauth_client, original.oauth_client);
+      assert.equal(staleAgent.oauth_code_verifier, undefined);
+      assert.equal(staleAgent.oauth_discovery_state, undefined);
+    } finally {
+      releaseToken?.();
+      await f.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const era of ['modern', 'legacy']) {
+  test(`${era} public-client issuer back-stamp preserves file-backed owner PKCE created during auth`, async () => {
+    const f = await fixture();
+    const directory = await mkdtemp(path.join(tmpdir(), 'sdk-issuer-public-client-inflight-'));
+    let releaseGate;
+    try {
+      const storage = createFileOAuthStorage({ configPath: path.join(directory, 'config.json') });
+      const original = f.agent();
+      delete original.oauth_client.issuer;
+      delete original.oauth_client.client_secret;
+      await storage.saveAgent(original);
+      const staleAgent = await storage.loadAgent(original.id);
+      assert.equal(Object.hasOwn(staleAgent, 'oauth_code_verifier'), true);
+      assert.equal(staleAgent.oauth_code_verifier, undefined);
+      assert.equal(Object.hasOwn(staleAgent, 'oauth_discovery_state'), true);
+      assert.equal(staleAgent.oauth_discovery_state, undefined);
+      const entered = new Promise(resolve => {
+        if (era === 'modern') f.state.metadataEntered = resolve;
+        else f.state.tokenEntered = resolve;
+      });
+      const gate = new Promise(resolve => {
+        releaseGate = resolve;
+      });
+      if (era === 'modern') f.state.metadataGate = gate;
+      else f.state.tokenGate = gate;
+      const provider = createNonInteractiveOAuthProvider(staleAgent, { storage, allowHttp: true });
+      const auth =
+        era === 'modern'
+          ? require('@modelcontextprotocol/client').auth
+          : (await import('@modelcontextprotocol/sdk/client/auth.js')).auth;
+      const operation = auth(provider, { serverUrl: staleAgent.agent_uri });
+      await entered;
+      const owner = await storage.loadAgent(original.id);
+      owner.oauth_code_verifier = 'new-owner-verifier';
+      owner.oauth_discovery_state = ownerPendingDiscovery(f);
+      await storage.saveAgent(owner);
+      releaseGate();
+      assert.equal(await operation, 'AUTHORIZED');
+      const saved = await storage.loadAgent(original.id);
+      assert.equal(f.state.posts.length, 1);
+      assert.equal(f.state.posts[0].path, '/owner/token');
+      assert.equal(saved.oauth_tokens.refresh_token, 'rotated-synthetic-refresh');
+      assert.equal(saved.oauth_tokens.issuer, `${f.state.origin}/owner`);
+      assert.equal(saved.oauth_code_verifier, owner.oauth_code_verifier);
+      assert.deepEqual(saved.oauth_discovery_state, owner.oauth_discovery_state);
+      assert.equal(saved.oauth_client.client_id, original.oauth_client.client_id);
+      assert.equal(saved.oauth_client.client_secret, undefined);
+      assert.equal(saved.oauth_client.issuer, `${f.state.origin}/owner`);
+      assert.equal(staleAgent.oauth_code_verifier, undefined);
+      assert.equal(staleAgent.oauth_discovery_state, undefined);
+    } finally {
+      releaseGate?.();
+      await f.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+}
+
+test('file-loaded client-credentials refresh preserves owner PKCE created during the token request', async () => {
+  const f = await fixture();
+  const directory = await mkdtemp(path.join(tmpdir(), 'sdk-issuer-cc-inflight-'));
+  let releaseToken;
+  try {
+    const storage = createFileOAuthStorage({ configPath: path.join(directory, 'config.json') });
+    const original = f.agent();
+    original.oauth_client_credentials = {
+      client_id: 'synthetic-cc-client',
+      client_secret: 'synthetic-cc-secret',
+      token_endpoint: `${f.state.origin}/owner/token`,
+    };
+    await storage.saveAgent(original);
+    const staleAgent = await storage.loadAgent(original.id);
+    assert.equal(Object.hasOwn(staleAgent, 'oauth_code_verifier'), true);
+    assert.equal(staleAgent.oauth_code_verifier, undefined);
+    assert.equal(Object.hasOwn(staleAgent, 'oauth_discovery_state'), true);
+    assert.equal(staleAgent.oauth_discovery_state, undefined);
+    const entered = new Promise(resolve => {
+      f.state.tokenEntered = resolve;
+    });
+    f.state.tokenGate = new Promise(resolve => {
+      releaseToken = resolve;
+    });
+    const operation = ensureClientCredentialsTokens(staleAgent, { storage, force: true, allowPrivateIp: true });
+    await entered;
+    const owner = await storage.loadAgent(original.id);
+    owner.oauth_code_verifier = 'new-owner-verifier';
+    owner.oauth_discovery_state = ownerPendingDiscovery(f);
+    await storage.saveAgent(owner);
+    releaseToken();
+    await operation;
+    const saved = await storage.loadAgent(original.id);
+    assert.equal(f.state.posts.length, 1);
+    assert.equal(f.state.posts[0].path, '/owner/token');
+    assert.equal(f.state.posts[0].form.get('grant_type'), 'client_credentials');
+    assert.equal(saved.oauth_tokens.access_token, 'fresh-synthetic-access');
+    assert.equal(saved.oauth_code_verifier, owner.oauth_code_verifier);
+    assert.deepEqual(saved.oauth_discovery_state, owner.oauth_discovery_state);
+    assert.deepEqual(saved.oauth_client, original.oauth_client);
+    assert.deepEqual(saved.oauth_client_credentials, original.oauth_client_credentials);
+    assert.equal(staleAgent.oauth_code_verifier, undefined);
+    assert.equal(staleAgent.oauth_discovery_state, undefined);
+  } finally {
+    releaseToken?.();
     await f.close();
     await rm(directory, { recursive: true, force: true });
   }

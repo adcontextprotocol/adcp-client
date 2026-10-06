@@ -192,7 +192,7 @@ export function createCLIOAuthProvider(
  * already saved tokens via `createCLIOAuthProvider`.
  *
  * A failed grant can throw `OAuthError` with `owner_reauthorization_required`;
- * missing or mismatched issuer bindings throw `oauth_issuer_binding_required`.
+ * missing or mismatched issuer bindings throw `oauth_issuer_required` or `oauth_issuer_mismatch`.
  * The owner can run `adcp <alias> --clear-oauth`, then
  * `adcp --save-auth <alias> --oauth` to start a fresh browser sign-in.
  */
@@ -272,6 +272,7 @@ export function clearOAuthTokens(agent: AgentConfig): void {
   agent.oauth_tokens = undefined;
   agent.oauth_client = undefined;
   agent.oauth_code_verifier = undefined;
+  agent.oauth_discovery_state = undefined;
 }
 
 /**

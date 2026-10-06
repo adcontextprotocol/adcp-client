@@ -24,6 +24,9 @@ export type { AgentConfig, AgentOAuthTokens, AgentOAuthClient };
  * Agent config storage interface
  *
  * Implement this to persist OAuth tokens back to agent configuration.
+ * Round-trip pending `oauth_code_verifier` and `oauth_discovery_state` verbatim.
+ * An own property explicitly set to undefined clears an OAuth field; absent
+ * fields preserve stored values when a caller saves a partial agent.
  * This allows different storage backends (file, database, memory)
  * while keeping tokens in the agent config structure.
  */
@@ -85,12 +88,6 @@ export interface OAuthFlowHandler {
  * Configuration for creating an OAuth provider
  */
 export interface OAuthProviderConfig {
-  /**
-   * Explicitly permit new interactive authorization/registration and automatic
-   * credential invalidation. Default false; CLI factories opt in. Background
-   * clients require owner reauthorization instead of clearing or replacing a grant.
-   */
-  allowInteractiveAuthorization?: boolean;
   /** Agent configuration (tokens will be stored here) */
   agent: AgentConfig;
 
@@ -99,6 +96,11 @@ export interface OAuthProviderConfig {
 
   /** Authorization flow handler */
   flowHandler: OAuthFlowHandler;
+  /**
+   * Explicitly allow fresh registration, PKCE work, redirects and automatic
+   * credential invalidation. Defaults to false; CLI factories opt in.
+   */
+  allowInteractiveAuthorization?: boolean;
 
   /** OAuth client metadata (required - use DEFAULT_CLIENT_METADATA as base) */
   clientMetadata: OAuthClientMetadata;
@@ -171,7 +173,7 @@ export class OAuthTimeoutError extends OAuthError {
  */
 export function toMCPTokens(tokens: AgentOAuthTokens): OAuthTokens {
   return {
-    ...(tokens.issuer !== undefined ? { issuer: tokens.issuer } : {}),
+    ...(tokens.issuer !== undefined && tokens.issuer !== null && { issuer: tokens.issuer }),
     access_token: tokens.access_token,
     refresh_token: tokens.refresh_token,
     token_type: tokens.token_type || 'Bearer',
@@ -185,7 +187,7 @@ export function toMCPTokens(tokens: AgentOAuthTokens): OAuthTokens {
  */
 export function fromMCPTokens(tokens: OAuthTokens): AgentOAuthTokens {
   const result: AgentOAuthTokens = {
-    ...(tokens.issuer !== undefined ? { issuer: tokens.issuer } : {}),
+    ...(tokens.issuer !== undefined && tokens.issuer !== null && { issuer: tokens.issuer }),
     access_token: tokens.access_token,
     token_type: tokens.token_type,
     scope: tokens.scope,
@@ -209,7 +211,7 @@ export function fromMCPTokens(tokens: OAuthTokens): AgentOAuthTokens {
  */
 export function toMCPClientInfo(client: AgentOAuthClient): OAuthClientInformation {
   return {
-    ...(client.issuer !== undefined ? { issuer: client.issuer } : {}),
+    ...(client.issuer !== undefined && client.issuer !== null && { issuer: client.issuer }),
     client_id: client.client_id,
     client_secret: client.client_secret,
     client_secret_expires_at: client.client_secret_expires_at,
@@ -221,9 +223,69 @@ export function toMCPClientInfo(client: AgentOAuthClient): OAuthClientInformatio
  */
 export function fromMCPClientInfo(info: OAuthClientInformationFull): AgentOAuthClient {
   return {
-    ...(info.issuer !== undefined ? { issuer: info.issuer } : {}),
+    ...(info.issuer !== undefined && info.issuer !== null && { issuer: info.issuer }),
     client_id: info.client_id,
     client_secret: info.client_secret,
     client_secret_expires_at: info.client_secret_expires_at,
   };
+}
+
+function isOAuthIssuer(value: unknown): value is string {
+  if (typeof value !== 'string' || !value || /[\u0000-\u0020\u007f\\]/.test(value)) return false;
+  try {
+    const url = new URL(value);
+    const rawAuthority = value.match(/^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i)?.[1];
+    return (
+      (url.protocol === 'https:' || url.protocol === 'http:') &&
+      !rawAuthority?.includes('@') &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Internal credential-binding guard; old secrets must be migrated from trusted configuration. */
+export function assertOAuthCredentialIssuer(
+  credential: { issuer?: unknown },
+  expectedIssuer?: string,
+  requireIssuer = false
+): void {
+  const issuer = credential.issuer;
+  if ((issuer === undefined || issuer === null) && !requireIssuer) return;
+  if (!isOAuthIssuer(issuer)) {
+    throw new OAuthError(
+      'Saved OAuth credentials need a valid issuer. Clear them and sign in again, or set their issuer from trusted configuration.',
+      'oauth_issuer_required'
+    );
+  }
+  if (
+    expectedIssuer !== undefined &&
+    issuer !== expectedIssuer &&
+    !(issuer.endsWith('/') && issuer.slice(0, -1) === expectedIssuer) &&
+    !(expectedIssuer.endsWith('/') && expectedIssuer.slice(0, -1) === issuer)
+  ) {
+    throw new OAuthError('OAuth credentials belong to a different authorization server.', 'oauth_issuer_mismatch');
+  }
+}
+
+/** Internal metadata guard, matching the modern MCP SDK's asymmetric issuer-echo rule. */
+export function assertOAuthServerIssuer(
+  metadata: { issuer?: unknown } | undefined,
+  authorizationServerUrl: string
+): void {
+  const issuer = metadata?.issuer;
+  if (
+    !isOAuthIssuer(issuer) ||
+    (issuer !== authorizationServerUrl &&
+      !(authorizationServerUrl.endsWith('/') && issuer === authorizationServerUrl.slice(0, -1)))
+  ) {
+    throw new OAuthError(
+      'Authorization-server metadata does not match the discovered issuer.',
+      'oauth_issuer_mismatch'
+    );
+  }
 }

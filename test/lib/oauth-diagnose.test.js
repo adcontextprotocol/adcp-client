@@ -90,6 +90,58 @@ function jsonRes(res, status, body, extraHeaders = {}) {
 // Scenarios
 // ---------------------------------------------------------------------------
 
+describe('runAuthDiagnosis: issuer isolation', () => {
+  for (const scenario of [
+    'unbound refresh',
+    'different refresh',
+    'unbound secret',
+    'different secret',
+    'false metadata issuer',
+  ]) {
+    test(`skips secret-bearing refresh for ${scenario}`, async () => {
+      let tokenRequests = 0;
+      const trustedIssuer = scenario === 'false metadata issuer' ? 'https://legitimate-as.example' : issuer();
+      setHandlers({
+        '/.well-known/oauth-protected-resource/mcp': (req, res) =>
+          jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [issuer()] }),
+        '/.well-known/oauth-authorization-server': (req, res) =>
+          jsonRes(res, 200, { issuer: trustedIssuer, token_endpoint: tokenEndpoint() }),
+        '/oauth/token': (req, res) => {
+          tokenRequests++;
+          jsonRes(res, 200, { access_token: 'unexpected', token_type: 'Bearer' });
+        },
+        '/mcp': (req, res) => {
+          res.statusCode = 401;
+          res.end();
+        },
+      });
+      const tokens = { access_token: 'opaque-access', refresh_token: 'saved-refresh', issuer: trustedIssuer };
+      const client = { client_id: 'cid', client_secret: 'saved-secret', issuer: trustedIssuer };
+      if (scenario === 'unbound refresh') delete tokens.issuer;
+      if (scenario === 'different refresh') tokens.issuer = 'https://different-as.example';
+      if (scenario === 'unbound secret') delete client.issuer;
+      if (scenario === 'different secret') client.issuer = 'https://different-as.example';
+      const report = await runAuthDiagnosis(
+        {
+          id: 'test',
+          name: 'test',
+          agent_uri: agentUrl(),
+          protocol: 'mcp',
+          oauth_tokens: tokens,
+          oauth_client: client,
+        },
+        { allowPrivateIp: true, skipToolCall: true }
+      );
+      assert.strictEqual(tokenRequests, 0);
+      const step = report.steps.find(step => step.name === 'token_refresh_attempt');
+      assert.match(step.error, /issuer|authorization server/i);
+      assert.strictEqual(step.http, undefined);
+      assert.ok(!JSON.stringify(report).includes('saved-secret'));
+      assert.ok(!JSON.stringify(report).includes('saved-refresh'));
+    });
+  }
+});
+
 describe('runAuthDiagnosis: H1 resource URL mismatch', () => {
   test('flags H1 likely when PRM resource is on a different origin', async () => {
     setHandlers({
@@ -98,7 +150,8 @@ describe('runAuthDiagnosis: H1 resource URL mismatch', () => {
           resource: 'https://wrong-host.example.com/mcp',
           authorization_servers: [issuer()],
         }),
-      '/.well-known/oauth-authorization-server': (req, res) => jsonRes(res, 200, { token_endpoint: tokenEndpoint() }),
+      '/.well-known/oauth-authorization-server': (req, res) =>
+        jsonRes(res, 200, { issuer: issuer(), token_endpoint: tokenEndpoint() }),
       '/mcp': (req, res) => {
         res.statusCode = 401;
         res.setHeader('www-authenticate', 'Bearer error="invalid_token"');
@@ -120,7 +173,8 @@ describe('runAuthDiagnosis: H1 resource URL mismatch', () => {
     setHandlers({
       '/.well-known/oauth-protected-resource/mcp': (req, res) =>
         jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [issuer()] }),
-      '/.well-known/oauth-authorization-server': (req, res) => jsonRes(res, 200, { token_endpoint: tokenEndpoint() }),
+      '/.well-known/oauth-authorization-server': (req, res) =>
+        jsonRes(res, 200, { issuer: issuer(), token_endpoint: tokenEndpoint() }),
       '/mcp': (req, res) => {
         res.statusCode = 401;
         res.setHeader('www-authenticate', 'Bearer error="invalid_token"');
@@ -145,7 +199,8 @@ describe('runAuthDiagnosis: H1 resource URL mismatch', () => {
     setHandlers({
       '/.well-known/oauth-protected-resource/mcp': (req, res) =>
         jsonRes(res, 200, { resource: resourceId, authorization_servers: [issuer()] }),
-      '/.well-known/oauth-authorization-server': (req, res) => jsonRes(res, 200, { token_endpoint: tokenEndpoint() }),
+      '/.well-known/oauth-authorization-server': (req, res) =>
+        jsonRes(res, 200, { issuer: issuer(), token_endpoint: tokenEndpoint() }),
       '/mcp': (req, res) => {
         res.statusCode = 401;
         res.setHeader('www-authenticate', 'Bearer error="invalid_token"');
@@ -172,7 +227,8 @@ describe('runAuthDiagnosis: H1 resource URL mismatch', () => {
     setHandlers({
       '/.well-known/oauth-protected-resource/mcp': (req, res) =>
         jsonRes(res, 200, { resource: resourceWithSlash, authorization_servers: [issuer()] }),
-      '/.well-known/oauth-authorization-server': (req, res) => jsonRes(res, 200, { token_endpoint: tokenEndpoint() }),
+      '/.well-known/oauth-authorization-server': (req, res) =>
+        jsonRes(res, 200, { issuer: issuer(), token_endpoint: tokenEndpoint() }),
       '/mcp': (req, res) => {
         res.statusCode = 401;
         res.setHeader('www-authenticate', 'Bearer error="invalid_token"');
@@ -193,7 +249,8 @@ describe('runAuthDiagnosis: H1 resource URL mismatch', () => {
     setHandlers({
       '/.well-known/oauth-protected-resource/mcp': (req, res) =>
         jsonRes(res, 200, { resource: 'urn:example:opaque', authorization_servers: [issuer()] }),
-      '/.well-known/oauth-authorization-server': (req, res) => jsonRes(res, 200, { token_endpoint: tokenEndpoint() }),
+      '/.well-known/oauth-authorization-server': (req, res) =>
+        jsonRes(res, 200, { issuer: issuer(), token_endpoint: tokenEndpoint() }),
       '/mcp': (req, res) => {
         res.statusCode = 401;
         res.setHeader('www-authenticate', 'Bearer error="invalid_token"');
@@ -219,7 +276,8 @@ describe('runAuthDiagnosis: H1 resource URL mismatch', () => {
     setHandlers({
       '/.well-known/oauth-protected-resource/mcp': (req, res) =>
         jsonRes(res, 200, { resource: siblingResource, authorization_servers: [issuer()] }),
-      '/.well-known/oauth-authorization-server': (req, res) => jsonRes(res, 200, { token_endpoint: tokenEndpoint() }),
+      '/.well-known/oauth-authorization-server': (req, res) =>
+        jsonRes(res, 200, { issuer: issuer(), token_endpoint: tokenEndpoint() }),
       '/mcp': (req, res) => {
         res.statusCode = 401;
         res.setHeader('www-authenticate', 'Bearer error="invalid_token"');
@@ -243,7 +301,8 @@ describe('runAuthDiagnosis: H4 missing WWW-Authenticate', () => {
     setHandlers({
       '/.well-known/oauth-protected-resource/mcp': (req, res) =>
         jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [issuer()] }),
-      '/.well-known/oauth-authorization-server': (req, res) => jsonRes(res, 200, { token_endpoint: tokenEndpoint() }),
+      '/.well-known/oauth-authorization-server': (req, res) =>
+        jsonRes(res, 200, { issuer: issuer(), token_endpoint: tokenEndpoint() }),
       '/mcp': (req, res) => {
         res.statusCode = 401;
         res.end();
@@ -264,7 +323,8 @@ describe('runAuthDiagnosis: H4 missing WWW-Authenticate', () => {
     setHandlers({
       '/.well-known/oauth-protected-resource/mcp': (req, res) =>
         jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [issuer()] }),
-      '/.well-known/oauth-authorization-server': (req, res) => jsonRes(res, 200, { token_endpoint: tokenEndpoint() }),
+      '/.well-known/oauth-authorization-server': (req, res) =>
+        jsonRes(res, 200, { issuer: issuer(), token_endpoint: tokenEndpoint() }),
       '/mcp': (req, res) => {
         res.statusCode = 401;
         res.setHeader(
@@ -290,7 +350,8 @@ describe('runAuthDiagnosis: H5 token audience mismatch', () => {
     setHandlers({
       '/.well-known/oauth-protected-resource/mcp': (req, res) =>
         jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [issuer()] }),
-      '/.well-known/oauth-authorization-server': (req, res) => jsonRes(res, 200, { token_endpoint: tokenEndpoint() }),
+      '/.well-known/oauth-authorization-server': (req, res) =>
+        jsonRes(res, 200, { issuer: issuer(), token_endpoint: tokenEndpoint() }),
       '/mcp': (req, res) => {
         res.statusCode = 401;
         res.setHeader('www-authenticate', 'Bearer error="invalid_token"');
@@ -318,7 +379,8 @@ describe('runAuthDiagnosis: H5 token audience mismatch', () => {
     setHandlers({
       '/.well-known/oauth-protected-resource/mcp': (req, res) =>
         jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [issuer()] }),
-      '/.well-known/oauth-authorization-server': (req, res) => jsonRes(res, 200, { token_endpoint: tokenEndpoint() }),
+      '/.well-known/oauth-authorization-server': (req, res) =>
+        jsonRes(res, 200, { issuer: issuer(), token_endpoint: tokenEndpoint() }),
       '/mcp': (req, res) => {
         res.statusCode = 401;
         res.setHeader('www-authenticate', 'Bearer error="invalid_token"');
@@ -348,7 +410,8 @@ describe('runAuthDiagnosis: H6 agent ignores audience', () => {
     setHandlers({
       '/.well-known/oauth-protected-resource/mcp': (req, res) =>
         jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [issuer()] }),
-      '/.well-known/oauth-authorization-server': (req, res) => jsonRes(res, 200, { token_endpoint: tokenEndpoint() }),
+      '/.well-known/oauth-authorization-server': (req, res) =>
+        jsonRes(res, 200, { issuer: issuer(), token_endpoint: tokenEndpoint() }),
       '/mcp': (req, res, body) => {
         const parsed = JSON.parse(body);
         // Return 200 regardless of whether the token aud is right —
@@ -411,8 +474,8 @@ describe('runAuthDiagnosis: H2 refresh grant ignoring resource', () => {
         name: 'test',
         agent_uri: agentUrl(),
         protocol: 'mcp',
-        oauth_tokens: { issuer: issuer(), access_token: makeJWT({ aud: agentUrl() }), refresh_token: 'rt-1' },
-        oauth_client: { issuer: issuer(), client_id: 'test-client', redirect_uris: [] },
+        oauth_tokens: { access_token: makeJWT({ aud: agentUrl() }), refresh_token: 'rt-1', issuer: issuer() },
+        oauth_client: { client_id: 'test-client', redirect_uris: [] },
       },
       { allowPrivateIp: true, skipToolCall: true }
     );
@@ -451,8 +514,8 @@ describe('runAuthDiagnosis: token redaction', () => {
         name: 'test',
         agent_uri: agentUrl(),
         protocol: 'mcp',
-        oauth_tokens: { issuer: issuer(), access_token: makeJWT({ aud: agentUrl() }), refresh_token: 'rt-1' },
-        oauth_client: { issuer: issuer(), client_id: 'c', redirect_uris: [] },
+        oauth_tokens: { access_token: makeJWT({ aud: agentUrl() }), refresh_token: 'rt-1', issuer: issuer() },
+        oauth_client: { client_id: 'c', redirect_uris: [] },
       },
       { allowPrivateIp: true, skipToolCall: true }
     );
@@ -491,8 +554,8 @@ describe('runAuthDiagnosis: token redaction', () => {
         name: 'test',
         agent_uri: agentUrl(),
         protocol: 'mcp',
-        oauth_tokens: { issuer: issuer(), access_token: makeJWT({ aud: agentUrl() }), refresh_token: 'rt-1' },
-        oauth_client: { issuer: issuer(), client_id: 'c', redirect_uris: [] },
+        oauth_tokens: { access_token: makeJWT({ aud: agentUrl() }), refresh_token: 'rt-1', issuer: issuer() },
+        oauth_client: { client_id: 'c', redirect_uris: [] },
       },
       { allowPrivateIp: true, skipToolCall: true, includeTokens: true }
     );
@@ -529,8 +592,8 @@ describe('runAuthDiagnosis: report shape', () => {
         name: 'test',
         agent_uri: agentUrl(),
         protocol: 'mcp',
-        oauth_tokens: { issuer: issuer(), access_token: makeJWT({ aud: agentUrl() }), refresh_token: 'rt-1' },
-        oauth_client: { issuer: issuer(), client_id: 'test-client', redirect_uris: [] },
+        oauth_tokens: { access_token: makeJWT({ aud: agentUrl() }), refresh_token: 'rt-1', issuer: issuer() },
+        oauth_client: { client_id: 'test-client', redirect_uris: [] },
       },
       { allowPrivateIp: true }
     );

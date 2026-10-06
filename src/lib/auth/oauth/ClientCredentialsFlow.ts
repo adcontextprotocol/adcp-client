@@ -469,7 +469,12 @@ export async function ensureClientCredentialsTokens(
       });
       agent.oauth_tokens = tokens;
       if (options.storage) {
-        await options.storage.saveAgent(agent);
+        // A browser flow may have created pending state during this request.
+        // Preserve the storage's current state rather than the loaded snapshot.
+        const refreshedAgent = { ...agent };
+        delete refreshedAgent.oauth_code_verifier;
+        delete refreshedAgent.oauth_discovery_state;
+        await options.storage.saveAgent(refreshedAgent);
       }
       return tokens;
     } finally {

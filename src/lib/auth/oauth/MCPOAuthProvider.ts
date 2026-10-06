@@ -22,11 +22,41 @@ import {
   fromMCPTokens,
   toMCPClientInfo,
   fromMCPClientInfo,
+  assertOAuthCredentialIssuer,
+  assertOAuthServerIssuer,
   OAuthError,
 } from './types';
 import { randomBytes } from 'crypto';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { createRequire } from 'node:module';
 import { validateOAuthResourceUrl } from './resource-url';
-import { assertOAuthCredentialIssuers, validatedOAuthIssuer } from './issuer';
+
+// Peer dependency overrides must not silently restore the vulnerable OAuth flow.
+let legacyOAuthSdkChecked = false;
+export function assertLegacyOAuthSdk(): void {
+  if (legacyOAuthSdkChecked) return;
+  try {
+    const clientPath = createRequire(resolve(__dirname, 'MCPOAuthProvider.js')).resolve(
+      '@modelcontextprotocol/sdk/client/index.js'
+    );
+    const { version } = JSON.parse(readFileSync(resolve(dirname(clientPath), '../../../package.json'), 'utf8'));
+    const match = typeof version === 'string' && /^1\.(\d+)\.\d+$/.exec(version);
+    if (!match || Number(match[1]) < 31) {
+      throw new OAuthError(
+        'Legacy MCP OAuth requires @modelcontextprotocol/sdk >=1.31.0 within major 1. Upgrade the installed peer dependency.',
+        'mcp_oauth_sdk_upgrade_required'
+      );
+    }
+  } catch (error) {
+    if (error instanceof OAuthError) throw error;
+    throw new OAuthError(
+      'Cannot verify a patched legacy MCP SDK. Install @modelcontextprotocol/sdk ^1.31.0 and keep it external when bundling.',
+      'mcp_oauth_sdk_upgrade_required'
+    );
+  }
+  legacyOAuthSdkChecked = true;
+}
 
 /**
  * MCP OAuth Client Provider
@@ -41,14 +71,15 @@ import { assertOAuthCredentialIssuers, validatedOAuthIssuer } from './issuer';
  *   name: 'My Agent',
  *   agent_uri: 'https://agent.example.com/mcp',
  *   protocol: 'mcp',
- *   // A fresh interactive flow saves issuer-bound tokens here.
+ *   // A fresh interactive flow saves issuer-bound credentials afterward.
  * };
  *
+ * const flowHandler = new CLIFlowHandler();
  * const provider = new MCPOAuthProvider({
- *   allowInteractiveAuthorization: true,
  *   agent,
- *   flowHandler: new CLIFlowHandler(),
- *   clientMetadata: DEFAULT_CLIENT_METADATA,
+ *   flowHandler,
+ *   clientMetadata: { ...DEFAULT_CLIENT_METADATA, redirect_uris: [flowHandler.getRedirectUrl().toString()] },
+ *   allowInteractiveAuthorization: true,
  *   storage: myConfigStorage  // Optional: persists tokens
  * });
  *
@@ -58,23 +89,23 @@ import { assertOAuthCredentialIssuers, validatedOAuthIssuer } from './issuer';
  * ```
  */
 export class MCPOAuthProvider implements OAuthClientProvider {
-  private readonly allowInteractiveAuthorization: boolean;
-  private savedDiscoveryState?: OAuthDiscoveryState;
   private agent: AgentConfig;
   private readonly storage?: OAuthConfigStorage;
   private readonly flowHandler: OAuthFlowHandler;
   private readonly _clientMetadata: OAuthClientMetadata;
   private readonly allowHttp: boolean;
   private readonly configuredResourceOverride?: string | null;
+  private readonly allowInteractiveAuthorization: boolean;
+  private pendingDiscoveryState?: OAuthDiscoveryState;
 
   constructor(config: OAuthProviderConfig) {
-    this.allowInteractiveAuthorization = config.allowInteractiveAuthorization === true;
     this.agent = config.agent;
     this.storage = config.storage;
     this.flowHandler = config.flowHandler;
     this._clientMetadata = config.clientMetadata;
     this.allowHttp = config.allowHttp === true;
     this.configuredResourceOverride = config.resourceOverride;
+    this.allowInteractiveAuthorization = config.allowInteractiveAuthorization === true;
   }
 
   /**
@@ -95,13 +126,13 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     };
 
     return new MCPOAuthProvider({
-      allowInteractiveAuthorization: true,
       agent,
       flowHandler,
       storage,
       clientMetadata,
       allowHttp: options?.allowHttp,
       resourceOverride: options?.resourceOverride,
+      allowInteractiveAuthorization: true,
     });
   }
 
@@ -158,6 +189,8 @@ export class MCPOAuthProvider implements OAuthClientProvider {
       throw this.ownerReauthorizationRequired();
     }
     if (this.agent.oauth_client) {
+      if (this.agent.oauth_client.client_secret) assertLegacyOAuthSdk();
+      assertOAuthCredentialIssuer(this.agent.oauth_client, undefined, !!this.agent.oauth_client.client_secret);
       return toMCPClientInfo(this.agent.oauth_client);
     }
     return undefined;
@@ -168,7 +201,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
    */
   async saveClientInformation(clientInfo: OAuthClientInformationFull): Promise<void> {
     this.agent.oauth_client = fromMCPClientInfo(clientInfo);
-    await this.persistAgent();
+    await this.persistCredentials();
   }
 
   /**
@@ -177,6 +210,8 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   async tokens(ctx?: { issuer: string }): Promise<OAuthTokens | undefined> {
     this.checkIssuerContext(ctx);
     if (this.agent.oauth_tokens) {
+      if (this.agent.oauth_tokens.refresh_token) assertLegacyOAuthSdk();
+      assertOAuthCredentialIssuer(this.agent.oauth_tokens, undefined, !!this.agent.oauth_tokens.refresh_token);
       return toMCPTokens(this.agent.oauth_tokens);
     }
     return undefined;
@@ -189,21 +224,91 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   async saveTokens(tokens: OAuthTokens): Promise<void> {
     this.agent.oauth_tokens = fromMCPTokens(tokens);
     // Clean up temporary code verifier after successful token exchange
-    this.agent.oauth_code_verifier = undefined;
-    await this.persistAgent();
+    if (this.allowInteractiveAuthorization) {
+      this.agent.oauth_code_verifier = undefined;
+      this.agent.oauth_discovery_state = undefined;
+    }
+    this.pendingDiscoveryState = undefined;
+    await this.persistCredentials();
   }
 
   /**
    * Redirect user to authorization URL
    */
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
-    await this.flowHandler.redirectToAuthorization(authorizationUrl);
+    if (!this.allowInteractiveAuthorization) throw this.ownerReauthorizationRequired('interactive_required');
+    try {
+      await this.flowHandler.redirectToAuthorization(authorizationUrl);
+    } catch (error) {
+      await this.invalidateCredentials('verifier');
+      throw error;
+    }
+  }
+
+  /** Persist the authorization-server identity across the callback leg. */
+  async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
+    this.validateDiscoveryState(state);
+    if (!this.agent.oauth_client && !this.allowInteractiveAuthorization) throw this.ownerReauthorizationRequired();
+    this.pendingDiscoveryState = structuredClone(state);
+    // Interactive PKCE callbacks must survive provider/process reconstruction.
+    // Background refresh must not save metadata-only mutations before a grant
+    // refusal; token persistence remains its existing durable boundary.
+    if (this.allowInteractiveAuthorization) {
+      this.agent.oauth_discovery_state = structuredClone(state);
+      await this.persistAgent();
+    }
+  }
+
+  async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
+    // A scheduled provider must never consume another owner's pending browser
+    // PKCE state. Its validated refresh discovery remains private to this run.
+    if (!this.allowInteractiveAuthorization) return undefined;
+    if (!this.agent.oauth_code_verifier) return undefined;
+    const state = this.pendingDiscoveryState ?? this.agent.oauth_discovery_state;
+    if (!state) return undefined;
+    // State persisted by older supported legacy clients was not necessarily
+    // metadata-validated. Never return that state as trusted callback discovery.
+    this.validateDiscoveryState(state);
+    this.pendingDiscoveryState = structuredClone(state);
+    return structuredClone(state);
+  }
+
+  private validateDiscoveryState(state: OAuthDiscoveryState): void {
+    assertOAuthServerIssuer(state.authorizationServerMetadata, String(state.authorizationServerUrl));
+    this.checkIssuerContext({ issuer: String(state.authorizationServerUrl) });
+  }
+
+  private checkIssuerContext(ctx?: { issuer: string }): string | undefined {
+    // Legacy helpers supply no ctx on later credential reads; retain the
+    // validated per-instance AS binding through those reads too.
+    const issuer = ctx?.issuer ?? this.pendingDiscoveryState?.authorizationServerUrl;
+    if (issuer !== undefined) {
+      if (this.agent.oauth_tokens) {
+        assertOAuthCredentialIssuer(this.agent.oauth_tokens, issuer, !!this.agent.oauth_tokens.refresh_token);
+      }
+      if (this.agent.oauth_client) {
+        assertOAuthCredentialIssuer(this.agent.oauth_client, issuer, !!this.agent.oauth_client.client_secret);
+      }
+    }
+    return issuer;
+  }
+
+  private ownerReauthorizationRequired(
+    code: 'owner_reauthorization_required' | 'interactive_required' = 'owner_reauthorization_required'
+  ): OAuthError {
+    return new OAuthError(
+      'OAuth owner reauthorization is required; this provider will not automatically clear credentials or register a new client. ' +
+        'CLI: adcp <alias> --clear-oauth, then adcp --save-auth <alias> --oauth.',
+      code,
+      this.agent.id
+    );
   }
 
   /**
    * Save PKCE code verifier
    */
   async saveCodeVerifier(codeVerifier: string): Promise<void> {
+    if (!this.allowInteractiveAuthorization) throw this.ownerReauthorizationRequired();
     this.agent.oauth_code_verifier = codeVerifier;
     await this.persistAgent();
   }
@@ -214,6 +319,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
    * retrieves it here during token exchange.
    */
   async codeVerifier(): Promise<string> {
+    if (!this.allowInteractiveAuthorization) throw this.ownerReauthorizationRequired();
     if (!this.agent.oauth_code_verifier) {
       throw new Error(
         'No PKCE code verifier found. The OAuth flow may have been interrupted or ' +
@@ -226,9 +332,11 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   /**
    * Invalidate credentials when server indicates they're invalid
    */
-  async invalidateCredentials(scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery'): Promise<void> {
-    if (scope === 'discovery') {
-      this.savedDiscoveryState = undefined;
+  async invalidateCredentials(
+    scope: Parameters<NonNullable<OAuthClientProvider['invalidateCredentials']>>[0]
+  ): Promise<void> {
+    if (!this.allowInteractiveAuthorization && (scope === 'discovery' || scope === 'verifier')) {
+      this.pendingDiscoveryState = undefined;
       return;
     }
     if (!this.allowInteractiveAuthorization && (scope === 'all' || scope === 'client' || scope === 'tokens')) {
@@ -237,10 +345,13 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     await this.clearCredentials(scope);
   }
 
-  private async clearCredentials(scope: 'all' | 'client' | 'tokens' | 'verifier'): Promise<void> {
+  private async clearCredentials(
+    scope: Parameters<NonNullable<OAuthClientProvider['invalidateCredentials']>>[0]
+  ): Promise<void> {
     switch (scope) {
       case 'all':
-        this.savedDiscoveryState = undefined;
+        this.pendingDiscoveryState = undefined;
+        this.agent.oauth_discovery_state = undefined;
         this.agent.oauth_tokens = undefined;
         this.agent.oauth_client = undefined;
         this.agent.oauth_code_verifier = undefined;
@@ -249,40 +360,21 @@ export class MCPOAuthProvider implements OAuthClientProvider {
         this.agent.oauth_tokens = undefined;
         break;
       case 'client':
+        this.pendingDiscoveryState = undefined;
+        this.agent.oauth_discovery_state = undefined;
         this.agent.oauth_client = undefined;
         break;
+      case 'discovery':
+        this.pendingDiscoveryState = undefined;
+        this.agent.oauth_discovery_state = undefined;
+        break;
       case 'verifier':
+        this.pendingDiscoveryState = undefined;
+        this.agent.oauth_discovery_state = undefined;
         this.agent.oauth_code_verifier = undefined;
         break;
     }
     await this.persistAgent();
-  }
-
-  /** Public MCP lifecycle hook also protects legacy clients that supply no ctx. */
-  async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
-    const issuer = validatedOAuthIssuer(state.authorizationServerUrl, state.authorizationServerMetadata?.issuer);
-    assertOAuthCredentialIssuers(this.agent, issuer);
-    if (!this.agent.oauth_client && !this.allowInteractiveAuthorization) throw this.ownerReauthorizationRequired();
-    this.savedDiscoveryState = structuredClone(state);
-  }
-
-  async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
-    return this.savedDiscoveryState ? structuredClone(this.savedDiscoveryState) : undefined;
-  }
-
-  private checkIssuerContext(ctx?: { issuer: string }): string | undefined {
-    const issuer = ctx?.issuer ?? this.savedDiscoveryState?.authorizationServerMetadata?.issuer;
-    if (issuer !== undefined) assertOAuthCredentialIssuers(this.agent, issuer);
-    return issuer;
-  }
-
-  private ownerReauthorizationRequired(): OAuthError {
-    return new OAuthError(
-      'OAuth owner reauthorization is required; this provider will not automatically clear credentials or register a new client. ' +
-        'CLI: adcp <alias> --clear-oauth, then adcp --save-auth <alias> --oauth.',
-      'owner_reauthorization_required',
-      this.agent.id
-    );
   }
 
   // ========================================
@@ -290,11 +382,24 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   // ========================================
 
   /**
-   * Persist agent config to storage if configured
+   * Persist a credential update without modifying independent browser state.
    */
-  private async persistAgent(): Promise<void> {
+  private async persistCredentials(): Promise<void> {
+    // Both token refresh and the official public-client issuer back-stamp can
+    // save a stale snapshot. Omit browser fields from background saves so
+    // storage preserves its current pending state instead of stale clears.
+    let savedAgent = this.agent;
+    if (!this.allowInteractiveAuthorization) {
+      savedAgent = { ...this.agent };
+      delete savedAgent.oauth_code_verifier;
+      delete savedAgent.oauth_discovery_state;
+    }
+    await this.persistAgent(savedAgent);
+  }
+
+  private async persistAgent(agent: AgentConfig = this.agent): Promise<void> {
     if (this.storage) {
-      await this.storage.saveAgent(this.agent);
+      await this.storage.saveAgent(agent);
     }
   }
 

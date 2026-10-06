@@ -29,6 +29,7 @@ interface StoredAgent {
   oauth_resource?: string;
   oauth_client_credentials?: AgentConfig['oauth_client_credentials'];
   oauth_code_verifier?: string;
+  oauth_discovery_state?: AgentConfig['oauth_discovery_state'];
 }
 
 /**
@@ -69,11 +70,10 @@ export interface FileOAuthStorageOptions {
  *
  * Does NOT touch fields outside the OAuth envelope (`auth_token`, custom
  * fields) when saving — the MCP provider only mutates `oauth_tokens`,
- * `oauth_client`, `oauth_resource`, and `oauth_code_verifier`, and we preserve
- * everything else.
- * Tokens, client information and the code verifier clear only when their own
- * properties are explicitly undefined. Omitted properties preserve existing
- * values for partial-agent callers.
+ * `oauth_client`, `oauth_resource`, `oauth_code_verifier`, and `oauth_discovery_state`.
+ * An own property explicitly set to undefined clears tokens, client, verifier
+ * or discovery state. Omitted properties preserve stored values for partial
+ * callers. Other fields keep their existing merge semantics.
  *
  * @example
  * ```ts
@@ -130,6 +130,7 @@ export function createFileOAuthStorage(options: FileOAuthStorageOptions): OAuthC
         oauth_resource: stored.oauth_resource,
         oauth_client_credentials: stored.oauth_client_credentials,
         oauth_code_verifier: stored.oauth_code_verifier,
+        oauth_discovery_state: stored.oauth_discovery_state,
       };
     },
 
@@ -150,7 +151,6 @@ export function createFileOAuthStorage(options: FileOAuthStorageOptions): OAuthC
           : {}),
         ...(agent.oauth_code_verifier !== undefined ? { oauth_code_verifier: agent.oauth_code_verifier } : {}),
       };
-      if (agent.oauth_resource === undefined) delete next.oauth_resource;
       if (Object.prototype.hasOwnProperty.call(agent, 'oauth_tokens') && agent.oauth_tokens === undefined) {
         delete next.oauth_tokens;
       }
@@ -163,6 +163,13 @@ export function createFileOAuthStorage(options: FileOAuthStorageOptions): OAuthC
       ) {
         delete next.oauth_code_verifier;
       }
+      if (
+        Object.prototype.hasOwnProperty.call(agent, 'oauth_discovery_state') &&
+        agent.oauth_discovery_state === undefined
+      ) {
+        delete next.oauth_discovery_state;
+      } else if (agent.oauth_discovery_state !== undefined) next.oauth_discovery_state = agent.oauth_discovery_state;
+      if (agent.oauth_resource === undefined) delete next.oauth_resource;
       config.agents[key] = next;
       await writeConfig(config);
     },
