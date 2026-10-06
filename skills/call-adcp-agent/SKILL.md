@@ -112,7 +112,7 @@ Every validation failure produces:
   "adcp_error": {
     "code": "VALIDATION_ERROR",
     "recovery": "correctable",
-    "field": "/first/offending/pointer",
+    "field": "account",
     "issues": [
       {
         "pointer": "/account",
@@ -130,7 +130,10 @@ Every validation failure produces:
 ```
 
 - `issues[].pointer` — RFC 6901 JSON Pointer to the field.
+- `field` — the first issue's pointer translated to JSONPath-lite (for example, `packages[0].targeting`). Parse `issues[].pointer` when you need JSON Pointer notation.
 - `issues[].keyword` — AJV keyword (`required`, `type`, `oneOf`, `anyOf`, `additionalProperties`, `format`, `enum`).
+- `not` presence guards name individually forbidden fields (for example, `product_id cannot be set here`). Compound guards retain their original diagnostic.
+- `adcp_error.details.issues_truncated` — when true, the diagnostic list reached its count or byte limit. Fix the displayed failures and retry to see any remaining failures.
 - `issues[].variants` — when the keyword is `oneOf` or `anyOf`, each entry lists one variant's `required` + declared `properties`. **Pick ONE variant**, send only its `required` fields. This is the fastest recovery path when you didn't know the field was a union.
 - `issues[].discriminator` — when an SDK ≥6.7 picks a "best surviving variant" of a const-discriminated union, this is the `[{field, value}, …]` pairs that variant requires. Reads as the validator's verdict on which branch you were inferred to be targeting. Example: `discriminator: [{field: 'type', value: 'key_value'}]` plus `pointer: '/deployments/0/activation_key/key'` and `keyword: 'required'` means "you picked the `key_value` activation_key variant and it requires top-level `key` and `value`." Compound discriminators like `audience-selector`'s `(type, value_type)` produce two-entry arrays.
 - `issues[].schemaId` — `$id` of the rejecting schema. For tools served from the bundled tree this is usually the response root; for flat-tree tools it can land on the deeper sub-schema. Diagnostic only; the actionable lever is `discriminator` + `variants` + `pointer`.

@@ -389,7 +389,7 @@ describe('schema-driven validation', () => {
       ];
       const payload = buildAdcpValidationErrorPayload('create_media_buy', 'response', issues);
       assert.ok(payload.message.includes('/media_buy_id'));
-      assert.strictEqual(payload.field, '/media_buy_id');
+      assert.strictEqual(payload.field, 'media_buy_id');
       // Issues land at the top level AND inside details (spec-convention mirror).
       assert.ok(Array.isArray(payload.issues), 'issues must be a top-level array');
       assert.strictEqual(payload.issues.length, 1);

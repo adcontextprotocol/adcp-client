@@ -198,6 +198,7 @@ import { STATUS_FREE_SYNC_RESPONSE_TOOLS } from '../utils/envelope-status-compat
 import { validateRequest, validateResponse, formatIssues, type ValidationIssue } from '../validation/schema-validator';
 import { validateSyncReportingStatusEnvelope } from '../validation/sync-reporting-status-envelope';
 import { buildAdcpValidationErrorPayload } from '../validation/schema-errors';
+import { validationDiagnosticsTruncated } from '../validation/diagnostic-limits';
 import { hashPayload, IdempotencyClaimOwnershipError, type IdempotencyStore } from './idempotency';
 import {
   createWebhookEmitter,
@@ -5859,7 +5860,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       validationMode === 'off'
         ? ({ valid: true, issues: [], schemaId: undefined } as const)
         : validateRequest(toolName, params, requestServedRelease(params)?.validationVersion ?? adcpVersion);
-    const issues = [...(outcome.valid ? [] : outcome.issues), ...accountIssues];
+    // Account-extension errors force rejection even in warn mode. Keep that
+    // reason first when serialized diagnostics reach their cap.
+    const issues = [...accountIssues, ...(outcome.valid ? [] : outcome.issues)];
     if (issues.length === 0) return undefined;
     if (validationMode === 'strict' || accountIssues.length > 0) {
       return adcpError(
@@ -6767,7 +6770,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             // surfaced rather than silently swallowed.
             let issues =
               idempotencyDisabled && requestIsStateChanging
-                ? outcome.issues.filter(i => !(i.keyword === 'required' && i.pointer === '/idempotency_key'))
+                ? outcome.issues.filter(
+                    i =>
+                      !(
+                        i.keyword === 'required' &&
+                        i.pointer === '/idempotency_key' &&
+                        !validationDiagnosticsTruncated([i])
+                      )
+                  )
                 : outcome.issues;
             if (toolName === 'sync_accounts' && effectiveFrameworkRequestValidationMode === 'strict') {
               const eventIssues = issues.filter(isAccountNotificationEventIssue);

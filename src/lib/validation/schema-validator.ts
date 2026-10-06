@@ -10,6 +10,7 @@ import { getValidator, getRegisteredSchemaIds, type Direction, type ResponseVari
 import { parseAdcpMajorVersion } from '../version';
 import { findHint } from './hints';
 import { injectLegacyEnvelopeStatus } from '../utils/envelope-status-compat';
+import { boundValidationIssues } from './diagnostic-limits';
 
 /**
  * One variant of a `oneOf` / `anyOf` that the caller's payload could have
@@ -294,6 +295,82 @@ function resolveSchemaPath(rootSchema: unknown, schemaPath: string): unknown {
     cursor = (cursor as Record<string, unknown>)[decoded];
   }
   return cursor;
+}
+
+/** Expand only unconditional single-property presence guards; keep other not rules intact. */
+function* expandNotErrors(
+  errors: readonly ErrorObject[],
+  rootSchema: unknown,
+  payload: unknown
+): Generator<ErrorObject> {
+  for (const error of errors) {
+    const rule = error.keyword === 'not' ? resolveSchemaPath(rootSchema, error.schemaPath) : undefined;
+    const branches = rule && typeof rule === 'object' ? (rule as { anyOf?: unknown }).anyOf : undefined;
+    if (!Array.isArray(branches) || branches.length === 0 || Object.keys(rule as object).length !== 1) {
+      yield error;
+      continue;
+    }
+    let instance = payload;
+    if (error.instancePath) {
+      for (const encoded of error.instancePath.slice(1).split('/')) {
+        const key = encoded.replace(/~1/g, '/').replace(/~0/g, '~');
+        if (instance == null || typeof instance !== 'object' || !Object.hasOwn(instance, key)) {
+          instance = undefined;
+          break;
+        }
+        instance = (instance as Record<string, unknown>)[key];
+      }
+    }
+    const keys = new Set<string>();
+    let opaqueBranch = false;
+    if (instance != null && typeof instance === 'object' && !Array.isArray(instance)) {
+      for (const branch of branches) {
+        if (
+          branch == null ||
+          typeof branch !== 'object' ||
+          Object.keys(branch).length !== 1 ||
+          !Array.isArray(branch.required) ||
+          branch.required.length !== 1 ||
+          typeof branch.required[0] !== 'string'
+        ) {
+          opaqueBranch = true;
+          continue;
+        }
+        const key = branch.required[0] as string;
+        if (Object.hasOwn(instance, key) && (instance as Record<string, unknown>)[key] !== undefined) keys.add(key);
+      }
+    }
+    if (keys.size === 0) {
+      yield error;
+      continue;
+    }
+    for (const key of keys) {
+      yield {
+        ...error,
+        instancePath: `${error.instancePath}/${key.replace(/~/g, '~0').replace(/\//g, '~1')}`,
+        message: `${key} cannot be set here`,
+      };
+    }
+    // Mixed guards can also reject field combinations. Preserve their opaque
+    // diagnostic instead of claiming each field is independently forbidden.
+    if (opaqueBranch) yield error;
+  }
+}
+
+function formatValidationIssues(
+  errors: readonly ErrorObject[],
+  ctx: FormatContext,
+  payload: unknown
+): ValidationIssue[] {
+  function* formatted(): Generator<ValidationIssue> {
+    for (const error of expandNotErrors(compactUnionErrors(errors, ctx.rootSchema), ctx.rootSchema, payload)) {
+      yield enrichWithVariants(formatIssue(error, ctx), ctx.rootSchema);
+    }
+  }
+  // sync_accounts uses the complete issue set to isolate failed entries before
+  // dispatching valid siblings. Its serialized error builders still apply the
+  // same bounds; truncating this internal set would change batch semantics.
+  return ctx.toolName === 'sync_accounts' ? [...formatted()] : boundValidationIssues(formatted());
 }
 
 /**
@@ -611,10 +688,9 @@ export function validateRequest(toolName: string, payload: unknown, version?: st
   if (valid) return { valid: true, issues: [], variant: 'request', ...(rootSchemaId && { schemaId: rootSchemaId }) };
   const registeredIds = getRegisteredSchemaIds(version);
   const ctx: FormatContext = { rootSchema, registeredIds, toolName };
-  const compacted = compactUnionErrors(validator.errors ?? [], rootSchema);
   return {
     valid: false,
-    issues: compacted.map(e => formatIssue(e, ctx)).map(i => enrichWithVariants(i, rootSchema)),
+    issues: formatValidationIssues(validator.errors ?? [], ctx, payload),
     variant: 'request',
     ...(rootSchemaId && { schemaId: rootSchemaId }),
   };
@@ -730,10 +806,9 @@ export function validateResponse(toolName: string, payload: unknown, version?: s
   }
   const registeredIds = getRegisteredSchemaIds(version);
   const ctx: FormatContext = { rootSchema, registeredIds, toolName };
-  const compacted = compactUnionErrors(effective.errors ?? [], rootSchema);
   return {
     valid: false,
-    issues: compacted.map(e => formatIssue(e, ctx)).map(i => enrichWithVariants(i, rootSchema)),
+    issues: formatValidationIssues(effective.errors ?? [], ctx, normalizedPayload),
     variant: usedVariant,
     ...(rootSchemaId && { schemaId: rootSchemaId }),
     ...fallbackFields,
