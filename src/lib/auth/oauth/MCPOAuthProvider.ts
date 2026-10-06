@@ -5,7 +5,7 @@
  * using AgentConfig for token storage.
  */
 
-import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
+import type { OAuthClientProvider, OAuthDiscoveryState } from '@modelcontextprotocol/sdk/client/auth.js';
 import type {
   OAuthClientMetadata,
   OAuthClientInformation,
@@ -16,9 +16,46 @@ import type {
   OAuthConfigStorage,
   AgentConfig,
 } from './types';
-import { DEFAULT_CLIENT_METADATA, toMCPTokens, fromMCPTokens, toMCPClientInfo, fromMCPClientInfo } from './types';
+import {
+  DEFAULT_CLIENT_METADATA,
+  toMCPTokens,
+  fromMCPTokens,
+  toMCPClientInfo,
+  fromMCPClientInfo,
+  assertOAuthCredentialIssuer,
+  OAuthError,
+} from './types';
 import { randomBytes } from 'crypto';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { createRequire } from 'node:module';
 import { validateOAuthResourceUrl } from './resource-url';
+
+// Peer dependency overrides must not silently restore the vulnerable OAuth flow.
+let legacyOAuthSdkChecked = false;
+export function assertLegacyOAuthSdk(): void {
+  if (legacyOAuthSdkChecked) return;
+  try {
+    const clientPath = createRequire(resolve(__dirname, 'MCPOAuthProvider.js')).resolve(
+      '@modelcontextprotocol/sdk/client/index.js'
+    );
+    const { version } = JSON.parse(readFileSync(resolve(dirname(clientPath), '../../../package.json'), 'utf8'));
+    const match = typeof version === 'string' && /^1\.(\d+)\.\d+$/.exec(version);
+    if (!match || Number(match[1]) < 31) {
+      throw new OAuthError(
+        'Legacy MCP OAuth requires @modelcontextprotocol/sdk >=1.31.0 within major 1. Upgrade the installed peer dependency.',
+        'mcp_oauth_sdk_upgrade_required'
+      );
+    }
+  } catch (error) {
+    if (error instanceof OAuthError) throw error;
+    throw new OAuthError(
+      'Cannot verify a patched legacy MCP SDK. Install @modelcontextprotocol/sdk ^1.31.0 and keep it external when bundling.',
+      'mcp_oauth_sdk_upgrade_required'
+    );
+  }
+  legacyOAuthSdkChecked = true;
+}
 
 /**
  * MCP OAuth Client Provider
@@ -141,6 +178,8 @@ export class MCPOAuthProvider implements OAuthClientProvider {
    */
   async clientInformation(): Promise<OAuthClientInformation | undefined> {
     if (this.agent.oauth_client) {
+      if (this.agent.oauth_client.client_secret) assertLegacyOAuthSdk();
+      assertOAuthCredentialIssuer(this.agent.oauth_client, undefined, !!this.agent.oauth_client.client_secret);
       return toMCPClientInfo(this.agent.oauth_client);
     }
     return undefined;
@@ -159,6 +198,8 @@ export class MCPOAuthProvider implements OAuthClientProvider {
    */
   async tokens(): Promise<OAuthTokens | undefined> {
     if (this.agent.oauth_tokens) {
+      if (this.agent.oauth_tokens.refresh_token) assertLegacyOAuthSdk();
+      assertOAuthCredentialIssuer(this.agent.oauth_tokens, undefined, !!this.agent.oauth_tokens.refresh_token);
       return toMCPTokens(this.agent.oauth_tokens);
     }
     return undefined;
@@ -172,6 +213,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     this.agent.oauth_tokens = fromMCPTokens(tokens);
     // Clean up temporary code verifier after successful token exchange
     delete this.agent.oauth_code_verifier;
+    delete this.agent.oauth_discovery_state;
     await this.persistAgent();
   }
 
@@ -179,7 +221,30 @@ export class MCPOAuthProvider implements OAuthClientProvider {
    * Redirect user to authorization URL
    */
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
-    await this.flowHandler.redirectToAuthorization(authorizationUrl);
+    try {
+      await this.flowHandler.redirectToAuthorization(authorizationUrl);
+    } catch (error) {
+      await this.invalidateCredentials('verifier');
+      throw error;
+    }
+  }
+
+  /** Persist the authorization-server identity across the callback leg. */
+  async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
+    const issuer = String(state.authorizationServerUrl);
+    // Refuse a changed AS before upstream can replace a trusted registration.
+    if (this.agent.oauth_tokens?.refresh_token) {
+      assertOAuthCredentialIssuer(this.agent.oauth_tokens, issuer, true);
+    }
+    if (this.agent.oauth_client?.client_secret) {
+      assertOAuthCredentialIssuer(this.agent.oauth_client, issuer, true);
+    }
+    this.agent.oauth_discovery_state = state;
+    await this.persistAgent();
+  }
+
+  async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
+    return this.agent.oauth_code_verifier ? this.agent.oauth_discovery_state : undefined;
   }
 
   /**
@@ -208,9 +273,12 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   /**
    * Invalidate credentials when server indicates they're invalid
    */
-  async invalidateCredentials(scope: 'all' | 'client' | 'tokens' | 'verifier'): Promise<void> {
+  async invalidateCredentials(
+    scope: Parameters<NonNullable<OAuthClientProvider['invalidateCredentials']>>[0]
+  ): Promise<void> {
     switch (scope) {
       case 'all':
+        delete this.agent.oauth_discovery_state;
         delete this.agent.oauth_tokens;
         delete this.agent.oauth_client;
         delete this.agent.oauth_code_verifier;
@@ -219,9 +287,14 @@ export class MCPOAuthProvider implements OAuthClientProvider {
         delete this.agent.oauth_tokens;
         break;
       case 'client':
+        delete this.agent.oauth_discovery_state;
         delete this.agent.oauth_client;
         break;
+      case 'discovery':
+        delete this.agent.oauth_discovery_state;
+        break;
       case 'verifier':
+        delete this.agent.oauth_discovery_state;
         delete this.agent.oauth_code_verifier;
         break;
     }

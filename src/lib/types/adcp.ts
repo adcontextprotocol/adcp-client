@@ -199,6 +199,8 @@ export interface DayParting {
  * OAuth tokens for agent authentication
  */
 export interface AgentOAuthTokens {
+  /** Authorization server that issued these tokens. Required when reusing a refresh token. */
+  issuer?: string;
   /** OAuth access token */
   access_token: string;
   /** OAuth refresh token (for token renewal) */
@@ -217,6 +219,8 @@ export interface AgentOAuthTokens {
  * OAuth client information (from dynamic registration)
  */
 export interface AgentOAuthClient {
+  /** Authorization server where this client was registered. Required when reusing a client secret. */
+  issuer?: string;
   /** OAuth client ID */
   client_id: string;
   /** OAuth client secret (for confidential clients) */
@@ -475,6 +479,9 @@ export interface AgentConfig {
    * @internal
    */
   oauth_code_verifier?: string;
+
+  /** Opaque discovery state paired with the pending PKCE verifier; persist and return verbatim. */
+  oauth_discovery_state?: import('@modelcontextprotocol/sdk/client/auth.js').OAuthDiscoveryState;
 
   /**
    * Additional HTTP headers to include in every request to this agent.
