@@ -148,7 +148,10 @@ describe('received signed IDN authorities', () => {
             { method: 'POST', headers: signed.headers, url: 'https://bücher.example.com/adcp/create_media_buy', body },
             options
           ),
-        error => error.code === 'request_signature_header_malformed' && error.failedStep === 1
+        // security.mdx#transport-error-taxonomy classifies the received URI,
+        // not the otherwise valid signature headers. Step 1 is SDK-local
+        // parsing diagnostics, not a normative URI checklist step.
+        error => error.code === 'request_target_uri_malformed' && error.failedStep === 1
       );
       assert.equal(keyLookups, 0);
       // The equivalent A-label still verifies with the same nonce: malformed
