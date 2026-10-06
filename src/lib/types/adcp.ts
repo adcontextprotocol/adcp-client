@@ -480,6 +480,9 @@ export interface AgentConfig {
    */
   oauth_code_verifier?: string;
 
+  /** Authorization-server discovery paired with the pending PKCE verifier. @internal */
+  oauth_discovery_state?: import('@modelcontextprotocol/sdk/client/auth.js').OAuthDiscoveryState;
+
   /**
    * Additional HTTP headers to include in every request to this agent.
    * Useful for sending API keys, org IDs, or other vendor-specific headers

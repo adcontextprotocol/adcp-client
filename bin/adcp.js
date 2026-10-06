@@ -1397,6 +1397,7 @@ async function ensureOAuthTokensForAlias(alias, url, { quiet = false, allowHttp 
     ...(existing?.oauth_client && { oauth_client: existing.oauth_client }),
     ...(existing?.oauth_tokens && { oauth_tokens: existing.oauth_tokens }),
     ...(existing?.oauth_code_verifier && { oauth_code_verifier: existing.oauth_code_verifier }),
+    ...(existing?.oauth_discovery_state && { oauth_discovery_state: existing.oauth_discovery_state }),
   };
 
   const { Client: MCPClient } = require('@modelcontextprotocol/sdk/client/index.js');
@@ -6671,6 +6672,7 @@ credential material — never sync or commit.
     delete agentConfig.oauth_tokens;
     delete agentConfig.oauth_client;
     delete agentConfig.oauth_code_verifier;
+    delete agentConfig.oauth_discovery_state;
     saveAgent(alias, agentConfig);
 
     console.log(`\n✅ Cleared OAuth tokens for '${alias}'`);

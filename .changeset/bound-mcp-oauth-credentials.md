@@ -1,5 +1,5 @@
 ---
-'@adcp/sdk': patch
+'@adcp/sdk': minor
 ---
 
 Upgrade the official MCP client and server to 2.2.0 and require the patched legacy MCP SDK peer (`^1.31.0`) for GHSA-6qxp-vccf-f47h. Preserve OAuth `issuer` bindings through agent configuration and credential storage. Verify the authorization-server issuer before direct web-flow exchanges or diagnostic refreshes, and refuse to reuse saved refresh tokens or client secrets without a valid binding.

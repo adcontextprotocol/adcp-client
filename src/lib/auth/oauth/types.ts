@@ -165,7 +165,7 @@ export class OAuthTimeoutError extends OAuthError {
  */
 export function toMCPTokens(tokens: AgentOAuthTokens): OAuthTokens {
   return {
-    ...(tokens.issuer !== undefined && { issuer: tokens.issuer }),
+    ...(tokens.issuer !== undefined && tokens.issuer !== null && { issuer: tokens.issuer }),
     access_token: tokens.access_token,
     refresh_token: tokens.refresh_token,
     token_type: tokens.token_type || 'Bearer',
@@ -179,7 +179,7 @@ export function toMCPTokens(tokens: AgentOAuthTokens): OAuthTokens {
  */
 export function fromMCPTokens(tokens: OAuthTokens): AgentOAuthTokens {
   const result: AgentOAuthTokens = {
-    ...(tokens.issuer !== undefined && { issuer: tokens.issuer }),
+    ...(tokens.issuer !== undefined && tokens.issuer !== null && { issuer: tokens.issuer }),
     access_token: tokens.access_token,
     token_type: tokens.token_type,
     scope: tokens.scope,
@@ -203,7 +203,7 @@ export function fromMCPTokens(tokens: OAuthTokens): AgentOAuthTokens {
  */
 export function toMCPClientInfo(client: AgentOAuthClient): OAuthClientInformation {
   return {
-    ...(client.issuer !== undefined && { issuer: client.issuer }),
+    ...(client.issuer !== undefined && client.issuer !== null && { issuer: client.issuer }),
     client_id: client.client_id,
     client_secret: client.client_secret,
     client_secret_expires_at: client.client_secret_expires_at,
@@ -215,7 +215,7 @@ export function toMCPClientInfo(client: AgentOAuthClient): OAuthClientInformatio
  */
 export function fromMCPClientInfo(info: OAuthClientInformationFull): AgentOAuthClient {
   return {
-    ...(info.issuer !== undefined && { issuer: info.issuer }),
+    ...(info.issuer !== undefined && info.issuer !== null && { issuer: info.issuer }),
     client_id: info.client_id,
     client_secret: info.client_secret,
     client_secret_expires_at: info.client_secret_expires_at,
@@ -245,7 +245,7 @@ export function assertOAuthCredentialIssuer(
   requireIssuer = false
 ): void {
   const issuer = credential.issuer;
-  if (issuer === undefined && !requireIssuer) return;
+  if ((issuer === undefined || issuer === null) && !requireIssuer) return;
   if (!isOAuthIssuer(issuer)) {
     throw new OAuthError(
       'Saved OAuth credentials need a valid issuer. Clear them and sign in again, or set their issuer from trusted configuration.',

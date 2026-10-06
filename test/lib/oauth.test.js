@@ -960,6 +960,32 @@ describe('OAuth issuer bindings', () => {
     assert.strictEqual(toMCPClientInfo(fromMCPClientInfo(client)).issuer, client.issuer);
   });
 
+  test('treats null as an absent issuer for non-secret credentials only', async () => {
+    const agent = {
+      id: 'nullable',
+      name: 'Nullable',
+      agent_uri: 'https://agent.example/mcp',
+      protocol: 'mcp',
+      oauth_tokens: { access_token: 'at', token_type: 'Bearer', issuer: null },
+      oauth_client: { client_id: 'cid', issuer: null },
+    };
+    const provider = new MCPOAuthProvider({ agent, flowHandler: {}, clientMetadata: DEFAULT_CLIENT_METADATA });
+    assert.strictEqual((await provider.tokens()).issuer, undefined);
+    assert.strictEqual((await provider.clientInformation()).issuer, undefined);
+    assert.strictEqual(fromMCPTokens(agent.oauth_tokens).issuer, undefined);
+    assert.strictEqual(fromMCPClientInfo(agent.oauth_client).issuer, undefined);
+    agent.oauth_tokens.refresh_token = 'rt';
+    agent.oauth_client.client_secret = 'secret';
+    await assert.rejects(
+      () => provider.tokens(),
+      error => error.code === 'oauth_issuer_required'
+    );
+    await assert.rejects(
+      () => provider.clientInformation(),
+      error => error.code === 'oauth_issuer_required'
+    );
+  });
+
   test('refuses legacy unbound refresh tokens and confidential clients', async () => {
     const provider = new MCPOAuthProvider({
       agent: {
