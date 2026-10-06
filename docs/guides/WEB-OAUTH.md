@@ -1,32 +1,24 @@
 # Web OAuth
 
-Use `startWebOAuthFlow` / `completeWebOAuthFlow` in application routes when start
-and callback can hit different processes. `CLIFlowHandler` implements
-`OAuthFlowHandler` for single-process localhost:8766 sign-in;
-`NonInteractiveFlowHandler` is refresh-only for jobs. Web flows span two
-requests and are not an `MCPOAuthProvider` handler.
+Web routes span processes; `CLIFlowHandler` is single-process localhost:8766,
+`NonInteractiveFlowHandler` is refresh-only. Web flows are not provider handlers. [Issuer binding](OAUTH-ISSUER-BINDING.md) covers recovery/storage migration.
 
-See [issuer binding](OAUTH-ISSUER-BINDING.md) for credential preservation,
-pending-flow migration and explicit owner recovery.
+## Discovery
 
-## SDK behavior
-
-- Discover PRM at `/.well-known/oauth-protected-resource{path}`. Use its first
-  authorization server; fall back to agent origin only on absent PRM (404,
-  RFC 9728 §3). Network, parse and other HTTP failures raise
-  `ProtectedResourceMetadataError`, without guessing another server.
+- PRM: `/.well-known/oauth-protected-resource{path}`, first AS. Only 404 absence
+  (RFC 9728 §3) allows agent-origin fallback; network/parse/other HTTP failures
+  raise `ProtectedResourceMetadataError`.
 - Resource: `resourceOverride` > validated `prm.resource` >
   `resourceUrlFromServerUrl(agent.agent_uri)`. Present PRM is authoritative;
-  its resource origin must match the agent unless an explicit or persisted override applies.
-  Forward resource through authorization, exchange and refresh.
+  its resource origin must match the agent unless explicitly/persistently overridden. Forward
+  resource through authorization, exchange and refresh.
 - Scope: `scopeHint` > `prm.scopes_supported` > `clientMetadata.scope`.
-- Register when no client exists and AS advertises `registration_endpoint`.
-  Confidential DCR responses require explicit `allowConfidentialClient: true`
-  and safe secret storage; otherwise pre-register a public client.
-- PKCE, authorization and exchange use official MCP primitives. Provider refresh
-  runs on later agent calls.
+- DCR requires no client and an advertised `registration_endpoint`. Confidential
+  DCR responses require `allowConfidentialClient: true` and safe secret storage;
+  otherwise use pre-registered clients. Official MCP handles PKCE/exchange;
+  subsequent agent calls refresh.
 
-## Express integration
+## Application routes
 
 ```ts
 import { startWebOAuthFlow, completeWebOAuthFlow, safeReturnTo } from '@adcp/sdk/auth';
@@ -61,55 +53,38 @@ router.get('/oauth/callback', async (req, res) => {
 });
 ```
 
-The application authorizes `loadAgent` and binds state to its browser session.
-Pending state alone is replay-protected, not browser-bound. Set it at start and
-pass it as `expectedState` at callback; omission fails closed. Only deliberate
-non-browser compatibility flows should set `allowUnboundState: true`.
-Validate attacker-influenced `carry`; `safeReturnTo` defaults to path-only
-redirects, with `allowedReturnHosts` for explicitly allowlisted absolute URLs.
+`loadAgent` must authorize the session user for `agent_id`. Bind browser state
+using the start cookie and callback
+`expectedState`: state alone prevents replay, not CSRF; missing binding refuses.
+`allowUnboundState: true` is for deliberate non-browser compatibility. Validate
+attacker-controlled `carry`; `safeReturnTo` is path-only unless `allowedReturnHosts`
+allowlists absolute URLs.
 
-Start accepts `scopeHint` from a prior 401 challenge (SEP-835), an operator
-`resourceOverride`, and Auth0-compatible `audience` for authorization only.
-With storage, resource override persists for refresh; omission reuses it.
-Pass `resourceOverride: null` to clear it after successful authorization and
-return to PRM/agent discovery. DIY refresh must forward resource itself.
+Start accepts prior-401 `scopeHint` (SEP-835), `resourceOverride`, and authorization-only
+Auth0 `audience`. With storage, overrides persist/reuse on omission; successful
+`resourceOverride: null` clears them and returns to discovery. DIY refresh forwards resource.
 
-## Storage
+## Storage and errors
 
-`PendingWebFlowStore` implements `put(flow)` and atomic `consume(state)`.
-Example PostgreSQL operations:
+`PendingWebFlowStore`: `put(flow)` and atomic `consume(state)`, e.g. PostgreSQL
+`DELETE ... WHERE state = $1 AND expires_at > now() RETURNING payload`, or Redis
+`SET pending:flow:<state> <payload> EX 600 NX` then `GETDEL`. SELECT/DELETE races
+permit replay. Store contract tests: `test/lib/oauth-web-flow.test.js`.
+`DEFAULT_WEB_FLOW_TTL_MS` is 10 minutes; shorten as needed. `InMemoryPendingFlowStore` is
+test/dev-only; restarts lose flows. Encrypt PKCE verifiers at rest across trust boundaries.
 
-```sql
-INSERT INTO pending_oauth_flows (state, payload, expires_at)
-  VALUES ($1, $2::jsonb, $3);
-DELETE FROM pending_oauth_flows
-  WHERE state = $1 AND expires_at > now()
-  RETURNING payload;
-```
+Optional `agentStorage` (`OAuthConfigStorage`): callback loads the pending row's
+agent ID. Without it, completion
+returns `persisted: false` for application persistence. Preserve the issuer guide's
+consistent client-bearing view and partial-save contract.
 
-Redis can use `SET pending:flow:<state> <payload> EX 600 NX` and `GETDEL`.
-Separate SELECT/DELETE permits replay and fails the contract. The contract
-tests in `test/lib/oauth-web-flow.test.js` can exercise your store. Default
-TTL is `DEFAULT_WEB_FLOW_TTL_MS` (10 minutes); shorten as needed.
-`InMemoryPendingFlowStore` is for tests/dev; restarts lose flows. Encrypt
-PKCE verifiers at rest across trust boundaries.
-
-Optional `agentStorage` implements `OAuthConfigStorage`; callback loads the
-pending row's agent ID itself. Without storage, completion returns tokens with
-`persisted: false` for application persistence. The issuer guide describes the
-required consistent client-bearing view and partial-save contract.
-
-## Errors
-
-- `InvalidOrExpiredFlowError`: missing/expired state; restart sign-in.
-- `StateMismatchError`: cookie/state mismatch, usually CSRF or a stale cookie.
+- `InvalidOrExpiredFlowError`: restart sign-in.
+- `StateMismatchError`: cookie/state mismatch.
 - `BrowserBindingRequiredError`: missing `expectedState`.
-- `TokenExchangeError`: AS rejected exchange; `oauthErrorCode`, `status` and
-  redacted `body` are diagnostic only. Never reflect sensitive body data to
-  browsers or access logs.
-- `ProtectedResourceMetadataError`: failed PRM or mismatched resource origin.
-- `AgentVanishedDuringFlowError`: agent removed during registration/exchange.
-- `AgentChangedDuringFlowError`: URI, resource or client changed; reload and
-  restart rather than saving against a replacement record.
-- `ConfidentialClientNotAllowedError`: DCR returned a secret without opt-in.
-- `OAuthError`: inspect `code` for other controlled failures.
+- `TokenExchangeError`: diagnostic `oauthErrorCode`, `status`, redacted `body`;
+  never reflect bodies to browsers/logs.
+- `ProtectedResourceMetadataError`: PRM/resource failure.
+- `AgentVanishedDuringFlowError`: removal during registration/exchange.
+- `AgentChangedDuringFlowError`: URI/resource/client changed; reload and restart.
+- `ConfidentialClientNotAllowedError`: secret DCR without opt-in.
+- `OAuthError`: other controlled `code` values.

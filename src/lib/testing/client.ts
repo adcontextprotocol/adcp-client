@@ -29,6 +29,8 @@ import { validateIncomingResponse } from '../validation/client-hooks';
 import { extractVersionUnsupportedDetails } from '../utils/error-extraction';
 import { buildAgentSigningContext } from '../signing/client';
 import type { VerifierCapability } from '../signing/types';
+import { bindAgentStorage } from '../auth/oauth/storage-registry';
+import type { OAuthConfigStorage } from '../auth/oauth/types';
 
 const TEST_CLIENT_VERSION_OPTIONS = Symbol('adcp.testClientVersionOptions');
 const TEST_CLIENT_SCOPE_SALT = randomBytes(32);
@@ -43,6 +45,7 @@ interface TestClientVersionOptions {
   authMode?: string;
   requestScopeMode?: string;
   requestSigningMode?: string;
+  oauthStorage?: OAuthConfigStorage;
   fetchFn?: typeof fetch;
   allowPrivateIp?: boolean;
   maxResponseBytes?: number;
@@ -193,6 +196,7 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
       // oauth_tokens and routes through the refresh-capable MCP OAuth path.
       agentConfig.oauth_tokens = options.auth.tokens;
       if (options.auth.client) agentConfig.oauth_client = options.auth.client;
+      if (options.auth.storage) bindAgentStorage(agentConfig, options.auth.storage);
     } else if (options.auth.type === 'oauth_client_credentials') {
       // oauth_client_credentials: attach credentials + optional cached tokens.
       // ProtocolClient pre-refreshes via secret re-exchange before each call
@@ -237,6 +241,7 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
       ...(authMode !== undefined && { authMode }),
       ...(requestScopeMode !== undefined && { requestScopeMode }),
       ...(requestSigningMode !== undefined && { requestSigningMode }),
+      ...(options.auth?.type === 'oauth' && options.auth.storage && { oauthStorage: options.auth.storage }),
       ...(options.transport?.trustedFetchFn && { fetchFn: options.transport.trustedFetchFn }),
       ...(options.transport?.allowPrivateIp !== undefined && { allowPrivateIp: options.transport.allowPrivateIp }),
       ...(options.transport?.maxResponseBytes !== undefined && {
@@ -292,8 +297,10 @@ function testClientMatchesVersionOptions(client: TestClient, agentUrl: string, o
   const expectedAuthMode = authReuseMode(effectiveOptions);
   const expectedRequestScopeMode = requestScopeReuseMode(effectiveOptions);
   const expectedRequestSigningMode = requestSigningReuseMode(effectiveOptions.functional_request_signing);
+  const expectedOAuthStorage = effectiveOptions.auth?.type === 'oauth' ? effectiveOptions.auth.storage : undefined;
   if (!meta) {
     return (
+      expectedOAuthStorage === undefined &&
       expectedRequestSigningMode === undefined &&
       effectiveOptions.adcpVersion === undefined &&
       effectiveOptions.versionEnvelope === undefined &&
@@ -313,6 +320,7 @@ function testClientMatchesVersionOptions(client: TestClient, agentUrl: string, o
     meta.authMode === expectedAuthMode &&
     meta.requestScopeMode === expectedRequestScopeMode &&
     meta.requestSigningMode === expectedRequestSigningMode &&
+    meta.oauthStorage === expectedOAuthStorage &&
     meta.fetchFn === effectiveOptions.transport?.trustedFetchFn &&
     meta.allowPrivateIp === effectiveOptions.transport?.allowPrivateIp &&
     meta.maxResponseBytes === effectiveOptions.transport?.maxResponseBytes &&
@@ -367,9 +375,12 @@ function requestScopeReuseMode(options: TestOptions): string | undefined {
       )
     : undefined;
   if (!options.auth && !headers && !options.test_session_id && !options.userAgent) return undefined;
+  // Runtime adapters can contain callbacks, secrets or cycles. Their object
+  // identity is checked separately; retain the existing credential scope.
+  const auth = options.auth?.type === 'oauth' ? { ...options.auth, storage: undefined } : options.auth;
   return testClientScopeDisambiguator(
     JSON.stringify({
-      auth: options.auth,
+      auth,
       headers,
       testSessionId: options.test_session_id,
       userAgent: options.userAgent,

@@ -160,7 +160,7 @@ export interface TestOptions {
    * - `basic`: cleartext `username` and `password`, encoded internally.
    * - `oauth`: saved OAuth tokens (access_token + refresh_token). MCP only.
    *   The library auto-refreshes on 401. Obtain tokens interactively via
-   *   `adcp --save-auth <alias> --oauth`, then pass the saved blob here for
+   *   `adcp --save-auth <alias> <url> --oauth`, then pass the saved blob here for
    *   non-interactive reuse.
    * - `oauth_client_credentials`: RFC 6749 §4.4 machine-to-machine flow.
    *   The library exchanges the secret for a fresh access token before each
@@ -174,6 +174,15 @@ export interface TestOptions {
         type: 'oauth';
         tokens: import('../types/adcp').AgentOAuthTokens;
         client?: import('../types/adcp').AgentOAuthClient;
+        /**
+         * Trusted runtime storage for refreshed OAuth configuration. Bound before
+         * client normalization; never sent to the agent. The adapter receives
+         * the testing client's ID (`test`), so capture any database context or
+         * tenant identity in the adapter itself. Shared clients require the
+         * same adapter object. Persistence alone does not coordinate concurrent
+         * refreshes of a rotating grant.
+         */
+        storage?: import('../auth/oauth/types').OAuthConfigStorage;
       }
     | {
         type: 'oauth_client_credentials';
