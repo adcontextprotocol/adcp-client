@@ -1,5 +1,18 @@
 # Changelog
 
+## 15.0.0
+
+### Major Changes
+
+- b189e93: Complete the OAuth issuer-binding protection with legacy metadata-echo validation, including restored PKCE discovery; owner/client checks after callback metadata and before token persistence; and refusal of background registration or destructive automatic invalidation. Direct constructors require explicit `allowInteractiveAuthorization: true` for fresh interactive authorization, while CLI factories opt in. Existing secret-bearing credentials without an independently trusted issuer require explicit owner clearing and sign-in. Preserve the existing patched MCP dependencies, legacy runtime version guard, public non-secret credential behavior and issuer error codes.
+
+  Restart pending web flows without the newly frozen issuer; refuse saving a new registration for a vanished owner. Preserve omitted token, client, verifier and discovery fields in partial file-backed saves, using an own property explicitly set to `undefined` for owner/PKCE/discovery cleanup. Custom `OAuthConfigStorage` adapters must honor the same omission-preserves/own-undefined-clears contract to preserve independent pending browser state. The existing CLI clear now handles client-only, verifier-only and discovery-only records. Keep interactive provider discovery durable across callbacks. Background providers refuse PKCE work and keep discovery private; token and public-client stamp saves, including configured client-credentials refreshes, omit pending browser fields so even a flow started during auth is preserved, while interactive completion still clears its own state. See `docs/guides/OAUTH-ISSUER-BINDING.md` for compatibility and recovery; distributed refresh coordination and application credential CAS remain separate.
+
+### Minor Changes
+
+- 7412a08: Export `AgentOAuthClientCredentialsSchema` from `@adcp/sdk`, `@adcp/sdk/auth`, and `@adcp/sdk/schemas` so hosted platforms can validate OAuth client credentials settings without duplicating the SDK type. The schema covers the required token endpoint, client ID and secret, plus optional scope, resource, audience, and authentication method, preserving environment-variable secret references.
+- 345268f: Allow testing OAuth auth options to bind a trusted OAuthConfigStorage before client normalization so refreshed tokens can be persisted. Shared test clients require the same storage adapter object in addition to their existing credential, version and transport scope checks. The binding stays out of serialized request scope and agent configuration. Storage persistence does not coordinate concurrent refreshes of rotating grants.
+
 ## 14.4.0
 
 ### Minor Changes
