@@ -298,7 +298,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   ): OAuthError {
     return new OAuthError(
       'OAuth owner reauthorization is required; this provider will not automatically clear credentials or register a new client. ' +
-        'CLI: adcp <alias> --clear-oauth, then adcp --save-auth <alias> --oauth.',
+        'CLI: adcp <alias> --clear-oauth, then adcp <alias> --oauth.',
       code,
       this.agent.id
     );

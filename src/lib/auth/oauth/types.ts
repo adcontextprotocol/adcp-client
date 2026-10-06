@@ -25,8 +25,9 @@ export type { AgentConfig, AgentOAuthTokens, AgentOAuthClient };
  *
  * Implement this to persist OAuth tokens back to agent configuration.
  * Round-trip pending `oauth_code_verifier` and `oauth_discovery_state` verbatim.
- * An own property explicitly set to undefined clears an OAuth field; absent
- * fields preserve stored values when a caller saves a partial agent.
+ * For oauth_tokens, oauth_client, oauth_code_verifier and oauth_discovery_state,
+ * an own undefined property clears; omission preserves the saved field.
+ * Resource overrides and other fields retain the storage backend's semantics.
  * This allows different storage backends (file, database, memory)
  * while keeping tokens in the agent config structure.
  */
