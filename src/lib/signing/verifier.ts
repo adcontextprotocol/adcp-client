@@ -150,7 +150,8 @@ export async function verifyRequestSignature(
   if (!parsedSig) throw parseError;
   const effectiveEncoding = pinnedBinaryEncoding ?? parsedEncoding!;
   const canonicalizationProfile = effectiveEncoding === 'rfc8941-base64' ? '3.2' : 'legacy';
-  if (canonicalizationProfile === 'legacy') rejectNonAsciiHost(request.url);
+  // A received signed authority must already use A-labels in every profile.
+  rejectNonAsciiHost(request.url);
   validateSingleValuedCoveredHeaders(parsedInput.components, request);
 
   // Step 2: required params present.

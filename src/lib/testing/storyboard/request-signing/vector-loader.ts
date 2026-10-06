@@ -32,7 +32,7 @@ export function selectRequestSigningVectors(
 
 export function signingProfileForAdcpVersion(version?: string): '3.2' | undefined {
   const match = /^(\d+)\.(\d+)/.exec(version ?? '');
-  return match && Number(match[1]) === 3 && Number(match[2]) === 2 ? '3.2' : undefined;
+  return match && (Number(match[1]) > 3 || (Number(match[1]) === 3 && Number(match[2]) >= 2)) ? '3.2' : undefined;
 }
 
 const ERROR_CODES: ReadonlySet<string> = new Set([

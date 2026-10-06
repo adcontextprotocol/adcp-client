@@ -327,6 +327,7 @@ const MUTATIONS: Record<string, Mutator> = {
   // transport-ungradable by the live probe because no HTTP client can route
   // to that intentionally invalid host spelling.
   'profile-3.2/negative/001-base64url-sf-binary': (vector, _keys, options) => passthrough(vector, options),
+  'profile-3.2/negative/001-no-signature-header': delegateToRoot('001-no-signature-header'),
   'profile-3.2/negative/002-multiple-trailing-dots': (vector, _keys, options) => passthrough(vector, options),
   'profile-3.2/negative/002-wrong-tag': delegateToRoot('002-wrong-tag'),
   'profile-3.2/negative/003-expired-signature': delegateToRoot('003-expired-signature'),
@@ -344,6 +345,7 @@ const MUTATIONS: Record<string, Mutator> = {
   'profile-3.2/negative/008-unknown-keyid': delegateToRoot('008-unknown-keyid'),
   'profile-3.2/negative/009-key-ops-missing-verify': delegateToRoot('009-key-ops-missing-verify'),
   'profile-3.2/negative/010-content-digest-mismatch': delegateToRoot('010-content-digest-mismatch'),
+  'profile-3.2/negative/011-malformed-header': delegateToRoot('011-malformed-header'),
   'profile-3.2/negative/012-missing-expires-param': delegateToRoot('012-missing-expires-param'),
   'profile-3.2/negative/013-expires-le-created': delegateToRoot('013-expires-le-created'),
   'profile-3.2/negative/014-missing-nonce-param': delegateToRoot('014-missing-nonce-param'),
@@ -356,8 +358,18 @@ const MUTATIONS: Record<string, Mutator> = {
   },
   'profile-3.2/negative/016-replayed-nonce': delegateToRoot('016-replayed-nonce'),
   'profile-3.2/negative/017-key-revoked': delegateToRoot('017-key-revoked'),
+  'profile-3.2/negative/019-signature-without-signature-input': delegateToRoot('019-signature-without-signature-input'),
   'profile-3.2/negative/020-rate-abuse': delegateToRoot('020-rate-abuse'),
+  'profile-3.2/negative/021-duplicate-signature-input-label': delegateToRoot('021-duplicate-signature-input-label'),
+  'profile-3.2/negative/022-multi-valued-content-type': delegateToRoot('022-multi-valued-content-type'),
+  'profile-3.2/negative/023-multi-valued-content-digest': delegateToRoot('023-multi-valued-content-digest'),
+  'profile-3.2/negative/024-unquoted-string-param': delegateToRoot('024-unquoted-string-param'),
   'profile-3.2/negative/025-jwk-alg-crv-mismatch': delegateToRoot('025-jwk-alg-crv-mismatch'),
+  'profile-3.2/negative/026-non-ascii-host': delegateToRoot('026-non-ascii-host'),
+  'profile-3.2/negative/027-webhook-registration-authentication-unsigned': delegateToRoot(
+    '027-webhook-registration-authentication-unsigned'
+  ),
+  'profile-3.2/negative/028-unsigned-protocol-method-required': delegateToRoot('028-unsigned-protocol-method-required'),
 };
 
 function delegateToRoot(rootId: string): Mutator {

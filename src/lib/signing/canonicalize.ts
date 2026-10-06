@@ -362,6 +362,8 @@ function decodeUnreservedPercentEncoding(input: string): string {
  * non-transitional produce different A-labels for the same input, which
  * would open a signer/verifier canonicalization differential. Accepts
  * both absolute (`scheme://…`) and scheme-relative (`//…`) URL shapes.
+ * The transport taxonomy classifies the received URI as malformed. Diagnostic
+ * step 1 is SDK-local parsing, not the checklist's signature-header parser.
  */
 export function rejectNonAsciiHost(rawUrl: string): void {
   const authorityMatch = rawUrl.match(/^(?:[a-z][a-z0-9+.\-]*:)?\/\/([^/?#]*)/i);
@@ -370,7 +372,7 @@ export function rejectNonAsciiHost(rawUrl: string): void {
   for (let i = 0; i < authority.length; i++) {
     if (authority.charCodeAt(i) > 0x7f) {
       throw new RequestSignatureError(
-        'request_signature_header_malformed',
+        'request_target_uri_malformed',
         1,
         'URL authority contains non-ASCII bytes; use the A-label (Punycode) form'
       );
