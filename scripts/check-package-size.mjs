@@ -31,7 +31,10 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // as CJS + ESM + both declaration flavours (four artifacts, 3,354 unpacked bytes).
 // The measured tarball is 20,040,986 bytes; allow 5 KB for these artifacts and
 // compressor variance. File-count, unpacked, and schema budgets stay fixed.
-const MAX_PACKED_TARBALL_BYTES = 20_045_000;
+// The optional GCS write fence adds three dual-format module/declaration sets
+// and one guide. CI measured 20,060,226 compressed bytes; preserve 10 KB of
+// compressor margin for that additive surface. Other size budgets stay fixed.
+const MAX_PACKED_TARBALL_BYTES = 20_075_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
