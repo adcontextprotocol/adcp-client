@@ -351,7 +351,7 @@ describe('creative format delivery projection', () => {
     );
   });
 
-  test('does not negotiate from advisory seller build metadata', () => {
+  test('does not negotiate from advisory seller build metadata', async () => {
     const client = new SingleAgentClient(
       { id: 'future-build', name: 'Future build', agent_uri: SELLER, protocol: 'mcp' },
       { adcpVersion: '3.1' }
@@ -359,42 +359,29 @@ describe('creative format delivery projection', () => {
     client.cachedToolSchemas = new Map([
       ['sync_creatives', { creatives: { items: { properties: { creative_id: {}, format_id: {} } } } }],
     ]);
+    client.getCapabilities = async () => ({ buildVersion: '4.0.0', features: {} });
 
-    assert.equal(
-      client.resolveCreativeFormatWireMode('sync_creatives', { buildVersion: '4.0.0', features: {} }),
-      'legacy'
-    );
-    assert.throws(
-      () =>
-        client.resolveCreativeFormatWireMode('sync_creatives', {
-          buildVersion: '4.0.0',
-          features: { canonicalCreatives: true },
-        }),
-      CreativeFormatCapabilityError
-    );
+    assert.equal(await client.resolveCreativeFormatWireMode('sync_creatives'), 'legacy');
+    client.getCapabilities = async () => ({ buildVersion: '4.0.0', features: { canonicalCreatives: true } });
+    await assert.rejects(client.resolveCreativeFormatWireMode('sync_creatives'), CreativeFormatCapabilityError);
 
     client.cachedToolSchemas = new Map([
       ['sync_creatives', { creatives: { items: { properties: { creative_id: {}, format_kind: {} } } } }],
     ]);
-    assert.throws(
-      () =>
-        client.resolveCreativeFormatWireMode('sync_creatives', {
-          buildVersion: '4.0.0',
-          features: { canonicalCreatives: false },
-        }),
-      CreativeFormatCapabilityError
-    );
+    client.getCapabilities = async () => ({ buildVersion: '4.0.0', features: { canonicalCreatives: false } });
+    await assert.rejects(client.resolveCreativeFormatWireMode('sync_creatives'), CreativeFormatCapabilityError);
   });
 
-  test('3.2 client fails closed when supported_versions and tool-schema evidence are both absent', () => {
+  test('3.2 client fails closed when supported_versions and tool-schema evidence are both absent', async () => {
     const client = new SingleAgentClient(
       { id: 'missing-release-proof', name: 'Missing release proof', agent_uri: SELLER, protocol: 'mcp' },
       { wireAdcpVersion: '3.2' }
     );
     client.cachedToolSchemas = new Map();
+    client.getCapabilities = async () => ({ features: {} });
 
-    assert.throws(
-      () => client.resolveCreativeFormatWireMode('sync_creatives', { features: {} }),
+    await assert.rejects(
+      client.resolveCreativeFormatWireMode('sync_creatives'),
       err =>
         err instanceof CreativeFormatCapabilityError &&
         err.message.includes('Cannot prove which AdCP release the seller serves')
