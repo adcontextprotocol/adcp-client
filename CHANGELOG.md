@@ -1,5 +1,26 @@
 # Changelog
 
+## 15.2.0
+
+### Minor Changes
+
+- c22e1b7: Expose `resolveCreativeFormatWireMode(taskType, options)` on `AgentClient` and `SingleAgentClient` so buyers can preflight the same capabilities, tool-schema fallback, and wire-version pin used by creative writes. Reuse cached or primed capability evidence and preserve existing capability errors and conservative `unknown` behavior for older peers. Scoped-transport writes now use the current transport's discovered tool schema instead of the shared cache's schema.
+
+### Patch Changes
+
+- f0f3688: Security fix for GHSA-frxv-c96c-4vqw (spec advisory GHSA-2pm6-6mc8-8xcm, adcp#7820): `request_signing.required_for` was not enforced over A2A. A seller that configured `signedRequests` and mounted `createA2AAdapter` advertised `required_for` while processing unsigned A2A requests for those operations. The advisory lists 14.2.0 through 14.4.0; 15.0.0 is affected too, and earlier releases that shipped the same A2A adapter and auto-wired verifier are likely affected (maintainer to confirm the range). Implements the AdCP 3.2.3 security erratum (adcp#7945, "Operation resolution over A2A").
+  - `createA2AAdapter` now runs the server's request-signature verifier on the JSON-RPC endpoint when the server was built with `createAdcpServer({ signedRequests })` (or when you pass `preTransport`). It buffers the exact request bytes, resolves the AdCP operation from the Message's sole DataPart `skill`, enforces `required_for` / `protocol_methods_required_for` and the webhook-authentication rule, and rejects with HTTP 401 `WWW-Authenticate: Signature error="<code>"` before `authenticate` or any handler runs. The dispatcher runs only the operation the gate resolved, and a `taskId` continuation that switches operation is rejected. A verified signature surfaces as `ctx.authInfo` (`clientId: signing:<keyid>`).
+  - New `adcpOperationResolver` (`@adcp/sdk/server`) and `resolveRequestOperation` / `UNRESOLVABLE_OPERATION` (`@adcp/sdk/signing`): MCP `tools/call` resolves to `params.name`; A2A `SendMessage`, `SendStreamingMessage`, `message/send`, `message/stream` resolve to the sole DataPart's `skill`. A body that does not resolve to exactly one operation (zero or several DataParts, FileParts, a Part with two content members, a non-string or empty `skill`, duplicate keys after JSON string decoding, case variants of recognized members, batches, non-JSON) is rejected with `request_body_malformed`, signed or not, before any signature header or capability list is consulted. `createAdcpServer`'s auto-wired verifier uses it for both transports.
+  - `requireSignatureWhenPresent` / `requireAuthenticatedOrSigned` reject an unresolvable body, default to `adcpOperationResolver` when `requiredFor` is set without a resolver (previously `required_for` went unenforced), and run the verifier's unsigned-branch checks: new `protocolMethodsRequiredFor` option, and the webhook-authentication rule, which a valid bearer does not satisfy. `verifyRequestSignature` accepts `UNRESOLVABLE_OPERATION` as `operation`. `mcpToolNameResolver` stays MCP-only and lenient; it does not enforce `required_for` over A2A.
+  - The buyer signer (`extractAdcpOperation`) now uses the same sole-DataPart rule.
+
+  This ships as a patch because it closes a security hole, but it changes behavior; audit these when upgrading:
+  1. `createA2AAdapter` throws at construction if the server advertises `signed-requests` / `request_signing.supported` but no verifier is wired for A2A (set `preTransport`, or `allowUnenforcedSignedRequests: true` if a gateway enforces signing), and when a gate is active but `agentCard.url` is not absolute (set `signedRequestsUrl`).
+  2. With `signedRequests`, do not mount a body parser ahead of the adapter unless it records the raw bytes (`express.json({ verify: adapter.rawBodyVerify })`); otherwise requests get a 500 and are never dispatched. A body with `Content-Encoding` other than `identity` is rejected with 415 (the signature covers the wire bytes).
+  3. Unsigned A2A calls to an operation in `required_for` now get 401 `request_signature_required`, even with a bearer, matching the MCP posture of the auto-wired verifier; stage the change through `warn_for` if buyers do not sign yet.
+  4. On the auto-wired MCP path, JSON-RPC batches and non-JSON POST bodies are rejected with `request_body_malformed` instead of falling through, and bodies containing `__proto__` / `constructor` keys fail the strict parse.
+  5. `requireSignatureWhenPresent` / `requireAuthenticatedOrSigned` now reject an unsigned request carrying webhook authentication even when it holds a valid bearer, and reject unresolvable bodies.
+
 ## 15.1.0
 
 ### Minor Changes
