@@ -37,7 +37,11 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // The complete GCS adapter/private-reader surface adds six internal module sets
 // and a guide; the first measured combined artifact is 20,079,662 bytes.
 // Allow 35 KB above that candidate for final documentation and compressor variance.
-const MAX_PACKED_TARBALL_BYTES = 20_115_000;
+// Operation resolution over A2A (GHSA-frxv-c96c-4vqw) adds the shared
+// signing/operation-resolution module, the A2A gate in the adapter, and the
+// grader's A2A vector module (about 42 KB compressed on top of the GCS surface). The measured combined
+// tarball is 20,121,361 bytes; allow 14 KB for compressor variance.
+const MAX_PACKED_TARBALL_BYTES = 20_135_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -134,6 +138,8 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // Storage-independent wholesale mirrors add one module set and one buyer guide (+5 files).
 // Shared JSONPath translation and bounded validation diagnostics add two
 // internal module/declaration sets (+8 files).
+// Operation resolution over A2A and the grader's A2A vector module add two
+// internal dual-format runtime/declaration module sets (+8 files).
 const MAX_PACKED_FILE_COUNT =
   6_135 +
   34 +
@@ -162,6 +168,7 @@ const MAX_PACKED_FILE_COUNT =
   13 +
   1 +
   5 +
+  8 +
   8 +
   13 + // GCS write-fence runtime/declaration modules and adoption guide.
   29; // GCS adapter, reader, validation, fence split, errors, I/O modules and guide.

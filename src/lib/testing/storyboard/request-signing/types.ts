@@ -74,6 +74,50 @@ export interface NegativeVector {
 
 export type Vector = PositiveVector | NegativeVector;
 
+/**
+ * Conformance tier of an A2A operation-resolution vector (adcp#7945).
+ *
+ * - `contradiction-resolution`: grades the security erratum that fixes the
+ *   `security.mdx` / A2A-profile contradiction. MUST for a 3.2 verifier.
+ * - `hardening`: grades clauses that go further. SHOULD in 3.2.x, MUST from 3.3.
+ */
+export type A2aVectorTier = 'contradiction-resolution' | 'hardening';
+
+export const A2A_VECTOR_TIERS: readonly A2aVectorTier[] = ['contradiction-resolution', 'hardening'];
+
+/**
+ * `expected_outcome` of an A2A operation-resolution vector. Wider than the
+ * root vectors': positives carry `status`, and both kinds may name the
+ * operation the verifier MUST resolve (`null` = "no operation") plus the
+ * dispatch the agent MUST perform. `failed_step: 0` is the pre-check, not a
+ * numbered checklist step.
+ */
+export interface A2aExpectedOutcome {
+  success: boolean;
+  /** Positives only: `verified` (valid signature) or `unsigned` (no signature required). */
+  status?: 'verified' | 'unsigned';
+  /** Negatives only: `request_signature_required` or `request_body_malformed`. */
+  error_code?: RequestSignatureErrorCode;
+  failed_step?: number | string;
+  resolved_operation?: string | null;
+  dispatched_operation?: string;
+  dispatch?: string;
+}
+
+/** Positive A2A operation-resolution vector. Ids are prefixed `a2a/positive/`. */
+export interface A2aPositiveVector extends PositiveVector {
+  tier: A2aVectorTier;
+  expected_outcome: A2aExpectedOutcome & { success: true; status: 'verified' | 'unsigned' };
+}
+
+/** Negative A2A operation-resolution vector. Ids are prefixed `a2a/negative/`. */
+export interface A2aNegativeVector extends NegativeVector {
+  tier: A2aVectorTier;
+  expected_outcome: A2aExpectedOutcome & { success: false };
+}
+
+export type A2aVector = A2aPositiveVector | A2aNegativeVector;
+
 export interface TestKeypair {
   kid: string;
   kty: string;

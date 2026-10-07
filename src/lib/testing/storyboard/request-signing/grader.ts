@@ -4,6 +4,7 @@ import { initializeMcpSession, probeSignedRequest, type ProbeOptions, type Probe
 import { loadRequestSigningVectors, selectRequestSigningVectors, type LoadVectorsOptions } from './vector-loader';
 import { captureA2aRequest, operationFromVectorUrl, type CapturedA2aRequest } from './a2a-dispatch';
 import { loadSignedRequestsRunnerContract, type SignedRequestsRunnerContract } from './test-kit';
+import { gradeA2aOperationResolution, type A2aOperationResolutionSummary } from './a2a-operation-resolution';
 import {
   InMemoryReplayStore,
   InMemoryRevocationStore,
@@ -14,7 +15,7 @@ import {
   type AdcpJsonWebKey,
 } from '../../../signing';
 import { parseSignatureInput } from '../../../signing/parser';
-import type { NegativeVector, PositiveVector, VerifierCapabilityFixture } from './types';
+import type { A2aVectorTier, NegativeVector, PositiveVector, VerifierCapabilityFixture } from './types';
 
 export interface GradeOptions extends LoadVectorsOptions {
   /** Grade only authored 3.2 profile vectors. Omit for the legacy root corpus. */
@@ -111,12 +112,27 @@ export interface GradeOptions extends LoadVectorsOptions {
    */
   agentRequiredFor?: readonly string[];
   /**
+   * The agent's advertised `request_signing.protocol_methods_required_for`
+   * (JSON-RPC method names such as `SendMessage` or `tasks/cancel`). Only the
+   * A2A operation-resolution vectors consult it: negative/007 (an unsigned
+   * `SendMessage` rejected because the method itself is required) skips when
+   * the agent does not declare `SendMessage`, and unsigned positives skip when
+   * the agent requires their method. Has no effect when `agentCapability` is
+   * provided (its own `protocol_methods_required_for` governs).
+   */
+  agentProtocolMethodsRequiredFor?: readonly string[];
+  /**
    * Transport shape the agent speaks. `'mcp'` (default) wraps each
    * vector body in a JSON-RPC `tools/call` envelope and POSTs to the MCP
    * mount path (`agentUrl`) — use when grading an MCP agent whose verifier
    * sits as transport-layer middleware ahead of MCP dispatch.
    *
    * See adcontextprotocol/adcp-client#612 for the MCP-mode rationale.
+   *
+   * `'a2a'` additionally grades the A2A operation-resolution vectors
+   * (adcp#7945): `required_for` must be enforced against the operation named
+   * by the invocation DataPart's `skill`, not the JSON-RPC method. See
+   * `a2a-operation-resolution.ts`. Vector ids are prefixed `a2a/`.
    */
   transport?: 'raw' | 'mcp' | 'a2a';
   /** Trusted Agent Card fetch seam for A2A tests and custom runtimes. */
@@ -184,6 +200,12 @@ export interface VectorGradeResult {
   /** For negatives: the error code the spec says we should see. */
   expected_error_code?: string;
   http_status: number;
+  /**
+   * A2A operation-resolution vectors only: `contradiction-resolution` is MUST
+   * for a 3.2 verifier; `hardening` is SHOULD in 3.2.x and MUST from 3.3.
+   * Hardening failures still count as failures; the tier tells you which kind.
+   */
+  tier?: A2aVectorTier;
   /** Actual endpoint probed when it differs from the configured agent URL (notably A2A card routing). */
   probe_url?: string;
   diagnostic?: string;
@@ -223,6 +245,14 @@ export interface GradeReport {
   contract_loaded: boolean;
   positive: VectorGradeResult[];
   negative: VectorGradeResult[];
+  /**
+   * Present only on `transport: 'a2a'` runs. Per-tier tally of the A2A
+   * operation-resolution vectors, or `vectors_available: false` (with the
+   * reason) when the compliance bundle carries none, so an absent corpus is
+   * never mistaken for a clean pass. The vector rows themselves are in
+   * `positive` / `negative` under `a2a/` ids.
+   */
+  a2a_operation_resolution?: A2aOperationResolutionSummary;
   passed: boolean;
   passed_count: number;
   failed_count: number;
@@ -314,6 +344,19 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
     );
   }
 
+  // A2A runs also grade the operation-resolution corpus (adcp#7945). Rows join
+  // `positive` / `negative` so counts, `passed`, and every report consumer treat
+  // them like any other vector; the summary carries the tier split.
+  let a2aSummary: A2aOperationResolutionSummary | undefined;
+  if (transport === 'a2a') {
+    const a2a = await gradeA2aOperationResolution(agentUrl, loaded.keys, contract, options);
+    if (a2a) {
+      positive.push(...a2a.positive);
+      negative.push(...a2a.negative);
+      a2aSummary = a2a.summary;
+    }
+  }
+
   const all = [...positive, ...negative];
   const passed_count = all.filter(r => r.passed && !r.skipped).length;
   const skipped_count = all.filter(r => r.skipped).length;
@@ -330,6 +373,7 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
     contract_loaded: Boolean(contract),
     positive,
     negative,
+    ...(a2aSummary ? { a2a_operation_resolution: a2aSummary } : {}),
     passed,
     passed_count,
     failed_count,

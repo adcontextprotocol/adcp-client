@@ -24,7 +24,7 @@
  *   capability: { ... },
  *   jwks,
  *   replayStore,                                        // <-- shared across instances
- *   resolveOperation: mcpToolNameResolver,
+ *   resolveOperation: adcpOperationResolver,
  * }));
  *
  * // Schedule the sweeper somewhere (cron, app timer, pg_cron, etc.):

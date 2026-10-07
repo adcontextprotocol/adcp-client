@@ -1,13 +1,39 @@
 import { existsSync, readFileSync, readdirSync } from 'fs';
-import { basename, join } from 'path';
+import { basename, join, resolve } from 'path';
 import { getComplianceCacheDir } from '../compliance';
 import type { RequestSignatureErrorCode } from '../../../signing';
-import { CONTRACT_IDS } from './types';
-import type { ContractId, NegativeVector, PositiveVector, TestKeypair, TestKeyset, Vector } from './types';
+import { A2A_VECTOR_TIERS, CONTRACT_IDS } from './types';
+import type {
+  A2aExpectedOutcome,
+  A2aNegativeVector,
+  A2aPositiveVector,
+  A2aVectorTier,
+  ContractId,
+  NegativeVector,
+  PositiveVector,
+  TestKeypair,
+  TestKeyset,
+  Vector,
+} from './types';
 
 export interface LoadVectorsOptions {
   complianceDir?: string;
   version?: string;
+  /**
+   * Explicit directory holding the A2A operation-resolution vectors
+   * (`positive/` and `negative/` subdirectories). Takes precedence over the
+   * compliance cache and the vendored copy; falls back to the
+   * `ADCP_A2A_VECTORS_DIR` environment variable. A configured directory that
+   * does not exist is an error, not a silent fall-through.
+   */
+  a2aVectorsDir?: string;
+  /**
+   * Allow falling back to the vendored `test/fixtures/request-signing-a2a`
+   * copy when the compliance cache has no A2A vectors. Default `true`. Set
+   * `false` to see exactly what an installed package sees (the fixtures are
+   * not shipped), e.g. to test the "unavailable" report.
+   */
+  a2aVendoredFallback?: boolean;
 }
 
 export interface LoadedVectors {
@@ -52,6 +78,7 @@ const ERROR_CODES: ReadonlySet<string> = new Set([
   'request_signature_digest_mismatch',
   'request_signature_replayed',
   'request_signature_rate_abuse',
+  'request_body_malformed',
 ]);
 
 const CONTRACT_ID_SET: ReadonlySet<string> = new Set(CONTRACT_IDS);
@@ -104,6 +131,147 @@ export function loadRequestSigningKeys(options: LoadVectorsOptions = {}): TestKe
 /** Test-only: clear the memoization cache so a fresh cache path is reread. */
 export function __resetVectorCache(): void {
   VECTOR_CACHE.clear();
+  A2A_VECTOR_CACHE.clear();
+}
+
+// ── A2A operation-resolution vectors (adcp#7945) ─────────────────
+
+/** Where the A2A operation-resolution vectors came from. */
+export type A2aVectorSource = 'override' | 'compliance_cache' | 'vendored_fixture' | 'none';
+
+export interface LoadedA2aVectors {
+  positive: A2aPositiveVector[];
+  negative: A2aNegativeVector[];
+  source: A2aVectorSource;
+  /** Directory the vectors were read from; absent when `source` is `'none'`. */
+  sourceDir?: string;
+}
+
+/** Reported verbatim when the grader finds no A2A operation-resolution vectors. */
+export const A2A_VECTORS_UNAVAILABLE_MESSAGE = 'a2a operation-resolution vectors unavailable in this compliance bundle';
+
+/** Env var naming an explicit A2A vector directory (tests, pre-release bundles). */
+export const A2A_VECTORS_DIR_ENV = 'ADCP_A2A_VECTORS_DIR';
+
+const A2A_VECTOR_CACHE = new Map<string, Pick<LoadedA2aVectors, 'positive' | 'negative'>>();
+
+/**
+ * Vendored copy of adcp PR #7945's vectors, used only until a released
+ * compliance bundle carries `test-vectors/request-signing/a2a/`.
+ *
+ * Resolved relative to this module: `src/lib/testing/storyboard/request-signing`
+ * and its compiled `dist/` twin are both five levels below the package root.
+ * `test/` is not in the package's `files`, so an installed package has no such
+ * directory and the existence check below yields "no vectors" rather than a
+ * path into someone else's tree.
+ */
+function vendoredA2aVectorsDir(): string {
+  return resolve(__dirname, '..', '..', '..', '..', '..', 'test', 'fixtures', 'request-signing-a2a');
+}
+
+function hasA2aVectorDirs(dir: string): boolean {
+  return existsSync(join(dir, 'positive')) && existsSync(join(dir, 'negative'));
+}
+
+/**
+ * Load the A2A operation-resolution vectors.
+ *
+ * Resolution order:
+ *   1. `options.a2aVectorsDir`, else `$ADCP_A2A_VECTORS_DIR` (explicit; must exist).
+ *   2. `<complianceCache>/test-vectors/request-signing/a2a/`.
+ *   3. The vendored `test/fixtures/request-signing-a2a/` copy, when present
+ *      (repo checkouts only; never shipped).
+ *
+ * Returns `source: 'none'` with empty arrays when none exist; callers MUST
+ * report that rather than treating it as a pass.
+ */
+export function loadA2aOperationResolutionVectors(options: LoadVectorsOptions = {}): LoadedA2aVectors {
+  const explicit = options.a2aVectorsDir ?? (process.env[A2A_VECTORS_DIR_ENV] || undefined);
+  let source: A2aVectorSource;
+  let dir: string;
+  if (explicit) {
+    if (!hasA2aVectorDirs(explicit)) {
+      throw new Error(`A2A operation-resolution vectors not found at ${explicit} (expected positive/ and negative/).`);
+    }
+    source = 'override';
+    dir = explicit;
+  } else {
+    const cacheDir = join(getComplianceCacheDir(options), 'test-vectors', 'request-signing', 'a2a');
+    const vendored = vendoredA2aVectorsDir();
+    if (hasA2aVectorDirs(cacheDir)) {
+      source = 'compliance_cache';
+      dir = cacheDir;
+    } else if (options.a2aVendoredFallback !== false && hasA2aVectorDirs(vendored)) {
+      source = 'vendored_fixture';
+      dir = vendored;
+    } else {
+      return { positive: [], negative: [], source: 'none' };
+    }
+  }
+
+  // Memoized per directory; `source` is how this call reached it, so it is not cached.
+  let parsed = A2A_VECTOR_CACHE.get(dir);
+  if (!parsed) {
+    parsed = {
+      positive: loadDir(join(dir, 'positive'), parseA2aPositive, 'a2a/positive/'),
+      negative: loadDir(join(dir, 'negative'), parseA2aNegative, 'a2a/negative/'),
+    };
+    A2A_VECTOR_CACHE.set(dir, parsed);
+  }
+  return { ...parsed, source, sourceDir: dir };
+}
+
+function parseA2aTier(id: string, r: Record<string, unknown>): A2aVectorTier {
+  const tier = r.tier;
+  if (typeof tier !== 'string' || !(A2A_VECTOR_TIERS as readonly string[]).includes(tier)) {
+    throw new Error(`${id}: tier must be one of ${A2A_VECTOR_TIERS.join(', ')} (got ${JSON.stringify(tier)})`);
+  }
+  return tier as A2aVectorTier;
+}
+
+function parseA2aOutcome(id: string, r: Record<string, unknown>): A2aExpectedOutcome {
+  const o = r.expected_outcome as Record<string, unknown>;
+  const resolved = o.resolved_operation;
+  if (resolved !== undefined && resolved !== null && typeof resolved !== 'string') {
+    throw new Error(`${id}: expected_outcome.resolved_operation must be a string or null`);
+  }
+  const status = o.status;
+  if (status !== undefined && status !== 'verified' && status !== 'unsigned') {
+    throw new Error(`${id}: expected_outcome.status must be "verified" or "unsigned"`);
+  }
+  return {
+    success: o.success as boolean,
+    ...(status !== undefined && { status }),
+    ...(typeof o.error_code === 'string' && { error_code: o.error_code as A2aExpectedOutcome['error_code'] }),
+    ...(o.failed_step !== undefined && { failed_step: o.failed_step as number | string }),
+    ...(resolved !== undefined && { resolved_operation: resolved as string | null }),
+    ...(typeof o.dispatched_operation === 'string' && { dispatched_operation: o.dispatched_operation }),
+    ...(typeof o.dispatch === 'string' && { dispatch: o.dispatch }),
+  };
+}
+
+function parseA2aPositive(id: string, raw: unknown): A2aPositiveVector {
+  const r = raw as Record<string, unknown>;
+  const base = parsePositive(id, raw);
+  const expected_outcome = parseA2aOutcome(id, r);
+  if (expected_outcome.status === undefined) {
+    throw new Error(`${id}: positive A2A vector requires expected_outcome.status`);
+  }
+  return {
+    ...base,
+    tier: parseA2aTier(id, r),
+    expected_outcome: expected_outcome as A2aPositiveVector['expected_outcome'],
+  };
+}
+
+function parseA2aNegative(id: string, raw: unknown): A2aNegativeVector {
+  const r = raw as Record<string, unknown>;
+  const base = parseNegative(id, raw);
+  return {
+    ...base,
+    tier: parseA2aTier(id, r),
+    expected_outcome: parseA2aOutcome(id, r) as A2aNegativeVector['expected_outcome'],
+  };
 }
 
 function loadDir<T extends Vector>(dir: string, parse: (id: string, raw: unknown) => T, idPrefix = ''): T[] {

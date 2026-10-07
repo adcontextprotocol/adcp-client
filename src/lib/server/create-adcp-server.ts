@@ -207,6 +207,7 @@ import {
   type WebhookEmitterOptions,
 } from './webhook-emitter';
 import { createExpressVerifier, type ExpressLike } from '../signing/middleware';
+import { resolveRequestOperation } from '../signing/operation-resolution';
 import { isSandboxOrMockAccount } from './account-mode';
 import {
   isSandboxRequest as isSandboxRequestForSeeding,
@@ -4397,10 +4398,13 @@ function resolveEffectiveSignedRequestPolicy(
  *
  * `serve()` buffers the request body into `req.rawBody` before invoking the
  * preTransport hook, so the verifier sees the exact bytes the signer hashed
- * for Content-Digest. For MCP the operation name comes from the JSON-RPC
- * `params.name`; the resolver below falls back to `undefined` for non-JSON or
- * non-`tools/call` bodies, which makes the verifier treat them as not-in-
- * `required_for` rather than rejecting (discovery probes, health checks).
+ * for Content-Digest. The operation comes from `resolveRequestOperation`:
+ * `params.name` for MCP `tools/call`, the sole DataPart's `skill` for A2A
+ * message methods, and none for other JSON-RPC methods and non-POST requests
+ * (discovery probes, health checks). A POST whose body does not resolve to
+ * exactly one operation is rejected with `request_body_malformed`.
+ *
+ * `createA2AAdapter` reuses this same function on the A2A JSON-RPC path.
  */
 function buildSignedRequestsPreTransport(
   signedRequests: SignedRequestsConfig,
@@ -4422,25 +4426,10 @@ function buildSignedRequestsPreTransport(
     revocationStore: signedRequests.revocationStore,
     adcpVersion,
     ...(signedRequests.agentUrlForKeyid ? { agentUrlForKeyid: signedRequests.agentUrlForKeyid } : {}),
-    resolveOperation: req => {
-      const raw = (req as { rawBody?: string }).rawBody;
-      if (!raw) return undefined;
-      try {
-        const parsed = JSON.parse(raw) as unknown;
-        const messages = Array.isArray(parsed) ? parsed : [parsed];
-        const operations = messages.flatMap(message => {
-          if (message == null || typeof message !== 'object') return [];
-          const candidate = message as { method?: unknown; params?: { name?: unknown } };
-          return candidate.method === 'tools/call' && typeof candidate.params?.name === 'string'
-            ? [candidate.params.name]
-            : [];
-        });
-        return operations.find(operation => requiredFor.includes(operation)) ?? operations[0];
-      } catch {
-        // Non-JSON or malformed body — let transport handle rejection.
-      }
-      return undefined;
-    },
+    // One resolver for MCP `tools/call` and A2A message methods; a body that
+    // does not resolve to exactly one operation is rejected by the verifier
+    // (`request_body_malformed`), never treated as "not in required_for".
+    resolveOperation: req => resolveRequestOperation({ rawBody: req.rawBody, method: req.method, url: req.url }),
   });
 
   return async function adcpPreTransport(req, res) {

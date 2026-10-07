@@ -360,7 +360,7 @@ For local dev / non-KMS testing, `--key-file <jwk-path>` accepts an in-process J
 
 ```typescript
 import { createExpressVerifier, StaticJwksResolver } from '@adcp/sdk/signing';
-import { mcpToolNameResolver } from '@adcp/sdk/server';
+import { adcpOperationResolver } from '@adcp/sdk/server';
 
 // Raw-body capture MUST be mounted ahead of the verifier — express.json()
 // would otherwise consume the stream and the verifier would have no bytes to
@@ -378,7 +378,7 @@ app.post(
       required_for: ['create_media_buy', 'update_media_buy'],
     },
     jwks: new StaticJwksResolver(buyerPublicKeys),
-    resolveOperation: mcpToolNameResolver,
+    resolveOperation: adcpOperationResolver,
   }),
   handler
 );
@@ -414,13 +414,27 @@ app.use(createExpressVerifier({
   capability: { ... },
   jwks,
   replayStore,                                                  // <-- shared across instances
-  resolveOperation: mcpToolNameResolver,
+  resolveOperation: adcpOperationResolver,
 }));
 ```
 
 The schema uses one table with `(keyid, scope, nonce)` as the primary key, indexes on `expires_at` and `(keyid, scope, expires_at)`, and a table-specific guarded-insert function. Each insert attempt is one round trip to that function, which tries a transaction-scoped advisory lock and handles the replay/cap/insert decision atomically. Busy scopes use bounded client-side retry between queries, so pooled connections remain available to unrelated scopes. Rerun `getReplayStoreMigration()` before deploying an SDK upgrade so the function stays current; the migration is idempotent. The sweeper exists because Postgres has no native row-level TTL — it's a `DELETE FROM replay_cache WHERE expires_at <= now()` you call on a schedule. Other backends (Redis, KeyDB, anything supporting atomic insert-if-absent with TTL) can implement the `ReplayStore` interface the same way.
 
 On successful verification, `req.verifiedSigner` contains `{ keyid, agent_url?, verified_at }`. On failure, the middleware returns `401` with `WWW-Authenticate: Signature error="<code>"`.
+
+### Operation resolution: MCP and A2A
+
+`required_for`, `supported_for`, and `warn_for` match the operation resolved from the request, not the JSON-RPC method (adcp#7945). `adcpOperationResolver` (from `@adcp/sdk/server`) implements the rule for both transports:
+
+| Request | Resolved operation |
+|---|---|
+| MCP `tools/call` | `params.name` |
+| A2A `SendMessage`, `SendStreamingMessage`, `message/send`, `message/stream` | `skill` of the Message's sole DataPart |
+| Any other JSON-RPC method (`tasks/*`, `CancelTask`, `initialize`) | none; matched by `protocol_methods_*` only |
+
+A body that does not resolve to exactly one operation returns the distinguished `UNRESOLVABLE_OPERATION`, and the verifier rejects it with `request_body_malformed` before it reads any signature header or capability list, signed or not. That covers zero or several DataParts, FileParts, a Part with two content members, a `skill` that is not a non-empty string, duplicate keys (after JSON string decoding), case variants of a recognized member name (`Skill`, `Parts`), and batches. Never treat an unresolvable body as "an operation that is not in `required_for`": a resolver that returns `undefined` for an A2A message (as `mcpToolNameResolver` does) leaves `required_for` unenforced over A2A.
+
+`createAdcpServer({ signedRequests })` and `createA2AAdapter` use this resolver for you. When you compose authenticators by hand, `requireAuthenticatedOrSigned` defaults to it, rejects unresolvable bodies, and also runs the verifier's unsigned-branch checks: `protocolMethodsRequiredFor`, and the webhook-authentication rule, which a valid bearer does not satisfy.
 
 ### Composing with bearer auth
 
@@ -433,7 +447,7 @@ import {
   verifyApiKey,
   verifySignatureAsAuthenticator,
   requireAuthenticatedOrSigned,
-  mcpToolNameResolver,
+  adcpOperationResolver,
 } from '@adcp/sdk/server';
 import { ResolvedAgentJwksResolver } from '@adcp/sdk/signing/server';
 
@@ -442,11 +456,11 @@ serve(createAgent, {
     signature: verifySignatureAsAuthenticator({
       capability: { supported: true, required_for: ['create_media_buy'], covers_content_digest: 'either' },
       jwks: new ResolvedAgentJwksResolver(expectedBuyerAgentUrl, 'mcp'),
-      resolveOperation: mcpToolNameResolver,
+      resolveOperation: adcpOperationResolver,
     }),
     fallback: verifyApiKey({ keys: { 'sk_live_abc': { principal: 'acct_42' } } }),
     requiredFor: ['create_media_buy', 'update_media_buy'],
-    resolveOperation: mcpToolNameResolver,
+    resolveOperation: adcpOperationResolver,
   }),
 });
 ```

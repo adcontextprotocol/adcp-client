@@ -397,7 +397,10 @@ describe('createAdcpServer: signedRequests auto-wiring', () => {
       const res = await postSigned({ url: started.url, body, sign: false });
       assert.strictEqual(res.status, 401, 'batching must not bypass required_for enforcement');
       const payload = await res.json();
-      assert.strictEqual(payload.error, 'request_signature_required');
+      // adcp#7945: a body that does not resolve to exactly one operation fails
+      // closed. (A verifier that accepted batches would answer
+      // `request_signature_required`; this one does not.)
+      assert.strictEqual(payload.error, 'request_body_malformed');
     });
 
     it('accepts a signed non-mutating get_products request', async () => {

@@ -77,9 +77,15 @@ import type {
   TaskArtifactUpdateEvent,
   TaskStatusUpdateEvent,
 } from '@a2a-js/sdk';
-import type { Request, RequestHandler } from 'express';
+import type { NextFunction, Request, RequestHandler, Response } from 'express';
+import type { IncomingMessage } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { redactSecrets } from '../utils/redact-secrets';
+import {
+  describeUnresolvable,
+  resolveRequestOperation,
+  isUnresolvableOperation,
+} from '../signing/operation-resolution';
 import {
   getSdkServer,
   isToolAvailableForVersion,
@@ -89,7 +95,14 @@ import {
   type AdcpServer,
 } from './adcp-server';
 import type { McpToolResponse } from './responses';
-import type { AdcpLogger } from './create-adcp-server';
+import {
+  ADCP_PRE_TRANSPORT,
+  ADCP_SIGNED_REQUESTS_STATE,
+  type AdcpLogger,
+  type AdcpPreTransport,
+  type AdcpSignedRequestsState,
+} from './create-adcp-server';
+import { ADCP_SERVE_REQUEST_CONTEXT } from './auth';
 import type { A2ALegacyCompatOptions } from '../protocols/a2a';
 
 // ---------------------------------------------------------------------------
@@ -240,6 +253,51 @@ export interface A2AAdapterOptions {
    * Set `enabled: false` to expose only the native A2A 1.0 path.
    */
   legacyCompat?: A2ALegacyCompatOptions;
+
+  /**
+   * RFC 9421 request-signature gate for the JSON-RPC endpoint. Defaults to the
+   * verifier that `createAdcpServer({ signedRequests })` attaches to `server`,
+   * so a seller that configures `signedRequests` enforces `required_for`,
+   * `protocol_methods_required_for` and the webhook-authentication rule over
+   * A2A exactly as it does over MCP. Pass it explicitly when you wired the
+   * verifier by hand (`serve({ preTransport })`).
+   *
+   * The gate runs on every `POST` to the JSON-RPC endpoint, before
+   * {@link A2AAdapterOptions.authenticate}. The adapter buffers the request
+   * body itself so the gate sees the exact signed bytes, resolves the AdCP
+   * operation from the Message's sole DataPart (`skill`), and rejects a body
+   * that does not resolve to exactly one operation with `request_body_malformed`
+   * before any handler runs. The dispatcher then runs only that operation.
+   * Unlike `authenticate`, a gate rejection is an HTTP 401 carrying
+   * `WWW-Authenticate: Signature error="<code>"`.
+   *
+   * A verified signature is surfaced to handlers as `ctx.authInfo`
+   * (`clientId: signing:<keyid>`). When `authenticate` is also set, its result
+   * stays authoritative and must carry the same `clientId`.
+   *
+   * Body capture: do not mount a body parser ahead of the adapter unless it
+   * records the raw bytes (`express.json({ verify: adapter.rawBodyVerify })`);
+   * a request whose raw body is unavailable is rejected.
+   */
+  preTransport?: AdcpPreTransport;
+
+  /**
+   * Canonical URL a client signed for this request (the signature's
+   * `@target-uri`). Defaults to the origin of `agentCard.url` plus the request's
+   * original path and query. Override when a path-rewriting proxy changes the
+   * path between the client and this process. Never derive it from a
+   * client-controlled `Host` / `X-Forwarded-*` header.
+   */
+  signedRequestsUrl?: (req: Request) => string;
+
+  /**
+   * Acknowledge that a seller advertising `signed-requests` / `request_signing`
+   * is not verifying signatures on this adapter (for example, an authenticating
+   * gateway in front of it does). Without this, `createA2AAdapter` refuses to
+   * construct when `server` advertises request signing but no gate is wired,
+   * because the advertisement would be false for A2A.
+   */
+  allowUnenforcedSignedRequests?: boolean;
 }
 
 /** Minimal Express app surface the adapter's `mount()` helper needs. */
@@ -286,6 +344,12 @@ export interface A2AAdapter {
   /** Returns the merged, validated agent card. */
   getAgentCard(): Promise<AgentCard>;
   /**
+   * `verify` hook for `express.json({ verify })` that records the exact request
+   * bytes on `req.rawBody`. Use it when a body parser must run ahead of the
+   * adapter on a signed-requests deployment.
+   */
+  rawBodyVerify: (req: IncomingMessage, res: unknown, buf: Buffer) => void;
+  /**
    * Wire all A2A routes onto an Express-compatible app in one call.
    * Eliminates the "card mounted at only one location" footgun: the
    * A2A SDK derives `${agentCard.url}/.well-known/agent-card.json` for
@@ -319,15 +383,27 @@ class RedactingA2ATaskStore implements TaskStore {
 // ---------------------------------------------------------------------------
 
 /**
+ * What the request-signature gate resolved for this request. Present only when
+ * a gate is active; the executor then dispatches exactly this operation.
+ */
+interface A2AGateState {
+  /** The operation the gate resolved, or `undefined` when the request carries none. */
+  readonly operation: string | undefined;
+  /** The principal a verified signature established, held apart from any `req.auth` set upstream. */
+  readonly signedAuth?: AdcpAuthInfo;
+}
+
+/**
  * Our `User` carries the full AdCP auth payload, not just the two
  * getters A2A's minimal `User` requires. The executor reads this back
  * out of `RequestContext.context.user`.
  */
 interface A2AAdcpUser extends User {
   readonly adcpAuthInfo?: AdcpAuthInfo;
+  readonly adcpGate?: A2AGateState;
 }
 
-function buildAuthenticatedUser(authInfo: AdcpAuthInfo): A2AAdcpUser {
+function buildAuthenticatedUser(authInfo: AdcpAuthInfo, gate?: A2AGateState): A2AAdcpUser {
   const clientId = authInfo.clientId;
   return {
     get isAuthenticated() {
@@ -337,10 +413,11 @@ function buildAuthenticatedUser(authInfo: AdcpAuthInfo): A2AAdcpUser {
       return clientId;
     },
     adcpAuthInfo: authInfo,
+    ...(gate && { adcpGate: gate }),
   };
 }
 
-function buildAnonymousUser(): UnauthenticatedUser {
+function buildAnonymousUser(gate?: A2AGateState): UnauthenticatedUser & { readonly adcpGate?: A2AGateState } {
   return {
     get isAuthenticated() {
       return false as const;
@@ -348,12 +425,18 @@ function buildAnonymousUser(): UnauthenticatedUser {
     get userName() {
       return 'anonymous';
     },
+    ...(gate && { adcpGate: gate }),
   };
 }
 
 function getAdcpAuthInfo(context: RequestContext['context']): AdcpAuthInfo | undefined {
   const user = context?.user as A2AAdcpUser | undefined;
   return user?.adcpAuthInfo;
+}
+
+function getGateState(context: RequestContext['context']): A2AGateState | undefined {
+  const user = context?.user as A2AAdcpUser | undefined;
+  return user?.adcpGate;
 }
 
 /**
@@ -407,6 +490,21 @@ function extractInvocation(message: Message, allowLegacyParameters = false): Ext
     throw new A2AInvocationError('DataPart must include an `input` object.');
   }
   return { skill, input: input as Record<string, unknown> };
+}
+
+/**
+ * The operation an existing task was created for: the `skill` of the first
+ * message in its history. `undefined` when the history carries no resolvable
+ * invocation, which a continuation must treat as a mismatch.
+ */
+function operationTaskWasCreatedFor(task: Task): string | undefined {
+  const first = task.history?.[0];
+  if (!first) return undefined;
+  try {
+    return extractInvocation(first, true).skill;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Thrown when an incoming Message doesn't match the AdCP-over-A2A convention. */
@@ -507,6 +605,35 @@ class AdcpA2AAgentExecutor implements AgentExecutor {
           message,
         });
         return;
+      }
+
+      // One source for the operation: when a signature gate resolved it from
+      // the raw bytes, the dispatcher runs that operation and nothing else. A
+      // difference means the two parsers disagree about the request, so
+      // reject it before any handler runs (adcp#7945, "one source, three uses").
+      const gate = getGateState(requestContext.context);
+      if (gate && gate.operation !== invocation.skill) {
+        this.logger.error('A2A adapter: dispatcher operation differs from the signature gate', {
+          gateOperation: gate.operation === undefined ? undefined : JSON.stringify(gate.operation.slice(0, 64)),
+          requestedToolName: JSON.stringify(invocation.skill.slice(0, 64)),
+        });
+        this.emitFailure(eventBus, taskId, contextId, {
+          reason: 'INVALID_REQUEST',
+          message: 'The request does not resolve to a single AdCP operation.',
+        });
+        return;
+      }
+      // Resuming a task must not run a different operation than the one it was
+      // created for.
+      if (requestContext.task) {
+        const createdFor = operationTaskWasCreatedFor(requestContext.task);
+        if (createdFor !== invocation.skill) {
+          this.emitFailure(eventBus, taskId, contextId, {
+            reason: 'INVALID_REQUEST',
+            message: 'A task continuation must use the operation the task was created for.',
+          });
+          return;
+        }
       }
 
       let response: McpToolResponse | undefined;
@@ -1062,6 +1189,244 @@ function validateAgentCard(card: AgentCard): void {
 }
 
 // ---------------------------------------------------------------------------
+// Request-signature gate
+// ---------------------------------------------------------------------------
+
+/** Cap on the request body the gate buffers; matches the A2A SDK's JSON parser default. */
+const MAX_GATED_BODY_BYTES = 100 * 1024;
+
+type GatedRequest = IncomingMessage & { rawBody?: string | Buffer; body?: unknown; _body?: boolean };
+
+class BodyTooLargeError extends Error {}
+
+function captureRawBody(req: IncomingMessage, _res: unknown, buf: Buffer): void {
+  (req as GatedRequest).rawBody = buf.toString('utf8');
+}
+
+/**
+ * The verifier that must run on the JSON-RPC path, or `undefined` when the
+ * seller does not verify signatures. Refuses to construct when the server
+ * advertises request signing but nothing here enforces it.
+ */
+function resolveSignatureGate(options: A2AAdapterOptions): AdcpPreTransport | undefined {
+  const symbols = options.server as unknown as Record<symbol, unknown>;
+  const attached = symbols[ADCP_PRE_TRANSPORT];
+  const gate = options.preTransport ?? (typeof attached === 'function' ? (attached as AdcpPreTransport) : undefined);
+  if (gate) return gate;
+  const state = symbols[ADCP_SIGNED_REQUESTS_STATE] as AdcpSignedRequestsState | undefined;
+  if ((state?.specialismClaimed || state?.capabilitySupported) && !options.allowUnenforcedSignedRequests) {
+    throw new Error(
+      'createA2AAdapter: the server advertises request signing (`signed-requests` / `request_signing.supported`) ' +
+        'but no signature verifier is wired for A2A, so `required_for` would not be enforced over A2A. ' +
+        'Configure `createAdcpServer({ signedRequests })`, pass the same verifier as `preTransport`, ' +
+        'or set `allowUnenforcedSignedRequests: true` if a gateway in front of this adapter enforces it.'
+    );
+  }
+  return undefined;
+}
+
+class InvalidRequestTargetError extends Error {}
+
+/**
+ * Origin of the public agent URL plus the request's original path and query.
+ * Only the path and query come from the request, and only in origin-form: an
+ * absolute-form request line (`POST https://elsewhere.example/a2a`) or a
+ * protocol-relative target (`//elsewhere.example/a2a`) would otherwise let a
+ * client choose the audience its signature is checked against.
+ */
+function signedRequestTargetUrl(req: Request, agentUrl: string, override: ((req: Request) => string) | undefined): URL {
+  if (override) return new URL(override(req));
+  const raw = req.originalUrl || req.url;
+  if (!raw.startsWith('/') || raw.startsWith('//')) throw new InvalidRequestTargetError();
+  const requested = new URL(raw, 'http://placeholder.invalid');
+  return new URL(requested.pathname + requested.search, new URL(agentUrl).origin);
+}
+
+/**
+ * Wrap the SDK's JSON-RPC handler with the RFC 9421 gate. For every `POST`:
+ *
+ * 1. buffer the exact request bytes (`req.rawBody`) before any body parser can
+ *    reshape them;
+ * 2. resolve the AdCP operation from those bytes. A body that does not resolve
+ *    to exactly one operation is rejected with `request_body_malformed`,
+ *    signed or not, before any handler;
+ * 3. run the verifier, which enforces `required_for` /
+ *    `protocol_methods_required_for` and verifies signatures;
+ * 4. record the resolved operation so the executor dispatches only that one.
+ *
+ * Non-`POST` requests are not part of the JSON-RPC interface and go straight
+ * to the SDK handler.
+ */
+function createSignatureGate(opts: {
+  gate: AdcpPreTransport;
+  next: RequestHandler;
+  gateStates: WeakMap<object, A2AGateState>;
+  targetUrl: (req: Request) => URL;
+  logger: AdcpLogger;
+}): RequestHandler {
+  const { gate, next: sdkHandler, gateStates, targetUrl, logger } = opts;
+
+  const reject = (res: Response, code: 'request_body_malformed', message: string): void => {
+    res.status(401).set('WWW-Authenticate', `Signature error="${code}"`).json({ error: code, message });
+  };
+
+  /** Resolves `true` when the request may continue to the SDK handler. */
+  const run = async (req: Request, res: Response): Promise<boolean> => {
+    const gated = req as unknown as GatedRequest;
+    if (gated.rawBody === undefined) {
+      // The signature covers the bytes on the wire, and the gate reads them as
+      // sent. A compressed body cannot be resolved or verified as such.
+      const encoding = req.headers['content-encoding'];
+      if (encoding !== undefined && encoding.trim().toLowerCase() !== 'identity') {
+        res.status(415).json({
+          jsonrpc: '2.0',
+          id: null,
+          error: { code: -32600, message: 'Content-Encoding is not supported on a signed-requests endpoint.' },
+        });
+        return false;
+      }
+      try {
+        const body = await readBody(req);
+        if (body !== undefined) {
+          gated.rawBody = body;
+          // The SDK's `express.json()` skips a request whose stream is already
+          // finished (body-parser 2) or flagged parsed (body-parser 1); hand it
+          // the parsed form so it never re-reads the drained stream. An
+          // unparseable body is rejected by the resolver below.
+          try {
+            gated.body = JSON.parse(body);
+            gated._body = true;
+          } catch {
+            /* rejected below */
+          }
+        }
+      } catch (err) {
+        if (!(err instanceof BodyTooLargeError)) throw err;
+        res.status(413).json({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Request body too large.' } });
+        return false;
+      }
+    }
+    const captured = gated.rawBody as string | Buffer | undefined;
+    const rawBody = typeof captured === 'string' ? captured : captured?.toString('utf8');
+    if (rawBody === undefined) {
+      // A body parser mounted ahead of the adapter drained the stream without
+      // recording the bytes. That is a deployment error, not a client error,
+      // and nothing can be verified, so fail closed.
+      logger.error(
+        'A2A adapter: the raw request body is unavailable, so the signature gate cannot verify it. ' +
+          'Mount the adapter ahead of any body parser, or capture the bytes with ' +
+          '`express.json({ verify: adapter.rawBodyVerify })`.'
+      );
+      res.status(500).json({ error: 'raw_body_unavailable' });
+      return false;
+    }
+    gated.rawBody = rawBody;
+
+    let target: URL;
+    try {
+      target = targetUrl(req);
+    } catch (err) {
+      if (!(err instanceof InvalidRequestTargetError)) throw err;
+      res.status(400).json({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid request target.' } });
+      return false;
+    }
+    const targetPath = target.pathname + target.search;
+    const input = { rawBody, method: req.method, url: targetPath };
+    const operation = resolveRequestOperation(input);
+    if (isUnresolvableOperation(operation)) {
+      logger.error('A2A adapter: request body does not resolve to one operation', {
+        reason: describeUnresolvable(input) ?? 'unknown',
+      });
+      reject(res, 'request_body_malformed', 'Request body does not resolve to exactly one AdCP operation');
+      return false;
+    }
+
+    // Present the request to the verifier as the client addressed it: the
+    // signed `@target-uri` comes from server-owned configuration, never from a
+    // client-supplied Host header, and Express strips the mount path from
+    // `req.url`.
+    const originalUrl = req.url;
+    const stamped = req as unknown as IncomingMessage & { [ADCP_SERVE_REQUEST_CONTEXT]?: unknown };
+    const previousContext = stamped[ADCP_SERVE_REQUEST_CONTEXT];
+    stamped[ADCP_SERVE_REQUEST_CONTEXT] = { host: target.host.toLowerCase(), publicUrl: target.origin };
+    req.url = targetPath;
+    // The verifier records a verified signer on `req.auth` / `req.verifiedSigner`
+    // and refuses to overwrite a different principal. Upstream middleware
+    // (`express-jwt`, ...) may already own `req.auth` on this request, so run
+    // the gate on a clean slate, keep what it established in the gate state,
+    // and put the upstream values back.
+    const slots = req as unknown as { auth?: AdcpAuthInfo; verifiedSigner?: unknown };
+    const previousAuth = slots.auth;
+    const previousSigner = slots.verifiedSigner;
+    slots.auth = undefined;
+    slots.verifiedSigner = undefined;
+    let handled: boolean;
+    let signedAuth: AdcpAuthInfo | undefined;
+    try {
+      handled = await gate(req as unknown as IncomingMessage & { rawBody?: string }, res);
+      if (slots.verifiedSigner !== undefined) signedAuth = slots.auth;
+    } finally {
+      req.url = originalUrl;
+      stamped[ADCP_SERVE_REQUEST_CONTEXT] = previousContext;
+      slots.auth = previousAuth;
+      slots.verifiedSigner = previousSigner;
+    }
+    if (handled || res.headersSent) return false;
+
+    // The SDK dispatches `req.body`. A body parser mounted upstream may have
+    // decoded the same bytes differently (a non-UTF-8 `charset`), so hand it
+    // exactly what the gate resolved and verified.
+    gated.body = JSON.parse(rawBody);
+    gated._body = true;
+
+    gateStates.set(req, { operation, ...(signedAuth && { signedAuth }) });
+    return true;
+  };
+
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (req.method !== 'POST') {
+      sdkHandler(req, res, next);
+      return;
+    }
+    run(req, res).then(
+      proceed => {
+        if (proceed) sdkHandler(req, res, next);
+      },
+      err => {
+        // Fail closed: a gate that throws never falls through to the handler.
+        logger.error('A2A adapter: signature gate failed', { error: (err as Error)?.name || 'Error' });
+        if (!res.headersSent) res.status(500).json({ error: 'verifier_error' });
+      }
+    );
+  };
+}
+
+/**
+ * Read the request stream into a UTF-8 string, rejecting past the gate's body
+ * cap. Resolves `undefined` when a parser mounted ahead of the adapter already
+ * drained the stream: there is nothing left to read.
+ */
+function readBody(req: Request): Promise<string | undefined> {
+  if (req.readableEnded || (req.complete && !req.readable)) return Promise.resolve(undefined);
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_GATED_BODY_BYTES) {
+        req.removeAllListeners('data');
+        req.resume();
+        reject(new BodyTooLargeError());
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -1106,6 +1471,17 @@ export function createA2AAdapter(options: A2AAdapterOptions): A2AAdapter {
   // cannot desynchronize the advertised interfaces from the active handlers.
   const legacyCompat = { enabled: options.legacyCompat?.enabled !== false };
   const card = buildAgentCard(options.server, options.agentCard, legacyCompat);
+  const signatureGate = resolveSignatureGate(options);
+  if (signatureGate && !options.signedRequestsUrl) {
+    try {
+      new URL(card.supportedInterfaces[0]!.url);
+    } catch {
+      throw new Error(
+        'createA2AAdapter: request signing needs an absolute `agentCard.url` (the URL buyers sign), ' +
+          'or a `signedRequestsUrl` callback that returns it.'
+      );
+    }
+  }
   const handlerCard = structuredClone(card);
   if (handlerCard.capabilities?.extensions) {
     handlerCard.capabilities.extensions = handlerCard.capabilities.extensions.map(extension =>
@@ -1127,8 +1503,13 @@ export function createA2AAdapter(options: A2AAdapterOptions): A2AAdapter {
   // interoperate, then enforce the required AdCP extension for 1.0 in execute().
   const requestHandler = new DefaultRequestHandler(handlerCard, taskStore, executor, eventBusManager);
 
+  const gateStates = new WeakMap<object, A2AGateState>();
   const userBuilder = async (req: Request): Promise<User> => {
-    if (!options.authenticate) return buildAnonymousUser();
+    const gate = gateStates.get(req);
+    const signed = gate?.signedAuth;
+    if (!options.authenticate) {
+      return signed ? buildAuthenticatedUser(signed, gate) : buildAnonymousUser(gate);
+    }
     const authInfo = await options.authenticate(req);
     if (authInfo == null) {
       // Throwing an A2AError with an authentication code would give the
@@ -1141,10 +1522,31 @@ export function createA2AAdapter(options: A2AAdapterOptions): A2AAdapter {
       // the fallback path.
       throw new Error('A2A authentication failed');
     }
-    return buildAuthenticatedUser(authInfo);
+    if (signed) {
+      // Same rule as the MCP path: a verified signature and another
+      // credential must name the same principal.
+      if (authInfo.clientId !== signed.clientId) {
+        logger.error(
+          'A2A adapter: `authenticate` returned a principal that differs from the verified signer ' +
+            `(${signed.clientId}). Map the signer in \`authenticate\` (read \`req.verifiedSigner\`) or use makePrincipal.`
+        );
+        throw new Error('A2A authentication failed');
+      }
+      return buildAuthenticatedUser({ ...authInfo, extra: { ...authInfo.extra, ...signed.extra } }, gate);
+    }
+    return buildAuthenticatedUser(authInfo, gate);
   };
 
-  const jsonRpc = jsonRpcHandler({ requestHandler, userBuilder, legacyCompat });
+  const sdkJsonRpc = jsonRpcHandler({ requestHandler, userBuilder, legacyCompat });
+  const jsonRpc: RequestHandler = signatureGate
+    ? createSignatureGate({
+        gate: signatureGate,
+        next: sdkJsonRpc,
+        gateStates,
+        targetUrl: req => signedRequestTargetUrl(req, card.supportedInterfaces[0]!.url, options.signedRequestsUrl),
+        logger,
+      })
+    : sdkJsonRpc;
   const nativeAgentCardMiddleware = agentCardHandler({ agentCardProvider: async () => card });
   const legacyAgentCardMiddleware = agentCardHandler({ agentCardProvider: async () => handlerCard, legacyCompat });
   const agentCardMiddleware: RequestHandler = (req, res, next) => {
@@ -1192,6 +1594,7 @@ export function createA2AAdapter(options: A2AAdapterOptions): A2AAdapter {
     async getAgentCard() {
       return card;
     },
+    rawBodyVerify: captureRawBody,
     mount,
   };
 }

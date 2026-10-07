@@ -16,6 +16,7 @@ import type { SignerKey } from './signer';
 import { containsWebhookAuthentication } from './webhook-auth-detection';
 import { ADCP_VERSION } from '../version';
 import { requestSigningEncodingForVersion } from './content-digest';
+import { resolveRequestOperation } from './operation-resolution';
 export { requestSigningEncodingForVersion } from './content-digest';
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -62,14 +63,6 @@ function describeBody(body: unknown): string {
   return typeof body;
 }
 
-/** A2A JSON-RPC methods that carry an AdCP operation, across A2A 0.3 and 1.0. */
-const A2A_SEND_METHODS: ReadonlySet<string> = new Set([
-  'message/send',
-  'message/stream',
-  'SendMessage',
-  'SendStreamingMessage',
-]);
-
 /**
  * Extract the AdCP operation name from a JSON-RPC request body, if any.
  *
@@ -89,36 +82,12 @@ const A2A_SEND_METHODS: ReadonlySet<string> = new Set([
 export function extractAdcpOperation(body: unknown): string | undefined {
   const text = bodyToUtf8(body);
   if (!text) return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  if (!parsed || typeof parsed !== 'object') return undefined;
-  const rpc = parsed as { method?: unknown; params?: unknown };
-
-  if (rpc.method === 'tools/call') {
-    const params = rpc.params as { name?: unknown } | undefined;
-    return typeof params?.name === 'string' ? params.name : undefined;
-  }
-
-  if (typeof rpc.method === 'string' && A2A_SEND_METHODS.has(rpc.method)) {
-    const params = rpc.params as { message?: { parts?: unknown } } | undefined;
-    const parts = params?.message?.parts;
-    if (!Array.isArray(parts)) return undefined;
-    for (const part of parts) {
-      if (part && typeof part === 'object') {
-        const p = part as { kind?: unknown; data?: { skill?: unknown } };
-        const isDataPart = p.kind === undefined || p.kind === 'data';
-        if (isDataPart && typeof p.data?.skill === 'string') {
-          return p.data.skill;
-        }
-      }
-    }
-  }
-
-  return undefined;
+  // The seller resolves the operation from the SAME rules (sole DataPart for
+  // A2A, `params.name` for MCP), so the buyer never decides whether to sign on
+  // the basis of a different Part than the seller will dispatch. A body the
+  // seller treats as unresolvable has no operation here either.
+  const operation = resolveRequestOperation({ rawBody: text, method: 'POST' });
+  return typeof operation === 'string' ? operation : undefined;
 }
 
 /**

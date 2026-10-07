@@ -347,6 +347,10 @@ npx @adcp/sdk@adcp-3.2 grade request-signing https://sandbox.agent.example/mcp -
 vectors. Library callers can select
 the same set with `gradeRequestSigning(agentUrl, { signingProfileVersion: '3.2' })`.
 
+#### A2A operation-resolution vectors (`--transport a2a`)
+
+`--transport a2a` also grades the A2A operation-resolution vectors (adcp#7945, GHSA-frxv-c96c-4vqw): `required_for` must be enforced against the operation named by the invocation DataPart's `skill`, not the JSON-RPC method, so an unsigned `SendMessage` carrying `create_media_buy` is rejected with `request_signature_required` and a body that does not resolve to exactly one operation is rejected with `request_body_malformed`. Unlike the other vectors these go out byte-for-byte (the defect is in the body) to the JSON-RPC endpoint your Agent Card declares; the four signed ones are re-signed over that URL. Rows are prefixed `a2a/` and tagged by tier: `contradiction-resolution` is MUST for a 3.2 verifier, `hardening` is SHOULD in 3.2.x and MUST from 3.3. Both count as failures; the summary under the table splits them. Pass `--required-for create_media_buy` (and `--protocol-methods-required-for SendMessage` for `negative/007`) so vectors for operations you do not require skip instead of failing. The two signed `create_media_buy` positives need `--allow-live-side-effects` against a non-sandbox endpoint. If the compliance bundle predates the vectors (a repo checkout falls back to a vendored copy; elsewhere point `ADCP_A2A_VECTORS_DIR` at one), the run says "a2a operation-resolution vectors unavailable in this compliance bundle" and reports a skipped `a2a/operation-resolution-vectors` row rather than passing silently.
+
 #### Same vectors inside `storyboard run`
 
 The `signed_requests` storyboard synthesizes one step per vector and grades them through the same engine. `storyboard run` exposes the knobs that matter there:

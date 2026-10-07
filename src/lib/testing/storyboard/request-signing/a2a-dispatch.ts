@@ -314,3 +314,44 @@ export async function resolveA2aDispatchTarget(
   }
   throw new Error('the A2A client returned without issuing a dispatch probe; no endpoint was resolved');
 }
+
+/**
+ * The A2A HTTP+JSON binding base URL the agent card declares, if any.
+ *
+ * Reads the raw card (not the SDK's normalization, which exposes only the
+ * interfaces its own transports drive) and accepts both card dialects:
+ * `supportedInterfaces[]` with `protocolBinding` (1.0) and `url` /
+ * `preferredTransport` / `additionalInterfaces[]` with `transport` (0.3).
+ * Returns `undefined` when the card does not resolve or declares no
+ * HTTP+JSON interface; the caller treats that as "this binding is not served"
+ * rather than guessing a path.
+ */
+export async function resolveA2aHttpJsonEndpoint(
+  agentUrl: string,
+  options: A2aDispatchOptions = {}
+): Promise<string | undefined> {
+  const cardFetch = buildGuardedCardFetch(agentUrl, options);
+  const isHttpJson = (value: unknown): boolean =>
+    typeof value === 'string' && value.replace(/\s+/g, '').toUpperCase() === 'HTTP+JSON';
+  for (const cardUrl of buildCardUrls(agentUrl)) {
+    let card: Record<string, unknown>;
+    try {
+      const res = await cardFetch(cardUrl, { headers: { accept: 'application/json' }, redirect: 'manual' });
+      if (!res.ok) continue;
+      card = (await res.json()) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const interfaces: Array<Record<string, unknown>> = [];
+    for (const key of ['supportedInterfaces', 'additionalInterfaces'] as const) {
+      const list = card[key];
+      if (Array.isArray(list)) interfaces.push(...list.filter((i): i is Record<string, unknown> => !!i));
+    }
+    if (typeof card.url === 'string') interfaces.push({ url: card.url, transport: card.preferredTransport });
+    const match = interfaces.find(
+      i => typeof i.url === 'string' && (isHttpJson(i.protocolBinding) || isHttpJson(i.transport))
+    );
+    if (match) return match.url as string;
+  }
+  return undefined;
+}

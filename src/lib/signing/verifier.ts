@@ -18,6 +18,7 @@ import { AgentResolverError } from './agent-resolver/errors';
 import { parseStrictJson, StrictJsonError } from './agent-resolver/strict-json';
 import { parseSignature, parseSignatureInput, type ParsedSignatureInput } from './parser';
 import { jwkToPublicKey, verifySignature } from './crypto';
+import { isUnresolvableOperation, type UnresolvableOperation } from './operation-resolution';
 import type { JwksResolver } from './jwks';
 import type { ReplayStore } from './replay';
 import type { RevocationStore } from './revocation';
@@ -45,8 +46,13 @@ export interface VerifyRequestOptions {
    * the verifier treats the operation as "not in any required_for list" and
    * returns an unsigned result rather than rejecting — callers in
    * always-verify mode (where every request is signed) can leave this blank.
+   *
+   * Pass {@link UNRESOLVABLE_OPERATION} when the request body does not resolve
+   * to exactly one operation (see `resolveRequestOperation`). The verifier
+   * then rejects with `request_body_malformed` before it looks at any
+   * signature header or capability list, whether or not the request is signed.
    */
-  operation?: string;
+  operation?: string | UnresolvableOperation;
   /**
    * Trusted endpoint release pin; never inferred from request payload data.
    * A 3.2+ pin parses `Signature` and `Content-Digest` strictly as RFC 8941
@@ -72,51 +78,20 @@ export async function verifyRequestSignature(
   const sigInputHeader = getHeaderValue(request.headers, 'Signature-Input');
   const sigHeader = getHeaderValue(request.headers, 'Signature');
 
+  // Pre-check 0: the request must resolve to exactly one operation. This runs
+  // before the header-pair checks and the `required_for` test, and whether or
+  // not the request is signed — an unresolvable body is never "an operation
+  // that is not in required_for".
+  if (isUnresolvableOperation(options.operation)) throw unresolvableOperationError();
+  const operation = options.operation;
+
   // Pre-check: both headers present or both absent.
   if (!sigInputHeader && !sigHeader) {
-    const operation = options.operation;
     // Precedence is intentionally fail-specific: AdCP tool required_for,
     // raw JSON-RPC protocol methods, then payload-driven webhook-auth
     // elevation. The specific signed-only contract should win before the
     // generic body scan runs.
-    if (operation && options.capability.required_for.includes(operation)) {
-      throw new RequestSignatureError(
-        'request_signature_required',
-        0,
-        `Operation "${operation}" requires a signed request`
-      );
-    }
-    const protocolMethodsRequiredFor = options.capability.protocol_methods_required_for ?? [];
-    if (protocolMethodsRequiredFor.length > 0 && exceedsUnsignedBodyInspectionCap(request.body)) {
-      throw new RequestSignatureError(
-        'request_signature_required',
-        0,
-        'Unsigned request body exceeds the protocol method inspection cap while protocol methods require signing'
-      );
-    }
-    const protocolMethods = jsonRpcProtocolMethods(request.body);
-    const requiredProtocolMethod = protocolMethods.find(method => protocolMethodsRequiredFor.includes(method));
-    if (requiredProtocolMethod) {
-      throw new RequestSignatureError(
-        'request_signature_required',
-        0,
-        `Protocol method "${requiredProtocolMethod}" requires a signed request`
-      );
-    }
-    // Payload-driven elevation: any request carrying webhook receiver
-    // credentials (task, reporting, artifact, or revocation callbacks) MUST
-    // be RFC 9421 signed, regardless of whether the operation appears in
-    // `required_for`
-    // (#webhook-security downgrade-resistance). A bearer-only channel
-    // would otherwise let an attacker who captured a token register or
-    // update webhook credentials and redirect callbacks to a hostile URL.
-    if (carriesWebhookAuthentication(request)) {
-      throw new RequestSignatureError(
-        'request_signature_required',
-        0,
-        'Requests carrying webhook authentication must be RFC 9421 signed'
-      );
-    }
+    assertUnsignedRequestAllowed(request.body, operation, options.capability);
     return { status: 'unsigned', verified_at: now };
   }
   if (!sigInputHeader || !sigHeader) {
@@ -419,6 +394,95 @@ function signatureEncodingCandidates(
   return ['legacy-base64url', 'rfc8941-base64'];
 }
 
+/** The `request_body_malformed` rejection for a body that resolves to no single operation. */
+export function unresolvableOperationError(): RequestSignatureError {
+  return new RequestSignatureError(
+    'request_body_malformed',
+    0,
+    'Request body does not resolve to exactly one AdCP operation'
+  );
+}
+
+/**
+ * Throw `request_signature_required` when an UNSIGNED request must be signed:
+ * its resolved operation is in `capability.required_for`, or its JSON-RPC
+ * method is in `capability.protocol_methods_required_for`, or it carries
+ * webhook authentication. Returns normally when none applies.
+ *
+ * "Unsigned" is the caller's contract: no `Signature` / `Signature-Input`
+ * header. The checks do not consult any fallback credential; a caller that
+ * lets a configured fallback authenticator satisfy `required_for` (the
+ * presence-gated composer) runs the pieces separately.
+ */
+export function assertUnsignedRequestAllowed(
+  body: string | undefined,
+  operation: string | undefined,
+  capability: Pick<VerifierCapability, 'required_for' | 'protocol_methods_required_for'>
+): void {
+  assertUnsignedOperationNotRequired(operation, capability);
+  assertUnsignedProtocolMethodNotRequired(body, capability);
+  assertUnsignedWebhookAuthenticationAbsent(body);
+}
+
+/** `required_for` half of {@link assertUnsignedRequestAllowed}. */
+export function assertUnsignedOperationNotRequired(
+  operation: string | undefined,
+  capability: Pick<VerifierCapability, 'required_for'>
+): void {
+  if (operation && capability.required_for.includes(operation)) {
+    throw new RequestSignatureError(
+      'request_signature_required',
+      0,
+      `Operation "${operation}" requires a signed request`
+    );
+  }
+}
+
+/** `protocol_methods_required_for` half of {@link assertUnsignedRequestAllowed}. */
+export function assertUnsignedProtocolMethodNotRequired(
+  body: string | undefined,
+  capability: Pick<VerifierCapability, 'protocol_methods_required_for'>
+): void {
+  const protocolMethodsRequiredFor = capability.protocol_methods_required_for ?? [];
+  if (protocolMethodsRequiredFor.length === 0) return;
+  if (exceedsUnsignedBodyInspectionCap(body)) {
+    throw new RequestSignatureError(
+      'request_signature_required',
+      0,
+      'Unsigned request body exceeds the protocol method inspection cap while protocol methods require signing'
+    );
+  }
+  const requiredProtocolMethod = jsonRpcProtocolMethods(body).find(method =>
+    protocolMethodsRequiredFor.includes(method)
+  );
+  if (requiredProtocolMethod) {
+    throw new RequestSignatureError(
+      'request_signature_required',
+      0,
+      `Protocol method "${requiredProtocolMethod}" requires a signed request`
+    );
+  }
+}
+
+/**
+ * Payload-driven elevation: any request carrying webhook receiver credentials
+ * (task, reporting, artifact, or revocation callbacks) MUST be RFC 9421
+ * signed, regardless of whether the operation appears in `required_for`
+ * (#webhook-security downgrade-resistance). A bearer-only channel would
+ * otherwise let an attacker who captured a token register or update webhook
+ * credentials and redirect callbacks to a hostile URL. Unlike `required_for`,
+ * a valid fallback credential does not satisfy this.
+ */
+export function assertUnsignedWebhookAuthenticationAbsent(body: string | undefined): void {
+  if (carriesWebhookAuthentication(body)) {
+    throw new RequestSignatureError(
+      'request_signature_required',
+      0,
+      'Requests carrying webhook authentication must be RFC 9421 signed'
+    );
+  }
+}
+
 function contentDigestEncodingCandidates(pinned: SfBinaryEncoding | undefined): readonly SfBinaryEncoding[] {
   // Legacy bundles contain both historical Base64URL digests and standards-
   // compliant RFC 8941 Base64 digests, so legacy and unpinned verifiers accept
@@ -696,8 +760,7 @@ function exceedsUnsignedBodyInspectionCap(body: string | undefined): boolean {
  * returns `true` — we can't prove absence of webhook auth within our DoS
  * budget, and oversized unsigned bodies are outside normal AdCP operation.
  */
-function carriesWebhookAuthentication(request: RequestLike): boolean {
-  const body = request.body;
+function carriesWebhookAuthentication(body: string | undefined): boolean {
   if (!body) return false;
   if (exceedsUnsignedBodyInspectionCap(body)) return true;
   let parsed: unknown;

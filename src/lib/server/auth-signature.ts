@@ -19,7 +19,7 @@
  *   verifyApiKey,
  *   anyOf,
  *   verifySignatureAsAuthenticator,
- *   mcpToolNameResolver,
+ *   adcpOperationResolver,
  * } from '@adcp/sdk/server';
  *
  * serve(createAgent, {
@@ -28,7 +28,7 @@
  *     verifySignatureAsAuthenticator({
  *       jwks, replayStore, revocationStore,
  *       capability: { supported: true, required_for: [], covers_content_digest: 'either' },
- *       resolveOperation: mcpToolNameResolver,
+ *       resolveOperation: adcpOperationResolver,
  *     }),
  *   ),
  * });
@@ -44,14 +44,27 @@ import type { JwksResolver } from '../signing/jwks';
 import { InMemoryReplayStore, type ReplayStore } from '../signing/replay';
 import { InMemoryRevocationStore, type RevocationStore } from '../signing/revocation';
 import type { VerifiedSigner, VerifierCapability, VerifyResult } from '../signing/types';
-import { verifyRequestSignature } from '../signing/verifier';
+import {
+  isUnresolvableOperation,
+  resolveRequestOperation,
+  describeUnresolvable,
+  type OperationResolutionInput,
+  type ResolvedOperation,
+} from '../signing/operation-resolution';
+import {
+  assertUnsignedOperationNotRequired,
+  assertUnsignedProtocolMethodNotRequired,
+  assertUnsignedWebhookAuthenticationAbsent,
+  unresolvableOperationError,
+  verifyRequestSignature,
+} from '../signing/verifier';
 import { markVerifiedHttpSig } from './decisioning/buyer-agent';
 import {
   AuthError,
+  authenticatorNeedsRawBody,
   type AuthPrincipal,
   type AuthResult,
   type Authenticator,
-  authenticatorNeedsRawBody,
   getServeRequestContext,
   tagAuthenticatorNeedsRawBody,
   tagAuthenticatorPresenceGated,
@@ -96,15 +109,20 @@ export interface VerifySignatureAsAuthenticatorOptions {
    * before this runs. Same semantics as
    * `ExpressMiddlewareOptions.resolveOperation` on {@link createExpressVerifier}.
    *
+   * Pass {@link adcpOperationResolver}: it resolves MCP `tools/call` and A2A
+   * `SendMessage` / `message/send` requests, and reports a body that does not
+   * resolve to exactly one operation as unresolvable, which the verifier
+   * rejects with `request_body_malformed`.
+   *
    * SECURITY: a resolver that always returns `undefined` disables
-   * `capability.required_for` enforcement for this authenticator. Since the
-   * bypass here is intentional (this adapter is for composition with other
-   * authenticators — see the module docstring), the fall-through still
-   * happens when the resolver returns `undefined`, so `required_for`
-   * enforcement should live in a separate `preTransport`-mounted verifier
-   * when composition is active.
+   * `capability.required_for` enforcement for this authenticator. This adapter
+   * is for composition with other authenticators (see the module docstring),
+   * so unsigned requests fall through to the next authenticator regardless;
+   * `required_for` enforcement on the unsigned path belongs to
+   * {@link requireSignatureWhenPresent}, which fails closed on an
+   * unresolvable body.
    */
-  resolveOperation: (req: IncomingMessage & { rawBody?: string }) => string | undefined;
+  resolveOperation: (req: IncomingMessage & { rawBody?: string }) => ResolvedOperation;
   /**
    * Override how the request's full URL is reconstructed. Use when the
    * server sits behind a TLS-terminating or path-rewriting load balancer
@@ -336,19 +354,35 @@ export interface RequireSignatureWhenPresentOptions {
    */
   requiredFor?: readonly string[];
   /**
-   * Extract the AdCP operation name (or any identifier that can be
-   * matched against `requiredFor`) from the incoming request.
-   *
-   * For MCP agents, pass the exported {@link mcpToolNameResolver} — it
-   * implements the standard `tools/call` → `params.name` parse. For A2A
-   * agents (or other non-JSON-RPC envelopes), supply a bespoke resolver.
-   *
-   * When `requiredFor` is set but `resolveOperation` is omitted OR
-   * returns `undefined`, the pre-check is skipped — better to let the
-   * downstream handler produce a precise `INVALID_REQUEST` than to
-   * reject every unsigned call as signature-required.
+   * JSON-RPC protocol methods (e.g. `CancelTask`, `tasks/cancel`) that MUST be
+   * signed, matching `capability.protocol_methods_required_for`. Matched
+   * against the JSON-RPC `method` only, never against the resolved operation.
+   * Like {@link requiredFor}, a valid fallback credential satisfies it.
    */
-  resolveOperation?: (req: IncomingMessage & { rawBody?: string }) => string | undefined;
+  protocolMethodsRequiredFor?: readonly string[];
+  /**
+   * Resolve the AdCP operation a request carries. Defaults to
+   * {@link adcpOperationResolver}, which understands MCP `tools/call` and A2A
+   * `SendMessage` / `SendStreamingMessage` / `message/send` / `message/stream`.
+   *
+   * A resolver may return:
+   * - an operation name, matched against {@link requiredFor};
+   * - `undefined` for a request that carries no AdCP operation (discovery
+   *   probes, `tasks/*`) — the request is not subject to {@link requiredFor};
+   * - {@link UNRESOLVABLE_OPERATION} for a body that does not resolve to
+   *   exactly one operation. The gate rejects it with `request_body_malformed`
+   *   before it looks at any signature header or credential, whether or not
+   *   the request is signed. An ambiguous body is never treated as "an
+   *   operation that is not in `requiredFor`".
+   *
+   * Omitting this option no longer disables the pre-check: a gate with
+   * `requiredFor` set and no resolver used to skip enforcement for every
+   * request. The default resolver is used instead. `requiredFor` and the
+   * resolver are only as good as each other — a resolver that returns
+   * `undefined` for A2A messages (such as {@link mcpToolNameResolver}) leaves
+   * `requiredFor` unenforced over A2A.
+   */
+  resolveOperation?: (req: IncomingMessage & { rawBody?: string }) => ResolvedOperation;
 }
 
 /**
@@ -371,8 +405,27 @@ export function requireSignatureWhenPresent(
   options: RequireSignatureWhenPresentOptions = {}
 ): Authenticator {
   const requiredFor = new Set(options.requiredFor ?? []);
-  const resolveOperation = options.resolveOperation;
+  const unsignedCapability = {
+    required_for: [...requiredFor],
+    ...(options.protocolMethodsRequiredFor
+      ? { protocol_methods_required_for: [...options.protocolMethodsRequiredFor] }
+      : {}),
+  };
+  // A gate that lists operations but names no resolver gets the default one:
+  // skipping resolution there would leave `requiredFor` unenforced.
+  const resolveOperation =
+    options.resolveOperation ??
+    (requiredFor.size > 0 || unsignedCapability.protocol_methods_required_for ? adcpOperationResolver : undefined);
   const combined: Authenticator = async req => {
+    const request = req as IncomingMessage & { rawBody?: string };
+    // Pre-check 0 (adcp#7945): the request must resolve to exactly one
+    // operation. Runs before the signature-header checks and before any
+    // credential is consulted, and whether or not the request is signed.
+    const operation = resolveOperation?.(request);
+    if (isUnresolvableOperation(operation)) {
+      logUnresolvable(request);
+      throw signatureAuthError(unresolvableOperationError());
+    }
     if (hasSignatureHeader(req)) {
       const result = await signatureAuth(req);
       if (result === null) {
@@ -382,6 +435,15 @@ export function requireSignatureWhenPresent(
         throw new AuthError('Signature declared but not recognized.');
       }
       return result;
+    }
+    const body = bodyText(request);
+    // Payload-driven elevation: webhook receiver credentials in an unsigned
+    // request MUST be rejected even when the caller holds a valid bearer, so
+    // this runs before the fallback can short-circuit.
+    try {
+      assertUnsignedWebhookAuthenticationAbsent(body);
+    } catch (err) {
+      throw asSignatureAuthError(err);
     }
     // Catch the fallback's throw so the `requiredFor` pre-check can run
     // regardless of fallback outcome. Without this, a caller presenting
@@ -409,33 +471,23 @@ export function requireSignatureWhenPresent(
     // signature was presented AND no valid fallback credential,
     // surface `request_signature_required` regardless of whether the
     // fallback threw (bad bearer) or returned null (no creds).
-    if (requiredFor.size > 0 && resolveOperation) {
-      const operation = resolveOperation(req as IncomingMessage & { rawBody?: string });
-      if (operation && requiredFor.has(operation)) {
-        throw new AuthError(`Signature required for ${operation}.`, {
-          cause: new RequestSignatureError(
-            'request_signature_required',
-            0,
-            `Operation ${operation} requires an RFC 9421 request signature when no other credentials are presented.`
-          ),
-        });
-      }
+    try {
+      assertUnsignedOperationNotRequired(operation, unsignedCapability);
+      assertUnsignedProtocolMethodNotRequired(body, unsignedCapability);
+    } catch (err) {
+      throw asSignatureAuthError(err);
     }
-    // Op not in requiredFor (or no resolver): rethrow the fallback's
-    // original error so the 401 carries the fallback's challenge
-    // (Bearer for bad-bearer, invalid_token for no-creds).
+    // Op not in requiredFor: rethrow the fallback's original error so the
+    // 401 carries the fallback's challenge (Bearer for bad-bearer,
+    // invalid_token for no-creds).
     if (fallbackThrew) throw fallbackError;
     return null;
   };
-  const anyChildNeedsRawBody = authenticatorNeedsRawBody(signatureAuth) || authenticatorNeedsRawBody(fallbackAuth);
-  // When `resolveOperation` is wired, it almost always reads
-  // `req.rawBody` to parse the JSON-RPC body — the SDK's documented
-  // pattern. If no child is tagged (test stubs, agents whose signature
-  // path is non-SDK), `serve()` won't buffer the body and
-  // `resolveOperation` silently sees `undefined`, bypassing
-  // `requiredFor`. Tag the combined authenticator whenever a resolver
-  // is present so buffering happens regardless of the child shapes.
-  if (anyChildNeedsRawBody || resolveOperation) {
+  // The resolver reads `req.rawBody`. If no child is tagged (test stubs,
+  // agents whose signature path is non-SDK), `serve()` would not buffer the
+  // body and the resolver would see nothing, so tag the combined authenticator
+  // whenever a resolver is in play.
+  if (resolveOperation || authenticatorNeedsRawBody(signatureAuth) || authenticatorNeedsRawBody(fallbackAuth)) {
     tagAuthenticatorNeedsRawBody(combined);
   }
   tagAuthenticatorPresenceGated(combined);
@@ -461,8 +513,10 @@ export interface RequireAuthenticatedOrSignedOptions {
    * declaration in `capabilities.request_signing.required_for`.
    */
   requiredFor?: readonly string[];
+  /** See {@link RequireSignatureWhenPresentOptions.protocolMethodsRequiredFor}. */
+  protocolMethodsRequiredFor?: readonly string[];
   /** See {@link RequireSignatureWhenPresentOptions.resolveOperation}. */
-  resolveOperation?: (req: IncomingMessage & { rawBody?: string }) => string | undefined;
+  resolveOperation?: (req: IncomingMessage & { rawBody?: string }) => ResolvedOperation;
 }
 
 /**
@@ -487,7 +541,7 @@ export interface RequireAuthenticatedOrSignedOptions {
  *   anyOf,
  *   verifySignatureAsAuthenticator,
  *   requireAuthenticatedOrSigned,
- *   mcpToolNameResolver,
+ *   adcpOperationResolver,
  *   MUTATING_TASKS,
  * } from '@adcp/sdk/server';
  *
@@ -495,11 +549,11 @@ export interface RequireAuthenticatedOrSignedOptions {
  *   authenticate: requireAuthenticatedOrSigned({
  *     signature: verifySignatureAsAuthenticator({
  *       jwks, replayStore, revocationStore, capability,
- *       resolveOperation: mcpToolNameResolver,
+ *       resolveOperation: adcpOperationResolver,
  *     }),
  *     fallback: anyOf(verifyApiKey({ keys }), verifyBearer({ jwksUri, issuer, audience })),
  *     requiredFor: [...MUTATING_TASKS],
- *     resolveOperation: mcpToolNameResolver,
+ *     resolveOperation: adcpOperationResolver,
  *   }),
  * });
  * ```
@@ -507,37 +561,55 @@ export interface RequireAuthenticatedOrSignedOptions {
 export function requireAuthenticatedOrSigned(options: RequireAuthenticatedOrSignedOptions): Authenticator {
   return requireSignatureWhenPresent(options.signature, options.fallback, {
     requiredFor: options.requiredFor,
+    protocolMethodsRequiredFor: options.protocolMethodsRequiredFor,
     resolveOperation: options.resolveOperation,
   });
 }
 
 /**
- * Default `resolveOperation` for MCP agents. Parses the buffered JSON-RPC
- * body on `req.rawBody` and returns `params.name` when `method === 'tools/call'`.
- * Returns `undefined` for non-`tools/call` methods, a missing body, or
- * malformed JSON — the same "skip the pre-check and let the handler produce
- * a precise error" semantics every other `resolveOperation` in the SDK
- * uses.
+ * Resolve the AdCP operation a request carries, for MCP and A2A alike
+ * (adcp#7945, "Operation resolution over A2A"). Pass it as `resolveOperation`
+ * on {@link verifySignatureAsAuthenticator}, {@link requireSignatureWhenPresent},
+ * {@link requireAuthenticatedOrSigned}, or `createExpressVerifier` from
+ * `@adcp/sdk/signing`; it is the default for the composers.
  *
- * Pass directly as `resolveOperation` on {@link verifySignatureAsAuthenticator},
- * {@link requireSignatureWhenPresent}, {@link requireAuthenticatedOrSigned},
- * or `createExpressVerifier` from `@adcp/sdk/signing`:
+ * | Request                                                                 | Result                         |
+ * |-------------------------------------------------------------------------|--------------------------------|
+ * | MCP `tools/call`                                                        | `params.name`                  |
+ * | A2A `SendMessage`, `SendStreamingMessage`, `message/send`, `message/stream` | `skill` of the sole DataPart |
+ * | any other JSON-RPC method (`tasks/*`, `CancelTask`, `initialize`, …)    | `undefined` (no operation)     |
+ * | non-`POST` request                                                      | `undefined`                    |
+ * | anything ambiguous                                                      | {@link UNRESOLVABLE_OPERATION} |
  *
- * ```ts
- * serve(createAgent, {
- *   authenticate: requireAuthenticatedOrSigned({
- *     signature: verifySignatureAsAuthenticator({
- *       jwks, replayStore, revocationStore, capability,
- *       resolveOperation: mcpToolNameResolver,
- *     }),
- *     fallback: anyOf(verifyApiKey({ keys }), verifyBearer({ jwksUri, issuer, audience })),
- *     requiredFor: [...MUTATING_TASKS],
- *     resolveOperation: mcpToolNameResolver,
- *   }),
- * });
- * ```
+ * Ambiguous means: an empty or non-JSON body on a `POST`, a JSON-RPC batch or
+ * non-object body, a missing `method`, duplicate object keys (compared after
+ * JSON string decoding), a case variant of a recognized member name (`Skill`,
+ * `Parts`), zero or more than one DataPart, a FilePart (`raw`, `url`, `file`),
+ * a Part with other than one content member or a `kind` that disagrees with
+ * it, `data` that is not an object, or a `skill` / `params.name` that is not a
+ * non-empty string. Matching is exact and case-sensitive.
  *
- * A2A agents use a different envelope — write a bespoke resolver there.
+ * The consumers reject {@link UNRESOLVABLE_OPERATION} with
+ * `request_body_malformed`, never as "an operation that is not in
+ * `required_for`". `req.rawBody` must hold the exact bytes the client sent.
+ */
+export function adcpOperationResolver(
+  req: OperationResolutionInput | (IncomingMessage & { rawBody?: string | Buffer })
+): ResolvedOperation {
+  return resolveRequestOperation(operationInput(req));
+}
+
+/**
+ * Resolver for MCP agents. Parses the buffered JSON-RPC body on `req.rawBody`
+ * and returns `params.name` when `method === 'tools/call'`; returns
+ * `undefined` for every other method, a missing body, or malformed JSON.
+ *
+ * **MCP only, and lenient.** It does not understand A2A: an A2A
+ * `SendMessage` resolves to `undefined`, so a `requiredFor` list guarded by
+ * this resolver is NOT enforced over A2A. It also treats an ambiguous body as
+ * "no operation". Prefer {@link adcpOperationResolver}, which resolves A2A and
+ * reports ambiguity as {@link UNRESOLVABLE_OPERATION}. Kept for callers that
+ * pin the previous behavior.
  */
 export function mcpToolNameResolver(req: { rawBody?: string }): string | undefined {
   const raw = req.rawBody;
@@ -550,6 +622,30 @@ export function mcpToolNameResolver(req: { rawBody?: string }): string | undefin
   } catch {
     return undefined;
   }
+}
+
+function operationInput(req: OperationResolutionInput | IncomingMessage): OperationResolutionInput {
+  const candidate = req as OperationResolutionInput;
+  return { rawBody: candidate.rawBody, method: candidate.method, url: candidate.url };
+}
+
+function bodyText(req: { rawBody?: string | Buffer }): string | undefined {
+  const raw = req.rawBody;
+  return typeof raw === 'string' ? raw : raw?.toString('utf8');
+}
+
+function signatureAuthError(err: RequestSignatureError): AuthError {
+  return new AuthError(`Signature rejected (${err.code}).`, { cause: err });
+}
+
+function asSignatureAuthError(err: unknown): unknown {
+  return err instanceof RequestSignatureError ? signatureAuthError(err) : err;
+}
+
+/** Server-side diagnostic; the client only sees the generic `request_body_malformed`. */
+function logUnresolvable(req: IncomingMessage & { rawBody?: string }): void {
+  const reason = describeUnresolvable(operationInput(req));
+  console.error(`[adcp/auth] request body does not resolve to one operation: ${reason ?? 'unknown'}`);
 }
 
 const SAFE_KEYID = /^[A-Za-z0-9._-]{1,256}$/;
