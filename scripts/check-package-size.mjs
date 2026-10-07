@@ -159,7 +159,8 @@ const MAX_PACKED_FILE_COUNT =
   13 +
   1 +
   5 +
-  8;
+  8 +
+  13; // GCS write-fence runtime/declaration modules and adoption guide.
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
