@@ -42,12 +42,18 @@ def stop(process):
     # Descendants can survive after the leader exits. Own and signal the group,
     # independently of the leader's return code, then reap the leader.
     try: os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError: pass
+    except ProcessLookupError:
+        # The owned process group may already have exited.
+        pass
     try: process.wait(timeout=15)
-    except subprocess.TimeoutExpired: pass
+    except subprocess.TimeoutExpired:
+        # Escalate to SIGKILL below after the graceful shutdown deadline.
+        pass
     finally:
         try: os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError: pass
+        except ProcessLookupError:
+            # The group can exit between the TERM and KILL signals.
+            pass
         process.wait(timeout=10)
 
 
@@ -96,7 +102,10 @@ def scrub_private_credentials(output, captured, credential_files, other):
     try:
         for filename in credential_files:
             try: captured.extend(credential_literals(json.loads(Path(filename).read_bytes())))
-            except (OSError, ValueError): pass
+            except (OSError, ValueError):
+                # Startup literals and bearer patterns still scrub logs when
+                # a credential file is unavailable or being rotated.
+                pass
         scrub(output, (*other, *captured))
         for file in output.rglob("*"):
             if file.is_file():
@@ -220,6 +229,7 @@ def run(upstream, installation, node, output, mode, gcs_input, wheel, grant_hook
                     ready = json.loads(ready_file.read_bytes())
                     break
                 except json.JSONDecodeError:
+                    # Retry a partially written readiness file until the deadline.
                     pass
             time.sleep(0.1)
         require(Path(ready["node"]["executable"]).resolve() == node.resolve(), "owned Node executable")

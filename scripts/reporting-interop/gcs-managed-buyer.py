@@ -208,7 +208,7 @@ async def run(url, destination, fixture_root, mode):
         dropped = DropCommittedResponse(client)
         if billing:
             try:
-                result = await reconcile_reporting(dropped, request, resource_reader=reader, expected_periods=[expected],
+                await reconcile_reporting(dropped, request, resource_reader=reader, expected_periods=[expected],
                                           reporting_capabilities=reporting_capabilities,
                                           now=datetime.now(timezone.utc))
             except LostResponse:
@@ -241,19 +241,21 @@ async def run(url, destination, fixture_root, mode):
         try:
             await reader.read(str(materialization.resource.location), max_bytes=1024 * 1024)
         except FileNotFoundError:
+            # The SDK reader must refuse the revoked resource.
             pass
         else:
             raise ValueError("revoked resource remains readable")
         # Bypass the SDK tombstone reader for this control: old provider bytes
         # themselves must be gone, even while the reader's prefix IAM survives.
         from google.api_core.exceptions import NotFound
-        resource_wire = wire(materialization.resource)
         reporting_objects = {key: generation for key, generation in reader.observed.items() if key.startswith(reader.grant['objectPrefix'])}
         require(len(reporting_objects) == 2, 'manifest and rows observed before revocation')
         for old_key, old_generation in reporting_objects.items():
             try:
                 reader.client.bucket(reader.grant['bucket']).blob(old_key, generation=old_generation).download_as_bytes(if_generation_match=old_generation, raw_download=True, start=0, end=1024, timeout=15, retry=None)
-            except NotFound: pass
+            except NotFound:
+                # The native generation itself must be absent after revocation.
+                pass
             else: raise BuyerGateError('old native provider generation unavailable')
         retained = await client.get_reporting_status(GetReportingStatusRequest.model_validate({
             "account": account, "view": "revision", "reporting_revision_id": revision.reporting_revision_id,
