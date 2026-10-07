@@ -20,6 +20,20 @@ import type {
 } from './types';
 import { REPORTING_LEDGER_AUTHORITY } from './types';
 import {
+  assertReportingObjectWriteScope,
+  reportingObjectWritePlanFingerprint,
+  ReportingObjectWriteConflictError,
+  ReportingObjectWriteNotRevokedError,
+  type ReportingObjectWritePlanV1,
+  type ReportingObjectWriteScopeV1,
+  type ReportingObjectWriteCursorV1,
+  type ReportingObjectWriteV1,
+  type ReportingObjectWriteBindingV1,
+  type ReportingObjectWriteContextV1,
+  type ReportingObjectWriteStoreV1,
+  type ReportingObjectWriteAuthorityStoreV1,
+} from './object-writes';
+import {
   adjustmentReceiptEvidenceMatches,
   assertMaterializationOutcome,
   receiptEvidenceMatches,
@@ -354,7 +368,9 @@ export interface PostgresReportingManagedDeliveryStoreOptions {
   evidenceRetentionDays?: number;
 }
 
-export class PostgresReportingManagedDeliveryStore implements ReportingManagedDeliveryStore {
+export class PostgresReportingManagedDeliveryStore
+  implements ReportingManagedDeliveryStore, ReportingObjectWriteStoreV1, ReportingObjectWriteAuthorityStoreV1
+{
   private readonly evidenceRetentionDays: number | undefined;
   private readonly statusRetentionDays: number | undefined;
   private readonly pendingRecoveryWindowSeconds: number | undefined;
@@ -1896,6 +1912,277 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       : null;
   }
 
+  /** Freeze all writable names under the same locks as revokeDestination. */
+  async registerObjectWritePlan(
+    input: ReportingObjectWritePlanV1,
+    context: ReportingObjectWriteContextV1 = {}
+  ): Promise<'registered' | 'unchanged' | 'revoked'> {
+    const plan = structuredClone(input);
+    const fingerprint = reportingObjectWritePlanFingerprint(plan);
+    return this.transaction(async client => {
+      await advisoryLock(client, accountLock(plan.account_id));
+      await advisoryLock(client, authLock(plan.account_id, plan.destination_ref));
+      const authorized = await client.query(
+        `SELECT 1 FROM adcp_reporting_destination_authorizations
+         WHERE account_id = $1 AND destination_ref = $2 AND generation = $3 AND revoked_at IS NULL`,
+        [plan.account_id, plan.destination_ref, plan.generation]
+      );
+      if (!authorized.rowCount) return 'revoked';
+      await client.query(
+        `INSERT INTO adcp_reporting_object_write_bindings (account_id,destination_ref,generation,bucket,namespace_key)
+         VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+        [plan.account_id, plan.destination_ref, plan.generation, plan.provider.bucket, plan.provider.namespace_key]
+      );
+      const binding = await client.query<QueryRow & ReportingObjectWriteBindingV1>(
+        `SELECT bucket,namespace_key FROM adcp_reporting_object_write_bindings
+         WHERE account_id=$1 AND destination_ref=$2 AND generation=$3`,
+        [plan.account_id, plan.destination_ref, plan.generation]
+      );
+      if (
+        binding.rows[0]?.bucket !== plan.provider.bucket ||
+        binding.rows[0]?.namespace_key !== plan.provider.namespace_key
+      )
+        throw new ReportingObjectWriteConflictError();
+      const inserted = await client.query(
+        `INSERT INTO adcp_reporting_object_write_plans (account_id, destination_ref, generation, plan_id, fingerprint)
+         VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+        [plan.account_id, plan.destination_ref, plan.generation, plan.plan_id, fingerprint]
+      );
+      if (!inserted.rowCount) {
+        const existing = await client.query<QueryRow & { fingerprint: string }>(
+          `SELECT fingerprint FROM adcp_reporting_object_write_plans
+           WHERE account_id=$1 AND destination_ref=$2 AND generation=$3 AND plan_id=$4`,
+          [plan.account_id, plan.destination_ref, plan.generation, plan.plan_id]
+        );
+        if (existing.rows[0]?.fingerprint !== fingerprint) throw new ReportingObjectWriteConflictError();
+        return 'unchanged';
+      }
+      await client.query(
+        `INSERT INTO adcp_reporting_object_writes
+         (account_id,destination_ref,generation,plan_id,object_index,bucket,object_name,sha256,size_bytes)
+         SELECT $1,$2,$3,$4,(ordinality-1)::integer,value->>'bucket',value->>'object_name',value->>'sha256',
+           (value->>'size_bytes')::bigint FROM jsonb_array_elements($5::jsonb) WITH ORDINALITY`,
+        [
+          plan.account_id,
+          plan.destination_ref,
+          plan.generation,
+          plan.plan_id,
+          JSON.stringify(
+            plan.objects.map(({ bucket, object_name, sha256, size_bytes }) => ({
+              bucket,
+              object_name,
+              sha256,
+              size_bytes,
+            }))
+          ),
+        ]
+      );
+      return 'registered';
+    }, context.signal);
+  }
+
+  async listRevokedObjectWrites(
+    inputScope: ReportingObjectWriteScopeV1,
+    inputOptions: { after?: ReportingObjectWriteCursorV1; limit?: number } = {},
+    context: ReportingObjectWriteContextV1 = {}
+  ): Promise<Array<ReportingObjectWriteV1 & ReportingObjectWriteCursorV1>> {
+    const scope = structuredClone(inputScope);
+    const options = structuredClone(inputOptions);
+    assertReportingObjectWriteScope(scope);
+    const limit = options.limit ?? 100;
+    if (
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 1000 ||
+      (options.after &&
+        (!/^[a-f0-9]{64}$/.test(options.after.plan_id) ||
+          !Number.isSafeInteger(options.after.object_index) ||
+          options.after.object_index < 0 ||
+          options.after.object_index >= 128))
+    ) {
+      throw new Error('Invalid reporting object-write page');
+    }
+    return this.transaction(async client => {
+      await advisoryLock(client, accountLock(scope.account_id));
+      await advisoryLock(client, authLock(scope.account_id, scope.destination_ref));
+      const revoked = await client.query(
+        `SELECT 1 FROM adcp_reporting_destination_authorizations
+         WHERE account_id=$1 AND destination_ref=$2 AND generation=$3 AND revoked_at IS NOT NULL`,
+        [scope.account_id, scope.destination_ref, scope.generation]
+      );
+      if (!revoked.rowCount) throw new ReportingObjectWriteNotRevokedError();
+      const rows = await client.query<QueryRow & ReportingObjectWriteV1 & ReportingObjectWriteCursorV1>(
+        `SELECT plan_id,object_index,bucket,object_name,sha256,size_bytes::float8 AS size_bytes
+         FROM adcp_reporting_object_writes WHERE account_id=$1 AND destination_ref=$2 AND generation=$3 AND fenced_at IS NULL
+         AND ($4::text IS NULL OR (plan_id,object_index) > ($4,$5::integer))
+         ORDER BY plan_id,object_index LIMIT $6`,
+        [
+          scope.account_id,
+          scope.destination_ref,
+          scope.generation,
+          options.after?.plan_id ?? null,
+          options.after?.object_index ?? null,
+          limit,
+        ]
+      );
+      return rows.rows;
+    }, context.signal);
+  }
+
+  async markObjectWriteFenced(
+    input: ReportingObjectWriteScopeV1 & ReportingObjectWriteCursorV1 & { tombstone_generation: string },
+    context: ReportingObjectWriteContextV1 = {}
+  ): Promise<void> {
+    const frozen = structuredClone(input);
+    assertReportingObjectWriteScope(frozen);
+    if (
+      !/^[a-f0-9]{64}$/.test(frozen.plan_id) ||
+      !Number.isSafeInteger(frozen.object_index) ||
+      frozen.object_index < 0 ||
+      frozen.object_index >= 128 ||
+      !/^[1-9][0-9]{0,39}$/.test(frozen.tombstone_generation)
+    ) {
+      throw new Error('Invalid reporting object-write fence');
+    }
+    await this.transaction(async client => {
+      await advisoryLock(client, accountLock(frozen.account_id));
+      await advisoryLock(client, authLock(frozen.account_id, frozen.destination_ref));
+      const updated = await client.query(
+        `UPDATE adcp_reporting_object_writes object SET fenced_at=COALESCE(fenced_at,clock_timestamp()), tombstone_generation=$6
+         WHERE account_id=$1 AND destination_ref=$2 AND generation=$3 AND plan_id=$4 AND object_index=$5
+         AND (tombstone_generation IS NULL OR tombstone_generation=$6)
+         AND EXISTS (SELECT 1 FROM adcp_reporting_destination_authorizations authz
+           WHERE authz.account_id=object.account_id AND authz.destination_ref=object.destination_ref
+           AND authz.generation=object.generation AND authz.revoked_at IS NOT NULL)`,
+        [
+          frozen.account_id,
+          frozen.destination_ref,
+          frozen.generation,
+          frozen.plan_id,
+          frozen.object_index,
+          frozen.tombstone_generation,
+        ]
+      );
+      if (updated.rowCount !== 1) throw new Error('Reporting object-write fence is not eligible');
+    }, context.signal);
+  }
+
+  async getObjectWriteBinding(
+    input: ReportingObjectWriteScopeV1,
+    context: ReportingObjectWriteContextV1 = {}
+  ): Promise<ReportingObjectWriteBindingV1 | null> {
+    const scope = structuredClone(input);
+    assertReportingObjectWriteScope(scope);
+    return this.transaction(async client => {
+      await advisoryLock(client, accountLock(scope.account_id));
+      await advisoryLock(client, authLock(scope.account_id, scope.destination_ref));
+      const revoked = await client.query(
+        `SELECT 1 FROM adcp_reporting_destination_authorizations
+         WHERE account_id=$1 AND destination_ref=$2 AND generation=$3 AND revoked_at IS NOT NULL`,
+        [scope.account_id, scope.destination_ref, scope.generation]
+      );
+      if (!revoked.rowCount) throw new ReportingObjectWriteNotRevokedError();
+      const binding = await client.query<QueryRow & ReportingObjectWriteBindingV1>(
+        `SELECT bucket,namespace_key FROM adcp_reporting_object_write_bindings
+         WHERE account_id=$1 AND destination_ref=$2 AND generation=$3`,
+        [scope.account_id, scope.destination_ref, scope.generation]
+      );
+      return binding.rows[0] ?? null;
+    }, context.signal);
+  }
+
+  async probeObjectWriteAuthority(context: ReportingObjectWriteContextV1 = {}): Promise<boolean> {
+    await this.transaction(async client => {
+      await client.query(
+        `SELECT installation_id,schema_version FROM adcp_reporting_object_write_authority WHERE singleton AND schema_version=1`
+      );
+      await client.query(
+        `SELECT account_id,destination_ref,generation,bucket,namespace_key FROM adcp_reporting_object_write_bindings LIMIT 0`
+      );
+      await client.query(
+        `SELECT account_id,destination_ref,generation,plan_id,fingerprint FROM adcp_reporting_object_write_plans LIMIT 0`
+      );
+      await client.query(
+        `SELECT plan_id,object_index,bucket,object_name,sha256,size_bytes,fenced_at,tombstone_generation FROM adcp_reporting_object_writes LIMIT 0`
+      );
+    }, context.signal);
+    await this.getObjectWriteAuthorityId(context);
+    return true;
+  }
+
+  async getObjectWriteAuthorityId(context: ReportingObjectWriteContextV1 = {}): Promise<string> {
+    return this.transaction(async client => {
+      const result = await client.query<QueryRow & { installation_id: string }>(
+        `SELECT installation_id::text FROM adcp_reporting_object_write_authority WHERE singleton AND schema_version=1`
+      );
+      const id = result.rows[0]?.installation_id;
+      if (result.rowCount !== 1 || !id || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(id))
+        throw new Error('Reporting object-write authority migration is unavailable');
+      return id;
+    }, context.signal);
+  }
+
+  async getAuthorizedObjectWriteBinding(
+    input: ReportingObjectWriteScopeV1,
+    context: ReportingObjectWriteContextV1 = {}
+  ): Promise<ReportingObjectWriteBindingV1 | null> {
+    const scope = {
+      account_id: input.account_id,
+      destination_ref: input.destination_ref,
+      generation: input.generation,
+    };
+    assertReportingObjectWriteScope(scope);
+    return this.transaction(async client => {
+      const result = await client.query<QueryRow & ReportingObjectWriteBindingV1>(
+        `SELECT binding.bucket,binding.namespace_key FROM adcp_reporting_object_write_bindings binding
+         JOIN adcp_reporting_destination_authorizations authz USING (account_id,destination_ref,generation)
+         WHERE binding.account_id=$1 AND binding.destination_ref=$2 AND binding.generation=$3 AND authz.revoked_at IS NULL`,
+        [scope.account_id, scope.destination_ref, scope.generation]
+      );
+      return result.rows[0] ?? null;
+    }, context.signal);
+  }
+
+  async getObjectWritePlan(
+    input: ReportingObjectWriteScopeV1,
+    planId: string,
+    context: ReportingObjectWriteContextV1 = {}
+  ): Promise<ReportingObjectWritePlanV1 | null> {
+    const scope = {
+      account_id: input.account_id,
+      destination_ref: input.destination_ref,
+      generation: input.generation,
+    };
+    assertReportingObjectWriteScope(scope);
+    if (typeof planId !== 'string' || !/^[a-f0-9]{64}$/.test(planId))
+      throw new Error('Invalid reporting object-write plan identity');
+    return this.transaction(async client => {
+      const selected = await client.query<QueryRow & ReportingObjectWriteBindingV1 & { fingerprint: string }>(
+        `SELECT binding.bucket,binding.namespace_key,plan.fingerprint FROM adcp_reporting_object_write_plans plan
+         JOIN adcp_reporting_object_write_bindings binding USING (account_id,destination_ref,generation)
+         JOIN adcp_reporting_destination_authorizations authz USING (account_id,destination_ref,generation)
+         WHERE plan.account_id=$1 AND plan.destination_ref=$2 AND plan.generation=$3 AND plan.plan_id=$4 AND authz.revoked_at IS NULL`,
+        [scope.account_id, scope.destination_ref, scope.generation, planId]
+      );
+      if (!selected.rows[0]) return null;
+      const selectedBinding = selected.rows[0];
+      const objects = await client.query<QueryRow & ReportingObjectWriteV1>(
+        `SELECT bucket,object_name,sha256,size_bytes::float8 AS size_bytes FROM adcp_reporting_object_writes
+         WHERE account_id=$1 AND destination_ref=$2 AND generation=$3 AND plan_id=$4 ORDER BY object_index`,
+        [scope.account_id, scope.destination_ref, scope.generation, planId]
+      );
+      const plan: ReportingObjectWritePlanV1 = {
+        ...scope,
+        plan_id: planId,
+        provider: { bucket: selectedBinding.bucket, namespace_key: selectedBinding.namespace_key },
+        objects: objects.rows,
+      };
+      if (reportingObjectWritePlanFingerprint(plan) !== selectedBinding.fingerprint)
+        throw new ReportingObjectWriteConflictError();
+      return plan;
+    }, context.signal);
+  }
+
   async isAuthorizationCurrent(input: { account_id: string; destination_ref: string; generation: number }) {
     const result = await this.query(
       `SELECT 1 FROM adcp_reporting_destination_authorizations
@@ -2351,7 +2638,8 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       : null;
   }
 
-  private async transaction<T>(body: (client: PgClient) => Promise<T>): Promise<T> {
+  private async transaction<T>(body: (client: PgClient) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted();
     let client: PgClient;
     try {
       client = (await this.pool.connect()) as PgClient;
@@ -2361,9 +2649,25 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     let releaseError: Error | undefined;
     let transactionStarted = false;
     try {
+      signal?.throwIfAborted();
       await client.query('BEGIN');
       transactionStarted = true;
-      const value = await body(client);
+      if (signal) await client.query("SET LOCAL lock_timeout = '5s'; SET LOCAL statement_timeout = '10s'");
+      const guarded: PgClient = signal
+        ? {
+            query: async <Row extends QueryRow = QueryRow>(sql: string, values?: unknown[]) => {
+              signal.throwIfAborted();
+              const result = await client.query<Row>(sql, values);
+              signal.throwIfAborted();
+              return result;
+            },
+            release: () => {
+              throw new Error('Transaction body cannot release connection');
+            },
+          }
+        : client;
+      const value = await body(guarded);
+      signal?.throwIfAborted();
       await client.query('COMMIT');
       return value;
     } catch (cause) {

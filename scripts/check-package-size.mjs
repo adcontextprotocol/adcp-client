@@ -31,11 +31,17 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // as CJS + ESM + both declaration flavours (four artifacts, 3,354 unpacked bytes).
 // The measured tarball is 20,040,986 bytes; allow 5 KB for these artifacts and
 // compressor variance. File-count, unpacked, and schema budgets stay fixed.
+// The optional GCS write fence adds three dual-format module/declaration sets
+// and one guide. CI measured 20,060,226 compressed bytes; preserve 10 KB of
+// compressor margin for that additive surface. Other size budgets stay fixed.
+// The complete GCS adapter/private-reader surface adds six internal module sets
+// and a guide; the first measured combined artifact is 20,079,662 bytes.
+// Allow 35 KB above that candidate for final documentation and compressor variance.
 // Operation resolution over A2A (GHSA-frxv-c96c-4vqw) adds the shared
 // signing/operation-resolution module, the A2A gate in the adapter, and the
-// grader's A2A vector module. The measured tarball is 20,077,645 bytes; allow
-// 12 KB for these artifacts and compressor variance.
-const MAX_PACKED_TARBALL_BYTES = 20_090_000;
+// grader's A2A vector module (about 42 KB compressed on top of the GCS surface). The measured combined
+// tarball is 20,121,361 bytes; allow 14 KB for compressor variance.
+const MAX_PACKED_TARBALL_BYTES = 20_135_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -163,7 +169,9 @@ const MAX_PACKED_FILE_COUNT =
   1 +
   5 +
   8 +
-  8;
+  8 +
+  13 + // GCS write-fence runtime/declaration modules and adoption guide.
+  29; // GCS adapter, reader, validation, fence split, errors, I/O modules and guide.
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

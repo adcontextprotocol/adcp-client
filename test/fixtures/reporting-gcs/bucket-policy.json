@@ -1,0 +1,16 @@
+{
+  "softDeletePolicy": {
+    "retentionDurationSeconds": "0"
+  },
+  "iamConfiguration": {
+    "bucketPolicyOnly": {
+      "enabled": true,
+      "lockedTime": "2027-01-05T00:23:58.463Z"
+    },
+    "uniformBucketLevelAccess": {
+      "enabled": true,
+      "lockedTime": "2027-01-05T00:23:58.463Z"
+    },
+    "publicAccessPrevention": "enforced"
+  }
+}
