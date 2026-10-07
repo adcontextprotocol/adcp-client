@@ -33,12 +33,15 @@ import {
   reconcileReportingStatusLifecycleV1,
   retryReportingStatusNotificationsV1,
 } from './lifecycle';
+import { listAdjustmentMetadataFromStore, listRevisionMetadataFromStore } from './revision-metadata';
 import type {
   CreateReportingProducerOptionsV1,
+  ReportingLedgerAdjustmentMetadataV1,
   ReportingLedgerAdjustmentV1,
   ReportingFinalityV1,
   ReportingLedgerConfigurationV1,
   ReportingLedgerObligationV1,
+  ReportingLedgerRevisionMetadataV1,
   ReportingLedgerRevisionV1,
   ReportingLedgerStore,
   ReportingProducerV1,
@@ -333,8 +336,8 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
               );
             }
           }
-          const previous = await options.store.listRevisions(obligation.reporting_obligation_id);
-          const adjustments = await options.store.listAdjustments(obligation.reporting_obligation_id);
+          const previous = await listRevisionMetadataFromStore(options.store, obligation.reporting_obligation_id);
+          const adjustments = await listAdjustmentMetadataFromStore(options.store, obligation.reporting_obligation_id);
           const publicationCount = previous.length + adjustments.length;
           if (publicationCount > 0) {
             const scheduledAt = nextPublicationAt(obligation, publicationCount);
@@ -620,8 +623,8 @@ function planObligation(
 function sourceRequest(
   obligation: ReportingLedgerObligationV1,
   offering: ReportingSourceOfferingV1,
-  previous: readonly ReportingLedgerRevisionV1[],
-  adjustments: readonly ReportingLedgerAdjustmentV1[],
+  previous: readonly ReportingLedgerRevisionMetadataV1[],
+  adjustments: readonly ReportingLedgerAdjustmentMetadataV1[],
   now: Date
 ): ReportingSourceSliceRequestV1 {
   const latest = adjustments.at(-1) ?? previous.at(-1);
@@ -780,7 +783,7 @@ function buildRevision(
   manifestReference: ReportingLedgerRevisionV1['manifest'],
   manifest: ReportingSourceManifestV1,
   rows: Record<string, unknown>[],
-  previous: readonly ReportingLedgerRevisionV1[]
+  previous: readonly ReportingLedgerRevisionMetadataV1[]
 ): ReportingLedgerRevisionV1 {
   const revisionNumber = previous.length + 1;
   const revisionId = `rrev_${digest([
@@ -944,11 +947,11 @@ function canonicalRowsSha256(rows: readonly Record<string, unknown>[], primaryKe
 
 function buildAdjustment(
   obligation: ReportingLedgerObligationV1,
-  official: ReportingLedgerRevisionV1,
+  official: ReportingLedgerRevisionMetadataV1,
   manifestReference: ReportingLedgerAdjustmentV1['manifest'],
   manifest: ReportingSourceManifestV1,
   rows: Record<string, unknown>[],
-  previous: readonly ReportingLedgerAdjustmentV1[]
+  previous: readonly ReportingLedgerAdjustmentMetadataV1[]
 ): ReportingLedgerAdjustmentV1 {
   if (obligation.feedPurpose === 'billing') {
     canonicalRowsSha256(rows, obligation.canonicalization!.primaryKeys);
@@ -1118,8 +1121,8 @@ function subtractDecimal(left: string, right: string): string {
 }
 
 function effectiveControlTotals(
-  official: ReportingLedgerRevisionV1,
-  adjustments: readonly ReportingLedgerAdjustmentV1[]
+  official: ReportingLedgerRevisionMetadataV1,
+  adjustments: readonly ReportingLedgerAdjustmentMetadataV1[]
 ): Map<string, ReportingControlTotal> {
   const totals = new Map(official.wireRevision.control_totals.map(value => [value.name, { ...value }]));
   for (const adjustment of adjustments) {
@@ -1137,7 +1140,10 @@ function effectiveControlTotals(
   return totals;
 }
 
-function effectiveRowCount(officialRowCount: number, adjustments: readonly ReportingLedgerAdjustmentV1[]): number {
+function effectiveRowCount(
+  officialRowCount: number,
+  adjustments: readonly ReportingLedgerAdjustmentMetadataV1[]
+): number {
   return adjustments.reduce((count, adjustment) => {
     const delta = adjustment.wireAdjustment.control_total_deltas.find(value => value.name === 'row_count');
     return count + (delta ? Number(delta.value) : 0);
@@ -1149,7 +1155,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function assertPublicationProgress(
-  previous: ReportingLedgerRevisionV1 | ReportingLedgerAdjustmentV1 | undefined,
+  previous: ReportingLedgerRevisionMetadataV1 | ReportingLedgerAdjustmentMetadataV1 | undefined,
   manifest: ReportingSourceManifestV1
 ): void {
   if (!previous) return;

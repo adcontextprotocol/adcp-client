@@ -26,6 +26,7 @@ import {
 } from './types';
 import type {
   ReportingLedgerConfigurationV1,
+  ReportingLedgerAdjustmentMetadataV1,
   ReportingLedgerAdjustmentV1,
   ReportingLedgerConsumerStatusV1,
   ReportingLedgerConsumerStatementV1,
@@ -883,6 +884,17 @@ ${managedDueArm}       )
     return result.rows.map(row => clone(row.data));
   }
 
+  async listRevisionMetadata(obligationId: string, accountId?: string): Promise<ReportingLedgerRevisionMetadataV1[]> {
+    const result = await this.query<JsonRow<ReportingLedgerRevisionMetadataV1>>(
+      `SELECT revision.data - 'rows' AS data FROM adcp_reporting_revisions revision
+         JOIN adcp_reporting_obligations obligation ON obligation.obligation_id = revision.obligation_id
+        WHERE revision.obligation_id = $1 AND ($2::text IS NULL OR obligation.account_id = $2)
+        ORDER BY revision.revision_number, revision.revision_id`,
+      [obligationId, accountId ?? null]
+    );
+    return result.rows.map(row => clone(row.data));
+  }
+
   async commitAdjustment(adjustment: ReportingLedgerAdjustmentV1, lease: ReportingLedgerLeaseV1) {
     assertLeaseTarget(adjustment.reporting_obligation_id, lease);
     validateBoundRows(adjustment);
@@ -945,6 +957,15 @@ ${managedDueArm}       )
   async listAdjustments(obligationId: string): Promise<ReportingLedgerAdjustmentV1[]> {
     const result = await this.query<JsonRow<ReportingLedgerAdjustmentV1>>(
       `SELECT data FROM adcp_reporting_adjustments WHERE obligation_id = $1
+        ORDER BY adjustment_number, adjustment_id`,
+      [obligationId]
+    );
+    return result.rows.map(row => clone(row.data));
+  }
+
+  async listAdjustmentMetadata(obligationId: string): Promise<ReportingLedgerAdjustmentMetadataV1[]> {
+    const result = await this.query<JsonRow<ReportingLedgerAdjustmentMetadataV1>>(
+      `SELECT data - 'rows' AS data FROM adcp_reporting_adjustments WHERE obligation_id = $1
         ORDER BY adjustment_number, adjustment_id`,
       [obligationId]
     );

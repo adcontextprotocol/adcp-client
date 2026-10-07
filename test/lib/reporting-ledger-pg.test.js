@@ -292,6 +292,26 @@ describe('PostgresReportingLedgerStore', { skip: !DATABASE_URL && 'PostgreSQL UR
       ReportingLedgerContinuityError
     );
 
+    // Row-free listings return the same headers in order, scoped to the
+    // caller's account when one is supplied, without materializing rows.
+    const fullRevisions = await store.listRevisions(obligation.reporting_obligation_id);
+    const revisionMetadata = await store.listRevisionMetadata(obligation.reporting_obligation_id);
+    assert.deepEqual(
+      revisionMetadata,
+      fullRevisions.map(({ rows: _rows, ...metadata }) => metadata)
+    );
+    assert.deepEqual(
+      revisionMetadata.map(value => value.reporting_revision_id),
+      [revision.reporting_revision_id, officialId]
+    );
+    assert.ok(revisionMetadata.every(value => !('rows' in value)));
+    assert.equal(
+      (await store.listRevisionMetadata(obligation.reporting_obligation_id, request.account.account_id)).length,
+      2
+    );
+    assert.deepEqual(await store.listRevisionMetadata(obligation.reporting_obligation_id, 'acct_other'), []);
+    assert.deepEqual(await store.listAdjustmentMetadata(obligation.reporting_obligation_id), []);
+
     const issue = {
       issueId: 'rpti_pg_fixture',
       reporting_obligation_id: obligation.reporting_obligation_id,

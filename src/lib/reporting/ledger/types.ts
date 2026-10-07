@@ -216,6 +216,7 @@ export interface ReportingLedgerAdjustmentV1 {
 
 export type ReportingLedgerRevisionSnapshotV1 = Omit<ReportingLedgerRevisionV1, 'rows'>;
 export type ReportingLedgerRevisionMetadataV1 = Omit<ReportingLedgerRevisionV1, 'rows'>;
+export type ReportingLedgerAdjustmentMetadataV1 = Omit<ReportingLedgerAdjustmentV1, 'rows'>;
 export type ReportingLedgerAdjustmentSnapshotV1 = Omit<ReportingLedgerAdjustmentV1, 'rows'>;
 
 export interface ReportingLedgerConsumerStatusV1 {
@@ -838,11 +839,23 @@ export interface ReportingLedgerStore {
   /** Returns an exact row-bearing revision only when it belongs to the resolved account. */
   getRevision(reporting_revision_id: string, account_id: string): Promise<ReportingLedgerRevisionV1 | null>;
   listRevisions(reporting_obligation_id: string): Promise<ReportingLedgerRevisionV1[]>;
+  /**
+   * Optional: every retained revision for one obligation without
+   * materializing rows. The producer, lifecycle reconciler and status ingest
+   * prefer it and otherwise fall back to `listRevisions` with rows dropped.
+   * When `account_id` is supplied, only that account's revisions are returned.
+   */
+  listRevisionMetadata?(
+    reporting_obligation_id: string,
+    account_id?: string
+  ): Promise<ReportingLedgerRevisionMetadataV1[]>;
   commitAdjustment(
     adjustment: ReportingLedgerAdjustmentV1,
     lease: ReportingLedgerLeaseV1
   ): Promise<{ inserted: boolean; value: ReportingLedgerAdjustmentV1 }>;
   listAdjustments(reporting_obligation_id: string): Promise<ReportingLedgerAdjustmentV1[]>;
+  /** Optional row-free counterpart of `listAdjustments`, preferred when present. */
+  listAdjustmentMetadata?(reporting_obligation_id: string): Promise<ReportingLedgerAdjustmentMetadataV1[]>;
   putConsumerStatus(
     status: ReportingLedgerConsumerStatusV1
   ): Promise<{ inserted: boolean; value: ReportingLedgerConsumerStatusV1 }>;

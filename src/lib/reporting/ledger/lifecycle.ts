@@ -4,9 +4,11 @@ import { canonicalJsonV1 } from '../source';
 import { moreSevereReportingHealthV1, projectManagedDelivery } from './handler';
 import { compareReportingInstants } from './instant';
 import { projectReportingObligationHealthV1 } from './health';
+import { listAdjustmentMetadataFromStore, listRevisionMetadataFromStore } from './revision-metadata';
 import type { ReportingAdjustmentReceipt, ReportingReceipt } from '../../types';
 import type {
   ReportingLedgerIssueV1,
+  ReportingLedgerRevisionMetadataV1,
   ReportingLedgerRevisionV1,
   ReportingLedgerStatusTransitionV1,
   ReportingLedgerStore,
@@ -188,7 +190,7 @@ export async function reconcileReportingStatusLifecycleV1(
   // check about the row set, not a statement about an instant. `projected` is
   // what the obligation had AT the cutoff, and is what the health and the
   // managed fold are computed from.
-  const revisions = await input.store.listRevisions(obligation.reporting_obligation_id);
+  const revisions = await listRevisionMetadataFromStore(input.store, obligation.reporting_obligation_id);
   let projected = revisions;
   const projectCore = (at: string) =>
     projectReportingObligationHealthV1(
@@ -379,7 +381,7 @@ const CONSUMER_SCOPED_RECEIPT_ISSUE_CODES: ReadonlySet<string> = new Set([
 async function composeManagedLifecycleProjection(
   input: { store: ReportingLedgerStore; ledgerAsOf: string },
   obligation: Awaited<ReturnType<ReportingLedgerStore['getObligation']>> & object,
-  revisions: Awaited<ReturnType<ReportingLedgerStore['listRevisions']>>,
+  revisions: ReportingLedgerRevisionMetadataV1[],
   coreProjection: ReturnType<typeof projectReportingObligationHealthV1>
 ): Promise<{
   projection: ReturnType<typeof projectReportingObligationHealthV1>;
@@ -403,7 +405,7 @@ async function composeManagedLifecycleProjection(
   // committed corrections from a fast producer. `createdAt` remains the
   // fallback for a store that reports no visible set, where it is the only
   // instant available.
-  const stored = await input.store.listAdjustments(obligation.reporting_obligation_id);
+  const stored = await listAdjustmentMetadataFromStore(input.store, obligation.reporting_obligation_id);
   const visibleAdjustmentIds = managed.visibleAdjustmentIds;
   const adjustments = visibleAdjustmentIds
     ? stored.filter(value => visibleAdjustmentIds.includes(value.reporting_adjustment_id))
