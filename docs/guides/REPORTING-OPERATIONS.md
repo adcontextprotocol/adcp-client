@@ -192,3 +192,5 @@ timeouts still depend on healthy host clocks.
   retention changes with independent protocol and security reviewers.
 - Capture dashboards, pages, runbook ownership, restore evidence, and capacity
   headroom before enabling financial decisions.
+
+For the optional GCS provider write-fence primitive and its bucket policy, inventory retention and cancellation requirements, see [Durable GCS reporting write fence](REPORTING-GCS-FENCE.md). Complete managed delivery integration remains a separate step.

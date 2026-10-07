@@ -126,7 +126,9 @@ jobs:
           repository: adcontextprotocol/adcp-client-python
           ref: 68345b5043b1cd8bae973c3d2ba0c0e7e53b6294
           path: .context/reporting-python-harness
-          sparse-checkout: scripts/ci/reporting_interop
+          # Git archive can inspect objects outside its selected paths. A full
+          # pinned checkout keeps the bounded export local; export.py still
+          # verifies and exports only scripts/tests, excluding SDK source.
           persist-credentials: false
 
       - name: Setup Node.js

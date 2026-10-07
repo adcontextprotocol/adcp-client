@@ -32,6 +32,7 @@ Install the peer packages used by your application at versions satisfying these 
 | Peer | Supported range | Installation |
 | --- | --- | --- |
 | `@a2a-js/sdk` | `^1.0.1` | Required |
+| `@google-cloud/storage` | `^7.22.0 || ^8.2.0` | Optional |
 | `@modelcontextprotocol/sdk` | `^1.31.0` | Required |
 | `@opentelemetry/api` | `^1.0.0` | Optional |
 | `redis` | `^4.6.0 || ^5.0.0 || ^6.0.0` | Optional |
