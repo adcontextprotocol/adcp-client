@@ -7,7 +7,7 @@
  * DataPart, and a body that does not resolve to exactly one operation fails
  * closed. See adcp#7945 ("Operation resolution over A2A").
  */
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, after, beforeEach } = require('node:test');
 const assert = require('node:assert');
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
