@@ -9,11 +9,15 @@ const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 async function run({ packageRoot, fixtureRoot, peer }) {
   const req = createRequire(path.resolve(packageRoot, 'package.json'));
   const sdk = req('@adcp/sdk/reporting/consumer');
-  const { canonicalize, ADCP_VERSION } = req('@adcp/sdk');
+  const { canonicalize, ADCP_VERSION, COMPATIBLE_ADCP_VERSIONS } = req('@adcp/sdk');
   const fixture = JSON.parse(fs.readFileSync(path.join(fixtureRoot, 'reporting-interop/evidence-v1.json')));
   assert.equal(fixture.contract, 'reporting_evidence_interop_v1');
   assert.equal(fixture.version, 1);
-  assert.equal(ADCP_VERSION, fixture.adcp_schema_version);
+  assert.ok(COMPATIBLE_ADCP_VERSIONS.includes(fixture.adcp_schema_version));
+  assert.equal(
+    ADCP_VERSION.split('.').slice(0, 2).join('.'),
+    fixture.adcp_schema_version.split('.').slice(0, 2).join('.')
+  );
   const canonicalVectors = JSON.parse(
     fs.readFileSync(path.join(fixtureRoot, 'reporting-interop/canonical-json-v1.json'))
   ).vectors;
@@ -134,7 +138,8 @@ async function run({ packageRoot, fixtureRoot, peer }) {
   const output = {
     contract: fixture.contract,
     version: fixture.version,
-    adcp_schema_version: ADCP_VERSION,
+    // This is the immutable evidence contract; run.mjs records the tested SDK pin.
+    adcp_schema_version: fixture.adcp_schema_version,
     manifest_utf8_base64: manifest.toString('base64'),
     manifest_sha256: manifestDigest,
     revision_content_utf8_base64: revisionBytes.toString('base64'),

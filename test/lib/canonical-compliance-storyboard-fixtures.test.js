@@ -63,9 +63,9 @@ function assertCanonicalPackagedFixture({
   assert.equal(loadedVersion, fixtureSetProvenance.protocol_version);
   assert.equal(loadedComplianceDirectory, getComplianceCacheDir({ version: fixtureSetProvenance.protocol_version }));
   assert.equal(Object.isFrozen(fixtureSetProvenance.files[fixtureName]), true);
-  assert.equal(fixtureSetProvenance.protocol_version, '3.2.1');
-  assert.equal(fixtureSetProvenance.source_commit, 'c32bd78c5389753e3b8f3ffd8a1c04b777854d83');
-  assert.equal(fixtureSetProvenance.bundle_sha256, '00b682c32a36dcc439ccc5e4f5a842f1e08e7b71c85dbbb033a5544365f90287');
+  assert.equal(fixtureSetProvenance.protocol_version, '3.2.3');
+  assert.equal(fixtureSetProvenance.source_commit, 'dfc6ad602780c1cff4fe23e16e30a570900c89d7');
+  assert.equal(fixtureSetProvenance.bundle_sha256, 'cad841ddef4617fdb6eda130be7b471d9028123489b1384a7ca843ea97fd4ba5');
 }
 
 test('packaged consumers receive the exact canonical universal/principal storyboard', () => {

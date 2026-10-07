@@ -12,7 +12,6 @@ describe('version-aware tool JSON Schemas (#2678)', () => {
   it('selects distinct 3.0, 3.1, and 3.2 request schemas and reports the resolved release', () => {
     const v30 = getToolInputSchema('create_media_buy', { adcpVersion: '3.0' });
     const v31 = getToolInputSchema('create_media_buy', { adcpVersion: '3.1' });
-    const v32 = getToolInputSchema('create_media_buy', { adcpVersion: '3.2.1' });
 
     assert.strictEqual(v30.bundleKey, '3.0');
     assert.strictEqual(v30.resolvedVersion, '3.0.25');
@@ -24,10 +23,13 @@ describe('version-aware tool JSON Schemas (#2678)', () => {
     assert.strictEqual(v31.schema.properties.adcp_major_version, undefined);
     assert.ok(v31.schema.properties.paused);
 
-    assert.strictEqual(v32.bundleKey, '3.2');
-    assert.strictEqual(v32.resolvedVersion, '3.2.1');
-    assert.strictEqual(v32.schema.deprecated, true);
-    assert.deepStrictEqual(v32.schema['x-superseded-by'], ['buy_products', 'accept_proposal']);
+    for (const adcpVersion of ['3.2.1', '3.2.2', '3.2.3']) {
+      const v32 = getToolInputSchema('create_media_buy', { adcpVersion });
+      assert.strictEqual(v32.bundleKey, '3.2');
+      assert.strictEqual(v32.resolvedVersion, '3.2.3');
+      assert.strictEqual(v32.schema.deprecated, true);
+      assert.deepStrictEqual(v32.schema['x-superseded-by'], ['buy_products', 'accept_proposal']);
+    }
   });
 
   it('returns protocol-authored response documents and independent caller-owned objects', () => {

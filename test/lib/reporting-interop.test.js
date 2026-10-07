@@ -23,6 +23,11 @@ test('shared reporting vectors independently inspect the manifest and construct 
     canonical_utf8_hex: vector.canonical_utf8_hex,
     receipt: vector.expected_python_receipt ?? vector.expected_receipt,
   }));
+  await run({
+    packageRoot: path.resolve(__dirname, '../..'),
+    fixtureRoot: path.resolve(__dirname, '../fixtures'),
+    peer,
+  });
   peer.adjustments[0].receipt.observed_adjustment_sha256 = '0'.repeat(64);
   await assert.rejects(
     run({

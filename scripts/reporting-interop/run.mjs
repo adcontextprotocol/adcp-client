@@ -31,6 +31,9 @@ async function main() {
     contract: 'reporting_evidence_interop_v1',
     fixture_version: 1,
     adcp_schema_version: pins.adcp_schema_version,
+    fixture_adcp_schema_version: JSON.parse(
+      await readFile(path.join(root, 'test/fixtures/reporting-interop/evidence-v1.json'))
+    ).adcp_schema_version,
     node: process.version,
     python_version: pins.python_version,
     python_harness_commit: pins.python_harness_commit,

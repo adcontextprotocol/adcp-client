@@ -1,8 +1,8 @@
-// AUTO-GENERATED FROM schemas/cache/3.2.1/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.2.3/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.2.1.
+ * Manifest-derived constants for AdCP 3.2.3.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
@@ -12,8 +12,8 @@
  * previously lived in `src/lib/utils/capabilities.ts` and
  * `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.2.1/manifest.json` (adcp_version: 3.2.1, generated_at:
- * 2026-10-01T01:52:17.954Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.2.3/manifest.json` (adcp_version: 3.2.3, generated_at:
+ * 2026-10-07T17:05:39.739Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -59,9 +59,9 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     suggestion: "replace the stale reference with error.details.current_account, refresh through list_accounts, and retry with a fresh idempotency key"
   },
   "ACCOUNT_NOT_FOUND": {
-    description: "The account reference could not be resolved.",
+    description: "The account reference could not be resolved: an account_id that does not exist, a buyer-declared natural key the seller has not provisioned, or an account outside the caller's authorized set. Sellers return it on tasks where account is optional too, rather than ignoring the reference, unless the seller lazily provisions it.",
     recovery: "terminal",
-    suggestion: "verify account via list_accounts or contact seller"
+    suggestion: "for a natural key, provision through sync_accounts or omit account for public discovery; for an account_id, verify via list_accounts or contact seller"
   },
   "ACCOUNT_PAYMENT_REQUIRED": {
     description: "Account has an outstanding balance requiring payment before new buys.",

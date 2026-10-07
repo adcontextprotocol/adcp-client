@@ -351,7 +351,7 @@ const requestSigningErrorCodeMetadata = {
   },
   "request_body_malformed": {
     "recovery": "correctable",
-    "suggestion": "emit strict unambiguous JSON without duplicate keys and re-sign the body"
+    "suggestion": "emit strict unambiguous JSON without duplicate keys, with exactly one A2A DataPart carrying a skill, and sign the body again if the request is signed"
   },
   "request_signature_replayed": {
     "recovery": "correctable",

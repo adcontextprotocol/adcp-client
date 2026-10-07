@@ -1606,7 +1606,7 @@ Flow: `get_adcp_capabilities → list_products → create_media_buy → validate
 Flow: `get_adcp_capabilities → sync_accounts → sync_governance → get_products → create_media_buy → update_media_buy → get_media_buy_delivery`
 
 **Guaranteed media buy with human IO approval** — Seller agent that requires human-in-the-loop IO signing before guaranteed media buys go live.
-Flow: `get_adcp_capabilities → sync_accounts → get_products → create_media_buy → get_media_buys → sync_creatives → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → get_products → comply_test_controller → create_media_buy → get_task_status → comply_test_controller → get_task_status → get_media_buys → sync_creatives → get_media_buy_delivery`
 
 **Non-guaranteed auction-based media buy** — Seller agent for auction-based, non-guaranteed buying where the buyer sets bid prices and budgets.
 Flow: `get_adcp_capabilities → get_products → create_media_buy → get_media_buys → update_media_buy → get_media_buy_delivery`
@@ -1877,7 +1877,7 @@ Agents use the `recovery` classification to decide what to do: `transient` → r
 | `ACCOUNT_AMBIGUOUS` | correctable | Natural key resolves to multiple accounts. |
 | `ACCOUNT_IDENTITY_CONFLICT` | correctable | The complete operator_identity requested through sync_accounts would rekey the account onto a natural key already owned by another account. The seller MUST reject the change atomically, MUST NOT merge the accounts, and MUST preserve both accounts and every account-scoped resource unchanged. Distinct from CONFLICT, which reports a transient stale revision or concurrent write. |
 | `ACCOUNT_MOVED` | correctable | An authorized caller used a former natural key that was tombstoned after the same account was rekeyed through sync_accounts. The seller MUST return the current canonical reference in error.details.current_account, conforming to error-details/account-moved.json, and MUST NOT provision or resolve a second account from the former key. Sellers retain the tombstone while the account or any account-scoped historical resources are retained. To avoid a cross-tenant existence oracle, sellers return ACCOUNT_MOVED only when the caller is authorized to resolve the current account; otherwise they return ACCOUNT_NOT_FOUND. |
-| `ACCOUNT_NOT_FOUND` | terminal | The account reference could not be resolved. |
+| `ACCOUNT_NOT_FOUND` | terminal | The account reference could not be resolved: an account_id that does not exist, a buyer-declared natural key the seller has not provisioned, or an account outside the caller's authorized set. Sellers return it on tasks where account is optional too, rather than ignoring the reference, unless the seller lazily provisions it. |
 | `ACCOUNT_PAYMENT_REQUIRED` | terminal | Account has an outstanding balance requiring payment before new buys. |
 | `ACCOUNT_REQUIRED` | correctable | The service must resolve the commercial account before it can determine governance applicability, but the request and referenced resource do not identify one. |
 | `ACCOUNT_SETUP_REQUIRED` | correctable | Natural key resolved but the account needs setup before use. |

@@ -5,7 +5,7 @@ routes it can still **call**. A 3.2 seller should make the compact lifecycle the
 obvious path for new buyers without breaking a 3.0 or 3.1 buyer that already
 calls the established names.
 
-The SDK is pinned to the signed `3.2.1` bundle. It retains the converged
+The SDK is pinned to the signed `3.2.3` bundle. It retains the converged
 RC.0 product-identity, daypart-timezone, and flat-rate loop-position and
 slot-span surface, and adds the Reliable Reporting 1.0 core, managed-delivery,
 and reconciled-billing schema contracts. Beta.5 introduced the normative async identity,
