@@ -126,7 +126,11 @@ jobs:
           repository: adcontextprotocol/adcp-client-python
           ref: 68345b5043b1cd8bae973c3d2ba0c0e7e53b6294
           path: .context/reporting-python-harness
-          sparse-checkout: scripts/ci/reporting_interop
+          # export.py verifies both trees against their pinned Git blobs. Load
+          # them here so its bounded archive step never lazily fetches blobs.
+          sparse-checkout: |
+            scripts
+            tests
           persist-credentials: false
 
       - name: Setup Node.js
