@@ -1,0 +1,185 @@
+{
+  "date": "2026-10-07",
+  "scope": "Unpublished full GCS managed reporting adapter and first-class private TypeScript readers. Independent published Python integration is recorded separately.",
+  "status": "passed",
+  "source_base_commit": "1cb93359b2054782f987235b7f8dfc0afbcb033e",
+  "source_file_sha256": {
+    ".changeset/private-gcs-managed-delivery.md": "af5d7783b12b514cd6df24d88feec1a6ee80f3491ba911be0eca20b8b33ef137",
+    "docs/guides/REPORTING-GCS-MANAGED.md": "254f1efa3a1c43bca5675f1ea131f0e9dc42f5cc0f183e25f7f6b23cd6a9855e",
+    "docs/guides/REPORTING-OPERATIONS.md": "124b1e4db0378aea7cc2fd9cdbce0aca5de89e79634ab99047ed0fd3a4fa6ce7",
+    "scripts/check-package-size.mjs": "4893854d0e57cc7a0895b0f248e602c203bfc509bb10525efe859d37b1f2a5b9",
+    "scripts/reporting-interop/gcs-managed.cjs": "ce278fcaf7de2ed04ce53ecf7e8528eb46df5aa631699e6de12b8daeb767c3ad",
+    "scripts/reporting-interop/managed-seller.cjs": "1a697734884e9bce93df0c796a12cf92af7595dc6f6114d85a98bcccba62547d",
+    "src/lib/canonical-references/index.ts": "6085e3d6fff9d60a306b8efcf1ac7d809a81d3e40cc4c2d2053ce374967ffa07",
+    "src/lib/reporting/gcs/adapter.ts": "6dda58d14c9a958a463a697367bab0f1bc70aa14b895e219222e1888ec3803e0",
+    "src/lib/reporting/gcs/errors.ts": "aa8c1a81ef8698f878a762241b5927340a5bf9046539e5f4a4a64a2d530ad1f0",
+    "src/lib/reporting/gcs/fence.ts": "f9a260aa384e433408b9df4a4911a6a6f96f33890f6564e0132af54a1b2798ab",
+    "src/lib/reporting/gcs/index.ts": "23c8439f1ca0c4da3deb9c731a0f62784968c492be01b3c9f07604010aa59a5a",
+    "src/lib/reporting/gcs/io.ts": "6bd85b2d8e1f6ade752db70fde2a51b957725c6f557b44f8de7db0b906745fad",
+    "src/lib/reporting/gcs/reader.ts": "0c7ccc6b3e163ff8dc91abf72d4f990e2b872dae922d7de9c3da3612c0fc08e7",
+    "src/lib/reporting/gcs/validation.ts": "d30a662667510663d862b58b0532d8d3716cf3c4682f6074ae9bb3a611f408ba",
+    "src/lib/reporting/ledger/handler.ts": "d7e0f5591fca78559c3872cbb48f732b79057221b1de42e49a2062d3728cef07",
+    "src/lib/reporting/ledger/managed-postgres.ts": "243ee457fd1475db660a8ffcf7fa666cf2465bdfe4b60f52529fca8da6f10945",
+    "src/lib/reporting/ledger/object-writes.ts": "3dbe6caa880409fb71c6b0b55cdb69bf5c8635b08bf18753d8f5915d977968b8",
+    "test/fixtures/canonical-private/child.json": "4e2f5c935fa3c0f966e30e2e892abc69471ff7480e149ba61fe068898146a0a1",
+    "test/fixtures/canonical-private/parent.json": "761e828098f8fff551e45ee443a8e174a8ee569d5d2776439907c9d975fb31f2",
+    "test/fixtures/types/reporting-gcs.ts": "59c58ebaa140a5b6e4d5f171388e77ae6560cb5c1b286f4c94b5ea45c9a19f71",
+    "test/lib/canonical-document-reader.test.js": "4e19b94927da9db22061df08992ae205fcd1c1be7daefe5d0dfb4c737792571b",
+    "test/lib/reporting-gcs-factory-pg.test.js": "cb06cb56e1a9e11f4d3daa6f618b76c41019a4a95a7d5b45c5626bc28bfa9c68",
+    "test/lib/reporting-gcs-pins.test.js": "8994f650a31d01a0da3260f6a766ff7ba8e8bb6f906e5b619d67e7fd6128747d",
+    "test/lib/reporting-gcs-reader-guards.test.js": "8f1425f72047c789e75164c3d3ae23f6c3bf58cd39fb9a2eb86fc6db10ba9864",
+    "test/lib/reporting-gcs-types.test.js": "482955af10dde047e372c06ddfe6dc2b5df960928ab4c6a7684609a6d3b0640a",
+    "test/lib/reporting-object-writes-pg.test.js": "98c04a287d2046b3267c813346286ff4a63fcacaedb0f7b9fc6f1d00dfd586a0"
+  },
+  "typescript_archive": {
+    "version_stamp": "14.4.0",
+    "published": false,
+    "sha256": "9f67066b71d063cbdfd6becad17885f3dbe61cfd20bdbf8f531b69d55643c61b"
+  },
+  "local_tests": {
+    "passed": 137,
+    "failed": 0,
+    "skipped": 0,
+    "commands": [
+      "REPORTING_LEDGER_PG_URL=PRIVATE_PG_URL node --test --test-timeout=60000 --test-force-exit test/lib/canonical-document-reader.test.js test/lib/canonical-reference-resolver.test.js test/lib/reporting-gcs-reader-guards.test.js test/lib/reporting-gcs-factory-pg.test.js test/lib/reporting-gcs-pins.test.js test/lib/reporting-gcs-types.test.js test/lib/reporting-object-writes-pg.test.js test/lib/reporting-managed-delivery-pg.test.js",
+      "node --test --test-timeout=60000 --test-force-exit test/lib/reporting-gcs-guards.test.js"
+    ]
+  },
+  "package_checks": [
+    "typecheck",
+    "format:check",
+    "build:lib",
+    "check:runtime-compat",
+    "check:packed-artifact",
+    "check:package-size",
+    "publint --strict",
+    "installed CJS/ESM strict declaration imports"
+  ],
+  "live_controls": {
+    "passed": 72,
+    "failed": 0,
+    "skipped": 0,
+    "result": {
+      "status": "passed",
+      "checks": [
+        {
+          "status": "passed",
+          "node": "v20.19.0",
+          "checks": [
+            "managed:host_callback_failures_fail_closed",
+            "managed:concurrent_exact_delivery_replay_after_discarded_response",
+            "managed:managed_worker_available_actual_provider_manifest",
+            "managed:forged_descriptors_and_open_cleanup_refused",
+            "managed:first_class_private_contract_inspection",
+            "managed:receipt_built_from_actual_provider_bytes",
+            "managed:principal_and_prefix_denied_before_provider_io",
+            "managed:actual_provider_corruption_rejected",
+            "managed:revoked_warm_contract_and_native_manifest_denied",
+            "billing:host_callback_failures_fail_closed",
+            "billing:concurrent_exact_delivery_replay_after_discarded_response",
+            "billing:managed_worker_available_actual_provider_manifest",
+            "billing:forged_descriptors_and_open_cleanup_refused",
+            "billing:first_class_private_contract_inspection",
+            "billing:receipt_built_from_actual_provider_bytes",
+            "billing:principal_and_prefix_denied_before_provider_io",
+            "billing:actual_provider_corruption_rejected",
+            "billing:revoked_warm_contract_and_native_manifest_denied",
+            "managed_empty:host_callback_failures_fail_closed",
+            "managed_empty:concurrent_exact_delivery_replay_after_discarded_response",
+            "managed_empty:managed_worker_available_actual_provider_manifest",
+            "managed_empty:forged_descriptors_and_open_cleanup_refused",
+            "managed_empty:first_class_private_contract_inspection",
+            "managed_empty:receipt_built_from_actual_provider_bytes",
+            "managed_empty:principal_and_prefix_denied_before_provider_io",
+            "managed_empty:actual_provider_corruption_rejected",
+            "managed_empty:revoked_warm_contract_and_native_manifest_denied",
+            "billing_empty:host_callback_failures_fail_closed",
+            "billing_empty:concurrent_exact_delivery_replay_after_discarded_response",
+            "billing_empty:managed_worker_available_actual_provider_manifest",
+            "billing_empty:forged_descriptors_and_open_cleanup_refused",
+            "billing_empty:first_class_private_contract_inspection",
+            "billing_empty:receipt_built_from_actual_provider_bytes",
+            "billing_empty:principal_and_prefix_denied_before_provider_io",
+            "billing_empty:actual_provider_corruption_rejected",
+            "billing_empty:revoked_warm_contract_and_native_manifest_denied"
+          ]
+        },
+        {
+          "status": "passed",
+          "node": "v24.19.0",
+          "checks": [
+            "managed:host_callback_failures_fail_closed",
+            "managed:concurrent_exact_delivery_replay_after_discarded_response",
+            "managed:managed_worker_available_actual_provider_manifest",
+            "managed:forged_descriptors_and_open_cleanup_refused",
+            "managed:first_class_private_contract_inspection",
+            "managed:receipt_built_from_actual_provider_bytes",
+            "managed:principal_and_prefix_denied_before_provider_io",
+            "managed:actual_provider_corruption_rejected",
+            "managed:revoked_warm_contract_and_native_manifest_denied",
+            "billing:host_callback_failures_fail_closed",
+            "billing:concurrent_exact_delivery_replay_after_discarded_response",
+            "billing:managed_worker_available_actual_provider_manifest",
+            "billing:forged_descriptors_and_open_cleanup_refused",
+            "billing:first_class_private_contract_inspection",
+            "billing:receipt_built_from_actual_provider_bytes",
+            "billing:principal_and_prefix_denied_before_provider_io",
+            "billing:actual_provider_corruption_rejected",
+            "billing:revoked_warm_contract_and_native_manifest_denied",
+            "managed_empty:host_callback_failures_fail_closed",
+            "managed_empty:concurrent_exact_delivery_replay_after_discarded_response",
+            "managed_empty:managed_worker_available_actual_provider_manifest",
+            "managed_empty:forged_descriptors_and_open_cleanup_refused",
+            "managed_empty:first_class_private_contract_inspection",
+            "managed_empty:receipt_built_from_actual_provider_bytes",
+            "managed_empty:principal_and_prefix_denied_before_provider_io",
+            "managed_empty:actual_provider_corruption_rejected",
+            "managed_empty:revoked_warm_contract_and_native_manifest_denied",
+            "billing_empty:host_callback_failures_fail_closed",
+            "billing_empty:concurrent_exact_delivery_replay_after_discarded_response",
+            "billing_empty:managed_worker_available_actual_provider_manifest",
+            "billing_empty:forged_descriptors_and_open_cleanup_refused",
+            "billing_empty:first_class_private_contract_inspection",
+            "billing_empty:receipt_built_from_actual_provider_bytes",
+            "billing_empty:principal_and_prefix_denied_before_provider_io",
+            "billing_empty:actual_provider_corruption_rejected",
+            "billing_empty:revoked_warm_contract_and_native_manifest_denied"
+          ]
+        }
+      ],
+      "cleanup": {
+        "owned_bucket_deleted_verified_404": true
+      }
+    }
+  },
+  "review": {
+    "claude_personas": [
+      "dx-expert",
+      "ad-tech-protocol-expert",
+      "code-reviewer",
+      "security-reviewer"
+    ],
+    "codex_personas": [
+      "protocol",
+      "code",
+      "security"
+    ],
+    "rounds": 3,
+    "convergent_fixes": [
+      "Preserve generic status handler compatibility",
+      "Avoid exclusive authorization locks during concurrent reads",
+      "Pin private default transport and bypass all private caches",
+      "Compare whole saved coverage and add negative contract-pin proof",
+      "Compose host and operation cancellation",
+      "Sanitize null and malformed expected callbacks before uploads"
+    ],
+    "evidence_note": "Round3 supplied an earlier 56-control result by mistake; the final exact-archive 72-control output above closes that evidence gap.",
+    "accepted_limitations": [
+      "Host SQL/pool timeouts for already-issued legacy store operations",
+      "Host aggregate quotas and cleanup throughput",
+      "No independently writable clone of live authorization or write plans",
+      "Public errors intentionally omit raw credential-bearing causes",
+      "Fail-closed integrity errors may share a general state/content error code"
+    ]
+  }
+}

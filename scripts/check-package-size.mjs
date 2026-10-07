@@ -34,7 +34,10 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // The optional GCS write fence adds three dual-format module/declaration sets
 // and one guide. CI measured 20,060,226 compressed bytes; preserve 10 KB of
 // compressor margin for that additive surface. Other size budgets stay fixed.
-const MAX_PACKED_TARBALL_BYTES = 20_075_000;
+// The complete GCS adapter/private-reader surface adds six internal module sets
+// and a guide; the first measured combined artifact is 20,079,662 bytes.
+// Allow 35 KB above that candidate for final documentation and compressor variance.
+const MAX_PACKED_TARBALL_BYTES = 20_115_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -160,7 +163,8 @@ const MAX_PACKED_FILE_COUNT =
   1 +
   5 +
   8 +
-  13; // GCS write-fence runtime/declaration modules and adoption guide.
+  13 + // GCS write-fence runtime/declaration modules and adoption guide.
+  29; // GCS adapter, reader, validation, fence split, errors, I/O modules and guide.
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

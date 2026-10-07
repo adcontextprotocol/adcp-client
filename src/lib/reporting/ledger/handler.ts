@@ -53,6 +53,17 @@ export interface ReportingStatusConsumerScopeOptionsV1<TContext = unknown> {
   consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1;
 }
 
+// The no-consumer-scope reader needs only a resolved account; transport state is unused.
+export function createReportingStatusHandler(
+  store: ReportingLedgerStore
+): (
+  request: Parameters<ReportingStatusHandlerV1>[0],
+  context: Pick<Parameters<ReportingStatusHandlerV1>[1], 'account' | 'signal'>
+) => ReturnType<ReportingStatusHandlerV1>;
+export function createReportingStatusHandler<TContext = unknown>(
+  store: ReportingLedgerStore,
+  options?: ReportingStatusConsumerScopeOptionsV1<TContext>
+): ReportingStatusHandlerV1;
 export function createReportingStatusHandler<TContext = unknown>(
   store: ReportingLedgerStore,
   options?: ReportingStatusConsumerScopeOptionsV1<TContext>
@@ -70,7 +81,10 @@ export function createReportingStatusHandler<TContext = unknown>(
     )
   );
   const activeReadsByAccount = new Map<string, number>();
-  return async (request, context) => {
+  return async (
+    request: Parameters<ReportingStatusHandlerV1>[0],
+    context: Pick<Parameters<ReportingStatusHandlerV1>[1], 'account' | 'signal'>
+  ) => {
     const raw = request as unknown as Record<string, unknown>;
     const resolvedAccount = isRecord(context.account) ? context.account : {};
     const resolvedAccountId =

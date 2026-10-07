@@ -62,6 +62,9 @@ export type CanonicalReferenceErrorCode =
   | 'external_ref_unpinned'
   | 'keyword_limit_exceeded'
   | 'budget_exceeded'
+  | 'invalid_options'
+  | 'aborted'
+  | 'access_denied'
   | 'digest_mismatch';
 
 export interface CanonicalReferenceError {
@@ -133,7 +136,37 @@ export interface CanonicalReferenceCacheOptions {
   maxBytes?: number;
 }
 
+/** Host-owned authenticated document transport. It must enforce destination scope before I/O. */
+export interface CanonicalDocumentReader {
+  read(request: {
+    uri: string;
+    maxBytes: number;
+    signal: AbortSignal;
+  }): Promise<{ body: Uint8Array; contentType?: string }>;
+}
+
+/** Stable, secret-free failure for an authenticated document transport. */
+export class CanonicalDocumentReadError extends Error {
+  constructor(
+    readonly code: 'access_denied' | 'unsafe_url' | 'body_too_large' | 'network_error' | 'invalid_options' | 'aborted'
+  ) {
+    super(`Canonical document read: ${code}`);
+    this.name = 'CanonicalDocumentReadError';
+    Object.defineProperty(this, Symbol.for('adcp.canonicalDocumentReadError'), { value: true });
+  }
+}
+
+function isCanonicalDocumentReadError(error: unknown): error is CanonicalDocumentReadError {
+  return (
+    !!error &&
+    typeof error === 'object' &&
+    (error as Record<symbol, unknown>)[Symbol.for('adcp.canonicalDocumentReadError')] === true
+  );
+}
+
 export interface CanonicalReferenceResolverOptions {
+  /** Private transports bypass all caches so every resolution re-authorizes. No HTTP fallback. */
+  documentReader?: CanonicalDocumentReader;
   /** Caller-owned cache. Defaults to a fresh bounded per-resolver LRU. */
   cache?: CanonicalReferenceCache;
   /** Default 5_000 ms. */
@@ -326,10 +359,21 @@ function exceedsJsonDocumentDepth(value: unknown): boolean {
 export function createCanonicalReferenceResolver(
   defaults: CanonicalReferenceResolverOptions = {}
 ): CanonicalReferenceResolver {
+  if (
+    defaults.documentReader &&
+    (!Number.isSafeInteger(defaults.timeoutMs ?? DEFAULT_TIMEOUT_MS) ||
+      (defaults.timeoutMs ?? DEFAULT_TIMEOUT_MS) < 1 ||
+      (defaults.timeoutMs ?? DEFAULT_TIMEOUT_MS) > 60_000 ||
+      !Number.isSafeInteger(defaults.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES) ||
+      (defaults.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES) < 1 ||
+      (defaults.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES) > 8 * 1024 * 1024)
+  )
+    throw new RangeError('Private canonical document transport limits are invalid');
   const cache = defaults.cache ?? createCanonicalReferenceCache();
   const merge = (options: Omit<CanonicalReferenceResolveOptions, 'cache'> = {}): CanonicalReferenceResolveOptions => ({
     ...defaults,
     ...options,
+    documentReader: defaults.documentReader ?? options.documentReader,
     cache,
   });
   return {
@@ -403,7 +447,7 @@ async function fetchJsonReference(
   const valid = validateRef(ref, kind, options);
   if (!valid.ok) return valid.result;
 
-  const cache = options.cache;
+  const cache = options.documentReader ? undefined : options.cache;
   const cacheKey = canonicalReferenceCacheKey(ref, options);
   const cached = cache?.get(cacheKey);
   if (cached) {
@@ -422,15 +466,79 @@ async function fetchJsonReference(
 
   let response;
   try {
-    response = await ssrfSafeFetch(ref.uri, {
-      method: 'GET',
-      headers: { accept: 'application/json, application/schema+json' },
-      timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-      maxBodyBytes: options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES,
-      allowPrivateIp: options.allowPrivateNetwork === true,
-      signal: options.signal,
-    });
+    if (options.documentReader) {
+      const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+      const maxBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+      if (
+        !Number.isSafeInteger(timeoutMs) ||
+        timeoutMs < 1 ||
+        timeoutMs > 60_000 ||
+        !Number.isSafeInteger(maxBytes) ||
+        maxBytes < 1 ||
+        maxBytes > 8 * 1024 * 1024
+      )
+        throw new CanonicalDocumentReadError('invalid_options');
+      const controller = new AbortController();
+      const onAbort = () => controller.abort(new CanonicalDocumentReadError('aborted'));
+      options.signal?.addEventListener('abort', onAbort, { once: true });
+      if (options.signal?.aborted) onAbort();
+      let abortListener: (() => void) | undefined;
+      const timer = setTimeout(() => controller.abort(new CanonicalDocumentReadError('network_error')), timeoutMs);
+      try {
+        controller.signal.throwIfAborted();
+        const read = await Promise.race([
+          options.documentReader.read({ uri: ref.uri, maxBytes, signal: controller.signal }),
+          new Promise<never>((_, reject) => {
+            abortListener = () => reject(controller.signal.reason);
+            controller.signal.addEventListener('abort', abortListener, { once: true });
+            if (controller.signal.aborted) abortListener();
+          }),
+        ]);
+        controller.signal.throwIfAborted();
+        if (!(read?.body instanceof Uint8Array) || read.body.byteLength > maxBytes)
+          throw new CanonicalDocumentReadError('body_too_large');
+        response = {
+          status: 200,
+          body: Uint8Array.from(read.body),
+          headers: { 'content-type': read.contentType ?? '' },
+        };
+      } finally {
+        clearTimeout(timer);
+        options.signal?.removeEventListener('abort', onAbort);
+        if (abortListener) controller.signal.removeEventListener('abort', abortListener);
+      }
+    } else {
+      response = await ssrfSafeFetch(ref.uri, {
+        method: 'GET',
+        headers: { accept: 'application/json, application/schema+json' },
+        timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        maxBodyBytes: options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES,
+        allowPrivateIp: options.allowPrivateNetwork === true,
+        signal: options.signal,
+      });
+    }
   } catch (err) {
+    if (isCanonicalDocumentReadError(err)) {
+      const code = [
+        'access_denied',
+        'unsafe_url',
+        'body_too_large',
+        'network_error',
+        'invalid_options',
+        'aborted',
+      ].includes(err.code)
+        ? err.code
+        : 'network_error';
+      return fail(
+        kind,
+        ref,
+        cacheKey,
+        code === 'unsafe_url' ? 'blocked_unsafe_url' : 'unresolvable',
+        code,
+        `Canonical document read failed: ${code}`,
+        { retryable: code === 'network_error' }
+      );
+    }
     if (err instanceof SsrfRefusedError) {
       if (err.code === 'body_exceeds_limit') {
         return fail(
