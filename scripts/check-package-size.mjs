@@ -31,7 +31,11 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // as CJS + ESM + both declaration flavours (four artifacts, 3,354 unpacked bytes).
 // The measured tarball is 20,040,986 bytes; allow 5 KB for these artifacts and
 // compressor variance. File-count, unpacked, and schema budgets stay fixed.
-const MAX_PACKED_TARBALL_BYTES = 20_045_000;
+// Operation resolution over A2A (GHSA-frxv-c96c-4vqw) adds the shared
+// signing/operation-resolution module, the A2A gate in the adapter, and the
+// grader's A2A vector module. The measured tarball is 20,077,645 bytes; allow
+// 12 KB for these artifacts and compressor variance.
+const MAX_PACKED_TARBALL_BYTES = 20_090_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -128,6 +132,8 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // Storage-independent wholesale mirrors add one module set and one buyer guide (+5 files).
 // Shared JSONPath translation and bounded validation diagnostics add two
 // internal module/declaration sets (+8 files).
+// Operation resolution over A2A and the grader's A2A vector module add two
+// internal dual-format runtime/declaration module sets (+8 files).
 const MAX_PACKED_FILE_COUNT =
   6_135 +
   34 +
@@ -156,6 +162,7 @@ const MAX_PACKED_FILE_COUNT =
   13 +
   1 +
   5 +
+  8 +
   8;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
