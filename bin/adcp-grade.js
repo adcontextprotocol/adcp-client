@@ -45,7 +45,25 @@ Options:
                              JSON-RPC tools/call envelope and posts to the
                              agent's MCP mount (see #612); \`raw\` posts to
                              per-operation AdCP endpoints (REST-binding agents);
-                             \`a2a\` signs the official A2A client's request.
+                             \`a2a\` signs the official A2A client's request
+                             and also grades the A2A operation-resolution
+                             vectors (adcp#7945): required_for must be
+                             enforced against the operation named by the
+                             invocation DataPart's \`skill\`, not the JSON-RPC
+                             method. Vector ids are prefixed a2a/. Tiers:
+                             contradiction-resolution (MUST in 3.2) and
+                             hardening (SHOULD in 3.2.x, MUST from 3.3). The
+                             signed create_media_buy vectors need
+                             --allow-live-side-effects (or a sandbox
+                             contract). If the compliance bundle carries no
+                             A2A vectors the run reports them unavailable.
+  --required-for <op[,op...]>
+                             Agent's request_signing.required_for. Skips
+                             vectors that assert an operation the agent does
+                             not require (capability_profile_mismatch).
+  --protocol-methods-required-for <m[,m...]>
+                             Agent's request_signing.protocol_methods_required_for
+                             (e.g. SendMessage). Gates A2A negative/007.
   --timeout <ms>             Per-probe timeout (default 10000)
   --json                     Emit the full GradeReport as JSON
   -h, --help                 Show this help
@@ -54,6 +72,9 @@ Environment:
   ADCP_GRADE_INITIALIZE_AUTHORIZATION
                              Authorization header used only for the MCP
                              initialize lifecycle (kept out of process argv).
+  ADCP_A2A_VECTORS_DIR       Directory with the A2A operation-resolution
+                             vectors (positive/ and negative/), overriding the
+                             compliance bundle. For bundles that predate them.
 
 Exit code:
   0   all graded vectors passed (skipped vectors don't count as failures)
@@ -202,6 +223,12 @@ async function runRequestSigningGrader(args) {
         options.signingProfileVersion = profile;
         break;
       }
+      case '--required-for':
+        options.agentRequiredFor = parseVectorList(args[++i], '--required-for');
+        break;
+      case '--protocol-methods-required-for':
+        options.agentProtocolMethodsRequiredFor = parseVectorList(args[++i], '--protocol-methods-required-for');
+        break;
       case '--allow-live-side-effects':
         options.allowLiveSideEffects = true;
         break;
@@ -470,6 +497,7 @@ function printHumanReport(report, options = {}) {
     `${report.passed_count} passed, ${report.failed_count} failed, ${report.skipped_count} skipped — total ${report.total_duration_ms}ms`
   );
   console.log(`Overall: ${report.passed ? 'PASS' : 'FAIL'}`);
+  printA2aOperationResolutionSummary(report.a2a_operation_resolution);
   // Only hint on an EXPLICIT --transport raw run — mcp is the default now,
   // so an unset transport already grades over MCP and the raw→mcp retry
   // hint would misdirect (if mcp mode fails everywhere, it's a different
@@ -482,6 +510,22 @@ function printHumanReport(report, options = {}) {
     }
   }
   console.log();
+}
+
+function printA2aOperationResolutionSummary(summary) {
+  if (!summary) return;
+  console.log();
+  if (!summary.vectors_available) {
+    console.log(`⚠  A2A operation-resolution: ${summary.message}. required_for over A2A was NOT graded.`);
+    return;
+  }
+  const t = summary.tiers;
+  const line = (label, tier) =>
+    `  ${label}: ${tier.passed} passed, ${tier.failed} failed, ${tier.skipped} skipped` +
+    (tier.failed_vectors.length ? ` (failed: ${tier.failed_vectors.join(', ')})` : '');
+  console.log(`A2A operation-resolution vectors (source: ${summary.source}):`);
+  console.log(line('contradiction-resolution (MUST in 3.2)', t['contradiction-resolution']));
+  console.log(line('hardening (SHOULD in 3.2.x, MUST from 3.3)', t.hardening));
 }
 
 /**
@@ -516,7 +560,7 @@ function formatRow(r) {
     : r.passed
       ? `${r.http_status}${r.actual_error_code ? ` ${r.actual_error_code}` : ''}`
       : (r.diagnostic ?? 'see report');
-  return { id, status, detail };
+  return { id, status, detail: r.tier && !r.skipped ? `[${r.tier}] ${detail}` : detail };
 }
 
 module.exports = { handleGradeCommand };

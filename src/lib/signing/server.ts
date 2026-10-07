@@ -95,6 +95,14 @@ export {
 } from './types';
 export { verifyRequestSignature, type VerifyRequestOptions } from './verifier';
 export {
+  isUnresolvableOperation,
+  resolveRequestOperation,
+  UNRESOLVABLE_OPERATION,
+  type OperationResolutionInput,
+  type ResolvedOperation,
+  type UnresolvableOperation,
+} from './operation-resolution';
+export {
   createWebhookVerifier,
   isWebhookLoopbackHost,
   verifyWebhookSignature,

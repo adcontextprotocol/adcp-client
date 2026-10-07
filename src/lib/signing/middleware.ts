@@ -4,6 +4,7 @@ import { RequestSignatureError } from './errors';
 import { InMemoryReplayStore } from './replay';
 import { InMemoryRevocationStore } from './revocation';
 import { verifyRequestSignature, type VerifyRequestOptions } from './verifier';
+import type { ResolvedOperation } from './operation-resolution';
 import type { VerifiedSigner } from './types';
 
 declare module 'http' {
@@ -67,6 +68,13 @@ export interface ExpressMiddlewareOptions extends Omit<
    * the verifier will then treat the request as "not in any required_for"
    * and accept unsigned traffic rather than rejecting.
    *
+   * Return {@link UNRESOLVABLE_OPERATION} for a body that does not resolve to
+   * exactly one operation; the verifier then rejects it with
+   * `request_body_malformed`, signed or not. `resolveRequestOperation` (and
+   * `adcpOperationResolver` from `@adcp/sdk/server`) implements the MCP and A2A
+   * rules, including that fail-closed result, and is what `createAdcpServer`
+   * auto-wires.
+   *
    * SECURITY: a `resolveOperation` that always returns `undefined` — for
    * example, a routing helper that silently fails to match — disables
    * `required_for` enforcement globally. Unsigned requests on signed-only
@@ -75,7 +83,7 @@ export interface ExpressMiddlewareOptions extends Omit<
    * asserting `resolveOperation(req)` is non-undefined for sample signed
    * requests is the simplest guard.
    */
-  resolveOperation: (req: ExpressLike) => string | undefined;
+  resolveOperation: (req: ExpressLike) => ResolvedOperation;
   /**
    * Override how the request's full URL is reconstructed. Use when the server
    * sits behind a TLS-terminating or path-rewriting load balancer, since

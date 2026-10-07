@@ -311,7 +311,7 @@ import { verifySignatureAsAuthenticator } from '@adcp/sdk/server';
 const auth = verifySignatureAsAuthenticator({
   capability,
   jwks,
-  resolveOperation: mcpToolNameResolver,
+  resolveOperation: adcpOperationResolver,
   // CONFIGURE THIS: maps the verified keyid back to the agent_url it
   // belongs to. The verifier stamps `credential.agent_url` from this
   // lookup; without it, the http_sig credential is omitted (no

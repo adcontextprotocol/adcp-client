@@ -300,6 +300,7 @@ export {
   requireSignatureWhenPresent,
   requireAuthenticatedOrSigned,
   mcpToolNameResolver,
+  adcpOperationResolver,
 } from './auth-signature';
 export type {
   VerifySignatureAsAuthenticatorOptions,

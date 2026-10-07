@@ -1966,7 +1966,9 @@ COMMANDS:
   doctor [options]            Check project secrets, SDK drift, and migrations
   storyboard <subcommand>     Test agent flows (run, list, show, step)
   specialism <subcommand>     Inspect a compliance specialism (list, show)
-  grade <subject> <url>       Conformance graders (e.g. request-signing)
+  grade <subject> <url>       Conformance graders (e.g. request-signing; with
+                              --transport a2a it also grades the A2A
+                              operation-resolution vectors)
   fuzz <url>                  Property-based conformance fuzzing against schemas
   resolve <agent-url>         Walk the brand_json_url discovery chain
                               (capabilities -> brand.json -> JWKS) and print
@@ -2191,7 +2193,10 @@ REQUEST-SIGNING VECTOR OPTIONS (signed_requests storyboard):
                                   discovery. Pass raw for agents that
                                   expose AdCP tools as per-operation HTTP
                                   endpoints. Mirrors
-                                  \`adcp grade request-signing --transport\`.
+                                  \`adcp grade request-signing --transport\`,
+                                  which with a2a additionally grades the A2A
+                                  operation-resolution vectors (required_for
+                                  keyed on the DataPart skill, adcp#7945).
   --signing-skip-vectors IDS      Comma-separated vector ids to skip (graded
                                   operator_skip), e.g.
                                   025-jwk-alg-crv-mismatch. Unknown ids are

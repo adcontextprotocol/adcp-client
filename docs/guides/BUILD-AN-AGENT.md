@@ -291,7 +291,10 @@ const a2a = createA2AAdapter({
 });
 
 const app = express();
-app.use(express.json());
+// With `signedRequests` configured, record the exact request bytes so the
+// signature gate can verify them: pass `verify: a2a.rawBodyVerify`, or mount the
+// adapter before any body parser (it buffers the body itself).
+app.use(express.json({ verify: a2a.rawBodyVerify }));
 // mount() wires: JSON-RPC at the `agentCard.url` pathname (`/a2a` here),
 // the agent card at both `{basePath}/.well-known/agent-card.json` (A2A
 // SDK discovery derives this) AND `/.well-known/agent-card.json` (origin-
@@ -300,6 +303,8 @@ app.use(express.json());
 a2a.mount(app);
 app.listen(3000);
 ```
+
+**Request signing over A2A.** If the server you pass to `createA2AAdapter` was built with `createAdcpServer({ signedRequests })`, the adapter runs the same RFC 9421 verifier on the JSON-RPC endpoint that `serve()` runs on MCP, so `request_signing.required_for` and `protocol_methods_required_for` hold on both transports. The adapter resolves the AdCP operation from the Message's sole DataPart `skill`, rejects a body that does not resolve to exactly one operation (`request_body_malformed`: zero or several DataParts, a FilePart, a duplicate or case-variant `skill` key, a non-string `skill`, a batch, a non-JSON body) before any handler runs, and dispatches only that operation. Rejections are HTTP 401 with `WWW-Authenticate: Signature error="<code>"`, issued before `authenticate` runs; a verified signature reaches handlers as `ctx.authInfo` with `clientId: signing:<keyid>`. Because the gate needs the exact signed bytes, do not mount a body parser ahead of the adapter unless it records them (`express.json({ verify: a2a.rawBodyVerify })`); a request whose raw body is unavailable gets a 500 and is never dispatched. If you wired the verifier by hand (`serve({ preTransport })`), pass it as `createA2AAdapter({ preTransport })`: the adapter refuses to construct when the server advertises request signing but nothing verifies signatures on A2A, unless you set `allowUnenforcedSignedRequests: true` because a gateway enforces it. `protocol_methods_required_for` matches the JSON-RPC `method` by exact name, and the A2A SDK serves its task methods under both the 1.0 and 0.3 names while `legacyCompat` is on, so list both (`CancelTask` and `tasks/cancel`). Resolve operations yourself with `adcpOperationResolver` (MCP `tools/call` and A2A message methods); `mcpToolNameResolver` is MCP-only and leaves `required_for` unenforced over A2A.
 
 The adapter enables the official A2A SDK's v0.3 compatibility layer by
 default, preserving existing sellers and buyers. For a native A2A 1.0-only
@@ -669,7 +674,7 @@ import {
   verifySignatureAsAuthenticator,
   verifyApiKey,
   requireAuthenticatedOrSigned,
-  mcpToolNameResolver,
+  adcpOperationResolver,
 } from '@adcp/sdk/server';
 import { ResolvedAgentJwksResolver } from '@adcp/sdk/signing/server';
 
@@ -693,11 +698,11 @@ serve(
       signature: verifySignatureAsAuthenticator({
         capability: { supported: true, required_for: ['create_media_buy', 'update_media_buy'], covers_content_digest: 'either' },
         jwks: new ResolvedAgentJwksResolver('https://buyer.example/mcp', 'mcp'),
-        resolveOperation: mcpToolNameResolver,
+        resolveOperation: adcpOperationResolver,
       }),
       fallback: verifyApiKey({ keys: { sk_live_abc: { principal: 'acct_42' } } }),
       requiredFor: ['create_media_buy', 'update_media_buy'],
-      resolveOperation: mcpToolNameResolver,
+      resolveOperation: adcpOperationResolver,
     }),
   }
 );

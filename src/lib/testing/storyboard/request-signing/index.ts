@@ -38,6 +38,12 @@ export {
   type VectorGradeResult,
 } from './grader';
 
+export {
+  A2A_UNAVAILABLE_ROW_ID,
+  type A2aOperationResolutionSummary,
+  type A2aTierSummary,
+} from './a2a-operation-resolution';
+
 // ── Storyboard-runner hooks ───────────────────────────────────────
 // Surfaces used internally by the runner; exported so external runners and
 // custom harnesses can wire them the same way.
@@ -66,11 +72,26 @@ export type {
   VerifierCapabilityFixture,
   Vector,
   ContractId,
+  A2aExpectedOutcome,
+  A2aNegativeVector,
+  A2aPositiveVector,
+  A2aVector,
+  A2aVectorTier,
 } from './types';
 
-export { CONTRACT_IDS } from './types';
+export { CONTRACT_IDS, A2A_VECTOR_TIERS } from './types';
 
-export { loadRequestSigningVectors, findKey, type LoadVectorsOptions, type LoadedVectors } from './vector-loader';
+export {
+  loadRequestSigningVectors,
+  loadA2aOperationResolutionVectors,
+  findKey,
+  A2A_VECTORS_UNAVAILABLE_MESSAGE,
+  A2A_VECTORS_DIR_ENV,
+  type A2aVectorSource,
+  type LoadVectorsOptions,
+  type LoadedA2aVectors,
+  type LoadedVectors,
+} from './vector-loader';
 
 export {
   buildPositiveRequest,
@@ -83,6 +104,7 @@ export {
 export {
   captureA2aRequest,
   resolveA2aDispatchTarget,
+  resolveA2aHttpJsonEndpoint,
   operationFromVectorUrl,
   type A2aCall,
   type A2aDispatchOptions,

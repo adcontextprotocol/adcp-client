@@ -74,7 +74,7 @@
  *   capability: { ... },
  *   jwks,
  *   replayStore,           // <-- shared across instances
- *   resolveOperation: mcpToolNameResolver,
+ *   resolveOperation: adcpOperationResolver,
  * }));
  * ```
  */

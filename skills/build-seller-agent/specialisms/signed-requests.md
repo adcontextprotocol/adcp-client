@@ -25,6 +25,8 @@ The `WWW-Authenticate` header is the grading surface — return the right error 
 
 **Auto-wiring via `createAdcpServerFromPlatform`.** Pass `signedRequests: { jwks, replayStore, revocationStore }` alongside your platform and add `'signed-requests'` to `capabilities.specialisms` — the framework builds the verifier preTransport for you and `serve()` auto-mounts it. `createAdcpServerFromPlatform` throws at startup when `signedRequests` is set without the specialism claim (buyers wouldn't sign), and logs a loud error in the other direction. Keep `request_signing` in capabilities separately — it's still how buyers discover your `required_for` policy.
 
+**A2A.** If you also mount `createA2AAdapter({ server })`, it runs the same verifier on the A2A JSON-RPC endpoint automatically, and `required_for` matches the `skill` of the Message's sole DataPart (`SendMessage`, `SendStreamingMessage`, `message/send`, `message/stream`), exactly as `params.name` does over MCP. A body that does not resolve to exactly one operation (several DataParts, a FilePart, duplicate or case-variant keys, a non-string `skill`, a batch) is rejected with `request_body_malformed` before any handler. Record the raw bytes if a body parser runs ahead of the adapter: `app.use(express.json({ verify: a2a.rawBodyVerify }))`. Since SDK 15.0.1 the adapter refuses to construct when the server advertises request signing and nothing verifies signatures on A2A; before that, A2A silently skipped `required_for` entirely (GHSA-frxv-c96c-4vqw), so upgrade if you serve A2A.
+
 ```typescript
 const platform = definePlatform({
   capabilities: {
