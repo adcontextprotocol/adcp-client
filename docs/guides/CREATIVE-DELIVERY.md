@@ -155,10 +155,19 @@ support. Conflicting capability/schema evidence or missing release proof with
 a 3.2+ buyer pin throws `CreativeFormatCapabilityError`, as during a write.
 The standalone `resolveCreativeFormatWireMode(capabilities, version)` helper
 only evaluates capability declarations; use the client method when you need
-the tool-schema fallback too. Pass the resulting mode and the same package
-selectors to `projectSyncCreativesForDelivery()` to check a creative's
-projection before calling `syncCreatives()`. Resolve again after refreshing
-capability evidence or changing the caller's authorization or transport scope.
+the tool-schema fallback too.
+
+For a manual projection check, import `projectSyncCreativesForDelivery` from
+`@adcp/sdk/v2/projection`. Matching the write requires the same mode, converter,
+resolver, and selector inputs. Include a selector container for every assigned
+`package_id`, including packages that have no selected format; `syncCreatives()`
+adds those missing containers automatically. Client-configured catalogs and
+cached package routes can also supply projection inputs, so this helper is not
+a dry run of the client's full projection pipeline.
+
+Resolve again after installing new evidence with `primeCapabilities()`, calling
+`SingleAgentClient.refreshCapabilities()`, or changing authorization or
+transport scope. Scoped transports rediscover evidence for each call.
 
 Use `packageRefsForFormatOptions(product, selectedIds)` when authoring package
 selectors. It returns only canonical `format_option_refs`. The SDK carries any

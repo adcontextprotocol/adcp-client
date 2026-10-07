@@ -6,8 +6,12 @@ const {
   CreativeFormatCapabilityError,
   CreativeFormatProjectionError,
   parseCapabilitiesResponse,
+  packageRefsForFormatOptions,
 } = require('../../dist/lib/index.js');
-const { projectSyncCreativesForDelivery } = require('../../dist/lib/v2/projection/index.js');
+const {
+  projectSyncCreativesForDelivery,
+  projectMediaBuyCreativesForDelivery,
+} = require('../../dist/lib/v2/projection/index.js');
 
 const AGENT = { id: 'wire-mode', name: 'Wire mode', agent_uri: 'https://seller.example/mcp', protocol: 'mcp' };
 const canonicalSchema = { creatives: { items: { properties: { creative_id: {}, format_kind: {} } } } };
@@ -137,13 +141,13 @@ describe('public creative wire mode resolution', () => {
     assert.equal(discoveryCalls.length, 1);
   });
 
-  test('scoped transport uses its discovered schema and leaves shared evidence intact', async () => {
+  test('scoped preflight and writes use discovered schemas and leave shared evidence intact', async () => {
     const client = new SingleAgentClient(AGENT, { wireAdcpVersion: '3.1' });
     prime(client, {}, { sync_creatives: legacySchema });
     const transport = { trustedFetchFn: async () => assert.fail('stubbed discovery must not fetch') };
     client.ensureEndpointDiscovered = async () => AGENT;
     client.getAgentInfo = async options => {
-      assert.equal(options.transport, transport);
+      assert.equal(options.transport.trustedFetchFn, transport.trustedFetchFn);
       return {
         tools: [
           { name: 'get_adcp_capabilities', inputSchema: { properties: {} } },
@@ -157,8 +161,79 @@ describe('public creative wire mode resolution', () => {
     };
 
     assert.equal(await client.resolveCreativeFormatWireMode('sync_creatives', { transport }), 'canonical');
+    let captured;
+    client.executeAndHandle = async (_task, _handler, params) => {
+      captured = params;
+      return { success: true, status: 'completed', data: {} };
+    };
+    await client.syncCreatives(
+      {
+        account: { account_id: 'account-1' },
+        idempotency_key: 'scoped-write-key-001',
+        creatives: [{ creative_id: 'creative-1', name: 'Image', format_kind: 'image', assets: {} }],
+      },
+      undefined,
+      { transport }
+    );
+    assert.equal(captured.creatives[0].format_kind, 'image');
+    assert.equal(captured.creatives[0].format_id, undefined);
     assert.equal(await client.resolveCreativeFormatWireMode('sync_creatives'), 'legacy');
   });
+
+  for (const [method, task] of [
+    ['createMediaBuy', 'create_media_buy'],
+    ['updateMediaBuy', 'update_media_buy'],
+  ]) {
+    test(`${method} uses the mode preflight resolves for its own tool`, async () => {
+      const client = new SingleAgentClient(AGENT, { wireAdcpVersion: '3.1' });
+      const packageSchema = { packages: { items: { properties: legacySchema } } };
+      prime(client, {}, { sync_creatives: canonicalSchema, [task]: packageSchema });
+      const selectors = packageRefsForFormatOptions(
+        {
+          format_options: [
+            {
+              format_option_id: 'image-mrec',
+              format_kind: 'image',
+              params: {},
+              v1_format_ref: [{ agent_url: AGENT.agent_uri, id: 'display_300x250_image' }],
+            },
+          ],
+        },
+        ['image-mrec']
+      );
+      const pkg = {
+        ...selectors,
+        package_id: 'package-1',
+        creatives: [{ creative_id: 'creative-1', name: 'Image', format_kind: 'image', assets: {} }],
+      };
+      const params =
+        method === 'createMediaBuy'
+          ? {
+              account: { account_id: 'account-1' },
+              idempotency_key: 'create-parity-key-001',
+              brand: { domain: 'brand.example' },
+              start_time: 'asap',
+              end_time: '2027-12-31T00:00:00Z',
+              packages: [{ ...pkg, product_id: 'product-1', budget: 1000, pricing_option_id: 'pricing-1' }],
+            }
+          : {
+              idempotency_key: 'update-parity-key-001',
+              media_buy_id: 'buy-1',
+              packages: [pkg],
+            };
+      const mode = await client.resolveCreativeFormatWireMode(task);
+      assert.equal(mode, 'legacy');
+      assert.equal(await client.resolveCreativeFormatWireMode('sync_creatives'), 'canonical');
+      let captured;
+      client.executeAndHandle = async (calledTask, _handler, wireParams) => {
+        assert.equal(calledTask, task);
+        captured = wireParams;
+        return { success: true, status: 'completed', data: {} };
+      };
+      await client[method](params);
+      assert.deepEqual(captured, projectMediaBuyCreativesForDelivery(params, mode, task));
+    });
+  }
 
   for (const [schema, expected] of [
     [canonicalSchema, 'canonical'],
