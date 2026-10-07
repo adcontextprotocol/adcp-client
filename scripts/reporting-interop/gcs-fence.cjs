@@ -1,6 +1,6 @@
 'use strict';
 const assert = require('node:assert/strict');
-const { createHash, randomUUID } = require('node:crypto');
+const { createHash } = require('node:crypto');
 const { readFileSync, writeFileSync } = require('node:fs');
 const { createRequire } = require('node:module');
 const { execFile } = require('node:child_process');
