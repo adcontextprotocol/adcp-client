@@ -1,0 +1,225 @@
+{
+  "status": "passed",
+  "scope": "Unpublished GCS write-fence primitive; not full managed delivery, independent Python buyer verification, or least-privilege deployment",
+  "qualified_at_utc": "2026-10-07T00:35:49.870829+00:00",
+  "source_base_commit": "9965a9994225cbc61befdbba8b4c9927d16076ea",
+  "source_file_sha256": {
+    "src/lib/reporting/gcs/index.ts": "9624bd100d9d77a5e738e55cade3892217ffbf9f3ea9c77261051b46afc89db4",
+    "src/lib/reporting/gcs/bucket-policy.ts": "81b66397b7cf0a23f25612fe527e583016059e7d12d33d9dfb8d73ec11011057",
+    "src/lib/reporting/ledger/object-writes.ts": "e69d88e6cf761e63a349d16eb04cf9a5ed660e3a7ae62b988b16377b0fe5a12c",
+    "src/lib/reporting/ledger/managed-postgres.ts": "347a7ceb48d495570ec2405f17e5dc8c85d70c13344626c85bf0334aa4ff4ddc",
+    "src/lib/reporting/ledger/index.ts": "e79e3a44710743243d93db3f7eec185dc8d9ae9b6fe33d3871222a75aa01d509",
+    "scripts/reporting-interop/gcs-fence.cjs": "af937e57f698c54ad5a7cae5c271d78ccf6161cc0271ed9ea12b633f9506b9f5",
+    "test/lib/reporting-object-writes-pg.test.js": "78630ec8a661fddb1bab2acbb1613044fad6f2ff284a6647eca2b589641c20dd",
+    "test/lib/reporting-gcs-guards.test.js": "ba3c662aab609782186f2f672a25db6669170fb4213aedccb0ba2cff80af3c80",
+    "test/fixtures/reporting-gcs/bucket-policy.json": "7a4d83b1d94b85269cb04fe79b33b47eb537e054e0b7ee4e69438c222902bcb7",
+    "package.json": "caa163055ef1e9e95e6f106756f8680f6791c2155ac2cedd63368400ea656703",
+    "package-lock.json": "05c3ca18ac90b78868486bcf80297db68d6d7d7d2ca45107b13873228b36721d"
+  },
+  "candidate_archive": {
+    "name": "adcp-sdk-14.4.0.tgz",
+    "published": false,
+    "package_version_stamp": "14.4.0",
+    "sha256": "7e373c141644331b8cac7e1449a56f7061d4d93bad80bfdc00dd126038ebfa03"
+  },
+  "local_tests": {
+    "postgresql_version": "16.14",
+    "passed": 97,
+    "failed": 0,
+    "skipped": 0
+  },
+  "gcs": {
+    "passed": 16,
+    "failed": 0,
+    "skipped": 0,
+    "lanes": [
+      {
+        "status": "passed",
+        "scope": "GCS write-fence primitive with real PostgreSQL; not full managed delivery or least-privilege deployment",
+        "node": "v20.19.0",
+        "verified_bucket_policy": {
+          "softDeletePolicy": {
+            "retentionDurationSeconds": "0"
+          },
+          "iamConfiguration": {
+            "bucketPolicyOnly": {
+              "enabled": true,
+              "lockedTime": "2027-01-05T00:34:27.394Z"
+            },
+            "uniformBucketLevelAccess": {
+              "enabled": true,
+              "lockedTime": "2027-01-05T00:34:27.394Z"
+            },
+            "publicAccessPrevention": "enforced"
+          }
+        },
+        "official_google_storage_version": "7.22.0",
+        "typescript_sdk_version": "14.4.0",
+        "fixture_rows_sha256": "735610f303d6d91aa618df3aa6d7f18bcf5dfa52bdbd9ef551293e6bd14c92d9",
+        "fixture_manifest_sha256": "e50959c9297a15669578f88102533626a9f991a6feeb8f8bb5fab0ae0fde978c",
+        "checks": [
+          {
+            "name": "resumable_session_after_sdk_deadline_and_revocation",
+            "real_provider_code": 412,
+            "no_readable_rows_resurrected": true
+          },
+          {
+            "name": "committed_before_revocation",
+            "exact_retry_verified": true,
+            "old_generation_read_denied_404": true,
+            "stale_generation_write_denied_412": true,
+            "bounded_cleanup_progress_recovered": true
+          },
+          {
+            "name": "revocation_during_exact_replay_read",
+            "old_generation_read_fails_and_returns_revoked": true
+          },
+          {
+            "name": "conflicting_and_oversized_provider_content",
+            "exact_replay_refused": true,
+            "bounded_read_overflow_refused": true
+          },
+          {
+            "name": "provider_tombstone_before_sql_completion",
+            "fresh_process_recovered": true
+          },
+          {
+            "name": "account_and_namespace_isolation",
+            "other_account_rows_retained_until_own_revocation": true,
+            "authoritative_binding_survives_namespace_rotation": true,
+            "mixed_cjs_store_esm_fence_errors_verified": true
+          },
+          {
+            "name": "deadline_stops_follow_on_cleanup",
+            "follow_on_provider_calls": 0,
+            "resumable_from_inventory": true
+          },
+          {
+            "name": "state_error_privacy",
+            "sanitized_without_raw_cause": true
+          }
+        ]
+      },
+      {
+        "status": "passed",
+        "scope": "GCS write-fence primitive with real PostgreSQL; not full managed delivery or least-privilege deployment",
+        "node": "v24.19.0",
+        "verified_bucket_policy": {
+          "softDeletePolicy": {
+            "retentionDurationSeconds": "0"
+          },
+          "iamConfiguration": {
+            "bucketPolicyOnly": {
+              "enabled": true,
+              "lockedTime": "2027-01-05T00:34:27.394Z"
+            },
+            "uniformBucketLevelAccess": {
+              "enabled": true,
+              "lockedTime": "2027-01-05T00:34:27.394Z"
+            },
+            "publicAccessPrevention": "enforced"
+          }
+        },
+        "official_google_storage_version": "8.2.0",
+        "typescript_sdk_version": "14.4.0",
+        "fixture_rows_sha256": "735610f303d6d91aa618df3aa6d7f18bcf5dfa52bdbd9ef551293e6bd14c92d9",
+        "fixture_manifest_sha256": "e50959c9297a15669578f88102533626a9f991a6feeb8f8bb5fab0ae0fde978c",
+        "checks": [
+          {
+            "name": "resumable_session_after_sdk_deadline_and_revocation",
+            "real_provider_code": 412,
+            "no_readable_rows_resurrected": true
+          },
+          {
+            "name": "committed_before_revocation",
+            "exact_retry_verified": true,
+            "old_generation_read_denied_404": true,
+            "stale_generation_write_denied_412": true,
+            "bounded_cleanup_progress_recovered": true
+          },
+          {
+            "name": "revocation_during_exact_replay_read",
+            "old_generation_read_fails_and_returns_revoked": true
+          },
+          {
+            "name": "conflicting_and_oversized_provider_content",
+            "exact_replay_refused": true,
+            "bounded_read_overflow_refused": true
+          },
+          {
+            "name": "provider_tombstone_before_sql_completion",
+            "fresh_process_recovered": true
+          },
+          {
+            "name": "account_and_namespace_isolation",
+            "other_account_rows_retained_until_own_revocation": true,
+            "authoritative_binding_survives_namespace_rotation": true,
+            "mixed_cjs_store_esm_fence_errors_verified": true
+          },
+          {
+            "name": "deadline_stops_follow_on_cleanup",
+            "follow_on_provider_calls": 0,
+            "resumable_from_inventory": true
+          },
+          {
+            "name": "state_error_privacy",
+            "sanitized_without_raw_cause": true
+          }
+        ]
+      }
+    ],
+    "cleanup": {
+      "owned_bucket_deleted_verified_404": true
+    }
+  },
+  "package_checks": [
+    "build:lib with Google7.22minimumpeer",
+    "typecheck",
+    "check:packed-artifact",
+    "check:runtime-compat",
+    "publint --strict",
+    "changed-file Prettier check",
+    "installed CJS/ESM and declaration-file smoke",
+    "input and caller-abort guards",
+    "Installed strict CJS/ESM type smoke with Google7.22and8.2 peers"
+  ],
+  "validation_notes": [
+    "Full97localtests passed; relevant10tests rerun after final promise/default/type-interface changes."
+  ],
+  "limits": [
+    "Trusted host derives tenant/account/destination scope and exclusively administers safe fresh bucket",
+    "Host provides a namespace unique across isolated databases sharing bucket; automatic per-schema identity deferred to adapter integration",
+    "Already-issued I/O, including Google internal retries, can have unknown outcome after deadline; persistent tombstones fence late create-only writes",
+    "Host retains inventory, tombstones and access to old provider bindings; no automatic pruning",
+    "Policy drift requires administrator remediation, not a complete-fencing claim",
+    "No production reports or existing production buckets modified"
+  ],
+  "expert_review": {
+    "rounds": 3,
+    "claude": [
+      "DX",
+      "protocol",
+      "code",
+      "security"
+    ],
+    "codex": [
+      "protocol",
+      "code",
+      "security"
+    ],
+    "unresolved_material_findings": 0,
+    "final_fixes": [
+      "Deadline propagation and immutable provider routing",
+      "Cross-format branded state errors and replay/revocation404 handling",
+      "Policy/input/abort CI guards and actual-provider content-conflict controls",
+      "Supported Node20/Google7 and Node24/Google8 package lanes",
+      "Operational overwrite/delete permission requirements",
+      "Promise-only operation errors, default10object cleanup page, explicit public/store type contracts"
+    ],
+    "limits": [
+      "Source reviews did not independently run backend tests",
+      "Schema/deployment namespace uniqueness and exclusive bucket administration remain host-owned",
+      "Strict policy-drift failure and administrator remediation; no least-privilege deployment claim"
+    ]
+  }
+}

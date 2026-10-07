@@ -409,6 +409,16 @@
         "types": "./dist/lib/media-buy/actions.d.ts",
         "default": "./dist/lib/media-buy/actions.js"
       }
+    },
+    "./reporting/gcs": {
+      "import": {
+        "types": "./dist/lib/reporting/gcs/index.d.mts",
+        "default": "./dist/lib/reporting/gcs/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/reporting/gcs/index.d.ts",
+        "default": "./dist/lib/reporting/gcs/index.js"
+      }
     }
   },
   "typesVersions": {
@@ -529,6 +539,9 @@
       ],
       "media-buy/actions": [
         "dist/lib/media-buy/actions.d.ts"
+      ],
+      "reporting/gcs": [
+        "dist/lib/reporting/gcs/index.d.ts"
       ]
     }
   },
@@ -733,12 +746,16 @@
   },
   "peerDependencies": {
     "@a2a-js/sdk": "^1.0.1",
+    "@google-cloud/storage": "^7.22.0 || ^8.2.0",
     "@modelcontextprotocol/sdk": "^1.31.0",
     "@opentelemetry/api": "^1.0.0",
     "redis": "^4.6.0 || ^5.0.0 || ^6.0.0",
     "zod": "^4.1.5"
   },
   "peerDependenciesMeta": {
+    "@google-cloud/storage": {
+      "optional": true
+    },
     "@opentelemetry/api": {
       "optional": true
     },
@@ -753,6 +770,7 @@
     "@changesets/cli": "^3.0.3",
     "@commitlint/cli": "^20.5.3",
     "@commitlint/config-conventional": "^20.5.3",
+    "@google-cloud/storage": "^7.22.0",
     "@modelcontextprotocol/sdk": "^1.31.0",
     "@opentelemetry/api": "^1.9.1",
     "@types/express": "4.17.25",
