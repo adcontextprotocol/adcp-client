@@ -211,3 +211,28 @@ export function reportingObjectWritePlanFingerprint(plan: ReportingObjectWritePl
     )
     .digest('hex');
 }
+
+/** Opt-in authority for complete provider adapters; the original primitive store port is unchanged. */
+export interface ReportingObjectWriteAuthorityStoreV1 extends ReportingObjectWriteStoreV1 {
+  probeObjectWriteAuthority(context?: ReportingObjectWriteContextV1): Promise<boolean>;
+  getObjectWriteAuthorityId(context?: ReportingObjectWriteContextV1): Promise<string>;
+  getAuthorizedObjectWriteBinding(
+    scope: ReportingObjectWriteScopeV1,
+    context?: ReportingObjectWriteContextV1
+  ): Promise<ReportingObjectWriteBindingV1 | null>;
+  getObjectWritePlan(
+    scope: ReportingObjectWriteScopeV1,
+    planId: string,
+    context?: ReportingObjectWriteContextV1
+  ): Promise<ReportingObjectWritePlanV1 | null>;
+}
+
+/** PostgreSQL 13+; apply after REPORTING_OBJECT_WRITE_MIGRATION. Identity survives replica/worker restart. */
+export const REPORTING_OBJECT_WRITE_AUTHORITY_MIGRATION = `
+CREATE TABLE IF NOT EXISTS adcp_reporting_object_write_authority (
+  singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+  installation_id UUID NOT NULL DEFAULT gen_random_uuid(),
+  schema_version INTEGER NOT NULL DEFAULT 1 CHECK (schema_version = 1)
+);
+INSERT INTO adcp_reporting_object_write_authority (singleton) VALUES (TRUE) ON CONFLICT DO NOTHING;
+`;

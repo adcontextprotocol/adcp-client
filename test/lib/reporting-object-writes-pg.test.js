@@ -34,6 +34,8 @@ describe('durable provider write inventory', { skip: !url && 'PostgreSQL URL not
       lib.REPORTING_MANAGED_DELIVERY_MIGRATION,
       lib.REPORTING_OBJECT_WRITE_MIGRATION,
       lib.REPORTING_OBJECT_WRITE_MIGRATION,
+      lib.REPORTING_OBJECT_WRITE_AUTHORITY_MIGRATION,
+      lib.REPORTING_OBJECT_WRITE_AUTHORITY_MIGRATION,
     ])
       await pool.query(migration);
     store = new lib.PostgresReportingManagedDeliveryStore(pool);
@@ -47,6 +49,43 @@ describe('durable provider write inventory', { skip: !url && 'PostgreSQL URL not
   });
   const authorize = id => store.authorizeDestination({ ...scope(id), authorized_at: new Date().toISOString() });
   const revoke = id => store.revokeDestination({ ...scope(id), revoked_at: new Date().toISOString() });
+
+  test('authority migration persists identity and plan reads require the live exact authorization', async () => {
+    const lib = require('../../dist/lib/reporting/ledger');
+    assert.equal(await store.probeObjectWriteAuthority(), true);
+    const id = await store.getObjectWriteAuthorityId();
+    await pool.query(lib.REPORTING_OBJECT_WRITE_AUTHORITY_MIGRATION);
+    assert.equal(await new lib.PostgresReportingManagedDeliveryStore(pool).getObjectWriteAuthorityId(), id);
+    await authorize('private-read');
+    const frozen = plan('private-read');
+    await store.registerObjectWritePlan(frozen);
+    assert.deepEqual(await store.getObjectWritePlan(scope('private-read'), frozen.plan_id), frozen);
+    assert.deepEqual(await store.getAuthorizedObjectWriteBinding(scope('private-read')), provider);
+    assert.equal(await store.getObjectWritePlan(scope('outside'), frozen.plan_id), null);
+    assert.equal(await store.getObjectWritePlan({ ...scope('private-read'), generation: 2 }, frozen.plan_id), null);
+    await revoke('private-read');
+    assert.equal(await store.getObjectWritePlan(scope('private-read'), frozen.plan_id), null);
+    assert.equal(await store.getAuthorizedObjectWriteBinding(scope('private-read')), null);
+  });
+
+  test('private authority reads remain concurrent with an account mutation lock', async () => {
+    await authorize('read-concurrency');
+    const frozen = plan('read-concurrency');
+    await store.registerObjectWritePlan(frozen);
+    const lock = await pool.connect();
+    try {
+      await lock.query('BEGIN');
+      await lock.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+        'adcp-reporting-account:read-concurrency',
+      ]);
+      const signal = AbortSignal.timeout(1000);
+      assert.deepEqual(await store.getAuthorizedObjectWriteBinding(scope('read-concurrency'), { signal }), provider);
+      assert.deepEqual(await store.getObjectWritePlan(scope('read-concurrency'), frozen.plan_id, { signal }), frozen);
+    } finally {
+      await lock.query('ROLLBACK');
+      lock.release();
+    }
+  });
 
   test('freezes content and object identities across retry and rolls back conflicts', async () => {
     await authorize('freeze');

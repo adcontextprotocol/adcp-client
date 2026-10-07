@@ -31,6 +31,7 @@ import {
   type ReportingObjectWriteBindingV1,
   type ReportingObjectWriteContextV1,
   type ReportingObjectWriteStoreV1,
+  type ReportingObjectWriteAuthorityStoreV1,
 } from './object-writes';
 import {
   adjustmentReceiptEvidenceMatches,
@@ -368,7 +369,7 @@ export interface PostgresReportingManagedDeliveryStoreOptions {
 }
 
 export class PostgresReportingManagedDeliveryStore
-  implements ReportingManagedDeliveryStore, ReportingObjectWriteStoreV1
+  implements ReportingManagedDeliveryStore, ReportingObjectWriteStoreV1, ReportingObjectWriteAuthorityStoreV1
 {
   private readonly evidenceRetentionDays: number | undefined;
   private readonly statusRetentionDays: number | undefined;
@@ -2087,6 +2088,98 @@ export class PostgresReportingManagedDeliveryStore
         [scope.account_id, scope.destination_ref, scope.generation]
       );
       return binding.rows[0] ?? null;
+    }, context.signal);
+  }
+
+  async probeObjectWriteAuthority(context: ReportingObjectWriteContextV1 = {}): Promise<boolean> {
+    await this.transaction(async client => {
+      await client.query(
+        `SELECT installation_id,schema_version FROM adcp_reporting_object_write_authority WHERE singleton AND schema_version=1`
+      );
+      await client.query(
+        `SELECT account_id,destination_ref,generation,bucket,namespace_key FROM adcp_reporting_object_write_bindings LIMIT 0`
+      );
+      await client.query(
+        `SELECT account_id,destination_ref,generation,plan_id,fingerprint FROM adcp_reporting_object_write_plans LIMIT 0`
+      );
+      await client.query(
+        `SELECT plan_id,object_index,bucket,object_name,sha256,size_bytes,fenced_at,tombstone_generation FROM adcp_reporting_object_writes LIMIT 0`
+      );
+    }, context.signal);
+    await this.getObjectWriteAuthorityId(context);
+    return true;
+  }
+
+  async getObjectWriteAuthorityId(context: ReportingObjectWriteContextV1 = {}): Promise<string> {
+    return this.transaction(async client => {
+      const result = await client.query<QueryRow & { installation_id: string }>(
+        `SELECT installation_id::text FROM adcp_reporting_object_write_authority WHERE singleton AND schema_version=1`
+      );
+      const id = result.rows[0]?.installation_id;
+      if (result.rowCount !== 1 || !id || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(id))
+        throw new Error('Reporting object-write authority migration is unavailable');
+      return id;
+    }, context.signal);
+  }
+
+  async getAuthorizedObjectWriteBinding(
+    input: ReportingObjectWriteScopeV1,
+    context: ReportingObjectWriteContextV1 = {}
+  ): Promise<ReportingObjectWriteBindingV1 | null> {
+    const scope = {
+      account_id: input.account_id,
+      destination_ref: input.destination_ref,
+      generation: input.generation,
+    };
+    assertReportingObjectWriteScope(scope);
+    return this.transaction(async client => {
+      const result = await client.query<QueryRow & ReportingObjectWriteBindingV1>(
+        `SELECT binding.bucket,binding.namespace_key FROM adcp_reporting_object_write_bindings binding
+         JOIN adcp_reporting_destination_authorizations authz USING (account_id,destination_ref,generation)
+         WHERE binding.account_id=$1 AND binding.destination_ref=$2 AND binding.generation=$3 AND authz.revoked_at IS NULL`,
+        [scope.account_id, scope.destination_ref, scope.generation]
+      );
+      return result.rows[0] ?? null;
+    }, context.signal);
+  }
+
+  async getObjectWritePlan(
+    input: ReportingObjectWriteScopeV1,
+    planId: string,
+    context: ReportingObjectWriteContextV1 = {}
+  ): Promise<ReportingObjectWritePlanV1 | null> {
+    const scope = {
+      account_id: input.account_id,
+      destination_ref: input.destination_ref,
+      generation: input.generation,
+    };
+    assertReportingObjectWriteScope(scope);
+    if (typeof planId !== 'string' || !/^[a-f0-9]{64}$/.test(planId))
+      throw new Error('Invalid reporting object-write plan identity');
+    return this.transaction(async client => {
+      const selected = await client.query<QueryRow & ReportingObjectWriteBindingV1 & { fingerprint: string }>(
+        `SELECT binding.bucket,binding.namespace_key,plan.fingerprint FROM adcp_reporting_object_write_plans plan
+         JOIN adcp_reporting_object_write_bindings binding USING (account_id,destination_ref,generation)
+         JOIN adcp_reporting_destination_authorizations authz USING (account_id,destination_ref,generation)
+         WHERE plan.account_id=$1 AND plan.destination_ref=$2 AND plan.generation=$3 AND plan.plan_id=$4 AND authz.revoked_at IS NULL`,
+        [scope.account_id, scope.destination_ref, scope.generation, planId]
+      );
+      if (!selected.rows[0]) return null;
+      const selectedBinding = selected.rows[0];
+      const objects = await client.query<QueryRow & ReportingObjectWriteV1>(
+        `SELECT bucket,object_name,sha256,size_bytes::float8 AS size_bytes FROM adcp_reporting_object_writes
+         WHERE account_id=$1 AND destination_ref=$2 AND generation=$3 AND plan_id=$4 ORDER BY object_index`,
+        [scope.account_id, scope.destination_ref, scope.generation, planId]
+      );
+      const plan: ReportingObjectWritePlanV1 = {
+        ...scope,
+        plan_id: planId,
+        provider: { bucket: selectedBinding.bucket, namespace_key: selectedBinding.namespace_key },
+        objects: objects.rows,
+      };
+      if (reportingObjectWritePlanFingerprint(plan) !== selectedBinding.fingerprint)
+        throw new ReportingObjectWriteConflictError();
+      return plan;
     }, context.signal);
   }
 

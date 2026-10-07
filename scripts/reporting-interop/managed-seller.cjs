@@ -12,7 +12,11 @@ const CONSUMER_ID = 'https://buyer.example.test/adcp';
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const iso = ms => new Date(ms).toISOString();
 
-async function createFixture(api, pool, { mode, adjustments = false, notificationActivityPort }) {
+async function createFixture(
+  api,
+  pool,
+  { mode, adjustments = false, notificationActivityPort, gcs, zeroRows = false }
+) {
   assert.ok(['managed', 'billing'].includes(mode));
   const billing = mode === 'billing';
   const root = path.resolve(process.env.REPORTING_INTEROP_DESTINATION);
@@ -25,10 +29,32 @@ async function createFixture(api, pool, { mode, adjustments = false, notificatio
     .map(row => JSON.parse(row));
   const revision = structuredClone(fixture.revision);
   revision.account_id = ACCOUNT_ID;
+  if (gcs) {
+    const base = `https://storage.googleapis.com/${gcs.bucket}/${gcs.contractPrefix}`;
+    revision.schema_uri = base + 'row-schema.json';
+    revision.report_definition_uri = base + 'report-definition.json';
+    revision.canonical_content_digest.canonicalization_uri = base + 'canonicalization.json';
+  }
   // Core configurations in this fixture freeze media-buy scope, without
   // package constituents. The revision must describe that exact same scope.
   revision.coverage.package_ids = [];
   revision.coverage.covered_package_ids = [];
+  if (zeroRows) {
+    rows.length = 0;
+    revision.row_count = 0;
+    revision.control_totals = revision.control_totals.map(total => ({ ...total, value: '0' }));
+    revision.revision_content_sha256 = sha(
+      Buffer.from(
+        api.jcs.canonicalize({
+          reporting_revision_id: revision.reporting_revision_id,
+          row_count: 0,
+          control_totals: revision.control_totals,
+          reporting_rows: rows,
+        })
+      )
+    );
+    revision.canonical_content_digest.value = sha(Buffer.from('[]'));
+  }
   if (!billing) delete revision.canonical_content_digest;
   // Keep the immutable historical report inside this invocation's recovery
   // window; PostgreSQL still supplies the authoritative current time.
@@ -38,10 +64,31 @@ async function createFixture(api, pool, { mode, adjustments = false, notificatio
   for (const [uri, name] of [
     [revision.schema_uri, 'row-schema.json'],
     [revision.report_definition_uri, 'report-definition.json'],
-    [fixture.revision.canonical_content_digest.canonicalization_uri, 'canonicalization.json'],
+    [
+      gcs
+        ? `https://storage.googleapis.com/${gcs.bucket}/${gcs.contractPrefix}canonicalization.json`
+        : fixture.revision.canonical_content_digest.canonicalization_uri,
+      'canonicalization.json',
+    ],
   ]) {
     const body = fs.readFileSync(path.join(fixtures, 'resources', name));
     contracts.set(uri, name);
+    if (gcs)
+      await gcs.storage
+        .bucket(gcs.bucket)
+        .file(gcs.contractPrefix + name)
+        .save(body, {
+          resumable: false,
+          preconditionOpts: { ifGenerationMatch: 0 },
+          metadata: {
+            contentType:
+              name === 'report-definition.json'
+                ? 'application/vnd.adcp.reporting-definition+json'
+                : name === 'canonicalization.json'
+                  ? 'application/vnd.adcp.reporting-canonicalization+json'
+                  : 'application/schema+json',
+          },
+        });
     fs.mkdirSync(path.join(root, 'contracts'), { recursive: true });
     fs.writeFileSync(path.join(root, 'contracts', name), body, { flag: 'wx' });
   }
@@ -78,10 +125,10 @@ async function createFixture(api, pool, { mode, adjustments = false, notificatio
     reconciliation_mode: billing ? 'consumer_receipt' : 'delivery_only',
     method: {
       pattern: 'file_transfer',
-      transport: 'owned_files',
+      transport: gcs ? 'gcs' : 'owned_files',
       orchestration: 'producer_managed',
       destination_modes: ['existing'],
-      provider: { domain: 'reports.example.test' },
+      provider: { domain: gcs ? 'storage.googleapis.com' : 'reports.example.test' },
       format: 'jsonl',
     },
   };
@@ -89,6 +136,9 @@ async function createFixture(api, pool, { mode, adjustments = false, notificatio
     api.ledger.REPORTING_LEDGER_MIGRATION,
     api.ledger.REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION,
     api.ledger.REPORTING_MANAGED_DELIVERY_MIGRATION,
+    ...(gcs
+      ? [api.ledger.REPORTING_OBJECT_WRITE_MIGRATION, api.ledger.REPORTING_OBJECT_WRITE_AUTHORITY_MIGRATION]
+      : []),
   ]) {
     await pool.query(migration);
   }
@@ -102,6 +152,146 @@ async function createFixture(api, pool, { mode, adjustments = false, notificatio
     statusRetentionDays: 90,
   });
   const resources = new Map();
+  const savedExpected = {
+    deliveryConfigId: `${mode}-files`,
+    deliveryConfigVersion: 1,
+    reportDefinitionId: revision.report_definition_id,
+    feedPurpose: feed,
+    reportingProfile: revision.reporting_profile,
+    mediaBuyIds: revision.media_buy_ids,
+    destinationRef: `destination-${mode}`,
+    deliveryMethod: 'file_transfer',
+    requiredFinality: 'official',
+    reconciliationMode: offering.reconciliation_mode,
+    coverageRequirement: 'full',
+    coverage: revision.coverage,
+    reportDefinitionUri: revision.report_definition_uri,
+    reportDefinitionSha256: revision.report_definition_sha256,
+    schemaVersion: revision.schema_version,
+    schemaUri: revision.schema_uri,
+    schemaSha256: revision.schema_sha256,
+    schemaDialect: revision.schema_dialect,
+    schemaRefPolicy: revision.schema_ref_policy,
+    verificationProfile: profile,
+    periodStart: revision.period.start,
+    periodEnd: revision.period.end,
+    officialFinality: { policyId: revision.finality_policy_id, basis: revision.finality_basis },
+    ...(billing
+      ? {
+          canonicalization: {
+            id: revision.canonical_content_digest.canonicalization_id,
+            uri: revision.canonical_content_digest.canonicalization_uri,
+            sha256: revision.canonical_content_digest.canonicalization_sha256,
+            primaryKeys: ['media_buy_id', 'date'],
+          },
+        }
+      : {}),
+  };
+  const createGcsAdapter = options => {
+    gcs.observeFactory?.(options);
+    return gcs.api.createGcsReportingManagedDeliveryAdapterV1(options);
+  };
+  const adapter = gcs
+    ? await createGcsAdapter({
+        storage: gcs.storage,
+        coreStore: core,
+        store: managed,
+        bucket: gcs.bucket,
+        namespace: gcs.namespace,
+        acknowledgeDedicatedFreshBucket: true,
+        resolveExpectedPeriod: async () => structuredClone(savedExpected),
+        resolveContractReader: async () => ({
+          scope: {
+            principal_id: 'fixture-producer',
+            account_id: ACCOUNT_ID,
+            destination_ref: `destination-${mode}`,
+            generation: 1,
+          },
+          bucket: gcs.bucket,
+          objectPrefix: gcs.contractPrefix,
+          getStorage: async () => gcs.storage,
+          authorize: async ({ scope, bucket, objectPrefix }, { signal }) => {
+            signal.throwIfAborted();
+            return (
+              scope.principal_id === 'fixture-producer' &&
+              scope.account_id === ACCOUNT_ID &&
+              scope.destination_ref === `destination-${mode}` &&
+              scope.generation === 1 &&
+              bucket === gcs.bucket &&
+              objectPrefix === gcs.contractPrefix &&
+              (await managed.isAuthorizationCurrent(scope))
+            );
+          },
+        }),
+      })
+    : {
+        verificationProfiles: [profile],
+        revocationFencesDeliveryGenerations: true,
+        async deliver(input) {
+          const id = input.materialization.reporting_materialization_id;
+          assert.match(id, /^[A-Za-z0-9._-]+$/);
+          const directory = path.join(root, id);
+          fs.mkdirSync(directory);
+          const bytes = Buffer.from(input.revision.rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+          fs.writeFileSync(path.join(directory, 'rows.jsonl'), bytes, { flag: 'wx' });
+          const manifest = {
+            ...JSON.parse(fs.readFileSync(path.join(fixtures, 'resources/manifest.json'))),
+            reporting_revision_id: input.revision.reporting_revision_id,
+            reporting_obligation_id: input.obligation.reporting_obligation_id,
+            reporting_materialization_id: id,
+            period: input.revision.wireRevision.period,
+            files: [{ object_ref: 'rows.jsonl', size_bytes: bytes.length, sha256: sha(bytes), row_count: rows.length }],
+            total_size_bytes: bytes.length,
+            row_count: rows.length,
+            control_totals: input.revision.wireRevision.control_totals,
+            created_at: iso(Date.now()),
+          };
+          const manifestBytes = Buffer.from(api.jcs.canonicalize(manifest));
+          fs.writeFileSync(path.join(directory, 'manifest.json'), manifestBytes, { flag: 'wx' });
+          const resourceRef = `file:${id}`;
+          resources.set(resourceRef, directory);
+          return {
+            status: 'available',
+            resource: {
+              resource_ref: resourceRef,
+              kind: 'manifest',
+              location: `https://reports.example.test/${id}/manifest.json`,
+              manifest_version: '1.0',
+              manifest_sha256: sha(manifestBytes),
+              immutability: 'immutable_location',
+              expires_at: iso(Date.now() + 31 * 86_400_000),
+            },
+            verification: {
+              verified_at: iso(Date.now()),
+              verification_path: 'representative_consumer',
+              verification_profile: profile,
+              row_count: rows.length,
+              control_totals: input.revision.wireRevision.control_totals,
+              physical_checksums: [{ object_ref: 'rows.jsonl', algorithm: 'sha256', value: sha(bytes) }],
+              ...(billing ? { canonical_content_digest: input.revision.wireRevision.canonical_content_digest } : {}),
+            },
+          };
+        },
+        async read(input) {
+          const directory = resources.get(input.resource.resource_ref);
+          if (!directory) throw new Error('resource grant is unavailable');
+          const body = fs.readFileSync(path.join(directory, 'manifest.json'));
+          assert.ok(body.length <= input.maxBytes);
+          return body;
+        },
+        async revoke() {
+          for (const directory of resources.values()) fs.rmSync(directory, { recursive: true });
+          resources.clear();
+        },
+      };
+  if (gcs?.observeDelivery) {
+    const deliver = adapter.deliver.bind(adapter);
+    adapter.deliver = async (input, context) => {
+      const outcome = await deliver(input, context);
+      gcs.observeDelivery(structuredClone(input), structuredClone(outcome));
+      return outcome;
+    };
+  }
   const runtime = await api.ledger.createReportingManagedDeliveryRuntime({
     coreStore: core,
     store: managed,
@@ -111,66 +301,7 @@ async function createFixture(api, pool, { mode, adjustments = false, notificatio
     resourceRetentionDays: 30,
     authorizationRevocationSeconds: 60,
     resolveConsumerId: context => context.consumer_id,
-    adapter: {
-      verificationProfiles: [profile],
-      revocationFencesDeliveryGenerations: true,
-      async deliver(input) {
-        const id = input.materialization.reporting_materialization_id;
-        assert.match(id, /^[A-Za-z0-9._-]+$/);
-        const directory = path.join(root, id);
-        fs.mkdirSync(directory);
-        const bytes = Buffer.from(input.revision.rows.map(row => JSON.stringify(row)).join('\n') + '\n');
-        fs.writeFileSync(path.join(directory, 'rows.jsonl'), bytes, { flag: 'wx' });
-        const manifest = {
-          ...JSON.parse(fs.readFileSync(path.join(fixtures, 'resources/manifest.json'))),
-          reporting_revision_id: input.revision.reporting_revision_id,
-          reporting_obligation_id: input.obligation.reporting_obligation_id,
-          reporting_materialization_id: id,
-          period: input.revision.wireRevision.period,
-          files: [{ object_ref: 'rows.jsonl', size_bytes: bytes.length, sha256: sha(bytes), row_count: rows.length }],
-          total_size_bytes: bytes.length,
-          row_count: rows.length,
-          control_totals: input.revision.wireRevision.control_totals,
-          created_at: iso(Date.now()),
-        };
-        const manifestBytes = Buffer.from(api.jcs.canonicalize(manifest));
-        fs.writeFileSync(path.join(directory, 'manifest.json'), manifestBytes, { flag: 'wx' });
-        const resourceRef = `file:${id}`;
-        resources.set(resourceRef, directory);
-        return {
-          status: 'available',
-          resource: {
-            resource_ref: resourceRef,
-            kind: 'manifest',
-            location: `https://reports.example.test/${id}/manifest.json`,
-            manifest_version: '1.0',
-            manifest_sha256: sha(manifestBytes),
-            immutability: 'immutable_location',
-            expires_at: iso(Date.now() + 31 * 86_400_000),
-          },
-          verification: {
-            verified_at: iso(Date.now()),
-            verification_path: 'representative_consumer',
-            verification_profile: profile,
-            row_count: rows.length,
-            control_totals: input.revision.wireRevision.control_totals,
-            physical_checksums: [{ object_ref: 'rows.jsonl', algorithm: 'sha256', value: sha(bytes) }],
-            ...(billing ? { canonical_content_digest: input.revision.wireRevision.canonical_content_digest } : {}),
-          },
-        };
-      },
-      async read(input) {
-        const directory = resources.get(input.resource.resource_ref);
-        if (!directory) throw new Error('resource grant is unavailable');
-        const body = fs.readFileSync(path.join(directory, 'manifest.json'));
-        assert.ok(body.length <= input.maxBytes);
-        return body;
-      },
-      async revoke() {
-        for (const directory of resources.values()) fs.rmSync(directory, { recursive: true });
-        resources.clear();
-      },
-    },
+    adapter,
   });
   const context = { account: { account_id: ACCOUNT_ID }, consumer_id: CONSUMER_ID };
   let prepared = false;
@@ -247,7 +378,7 @@ async function createFixture(api, pool, { mode, adjustments = false, notificatio
         authorization_generation: 1,
         feed_purpose: feed,
         method: 'file_transfer',
-        transport: 'owned_files',
+        transport: gcs ? 'gcs' : 'owned_files',
         verification_profile: profile,
         reconciliation_mode: offering.reconciliation_mode,
         resource_retention_days: 30,
@@ -417,7 +548,7 @@ async function createFixture(api, pool, { mode, adjustments = false, notificatio
     }
     throw new Error('unsupported operation');
   }
-  return { mode, runtime, controller, appendAdjustments };
+  return { mode, runtime, controller, appendAdjustments, core, managed, adapter, savedExpected, status };
 }
 
 if (require.main === module) {
