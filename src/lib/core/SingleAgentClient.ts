@@ -6945,7 +6945,7 @@ export class SingleAgentClient {
       this.validateBeforeCreativeCapabilityProbe('create_media_buy', params, taskOptions);
     }
     const wireMode = hasCreativeFormatData
-      ? this.resolveCreativeFormatWireMode('create_media_buy', await this.getCapabilities(taskOptions))
+      ? await this.resolveCreativeFormatWireMode('create_media_buy', taskOptions)
       : 'canonical';
     const wireParams = params as MutatingRequestInput<CanonicalCreateMediaBuyRequest>;
 
@@ -7053,7 +7053,7 @@ export class SingleAgentClient {
       this.validateBeforeCreativeCapabilityProbe('update_media_buy', params, taskOptions);
     }
     const wireMode = hasCreativeFormatData
-      ? this.resolveCreativeFormatWireMode('update_media_buy', await this.getCapabilities(taskOptions))
+      ? await this.resolveCreativeFormatWireMode('update_media_buy', taskOptions)
       : 'canonical';
     const result = await this.executeAndHandle<UpdateMediaBuyResponse>(
       'update_media_buy',
@@ -7153,7 +7153,7 @@ export class SingleAgentClient {
       projectionCatalogs ?? this.config.projectionCatalogs
     );
     this.validateBeforeCreativeCapabilityProbe('sync_creatives', params, taskOptions);
-    const wireMode = this.resolveCreativeFormatWireMode('sync_creatives', await this.getCapabilities(taskOptions));
+    const wireMode = await this.resolveCreativeFormatWireMode('sync_creatives', taskOptions);
     const configuredSelectorContainers = [
       ...((creativeFormatProjection?.selectorContainers ?? []) as ReadonlyArray<CreativeFormatSelectorContainer>),
     ];
@@ -7207,13 +7207,35 @@ export class SingleAgentClient {
     );
   }
 
-  private resolveCreativeFormatWireMode(taskType: string, capabilities: unknown): CreativeFormatWireMode {
+  /**
+   * Resolve the creative wire mode used by the canonical write methods without
+   * sending a mutation. Discovers capabilities and the current tool's input
+   * schema, or reuses fresh cached/primed evidence, with this client's wire pin.
+   *
+   * `unknown` preserves the conservative legacy projection for older peers
+   * whose capabilities and schema do not establish support. Projection still
+   * requires an unambiguous legacy reference for each creative in that case.
+   * Conflicting evidence and unproven support with a 3.2+ buyer pin throw
+   * `CreativeFormatCapabilityError`, just as they do during a write.
+   */
+  async resolveCreativeFormatWireMode(
+    taskType: 'sync_creatives' | 'create_media_buy' | 'update_media_buy',
+    options?: ReadRequestOptions
+  ): Promise<CreativeFormatWireMode> {
+    const discoveryContext: CapabilityDiscoveryContext = {};
+    const capabilities = await this.getCapabilities({
+      ...options,
+      [CAPABILITY_DISCOVERY_CONTEXT]: discoveryContext,
+    } as InternalReadRequestOptions);
+    const usesScopedFetch =
+      normalizeTransportOptions(options?.transport ?? this.config.transport)?.trustedFetchFn !== undefined;
+    const toolSchemas = discoveryContext.toolSchemas ?? (usesScopedFetch ? undefined : this.cachedToolSchemas);
     // Capabilities `adcp.build_version` is advisory deployment metadata. The
     // protocol schema explicitly forbids using it for negotiation, so wire
     // guarantees follow the release pin this client actually emits.
     const wireRelease = this.config.wireAdcpVersion ?? this.resolvedAdcpVersion;
     const declared = resolveCreativeFormatWireMode(capabilities, wireRelease);
-    const schema = creativeSchemaSupport(this.cachedToolSchemas?.get(taskType));
+    const schema = creativeSchemaSupport(toolSchemas?.get(taskType));
     if (declared !== 'unknown' && schema !== 'unknown' && declared !== schema) {
       throw new CreativeFormatCapabilityError(
         `Seller capability and ${taskType} input schema disagree about canonical creative support`

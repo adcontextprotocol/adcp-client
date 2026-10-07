@@ -175,6 +175,7 @@ import type {
   CanonicalProduct,
   CanonicalSyncCreativesRequest,
   CanonicalUpdateMediaBuyRequest,
+  CreativeFormatWireMode,
 } from '../v2/projection/creative-delivery';
 export type { CanonicalGetProductsResponse } from '../v2/projection/creative-delivery';
 
@@ -1480,6 +1481,20 @@ export class AgentClient {
    */
   async getCapabilities(options?: Pick<TaskOptions, 'signal' | 'transport'>): Promise<AdcpCapabilities> {
     return this.client.getCapabilities(options);
+  }
+
+  /**
+   * Resolve the creative wire mode used by canonical writes without sending a
+   * mutation. Uses capabilities, this tool's input schema, and the client wire
+   * pin. Older peers with insufficient evidence return `unknown` and require
+   * an unambiguous legacy reference during projection; conflicting evidence
+   * or unproven support with a 3.2+ buyer pin throws `CreativeFormatCapabilityError`.
+   */
+  async resolveCreativeFormatWireMode(
+    taskType: 'sync_creatives' | 'create_media_buy' | 'update_media_buy',
+    options?: Pick<TaskOptions, 'signal' | 'transport'>
+  ): Promise<CreativeFormatWireMode> {
+    return this.client.resolveCreativeFormatWireMode(taskType, options);
   }
 
   /** Scope token for a tenant-bound, application-owned capability preflight. */

@@ -1866,6 +1866,7 @@ export {
   FormatOptionRefsLookupError,
   CreativeFormatCapabilityError,
   CreativeFormatProjectionError,
+  type CreativeFormatWireMode,
   type LegacyFormatConversionContext,
   type LegacyFormatConverter,
   type LegacyFormatResolutionContext,
