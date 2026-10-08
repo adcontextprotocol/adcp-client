@@ -10,6 +10,7 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { injectTraceHeaders } from '../observability/tracing';
 import { isAbortOrTimeoutError, resolveRequestTimeoutMs, withAbortSignal } from './abort';
 
 export interface MCPCallContext {
@@ -73,6 +74,22 @@ export function isCorrelationHeader(name: string): boolean {
   const lower = name.toLowerCase();
   if (IDENTITY_HEADER_HINT.test(lower)) return false;
   return CORRELATION_HEADER_NAMES.has(lower) || CORRELATION_HEADER_PATTERN.test(lower);
+}
+
+/** Snapshot ambient routing headers before choosing a connection or discovery key. */
+export function withAmbientIdentityHeaders(headers?: Record<string, string>): Record<string, string> {
+  const effective = new Headers(headers);
+  // An explicit trace family suppresses unrelated ambient baggage as well.
+  if (!effective.has('traceparent')) {
+    for (const [name, value] of Object.entries(injectTraceHeaders())) {
+      if (!isCorrelationHeader(name) && !effective.has(name)) effective.set(name, value);
+    }
+  }
+  const result: Record<string, string> = {};
+  effective.forEach((value, name) => {
+    result[name] = value;
+  });
+  return result;
 }
 
 /**
@@ -195,6 +212,21 @@ export async function joinPendingConnection<T>(
  * transport's long-lived background GET/SSE listener is created at connect
  * time, outside this phase, and keeps its own lifetime.
  */
+/** Internal cleanup of a response stream after the SDK has delivered a successful result. */
+const MCP_CALL_COMPLETED_MARKER = Symbol.for('@adcp/sdk/mcp-call-completed');
+export const MCP_CALL_COMPLETED = Object.assign(new DOMException('MCP call completed', 'AbortError'), {
+  [MCP_CALL_COMPLETED_MARKER]: true,
+});
+
+/** Recognize the cleanup reason across independently bundled CJS/ESM entry points. */
+export function isMCPCallCompleted(reason: unknown): boolean {
+  return (
+    typeof reason === 'object' &&
+    reason !== null &&
+    (reason as Record<symbol, unknown>)[MCP_CALL_COMPLETED_MARKER] === true
+  );
+}
+
 export async function runCallPhase<T>(signal: AbortSignal | undefined, fn: () => Promise<T>): Promise<T> {
   const context = callContextStorage.getStore();
   if (!context) return fn();
@@ -202,15 +234,37 @@ export async function runCallPhase<T>(signal: AbortSignal | undefined, fn: () =>
   const forward = () => controller.abort(signal?.reason);
   if (signal?.aborted) forward();
   else signal?.addEventListener('abort', forward, { once: true });
+  let completed = false;
   try {
-    return await callContextStorage.run({ ...context, callSignal: controller.signal }, fn);
+    const result = await callContextStorage.run({ ...context, callSignal: controller.signal }, fn);
+    completed = true;
+    return result;
   } finally {
     signal?.removeEventListener('abort', forward);
-    controller.abort();
+    controller.abort(completed ? MCP_CALL_COMPLETED : undefined);
   }
 }
 
 const JSON_RPC_NOTIFICATION = /^\s*\{[^]{0,120}?"method"\s*:\s*"notifications\//;
+
+function isNotificationBody(body: string): boolean {
+  // The cheap prefix check avoids parsing ordinary tool payloads. Confirm the
+  // top-level method: a tool argument named `method` is still a cancellable call.
+  if (!JSON_RPC_NOTIFICATION.test(body)) return false;
+  try {
+    const message = JSON.parse(body);
+    return (
+      message !== null &&
+      typeof message === 'object' &&
+      !Array.isArray(message) &&
+      !Object.prototype.hasOwnProperty.call(message, 'id') &&
+      typeof message.method === 'string' &&
+      message.method.startsWith('notifications/')
+    );
+  } catch {
+    return false;
+  }
+}
 
 /**
  * The active call's cancellation signal for its own requests: POSTs, and the
@@ -221,7 +275,7 @@ export function callRequestSignal(init: RequestInit | undefined): AbortSignal | 
   if (method !== 'POST' && !(method === 'GET' && new Headers(init?.headers).has('last-event-id'))) return undefined;
   // A JSON-RPC notification (notably `notifications/cancelled`) tells the seller
   // to stop work for a call that is ending, so it must still be delivered.
-  if (method === 'POST' && typeof init?.body === 'string' && JSON_RPC_NOTIFICATION.test(init.body)) return undefined;
+  if (method === 'POST' && typeof init?.body === 'string' && isNotificationBody(init.body)) return undefined;
   return callContextStorage.getStore()?.callSignal;
 }
 

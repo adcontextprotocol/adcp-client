@@ -132,6 +132,7 @@ import { withTaskDeadline } from './task-deadline';
 import { createMCPRequestHeaders } from '../auth';
 import { isAbortOrTimeoutError } from '../protocols/abort';
 import { getSignedRequestRejection } from '../protocols/signedRequestRejection';
+import { withAmbientIdentityHeaders } from '../protocols/mcp-call-context';
 import { ProtocolClient, normalizeTransportOptions } from '../protocols';
 import {
   AuthenticationCredentialsRejectedError,
@@ -235,6 +236,7 @@ function presentedStaticTransportCredential(
 import type { AdcpCapabilities, AdcpMajorVersion, ToolInfo, FeatureName } from '../utils/capabilities';
 import {
   agentDiscoveryCacheKey,
+  MAX_AGENT_DISCOVERY_TTL_MS,
   resolveAgentDiscoveryTtlMs,
   validateAgentDiscoveryCacheConfig,
   type AgentDiscoveryCacheConfig,
@@ -1687,18 +1689,40 @@ export interface AgentDiscoverySeed {
   toolSchemas?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
   /**
    * The MCP endpoint serving this agent, to skip endpoint probing. Must be a
-   * credential-free URL on the configured agent's origin.
+   * credential-free URL on the configured agent's origin, without query or fragment.
    */
   endpoint?: { agentUri: string; mcpEra?: 'legacy' | 'modern' };
 }
 
-// Per shared cache and key: how many times evidence was invalidated in this
-// process, so an older in-flight discovery cannot write back what was dropped.
-// Best effort across processes: a distributed backend is not made atomic.
-const sharedInvalidationEpochs = new WeakMap<object, Map<string, number>>();
+// Per shared cache and key: the latest invalidation in this process. `epoch`
+// (unique, never reused) lets an older in-flight discovery or local evidence
+// notice it was dropped; `at` is a tombstone, so an entry observed before it is
+// a miss even when the backend delete failed or is still queued. Bounded: records
+// older than any entry could live, and the oldest beyond the cap, are forgotten,
+// but only into a per-cache floor (the largest forgotten epoch and time) that
+// every key inherits: held epochs and entries older than a forgotten invalidation
+// then miss, so forgetting can only cost a rediscovery, never resurrect stale
+// evidence. Best effort across processes: a distributed backend is not made atomic.
+interface SharedInvalidation {
+  epoch: number;
+  at: number;
+}
+const sharedInvalidations = new WeakMap<object, Map<string, SharedInvalidation>>();
+const sharedInvalidationFloors = new WeakMap<object, SharedInvalidation>();
+let sharedInvalidationCounter = 0;
+const MAX_SHARED_INVALIDATION_RECORDS = 1024;
 
-// Per shared cache and key: tail of the in-process queue of backend mutations.
-const sharedMutationChains = new WeakMap<object, Map<string, Promise<void>>>();
+// Per shared cache and key: in-process queue of backend mutations. Bounded so a
+// backend that never answers cannot make the queues grow without limit.
+interface SharedMutationQueue {
+  tail: Promise<void>;
+  pending: number;
+  /** Latest queued delete that has not started; a newer invalidation joins it. */
+  waitingDelete?: { promise: Promise<unknown>; started: boolean };
+}
+const sharedMutationChains = new WeakMap<object, Map<string, SharedMutationQueue>>();
+const MAX_PENDING_SHARED_MUTATIONS_PER_KEY = 16;
+const MAX_SHARED_MUTATION_KEYS = 1024;
 
 // In-process singleflight of live discovery per shared cache and key.
 const sharedDiscoveryFlights = new WeakMap<object, Map<string, Promise<void>>>();
@@ -2135,7 +2159,9 @@ export class SingleAgentClient {
   private capabilitiesFromSharedCache = false; // Installed from config.discoveryCache rather than discovered live
   private discoveryEpoch = 0; // bumped by invalidation so an older in-flight discovery cannot re-install what was dropped
   private discoveredEndpointKey?: string; // discoveryCache key the local endpoint was obtained under
+  private discoveredEndpointEpoch?: number; // shared invalidation epoch of that key when the endpoint was obtained
   private discoveredEndpointExpiresAt?: number; // freshness bound for that endpoint (shared-cache mode only)
+  private sharedEvidenceEpoch?: number; // shared invalidation epoch of that key when the evidence was obtained
   private sharedEvidenceKey?: string; // discoveryCache key the local capability cache was obtained under
   private _v2WarningFired = false; // Gate: emit the v2-sunset warning once per client instance
   private _syntheticV3WarningFired = false; // Gate: emit the synthetic-v3 warning once per client instance
@@ -3198,11 +3224,17 @@ export class SingleAgentClient {
 
     // With a shared discoveryCache the local endpoint is only valid for the
     // policy it was found under and for the freshness bound it was granted.
+    const effectiveEndpointKey =
+      this.config.discoveryCache && !usesScopedFetch && this.discoveredEndpoint
+        ? this.sharedDiscoveryKey(options)
+        : undefined;
     if (
       this.config.discoveryCache &&
       !usesScopedFetch &&
       this.discoveredEndpoint &&
-      (this.discoveredEndpointKey !== this.sharedDiscoveryKey(options) ||
+      (this.discoveredEndpointKey !== effectiveEndpointKey ||
+        (effectiveEndpointKey !== undefined &&
+          this.discoveredEndpointEpoch !== this.sharedInvalidationEpoch(effectiveEndpointKey)) ||
         (this.discoveredEndpointExpiresAt ?? 0) <= Date.now())
     ) {
       this.discoveredEndpoint = undefined;
@@ -3218,15 +3250,16 @@ export class SingleAgentClient {
       await this.adoptSharedEndpoint(options);
     }
     if (!usesScopedFetch && this.discoveredEndpoint) {
-      this.discoveredAgent = {
+      const adoptedAgent: AgentConfig = {
         ...this.normalizedAgent,
         agent_uri: this.discoveredEndpoint,
       };
+      this.discoveredAgent = adoptedAgent;
       if (this.normalizedAgent.oauth_tokens && !this.normalizedAgent.oauth_client_credentials) {
         const { shareNonInteractiveOAuthProvider } = await import('../auth/oauth/provider-cache');
-        shareNonInteractiveOAuthProvider(this.normalizedAgent, this.discoveredAgent);
+        shareNonInteractiveOAuthProvider(this.normalizedAgent, adoptedAgent);
       }
-      return this.discoveredAgent;
+      return adoptedAgent;
     }
 
     if (this.normalizedAgent.oauth_client_credentials) {
@@ -3260,6 +3293,10 @@ export class SingleAgentClient {
     this.discoveredEndpoint = discoveredEndpoint;
     if (this.config.discoveryCache) {
       this.discoveredEndpointKey = this.sharedDiscoveryKey(options);
+      this.discoveredEndpointEpoch = endpointEpoch?.shared;
+      // Publish the complete local state before awaiting the shared write, so a
+      // concurrent call on this instance never sees an endpoint without its bound.
+      this.discoveredEndpointExpiresAt = Date.now() + resolveAgentDiscoveryTtlMs(this.config.discoveryCache.ttlMs);
       const stored = await this.writeSharedDiscovery(
         options,
         {
@@ -3278,22 +3315,22 @@ export class SingleAgentClient {
         }
         return { ...this.normalizedAgent, agent_uri: discoveredEndpoint };
       }
-      this.discoveredEndpointExpiresAt =
-        stored?.expiresAt ?? Date.now() + resolveAgentDiscoveryTtlMs(this.config.discoveryCache.ttlMs);
+      if (stored && this.discoveredEndpoint === discoveredEndpoint) this.discoveredEndpointExpiresAt = stored.expiresAt;
     }
 
     // Compute canonical base URL by stripping /mcp suffix
-    this.canonicalBaseUrl = this.computeBaseUrl(this.discoveredEndpoint);
+    this.canonicalBaseUrl = this.computeBaseUrl(discoveredEndpoint);
 
-    this.discoveredAgent = {
+    const discoveredAgent: AgentConfig = {
       ...this.normalizedAgent,
-      agent_uri: this.discoveredEndpoint,
+      agent_uri: discoveredEndpoint,
     };
+    this.discoveredAgent = discoveredAgent;
     if (this.normalizedAgent.oauth_tokens && !this.normalizedAgent.oauth_client_credentials) {
       const { shareNonInteractiveOAuthProvider } = await import('../auth/oauth/provider-cache');
-      shareNonInteractiveOAuthProvider(this.normalizedAgent, this.discoveredAgent);
+      shareNonInteractiveOAuthProvider(this.normalizedAgent, discoveredAgent);
     }
-    return this.discoveredAgent;
+    return discoveredAgent;
   }
 
   /**
@@ -8622,6 +8659,7 @@ export class SingleAgentClient {
         beforeDispatch,
         deferredClientContext
       );
+      if (!result.success) await this.invalidateDiscoveryOnCapabilityError(result.adcpError?.code, effectiveOptions);
 
       const postAdapterLogs = [...inputSchemaStripLogs, ...v25DriftLogs];
       if (postAdapterLogs.length > 0) {
@@ -9465,15 +9503,24 @@ export class SingleAgentClient {
       this.cachedCapabilities = undefined;
       this.cachedToolSchemas = undefined;
       this.primedCapabilitiesExpiresAt = undefined;
+      this.capabilitiesFromSharedCache = false;
     }
 
     // With a shared discoveryCache, local evidence is only valid for the policy
-    // (transport overrides, headers, version) it was gathered under.
+    // (transport overrides, headers, version) it was gathered under, and only
+    // until anything sharing that key invalidates it.
+    const effectiveSharedKey =
+      this.config.discoveryCache && !usesScopedFetch && this.cachedCapabilities
+        ? this.sharedDiscoveryKey(options)
+        : undefined;
     if (
       this.config.discoveryCache &&
       !usesScopedFetch &&
       this.cachedCapabilities &&
-      this.sharedEvidenceKey !== this.sharedDiscoveryKey(options)
+      (this.sharedEvidenceKey !== effectiveSharedKey ||
+        (effectiveSharedKey !== undefined &&
+          this.sharedEvidenceEpoch !== undefined &&
+          this.sharedEvidenceEpoch !== this.sharedInvalidationEpoch(effectiveSharedKey)))
     ) {
       this.cachedCapabilities = undefined;
       this.cachedToolSchemas = undefined;
@@ -9539,8 +9586,9 @@ export class SingleAgentClient {
         return await this.discoverCapabilitiesLive(options, usesScopedFetch, discoveryContext);
       } finally {
         if (ownsFlight) {
+          // The (weakly held) map stays: a follower may hold it, and dropping it
+          // would let a later caller start a second, unseen one.
           flights.delete(key);
-          if (flights.size === 0) sharedDiscoveryFlights.delete(config.cache);
         }
         finish();
       }
@@ -9576,7 +9624,7 @@ export class SingleAgentClient {
     this.cachedToolSchemas = schemas;
     this.primedCapabilitiesExpiresAt = entry.expiresAt;
     this.capabilitiesFromSharedCache = true;
-    this.sharedEvidenceKey = key;
+    this.recordSharedEvidence(key);
     if (discoveryContext) discoveryContext.toolSchemas = this.cachedToolSchemas;
     this.maybeWarnV2Sunset(installed);
     return installed;
@@ -9671,7 +9719,7 @@ export class SingleAgentClient {
             // Only an authoritative, validated response is shared; every
             // synthetic fallback below stays private to this instance.
             if (!capabilities._synthetic && this.config.discoveryCache) {
-              this.sharedEvidenceKey = this.sharedDiscoveryKey(options);
+              this.recordSharedEvidence(this.sharedDiscoveryKey(options));
               const stored = await this.writeSharedDiscovery(
                 options,
                 {
@@ -9735,7 +9783,8 @@ export class SingleAgentClient {
           const capabilities = augmentCapabilitiesFromTools(v3Capabilities, tools);
           if (!usesScopedFetch && !superseded()) {
             this.cachedCapabilities = capabilities;
-            this.sharedEvidenceKey = this.sharedDiscoveryKey(options);
+            this.capabilitiesFromSharedCache = false;
+            this.recordSharedEvidence(this.sharedDiscoveryKey(options));
           }
           this.maybeWarnV2Sunset(capabilities);
           return capabilities;
@@ -9797,7 +9846,8 @@ export class SingleAgentClient {
         const capabilities = augmentCapabilitiesFromTools(buildSyntheticV3Capabilities(tools), tools);
         if (!usesScopedFetch && !superseded()) {
           this.cachedCapabilities = capabilities;
-          this.sharedEvidenceKey = this.sharedDiscoveryKey(options);
+          this.capabilitiesFromSharedCache = false;
+          this.recordSharedEvidence(this.sharedDiscoveryKey(options));
         }
         this.maybeWarnV2Sunset(capabilities);
         return capabilities;
@@ -9813,7 +9863,8 @@ export class SingleAgentClient {
     const capabilities = buildSyntheticCapabilities(tools);
     if (!usesScopedFetch && !superseded()) {
       this.cachedCapabilities = capabilities;
-      this.sharedEvidenceKey = this.sharedDiscoveryKey(options);
+      this.capabilitiesFromSharedCache = false;
+      this.recordSharedEvidence(this.sharedDiscoveryKey(options));
     }
     return capabilities;
   }
@@ -9913,6 +9964,7 @@ export class SingleAgentClient {
       this.cachedCapabilities = undefined;
       this.cachedToolSchemas = undefined;
       this.primedCapabilitiesExpiresAt = undefined;
+      this.capabilitiesFromSharedCache = false;
       return false;
     }
 
@@ -9925,7 +9977,7 @@ export class SingleAgentClient {
       // Application-owned evidence, not a shared-cache copy: a failed feature
       // check must not discard it as if it were stale shared evidence.
       this.capabilitiesFromSharedCache = false;
-      this.sharedEvidenceKey = this.sharedDiscoveryKey();
+      this.recordSharedEvidence(this.sharedDiscoveryKey(), true);
       this.cachedToolSchemas = snapshot.toolSchemas
         ? new Map(
             Object.entries(snapshot.toolSchemas).map(([tool, properties]) => [
@@ -9959,23 +10011,59 @@ export class SingleAgentClient {
   ): { local: number; shared: number; key: string } | undefined {
     const key = this.sharedDiscoveryKey(options);
     if (!key || !this.config.discoveryCache) return undefined;
-    const shared = sharedInvalidationEpochs.get(this.config.discoveryCache.cache)?.get(key) ?? 0;
-    return { local: this.discoveryEpoch, shared, key };
+    return { local: this.discoveryEpoch, shared: this.sharedInvalidationEpoch(key), key };
   }
 
   private discoveryEpochIs(epoch: { local: number; shared: number; key: string }): boolean {
-    const shared = sharedInvalidationEpochs.get(this.config.discoveryCache!.cache)?.get(epoch.key) ?? 0;
-    return epoch.local === this.discoveryEpoch && epoch.shared === shared;
+    return epoch.local === this.discoveryEpoch && epoch.shared === this.sharedInvalidationEpoch(epoch.key);
+  }
+
+  /** The latest invalidation that applies to `key`: its own, combined with the cache's floor of forgotten ones. */
+  private sharedInvalidationRecord(key: string): SharedInvalidation | undefined {
+    const cache = this.config.discoveryCache!.cache;
+    const record = sharedInvalidations.get(cache)?.get(key);
+    const floor = sharedInvalidationFloors.get(cache);
+    if (!floor) return record;
+    if (!record) return floor;
+    return { epoch: Math.max(record.epoch, floor.epoch), at: Math.max(record.at, floor.at) };
+  }
+
+  private sharedInvalidationEpoch(key: string): number {
+    return this.sharedInvalidationRecord(key)?.epoch ?? 0;
   }
 
   private bumpSharedInvalidationEpoch(key: string): void {
     const cache = this.config.discoveryCache!.cache;
-    let epochs = sharedInvalidationEpochs.get(cache);
-    if (!epochs) {
-      epochs = new Map();
-      sharedInvalidationEpochs.set(cache, epochs);
+    let records = sharedInvalidations.get(cache);
+    if (!records) {
+      records = new Map();
+      sharedInvalidations.set(cache, records);
     }
-    epochs.set(key, (epochs.get(key) ?? 0) + 1);
+    const now = Date.now();
+    // Re-inserting keeps the map ordered oldest-first for pruning.
+    records.delete(key);
+    records.set(key, { epoch: ++sharedInvalidationCounter, at: now });
+    for (const [oldKey, record] of records) {
+      if (records.size <= MAX_SHARED_INVALIDATION_RECORDS && record.at + MAX_AGENT_DISCOVERY_TTL_MS > now) break;
+      const floor = sharedInvalidationFloors.get(cache);
+      sharedInvalidationFloors.set(cache, {
+        epoch: Math.max(record.epoch, floor?.epoch ?? 0),
+        at: Math.max(record.at, floor?.at ?? 0),
+      });
+      records.delete(oldKey);
+    }
+  }
+
+  /**
+   * Remember which key the local capability evidence belongs to and, unless it
+   * is application-owned (`primeCapabilities`), the shared invalidation epoch it
+   * was obtained under. Application-owned evidence keeps its caller-declared
+   * freshness and is not discarded by another instance's invalidation.
+   */
+  private recordSharedEvidence(key: string | undefined, applicationOwned = false): void {
+    this.sharedEvidenceKey = key;
+    this.sharedEvidenceEpoch =
+      key && this.config.discoveryCache && !applicationOwned ? this.sharedInvalidationEpoch(key) : undefined;
   }
 
   /** Non-secret fingerprint of the request-signing identity, so keys never mix signing identities. */
@@ -10010,7 +10098,7 @@ export class SingleAgentClient {
       wireAdcpVersion: this.config.wireAdcpVersion,
       authIdentity: config.authIdentity,
       credentialKind: this.discoveryCredentialKind(),
-      headers: this.normalizedAgent.headers,
+      headers: withAmbientIdentityHeaders(this.normalizedAgent.headers),
       signing: this.discoverySigningFingerprint(),
       allowPrivateIp: transport?.allowPrivateIp,
       maxResponseBytes: transport?.maxResponseBytes,
@@ -10034,26 +10122,69 @@ export class SingleAgentClient {
    * settled. The caller's wait is still bounded: an unresponsive backend makes
    * the caller see a miss, but later mutations stay queued behind the hung
    * operation, so an old callback can never land after a newer one.
+   *
+   * The queue is bounded. A `droppable` mutation (a write or cleanup) is
+   * abandoned when its caller stopped waiting before it started, and is refused
+   * when the key's queue is full; refusal is a failed write, never a call
+   * failure. A `delete` is never refused for a known key: while one is queued
+   * and not yet started, a newer invalidation joins it. Only for a new key beyond
+   * the key cap is a delete refused — the invalidation tombstone still hides the
+   * entry from this process's readers.
    */
-  private serializedCacheMutation<T>(key: string, operation: () => T | Promise<T>, signal?: AbortSignal): Promise<T> {
+  private serializedCacheMutation<T>(
+    key: string,
+    operation: () => T | Promise<T>,
+    signal?: AbortSignal,
+    kind: 'delete' | 'droppable' = 'droppable'
+  ): Promise<T> {
     const cache = this.config.discoveryCache!.cache;
     let chains = sharedMutationChains.get(cache);
     if (!chains) {
       chains = new Map();
       sharedMutationChains.set(cache, chains);
     }
-    const previous = chains.get(key) ?? Promise.resolve();
-    const run = previous.then(operation);
+    let queue = chains.get(key);
+    if (!queue && chains.size >= MAX_SHARED_MUTATION_KEYS) {
+      return Promise.reject(new Error('Shared discovery cache mutation queue is full.'));
+    }
+    if (kind === 'delete' && queue?.waitingDelete && !queue.waitingDelete.started) {
+      const joined = queue.waitingDelete.promise as Promise<T>;
+      return this.boundedCacheOperation(() => joined, signal);
+    }
+    if (kind === 'droppable' && queue && queue.pending >= MAX_PENDING_SHARED_MUTATIONS_PER_KEY) {
+      return Promise.reject(new Error('Shared discovery cache mutation queue is full.'));
+    }
+    if (!queue) {
+      queue = { tail: Promise.resolve(), pending: 0 };
+      chains.set(key, queue);
+    }
+    const current = queue;
+    const state = { abandoned: false, started: false };
+    const run = current.tail.then(() => {
+      if (kind === 'droppable' && state.abandoned) throw new Error('Shared discovery cache mutation abandoned.');
+      state.started = true;
+      if (current.waitingDelete?.promise === run) current.waitingDelete.started = true;
+      return operation();
+    });
+    current.pending++;
+    if (kind === 'delete') current.waitingDelete = { promise: run, started: false };
     const tail = run.then(
       () => undefined,
       () => undefined
     );
-    chains.set(key, tail);
+    current.tail = tail;
     void tail.then(() => {
-      if (chains.get(key) === tail) chains.delete(key);
-      if (chains.size === 0 && sharedMutationChains.get(cache) === chains) sharedMutationChains.delete(cache);
+      current.pending--;
+      if (current.waitingDelete?.promise === run) current.waitingDelete = undefined;
+      if (current.pending === 0) {
+        if (chains.get(key) === current) chains.delete(key);
+        if (chains.size === 0 && sharedMutationChains.get(cache) === chains) sharedMutationChains.delete(cache);
+      }
     });
-    return this.boundedCacheOperation(() => run, signal);
+    return this.boundedCacheOperation(() => run, signal).catch(error => {
+      state.abandoned = true;
+      throw error;
+    });
   }
 
   /** Is this stored entry structurally sound and not expired (before any caller-TTL cap)? */
@@ -10080,6 +10211,10 @@ export class SingleAgentClient {
       // A read that was in flight when the evidence was invalidated is a miss.
       if (epoch && !this.discoveryEpochIs(epoch)) return undefined;
       if (!entry) return undefined;
+      // An entry observed before the latest invalidation here is stale evidence
+      // the backend has not (yet) dropped: its delete may have failed or still be queued.
+      const invalidation = this.sharedInvalidationRecord(key);
+      if (invalidation && entry.observedAt <= invalidation.at) return undefined;
       const now = Date.now();
       if (!this.isLiveSharedEntry(entry, now)) {
         // Remove it only if it is still the expired entry when the mutation runs:
@@ -10124,6 +10259,12 @@ export class SingleAgentClient {
   ): Promise<AgentDiscoveryEntry | undefined> {
     const key = this.sharedDiscoveryKey(options);
     if (!key) return undefined;
+    // URL queries and fragments can carry credentials. Keep such endpoints
+    // local, while still allowing their capabilities and schemas to be shared.
+    if (patch.endpoint && !this.isDiscoverableEndpoint(patch.endpoint.agentUri)) {
+      patch = { capabilities: patch.capabilities, toolSchemas: patch.toolSchemas };
+      if (!patch.capabilities && !patch.toolSchemas) return undefined;
+    }
     const config = this.config.discoveryCache!;
     // An invalidation since `epoch` was taken wins over this writer. Staleness is
     // judged when the mutation reaches the front of the key's queue and again
@@ -10136,12 +10277,29 @@ export class SingleAgentClient {
         key,
         async () => {
           if (stale()) return undefined;
-          const now = Date.now();
+          // Fresh evidence is stamped strictly after the latest invalidation here,
+          // so the tombstone can tell it from anything observed before.
+          const invalidation = this.sharedInvalidationRecord(key);
+          const now = Math.max(Date.now(), (invalidation?.at ?? 0) + 1);
           let existing: AgentDiscoveryEntry | undefined;
           if (!replace) {
             const raw = await config.cache.get(key);
-            if (raw && this.isLiveSharedEntry(raw, now) && raw.observedAt <= now + SHARED_DISCOVERY_CLOCK_SKEW_MS) {
-              existing = raw;
+            // Nothing observed before the latest invalidation here is merged back
+            // in: not the entry, and not an endpoint carried inside a newer one.
+            if (
+              raw &&
+              this.isLiveSharedEntry(raw, now) &&
+              raw.observedAt <= now + SHARED_DISCOVERY_CLOCK_SKEW_MS &&
+              !(invalidation && raw.observedAt <= invalidation.at)
+            ) {
+              const endpointObservedAt = raw.endpoint?.observedAt ?? raw.observedAt;
+              existing = { ...raw };
+              if (
+                existing.endpoint &&
+                (!this.isDiscoverableEndpoint(existing.endpoint.agentUri) ||
+                  (invalidation && endpointObservedAt <= invalidation.at))
+              )
+                delete existing.endpoint;
             }
             if (stale()) return undefined;
           }
@@ -10177,6 +10335,8 @@ export class SingleAgentClient {
       return (
         candidate.username === '' &&
         candidate.password === '' &&
+        candidate.search === '' &&
+        candidate.hash === '' &&
         candidate.origin === new URL(this.normalizedAgent.agent_uri).origin
       );
     } catch {
@@ -10193,6 +10353,9 @@ export class SingleAgentClient {
     if (!entry || !endpoint || !this.isDiscoverableEndpoint(endpoint.agentUri)) return;
     // The endpoint is only as fresh as its own observation, under this caller's TTL.
     const observedAt = Number.isFinite(endpoint.observedAt) ? (endpoint.observedAt as number) : entry.observedAt;
+    const sharedKey = this.sharedDiscoveryKey(options);
+    const tombstone = sharedKey ? this.sharedInvalidationRecord(sharedKey) : undefined;
+    if (tombstone && observedAt <= tombstone.at) return;
     const expiresAt = Math.min(
       entry.expiresAt,
       observedAt + resolveAgentDiscoveryTtlMs(this.config.discoveryCache!.ttlMs)
@@ -10200,6 +10363,9 @@ export class SingleAgentClient {
     if (!(expiresAt > Date.now()) || observedAt > Date.now() + SHARED_DISCOVERY_CLOCK_SKEW_MS) return;
     this.discoveredEndpoint = endpoint.agentUri;
     this.discoveredEndpointKey = this.sharedDiscoveryKey(options);
+    this.discoveredEndpointEpoch = this.discoveredEndpointKey
+      ? this.sharedInvalidationEpoch(this.discoveredEndpointKey)
+      : undefined;
     this.discoveredEndpointExpiresAt = expiresAt;
     this.canonicalBaseUrl = this.computeBaseUrl(endpoint.agentUri);
     if (endpoint.mcpEra === 'legacy' || endpoint.mcpEra === 'modern') {
@@ -10231,6 +10397,7 @@ export class SingleAgentClient {
       this.discoveredAgent = undefined;
       this.discoveredMcpEra = undefined;
       this.discoveredEndpointKey = undefined;
+      this.discoveredEndpointEpoch = undefined;
       this.discoveredEndpointExpiresAt = undefined;
     }
     const key = this.sharedDiscoveryKey(options);
@@ -10239,7 +10406,7 @@ export class SingleAgentClient {
     try {
       const cache = this.config.discoveryCache!.cache;
       // Queued behind any write already in flight, ahead of any later one.
-      await this.serializedCacheMutation(key, () => cache.delete(key));
+      await this.serializedCacheMutation(key, () => cache.delete(key), undefined, 'delete');
     } catch {
       /* best effort */
     }
@@ -10253,8 +10420,13 @@ export class SingleAgentClient {
    *
    * Returns `true` only once the backing cache has accepted the entry. Returns
    * `false` — having seeded nothing — when sharing is not configured, the
-   * client uses a scoped `trustedFetchFn`, the evidence is synthetic, malformed
-   * or not cloneable, or the cache rejected the write. Seed `endpoint` as well
+   * client uses a scoped `trustedFetchFn`, or the evidence is synthetic,
+   * malformed or not cloneable. When the cache rejects the write or does not
+   * answer within the backend deadline, the result is also `false`, but the
+   * outcome is indeterminate: a write already handed to the backend may still
+   * land, whereas one still queued behind earlier operations is dropped. Treat
+   * `false` as "not confirmed", and seed again (or invalidate) rather than
+   * assuming the cache is empty. Seed `endpoint` as well
    * to skip the endpoint probe on the first call; without it that probe still
    * runs once per cold client.
    */
@@ -10468,8 +10640,27 @@ export class SingleAgentClient {
    * with an actionable error message.
    */
   async require(...features: FeatureName[]): Promise<void> {
-    const capabilities = await this.getCapabilities();
-    const missing = features.filter(f => !resolveFeature(capabilities, f));
+    await this.assertFeaturesSupported(features);
+  }
+
+  /**
+   * Throw {@link FeatureUnsupportedError} when a feature is missing, deciding on
+   * live capabilities when the refusal would rest on shared evidence that may
+   * predate a seller upgrade.
+   */
+  private async assertFeaturesSupported(
+    requiredFeatures: readonly FeatureName[],
+    options?: ReadRequestOptions
+  ): Promise<void> {
+    let capabilities = await this.getCapabilities(options);
+    let missing = requiredFeatures.filter(f => !resolveFeature(capabilities, f));
+    if (missing.length > 0 && this.capabilitiesFromSharedCache) {
+      // Shared evidence may predate a seller upgrade: before refusing the
+      // call, drop it and decide on live capabilities.
+      await this.invalidateDiscoveryCache(options);
+      capabilities = await this.getCapabilities(options);
+      missing = requiredFeatures.filter(f => !resolveFeature(capabilities, f));
+    }
     if (missing.length > 0) {
       throw new FeatureUnsupportedError(missing, listDeclaredFeatures(capabilities), this.agent.agent_uri);
     }
@@ -10502,18 +10693,7 @@ export class SingleAgentClient {
     const requiredFeatures = TASK_FEATURE_MAP[taskName];
     if (!requiredFeatures || requiredFeatures.length === 0) return;
 
-    let capabilities = await this.getCapabilities(options);
-    let missing = requiredFeatures.filter(f => !resolveFeature(capabilities, f));
-    if (missing.length > 0 && this.capabilitiesFromSharedCache) {
-      // Shared evidence may predate a seller upgrade: before refusing the
-      // call, drop it and decide on live capabilities.
-      await this.invalidateDiscoveryCache(options);
-      capabilities = await this.getCapabilities(options);
-      missing = requiredFeatures.filter(f => !resolveFeature(capabilities, f));
-    }
-    if (missing.length > 0) {
-      throw new FeatureUnsupportedError(missing, listDeclaredFeatures(capabilities), this.agent.agent_uri);
-    }
+    await this.assertFeaturesSupported(requiredFeatures, options);
   }
 
   /**

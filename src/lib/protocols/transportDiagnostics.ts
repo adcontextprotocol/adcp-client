@@ -1,5 +1,6 @@
 import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
 import { createHmac, randomUUID } from 'node:crypto';
+import { isMCPCallCompleted } from './mcp-call-context';
 
 /**
  * Lifecycle events for one transport request.
@@ -66,7 +67,8 @@ export interface TransportActivity {
    * On `response_completed`: how the body ended. `ended` is EOF, `errored` is a
    * stream error, `aborted` is an `AbortSignal` abort (including a cancel after the
    * signal fired) or abort-style error, and `cancelled` is the consumer
-   * cancelling the body without an abort.
+   * cancelling the body without an abort, including SDK cleanup after it has
+   * delivered a successful MCP result.
    */
   outcome?: TransportResponseOutcome;
   /** On `response_completed`: body bytes that passed through before the outcome. */
@@ -348,7 +350,7 @@ function observeResponseBody(
       // Already released.
     }
   };
-  const onAbort = () => finish('aborted', signal?.reason);
+  const onAbort = () => finish(isMCPCallCompleted(signal?.reason) ? 'cancelled' : 'aborted', signal?.reason);
   const finish = (outcome: 'ended' | 'errored' | 'aborted' | 'cancelled', error?: unknown) => {
     if (finished) return;
     finished = true;
@@ -356,7 +358,12 @@ function observeResponseBody(
     try {
       // A custom abort reason can surface as any error type, and cancelling a
       // body after the signal fired is still an abort.
-      const resolved = outcome !== 'ended' && signal?.aborted ? 'aborted' : outcome;
+      const resolved =
+        outcome !== 'ended' && signal?.aborted
+          ? isMCPCallCompleted(signal.reason)
+            ? 'cancelled'
+            : 'aborted'
+          : outcome;
       const event: Record<string, unknown> = {
         ...correlation,
         type: 'response_completed',

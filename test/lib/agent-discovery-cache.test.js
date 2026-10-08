@@ -78,6 +78,17 @@ before(async () => {
           { name: 'get_products', inputSchema: { type: 'object', properties: { brief: { type: 'string' } } } },
         ],
       };
+    } else if (
+      message.method === 'tools/call' &&
+      message.params?.name === 'get_products' &&
+      path.startsWith('/seller-error')
+    ) {
+      const envelope = { adcp_error: { code: 'TOOL_NOT_FOUND', message: 'get_products is gone' } };
+      result = {
+        content: [{ type: 'text', text: JSON.stringify(envelope) }],
+        structuredContent: envelope,
+        isError: true,
+      };
     } else if (message.method === 'tools/call' && message.params?.name === 'get_adcp_capabilities') {
       state.capabilityCalls++;
       result = {
@@ -583,6 +594,27 @@ describe('invalidation and seeding', () => {
     assert.equal(tally(pathOf(uri)).capabilityCalls, before + 1, 'the stale overridden entry is gone');
   });
 
+  test('shared endpoint evidence never persists URL queries or fragments', async () => {
+    const uri = `${origin}/query-endpoint-${++nextPath}?token=endpoint-secret`;
+    const cache = createInMemoryAgentDiscoveryCache();
+    const client = makeClient(uri, sharing(cache));
+    assert.equal((await client.ensureEndpointDiscovered()).agent_uri, uri, 'operational endpoint stays intact');
+    assert.equal(cache.size, 0, 'query-bearing endpoint was not written');
+    const capabilities = await client.getCapabilities();
+    const entry = cache.get(client.sharedDiscoveryKey());
+    assert.ok(entry.capabilities, 'capabilities can still be shared');
+    assert.equal(entry.endpoint, undefined);
+    for (const suffix of ['?token=endpoint-secret', '#endpoint-secret']) {
+      assert.equal(
+        await client.primeDiscoveryCache({
+          capabilities,
+          endpoint: { agentUri: `${origin}/mcp${suffix}` },
+        }),
+        false
+      );
+    }
+  });
+
   test('primeDiscoveryCache seeds evidence that outlives the instance, endpoint included', async () => {
     const uri = freshAgentUri();
     const cache = createInMemoryAgentDiscoveryCache();
@@ -729,5 +761,165 @@ describe('configuration and backend failures', () => {
     await makeClient(uri).getCapabilities();
     await makeClient(uri).getCapabilities();
     assert.equal(tally(pathOf(uri)).capabilityCalls, 2);
+  });
+});
+
+describe('final review regressions', () => {
+  /** A backend wrapper whose operations can be made to fail, hang or be counted. */
+  function controllableBackend() {
+    const inner = createInMemoryAgentDiscoveryCache();
+    const backend = {
+      inner,
+      calls: { set: 0, delete: 0 },
+      failDelete: false,
+      gate: undefined,
+      get: key => inner.get(key),
+      set: async (key, entry) => {
+        backend.calls.set++;
+        backend.lastSet = entry;
+        if (backend.gate && backend.calls.set === 1) await backend.gate;
+        return inner.set(key, entry);
+      },
+      delete: async key => {
+        backend.calls.delete++;
+        if (backend.failDelete) throw new Error('delete failed');
+        if (backend.deleteGate && backend.calls.delete === 1) await backend.deleteGate;
+        return inner.delete(key);
+      },
+    };
+    return backend;
+  }
+
+  test('public require() refreshes stale shared evidence before refusing', async () => {
+    const uri = freshAgentUri();
+    const cache = createInMemoryAgentDiscoveryCache();
+    const seeder = makeClient(uri, sharing(cache));
+    const stale = structuredClone(await seeder.getCapabilities());
+    stale.protocols = ['signals'];
+    assert.equal(await seeder.primeDiscoveryCache({ capabilities: stale }), true);
+
+    const client = makeClient(uri, sharing(cache));
+    const before = tally(pathOf(uri)).capabilityCalls;
+    await client.require('media_buy');
+    assert.equal(tally(pathOf(uri)).capabilityCalls, before + 1, 'require() decided on live capabilities');
+    await assert.rejects(client.require('governance'), /governance/, 'a genuinely missing feature is still refused');
+  });
+
+  test('a seller capability error on a standard method invalidates shared evidence', async () => {
+    const uri = freshAgentUri('/seller-error');
+    const cache = createInMemoryAgentDiscoveryCache();
+    const client = makeClient(uri, sharing(cache));
+    await client.getCapabilities();
+    assert.equal(cache.size, 1);
+    await client.getProducts({ buying_mode: 'brief', brief: 'anything' }).catch(() => {});
+    assert.equal(cache.size, 0, 'the unprojected execution path invalidated the entry');
+  });
+
+  test('a read after a failed delete misses through the invalidation tombstone', async () => {
+    const uri = freshAgentUri();
+    const backend = controllableBackend();
+    const first = makeClient(uri, sharing(backend));
+    await first.getCapabilities();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    backend.failDelete = true;
+    await first.invalidateDiscoveryCache();
+    assert.equal(backend.inner.size, 1, 'the backend still holds the stale entry');
+
+    const before = tally(pathOf(uri)).capabilityCalls;
+    await makeClient(uri, sharing(backend)).getCapabilities();
+    assert.equal(tally(pathOf(uri)).capabilityCalls, before + 1, 'the stale entry was not trusted');
+    backend.failDelete = false;
+    const after = tally(pathOf(uri)).capabilityCalls;
+    await makeClient(uri, sharing(backend)).getCapabilities();
+    assert.equal(tally(pathOf(uri)).capabilityCalls, after, 'evidence written after the invalidation is shared');
+  });
+
+  test('after a failed delete a fresh write does not merge the old endpoint back in', async () => {
+    const uri = `${origin}/t-endpoint-${++nextPath}`;
+    const backend = controllableBackend();
+    const first = makeClient(uri, sharing(backend));
+    await first.getCapabilities();
+    assert.ok(backend.lastSet?.endpoint, 'the first discovery stored its endpoint');
+    await new Promise(resolve => setTimeout(resolve, 10));
+    backend.failDelete = true;
+    await first.invalidateDiscoveryCache();
+
+    const second = makeClient(uri, sharing(backend));
+    const initializes = tally(pathOf(uri)).initialize;
+    await second.getCapabilities();
+    assert.ok(tally(pathOf(uri)).initialize > initializes, 'the old endpoint was not adopted or merged back');
+  });
+
+  test("another instance's invalidation drops this instance's local evidence and endpoint", async () => {
+    const uri = `${origin}/t-endpoint-${++nextPath}`;
+    const cache = createInMemoryAgentDiscoveryCache();
+    const a = makeClient(uri, sharing(cache));
+    const b = makeClient(uri, sharing(cache));
+    await a.getCapabilities();
+    await b.getCapabilities();
+    const state = tally(pathOf(uri));
+    const calls = state.capabilityCalls;
+    const initializes = state.initialize;
+    await b.getCapabilities();
+    assert.equal(state.capabilityCalls, calls, 'cached locally before the invalidation');
+
+    await a.invalidateDiscoveryCache();
+    await b.getCapabilities();
+    assert.equal(state.capabilityCalls, calls + 1, 'the peer rediscovered instead of serving its local copy');
+    assert.ok(state.initialize > initializes, 'the peer re-probed its endpoint');
+  });
+
+  test('a seed that did not confirm is dropped when still queued, and a hung delete queue stays bounded', async () => {
+    const uri = freshAgentUri();
+    const backend = controllableBackend();
+    let release;
+    backend.gate = new Promise(resolve => (release = resolve));
+    const capabilities = await makeClient(
+      freshAgentUri(),
+      sharing(createInMemoryAgentDiscoveryCache())
+    ).getCapabilities();
+    const client = makeClient(uri, sharing(backend));
+
+    const [first, second] = await Promise.all([
+      client.primeDiscoveryCache({ capabilities }),
+      client.primeDiscoveryCache({ capabilities }),
+    ]);
+    assert.deepEqual([first, second], [false, false], 'an unanswered backend is not a confirmed seed');
+    release();
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(backend.calls.set, 1, 'the write still queued behind the hung one was dropped');
+  });
+
+  test('invalidations queued behind a hung delete coalesce into one', async () => {
+    const uri = freshAgentUri();
+    const backend = controllableBackend();
+    let release;
+    backend.deleteGate = new Promise(resolve => (release = resolve));
+    const client = makeClient(uri, sharing(backend));
+    await client.getCapabilities();
+
+    const hung = client.invalidateDiscoveryCache();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    await Promise.all(Array.from({ length: 25 }, () => client.invalidateDiscoveryCache()));
+    await hung;
+    release();
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(backend.calls.delete, 2, 'one in flight and one coalesced follow-up, in order');
+  });
+
+  test('concurrent calls on one instance tolerate a slow shared write while discovering the endpoint', async () => {
+    const uri = `${origin}/t-endpoint-${++nextPath}`;
+    const inner = createInMemoryAgentDiscoveryCache();
+    const slow = {
+      get: key => inner.get(key),
+      set: async (key, entry) => {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        return inner.set(key, entry);
+      },
+      delete: key => inner.delete(key),
+    };
+    const client = makeClient(uri, sharing(slow));
+    const agents = await Promise.all([client.ensureEndpointDiscovered(), client.ensureEndpointDiscovered()]);
+    for (const agent of agents) assert.equal(typeof agent.agent_uri, 'string');
   });
 });

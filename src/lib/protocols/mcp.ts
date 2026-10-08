@@ -36,6 +36,8 @@ import {
 import { terminateSessionBestEffort } from './session-termination';
 import {
   applyMCPCallHeaders,
+  isCorrelationHeader,
+  withAmbientIdentityHeaders,
   closeWhenIdle,
   linkedCallSignal,
   joinPendingConnection,
@@ -207,7 +209,9 @@ function withPerRequestTraceHeaders(fetchImpl: typeof fetch, directDefaults?: Re
     // An explicit traceparent names the trace family; ambient tracestate/baggage
     // from a different family must not ride along with it.
     if (headers.has('traceparent')) return fetchImpl(input, { ...init, headers, ...linkedCallSignal(init) });
-    for (const [key, value] of Object.entries(injectTraceHeaders())) if (!headers.has(key)) headers.set(key, value);
+    for (const [key, value] of Object.entries(injectTraceHeaders())) {
+      if (isCorrelationHeader(key) && !headers.has(key)) headers.set(key, value);
+    }
     return fetchImpl(input, { ...init, headers, ...linkedCallSignal(init) });
   };
 }
@@ -463,6 +467,7 @@ async function withCachedOAuthConnection<T>(
   label: string,
   fn: (client: MCPClient) => Promise<T>
 ): Promise<T> {
+  options = { ...options, customHeaders: withAmbientIdentityHeaders(options.customHeaders) };
   return runWithMCPCallContext(callContextFor(options.customHeaders, options.requestTimeoutMs), () =>
     withCachedOAuthConnectionImpl(options, label, fn)
   );
@@ -565,6 +570,7 @@ export async function withCachedConnection<T>(
   transportFetch?: typeof fetch,
   requestOptions: { signal?: AbortSignal; requestTimeoutMs?: number; allowPrivateIp?: boolean } = {}
 ): Promise<T> {
+  authHeaders = withAmbientIdentityHeaders(authHeaders);
   return runWithMCPCallContext(callContextFor(authHeaders, requestOptions.requestTimeoutMs), () =>
     withCachedConnectionImpl(agentUrl, authToken, authHeaders, debugLogs, label, fn, transportFetch, requestOptions)
   );
@@ -797,6 +803,7 @@ export async function connectMCPWithFallback(
   transportFetch?: typeof fetch,
   requestOptions: { signal?: AbortSignal; requestTimeoutMs?: number; allowPrivateIp?: boolean } = {}
 ): Promise<MCPClient> {
+  authHeaders = withAmbientIdentityHeaders(authHeaders);
   return withSpan(
     'adcp.mcp.connect',
     {
@@ -1244,7 +1251,7 @@ export async function connectMCP(options: {
         })
       )
     : customHeaders;
-  const authHeaders = createMCPRequestHeaders(filteredCustomHeaders, authToken);
+  const authHeaders = withAmbientIdentityHeaders(createMCPRequestHeaders(filteredCustomHeaders, authToken));
   const hasNonAcceptCustomHeaders = Object.keys(filteredCustomHeaders ?? {}).some(
     key => key.toLowerCase() !== 'accept'
   );

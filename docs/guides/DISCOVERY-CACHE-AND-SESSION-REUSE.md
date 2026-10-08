@@ -49,7 +49,7 @@ The key is a SHA-256 over:
 | `authIdentity`                                       | **caller-owned** principal. Deliberately _not_ derived from the token: you decide who may share evidence               |
 | credential kind (anonymous, bearer, OAuth or header) | Keeps anonymous and authenticated discovery separate while allowing token rotation                                     |
 | configured `adcpVersion` / `wireAdcpVersion`         | negotiated version                                                                                                     |
-| every non-correlation, non-credential header         | unknown `x-*` tenant / routing / policy headers can select a different upstream view, so they fail closed into the key |
+| every non-correlation, non-credential header         | unknown `x-*` tenant / routing / policy headers can select a different upstream view, so they fail closed into the key. This includes `baggage`, **ambient OpenTelemetry baggage included** |
 | request-signing identity and policy                  | `kind`, `kid`, `alg`, agent URL and signing policy; never the private key                                              |
 | effective `allowPrivateIp`, `maxResponseBytes`       | the transport policy the evidence was gathered under (per-call `transport` overrides included)                         |
 
@@ -64,15 +64,16 @@ Never shared:
 ### Concurrency, cancellation, failures
 
 - Cold concurrent clients for the same key share one in-process discovery: one leader discovers, followers wait for it under **their own** signal and request timeout. A leader that is cancelled or fails never fails its followers; they discover for themselves.
-- A cache backend that throws, returns a malformed entry or hangs costs a rediscovery, never a failed call. Each cache read or mutation wait is bounded by a 2 second deadline and, for reads and automatic writes, by the caller's `AbortSignal`. Mutations of one key are ordered in-process. A timed-out backend mutation retains its place until it settles, so a late writer cannot overwrite or delete a newer seed; later mutation waits also time out while discovery proceeds live.
+- A cache backend that throws, returns a malformed entry or hangs costs a rediscovery, never a failed call. Each cache read or mutation wait is bounded by a 2 second deadline and, for reads and automatic writes, by the caller's `AbortSignal`. Mutations of one key are ordered in-process. A timed-out backend mutation retains its place until it settles, so a late writer cannot overwrite or delete a newer seed; later mutation waits also time out while discovery proceeds live. The queue is bounded: a write whose caller already stopped waiting is dropped if it has not started, a full per-key queue refuses further writes (a failed write, never a failed call), and invalidations queued behind a hung delete coalesce into one follow-up delete. Nothing is ever replayed automatically.
 - The shared cache is in-process singleflight. Across processes each cold process still discovers once.
 
 ### Invalidation
 
-- `client.invalidateDiscoveryCache()` drops this client's local evidence and the shared entry. `refreshCapabilities()` does the same and re-discovers.
+- `client.invalidateDiscoveryCache()` drops this client's local evidence and the shared entry. `SingleAgentClient.refreshCapabilities()` does the same and re-discovers; on `AgentClient`, call `invalidateDiscoveryCache()` and then `getCapabilities()`.
 - A feature check (`require`, or the pre-flight check before a task) that fails against **shared** evidence invalidates it and re-decides on live capabilities before refusing the call.
-- A seller error of `VERSION_UNSUPPORTED`, `UNSUPPORTED_FEATURE`, `FEATURE_UNSUPPORTED`, `TOOL_NOT_FOUND`, `METHOD_NOT_FOUND` or `UNKNOWN_TOOL` invalidates the shared entry.
+- A seller error of `VERSION_UNSUPPORTED`, `UNSUPPORTED_FEATURE`, `FEATURE_UNSUPPORTED`, `TOOL_NOT_FOUND`, `METHOD_NOT_FOUND` or `UNKNOWN_TOOL` invalidates the shared entry, on every task path including `executeTask()` and the typed methods. Each such live re-check costs one rediscovery; a seller that genuinely lacks a feature pays it on every refused call.
 - A malformed or expired entry is deleted and treated as a miss. An entry older than this reader's shorter TTL is also a miss.
+- Invalidation by any client sharing the cache in this process also drops other instances' local evidence and endpoint for that key (application-owned `primeCapabilities` evidence keeps its own freshness bound). In this process an invalidation leaves a tombstone, so a shared entry observed before it is a miss even when the backend delete failed or is still queued; the tombstone record set is bounded and, once pruned, errs toward a miss. Other processes still rely on the backend delete.
 - In-process invalidation takes precedence over an earlier discovery still in flight. External backends with concurrent writers in other processes must supply their own atomic invalidation/versioning if they need that guarantee across processes.
 
 ### Pre-seeding
@@ -90,7 +91,7 @@ const ok = await client.primeDiscoveryCache({
 });
 ```
 
-Unlike [`primeCapabilities`](../TYPE-SUMMARY.md) — which stays client-bound and scope-keyed — seeded evidence outlives the instance. It returns `true` only once the backing cache accepted the entry, and `false` (seeding nothing) for synthetic, malformed, uncloneable or foreign-origin evidence, or when the cache rejects the write. Without `endpoint` the first call of a cold client still runs the endpoint probe once.
+Unlike [`primeCapabilities`](../TYPE-SUMMARY.md) — which stays client-bound and scope-keyed — seeded evidence outlives the instance. It returns `true` only once the backing cache accepted the entry, and `false` (seeding nothing) for synthetic, malformed, uncloneable or foreign-origin evidence. When the cache rejects the write or does not answer within the 2 second deadline, `false` means *not confirmed*, not *empty*: a write already handed to the backend may still land later, while one still queued behind earlier operations is dropped. After such a `false`, seed again or invalidate rather than assuming nothing was stored. Without `endpoint` the first call of a cold client still runs the endpoint probe once.
 
 ## Reusable MCP connections
 
@@ -105,7 +106,7 @@ Each call still sends _its own_ correlation headers, deadline and cancellation o
 
 Isolation properties:
 
-- A cancelled or timed-out call tears down only its own request. It does not evict or terminate a session other calls are using; other failures retire the session and close it once its in-flight calls finish.
+- A cancelled or timed-out call tears down only its own request. It does not evict or terminate a session other calls are using; other failures retire the session and close it once its in-flight calls finish. A session the seller has expired may fail the current call once; the SDK retires that connection and never replays a dispatched call, so a caller must reconcile the outcome of a mutation that failed that way (for example by re-reading it) before retrying with the same `idempotency_key`.
 - A caller that joins another caller's in-flight connect waits under its own signal and timeout. If the creator cancels the connect, the joiner retries for itself, with at most two retries after foreign aborts.
 - A caller-injected `fetchFn` (a per-call network trust boundary) keeps its own one-shot session outside a connection scope; inside a scope its identity is part of the key.
 - Connections are never shared across credentials, tenant headers, signing identities or `allowPrivateIp` settings.
@@ -117,14 +118,14 @@ import { withMCPConnectionScope } from '@adcp/sdk'; // also from '@adcp/sdk/adva
 
 await withMCPConnectionScope(async () => {
   await client.syncAccounts(accounts);
-  await client.listCreativeFormats({});
+  await client.getCapabilities();
   await client.getProducts(brief); // same MCP session
 }); // the session is terminated once, here
 ```
 
 Await every operation before the scope callback returns; the callback owns the session lifetime. Open process-wide sessions can keep sockets alive, so close them at shutdown.
 
-Inside a scope the endpoint probe, capability discovery, `tools/list` and tool calls share one negotiated session per identity. `closeScopedConnections()` closes the current scope's sessions early and does nothing when no MCP scope is active. Nested `withMCPConnectionScope` calls join the outer scope unless you pass `{ isolate: true }`.
+Inside a scope the endpoint probe, capability discovery, `tools/list` and tool calls share one negotiated session per identity. `closeScopedConnections()` closes the current MCP scope's sessions early and does nothing when no MCP scope is active (A2A connections are not scoped). Nested `withMCPConnectionScope` calls join the outer scope unless you pass `{ isolate: true }`.
 
 ### One exception: the first legacy handoff
 
@@ -132,7 +133,9 @@ For a seller on the pre-2026 MCP protocol era, the SDK negotiates with the v2 cl
 
 ### Troubleshooting cache misses
 
-Unknown headers participate in identity. A varying header such as `x-forwarded-for` causes a cache miss even when `authIdentity` matches. Also check version, transport policy, signing policy and TTL before assuming the cache backend failed.
+Unknown headers participate in identity. A varying header such as `x-forwarded-for` causes a cache miss even when `authIdentity` matches, and so does varying `baggage`, including ambient OpenTelemetry baggage that differs per request. Ambient OpenTelemetry context is not a way to split or merge keys: set the baggage identically for callers that should share evidence, or keep it out of routing. Calls with a scoped `trustedFetchFn` bypass the cache entirely, so a client that always passes one never hits it. Also check version, transport policy, signing policy and TTL before assuming the cache backend failed.
+
+The cache holds capabilities, schemas and the endpoint URL. Endpoint sharing excludes URLs with userinfo, a query string or a fragment; those endpoints stay local while their capabilities and schemas can still be shared. `primeDiscoveryCache` refuses such an endpoint. Put credentials in authentication headers. Treat a custom `AgentDiscoveryCache` backend as trusted storage.
 
 ## Related
 

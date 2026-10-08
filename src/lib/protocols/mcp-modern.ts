@@ -30,6 +30,8 @@ import {
 import { terminateSessionBestEffort } from './session-termination';
 import {
   applyMCPCallHeaders,
+  isCorrelationHeader,
+  withAmbientIdentityHeaders,
   closeWhenIdle,
   linkedCallSignal,
   joinPendingConnection,
@@ -134,7 +136,7 @@ function buildAuthHeaders(
           })
         )
       : customHeaders;
-  return createMCPRequestHeaders(filteredHeaders, authProvider ? undefined : authToken);
+  return withAmbientIdentityHeaders(createMCPRequestHeaders(filteredHeaders, authProvider ? undefined : authToken));
 }
 
 function oauthProviderCacheKey(provider: object | undefined): string | undefined {
@@ -278,7 +280,9 @@ function withPerRequestTraceHeaders(fetchImpl: typeof fetch): typeof fetch {
     // An explicit traceparent names the trace family; ambient tracestate/baggage
     // from a different family must not ride along with it.
     if (headers.has('traceparent')) return fetchImpl(input, { ...init, headers, ...linkedCallSignal(init) });
-    for (const [key, value] of Object.entries(injectTraceHeaders())) if (!headers.has(key)) headers.set(key, value);
+    for (const [key, value] of Object.entries(injectTraceHeaders())) {
+      if (isCorrelationHeader(key) && !headers.has(key)) headers.set(key, value);
+    }
     return fetchImpl(input, { ...init, headers, ...linkedCallSignal(init) });
   };
 }

@@ -105,7 +105,7 @@ caller finishes with it, exactly one `response_completed` event reports
 | `ended`     | The caller read the stream to EOF.                                         |
 | `errored`   | The stream failed (`errorName` / sanitized `errorMessage` are set).        |
 | `aborted`   | The request's `AbortSignal` fired (also when the body is cancelled after it fired), or the stream failed with an abort error. |
-| `cancelled` | The caller cancelled the body without an abort.                            |
+| `cancelled` | The consumer cancelled the body, including SDK cleanup after delivering a successful MCP result. |
 
 A streamed call that never answers therefore shows `response_received` with no
 matching `response_completed` until the caller aborts it (for example, when its

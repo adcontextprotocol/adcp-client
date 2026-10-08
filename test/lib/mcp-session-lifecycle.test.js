@@ -1,9 +1,11 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const http = require('node:http');
+const { AsyncLocalStorage } = require('node:async_hooks');
 const { callMCPToolWithTasks } = require('../../dist/lib/protocols/mcp-tasks.js');
 const { propagation } = require('@opentelemetry/api');
 const { connectMCP, connectMCPWithFallback, closeMCPConnections } = require('../../dist/lib/protocols/mcp.js');
+const { callMCPToolWithOAuth } = require('../../dist/lib/protocols/mcp.js');
 const { tryCallModernMCPTool, tryListModernMCPTools } = require('../../dist/lib/protocols/mcp-modern.js');
 const { withMCPConnectionScope } = require('../../dist/lib/index.js');
 
@@ -150,6 +152,71 @@ for (const api of ['connectMCP', 'connectMCPWithFallback']) {
     }
     assert.ok(server.requests.some(request => request.method === 'initialize'));
     assert.ok(server.requests.some(request => request.method === 'tools/call'));
+  });
+}
+
+for (const mode of ['static', 'oauth']) {
+  test(`ambient tenant baggage partitions ${mode} legacy sessions`, async t => {
+    const server = await fixture(t);
+    const routing = new AsyncLocalStorage();
+    propagation.setGlobalPropagator({
+      inject(_context, carrier, setter) {
+        setter.set(carrier, 'baggage', routing.getStore());
+      },
+      extract(context) {
+        return context;
+      },
+      fields() {
+        return ['baggage'];
+      },
+    });
+    t.after(() => propagation.disable());
+    const provider = {
+      redirectUrl: undefined,
+      clientMetadata: { client_name: 'ambient-routing', redirect_uris: [] },
+      async clientInformation() {
+        return { client_id: 'ambient-routing' };
+      },
+      async tokens() {
+        return { access_token: 'token', token_type: 'Bearer' };
+      },
+      async saveTokens() {},
+      async redirectToAuthorization() {
+        throw new Error('Unexpected authorization flow');
+      },
+      async saveCodeVerifier() {},
+      async codeVerifier() {
+        return 'verifier';
+      },
+    };
+    const call = tenant =>
+      routing.run(`tenant=${tenant}`, () =>
+        mode === 'static'
+          ? callMCPToolWithTasks(server.url, 'ping', {}, 'token', [], undefined, { allowPrivateIp: true })
+          : callMCPToolWithOAuth({
+              agentUrl: server.url,
+              toolName: 'ping',
+              args: {},
+              authProvider: provider,
+              allowPrivateIp: true,
+            })
+      );
+    await withMCPConnectionScope(async () => {
+      await Promise.all([call('one'), call('two')]);
+      const coldInitializes = server.initializes;
+      await Promise.all([call('one'), call('two')]);
+      assert.equal(server.initializes, coldInitializes, 'each tenant reuses its own session');
+      const initialized = server.requests.filter(request => request.method === 'initialize');
+      assert.ok(initialized.some(request => request.headers.baggage === 'tenant=one'));
+      assert.ok(initialized.some(request => request.headers.baggage === 'tenant=two'));
+      assert.deepEqual(
+        server.requests
+          .filter(request => request.method === 'tools/call')
+          .map(request => request.headers.baggage)
+          .sort(),
+        ['tenant=one', 'tenant=one', 'tenant=two', 'tenant=two']
+      );
+    });
   });
 }
 

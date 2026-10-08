@@ -79,6 +79,13 @@ for (const mode of ['static', 'oauth']) {
           return;
         }
         result = { content: [{ type: 'text', text: message.params.name }] };
+        if (message.params.name === 'after') {
+          // A valid result may arrive before server EOF. Successful SDK cleanup
+          // cancels this body; it must not look like a failed/aborted tool call.
+          res.writeHead(200, { 'content-type': 'text/event-stream', 'mcp-session-id': 'shared-session' });
+          res.write('data: ' + JSON.stringify({ jsonrpc: '2.0', id: message.id, result }) + '\n\n');
+          return;
+        }
       } else {
         res.writeHead(404).end();
         return;
@@ -115,6 +122,9 @@ for (const mode of ['static', 'oauth']) {
       },
     };
     const call = (name, timeout, controller) => {
+      // A nested `method` must never classify a tool request as a notification
+      // and exempt its HTTP stream from this call's cancellation.
+      const args = ['abort', 'timeout'].includes(name) ? { method: 'notifications/nested' } : {};
       const headers = {
         'x-request-id': name,
         traceparent: traceparent({ warm: 1, slow: 2, abort: 3, after: 4, timeout: 5 }[name]),
@@ -123,14 +133,14 @@ for (const mode of ['static', 'oauth']) {
         return callMCPToolWithOAuth({
           agentUrl: url,
           toolName: name,
-          args: {},
+          args,
           authProvider: provider,
           customHeaders: headers,
           signal: controller.signal,
           requestTimeoutMs: timeout,
           allowPrivateIp: true,
         });
-      return callMCPToolWithTasks(url, name, {}, 'same-auth-token', [], headers, {
+      return callMCPToolWithTasks(url, name, args, 'same-auth-token', [], headers, {
         signal: controller.signal,
         requestTimeoutMs: timeout,
         allowPrivateIp: true,
@@ -199,6 +209,11 @@ for (const mode of ['static', 'oauth']) {
         })
     );
     await new Promise(resolve => setImmediate(resolve));
+    const successfulStream = events.filter(
+      event => event.type === 'response_completed' && event.requestHeaders['x-request-id'] === 'after'
+    );
+    assert.equal(successfulStream.length, 1, 'successful streamed result has one terminal event');
+    assert.equal(successfulStream[0].outcome, 'cancelled', 'SDK cleanup after a result is consumer cancellation');
     const completions = events.filter(event => event.type === 'response_completed' && event.outcome === 'aborted');
     assert.equal(
       completions.length,

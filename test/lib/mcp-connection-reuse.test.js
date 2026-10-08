@@ -12,6 +12,8 @@
 const { after, before, describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const { AsyncLocalStorage } = require('node:async_hooks');
+const { propagation } = require('@opentelemetry/api');
 
 const { createMcpHandler, McpServer } = require('@modelcontextprotocol/server');
 const { toNodeHandler } = require('@modelcontextprotocol/node');
@@ -71,6 +73,7 @@ before(async () => {
       requestId: req.headers['x-request-id'],
       traceparent: req.headers.traceparent,
       tenant: req.headers['x-tenant'],
+      baggage: req.headers.baggage,
     });
     void nodeHandler(req, res);
   });
@@ -91,7 +94,7 @@ before(async () => {
     if (message.method) state.methodIds.push([message.method, req.headers['x-request-id']]);
     if (message.method === 'initialize') {
       state.initialize++;
-      if (path === '/slow-init') await new Promise(resolve => setTimeout(resolve, 200));
+      if (path.startsWith('/slow-init')) await new Promise(resolve => setTimeout(resolve, 200));
     }
     if (message.method === 'tools/call') {
       state.calls++;
@@ -316,6 +319,39 @@ describe('connection identity excludes per-call concerns', () => {
 
     await tryCallModernMCPTool(url, 'echo', {}, 'another-token', [], { 'x-tenant': 'one' });
     assert.equal(modernCount('/mcp-identity', 'server/discover'), 5, 'a different credential is a different session');
+  });
+
+  test('ambient tenant baggage partitions modern sessions while repeated identity reuses discovery', async t => {
+    const routing = new AsyncLocalStorage();
+    propagation.setGlobalPropagator({
+      inject(_context, carrier, setter) {
+        setter.set(carrier, 'baggage', routing.getStore());
+      },
+      extract(context) {
+        return context;
+      },
+      fields() {
+        return ['baggage'];
+      },
+    });
+    t.after(() => propagation.disable());
+    const call = tenant =>
+      routing.run(`tenant=${tenant}`, () =>
+        tryCallModernMCPTool(`${modernOrigin}/ambient-identity`, 'echo', {}, 'token')
+      );
+    await withMCPConnectionScope(async () => {
+      await Promise.all([call('one'), call('two')]);
+      assert.equal(modernCount('/ambient-identity', 'server/discover'), 2);
+      await Promise.all([call('one'), call('two')]);
+      assert.equal(modernCount('/ambient-identity', 'server/discover'), 2);
+      assert.deepEqual(
+        modernRequests
+          .filter(request => request.path === '/ambient-identity' && request.method === 'tools/call')
+          .map(request => request.baggage)
+          .sort(),
+        ['tenant=one', 'tenant=one', 'tenant=two', 'tenant=two']
+      );
+    });
   });
 
   test("a call that joins another caller's in-flight connect is not failed by that caller's cancellation", async () => {
