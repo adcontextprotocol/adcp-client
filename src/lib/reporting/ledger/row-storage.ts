@@ -1,7 +1,9 @@
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
+import { gunzipSync, gzipSync } from 'zlib';
 
 import { canonicalize } from '../../utils/jcs';
 import {
+  REPORTING_ROW_CHUNK_MAX_BYTES,
   REPORTING_ROW_ENCODING_V1,
   createReportingRevisionEnvelopeHasherV1,
   createReportingRowsOnlyHasherV1,
@@ -15,6 +17,14 @@ import {
   type ReportingRowSegmentManifestV1,
 } from './row-encoding';
 import { probeReportingRowStorageSchemaV1 } from './row-storage-migration';
+import { ReportingRowStoreError, isReportingRowStoreError } from './row-storage-errors';
+import {
+  REPORTING_ROW_DEFAULT_KEY_TEMPLATE,
+  assertReportingRowKeyTemplateV1,
+  assertReportingRowPrefixV1,
+  renderReportingRowObjectKeyV1,
+  type ReportingRowObjectProviderV1,
+} from './row-storage-object';
 
 /**
  * Revision row storage (shared SDK persistence spec,
@@ -24,44 +34,37 @@ import { probeReportingRowStorageSchemaV1 } from './row-storage-migration';
  * are released.
  */
 
-export type ReportingRowStoreErrorCode =
-  | 'INVALID_INPUT'
-  | 'CONTENT_CONFLICT'
-  | 'ROWS_INTEGRITY_FAILED'
-  | 'ROWS_UNAVAILABLE'
-  | 'ROWS_EXPIRED'
-  | 'PROVIDER_UNAVAILABLE'
-  | 'DEADLINE_EXCEEDED'
-  | 'ABORTED'
-  | 'UNSAFE_BINDING'
-  | 'STATE_UNAVAILABLE';
-
-/** Stable, secret-free row-storage failure. Switch on `code`. */
-export class ReportingRowStoreError extends Error {
-  constructor(
-    readonly code: ReportingRowStoreErrorCode,
-    detail?: string
-  ) {
-    super(detail ? `Reporting row store: ${code}: ${detail}` : `Reporting row store: ${code}`);
-    this.name = 'ReportingRowStoreError';
-    Object.defineProperty(this, Symbol.for('adcp.reportingRowStoreError'), { value: true });
-  }
-}
-
-export function isReportingRowStoreError(error: unknown): error is ReportingRowStoreError {
-  return (
-    !!error &&
-    typeof error === 'object' &&
-    (error as Record<symbol, unknown>)[Symbol.for('adcp.reportingRowStoreError')] === true
-  );
-}
+export { ReportingRowStoreError, isReportingRowStoreError } from './row-storage-errors';
+export type { ReportingRowStoreErrorCode } from './row-storage-errors';
 
 /** Rows stored as chunk bodies in the ledger's own PostgreSQL schema. */
 export interface ReportingPostgresRowBindingV1 {
   kind: 'postgres';
 }
 
-export type ReportingRowBindingDefinitionV1 = ReportingPostgresRowBindingV1;
+/**
+ * Rows stored as one object per chunk through a registered provider. The
+ * definition lives in host code, which makes it the allowlist: a row set
+ * whose recorded binding identity differs from the configured definition is
+ * never read from or written to.
+ */
+export interface ReportingObjectRowBindingV1 {
+  kind: 'object';
+  /** Name of a provider registered in `ReportingRowStorageOptionsV1.providers`. */
+  provider: string;
+  /** Non-secret provider coordinates, validated by the provider's closed schema. */
+  location: Readonly<Record<string, string>>;
+  /** Owned key prefix. Sweeps and deletes never touch keys outside it. */
+  prefix: string;
+  /** Object key template; see `REPORTING_ROW_DEFAULT_KEY_TEMPLATE`. */
+  keyTemplate?: string;
+  /** Stored encoding; digests always cover uncompressed bytes. Default `gzip`. */
+  compression?: 'none' | 'gzip';
+  /** Host-mapped client reference passed to the provider; never a secret. */
+  credentialRef?: string;
+}
+
+export type ReportingRowBindingDefinitionV1 = ReportingPostgresRowBindingV1 | ReportingObjectRowBindingV1;
 
 export interface ReportingRowBindingSelectionInputV1 {
   account_id: string;
@@ -75,10 +78,12 @@ export interface ReportingRowBindingSelectionInputV1 {
 export interface ReportingRowStorageOptionsV1 {
   /**
    * Logical binding ID → immutable definition. Defaults to a single
-   * `postgres` binding. Changing a definition requires a new ID; existing
-   * revisions keep resolving through the binding they were written with.
+   * `postgres` binding. Changing a definition requires a new ID; keep retired
+   * definitions configured while revisions still reference them.
    */
   bindings?: Readonly<Record<string, ReportingRowBindingDefinitionV1>>;
+  /** Object-storage providers by name. */
+  providers?: Readonly<Record<string, ReportingRowObjectProviderV1>>;
   /** Picks the binding for each new row set. Defaults to the only binding, or `postgres`. */
   selectRowBinding?(input: ReportingRowBindingSelectionInputV1): string | Promise<string>;
   /**
@@ -86,6 +91,10 @@ export interface ReportingRowStorageOptionsV1 {
    * identity into each binding's `namespace_key`. Defaults to `default`.
    */
   deploymentNamespace?: string;
+  /** Deadline for one row set's uploads. Default 60 seconds. */
+  writeDeadlineMilliseconds?: number;
+  /** Deadline for one object read. Default 30 seconds. */
+  readDeadlineMilliseconds?: number;
 }
 
 export interface ReportingRowSetPrepareInputV1 {
@@ -95,10 +104,21 @@ export interface ReportingRowSetPrepareInputV1 {
   obligationId: string;
   rows: readonly Record<string, unknown>[];
   finality?: 'snapshot' | 'official';
+  /** Reporting period start, used for `{period_date}` in object keys. */
+  periodStart?: string;
   /** Committed protocol binding the chunks must reproduce. */
   binding: { sha256: string; byteCount: number; rowCount: number };
   /** Required for revisions (`revision_envelope_v1`); omitted for adjustments (`rows_v1`). */
   controlTotals?: readonly unknown[];
+  /** Overrides `selectRowBinding` (for example, to migrate inline rows into a PostgreSQL binding). */
+  bindingId?: string;
+}
+
+interface PreparedObjectV1 {
+  readonly key: string;
+  readonly physicalBytes: Buffer;
+  readonly physicalSha256: string;
+  readonly compression: 'none' | 'gzip';
 }
 
 export interface ReportingPreparedRowSetV1 {
@@ -107,6 +127,19 @@ export interface ReportingPreparedRowSetV1 {
   readonly bindingId: string;
   readonly binding: ReportingRowBindingDefinitionV1;
   readonly digestProfile: 'revision_envelope_v1' | 'rows_v1';
+  /** Object kind only: one planned object per chunk. */
+  readonly objects?: readonly PreparedObjectV1[];
+}
+
+/** Where one chunk was stored; recorded in the chunk manifest. */
+export interface ReportingRowChunkLocatorV1 {
+  objectKey: string;
+  nativeVersion: string;
+  compression: 'none' | 'gzip';
+  physicalSha256: string;
+  physicalByteCount: number;
+  /** Whether this upload created the object (as opposed to adopting identical bytes). */
+  created: boolean;
 }
 
 interface QueryableV1 {
@@ -131,6 +164,7 @@ interface RowSetRecordV1 {
   row_location_version: number;
   rows_state: 'live' | 'pruning' | 'pruned' | 'unavailable';
   kind: 'postgres' | 'object';
+  identity_sha256: string;
 }
 
 interface ChunkRecordV1 {
@@ -140,6 +174,11 @@ interface ChunkRecordV1 {
   byte_count: string | number;
   sha256: string;
   segments: ReportingRowSegmentManifestV1[];
+  object_key: string | null;
+  native_version: string | null;
+  compression: 'none' | 'gzip';
+  physical_sha256: string | null;
+  physical_byte_count: string | number | null;
 }
 
 /** A row set whose chunk manifest has been verified against its committed digest. */
@@ -154,34 +193,56 @@ export interface ReportingRowSetHandleV1 {
   readonly rowCount: number;
   readonly rowManifestSha256: string;
   readonly bindingId: string;
+  readonly bindingIdentitySha256: string;
   readonly kind: 'postgres' | 'object';
   readonly manifests: readonly ReportingRowChunkManifestV1[];
+  /** Object kind only, by chunk index. */
+  readonly locators: readonly (Omit<ReportingRowChunkLocatorV1, 'created'> | undefined)[];
 }
 
 const DEFAULT_BINDING_ID = 'postgres';
 const BINDING_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
+const CREDENTIAL_REF = /^[A-Za-z0-9_.:-]{1,128}$/;
+/** Upper bound for adopting an existing object whose encoding may differ byte-for-byte. */
+const MAX_ADOPTED_OBJECT_BYTES = 2 * REPORTING_ROW_CHUNK_MAX_BYTES + 1024 * 1024;
 
 /**
- * Reads and writes revision row sets. Reads are always available once the
- * row-storage migration is applied; writes require an explicit opt-in on the
- * owning store.
+ * Reads and writes revision row sets. PostgreSQL-kind reads are always
+ * available once the row-storage migration is applied; object-kind reads need
+ * the binding and its provider configured. Writes require an explicit opt-in
+ * on the owning store.
  */
 export class ReportingRowStorageV1 {
   private readonly bindings: Readonly<Record<string, ReportingRowBindingDefinitionV1>>;
+  private readonly providers: Readonly<Record<string, ReportingRowObjectProviderV1>>;
   private readonly deploymentNamespace: string;
+  private readonly writeDeadline: number;
+  private readonly readDeadline: number;
   private readied?: Promise<void>;
+  private installation?: { installationId: string; namespaceKey: string };
 
   constructor(
     private readonly pool: QueryableV1,
     private readonly options: ReportingRowStorageOptionsV1 = {}
   ) {
     const bindings = options.bindings ?? { [DEFAULT_BINDING_ID]: { kind: 'postgres' } };
+    this.providers = Object.freeze({ ...(options.providers ?? {}) });
     const ids = Object.keys(bindings);
     if (ids.length === 0) throw new ReportingRowStoreError('INVALID_INPUT', 'at least one row binding is required');
     for (const id of ids) {
       if (!BINDING_ID.test(id)) throw new ReportingRowStoreError('INVALID_INPUT', `invalid row binding ID ${id}`);
-      if (bindings[id]!.kind !== 'postgres') {
+      const binding = bindings[id]!;
+      if (binding.kind === 'postgres') continue;
+      if (binding.kind !== 'object') {
         throw new ReportingRowStoreError('INVALID_INPUT', `row binding ${id} has an unsupported kind`);
+      }
+      const provider = this.providers[binding.provider];
+      if (!provider) throw new ReportingRowStoreError('INVALID_INPUT', `row binding ${id} names an unknown provider`);
+      provider.validateLocation(binding.location);
+      assertReportingRowPrefixV1(binding.prefix);
+      assertReportingRowKeyTemplateV1(binding.keyTemplate ?? REPORTING_ROW_DEFAULT_KEY_TEMPLATE);
+      if (binding.credentialRef !== undefined && !CREDENTIAL_REF.test(binding.credentialRef)) {
+        throw new ReportingRowStoreError('INVALID_INPUT', `row binding ${id} has an invalid credentialRef`);
       }
     }
     this.bindings = Object.freeze({ ...bindings });
@@ -189,9 +250,16 @@ export class ReportingRowStorageV1 {
     if (!this.deploymentNamespace || this.deploymentNamespace.length > 256) {
       throw new ReportingRowStoreError('INVALID_INPUT', 'deploymentNamespace must be 1-256 characters');
     }
+    this.writeDeadline = positiveMilliseconds(options.writeDeadlineMilliseconds ?? 60_000, 'writeDeadlineMilliseconds');
+    this.readDeadline = positiveMilliseconds(options.readDeadlineMilliseconds ?? 30_000, 'readDeadlineMilliseconds');
   }
 
-  /** Probe the schema and register (or verify) every configured binding. Idempotent. */
+  /** Deadline budget a writer must still hold on its lease before uploading. */
+  get writeDeadlineMilliseconds(): number {
+    return this.writeDeadline;
+  }
+
+  /** Probe the schema and every provider, and register (or verify) every configured binding. Idempotent. */
   ready(): Promise<void> {
     this.readied ??= this.register().catch(error => {
       this.readied = undefined;
@@ -200,7 +268,7 @@ export class ReportingRowStorageV1 {
     return this.readied;
   }
 
-  /** Encode rows, prove the chunks reproduce the committed binding, and select a binding. */
+  /** Encode rows, prove the chunks reproduce the committed binding, select a binding and plan objects. */
   async prepare(input: ReportingRowSetPrepareInputV1): Promise<ReportingPreparedRowSetV1> {
     await this.ready();
     let encoded: ReportingEncodedRowsV1;
@@ -229,30 +297,135 @@ export class ReportingRowStorageV1 {
       throw new ReportingRowStoreError('INVALID_INPUT', 'rows do not reproduce their committed binding');
     }
     const ids = Object.keys(this.bindings);
-    const bindingId = this.options.selectRowBinding
-      ? await this.options.selectRowBinding({
-          account_id: input.accountId,
-          reporting_obligation_id: input.obligationId,
-          row_set_kind: input.rowSetKind,
-          ...(input.finality ? { finality: input.finality } : {}),
-          row_count: input.rows.length,
-          canonical_byte_count: digest.byteCount,
-        })
-      : ids.length === 1
-        ? ids[0]!
-        : DEFAULT_BINDING_ID;
+    const bindingId = input.bindingId
+      ? input.bindingId
+      : this.options.selectRowBinding
+        ? await this.options.selectRowBinding({
+            account_id: input.accountId,
+            reporting_obligation_id: input.obligationId,
+            row_set_kind: input.rowSetKind,
+            ...(input.finality ? { finality: input.finality } : {}),
+            row_count: input.rows.length,
+            canonical_byte_count: digest.byteCount,
+          })
+        : ids.length === 1
+          ? ids[0]!
+          : DEFAULT_BINDING_ID;
     const binding = this.bindings[bindingId];
-    if (!binding) throw new ReportingRowStoreError('INVALID_INPUT', `row binding ${bindingId} is not configured`);
-    return Object.freeze({ input, encoded, bindingId, binding, digestProfile });
+    if (!binding) throw new ReportingRowStoreError('STATE_UNAVAILABLE', `row binding ${bindingId} is not configured`);
+    if (binding.kind === 'postgres') return Object.freeze({ input, encoded, bindingId, binding, digestProfile });
+    const compression = binding.compression ?? 'gzip';
+    const namespaceKey = this.installation!.namespaceKey;
+    const objects = encoded.chunks.map(chunk => {
+      const physicalBytes = compression === 'gzip' ? gzipSync(chunk.bytes, { level: 6 }) : chunk.bytes;
+      return Object.freeze({
+        key: renderReportingRowObjectKeyV1({
+          template: binding.keyTemplate ?? REPORTING_ROW_DEFAULT_KEY_TEMPLATE,
+          prefix: binding.prefix,
+          namespaceKey,
+          accountId: input.accountId,
+          rowSetId: input.rowSetId,
+          ...(input.periodStart ? { periodStart: input.periodStart } : {}),
+          ...(input.finality ? { finality: input.finality } : {}),
+          contentSha256: input.binding.sha256,
+          chunkIndex: chunk.manifest.chunk_index,
+          compression,
+        }),
+        physicalBytes,
+        physicalSha256: sha256Hex(physicalBytes),
+        compression,
+      });
+    });
+    return Object.freeze({ input, encoded, bindingId, binding, digestProfile, objects: Object.freeze(objects) });
   }
 
   /**
-   * Persist a prepared `postgres`-kind row set inside the caller's ledger
-   * transaction. Replays of an identical row set are no-ops; a conflicting
-   * row set under the same ID is refused.
+   * Upload a prepared object-kind row set, create-only. An object already at a
+   * planned key is adopted only when its bytes decode to the exact chunk;
+   * otherwise `CONTENT_CONFLICT`. `onCreated` is awaited for every object this
+   * call created, before the next upload, so the caller can record it in its
+   * write intent.
    */
-  async writeInTransaction(transaction: QueryableV1, prepared: ReportingPreparedRowSetV1): Promise<void> {
+  async upload(
+    prepared: ReportingPreparedRowSetV1,
+    intentId: string,
+    onCreated: (object: { objectKey: string; nativeVersion: string }) => Promise<void>,
+    signal?: AbortSignal
+  ): Promise<ReportingRowChunkLocatorV1[]> {
+    const binding = prepared.binding;
+    if (binding.kind !== 'object' || !prepared.objects) {
+      throw new ReportingRowStoreError('INVALID_INPUT', 'only object-kind row sets are uploaded');
+    }
+    const provider = this.providers[binding.provider]!;
+    const context = { signal: deadlineSignal(this.writeDeadline, signal) };
+    const location = providerLocation(binding);
+    const locators: ReportingRowChunkLocatorV1[] = [];
+    for (const [index, object] of prepared.objects.entries()) {
+      const manifest = prepared.encoded.manifests[index]!;
+      const put = await this.provider(() =>
+        provider.putIfAbsent(
+          {
+            ...location,
+            key: object.key,
+            bytes: object.physicalBytes,
+            contentType: object.compression === 'gzip' ? 'application/gzip' : 'application/x-ndjson',
+            metadata: {
+              'adcp-installation': this.installation!.installationId,
+              'adcp-intent': intentId,
+            },
+          },
+          context
+        )
+      );
+      if (put.created) {
+        await onCreated({ objectKey: object.key, nativeVersion: put.nativeVersion });
+        locators.push({
+          objectKey: object.key,
+          nativeVersion: put.nativeVersion,
+          compression: object.compression,
+          physicalSha256: object.physicalSha256,
+          physicalByteCount: object.physicalBytes.byteLength,
+          created: true,
+        });
+        continue;
+      }
+      const existing = await this.provider(() =>
+        provider.get(
+          { ...location, key: object.key, nativeVersion: put.nativeVersion, maxBytes: MAX_ADOPTED_OBJECT_BYTES },
+          context
+        )
+      );
+      const logical = existing ? this.inflate(Buffer.from(existing), object.compression, manifest.byte_count) : null;
+      if (!existing || !logical || sha256Hex(logical) !== manifest.sha256) {
+        throw new ReportingRowStoreError('CONTENT_CONFLICT', `object for chunk ${index} holds different bytes`);
+      }
+      locators.push({
+        objectKey: object.key,
+        nativeVersion: put.nativeVersion,
+        compression: object.compression,
+        physicalSha256: sha256Hex(existing),
+        physicalByteCount: existing.byteLength,
+        created: false,
+      });
+    }
+    return locators;
+  }
+
+  /**
+   * Persist a prepared row set inside the caller's ledger transaction:
+   * bodies for the `postgres` kind, or the uploaded locators for the object
+   * kind. Replays of an identical row set are no-ops; a conflicting row set
+   * under the same ID is refused.
+   */
+  async writeInTransaction(
+    transaction: QueryableV1,
+    prepared: ReportingPreparedRowSetV1,
+    locators?: readonly ReportingRowChunkLocatorV1[]
+  ): Promise<void> {
     const { input, encoded } = prepared;
+    if (prepared.binding.kind === 'object' && locators?.length !== encoded.chunks.length) {
+      throw new ReportingRowStoreError('INVALID_INPUT', 'object-kind row sets need one locator per chunk');
+    }
     const inserted = await transaction.query(
       `INSERT INTO adcp_reporting_row_sets
          (row_set_id, row_set_kind, account_id, obligation_id, encoding, digest_profile, content_sha256,
@@ -289,17 +462,21 @@ export class ReportingRowStorageV1 {
       }
       return;
     }
-    for (const chunk of encoded.chunks) {
+    for (const [index, chunk] of encoded.chunks.entries()) {
       const manifest = chunk.manifest;
-      await transaction.query(
-        `INSERT INTO adcp_reporting_chunk_bodies (account_id, obligation_id, sha256, body)
-         VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
-        [input.accountId, input.obligationId, manifest.sha256, chunk.bytes]
-      );
+      const locator = locators?.[index];
+      if (!locator) {
+        await transaction.query(
+          `INSERT INTO adcp_reporting_chunk_bodies (account_id, obligation_id, sha256, body)
+           VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+          [input.accountId, input.obligationId, manifest.sha256, chunk.bytes]
+        );
+      }
       await transaction.query(
         `INSERT INTO adcp_reporting_row_chunks
-           (row_set_id, chunk_index, account_id, obligation_id, first_ordinal, row_count, byte_count, sha256, segments)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)`,
+           (row_set_id, chunk_index, account_id, obligation_id, first_ordinal, row_count, byte_count, sha256, segments,
+            object_key, native_version, compression, physical_sha256, physical_byte_count)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14)`,
         [
           input.rowSetId,
           manifest.chunk_index,
@@ -310,6 +487,11 @@ export class ReportingRowStorageV1 {
           manifest.byte_count,
           manifest.sha256,
           JSON.stringify(manifest.segments),
+          locator?.objectKey ?? null,
+          locator?.nativeVersion ?? null,
+          locator?.compression ?? 'none',
+          locator?.physicalSha256 ?? null,
+          locator?.physicalByteCount ?? null,
         ]
       );
     }
@@ -330,7 +512,7 @@ export class ReportingRowStorageV1 {
       `SELECT row_set.row_set_id, row_set.row_set_kind, row_set.account_id, row_set.obligation_id,
               row_set.digest_profile, row_set.content_sha256, row_set.canonical_byte_count, row_set.row_count,
               row_set.row_manifest_sha256, row_set.chunk_count, row_set.row_binding_id,
-              row_set.row_location_version, row_set.rows_state, binding.kind
+              row_set.row_location_version, row_set.rows_state, binding.kind, binding.identity_sha256
          FROM adcp_reporting_row_sets row_set
          JOIN adcp_reporting_row_bindings binding ON binding.row_binding_id = row_set.row_binding_id
         WHERE row_set.row_set_id = $1 AND row_set.account_id = $2`,
@@ -343,7 +525,8 @@ export class ReportingRowStorageV1 {
     }
     if (record.rows_state === 'unavailable') throw new ReportingRowStoreError('ROWS_UNAVAILABLE');
     const chunks = await queryable.query<ChunkRecordV1 & Record<string, unknown>>(
-      `SELECT chunk_index, first_ordinal, row_count, byte_count, sha256, segments
+      `SELECT chunk_index, first_ordinal, row_count, byte_count, sha256, segments,
+              object_key, native_version, compression, physical_sha256, physical_byte_count
          FROM adcp_reporting_row_chunks WHERE row_set_id = $1 ORDER BY chunk_index`,
       [rowSetId]
     );
@@ -371,6 +554,21 @@ export class ReportingRowStorageV1 {
     if (manifests.length !== record.chunk_count) {
       throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', 'chunk count does not match the row set');
     }
+    const locators = chunks.rows.map(chunk => {
+      const hasLocation = chunk.object_key !== null;
+      if (hasLocation !== (record.kind === 'object')) {
+        throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', 'chunk location does not match its binding kind');
+      }
+      return hasLocation
+        ? Object.freeze({
+            objectKey: chunk.object_key!,
+            nativeVersion: chunk.native_version!,
+            compression: chunk.compression,
+            physicalSha256: chunk.physical_sha256!,
+            physicalByteCount: Number(chunk.physical_byte_count),
+          })
+        : undefined;
+    });
     return Object.freeze({
       rowSetId: record.row_set_id,
       rowSetKind: record.row_set_kind,
@@ -382,8 +580,10 @@ export class ReportingRowStorageV1 {
       rowCount,
       rowManifestSha256: record.row_manifest_sha256,
       bindingId: record.row_binding_id,
+      bindingIdentitySha256: record.identity_sha256,
       kind: record.kind,
       manifests: Object.freeze(manifests),
+      locators: Object.freeze(locators),
     });
   }
 
@@ -415,7 +615,8 @@ export class ReportingRowStorageV1 {
         handle,
         manifest,
         firstSegment.byte_offset,
-        lastSegment.byte_offset + lastSegment.byte_count - firstSegment.byte_offset
+        lastSegment.byte_offset + lastSegment.byte_count - firstSegment.byte_offset,
+        signal
       );
       const decoded = this.decode(() => decodeVerifiedReportingRowSegmentsV1(manifest, [from, to], bytes));
       const startIndex = Math.max(offset, firstSegment.first_ordinal) - firstSegment.first_ordinal;
@@ -448,7 +649,7 @@ export class ReportingRowStorageV1 {
     const rows: Record<string, unknown>[] = [];
     for (const manifest of handle.manifests) {
       options.signal?.throwIfAborted();
-      const bytes = await this.readChunkRange(handle, manifest, 0, manifest.byte_count);
+      const bytes = await this.readChunkRange(handle, manifest, 0, manifest.byte_count, options.signal);
       this.decode(() => verifyReportingRowChunkV1(manifest, bytes));
       hasher.update(bytes);
       rows.push(
@@ -462,22 +663,120 @@ export class ReportingRowStorageV1 {
     return rows;
   }
 
+  /**
+   * Delete exact object versions through the configured binding's provider.
+   * `absent` counts as success. Only object-kind bindings are accepted.
+   */
+  async deleteObjects(
+    bindingId: string,
+    objects: readonly { objectKey: string; nativeVersion: string }[],
+    signal?: AbortSignal
+  ): Promise<void> {
+    await this.ready();
+    const binding = this.bindings[bindingId];
+    if (!binding || binding.kind !== 'object') {
+      throw new ReportingRowStoreError('STATE_UNAVAILABLE', `row binding ${bindingId} is not configured for objects`);
+    }
+    const provider = this.providers[binding.provider]!;
+    const ownedPrefix = `${binding.prefix}/${this.installation!.namespaceKey}/`;
+    const context = { signal: deadlineSignal(this.writeDeadline, signal) };
+    for (const object of objects) {
+      if (!object.objectKey.startsWith(ownedPrefix)) {
+        throw new ReportingRowStoreError('UNSAFE_BINDING', 'refusing to delete an object outside the owned prefix');
+      }
+      await this.provider(() =>
+        provider.delete(
+          { ...providerLocation(binding), key: object.objectKey, nativeVersion: object.nativeVersion },
+          context
+        )
+      );
+    }
+  }
+
+  /** Installation identity and namespace key; available after `ready()`. */
+  get installationIdentity(): { installationId: string; namespaceKey: string } {
+    if (!this.installation) throw new ReportingRowStoreError('STATE_UNAVAILABLE', 'row storage is not ready');
+    return this.installation;
+  }
+
   private async readChunkRange(
     handle: ReportingRowSetHandleV1,
     manifest: ReportingRowChunkManifestV1,
     byteOffset: number,
-    byteCount: number
+    byteCount: number,
+    signal?: AbortSignal
   ): Promise<Buffer> {
-    if (handle.kind !== 'postgres') throw new ReportingRowStoreError('STATE_UNAVAILABLE', 'unsupported row binding');
-    const result = await this.pool.query<{ bytes: Buffer }>(
-      `SELECT substring(body FROM $4::integer + 1 FOR $5::integer) AS bytes
-         FROM adcp_reporting_chunk_bodies
-        WHERE account_id = $1 AND obligation_id = $2 AND sha256 = $3`,
-      [handle.accountId, handle.obligationId, manifest.sha256, byteOffset, byteCount]
+    if (handle.kind === 'postgres') {
+      const result = await this.pool.query<{ bytes: Buffer }>(
+        `SELECT substring(body FROM $4::integer + 1 FOR $5::integer) AS bytes
+           FROM adcp_reporting_chunk_bodies
+          WHERE account_id = $1 AND obligation_id = $2 AND sha256 = $3`,
+        [handle.accountId, handle.obligationId, manifest.sha256, byteOffset, byteCount]
+      );
+      const bytes = result.rows[0]?.bytes;
+      if (!bytes) throw new ReportingRowStoreError('ROWS_UNAVAILABLE', `chunk ${manifest.chunk_index} body is missing`);
+      return bytes;
+    }
+    const binding = this.bindings[handle.bindingId];
+    if (!binding || binding.kind !== 'object' || bindingIdentitySha256(binding) !== handle.bindingIdentitySha256) {
+      throw new ReportingRowStoreError('STATE_UNAVAILABLE', `row binding ${handle.bindingId} is not configured`);
+    }
+    const locator = handle.locators[manifest.chunk_index]!;
+    const provider = this.providers[binding.provider]!;
+    const context = { signal: deadlineSignal(this.readDeadline, signal) };
+    const location = providerLocation(binding);
+    if (locator.compression === 'none' && provider.rangedReads) {
+      const bytes = await this.provider(() =>
+        provider.get(
+          {
+            ...location,
+            key: locator.objectKey,
+            nativeVersion: locator.nativeVersion,
+            range: { offset: byteOffset, length: byteCount },
+            maxBytes: byteCount,
+          },
+          context
+        )
+      );
+      if (!bytes)
+        throw new ReportingRowStoreError('ROWS_UNAVAILABLE', `chunk ${manifest.chunk_index} object is missing`);
+      if (bytes.byteLength !== byteCount) {
+        throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', `chunk ${manifest.chunk_index} range is truncated`);
+      }
+      return Buffer.from(bytes);
+    }
+    const stored = await this.provider(() =>
+      provider.get(
+        {
+          ...location,
+          key: locator.objectKey,
+          nativeVersion: locator.nativeVersion,
+          maxBytes: locator.physicalByteCount,
+        },
+        context
+      )
     );
-    const bytes = result.rows[0]?.bytes;
-    if (!bytes) throw new ReportingRowStoreError('ROWS_UNAVAILABLE', `chunk ${manifest.chunk_index} body is missing`);
-    return bytes;
+    if (!stored)
+      throw new ReportingRowStoreError('ROWS_UNAVAILABLE', `chunk ${manifest.chunk_index} object is missing`);
+    const physical = Buffer.from(stored);
+    if (physical.byteLength !== locator.physicalByteCount || sha256Hex(physical) !== locator.physicalSha256) {
+      throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', `chunk ${manifest.chunk_index} stored bytes differ`);
+    }
+    const logical = this.inflate(physical, locator.compression, manifest.byte_count);
+    if (!logical) {
+      throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', `chunk ${manifest.chunk_index} does not decompress`);
+    }
+    return logical.subarray(byteOffset, byteOffset + byteCount);
+  }
+
+  private inflate(physical: Buffer, compression: 'none' | 'gzip', byteCount: number): Buffer | null {
+    if (compression === 'none') return physical.byteLength === byteCount ? physical : null;
+    try {
+      const logical = gunzipSync(physical, { maxOutputLength: byteCount });
+      return logical.byteLength === byteCount ? logical : null;
+    } catch {
+      return null;
+    }
   }
 
   private decode<T>(operation: () => T): T {
@@ -489,18 +788,56 @@ export class ReportingRowStorageV1 {
     }
   }
 
+  /** Collapse provider failures to stable, secret-free codes. */
+  private async provider<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (isReportingRowStoreError(error)) throw error;
+      if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+        throw new ReportingRowStoreError(error.name === 'TimeoutError' ? 'DEADLINE_EXCEEDED' : 'ABORTED');
+      }
+      throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE');
+    }
+  }
+
   private async register(): Promise<void> {
     const { installationId } = await probeReportingRowStorageSchemaV1(this.pool);
     const namespaceKey = sha256Hex(canonicalize(['adcp.rows.v1', this.deploymentNamespace, installationId]));
+    this.installation = { installationId, namespaceKey };
     for (const [bindingId, binding] of Object.entries(this.bindings)) {
-      const identityConfig = {};
-      const identitySha256 = sha256Hex(canonicalize([binding.kind, binding.kind, identityConfig]));
+      if (binding.kind === 'object') {
+        const provider = this.providers[binding.provider]!;
+        await this.provider(() =>
+          provider.probe(
+            { ...providerLocation(binding), prefix: binding.prefix },
+            { signal: AbortSignal.timeout(this.readDeadline) }
+          )
+        );
+      }
+      const identityConfig = bindingIdentityConfig(binding);
+      const identitySha256 = bindingIdentitySha256(binding);
+      const operationalConfig =
+        binding.kind === 'object'
+          ? {
+              compression: binding.compression ?? 'gzip',
+              ...(binding.credentialRef ? { credentialRef: binding.credentialRef } : {}),
+            }
+          : {};
       await this.pool.query(
         `INSERT INTO adcp_reporting_row_bindings
-           (row_binding_id, kind, provider, identity_config, identity_sha256, namespace_key)
-         VALUES ($1, $2, $3, $4::jsonb, $5, $6)
+           (row_binding_id, kind, provider, identity_config, identity_sha256, operational_config, namespace_key)
+         VALUES ($1, $2, $3, $4::jsonb, $5, $6::jsonb, $7)
          ON CONFLICT (row_binding_id) DO NOTHING`,
-        [bindingId, binding.kind, binding.kind, JSON.stringify(identityConfig), identitySha256, namespaceKey]
+        [
+          bindingId,
+          binding.kind,
+          binding.kind === 'object' ? binding.provider : 'postgres',
+          JSON.stringify(identityConfig),
+          identitySha256,
+          JSON.stringify(operationalConfig),
+          namespaceKey,
+        ]
       );
       const stored = await this.pool.query<{ identity_sha256: string; namespace_key: string; state: string }>(
         'SELECT identity_sha256, namespace_key, state FROM adcp_reporting_row_bindings WHERE row_binding_id = $1',
@@ -520,6 +857,45 @@ export class ReportingRowStorageV1 {
   }
 }
 
-function sha256Hex(value: string): string {
+function bindingIdentityConfig(binding: ReportingRowBindingDefinitionV1): Record<string, unknown> {
+  return binding.kind === 'object'
+    ? {
+        location: { ...binding.location },
+        prefix: binding.prefix,
+        keyTemplate: binding.keyTemplate ?? REPORTING_ROW_DEFAULT_KEY_TEMPLATE,
+      }
+    : {};
+}
+
+function bindingIdentitySha256(binding: ReportingRowBindingDefinitionV1): string {
+  const provider = binding.kind === 'object' ? binding.provider : binding.kind;
+  return sha256Hex(canonicalize([binding.kind, provider, bindingIdentityConfig(binding)]));
+}
+
+function providerLocation(binding: ReportingObjectRowBindingV1): {
+  location: Readonly<Record<string, string>>;
+  credentialRef?: string;
+} {
+  return { location: binding.location, ...(binding.credentialRef ? { credentialRef: binding.credentialRef } : {}) };
+}
+
+function deadlineSignal(milliseconds: number, signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(milliseconds);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+function positiveMilliseconds(value: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value < 1_000 || value > 600_000) {
+    throw new ReportingRowStoreError('INVALID_INPUT', `${name} must be between 1000 and 600000`);
+  }
+  return value;
+}
+
+function sha256Hex(value: string | Uint8Array): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+/** Fresh opaque intent identifier for one upload attempt. */
+export function reportingRowWriteIntentIdV1(): string {
+  return randomUUID();
 }
