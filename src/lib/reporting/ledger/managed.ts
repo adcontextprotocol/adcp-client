@@ -861,6 +861,7 @@ export async function runManagedDeliveryWorker(
         }
         lease.revision = hydrated;
       }
+
       const outcome = await withinDeadline(
         signal =>
           adapter.deliver(

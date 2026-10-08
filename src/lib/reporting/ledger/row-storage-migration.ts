@@ -57,14 +57,19 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_row_sets (
   row_count BIGINT NOT NULL CHECK (row_count >= 0),
   row_manifest_sha256 TEXT COLLATE "C" NOT NULL CHECK (row_manifest_sha256 ~ '^[0-9a-f]{64}$'),
   chunk_count INTEGER NOT NULL CHECK (chunk_count >= 0),
-  rows_shared_from_row_set_id TEXT COLLATE "C" REFERENCES adcp_reporting_row_sets(row_set_id),
+  rows_shared_from_row_set_id TEXT COLLATE "C",
   row_binding_id TEXT COLLATE "C" NOT NULL REFERENCES adcp_reporting_row_bindings(row_binding_id),
   row_location_version INTEGER NOT NULL DEFAULT 1 CHECK (row_location_version > 0),
   rows_state TEXT NOT NULL DEFAULT 'live' CHECK (rows_state IN ('live', 'pruning', 'pruned', 'unavailable')),
   rows_state_changed_at TIMESTAMPTZ,
   recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   CHECK ((row_count = 0) = (chunk_count = 0)),
-  CHECK (rows_shared_from_row_set_id IS NULL OR rows_shared_from_row_set_id <> row_set_id)
+  CHECK (rows_shared_from_row_set_id IS NULL OR rows_shared_from_row_set_id <> row_set_id),
+  -- Tenant columns are the composite key children reference, so a chunk or a
+  -- shared row set can never name another account's or obligation's rows.
+  UNIQUE (row_set_id, account_id, obligation_id),
+  FOREIGN KEY (rows_shared_from_row_set_id, account_id, obligation_id)
+    REFERENCES adcp_reporting_row_sets (row_set_id, account_id, obligation_id)
 );
 CREATE INDEX IF NOT EXISTS adcp_reporting_row_sets_obligation
   ON adcp_reporting_row_sets (obligation_id, recorded_at, row_set_id);
@@ -76,7 +81,7 @@ CREATE INDEX IF NOT EXISTS adcp_reporting_row_sets_shared
   WHERE rows_shared_from_row_set_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS adcp_reporting_row_chunks (
-  row_set_id TEXT COLLATE "C" NOT NULL REFERENCES adcp_reporting_row_sets(row_set_id),
+  row_set_id TEXT COLLATE "C" NOT NULL,
   chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
   account_id TEXT COLLATE "C" NOT NULL,
   obligation_id TEXT COLLATE "C" NOT NULL,
@@ -91,6 +96,8 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_row_chunks (
   physical_sha256 TEXT COLLATE "C" CHECK (physical_sha256 IS NULL OR physical_sha256 ~ '^[0-9a-f]{64}$'),
   physical_byte_count BIGINT CHECK (physical_byte_count IS NULL OR physical_byte_count > 0),
   PRIMARY KEY (row_set_id, chunk_index),
+  FOREIGN KEY (row_set_id, account_id, obligation_id)
+    REFERENCES adcp_reporting_row_sets (row_set_id, account_id, obligation_id),
   CHECK ((object_key IS NULL) = (native_version IS NULL)),
   CHECK ((object_key IS NULL) = (physical_sha256 IS NULL)),
   CHECK ((object_key IS NULL) = (physical_byte_count IS NULL))

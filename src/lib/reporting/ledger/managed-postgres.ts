@@ -19,7 +19,7 @@ import type {
   ReportingLedgerStore,
 } from './types';
 import { REPORTING_LEDGER_AUTHORITY } from './types';
-import { ReportingRowStorageV1 } from './row-storage';
+import { ReportingRowStorageV1, isReportingRowStoreError } from './row-storage';
 import {
   assertReportingObjectWriteScope,
   reportingObjectWritePlanFingerprint,
@@ -1535,16 +1535,23 @@ export class PostgresReportingManagedDeliveryStore
     if (!lease || Array.isArray(lease.revision.rows)) return lease;
     // Rows kept as PostgreSQL chunks live in this same schema, so the claim
     // hydrates and verifies them itself. Rows in an external binding are left
-    // for the worker's `hydrateRevision`, which owns the provider clients.
-    const handle = await this.rowStorage.find(
-      lease.revision.reporting_revision_id,
-      lease.obligation.account.account_id
-    );
-    if (handle?.kind === 'postgres') {
-      lease.revision = {
-        ...lease.revision,
-        rows: await this.rowStorage.readAll(handle, lease.revision.wireRevision.control_totals),
-      };
+    // for the worker's `hydrateRevision`, which owns the provider clients. A
+    // row-store failure (corrupt, lost or expired rows) also leaves the lease
+    // unhydrated: the claim has already committed, and the worker's per-item
+    // handling then fails this one materialization instead of the whole tick.
+    try {
+      const handle = await this.rowStorage.find(
+        lease.revision.reporting_revision_id,
+        lease.obligation.account.account_id
+      );
+      if (handle?.kind === 'postgres') {
+        lease.revision = {
+          ...lease.revision,
+          rows: await this.rowStorage.readAll(handle, lease.revision.wireRevision.control_totals),
+        };
+      }
+    } catch (error) {
+      if (!isReportingRowStoreError(error)) throw error;
     }
     return lease;
   }

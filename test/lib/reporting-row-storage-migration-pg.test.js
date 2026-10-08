@@ -102,6 +102,31 @@ describe('REPORTING_ROW_STORAGE_MIGRATION', { skip: !DATABASE_URL && 'PostgreSQL
       [body.byteLength, hex(body)]
     );
     await assert.rejects(
+      () =>
+        pool.query(
+          `INSERT INTO adcp_reporting_row_chunks
+             (row_set_id, chunk_index, account_id, obligation_id, first_ordinal, row_count, byte_count, sha256, segments)
+           VALUES ('rrev_rows', 1, 'acct_other', 'robl_rows', 1, 1, $1, $2, '[]'::jsonb)`,
+          [body.byteLength, hex(body)]
+        ),
+      /foreign key/,
+      'a chunk can never name another account than its row set'
+    );
+    await assert.rejects(
+      () =>
+        pool.query(
+          `INSERT INTO adcp_reporting_row_sets
+             (row_set_id, row_set_kind, account_id, obligation_id, encoding, digest_profile, content_sha256,
+              canonical_byte_count, row_count, row_manifest_sha256, chunk_count, row_binding_id,
+              rows_shared_from_row_set_id)
+           VALUES ('rrev_foreign_share', 'revision', 'acct_other', 'robl_rows', 'adcp_canonical_jsonl_v1',
+                   'revision_envelope_v1', $1, 80, 1, $2, 1, 'postgres', 'rrev_rows')`,
+          ['d'.repeat(64), 'e'.repeat(64)]
+        ),
+      /foreign key/,
+      'a header-only revision can only share rows within its own account and obligation'
+    );
+    await assert.rejects(
       () => pool.query(`UPDATE adcp_reporting_row_sets SET row_count = 2`),
       /row set content is immutable/
     );
