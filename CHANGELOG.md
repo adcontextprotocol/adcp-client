@@ -1,5 +1,17 @@
 # Changelog
 
+## 15.4.0
+
+### Minor Changes
+
+- daec63f: Reporting exact reads now page rows instead of loading whole revisions. `ReportingLedgerStore` gains optional `getRevisionMetadata` and `readRevisionRows({reporting_revision_id, account_id, offset, limit})`; `PostgresReportingLedgerStore` slices rows inside PostgreSQL. `createReportingDeliveryHandler` reads only the requested page and takes `total_count` from the revision binding. The `get_reporting_status` `revision` view returns `reporting_rows` inline only for revisions up to `REPORTING_STATUS_REVISION_VIEW_MAX_ROWS` (10,000) rows; larger revisions omit the field and are paged through `get_media_buy_delivery`. Custom stores without the new methods keep working through `getRevision`.
+- daec63f: Reporting ledger paths that only need revision metadata no longer load revision rows. `ReportingLedgerStore` gains optional `listRevisionMetadata(obligationId, accountId?)` and `listAdjustmentMetadata(obligationId)`, implemented by `PostgresReportingLedgerStore` with `data - 'rows'`. The producer, lifecycle reconciler and status ingest prefer them and fall back to `listRevisions`/`listAdjustments` with rows dropped, so custom stores keep working unchanged. Managed Delivery materialization planning now selects and groups by revision id instead of the full revision document. Adds the `ReportingLedgerAdjustmentMetadataV1` type.
+- c4c2a5f: Add the canonical JSONL row encoding for reporting revisions to `@adcp/sdk/reporting/ledger`: contract-fixed 500-row segments and 10,000-row / 8 MiB chunks, segment and chunk digests, a row-manifest digest for the revision header, ranged verified segment decoding, and streaming hashers that reproduce the protocol `revision_content_sha256` (and the `rows_v1` profile) from stored chunk bytes without parsing rows. Writers refuse rows that are not portable across RFC 8785 implementations (unsafe integers, non-finite numbers, lone surrogates, non-plain objects). This is the first building block of pluggable revision row storage; no existing store behavior changes.
+
+### Patch Changes
+
+- de3b6ba: Treat HTTP 408 and 429 during capabilities or brand.json signing discovery as retryable failures, including webhook signature verification. Other HTTP 4xx and SSRF policy refusals remain terminal.
+
 ## 15.3.0
 
 ### Minor Changes
