@@ -194,7 +194,8 @@ const MAX_PACKED_FILE_COUNT =
   4 + // Reporting host change-feed module (one dual-format set).
   8 + // GCS row-object provider and shared cloud-provider I/O modules (two dual-format sets).
   9 + // Shared discovery and per-call MCP context modules (two dual-format sets) and adoption guide.
-  4; // `reporting/s3` row-object provider subpath (one dual-format set).
+  4 + // `reporting/s3` row-object provider subpath (one dual-format set).
+  4; // `reporting/azure` row-object provider subpath (one dual-format set).
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
