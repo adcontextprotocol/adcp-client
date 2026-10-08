@@ -48,7 +48,10 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // and the verified PostgreSQL chunk engine) adds three internal dual-format
 // module sets. The measured paged-read artifact is 20,160,752 bytes; allow 40 KB
 // for the following row-storage modules and compressor variance.
-const MAX_PACKED_TARBALL_BYTES = 20_200_000;
+// Object-storage row bindings add the provider port, key rendering, filesystem
+// provider and conformance runner; the measured artifact is 20,205,763 bytes.
+// Allow 55 KB for row retention, host reads and the cloud object providers.
+const MAX_PACKED_TARBALL_BYTES = 20_260_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -182,7 +185,8 @@ const MAX_PACKED_FILE_COUNT =
   33 + // AdCP 3.2.3 canonical A2A vectors; the measured package contains 6,457 files.
   8 + // Reporting row encoding and revision-metadata helper modules (two dual-format sets).
   4 + // Reporting row-storage migration module (one dual-format set).
-  4; // Verified reporting row-storage engine (one dual-format set).
+  4 + // Verified reporting row-storage engine (one dual-format set).
+  8; // Reporting row-storage errors and object-provider modules (two dual-format sets).
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

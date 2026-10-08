@@ -62,6 +62,9 @@ import {
   ReportingRowStorageV1,
   ReportingRowStoreError,
   isReportingRowStoreError,
+  reportingRowWriteIntentIdV1,
+  type ReportingPreparedRowSetV1,
+  type ReportingRowChunkLocatorV1,
   type ReportingRowStorageOptionsV1,
 } from './row-storage';
 import { isFrozenCalendarRulesMismatch, reportingPeriodSchedule } from './schedule';
@@ -563,7 +566,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
    * repack.
    */
   async migrateInlineRows(
-    input: { limit?: number; account_id?: string; cursor?: string; signal?: AbortSignal } = {}
+    input: { limit?: number; account_id?: string; cursor?: string; bindingId?: string; signal?: AbortSignal } = {}
   ): Promise<{ migrated: number; quarantined: string[]; cursor?: string }> {
     if (!this.rowStorageWrites) throw new Error('migrateInlineRows requires rowStorage');
     const limit = input.limit ?? 100;
@@ -630,10 +633,19 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
                 ? { finality: document.finality, controlTotals: document.wireRevision.control_totals }
                 : {}),
               binding: document.binding,
+              ...(input.bindingId ? { bindingId: input.bindingId } : {}),
             });
           } catch (error) {
+            // Rows that cannot be canonicalized or no longer reproduce their
+            // committed binding are reported, never rewritten.
             if (isReportingRowStoreError(error) && error.code === 'INVALID_INPUT') return 'quarantined' as const;
             throw error;
+          }
+          if (prepared.binding.kind !== 'postgres') {
+            throw new ReportingRowStoreError(
+              'INVALID_INPUT',
+              'migrateInlineRows writes PostgreSQL-kind row sets; select a postgres binding for migrated rows'
+            );
           }
           await this.rowStorage.writeInTransaction(client, prepared);
           await client.query(`UPDATE ${table} SET data = data - 'rows' WHERE ${idColumn} = $1`, [candidate.id]);
@@ -931,10 +943,15 @@ ${managedDueArm}       )
           obligationId: revision.reporting_obligation_id,
           rows: revision.rows,
           finality: revision.finality,
+          periodStart: lease.obligation.period.start,
           binding: revision.binding,
           controlTotals: revision.wireRevision.control_totals,
         })
       : undefined;
+    const upload =
+      prepared?.binding.kind === 'object'
+        ? await this.uploadRowSetUnlessCommitted(prepared, lease, 'adcp_reporting_revisions', 'revision_id')
+        : undefined;
     const port = this.notificationActivityPort?.recordLedgerChanged ? this.notificationActivityPort : undefined;
     const result = await this.putImmutable(
       `WITH leased_obligation AS (
@@ -990,7 +1007,7 @@ ${managedDueArm}       )
       revisionLegacyCanonicalDigestReplay,
       prepared || port
         ? async (client, committed) => {
-            if (prepared) await this.rowStorage.writeInTransaction(client, prepared);
+            if (prepared) await this.writePreparedRowSet(client, prepared, upload);
             await port?.recordLedgerChanged!(
               { obligation: lease.obligation, revision: withRows(committed, revision.rows) },
               client
@@ -1091,9 +1108,14 @@ ${managedDueArm}       )
           accountId: lease.obligation.account.account_id,
           obligationId: adjustment.reporting_obligation_id,
           rows: adjustment.rows,
+          periodStart: lease.obligation.period.start,
           binding: adjustment.binding,
         })
       : undefined;
+    const upload =
+      prepared?.binding.kind === 'object'
+        ? await this.uploadRowSetUnlessCommitted(prepared, lease, 'adcp_reporting_adjustments', 'adjustment_id')
+        : undefined;
     const port = this.notificationActivityPort?.recordLedgerChanged ? this.notificationActivityPort : undefined;
     const result = await this.putImmutable(
       `WITH leased_obligation AS (
@@ -1143,7 +1165,7 @@ ${managedDueArm}       )
       adjustmentLegacyCanonicalDigestReplay,
       prepared || port
         ? async (client, committed) => {
-            if (prepared) await this.rowStorage.writeInTransaction(client, prepared);
+            if (prepared) await this.writePreparedRowSet(client, prepared, upload);
             await port?.recordLedgerChanged!(
               { obligation: lease.obligation, adjustment: withRows(committed, adjustment.rows) },
               client
@@ -1174,6 +1196,104 @@ ${managedDueArm}       )
       adjustments.push({ ...adjustment, rows: await this.rowStorage.readAll(handle) });
     }
     return adjustments;
+  }
+
+  /**
+   * Upload an object-kind row set before its ledger commit (spec §3.5):
+   * skip when the document already exists (replay), refuse unless the lease
+   * still covers the upload deadline, open or take over an expired write
+   * intent under the account lock, then write every chunk create-only,
+   * recording each object this upload created in the intent first.
+   */
+  private async uploadRowSetUnlessCommitted(
+    prepared: ReportingPreparedRowSetV1,
+    lease: ReportingLedgerLeaseV1,
+    table: 'adcp_reporting_revisions' | 'adcp_reporting_adjustments',
+    idColumn: 'revision_id' | 'adjustment_id'
+  ): Promise<{ locators: ReportingRowChunkLocatorV1[]; ownerToken: string } | undefined> {
+    const { input } = prepared;
+    const committed = await this.query(`SELECT 1 FROM ${table} WHERE ${idColumn} = $1`, [input.rowSetId]);
+    if (committed.rows.length > 0) return undefined;
+    const ownerToken = reportingRowWriteIntentIdV1();
+    const budget = this.rowStorage.writeDeadlineMilliseconds;
+    const intentKey = [prepared.bindingId, input.rowSetId, input.binding.sha256];
+    await this.transaction(
+      async client => {
+        const opened = await client.query(
+          `INSERT INTO adcp_reporting_row_write_intents
+             (row_binding_id, account_id, row_set_id, content_sha256, state, owner_token, expires_at)
+           SELECT $1, $2, $3, $4, 'open', $5, obligation.lease_expires_at + ($6::bigint * INTERVAL '1 millisecond')
+             FROM adcp_reporting_obligations obligation
+            WHERE obligation.obligation_id = $7 AND obligation.lease_owner = $8
+              AND obligation.lease_generation = $9
+              AND obligation.lease_expires_at - clock_timestamp() >= (($6::bigint + 5000) * INTERVAL '1 millisecond')
+           ON CONFLICT (row_binding_id, row_set_id, content_sha256) DO UPDATE
+              SET owner_token = EXCLUDED.owner_token, expires_at = EXCLUDED.expires_at
+            WHERE adcp_reporting_row_write_intents.state = 'open'
+              AND adcp_reporting_row_write_intents.expires_at <= clock_timestamp()
+           RETURNING owner_token`,
+          [
+            prepared.bindingId,
+            input.accountId,
+            input.rowSetId,
+            input.binding.sha256,
+            ownerToken,
+            budget,
+            input.obligationId,
+            lease.owner,
+            lease.generation,
+          ]
+        );
+        if (opened.rows.length === 1) return;
+        const held = await client.query(
+          `SELECT lease_expires_at - clock_timestamp() >= (($4::bigint + 5000) * INTERVAL '1 millisecond') AS budget
+             FROM adcp_reporting_obligations
+            WHERE obligation_id = $1 AND lease_owner = $2 AND lease_generation = $3
+              AND lease_expires_at > clock_timestamp()`,
+          [input.obligationId, lease.owner, lease.generation, budget]
+        );
+        if (held.rows.length === 0) throw new ReportingLedgerLeaseLostError();
+        if (!held.rows[0]!.budget) {
+          throw new ReportingRowStoreError('DEADLINE_EXCEEDED', 'the lease does not cover the row upload deadline');
+        }
+        throw new ReportingRowStoreError('STATE_UNAVAILABLE', 'another writer holds this row upload');
+      },
+      { preBeginAdvisoryLock: accountLock(input.accountId) }
+    );
+    const locators = await this.rowStorage.upload(prepared, ownerToken, async object => {
+      const recorded = await this.query(
+        `UPDATE adcp_reporting_row_write_intents
+            SET created_objects = created_objects || $5::jsonb
+          WHERE row_binding_id = $1 AND row_set_id = $2 AND content_sha256 = $3
+            AND owner_token = $4 AND state = 'open'`,
+        [...intentKey, ownerToken, JSON.stringify([object])]
+      );
+      if (recorded.rowCount !== 1) {
+        throw new ReportingRowStoreError('STATE_UNAVAILABLE', 'the row upload intent was taken over or swept');
+      }
+    });
+    return { locators, ownerToken };
+  }
+
+  /** Persist a prepared row set and close its upload intent in the ledger commit transaction. */
+  private async writePreparedRowSet(
+    client: ReportingLedgerTransactionV1,
+    prepared: ReportingPreparedRowSetV1,
+    upload: { locators: ReportingRowChunkLocatorV1[]; ownerToken: string } | undefined
+  ): Promise<void> {
+    if (prepared.binding.kind === 'object') {
+      if (!upload) throw new ReportingRowStoreError('STATE_UNAVAILABLE', 'object rows were not uploaded');
+      const closed = await client.query(
+        `DELETE FROM adcp_reporting_row_write_intents
+          WHERE row_binding_id = $1 AND row_set_id = $2 AND content_sha256 = $3
+            AND owner_token = $4 AND state = 'open'`,
+        [prepared.bindingId, prepared.input.rowSetId, prepared.input.binding.sha256, upload.ownerToken]
+      );
+      if (closed.rowCount !== 1) {
+        throw new ReportingRowStoreError('STATE_UNAVAILABLE', 'the row upload intent was taken over or swept');
+      }
+    }
+    await this.rowStorage.writeInTransaction(client, prepared, upload?.locators);
   }
 
   /** Attach verified rows to a revision document whose rows live in row storage. */

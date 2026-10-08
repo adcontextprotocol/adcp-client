@@ -323,6 +323,61 @@ do {
 Removing rows from ledger documents frees space only after `VACUUM FULL` or an
 online repack of `adcp_reporting_revisions` and `adcp_reporting_adjustments`.
 
+### Object storage bindings
+
+Rows can live in object storage instead of PostgreSQL. A binding is defined in
+host code, which makes the configuration the allowlist: the database records
+which binding each revision used and its identity digest, but it can never
+point reads or writes at a destination the host did not configure.
+
+```ts
+import {
+  PostgresReportingLedgerStore,
+  createFilesystemReportingRowObjectProviderV1,
+} from '@adcp/sdk/reporting/ledger';
+
+const store = new PostgresReportingLedgerStore(pool, {
+  acknowledgeIsolatedDatabase: true,
+  rowStorage: {
+    deploymentNamespace: 'prod-us',
+    bindings: {
+      inline: { kind: 'postgres' },
+      reports: {
+        kind: 'object',
+        provider: 'filesystem', // or a cloud provider registered below
+        location: { root: 'reports' },
+        prefix: 'adcp-rows',
+        compression: 'gzip',
+      },
+    },
+    providers: {
+      filesystem: createFilesystemReportingRowObjectProviderV1({ roots: { reports: '/var/lib/adcp/rows' } }),
+    },
+    selectRowBinding: ({ canonical_byte_count }) => (canonical_byte_count < 256 * 1024 ? 'inline' : 'reports'),
+  },
+});
+await store.readyRowStorage();
+```
+
+- Each chunk is one object, written create-only. If an object already exists at
+  a planned key, it is adopted only when its bytes decode to the exact chunk;
+  otherwise the commit fails with `CONTENT_CONFLICT`.
+- Keys always start with `{prefix}/{namespace_key}/` and use a hashed account
+  segment, never a raw account ID. Override `keyTemplate` with the placeholders
+  in `REPORTING_ROW_KEY_PLACEHOLDERS`; templates must include
+  `{content_sha256}` and `{chunk_index}`.
+- An upload runs only while the obligation lease still covers
+  `writeDeadlineMilliseconds` plus five seconds. A fenced write intent records
+  every object the upload created, and the ledger commit closes the intent in
+  the same transaction. Objects of an upload that never committed are left for
+  the intent sweep.
+- Every read verifies the stored bytes against the recorded physical digest
+  before decompressing, then verifies segments, chunks and the revision binding.
+- Keep a retired binding configured while revisions still reference it.
+- Custom providers implement `ReportingRowObjectProviderV1`. Run
+  `runReportingRowObjectProviderConformanceV1(provider, { location, prefix })`
+  against a dedicated test prefix before using one.
+
 ## Managed Delivery and Reconciled Billing
 
 Core remains the default and has no destination, external-resource, or receipt dependency. To opt into the higher tiers, apply `REPORTING_MANAGED_DELIVERY_MIGRATION` **after** `REPORTING_LEDGER_MIGRATION`, explicitly construct the Core store with `managedDelivery: true`, create a `PostgresReportingManagedDeliveryStore`, and pass both stores with a destination adapter to `createReportingManagedDeliveryRuntime`. The async factory proves the stores share one authority and validates the RC3 tier wiring before returning it. It advertises `managed_delivery` only when an immutable binding, delivery, bounded resource reading, generation-fenced revocation, and at least one verification profile are installed. The advertised automated recovery window must be at least the widest installed managed Core configuration recovery window. It advertises `reconciled_billing` and `receipt_task` only when an authenticated consumer resolver and canonical-digest verification are also installed.
