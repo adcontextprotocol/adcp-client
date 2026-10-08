@@ -439,6 +439,16 @@
         "types": "./dist/lib/reporting/azure/index.d.ts",
         "default": "./dist/lib/reporting/azure/index.js"
       }
+    },
+    "./reporting/bigquery": {
+      "import": {
+        "types": "./dist/lib/reporting/bigquery/index.d.mts",
+        "default": "./dist/lib/reporting/bigquery/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/reporting/bigquery/index.d.ts",
+        "default": "./dist/lib/reporting/bigquery/index.js"
+      }
     }
   },
   "typesVersions": {
@@ -568,6 +578,9 @@
       ],
       "reporting/azure": [
         "dist/lib/reporting/azure/index.d.ts"
+      ],
+      "reporting/bigquery": [
+        "dist/lib/reporting/bigquery/index.d.ts"
       ]
     }
   },

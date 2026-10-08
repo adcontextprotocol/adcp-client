@@ -56,6 +56,10 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // measured combined artifact is 20,287,031 bytes; allow 23 KB for compressor
 // variance. Unpacked, schema and declaration budgets remain unchanged.
 const MAX_PACKED_TARBALL_BYTES = 20_310_000;
+// The GCS, S3 and Azure row providers and the BigQuery warehouse sink complete
+// Stage 1 row storage; the measured artifact is 20,263,249 bytes. Allow 26 KB
+// for compressor variance and follow-up documentation.
+const MAX_PACKED_TARBALL_BYTES = 20_290_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -195,7 +199,8 @@ const MAX_PACKED_FILE_COUNT =
   8 + // GCS row-object provider and shared cloud-provider I/O modules (two dual-format sets).
   9 + // Shared discovery and per-call MCP context modules (two dual-format sets) and adoption guide.
   4 + // `reporting/s3` row-object provider subpath (one dual-format set).
-  4; // `reporting/azure` row-object provider subpath (one dual-format set).
+  4 + // `reporting/azure` row-object provider subpath (one dual-format set).
+  4; // `reporting/bigquery` warehouse sink subpath (one dual-format set).
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

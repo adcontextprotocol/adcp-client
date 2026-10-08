@@ -548,6 +548,59 @@ await store.saveFeedConsumerCursor('pacing', page.cursor); // holds back pruning
 - The production service accepts `changeFeed: true | { changeRetentionDays,
   maxFeedHoldDays }` and prunes the feed on its scheduler.
 
+### BigQuery warehouse sink
+
+`@adcp/sdk/reporting/bigquery` loads committed revisions into your own BigQuery
+tables for analysts. The warehouse copy is derived and non-authoritative. It
+is never read for serving or verification, so its table names, columns,
+partitioning and retention are yours.
+
+```ts
+import { BigQuery } from '@google-cloud/bigquery';
+import {
+  REPORTING_WAREHOUSE_SINK_MIGRATION,
+  createBigQueryReportingWarehouseSinkV1,
+} from '@adcp/sdk/reporting/bigquery';
+
+await pool.query(REPORTING_WAREHOUSE_SINK_MIGRATION); // after REPORTING_LEDGER_CHANGES_MIGRATION
+const sink = createBigQueryReportingWarehouseSinkV1({
+  store, // PostgresReportingLedgerStore with changeFeed: true
+  db: pool,
+  bigquery: new BigQuery({ projectId: 'analytics-prod' }), // ADC / workload identity
+  name: 'warehouse',
+  projectId: 'analytics-prod',
+  datasetId: 'reporting',
+  rowsTableId: 'media_buy_delivery_rows',
+  revisionsTableId: 'media_buy_delivery_revisions',
+  location: 'US',
+  mapRow: row => ({ media_buy_id: row.media_buy_id, impressions: row.impressions, spend: row.spend }),
+  labels: { component: 'adcp-reporting' },
+});
+await bigquery.query({ query: sink.defaultTablesSql }); // or create your own tables
+await bigquery.query({ query: sink.currentRowsViewSql });
+setInterval(() => void sink.runOnce(), 15 * 60_000);
+```
+
+- Each run follows the change feed and reads every revision's rows through the
+  store's verified reader. It loads rows first and revision metadata second,
+  in one load job per table per tick. The sink always adds
+  `reporting_revision_id`, `reporting_obligation_id`, `account_id`,
+  `revision_number`, `finality`, `period_date` (the period's date in its source
+  timezone) and `ordinal` to your mapped columns.
+- Batches are planned durably before loading, and job IDs derive from the
+  change-feed range. A crash between a load and the cursor commit replays the
+  same batch under the same job ID, which BigQuery refuses to run twice. A job
+  that finished with an error is retried under a new attempt for that table
+  only.
+- Query `current_rows`, not the raw rows table. Pacing snapshots are
+  cumulative, so summing across revisions double-counts. The view keeps each
+  obligation's current revision.
+- The sink registers as a change-feed consumer, so `pruneChanges` keeps changes
+  it has not loaded yet. Superseded snapshots are the intraday pacing curve, and
+  the warehouse may keep them as long as you like.
+- The sink uses only `dataset().table().load()`, `job().getMetadata()` and
+  `query()` from the official client you construct. It adds no dependency.
+
 ## Managed Delivery and Reconciled Billing
 
 Core remains the default and has no destination, external-resource, or receipt dependency. To opt into the higher tiers, apply `REPORTING_MANAGED_DELIVERY_MIGRATION` **after** `REPORTING_LEDGER_MIGRATION`, explicitly construct the Core store with `managedDelivery: true`, create a `PostgresReportingManagedDeliveryStore`, and pass both stores with a destination adapter to `createReportingManagedDeliveryRuntime`. The async factory proves the stores share one authority and validates the RC3 tier wiring before returning it. It advertises `managed_delivery` only when an immutable binding, delivery, bounded resource reading, generation-fenced revocation, and at least one verification profile are installed. The advertised automated recovery window must be at least the widest installed managed Core configuration recovery window. It advertises `reconciled_billing` and `receipt_task` only when an authenticated consumer resolver and canonical-digest verification are also installed.
