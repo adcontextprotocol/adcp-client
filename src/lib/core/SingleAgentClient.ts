@@ -3248,6 +3248,17 @@ export class SingleAgentClient {
     }
     if (!usesScopedFetch && !this.discoveredEndpoint && this.config.discoveryCache) {
       await this.adoptSharedEndpoint(options);
+      // Adoption itself is awaited. A peer can invalidate the key after its
+      // final read check but before this continuation uses the derived agent.
+      if (
+        this.discoveredEndpoint &&
+        (this.discoveredEndpointEpoch !== this.sharedInvalidationEpoch(this.sharedDiscoveryKey(options)!) ||
+          (this.discoveredEndpointExpiresAt ?? 0) <= Date.now())
+      ) {
+        this.discoveredEndpoint = undefined;
+        this.discoveredAgent = undefined;
+        this.discoveredMcpEra = undefined;
+      }
     }
     if (!usesScopedFetch && this.discoveredEndpoint) {
       const adoptedAgent: AgentConfig = {
@@ -3309,9 +3320,13 @@ export class SingleAgentClient {
         endpointEpoch
       );
       if (endpointEpoch && !this.discoveryEpochIs(endpointEpoch)) {
-        if (this.discoveredEndpoint === discoveredEndpoint) {
+        if (this.discoveredEndpoint === discoveredEndpoint && this.discoveredEndpointEpoch === endpointEpoch.shared) {
           this.discoveredEndpoint = undefined;
           this.discoveredEndpointKey = undefined;
+          this.discoveredEndpointEpoch = undefined;
+          this.discoveredEndpointExpiresAt = undefined;
+          if (this.discoveredAgent?.agent_uri === discoveredEndpoint) this.discoveredAgent = undefined;
+          this.discoveredMcpEra = undefined;
         }
         return { ...this.normalizedAgent, agent_uri: discoveredEndpoint };
       }
@@ -9564,8 +9579,12 @@ export class SingleAgentClient {
     }
 
     for (let attempt = 0; ; attempt++) {
+      const readEpoch = this.discoveryEpochSnapshot(options);
       const entry = await this.readSharedDiscovery(options);
-      const installed = entry && this.installSharedCapabilities(entry, key, discoveryContext);
+      const installed =
+        entry &&
+        (!readEpoch || this.discoveryEpochIs(readEpoch)) &&
+        this.installSharedCapabilities(entry, key, discoveryContext);
       if (installed) return installed;
 
       const flight = flights.get(key);
@@ -10346,7 +10365,9 @@ export class SingleAgentClient {
 
   /** Adopt a previously discovered MCP endpoint instead of re-probing the agent. */
   private async adoptSharedEndpoint(options?: ReadRequestOptions): Promise<void> {
+    const readEpoch = this.discoveryEpochSnapshot(options);
     const entry = await this.readSharedDiscovery(options);
+    if (readEpoch && !this.discoveryEpochIs(readEpoch)) return;
     const endpoint = entry?.endpoint;
     // A cached endpoint that is not a path variant of the configured URL is not
     // something this client's discovery could have found.

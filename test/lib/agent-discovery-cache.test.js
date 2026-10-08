@@ -765,6 +765,63 @@ describe('configuration and backend failures', () => {
 });
 
 describe('final review regressions', () => {
+  test('invalidation after a cache read resolves cannot stamp old evidence with a new epoch', async () => {
+    const uri = freshAgentUri();
+    const cache = createInMemoryAgentDiscoveryCache();
+    const peer = makeClient(uri, sharing(cache));
+    await peer.getCapabilities();
+    const before = tally(pathOf(uri)).capabilityCalls;
+    const client = makeClient(uri, sharing(cache));
+    const read = client.readSharedDiscovery.bind(client);
+    let invalidated = false;
+    client.readSharedDiscovery = async options => {
+      const entry = await read(options);
+      if (!invalidated && entry) {
+        invalidated = true;
+        await peer.invalidateDiscoveryCache();
+      }
+      return entry;
+    };
+    await client.getCapabilities();
+    assert.equal(tally(pathOf(uri)).capabilityCalls, before + 1, 'superseded read rediscovered live');
+    await client.getCapabilities();
+    assert.equal(tally(pathOf(uri)).capabilityCalls, before + 1, 'only the fresh local evidence was kept');
+  });
+
+  test('a superseded endpoint writer clears an agent derived by a concurrent call', async () => {
+    const uri = `${origin}/t-endpoint-${++nextPath}`;
+    const inner = createInMemoryAgentDiscoveryCache();
+    let release;
+    let entered;
+    const gate = new Promise(resolve => (release = resolve));
+    const writing = new Promise(resolve => (entered = resolve));
+    let firstSet = true;
+    const cache = {
+      get: key => inner.get(key),
+      async set(key, entry) {
+        if (firstSet) {
+          firstSet = false;
+          entered();
+          await gate;
+        }
+        inner.set(key, entry);
+      },
+      delete: key => inner.delete(key),
+    };
+    const client = makeClient(uri, sharing(cache));
+    const first = client.ensureEndpointDiscovered();
+    await writing;
+    await client.ensureEndpointDiscovered();
+    const peer = makeClient(uri, sharing(cache));
+    const invalidating = peer.invalidateDiscoveryCache();
+    release();
+    await Promise.all([first, invalidating]);
+    assert.equal(client.discoveredAgent, undefined, 'the derived fast path was dropped with its endpoint');
+    const initializes = tally(pathOf(uri)).initialize;
+    await client.ensureEndpointDiscovered();
+    assert.ok(tally(pathOf(uri)).initialize > initializes, 'next call re-probed rather than returning the old agent');
+  });
+
   /** A backend wrapper whose operations can be made to fail, hang or be counted. */
   function controllableBackend() {
     const inner = createInMemoryAgentDiscoveryCache();
