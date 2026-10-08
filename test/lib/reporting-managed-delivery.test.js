@@ -491,6 +491,44 @@ describe('seller managed reporting runtime', () => {
     assert.equal(result.failed, 1);
   });
 
+  test('a row-store failure while hydrating fails one materialization, not the whole tick', async () => {
+    const leases = ['revision-lost', 'revision-ok'].map(id => {
+      const value = lease();
+      value.materialization.reporting_materialization_id = `materialization-${id}`;
+      value.materialization.reporting_revision_id = id;
+      value.revision.reporting_revision_id = id;
+      value.revision.binding = { rowCount: 2, sha256: `sha-${id}` };
+      value.obligation = { ...value.obligation, account: { account_id: 'account-1' } };
+      return value;
+    });
+    const settled = [];
+    const store = {
+      planMaterializations: async () => 2,
+      claimRevocation: async () => null,
+      claimMaterialization: async () => (leases.length ? structuredClone(leases.shift()) : null),
+      settleMaterialization: async input => {
+        settled.push([input.lease.revision.reporting_revision_id, input.outcome.status]);
+        return input.outcome.status !== 'failed';
+      },
+    };
+    const adapter = { verificationProfiles: ['canonical_digest'], deliver: async () => outcome() };
+    const result = await ledger.runManagedDeliveryWorker(store, adapter, {
+      now: () => new Date('2026-08-27T04:00:00.000Z'),
+      maxIterations: 3,
+      hydrateRevision: async revision => {
+        if (revision.reporting_revision_id === 'revision-lost') {
+          throw new ledger.ReportingRowStoreError('ROWS_UNAVAILABLE');
+        }
+        return { ...revision, rows: [{ a: 1 }, { a: 2 }] };
+      },
+    });
+    assert.deepEqual({ delivered: result.delivered, failed: result.failed }, { delivered: 1, failed: 1 });
+    assert.deepEqual(settled, [
+      ['revision-lost', 'failed'],
+      ['revision-ok', 'available'],
+    ]);
+  });
+
   test('keeps tenant-local workers from claiming another account revocation', async () => {
     let claimInput;
     const store = {

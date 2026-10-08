@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { rowStorageServiceOptionsForTest } = require('../helpers/reporting-row-storage-mode.js');
 const { generateKeyPairSync } = require('node:crypto');
 const { after, before, describe, test } = require('node:test');
 
@@ -76,6 +77,7 @@ describe(
         },
       };
       service = await reporting.createPostgresReliableReportingProductionService({
+        ...rowStorageServiceOptionsForTest(),
         db: pool,
         namespace: 'reporting-production-test',
         publisherScope: 'reporting-production-test',

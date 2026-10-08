@@ -702,7 +702,7 @@ jobs:
     name: Webhook Delivery Backends
     runs-on: ubuntu-latest
     needs: library-build
-    timeout-minutes: 10
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16
@@ -802,7 +802,24 @@ jobs:
           test/lib/reporting-webhook-activity-pg.test.js
           test/lib/reliable-reporting-production-pg.test.js
           test/lib/reporting-status-ingest-pg.test.js
+          test/lib/reporting-row-storage-migration-pg.test.js
+          test/lib/reporting-row-storage-pg.test.js
           test/reliable-reporting-lifecycle-pg.test.js
+
+      - name: Run PostgreSQL reporting contracts with chunked row storage
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
+          REPORTING_LEDGER_PG_URL: postgresql://postgres@127.0.0.1:5432/postgres
+          REPORTING_ROW_STORAGE: chunked
+        run: >-
+          node --test --test-timeout=120000
+          test/lib/reporting-ledger-pg.test.js
+          test/lib/reporting-managed-delivery-pg.test.js
+          test/lib/reporting-ledger-writer-fence-pg.test.js
+          test/lib/reporting-notification-activity-pg.test.js
+          test/lib/reporting-status-ingest-pg.test.js
+          test/lib/reliable-reporting-production-pg.test.js
 
   eslint-plugin-tests:
     name: ESLint Plugin Tests

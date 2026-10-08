@@ -1,0 +1,5 @@
+---
+'@adcp/sdk': minor
+---
+
+`PostgresReportingLedgerStore` can now store revision and adjustment rows as verified canonical JSONL chunks instead of inline in ledger documents. Pass `rowStorage: true` (or `ReportingRowStorageOptionsV1`) and apply `REPORTING_ROW_STORAGE_MIGRATION`; `createPostgresReliableReportingProductionService` accepts the same option and adds the migration to its setup. Chunk bodies are content-addressed per obligation, every read verifies segment, chunk, manifest and binding digests before releasing rows, and delivery pages read only the segments they need. Reads handle legacy inline and chunked revisions whether or not the option is set. Managed Delivery claims hydrate PostgreSQL-stored rows; `runManagedDeliveryWorker` gains an optional `hydrateRevision` hook for rows in external bindings. Row-storage failures surface as `ReportingRowStoreError` codes; the delivery handler maps expired rows to the unknown-revision error and missing or corrupt rows to `SERVICE_UNAVAILABLE`.
