@@ -16,6 +16,7 @@ import {
   REPORTING_LEDGER_MIGRATION,
   REPORTING_MANAGED_DELIVERY_MIGRATION,
   REPORTING_ROW_STORAGE_MIGRATION,
+  REPORTING_LEDGER_CHANGES_MIGRATION,
   PostgresReportingLedgerStore,
   sweepExpiredReportingLedgerState,
   PostgresReportingManagedDeliveryStore,
@@ -631,6 +632,14 @@ export type CreatePostgresReliableReportingProductionServiceOptionsV1<TCtxMeta =
    * and expired cursor snapshots are always swept.
    */
   retention?: { enabled: true; recordRetentionDays?: number; limit?: number };
+  /**
+   * Maintain the host change feed (`changesAfter`, `getCurrentRevision`,
+   * `listCurrentRevisions` on `stores.core`). Adds
+   * `REPORTING_LEDGER_CHANGES_MIGRATION` (PostgreSQL 13+); the scheduler prunes
+   * changes older than `changeRetentionDays` (default 30) unless a registered
+   * consumer updated within `maxFeedHoldDays` (default 7) still needs them.
+   */
+  changeFeed?: boolean | { changeRetentionDays?: number; maxFeedHoldDays?: number };
   notifications: ProductionNotificationOptions;
   managedDelivery: {
     adapter: ReportingManagedDeliveryAdapterV1;
@@ -789,6 +798,7 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
     ...(options.consumerMismatchEscalation ? { consumerMismatchEscalation: options.consumerMismatchEscalation } : {}),
     notificationActivityPort: notificationActivity.port,
     ...(options.rowStorage ? { rowStorage: options.rowStorage } : {}),
+    ...(options.changeFeed ? { changeFeed: true } : {}),
   });
   const managedStore = new PostgresReportingManagedDeliveryStore(options.db, {
     ...options.managedDelivery.store,
@@ -805,6 +815,7 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
   const migrations = Object.freeze([
     REPORTING_LEDGER_MIGRATION,
     ...(options.rowStorage ? [REPORTING_ROW_STORAGE_MIGRATION] : []),
+    ...(options.changeFeed ? [REPORTING_LEDGER_CHANGES_MIGRATION] : []),
     REPORTING_MANAGED_DELIVERY_MIGRATION,
     ...notifications.migrations.all,
     ...notificationActivity.migrations.all,
@@ -939,6 +950,22 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
     const ledgerMaintenance = await Promise.allSettled([
       sweepExpiredReportingLedgerState(options.db, 1_000),
       coreStore.sweepRowWriteIntents({ limit: 100, signal }),
+      ...(options.changeFeed
+        ? [
+            coreStore.pruneChanges(
+              typeof options.changeFeed === 'object'
+                ? {
+                    ...(options.changeFeed.changeRetentionDays !== undefined
+                      ? { changeRetentionDays: options.changeFeed.changeRetentionDays }
+                      : {}),
+                    ...(options.changeFeed.maxFeedHoldDays !== undefined
+                      ? { maxFeedHoldDays: options.changeFeed.maxFeedHoldDays }
+                      : {}),
+                  }
+                : {}
+            ),
+          ]
+        : []),
       ...(options.retention?.enabled
         ? [
             coreStore.retireExpiredPeriods({

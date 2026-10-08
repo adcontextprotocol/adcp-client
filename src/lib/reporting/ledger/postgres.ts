@@ -59,6 +59,13 @@ import type { ReportingConsumerMismatchEscalationV1 } from './types';
 import { moreSevereReportingHealthV1, projectManagedDelivery } from './handler';
 import { reportingCanonicalAdjustmentSha256V1 } from './producer';
 import {
+  ReportingChangeCursorExpiredError,
+  decodeReportingChangeCursorV1,
+  encodeReportingChangeCursorV1,
+  type ReportingChangeKindV1,
+  type ReportingChangesPageV1,
+} from './change-feed';
+import {
   ReportingRowStorageV1,
   ReportingRowStoreError,
   isReportingRowStoreError,
@@ -483,6 +490,12 @@ export interface PostgresReportingLedgerStoreOptions {
    * whether or not this option is set.
    */
   rowStorage?: boolean | ReportingRowStorageOptionsV1;
+  /**
+   * Append obligation, revision, adjustment and retirement changes to the
+   * host change feed (`REPORTING_LEDGER_CHANGES_MIGRATION`, PostgreSQL 13+) in
+   * the same transaction as each record. Required for `changesAfter`.
+   */
+  changeFeed?: boolean;
 }
 
 export class ReportingLedgerLeaseLostError extends Error {
@@ -559,6 +572,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
   private readonly notificationActivityPort?: ReportingLedgerNotificationActivityPortV1<ReportingLedgerTransactionV1>;
   private readonly rowStorage: ReportingRowStorageV1;
   private readonly rowStorageWrites: boolean;
+  private readonly changeFeed: boolean;
 
   constructor(
     private readonly pool: ReportingPgPool,
@@ -578,6 +592,22 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     this.transactionalNotificationActivity = options.notificationActivityPort !== undefined;
     this.rowStorage = new ReportingRowStorageV1(pool, typeof options.rowStorage === 'object' ? options.rowStorage : {});
     this.rowStorageWrites = options.rowStorage !== undefined && options.rowStorage !== false;
+    this.changeFeed = options.changeFeed === true;
+  }
+
+  /** Append one host change-feed row inside the caller's account-locked transaction. */
+  private async appendChange(
+    client: ReportingLedgerTransactionV1,
+    kind: ReportingChangeKindV1,
+    accountId: string,
+    recordId: string,
+    obligationId: string
+  ): Promise<void> {
+    if (!this.changeFeed) return;
+    await client.query(
+      `INSERT INTO adcp_reporting_changes (account_id, record_kind, record_id, obligation_id) VALUES ($1, $2, $3, $4)`,
+      [accountId, kind, recordId, obligationId]
+    );
   }
 
   /** Probe and register row storage when enabled. Safe to call repeatedly. */
@@ -791,7 +821,19 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
       [obligation.configurationId, obligation.periodOrdinal],
       obligation,
       value => value.semanticFingerprint,
-      accountLock(obligation.account.account_id)
+      accountLock(obligation.account.account_id),
+      undefined,
+      undefined,
+      this.changeFeed
+        ? client =>
+            this.appendChange(
+              client,
+              'obligation',
+              obligation.account.account_id,
+              obligation.reporting_obligation_id,
+              obligation.reporting_obligation_id
+            )
+        : undefined
     );
   }
 
@@ -910,6 +952,13 @@ ${managedDueArm}       )
           ]
         );
         if (result.rowCount !== 1) throw new ReportingLedgerLeaseLostError();
+        await this.appendChange(
+          client,
+          'obligation',
+          lease.obligation.account.account_id,
+          obligation.reporting_obligation_id,
+          obligation.reporting_obligation_id
+        );
         if (issue) {
           if (issue.reporting_obligation_id !== obligation.reporting_obligation_id) {
             throw new Error('Reporting issue must belong to the leased obligation');
@@ -1060,9 +1109,16 @@ ${managedDueArm}       )
         generation: lease.generation,
       },
       revisionLegacyCanonicalDigestReplay,
-      prepared || port
+      prepared || port || this.changeFeed
         ? async (client, committed) => {
             if (prepared) await this.writePreparedRowSet(client, prepared, upload);
+            await this.appendChange(
+              client,
+              'revision',
+              lease.obligation.account.account_id,
+              revision.reporting_revision_id,
+              revision.reporting_obligation_id
+            );
             await port?.recordLedgerChanged!(
               { obligation: lease.obligation, revision: withRows(committed, revision.rows) },
               client
@@ -1218,9 +1274,16 @@ ${managedDueArm}       )
         generation: lease.generation,
       },
       adjustmentLegacyCanonicalDigestReplay,
-      prepared || port
+      prepared || port || this.changeFeed
         ? async (client, committed) => {
             if (prepared) await this.writePreparedRowSet(client, prepared, upload);
+            await this.appendChange(
+              client,
+              'adjustment',
+              lease.obligation.account.account_id,
+              adjustment.reporting_adjustment_id,
+              adjustment.reporting_obligation_id
+            );
             await port?.recordLedgerChanged!(
               { obligation: lease.obligation, adjustment: withRows(committed, adjustment.rows) },
               client
@@ -1251,6 +1314,225 @@ ${managedDueArm}       )
       adjustments.push({ ...adjustment, rows: await this.rowStorage.readAll(handle) });
     }
     return adjustments;
+  }
+
+  /**
+   * The obligation's current revision header: its official revision if one
+   * exists, otherwise its highest-numbered snapshot. An official revision is
+   * terminal, so this is always the highest revision number — one index
+   * lookup. Rows are read separately through `readRevisionRows`.
+   */
+  async getCurrentRevision(input: {
+    account_id: string;
+    reporting_obligation_id: string;
+  }): Promise<ReportingLedgerRevisionMetadataV1 | null> {
+    return this.one<ReportingLedgerRevisionMetadataV1>(
+      `SELECT revision.data - 'rows' AS data
+         FROM adcp_reporting_obligations obligation
+         JOIN LATERAL (
+           SELECT data FROM adcp_reporting_revisions current_revision
+            WHERE current_revision.obligation_id = obligation.obligation_id
+            ORDER BY current_revision.revision_number DESC LIMIT 1
+         ) revision ON TRUE
+        WHERE obligation.obligation_id = $1 AND obligation.account_id = $2`,
+      [input.reporting_obligation_id, input.account_id]
+    );
+  }
+
+  /**
+   * Current revision headers for an account's obligations whose period starts
+   * in `[period_start_from, period_start_to)`, ordered by period start.
+   * Obligations without a revision yet are omitted. Page with `cursor`.
+   */
+  async listCurrentRevisions(input: {
+    account_id: string;
+    period_start_from: string;
+    period_start_to: string;
+    delivery_config_id?: string;
+    limit?: number;
+    cursor?: string;
+  }): Promise<{ revisions: ReportingLedgerRevisionMetadataV1[]; cursor?: string }> {
+    const limit = input.limit ?? 100;
+    positiveInteger(limit, 'limit');
+    if (limit > 1_000) throw new RangeError('listCurrentRevisions limit must not exceed 1000');
+    let after: { start: string; id: string } | undefined;
+    if (input.cursor !== undefined) {
+      try {
+        const parsed = JSON.parse(Buffer.from(input.cursor, 'base64url').toString('utf8')) as Record<string, unknown>;
+        if (typeof parsed.start !== 'string' || typeof parsed.id !== 'string') throw new Error('invalid');
+        after = { start: parsed.start, id: parsed.id };
+      } catch {
+        throw new RangeError('listCurrentRevisions cursor is invalid');
+      }
+    }
+    const result = await this.query<JsonRow<ReportingLedgerRevisionMetadataV1> & { start: string; id: string }>(
+      `SELECT revision.data - 'rows' AS data,
+              to_char(obligation.period_start AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS start,
+              obligation.obligation_id AS id
+         FROM adcp_reporting_obligations obligation
+         JOIN LATERAL (
+           SELECT data FROM adcp_reporting_revisions current_revision
+            WHERE current_revision.obligation_id = obligation.obligation_id
+            ORDER BY current_revision.revision_number DESC LIMIT 1
+         ) revision ON TRUE
+        WHERE obligation.account_id = $1
+          AND obligation.period_start >= $2::timestamptz AND obligation.period_start < $3::timestamptz
+          AND ($4::text IS NULL OR obligation.data->>'delivery_config_id' = $4)
+          AND ($5::timestamptz IS NULL
+               OR (obligation.period_start, obligation.obligation_id) > ($5::timestamptz, $6::text))
+        ORDER BY obligation.period_start, obligation.obligation_id
+        LIMIT $7`,
+      [
+        input.account_id,
+        input.period_start_from,
+        input.period_start_to,
+        input.delivery_config_id ?? null,
+        after?.start ?? null,
+        after?.id ?? null,
+        limit + 1,
+      ]
+    );
+    const page = result.rows.slice(0, limit);
+    const last = result.rows.length > limit ? page.at(-1) : undefined;
+    return {
+      revisions: page.map(row => clone(row.data)),
+      ...(last
+        ? { cursor: Buffer.from(JSON.stringify({ start: last.start, id: last.id }), 'utf8').toString('base64url') }
+        : {}),
+    };
+  }
+
+  /**
+   * Host change feed. Omit `cursor` to start from the oldest retained change.
+   * Account-scoped feeds order by sequence; the deployment-wide feed orders by
+   * `(xid, seq)` and returns only changes whose transaction precedes every
+   * transaction still in flight, so no commit is ever skipped. A cursor older
+   * than the retained history throws `ReportingChangeCursorExpiredError`;
+   * resynchronize from `listCurrentRevisions`.
+   */
+  async changesAfter(
+    input: {
+      cursor?: string;
+      account_id?: string;
+      kinds?: readonly ReportingChangeKindV1[];
+      limit?: number;
+    } = {}
+  ): Promise<ReportingChangesPageV1> {
+    if (!this.changeFeed) throw new Error('changesAfter requires the store changeFeed option');
+    const limit = input.limit ?? 500;
+    positiveInteger(limit, 'limit');
+    if (limit > 10_000) throw new RangeError('changesAfter limit must not exceed 10000');
+    const account = input.account_id ?? null;
+    const cursor = input.cursor === undefined ? undefined : decodeReportingChangeCursorV1(input.cursor, account);
+    const horizon = await this.query<{ pruned_through_seq: string }>(
+      'SELECT pruned_through_seq::text AS pruned_through_seq FROM adcp_reporting_change_horizon WHERE singleton'
+    );
+    const prunedThrough = BigInt(horizon.rows[0]?.pruned_through_seq ?? '0');
+    if (cursor && BigInt(cursor.seq) < prunedThrough) throw new ReportingChangeCursorExpiredError();
+    const kinds = input.kinds?.length ? [...input.kinds] : null;
+    type ChangeRow = {
+      seq: string;
+      xid: string;
+      account_id: string;
+      record_kind: ReportingChangeKindV1;
+      record_id: string;
+      obligation_id: string;
+      recorded_at: string;
+    };
+    const columns = `seq::text AS seq, xid::text AS xid, account_id, record_kind, record_id, obligation_id,
+      to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS recorded_at`;
+    const result =
+      account !== null
+        ? await this.query<ChangeRow>(
+            `SELECT ${columns} FROM adcp_reporting_changes
+              WHERE account_id = $1 AND seq > $2::bigint AND ($3::text[] IS NULL OR record_kind = ANY($3))
+              ORDER BY seq LIMIT $4`,
+            [account, cursor?.seq ?? '0', kinds, limit]
+          )
+        : await this.query<ChangeRow>(
+            `SELECT ${columns} FROM adcp_reporting_changes
+              WHERE (xid, seq) > ($1::text::xid8, $2::bigint)
+                AND xid < pg_snapshot_xmin(pg_current_snapshot())
+                AND ($3::text[] IS NULL OR record_kind = ANY($3))
+              ORDER BY xid, seq LIMIT $4`,
+            [cursor?.xid ?? '0', cursor?.seq ?? '0', kinds, limit]
+          );
+    const last = result.rows.at(-1);
+    const next = last
+      ? encodeReportingChangeCursorV1({ v: 1, account, seq: last.seq, ...(account === null ? { xid: last.xid } : {}) })
+      : (input.cursor ??
+        encodeReportingChangeCursorV1({ v: 1, account, seq: '0', ...(account === null ? { xid: '0' } : {}) }));
+    return {
+      records: result.rows.map(row => ({
+        kind: row.record_kind,
+        record_id: row.record_id,
+        reporting_obligation_id: row.obligation_id,
+        account_id: row.account_id,
+        recorded_at: row.recorded_at,
+      })),
+      cursor: next,
+    };
+  }
+
+  /**
+   * Record a named durable consumer's position. Registered consumers hold
+   * back change-table pruning until `maxFeedHoldDays` after their last update.
+   */
+  async saveFeedConsumerCursor(name: string, cursor: string): Promise<void> {
+    if (!this.changeFeed) throw new Error('saveFeedConsumerCursor requires the store changeFeed option');
+    let account: string | null;
+    try {
+      const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { account?: unknown };
+      account = typeof parsed.account === 'string' ? parsed.account : null;
+    } catch {
+      throw new RangeError('feed consumer cursor is invalid');
+    }
+    const decoded = decodeReportingChangeCursorV1(cursor, account);
+    await this.query(
+      `INSERT INTO adcp_reporting_feed_consumers (consumer_name, cursor_seq) VALUES ($1, $2::bigint)
+       ON CONFLICT (consumer_name) DO UPDATE SET cursor_seq = EXCLUDED.cursor_seq, updated_at = clock_timestamp()`,
+      [name, decoded.seq]
+    );
+  }
+
+  /**
+   * Delete change rows older than `changeRetentionDays` that every consumer
+   * updated within `maxFeedHoldDays` has passed, and advance the expiry
+   * horizon so older cursors fail closed.
+   */
+  async pruneChanges(
+    input: { changeRetentionDays?: number; maxFeedHoldDays?: number; limit?: number } = {}
+  ): Promise<{ deleted: number }> {
+    if (!this.changeFeed) return { deleted: 0 };
+    const retentionDays = input.changeRetentionDays ?? 30;
+    const holdDays = input.maxFeedHoldDays ?? 7;
+    positiveInteger(retentionDays, 'changeRetentionDays');
+    positiveInteger(holdDays, 'maxFeedHoldDays');
+    const limit = input.limit ?? 10_000;
+    positiveInteger(limit, 'limit');
+    const deleted = await this.query<{ seq: string }>(
+      `WITH held AS (
+         SELECT MIN(cursor_seq) AS seq FROM adcp_reporting_feed_consumers
+          WHERE updated_at > clock_timestamp() - ($2::integer * INTERVAL '1 day')
+       ), victims AS (
+         SELECT change.seq FROM adcp_reporting_changes change
+          WHERE change.recorded_at < clock_timestamp() - ($1::integer * INTERVAL '1 day')
+            AND change.seq <= COALESCE((SELECT seq FROM held), change.seq)
+          ORDER BY change.seq LIMIT $3
+       )
+       DELETE FROM adcp_reporting_changes change USING victims
+        WHERE change.seq = victims.seq RETURNING change.seq::text AS seq`,
+      [retentionDays, holdDays, limit]
+    );
+    const highest = deleted.rows.reduce((max, row) => (BigInt(row.seq) > max ? BigInt(row.seq) : max), 0n);
+    if (highest > 0n) {
+      await this.query(
+        `UPDATE adcp_reporting_change_horizon
+            SET pruned_through_seq = GREATEST(pruned_through_seq, $1::bigint) WHERE singleton`,
+        [highest.toString()]
+      );
+    }
+    return { deleted: deleted.rows.length };
   }
 
   /**
@@ -1411,11 +1693,14 @@ ${managedDueArm}       )
         await client.query(`DELETE FROM adcp_reporting_transitions WHERE obligation_id = $1`, [obligationId]);
         await client.query(`DELETE FROM adcp_reporting_lifecycle_state WHERE obligation_id = $1`, [obligationId]);
         await client.query(`DELETE FROM adcp_reporting_obligations WHERE obligation_id = $1`, [obligationId]);
-        await client.query(
+        const retiredNow = await client.query(
           `UPDATE adcp_reporting_obligation_tombstones SET state = 'retired', retired_at = clock_timestamp()
             WHERE obligation_id = $1 AND state = 'retiring'`,
           [obligationId]
         );
+        if (retiredNow.rowCount === 1) {
+          await this.appendChange(client, 'retirement', accountId, obligationId, obligationId);
+        }
       },
       { preBeginAdvisoryLock: accountLock(accountId) }
     );

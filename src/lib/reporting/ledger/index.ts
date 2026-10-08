@@ -15,3 +15,4 @@ export * from './row-encoding';
 export * from './row-storage-migration';
 export * from './row-storage';
 export * from './row-storage-object';
+export * from './change-feed';

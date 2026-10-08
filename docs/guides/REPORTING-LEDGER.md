@@ -403,6 +403,45 @@ because the retired obligations no longer exist.
 always sweeps abandoned row uploads and expired cursor snapshots and
 checkpoints, and retires periods when retention is enabled.
 
+### Host reads: current revisions and the change feed
+
+In-process consumers such as pacing, alerts and warehouse loaders read from the
+ledger, never from a warehouse copy.
+
+```ts
+import { REPORTING_LEDGER_CHANGES_MIGRATION } from '@adcp/sdk/reporting/ledger';
+
+await pool.query(REPORTING_LEDGER_CHANGES_MIGRATION); // PostgreSQL 13+
+const store = new PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true, changeFeed: true });
+
+const current = await store.getCurrentRevision({ account_id, reporting_obligation_id });
+const { revisions, cursor: next } = await store.listCurrentRevisions({
+  account_id,
+  period_start_from: '2026-10-01T00:00:00Z',
+  period_start_to: '2026-10-08T00:00:00Z',
+});
+
+let cursor = await loadCursor();
+const page = await store.changesAfter({ account_id, cursor, kinds: ['revision'] });
+// ...apply page.records...
+await store.saveFeedConsumerCursor('pacing', page.cursor); // holds back pruning
+```
+
+- The current revision is the official revision if one exists, otherwise the
+  highest-numbered snapshot. An official revision is terminal, so this is always
+  one index lookup.
+- `changesAfter` lists committed obligation, revision, adjustment and retirement
+  changes. Account feeds order by sequence. The deployment-wide feed (omit
+  `account_id`) orders by `(xid, seq)` and returns only changes whose
+  transaction precedes every transaction still in flight, so a slow commit is
+  never skipped.
+- `pruneChanges` deletes changes older than `changeRetentionDays` (default 30)
+  that every consumer updated within `maxFeedHoldDays` (default 7) has passed.
+  An older cursor throws `ReportingChangeCursorExpiredError`; resynchronize from
+  `listCurrentRevisions`.
+- The production service accepts `changeFeed: true | { changeRetentionDays,
+  maxFeedHoldDays }` and prunes the feed on its scheduler.
+
 ## Managed Delivery and Reconciled Billing
 
 Core remains the default and has no destination, external-resource, or receipt dependency. To opt into the higher tiers, apply `REPORTING_MANAGED_DELIVERY_MIGRATION` **after** `REPORTING_LEDGER_MIGRATION`, explicitly construct the Core store with `managedDelivery: true`, create a `PostgresReportingManagedDeliveryStore`, and pass both stores with a destination adapter to `createReportingManagedDeliveryRuntime`. The async factory proves the stores share one authority and validates the RC3 tier wiring before returning it. It advertises `managed_delivery` only when an immutable binding, delivery, bounded resource reading, generation-fenced revocation, and at least one verification profile are installed. The advertised automated recovery window must be at least the widest installed managed Core configuration recovery window. It advertises `reconciled_billing` and `receipt_task` only when an authenticated consumer resolver and canonical-digest verification are also installed.
