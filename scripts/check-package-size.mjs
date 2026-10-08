@@ -175,7 +175,8 @@ const MAX_PACKED_FILE_COUNT =
   8 +
   13 + // GCS write-fence runtime/declaration modules and adoption guide.
   29 + // GCS adapter, reader, validation, fence split, errors, I/O modules and guide.
-  33; // AdCP 3.2.3 canonical A2A vectors; the measured package contains 6,457 files.
+  33 + // AdCP 3.2.3 canonical A2A vectors; the measured package contains 6,457 files.
+  8; // Reporting row encoding and revision-metadata helper modules (two dual-format sets).
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
