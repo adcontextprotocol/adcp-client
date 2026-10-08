@@ -186,7 +186,8 @@ const MAX_PACKED_FILE_COUNT =
   8 + // Reporting row encoding and revision-metadata helper modules (two dual-format sets).
   4 + // Reporting row-storage migration module (one dual-format set).
   4 + // Verified reporting row-storage engine (one dual-format set).
-  8; // Reporting row-storage errors and object-provider modules (two dual-format sets).
+  8 + // Reporting row-storage errors and object-provider modules (two dual-format sets).
+  9; // Shared discovery and per-call MCP context modules (two dual-format sets) and adoption guide.
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
