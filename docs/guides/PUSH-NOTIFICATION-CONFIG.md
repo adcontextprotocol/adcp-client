@@ -39,6 +39,45 @@ the reporting webhook schema. A caller-provided reporting URL must always bring
 its own complete authentication block; the client never pairs `webhookSecret`
 with a caller-controlled endpoint.
 
+## Inline completion handlers
+
+Configured status handlers also run inline when a task call returns a successful
+completed result. By default, an inline handler error rejects that call. For a
+forwarding call whose caller will process the returned result, skip the inline
+handler for that call:
+
+```typescript
+const result = await agent.syncCreatives(params, undefined, { skipStatusHandlers: true });
+```
+
+The option follows submitted waits and deferred resumes, including stored
+continuations resumed after restart. Independently delivered webhook handlers
+still run; `skipStatusHandlers` does not disable webhook registration or delivery.
+
+To keep successful results when inline post-processing fails, opt in at client
+construction:
+
+```typescript
+const agent = new SingleAgentClient(sellerConfig, {
+  handlers: {
+    onSyncCreativesStatusChange: recordCreativeResults,
+  },
+  isolateStatusHandlerErrors: true,
+  onStatusHandlerError: async (error, { handlerName, metadata }) => {
+    await recordLocalFailure(error, handlerName, metadata.task_id);
+  },
+});
+```
+
+Isolation returns the completed `TaskResult` and allows settlement acknowledgement.
+The SDK adds a warning to `debug_logs` without including the handler's error text.
+The observer receives the original error and completion metadata, so keep secrets
+out of application logs. Observer errors add a warning and do not reject the task.
+The observer is awaited; keep its work bounded so it cannot stall local completion.
+Cancellation, response validation, settlement acknowledgement errors, and webhook
+error handling retain their existing behavior. With isolation disabled, durable
+handler failures remain retryable without redispatching the seller operation.
+
 ## Wire Payload
 
 The default RFC 9421 registration has no `authentication` block:

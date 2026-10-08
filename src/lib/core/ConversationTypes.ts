@@ -154,6 +154,11 @@ export type WebhookUrlTemplate =
  */
 export interface TaskOptions {
   /**
+   * Skip inline completion status handlers for this call and its continuations.
+   * Defaults to false. Independently delivered webhook handlers are unaffected.
+   */
+  skipStatusHandlers?: boolean;
+  /**
    * Absolute wall-clock deadline for the entire SDK task call (ms), including
    * discovery and capability/version preflight. Unlike `workingTimeout`, this
    * deadline never resets on progress and aborts in-flight protocol work.

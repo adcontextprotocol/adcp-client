@@ -1465,6 +1465,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`}`);
   ln();
   ln(`interface TaskOptions {`);
+  ln(`  skipStatusHandlers?: boolean; // Skip inline completion handlers, including continuations`);
   ln(`  timeout?: number;             // Absolute whole-task deadline`);
   ln(`  signal?: AbortSignal;         // Caller cancellation`);
   ln(`  // Direct A2A mutation route, bound to authenticated principal + account scope.`);

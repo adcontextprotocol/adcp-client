@@ -287,6 +287,7 @@ export type {
   ClientProductPropertyPolicy,
   CreativeDeliveryTaskOptions,
   SingleAgentClientConfig,
+  StatusHandlerErrorContext,
   SyncCreativesTaskOptions,
   VerifyAndParseWebhookOptions,
   WebhookHandlerAdapter,
