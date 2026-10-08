@@ -1,5 +1,11 @@
 # Changelog
 
+## 15.2.2
+
+### Patch Changes
+
+- 7e8f624: Treat HTTP 408 and 429 during capabilities or brand.json signing discovery as retryable failures, including webhook signature verification. Other HTTP 4xx and SSRF policy refusals remain terminal.
+
 ## 15.2.1
 
 ### Patch Changes
