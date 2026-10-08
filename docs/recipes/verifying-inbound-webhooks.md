@@ -372,6 +372,14 @@ await processWebhook(sender, payload);
 
 ## Failure Responses
 
+Use `WebhookSignatureError.retryable` when deciding whether a failed RFC 9421
+verification can be retried. Capabilities or brand.json discovery failures with
+HTTP 408, 429, or 5xx are retryable, as are DNS failures, timeouts, and connection
+resets. Other HTTP 4xx and SSRF policy refusals remain terminal; a temporary
+discovery failure still requires successful signature verification before
+processing the webhook.
+Retry transient failures with backoff.
+
 Use `401` for signature failures. Do not include resolved private IPs, raw
 signature bases, JWKS bodies, secrets, or raw payload bytes in the response.
 Log correlation IDs and typed error codes; keep detailed material in a secure
