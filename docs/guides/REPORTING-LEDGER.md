@@ -307,6 +307,22 @@ await store.readyRowStorage();
   the revision as absent; expired rows read like an unknown revision.
 - Managed Delivery claims hydrate PostgreSQL-stored rows automatically.
 
+To move existing inline rows into row storage, run the resumable migration in
+bounded batches. A revision whose rows do not reproduce its committed binding is
+reported in `quarantined` and left untouched:
+
+```ts
+let cursor: string | undefined;
+do {
+  const batch = await store.migrateInlineRows({ limit: 100, cursor });
+  if (batch.quarantined.length) console.warn('unverifiable inline rows', batch.quarantined);
+  cursor = batch.cursor;
+} while (cursor);
+```
+
+Removing rows from ledger documents frees space only after `VACUUM FULL` or an
+online repack of `adcp_reporting_revisions` and `adcp_reporting_adjustments`.
+
 ## Managed Delivery and Reconciled Billing
 
 Core remains the default and has no destination, external-resource, or receipt dependency. To opt into the higher tiers, apply `REPORTING_MANAGED_DELIVERY_MIGRATION` **after** `REPORTING_LEDGER_MIGRATION`, explicitly construct the Core store with `managedDelivery: true`, create a `PostgresReportingManagedDeliveryStore`, and pass both stores with a destination adapter to `createReportingManagedDeliveryRuntime`. The async factory proves the stores share one authority and validates the RC3 tier wiring before returning it. It advertises `managed_delivery` only when an immutable binding, delivery, bounded resource reading, generation-fenced revocation, and at least one verification profile are installed. The advertised automated recovery window must be at least the widest installed managed Core configuration recovery window. It advertises `reconciled_billing` and `receipt_task` only when an authenticated consumer resolver and canonical-digest verification are also installed.

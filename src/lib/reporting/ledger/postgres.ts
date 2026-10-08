@@ -58,7 +58,12 @@ import { ReportingConsumerStatusConflictError } from './types';
 import type { ReportingConsumerMismatchEscalationV1 } from './types';
 import { moreSevereReportingHealthV1, projectManagedDelivery } from './handler';
 import { reportingCanonicalAdjustmentSha256V1 } from './producer';
-import { ReportingRowStorageV1, ReportingRowStoreError, type ReportingRowStorageOptionsV1 } from './row-storage';
+import {
+  ReportingRowStorageV1,
+  ReportingRowStoreError,
+  isReportingRowStoreError,
+  type ReportingRowStorageOptionsV1,
+} from './row-storage';
 import { isFrozenCalendarRulesMismatch, reportingPeriodSchedule } from './schedule';
 import {
   normalizeReportingConsumerStatusIdsV1,
@@ -544,6 +549,109 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
   /** Probe and register row storage when enabled. Safe to call repeatedly. */
   async readyRowStorage(): Promise<void> {
     if (this.rowStorageWrites) await this.rowStorage.ready();
+  }
+
+  /**
+   * Move legacy inline revision and adjustment rows into row storage, a
+   * bounded batch at a time. Each row set is re-encoded, proven to reproduce
+   * its committed binding, written, and only then removed from the ledger
+   * document, in one transaction under the account lock. A document whose
+   * rows do not reproduce its binding is never rewritten: it is reported in
+   * `quarantined` and left inline. Pass the returned `cursor` back to resume
+   * after the last examined document; it is absent once every candidate has
+   * been examined. Reclaiming the freed space needs `VACUUM FULL` or an online
+   * repack.
+   */
+  async migrateInlineRows(
+    input: { limit?: number; account_id?: string; cursor?: string; signal?: AbortSignal } = {}
+  ): Promise<{ migrated: number; quarantined: string[]; cursor?: string }> {
+    if (!this.rowStorageWrites) throw new Error('migrateInlineRows requires rowStorage');
+    const limit = input.limit ?? 100;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) {
+      throw new RangeError('migrateInlineRows limit must be between 1 and 10000');
+    }
+    let after: { at: string; id: string } | undefined;
+    if (input.cursor !== undefined) {
+      try {
+        const parsed = JSON.parse(Buffer.from(input.cursor, 'base64url').toString('utf8')) as Record<string, unknown>;
+        if (typeof parsed.at !== 'string' || typeof parsed.id !== 'string') throw new Error('invalid');
+        after = { at: parsed.at, id: parsed.id };
+      } catch {
+        throw new RangeError('migrateInlineRows cursor is invalid');
+      }
+    }
+    await this.rowStorage.ready();
+    const candidates = await this.query<{
+      kind: 'revision' | 'adjustment';
+      id: string;
+      account_id: string;
+      at: string;
+    }>(
+      `SELECT kind, id, account_id, to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at
+         FROM (
+           SELECT 'revision' AS kind, revision.revision_id AS id, obligation.account_id, revision.recorded_at
+             FROM adcp_reporting_revisions revision
+             JOIN adcp_reporting_obligations obligation ON obligation.obligation_id = revision.obligation_id
+            WHERE revision.data ? 'rows' AND ($2::text IS NULL OR obligation.account_id = $2)
+           UNION ALL
+           SELECT 'adjustment', adjustment.adjustment_id, obligation.account_id, adjustment.recorded_at
+             FROM adcp_reporting_adjustments adjustment
+             JOIN adcp_reporting_obligations obligation ON obligation.obligation_id = adjustment.obligation_id
+            WHERE adjustment.data ? 'rows' AND ($2::text IS NULL OR obligation.account_id = $2)
+         ) inline_rows
+        WHERE $3::timestamptz IS NULL OR (recorded_at, id) > ($3::timestamptz, $4::text)
+        ORDER BY recorded_at, id
+        LIMIT $1`,
+      [limit + 1, input.account_id ?? null, after?.at ?? null, after?.id ?? null]
+    );
+    let migrated = 0;
+    const quarantined: string[] = [];
+    for (const candidate of candidates.rows.slice(0, limit)) {
+      input.signal?.throwIfAborted();
+      const table = candidate.kind === 'revision' ? 'adcp_reporting_revisions' : 'adcp_reporting_adjustments';
+      const idColumn = candidate.kind === 'revision' ? 'revision_id' : 'adjustment_id';
+      const outcome = await this.transaction(
+        async client => {
+          const locked = await client.query<JsonRow<ReportingLedgerRevisionV1 & ReportingLedgerAdjustmentV1>>(
+            `SELECT data FROM ${table} WHERE ${idColumn} = $1 AND data ? 'rows' FOR UPDATE`,
+            [candidate.id]
+          );
+          const document = locked.rows[0]?.data;
+          if (!document) return 'skipped' as const;
+          let prepared;
+          try {
+            prepared = await this.rowStorage.prepare({
+              rowSetId: candidate.id,
+              rowSetKind: candidate.kind,
+              accountId: candidate.account_id,
+              obligationId: document.reporting_obligation_id,
+              rows: document.rows,
+              ...(candidate.kind === 'revision'
+                ? { finality: document.finality, controlTotals: document.wireRevision.control_totals }
+                : {}),
+              binding: document.binding,
+            });
+          } catch (error) {
+            if (isReportingRowStoreError(error) && error.code === 'INVALID_INPUT') return 'quarantined' as const;
+            throw error;
+          }
+          await this.rowStorage.writeInTransaction(client, prepared);
+          await client.query(`UPDATE ${table} SET data = data - 'rows' WHERE ${idColumn} = $1`, [candidate.id]);
+          return 'migrated' as const;
+        },
+        { preBeginAdvisoryLock: accountLock(candidate.account_id) }
+      );
+      if (outcome === 'migrated') migrated += 1;
+      if (outcome === 'quarantined') quarantined.push(candidate.id);
+    }
+    const last = candidates.rows.length > limit ? candidates.rows[limit - 1] : undefined;
+    return {
+      migrated,
+      quarantined,
+      ...(last
+        ? { cursor: Buffer.from(JSON.stringify({ at: last.at, id: last.id }), 'utf8').toString('base64url') }
+        : {}),
+    };
   }
 
   async putConfiguration(configuration: ReportingLedgerConfigurationV1) {
@@ -3444,7 +3552,8 @@ ${managedDueArm}       )
         error instanceof ReportingLedgerLeaseLostError ||
         error instanceof ReportingLedgerContinuityError ||
         error instanceof ReportingLedgerSnapshotUnavailableError ||
-        error instanceof ReportingConsumerStatusConflictError
+        error instanceof ReportingConsumerStatusConflictError ||
+        isReportingRowStoreError(error)
       ) {
         throw error;
       }
