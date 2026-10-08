@@ -417,6 +417,41 @@ const gcs = createGcsReportingRowObjectProviderV1({
 - The client needs `storage.buckets.get` for the probe plus object create, get
   and delete on the bucket.
 
+**Amazon S3 and S3-compatible stores** (`@adcp/sdk/reporting/s3`, optional peer
+`@aws-sdk/client-s3`):
+
+```ts
+import { S3Client } from '@aws-sdk/client-s3';
+import { createS3ReportingRowObjectProviderV1 } from '@adcp/sdk/reporting/s3';
+
+const s3 = createS3ReportingRowObjectProviderV1({
+  client: new S3Client({ region: 'us-east-1' }), // default credential chain
+});
+// binding: { kind: 'object', provider: 's3', location: { bucket: 'acme-adcp-rows', region: 'us-east-1' }, prefix: 'adcp-rows' }
+// providers: { s3 }
+```
+
+- Endpoint, region, credentials and path style come only from the client you
+  inject; `location` accepts just `bucket` and an optional `region`, which the
+  probe checks against the client.
+- Writes use `PutObject` with `If-None-Match: *` (a 409 is retried once). The
+  recorded native version is the `VersionId` on versioned buckets, else the
+  quoted ETag. Reads pin it with `VersionId` or `If-Match`; deletes confirm the
+  exact version with `HeadObject`, then delete by `VersionId` or with
+  `If-Match`. Prefer versioned buckets: an ETag identifies content, not a
+  write, so it cannot tell a deleted object from an identical re-upload.
+- S3-compatible stores may ignore `If-None-Match`, so the probe writes a probe
+  key under the binding prefix twice and requires the second write to fail with
+  412, then deletes it. It also refuses missing or inaccessible buckets, a
+  bucket policy reported as public, and enabled lifecycle `Expiration` rules
+  that can match the prefix. The probe cannot verify Block Public Access on
+  every store, so keep row buckets private.
+- The client needs `s3:ListBucket` (HeadBucket),
+  `s3:GetLifecycleConfiguration`, object put/get/delete, and on versioned
+  buckets `s3:GetObjectVersion` and `s3:DeleteObjectVersion`.
+  `s3:GetBucketPolicyStatus` is optional. For stores without flexible
+  checksums, construct the client with `requestChecksumCalculation: 'WHEN_REQUIRED'`.
+
 ### Retention
 
 Retention is period-aligned and opt-in. A period becomes eligible once both its
