@@ -16,8 +16,15 @@ const { AgentTransportPolicyError } = require('../dist/lib/net/agent-transport-f
 const cases = [
   [new SafeFetchError('capabilities', 'ssrf_refused', 'private'), 'ssrf_refused', undefined, false],
   [new SafeFetchError('capabilities', 'fetch_failed', 'no', 401), 'fetch_failed', 401, false],
+  [new SafeFetchError('capabilities', 'fetch_failed', 'no', 403), 'fetch_failed', 403, false],
   [new SafeFetchError('capabilities', 'fetch_failed', 'no', 404), 'fetch_failed', 404, false],
+  [new SafeFetchError('capabilities', 'fetch_failed', 'no', 408), 'fetch_failed', 408, true],
+  [new SafeFetchError('capabilities', 'fetch_failed', 'no', 410), 'fetch_failed', 410, false],
+  [new SafeFetchError('capabilities', 'fetch_failed', 'no', 429), 'fetch_failed', 429, true],
   [new SafeFetchError('capabilities', 'fetch_failed', 'no', 503), 'fetch_failed', 503, true],
+  [Object.assign(new Error('http'), { status: 408 }), 'fetch_failed', 408, true],
+  [Object.assign(new Error('http'), { statusCode: 429 }), 'fetch_failed', 429, true],
+  [Object.assign(new Error('http'), { httpStatus: 429 }), 'fetch_failed', 429, true],
   [Object.assign(new Error('dns'), { code: 'ENOTFOUND' }), 'dns_error', undefined, true],
   [Object.assign(new Error('timeout'), { name: 'TimeoutError' }), 'timeout', undefined, true],
   [new AgentTransportPolicyError('private topology must not leak'), 'ssrf_refused', undefined, false],
@@ -51,7 +58,7 @@ test('default capability transport rejects non-HTTPS and always-blocked origins 
     });
   }
 });
-test('real brand.json HTTP 4xx are terminal while 5xx remains transient', async t => {
+test('real brand.json HTTP 408, 429, and 5xx are transient while other 4xx remain terminal', async t => {
   let status = 404;
   const server = http.createServer((req, res) => {
     res.writeHead(status);
@@ -60,7 +67,17 @@ test('real brand.json HTTP 4xx are terminal while 5xx remains transient', async 
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   const agent = `http://127.0.0.1:${server.address().port}/mcp`;
-  for (status of [401, 403, 404, 408, 410, 429, 500, 503]) {
+  for (const [httpStatus, recovery] of [
+    [401, 'terminal'],
+    [403, 'terminal'],
+    [404, 'terminal'],
+    [408, 'transient'],
+    [410, 'terminal'],
+    [429, 'transient'],
+    [500, 'transient'],
+    [503, 'transient'],
+  ]) {
+    status = httpStatus;
     await assert.rejects(
       resolveAgent(agent, {
         allowPrivateIp: true,
@@ -71,25 +88,33 @@ test('real brand.json HTTP 4xx are terminal while 5xx remains transient', async 
       error => {
         assert.equal(error.code, 'request_signature_brand_json_unreachable');
         assert.equal(error.detail.http_status, status);
-        assert.equal(error.recovery, status < 500 ? 'terminal' : 'transient');
+        assert.equal(error.recovery, recovery);
         return true;
       }
     );
   }
 });
 test('default official MCP capability discovery preserves HTTP rejection status', async t => {
+  let status = 403;
   const server = http.createServer((req, res) => {
-    res.writeHead(403);
+    res.writeHead(status);
     res.end();
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   const agent = `http://127.0.0.1:${server.address().port}/mcp`;
-  await assert.rejects(resolveAgent(agent, { allowPrivateIp: true }), error => {
-    assert.equal(error.detail.http_status, 403);
-    assert.equal(error.recovery, 'terminal');
-    return true;
-  });
+  for (const [httpStatus, recovery] of [
+    [403, 'terminal'],
+    [408, 'transient'],
+    [429, 'transient'],
+  ]) {
+    status = httpStatus;
+    await assert.rejects(resolveAgent(agent, { allowPrivateIp: true }), error => {
+      assert.equal(error.detail.http_status, status);
+      assert.equal(error.recovery, recovery);
+      return true;
+    });
+  }
 });
 test('webhook retryability uses the discovery cause rather than unconditional code metadata', async () => {
   const now = Math.floor(Date.now() / 1000);
@@ -109,7 +134,14 @@ test('webhook retryability uses the discovery cause rather than unconditional co
   for (const code of ['request_signature_capabilities_unreachable', 'request_signature_brand_json_unreachable']) {
     for (const [detail, retryable] of [
       [{ dns_error: 'ssrf_refused' }, false],
+      [{ dns_error: 'ssrf_refused', http_status: 408 }, false],
+      [{ dns_error: 'ssrf_refused', http_status: 429 }, false],
+      [{ http_status: 401 }, false],
+      [{ http_status: 403 }, false],
       [{ http_status: 404 }, false],
+      [{ http_status: 408 }, true],
+      [{ http_status: 410 }, false],
+      [{ http_status: 429 }, true],
       [{ http_status: 503 }, true],
       [{ dns_error: 'dns_error' }, true],
     ]) {
@@ -164,43 +196,55 @@ test('legacy brand lookup preserves policy refusal while DNS failure remains tra
   }
 });
 
-test('MCP legacy fallback cannot replace a POST 503 with a GET 404', async t => {
+test('MCP legacy fallback cannot replace a transient POST rejection with a GET 404', async t => {
+  let status = 503;
   const server = http.createServer((req, res) => {
-    res.writeHead(req.method === 'POST' ? 503 : 404);
+    res.writeHead(req.method === 'POST' ? status : 404);
     res.end();
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
-  await assert.rejects(
-    resolveAgent(`http://127.0.0.1:${server.address().port}/mcp`, { allowPrivateIp: true }),
-    error => {
-      assert.equal(error.recovery, 'transient');
-      assert.equal(error.detail.http_status, 503);
-      return true;
-    }
-  );
+  for (status of [408, 429, 503]) {
+    await assert.rejects(
+      resolveAgent(`http://127.0.0.1:${server.address().port}/mcp`, { allowPrivateIp: true }),
+      error => {
+        assert.equal(error.recovery, 'transient');
+        assert.equal(error.detail.http_status, status);
+        return true;
+      }
+    );
+  }
 });
 
-test('permanent onboarding errors stay permanent throughout the resolver cooldown', async t => {
+test('brand lookup preserves HTTP retryability throughout the resolver cooldown', async t => {
   const { BrandJsonJwksResolver } = require('../dist/lib/signing');
   let requests = 0;
+  let status = 404;
   const server = http.createServer((req, res) => {
     requests++;
-    res.writeHead(404);
+    res.writeHead(status);
     res.end();
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
-  const resolver = new BrandJsonJwksResolver(`http://127.0.0.1:${server.address().port}/brand.json`, {
-    agentType: 'sales',
-    allowPrivateIp: true,
-    now: () => 1000,
-  });
-  for (let attempt = 0; attempt < 2; attempt++)
-    await assert.rejects(resolver.resolve('key'), error => {
-      assert.equal(error.recovery, 'terminal');
-      assert.equal(error.httpStatus, 404);
-      return true;
+  for (const [httpStatus, recovery] of [
+    [404, 'terminal'],
+    [408, 'transient'],
+    [429, 'transient'],
+  ]) {
+    status = httpStatus;
+    requests = 0;
+    const resolver = new BrandJsonJwksResolver(`http://127.0.0.1:${server.address().port}/brand.json`, {
+      agentType: 'sales',
+      allowPrivateIp: true,
+      now: () => 1000,
     });
-  assert.equal(requests, 1);
+    for (let attempt = 0; attempt < 2; attempt++)
+      await assert.rejects(resolver.resolve('key'), error => {
+        assert.equal(error.recovery, recovery);
+        assert.equal(error.httpStatus, status);
+        return true;
+      });
+    assert.equal(requests, 1);
+  }
 });
