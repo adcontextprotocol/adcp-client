@@ -1262,11 +1262,11 @@ export class PostgresReportingManagedDeliveryStore
         QueryRow & {
           binding: ReportingManagedDeliveryBindingV1;
           obligation: ReportingLedgerObligationV1;
-          revision: ReportingLedgerRevisionV1;
+          revision_id: string;
           attempt: number;
         }
       >(
-        `SELECT binding.data AS binding, obligation.data AS obligation, revision.data AS revision,
+        `SELECT binding.data AS binding, obligation.data AS obligation, revision.revision_id AS revision_id,
                 GREATEST(COALESCE(MAX(existing.attempt), 0), COALESCE(MAX(tomb.highest_attempt), 0))::integer + 1
                   AS attempt
            FROM adcp_reporting_managed_bindings binding
@@ -1286,7 +1286,7 @@ export class PostgresReportingManagedDeliveryStore
              ON tomb.configuration_id = binding.configuration_id AND tomb.revision_id = revision.revision_id
           WHERE ($1::text IS NULL OR binding.account_id = $1)
           GROUP BY binding.configuration_id, binding.data, obligation.obligation_id, obligation.data,
-                   revision.revision_id, revision.data
+                   revision.revision_id
          HAVING NOT COALESCE(BOOL_OR(existing.status IN ('pending','available','delivered')), false)
             AND NOT COALESCE(BOOL_OR(tomb.reached_success), false)
             AND GREATEST(COALESCE(MAX(existing.attempt), 0), COALESCE(MAX(tomb.highest_attempt), 0))
@@ -1301,11 +1301,11 @@ export class PostgresReportingManagedDeliveryStore
         const remaining = remainingByAccount.get(binding.account_id) ?? 0;
         if (remaining <= 0) continue;
         const obligation = candidate.obligation;
-        const revision = candidate.revision;
+        const revisionId = candidate.revision_id;
         const created_at = new Date().toISOString();
         const materialization: ReportingMaterialization = {
           reporting_materialization_id: `rmat_${randomUUID()}`,
-          reporting_revision_id: revision.reporting_revision_id,
+          reporting_revision_id: revisionId,
           reporting_obligation_id: obligation.reporting_obligation_id,
           delivery_config_id: binding.delivery_config_id,
           delivery_config_version: binding.delivery_config_version,
@@ -1328,7 +1328,7 @@ export class PostgresReportingManagedDeliveryStore
             binding.account_id,
             binding.configurationId,
             obligation.reporting_obligation_id,
-            revision.reporting_revision_id,
+            revisionId,
             binding.destination_ref,
             binding.authorization_generation,
             candidate.attempt,

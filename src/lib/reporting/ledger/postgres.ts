@@ -26,6 +26,7 @@ import {
 } from './types';
 import type {
   ReportingLedgerConfigurationV1,
+  ReportingLedgerAdjustmentMetadataV1,
   ReportingLedgerAdjustmentV1,
   ReportingLedgerConsumerStatusV1,
   ReportingLedgerConsumerStatementV1,
@@ -47,6 +48,8 @@ import type {
   ReportingConsumerStatusBatchResultV1,
   ReportingConsumerStatusReplayInputV1,
   ReportingLedgerRevisionMetadataV1,
+  ReportingRevisionRowsPageV1,
+  ReportingRevisionRowsReadV1,
   ReportingManagedDeliveryBindingV1,
   ReportingManagedLifecycleProjectionV1,
   ReportingLedgerAuthorityV1,
@@ -874,11 +877,49 @@ ${managedDueArm}       )
     );
   }
 
+  async readRevisionRows(input: ReportingRevisionRowsReadV1): Promise<ReportingRevisionRowsPageV1 | null> {
+    if (
+      !Number.isSafeInteger(input.offset) ||
+      input.offset < 0 ||
+      !Number.isSafeInteger(input.limit) ||
+      input.limit < 1
+    ) {
+      throw new RangeError('Reporting row page bounds are invalid');
+    }
+    // Slice inside PostgreSQL so a page never ships the whole revision.
+    const result = await this.query<{ total: number; rows: Record<string, unknown>[] }>(
+      `SELECT jsonb_array_length(revision.data->'rows') AS total,
+              jsonb_path_query_array(
+                revision.data->'rows',
+                '$[$from to $to]',
+                jsonb_build_object('from', $3::bigint, 'to', $3::bigint + $4::bigint - 1)
+              ) AS rows
+         FROM adcp_reporting_revisions revision
+         JOIN adcp_reporting_obligations obligation ON obligation.obligation_id = revision.obligation_id
+        WHERE revision.revision_id = $1 AND obligation.account_id = $2`,
+      [input.reporting_revision_id, input.account_id, input.offset, input.limit]
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return { rows: clone(row.rows), total: Number(row.total) };
+  }
+
   async listRevisions(obligationId: string): Promise<ReportingLedgerRevisionV1[]> {
     const result = await this.query<JsonRow<ReportingLedgerRevisionV1>>(
       `SELECT data FROM adcp_reporting_revisions WHERE obligation_id = $1
         ORDER BY revision_number, revision_id`,
       [obligationId]
+    );
+    return result.rows.map(row => clone(row.data));
+  }
+
+  async listRevisionMetadata(obligationId: string, accountId?: string): Promise<ReportingLedgerRevisionMetadataV1[]> {
+    const result = await this.query<JsonRow<ReportingLedgerRevisionMetadataV1>>(
+      `SELECT revision.data - 'rows' AS data FROM adcp_reporting_revisions revision
+         JOIN adcp_reporting_obligations obligation ON obligation.obligation_id = revision.obligation_id
+        WHERE revision.obligation_id = $1 AND ($2::text IS NULL OR obligation.account_id = $2)
+        ORDER BY revision.revision_number, revision.revision_id`,
+      [obligationId, accountId ?? null]
     );
     return result.rows.map(row => clone(row.data));
   }
@@ -945,6 +986,15 @@ ${managedDueArm}       )
   async listAdjustments(obligationId: string): Promise<ReportingLedgerAdjustmentV1[]> {
     const result = await this.query<JsonRow<ReportingLedgerAdjustmentV1>>(
       `SELECT data FROM adcp_reporting_adjustments WHERE obligation_id = $1
+        ORDER BY adjustment_number, adjustment_id`,
+      [obligationId]
+    );
+    return result.rows.map(row => clone(row.data));
+  }
+
+  async listAdjustmentMetadata(obligationId: string): Promise<ReportingLedgerAdjustmentMetadataV1[]> {
+    const result = await this.query<JsonRow<ReportingLedgerAdjustmentMetadataV1>>(
+      `SELECT data - 'rows' AS data FROM adcp_reporting_adjustments WHERE obligation_id = $1
         ORDER BY adjustment_number, adjustment_id`,
       [obligationId]
     );

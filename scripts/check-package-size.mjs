@@ -44,7 +44,11 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // AdCP 3.2.3 adds 33 canonical A2A operation-resolution vectors. The measured
 // tarball is about 20,146,000 bytes; preserve 14 KB of compressor margin for this
 // signed compliance corpus. Unpacked, schema, and declaration budgets stay fixed.
-const MAX_PACKED_TARBALL_BYTES = 20_160_000;
+// Reliable Reporting row storage (paged exact reads, the row-storage migration
+// and the verified PostgreSQL chunk engine) adds three internal dual-format
+// module sets. The measured paged-read artifact is 20,160,752 bytes; allow 40 KB
+// for the following row-storage modules and compressor variance.
+const MAX_PACKED_TARBALL_BYTES = 20_200_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -175,7 +179,8 @@ const MAX_PACKED_FILE_COUNT =
   8 +
   13 + // GCS write-fence runtime/declaration modules and adoption guide.
   29 + // GCS adapter, reader, validation, fence split, errors, I/O modules and guide.
-  33; // AdCP 3.2.3 canonical A2A vectors; the measured package contains 6,457 files.
+  33 + // AdCP 3.2.3 canonical A2A vectors; the measured package contains 6,457 files.
+  8; // Reporting row encoding and revision-metadata helper modules (two dual-format sets).
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
