@@ -581,5 +581,43 @@ describe('PostgresReportingLedgerStore', { skip: !DATABASE_URL && 'PostgreSQL UR
     );
     const swept = await sweepExpiredReportingLedgerState(pool, 10);
     assert.equal(swept.checkpointsDeleted, 1);
+
+    // Paged row reads slice inside PostgreSQL and stay account-scoped.
+    assert.deepEqual(
+      await store.readRevisionRows({
+        reporting_revision_id: revision.reporting_revision_id,
+        account_id: request.account.account_id,
+        offset: 0,
+        limit: 5,
+      }),
+      { rows, total: rows.length }
+    );
+    assert.equal(
+      await store.readRevisionRows({
+        reporting_revision_id: revision.reporting_revision_id,
+        account_id: 'acct_other',
+        offset: 0,
+        limit: 5,
+      }),
+      null
+    );
+    const sliceRows = Array.from({ length: 25 }, (_, index) => ({ ordinal: index }));
+    await pool.query(
+      `INSERT INTO adcp_reporting_revisions
+         (revision_id, obligation_id, revision_number, finality, kind, content_sha256, data, created_at)
+       VALUES ('rrev_pg_slice', $1, 99, 'snapshot', 'snapshot', $2, jsonb_build_object('rows', $3::jsonb), clock_timestamp())`,
+      [obligation.reporting_obligation_id, 'a'.repeat(64), JSON.stringify(sliceRows)]
+    );
+    const slice = input =>
+      store.readRevisionRows({
+        reporting_revision_id: 'rrev_pg_slice',
+        account_id: request.account.account_id,
+        ...input,
+      });
+    assert.deepEqual(await slice({ offset: 0, limit: 10 }), { rows: sliceRows.slice(0, 10), total: 25 });
+    assert.deepEqual(await slice({ offset: 20, limit: 10 }), { rows: sliceRows.slice(20), total: 25 });
+    assert.deepEqual(await slice({ offset: 25, limit: 10 }), { rows: [], total: 25 });
+    await assert.rejects(() => slice({ offset: -1, limit: 10 }), RangeError);
+    await assert.rejects(() => slice({ offset: 0, limit: 0 }), RangeError);
   });
 });

@@ -217,6 +217,22 @@ export interface ReportingLedgerAdjustmentV1 {
 export type ReportingLedgerRevisionSnapshotV1 = Omit<ReportingLedgerRevisionV1, 'rows'>;
 export type ReportingLedgerRevisionMetadataV1 = Omit<ReportingLedgerRevisionV1, 'rows'>;
 export type ReportingLedgerAdjustmentMetadataV1 = Omit<ReportingLedgerAdjustmentV1, 'rows'>;
+
+export interface ReportingRevisionRowsReadV1 {
+  reporting_revision_id: string;
+  account_id: string;
+  /** Zero-based ordinal of the first row to return. */
+  offset: number;
+  /** Maximum rows to return; at least 1. */
+  limit: number;
+  signal?: AbortSignal;
+}
+
+export interface ReportingRevisionRowsPageV1 {
+  rows: Record<string, unknown>[];
+  /** Total rows in the revision. */
+  total: number;
+}
 export type ReportingLedgerAdjustmentSnapshotV1 = Omit<ReportingLedgerAdjustmentV1, 'rows'>;
 
 export interface ReportingLedgerConsumerStatusV1 {
@@ -838,6 +854,22 @@ export interface ReportingLedgerStore {
   ): Promise<{ inserted: boolean; value: ReportingLedgerRevisionV1 }>;
   /** Returns an exact row-bearing revision only when it belongs to the resolved account. */
   getRevision(reporting_revision_id: string, account_id: string): Promise<ReportingLedgerRevisionV1 | null>;
+  /**
+   * Optional row-free counterpart of `getRevision`, scoped to the resolved
+   * account. Exact-read handlers prefer it so they never load every row to
+   * serve one page.
+   */
+  getRevisionMetadata?(
+    reporting_revision_id: string,
+    account_id: string
+  ): Promise<ReportingLedgerRevisionMetadataV1 | null>;
+  /**
+   * Optional: one page of a revision's rows in ordinal order, only when the
+   * revision belongs to the resolved account. `total` is the revision's row
+   * count. Stores that keep rows outside the revision document verify every
+   * row they return against the committed binding before returning it.
+   */
+  readRevisionRows?(input: ReportingRevisionRowsReadV1): Promise<ReportingRevisionRowsPageV1 | null>;
   listRevisions(reporting_obligation_id: string): Promise<ReportingLedgerRevisionV1[]>;
   /**
    * Optional: every retained revision for one obligation without

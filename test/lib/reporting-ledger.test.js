@@ -5,6 +5,7 @@ const { describe, test } = require('node:test');
 const {
   REPORTING_LEDGER_MIGRATION,
   REPORTING_NOTIFICATION_ACTIVITY_MIGRATION,
+  REPORTING_STATUS_REVISION_VIEW_MAX_ROWS,
   ReportingLedgerSnapshotUnavailableError,
   aggregateReportingCoverageV1,
   aggregateReportingHealthV1,
@@ -1478,6 +1479,25 @@ describe('seller reporting ledger', () => {
     const parsedExact = GetReportingStatusResponseSchema.safeParse(exact);
     assert.equal(parsedExact.success, true, parsedExact.success ? undefined : JSON.stringify(parsedExact.error.issues));
     assert.equal(validateResponse('get_reporting_status', exact, '3.2.1').valid, true);
+    // Revisions above the inline cap omit rows from the status view; their
+    // rows stay pageable through the exact delivery read.
+    const oversizedStore = Object.create(store);
+    oversizedStore.getRevisionMetadata = async (...args) => {
+      const metadata = await store.getRevisionMetadata(...args);
+      return (
+        metadata && {
+          ...metadata,
+          binding: { ...metadata.binding, rowCount: REPORTING_STATUS_REVISION_VIEW_MAX_ROWS + 1 },
+        }
+      );
+    };
+    const oversizedExact = await createReportingStatusHandler(oversizedStore)(
+      { account: request.account, view: 'revision', reporting_revision_id: revisions[0].reporting_revision_id },
+      context
+    );
+    assert.equal(oversizedExact.revision.reporting_revision_id, revisions[0].reporting_revision_id);
+    assert.equal('reporting_rows' in oversizedExact, false);
+    assert.equal(validateResponse('get_reporting_status', oversizedExact, '3.2.1').valid, true);
     const deliveryHandler = createReportingDeliveryHandler(store);
     const delivery = await deliveryHandler(
       {

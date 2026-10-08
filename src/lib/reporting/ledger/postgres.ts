@@ -48,6 +48,8 @@ import type {
   ReportingConsumerStatusBatchResultV1,
   ReportingConsumerStatusReplayInputV1,
   ReportingLedgerRevisionMetadataV1,
+  ReportingRevisionRowsPageV1,
+  ReportingRevisionRowsReadV1,
   ReportingManagedDeliveryBindingV1,
   ReportingManagedLifecycleProjectionV1,
   ReportingLedgerAuthorityV1,
@@ -873,6 +875,33 @@ ${managedDueArm}       )
         WHERE revision.revision_id = $1 AND obligation.account_id = $2`,
       [id, accountId]
     );
+  }
+
+  async readRevisionRows(input: ReportingRevisionRowsReadV1): Promise<ReportingRevisionRowsPageV1 | null> {
+    if (
+      !Number.isSafeInteger(input.offset) ||
+      input.offset < 0 ||
+      !Number.isSafeInteger(input.limit) ||
+      input.limit < 1
+    ) {
+      throw new RangeError('Reporting row page bounds are invalid');
+    }
+    // Slice inside PostgreSQL so a page never ships the whole revision.
+    const result = await this.query<{ total: number; rows: Record<string, unknown>[] }>(
+      `SELECT jsonb_array_length(revision.data->'rows') AS total,
+              jsonb_path_query_array(
+                revision.data->'rows',
+                '$[$from to $to]',
+                jsonb_build_object('from', $3::bigint, 'to', $3::bigint + $4::bigint - 1)
+              ) AS rows
+         FROM adcp_reporting_revisions revision
+         JOIN adcp_reporting_obligations obligation ON obligation.obligation_id = revision.obligation_id
+        WHERE revision.revision_id = $1 AND obligation.account_id = $2`,
+      [input.reporting_revision_id, input.account_id, input.offset, input.limit]
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return { rows: clone(row.rows), total: Number(row.total) };
   }
 
   async listRevisions(obligationId: string): Promise<ReportingLedgerRevisionV1[]> {
