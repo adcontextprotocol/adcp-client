@@ -947,40 +947,78 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
     for (const result of pruneResults) {
       if (result.status === 'rejected' && !signal.aborted) await reportAuxiliaryError(scheduler, result.reason);
     }
-    const ledgerMaintenance = await Promise.allSettled([
-      sweepExpiredReportingLedgerState(options.db, 1_000),
-      coreStore.sweepRowWriteIntents({ limit: 100, signal }),
+    const ledgerMaintenance: [string, Promise<unknown>][] = [
+      ['snapshot sweep', sweepExpiredReportingLedgerState(options.db, 1_000)],
+      ['row upload sweep', coreStore.sweepRowWriteIntents({ limit: 100, signal })],
       ...(options.changeFeed
-        ? [
-            coreStore.pruneChanges(
-              typeof options.changeFeed === 'object'
-                ? {
-                    ...(options.changeFeed.changeRetentionDays !== undefined
-                      ? { changeRetentionDays: options.changeFeed.changeRetentionDays }
-                      : {}),
-                    ...(options.changeFeed.maxFeedHoldDays !== undefined
-                      ? { maxFeedHoldDays: options.changeFeed.maxFeedHoldDays }
-                      : {}),
-                  }
-                : {}
-            ),
-          ]
+        ? ([
+            [
+              'change-feed pruning',
+              coreStore.pruneChanges(
+                typeof options.changeFeed === 'object'
+                  ? {
+                      ...(options.changeFeed.changeRetentionDays !== undefined
+                        ? { changeRetentionDays: options.changeFeed.changeRetentionDays }
+                        : {}),
+                      ...(options.changeFeed.maxFeedHoldDays !== undefined
+                        ? { maxFeedHoldDays: options.changeFeed.maxFeedHoldDays }
+                        : {}),
+                    }
+                  : {}
+              ),
+            ],
+          ] as [string, Promise<unknown>][])
         : []),
       ...(options.retention?.enabled
-        ? [
-            coreStore.retireExpiredPeriods({
-              statusRetentionDays: options.statusRetentionDays,
-              ...(options.retention.recordRetentionDays !== undefined
-                ? { recordRetentionDays: options.retention.recordRetentionDays }
-                : {}),
-              limit: options.retention.limit ?? 100,
-              signal,
-            }),
-          ]
+        ? ([
+            [
+              'retention',
+              coreStore.retireExpiredPeriods({
+                statusRetentionDays: options.statusRetentionDays,
+                ...(options.retention.recordRetentionDays !== undefined
+                  ? { recordRetentionDays: options.retention.recordRetentionDays }
+                  : {}),
+                limit: options.retention.limit ?? 100,
+                signal,
+              }),
+            ],
+          ] as [string, Promise<unknown>][])
         : []),
-    ]);
-    for (const result of ledgerMaintenance) {
-      if (result.status === 'rejected' && !signal.aborted) await reportAuxiliaryError(scheduler, result.reason);
+    ];
+    const maintenanceResults = await Promise.allSettled(ledgerMaintenance.map(([, task]) => task));
+    for (const [index, result] of maintenanceResults.entries()) {
+      const name = ledgerMaintenance[index]![0];
+      if (result.status === 'rejected') {
+        if (!signal.aborted) await reportAuxiliaryError(scheduler, result.reason);
+        continue;
+      }
+      // Partial failures resolve rather than reject; surface them so a period
+      // or upload that fails every pass is visible to error reporting.
+      const value = result.value as
+        | {
+            failed?: number | readonly string[];
+            failures?: readonly { reporting_obligation_id: string; cause: string }[];
+          }
+        | undefined;
+      const failed = Array.isArray(value?.failed)
+        ? value.failed.length
+        : typeof value?.failed === 'number'
+          ? value.failed
+          : 0;
+      if (failed > 0 && !signal.aborted) {
+        await reportAuxiliaryError(
+          scheduler,
+          new ReportingMaintenancePartialFailureError(
+            name,
+            failed,
+            value?.failures?.length
+              ? value.failures.map(entry => `${entry.reporting_obligation_id} (${entry.cause})`)
+              : Array.isArray(value?.failed)
+                ? value.failed
+                : []
+          )
+        );
+      }
     }
     const accountIds = rotate(await deploymentWideAccountIds(coreStore), auxiliaryRotation);
     auxiliaryRotation += 1;
@@ -2014,3 +2052,21 @@ function deepFreeze<T>(value: T): T {
 }
 
 export * from './conformance';
+
+/**
+ * A scheduled maintenance pass completed but could not process some items
+ * (for example, a retention period whose objects could not be deleted). The
+ * pass resumes them next time; repeated reports need operator attention.
+ */
+export class ReportingMaintenancePartialFailureError extends Error {
+  constructor(
+    readonly task: string,
+    readonly failedCount: number,
+    readonly failedIds: readonly string[]
+  ) {
+    super(
+      `Reporting ${task} could not process ${failedCount} item(s)${failedIds.length ? `: ${failedIds.slice(0, 20).join(', ')}` : ''}`
+    );
+    this.name = 'ReportingMaintenancePartialFailureError';
+  }
+}

@@ -1618,7 +1618,12 @@ ${managedDueArm}       )
     limit?: number;
     account_id?: string;
     signal?: AbortSignal;
-  }): Promise<{ retired: number; failed: string[] }> {
+  }): Promise<{
+    retired: number;
+    failed: string[];
+    /** Secret-free cause per failed period: a row-store code or the error class name. */
+    failures: { reporting_obligation_id: string; cause: string }[];
+  }> {
     if (!Number.isSafeInteger(input.statusRetentionDays) || input.statusRetentionDays < 1) {
       throw new RangeError('statusRetentionDays must be a positive integer');
     }
@@ -1659,6 +1664,7 @@ ${managedDueArm}       )
     );
     let retired = 0;
     const failed: string[] = [];
+    const failures: { reporting_obligation_id: string; cause: string }[] = [];
     for (const candidate of candidates.rows) {
       input.signal?.throwIfAborted();
       try {
@@ -1667,9 +1673,13 @@ ${managedDueArm}       )
       } catch (error) {
         if (error instanceof ReportingLedgerPeriodRetiredError) continue;
         failed.push(candidate.obligation_id);
+        failures.push({
+          reporting_obligation_id: candidate.obligation_id,
+          cause: isReportingRowStoreError(error) ? error.code : error instanceof Error ? error.name : 'Error',
+        });
       }
     }
-    return { retired, failed };
+    return { retired, failed, failures };
   }
 
   private async retirePeriod(

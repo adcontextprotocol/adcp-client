@@ -90,7 +90,11 @@ describe('reporting retention', { skip: !DATABASE_URL && 'PostgreSQL URL not set
     await store.commitRevision(retained.revision('rrev_retained_1', 1, rows), retained.lease);
 
     // Within the window nothing is eligible.
-    assert.deepEqual(await store.retireExpiredPeriods({ statusRetentionDays: 30 }), { retired: 0, failed: [] });
+    assert.deepEqual(await store.retireExpiredPeriods({ statusRetentionDays: 30 }), {
+      retired: 0,
+      failed: [],
+      failures: [],
+    });
 
     await expire(fixture.obligation.reporting_obligation_id);
     // A recent publication on another period keeps that period, even when
@@ -103,7 +107,7 @@ describe('reporting retention', { skip: !DATABASE_URL && 'PostgreSQL URL not set
       [retained.obligation.reporting_obligation_id]
     );
     const result = await store.retireExpiredPeriods({ statusRetentionDays: 30 });
-    assert.deepEqual(result, { retired: 1, failed: [] });
+    assert.deepEqual(result, { retired: 1, failed: [], failures: [] });
 
     const obligationId = fixture.obligation.reporting_obligation_id;
     assert.equal(
@@ -150,7 +154,11 @@ describe('reporting retention', { skip: !DATABASE_URL && 'PostgreSQL URL not set
     // Without the object binding the store cannot delete the bytes: phase 1
     // commits, phase 2 fails, and the period stays retiring.
     const first = await unconfigured.retireExpiredPeriods({ statusRetentionDays: 30 });
-    assert.deepEqual(first, { retired: 0, failed: [fixture.obligation.reporting_obligation_id] });
+    assert.deepEqual(first, {
+      retired: 0,
+      failed: [fixture.obligation.reporting_obligation_id],
+      failures: [{ reporting_obligation_id: fixture.obligation.reporting_obligation_id, cause: 'STATE_UNAVAILABLE' }],
+    });
     await assert.rejects(
       () => store.getRevision('rrev_resume_1', fixture.request.account.account_id),
       error => ledger.isReportingRowStoreError(error) && error.code === 'ROWS_EXPIRED'
