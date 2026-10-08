@@ -337,6 +337,74 @@ describe('PostgresReportingLedgerStore row storage', { skip: !DATABASE_URL && 'P
     assert.equal('reporting_rows' in status, false);
   });
 
+  test('migrates inline rows in resumable batches and quarantines unverifiable documents', async () => {
+    const inlineStore = new ledger.PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true });
+    const inlineObligation = {
+      ...obligation,
+      reporting_obligation_id: 'robl_rows_inline',
+      periodOrdinal: 1,
+      semanticFingerprint: 'sha256:obligation-rows-inline',
+    };
+    await inlineStore.putObligation(inlineObligation);
+    const inlineLease = await inlineStore.claimObligation({
+      owner: 'inline-worker',
+      now: new Date(now).toISOString(),
+      leaseMilliseconds: 600_000,
+    });
+    assert.equal(inlineLease.obligation.reporting_obligation_id, 'robl_rows_inline');
+    const previous = obligation;
+    obligation = inlineObligation;
+    const legacyRows = rows.slice(0, 600);
+    try {
+      for (const [index, id] of ['rrev_inline_1', 'rrev_inline_2', 'rrev_inline_3'].entries()) {
+        await inlineStore.commitRevision(
+          revision(
+            id,
+            index + 1,
+            legacyRows,
+            index ? { supersedes_reporting_revision_id: `rrev_inline_${index}` } : {}
+          ),
+          inlineLease
+        );
+      }
+    } finally {
+      obligation = previous;
+    }
+    // A document whose rows no longer reproduce its binding is never rewritten.
+    await pool.query(
+      `UPDATE adcp_reporting_revisions SET data = jsonb_set(data, '{rows,0,impressions}', '999999')
+        WHERE revision_id = 'rrev_inline_2'`
+    );
+
+    let cursor;
+    let migrated = 0;
+    const quarantined = [];
+    do {
+      const batch = await store.migrateInlineRows({ limit: 1, cursor, account_id: request.account.account_id });
+      migrated += batch.migrated;
+      quarantined.push(...batch.quarantined);
+      cursor = batch.cursor;
+    } while (cursor);
+    assert.equal(migrated, 2);
+    assert.deepEqual(quarantined, ['rrev_inline_2']);
+    const inline = await pool.query(
+      `SELECT revision_id, data ? 'rows' AS inline FROM adcp_reporting_revisions
+        WHERE obligation_id = 'robl_rows_inline' ORDER BY revision_number`
+    );
+    assert.deepEqual(
+      inline.rows.map(row => [row.revision_id, row.inline]),
+      [
+        ['rrev_inline_1', false],
+        ['rrev_inline_2', true],
+        ['rrev_inline_3', false],
+      ]
+    );
+    for (const id of ['rrev_inline_1', 'rrev_inline_3']) {
+      assert.deepEqual((await store.getRevision(id, request.account.account_id)).rows, legacyRows);
+    }
+    assert.equal((await store.migrateInlineRows({ account_id: request.account.account_id })).migrated, 0);
+  });
+
   test('refuses a binding registered by another deployment namespace', async () => {
     const other = new ledger.PostgresReportingLedgerStore(pool, {
       acknowledgeIsolatedDatabase: true,
