@@ -72,6 +72,56 @@ different operators own tenant partitions. For Reconciled Billing offerings,
 provide `obligatedConsumers` from a trusted authorization roster. A missing or
 incomplete roster cannot safely mark a billing obligation reconciled.
 
+## Adopting row storage, retention and the change feed
+
+Each of these features is opt-in and additive. Enable them one at a time on a
+running deployment. See the [ledger guide](REPORTING-LEDGER.md#row-storage)
+for configuration details.
+
+1. **Row storage.** Apply `REPORTING_ROW_STORAGE_MIGRATION` (PostgreSQL 13+),
+   or pass `rowStorage` to the production service, which adds it to
+   `setup.migrations`. Roll out with `rowStorage` set. New revisions store
+   verified chunks. Existing revisions keep their inline rows, and every
+   binary built with row storage reads both forms. Do not run a writer older
+   than this release once chunked revisions exist: it cannot read them.
+2. **Existing inline rows (optional).** Run `migrateInlineRows` in bounded
+   batches from a maintenance job until it returns no cursor. Alert on any
+   `quarantined` IDs: those revisions no longer reproduce their committed
+   binding and are left untouched for investigation. Then reclaim space with
+   `VACUUM FULL` or an online repack in a maintenance window.
+3. **Object storage.** Create a dedicated private bucket, container or prefix
+   for rows, separate from Managed Delivery buckets. Configure the binding in
+   host code and run `runReportingRowObjectProviderConformanceV1` against a
+   test prefix first. Prefer versioned buckets on S3 and Azure: an ETag-only
+   version cannot tell an identical re-upload from the recorded object. Do not
+   attach lifecycle rules that can delete live rows sooner than
+   `max(statusRetentionDays, recordRetentionDays)` plus the restatement window.
+   The GCS probe refuses them; for S3 and Azure, policies outside the client's
+   view are the operator's responsibility.
+4. **Change feed.** Apply `REPORTING_LEDGER_CHANGES_MIGRATION` (PostgreSQL 13+)
+   or pass `changeFeed`. Register each durable consumer with
+   `saveFeedConsumerCursor`, and size `maxFeedHoldDays` so one stalled consumer
+   cannot hold the table indefinitely.
+5. **Warehouse sink.** Apply `REPORTING_WAREHOUSE_SINK_MIGRATION`, create the
+   tables, and the `current_rows` view, then schedule `runOnce`. Point analysts
+   at `current_rows`.
+6. **Retention.** Enable `retention` last, after confirming the advertised
+   `status_retention_days` is the window you intend to keep. Retirement deletes
+   rows and ledger records for whole periods and cannot be undone. Keep backups
+   for any longer audit requirement.
+
+Alert on these row-storage signals:
+
+- `ROWS_INTEGRITY_FAILED` or `ROWS_UNAVAILABLE` from reads. These are never
+  normal, and buyers see `SERVICE_UNAVAILABLE` for the affected revision.
+- A growing count of `adcp_reporting_row_write_intents` in `sweeping` state,
+  or `sweepRowWriteIntents` reporting failures. Provider deletes are failing.
+- `retireExpiredPeriods` returning `failed` IDs. Usually a binding was removed
+  from configuration while revisions still reference it; keep retired bindings
+  configured.
+- `ReportingChangeCursorExpiredError` in a consumer. That consumer fell behind
+  retention and must resynchronize from `listCurrentRevisions`.
+
 ## Service objectives and alerts
 
 Choose targets stricter than contractual delivery SLAs. A reasonable starting
@@ -146,7 +196,17 @@ Quarterly, restore into an isolated environment and verify:
 - notification recovery resumes without duplicate logical events;
 - buyer cursors/checkpoints resume and duplicate notification keys remain deduped;
 - a new lease fences an expired owner;
-- sampled manifest and canonical-content digests still verify.
+- sampled manifest and canonical-content digests still verify;
+- sampled chunked revisions read back through `getRevision`, including rows in
+  object-storage bindings.
+
+Row objects live outside the database. A database restore and the matching
+row buckets must come from the same point in time, or revisions committed
+after the bucket snapshot read as `ROWS_UNAVAILABLE`. A restored replica of
+the same authority keeps its installation identity. An independently writable
+clone, such as staging restored from production, must mint a new
+`adcp_persistence_installation` row and use new bindings before it writes or
+sweeps, so it can never delete production objects.
 
 After regional failover, fence the old primary before enabling writers. Ensure
 database time is healthy, then start canary workers and watch lease generation,
@@ -176,6 +236,12 @@ Buyer stuck or ambiguous notification scope: polling remains authoritative.
 Disable notification-triggered acceleration if necessary, retain dedupe rows,
 and repair the authenticated seller/principal registry before resuming. Never
 choose an account based only on an untrusted webhook body.
+
+Row-storage integrity failure: stop serving the affected scope and do not
+re-upload over the recorded object. Compare the stored object's bytes and
+version with the chunk manifest, restore the exact recorded version from bucket
+versioning or backups, and verify by reading the revision through `getRevision`.
+Never edit a chunk manifest or digest to match the stored bytes.
 
 Clock skew: remove the host from service. Lease and event times use PostgreSQL
 where correctness needs a shared clock, while provider deadlines and process
