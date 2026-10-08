@@ -19,7 +19,14 @@ function releaseNotes(changelog, version, changelogUrl) {
   return `Release notes exceed GitHub's size limit. Read the [complete changelog](${changelogUrl}).`;
 }
 
-async function createReleases({ github, context, core, publishedPackages, cwd = process.cwd() }) {
+async function createReleases({
+  github,
+  context,
+  core,
+  publishedPackages,
+  cwd = process.cwd(),
+  npmTag = process.env.ADCP_NPM_TAG,
+}) {
   // The SDK root and packages/* are the repository's workspace layout. Read
   // their metadata directly so publishing does not rely on hoisted tooling.
   const rootPackage = JSON.parse(readFileSync(path.join(cwd, 'package.json'), 'utf8'));
@@ -68,9 +75,11 @@ async function createReleases({ github, context, core, publishedPackages, cwd = 
     await github.rest.repos.createRelease({
       ...context.repo,
       tag_name: tag,
+      target_commitish: context.sha,
       name: tag,
       body,
       prerelease: version.includes('-'),
+      make_latest: version.includes('-') || (npmTag && npmTag !== 'latest') ? 'false' : 'true',
     });
   }
 }

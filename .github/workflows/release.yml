@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     branches:
-      - main
+      - 15.2.x
 
 permissions:
   contents: read
@@ -18,6 +18,7 @@ jobs:
   release:
     name: Release
     needs: reference-seller-interop
+    if: github.ref == 'refs/heads/15.2.x'
     concurrency:
       # npm publishing and dist-tag updates mutate package-global state.
       # Serialize those mutations across main and maintenance releases.
@@ -26,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ADCP_REQUIRE_SIGNATURE: '1'
+      ADCP_NPM_TAG: sdk-15.2
     permissions:
       contents: write
       pull-requests: write

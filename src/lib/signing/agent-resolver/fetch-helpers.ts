@@ -160,6 +160,10 @@ export function classifyDiscoveryFailure(error: unknown): {
 export function isPermanentDiscoveryFailure(detail: { dns_error?: string; http_status?: number }): boolean {
   return (
     detail.dns_error === 'ssrf_refused' ||
-    (detail.http_status !== undefined && detail.http_status >= 400 && detail.http_status < 500)
+    (detail.http_status !== undefined &&
+      detail.http_status >= 400 &&
+      detail.http_status < 500 &&
+      detail.http_status !== 408 &&
+      detail.http_status !== 429)
   );
 }
