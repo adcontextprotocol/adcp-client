@@ -11,7 +11,7 @@ fail CI instead of reaching consumers.
   and the generated declaration sizes, and requires the exact schema façade.
 - `check:publish-protocol-artifacts` inspects the actual npm pack inventory,
   export map, and advertised compatibility list. It permits maintained stable
-  bundles plus the current `ADCP_VERSION` bundle (`3.2.1`) and rejects any
+  bundles plus the current `ADCP_VERSION` bundle (`3.2.3`) and rejects any
   beta/RC schema, compliance bundle, or versioned type subpath that is not the
   current pin. It also runs
   from `prepublishOnly` after schema sync and build.

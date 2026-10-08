@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.2.1
-// Generated at: 2026-10-05T10:11:38.565Z
+// Generated AdCP core types from official schemas v3.2.3
+// Generated at: 2026-10-07T19:16:04.017Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -13334,7 +13334,7 @@ export type None2 = None;
 export type AccountReference =
   | {
       /**
-       * Seller-assigned account identifier. For upstream-managed account namespaces, this value comes from list_accounts; for seller-defined namespaces without a list_accounts surface, it is supplied out-of-band. Buyer-declared account sellers MAY echo account_id from sync_accounts as an internal handle, but they MUST continue accepting the account's current natural-key AccountRef on subsequent calls. A former key tombstoned by identity reconciliation returns ACCOUNT_MOVED to authorized callers.
+       * Seller-assigned account identifier. For upstream-managed account namespaces, this value comes from list_accounts; for seller-defined namespaces without a list_accounts surface, it is supplied out-of-band. Buyer-declared account sellers MAY echo account_id from sync_accounts as an internal handle, but they MUST continue accepting the account's current natural-key AccountRef on subsequent calls. Buyers of buyer-declared accounts send the natural key; a seller MAY also accept its echoed account_id, and buyers MUST NOT assume it does. A former key tombstoned by identity reconciliation returns ACCOUNT_MOVED to authorized callers.
        */
       account_id: string;
     }
@@ -26649,7 +26649,7 @@ export interface CollectionListChangedWebhook {
    */
   cache_valid_until?: string;
   /**
-   * HMAC-SHA256 webhook signature over {unix_timestamp}.{raw_http_body_bytes} using the secret exchanged out-of-band when the seller registered with the governance agent. Recipients MUST verify against the X-ADCP-Signature and X-ADCP-Timestamp headers using timing-safe comparison and MUST reject requests where |now - timestamp| > 300 seconds. The body copy of this field is a convenience only — the headers are authoritative. See docs/building/implementation/security#webhook-security.
+   * HMAC-SHA256 webhook signature over {unix_timestamp}.{raw_http_body_bytes} using the secret exchanged out-of-band when the seller registered with the governance agent. Recipients MUST verify against the X-ADCP-Signature and X-ADCP-Timestamp headers using timing-safe comparison and MUST reject requests where |now - timestamp| > 300 seconds. The body copy of this field is a convenience only — the headers are authoritative. See docs/building/by-layer/L1/security#webhook-security.
    */
   signature: string;
   ext?: ExtensionObject;
@@ -29024,7 +29024,7 @@ export type AudienceSelector =
  */
 export interface AuthorizedAgentBaseFields {
   /**
-   * The authorized agent's API endpoint URL. Callers comparing this URL against a registry (sales-agent list, signal-provider registry, TMP provider lookup, etc.) MUST canonicalize both sides per the AdCP URL canonicalization rules, not byte-equality — two URLs that differ only in case, default port, or percent-encoding of unreserved characters are the same agent. See docs/reference/url-canonicalization.
+   * The authorized agent's protocol endpoint URL: the exact agent URL buyers are given and send AdCP requests to, including the path (e.g., `https://agent.example.com/mcp`). A bare origin matches only an agent served at the root. An agent reachable at more than one agent URL (for example, separate MCP and A2A endpoints) needs one entry per URL. Callers comparing this URL against a registry (sales-agent list, signal-provider registry, TMP provider lookup, etc.) MUST canonicalize both sides per the AdCP URL canonicalization rules, not byte-equality — two URLs that differ only in case, default port, or percent-encoding of unreserved characters are the same agent. See docs/reference/url-canonicalization.
    */
   url: string;
   /**
@@ -36611,7 +36611,7 @@ export interface ReportingWebhook {
   token?: string;
   /**
    * @deprecated
-   * Legacy authentication configuration for webhook delivery (A2A-compatible). Opts the receiver into Bearer or HMAC-SHA256 signing. Both schemes are deprecated; the preferred signing profile for new integrations is RFC 9421, where the seller signs with a key published at its brand.json agents[] entry and the buyer verifies against the seller's JWKS — no shared secret crosses the wire (see docs/building/implementation/security.mdx#webhook-callbacks). This field is required in AdCP 3.x; the requirement is removed in AdCP 4.0 when the default RFC 9421 path becomes the only path.
+   * Legacy authentication configuration for webhook delivery (A2A-compatible). Opts the receiver into Bearer or HMAC-SHA256 signing. Both schemes are deprecated; the preferred signing profile for new integrations is RFC 9421, where the seller signs with a key published at its brand.json agents[] entry and the buyer verifies against the seller's JWKS — no shared secret crosses the wire (see docs/building/by-layer/L1/security.mdx#webhook-callbacks). This field is required in AdCP 3.x; the requirement is removed in AdCP 4.0 when the default RFC 9421 path becomes the only path.
    */
   authentication: {
     /**
@@ -42611,7 +42611,7 @@ export type TMPProviderRegistration = (
    */
   provider_id: string;
   /**
-   * Base URL the router calls. The router appends /context for Context Match and /identity for Identity Match. MUST be HTTPS in production, validated against the canonical reserved IPv4 and IPv6 ranges, with the TCP connection pinned to the validated IP (DNS re-resolution alone is insufficient against rebinding). Publishers comparing two provider registrations for the same `endpoint` MUST canonicalize both per the AdCP URL canonicalization rules; two registrations differing only in case, default port, or path-slash collapsing are the same provider. See docs/trusted-match/specification#provider-registration-security, docs/building/implementation/security#webhook-url-validation-ssrf, and docs/reference/url-canonicalization.
+   * Base URL the router calls. The router appends /context for Context Match and /identity for Identity Match. MUST be HTTPS in production, validated against the canonical reserved IPv4 and IPv6 ranges, with the TCP connection pinned to the validated IP (DNS re-resolution alone is insufficient against rebinding). Publishers comparing two provider registrations for the same `endpoint` MUST canonicalize both per the AdCP URL canonicalization rules; two registrations differing only in case, default port, or path-slash collapsing are the same provider. See docs/trusted-match/specification#provider-registration-security, docs/building/by-layer/L1/security#webhook-url-validation-ssrf, and docs/reference/url-canonicalization.
    */
   endpoint: string;
   /**

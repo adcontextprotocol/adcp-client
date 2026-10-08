@@ -11,7 +11,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
-const { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } = require('node:fs');
+const { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -30,6 +30,17 @@ const {
 } = require('../dist/lib/signing/index.js');
 
 const VENDORED_DIR = path.join(__dirname, 'fixtures', 'request-signing-a2a');
+
+function complianceCacheWithoutA2aVectors(t) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'a2a-no-cache-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const source = path.dirname(path.dirname(loadRequestSigningVectors().sourceDir));
+  cpSync(source, dir, {
+    recursive: true,
+    filter: file => path.relative(source, file) !== path.join('test-vectors', 'request-signing', 'a2a'),
+  });
+  return dir;
+}
 const CAPABILITY = {
   supported: true,
   covers_content_digest: 'required',
@@ -170,6 +181,21 @@ const skips = report =>
     .map(r => r.vector_id);
 
 describe('A2A operation-resolution vector loader', () => {
+  test('ships all 33 canonical A2A vectors in the default compliance cache', () => {
+    const loaded = loadA2aOperationResolutionVectors({ a2aVendoredFallback: false });
+    assert.strictEqual(loaded.source, 'compliance_cache');
+    assert.strictEqual(loaded.positive.length, 7);
+    assert.strictEqual(loaded.negative.length, 26);
+    for (const kind of ['positive', 'negative']) {
+      for (const { file } of rawVectors(kind)) {
+        assert.deepStrictEqual(
+          readFileSync(path.join(loaded.sourceDir, kind, file)),
+          readFileSync(path.join(VENDORED_DIR, kind, file)),
+          `${kind}/${file}`
+        );
+      }
+    }
+  });
   test('loads 26 negative and 7 positive vectors from the vendored fixtures', () => {
     const loaded = loadA2aOperationResolutionVectors({ a2aVectorsDir: VENDORED_DIR });
     assert.strictEqual(loaded.source, 'override');
@@ -202,14 +228,17 @@ describe('A2A operation-resolution vector loader', () => {
     assert.strictEqual(pos007.expected_outcome.dispatch, 'method_not_found');
   });
 
-  test('in a repo checkout the default load falls back to the vendored copy when the cache lacks the vectors', () => {
-    const loaded = loadA2aOperationResolutionVectors();
-    assert.ok(['compliance_cache', 'vendored_fixture'].includes(loaded.source), `source=${loaded.source}`);
+  test('in a repo checkout the default load falls back to the vendored copy when the cache lacks the vectors', t => {
+    const loaded = loadA2aOperationResolutionVectors({ complianceDir: complianceCacheWithoutA2aVectors(t) });
+    assert.strictEqual(loaded.source, 'vendored_fixture');
     assert.strictEqual(loaded.negative.length + loaded.positive.length, 33);
   });
 
-  test('without a cache copy and without the vendored fallback (an installed package) there are no vectors', () => {
-    const loaded = loadA2aOperationResolutionVectors({ a2aVendoredFallback: false });
+  test('without a cache copy and without the vendored fallback (an installed package) there are no vectors', t => {
+    const loaded = loadA2aOperationResolutionVectors({
+      complianceDir: complianceCacheWithoutA2aVectors(t),
+      a2aVendoredFallback: false,
+    });
     assert.strictEqual(loaded.source, 'none');
     assert.deepStrictEqual([loaded.positive.length, loaded.negative.length], [0, 0]);
   });
@@ -225,10 +254,11 @@ describe('A2A operation-resolution vector loader', () => {
 });
 
 describe('A2A operation-resolution grading', () => {
-  test('reports unavailable vectors clearly instead of passing silently', async () => {
+  test('reports unavailable vectors clearly instead of passing silently', async t => {
     const report = await gradeRequestSigning('http://127.0.0.1:1', {
       transport: 'a2a',
       allowPrivateIp: true,
+      complianceDir: complianceCacheWithoutA2aVectors(t),
       a2aVendoredFallback: false,
       onlyVectors: ['a2a/negative/001-unsigned-sendmessage-required'],
     });

@@ -890,7 +890,7 @@ In AdCP 3.2, `next_expected_at` has two deliberately different summary meanings.
 
 ## Consumer status ingest
 
-The SDK is pinned to AdCP 3.2.1 and exposes `sync_reporting_status` from the ledger subpath. Its request, response, consumer-status, obligation, issue, delivery-capabilities, and reporting-status types come from the published 3.2.1 schema bundle.
+The SDK is pinned to AdCP 3.2.3 and exposes `sync_reporting_status` from the ledger subpath. Its request, response, consumer-status, obligation, issue, delivery-capabilities, and reporting-status types come from the published 3.2.3 schema bundle.
 
 ```ts
 const syncReportingStatus = createSyncReportingStatusHandler(store, {

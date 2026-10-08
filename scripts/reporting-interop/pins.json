@@ -3,5 +3,5 @@
   "python_wheel_url": "https://files.pythonhosted.org/packages/8a/78/861204ee7d89f57baccdeb932d84c612f937c640e1134d1ad560769a80ae/adcp-8.0.0-py3-none-any.whl",
   "python_wheel_sha256": "d862687ab71f1aa411887d20dc7faba66547e68a319d29c0a8f568e8f88dd8fb",
   "python_harness_commit": "68345b5043b1cd8bae973c3d2ba0c0e7e53b6294",
-  "adcp_schema_version": "3.2.1"
+  "adcp_schema_version": "3.2.3"
 }

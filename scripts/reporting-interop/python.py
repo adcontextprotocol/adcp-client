@@ -7,12 +7,16 @@ import asyncio
 import base64
 import hashlib
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urljoin
 
 from adcp import get_adcp_spec_version
+# The interoperability gate installs the SHA-pinned wheel in pins.json,
+# whose internal resolver applies the same stable-patch wire compatibility.
+from adcp._version import resolve_adcp_version
 from adcp.reporting import ReportingInspectionContext, ReportingObservation, build_reporting_receipt
 from adcp.reporting.adjustment_evidence import (
     ReportingAdjustmentReceiptContext,
@@ -49,7 +53,11 @@ async def run(fixture_root, peer=None):
     fixture = json.loads((fixture_root / "reporting-interop/evidence-v1.json").read_bytes())
     require(fixture["contract"] == "reporting_evidence_interop_v1", "fixture contract")
     require(fixture["version"] == 1, "fixture version")
-    require(ADCP_VERSION == fixture["adcp_schema_version"], "schema version")
+    require(re.fullmatch(r"\d+\.\d+\.\d+", fixture["adcp_schema_version"]) is not None, "stable schema version")
+    require(
+        resolve_adcp_version(ADCP_VERSION) == resolve_adcp_version(fixture["adcp_schema_version"]),
+        "schema version",
+    )
     vectors = json.loads((fixture_root / "reporting-interop/canonical-json-v1.json").read_bytes())
     for vector in vectors["vectors"]:
         body = canonical_json_utf8_v1(vector["value"])
@@ -73,7 +81,7 @@ async def run(fixture_root, peer=None):
     if peer:
         require(peer["contract"] == fixture["contract"], "peer contract")
         require(peer["version"] == fixture["version"], "peer version")
-        require(peer["adcp_schema_version"] == ADCP_VERSION, "peer schema version")
+        require(peer["adcp_schema_version"] == fixture["adcp_schema_version"], "peer schema version")
         require(base64.b64decode(peer["manifest_utf8_base64"], validate=True) == manifest, "peer manifest bytes")
         require(peer["manifest_sha256"] == manifest_digest, "peer manifest digest")
     resources["manifest.json"] = manifest if peer is None else base64.b64decode(peer["manifest_utf8_base64"])
@@ -136,8 +144,9 @@ async def run(fixture_root, peer=None):
         ))
         require(receipt == vector.get("expected_python_receipt", vector["expected_receipt"]), f"{vector['id']} receipt")
         adjustments.append({"id": vector["id"], "canonical_utf8_hex": evidence.canonical_json.hex(), "receipt": receipt})
+    # Evidence retains the fixture contract; run.mjs records the tested SDK pin.
     output = {
-        "contract": fixture["contract"], "version": fixture["version"], "adcp_schema_version": ADCP_VERSION,
+        "contract": fixture["contract"], "version": fixture["version"], "adcp_schema_version": fixture["adcp_schema_version"],
         "manifest_utf8_base64": base64.b64encode(manifest).decode("ascii"), "manifest_sha256": manifest_digest,
         "revision_content_utf8_base64": base64.b64encode(revision_bytes).decode("ascii"),
         "revision_receipts": revision_receipts, "adjustments": adjustments,

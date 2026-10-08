@@ -7,7 +7,7 @@ How `@adcp/sdk` keeps a buyer pinned to one AdCP major version while talking to 
 ## The shape of the problem
 
 The SDK speaks one primary AdCP version on its public surface — `ADCP_VERSION`
-in `src/lib/version.ts`. The SDK 14 pin is `3.2.1`; maintained side
+in `src/lib/version.ts`. The current SDK pin is `3.2.3`; maintained side
 bundles cover `3.1.24`, `3.0.25`, and v2.5. Every buyer-facing type, helper,
 and example assumes the primary pin.
 
@@ -27,7 +27,7 @@ There is exactly one active legacy compat layer at a time today: `legacy/v2-5/`.
 
 ```
 schemas/cache/
-├── 3.2.1/       # current SDK pin
+├── 3.2.3/       # current SDK pin
 ├── 3.1.24/       # maintained stable side bundle
 ├── 3.0.25/       # maintained stable side bundle
 ├── latest/       # symlink to the primary pin

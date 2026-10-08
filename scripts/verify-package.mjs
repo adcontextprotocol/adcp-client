@@ -349,7 +349,7 @@ try {
       "  throw new Error('runtime validator did not load the archived get_products schema');",
       '}',
       "const schema = loadRequestSchema('get_products', { version: '3.2.1' });",
-      "if (schema.$id !== 'https://adcontextprotocol.org/schemas/3.2.1/media-buy/get-products-request.json') {",
+      "if (schema.$id !== 'https://adcontextprotocol.org/schemas/3.2.3/media-buy/get-products-request.json') {",
       '  throw new Error(`conformance loader returned the wrong authored schema ID: ${schema.$id}`);',
       '}',
       'if (!schema._bundled || !schema.$defs || Object.keys(schema.$defs).length === 0) {',
