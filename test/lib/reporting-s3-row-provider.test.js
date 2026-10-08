@@ -286,6 +286,32 @@ test('reads pin VersionId or If-Match and honour ranges and the byte cap', async
   }
 });
 
+test('a store that ignores versionId or If-Match never serves or deletes a different version', async () => {
+  const client = createFakeS3();
+  const provider = createS3ReportingRowObjectProviderV1({ client });
+  const key = 'adcp-rows/ns/v.jsonl';
+  const { nativeVersion } = await put(provider, key);
+  const send = client.send.bind(client);
+  client.send = (command, options) => {
+    // Emulate a store that drops the version selectors and answers from the current object.
+    delete command.input.VersionId;
+    delete command.input.IfMatch;
+    return send(command, options);
+  };
+  for (const foreign of ['"0000"', 'some-version']) {
+    assert.equal(await provider.get({ ...base, key, nativeVersion: foreign, maxBytes: 100 }, signal()), null);
+    assert.equal(
+      await provider.get(
+        { ...base, key, nativeVersion: foreign, range: { offset: 0, length: 0 }, maxBytes: 0 },
+        signal()
+      ),
+      null
+    );
+    assert.equal(await provider.delete({ ...base, key, nativeVersion: foreign }, signal()), 'absent');
+  }
+  assert.ok(await provider.get({ ...base, key, nativeVersion, maxBytes: 100 }, signal()));
+});
+
 test('streaming cap applies even when ContentLength is absent', async () => {
   const client = createFakeS3();
   const provider = createS3ReportingRowObjectProviderV1({ client });

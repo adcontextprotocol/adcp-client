@@ -79,6 +79,15 @@ function selectorOf(nativeVersion: string): { VersionId: string } | { IfMatch: s
   return VERSION_ID.test(nativeVersion) ? { VersionId: nativeVersion } : null;
 }
 
+/** Whether a response came from the pinned version (echoed `VersionId`, or the matching ETag). */
+function servedVersion(
+  output: { VersionId?: string; ETag?: string },
+  selector: { VersionId: string } | { IfMatch: string }
+): boolean {
+  if ('VersionId' in selector) return output.VersionId === selector.VersionId;
+  return typeof output.ETag === 'string' && reportingRowEtagVersion(output.ETag) === selector.IfMatch;
+}
+
 function liveExpirationCovers(rule: LifecycleRule, prefix: string): boolean {
   if (rule.Status !== 'Enabled') return false;
   if (rule.Expiration?.Days === undefined && rule.Expiration?.Date === undefined) return false;
@@ -292,6 +301,7 @@ export function createS3ReportingRowObjectProviderV1(
             const head = await client.send(new HeadObjectCommand({ Bucket, Key, ...selector }), {
               abortSignal: context.signal,
             });
+            if (!servedVersion(head, selector)) return null;
             if (input.range.offset > Number(head.ContentLength ?? 0)) {
               throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', 'requested range exceeds the stored object');
             }
@@ -311,6 +321,11 @@ export function createS3ReportingRowObjectProviderV1(
           const body = output.Body as unknown as AsyncIterable<unknown> & { destroy?: (error?: Error) => unknown };
           if (!body || typeof body[Symbol.asyncIterator] !== 'function') {
             throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'object body is not a stream');
+          }
+          // Some S3-compatible stores ignore `versionId` or `If-Match`; only an echoed exact version counts.
+          if (!servedVersion(output, selector)) {
+            body.destroy?.();
+            return null;
           }
           if (typeof output.ContentLength === 'number' && output.ContentLength > input.maxBytes) {
             body.destroy?.();
@@ -338,7 +353,8 @@ export function createS3ReportingRowObjectProviderV1(
         const signal = context.signal;
         // S3 deletes succeed for missing keys and versions, so confirm the exact version first.
         try {
-          await client.send(new HeadObjectCommand({ Bucket, Key, ...selector }), { abortSignal: signal });
+          const head = await client.send(new HeadObjectCommand({ Bucket, Key, ...selector }), { abortSignal: signal });
+          if (!servedVersion(head, selector)) return 'absent' as const;
         } catch (error) {
           if (isNotFound(error) || isPreconditionFailed(error)) return 'absent' as const;
           // 400: malformed or foreign version ID; 405: the version is a delete marker.
