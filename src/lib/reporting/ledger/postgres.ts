@@ -1424,11 +1424,42 @@ ${managedDueArm}       )
     if (limit > 10_000) throw new RangeError('changesAfter limit must not exceed 10000');
     const account = input.account_id ?? null;
     const cursor = input.cursor === undefined ? undefined : decodeReportingChangeCursorV1(input.cursor, account);
-    const horizon = await this.query<{ pruned_through_seq: string }>(
-      'SELECT pruned_through_seq::text AS pruned_through_seq FROM adcp_reporting_change_horizon WHERE singleton'
-    );
-    const prunedThrough = BigInt(horizon.rows[0]?.pruned_through_seq ?? '0');
-    if (cursor && BigInt(cursor.seq) < prunedThrough) throw new ReportingChangeCursorExpiredError();
+    // The pruned horizon in this feed's own order. A supplied cursor below it
+    // may have missed a pruned change and fails closed; a consumer starting
+    // without a cursor begins at it, which is the oldest retained change.
+    const horizon =
+      account !== null
+        ? {
+            seq:
+              (
+                await this.query<{ seq: string }>(
+                  `SELECT pruned_through_seq::text AS seq FROM adcp_reporting_change_account_horizon
+                    WHERE account_id = $1`,
+                  [account]
+                )
+              ).rows[0]?.seq ?? '0',
+          }
+        : ((
+            await this.query<{ xid: string; seq: string }>(
+              `SELECT pruned_through_xid::text AS xid, pruned_through_seq::text AS seq
+                 FROM adcp_reporting_change_horizon WHERE singleton`
+            )
+          ).rows[0] ?? { xid: '0', seq: '0' });
+    if (cursor) {
+      const behind =
+        account !== null
+          ? BigInt(horizon.seq) > BigInt(cursor.seq)
+          : BigInt((horizon as { xid: string }).xid) > BigInt(cursor.xid!) ||
+            (BigInt((horizon as { xid: string }).xid) === BigInt(cursor.xid!) &&
+              BigInt(horizon.seq) > BigInt(cursor.seq));
+      if (behind) throw new ReportingChangeCursorExpiredError();
+    }
+    const position = cursor ?? {
+      v: 1 as const,
+      account,
+      seq: horizon.seq,
+      ...(account === null ? { xid: (horizon as { xid: string }).xid } : {}),
+    };
     const kinds = input.kinds?.length ? [...input.kinds] : null;
     type ChangeRow = {
       seq: string;
@@ -1447,7 +1478,7 @@ ${managedDueArm}       )
             `SELECT ${columns} FROM adcp_reporting_changes
               WHERE account_id = $1 AND seq > $2::bigint AND ($3::text[] IS NULL OR record_kind = ANY($3))
               ORDER BY seq LIMIT $4`,
-            [account, cursor?.seq ?? '0', kinds, limit]
+            [account, position.seq, kinds, limit]
           )
         : await this.query<ChangeRow>(
             `SELECT ${columns} FROM adcp_reporting_changes
@@ -1455,13 +1486,12 @@ ${managedDueArm}       )
                 AND xid < pg_snapshot_xmin(pg_current_snapshot())
                 AND ($3::text[] IS NULL OR record_kind = ANY($3))
               ORDER BY xid, seq LIMIT $4`,
-            [cursor?.xid ?? '0', cursor?.seq ?? '0', kinds, limit]
+            [position.xid ?? '0', position.seq, kinds, limit]
           );
     const last = result.rows.at(-1);
     const next = last
       ? encodeReportingChangeCursorV1({ v: 1, account, seq: last.seq, ...(account === null ? { xid: last.xid } : {}) })
-      : (input.cursor ??
-        encodeReportingChangeCursorV1({ v: 1, account, seq: '0', ...(account === null ? { xid: '0' } : {}) }));
+      : (input.cursor ?? encodeReportingChangeCursorV1(position));
     return {
       records: result.rows.map(row => ({
         kind: row.record_kind,
@@ -1489,9 +1519,12 @@ ${managedDueArm}       )
     }
     const decoded = decodeReportingChangeCursorV1(cursor, account);
     await this.query(
-      `INSERT INTO adcp_reporting_feed_consumers (consumer_name, cursor_seq) VALUES ($1, $2::bigint)
-       ON CONFLICT (consumer_name) DO UPDATE SET cursor_seq = EXCLUDED.cursor_seq, updated_at = clock_timestamp()`,
-      [name, decoded.seq]
+      `INSERT INTO adcp_reporting_feed_consumers (consumer_name, account_id, cursor_xid, cursor_seq)
+       VALUES ($1, $2, $3::text::xid8, $4::bigint)
+       ON CONFLICT (consumer_name) DO UPDATE
+          SET account_id = EXCLUDED.account_id, cursor_xid = EXCLUDED.cursor_xid,
+              cursor_seq = EXCLUDED.cursor_seq, updated_at = clock_timestamp()`,
+      [name, account, account === null ? decoded.xid! : null, decoded.seq]
     );
   }
 
@@ -1510,29 +1543,55 @@ ${managedDueArm}       )
     positiveInteger(holdDays, 'maxFeedHoldDays');
     const limit = input.limit ?? 10_000;
     positiveInteger(limit, 'limit');
-    const deleted = await this.query<{ seq: string }>(
-      `WITH held AS (
-         SELECT MIN(cursor_seq) AS seq FROM adcp_reporting_feed_consumers
-          WHERE updated_at > clock_timestamp() - ($2::integer * INTERVAL '1 day')
-       ), victims AS (
-         SELECT change.seq FROM adcp_reporting_changes change
-          WHERE change.recorded_at < clock_timestamp() - ($1::integer * INTERVAL '1 day')
-            AND change.seq <= COALESCE((SELECT seq FROM held), change.seq)
-          ORDER BY change.seq LIMIT $3
-       )
-       DELETE FROM adcp_reporting_changes change USING victims
-        WHERE change.seq = victims.seq RETURNING change.seq::text AS seq`,
-      [retentionDays, holdDays, limit]
-    );
-    const highest = deleted.rows.reduce((max, row) => (BigInt(row.seq) > max ? BigInt(row.seq) : max), 0n);
-    if (highest > 0n) {
-      await this.query(
-        `UPDATE adcp_reporting_change_horizon
-            SET pruned_through_seq = GREATEST(pruned_through_seq, $1::bigint) WHERE singleton`,
-        [highest.toString()]
+    // A change is pruned only once every live consumer has passed it in that
+    // consumer's own feed order. Horizons advance in the same transaction,
+    // so a cursor that missed a pruned change always fails closed.
+    const deleted = await this.transaction(async client => {
+      const victims = await client.query<{ seq: string; xid: string; account_id: string }>(
+        `WITH victims AS (
+           SELECT change.seq FROM adcp_reporting_changes change
+            WHERE change.recorded_at < clock_timestamp() - ($1::integer * INTERVAL '1 day')
+              AND NOT EXISTS (
+                SELECT 1 FROM adcp_reporting_feed_consumers consumer
+                 WHERE consumer.updated_at > clock_timestamp() - ($2::integer * INTERVAL '1 day')
+                   AND ((consumer.account_id IS NULL
+                         AND (change.xid, change.seq) > (consumer.cursor_xid, consumer.cursor_seq))
+                     OR (consumer.account_id = change.account_id AND change.seq > consumer.cursor_seq))
+              )
+            ORDER BY change.seq LIMIT $3
+         )
+         DELETE FROM adcp_reporting_changes change USING victims
+          WHERE change.seq = victims.seq
+         RETURNING change.seq::text AS seq, change.xid::text AS xid, change.account_id`,
+        [retentionDays, holdDays, limit]
       );
-    }
-    return { deleted: deleted.rows.length };
+      if (victims.rows.length === 0) return 0;
+      const highest = victims.rows.reduce((max, row) =>
+        BigInt(row.xid) > BigInt(max.xid) || (row.xid === max.xid && BigInt(row.seq) > BigInt(max.seq)) ? row : max
+      );
+      await client.query(
+        `UPDATE adcp_reporting_change_horizon
+            SET (pruned_through_xid, pruned_through_seq) = ($1::text::xid8, $2::bigint)
+          WHERE singleton AND ($1::text::xid8, $2::bigint) > (pruned_through_xid, pruned_through_seq)`,
+        [highest.xid, highest.seq]
+      );
+      const perAccount = new Map<string, bigint>();
+      for (const row of victims.rows) {
+        const seq = BigInt(row.seq);
+        if (seq > (perAccount.get(row.account_id) ?? 0n)) perAccount.set(row.account_id, seq);
+      }
+      for (const [accountId, seq] of perAccount) {
+        await client.query(
+          `INSERT INTO adcp_reporting_change_account_horizon (account_id, pruned_through_seq) VALUES ($1, $2::bigint)
+           ON CONFLICT (account_id) DO UPDATE
+              SET pruned_through_seq = GREATEST(adcp_reporting_change_account_horizon.pruned_through_seq,
+                                                EXCLUDED.pruned_through_seq)`,
+          [accountId, seq.toString()]
+        );
+      }
+      return victims.rows.length;
+    });
+    return { deleted };
   }
 
   /**

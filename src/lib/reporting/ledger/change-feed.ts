@@ -29,16 +29,30 @@ CREATE INDEX IF NOT EXISTS adcp_reporting_changes_deployment
 CREATE INDEX IF NOT EXISTS adcp_reporting_changes_recorded
   ON adcp_reporting_changes (recorded_at, seq);
 
+-- Highest (xid, seq) ever pruned: a deployment-wide cursor below it may have
+-- missed a deleted change and fails closed.
 CREATE TABLE IF NOT EXISTS adcp_reporting_change_horizon (
   singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+  pruned_through_xid xid8 NOT NULL DEFAULT '0',
   pruned_through_seq BIGINT NOT NULL DEFAULT 0
 );
 INSERT INTO adcp_reporting_change_horizon (singleton) VALUES (TRUE) ON CONFLICT DO NOTHING;
 
+-- Highest seq ever pruned per account: an account cursor below it fails closed.
+CREATE TABLE IF NOT EXISTS adcp_reporting_change_account_horizon (
+  account_id TEXT PRIMARY KEY,
+  pruned_through_seq BIGINT NOT NULL
+);
+
+-- Registered consumers hold back pruning in their own feed order: account
+-- consumers by seq within their account, deployment consumers by (xid, seq).
 CREATE TABLE IF NOT EXISTS adcp_reporting_feed_consumers (
   consumer_name TEXT PRIMARY KEY CHECK (consumer_name ~ '^[A-Za-z0-9_.:-]{1,128}$'),
+  account_id TEXT,
+  cursor_xid xid8,
   cursor_seq BIGINT NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  CHECK ((account_id IS NULL) = (cursor_xid IS NOT NULL))
 );
 `.trim();
 

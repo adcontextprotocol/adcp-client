@@ -141,8 +141,15 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
     const firstPage = await store.changesAfter({ account_id: accountId, limit: 1 });
     await pool.query(`UPDATE adcp_reporting_changes SET recorded_at = recorded_at - INTERVAL '40 days'`);
     await store.saveFeedConsumerCursor('warehouse-sink', firstPage.cursor);
-    const held = await store.pruneChanges({ changeRetentionDays: 30 });
-    assert.equal(held.deleted, 1, 'only changes the registered consumer has passed are pruned');
+    await store.pruneChanges({ changeRetentionDays: 30 });
+    const remaining = await pool.query(
+      `SELECT account_id, count(*)::int AS n FROM adcp_reporting_changes GROUP BY account_id`
+    );
+    assert.deepEqual(
+      remaining.rows,
+      [{ account_id: accountId, n: 4 }],
+      'an account consumer holds only the unread changes of its own account'
+    );
     assert.equal(
       (await store.changesAfter({ account_id: accountId, cursor: firstPage.cursor })).records.length,
       4,
@@ -158,5 +165,51 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
     );
     const fresh = await store.changesAfter({ account_id: accountId });
     assert.ok(Array.isArray(fresh.records), 'a consumer without a cursor starts from the oldest retained change');
+  });
+
+  test('a deployment consumer holds an unread change whose seq precedes its cursor', async () => {
+    await pool.query('DELETE FROM adcp_reporting_feed_consumers');
+    const start = await store.changesAfter({ limit: 10_000 });
+    // Change A gets the older transaction but the later sequence value; B the
+    // reverse. The deployment feed returns A before B.
+    const older = await pool.connect();
+    try {
+      await older.query('BEGIN');
+      await older.query('SELECT pg_current_xact_id()');
+      await pool.query(
+        `INSERT INTO adcp_reporting_changes (account_id, record_kind, record_id, obligation_id)
+         VALUES ('acct_b', 'revision', 'rrev_b', 'robl_b')`
+      );
+      await older.query(
+        `INSERT INTO adcp_reporting_changes (account_id, record_kind, record_id, obligation_id)
+         VALUES ('acct_a', 'revision', 'rrev_a', 'robl_a')`
+      );
+      await older.query('COMMIT');
+    } finally {
+      older.release();
+    }
+    const firstRead = await store.changesAfter({ cursor: start.cursor, limit: 1 });
+    assert.deepEqual(
+      firstRead.records.map(record => record.record_id),
+      ['rrev_a']
+    );
+    await store.saveFeedConsumerCursor('deployment-sink', firstRead.cursor);
+    await pool.query(`UPDATE adcp_reporting_changes SET recorded_at = recorded_at - INTERVAL '40 days'`);
+    await store.pruneChanges({ changeRetentionDays: 30 });
+    const resumed = await store.changesAfter({ cursor: firstRead.cursor });
+    assert.deepEqual(
+      resumed.records.map(record => record.record_id),
+      ['rrev_b'],
+      'the unread lower-sequence change survives pruning'
+    );
+
+    await store.saveFeedConsumerCursor('deployment-sink', resumed.cursor);
+    await store.pruneChanges({ changeRetentionDays: 30 });
+    await assert.rejects(
+      () => store.changesAfter({ cursor: start.cursor }),
+      ledger.ReportingChangeCursorExpiredError,
+      'a deployment cursor that missed a pruned change fails closed'
+    );
+    assert.deepEqual((await store.changesAfter({ cursor: resumed.cursor })).records, []);
   });
 });
