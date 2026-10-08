@@ -14,3 +14,4 @@ export * from './notification-activity';
 export * from './row-encoding';
 export * from './row-storage-migration';
 export * from './row-storage';
+export * from './row-storage-object';
