@@ -3449,6 +3449,91 @@ test('failed completion handler retains the checkpoint and retries finalization 
   }
 });
 
+for (const mode of ['skip', 'isolate']) {
+  test(`${mode} completion handler failures finalize durable results and replay without redispatch`, async () => {
+    const originalCallTool = ProtocolClient.callTool;
+    const storage = new MemoryStorage({ autoCleanup: false });
+    const operationId = `${mode}-handler-operation`;
+    const token = testDurableToken(`${mode}-handler-token`);
+    const sellerWorkId = `${mode}-handler-seller-task`;
+    const now = Date.now();
+    await storeDeferredState(
+      storage,
+      token,
+      {
+        continuationVersion: `${mode}-handler-version`,
+        taskId: operationId,
+        a2aTaskId: `${mode}-handler-a2a-task`,
+        serverVersion: 'v3',
+        agentId: agent.id,
+        taskName: 'create_media_buy',
+        params: {},
+        messages: [],
+        clientContext: {
+          kind: 'single-agent',
+          taskType: 'create_media_buy',
+          handlerName: 'onCreateMediaBuyStatusChange',
+          canonical: false,
+          productPolicyRequest: {},
+          ...(mode === 'skip' && { skipStatusHandlers: true }),
+        },
+        settlementOperationId: operationId,
+        settlementServerTaskId: sellerWorkId,
+        createdAt: now,
+        expiresAt: now + 60_000,
+      },
+      60
+    );
+    let protocolCalls = 0;
+    let handlerCalls = 0;
+    let observerCalls = 0;
+    ProtocolClient.callTool = async () => {
+      protocolCalls += 1;
+      return { status: 'completed', task_id: sellerWorkId, media_buy_id: `${mode}-handler-buy`, packages: [] };
+    };
+    try {
+      const client = new SingleAgentClient(agent, {
+        deferredStorage: storage,
+        validateFeatures: false,
+        validation: { requests: 'off', responses: 'off' },
+        isolateStatusHandlerErrors: mode === 'isolate',
+        handlers: {
+          onCreateMediaBuyStatusChange: () => {
+            handlerCalls += 1;
+            throw new Error('local post-processing failed');
+          },
+        },
+        onStatusHandlerError: () => {
+          observerCalls += 1;
+        },
+      });
+      client.ensureCanonicalUrlResolved = async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' });
+      client.registerDurableSettlementRecovery(async (_operationId, observation) => ({
+        settled: true,
+        status: 'completed',
+        result: observation.result,
+      }));
+      const completed = await client.resumeDeferredTask(token, { approved: true });
+      assert.equal(completed.status, 'completed');
+      assert.equal(completed.data.media_buy_id, `${mode}-handler-buy`);
+      const stored = await storage.get(token);
+      assert.equal(stored.settlementFinalizedResult.status, 'completed');
+      assert.equal(stored.settlementFinalizationLease, undefined);
+      const replay = await client.resumeDeferredTask(token, { approved: true });
+      assert.deepEqual(replay.data, completed.data);
+      assert.deepEqual(replay.metadata, completed.metadata);
+      assert.deepEqual(replay.debug_logs, completed.debug_logs);
+      assert.deepEqual(replay.conversation, completed.conversation);
+      assert.equal(protocolCalls, 1);
+      assert.equal(handlerCalls, mode === 'skip' ? 0 : 1);
+      assert.equal(observerCalls, mode === 'skip' ? 0 : 1);
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+      storage.destroy();
+    }
+  });
+}
+
 test('an active terminal checkpoint lease excludes concurrent clients', async () => {
   const storage = new MemoryStorage({ autoCleanup: false });
   const token = testDurableToken('concurrent-finalizer-token');

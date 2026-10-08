@@ -57,6 +57,7 @@ interface TransportOptions {
 }
 
 interface TaskOptions {
+  skipStatusHandlers?: boolean; // Skip inline completion handlers, including continuations
   timeout?: number;             // Absolute whole-task deadline
   signal?: AbortSignal;         // Caller cancellation
   // Direct A2A mutation route, bound to authenticated principal + account scope.

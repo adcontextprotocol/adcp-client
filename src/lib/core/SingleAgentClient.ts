@@ -571,6 +571,7 @@ interface DeferredClientFinalizationContext {
   readonly routingSnapshot?: CanonicalCreativeRoutingSnapshot;
   readonly optionTaskId?: string;
   readonly optionContextId?: string;
+  readonly skipStatusHandlers?: boolean;
   readonly accountRegistry?: {
     scope: string;
     refs?: AccountReference[];
@@ -593,7 +594,8 @@ function isDeferredClientFinalizationContext(value: unknown): value is DeferredC
     (context.serverVersion === undefined || context.serverVersion === 'v2' || context.serverVersion === 'v3') &&
     (context.serverVersionSynthetic === undefined || typeof context.serverVersionSynthetic === 'boolean') &&
     (context.projectionCatalogs === undefined || Array.isArray(context.projectionCatalogs)) &&
-    (context.handlerName === undefined || typeof context.handlerName === 'string')
+    (context.handlerName === undefined || typeof context.handlerName === 'string') &&
+    (context.skipStatusHandlers === undefined || typeof context.skipStatusHandlers === 'boolean')
   );
 }
 
@@ -1350,6 +1352,12 @@ const DURABLE_SETTLEMENT_TERMINAL_STATUSES = new Set<import('./ConversationTypes
 // normalizeWebhookPayload), so its omission is non-fatal for dispatch.
 const MCP_WEBHOOK_REQUIRED_FIELDS = ['idempotency_key', 'task_id', 'task_type', 'status', 'timestamp'] as const;
 
+/** Context for an isolated inline completion status-handler failure. */
+export interface StatusHandlerErrorContext {
+  handlerName: keyof AsyncHandlerConfig;
+  metadata: WebhookMetadata;
+}
+
 /**
  * Configuration for SingleAgentClient (and multi-agent client)
  */
@@ -1428,8 +1436,21 @@ export interface SingleAgentClientConfig extends ConversationConfig {
    * For at-least-once webhook delivery, set `handlers.webhookDedup` to
    * drop duplicate retries by `idempotency_key`. See
    * `docs/guides/PUSH-NOTIFICATION-CONFIG.md#deduplication`.
+   * For per-call skipping and inline error isolation, see
+   * `docs/guides/PUSH-NOTIFICATION-CONFIG.md#inline-completion-handlers`.
    */
   handlers?: AsyncHandlerConfig;
+  /**
+   * Return successful completed results even if an inline status handler throws.
+   * Defaults to false, preserving handler rejection and durable finalization retry.
+   * Does not change webhook error handling or cancellation behavior.
+   */
+  isolateStatusHandlerErrors?: boolean;
+  /**
+   * Reports inline status-handler errors when isolateStatusHandlerErrors is true.
+   * Errors thrown by this observer are recorded as warnings and do not reject the task.
+   */
+  onStatusHandlerError?: (error: unknown, context: StatusHandlerErrorContext) => void | Promise<void>;
   /** Select legacy HMAC-SHA256 push verification. Omit to use RFC 9421. */
   webhookSecret?: string;
   /** Durable provenance for outbound push registrations. Defaults to process-local memory. */
@@ -5025,6 +5046,9 @@ export class SingleAgentClient {
       ...(routingSnapshot !== undefined && { routingSnapshot }),
       ...(effectiveOptions?.taskId !== undefined && { optionTaskId: effectiveOptions.taskId }),
       ...(effectiveOptions?.contextId !== undefined && { optionContextId: effectiveOptions.contextId }),
+      ...(effectiveOptions?.skipStatusHandlers !== undefined && {
+        skipStatusHandlers: effectiveOptions.skipStatusHandlers,
+      }),
     };
     let result = await canonicalCreativeExecutionStorage.run(
       {
@@ -5180,6 +5204,7 @@ export class SingleAgentClient {
       ...(options ?? {}),
       ...(context.optionTaskId !== undefined && { taskId: context.optionTaskId }),
       ...(context.optionContextId !== undefined && { contextId: context.optionContextId }),
+      ...(context.skipStatusHandlers !== undefined && { skipStatusHandlers: context.skipStatusHandlers }),
     };
     const rawDeferredResume = result.deferred?.resume;
     const rawSubmittedWaitForCompletion = result.submitted?.waitForCompletion;
@@ -5286,13 +5311,14 @@ export class SingleAgentClient {
     handlerName: keyof AsyncHandlerConfig,
     options?: TaskOptions
   ): Promise<void> {
-    if (result.status !== 'completed' || !result.success || !this.asyncHandler) return;
+    if (options?.skipStatusHandlers === true || result.status !== 'completed' || !result.success || !this.asyncHandler)
+      return;
     const handler = this.config.handlers?.[handlerName] as
-      | ((data: unknown, metadata: Record<string, unknown>) => void | Promise<void>)
+      | ((data: unknown, metadata: WebhookMetadata) => void | Promise<void>)
       | undefined;
     if (!handler) return;
     throwIfAborted(options?.signal);
-    await handler(result.data, {
+    const metadata: WebhookMetadata = {
       operation_id: options?.contextId || 'sync',
       context_id: options?.contextId,
       task_id: result.metadata.taskId,
@@ -5300,7 +5326,30 @@ export class SingleAgentClient {
       task_type: taskType,
       status: result.status,
       timestamp: new Date().toISOString(),
-    });
+    };
+    try {
+      await handler(result.data, metadata);
+    } catch (error) {
+      if (this.config.isolateStatusHandlerErrors !== true) throw error;
+      throwIfAborted(options?.signal);
+      result.debug_logs = [
+        ...(result.debug_logs ?? []),
+        {
+          level: 'warn',
+          timestamp: new Date().toISOString(),
+          message: 'Inline status handler failed. The seller operation completed; reconcile local post-processing.',
+        },
+      ];
+      try {
+        await this.config.onStatusHandlerError?.(error, { handlerName, metadata });
+      } catch {
+        result.debug_logs.push({
+          level: 'warn',
+          timestamp: new Date().toISOString(),
+          message: 'onStatusHandlerError observer failed. The seller operation completed.',
+        });
+      }
+    }
     throwIfAborted(options?.signal);
   }
 
@@ -8432,6 +8481,9 @@ export class SingleAgentClient {
         accountRegistry: this.accountRegistryContext(taskName, normalizedParams, effectiveOptions),
         ...(effectiveOptions?.taskId !== undefined && { optionTaskId: effectiveOptions.taskId }),
         ...(effectiveOptions?.contextId !== undefined && { optionContextId: effectiveOptions.contextId }),
+        ...(effectiveOptions?.skipStatusHandlers !== undefined && {
+          skipStatusHandlers: effectiveOptions.skipStatusHandlers,
+        }),
       };
       let result = await this.executor.executeTask<T>(
         agent,
