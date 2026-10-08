@@ -1502,6 +1502,16 @@ export class AgentClient {
     return this.client.getCapabilityEvidenceScope();
   }
 
+  /** Drop this client's discovery evidence and its shared `discoveryCache` entry. */
+  invalidateDiscoveryCache(options?: Pick<TaskOptions, 'transport'>): Promise<void> {
+    return this.client.invalidateDiscoveryCache(options);
+  }
+
+  /** Pre-seed the shared `discoveryCache` so peer clients skip discovery within the TTL. */
+  primeDiscoveryCache(seed: import('./SingleAgentClient').AgentDiscoverySeed): Promise<boolean> {
+    return this.client.primeDiscoveryCache(seed);
+  }
+
   /** Install fresh capability evidence without making a redundant probe. */
   primeCapabilities(snapshot: import('./SingleAgentClient').CapabilityEvidenceSnapshot): boolean {
     return this.client.primeCapabilities(snapshot);

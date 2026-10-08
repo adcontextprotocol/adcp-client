@@ -34,6 +34,19 @@ import {
   registerMCPConnectionScopePending,
 } from './mcp-scope';
 import { terminateSessionBestEffort } from './session-termination';
+import {
+  applyMCPCallHeaders,
+  closeWhenIdle,
+  linkedCallSignal,
+  joinPendingConnection,
+  RETRY_CONNECT,
+  requestTimeoutFor,
+  runCallPhase,
+  runWithMCPCallContext,
+  splitConnectionHeaders,
+  type MCPCallContext,
+  trackConnectionUse,
+} from './mcp-call-context';
 import { createAgentTransportFetch } from '../net/agent-transport-fetch';
 
 // Re-export for convenience
@@ -55,9 +68,11 @@ type CallToolResponse = {
  * Uses LRU eviction: cache hits delete-and-re-insert the entry so that
  * Map iteration order reflects most-recent access.
  *
- * Caller-defined trace headers are refreshed per request and excluded from the
- * key. Other headers, scoped fetchers, and AbortSignals remain isolated by
- * value or identity.
+ * Correlation headers (`traceparent`, `x-request-id`, ...), the caller's
+ * AbortSignal and the per-call timeout are excluded from the key and applied per
+ * call through the MCP call context. Credentials, other headers, signing
+ * identity, scoped fetchers and transport policy remain isolated by value or
+ * identity.
  *
  * Note: This is a process-global singleton. Not suitable for multi-tenant
  * server use where different tenants share a process.
@@ -69,11 +84,9 @@ const pendingOAuthConnections = new Map<string, Promise<MCPClient>>();
 const streamableTransports = new WeakMap<MCPClient, StreamableHTTPClientTransport>();
 const oauthProviderIds = new WeakMap<OAuthClientProvider, string>();
 const transportFetchFnIds = new WeakMap<typeof fetch, string>();
-const transportSignalIds = new WeakMap<AbortSignal, string>();
 const MAX_CACHED_CONNECTIONS = 20;
 let nextOAuthProviderId = 0;
 let nextTransportFetchFnId = 0;
-let nextTransportSignalId = 0;
 let connectionGeneration = 0;
 let oauthConnectionGeneration = 0;
 
@@ -133,8 +146,6 @@ function connectionCacheKey(
   signingCacheKey?: string,
   authHeaders?: Record<string, string>,
   transportFetch?: typeof fetch,
-  signal?: AbortSignal,
-  requestTimeoutMs?: number,
   allowPrivateIp?: boolean
 ): string {
   const parts = [agentUrl];
@@ -144,8 +155,6 @@ function connectionCacheKey(
   if (headersKey) parts.push(`headers:${headersKey}`);
   if (signingCacheKey) parts.push(signingCacheKey);
   if (transportFetch) parts.push(`fetch:${getTransportFetchFnDisambiguator(transportFetch)}`);
-  if (signal) parts.push(`signal:${getTransportSignalDisambiguator(signal)}`);
-  if (requestTimeoutMs !== undefined) parts.push(`timeout:${requestTimeoutMs}`);
   if (allowPrivateIp !== undefined) parts.push(`allow-private-ip:${allowPrivateIp}`);
   const scopeKey = currentMCPConnectionScopeKey();
   if (scopeKey) parts.push(scopeKey);
@@ -183,22 +192,23 @@ function extractAuthHeader(headers?: Record<string, string>): string | undefined
 }
 
 function headersCacheDisambiguator(headers?: Record<string, string>): string | undefined {
-  const entries = Object.entries(headers ?? {})
-    .filter(([key]) => {
-      const lower = key.toLowerCase();
-      return lower !== 'traceparent' && lower !== 'tracestate' && lower !== 'baggage';
-    })
+  const entries = Object.entries(splitConnectionHeaders(headers).identity)
     .map(([key, value]) => [key.toLowerCase(), value] as const)
     .sort(([a], [b]) => a.localeCompare(b));
   return entries.length > 0 ? cacheDisambiguator(JSON.stringify(entries)) : undefined;
 }
 
-function withPerRequestTraceHeaders(fetchImpl: typeof fetch): typeof fetch {
+function withPerRequestTraceHeaders(fetchImpl: typeof fetch, directDefaults?: Record<string, string>): typeof fetch {
   return (input, init) => {
     const headers = new Headers(input instanceof Request ? input.headers : undefined);
     new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
-    for (const [key, value] of Object.entries(injectTraceHeaders())) headers.set(key, value);
-    return fetchImpl(input, { ...init, headers });
+    applyMCPCallHeaders(headers, directDefaults);
+    // Ambient trace context is a default: an explicit caller header wins.
+    // An explicit traceparent names the trace family; ambient tracestate/baggage
+    // from a different family must not ride along with it.
+    if (headers.has('traceparent')) return fetchImpl(input, { ...init, headers, ...linkedCallSignal(init) });
+    for (const [key, value] of Object.entries(injectTraceHeaders())) if (!headers.has(key)) headers.set(key, value);
+    return fetchImpl(input, { ...init, headers, ...linkedCallSignal(init) });
   };
 }
 
@@ -221,8 +231,9 @@ function evictLeastRecentlyUsed(): void {
   if (!lruKey) return;
   const oldClient = connectionCache.get(lruKey);
   connectionCache.delete(lruKey);
-  // Fire-and-forget: eviction is on the hot path; close is best-effort
-  if (oldClient) void closeMCPClient(oldClient).catch(() => {});
+  // Fire-and-forget: eviction is on the hot path; close is best-effort. An
+  // in-flight call keeps its session until it finishes.
+  if (oldClient) void closeWhenIdle(oldClient, () => closeMCPClient(oldClient)).catch(() => {});
 }
 
 function evictLeastRecentlyUsedOAuth(): void {
@@ -231,7 +242,7 @@ function evictLeastRecentlyUsedOAuth(): void {
   if (!lruKey) return;
   const oldClient = oauthConnectionCache.get(lruKey);
   oauthConnectionCache.delete(lruKey);
-  if (oldClient) void closeMCPClient(oldClient).catch(() => {});
+  if (oldClient) void closeWhenIdle(oldClient, () => closeMCPClient(oldClient)).catch(() => {});
 }
 
 /**
@@ -298,35 +309,41 @@ async function getOrCreateConnection(
   transportFetch?: typeof fetch,
   requestOptions: { signal?: AbortSignal; requestTimeoutMs?: number; allowPrivateIp?: boolean } = {}
 ): Promise<MCPClient> {
-  const cached = getCachedConnection(cacheKey);
-  if (cached) return cached;
+  for (let attempt = 0; ; attempt++) {
+    const cached = getCachedConnection(cacheKey);
+    if (cached) return cached;
 
-  const pending = pendingConnections.get(cacheKey);
-  if (pending) return pending;
+    const pending = pendingConnections.get(cacheKey);
+    if (pending) {
+      const joined = await joinPendingConnection(pending, requestOptions, attempt);
+      if (joined === RETRY_CONNECT) continue;
+      return joined;
+    }
 
-  const generation = connectionGeneration;
-  const promise = connectMCPWithFallback(baseUrl, authHeaders, debugLogs, label, transportFetch, requestOptions)
-    .then(async client => {
-      if (generation !== connectionGeneration) {
-        await closeMCPClient(client).catch(() => {});
-        throw new Error(`MCP ${label} completed after connection teardown`);
-      }
-      connectionCache.set(cacheKey, client);
-      registerMCPConnectionScopeCleanup('legacy', cacheKey, async () => {
-        if (connectionCache.get(cacheKey) !== client) return;
-        connectionCache.delete(cacheKey);
-        await closeMCPClient(client);
+    const generation = connectionGeneration;
+    const promise = connectMCPWithFallback(baseUrl, authHeaders, debugLogs, label, transportFetch, requestOptions)
+      .then(async client => {
+        if (generation !== connectionGeneration) {
+          await closeMCPClient(client).catch(() => {});
+          throw new Error(`MCP ${label} completed after connection teardown`);
+        }
+        connectionCache.set(cacheKey, client);
+        registerMCPConnectionScopeCleanup('legacy', cacheKey, async () => {
+          if (connectionCache.get(cacheKey) !== client) return;
+          connectionCache.delete(cacheKey);
+          await closeMCPClient(client);
+        });
+        evictLeastRecentlyUsed();
+        return client;
+      })
+      .finally(() => {
+        if (pendingConnections.get(cacheKey) === promise) pendingConnections.delete(cacheKey);
       });
-      evictLeastRecentlyUsed();
-      return client;
-    })
-    .finally(() => {
-      if (pendingConnections.get(cacheKey) === promise) pendingConnections.delete(cacheKey);
-    });
 
-  pendingConnections.set(cacheKey, promise);
-  registerMCPConnectionScopePending(promise);
-  return promise;
+    pendingConnections.set(cacheKey, promise);
+    registerMCPConnectionScopePending(promise);
+    return promise;
+  }
 }
 
 function getOAuthProviderDisambiguator(authProvider: OAuthClientProvider): string {
@@ -347,15 +364,6 @@ function getTransportFetchFnDisambiguator(fetchFn: typeof fetch): string {
   return id;
 }
 
-function getTransportSignalDisambiguator(signal: AbortSignal): string {
-  let id = transportSignalIds.get(signal);
-  if (!id) {
-    id = cacheDisambiguator(`transport-signal:${++nextTransportSignalId}`);
-    transportSignalIds.set(signal, id);
-  }
-  return id;
-}
-
 function customHeadersDisambiguator(customHeaders?: Record<string, string>): string | undefined {
   return headersCacheDisambiguator(customHeaders);
 }
@@ -366,8 +374,6 @@ function oauthConnectionCacheKey(
   signingCacheKey?: string,
   customHeaders?: Record<string, string>,
   fetchFn?: typeof fetch,
-  signal?: AbortSignal,
-  requestTimeoutMs?: number,
   allowPrivateIp?: boolean
 ): string {
   const parts = [`${agentUrl}::oauth:${getOAuthProviderDisambiguator(authProvider)}`];
@@ -375,8 +381,6 @@ function oauthConnectionCacheKey(
   const headersKey = customHeadersDisambiguator(customHeaders);
   if (headersKey) parts.push(`headers:${headersKey}`);
   if (fetchFn) parts.push(`fetch:${getTransportFetchFnDisambiguator(fetchFn)}`);
-  if (signal) parts.push(`signal:${getTransportSignalDisambiguator(signal)}`);
-  if (requestTimeoutMs !== undefined) parts.push(`timeout:${requestTimeoutMs}`);
   if (allowPrivateIp !== undefined) parts.push(`allow-private-ip:${allowPrivateIp}`);
   const scopeKey = currentMCPConnectionScopeKey();
   if (scopeKey) parts.push(scopeKey);
@@ -407,35 +411,41 @@ async function getOrCreateOAuthConnection(
     allowPrivateIp?: boolean;
   }
 ): Promise<MCPClient> {
-  const cached = getCachedOAuthConnection(cacheKey);
-  if (cached) return cached;
+  for (let attempt = 0; ; attempt++) {
+    const cached = getCachedOAuthConnection(cacheKey);
+    if (cached) return cached;
 
-  const pending = pendingOAuthConnections.get(cacheKey);
-  if (pending) return pending;
+    const pending = pendingOAuthConnections.get(cacheKey);
+    if (pending) {
+      const joined = await joinPendingConnection(pending, options, attempt);
+      if (joined === RETRY_CONNECT) continue;
+      return joined;
+    }
 
-  const generation = oauthConnectionGeneration;
-  const promise = connectMCP(options)
-    .then(async ({ client }) => {
-      if (generation !== oauthConnectionGeneration) {
-        await closeMCPClient(client).catch(() => {});
-        throw new Error('OAuth MCP connection completed after connection teardown');
-      }
-      oauthConnectionCache.set(cacheKey, client);
-      registerMCPConnectionScopeCleanup('oauth', cacheKey, async () => {
-        if (oauthConnectionCache.get(cacheKey) !== client) return;
-        oauthConnectionCache.delete(cacheKey);
-        await closeMCPClient(client);
+    const generation = oauthConnectionGeneration;
+    const promise = connectMCP(options)
+      .then(async ({ client }) => {
+        if (generation !== oauthConnectionGeneration) {
+          await closeMCPClient(client).catch(() => {});
+          throw new Error('OAuth MCP connection completed after connection teardown');
+        }
+        oauthConnectionCache.set(cacheKey, client);
+        registerMCPConnectionScopeCleanup('oauth', cacheKey, async () => {
+          if (oauthConnectionCache.get(cacheKey) !== client) return;
+          oauthConnectionCache.delete(cacheKey);
+          await closeMCPClient(client);
+        });
+        evictLeastRecentlyUsedOAuth();
+        return client;
+      })
+      .finally(() => {
+        if (pendingOAuthConnections.get(cacheKey) === promise) pendingOAuthConnections.delete(cacheKey);
       });
-      evictLeastRecentlyUsedOAuth();
-      return client;
-    })
-    .finally(() => {
-      if (pendingOAuthConnections.get(cacheKey) === promise) pendingOAuthConnections.delete(cacheKey);
-    });
 
-  pendingOAuthConnections.set(cacheKey, promise);
-  registerMCPConnectionScopePending(promise);
-  return promise;
+    pendingOAuthConnections.set(cacheKey, promise);
+    registerMCPConnectionScopePending(promise);
+    return promise;
+  }
 }
 
 async function withCachedOAuthConnection<T>(
@@ -453,13 +463,35 @@ async function withCachedOAuthConnection<T>(
   label: string,
   fn: (client: MCPClient) => Promise<T>
 ): Promise<T> {
-  const guardedConnection =
-    options.signal !== undefined || options.requestTimeoutMs !== undefined || options.fetchFn !== undefined;
+  return runWithMCPCallContext(callContextFor(options.customHeaders, options.requestTimeoutMs), () =>
+    withCachedOAuthConnectionImpl(options, label, fn)
+  );
+}
+
+async function withCachedOAuthConnectionImpl<T>(
+  options: {
+    agentUrl: string;
+    authProvider: OAuthClientProvider;
+    debugLogs: DebugLogEntry[];
+    customHeaders?: Record<string, string>;
+    signingContext?: AgentSigningContext;
+    signal?: AbortSignal;
+    requestTimeoutMs?: number;
+    fetchFn?: typeof fetch;
+    allowPrivateIp?: boolean;
+  },
+  label: string,
+  fn: (client: MCPClient) => Promise<T>
+): Promise<T> {
+  // A caller-injected fetch is a per-call network trust boundary, so outside a
+  // caller-owned scope it keeps its own one-shot session. Signal, deadline and
+  // correlation headers only bound the call and never force a new session.
+  const guardedConnection = options.fetchFn !== undefined;
   if (guardedConnection && currentMCPConnectionScopeKey() === undefined) {
     const { client } = await connectMCP(options);
     let succeeded = false;
     try {
-      const result = await fn(client);
+      const result = await runCallPhase(options.signal, () => fn(client));
       succeeded = true;
       return result;
     } finally {
@@ -473,15 +505,13 @@ async function withCachedOAuthConnection<T>(
     options.signingContext?.cacheKey,
     options.customHeaders,
     options.fetchFn,
-    options.signal,
-    options.requestTimeoutMs,
     options.allowPrivateIp
   );
 
   const mcpClient = await getOrCreateOAuthConnection(cacheKey, options);
 
   try {
-    return await fn(mcpClient);
+    return await trackConnectionUse(mcpClient, () => runCallPhase(options.signal, () => fn(mcpClient)));
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     options.debugLogs.push({
@@ -491,52 +521,25 @@ async function withCachedOAuthConnection<T>(
       error,
     });
 
+    // An abort or timeout is scoped to the request that carried it (its HTTP
+    // request is cancelled through the call context), so the shared session
+    // stays available to other callers.
+    if (isAbortOrTimeoutError(error)) throw error;
+
     if (is401Error(error)) {
-      oauthConnectionCache.delete(cacheKey);
-      try {
-        await closeMCPClient(mcpClient, false);
-      } catch {
-        /* ignore */
-      }
       options.debugLogs.push({
         type: 'warning',
         message: `MCP: OAuth authentication issue detected for ${label}; evicted cached connection`,
         timestamp: new Date().toISOString(),
       });
-      throw error;
-    }
-
-    if (isAbortOrTimeoutError(error)) {
-      oauthConnectionCache.delete(cacheKey);
-      try {
-        // Abort the transport immediately. A graceful DELETE here can hang
-        // behind the same failed server and defeat the caller's deadline.
-        await closeMCPClient(mcpClient, false);
-      } catch {
-        /* ignore */
-      }
-      throw error;
     }
 
     // A 404 after a successful initialize means this known session no longer
-    // exists. Reconnecting/replaying the call can create a request storm and
-    // is unsafe for mutations, so evict and surface it as terminal.
-    if (httpStatusOf(error) === 404) {
-      oauthConnectionCache.delete(cacheKey);
-      try {
-        await closeMCPClient(mcpClient, false);
-      } catch {
-        /* ignore */
-      }
-      throw error;
-    }
-
-    oauthConnectionCache.delete(cacheKey);
-    try {
-      await closeMCPClient(mcpClient, false);
-    } catch {
-      /* ignore */
-    }
+    // exists, and any other failure leaves it unusable. Reconnecting/replaying
+    // the call can create a request storm and is unsafe for mutations, so evict
+    // and surface it as terminal. The session is closed once other in-flight
+    // calls on it have finished.
+    await retireLegacyConnection(oauthConnectionCache, cacheKey, mcpClient);
 
     // The request may have reached the seller even when its response was lost.
     // Never replay a tool call implicitly; callers own idempotent retry policy.
@@ -562,18 +565,35 @@ export async function withCachedConnection<T>(
   transportFetch?: typeof fetch,
   requestOptions: { signal?: AbortSignal; requestTimeoutMs?: number; allowPrivateIp?: boolean } = {}
 ): Promise<T> {
+  return runWithMCPCallContext(callContextFor(authHeaders, requestOptions.requestTimeoutMs), () =>
+    withCachedConnectionImpl(agentUrl, authToken, authHeaders, debugLogs, label, fn, transportFetch, requestOptions)
+  );
+}
+
+async function withCachedConnectionImpl<T>(
+  agentUrl: string,
+  authToken: string | undefined,
+  authHeaders: Record<string, string>,
+  debugLogs: DebugLogEntry[],
+  label: string,
+  fn: (client: MCPClient) => Promise<T>,
+  transportFetch: typeof fetch | undefined,
+  requestOptions: { signal?: AbortSignal; requestTimeoutMs?: number; allowPrivateIp?: boolean }
+): Promise<T> {
   const signingContext = signingContextStorage.getStore();
   const baseUrl = new URL(agentUrl);
 
-  const guardedConnection =
-    transportFetch !== undefined ||
-    requestOptions.signal !== undefined ||
-    requestOptions.requestTimeoutMs !== undefined;
+  // A caller-injected fetch is a per-call network trust boundary, so outside a
+  // caller-owned scope it keeps its own one-shot session. Signal, deadline and
+  // correlation headers only bound the call and never force a new session.
+  const guardedConnection = transportFetch !== undefined;
   if (guardedConnection && currentMCPConnectionScopeKey() === undefined) {
     const client = await connectMCPWithFallback(baseUrl, authHeaders, debugLogs, label, transportFetch, requestOptions);
     let succeeded = false;
     try {
-      const result = await withAbortSignal([requestOptions.signal], undefined, () => fn(client));
+      const result = await withAbortSignal([requestOptions.signal], undefined, () =>
+        runCallPhase(requestOptions.signal, () => fn(client))
+      );
       succeeded = true;
       return result;
     } finally {
@@ -587,8 +607,6 @@ export async function withCachedConnection<T>(
     signingContext?.cacheKey,
     authHeaders,
     transportFetch,
-    requestOptions.signal,
-    requestOptions.requestTimeoutMs,
     requestOptions.allowPrivateIp
   );
   const mcpClient = await getOrCreateConnection(
@@ -602,7 +620,7 @@ export async function withCachedConnection<T>(
   );
 
   try {
-    return await fn(mcpClient);
+    return await trackConnectionUse(mcpClient, () => runCallPhase(requestOptions.signal, () => fn(mcpClient)));
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     debugLogs.push({
@@ -612,60 +630,95 @@ export async function withCachedConnection<T>(
       error,
     });
 
+    // An abort or timeout is scoped to the request that carried it: its HTTP
+    // request is cancelled through the call context, and the shared session
+    // stays available to other callers.
+    if (isAbortOrTimeoutError(error)) throw error;
+
     // Auth errors won't be fixed by reconnecting — fail fast
     if (is401Error(error)) {
-      connectionCache.delete(cacheKey);
-      try {
-        await closeMCPClient(mcpClient, false);
-      } catch {
-        /* ignore */
-      }
       debugLogs.push({
         type: 'warning',
         message: `MCP: Authentication issue detected for ${label} - headers may not be reaching server`,
         timestamp: new Date().toISOString(),
       });
-      throw error;
-    }
-
-    if (isAbortOrTimeoutError(error)) {
-      connectionCache.delete(cacheKey);
-      try {
-        // client.close() aborts the v1 transport's in-flight POST. Do not wait
-        // for a best-effort DELETE on the caller's abort/timeout path.
-        await closeMCPClient(mcpClient, false);
-      } catch {
-        /* ignore */
-      }
-      throw error;
-    }
-
-    if (httpStatusOf(error) === 404) {
-      connectionCache.delete(cacheKey);
-      try {
-        await closeMCPClient(mcpClient, false);
-      } catch {
-        /* ignore */
-      }
+    } else if (httpStatusOf(error) === 404) {
       debugLogs.push({
         type: 'warning',
         message: `MCP: Session not found for ${label}; evicted cached connection without retry`,
         timestamp: new Date().toISOString(),
       });
-      throw error;
     }
 
     // A tool request may have reached the seller even when its response was
     // lost. Evict the unusable session, but never replay the call implicitly.
-    connectionCache.delete(cacheKey);
-    try {
-      await closeMCPClient(mcpClient, false);
-    } catch {
-      /* ignore */
-    }
+    // The session is closed once other in-flight calls on it have finished.
+    await retireLegacyConnection(connectionCache, cacheKey, mcpClient);
 
     throw error;
   }
+}
+
+/**
+ * Run `fn` on the current caller-owned scope's shared v1 session, so legacy
+ * discovery (`tools/list`) and the v1 tool calls that follow use one initialized
+ * session. Outside a scope there is nothing to share and this returns
+ * `undefined` without calling `fn`; the caller keeps its one-shot connection.
+ *
+ * @internal Used by SingleAgentClient discovery. Not part of the public API.
+ */
+export async function withScopedLegacyConnection<T>(
+  options: Parameters<typeof connectMCP>[0],
+  label: string,
+  fn: (client: MCPClient) => Promise<T>
+): Promise<{ value: T } | undefined> {
+  if (currentMCPConnectionScopeKey() === undefined) return undefined;
+  const debugLogs = options.debugLogs ?? [];
+  if (options.authProvider) {
+    return {
+      value: await withCachedOAuthConnection({ ...options, authProvider: options.authProvider, debugLogs }, label, fn),
+    };
+  }
+  const authHeaders = createMCPRequestHeaders(options.customHeaders, options.authToken);
+  return {
+    value: await withCachedConnection(
+      options.agentUrl,
+      options.authToken,
+      authHeaders,
+      debugLogs,
+      label,
+      fn,
+      options.fetchFn,
+      {
+        signal: options.signal,
+        requestTimeoutMs: options.requestTimeoutMs,
+        allowPrivateIp: options.allowPrivateIp,
+      }
+    ),
+  };
+}
+
+function callContextFor(
+  headers: Record<string, string> | undefined,
+  requestTimeoutMs: number | undefined
+): MCPCallContext {
+  const { perRequest } = splitConnectionHeaders(headers);
+  const timeoutMs = resolveRequestTimeoutMs(requestTimeoutMs);
+  return {
+    ...(Object.keys(perRequest).length > 0 && { headers: perRequest }),
+    ...(timeoutMs !== undefined && { requestTimeoutMs: timeoutMs }),
+  };
+}
+
+/** Take a failed shared v1 connection out of service; close it once idle. */
+async function retireLegacyConnection(
+  cache: Map<string, MCPClient>,
+  cacheKey: string,
+  client: MCPClient
+): Promise<void> {
+  if (cache.get(cacheKey) === client) cache.delete(cacheKey);
+  // A graceful DELETE can hang behind the same failed server, so skip it.
+  await closeWhenIdle(client, () => closeMCPClient(client, false)).catch(() => {});
 }
 
 function httpStatusOf(error: unknown, depth = 0): number | undefined {
@@ -704,8 +757,10 @@ export interface MCPCallOptions {
   /**
    * Scoped fetch implementation used for MCP requests, OAuth discovery, and token exchange.
    * Direct SDK calls retain isolated one-shot connections. Runner workflows opt into
-   * scoped reuse, where the exact fetch function, cancellation signal, timeout,
-   * credential, and headers all participate in connection identity.
+   * scoped reuse, where the exact fetch function, credential, signing identity,
+   * tenant/routing headers and transport policy participate in connection identity.
+   * The cancellation signal, timeout and correlation headers are per call: they
+   * bound that call's requests and never choose or split the session.
    */
   fetchFn?: typeof fetch;
   /** Explicitly allow private/loopback agent addresses for this connection. */
@@ -776,14 +831,14 @@ async function connectMCPWithFallbackImpl(
     trustedFetchFn: transportFetch,
     allowPrivateIp: requestOptions.allowPrivateIp,
   });
-  const networkFetch = (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-    // Keep cancellation linked for the entire response-body lifetime. A
-    // Promise race around fetch only covers receipt of response headers; MCP
-    // Streamable HTTP can then hold the body open while a tool runs.
-    const signals = [init?.signal ?? undefined].filter((signal): signal is AbortSignal => signal !== undefined);
-    const signal = signals.length === 0 ? undefined : signals.length === 1 ? signals[0] : AbortSignal.any(signals);
-    return rawNetworkFetch(input, { ...init, signal });
-  };
+  const networkFetch = (input: Parameters<typeof fetch>[0], init?: RequestInit) =>
+    // Cancellation stays linked for the entire response-body lifetime, through
+    // `init.signal`: the v1 transport does not forward a request's own signal, so
+    // the active call's signal is linked to that call's POST at the outermost
+    // transport wrapper (aborting one call cancels its HTTP request without
+    // closing a session other calls share). The background GET/SSE listener
+    // never carries a call signal.
+    rawNetworkFetch(input, { ...init, signal: init?.signal ?? undefined });
   const sizeLimited = wrapFetchWithSizeLimit(networkFetch);
   const diagnosticFetch = wrapFetchWithTransportDiagnostics(sizeLimited);
   const baseFetch: typeof fetch = signingContext
@@ -795,8 +850,8 @@ async function connectMCPWithFallbackImpl(
       }) as typeof fetch)
     : diagnosticFetch;
   const transportOptions: StreamableHTTPClientTransportOptions = {
-    requestInit: { headers: authHeaders, redirect: 'manual' },
-    fetch: wrapFetchWithCapture(withPerRequestTraceHeaders(baseFetch)),
+    requestInit: { headers: splitConnectionHeaders(authHeaders).identity, redirect: 'manual' },
+    fetch: wrapFetchWithCapture(withPerRequestTraceHeaders(baseFetch, splitConnectionHeaders(authHeaders).perRequest)),
   };
   let failedClient: MCPClient | undefined;
 
@@ -911,8 +966,10 @@ async function connectMCPWithFallbackImpl(
     try {
       await client.connect(
         new SSEClientTransport(url, {
-          requestInit: { headers: authHeaders, redirect: 'manual' },
-          fetch: wrapFetchWithCapture(withPerRequestTraceHeaders(baseFetch)),
+          requestInit: { headers: splitConnectionHeaders(authHeaders).identity, redirect: 'manual' },
+          fetch: wrapFetchWithCapture(
+            withPerRequestTraceHeaders(baseFetch, splitConnectionHeaders(authHeaders).perRequest)
+          ),
         }),
         mcpRequestOptions
       );
@@ -1191,7 +1248,7 @@ export async function connectMCP(options: {
   const hasNonAcceptCustomHeaders = Object.keys(filteredCustomHeaders ?? {}).some(
     key => key.toLowerCase() !== 'accept'
   );
-  transportOptions.requestInit = { headers: authHeaders, redirect: 'manual' };
+  transportOptions.requestInit = { headers: splitConnectionHeaders(authHeaders).identity, redirect: 'manual' };
   if (authProvider) {
     transportOptions.authProvider = authProvider;
     debugLogs.push({
@@ -1217,16 +1274,23 @@ export async function connectMCP(options: {
   // headers the SDK assembled (including any OAuth-issued Authorization) and
   // decides per outbound request whether to sign. Size-limit sits innermost so
   // the response body is bounded before signing/capture observe it.
-  const requestTimeoutMs = resolveRequestTimeoutMs(configuredRequestTimeoutMs);
   const clientRequestTimeoutMs = resolveClientRequestTimeoutMs(configuredRequestTimeoutMs);
+  const directRequestTimeoutMs = resolveRequestTimeoutMs(configuredRequestTimeoutMs);
   const requestOptions = {
     ...(signal && { signal }),
     ...(clientRequestTimeoutMs !== undefined && { timeout: clientRequestTimeoutMs }),
   };
   const rawNetworkFetch = createAgentTransportFetch(agentUrl, { trustedFetchFn: fetchFn, allowPrivateIp });
   const sizeLimited = wrapFetchWithSizeLimit((input, init) =>
-    withAbortSignal<Response>([init?.signal], requestTimeoutMs, linkedSignal =>
-      rawNetworkFetch(input, { ...init, signal: linkedSignal })
+    // Inside a call context the deadline is that call's; a direct caller who
+    // holds the returned client keeps the timeout configured on connect. The
+    // call's own signal is already linked into `init.signal` for the whole
+    // response body, so aborting one call cancels its streamed POST only.
+    withAbortSignal<Response>([init?.signal], requestTimeoutFor(init, directRequestTimeoutMs), deadline =>
+      rawNetworkFetch(input, {
+        ...init,
+        signal: init?.signal && deadline ? AbortSignal.any([init.signal, deadline]) : (deadline ?? init?.signal),
+      })
     )
   );
   const diagnosticFetch = wrapFetchWithTransportDiagnostics(sizeLimited);
@@ -1238,7 +1302,9 @@ export async function connectMCP(options: {
         adcpVersion: signingContext.adcpVersion,
       }) as typeof fetch)
     : diagnosticFetch;
-  transportOptions.fetch = wrapFetchWithCapture(withPerRequestTraceHeaders(signedFetch));
+  transportOptions.fetch = wrapFetchWithCapture(
+    withPerRequestTraceHeaders(signedFetch, splitConnectionHeaders(authHeaders).perRequest)
+  );
 
   const transport = new StreamableHTTPClientTransport(baseUrl, transportOptions);
 
