@@ -15,6 +15,7 @@ import {
 import {
   REPORTING_LEDGER_MIGRATION,
   REPORTING_MANAGED_DELIVERY_MIGRATION,
+  REPORTING_ROW_STORAGE_MIGRATION,
   PostgresReportingLedgerStore,
   PostgresReportingManagedDeliveryStore,
   createPostgresReportingNotificationActivityRuntime,
@@ -40,6 +41,7 @@ import {
   type PostgresReportingNotificationActivityOptions,
   type PostgresReportingNotificationActivityRuntime,
   type ReportingPgPool,
+  type ReportingRowStorageOptionsV1,
   type ReportingSourceWithReaderV1,
 } from '../ledger';
 import {
@@ -614,6 +616,12 @@ export type CreatePostgresReliableReportingProductionServiceOptionsV1<TCtxMeta =
   publisherScope: string;
   /** Explicit acknowledgement required by the authoritative Core store. */
   acknowledgeIsolatedDatabase: true;
+  /**
+   * Store new revision rows as verified canonical JSONL chunks. Adds
+   * `REPORTING_ROW_STORAGE_MIGRATION` (PostgreSQL 13+) to `setup.migrations`
+   * and probes it before publishing capabilities.
+   */
+  rowStorage?: boolean | ReportingRowStorageOptionsV1;
   notifications: ProductionNotificationOptions;
   managedDelivery: {
     adapter: ReportingManagedDeliveryAdapterV1;
@@ -771,6 +779,7 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
     ...(options.obligatedConsumers ? { obligatedConsumers: options.obligatedConsumers } : {}),
     ...(options.consumerMismatchEscalation ? { consumerMismatchEscalation: options.consumerMismatchEscalation } : {}),
     notificationActivityPort: notificationActivity.port,
+    ...(options.rowStorage ? { rowStorage: options.rowStorage } : {}),
   });
   const managedStore = new PostgresReportingManagedDeliveryStore(options.db, {
     ...options.managedDelivery.store,
@@ -786,12 +795,14 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
   const core = createReliableReportingService(coreOptions);
   const migrations = Object.freeze([
     REPORTING_LEDGER_MIGRATION,
+    ...(options.rowStorage ? [REPORTING_ROW_STORAGE_MIGRATION] : []),
     REPORTING_MANAGED_DELIVERY_MIGRATION,
     ...notifications.migrations.all,
     ...notificationActivity.migrations.all,
     ...webhookActivity.migrations.all,
   ]);
   await options.applyMigrations?.(migrations);
+  await coreStore.readyRowStorage();
   await notifications.probe();
   await notificationActivity.probe();
   await webhookActivity.probe();

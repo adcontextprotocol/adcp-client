@@ -19,6 +19,7 @@ import type {
   ReportingLedgerStore,
 } from './types';
 import { REPORTING_LEDGER_AUTHORITY } from './types';
+import { ReportingRowStorageV1 } from './row-storage';
 import {
   assertReportingObjectWriteScope,
   reportingObjectWritePlanFingerprint,
@@ -606,10 +607,14 @@ export class PostgresReportingManagedDeliveryStore
     };
   }
 
+  /** Read-only access to PostgreSQL row chunks for claim hydration. */
+  private readonly rowStorage: ReportingRowStorageV1;
+
   constructor(
     private readonly pool: ReportingPgPool,
     options: PostgresReportingManagedDeliveryStoreOptions = {}
   ) {
+    this.rowStorage = new ReportingRowStorageV1(pool);
     if (options.statusRetentionDays !== undefined) positiveInteger(options.statusRetentionDays, 'statusRetentionDays');
     if (options.evidenceRetentionDays !== undefined) {
       positiveInteger(options.evidenceRetentionDays, 'evidenceRetentionDays');
@@ -1461,7 +1466,7 @@ export class PostgresReportingManagedDeliveryStore
     account_id?: string;
   }): Promise<ReportingManagedDeliveryLeaseV1 | null> {
     positiveInteger(input.lease_milliseconds, 'lease_milliseconds');
-    return this.transaction(async client => {
+    const lease = await this.transaction(async client => {
       const selected = await client.query<
         QueryRow & {
           materialization_id: string;
@@ -1527,6 +1532,21 @@ export class PostgresReportingManagedDeliveryStore
         expires_at: row.expires_at.toISOString(),
       };
     });
+    if (!lease || Array.isArray(lease.revision.rows)) return lease;
+    // Rows kept as PostgreSQL chunks live in this same schema, so the claim
+    // hydrates and verifies them itself. Rows in an external binding are left
+    // for the worker's `hydrateRevision`, which owns the provider clients.
+    const handle = await this.rowStorage.find(
+      lease.revision.reporting_revision_id,
+      lease.obligation.account.account_id
+    );
+    if (handle?.kind === 'postgres') {
+      lease.revision = {
+        ...lease.revision,
+        rows: await this.rowStorage.readAll(handle, lease.revision.wireRevision.control_totals),
+      };
+    }
+    return lease;
   }
 
   /**

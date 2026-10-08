@@ -203,7 +203,10 @@ export const REPORTING_ROW_STORAGE_TABLES = Object.freeze([
 ] as const);
 
 interface QueryablePoolV1 {
-  query<T = Record<string, unknown>>(text: string, values?: unknown[]): Promise<{ rows: T[] }>;
+  query<Row extends Record<string, unknown> = Record<string, unknown>>(
+    text: string,
+    values?: unknown[]
+  ): Promise<{ rows: Row[] }>;
 }
 
 /**

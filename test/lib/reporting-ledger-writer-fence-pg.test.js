@@ -10,6 +10,10 @@
  *   node --test test/lib/reporting-ledger-writer-fence-pg.test.js
  */
 const assert = require('node:assert/strict');
+const {
+  newReportingLedgerStoreForTest,
+  reportingLedgerMigrationForTest,
+} = require('../helpers/reporting-row-storage-mode.js');
 const { after, before, describe, test } = require('node:test');
 
 const DATABASE_URL = process.env.REPORTING_LEDGER_PG_URL;
@@ -40,8 +44,8 @@ describe('reporting finality writer fence', { skip: !DATABASE_URL && 'PostgreSQL
     const schema = `adcp_reporting_fence_${process.pid}_${suffix}`;
     await bootstrap.query(`CREATE SCHEMA "${schema}"`);
     const pool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${schema}"` });
-    await pool.query(ledger.REPORTING_LEDGER_MIGRATION);
-    const store = new ledger.PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true });
+    await pool.query(reportingLedgerMigrationForTest(ledger));
+    const store = newReportingLedgerStoreForTest(ledger, pool, { acknowledgeIsolatedDatabase: true });
     const deployment = { schema, pool, store };
     deployments.push(deployment);
     return deployment;

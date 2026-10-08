@@ -5,6 +5,10 @@
  *   node --test test/lib/reporting-notification-activity-pg.test.js
  */
 const assert = require('node:assert/strict');
+const {
+  newReportingLedgerStoreForTest,
+  reportingLedgerMigrationForTest,
+} = require('../helpers/reporting-row-storage-mode.js');
 const { createHash, generateKeyPairSync } = require('node:crypto');
 const { after, before, describe, test } = require('node:test');
 
@@ -168,10 +172,10 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       attemptCheckpoint,
       tenantScopeForAccount: accountId => (accountId === 'account-b' ? 'tenant-b' : 'tenant-a'),
     });
-    await pool.query(ledger.REPORTING_LEDGER_MIGRATION);
+    await pool.query(reportingLedgerMigrationForTest(ledger));
     for (const migration of notifications.migrations.all) await pool.query(migration);
     for (const migration of activity.migrations.all) await pool.query(migration);
-    store = new ledger.PostgresReportingLedgerStore(pool, {
+    store = newReportingLedgerStoreForTest(ledger, pool, {
       acknowledgeIsolatedDatabase: true,
       notificationActivityPort: activity.port,
     });
@@ -189,7 +193,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
 
   test('rolls transition, activity, and outbox intent back together before commit', async () => {
     const obligation = await putObligation('rollback', 'account-a');
-    const failingStore = new ledger.PostgresReportingLedgerStore(pool, {
+    const failingStore = newReportingLedgerStoreForTest(ledger, pool, {
       acknowledgeIsolatedDatabase: true,
       notificationActivityPort: {
         async recordTransition(input, transaction) {
@@ -2673,13 +2677,13 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
         attemptCheckpoint: docsAttemptCheckpoint,
         tenantScopeForAccount: () => 'tenant-a',
       });
-      const docsStore = new ledger.PostgresReportingLedgerStore(freshPool, {
+      const docsStore = newReportingLedgerStoreForTest(ledger, freshPool, {
         acknowledgeIsolatedDatabase: true,
         notificationActivityPort: docsActivity.port,
       });
       assert.ok(docsStore);
 
-      await freshPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await freshPool.query(reportingLedgerMigrationForTest(ledger));
       for (const sql of docsNotifications.migrations.all) await freshPool.query(sql);
       for (const sql of docsActivity.migrations.all) await freshPool.query(sql);
       await docsActivity.probe();
@@ -2949,7 +2953,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     });
     const reader = await readerPool.connect();
     try {
-      await migrationPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await migrationPool.query(reportingLedgerMigrationForTest(ledger));
       for (const sql of runtime.migrations.all) await migrationPool.query(sql);
       const before = await activityDefinitions(migrationPool);
 
@@ -3010,13 +3014,13 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
         });
 
       // A is installed fresh and is therefore already current.
-      await poolA.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await poolA.query(reportingLedgerMigrationForTest(ledger));
       for (const sql of runtimeFor(poolA).migrations.all) await poolA.query(sql);
       assert.match(await retentionIndexDefinition(poolA), /abandoned/, 'schema A is current');
 
       // B still carries the earlier shape: projected-only retention index and
       // pre-abandonment constraints.
-      await poolB.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await poolB.query(reportingLedgerMigrationForTest(ledger));
       await poolB.query(`
         CREATE TABLE adcp_reporting_notification_activity (
           namespace TEXT NOT NULL, transition_id TEXT NOT NULL,
@@ -3088,7 +3092,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
 
   test('rechecks legacy pending transitions inside transactional store writes', async () => {
     const obligation = await putObligation('legacy-cutover-race', 'account-a');
-    const legacyStore = new ledger.PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true });
+    const legacyStore = newReportingLedgerStoreForTest(ledger, pool, { acknowledgeIsolatedDatabase: true });
     await legacyStore.appendTransition({
       transitionId: 'rst_legacy_cutover_race',
       reporting_obligation_id: obligation.reporting_obligation_id,
@@ -3518,7 +3522,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       tenantScopeForAccount: () => 'tenant-a',
       maxPendingPerTenant: 1,
     });
-    const cappedStore = new ledger.PostgresReportingLedgerStore(pool, {
+    const cappedStore = newReportingLedgerStoreForTest(ledger, pool, {
       acknowledgeIsolatedDatabase: true,
       notificationActivityPort: cappedActivity.port,
     });
@@ -3908,7 +3912,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       namespace: isolatedNamespace,
       attemptCheckpoint,
       activity: isolated,
-      store: new ledger.PostgresReportingLedgerStore(pool, {
+      store: newReportingLedgerStoreForTest(ledger, pool, {
         acknowledgeIsolatedDatabase: true,
         notificationActivityPort: isolated.port,
       }),
