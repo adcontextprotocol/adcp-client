@@ -89,6 +89,13 @@ export interface CreateBigQueryReportingWarehouseSinkOptionsV1 {
   maxRevisionsPerBatch?: number;
   /** Job labels for cost attribution. */
   labels?: Readonly<Record<string, string>>;
+  /**
+   * Deadline for one load (and its status check). Default 10 minutes. It is
+   * also sent as the job's `jobTimeoutMs`. A run that times out leaves its
+   * plan in place; the next run reuses the same job ID and waits for, or
+   * accepts, the job BigQuery is still running.
+   */
+  loadTimeoutMilliseconds?: number;
 }
 
 export interface BigQueryReportingWarehouseSinkV1 {
@@ -118,6 +125,10 @@ export function createBigQueryReportingWarehouseSinkV1(
   ] as const) {
     if (!DATASET_OR_TABLE.test(value)) throw new TypeError(`BigQuery ${label} is invalid`);
   }
+  const loadTimeout = options.loadTimeoutMilliseconds ?? 600_000;
+  if (!Number.isSafeInteger(loadTimeout) || loadTimeout < 1_000 || loadTimeout > 6 * 3_600_000) {
+    throw new RangeError('loadTimeoutMilliseconds must be between 1 second and 6 hours');
+  }
   const maxRevisions = options.maxRevisionsPerBatch ?? 200;
   if (!Number.isSafeInteger(maxRevisions) || maxRevisions < 1 || maxRevisions > 10_000) {
     throw new RangeError('maxRevisionsPerBatch must be between 1 and 10000');
@@ -140,20 +151,29 @@ export function createBigQueryReportingWarehouseSinkV1(
     try {
       await fs.writeFile(file, lines.length ? lines.join('\n') + '\n' : '');
       try {
-        await dataset.table(tableId).load(file, {
-          jobId,
-          sourceFormat: 'NEWLINE_DELIMITED_JSON',
-          writeDisposition: 'WRITE_APPEND',
-          ...(options.location ? { location: options.location } : {}),
-          ...(options.labels ? { labels: { ...options.labels } } : {}),
-        });
+        await withinDeadline(
+          () =>
+            dataset.table(tableId).load(file, {
+              jobId,
+              sourceFormat: 'NEWLINE_DELIMITED_JSON',
+              writeDisposition: 'WRITE_APPEND',
+              jobTimeoutMs: String(loadTimeout),
+              ...(options.location ? { location: options.location } : {}),
+              ...(options.labels ? { labels: { ...options.labels } } : {}),
+            }),
+          loadTimeout,
+          signal
+        );
       } catch (error) {
         if (!isAlreadyExists(error)) throw error;
-        // The job ran before (a crash after the load, before the cursor
-        // commit). Accept it only if it finished cleanly.
-        const metadata = await options.bigquery
-          .job(jobId, options.location ? { location: options.location } : undefined)
-          .getMetadata();
+        // The job ran before (a crash or timeout after submission, before the
+        // cursor commit). Accept it only if it finished cleanly.
+        const metadata = await withinDeadline(
+          () =>
+            options.bigquery.job(jobId, options.location ? { location: options.location } : undefined).getMetadata(),
+          loadTimeout,
+          signal
+        );
         assertJobSucceeded(metadata);
       }
     } finally {
@@ -407,6 +427,35 @@ function sourceLocalDate(start: string | undefined, timeZone: string | undefined
     return parts;
   } catch {
     return instant.toISOString().slice(0, 10);
+  }
+}
+
+/**
+ * Bound one client call by a deadline and the caller's signal. The official
+ * client takes no abort signal, so an abandoned call may still complete in
+ * the background; deterministic job IDs make that harmless.
+ */
+async function withinDeadline<T>(operation: () => Promise<T>, milliseconds: number, signal?: AbortSignal): Promise<T> {
+  signal?.throwIfAborted();
+  let timer: NodeJS.Timeout | undefined;
+  let onAbort: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      operation(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('BigQuery call exceeded its deadline; the batch will be retried')),
+          milliseconds
+        );
+        if (signal) {
+          onAbort = () => reject(signal.reason ?? new Error('aborted'));
+          signal.addEventListener('abort', onAbort, { once: true });
+        }
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (signal && onAbort) signal.removeEventListener('abort', onAbort);
   }
 }
 

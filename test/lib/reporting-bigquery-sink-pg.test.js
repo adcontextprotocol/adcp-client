@@ -200,6 +200,45 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     assert.ok(![...bigquery.jobs.keys()].some(id => id.endsWith('_rows_a1')));
   });
 
+  test('a hung load times out and the retry waits for the same job instead of loading twice', async () => {
+    const bigquery = fakeBigQuery();
+    const sink = newSink(bigquery, { name: 'hung', loadTimeoutMilliseconds: 1_000 });
+    await sink.runOnce();
+    const rowsBefore = bigquery.tables.get('reporting.revision_rows')?.length ?? 0;
+    await store.commitRevision(
+      fixture.revision('rrev_sink_5', 5, rows.slice(0, 2), { supersedes_reporting_revision_id: 'rrev_sink_4' }),
+      fixture.lease
+    );
+    // The first submission is accepted by BigQuery but its response never arrives.
+    const table = bigquery.dataset('reporting').table;
+    let hung = true;
+    bigquery.dataset = datasetId => {
+      const real = { table };
+      return {
+        table(tableId) {
+          const target = real.table(tableId);
+          return {
+            async load(file, metadata) {
+              if (hung && tableId === 'revision_rows') {
+                hung = false;
+                await target.load(file, metadata);
+                return new Promise(() => {});
+              }
+              return target.load(file, metadata);
+            },
+          };
+        },
+      };
+    };
+    const first = newSink(bigquery, { name: 'hung', loadTimeoutMilliseconds: 1_000 });
+    await assert.rejects(() => first.runOnce(), /exceeded its deadline/);
+    assert.deepEqual(await first.runOnce(), { idle: false, revisions: 1, rows: 2 });
+    assert.equal(bigquery.tables.get('reporting.revision_rows').length, rowsBefore + 2, 'rows landed exactly once');
+    const sentTimeout = [...bigquery.jobs.values()].find(job => job.metadata?.jobTimeoutMs)?.metadata.jobTimeoutMs;
+    assert.equal(sentTimeout, '1000');
+    assert.throws(() => newSink(bigquery, { loadTimeoutMilliseconds: 10 }), /loadTimeoutMilliseconds/);
+  });
+
   test('publishes partitioned table DDL and a current-revision view, and validates identifiers', () => {
     const sink = newSink(fakeBigQuery());
     assert.match(sink.defaultTablesSql, /PARTITION BY period_date/);
