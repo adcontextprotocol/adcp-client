@@ -1799,10 +1799,14 @@ ${managedDueArm}       )
     lease: ReportingLedgerLeaseV1,
     table: 'adcp_reporting_revisions' | 'adcp_reporting_adjustments',
     idColumn: 'revision_id' | 'adjustment_id'
-  ): Promise<{ locators: ReportingRowChunkLocatorV1[]; ownerToken: string } | undefined> {
+  ): Promise<RowSetUploadV1 | undefined> {
     const { input } = prepared;
     const committed = await this.query(`SELECT 1 FROM ${table} WHERE ${idColumn} = $1`, [input.rowSetId]);
     if (committed.rows.length > 0) return undefined;
+    // A header-only revision: identical rows already stored for this
+    // obligation are referenced instead of uploaded again.
+    const shared = await this.rowStorage.findShareable(this.pool, prepared);
+    if (shared) return { locators: shared.locators, sharedFrom: shared.rowSetId };
     const ownerToken = reportingRowWriteIntentIdV1();
     const budget = this.rowStorage.writeDeadlineMilliseconds;
     const intentKey = [prepared.bindingId, input.rowSetId, input.binding.sha256];
@@ -1868,10 +1872,25 @@ ${managedDueArm}       )
   private async writePreparedRowSet(
     client: ReportingLedgerTransactionV1,
     prepared: ReportingPreparedRowSetV1,
-    upload: { locators: ReportingRowChunkLocatorV1[]; ownerToken: string } | undefined
+    upload: RowSetUploadV1 | undefined
   ): Promise<void> {
-    if (prepared.binding.kind === 'object') {
-      if (!upload) throw new ReportingRowStoreError('STATE_UNAVAILABLE', 'object rows were not uploaded');
+    if (prepared.binding.kind === 'postgres') {
+      const shared = await this.rowStorage.findShareable(client, prepared);
+      await this.rowStorage.writeInTransaction(client, prepared, undefined, shared?.rowSetId);
+      return;
+    }
+    if (!upload) throw new ReportingRowStoreError('STATE_UNAVAILABLE', 'object rows were not uploaded');
+    if (upload.sharedFrom) {
+      // The shared row set must still be live when this commit lands; retention
+      // cannot race it because this writer holds the obligation lease.
+      const live = await client.query(
+        `SELECT 1 FROM adcp_reporting_row_sets WHERE row_set_id = $1 AND rows_state = 'live' FOR SHARE`,
+        [upload.sharedFrom]
+      );
+      if (live.rows.length !== 1) {
+        throw new ReportingRowStoreError('STATE_UNAVAILABLE', 'the shared row set is no longer live');
+      }
+    } else {
       const closed = await client.query(
         `DELETE FROM adcp_reporting_row_write_intents
           WHERE row_binding_id = $1 AND row_set_id = $2 AND content_sha256 = $3
@@ -1882,7 +1901,7 @@ ${managedDueArm}       )
         throw new ReportingRowStoreError('STATE_UNAVAILABLE', 'the row upload intent was taken over or swept');
       }
     }
-    await this.rowStorage.writeInTransaction(client, prepared, upload?.locators);
+    await this.rowStorage.writeInTransaction(client, prepared, upload.locators, upload.sharedFrom);
   }
 
   /** Attach verified rows to a revision document whose rows live in row storage. */
@@ -4909,3 +4928,8 @@ function withoutRows<T extends { rows: unknown }>(value: T): Omit<T, 'rows'> {
 function withRows<T extends { rows: Record<string, unknown>[] }>(value: T, rows: Record<string, unknown>[]): T {
   return Array.isArray(value.rows) ? value : { ...value, rows: clone(rows) };
 }
+
+/** Locations for an object-kind row set: freshly uploaded under an intent, or shared from identical rows. */
+type RowSetUploadV1 =
+  | { locators: ReportingRowChunkLocatorV1[]; ownerToken: string; sharedFrom?: undefined }
+  | { locators: ReportingRowChunkLocatorV1[]; sharedFrom: string; ownerToken?: undefined };

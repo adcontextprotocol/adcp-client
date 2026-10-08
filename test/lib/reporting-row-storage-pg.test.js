@@ -242,6 +242,15 @@ describe('PostgresReportingLedgerStore row storage', { skip: !DATABASE_URL && 'P
     const second = revision('rrev_rows_2', 2, rows, { supersedes_reporting_revision_id: 'rrev_rows_1' });
     assert.equal((await store.commitRevision(second, lease)).inserted, true);
     assert.equal(await count('adcp_reporting_chunk_bodies'), bodiesBefore);
+    assert.equal(
+      (
+        await pool.query(
+          `SELECT rows_shared_from_row_set_id AS shared FROM adcp_reporting_row_sets WHERE row_set_id = 'rrev_rows_2'`
+        )
+      ).rows[0].shared,
+      'rrev_rows_1',
+      'a header-only revision records the row set it repeats'
+    );
     assert.deepEqual((await store.getRevision('rrev_rows_2', request.account.account_id)).rows, rows);
   });
 
