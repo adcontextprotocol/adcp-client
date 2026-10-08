@@ -452,6 +452,38 @@ const s3 = createS3ReportingRowObjectProviderV1({
   `s3:GetBucketPolicyStatus` is optional. For stores without flexible
   checksums, construct the client with `requestChecksumCalculation: 'WHEN_REQUIRED'`.
 
+**Azure Blob Storage** (`@adcp/sdk/reporting/azure`, optional peer
+`@azure/storage-blob`):
+
+```ts
+import { DefaultAzureCredential } from '@azure/identity';
+import { BlobServiceClient } from '@azure/storage-blob';
+import { createAzureBlobReportingRowObjectProviderV1 } from '@adcp/sdk/reporting/azure';
+
+const azure = createAzureBlobReportingRowObjectProviderV1({
+  client: new BlobServiceClient('https://acmerows.blob.core.windows.net', new DefaultAzureCredential()),
+});
+// binding: { kind: 'object', provider: 'azure_blob', location: { account: 'acmerows', container: 'adcp-rows' }, prefix: 'adcp-rows' }
+// providers: { azure_blob: azure }
+```
+
+- `location` names the storage `account` and `container`; the selected client
+  must belong to that account. The endpoint and credentials come only from
+  the client.
+- Writes are block-blob uploads with `If-None-Match: *`. A 409
+  `BlobAlreadyExists` or 412 adopts the existing blob. The recorded native
+  version is the `versionId` when blob versioning is enabled, else the quoted
+  ETag. Reads and deletes pin it, and only count a response that echoes that
+  exact version. Metadata names are stored as C# identifiers (`adcp_intent`).
+- The probe refuses missing or inaccessible containers and containers with
+  anonymous access. Like S3, it proves create-only writes empirically with a
+  probe blob under the prefix. Lifecycle management policies are account-level
+  and are not visible to the data-plane client, so make sure none can delete
+  blobs under the binding prefix.
+- The client needs read, write and delete on blobs in the container (for
+  example `Storage Blob Data Contributor`), plus permission to delete versions
+  when versioning is enabled.
+
 ### Retention
 
 Retention is period-aligned and opt-in. A period becomes eligible once both its
