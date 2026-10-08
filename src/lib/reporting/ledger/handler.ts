@@ -21,6 +21,7 @@ import {
   projectReportingObligationHealthV1,
 } from './health';
 import { compareReportingInstants } from './instant';
+import { getRevisionMetadataFromStore, readRevisionRowsFromStore } from './revision-metadata';
 import { reportingPeriodSchedule } from './schedule';
 import { ReportingLedgerSnapshotUnavailableError } from './types';
 import type {
@@ -351,9 +352,28 @@ export function createReportingStatusHandler<TContext = unknown>(
         const id = query.reporting_revision_id;
         const inSnapshot = id ? page.snapshot.revisions.some(value => value.reporting_revision_id === id) : false;
         let revision = null;
+        let revisionRows: Record<string, unknown>[] | undefined;
         if (id && inSnapshot) {
           try {
-            revision = await store.getRevision(id, accountId);
+            revision = await getRevisionMetadataFromStore(store, id, accountId);
+            // The status view carries rows inline only while they fit one
+            // bounded read; larger revisions are paged through the exact
+            // delivery read, which is the protocol's row transport.
+            const rowCount = revision?.binding.rowCount ?? 0;
+            if (revision && rowCount <= REPORTING_STATUS_REVISION_VIEW_MAX_ROWS) {
+              const page =
+                rowCount === 0
+                  ? { rows: [], total: 0 }
+                  : await readRevisionRowsFromStore(store, {
+                      reporting_revision_id: id,
+                      account_id: accountId,
+                      offset: 0,
+                      limit: rowCount,
+                      ...(context.signal ? { signal: context.signal } : {}),
+                    });
+              if (!page || page.total !== rowCount) revision = null;
+              else revisionRows = page.rows;
+            }
           } catch (error) {
             if (error instanceof ReportingReadCapacityError) return lookupUnavailable(view);
             throw error;
@@ -386,7 +406,7 @@ export function createReportingStatusHandler<TContext = unknown>(
             revision_content_sha256: revision.wireRevision.revision_content_sha256,
             row_count: revision.binding.rowCount,
           },
-          reporting_rows: revision.rows,
+          ...(revisionRows ? { reporting_rows: revisionRows } : {}),
           adjustments: revisionAdjustments.map(value => value.wireAdjustment),
           ...(consumerId ? { consumer_statuses: (page.consumerStatuses ?? []).map(wireConsumerStatus) } : {}),
           materializations: (page.materializations ?? []).filter(
@@ -512,6 +532,13 @@ export function createReportingStatusHandler<TContext = unknown>(
   };
 }
 
+/**
+ * Largest revision whose rows the `get_reporting_status` `revision` view
+ * returns inline. Larger revisions omit `reporting_rows` there; callers page
+ * them through the exact `get_media_buy_delivery` read.
+ */
+export const REPORTING_STATUS_REVISION_VIEW_MAX_ROWS = 10_000;
+
 /** Exact revision reader for createAdcpServer's getMediaBuyDelivery slot. */
 export function createReportingDeliveryHandler(store: ReportingLedgerStore): ReportingDeliveryHandlerV1 {
   const activeReadsByAccount = new Map<string, number>();
@@ -533,7 +560,7 @@ export function createReportingDeliveryHandler(store: ReportingLedgerStore): Rep
       if (typeof raw.reporting_revision_id !== 'string' || !raw.reporting_revision_id) {
         throw new Error('Ledger delivery reads require reporting_revision_id');
       }
-      const revision = await store.getRevision(raw.reporting_revision_id, accountId);
+      const revision = await getRevisionMetadataFromStore(store, raw.reporting_revision_id, accountId);
       if (!revision) throw new Error('Reporting revision is unavailable');
       const obligation = await store.getObligation(revision.reporting_obligation_id);
       if (!obligation || obligation.account.account_id !== accountId) {
@@ -544,6 +571,7 @@ export function createReportingDeliveryHandler(store: ReportingLedgerStore): Rep
         typeof pagination.max_results === 'number' && Number.isFinite(pagination.max_results)
           ? Math.max(1, Math.min(500, Math.trunc(pagination.max_results)))
           : 100;
+      const totalCount = revision.binding.rowCount;
       let offset = 0;
       if (typeof pagination.cursor === 'string') {
         try {
@@ -556,7 +584,7 @@ export function createReportingDeliveryHandler(store: ReportingLedgerStore): Rep
             typeof cursor.offset !== 'number' ||
             !Number.isSafeInteger(cursor.offset) ||
             cursor.offset < 0 ||
-            cursor.offset >= revision.rows.length
+            cursor.offset >= totalCount
           ) {
             throw new Error('invalid');
           }
@@ -565,9 +593,20 @@ export function createReportingDeliveryHandler(store: ReportingLedgerStore): Rep
           throw new Error('Reporting delivery cursor is invalid');
         }
       }
-      const reportingRows = revision.rows.slice(offset, offset + maxResults);
+      let reportingRows: Record<string, unknown>[] = [];
+      if (totalCount > 0) {
+        const page = await readRevisionRowsFromStore(store, {
+          reporting_revision_id: revision.reporting_revision_id,
+          account_id: accountId,
+          offset,
+          limit: maxResults,
+          ...(context.signal ? { signal: context.signal } : {}),
+        });
+        if (!page || page.total !== totalCount) throw new Error('Reporting revision is unavailable');
+        reportingRows = page.rows;
+      }
       const nextOffset = offset + reportingRows.length;
-      const hasMore = nextOffset < revision.rows.length;
+      const hasMore = nextOffset < totalCount;
       return {
         reporting_period: { start: obligation.period.start, end: obligation.period.end },
         media_buy_deliveries: [],
@@ -588,7 +627,7 @@ export function createReportingDeliveryHandler(store: ReportingLedgerStore): Rep
         errors: [],
         pagination: {
           has_more: hasMore,
-          total_count: revision.rows.length,
+          total_count: totalCount,
           ...(hasMore
             ? {
                 cursor: Buffer.from(
