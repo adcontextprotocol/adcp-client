@@ -34,7 +34,7 @@ test('an existing release is skipped before validating stale checkout metadata o
   let writes = 0;
   await createReleases({
     github: { rest: { repos: { getReleaseByTag: async () => ({}), createRelease: async () => writes++ } } },
-    context: { repo: { owner: 'adcontextprotocol', repo: 'adcp-client' } },
+    context: { repo: { owner: 'adcontextprotocol', repo: 'adcp-client' }, sha: 'release-commit' },
     core: { info: message => info.push(message) },
     publishedPackages: [{ name: '@adcp/sdk', version: '0.0.0' }],
     cwd: path.resolve(__dirname, '../..'),
@@ -64,10 +64,39 @@ test('creates releases for the actual SDK root and wildcard workspaces', async (
     core: { info: () => {} },
     publishedPackages: metadata.map(({ name, version }) => ({ name, version })),
     cwd,
+    npmTag: 'latest',
   });
   assert.deepEqual(
     created.map(release => release.tag_name),
     metadata.map(pkg => `${pkg.name}@${pkg.version}`)
   );
   assert.ok(created.every(release => release.body.length > 0 && Buffer.byteLength(release.body) <= 120_000));
+  assert.ok(created.every(release => release.make_latest === 'true'));
+});
+
+test('maintenance releases retain the current GitHub latest release and tag the publishing commit', async () => {
+  const cwd = path.resolve(__dirname, '../..');
+  const metadata = JSON.parse(readFileSync(path.join(cwd, 'package.json'), 'utf8'));
+  const created = [];
+  await createReleases({
+    github: {
+      rest: {
+        repos: {
+          getReleaseByTag: async () => {
+            throw Object.assign(new Error('Not found'), { status: 404 });
+          },
+          createRelease: async release => created.push(release),
+        },
+      },
+    },
+    context: { repo: { owner: 'adcontextprotocol', repo: 'adcp-client' }, sha: 'maintenance-commit' },
+    core: { info: () => {} },
+    publishedPackages: [{ name: metadata.name, version: metadata.version }],
+    cwd,
+    npmTag: 'sdk-15.2',
+  });
+  assert.equal(created.length, 1);
+  assert.equal(created[0].make_latest, 'false');
+  assert.equal(created[0].target_commitish, 'maintenance-commit');
+  assert.equal(created[0].prerelease, false);
 });

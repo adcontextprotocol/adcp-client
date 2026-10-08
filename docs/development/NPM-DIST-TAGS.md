@@ -9,8 +9,9 @@ dist-tag:
 
 | Tag | SDK line | AdCP line | Published from |
 |---|---|---|---|
-| `latest` | 14.x | 3.2 | `main` |
-| `adcp-3.2` | 14.x | 3.2 (current line) | `main`; moved manually after each release (see below) |
+| `latest` | 15.x | 3.2 | `main` |
+| `sdk-15.2` | 15.2.x | 3.2 | `15.2.x` branch, with `ADCP_NPM_TAG=sdk-15.2` |
+| `adcp-3.2` | 14.x | 3.2 (tag trails the current SDK) | `main`; moved manually after each release (see below) |
 | `adcp-3.1` | 13.x | 3.1 (maintenance line) | `13.x` branch, with `ADCP_NPM_TAG=adcp-3.1` |
 | `adcp-3.0` | 7.11.x | 3.0 | 7.x maintenance releases, with `ADCP_NPM_TAG=adcp-3.0` |
 
@@ -27,7 +28,13 @@ names because it parses them as semver ranges.
 
 ## Release Automation
 
-The release workflow publishes with `npm publish --tag latest` via
+The `15.2.x` release workflow publishes SDK backports under `sdk-15.2`. Limit
+backport changesets to `@adcp/sdk`; other workspace packages keep their own
+release lines. This
+keeps `latest` on the current stable SDK line from `main`. Consumers can install
+an exact version (such as `@adcp/sdk@15.2.2`) or use `@adcp/sdk@sdk-15.2`.
+
+The release workflow on `main` publishes with `npm publish --tag latest` via
 `npm run release`. `latest` intentionally tracks the default stable SDK release,
 not a branch name.
 
@@ -43,7 +50,7 @@ still be repaired manually with `npm dist-tag add`, but normal releases should
 not need a registry token.
 
 The current-line tag is the one exception. A release from `main` publishes with
-`latest`, so OIDC cannot also move `adcp-3.2`. After each 14.x release, a
+`latest`, so OIDC cannot also move `adcp-3.2`. After each current SDK release, a
 maintainer with registry access moves it by hand:
 
 ```bash

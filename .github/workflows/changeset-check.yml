@@ -2,7 +2,7 @@ name: changeset-check
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 15.2.x]
 
 permissions:
   contents: read
@@ -11,23 +11,19 @@ jobs:
   check:
     name: Check for changeset
     runs-on: ubuntu-latest
+    env:
+      CHANGES_BASE_BRANCH: ${{ github.base_ref }}
 
     steps:
-      - name: Skip for release PRs
-        if: github.head_ref == 'changeset-release/main'
-        run: echo "Release PR — changeset not required"
-
       - name: Checkout code
-        if: github.head_ref != 'changeset-release/main'
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Detect release metadata-only change
-        if: github.head_ref != 'changeset-release/main'
         id: release-metadata
         run: |
-          changed_files="$(git diff --name-only origin/main...HEAD)"
+          changed_files="$(git diff --name-only "origin/${CHANGES_BASE_BRANCH}...HEAD")"
           package_changes="$(
             printf '%s\n' "$changed_files" |
               grep -Ev '^(\.changeset/(pre\.json|[^/]+\.md)|CHANGELOG\.md|package(-lock)?\.json|packages/[^/]+/(CHANGELOG\.md|package\.json)|src/lib/version\.ts|docs/(llms\.txt|TYPE-SUMMARY\.md|migration-14\.x-rc-worksheet\.md)|\.github/workflows/(changeset-check|release)\.yml)$' ||
@@ -60,16 +56,16 @@ jobs:
           fi
 
       - name: Setup Node.js
-        if: github.head_ref != 'changeset-release/main' && steps.release-metadata.outputs.skip != 'true'
+        if: steps.release-metadata.outputs.skip != 'true'
         uses: actions/setup-node@v5
         with:
           node-version: '24.x'
           cache: 'npm'
 
       - name: Install dependencies
-        if: github.head_ref != 'changeset-release/main' && steps.release-metadata.outputs.skip != 'true'
+        if: steps.release-metadata.outputs.skip != 'true'
         run: npm ci
 
       - name: Check for changeset
-        if: github.head_ref != 'changeset-release/main' && steps.release-metadata.outputs.skip != 'true'
-        run: npx changeset status --since=origin/main
+        if: steps.release-metadata.outputs.skip != 'true'
+        run: npx changeset status --since="origin/${CHANGES_BASE_BRANCH}"
