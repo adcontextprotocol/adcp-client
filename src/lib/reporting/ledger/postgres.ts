@@ -58,6 +58,7 @@ import { ReportingConsumerStatusConflictError } from './types';
 import type { ReportingConsumerMismatchEscalationV1 } from './types';
 import { moreSevereReportingHealthV1, projectManagedDelivery } from './handler';
 import { reportingCanonicalAdjustmentSha256V1 } from './producer';
+import { ReportingRowStorageV1, ReportingRowStoreError, type ReportingRowStorageOptionsV1 } from './row-storage';
 import { isFrozenCalendarRulesMismatch, reportingPeriodSchedule } from './schedule';
 import {
   normalizeReportingConsumerStatusIdsV1,
@@ -443,6 +444,14 @@ export interface PostgresReportingLedgerStoreOptions {
    * lifecycle transaction. Its tables must be migrated before transitions run.
    */
   notificationActivityPort?: ReportingLedgerNotificationActivityPortV1<ReportingLedgerTransactionV1>;
+  /**
+   * Store new revision and adjustment rows as verified canonical JSONL chunks
+   * (see `REPORTING_ROW_STORAGE_MIGRATION`) instead of inline in the ledger
+   * document. `true` uses a single `postgres` binding. Revisions written
+   * before enabling this keep their inline rows; reads handle both forms
+   * whether or not this option is set.
+   */
+  rowStorage?: boolean | ReportingRowStorageOptionsV1;
 }
 
 export class ReportingLedgerLeaseLostError extends Error {
@@ -509,6 +518,8 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
   private readonly obligatedConsumers: PostgresReportingLedgerStoreOptions['obligatedConsumers'];
   readonly transactionalNotificationActivity: boolean;
   private readonly notificationActivityPort?: ReportingLedgerNotificationActivityPortV1<ReportingLedgerTransactionV1>;
+  private readonly rowStorage: ReportingRowStorageV1;
+  private readonly rowStorageWrites: boolean;
 
   constructor(
     private readonly pool: ReportingPgPool,
@@ -526,6 +537,13 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     this.consumerMismatchEscalation = assertReportingConsumerMismatchEscalation(options.consumerMismatchEscalation);
     this.notificationActivityPort = options.notificationActivityPort;
     this.transactionalNotificationActivity = options.notificationActivityPort !== undefined;
+    this.rowStorage = new ReportingRowStorageV1(pool, typeof options.rowStorage === 'object' ? options.rowStorage : {});
+    this.rowStorageWrites = options.rowStorage !== undefined && options.rowStorage !== false;
+  }
+
+  /** Probe and register row storage when enabled. Safe to call repeatedly. */
+  async readyRowStorage(): Promise<void> {
+    if (this.rowStorageWrites) await this.rowStorage.ready();
   }
 
   async putConfiguration(configuration: ReportingLedgerConfigurationV1) {
@@ -797,7 +815,20 @@ ${managedDueArm}       )
   async commitRevision(revision: ReportingLedgerRevisionV1, lease: ReportingLedgerLeaseV1) {
     assertLeaseTarget(revision.reporting_obligation_id, lease);
     validateRevisionBinding(revision);
-    return this.putImmutable(
+    const prepared = this.rowStorageWrites
+      ? await this.rowStorage.prepare({
+          rowSetId: revision.reporting_revision_id,
+          rowSetKind: 'revision',
+          accountId: lease.obligation.account.account_id,
+          obligationId: revision.reporting_obligation_id,
+          rows: revision.rows,
+          finality: revision.finality,
+          binding: revision.binding,
+          controlTotals: revision.wireRevision.control_totals,
+        })
+      : undefined;
+    const port = this.notificationActivityPort?.recordLedgerChanged ? this.notificationActivityPort : undefined;
+    const result = await this.putImmutable(
       `WITH leased_obligation AS (
          SELECT * FROM adcp_reporting_obligations obligation
           WHERE obligation.obligation_id = $2
@@ -834,7 +865,7 @@ ${managedDueArm}       )
         revision.kind,
         revision.supersedes_reporting_revision_id ?? null,
         revision.binding.sha256,
-        JSON.stringify(revision),
+        JSON.stringify(prepared ? withoutRows(revision) : revision),
         lease.owner,
         lease.generation,
       ],
@@ -849,23 +880,27 @@ ${managedDueArm}       )
         generation: lease.generation,
       },
       revisionLegacyCanonicalDigestReplay,
-      this.notificationActivityPort?.recordLedgerChanged
-        ? (client, committed) =>
-            this.notificationActivityPort!.recordLedgerChanged!(
-              { obligation: lease.obligation, revision: committed },
+      prepared || port
+        ? async (client, committed) => {
+            if (prepared) await this.rowStorage.writeInTransaction(client, prepared);
+            await port?.recordLedgerChanged!(
+              { obligation: lease.obligation, revision: withRows(committed, revision.rows) },
               client
-            )
+            );
+          }
         : undefined
     );
+    return { inserted: result.inserted, value: withRows(result.value, revision.rows) };
   }
 
   async getRevision(id: string, accountId: string): Promise<ReportingLedgerRevisionV1 | null> {
-    return this.one<ReportingLedgerRevisionV1>(
+    const revision = await this.one<ReportingLedgerRevisionV1>(
       `SELECT revision.data FROM adcp_reporting_revisions revision
          JOIN adcp_reporting_obligations obligation ON obligation.obligation_id = revision.obligation_id
         WHERE revision.revision_id = $1 AND obligation.account_id = $2`,
       [id, accountId]
     );
+    return revision ? this.hydrateRevision(revision, accountId) : null;
   }
 
   async getRevisionMetadata(id: string, accountId: string): Promise<ReportingLedgerRevisionMetadataV1 | null> {
@@ -886,14 +921,17 @@ ${managedDueArm}       )
     ) {
       throw new RangeError('Reporting row page bounds are invalid');
     }
-    // Slice inside PostgreSQL so a page never ships the whole revision.
-    const result = await this.query<{ total: number; rows: Record<string, unknown>[] }>(
-      `SELECT jsonb_array_length(revision.data->'rows') AS total,
-              jsonb_path_query_array(
+    // Inline (legacy) rows are sliced inside PostgreSQL so a page never
+    // ships the whole revision; chunked rows are read segment by segment and
+    // verified before release.
+    const result = await this.query<{ inline: boolean; total: number | null; rows: Record<string, unknown>[] | null }>(
+      `SELECT revision.data ? 'rows' AS inline,
+              CASE WHEN revision.data ? 'rows' THEN jsonb_array_length(revision.data->'rows') END AS total,
+              CASE WHEN revision.data ? 'rows' THEN jsonb_path_query_array(
                 revision.data->'rows',
                 '$[$from to $to]',
                 jsonb_build_object('from', $3::bigint, 'to', $3::bigint + $4::bigint - 1)
-              ) AS rows
+              ) END AS rows
          FROM adcp_reporting_revisions revision
          JOIN adcp_reporting_obligations obligation ON obligation.obligation_id = revision.obligation_id
         WHERE revision.revision_id = $1 AND obligation.account_id = $2`,
@@ -901,16 +939,27 @@ ${managedDueArm}       )
     );
     const row = result.rows[0];
     if (!row) return null;
-    return { rows: clone(row.rows), total: Number(row.total) };
+    if (row.inline) return { rows: clone(row.rows ?? []), total: Number(row.total) };
+    const handle = await this.rowStorage.find(input.reporting_revision_id, input.account_id);
+    if (!handle) throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', 'revision rows are not recorded');
+    if (input.offset >= handle.rowCount) return { rows: [], total: handle.rowCount };
+    return {
+      rows: await this.rowStorage.readPage(handle, input.offset, input.limit, input.signal),
+      total: handle.rowCount,
+    };
   }
 
   async listRevisions(obligationId: string): Promise<ReportingLedgerRevisionV1[]> {
-    const result = await this.query<JsonRow<ReportingLedgerRevisionV1>>(
-      `SELECT data FROM adcp_reporting_revisions WHERE obligation_id = $1
-        ORDER BY revision_number, revision_id`,
+    const result = await this.query<JsonRow<ReportingLedgerRevisionV1> & { account_id: string }>(
+      `SELECT revision.data, obligation.account_id FROM adcp_reporting_revisions revision
+         JOIN adcp_reporting_obligations obligation ON obligation.obligation_id = revision.obligation_id
+        WHERE revision.obligation_id = $1
+        ORDER BY revision.revision_number, revision.revision_id`,
       [obligationId]
     );
-    return result.rows.map(row => clone(row.data));
+    const revisions: ReportingLedgerRevisionV1[] = [];
+    for (const row of result.rows) revisions.push(await this.hydrateRevision(clone(row.data), row.account_id));
+    return revisions;
   }
 
   async listRevisionMetadata(obligationId: string, accountId?: string): Promise<ReportingLedgerRevisionMetadataV1[]> {
@@ -927,7 +976,18 @@ ${managedDueArm}       )
   async commitAdjustment(adjustment: ReportingLedgerAdjustmentV1, lease: ReportingLedgerLeaseV1) {
     assertLeaseTarget(adjustment.reporting_obligation_id, lease);
     validateBoundRows(adjustment);
-    return this.putImmutable(
+    const prepared = this.rowStorageWrites
+      ? await this.rowStorage.prepare({
+          rowSetId: adjustment.reporting_adjustment_id,
+          rowSetKind: 'adjustment',
+          accountId: lease.obligation.account.account_id,
+          obligationId: adjustment.reporting_obligation_id,
+          rows: adjustment.rows,
+          binding: adjustment.binding,
+        })
+      : undefined;
+    const port = this.notificationActivityPort?.recordLedgerChanged ? this.notificationActivityPort : undefined;
+    const result = await this.putImmutable(
       `WITH leased_obligation AS (
          SELECT * FROM adcp_reporting_obligations obligation
           WHERE obligation.obligation_id = $2
@@ -958,7 +1018,7 @@ ${managedDueArm}       )
         adjustment.adjusts_reporting_revision_id,
         adjustment.adjustmentNumber,
         adjustment.binding.sha256,
-        JSON.stringify(adjustment),
+        JSON.stringify(prepared ? withoutRows(adjustment) : adjustment),
         lease.owner,
         lease.generation,
       ],
@@ -973,23 +1033,53 @@ ${managedDueArm}       )
         generation: lease.generation,
       },
       adjustmentLegacyCanonicalDigestReplay,
-      this.notificationActivityPort?.recordLedgerChanged
-        ? (client, committed) =>
-            this.notificationActivityPort!.recordLedgerChanged!(
-              { obligation: lease.obligation, adjustment: committed },
+      prepared || port
+        ? async (client, committed) => {
+            if (prepared) await this.rowStorage.writeInTransaction(client, prepared);
+            await port?.recordLedgerChanged!(
+              { obligation: lease.obligation, adjustment: withRows(committed, adjustment.rows) },
               client
-            )
+            );
+          }
         : undefined
     );
+    return { inserted: result.inserted, value: withRows(result.value, adjustment.rows) };
   }
 
   async listAdjustments(obligationId: string): Promise<ReportingLedgerAdjustmentV1[]> {
-    const result = await this.query<JsonRow<ReportingLedgerAdjustmentV1>>(
-      `SELECT data FROM adcp_reporting_adjustments WHERE obligation_id = $1
-        ORDER BY adjustment_number, adjustment_id`,
+    const result = await this.query<JsonRow<ReportingLedgerAdjustmentV1> & { account_id: string }>(
+      `SELECT adjustment.data, obligation.account_id FROM adcp_reporting_adjustments adjustment
+         JOIN adcp_reporting_obligations obligation ON obligation.obligation_id = adjustment.obligation_id
+        WHERE adjustment.obligation_id = $1
+        ORDER BY adjustment.adjustment_number, adjustment.adjustment_id`,
       [obligationId]
     );
-    return result.rows.map(row => clone(row.data));
+    const adjustments: ReportingLedgerAdjustmentV1[] = [];
+    for (const row of result.rows) {
+      const adjustment = clone(row.data);
+      if (Array.isArray(adjustment.rows)) {
+        adjustments.push(adjustment);
+        continue;
+      }
+      const handle = await this.rowStorage.find(adjustment.reporting_adjustment_id, row.account_id);
+      if (!handle) throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', 'adjustment rows are not recorded');
+      adjustments.push({ ...adjustment, rows: await this.rowStorage.readAll(handle) });
+    }
+    return adjustments;
+  }
+
+  /** Attach verified rows to a revision document whose rows live in row storage. */
+  private async hydrateRevision(
+    revision: ReportingLedgerRevisionV1,
+    accountId: string
+  ): Promise<ReportingLedgerRevisionV1> {
+    if (Array.isArray(revision.rows)) return revision;
+    const handle = await this.rowStorage.find(revision.reporting_revision_id, accountId);
+    if (!handle) throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', 'revision rows are not recorded');
+    if (handle.contentSha256 !== revision.binding.sha256 || handle.rowCount !== revision.binding.rowCount) {
+      throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', 'row set does not match the revision binding');
+    }
+    return { ...revision, rows: await this.rowStorage.readAll(handle, revision.wireRevision.control_totals) };
   }
 
   async listAdjustmentMetadata(obligationId: string): Promise<ReportingLedgerAdjustmentMetadataV1[]> {
@@ -3989,4 +4079,14 @@ function clone<T>(value: T): T {
 
 function positiveInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`${name} must be a positive safe integer`);
+}
+
+function withoutRows<T extends { rows: unknown }>(value: T): Omit<T, 'rows'> {
+  const { rows: _rows, ...rest } = value;
+  return rest;
+}
+
+/** Restore rows the caller already holds onto a stored document that omits them. */
+function withRows<T extends { rows: Record<string, unknown>[] }>(value: T, rows: Record<string, unknown>[]): T {
+  return Array.isArray(value.rows) ? value : { ...value, rows: clone(rows) };
 }

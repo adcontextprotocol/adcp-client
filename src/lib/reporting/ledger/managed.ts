@@ -280,6 +280,19 @@ export interface ReportingManagedDeliveryWorkerOptionsV1 {
    */
   authorizationRevocationSeconds?: number;
   account_id?: string;
+  /**
+   * Loads verified rows for a claimed revision whose rows live in row storage
+   * rather than in the ledger document. `createReportingManagedDeliveryRuntime`
+   * supplies one backed by its Core store. PostgreSQL-kind chunks are
+   * hydrated by the managed store's claim itself; a direct caller whose rows
+   * live in an external binding must supply this, or the adapter receives a
+   * revision without rows.
+   */
+  hydrateRevision?: (
+    revision: ReportingManagedDeliveryLeaseV1['revision'],
+    account_id: string,
+    signal: AbortSignal | undefined
+  ) => Promise<ReportingManagedDeliveryLeaseV1['revision']>;
 }
 
 export interface CreateReportingManagedDeliveryRuntimeOptionsV1<
@@ -462,6 +475,15 @@ export async function createReportingManagedDeliveryRuntime<
     ...(syncReportingReceipts ? { syncReportingReceipts } : {}),
     runWorker: workerOptions =>
       runManagedDeliveryWorker(options.store, options.adapter, {
+        ...(typeof options.coreStore.getRevision === 'function'
+          ? {
+              hydrateRevision: async (revision: ReportingLedgerRevisionV1, accountId: string) => {
+                const hydrated = await options.coreStore.getRevision(revision.reporting_revision_id, accountId);
+                if (!hydrated) throw new Error('Reporting revision is unavailable for delivery');
+                return hydrated;
+              },
+            }
+          : {}),
         ...workerOptions,
         minimumResourceRetentionDays: Math.max(
           options.resourceRetentionDays,
@@ -824,6 +846,21 @@ export async function runManagedDeliveryWorker(
     if (!lease) break;
     counts.claimed += 1;
     try {
+      if (!Array.isArray(lease.revision.rows) && options.hydrateRevision) {
+        const hydrated = await options.hydrateRevision(
+          lease.revision,
+          lease.obligation.account.account_id,
+          options.signal
+        );
+        if (
+          hydrated.reporting_revision_id !== lease.revision.reporting_revision_id ||
+          hydrated.binding.sha256 !== lease.revision.binding.sha256 ||
+          !Array.isArray(hydrated.rows)
+        ) {
+          throw new Error('Hydrated reporting revision does not match the claimed revision');
+        }
+        lease.revision = hydrated;
+      }
       const outcome = await withinDeadline(
         signal =>
           adapter.deliver(

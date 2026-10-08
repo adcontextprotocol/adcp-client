@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { reportingLedgerMigrationForTest } = require('./helpers/reporting-row-storage-mode.js');
 const { createHash } = require('node:crypto');
 const { after, before, describe, test } = require('node:test');
 
@@ -21,7 +22,7 @@ describe('reliable reporting lifecycle reference', { skip: !DATABASE_URL && 'Pos
     bootstrap = new Pool({ connectionString: DATABASE_URL });
     await bootstrap.query(`CREATE SCHEMA "${schema}"`);
     pool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${schema}"` });
-    await pool.query(ledger.REPORTING_LEDGER_MIGRATION);
+    await pool.query(reportingLedgerMigrationForTest(ledger));
     reference = createReportingLifecycleReference({ pool });
     request = sourceApi.redactedReportingSourceRequestV1();
   });

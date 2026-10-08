@@ -4,6 +4,10 @@
  * REPORTING_LEDGER_PG_URL=postgres://localhost/test node --test test/lib/reporting-managed-delivery-pg.test.js
  */
 const assert = require('node:assert/strict');
+const {
+  newReportingLedgerStoreForTest,
+  reportingLedgerMigrationForTest,
+} = require('../helpers/reporting-row-storage-mode.js');
 const { createHash } = require('node:crypto');
 const { after, before, describe, test } = require('node:test');
 
@@ -29,10 +33,10 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     bootstrap = new Pool({ connectionString: DATABASE_URL });
     await bootstrap.query(`CREATE SCHEMA "${schema}"`);
     pool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${schema}"` });
-    await pool.query(ledger.REPORTING_LEDGER_MIGRATION);
+    await pool.query(reportingLedgerMigrationForTest(ledger));
     await pool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
     await pool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
-    core = new ledger.PostgresReportingLedgerStore(pool, {
+    core = newReportingLedgerStoreForTest(ledger, pool, {
       acknowledgeIsolatedDatabase: true,
       managedDelivery: true,
     });
@@ -61,7 +65,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       pendingReceipt.periods[0].issues.some(value => value.code === 'RECEIPT_REQUIRED'),
       true
     );
-    const coreOnly = new ledger.PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true });
+    const coreOnly = newReportingLedgerStoreForTest(ledger, pool, { acknowledgeIsolatedDatabase: true });
     await assert.rejects(
       () =>
         ledger.createReportingManagedDeliveryRuntime({
@@ -200,9 +204,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     await bootstrap.query(`CREATE SCHEMA "${fairSchema}"`);
     const fairPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${fairSchema}"` });
     try {
-      await fairPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await fairPool.query(reportingLedgerMigrationForTest(ledger));
       await fairPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
-      const fairCore = new ledger.PostgresReportingLedgerStore(fairPool, {
+      const fairCore = newReportingLedgerStoreForTest(ledger, fairPool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
       });
@@ -988,7 +992,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     // The supported seam: a seller whose authorization layer does know the
     // roster supplies it and gets accurate reconciled transitions. Without it
     // the fold stays conservative forever.
-    const rosterAware = new ledger.PostgresReportingLedgerStore(pool, {
+    const rosterAware = newReportingLedgerStoreForTest(ledger, pool, {
       acknowledgeIsolatedDatabase: true,
       managedDelivery: true,
       obligatedConsumers: async input => {
@@ -1019,7 +1023,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     });
     try {
       let reentrantRows = -1;
-      const serialized = new ledger.PostgresReportingLedgerStore(singleConnection, {
+      const serialized = newReportingLedgerStoreForTest(ledger, singleConnection, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
         obligatedConsumers: async () => {
@@ -1469,9 +1473,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     await bootstrap.query(`CREATE SCHEMA "${failSchema}"`);
     const failPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${failSchema}"` });
     try {
-      await failPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await failPool.query(reportingLedgerMigrationForTest(ledger));
       await failPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
-      const failCore = new ledger.PostgresReportingLedgerStore(failPool, {
+      const failCore = newReportingLedgerStoreForTest(ledger, failPool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
       });
@@ -1480,7 +1484,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       const first = await seedSkewLedgerInto(failCore, failManaged, 'rosterfailone', 'consumer_receipt');
       const second = await seedSkewLedgerInto(failCore, failManaged, 'rosterfailtwo', 'consumer_receipt');
       const seen = [];
-      const rosterStore = new ledger.PostgresReportingLedgerStore(failPool, {
+      const rosterStore = newReportingLedgerStoreForTest(ledger, failPool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
         obligatedConsumers: async input => {
@@ -1560,9 +1564,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     await bootstrap.query(`CREATE SCHEMA "${poisonSchema}"`);
     const poisonPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${poisonSchema}"` });
     try {
-      await poisonPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await poisonPool.query(reportingLedgerMigrationForTest(ledger));
       await poisonPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
-      const poisonCore = new ledger.PostgresReportingLedgerStore(poisonPool, {
+      const poisonCore = newReportingLedgerStoreForTest(ledger, poisonPool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
       });
@@ -1668,7 +1672,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     await bootstrap.query(`CREATE SCHEMA "${atomicSchema}"`);
     const atomicPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${atomicSchema}"` });
     try {
-      await atomicPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await atomicPool.query(reportingLedgerMigrationForTest(ledger));
       // Simulate the two-column registry installed by an earlier RC. The
       // additive migration must upgrade it in place before four-policy use.
       await atomicPool.query(`CREATE TABLE adcp_reporting_managed_policy (
@@ -1686,7 +1690,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
         resourceRetentionDays: 30,
         authorizationRevocationSeconds: 60,
       });
-      const atomicCore = new ledger.PostgresReportingLedgerStore(atomicPool, {
+      const atomicCore = newReportingLedgerStoreForTest(ledger, atomicPool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
       });
@@ -2364,7 +2368,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     };
 
     try {
-      const racing = new ledger.PostgresReportingLedgerStore(interleavingPool, {
+      const racing = newReportingLedgerStoreForTest(ledger, interleavingPool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
       });
@@ -2555,7 +2559,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       options: `-c search_path="${policySchema}"`,
     });
     try {
-      await policyPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await policyPool.query(reportingLedgerMigrationForTest(ledger));
       await policyPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
 
       const first = new ledger.PostgresReportingManagedDeliveryStore(policyPool);
@@ -2567,7 +2571,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
         authorizationRevocationSeconds: 60,
       });
 
-      const policyCore = new ledger.PostgresReportingLedgerStore(policyPool, {
+      const policyCore = newReportingLedgerStoreForTest(ledger, policyPool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
       });
@@ -2653,7 +2657,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       options: `-c search_path="${retentionSchema}"`,
     });
     try {
-      await retentionPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await retentionPool.query(reportingLedgerMigrationForTest(ledger));
       await retentionPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
       // A runtime registers a 90-day status horizon.
       const runtime = new ledger.PostgresReportingManagedDeliveryStore(retentionPool);
@@ -2820,7 +2824,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     const roster = await seedSkewLedger('rosterver', 'consumer_receipt');
     let version = 'v1';
     let reads = 0;
-    const rosterAware = new ledger.PostgresReportingLedgerStore(pool, {
+    const rosterAware = newReportingLedgerStoreForTest(ledger, pool, {
       acknowledgeIsolatedDatabase: true,
       managedDelivery: true,
       obligatedConsumers: async () => {
@@ -2846,7 +2850,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
 
     // A roster with no declared version still moves when its content does.
     let ids = ['https://a.example'];
-    const contentVersioned = new ledger.PostgresReportingLedgerStore(pool, {
+    const contentVersioned = newReportingLedgerStoreForTest(ledger, pool, {
       acknowledgeIsolatedDatabase: true,
       managedDelivery: true,
       obligatedConsumers: async () => ({ ids, complete: true }),
@@ -3093,7 +3097,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     // A roster callback that throws only for the poisoned tenant. Before
     // isolation this aborted the whole sweep at that obligation.
     let healthyReconciled = 0;
-    const sweepStore = new ledger.PostgresReportingLedgerStore(pool, {
+    const sweepStore = newReportingLedgerStoreForTest(ledger, pool, {
       acknowledgeIsolatedDatabase: true,
       managedDelivery: true,
       obligatedConsumers: async input => {
@@ -3153,7 +3157,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       },
       end: async () => {},
     };
-    const store = new ledger.PostgresReportingLedgerStore(flaky, {
+    const store = newReportingLedgerStoreForTest(ledger, flaky, {
       acknowledgeIsolatedDatabase: true,
       managedDelivery: true,
     });
@@ -3196,7 +3200,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       rogue
     );
 
-    const rosterStore = new ledger.PostgresReportingLedgerStore(pool, {
+    const rosterStore = newReportingLedgerStoreForTest(ledger, pool, {
       acknowledgeIsolatedDatabase: true,
       managedDelivery: true,
       obligatedConsumers: async () => ({ ids: ['https://listed.example'], complete: true }),
@@ -3225,7 +3229,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     );
 
     // An incomplete roster is only a hint, so observed principals still count.
-    const hintStore = new ledger.PostgresReportingLedgerStore(pool, {
+    const hintStore = newReportingLedgerStoreForTest(ledger, pool, {
       acknowledgeIsolatedDatabase: true,
       managedDelivery: true,
       obligatedConsumers: async () => ({ ids: ['https://listed.example'], complete: false }),
@@ -3320,7 +3324,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
   test('re-arms a lifecycle reconcile when the external roster version changes', async () => {
     const rearm = await seedSkewLedger('rosterrearm', 'consumer_receipt');
     let version = 'r1';
-    const rosterStore = new ledger.PostgresReportingLedgerStore(pool, {
+    const rosterStore = newReportingLedgerStoreForTest(ledger, pool, {
       acknowledgeIsolatedDatabase: true,
       managedDelivery: true,
       obligatedConsumers: async () => ({ ids: ['https://rearm.example'], complete: true, version }),
@@ -3567,7 +3571,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     );
 
     // A roster naming both consumers: A is settled by its tombstone, B is not.
-    const rosterStore = new ledger.PostgresReportingLedgerStore(pool, {
+    const rosterStore = newReportingLedgerStoreForTest(ledger, pool, {
       acknowledgeIsolatedDatabase: true,
       managedDelivery: true,
       obligatedConsumers: async () => ({
@@ -3598,7 +3602,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
   test('re-arms on a roster change without anyone reconciling first', async () => {
     const autonomous = await seedSkewLedger('rosterauto', 'consumer_receipt');
     let version = 'a1';
-    const rosterStore = new ledger.PostgresReportingLedgerStore(pool, {
+    const rosterStore = newReportingLedgerStoreForTest(ledger, pool, {
       acknowledgeIsolatedDatabase: true,
       managedDelivery: true,
       obligatedConsumers: async () => ({ ids: ['https://auto.example'], complete: true, version }),
@@ -3648,7 +3652,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     const roster = async () => ({ ids: ['https://rostercas.example'], complete: true, version });
     const { Pool } = require('pg');
     const sidePool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${schema}"` });
-    const sideStore = new ledger.PostgresReportingLedgerStore(sidePool, {
+    const sideStore = newReportingLedgerStoreForTest(ledger, sidePool, {
       acknowledgeIsolatedDatabase: true,
       managedDelivery: true,
       obligatedConsumers: roster,
@@ -3693,7 +3697,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     };
 
     try {
-      const rosterStore = new ledger.PostgresReportingLedgerStore(interleavingPool, {
+      const rosterStore = newReportingLedgerStoreForTest(ledger, interleavingPool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
         obligatedConsumers: roster,
@@ -3910,9 +3914,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     await bootstrap.query(`CREATE SCHEMA "${cursorSchema}"`);
     const cursorPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${cursorSchema}"` });
     try {
-      await cursorPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await cursorPool.query(reportingLedgerMigrationForTest(ledger));
       await cursorPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
-      const cursorCore = new ledger.PostgresReportingLedgerStore(cursorPool, {
+      const cursorCore = newReportingLedgerStoreForTest(ledger, cursorPool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
       });
@@ -3924,7 +3928,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
         ids.push(seeded.obligation.reporting_obligation_id);
       }
       const seen = [];
-      const rosterStore = new ledger.PostgresReportingLedgerStore(cursorPool, {
+      const rosterStore = newReportingLedgerStoreForTest(ledger, cursorPool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
         obligatedConsumers: async input => {
@@ -3975,7 +3979,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     let claiming;
     let adopting;
     try {
-      await fencePool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await fencePool.query(reportingLedgerMigrationForTest(ledger));
       await fencePool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
       const pruningStore = new ledger.PostgresReportingManagedDeliveryStore(prunePool, {
         evidenceRetentionDays: 30,
@@ -4325,9 +4329,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     await bootstrap.query(`CREATE SCHEMA "${capSchema}"`);
     const capPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${capSchema}"` });
     try {
-      await capPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await capPool.query(reportingLedgerMigrationForTest(ledger));
       await capPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
-      const capCore = new ledger.PostgresReportingLedgerStore(capPool, {
+      const capCore = newReportingLedgerStoreForTest(ledger, capPool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
       });
@@ -4887,9 +4891,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     const sweepPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${sweepSchema}"` });
     const sidePool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${sweepSchema}"` });
     try {
-      await sweepPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await sweepPool.query(reportingLedgerMigrationForTest(ledger));
       await sweepPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
-      const sweepCore = new ledger.PostgresReportingLedgerStore(sweepPool, {
+      const sweepCore = newReportingLedgerStoreForTest(ledger, sweepPool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
       });
@@ -4967,9 +4971,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     await bootstrap.query(`CREATE SCHEMA "${deepSchema}"`);
     const deepPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${deepSchema}"` });
     try {
-      await deepPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await deepPool.query(reportingLedgerMigrationForTest(ledger));
       await deepPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
-      const deepCore = new ledger.PostgresReportingLedgerStore(deepPool, {
+      const deepCore = newReportingLedgerStoreForTest(ledger, deepPool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
       });
@@ -5099,7 +5103,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     };
 
     try {
-      const racing = new ledger.PostgresReportingLedgerStore(interleavingPool, {
+      const racing = newReportingLedgerStoreForTest(ledger, interleavingPool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
       });
@@ -5314,9 +5318,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     await bootstrap.query(`CREATE SCHEMA "${wideSchema}"`);
     const widePool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${wideSchema}"` });
     try {
-      await widePool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await widePool.query(reportingLedgerMigrationForTest(ledger));
       await widePool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
-      const wideCore = new ledger.PostgresReportingLedgerStore(widePool, {
+      const wideCore = newReportingLedgerStoreForTest(ledger, widePool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
       });
@@ -5432,7 +5436,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
 
     // An authoritative roster, so the verdict turns on the evidence rather
     // than on the conservative unknown-roster fail-safe.
-    const rosterStore = new ledger.PostgresReportingLedgerStore(pool, {
+    const rosterStore = newReportingLedgerStoreForTest(ledger, pool, {
       acknowledgeIsolatedDatabase: true,
       managedDelivery: true,
       obligatedConsumers: async () => ({ ids: [consumerId], complete: true, version: 'h1' }),
@@ -5722,10 +5726,10 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     await bootstrap.query(`CREATE SCHEMA "${guardSchema}"`);
     const guardPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${guardSchema}"` });
     try {
-      await guardPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await guardPool.query(reportingLedgerMigrationForTest(ledger));
       await guardPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
       const wideRoster = Array.from({ length: 10_001 }, (_value, index) => `https://guard-${index}.example`);
-      const guardCore = new ledger.PostgresReportingLedgerStore(guardPool, {
+      const guardCore = newReportingLedgerStoreForTest(ledger, guardPool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
         obligatedConsumers: async () => ({ ids: wideRoster, complete: true }),
@@ -5806,7 +5810,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       // engaged statuses and receipt leaves are capped in the stored
       // projection, but neither cap may truncate the version identity that
       // the immediate CAS read computes again.
-      const incompleteCore = new ledger.PostgresReportingLedgerStore(guardPool, {
+      const incompleteCore = newReportingLedgerStoreForTest(ledger, guardPool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
         obligatedConsumers: async () => ({
@@ -5860,9 +5864,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     await bootstrap.query(`CREATE SCHEMA "${planSchema}"`);
     const planPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${planSchema}"` });
     try {
-      await planPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await planPool.query(reportingLedgerMigrationForTest(ledger));
       await planPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
-      const planCore = new ledger.PostgresReportingLedgerStore(planPool, {
+      const planCore = newReportingLedgerStoreForTest(ledger, planPool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
       });
@@ -5936,7 +5940,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
         },
         end: async () => {},
       };
-      const capturing = new ledger.PostgresReportingLedgerStore(capturingPool, {
+      const capturing = newReportingLedgerStoreForTest(ledger, capturingPool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
         obligatedConsumers: async () => ({ ids: ['https://plan-roster.example'], complete: true, version: 'p1' }),
@@ -6127,7 +6131,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       fast.coreLease
     );
 
-    const rosterStore = new ledger.PostgresReportingLedgerStore(pool, {
+    const rosterStore = newReportingLedgerStoreForTest(ledger, pool, {
       acknowledgeIsolatedDatabase: true,
       managedDelivery: true,
       obligatedConsumers: async () => ({ ids: [consumerId], complete: true, version: 'f1' }),
@@ -6244,7 +6248,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     });
     assert.deepEqual(projection.visibleRevisionIds, [], 'the ledger held no revision at that cutoff');
 
-    const rosterStore = new ledger.PostgresReportingLedgerStore(pool, {
+    const rosterStore = newReportingLedgerStoreForTest(ledger, pool, {
       acknowledgeIsolatedDatabase: true,
       managedDelivery: true,
       obligatedConsumers: async () => ({ ids: [consumerId], complete: true, version: 'e1' }),

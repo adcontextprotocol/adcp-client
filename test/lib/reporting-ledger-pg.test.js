@@ -4,6 +4,10 @@
  * REPORTING_LEDGER_PG_URL=postgres://localhost/test node --test test/lib/reporting-ledger-pg.test.js
  */
 const assert = require('node:assert/strict');
+const {
+  newReportingLedgerStoreForTest,
+  reportingLedgerMigrationForTest,
+} = require('../helpers/reporting-row-storage-mode.js');
 const { createHash } = require('node:crypto');
 const { after, before, describe, test } = require('node:test');
 
@@ -31,9 +35,9 @@ describe('PostgresReportingLedgerStore', { skip: !DATABASE_URL && 'PostgreSQL UR
     bootstrapPool = new Pool({ connectionString: DATABASE_URL });
     await bootstrapPool.query(`CREATE SCHEMA "${schema}"`);
     pool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${schema}"` });
-    await pool.query(ledger.REPORTING_LEDGER_MIGRATION);
-    await pool.query(ledger.REPORTING_LEDGER_MIGRATION);
-    store = new ledger.PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true });
+    await pool.query(reportingLedgerMigrationForTest(ledger));
+    await pool.query(reportingLedgerMigrationForTest(ledger));
+    store = newReportingLedgerStoreForTest(ledger, pool, { acknowledgeIsolatedDatabase: true });
   });
 
   after(async () => {

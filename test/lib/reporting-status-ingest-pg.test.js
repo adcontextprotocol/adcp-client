@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { reportingLedgerMigrationForTest } = require('../helpers/reporting-row-storage-mode.js');
 const { after, before, describe, test } = require('node:test');
 
 const DATABASE_URL = process.env.REPORTING_LEDGER_PG_URL;
@@ -23,7 +24,7 @@ describe('sync_reporting_status ingest', { skip: !DATABASE_URL && 'PostgreSQL UR
     bootstrap = new Pool({ connectionString: DATABASE_URL });
     await bootstrap.query(`CREATE SCHEMA "${schema}"`);
     pool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${schema}"` });
-    await pool.query(ledger.REPORTING_LEDGER_MIGRATION);
+    await pool.query(reportingLedgerMigrationForTest(ledger));
     reference = createReportingLifecycleReference({ pool });
     request = sourceApi.redactedReportingSourceRequestV1();
     const day = 86_400_000;
@@ -1639,7 +1640,7 @@ describe('sync_reporting_status ingest', { skip: !DATABASE_URL && 'PostgreSQL UR
         JSON.stringify({ reporting_status_id: 'fixture-legacy-status-0001' }),
       ]
     );
-    await pool.query(ledger.REPORTING_LEDGER_MIGRATION);
+    await pool.query(reportingLedgerMigrationForTest(ledger));
     const migrated = await pool.query(
       `SELECT account_id, consumer_id, chain_key, semantic_fingerprint
        FROM adcp_reporting_consumer_statuses WHERE consumer_status_id = 'fixture-legacy-status-0001'`

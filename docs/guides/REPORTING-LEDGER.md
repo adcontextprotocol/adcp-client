@@ -272,6 +272,41 @@ Official configurations also pin a `finalityPolicy` (`policyId` plus `source_fin
 
 Every revision stores its rows together with an RFC 8785 JCS SHA-256 binding and exact decimal control totals for requested numeric metrics. A revision number and obligation are immutable. Official revisions are terminal; later source corrections are immutable adjustments bound to the official revision, never superseding revisions. Status snapshots omit row payloads, are capped at 8 MiB, expire after 15 minutes, and keep cursor pages stable over the flat obligation/revision/adjustment union. A periods response returns an opaque `changes_checkpoint`; echo that value verbatim as `changes_after` rather than supplying a timestamp. Account-scoped write/snapshot locks make those checkpoints gap-free for SDK store writes. The default table set is deployment-wide; use a dedicated database/schema and acknowledge that boundary explicitly. `sourceScope` must contain opaque routing identities only—never credentials or bearer tokens—because it is retained with the obligation. Retained resource locations are held to the same rule, and at the seam that persists them rather than only in the worker's pre-flight, because a caller driving `settleMaterialization` directly would otherwise store a presigned location that `get_reporting_status` then publishes. Query and fragment are refused on the raw string rather than on a successful parse, because a relative path carrying a presigning query never parsed as a URL at all; userinfo is refused as a colon-separated pair before the `@`, which is the credential shape, plus any `http(s)` userinfo at all. A blanket `@` rule would refuse `abfss://container@account.dfs.core.windows.net/...` and a Snowflake stage reference, neither of which carries a secret.
 
+## Row storage
+
+By default every revision document carries its rows inline. At pulse cadence
+that keeps bulk report bytes in the transactional database. Opt in to row
+storage to keep only the revision header in the ledger document and store
+rows as verified canonical JSONL chunks (the shared SDK persistence layout,
+adcontextprotocol/adcp#7996):
+
+```ts
+import { REPORTING_ROW_STORAGE_MIGRATION } from '@adcp/sdk/reporting/ledger';
+
+await pool.query(REPORTING_ROW_STORAGE_MIGRATION); // after REPORTING_LEDGER_MIGRATION; PostgreSQL 13+
+const store = new PostgresReportingLedgerStore(pool, {
+  acknowledgeIsolatedDatabase: true,
+  rowStorage: true,
+});
+await store.readyRowStorage();
+```
+
+`createPostgresReliableReportingProductionService` accepts the same
+`rowStorage` option and adds the migration to `setup.migrations`.
+
+- Rows are split into 500-row segments and chunks of at most 10,000 rows or
+  8 MiB. Chunk, segment and manifest digests are committed with the revision,
+  and every read is verified before rows are released. Delivery pages read only
+  the segments they need.
+- Chunk bodies are content-addressed per obligation, so a revision that
+  repeats its predecessor's rows stores no new bytes.
+- Revisions written before you enable row storage keep their inline rows.
+  Reads handle both forms whether or not the option is set.
+- Missing or corrupt rows inside the retention window make
+  `get_media_buy_delivery` fail with `SERVICE_UNAVAILABLE` rather than reporting
+  the revision as absent; expired rows read like an unknown revision.
+- Managed Delivery claims hydrate PostgreSQL-stored rows automatically.
+
 ## Managed Delivery and Reconciled Billing
 
 Core remains the default and has no destination, external-resource, or receipt dependency. To opt into the higher tiers, apply `REPORTING_MANAGED_DELIVERY_MIGRATION` **after** `REPORTING_LEDGER_MIGRATION`, explicitly construct the Core store with `managedDelivery: true`, create a `PostgresReportingManagedDeliveryStore`, and pass both stores with a destination adapter to `createReportingManagedDeliveryRuntime`. The async factory proves the stores share one authority and validates the RC3 tier wiring before returning it. It advertises `managed_delivery` only when an immutable binding, delivery, bounded resource reading, generation-fenced revocation, and at least one verification profile are installed. The advertised automated recovery window must be at least the widest installed managed Core configuration recovery window. It advertises `reconciled_billing` and `receipt_task` only when an authenticated consumer resolver and canonical-digest verification are also installed.

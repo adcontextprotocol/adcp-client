@@ -1,5 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { newReportingLedgerStoreForTest } = require('../helpers/reporting-row-storage-mode.js');
 const { Storage } = require('@google-cloud/storage');
 const { createGcsReportingManagedDeliveryAdapterV1 } = require('../../dist/lib/reporting/gcs');
 const ledger = require('../../dist/lib/reporting/ledger');
@@ -16,7 +17,7 @@ test(
     try {
       const options = {
         storage: new Storage({ projectId: 'owned-fixture-project' }),
-        coreStore: new ledger.PostgresReportingLedgerStore(pool, {
+        coreStore: newReportingLedgerStoreForTest(ledger, pool, {
           acknowledgeIsolatedDatabase: true,
           managedDelivery: true,
         }),

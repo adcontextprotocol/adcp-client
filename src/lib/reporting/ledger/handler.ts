@@ -22,6 +22,7 @@ import {
 } from './health';
 import { compareReportingInstants } from './instant';
 import { getRevisionMetadataFromStore, readRevisionRowsFromStore } from './revision-metadata';
+import { isReportingRowStoreError } from './row-storage';
 import { reportingPeriodSchedule } from './schedule';
 import { ReportingLedgerSnapshotUnavailableError } from './types';
 import type {
@@ -375,7 +376,9 @@ export function createReportingStatusHandler<TContext = unknown>(
               else revisionRows = page.rows;
             }
           } catch (error) {
-            if (error instanceof ReportingReadCapacityError) return lookupUnavailable(view);
+            if (error instanceof ReportingReadCapacityError || isReportingRowStoreError(error)) {
+              return lookupUnavailable(view);
+            }
             throw error;
           }
         }
@@ -595,13 +598,27 @@ export function createReportingDeliveryHandler(store: ReportingLedgerStore): Rep
       }
       let reportingRows: Record<string, unknown>[] = [];
       if (totalCount > 0) {
-        const page = await readRevisionRowsFromStore(store, {
-          reporting_revision_id: revision.reporting_revision_id,
-          account_id: accountId,
-          offset,
-          limit: maxResults,
-          ...(context.signal ? { signal: context.signal } : {}),
-        });
+        let page;
+        try {
+          page = await readRevisionRowsFromStore(store, {
+            reporting_revision_id: revision.reporting_revision_id,
+            account_id: accountId,
+            offset,
+            limit: maxResults,
+            ...(context.signal ? { signal: context.signal } : {}),
+          });
+        } catch (error) {
+          // Expired rows read exactly like an unknown revision. Missing or
+          // corrupt rows inside the retention window are never reported as
+          // absent and never released unverified.
+          if (isReportingRowStoreError(error)) {
+            if (error.code === 'ROWS_EXPIRED') throw new Error('Reporting revision is unavailable');
+            throw new AdcpError('SERVICE_UNAVAILABLE', {
+              message: 'Reporting revision rows are temporarily unavailable',
+            });
+          }
+          throw error;
+        }
         if (!page || page.total !== totalCount) throw new Error('Reporting revision is unavailable');
         reportingRows = page.rows;
       }
