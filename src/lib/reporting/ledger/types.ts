@@ -830,6 +830,11 @@ export interface ReportingLedgerStore {
   ): Promise<{ inserted: boolean; value: ReportingLedgerObligationV1 }>;
   getObligation(reporting_obligation_id: string, account_id?: string): Promise<ReportingLedgerObligationV1 | null>;
   listObligations(account_id?: string): Promise<ReportingLedgerObligationV1[]>;
+  /**
+   * Optional: periods whose ledger records were retired by retention. The
+   * planner treats them as already covered so it never re-creates them.
+   */
+  listRetiredObligationOrdinals?(account_id?: string): Promise<{ configurationId: string; periodOrdinal: number }[]>;
   listLifecycleDueObligations(input: {
     ledgerAsOf: string;
     account_id?: string;

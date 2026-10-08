@@ -17,6 +17,7 @@ import {
   REPORTING_MANAGED_DELIVERY_MIGRATION,
   REPORTING_ROW_STORAGE_MIGRATION,
   PostgresReportingLedgerStore,
+  sweepExpiredReportingLedgerState,
   PostgresReportingManagedDeliveryStore,
   createPostgresReportingNotificationActivityRuntime,
   createPostgresReportingNotificationAttemptCheckpoint,
@@ -622,6 +623,14 @@ export type CreatePostgresReliableReportingProductionServiceOptionsV1<TCtxMeta =
    * and probes it before publishing capabilities.
    */
   rowStorage?: boolean | ReportingRowStorageOptionsV1;
+  /**
+   * Opt in to period-aligned retention. Each scheduler pass retires whole
+   * periods once `max(statusRetentionDays, recordRetentionDays)` has elapsed
+   * since both the period end and its latest publication, deleting their
+   * rows and ledger records and leaving a tombstone. Abandoned row uploads
+   * and expired cursor snapshots are always swept.
+   */
+  retention?: { enabled: true; recordRetentionDays?: number; limit?: number };
   notifications: ProductionNotificationOptions;
   managedDelivery: {
     adapter: ReportingManagedDeliveryAdapterV1;
@@ -925,6 +934,25 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
       webhookActivity.pruneCompleted({ limit: 1_000 }),
     ]);
     for (const result of pruneResults) {
+      if (result.status === 'rejected' && !signal.aborted) await reportAuxiliaryError(scheduler, result.reason);
+    }
+    const ledgerMaintenance = await Promise.allSettled([
+      sweepExpiredReportingLedgerState(options.db, 1_000),
+      coreStore.sweepRowWriteIntents({ limit: 100, signal }),
+      ...(options.retention?.enabled
+        ? [
+            coreStore.retireExpiredPeriods({
+              statusRetentionDays: options.statusRetentionDays,
+              ...(options.retention.recordRetentionDays !== undefined
+                ? { recordRetentionDays: options.retention.recordRetentionDays }
+                : {}),
+              limit: options.retention.limit ?? 100,
+              signal,
+            }),
+          ]
+        : []),
+    ]);
+    for (const result of ledgerMaintenance) {
       if (result.status === 'rejected' && !signal.aborted) await reportAuxiliaryError(scheduler, result.reason);
     }
     const accountIds = rotate(await deploymentWideAccountIds(coreStore), auxiliaryRotation);

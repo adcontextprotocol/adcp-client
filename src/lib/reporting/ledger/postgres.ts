@@ -335,6 +335,29 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_checkpoints (
 );
 CREATE INDEX IF NOT EXISTS adcp_reporting_checkpoints_expiry
   ON adcp_reporting_checkpoints (expires_at);
+
+-- A retired period keeps one compact record: it refuses replays that would
+-- resurrect the period and preserves the audit conclusion after the period's
+-- ledger records are deleted.
+CREATE TABLE IF NOT EXISTS adcp_reporting_obligation_tombstones (
+  obligation_id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  configuration_id TEXT NOT NULL,
+  period_ordinal BIGINT NOT NULL,
+  period_start TIMESTAMPTZ NOT NULL,
+  period_end TIMESTAMPTZ NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('retiring', 'retired')),
+  final_revision_id TEXT,
+  final_content_sha256 TEXT,
+  revision_count INTEGER NOT NULL CHECK (revision_count >= 0),
+  adjustment_count INTEGER NOT NULL CHECK (adjustment_count >= 0),
+  retiring_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  retired_at TIMESTAMPTZ,
+  UNIQUE (configuration_id, period_ordinal),
+  CHECK ((state = 'retired') = (retired_at IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS adcp_reporting_obligation_tombstones_account
+  ON adcp_reporting_obligation_tombstones (account_id, configuration_id, period_ordinal);
 `.trim();
 
 /** Constraint installed by {@link REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION}. */
@@ -466,6 +489,14 @@ export class ReportingLedgerLeaseLostError extends Error {
   constructor(message = 'Reporting ledger lease was lost before commit') {
     super(message);
     this.name = 'ReportingLedgerLeaseLostError';
+  }
+}
+
+/** A planner or writer named a period whose ledger records were retired by retention. */
+export class ReportingLedgerPeriodRetiredError extends Error {
+  constructor(message = 'Reporting obligation period was retired by retention') {
+    super(message);
+    this.name = 'ReportingLedgerPeriodRetiredError';
   }
 }
 
@@ -728,11 +759,20 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
   }
 
   async putObligation(obligation: ReportingLedgerObligationV1) {
+    const retired = await this.query(
+      `SELECT 1 FROM adcp_reporting_obligation_tombstones WHERE configuration_id = $1 AND period_ordinal = $2`,
+      [obligation.configurationId, obligation.periodOrdinal]
+    );
+    if (retired.rows.length > 0) throw new ReportingLedgerPeriodRetiredError();
     return this.putImmutable(
       `INSERT INTO adcp_reporting_obligations
          (obligation_id, configuration_id, account_id, period_ordinal, period_start, period_end,
           next_attempt_at, state, semantic_fingerprint, data, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, clock_timestamp())
+       SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, clock_timestamp()
+        WHERE NOT EXISTS (
+          SELECT 1 FROM adcp_reporting_obligation_tombstones
+           WHERE configuration_id = $2 AND period_ordinal = $4
+        )
        ON CONFLICT DO NOTHING RETURNING data`,
       [
         obligation.reporting_obligation_id,
@@ -761,6 +801,21 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         WHERE obligation_id = $1 AND ($2::text IS NULL OR account_id = $2)`,
       [id, account_id ?? null]
     );
+  }
+
+  /** Periods retired by retention; planners treat them as already covered. */
+  async listRetiredObligationOrdinals(
+    account_id?: string
+  ): Promise<{ configurationId: string; periodOrdinal: number }[]> {
+    const result = await this.query<{ configuration_id: string; period_ordinal: string }>(
+      `SELECT configuration_id, period_ordinal FROM adcp_reporting_obligation_tombstones
+        WHERE ($1::text IS NULL OR account_id = $1) ORDER BY configuration_id, period_ordinal`,
+      [account_id ?? null]
+    );
+    return result.rows.map(row => ({
+      configurationId: row.configuration_id,
+      periodOrdinal: Number(row.period_ordinal),
+    }));
   }
 
   async listObligations(account_id?: string): Promise<ReportingLedgerObligationV1[]> {
@@ -1196,6 +1251,255 @@ ${managedDueArm}       )
       adjustments.push({ ...adjustment, rows: await this.rowStorage.readAll(handle) });
     }
     return adjustments;
+  }
+
+  /**
+   * Retire whole reporting periods whose retention has elapsed (shared SDK
+   * persistence spec §4). A period is eligible once both its end and its
+   * latest publication are older than `max(statusRetentionDays,
+   * recordRetentionDays)`, no worker holds its lease, and no Managed Delivery
+   * materialization still references it. Retirement is period-aligned and
+   * resumable:
+   *
+   * 1. under the account lock, record a `retiring` tombstone and mark the
+   *    period's row sets `pruning`, so exact reads answer as expired;
+   * 2. delete the period's external row objects at their recorded versions;
+   * 3. under the account lock, delete the period's ledger records (rows,
+   *    revisions, adjustments, consumer statuses, issues, transitions,
+   *    lifecycle state, obligation) and mark the tombstone `retired`.
+   *
+   * Planners skip retired periods, and `ledger_retained_from` advances past
+   * them because their obligations no longer exist.
+   */
+  async retireExpiredPeriods(input: {
+    statusRetentionDays: number;
+    recordRetentionDays?: number;
+    limit?: number;
+    account_id?: string;
+    signal?: AbortSignal;
+  }): Promise<{ retired: number; failed: string[] }> {
+    if (!Number.isSafeInteger(input.statusRetentionDays) || input.statusRetentionDays < 1) {
+      throw new RangeError('statusRetentionDays must be a positive integer');
+    }
+    const recordDays = input.recordRetentionDays ?? input.statusRetentionDays;
+    if (!Number.isSafeInteger(recordDays) || recordDays < input.statusRetentionDays) {
+      throw new RangeError('recordRetentionDays must be an integer no shorter than statusRetentionDays');
+    }
+    const limit = input.limit ?? 100;
+    positiveInteger(limit, 'limit');
+    const tables = await this.optionalTables();
+    const materializationHold = tables.has('adcp_reporting_materializations')
+      ? `AND NOT EXISTS (SELECT 1 FROM adcp_reporting_materializations hold WHERE hold.obligation_id = obligation.obligation_id)`
+      : '';
+    const candidates = await this.query<{ obligation_id: string; account_id: string }>(
+      `SELECT obligation_id, account_id FROM (
+         SELECT tombstone.obligation_id, tombstone.account_id, 0 AS resume, tombstone.period_end
+           FROM adcp_reporting_obligation_tombstones tombstone
+          WHERE tombstone.state = 'retiring' AND ($2::text IS NULL OR tombstone.account_id = $2)
+         UNION ALL
+         SELECT obligation.obligation_id, obligation.account_id, 1, obligation.period_end
+           FROM adcp_reporting_obligations obligation
+          WHERE ($2::text IS NULL OR obligation.account_id = $2)
+            AND obligation.period_end + ($3::integer * INTERVAL '1 day') <= clock_timestamp()
+            AND (obligation.lease_expires_at IS NULL OR obligation.lease_expires_at <= clock_timestamp())
+            AND COALESCE((SELECT MAX(revision.recorded_at) FROM adcp_reporting_revisions revision
+                           WHERE revision.obligation_id = obligation.obligation_id), obligation.created_at)
+                + ($3::integer * INTERVAL '1 day') <= clock_timestamp()
+            AND COALESCE((SELECT MAX(adjustment.recorded_at) FROM adcp_reporting_adjustments adjustment
+                           WHERE adjustment.obligation_id = obligation.obligation_id), '-infinity'::timestamptz)
+                + ($3::integer * INTERVAL '1 day') <= clock_timestamp()
+            AND NOT EXISTS (SELECT 1 FROM adcp_reporting_obligation_tombstones tombstone
+                             WHERE tombstone.obligation_id = obligation.obligation_id)
+            ${materializationHold}
+       ) candidate
+       ORDER BY resume, period_end, obligation_id
+       LIMIT $1`,
+      [limit, input.account_id ?? null, recordDays]
+    );
+    let retired = 0;
+    const failed: string[] = [];
+    for (const candidate of candidates.rows) {
+      input.signal?.throwIfAborted();
+      try {
+        await this.retirePeriod(candidate.obligation_id, candidate.account_id, tables, input.signal);
+        retired += 1;
+      } catch (error) {
+        if (error instanceof ReportingLedgerPeriodRetiredError) continue;
+        failed.push(candidate.obligation_id);
+      }
+    }
+    return { retired, failed };
+  }
+
+  private async retirePeriod(
+    obligationId: string,
+    accountId: string,
+    tables: ReadonlySet<string>,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const rowStorage = tables.has('adcp_reporting_row_sets');
+    // Phase 1: tombstone first, so expired rows read as expired from here on.
+    await this.transaction(
+      async client => {
+        await client.query(
+          `INSERT INTO adcp_reporting_obligation_tombstones
+             (obligation_id, account_id, configuration_id, period_ordinal, period_start, period_end, state,
+              final_revision_id, final_content_sha256, revision_count, adjustment_count)
+           SELECT obligation.obligation_id, obligation.account_id, obligation.configuration_id,
+                  obligation.period_ordinal, obligation.period_start, obligation.period_end, 'retiring',
+                  latest.revision_id, latest.content_sha256,
+                  (SELECT count(*) FROM adcp_reporting_revisions revision WHERE revision.obligation_id = obligation.obligation_id),
+                  (SELECT count(*) FROM adcp_reporting_adjustments adjustment WHERE adjustment.obligation_id = obligation.obligation_id)
+             FROM adcp_reporting_obligations obligation
+             LEFT JOIN LATERAL (
+               SELECT revision.revision_id, revision.content_sha256 FROM adcp_reporting_revisions revision
+                WHERE revision.obligation_id = obligation.obligation_id
+                ORDER BY revision.revision_number DESC LIMIT 1
+             ) latest ON TRUE
+            WHERE obligation.obligation_id = $1
+           ON CONFLICT (obligation_id) DO NOTHING`,
+          [obligationId]
+        );
+        if (rowStorage) {
+          await client.query(
+            `UPDATE adcp_reporting_row_sets SET rows_state = 'pruning', rows_state_changed_at = clock_timestamp()
+              WHERE obligation_id = $1 AND rows_state IN ('live', 'unavailable')`,
+            [obligationId]
+          );
+        }
+      },
+      { preBeginAdvisoryLock: accountLock(accountId) }
+    );
+    // Phase 2: external bytes, at their recorded versions. Sharing never
+    // crosses obligations, so every object here belongs to this period.
+    if (rowStorage) {
+      const objects = await this.query<{ row_binding_id: string; object_key: string; native_version: string }>(
+        `SELECT DISTINCT row_set.row_binding_id, chunk.object_key, chunk.native_version
+           FROM adcp_reporting_row_chunks chunk
+           JOIN adcp_reporting_row_sets row_set ON row_set.row_set_id = chunk.row_set_id
+          WHERE chunk.obligation_id = $1 AND chunk.object_key IS NOT NULL`,
+        [obligationId]
+      );
+      const byBinding = new Map<string, { objectKey: string; nativeVersion: string }[]>();
+      for (const row of objects.rows) {
+        const list = byBinding.get(row.row_binding_id) ?? [];
+        list.push({ objectKey: row.object_key, nativeVersion: row.native_version });
+        byBinding.set(row.row_binding_id, list);
+      }
+      for (const [bindingId, list] of byBinding) await this.rowStorage.deleteObjects(bindingId, list, signal);
+    }
+    // Phase 3: the period's ledger records, together.
+    await this.transaction(
+      async client => {
+        const revisionIds = `SELECT revision_id FROM adcp_reporting_revisions WHERE obligation_id = $1`;
+        if (rowStorage) {
+          await client.query(`DELETE FROM adcp_reporting_row_chunks WHERE obligation_id = $1`, [obligationId]);
+          await client.query(`DELETE FROM adcp_reporting_row_sets WHERE obligation_id = $1`, [obligationId]);
+          await client.query(`DELETE FROM adcp_reporting_chunk_bodies WHERE account_id = $2 AND obligation_id = $1`, [
+            obligationId,
+            accountId,
+          ]);
+        }
+        await client.query(
+          `DELETE FROM adcp_reporting_consumer_statuses
+            WHERE obligation_id = $1 OR revision_id IN (${revisionIds})`,
+          [obligationId]
+        );
+        await client.query(`DELETE FROM adcp_reporting_adjustments WHERE obligation_id = $1`, [obligationId]);
+        await client.query(`DELETE FROM adcp_reporting_revisions WHERE obligation_id = $1`, [obligationId]);
+        await client.query(`DELETE FROM adcp_reporting_issues WHERE obligation_id = $1`, [obligationId]);
+        await client.query(`DELETE FROM adcp_reporting_transitions WHERE obligation_id = $1`, [obligationId]);
+        await client.query(`DELETE FROM adcp_reporting_lifecycle_state WHERE obligation_id = $1`, [obligationId]);
+        await client.query(`DELETE FROM adcp_reporting_obligations WHERE obligation_id = $1`, [obligationId]);
+        await client.query(
+          `UPDATE adcp_reporting_obligation_tombstones SET state = 'retired', retired_at = clock_timestamp()
+            WHERE obligation_id = $1 AND state = 'retiring'`,
+          [obligationId]
+        );
+      },
+      { preBeginAdvisoryLock: accountLock(accountId) }
+    );
+  }
+
+  /**
+   * Resolve abandoned object uploads (spec §4.3). An expired `open` write
+   * intent whose ledger commit never happened is moved to `sweeping` under
+   * the account lock, so no writer can commit against it, then only the
+   * objects that upload created — never adopted ones, never any object a
+   * committed chunk references — are deleted at their recorded versions.
+   * Interrupted sweeps resume.
+   */
+  async sweepRowWriteIntents(
+    input: { limit?: number; account_id?: string; signal?: AbortSignal } = {}
+  ): Promise<{ swept: number; objectsDeleted: number; failed: number }> {
+    const limit = input.limit ?? 100;
+    positiveInteger(limit, 'limit');
+    const tables = await this.optionalTables();
+    if (!tables.has('adcp_reporting_row_write_intents')) return { swept: 0, objectsDeleted: 0, failed: 0 };
+    const expired = await this.query<{
+      row_binding_id: string;
+      account_id: string;
+      row_set_id: string;
+      content_sha256: string;
+    }>(
+      `SELECT row_binding_id, account_id, row_set_id, content_sha256 FROM adcp_reporting_row_write_intents
+        WHERE ($2::text IS NULL OR account_id = $2)
+          AND (state = 'sweeping' OR expires_at <= clock_timestamp())
+        ORDER BY expires_at LIMIT $1`,
+      [limit, input.account_id ?? null]
+    );
+    let swept = 0;
+    let objectsDeleted = 0;
+    let failed = 0;
+    for (const intent of expired.rows) {
+      input.signal?.throwIfAborted();
+      const key = [intent.row_binding_id, intent.row_set_id, intent.content_sha256];
+      try {
+        const claimed = await this.transaction(
+          async client => {
+            const updated = await client.query<{ created_objects: { objectKey: string; nativeVersion: string }[] }>(
+              `UPDATE adcp_reporting_row_write_intents SET state = 'sweeping'
+                WHERE row_binding_id = $1 AND row_set_id = $2 AND content_sha256 = $3
+                  AND (state = 'sweeping' OR expires_at <= clock_timestamp())
+                RETURNING created_objects`,
+              key
+            );
+            return updated.rows[0]?.created_objects;
+          },
+          { preBeginAdvisoryLock: accountLock(intent.account_id) }
+        );
+        if (!claimed) continue;
+        const orphaned: { objectKey: string; nativeVersion: string }[] = [];
+        for (const object of claimed) {
+          const referenced = await this.query(
+            `SELECT 1 FROM adcp_reporting_row_chunks WHERE object_key = $1 AND native_version = $2 LIMIT 1`,
+            [object.objectKey, object.nativeVersion]
+          );
+          if (referenced.rows.length === 0) orphaned.push(object);
+        }
+        if (orphaned.length > 0) await this.rowStorage.deleteObjects(intent.row_binding_id, orphaned, input.signal);
+        await this.query(
+          `DELETE FROM adcp_reporting_row_write_intents
+            WHERE row_binding_id = $1 AND row_set_id = $2 AND content_sha256 = $3 AND state = 'sweeping'`,
+          key
+        );
+        swept += 1;
+        objectsDeleted += orphaned.length;
+      } catch {
+        failed += 1;
+      }
+    }
+    return { swept, objectsDeleted, failed };
+  }
+
+  private async optionalTables(): Promise<ReadonlySet<string>> {
+    const result = await this.query<{ name: string }>(
+      `SELECT table_name AS name FROM information_schema.tables
+        WHERE table_schema = current_schema()
+          AND table_name IN ('adcp_reporting_row_sets', 'adcp_reporting_row_write_intents',
+                             'adcp_reporting_materializations')`
+    );
+    return new Set(result.rows.map(row => row.name));
   }
 
   /**
@@ -3671,6 +3975,7 @@ ${managedDueArm}       )
       if (
         error instanceof ReportingLedgerLeaseLostError ||
         error instanceof ReportingLedgerContinuityError ||
+        error instanceof ReportingLedgerPeriodRetiredError ||
         error instanceof ReportingLedgerSnapshotUnavailableError ||
         error instanceof ReportingConsumerStatusConflictError ||
         isReportingRowStoreError(error)

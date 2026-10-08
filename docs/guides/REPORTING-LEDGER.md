@@ -378,6 +378,31 @@ await store.readyRowStorage();
   `runReportingRowObjectProviderConformanceV1(provider, { location, prefix })`
   against a dedicated test prefix before using one.
 
+### Retention
+
+Retention is period-aligned and opt-in. A period becomes eligible once both its
+end and its latest publication are older than `max(statusRetentionDays,
+recordRetentionDays)`, no worker holds its lease, and no Managed Delivery
+materialization still references it. Superseded snapshots stay readable for the
+whole window, as the protocol requires.
+
+```ts
+await store.retireExpiredPeriods({ statusRetentionDays: 30, recordRetentionDays: 45, limit: 100 });
+await store.sweepRowWriteIntents({ limit: 100 }); // abandoned object uploads
+```
+
+Retirement runs in three resumable phases. First it records a `retiring`
+tombstone and marks the period's rows as expired. Then it deletes external row
+objects at their recorded versions. Finally it deletes the period's rows and
+ledger records together. The tombstone keeps the final revision ID and digest,
+and planners never re-create a retired period. `ledger_retained_from` advances
+because the retired obligations no longer exist.
+
+`createPostgresReliableReportingProductionService` accepts
+`retention: { enabled: true, recordRetentionDays?, limit? }`. Its scheduler
+always sweeps abandoned row uploads and expired cursor snapshots and
+checkpoints, and retires periods when retention is enabled.
+
 ## Managed Delivery and Reconciled Billing
 
 Core remains the default and has no destination, external-resource, or receipt dependency. To opt into the higher tiers, apply `REPORTING_MANAGED_DELIVERY_MIGRATION` **after** `REPORTING_LEDGER_MIGRATION`, explicitly construct the Core store with `managedDelivery: true`, create a `PostgresReportingManagedDeliveryStore`, and pass both stores with a destination adapter to `createReportingManagedDeliveryRuntime`. The async factory proves the stores share one authority and validates the RC3 tier wiring before returning it. It advertises `managed_delivery` only when an immutable binding, delivery, bounded resource reading, generation-fenced revocation, and at least one verification profile are installed. The advertised automated recovery window must be at least the widest installed managed Core configuration recovery window. It advertises `reconciled_billing` and `receipt_task` only when an authenticated consumer resolver and canonical-digest verification are also installed.
