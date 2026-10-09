@@ -499,7 +499,7 @@ export async function completeWebOAuthFlow(opts: CompleteWebFlowOptions): Promis
   }
 
   const flow = await pendingFlowStore.consume(state);
-  if (!flow || flow.expiresAt.getTime() < Date.now()) {
+  if (!flow || flow.expiresAt.getTime() <= Date.now()) {
     throw new InvalidOrExpiredFlowError(state);
   }
 
@@ -677,7 +677,7 @@ export class InMemoryPendingFlowStore implements PendingWebFlowStore {
     const flow = this.flows.get(state);
     if (!flow) return null;
     this.flows.delete(state);
-    if (flow.expiresAt.getTime() < Date.now()) return null;
+    if (flow.expiresAt.getTime() <= Date.now()) return null;
     return flow;
   }
 
@@ -685,7 +685,7 @@ export class InMemoryPendingFlowStore implements PendingWebFlowStore {
     const now = Date.now();
     let removed = 0;
     for (const [state, flow] of this.flows) {
-      if (flow.expiresAt.getTime() < now) {
+      if (flow.expiresAt.getTime() <= now) {
         this.flows.delete(state);
         removed++;
       }
