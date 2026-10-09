@@ -298,8 +298,10 @@ await store.readyRowStorage();
   8 MiB. Chunk, segment and manifest digests are committed with the revision,
   and every read is verified before rows are released. Delivery pages read only
   the segments they need.
-- Chunk bodies are content-addressed per obligation, so a revision that
-  repeats its predecessor's rows stores no new bytes.
+- A revision whose rows are byte-identical to a live row set in the same
+  obligation is stored as a header-only revision. It gets a new identity,
+  freshness and binding, and references the existing chunks
+  (`rows_shared_from_row_set_id`), so an unchanged pulse uploads nothing.
 - Revisions written before you enable row storage keep their inline rows.
   Reads handle both forms whether or not the option is set.
 - Missing or corrupt rows inside the retention window make
@@ -377,6 +379,43 @@ await store.readyRowStorage();
 - Custom providers implement `ReportingRowObjectProviderV1`. Run
   `runReportingRowObjectProviderConformanceV1(provider, { location, prefix })`
   against a dedicated test prefix before using one.
+
+#### Cloud providers
+
+Cloud providers wrap official clients that the host constructs with its own
+credentials. A binding's `location` holds only non-secret coordinates, and its
+optional `credentialRef` names one of the clients you injected; an unknown
+reference fails `UNSAFE_BINDING`. Provider errors surface only as stable
+`ReportingRowStoreError` codes. Row buckets are separate from Managed Delivery
+buckets.
+
+**Google Cloud Storage** (`@adcp/sdk/reporting/gcs`, optional peer
+`@google-cloud/storage`):
+
+```ts
+import { Storage } from '@google-cloud/storage';
+import { createGcsReportingRowObjectProviderV1 } from '@adcp/sdk/reporting/gcs';
+
+const gcs = createGcsReportingRowObjectProviderV1({
+  storage: new Storage(), // keyless credentials (workload identity / ADC)
+  clients: { 'tenant-eu': euStorage }, // optional, selected by credentialRef
+});
+// binding: { kind: 'object', provider: 'gcs', location: { bucket: 'acme-adcp-rows' }, prefix: 'adcp-rows' }
+// providers: { gcs }
+```
+
+- Writes are single-request uploads with `ifGenerationMatch: 0` and a declared
+  MD5, without `Content-Encoding`. The recorded native version is the object
+  generation; reads and deletes pin it, and reads never transcode.
+- The probe requires uniform bucket-level access and enforced public access
+  prevention. Versioning, soft delete and retention policies are allowed. A
+  lifecycle `Delete` rule that can match live objects under the binding prefix
+  (no `matchesPrefix`, or a prefix that overlaps it) is refused; rules limited
+  to noncurrent versions (`isLive: false`, `numNewerVersions`,
+  `daysSinceNoncurrentTime`, `noncurrentTimeBefore`) are allowed. Keep
+  retention-driven deletion in the ledger's pruning, not in bucket lifecycle.
+- The client needs `storage.buckets.get` for the probe plus object create, get
+  and delete on the bucket.
 
 ### Retention
 
