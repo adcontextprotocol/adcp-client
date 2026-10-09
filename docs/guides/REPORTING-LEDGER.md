@@ -307,6 +307,11 @@ await store.readyRowStorage();
 - Missing or corrupt rows inside the retention window make
   `get_media_buy_delivery` fail with `SERVICE_UNAVAILABLE` rather than reporting
   the revision as absent; expired rows read like an unknown revision.
+- An exact `get_media_buy_delivery` read of an unknown, unauthorized, expired or
+  compacted revision, or with a tampered `pagination.cursor`, returns the same
+  nondisclosing `REFERENCE_NOT_FOUND` with `field: "reporting_revision_id"`
+  (not transient, so buyers do not retry), so a response never reveals whether a
+  revision exists for another account.
 - Managed Delivery claims hydrate PostgreSQL-stored rows automatically.
 
 To move existing inline rows into row storage, run the resumable migration in

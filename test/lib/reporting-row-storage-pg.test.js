@@ -328,7 +328,7 @@ describe('PostgresReportingLedgerStore row storage', { skip: !DATABASE_URL && 'P
     await rowStoreCode(() => store.getRevision('rrev_rows_1', accountId), 'ROWS_EXPIRED');
     await assert.rejects(
       () => read('rrev_rows_1'),
-      error => !error.code && /unavailable/.test(error.message)
+      error => error.code === 'REFERENCE_NOT_FOUND' && error.field === 'reporting_revision_id'
     );
 
     await pool.query(`DELETE FROM adcp_reporting_chunk_bodies WHERE obligation_id = $1`, [
