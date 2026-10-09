@@ -1157,15 +1157,34 @@ describe('published pending-flow store conformance helper', () => {
     assert.strictEqual(store.rows.size, 0);
   });
 
-  test('accepts stores that reject already-expired inserts', async () => {
+  test('accepts synchronous rejection of duplicate and already-expired inserts', async () => {
     const store = new JsonStringPendingFlowStore();
     await assertPendingWebFlowStoreRoundTrip({
       put: flow => {
         if (flow.expiresAt.getTime() < Date.now()) throw new Error('Non-positive TTL');
+        if (store.rows.has(flow.state)) throw new Error('Duplicate state');
         return store.put(flow);
       },
       consume: stateValue => store.consume(stateValue),
     });
+  });
+
+  test('isolates adopter carry from stores that mutate their input after saving', async () => {
+    const store = new JsonStringPendingFlowStore();
+    const carry = { user_id: 'owner', nested: { values: [1, null] } };
+    const expected = structuredClone(carry);
+    await assertPendingWebFlowStoreRoundTrip(
+      {
+        put: async flow => {
+          assert.deepStrictEqual(flow.carry, expected);
+          await store.put(flow);
+          flow.carry.nested.values.push('mutated');
+        },
+        consume: stateValue => store.consume(stateValue),
+      },
+      { carry }
+    );
+    assert.deepStrictEqual(carry, expected);
   });
 
   test('expiry at the exact deadline is absent in the reference store and callback', async t => {
@@ -1290,19 +1309,16 @@ describe('published pending-flow store conformance helper', () => {
     for (const violation of ['missing-state', 'replay', 'expiry', 'duplicate', 'concurrent']) {
       const rows = new Map();
       let current;
-      let inserted = 0;
-      let concurrentState;
       const store = {
         put: async flow => {
           if (rows.has(flow.state) && violation !== 'duplicate') throw new Error('Duplicate');
-          if (!rows.has(flow.state) && ++inserted === 4) concurrentState = flow.state;
           current = flow;
           rows.set(flow.state, structuredClone(flow));
         },
         consume: async stateValue => {
           const flow = rows.get(stateValue);
           if (!flow) return violation === 'missing-state' ? current : null;
-          if (violation === 'concurrent' && stateValue === concurrentState) {
+          if (violation === 'concurrent') {
             // Models SELECT followed by an asynchronous DELETE, so both readers win.
             await Promise.resolve();
           }

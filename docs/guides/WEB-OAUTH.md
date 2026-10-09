@@ -113,7 +113,9 @@ already-expired inserts; the helper still checks that consumption returns `null`
 Its fixture is exhaustive at SDK build time, including optional flow and client
 information fields. The concurrency check is a smoke test; the backend must
 provide atomic deletion across processes. Use JSON-serializable `carry` and validate
-its application-owned contents separately. The store still owns encryption of PKCE
+its application-owned contents separately. Keep absent optional fields absent when
+hydrating rows; an undefined-valued own `resourceOverrideSnapshot` can trigger the
+callback's concurrent-edit guard. The store still owns encryption of PKCE
 and client secrets, TTL, duplicate rejection, atomic consume, and binding the payload's
 `state` to its storage key. The parser does not filter expired flows or establish
 issuer trust; `completeWebOAuthFlow` also enforces expiry and issuer binding.

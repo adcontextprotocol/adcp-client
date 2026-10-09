@@ -45,11 +45,14 @@ function createPendingWebFlowFixture(
     },
     createdAt,
     expiresAt: new Date(createdAt.getTime() + 10 * 60 * 1000),
-    carry: options.carry ?? {
-      user_id: 'conformance-user',
-      return_to: '/dashboard',
-      nested: { values: ['one', 2, true, null, { retained: 'yes' }] },
-    },
+    carry:
+      options.carry !== undefined
+        ? structuredClone(options.carry)
+        : {
+            user_id: 'conformance-user',
+            return_to: '/dashboard',
+            nested: { values: ['one', 2, true, null, { retained: 'yes' }] },
+          },
     conformanceExtension: { retained: 'future flow fields' },
   } satisfies PendingWebFlowFixture;
 }
@@ -60,6 +63,8 @@ function createPendingWebFlowFixture(
  * once, and treats expired rows as absent. Throws on a contract violation.
  * Stores may refuse to insert an already-expired row. Also checks null snapshots,
  * clear actions, public clients, registration metadata and unknown extensions.
+ * Absent optional fields must stay absent rather than become undefined-valued
+ * own properties; the callback distinguishes presence for resource snapshots.
  *
  * Run against a disposable store in CI on every SDK upgrade. Uses random states
  * and only conformance credentials; no OAuth endpoints are contacted. Concurrent
@@ -114,7 +119,7 @@ export async function assertPendingWebFlowStoreRoundTrip(
   const expectedConcurrent = structuredClone(concurrent);
   await store.put(concurrent);
   const duplicate = { ...structuredClone(concurrent), codeVerifier: 'different-conformance-verifier' };
-  await assert.rejects(() => store.put(duplicate), 'Duplicate state must be rejected');
+  await assert.rejects(async () => store.put(duplicate), 'Duplicate state must be rejected');
   const results = await Promise.all([store.consume(concurrent.state), store.consume(concurrent.state)]);
   const winners = results.filter(result => result !== null);
   assert.equal(winners.length, 1, 'Concurrent consumes must return the flow exactly once');
