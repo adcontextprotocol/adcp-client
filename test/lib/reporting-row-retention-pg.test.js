@@ -269,11 +269,12 @@ describe(
     }
 
     /**
-     * Cursor after the feed has delivered a change for the obligation. The
+     * Cursor after the feed has delivered the published revision. Earlier
+     * obligation changes do not prove that the revision has been delivered. The
      * deployment-wide feed withholds changes while another transaction (other
      * suites share the server) is in flight, so wait for it to appear.
      */
-    async function headPast(accountId, obligationId) {
+    async function headPast(accountId, revisionId) {
       let cursor;
       for (let attempt = 0; attempt < 100; attempt += 1) {
         const page = await store.changesAfter({
@@ -281,10 +282,12 @@ describe(
           ...(cursor ? { cursor } : {}),
         });
         cursor = page.cursor;
-        if (page.records.some(record => record.reporting_obligation_id === obligationId)) return head(accountId);
+        if (page.records.some(record => record.kind === 'revision' && record.record_id === revisionId)) {
+          return head(accountId);
+        }
         if (page.records.length === 0) await new Promise(resolve => setTimeout(resolve, 100));
       }
-      throw new Error('the feed never delivered the period changes');
+      throw new Error('the feed never delivered the revision change');
     }
 
     const periodExists = async obligationId =>
@@ -346,7 +349,7 @@ describe(
         assert.equal((await store.getRevision(`rrev_hold_${kind}_1`, accountId)).rows.length, 5);
 
         // The consumer passes the period's changes: it is released.
-        await store.saveFeedConsumerCursor('sink', await headPast(scope, obligationId));
+        await store.saveFeedConsumerCursor('sink', await headPast(scope, `rrev_hold_${kind}_1`));
         assert.deepEqual(await store.retireExpiredPeriods({ statusRetentionDays: 30 }), {
           retired: 1,
           failed: [],
