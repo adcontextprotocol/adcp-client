@@ -110,6 +110,27 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
     await assert.rejects(() => store.changesAfter({ cursor: rest.cursor }), /does not belong to this feed/);
   });
 
+  // The deployment-wide feed stops below the oldest transaction still open in
+  // the whole database, which suites running concurrently may hold briefly. It
+  // delays records and never loses them, so these reads poll until the records
+  // under test appear, and assertions look only at those records.
+  async function readDeployment(cursor, done, { limit } = {}) {
+    const records = [];
+    let next = cursor;
+    const deadline = Date.now() + 30_000;
+    for (;;) {
+      const page = await store.changesAfter({ ...(next ? { cursor: next } : {}), ...(limit ? { limit } : {}) });
+      records.push(...page.records);
+      next = page.cursor;
+      if (done(records)) return { records, cursor: next };
+      if (page.records.length === 0) {
+        if (Date.now() > deadline) throw new Error('deployment feed did not deliver the expected records');
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+  }
+  const ids = (records, wanted) => records.map(record => record.record_id).filter(id => wanted.includes(id));
+
   test('the deployment-wide feed never skips a slower lower-sequence commit', async () => {
     const start = await store.changesAfter({ limit: 10_000 });
     const slow = await pool.connect();
@@ -123,17 +144,20 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
         `INSERT INTO adcp_reporting_changes (account_id, record_kind, record_id, obligation_id)
          VALUES ('acct_fast', 'revision', 'rrev_fast', 'robl_fast')`
       );
-      const whileSlowOpen = await store.changesAfter({ cursor: start.cursor });
-      assert.deepEqual(whileSlowOpen.records, [], 'a later commit waits for the earlier transaction');
+      const whileSlowOpen = await store.changesAfter({ cursor: start.cursor, limit: 10_000 });
+      assert.deepEqual(
+        ids(whileSlowOpen.records, ['rrev_slow', 'rrev_fast']),
+        [],
+        'a later commit waits for the earlier transaction'
+      );
       await slow.query('COMMIT');
     } finally {
       slow.release();
     }
-    const afterCommit = await store.changesAfter({ cursor: start.cursor });
-    assert.deepEqual(
-      afterCommit.records.map(record => record.record_id),
-      ['rrev_slow', 'rrev_fast']
+    const afterCommit = await readDeployment(start.cursor, records =>
+      ['rrev_slow', 'rrev_fast'].every(id => records.some(record => record.record_id === id))
     );
+    assert.deepEqual(ids(afterCommit.records, ['rrev_slow', 'rrev_fast']), ['rrev_slow', 'rrev_fast']);
   });
 
   test('pruning honours registered consumers and expires older cursors', async () => {
@@ -188,17 +212,20 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
     } finally {
       older.release();
     }
-    const firstRead = await store.changesAfter({ cursor: start.cursor, limit: 1 });
-    assert.deepEqual(
-      firstRead.records.map(record => record.record_id),
-      ['rrev_a']
+    const firstRead = await readDeployment(
+      start.cursor,
+      records => records.some(record => record.record_id === 'rrev_a'),
+      { limit: 1 }
     );
+    assert.deepEqual(ids(firstRead.records, ['rrev_a', 'rrev_b']), ['rrev_a'], 'A is delivered before B');
     await store.saveFeedConsumerCursor('deployment-sink', firstRead.cursor);
     await pool.query(`UPDATE adcp_reporting_changes SET recorded_at = recorded_at - INTERVAL '40 days'`);
     await store.pruneChanges({ changeRetentionDays: 30 });
-    const resumed = await store.changesAfter({ cursor: firstRead.cursor });
+    const resumed = await readDeployment(firstRead.cursor, records =>
+      records.some(record => record.record_id === 'rrev_b')
+    );
     assert.deepEqual(
-      resumed.records.map(record => record.record_id),
+      ids(resumed.records, ['rrev_a', 'rrev_b']),
       ['rrev_b'],
       'the unread lower-sequence change survives pruning'
     );
@@ -210,6 +237,6 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
       ledger.ReportingChangeCursorExpiredError,
       'a deployment cursor that missed a pruned change fails closed'
     );
-    assert.deepEqual((await store.changesAfter({ cursor: resumed.cursor })).records, []);
+    assert.deepEqual(ids((await store.changesAfter({ cursor: resumed.cursor })).records, ['rrev_a', 'rrev_b']), []);
   });
 });
