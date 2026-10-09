@@ -214,7 +214,8 @@ export function createFilesystemReportingRowObjectProviderV1(
   // Write-unique: inode numbers are reused after a delete, so the version also carries
   // nanosecond birth and modify times (not ctime, which changes when the temporary link is
   // removed). `putIfAbsent` stamps a random sub-millisecond mtime so an identical
-  // re-creation inside one coarse timestamp tick still differs.
+  // re-creation inside one coarse timestamp tick still differs. Filesystems with whole-second
+  // mtime truncate the stamp away; `write-unique-version` conformance refuses them.
   const versionOf = (stat: { ino: bigint; birthtimeNs: bigint; mtimeNs: bigint; size: bigint }) =>
     `${stat.ino}:${stat.birthtimeNs}:${stat.mtimeNs}:${stat.size}`;
   const version = async (target: string) => versionOf(await fs.stat(target, { bigint: true }));

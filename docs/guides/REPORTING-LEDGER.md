@@ -376,6 +376,14 @@ await store.readyRowStorage();
 - Every read verifies the stored bytes against the recorded physical digest
   before decompressing, then verifies segments, chunks and the revision binding.
 - Keep a retired binding configured while revisions still reference it.
+- The filesystem provider identifies each write by inode, birth time, mtime
+  and size, stamping a random sub-millisecond mtime on every write. It needs a
+  filesystem with sub-second mtime and, ideally, birth time (ext4, XFS, APFS,
+  NTFS). On a coarse filesystem (FAT, some NFS mounts, ext3), a reused inode
+  re-created with identical bytes in the same second gets the same version,
+  so a delayed delete could remove the replacement. The conformance check
+  `write-unique-version` fails on such filesystems. That failure means the
+  filesystem is wrong, not the code.
 - Custom providers implement `ReportingRowObjectProviderV1`. Run
   `runReportingRowObjectProviderConformanceV1(provider, { location, prefix })`
   against a dedicated test prefix before using one.
