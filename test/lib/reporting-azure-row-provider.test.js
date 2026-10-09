@@ -431,7 +431,11 @@ test('provider errors map to stable, secret-free codes', async () => {
   );
 });
 
-test('deadlines and cancellation propagate as abortSignal and stable codes', async () => {
+test('deadlines and cancellation propagate as abortSignal and stable codes', async t => {
+  // AbortSignal.timeout uses an unreferenced timer; the hanging fake supplies
+  // no active I/O to keep the event loop alive while that deadline expires.
+  const keepAlive = setInterval(() => {}, 1000);
+  t.after(() => clearInterval(keepAlive));
   const client = createFakeAzure();
   client.hang = true;
   const provider = createAzureBlobReportingRowObjectProviderV1({ client });

@@ -32,6 +32,8 @@ Install the peer packages used by your application at versions satisfying these 
 | Peer | Supported range | Installation |
 | --- | --- | --- |
 | `@a2a-js/sdk` | `^1.0.1` | Required |
+| `@aws-sdk/client-s3` | `^3.700.0` | Optional |
+| `@azure/storage-blob` | `^12.23.0` | Optional |
 | `@google-cloud/storage` | `^7.22.0 || ^8.2.0` | Optional |
 | `@modelcontextprotocol/sdk` | `^1.31.0` | Required |
 | `@opentelemetry/api` | `^1.0.0` | Optional |
