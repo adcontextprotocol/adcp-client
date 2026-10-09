@@ -23,6 +23,60 @@ const TOOLS_SOURCE_FILE = path.join(__dirname, '../src/lib/types/tools.generated
 const OUTPUT_FILE = path.join(__dirname, '../src/lib/types/schemas.generated.ts');
 
 /**
+ * Schema construction only creates local validators and captures their dependencies.
+ * Wrap the entire initializer in a pure IIFE so unused definitions, including all
+ * nested Zod calls and format helpers, can be removed by consumer bundlers. Marking
+ * only the outer Zod call pure would leave its effectful-looking arguments behind.
+ * Run this last so structural post-processors still see their original expressions.
+ */
+function postProcessPureInitializers(content: string): string {
+  const source = ts.createSourceFile('adcp-generated-zod.ts', content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const edits: { start: number; end: number; text: string }[] = [];
+  for (const statement of source.statements) {
+    // Generated initializers must construct local validators, without shared
+    // registry setup or other externally observable initialization effects.
+    if (
+      ts.isImportDeclaration(statement) ||
+      ts.isTypeAliasDeclaration(statement) ||
+      ts.isInterfaceDeclaration(statement) ||
+      (ts.isExportDeclaration(statement) && statement.isTypeOnly)
+    ) {
+      continue;
+    }
+    if (!ts.isVariableStatement(statement)) {
+      throw new Error('Generated schemas may only contain imports, types, and const declarations.');
+    }
+    if (!(statement.declarationList.flags & ts.NodeFlags.Const)) {
+      throw new Error('Generated schema initializers must be const before marking them pure.');
+    }
+    for (const declaration of statement.declarationList.declarations) {
+      const initializer = declaration.initializer;
+      if (!initializer) continue;
+      const start = initializer.getStart(source);
+      const leadingTrivia = content.slice(initializer.getFullStart(), start);
+      if (
+        leadingTrivia.includes('@__PURE__') &&
+        ts.isCallExpression(initializer) &&
+        initializer.arguments.length === 0 &&
+        ts.isParenthesizedExpression(initializer.expression) &&
+        ts.isArrowFunction(initializer.expression.expression) &&
+        initializer.expression.expression.parameters.length === 0
+      ) {
+        continue;
+      }
+      edits.push({
+        start,
+        end: initializer.end,
+        text: `/* @__PURE__ */ (() => (${initializer.getText(source)}))()`,
+      });
+    }
+  }
+  return edits
+    .reverse()
+    .reduce((result, edit) => result.slice(0, edit.start) + edit.text + result.slice(edit.end), content);
+}
+
+/**
  * Post-process generated Zod schemas to convert .optional() to .nullish() globally.
  * This is needed because real-world API responses often send explicit null values for optional
  * fields, but ts-to-zod generates .optional() which only accepts undefined.
@@ -5706,7 +5760,7 @@ async function generateZodSchemas() {
     // Create header with metadata
     const header = `// Generated Zod v4 schemas from TypeScript types\n// Generated at: ${new Date().toISOString()}\n// Sources:\n//   - ${path.basename(CORE_SOURCE_FILE)} (core types)\n//   - ${path.basename(TOOLS_SOURCE_FILE)} (tool types)\n//\n// These schemas provide runtime validation for AdCP data structures\n// Generated using ts-to-zod from TypeScript type definitions\n\n`;
 
-    const finalContent = header + addBackwardCompatSchemaAliases(zodSchemas);
+    const finalContent = header + postProcessPureInitializers(addBackwardCompatSchemaAliases(zodSchemas));
 
     // Write the output
     const changed = writeFileIfChanged(OUTPUT_FILE, finalContent);
@@ -5735,6 +5789,7 @@ if (require.main === module) {
 }
 
 export const __test__ = {
+  postProcessPureInitializers,
   postProcessCompatibilityPurchaseCoordinatorInput,
   postProcessForPassthrough,
   postProcessTupleRestArrays,

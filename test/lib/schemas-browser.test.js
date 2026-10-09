@@ -4,6 +4,7 @@ const { build } = require('esbuild');
 const { runInNewContext } = require('node:vm');
 const { existsSync } = require('node:fs');
 const { resolve } = require('node:path');
+const { gzipSync } = require('node:zlib');
 const pkg = require('../../package.json');
 
 const portableValidators = [
@@ -46,6 +47,71 @@ test('browser schemas publish declaration paths for modern and legacy TypeScript
     assert.ok(existsSync(resolve(entry.types)), entry.types);
     assert.ok(existsSync(resolve(entry.default)), entry.default);
   }
+});
+
+test('a single browser schema drops unrelated validators and stays within its size budget', async t => {
+  const result = await build({
+    stdin: {
+      contents:
+        "import { EventSourceHealthSchema } from '@adcp/sdk/schemas/browser'; globalThis.healthSchema = EventSourceHealthSchema;",
+      resolveDir: process.cwd(),
+    },
+    bundle: true,
+    platform: 'browser',
+    format: 'iife',
+    target: 'es2022',
+    minify: true,
+    write: false,
+    metafile: true,
+    logLevel: 'silent',
+  });
+  const { contents, text } = result.outputFiles[0];
+  const output = Object.values(result.metafile.outputs)[0];
+  const generatedInput = output.inputs['dist/lib/types/schemas.generated.mjs'];
+  assert.ok(generatedInput, `expected generated schemas in bundle inputs: ${Object.keys(output.inputs).join(', ')}`);
+  const generatedBytes = generatedInput.bytesInOutput;
+  const gzipBytes = gzipSync(contents).length;
+  t.diagnostic(`single schema: ${contents.length} B minified, ${gzipBytes} B gzip, ${generatedBytes} B generated`);
+
+  // Includes Zod and ajv-formats. See docs/ZOD-SCHEMAS.md for the measured
+  // baseline and flags; the generated-code budget catches over-retention even
+  // if a dependency update makes the total bundle smaller.
+  assert.ok(contents.length <= 375000, `minified browser schema bundle is ${contents.length} B`);
+  assert.ok(gzipBytes <= 75000, `gzipped browser schema bundle is ${gzipBytes} B`);
+  assert.ok(generatedBytes <= 2048, `single schema retains ${generatedBytes} B of generated validators`);
+  for (const unrelatedField of ['product_id', 'media_buy_id', 'reporting_obligation_id']) {
+    assert.ok(!text.includes(unrelatedField), `unused ${unrelatedField} validator survived tree-shaking`);
+  }
+  assert.equal(output.imports.length, 0);
+  const context = { URL };
+  runInNewContext(text, context, { timeout: 10000 });
+  const health = { status: 'good', match_rate: 0.8, last_event_at: '2026-10-09T12:00:00Z' };
+  assert.equal(context.healthSchema.safeParse(health).success, true);
+  assert.equal(context.healthSchema.safeParse({ ...health, match_rate: 2 }).success, false);
+  assert.equal(context.healthSchema.safeParse({ ...health, last_event_at: 'invalid' }).success, false);
+});
+
+test('a portable action validator drops the other sync-creatives validators', async () => {
+  const result = await build({
+    stdin: {
+      contents:
+        "import { SyncCreativesActionSchema } from '@adcp/sdk/schemas/browser'; globalThis.actionSchema = SyncCreativesActionSchema;",
+      resolveDir: process.cwd(),
+    },
+    bundle: true,
+    platform: 'browser',
+    format: 'iife',
+    write: false,
+    logLevel: 'silent',
+  });
+  const code = result.outputFiles[0].text;
+  for (const unrelated of ['SyncCreativesItemSchema', 'SyncCreativesSuccessStrictSchema', 'AccountSchema']) {
+    assert.ok(!code.includes(unrelated), `${unrelated} survived an action-only import`);
+  }
+  const context = {};
+  runInNewContext(code, context, { timeout: 10000 });
+  assert.equal(context.actionSchema.safeParse('deleted').success, true);
+  assert.equal(context.actionSchema.safeParse('invalid').success, false);
 });
 
 for (const format of ['esm', 'cjs']) {
