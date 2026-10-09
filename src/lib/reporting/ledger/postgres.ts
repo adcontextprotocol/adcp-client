@@ -595,6 +595,20 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     this.changeFeed = options.changeFeed === true;
   }
 
+  /** Whether this store writes the host change feed (`changeFeed: true`). */
+  get changeFeedEnabled(): boolean {
+    return this.changeFeed;
+  }
+
+  /**
+   * Delete expired cursor snapshots and changes checkpoints, a bounded batch
+   * at a time. The store-bound form of `sweepExpiredReportingLedgerState`, for
+   * hosts that hold the store but not the pool.
+   */
+  async sweepExpiredState(limit = 1_000): Promise<{ snapshotsDeleted: number; checkpointsDeleted: number }> {
+    return sweepExpiredReportingLedgerState(this.pool, limit);
+  }
+
   /** Append one host change-feed row inside the caller's account-locked transaction. */
   private async appendChange(
     client: ReportingLedgerTransactionV1,

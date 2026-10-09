@@ -78,6 +78,12 @@ Each of these features is opt-in and additive. Enable them one at a time on a
 running deployment. See the [ledger guide](REPORTING-LEDGER.md#row-storage)
 for configuration details.
 
+Running Core only, without the production service? Pass `maintenance` to
+`createReliableReportingService` so its scheduler (or `runMaintenance()`) does
+the retention, change-feed pruning and abandoned-upload sweeps the production
+service runs for you. See
+[Core-only setup](REPORTING-LEDGER.md#core-only-setup-with-row-storage-change-feed-and-retention).
+
 1. **Row storage.** Apply `REPORTING_ROW_STORAGE_MIGRATION` (PostgreSQL 13+),
    or pass `rowStorage` to the production service, which adds it to
    `setup.migrations`. Roll out with `rowStorage` set. New revisions store

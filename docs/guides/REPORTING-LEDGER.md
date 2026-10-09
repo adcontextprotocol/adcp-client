@@ -541,6 +541,90 @@ because the retired obligations no longer exist.
 always sweeps abandoned row uploads and expired cursor snapshots and
 checkpoints, and retires periods when retention is enabled.
 
+### Core-only setup with row storage, change feed and retention
+
+You do not need the production service (managed delivery, notifications and
+activity) to keep a ledger tidy. Build the store with the options you want and
+give `createReliableReportingService` a `maintenance` option. The production
+service does the same work automatically; the two share one implementation, so
+partial-failure reporting, the `maxFeedHoldDays` that retention honours, per-task
+limits and abort handling are identical.
+
+```ts
+import {
+  PostgresReportingLedgerStore,
+  REPORTING_LEDGER_MIGRATION,
+  REPORTING_ROW_STORAGE_MIGRATION,
+  REPORTING_LEDGER_CHANGES_MIGRATION,
+} from '@adcp/sdk/reporting/ledger';
+import { createReliableReportingService } from '@adcp/sdk/reporting/service';
+
+// Apply the three migrations, then:
+const store = new PostgresReportingLedgerStore(pool, {
+  acknowledgeIsolatedDatabase: true,
+  rowStorage, // verified chunked rows in your object store
+  changeFeed: true, // host reads and consumer cursors
+});
+await store.readyRowStorage();
+
+const reporting = createReliableReportingService({
+  store,
+  statusRetentionDays: 90, // the commitment advertised to buyers; retention uses it
+  // ...adapters, contact, resolveSource, resolveCurrency, resolveCoverage
+  maintenance: {
+    intervalMilliseconds: 300_000, // default: at most one pass per 5 minutes
+    retention: { enabled: true, recordRetentionDays: 120, limit: 100 },
+    changeFeed: { changeRetentionDays: 30, maxFeedHoldDays: 7 },
+  },
+});
+
+reporting.start({ intervalMilliseconds: 60_000, deploymentWide: true, onError });
+```
+
+`reporting.start()` runs maintenance on its first pass and then at most once per
+`maintenance.intervalMilliseconds`, after the tenant cycles, never on every
+cycle. A task that throws, or that resolves with `failed` items, goes to the
+scheduler's `onError` (or `logger.warn`) and never stops the loop; partial
+failures arrive as `ReportingMaintenancePartialFailureError`.
+
+If you run your own scheduler instead, call `reporting.runMaintenance({ signal })`.
+It returns one result per task and reports failures in the result rather than
+throwing:
+
+```ts
+for (const result of await reporting.runMaintenance()) {
+  if (result.status === 'failed') log.error(result.task, result.error);
+  else if (result.partialFailure) log.warn(result.partialFailure.message);
+}
+```
+
+Tasks, in order:
+
+| Task                  | Runs                                              | What it does                                                         |
+| --------------------- | ------------------------------------------------- | -------------------------------------------------------------------- |
+| `snapshot sweep`      | always                                            | Deletes expired cursor snapshots and checkpoints (1,000 per pass).   |
+| `row upload sweep`    | always                                            | Resolves abandoned object uploads (100 per pass); no-op without row storage. |
+| `change-feed pruning` | when `maintenance.changeFeed` is set              | `pruneChanges` with `changeRetentionDays` and `maxFeedHoldDays`.     |
+| `retention`           | when `maintenance.retention.enabled` is `true`    | `retireExpiredPeriods` with the service's `statusRetentionDays` and the feed's `maxFeedHoldDays`. |
+
+Notes:
+
+- `maintenance` requires a `PostgresReportingLedgerStore` (or a store with the
+  same `retireExpiredPeriods`, `pruneChanges` and `sweepRowWriteIntents`
+  methods) and fails at construction otherwise. `maintenance.changeFeed` also
+  requires `changeFeed: true` on the store, since pruning is otherwise a silent
+  no-op.
+- Retention takes `statusRetentionDays` from the service, so it can never retire
+  a period earlier than the retention you advertise. `recordRetentionDays` may
+  only lengthen it.
+- The snapshot sweep uses `store.sweepExpiredState()`. A custom store without
+  that method skips the task rather than failing.
+- Run it on every replica or on one: each task is bounded, resumable and safe
+  to run concurrently.
+- Enable `retention` last (see the adoption checklist in the
+  [operations guide](REPORTING-OPERATIONS.md#adopting-row-storage-retention-and-the-change-feed)).
+  Retirement cannot be undone.
+
 ### Host reads: current revisions and the change feed
 
 In-process consumers such as pacing, alerts and warehouse loaders read from the

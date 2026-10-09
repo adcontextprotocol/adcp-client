@@ -4247,3 +4247,49 @@ describe('ReliableReportingService', () => {
     assert.match(String(errors[0]), /must return an array/);
   });
 });
+
+describe('ReliableReportingService ledger maintenance option', () => {
+  /** The three methods maintenance drives, on an object that is not a Postgres store. */
+  const maintenanceCapable = store => {
+    const stub = Object.create(store);
+    stub.retireExpiredPeriods = async () => ({ retired: 0, failed: [], failures: [] });
+    stub.pruneChanges = async () => ({ deleted: 0 });
+    stub.sweepRowWriteIntents = async () => ({ swept: 0, objectsDeleted: 0, failed: 0 });
+    return stub;
+  };
+
+  test('fails fast at construction when the store cannot run ledger maintenance', () => {
+    assert.throws(
+      () => serviceFixture({ maintenance: { retention: { enabled: true } } }),
+      /maintenance requires a PostgresReportingLedgerStore .*retireExpiredPeriods/
+    );
+  });
+
+  test('fails fast on a change feed the store does not maintain and on options the store would refuse', () => {
+    const store = maintenanceCapable(new MemoryLedgerStore());
+    const build = maintenance => serviceFixture({ store, maintenance });
+    assert.doesNotThrow(() => build({ retention: { enabled: true }, changeFeed: true }));
+    store.changeFeedEnabled = false;
+    assert.throws(() => build({ changeFeed: true }), /changeFeed: true/);
+    assert.doesNotThrow(() => build({ retention: { enabled: true } }), 'retention does not need the feed');
+    store.changeFeedEnabled = true;
+    assert.throws(() => build({ intervalMilliseconds: 0 }), /intervalMilliseconds/);
+    assert.throws(() => build({ retention: { enabled: false } }), /enabled: true/);
+    assert.throws(() => build({ retention: { enabled: true, limit: 0 } }), /limit/);
+    assert.throws(
+      () => build({ retention: { enabled: true, recordRetentionDays: 1 } }),
+      /no shorter than statusRetentionDays/
+    );
+    assert.throws(() => build({ changeFeed: { maxFeedHoldDays: 0 } }), /maxFeedHoldDays/);
+    assert.throws(() => build({ changeFeed: { changeRetentionDays: 1.5 } }), /changeRetentionDays/);
+  });
+
+  test('runMaintenance requires the option, and omits the snapshot sweep when the store cannot reach the pool', async () => {
+    await assert.rejects(() => serviceFixture().service.runMaintenance(), /requires the maintenance option/);
+    const { service } = serviceFixture({ store: maintenanceCapable(new MemoryLedgerStore()), maintenance: {} });
+    assert.deepEqual(
+      (await service.runMaintenance()).map(result => result.task),
+      ['row upload sweep']
+    );
+  });
+});
