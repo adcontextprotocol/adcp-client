@@ -1,5 +1,15 @@
 # Changelog
 
+## 15.7.0
+
+### Minor Changes
+
+- 78e9417: Core-only Reliable Reporting can now maintain its own ledger. `createReliableReportingService` accepts `maintenance: { intervalMilliseconds?, retention?, changeFeed? }` for a `PostgresReportingLedgerStore`, with the same `retention` and `changeFeed` shapes as `createPostgresReliableReportingProductionService`. `start()` runs the pass on its first cycle and then at most once per `intervalMilliseconds` (default 5 minutes), sweeping expired cursor snapshots and abandoned row uploads, pruning the change feed, and retiring expired periods using the service's own `statusRetentionDays` and the feed's `maxFeedHoldDays`. Failures and partial failures reach the scheduler's `onError` (or `logger.warn`) without stopping the loop. A new `runMaintenance({ signal? })` runs one pass for hosts with their own scheduler and returns one result per task. Construction fails fast if the store cannot run maintenance or `maintenance.changeFeed` is set on a store without `changeFeed: true`. The production service now runs the same shared helper, so the two cannot drift. `PostgresReportingLedgerStore` gains `sweepExpiredState()` and a `changeFeedEnabled` getter.
+
+### Patch Changes
+
+- 1524d11: Fix exact `get_media_buy_delivery` reads in `createReportingDeliveryHandler` returning `SERVICE_UNAVAILABLE` (transient, retry) for references that will never resolve. An unknown, unauthorized, row-expired or compacted `reporting_revision_id`, and a tampered or unusable pagination cursor, now return the same nondisclosing `REFERENCE_NOT_FOUND` with `field: "reporting_revision_id"`, so buyers stop retrying and the response never reveals whether a revision exists for another account. A missing `reporting_revision_id` is now a `VALIDATION_ERROR`. Integrity failures on a retained revision (missing or corrupt rows, row count that disagrees with the committed binding) still return `SERVICE_UNAVAILABLE`.
+
 ## 15.6.0
 
 ### Minor Changes
