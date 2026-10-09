@@ -153,16 +153,3 @@ export function reportingRowPrefixFilterOverlaps(filter: string | undefined, bin
   const owned = `${bindingPrefix}/`;
   return owned.startsWith(filter) || filter.startsWith(owned);
 }
-
-/**
- * S3 and Azure record a version ID when the store is versioned, else the
- * ETag. ETags are always kept quoted, which version IDs never are, so the two
- * cannot be confused when the version is read back.
- */
-export function reportingRowEtagVersion(etag: string): string {
-  return etag.startsWith('"') && etag.endsWith('"') && etag.length >= 2 ? etag : `"${etag}"`;
-}
-
-export function isReportingRowEtagVersion(nativeVersion: string): boolean {
-  return nativeVersion.length >= 2 && nativeVersion.startsWith('"') && nativeVersion.endsWith('"');
-}

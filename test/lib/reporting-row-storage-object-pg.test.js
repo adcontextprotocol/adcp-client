@@ -89,6 +89,7 @@ describe('object-storage revision rows', { skip: !DATABASE_URL && 'PostgreSQL UR
       'ranged-read',
       'version-pinned-read',
       'exact-version-delete',
+      'write-unique-version',
     ]);
   });
 
