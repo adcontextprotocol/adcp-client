@@ -20,6 +20,18 @@ if (result.success) {
 }
 ```
 
+### Browser / UI bundles
+
+Browser widgets, dashboards, and forms should import runtime validators from `@adcp/sdk/schemas/browser`:
+
+```typescript
+import { EventSourceHealthSchema } from '@adcp/sdk/schemas/browser';
+
+const health = EventSourceHealthSchema.parse(rawHealth);
+```
+
+This entry has no Node built-ins in its import graph and shares the Node entry's portable validators, including canonical and legacy get-products selectors. JSON Schema loading and tool registration helpers are available from `@adcp/sdk/schemas`. Importing one schema can still retain the full generated module; per-schema tree-shaking is tracked in [#3178](https://github.com/adcontextprotocol/adcp-client/issues/3178).
+
 ## Why Zod Schemas?
 
 - ✅ **Runtime validation** - Catch data issues at runtime, not just compile time
@@ -131,7 +143,7 @@ const authority = resolvePreviewAuthority({
 ```typescript
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { CreateMediaBuyRequestSchema } from '@adcp/sdk/schemas';
+import { CreateMediaBuyRequestSchema } from '@adcp/sdk/schemas/browser';
 
 function MediaBuyForm() {
   const { register, handleSubmit } = useForm({

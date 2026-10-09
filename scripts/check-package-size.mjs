@@ -200,7 +200,8 @@ const MAX_PACKED_FILE_COUNT =
   4 + // `reporting/s3` row-object provider subpath (one dual-format set).
   4 + // `reporting/azure` row-object provider subpath (one dual-format set).
   4 + // `reporting/bigquery` warehouse sink subpath (one dual-format set).
-  8; // Pending OAuth flow serialization and store conformance (two dual-format sets).
+  8 + // Pending OAuth flow serialization and store conformance (two dual-format sets).
+  8; // Browser schemas entry and shared get-products validator (two dual-format runtime/declaration sets).
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
