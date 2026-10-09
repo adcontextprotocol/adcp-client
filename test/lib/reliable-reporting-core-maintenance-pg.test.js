@@ -293,6 +293,27 @@ describe('Reliable Reporting Core maintenance', { skip: !DATABASE_URL && 'Postgr
     await assert.rejects(() => service.runMaintenance({ signal: controller.signal }));
   });
 
+  test('a task that throws synchronously fails alone; the others still run', async () => {
+    const broken = Object.create(store);
+    broken.sweepRowWriteIntents = () => {
+      throw new Error('sweep could not start');
+    };
+    const results = await createService(
+      { changeFeed: true, retention: { enabled: true } },
+      { store: broken }
+    ).runMaintenance();
+    assert.deepEqual(
+      results.map(result => [result.task, result.status]),
+      [
+        ['snapshot sweep', 'completed'],
+        ['row upload sweep', 'failed'],
+        ['change-feed pruning', 'completed'],
+        ['retention', 'completed'],
+      ]
+    );
+    assert.match(results[1].error.message, /sweep could not start/);
+  });
+
   test('surfaces a partially failed task on the result', async () => {
     const partial = Object.create(store);
     partial.retireExpiredPeriods = async () => ({

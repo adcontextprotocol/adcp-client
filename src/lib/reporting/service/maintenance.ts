@@ -100,13 +100,22 @@ export async function runReportingLedgerMaintenance(
   input: RunReportingLedgerMaintenanceInputV1
 ): Promise<ReportingLedgerMaintenanceTaskResultV1[]> {
   const { store, signal, changeFeed, retention } = input;
+  // Each task starts inside `start`, so a synchronous throw becomes that
+  // task's rejection instead of aborting the list: the tasks after it still
+  // run and the ones already started are never orphaned.
+  const start = (name: ReportingLedgerMaintenanceTaskNameV1, run: () => Promise<unknown>): StartedTask => {
+    try {
+      return [name, run()];
+    } catch (error) {
+      return [name, Promise.reject(error)];
+    }
+  };
   const tasks: StartedTask[] = [
-    ...(input.sweepSnapshots ? ([['snapshot sweep', input.sweepSnapshots(1_000)]] as StartedTask[]) : []),
-    ['row upload sweep', store.sweepRowWriteIntents({ limit: 100, ...(signal ? { signal } : {}) })],
+    ...(input.sweepSnapshots ? [start('snapshot sweep', () => input.sweepSnapshots!(1_000))] : []),
+    start('row upload sweep', () => store.sweepRowWriteIntents({ limit: 100, ...(signal ? { signal } : {}) })),
     ...(changeFeed
-      ? ([
-          [
-            'change-feed pruning',
+      ? [
+          start('change-feed pruning', () =>
             store.pruneChanges(
               typeof changeFeed === 'object'
                 ? {
@@ -118,14 +127,13 @@ export async function runReportingLedgerMaintenance(
                       : {}),
                   }
                 : {}
-            ),
-          ],
-        ] as StartedTask[])
+            )
+          ),
+        ]
       : []),
     ...(retention?.enabled
-      ? ([
-          [
-            'retention',
+      ? [
+          start('retention', () =>
             store.retireExpiredPeriods({
               statusRetentionDays: input.statusRetentionDays,
               ...(retention.recordRetentionDays !== undefined
@@ -136,9 +144,9 @@ export async function runReportingLedgerMaintenance(
                 : {}),
               limit: retention.limit ?? 100,
               ...(signal ? { signal } : {}),
-            }),
-          ],
-        ] as StartedTask[])
+            })
+          ),
+        ]
       : []),
   ];
   const settled = await Promise.allSettled(tasks.map(([, task]) => task));
