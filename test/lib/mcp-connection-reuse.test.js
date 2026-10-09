@@ -20,7 +20,7 @@ const { toNodeHandler } = require('@modelcontextprotocol/node');
 
 const publicEntry = require('../../dist/lib/index.js');
 const advancedEntry = require('../../dist/lib/advanced.js');
-const { closeMCPConnections, withScopedLegacyConnection, connectMCP } = require('../../dist/lib/protocols/mcp.js');
+const { closeMCPConnections, withScopedLegacyConnection } = require('../../dist/lib/protocols/mcp.js');
 const { callMCPToolWithTasks } = require('../../dist/lib/protocols/mcp-tasks.js');
 const {
   probeModernMCPConnection,
