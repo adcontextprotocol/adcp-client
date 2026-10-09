@@ -107,7 +107,7 @@ await assertPendingWebFlowStoreRoundTrip(pendingFlowStore, {
 
 The helper checks every current SDK field (including nested `carry` and issuer-bound
 client secrets), Date revival, missing states, single use, expired rows, duplicate
-rejection, and concurrent consume. It also checks null snapshots, clear actions,
+rejection, and concurrent consume. It also checks null/absent snapshots, clear actions,
 public clients, registration metadata, and unknown extensions. Stores may reject
 already-expired inserts; the helper still checks that consumption returns `null`.
 Its fixture is exhaustive at SDK build time, including optional flow and client

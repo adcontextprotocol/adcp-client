@@ -1267,8 +1267,8 @@ describe('published pending-flow store conformance helper', () => {
     );
   });
 
-  test('detects stores that drop null snapshots or overwrite before rejecting duplicates', async () => {
-    for (const violation of ['null-snapshot', 'duplicate-overwrite']) {
+  test('detects null/absent snapshot loss and overwrites before duplicate rejection', async () => {
+    for (const violation of ['null-snapshot', 'snapshot-hydration', 'duplicate-overwrite']) {
       const rows = new Map();
       await assert.rejects(
         () =>
@@ -1279,6 +1279,9 @@ describe('published pending-flow store conformance helper', () => {
               const saved = structuredClone(flow);
               if (saved.resourceOverrideSnapshot === null && violation === 'null-snapshot') {
                 delete saved.resourceOverrideSnapshot;
+              }
+              if (!Object.hasOwn(saved, 'resourceOverrideSnapshot') && violation === 'snapshot-hydration') {
+                saved.resourceOverrideSnapshot = undefined;
               }
               rows.set(flow.state, saved);
               if (duplicate) throw new Error('Duplicate');

@@ -61,7 +61,7 @@ function createPendingWebFlowFixture(
  * Assert that an adopter's pending-flow store preserves every current SDK field,
  * revives Dates, isolates state keys, rejects duplicates, consumes atomically
  * once, and treats expired rows as absent. Throws on a contract violation.
- * Stores may refuse to insert an already-expired row. Also checks null snapshots,
+ * Stores may refuse to insert an already-expired row. Also checks null/absent snapshots,
  * clear actions, public clients, registration metadata and unknown extensions.
  * Absent optional fields must stay absent rather than become undefined-valued
  * own properties; the callback distinguishes presence for resource snapshots.
@@ -104,6 +104,19 @@ export async function assertPendingWebFlowStoreRoundTrip(
   );
   assert.equal(await store.consume(clear.state), null, 'Clear flow must only be consumed once');
 
+  const preserve: PendingWebFlow = { ...createPendingWebFlowFixture(newState(), options) };
+  delete preserve.resourceOverride;
+  delete preserve.resourceOverrideAction;
+  delete preserve.resourceOverrideSnapshot;
+  const expectedPreserve = structuredClone(preserve);
+  await store.put(preserve);
+  assert.deepStrictEqual(
+    await store.consume(preserve.state),
+    expectedPreserve,
+    'Preserve-only flow must keep override fields absent'
+  );
+  assert.equal(await store.consume(preserve.state), null, 'Preserve-only flow must only be consumed once');
+
   const expired = createPendingWebFlowFixture(newState(), options);
   expired.createdAt = new Date(Date.now() - 2 * 60 * 60 * 1000);
   expired.expiresAt = new Date(Date.now() - 60 * 60 * 1000);
@@ -118,7 +131,7 @@ export async function assertPendingWebFlowStoreRoundTrip(
   const concurrent = createPendingWebFlowFixture(newState(), options);
   const expectedConcurrent = structuredClone(concurrent);
   await store.put(concurrent);
-  const duplicate = { ...structuredClone(concurrent), codeVerifier: 'different-conformance-verifier' };
+  const duplicate = { ...structuredClone(expectedConcurrent), codeVerifier: 'different-conformance-verifier' };
   await assert.rejects(async () => store.put(duplicate), 'Duplicate state must be rejected');
   const results = await Promise.all([store.consume(concurrent.state), store.consume(concurrent.state)]);
   const winners = results.filter(result => result !== null);
