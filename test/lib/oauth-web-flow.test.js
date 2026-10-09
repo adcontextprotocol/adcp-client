@@ -26,7 +26,10 @@ const {
   AgentVanishedDuringFlowError,
   AgentChangedDuringFlowError,
   ConfidentialClientNotAllowedError,
+  serializePendingWebFlow,
+  parsePendingWebFlow,
 } = require('../../dist/lib/auth/oauth');
+const { assertPendingWebFlowStoreRoundTrip } = require('@adcp/sdk/testing');
 
 // This suite intentionally uses an in-process plaintext authorization server.
 const startWebOAuthFlow = options => rawStartWebOAuthFlow({ allowHttp: true, ...options });
@@ -985,6 +988,334 @@ describe('completeWebOAuthFlow', () => {
   });
 });
 
+// Test adapter for the same JSON boundary a Redis/Postgres implementation uses.
+class JsonStringPendingFlowStore {
+  rows = new Map();
+
+  async put(flow) {
+    if (this.rows.has(flow.state)) throw new Error('Duplicate state');
+    this.rows.set(flow.state, serializePendingWebFlow(flow));
+  }
+
+  async consume(stateValue) {
+    const json = this.rows.get(stateValue);
+    this.rows.delete(stateValue);
+    if (json === undefined) return null;
+    const flow = parsePendingWebFlow(json);
+    return flow && flow.state === stateValue && flow.expiresAt.getTime() > Date.now() ? flow : null;
+  }
+}
+
+// Obtain the complete fixture from the published helper, keeping SDK field
+// coverage in one place rather than maintaining a second full fixture here.
+async function capturePendingFlowFixture() {
+  const store = new InMemoryPendingFlowStore();
+  let fixture;
+  await assertPendingWebFlowStoreRoundTrip({
+    put: async flow => {
+      fixture ??= structuredClone(flow);
+      await store.put(flow);
+    },
+    consume: stateValue => store.consume(stateValue),
+  });
+  return fixture;
+}
+
+describe('pending web-flow serialization', () => {
+  let fixture;
+  before(async () => {
+    fixture = await capturePendingFlowFixture();
+  });
+
+  test('round-trips all SDK fields, client information, nested carry, and Dates', () => {
+    const json = serializePendingWebFlow(fixture);
+    const wire = JSON.parse(json);
+    assert.strictEqual(wire.createdAt, fixture.createdAt.toISOString());
+    assert.strictEqual(wire.expiresAt, fixture.expiresAt.toISOString());
+    assert.deepStrictEqual(parsePendingWebFlow(json), fixture);
+    assert.deepStrictEqual(parsePendingWebFlow(wire), fixture, 'decoded Postgres jsonb payload');
+    assert.strictEqual(typeof require('@adcp/sdk/auth').serializePendingWebFlow, 'function');
+    assert.strictEqual(typeof require('@adcp/sdk/auth').parsePendingWebFlow, 'function');
+  });
+
+  test('preserves unknown top-level fields, client metadata, and nested extensions', () => {
+    const extended = structuredClone(fixture);
+    extended.futureField = { nested: [1, false, null, { issuer: 'opaque' }] };
+    extended.clientInformation.redirect_uris = ['https://buyer.example/oauth/callback'];
+    extended.clientInformation.token_endpoint_auth_method = 'client_secret_post';
+    extended.clientInformation.futureMetadata = { retained: true };
+    assert.deepStrictEqual(parsePendingWebFlow(serializePendingWebFlow(extended)), extended);
+  });
+
+  test('permits absent optional fields, a null snapshot, and the clear action', () => {
+    const flow = structuredClone(fixture);
+    for (const key of [
+      'resource',
+      'resourceOverride',
+      'resourceOverrideAction',
+      'resourceOverrideSnapshot',
+      'scope',
+      'authorizationServerIssuer',
+      'carry',
+    ])
+      delete flow[key];
+    flow.clientInformation = { client_id: 'public-client' };
+    assert.deepStrictEqual(parsePendingWebFlow(serializePendingWebFlow(flow)), flow);
+    flow.resourceOverrideAction = 'clear';
+    flow.resourceOverrideSnapshot = null;
+    assert.deepStrictEqual(parsePendingWebFlow(serializePendingWebFlow(flow)), flow);
+  });
+
+  test('does not filter expired flows during parsing', () => {
+    const expired = structuredClone(fixture);
+    expired.expiresAt = new Date(0);
+    assert.deepStrictEqual(parsePendingWebFlow(serializePendingWebFlow(expired)), expired);
+  });
+
+  test('returns null on invalid JSON and non-object payloads', () => {
+    for (const json of ['', '{', 'null', '[]', '42', '"string"', '{}', null, undefined]) {
+      assert.strictEqual(parsePendingWebFlow(json), null);
+    }
+  });
+
+  test('rejects each missing required field and every malformed SDK field', () => {
+    const wire = JSON.parse(serializePendingWebFlow(fixture));
+    for (const key of [
+      'state',
+      'agentId',
+      'agentUrl',
+      'codeVerifier',
+      'redirectUri',
+      'authorizationServerUrl',
+      'clientInformation',
+      'createdAt',
+      'expiresAt',
+    ]) {
+      const missing = { ...wire };
+      delete missing[key];
+      assert.strictEqual(parsePendingWebFlow(JSON.stringify(missing)), null, key);
+    }
+    for (const key of Object.keys(wire)) {
+      if (key === 'conformanceExtension') continue; // Deliberately unknown future field.
+      assert.strictEqual(parsePendingWebFlow(JSON.stringify({ ...wire, [key]: 123 })), null, key);
+    }
+    for (const value of [null, [], 'not-a-date', '2026-02-30T00:00:00.000Z', '2026-10-09']) {
+      for (const key of ['createdAt', 'expiresAt']) {
+        assert.strictEqual(parsePendingWebFlow(JSON.stringify({ ...wire, [key]: value })), null, key);
+      }
+    }
+    for (const value of [null, [], 'invalid']) {
+      assert.strictEqual(parsePendingWebFlow(JSON.stringify({ ...wire, carry: value })), null);
+    }
+    for (const value of [null, [], {}, { client_id: 1 }, { client_id: 'c', issuer: 7 }]) {
+      assert.strictEqual(parsePendingWebFlow(JSON.stringify({ ...wire, clientInformation: value })), null);
+    }
+    for (const key of ['client_secret', 'client_id_issued_at', 'client_secret_expires_at']) {
+      const invalidValue = key === 'client_secret' ? 123 : 'not-a-number';
+      assert.strictEqual(
+        parsePendingWebFlow(JSON.stringify({ ...wire, clientInformation: { client_id: 'c', [key]: invalidValue } })),
+        null,
+        key
+      );
+    }
+    assert.strictEqual(parsePendingWebFlow(JSON.stringify({ ...wire, resourceOverrideAction: 'invalid' })), null);
+  });
+
+  test('serializer rejects invalid Dates and non-JSON-serializable carry', () => {
+    assert.throws(() => serializePendingWebFlow({ ...fixture, expiresAt: new Date(NaN) }), TypeError);
+    assert.throws(() => serializePendingWebFlow({ ...fixture, carry: { value: 1n } }), TypeError);
+    const carry = {};
+    carry.circular = carry;
+    assert.throws(() => serializePendingWebFlow({ ...fixture, carry }), TypeError);
+  });
+});
+
+describe('published pending-flow store conformance helper', () => {
+  test('passes against the in-memory reference', async () => {
+    await assertPendingWebFlowStoreRoundTrip(new InMemoryPendingFlowStore());
+  });
+
+  test('passes across JSON serialization and Date revival', async () => {
+    await assertPendingWebFlowStoreRoundTrip(new JsonStringPendingFlowStore());
+  });
+
+  test('supports adopter-owned fixture values and real SDK state lengths', async () => {
+    const store = new JsonStringPendingFlowStore();
+    const carry = { tenant: 'test-tenant', nested: { retained: [1, null] } };
+    await assertPendingWebFlowStoreRoundTrip(
+      {
+        put: async flow => {
+          assert.strictEqual(flow.agentId, 'existing-test-agent');
+          assert.deepStrictEqual(flow.carry, carry);
+          assert.match(flow.state, /^[A-Za-z0-9_-]{43}$/);
+          await store.put(flow);
+        },
+        consume: stateValue => store.consume(stateValue),
+      },
+      { agentId: 'existing-test-agent', carry }
+    );
+    assert.strictEqual(store.rows.size, 0);
+  });
+
+  test('accepts stores that reject already-expired inserts', async () => {
+    const store = new JsonStringPendingFlowStore();
+    await assertPendingWebFlowStoreRoundTrip({
+      put: flow => {
+        if (flow.expiresAt.getTime() < Date.now()) throw new Error('Non-positive TTL');
+        return store.put(flow);
+      },
+      consume: stateValue => store.consume(stateValue),
+    });
+  });
+
+  test('expiry at the exact deadline is absent in the reference store and callback', async t => {
+    const fixture = await capturePendingFlowFixture();
+    const deadline = fixture.expiresAt.getTime();
+    t.mock.method(Date, 'now', () => deadline);
+    const store = new InMemoryPendingFlowStore();
+    await store.put(structuredClone(fixture));
+    assert.strictEqual(await store.consume(fixture.state), null);
+    await store.put(structuredClone(fixture));
+    assert.strictEqual(await store.cleanupExpired(), 1);
+    await assert.rejects(
+      () =>
+        completeWebOAuthFlow({
+          state: fixture.state,
+          code: 'auth-code',
+          pendingFlowStore: {
+            put: async () => {},
+            consume: async () => structuredClone(fixture),
+          },
+        }),
+      error => error instanceof InvalidOrExpiredFlowError
+    );
+    assert.strictEqual(state.lastTokenRequest, null);
+  });
+
+  test('detects losing any fixture field, including optional issuer and override fields', async () => {
+    const fixture = await capturePendingFlowFixture();
+    for (const key of Object.keys(fixture)) {
+      const store = new InMemoryPendingFlowStore();
+      await assert.rejects(
+        () =>
+          assertPendingWebFlowStoreRoundTrip({
+            put: flow => store.put(flow),
+            consume: async stateValue => {
+              const flow = await store.consume(stateValue);
+              if (flow) delete flow[key];
+              return flow;
+            },
+          }),
+        /round-trip every field and Date/,
+        key
+      );
+    }
+  });
+
+  test('detects Date strings, lost client secrets/issuer, and flattened carry', async () => {
+    for (const corrupt of [
+      flow => ({ ...flow, createdAt: flow.createdAt.toISOString() }),
+      flow => ({ ...flow, clientInformation: { client_id: flow.clientInformation.client_id } }),
+      flow => ({ ...flow, carry: { user_id: flow.carry.user_id } }),
+    ]) {
+      const store = new InMemoryPendingFlowStore();
+      await assert.rejects(
+        () =>
+          assertPendingWebFlowStoreRoundTrip({
+            put: flow => store.put(flow),
+            consume: async stateValue => {
+              const flow = await store.consume(stateValue);
+              return flow ? corrupt(flow) : null;
+            },
+          }),
+        /round-trip every field and Date/
+      );
+    }
+  });
+
+  test('snapshots the fixture before a store mutates its input', async () => {
+    const store = new InMemoryPendingFlowStore();
+    await assert.rejects(
+      () =>
+        assertPendingWebFlowStoreRoundTrip({
+          put: async flow => {
+            delete flow.authorizationServerIssuer;
+            await store.put(flow);
+          },
+          consume: stateValue => store.consume(stateValue),
+        }),
+      /round-trip every field and Date/
+    );
+  });
+
+  test('detects stores that drop null snapshots or overwrite before rejecting duplicates', async () => {
+    for (const violation of ['null-snapshot', 'duplicate-overwrite']) {
+      const rows = new Map();
+      await assert.rejects(
+        () =>
+          assertPendingWebFlowStoreRoundTrip({
+            put: async flow => {
+              const duplicate = rows.has(flow.state);
+              if (duplicate && violation !== 'duplicate-overwrite') throw new Error('Duplicate');
+              const saved = structuredClone(flow);
+              if (saved.resourceOverrideSnapshot === null && violation === 'null-snapshot') {
+                delete saved.resourceOverrideSnapshot;
+              }
+              rows.set(flow.state, saved);
+              if (duplicate) throw new Error('Duplicate');
+            },
+            consume: async stateValue => {
+              const flow = rows.get(stateValue);
+              rows.delete(stateValue);
+              return flow && flow.expiresAt.getTime() > Date.now() ? flow : null;
+            },
+          }),
+        { name: 'AssertionError' },
+        violation
+      );
+    }
+  });
+
+  test('JSON store refuses malformed payloads and payloads under the wrong state key', async () => {
+    const store = new JsonStringPendingFlowStore();
+    const fixture = await capturePendingFlowFixture();
+    store.rows.set('wrong-state', serializePendingWebFlow(fixture));
+    store.rows.set('malformed', '{');
+    assert.strictEqual(await store.consume('wrong-state'), null);
+    assert.strictEqual(await store.consume('malformed'), null);
+    assert.strictEqual(store.rows.size, 0);
+  });
+
+  test('detects missing-state, replay, expiry, duplicate, and concurrent-consume violations', async () => {
+    for (const violation of ['missing-state', 'replay', 'expiry', 'duplicate', 'concurrent']) {
+      const rows = new Map();
+      let current;
+      let inserted = 0;
+      let concurrentState;
+      const store = {
+        put: async flow => {
+          if (rows.has(flow.state) && violation !== 'duplicate') throw new Error('Duplicate');
+          if (!rows.has(flow.state) && ++inserted === 4) concurrentState = flow.state;
+          current = flow;
+          rows.set(flow.state, structuredClone(flow));
+        },
+        consume: async stateValue => {
+          const flow = rows.get(stateValue);
+          if (!flow) return violation === 'missing-state' ? current : null;
+          if (violation === 'concurrent' && stateValue === concurrentState) {
+            // Models SELECT followed by an asynchronous DELETE, so both readers win.
+            await Promise.resolve();
+          }
+          if (violation !== 'replay') rows.delete(stateValue);
+          if (flow.expiresAt.getTime() < Date.now() && violation !== 'expiry') return null;
+          return flow;
+        },
+      };
+      await assert.rejects(() => assertPendingWebFlowStoreRoundTrip(store), { name: 'AssertionError' }, violation);
+    }
+  });
+});
+
 describe('PendingWebFlowStore contract (run against any implementation)', () => {
   /**
    * Reusable contract test. Adopters implementing a Postgres or Redis
@@ -1053,9 +1384,54 @@ describe('PendingWebFlowStore contract (run against any implementation)', () => 
   }
 
   runContract('InMemoryPendingFlowStore', async () => new InMemoryPendingFlowStore());
+  runContract('JsonStringPendingFlowStore', async () => new JsonStringPendingFlowStore());
 });
 
 describe('web OAuth issuer isolation', () => {
+  test('completes a web flow across the shared JSON persistence boundary', async () => {
+    installStandardASHandlers();
+    const store = new JsonStringPendingFlowStore();
+    const carry = { user_id: 'owner', nested: { values: ['one', { two: 2 }] } };
+    const started = await startWebOAuthFlow({
+      agent: makeAgent(),
+      redirectUri: 'http://localhost/callback',
+      resourceOverride: `${origin()}/resource`,
+      carry,
+      pendingFlowStore: store,
+    });
+    const persisted = JSON.parse(store.rows.get(started.state));
+    assert.strictEqual(persisted.authorizationServerIssuer, `${origin()}/`);
+    assert.strictEqual(persisted.resourceOverrideAction, 'set');
+    const completed = await completeWebOAuthFlow({
+      state: started.state,
+      code: 'auth-code',
+      pendingFlowStore: store,
+    });
+    assert.deepStrictEqual(completed.carry, carry);
+    assert.strictEqual(completed.tokens.issuer, `${origin()}/`);
+    assert.strictEqual(state.lastTokenRequest.params.resource, `${origin()}/resource`);
+    assert.strictEqual(await store.consume(started.state), null);
+  });
+
+  test('parseable legacy rows without a frozen issuer refuse callback before token exchange', async () => {
+    installStandardASHandlers();
+    const store = new JsonStringPendingFlowStore();
+    const started = await startWebOAuthFlow({
+      agent: makeAgent(),
+      redirectUri: 'http://localhost/callback',
+      pendingFlowStore: store,
+    });
+    const flow = parsePendingWebFlow(store.rows.get(started.state));
+    delete flow.authorizationServerIssuer;
+    store.rows.set(started.state, serializePendingWebFlow(flow));
+    await assert.rejects(
+      () => completeWebOAuthFlow({ state: started.state, code: 'auth-code', pendingFlowStore: store }),
+      error => error.code === 'oauth_issuer_required'
+    );
+    assert.strictEqual(state.lastTokenRequest, null);
+    assert.strictEqual(await store.consume(started.state), null);
+  });
+
   test('rejects unbound or differently bound confidential clients before starting a flow', async () => {
     installStandardASHandlers();
     for (const issuer of [undefined, 'https://different-as.example']) {

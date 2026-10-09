@@ -1,6 +1,8 @@
 // Test helpers for AdCP client library
 // Provides pre-configured test agents for examples and quick testing
 
+export { assertPendingWebFlowStoreRoundTrip, type PendingWebFlowStoreRoundTripOptions } from './pending-web-flow-store';
+
 export {
   // Test agents (with auth)
   testAgent,

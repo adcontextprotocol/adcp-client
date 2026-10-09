@@ -89,6 +89,8 @@ export {
   type CompleteWebFlowResult,
 } from './web-flow';
 
+export { serializePendingWebFlow, parsePendingWebFlow } from './pending-web-flow';
+
 // Main provider
 export { MCPOAuthProvider } from './MCPOAuthProvider';
 

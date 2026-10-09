@@ -69,9 +69,54 @@ Auth0 `audience`. With storage, overrides persist/reuse on omission; successful
 `PendingWebFlowStore`: `put(flow)` and atomic `consume(state)`, e.g. PostgreSQL
 `DELETE ... WHERE state = $1 AND expires_at > now() RETURNING payload`, or Redis
 `SET pending:flow:<state> <payload> EX 600 NX` then `GETDEL`. SELECT/DELETE races
-permit replay. Store contract tests: `test/lib/oauth-web-flow.test.js`.
+permit replay. Check your store with `assertPendingWebFlowStoreRoundTrip` (below).
 `DEFAULT_WEB_FLOW_TTL_MS` is 10 minutes; shorten as needed. `InMemoryPendingFlowStore` is
 test/dev-only; restarts lose flows. Encrypt PKCE verifiers at rest across trust boundaries.
+
+Use `serializePendingWebFlow` and `parsePendingWebFlow` from `@adcp/sdk/auth`
+for the stored payload. The parser validates SDK-owned fields, revives `createdAt`
+and `expiresAt` as `Date` values, and returns `null` for malformed input. It accepts
+JSON strings and decoded JSON values such as `pg`'s `jsonb` payloads. It preserves
+unknown fields and all client metadata, including `issuer` and `client_secret`.
+Do not narrow the persisted shape to today's fields: a hand-written schema that
+strips new optional fields can type-check while breaking sign-in after an SDK upgrade.
+
+```ts
+import { parsePendingWebFlow, serializePendingWebFlow } from '@adcp/sdk/auth';
+import { assertPendingWebFlowStoreRoundTrip } from '@adcp/sdk/testing';
+
+// In put(flow), serialize before encrypting and inserting with duplicate rejection:
+const payload = serializePendingWebFlow(flow);
+
+// In consume(state), decrypt the payload returned by atomic get-and-delete:
+function restoreConsumedFlow(state: string, decryptedPayload: unknown) {
+  const restored = parsePendingWebFlow(decryptedPayload);
+  return restored && restored.state === state && restored.expiresAt.getTime() > Date.now()
+    ? restored
+    : null;
+}
+
+// In CI, use a disposable instance of your production store on each SDK upgrade:
+await assertPendingWebFlowStoreRoundTrip(pendingFlowStore);
+// Stores with application-owned constraints can supply valid fixture values:
+await assertPendingWebFlowStoreRoundTrip(pendingFlowStore, {
+  agentId: testAgentId,
+  carry: { user_id: testUserId, nested: { values: ['one', 2, null] } },
+});
+```
+
+The helper checks every current SDK field (including nested `carry` and issuer-bound
+client secrets), Date revival, missing states, single use, expired rows, duplicate
+rejection, and concurrent consume. It also checks null snapshots, clear actions,
+public clients, registration metadata, and unknown extensions. Stores may reject
+already-expired inserts; the helper still checks that consumption returns `null`.
+Its fixture is exhaustive at SDK build time, including optional flow and client
+information fields. The concurrency check is a smoke test; the backend must
+provide atomic deletion across processes. Use JSON-serializable `carry` and validate
+its application-owned contents separately. The store still owns encryption of PKCE
+and client secrets, TTL, duplicate rejection, atomic consume, and binding the payload's
+`state` to its storage key. The parser does not filter expired flows or establish
+issuer trust; `completeWebOAuthFlow` also enforces expiry and issuer binding.
 
 Optional `agentStorage` (`OAuthConfigStorage`): callback loads the pending row's
 agent ID. Without it, completion

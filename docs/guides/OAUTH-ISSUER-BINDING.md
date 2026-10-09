@@ -38,6 +38,12 @@ stage DCR privately and reconstruct for callback. Applications provide ownership
 and atomic generation replacement. No distributed refresh coordination,
 grant/client CAS or spent-grant cancellation: quiesce background callers for recovery.
 
+Pending flows written by an older store that omitted `authorizationServerIssuer`
+fail at callback with `oauth_issuer_required` and must restart sign-in. The SDK parser
+can read these legacy rows, but cannot recreate their historical issuer trust.
+Use the shared serializer and run `assertPendingWebFlowStoreRoundTrip` in CI to
+catch dropped fields on upgrade; see [Web OAuth storage](WEB-OAUTH.md#storage-and-errors).
+
 Custom providers must preserve issuer in getters/saves. Upstream
 `ClientCredentialsProvider`, `PrivateKeyJwtProvider`, `StaticPrivateKeyJwtProvider`,
 `CrossAppAccessProvider` need independent `expectedIssuer`. Direct exchange/refresh
