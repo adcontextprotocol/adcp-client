@@ -107,7 +107,12 @@ async function createRowStorageFixture({ store, now = Date.now(), suffix = 'rows
       dataThrough: new Date(now - 1_000).toISOString(),
       sourceReadCutoffAt: new Date(now + revisionNumber).toISOString(),
       createdAt: new Date(now).toISOString(),
-      wireRevision: { reporting_revision_id: id, revision_content_sha256: sha256, control_totals: [] },
+      wireRevision: {
+        reporting_revision_id: id,
+        revision_content_sha256: sha256,
+        control_totals: [],
+        period: { start: obligation.period.start, end: obligation.period.end, source_timezone: 'UTC' },
+      },
       ...extra,
     };
   }
