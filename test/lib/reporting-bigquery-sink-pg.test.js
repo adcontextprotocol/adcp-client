@@ -120,14 +120,14 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
   test('loads committed revisions once, with metadata, and stays idle until more commit', async () => {
     const bigquery = fakeBigQuery();
     const sink = newSink(bigquery);
-    assert.deepEqual(await sink.runOnce(), { idle: true, revisions: 0, rows: 0 });
+    assert.deepEqual(await sink.runOnce(), { idle: true, revisions: 0, rows: 0, missing: [] });
 
     await store.commitRevision(fixture.revision('rrev_sink_1', 1, rows), fixture.lease);
     await store.commitRevision(
       fixture.revision('rrev_sink_2', 2, rows.slice(0, 10), { supersedes_reporting_revision_id: 'rrev_sink_1' }),
       fixture.lease
     );
-    assert.deepEqual(await sink.runOnce(), { idle: false, revisions: 2, rows: 1_210 });
+    assert.deepEqual(await sink.runOnce(), { idle: false, revisions: 2, rows: 1_210, missing: [] });
     const loaded = bigquery.tables.get('reporting.revision_rows');
     assert.equal(loaded.length, 1_210);
     assert.deepEqual(loaded[0], {
@@ -148,7 +148,7 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
         ['rrev_sink_2', 10],
       ]
     );
-    assert.deepEqual(await sink.runOnce(), { idle: true, revisions: 0, rows: 0 });
+    assert.deepEqual(await sink.runOnce(), { idle: true, revisions: 0, rows: 0, missing: [] });
     assert.equal(
       Number(
         (await pool.query(`SELECT count(*) AS n FROM adcp_reporting_feed_consumers WHERE consumer_name = 'warehouse'`))
@@ -172,7 +172,7 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     bigquery.failNext('revisions', 'network');
     await assert.rejects(() => sink.runOnce(), /socket hang up/);
     assert.equal(bigquery.tables.get('reporting.revision_rows').length, before + 5, 'rows landed once');
-    assert.deepEqual(await sink.runOnce(), { idle: false, revisions: 1, rows: 5 });
+    assert.deepEqual(await sink.runOnce(), { idle: false, revisions: 1, rows: 5, missing: [] });
     assert.equal(
       bigquery.tables.get('reporting.revision_rows').length,
       before + 5,
@@ -194,7 +194,7 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     await assert.rejects(() => sink.runOnce(), /Job failed/);
     // The next run learns the job finished with an error and advances only that table's attempt.
     await assert.rejects(() => sink.runOnce(), /will be retried as a new attempt/);
-    assert.deepEqual(await sink.runOnce(), { idle: false, revisions: 1, rows: 3 });
+    assert.deepEqual(await sink.runOnce(), { idle: false, revisions: 1, rows: 3, missing: [] });
     assert.equal(bigquery.tables.get('reporting.revision_rows').length, rowsBefore + 3);
     assert.ok([...bigquery.jobs.keys()].some(id => id.endsWith('_revs_a1')));
     assert.ok(![...bigquery.jobs.keys()].some(id => id.endsWith('_rows_a1')));
@@ -232,11 +232,45 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     };
     const first = newSink(bigquery, { name: 'hung', loadTimeoutMilliseconds: 1_000 });
     await assert.rejects(() => first.runOnce(), /exceeded its deadline/);
-    assert.deepEqual(await first.runOnce(), { idle: false, revisions: 1, rows: 2 });
+    assert.deepEqual(await first.runOnce(), { idle: false, revisions: 1, rows: 2, missing: [] });
     assert.equal(bigquery.tables.get('reporting.revision_rows').length, rowsBefore + 2, 'rows landed exactly once');
     const sentTimeout = [...bigquery.jobs.values()].find(job => job.metadata?.jobTimeoutMs)?.metadata.jobTimeoutMs;
     assert.equal(sentTimeout, '1000');
     assert.throws(() => newSink(bigquery, { loadTimeoutMilliseconds: 10 }), /loadTimeoutMilliseconds/);
+  });
+
+  test('reports revisions retired before the batch ran as missing, and still advances', async () => {
+    const bigquery = fakeBigQuery();
+    const sink = newSink(bigquery, { name: 'behind' });
+    await sink.runOnce();
+    const gone = await createRowStorageFixture({ store, suffix: 'sinkgone' });
+    await store.commitRevision(gone.revision('rrev_sink_gone_1', 1, rows.slice(0, 4)), gone.lease);
+    const obligationId = gone.obligation.reporting_obligation_id;
+    await pool.query(
+      `UPDATE adcp_reporting_obligations
+          SET period_start = period_start - INTERVAL '40 days', period_end = period_end - INTERVAL '40 days',
+              created_at = created_at - INTERVAL '40 days', lease_expires_at = clock_timestamp() - INTERVAL '1 second'
+        WHERE obligation_id = $1`,
+      [obligationId]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_revisions SET recorded_at = recorded_at - INTERVAL '40 days' WHERE obligation_id = $1`,
+      [obligationId]
+    );
+    // The sink has not read the period's changes yet, so retention waits for it.
+    assert.equal((await store.retireExpiredPeriods({ statusRetentionDays: 30 })).retired, 0);
+    // Once the sink is dead beyond the hold window, retention proceeds without it.
+    await pool.query(`UPDATE adcp_reporting_feed_consumers SET updated_at = clock_timestamp() - INTERVAL '10 days'`);
+    assert.equal((await store.retireExpiredPeriods({ statusRetentionDays: 30 })).retired, 1);
+
+    assert.deepEqual(await sink.runOnce(), { idle: false, revisions: 0, rows: 0, missing: ['rrev_sink_gone_1'] });
+    for (const table of ['reporting.revisions', 'reporting.revision_rows']) {
+      assert.ok(
+        !(bigquery.tables.get(table) ?? []).some(value => value.reporting_revision_id === 'rrev_sink_gone_1'),
+        'nothing was loaded for the retired revision'
+      );
+    }
+    assert.deepEqual(await sink.runOnce(), { idle: true, revisions: 0, rows: 0, missing: [] }, 'the cursor advanced');
   });
 
   test('publishes partitioned table DDL and a current-revision view, and validates identifiers', () => {

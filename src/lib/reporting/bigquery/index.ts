@@ -99,8 +99,21 @@ export interface CreateBigQueryReportingWarehouseSinkOptionsV1 {
 }
 
 export interface BigQueryReportingWarehouseSinkV1 {
-  /** Load at most one batch. Resolves with what was loaded; `idle` when nothing new committed. */
-  runOnce(options?: { signal?: AbortSignal }): Promise<{ idle: boolean; revisions: number; rows: number }>;
+  /**
+   * Load at most one batch. Resolves with what was loaded; `idle` when nothing new committed.
+   *
+   * `missing` lists revision IDs the change feed announced that no longer
+   * exist in the ledger because their period was retired before this batch
+   * ran. That is a data-loss signal: the sink fell behind retention (it was
+   * down longer than `maxFeedHoldDays`, so retention stopped waiting for it)
+   * and the warehouse lacks those revisions. Backfill them from another source
+   * or accept the gap. The cursor still advances so the sink is not stuck.
+   * Alert on a non-empty `missing`. After a crash-and-replay of a planned
+   * batch, a listed revision may already have been loaded by the first attempt.
+   */
+  runOnce(options?: {
+    signal?: AbortSignal;
+  }): Promise<{ idle: boolean; revisions: number; rows: number; missing: string[] }>;
   /** DDL for the default rows and revisions tables (partitioned and clustered). */
   readonly defaultTablesSql: string;
   /** DDL for the reference `current_rows` view. */
@@ -224,7 +237,7 @@ export function createBigQueryReportingWarehouseSinkV1(
         });
         if (page.records.length === 0) {
           if (page.cursor !== state.committed_cursor) await commit(page.cursor);
-          return { idle: true, revisions: 0, rows: 0 };
+          return { idle: true, revisions: 0, rows: 0, missing: [] };
         }
         plan = {
           from: state.committed_cursor,
@@ -244,11 +257,16 @@ export function createBigQueryReportingWarehouseSinkV1(
 
       const rowLines: string[] = [];
       const revisionLines: string[] = [];
+      const missing: string[] = [];
       for (const planned of plan.revisions) {
         signal?.throwIfAborted();
         const revision = await options.store.getRevisionMetadata(planned.id, planned.account_id);
-        // Retired before this batch ran: its period no longer exists in the ledger.
-        if (!revision) continue;
+        // Retired before this batch ran: its period no longer exists in the
+        // ledger, so the sink fell behind retention. Report it, never drop it silently.
+        if (!revision) {
+          missing.push(planned.id);
+          continue;
+        }
         const periodDate = sourceLocalDate(
           revision.wireRevision.period?.start,
           revision.wireRevision.period?.source_timezone
@@ -319,7 +337,7 @@ export function createBigQueryReportingWarehouseSinkV1(
         }
       }
       await commit(plan.to);
-      return { idle: false, revisions: revisionLines.length, rows: rowLines.length };
+      return { idle: false, revisions: revisionLines.length, rows: rowLines.length, missing };
     },
   };
 

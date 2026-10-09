@@ -1611,10 +1611,20 @@ ${managedDueArm}       )
    *
    * Planners skip retired periods, and `ledger_retained_from` advances past
    * them because their obligations no longer exist.
+   *
+   * When the change-feed tables exist, a period that is not yet retiring is
+   * also held while any live registered feed consumer (updated within
+   * `maxFeedHoldDays`, default 7) has not passed that period's change rows in
+   * the consumer's own feed order, the same rule `pruneChanges` applies. A
+   * held period is simply not a candidate this pass. A consumer that stays
+   * silent past `maxFeedHoldDays` stops holding, so retention is never
+   * blocked forever; it then falls behind retention and a sink sees the
+   * retired revisions as missing.
    */
   async retireExpiredPeriods(input: {
     statusRetentionDays: number;
     recordRetentionDays?: number;
+    maxFeedHoldDays?: number;
     limit?: number;
     account_id?: string;
     signal?: AbortSignal;
@@ -1633,10 +1643,23 @@ ${managedDueArm}       )
     }
     const limit = input.limit ?? 100;
     positiveInteger(limit, 'limit');
+    const holdDays = input.maxFeedHoldDays ?? 7;
+    positiveInteger(holdDays, 'maxFeedHoldDays');
     const tables = await this.optionalTables();
     const materializationHold = tables.has('adcp_reporting_materializations')
       ? `AND NOT EXISTS (SELECT 1 FROM adcp_reporting_materializations hold WHERE hold.obligation_id = obligation.obligation_id)`
       : '';
+    const feedHold =
+      tables.has('adcp_reporting_changes') && tables.has('adcp_reporting_feed_consumers')
+        ? `AND NOT EXISTS (
+                  SELECT 1 FROM adcp_reporting_changes change
+                    JOIN adcp_reporting_feed_consumers consumer
+                      ON consumer.updated_at > clock_timestamp() - ($4::integer * INTERVAL '1 day')
+                   WHERE change.obligation_id = obligation.obligation_id
+                     AND ((consumer.account_id IS NULL
+                           AND (change.xid, change.seq) > (consumer.cursor_xid, consumer.cursor_seq))
+                       OR (consumer.account_id = change.account_id AND change.seq > consumer.cursor_seq)))`
+        : '';
     const candidates = await this.query<{ obligation_id: string; account_id: string }>(
       `SELECT obligation_id, account_id FROM (
          SELECT tombstone.obligation_id, tombstone.account_id, 0 AS resume, tombstone.period_end
@@ -1657,10 +1680,11 @@ ${managedDueArm}       )
             AND NOT EXISTS (SELECT 1 FROM adcp_reporting_obligation_tombstones tombstone
                              WHERE tombstone.obligation_id = obligation.obligation_id)
             ${materializationHold}
+            ${feedHold}
        ) candidate
        ORDER BY resume, period_end, obligation_id
        LIMIT $1`,
-      [limit, input.account_id ?? null, recordDays]
+      feedHold ? [limit, input.account_id ?? null, recordDays, holdDays] : [limit, input.account_id ?? null, recordDays]
     );
     let retired = 0;
     const failed: string[] = [];
@@ -1851,7 +1875,8 @@ ${managedDueArm}       )
       `SELECT table_name AS name FROM information_schema.tables
         WHERE table_schema = current_schema()
           AND table_name IN ('adcp_reporting_row_sets', 'adcp_reporting_row_write_intents',
-                             'adcp_reporting_materializations')`
+                             'adcp_reporting_materializations', 'adcp_reporting_changes',
+                             'adcp_reporting_feed_consumers')`
     );
     return new Set(result.rows.map(row => row.name));
   }

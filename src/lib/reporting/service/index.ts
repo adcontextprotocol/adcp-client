@@ -629,7 +629,9 @@ export type CreatePostgresReliableReportingProductionServiceOptionsV1<TCtxMeta =
    * periods once `max(statusRetentionDays, recordRetentionDays)` has elapsed
    * since both the period end and its latest publication, deleting their
    * rows and ledger records and leaving a tombstone. Abandoned row uploads
-   * and expired cursor snapshots are always swept.
+   * and expired cursor snapshots are always swept. With `changeFeed`, a
+   * period is also held until every live registered feed consumer (updated
+   * within `changeFeed.maxFeedHoldDays`, default 7) has read its changes.
    */
   retention?: { enabled: true; recordRetentionDays?: number; limit?: number };
   /**
@@ -977,6 +979,9 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
                 statusRetentionDays: options.statusRetentionDays,
                 ...(options.retention.recordRetentionDays !== undefined
                   ? { recordRetentionDays: options.retention.recordRetentionDays }
+                  : {}),
+                ...(typeof options.changeFeed === 'object' && options.changeFeed.maxFeedHoldDays !== undefined
+                  ? { maxFeedHoldDays: options.changeFeed.maxFeedHoldDays }
                   : {}),
                 limit: options.retention.limit ?? 100,
                 signal,
