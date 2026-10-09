@@ -1,5 +1,0 @@
----
-'@adcp/sdk': minor
----
-
-Reporting row storage can now keep revision and adjustment rows in object storage. Configure an `object` binding (`provider`, non-secret `location`, owned `prefix`, optional `keyTemplate`, `compression`, `credentialRef`) and register a `ReportingRowObjectProviderV1`; host-configured bindings are the allowlist, so database state can never redirect reads or writes. Chunks are uploaded create-only (identical existing bytes are adopted, different bytes fail with `CONTENT_CONFLICT`) under a fenced write intent that requires the obligation lease to cover the upload deadline, and the ledger commit closes the intent atomically. Reads verify the stored object's physical digest before decompressing and every segment, chunk and binding digest before releasing rows. Ships `createFilesystemReportingRowObjectProviderV1`, `runReportingRowObjectProviderConformanceV1`, key-template helpers and `ReportingRowStorageV1` exports. `migrateInlineRows` accepts a `bindingId` override.
