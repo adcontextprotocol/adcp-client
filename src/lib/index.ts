@@ -281,7 +281,16 @@ export {
   createSingleAgentClient,
   UnsupportedFeatureError,
 } from './core/SingleAgentClient';
+export { createInMemoryAgentDiscoveryCache } from './core/agent-discovery-cache';
 export type {
+  AgentDiscoveryCache,
+  AgentDiscoveryCacheConfig,
+  AgentDiscoveryEntry,
+  InMemoryAgentDiscoveryCache,
+  InMemoryAgentDiscoveryCacheOptions,
+} from './core/agent-discovery-cache';
+export type {
+  AgentDiscoverySeed,
   CapabilityEvidenceScope,
   CapabilityEvidenceSnapshot,
   ClientProductPropertyPolicy,
@@ -1663,6 +1672,8 @@ export {
   createA2AClient,
   closeMCPConnections,
   closeOAuthConnections,
+  closeScopedConnections,
+  withMCPConnectionScope,
   bundleSupportsAdcpVersionField,
   BODY_SNIPPET_TIMEOUT_MS,
   OBSERVER_FLUSH_TIMEOUT_MS,
@@ -1675,6 +1686,8 @@ export type {
   TransportActivity,
   TransportActivityContext,
   TransportActivityHandler,
+  TransportActivityType,
+  TransportResponseOutcome,
   TransportOptions,
   A2ALegacyCompatOptions,
 } from './protocols';

@@ -132,6 +132,7 @@ import { withTaskDeadline } from './task-deadline';
 import { createMCPRequestHeaders } from '../auth';
 import { isAbortOrTimeoutError } from '../protocols/abort';
 import { getSignedRequestRejection } from '../protocols/signedRequestRejection';
+import { withAmbientIdentityHeaders } from '../protocols/mcp-call-context';
 import { ProtocolClient, normalizeTransportOptions } from '../protocols';
 import {
   AuthenticationCredentialsRejectedError,
@@ -233,6 +234,14 @@ function presentedStaticTransportCredential(
 
 // v3.0 compatibility utilities
 import type { AdcpCapabilities, AdcpMajorVersion, ToolInfo, FeatureName } from '../utils/capabilities';
+import {
+  agentDiscoveryCacheKey,
+  MAX_AGENT_DISCOVERY_TTL_MS,
+  resolveAgentDiscoveryTtlMs,
+  validateAgentDiscoveryCacheConfig,
+  type AgentDiscoveryCacheConfig,
+  type AgentDiscoveryEntry,
+} from './agent-discovery-cache';
 import {
   buildSyntheticCapabilities,
   buildSyntheticV3Capabilities,
@@ -1373,6 +1382,21 @@ export interface SingleAgentClientConfig extends ConversationConfig {
   /** Trusted stable caller identity for durable registry partitioning. Default is credential fingerprint. */
   accountRegistryScope?: string;
   productCache?: ProductCache;
+  /**
+   * Share endpoint discovery, the `tools/list` schema map and
+   * `get_adcp_capabilities` across client instances. Opt-in: nothing is shared
+   * unless a cache and a caller-owned `authIdentity` are supplied.
+   *
+   * Entries are keyed by agent URL, `authIdentity`, the pinned AdCP version, the
+   * non-correlation request headers (tenant/routing headers included), the
+   * signing identity and the transport policy (`allowPrivateIp`,
+   * `maxResponseBytes`), and expire after `ttlMs`. Synthetic capabilities
+   * (a seller whose capabilities call failed or that has no
+   * `get_adcp_capabilities`) are never shared, and calls that use a scoped
+   * `trustedFetchFn` bypass the cache entirely.
+   * See `docs/guides/DISCOVERY-CACHE-AND-SESSION-REUSE.md`.
+   */
+  discoveryCache?: AgentDiscoveryCacheConfig;
   /** Durable storage for restart-safe A2A human continuations. */
   deferredStorage?: DeferredTaskStorage;
   /** Resolve current trusted agent configuration for a persisted continuation. */
@@ -1655,6 +1679,79 @@ export interface CapabilityEvidenceSnapshot {
   expiresAt: string;
   /** `tools/list` input-schema properties keyed by tool name; optional when capabilities already carry discoveredTools. */
   toolSchemas?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+}
+
+/** Capability evidence to pre-seed into a shared `discoveryCache`. */
+export interface AgentDiscoverySeed {
+  /** Authoritative capabilities (never synthetic). */
+  capabilities: AdcpCapabilities;
+  /** `tools/list` input-schema properties keyed by tool name; optional when capabilities carry discoveredTools. */
+  toolSchemas?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+  /**
+   * The MCP endpoint serving this agent, to skip endpoint probing. Must be a
+   * credential-free URL on the configured agent's origin, without query or fragment.
+   */
+  endpoint?: { agentUri: string; mcpEra?: 'legacy' | 'modern' };
+}
+
+// Per shared cache and key: the latest invalidation in this process. `epoch`
+// (unique, never reused) lets an older in-flight discovery or local evidence
+// notice it was dropped; `at` is a tombstone, so an entry observed before it is
+// a miss even when the backend delete failed or is still queued. Bounded: records
+// older than any entry could live, and the oldest beyond the cap, are forgotten,
+// but only into a per-cache floor (the largest forgotten epoch and time) that
+// every key inherits: held epochs and entries older than a forgotten invalidation
+// then miss, so forgetting can only cost a rediscovery, never resurrect stale
+// evidence. Best effort across processes: a distributed backend is not made atomic.
+interface SharedInvalidation {
+  epoch: number;
+  at: number;
+}
+const sharedInvalidations = new WeakMap<object, Map<string, SharedInvalidation>>();
+const sharedInvalidationFloors = new WeakMap<object, SharedInvalidation>();
+let sharedInvalidationCounter = 0;
+const MAX_SHARED_INVALIDATION_RECORDS = 1024;
+
+// Per shared cache and key: in-process queue of backend mutations. Bounded so a
+// backend that never answers cannot make the queues grow without limit.
+interface SharedMutationQueue {
+  tail: Promise<void>;
+  pending: number;
+  /** Latest queued delete that has not started; a newer invalidation joins it. */
+  waitingDelete?: { promise: Promise<unknown>; started: boolean };
+}
+const sharedMutationChains = new WeakMap<object, Map<string, SharedMutationQueue>>();
+const MAX_PENDING_SHARED_MUTATIONS_PER_KEY = 16;
+const MAX_SHARED_MUTATION_KEYS = 1024;
+
+// In-process singleflight of live discovery per shared cache and key.
+const sharedDiscoveryFlights = new WeakMap<object, Map<string, Promise<void>>>();
+const MAX_SHARED_DISCOVERY_WAITS = 3;
+// Backend deadline for each shared-cache get/set/delete.
+const SHARED_DISCOVERY_CACHE_TIMEOUT_MS = 2_000;
+// Tolerated disagreement between hosts' clocks when judging an entry's age.
+const SHARED_DISCOVERY_CLOCK_SKEW_MS = 5_000;
+
+// Seller errors that say the capabilities, version or tool surface we cached have changed.
+const CAPABILITY_STALE_ERROR_CODES: ReadonlySet<string> = new Set([
+  'VERSION_UNSUPPORTED',
+  'UNSUPPORTED_FEATURE',
+  'FEATURE_UNSUPPORTED',
+  'TOOL_NOT_FOUND',
+  'METHOD_NOT_FOUND',
+  'UNKNOWN_TOOL',
+]);
+
+/** A plain `{ toolName: { ...inputSchema.properties } }` record; arrays are rejected at both levels. */
+function isToolSchemaRecord(value: unknown): value is Record<string, Record<string, unknown>> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every(
+      properties => typeof properties === 'object' && properties !== null && !Array.isArray(properties)
+    )
+  );
 }
 
 function isCapabilityEvidence(value: unknown): value is AdcpCapabilities {
@@ -2059,6 +2156,13 @@ export class SingleAgentClient {
   private primedCapabilitiesExpiresAt?: number; // Freshness bound for application-owned evidence only
   private capabilityEvidenceScopeKey = randomUUID();
   private capabilityEvidenceAuthMaterial?: string;
+  private capabilitiesFromSharedCache = false; // Installed from config.discoveryCache rather than discovered live
+  private discoveryEpoch = 0; // bumped by invalidation so an older in-flight discovery cannot re-install what was dropped
+  private discoveredEndpointKey?: string; // discoveryCache key the local endpoint was obtained under
+  private discoveredEndpointEpoch?: number; // shared invalidation epoch of that key when the endpoint was obtained
+  private discoveredEndpointExpiresAt?: number; // freshness bound for that endpoint (shared-cache mode only)
+  private sharedEvidenceEpoch?: number; // shared invalidation epoch of that key when the evidence was obtained
+  private sharedEvidenceKey?: string; // discoveryCache key the local capability cache was obtained under
   private _v2WarningFired = false; // Gate: emit the v2-sunset warning once per client instance
   private _syntheticV3WarningFired = false; // Gate: emit the synthetic-v3 warning once per client instance
   private _syntheticV2WarningFired = false; // Gate: emit the synthetic-v2 warning once per client instance
@@ -2118,6 +2222,7 @@ export class SingleAgentClient {
       ...(configuredWebhookVerification !== undefined && { webhookVerification: configuredWebhookVerification }),
     };
     config = this.config;
+    validateAgentDiscoveryCacheConfig(config.discoveryCache);
     // Validate the configured adcpVersion at construction time. Throws
     // ConfigurationError if the pin's major differs from ADCP_MAJOR_VERSION
     // — cross-major support lands in Stage 3 of the multi-version refactor.
@@ -3117,20 +3222,55 @@ export class SingleAgentClient {
       return this.normalizedAgent;
     }
 
+    // With a shared discoveryCache the local endpoint is only valid for the
+    // policy it was found under and for the freshness bound it was granted.
+    const effectiveEndpointKey =
+      this.config.discoveryCache && !usesScopedFetch && this.discoveredEndpoint
+        ? this.sharedDiscoveryKey(options)
+        : undefined;
+    if (
+      this.config.discoveryCache &&
+      !usesScopedFetch &&
+      this.discoveredEndpoint &&
+      (this.discoveredEndpointKey !== effectiveEndpointKey ||
+        (effectiveEndpointKey !== undefined &&
+          this.discoveredEndpointEpoch !== this.sharedInvalidationEpoch(effectiveEndpointKey)) ||
+        (this.discoveredEndpointExpiresAt ?? 0) <= Date.now())
+    ) {
+      this.discoveredEndpoint = undefined;
+      this.discoveredAgent = undefined;
+      this.discoveredMcpEra = undefined;
+    }
+
     // Already discovered? Use cached value
     if (!usesScopedFetch && this.discoveredAgent) {
       return this.discoveredAgent;
     }
+    if (!usesScopedFetch && !this.discoveredEndpoint && this.config.discoveryCache) {
+      await this.adoptSharedEndpoint(options);
+      // Adoption itself is awaited. A peer can invalidate the key after its
+      // final read check but before this continuation uses the derived agent.
+      if (
+        this.discoveredEndpoint &&
+        (this.discoveredEndpointEpoch !== this.sharedInvalidationEpoch(this.sharedDiscoveryKey(options)!) ||
+          (this.discoveredEndpointExpiresAt ?? 0) <= Date.now())
+      ) {
+        this.discoveredEndpoint = undefined;
+        this.discoveredAgent = undefined;
+        this.discoveredMcpEra = undefined;
+      }
+    }
     if (!usesScopedFetch && this.discoveredEndpoint) {
-      this.discoveredAgent = {
+      const adoptedAgent: AgentConfig = {
         ...this.normalizedAgent,
         agent_uri: this.discoveredEndpoint,
       };
+      this.discoveredAgent = adoptedAgent;
       if (this.normalizedAgent.oauth_tokens && !this.normalizedAgent.oauth_client_credentials) {
         const { shareNonInteractiveOAuthProvider } = await import('../auth/oauth/provider-cache');
-        shareNonInteractiveOAuthProvider(this.normalizedAgent, this.discoveredAgent);
+        shareNonInteractiveOAuthProvider(this.normalizedAgent, adoptedAgent);
       }
-      return this.discoveredAgent;
+      return adoptedAgent;
     }
 
     if (this.normalizedAgent.oauth_client_credentials) {
@@ -3144,6 +3284,7 @@ export class SingleAgentClient {
     }
 
     // Perform discovery
+    const endpointEpoch = this.discoveryEpochSnapshot(options);
     const discoveredEndpoint = await this.discoverMCPEndpoint(this.normalizedAgent.agent_uri, options);
 
     if (usesScopedFetch) {
@@ -3155,20 +3296,56 @@ export class SingleAgentClient {
       return discoveredAgent;
     }
 
+    if (endpointEpoch && !this.discoveryEpochIs(endpointEpoch)) {
+      // Invalidated while the probe was in flight: serve this call, keep nothing.
+      return { ...this.normalizedAgent, agent_uri: discoveredEndpoint };
+    }
+
     this.discoveredEndpoint = discoveredEndpoint;
+    if (this.config.discoveryCache) {
+      this.discoveredEndpointKey = this.sharedDiscoveryKey(options);
+      this.discoveredEndpointEpoch = endpointEpoch?.shared;
+      // Publish the complete local state before awaiting the shared write, so a
+      // concurrent call on this instance never sees an endpoint without its bound.
+      this.discoveredEndpointExpiresAt = Date.now() + resolveAgentDiscoveryTtlMs(this.config.discoveryCache.ttlMs);
+      const stored = await this.writeSharedDiscovery(
+        options,
+        {
+          endpoint: {
+            agentUri: discoveredEndpoint,
+            ...(this.discoveredMcpEra && { mcpEra: this.discoveredMcpEra }),
+          },
+        },
+        false,
+        endpointEpoch
+      );
+      if (endpointEpoch && !this.discoveryEpochIs(endpointEpoch)) {
+        if (this.discoveredEndpoint === discoveredEndpoint && this.discoveredEndpointEpoch === endpointEpoch.shared) {
+          this.discoveredEndpoint = undefined;
+          this.discoveredEndpointKey = undefined;
+          this.discoveredEndpointEpoch = undefined;
+          this.discoveredEndpointExpiresAt = undefined;
+          if (this.discoveredAgent?.agent_uri === discoveredEndpoint) this.discoveredAgent = undefined;
+          this.discoveredMcpEra = undefined;
+        }
+        return { ...this.normalizedAgent, agent_uri: discoveredEndpoint };
+      }
+      if (stored && this.discoveredEndpoint === discoveredEndpoint) this.discoveredEndpointExpiresAt = stored.expiresAt;
+    }
 
     // Compute canonical base URL by stripping /mcp suffix
-    this.canonicalBaseUrl = this.computeBaseUrl(this.discoveredEndpoint);
+    this.canonicalBaseUrl = this.computeBaseUrl(discoveredEndpoint);
 
-    this.discoveredAgent = {
+    const discoveredAgent: AgentConfig = {
       ...this.normalizedAgent,
-      agent_uri: this.discoveredEndpoint,
+      agent_uri: discoveredEndpoint,
     };
+    this.discoveredAgent = discoveredAgent;
     if (this.normalizedAgent.oauth_tokens && !this.normalizedAgent.oauth_client_credentials) {
       const { shareNonInteractiveOAuthProvider } = await import('../auth/oauth/provider-cache');
-      shareNonInteractiveOAuthProvider(this.normalizedAgent, this.discoveredAgent);
+      shareNonInteractiveOAuthProvider(this.normalizedAgent, discoveredAgent);
     }
-    return this.discoveredAgent;
+    return discoveredAgent;
   }
 
   /**
@@ -5071,6 +5248,7 @@ export class SingleAgentClient {
         )
     );
     throwIfAborted(effectiveOptions?.signal);
+    if (!result.success) await this.invalidateDiscoveryOnCapabilityError(result.adcpError?.code, effectiveOptions);
 
     // Merge collected drift into the executor's debug_logs so adopters
     // reading result.debug_logs see input-schema stripping, post-adapter
@@ -8496,6 +8674,7 @@ export class SingleAgentClient {
         beforeDispatch,
         deferredClientContext
       );
+      if (!result.success) await this.invalidateDiscoveryOnCapabilityError(result.adcpError?.code, effectiveOptions);
 
       const postAdapterLogs = [...inputSchemaStripLogs, ...v25DriftLogs];
       if (postAdapterLogs.length > 0) {
@@ -9174,6 +9353,27 @@ export class SingleAgentClient {
         };
       }
 
+      // Inside a caller-owned connection scope, list on the scope's shared v1
+      // session so discovery and the tool calls that follow initialize once.
+      const { withScopedLegacyConnection } = await import('../protocols/mcp');
+      const scopedList = await withScopedLegacyConnection(connectOptions, 'tools/list', client =>
+        withResponseSizeLimit(maxResponseBytes, () => client.listTools(mcpListParams, mcpRequestOptions))
+      );
+      if (scopedList) {
+        return {
+          name: this.normalizedAgent.name,
+          description: undefined,
+          protocol: this.normalizedAgent.protocol,
+          url: agent.agent_uri,
+          tools: scopedList.value.tools.map(tool => ({
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema,
+            parameters: tool.inputSchema?.properties ? Object.keys(tool.inputSchema.properties) : [],
+          })),
+        };
+      }
+
       const { client: mcpClient } = await connectMCP(connectOptions);
       try {
         const toolsList = await withResponseSizeLimit(maxResponseBytes, () =>
@@ -9318,6 +9518,29 @@ export class SingleAgentClient {
       this.cachedCapabilities = undefined;
       this.cachedToolSchemas = undefined;
       this.primedCapabilitiesExpiresAt = undefined;
+      this.capabilitiesFromSharedCache = false;
+    }
+
+    // With a shared discoveryCache, local evidence is only valid for the policy
+    // (transport overrides, headers, version) it was gathered under, and only
+    // until anything sharing that key invalidates it.
+    const effectiveSharedKey =
+      this.config.discoveryCache && !usesScopedFetch && this.cachedCapabilities
+        ? this.sharedDiscoveryKey(options)
+        : undefined;
+    if (
+      this.config.discoveryCache &&
+      !usesScopedFetch &&
+      this.cachedCapabilities &&
+      (this.sharedEvidenceKey !== effectiveSharedKey ||
+        (effectiveSharedKey !== undefined &&
+          this.sharedEvidenceEpoch !== undefined &&
+          this.sharedEvidenceEpoch !== this.sharedInvalidationEpoch(effectiveSharedKey)))
+    ) {
+      this.cachedCapabilities = undefined;
+      this.cachedToolSchemas = undefined;
+      this.primedCapabilitiesExpiresAt = undefined;
+      this.capabilitiesFromSharedCache = false;
     }
 
     // Return cached if available
@@ -9326,6 +9549,115 @@ export class SingleAgentClient {
       this.maybeWarnV2Sunset(this.cachedCapabilities);
       return this.cachedCapabilities;
     }
+
+    if (!usesScopedFetch && this.config.discoveryCache) {
+      return this.discoverCapabilitiesThroughSharedCache(options, usesScopedFetch, discoveryContext);
+    }
+    return this.discoverCapabilitiesLive(options, usesScopedFetch, discoveryContext);
+  }
+
+  /**
+   * Serve capabilities from the shared `discoveryCache`, or discover them live
+   * as the single in-process "leader" for this cache key. Concurrent clients
+   * for the same key wait for the leader under their *own* signal and deadline;
+   * a leader that fails or is cancelled never fails its followers, which then
+   * discover for themselves.
+   */
+  private async discoverCapabilitiesThroughSharedCache(
+    options: ReadRequestOptions | undefined,
+    usesScopedFetch: boolean,
+    discoveryContext: CapabilityDiscoveryContext | undefined
+  ): Promise<AdcpCapabilities> {
+    const config = this.config.discoveryCache!;
+    const key = this.sharedDiscoveryKey(options);
+    if (!key) return this.discoverCapabilitiesLive(options, usesScopedFetch, discoveryContext);
+
+    let flights = sharedDiscoveryFlights.get(config.cache);
+    if (!flights) {
+      flights = new Map();
+      sharedDiscoveryFlights.set(config.cache, flights);
+    }
+
+    for (let attempt = 0; ; attempt++) {
+      const readEpoch = this.discoveryEpochSnapshot(options);
+      const entry = await this.readSharedDiscovery(options);
+      const installed =
+        entry &&
+        (!readEpoch || this.discoveryEpochIs(readEpoch)) &&
+        this.installSharedCapabilities(entry, key, discoveryContext);
+      if (installed) return installed;
+
+      const flight = flights.get(key);
+      if (flight && attempt < MAX_SHARED_DISCOVERY_WAITS) {
+        const requestTimeoutMs = resolveRequestTimeoutMs(
+          options?.transport?.requestTimeoutMs ?? this.config.transport?.requestTimeoutMs
+        );
+        // Rejects only for this caller's own abort or timeout.
+        await withAbortSignal([options?.signal], requestTimeoutMs, () => flight);
+        continue;
+      }
+
+      let finish!: () => void;
+      const mine = new Promise<void>(resolve => (finish = resolve));
+      const ownsFlight = !flights.has(key);
+      if (ownsFlight) flights.set(key, mine);
+      try {
+        return await this.discoverCapabilitiesLive(options, usesScopedFetch, discoveryContext);
+      } finally {
+        if (ownsFlight) {
+          // The (weakly held) map stays: a follower may hold it, and dropping it
+          // would let a later caller start a second, unseen one.
+          flights.delete(key);
+        }
+        finish();
+      }
+    }
+  }
+
+  /** Install capabilities from a shared entry; `undefined` when the entry is not usable evidence. */
+  private installSharedCapabilities(
+    entry: AgentDiscoveryEntry,
+    key: string,
+    discoveryContext: CapabilityDiscoveryContext | undefined
+  ): AdcpCapabilities | undefined {
+    const capabilities = entry.capabilities;
+    if (!isCapabilityEvidence(capabilities) || capabilities._synthetic) return undefined;
+    const toolSchemas = entry.toolSchemas;
+    const hasToolEvidence = toolSchemas !== undefined || Array.isArray(capabilities.discoveredTools);
+    if (!hasToolEvidence) return undefined;
+    if (toolSchemas !== undefined && !isToolSchemaRecord(toolSchemas)) {
+      return undefined;
+    }
+    let installed: AdcpCapabilities;
+    let schemas: Map<string, Record<string, unknown>> | undefined;
+    try {
+      installed = structuredClone(capabilities);
+      schemas = toolSchemas
+        ? new Map(Object.entries(toolSchemas).map(([tool, properties]) => [tool, structuredClone(properties)]))
+        : undefined;
+    } catch {
+      // A malformed entry from a custom backend is a miss, not a failed call.
+      return undefined;
+    }
+    this.cachedCapabilities = installed;
+    this.cachedToolSchemas = schemas;
+    this.primedCapabilitiesExpiresAt = entry.expiresAt;
+    this.capabilitiesFromSharedCache = true;
+    this.recordSharedEvidence(key);
+    if (discoveryContext) discoveryContext.toolSchemas = this.cachedToolSchemas;
+    this.maybeWarnV2Sunset(installed);
+    return installed;
+  }
+
+  private async discoverCapabilitiesLive(
+    options: ReadRequestOptions | undefined,
+    usesScopedFetch: boolean,
+    discoveryContext: CapabilityDiscoveryContext | undefined
+  ): Promise<AdcpCapabilities> {
+    const startedAtEpoch = this.discoveryEpochSnapshot(options);
+    // An invalidation that lands while this discovery is in flight wins: its
+    // result still serves this call but must not be re-installed anywhere.
+    const superseded = () => startedAtEpoch !== undefined && !this.discoveryEpochIs(startedAtEpoch);
 
     // First get tool list to support both detection methods
     const agentInfo = await this.getAgentInfo(options);
@@ -9343,7 +9675,7 @@ export class SingleAgentClient {
         .map(t => [t.name, t.inputSchema!.properties as Record<string, unknown>])
     );
     if (discoveryContext) discoveryContext.toolSchemas = discoveredToolSchemas;
-    if (!usesScopedFetch) this.cachedToolSchemas = discoveredToolSchemas;
+    if (!usesScopedFetch && !superseded()) this.cachedToolSchemas = discoveredToolSchemas;
 
     // Check if agent supports get_adcp_capabilities (v3)
     const advertisesCapabilitiesTool = tools.some(t => t.name === 'get_adcp_capabilities');
@@ -9400,7 +9732,37 @@ export class SingleAgentClient {
 
         if (result.success && result.data) {
           const capabilities = augmentCapabilitiesFromTools(parseCapabilitiesResponse(result.data), tools);
-          if (!usesScopedFetch) this.cachedCapabilities = capabilities;
+          if (!usesScopedFetch && !superseded()) {
+            this.cachedCapabilities = capabilities;
+            this.capabilitiesFromSharedCache = false;
+            // Only an authoritative, validated response is shared; every
+            // synthetic fallback below stays private to this instance.
+            if (!capabilities._synthetic && this.config.discoveryCache) {
+              this.recordSharedEvidence(this.sharedDiscoveryKey(options));
+              const stored = await this.writeSharedDiscovery(
+                options,
+                {
+                  capabilities: structuredClone(capabilities),
+                  toolSchemas: Object.fromEntries(discoveredToolSchemas),
+                },
+                false,
+                startedAtEpoch
+              );
+              if (superseded()) {
+                // Invalidated while the write was in flight: drop this copy, but
+                // never a newer live result another call has installed since.
+                if (this.cachedCapabilities === capabilities) {
+                  this.cachedCapabilities = undefined;
+                  this.cachedToolSchemas = undefined;
+                  this.primedCapabilitiesExpiresAt = undefined;
+                }
+              } else {
+                // The live result honors the same freshness bound as shared copies.
+                this.primedCapabilitiesExpiresAt =
+                  stored?.expiresAt ?? Date.now() + resolveAgentDiscoveryTtlMs(this.config.discoveryCache.ttlMs);
+              }
+            }
+          }
           this.maybeWarnV2Sunset(capabilities);
           return capabilities;
         }
@@ -9438,7 +9800,11 @@ export class SingleAgentClient {
             majorVersions: parsed.majorVersions.includes(3) ? parsed.majorVersions : ([3] as AdcpMajorVersion[]),
           };
           const capabilities = augmentCapabilitiesFromTools(v3Capabilities, tools);
-          if (!usesScopedFetch) this.cachedCapabilities = capabilities;
+          if (!usesScopedFetch && !superseded()) {
+            this.cachedCapabilities = capabilities;
+            this.capabilitiesFromSharedCache = false;
+            this.recordSharedEvidence(this.sharedDiscoveryKey(options));
+          }
           this.maybeWarnV2Sunset(capabilities);
           return capabilities;
         }
@@ -9497,7 +9863,11 @@ export class SingleAgentClient {
       // signal that it's v3 even though we couldn't read details.
       if (advertisesCapabilitiesTool) {
         const capabilities = augmentCapabilitiesFromTools(buildSyntheticV3Capabilities(tools), tools);
-        if (!usesScopedFetch) this.cachedCapabilities = capabilities;
+        if (!usesScopedFetch && !superseded()) {
+          this.cachedCapabilities = capabilities;
+          this.capabilitiesFromSharedCache = false;
+          this.recordSharedEvidence(this.sharedDiscoveryKey(options));
+        }
         this.maybeWarnV2Sunset(capabilities);
         return capabilities;
       }
@@ -9510,7 +9880,11 @@ export class SingleAgentClient {
         `Tools: [${tools.map(t => t.name).join(', ')}]`
     );
     const capabilities = buildSyntheticCapabilities(tools);
-    if (!usesScopedFetch) this.cachedCapabilities = capabilities;
+    if (!usesScopedFetch && !superseded()) {
+      this.cachedCapabilities = capabilities;
+      this.capabilitiesFromSharedCache = false;
+      this.recordSharedEvidence(this.sharedDiscoveryKey(options));
+    }
     return capabilities;
   }
 
@@ -9609,6 +9983,7 @@ export class SingleAgentClient {
       this.cachedCapabilities = undefined;
       this.cachedToolSchemas = undefined;
       this.primedCapabilitiesExpiresAt = undefined;
+      this.capabilitiesFromSharedCache = false;
       return false;
     }
 
@@ -9618,6 +9993,10 @@ export class SingleAgentClient {
       ].map(name => ({ name }));
       this.cachedCapabilities = augmentCapabilitiesFromTools(structuredClone(capabilities), observedTools);
       this.primedCapabilitiesExpiresAt = expiresAt;
+      // Application-owned evidence, not a shared-cache copy: a failed feature
+      // check must not discard it as if it were stale shared evidence.
+      this.capabilitiesFromSharedCache = false;
+      this.recordSharedEvidence(this.sharedDiscoveryKey(), true);
       this.cachedToolSchemas = snapshot.toolSchemas
         ? new Map(
             Object.entries(snapshot.toolSchemas).map(([tool, properties]) => [
@@ -9633,6 +10012,485 @@ export class SingleAgentClient {
       this.primedCapabilitiesExpiresAt = undefined;
       return false;
     }
+  }
+
+  /** Which kind of credential this client presents (never its value), so an unauthenticated client cannot adopt an authenticated one's evidence. */
+  private discoveryCredentialKind(): string {
+    const agent = this.normalizedAgent;
+    if (agent.oauth_client_credentials) return 'oauth-client-credentials';
+    if (agent.oauth_tokens) return 'oauth';
+    if (agent.auth_token) return 'bearer';
+    const headerNames = Object.keys(agent.headers ?? {}).map(name => name.toLowerCase());
+    return headerNames.includes('authorization') || headerNames.includes('x-adcp-auth') ? 'header' : 'none';
+  }
+
+  /** Epoch of this client's evidence for the call's effective shared key; `undefined` without a shared cache. */
+  private discoveryEpochSnapshot(
+    options?: ReadRequestOptions
+  ): { local: number; shared: number; key: string } | undefined {
+    const key = this.sharedDiscoveryKey(options);
+    if (!key || !this.config.discoveryCache) return undefined;
+    return { local: this.discoveryEpoch, shared: this.sharedInvalidationEpoch(key), key };
+  }
+
+  private discoveryEpochIs(epoch: { local: number; shared: number; key: string }): boolean {
+    return epoch.local === this.discoveryEpoch && epoch.shared === this.sharedInvalidationEpoch(epoch.key);
+  }
+
+  /** The latest invalidation that applies to `key`: its own, combined with the cache's floor of forgotten ones. */
+  private sharedInvalidationRecord(key: string): SharedInvalidation | undefined {
+    const cache = this.config.discoveryCache!.cache;
+    const record = sharedInvalidations.get(cache)?.get(key);
+    const floor = sharedInvalidationFloors.get(cache);
+    if (!floor) return record;
+    if (!record) return floor;
+    return { epoch: Math.max(record.epoch, floor.epoch), at: Math.max(record.at, floor.at) };
+  }
+
+  private sharedInvalidationEpoch(key: string): number {
+    return this.sharedInvalidationRecord(key)?.epoch ?? 0;
+  }
+
+  private bumpSharedInvalidationEpoch(key: string): void {
+    const cache = this.config.discoveryCache!.cache;
+    let records = sharedInvalidations.get(cache);
+    if (!records) {
+      records = new Map();
+      sharedInvalidations.set(cache, records);
+    }
+    const now = Date.now();
+    // Re-inserting keeps the map ordered oldest-first for pruning.
+    records.delete(key);
+    records.set(key, { epoch: ++sharedInvalidationCounter, at: now });
+    for (const [oldKey, record] of records) {
+      if (records.size <= MAX_SHARED_INVALIDATION_RECORDS && record.at + MAX_AGENT_DISCOVERY_TTL_MS > now) break;
+      const floor = sharedInvalidationFloors.get(cache);
+      sharedInvalidationFloors.set(cache, {
+        epoch: Math.max(record.epoch, floor?.epoch ?? 0),
+        at: Math.max(record.at, floor?.at ?? 0),
+      });
+      records.delete(oldKey);
+    }
+  }
+
+  /**
+   * Remember which key the local capability evidence belongs to and, unless it
+   * is application-owned (`primeCapabilities`), the shared invalidation epoch it
+   * was obtained under. Application-owned evidence keeps its caller-declared
+   * freshness and is not discarded by another instance's invalidation.
+   */
+  private recordSharedEvidence(key: string | undefined, applicationOwned = false): void {
+    this.sharedEvidenceKey = key;
+    this.sharedEvidenceEpoch =
+      key && this.config.discoveryCache && !applicationOwned ? this.sharedInvalidationEpoch(key) : undefined;
+  }
+
+  /** Non-secret fingerprint of the request-signing identity, so keys never mix signing identities. */
+  private discoverySigningFingerprint(): unknown {
+    const signing = this.normalizedAgent.request_signing;
+    if (!signing) return undefined;
+    const provider = signing.kind === 'provider' ? signing.provider : undefined;
+    return {
+      kind: signing.kind ?? 'inline',
+      agentUrl: signing.agent_url ?? null,
+      kid: (provider ? provider.keyid : (signing as { kid?: string }).kid) ?? null,
+      alg: (provider ? provider.algorithm : (signing as { alg?: string }).alg) ?? null,
+      alwaysSign: signing.always_sign ?? null,
+      signSupported: signing.sign_supported ?? null,
+    };
+  }
+
+  /**
+   * Shared-discovery key for the effective transport policy of this call, or
+   * `undefined` when sharing is off or the call uses a scoped `trustedFetchFn`
+   * (whose network boundary is per-call, so its evidence is never shared).
+   */
+  private sharedDiscoveryKey(options?: ReadRequestOptions): string | undefined {
+    const config = this.config.discoveryCache;
+    if (!config) return undefined;
+    const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
+    if (transport?.trustedFetchFn !== undefined) return undefined;
+    return agentDiscoveryCacheKey({
+      protocol: this.normalizedAgent.protocol,
+      agentUri: this.normalizedAgent.agent_uri,
+      adcpVersion: this.resolvedAdcpVersion,
+      wireAdcpVersion: this.config.wireAdcpVersion,
+      authIdentity: config.authIdentity,
+      credentialKind: this.discoveryCredentialKind(),
+      headers: withAmbientIdentityHeaders(this.normalizedAgent.headers),
+      signing: this.discoverySigningFingerprint(),
+      allowPrivateIp: transport?.allowPrivateIp,
+      maxResponseBytes: transport?.maxResponseBytes,
+    });
+  }
+
+  /**
+   * Run a shared-cache operation under the caller's signal and a fixed backend
+   * deadline, so an unresponsive store can neither make a call uncancellable nor
+   * stall it beyond {@link SHARED_DISCOVERY_CACHE_TIMEOUT_MS}. Rejects on the
+   * caller's abort or when the backend fails or times out; callers decide which
+   * of those is a miss.
+   */
+  private boundedCacheOperation<T>(operation: () => T | Promise<T>, signal?: AbortSignal): Promise<T> {
+    return withAbortSignal([signal], SHARED_DISCOVERY_CACHE_TIMEOUT_MS, () => Promise.resolve().then(operation));
+  }
+
+  /**
+   * Run one backend mutation (or read-modify-write) for a shared key strictly
+   * after every earlier mutation of that key in this process has actually
+   * settled. The caller's wait is still bounded: an unresponsive backend makes
+   * the caller see a miss, but later mutations stay queued behind the hung
+   * operation, so an old callback can never land after a newer one.
+   *
+   * The queue is bounded. A `droppable` mutation (a write or cleanup) is
+   * abandoned when its caller stopped waiting before it started, and is refused
+   * when the key's queue is full; refusal is a failed write, never a call
+   * failure. A `delete` is never refused for a known key: while one is queued
+   * and not yet started, a newer invalidation joins it. Only for a new key beyond
+   * the key cap is a delete refused — the invalidation tombstone still hides the
+   * entry from this process's readers.
+   */
+  private serializedCacheMutation<T>(
+    key: string,
+    operation: () => T | Promise<T>,
+    signal?: AbortSignal,
+    kind: 'delete' | 'droppable' = 'droppable'
+  ): Promise<T> {
+    const cache = this.config.discoveryCache!.cache;
+    let chains = sharedMutationChains.get(cache);
+    if (!chains) {
+      chains = new Map();
+      sharedMutationChains.set(cache, chains);
+    }
+    let queue = chains.get(key);
+    if (!queue && chains.size >= MAX_SHARED_MUTATION_KEYS) {
+      return Promise.reject(new Error('Shared discovery cache mutation queue is full.'));
+    }
+    if (kind === 'delete' && queue?.waitingDelete && !queue.waitingDelete.started) {
+      const joined = queue.waitingDelete.promise as Promise<T>;
+      return this.boundedCacheOperation(() => joined, signal);
+    }
+    if (kind === 'droppable' && queue && queue.pending >= MAX_PENDING_SHARED_MUTATIONS_PER_KEY) {
+      return Promise.reject(new Error('Shared discovery cache mutation queue is full.'));
+    }
+    if (!queue) {
+      queue = { tail: Promise.resolve(), pending: 0 };
+      chains.set(key, queue);
+    }
+    const current = queue;
+    const state = { abandoned: false, started: false };
+    const run = current.tail.then(() => {
+      if (kind === 'droppable' && state.abandoned) throw new Error('Shared discovery cache mutation abandoned.');
+      state.started = true;
+      if (current.waitingDelete?.promise === run) current.waitingDelete.started = true;
+      return operation();
+    });
+    current.pending++;
+    if (kind === 'delete') current.waitingDelete = { promise: run, started: false };
+    const tail = run.then(
+      () => undefined,
+      () => undefined
+    );
+    current.tail = tail;
+    void tail.then(() => {
+      current.pending--;
+      if (current.waitingDelete?.promise === run) current.waitingDelete = undefined;
+      if (current.pending === 0) {
+        if (chains.get(key) === current) chains.delete(key);
+        if (chains.size === 0 && sharedMutationChains.get(cache) === chains) sharedMutationChains.delete(cache);
+      }
+    });
+    return this.boundedCacheOperation(() => run, signal).catch(error => {
+      state.abandoned = true;
+      throw error;
+    });
+  }
+
+  /** Is this stored entry structurally sound and not expired (before any caller-TTL cap)? */
+  private isLiveSharedEntry(entry: AgentDiscoveryEntry, now: number): boolean {
+    return (
+      Number.isFinite(entry.expiresAt) &&
+      Number.isFinite(entry.observedAt) &&
+      entry.expiresAt >= entry.observedAt &&
+      entry.expiresAt > now
+    );
+  }
+
+  /**
+   * Read a fresh, structurally valid shared entry. A backend failure or
+   * timeout is a miss, never a call failure; the caller's own abort propagates.
+   */
+  private async readSharedDiscovery(options?: ReadRequestOptions): Promise<AgentDiscoveryEntry | undefined> {
+    const key = this.sharedDiscoveryKey(options);
+    if (!key) return undefined;
+    const cache = this.config.discoveryCache!.cache;
+    const epoch = this.discoveryEpochSnapshot(options);
+    try {
+      const entry = await this.boundedCacheOperation(() => cache.get(key), options?.signal);
+      // A read that was in flight when the evidence was invalidated is a miss.
+      if (epoch && !this.discoveryEpochIs(epoch)) return undefined;
+      if (!entry) return undefined;
+      // An entry observed before the latest invalidation here is stale evidence
+      // the backend has not (yet) dropped: its delete may have failed or still be queued.
+      const invalidation = this.sharedInvalidationRecord(key);
+      if (invalidation && entry.observedAt <= invalidation.at) return undefined;
+      const now = Date.now();
+      if (!this.isLiveSharedEntry(entry, now)) {
+        // Remove it only if it is still the expired entry when the mutation runs:
+        // a fresh seed or write may have replaced it meanwhile.
+        await this.serializedCacheMutation(
+          key,
+          async () => {
+            const current = await cache.get(key);
+            if (current && !this.isLiveSharedEntry(current, Date.now())) await cache.delete(key);
+          },
+          options?.signal
+        );
+        return undefined;
+      }
+      // Hosts sharing a backend disagree about the time by a little; an entry
+      // observed further in the future than that is not trusted, but is not ours to delete.
+      if (entry.observedAt > now + SHARED_DISCOVERY_CLOCK_SKEW_MS) return undefined;
+      // Another client may have stored this entry under a longer TTL; this
+      // caller never trusts evidence older than its own configured window. The
+      // stored entry is left for callers whose TTL still admits it.
+      const callerExpiresAt = entry.observedAt + resolveAgentDiscoveryTtlMs(this.config.discoveryCache!.ttlMs);
+      if (!(callerExpiresAt > now)) return undefined;
+      return callerExpiresAt < entry.expiresAt ? { ...entry, expiresAt: callerExpiresAt } : entry;
+    } catch {
+      throwIfAborted(options?.signal);
+      return undefined;
+    }
+  }
+
+  /**
+   * Merge fresh evidence into the shared entry; the merged entry never outlives
+   * its oldest part. Returns the stored entry, or `undefined` when it was not
+   * stored: automatic writes
+   * ignore a `false` (a failed write only costs a later rediscovery), while
+   * {@link primeDiscoveryCache} reports it.
+   */
+  private async writeSharedDiscovery(
+    options: ReadRequestOptions | undefined,
+    patch: Pick<AgentDiscoveryEntry, 'endpoint' | 'capabilities' | 'toolSchemas'>,
+    replace = false,
+    epoch = this.discoveryEpochSnapshot(options)
+  ): Promise<AgentDiscoveryEntry | undefined> {
+    const key = this.sharedDiscoveryKey(options);
+    if (!key) return undefined;
+    // URL queries and fragments can carry credentials. Keep such endpoints
+    // local, while still allowing their capabilities and schemas to be shared.
+    if (patch.endpoint && !this.isDiscoverableEndpoint(patch.endpoint.agentUri)) {
+      patch = { capabilities: patch.capabilities, toolSchemas: patch.toolSchemas };
+      if (!patch.capabilities && !patch.toolSchemas) return undefined;
+    }
+    const config = this.config.discoveryCache!;
+    // An invalidation since `epoch` was taken wins over this writer. Staleness is
+    // judged when the mutation reaches the front of the key's queue and again
+    // after its read; a set already in flight when an invalidation arrives is
+    // followed (never preceded) by that invalidation's delete, so it cannot
+    // outlive it and no cleanup that could remove newer evidence is needed.
+    const stale = () => epoch !== undefined && !this.discoveryEpochIs(epoch);
+    try {
+      return await this.serializedCacheMutation(
+        key,
+        async () => {
+          if (stale()) return undefined;
+          // Fresh evidence is stamped strictly after the latest invalidation here,
+          // so the tombstone can tell it from anything observed before.
+          const invalidation = this.sharedInvalidationRecord(key);
+          const now = Math.max(Date.now(), (invalidation?.at ?? 0) + 1);
+          let existing: AgentDiscoveryEntry | undefined;
+          if (!replace) {
+            const raw = await config.cache.get(key);
+            // Nothing observed before the latest invalidation here is merged back
+            // in: not the entry, and not an endpoint carried inside a newer one.
+            if (
+              raw &&
+              this.isLiveSharedEntry(raw, now) &&
+              raw.observedAt <= now + SHARED_DISCOVERY_CLOCK_SKEW_MS &&
+              !(invalidation && raw.observedAt <= invalidation.at)
+            ) {
+              const endpointObservedAt = raw.endpoint?.observedAt ?? raw.observedAt;
+              existing = { ...raw };
+              if (
+                existing.endpoint &&
+                (!this.isDiscoverableEndpoint(existing.endpoint.agentUri) ||
+                  (invalidation && endpointObservedAt <= invalidation.at))
+              )
+                delete existing.endpoint;
+            }
+            if (stale()) return undefined;
+          }
+          // Fresh capabilities restart the entry's clock; each endpoint keeps its own
+          // observation time so merging never extends how long it may be trusted.
+          const restartsClock = !existing || patch.capabilities !== undefined;
+          const ttl = resolveAgentDiscoveryTtlMs(config.ttlMs);
+          const entry: AgentDiscoveryEntry = {
+            ...(existing?.capabilities && { capabilities: existing.capabilities }),
+            ...(existing?.toolSchemas && { toolSchemas: existing.toolSchemas }),
+            ...(existing?.endpoint && { endpoint: existing.endpoint }),
+            ...(patch.endpoint && { endpoint: { ...patch.endpoint, observedAt: now } }),
+            ...(patch.capabilities && { capabilities: patch.capabilities }),
+            ...(patch.toolSchemas && { toolSchemas: patch.toolSchemas }),
+            observedAt: restartsClock || !existing ? now : Math.min(existing.observedAt, now),
+            expiresAt: restartsClock || !existing ? now + ttl : Math.min(existing.expiresAt, now + ttl),
+          };
+          await config.cache.set(key, structuredClone(entry));
+          return stale() ? undefined : entry;
+        },
+        options?.signal
+      );
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Is `agentUri` a credential-free URL on the configured agent's origin (all discovery ever tries)? */
+  private isDiscoverableEndpoint(agentUri: unknown): agentUri is string {
+    if (typeof agentUri !== 'string') return false;
+    try {
+      const candidate = new URL(agentUri);
+      return (
+        candidate.username === '' &&
+        candidate.password === '' &&
+        candidate.search === '' &&
+        candidate.hash === '' &&
+        candidate.origin === new URL(this.normalizedAgent.agent_uri).origin
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  /** Adopt a previously discovered MCP endpoint instead of re-probing the agent. */
+  private async adoptSharedEndpoint(options?: ReadRequestOptions): Promise<void> {
+    const readEpoch = this.discoveryEpochSnapshot(options);
+    const entry = await this.readSharedDiscovery(options);
+    if (readEpoch && !this.discoveryEpochIs(readEpoch)) return;
+    const endpoint = entry?.endpoint;
+    // A cached endpoint that is not a path variant of the configured URL is not
+    // something this client's discovery could have found.
+    if (!entry || !endpoint || !this.isDiscoverableEndpoint(endpoint.agentUri)) return;
+    // The endpoint is only as fresh as its own observation, under this caller's TTL.
+    const observedAt = Number.isFinite(endpoint.observedAt) ? (endpoint.observedAt as number) : entry.observedAt;
+    const sharedKey = this.sharedDiscoveryKey(options);
+    const tombstone = sharedKey ? this.sharedInvalidationRecord(sharedKey) : undefined;
+    if (tombstone && observedAt <= tombstone.at) return;
+    const expiresAt = Math.min(
+      entry.expiresAt,
+      observedAt + resolveAgentDiscoveryTtlMs(this.config.discoveryCache!.ttlMs)
+    );
+    if (!(expiresAt > Date.now()) || observedAt > Date.now() + SHARED_DISCOVERY_CLOCK_SKEW_MS) return;
+    this.discoveredEndpoint = endpoint.agentUri;
+    this.discoveredEndpointKey = this.sharedDiscoveryKey(options);
+    this.discoveredEndpointEpoch = this.discoveredEndpointKey
+      ? this.sharedInvalidationEpoch(this.discoveredEndpointKey)
+      : undefined;
+    this.discoveredEndpointExpiresAt = expiresAt;
+    this.canonicalBaseUrl = this.computeBaseUrl(endpoint.agentUri);
+    if (endpoint.mcpEra === 'legacy' || endpoint.mcpEra === 'modern') {
+      this.discoveredMcpEra = endpoint.mcpEra;
+      // The era verdict is as old as the endpoint observation, not this adoption.
+      this.discoveredMcpEraAt = observedAt;
+    }
+  }
+
+  /**
+   * Drop discovery evidence for this client: its in-memory capability and
+   * tool-schema caches, the discovered endpoint, and the shared
+   * `discoveryCache` entry (when configured). The next call rediscovers.
+   *
+   * Call this when you learn the seller changed (a deploy, a version bump, a
+   * capability-dependent error you observed). The SDK also invalidates by
+   * itself when a feature check fails against shared evidence, and when a
+   * seller answers with a version or capability error.
+   */
+  async invalidateDiscoveryCache(options?: Pick<TaskOptions, 'transport'>): Promise<void> {
+    this.cachedCapabilities = undefined;
+    this.cachedToolSchemas = undefined;
+    this.primedCapabilitiesExpiresAt = undefined;
+    this.capabilitiesFromSharedCache = false;
+    this.capabilityEvidenceScopeKey = randomUUID();
+    this.discoveryEpoch++;
+    if (this.normalizedAgent._needsDiscovery) {
+      this.discoveredEndpoint = undefined;
+      this.discoveredAgent = undefined;
+      this.discoveredMcpEra = undefined;
+      this.discoveredEndpointKey = undefined;
+      this.discoveredEndpointEpoch = undefined;
+      this.discoveredEndpointExpiresAt = undefined;
+    }
+    const key = this.sharedDiscoveryKey(options);
+    if (!key) return;
+    this.bumpSharedInvalidationEpoch(key);
+    try {
+      const cache = this.config.discoveryCache!.cache;
+      // Queued behind any write already in flight, ahead of any later one.
+      await this.serializedCacheMutation(key, () => cache.delete(key), undefined, 'delete');
+    } catch {
+      /* best effort */
+    }
+  }
+
+  /**
+   * Pre-seed the shared `discoveryCache` with capability evidence the caller
+   * already holds (for example from a registry sync), so no client sharing
+   * this identity probes the seller within the TTL. Unlike
+   * {@link primeCapabilities} the seeded evidence outlives this instance.
+   *
+   * Returns `true` only once the backing cache has accepted the entry. Returns
+   * `false` — having seeded nothing — when sharing is not configured, the
+   * client uses a scoped `trustedFetchFn`, or the evidence is synthetic,
+   * malformed or not cloneable. When the cache rejects the write or does not
+   * answer within the backend deadline, the result is also `false`, but the
+   * outcome is indeterminate: a write already handed to the backend may still
+   * land, whereas one still queued behind earlier operations is dropped. Treat
+   * `false` as "not confirmed", and seed again (or invalidate) rather than
+   * assuming the cache is empty. Seed `endpoint` as well
+   * to skip the endpoint probe on the first call; without it that probe still
+   * runs once per cold client.
+   */
+  async primeDiscoveryCache(seed: AgentDiscoverySeed): Promise<boolean> {
+    const key = this.sharedDiscoveryKey();
+    const capabilities = seed?.capabilities;
+    if (!key || !isCapabilityEvidence(capabilities) || capabilities._synthetic) return false;
+    const toolSchemas = seed.toolSchemas;
+    if (toolSchemas !== undefined && !isToolSchemaRecord(toolSchemas)) {
+      return false;
+    }
+    if (toolSchemas === undefined && !Array.isArray(capabilities.discoveredTools)) return false;
+    if (seed.endpoint !== undefined && !this.isDiscoverableEndpoint(seed.endpoint.agentUri)) return false;
+    try {
+      const stored = await this.writeSharedDiscovery(
+        undefined,
+        {
+          capabilities: structuredClone(capabilities),
+          ...(toolSchemas && { toolSchemas: structuredClone(toolSchemas) as Record<string, Record<string, unknown>> }),
+          ...(seed.endpoint && {
+            endpoint: {
+              agentUri: seed.endpoint.agentUri,
+              ...(seed.endpoint.mcpEra && { mcpEra: seed.endpoint.mcpEra }),
+            },
+          }),
+        },
+        true
+      );
+      return stored !== undefined;
+    } catch {
+      // Evidence that cannot be cloned is not evidence.
+      return false;
+    }
+  }
+
+  /** Drop shared evidence when a seller answers with an error that says our cached view of it is stale. */
+  private async invalidateDiscoveryOnCapabilityError(
+    code: string | undefined,
+    options?: Pick<TaskOptions, 'transport'>
+  ): Promise<void> {
+    if (!this.config.discoveryCache || !code || !CAPABILITY_STALE_ERROR_CODES.has(code)) return;
+    // The entry that served this call lives under its effective (per-call) transport policy.
+    await this.invalidateDiscoveryCache(options);
   }
 
   /**
@@ -9803,8 +10661,27 @@ export class SingleAgentClient {
    * with an actionable error message.
    */
   async require(...features: FeatureName[]): Promise<void> {
-    const capabilities = await this.getCapabilities();
-    const missing = features.filter(f => !resolveFeature(capabilities, f));
+    await this.assertFeaturesSupported(features);
+  }
+
+  /**
+   * Throw {@link FeatureUnsupportedError} when a feature is missing, deciding on
+   * live capabilities when the refusal would rest on shared evidence that may
+   * predate a seller upgrade.
+   */
+  private async assertFeaturesSupported(
+    requiredFeatures: readonly FeatureName[],
+    options?: ReadRequestOptions
+  ): Promise<void> {
+    let capabilities = await this.getCapabilities(options);
+    let missing = requiredFeatures.filter(f => !resolveFeature(capabilities, f));
+    if (missing.length > 0 && this.capabilitiesFromSharedCache) {
+      // Shared evidence may predate a seller upgrade: before refusing the
+      // call, drop it and decide on live capabilities.
+      await this.invalidateDiscoveryCache(options);
+      capabilities = await this.getCapabilities(options);
+      missing = requiredFeatures.filter(f => !resolveFeature(capabilities, f));
+    }
     if (missing.length > 0) {
       throw new FeatureUnsupportedError(missing, listDeclaredFeatures(capabilities), this.agent.agent_uri);
     }
@@ -9818,7 +10695,10 @@ export class SingleAgentClient {
     this.cachedCapabilities = undefined;
     this.cachedToolSchemas = undefined;
     this.primedCapabilitiesExpiresAt = undefined;
+    this.capabilitiesFromSharedCache = false;
     this.capabilityEvidenceScopeKey = randomUUID();
+    this.discoveryEpoch++;
+    if (this.config.discoveryCache) await this.invalidateDiscoveryCache();
     return this.getCapabilities();
   }
 
@@ -9834,11 +10714,7 @@ export class SingleAgentClient {
     const requiredFeatures = TASK_FEATURE_MAP[taskName];
     if (!requiredFeatures || requiredFeatures.length === 0) return;
 
-    const capabilities = await this.getCapabilities(options);
-    const missing = requiredFeatures.filter(f => !resolveFeature(capabilities, f));
-    if (missing.length > 0) {
-      throw new FeatureUnsupportedError(missing, listDeclaredFeatures(capabilities), this.agent.agent_uri);
-    }
+    await this.assertFeaturesSupported(requiredFeatures, options);
   }
 
   /**

@@ -391,7 +391,11 @@ test('provider errors map to stable codes without leaking provider messages', as
   );
 });
 
-test('deadlines and cancellation settle even when the client hangs', async () => {
+test('deadlines and cancellation settle even when the client hangs', async t => {
+  // AbortSignal.timeout uses an unreferenced timer; the inert client supplies
+  // no active I/O to keep the event loop alive while that deadline expires.
+  const keepAlive = setInterval(() => {}, 1000);
+  t.after(() => clearInterval(keepAlive));
   const storage = createFakeStorage();
   storage.bucket = () => ({
     getMetadata: () => new Promise(() => {}),

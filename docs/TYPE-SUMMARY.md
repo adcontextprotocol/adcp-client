@@ -56,6 +56,39 @@ interface TransportOptions {
   legacyCompat?: A2ALegacyCompatOptions; // A2A only
 }
 
+// Selected transport observer fields; correlate all events by transportRequestId.
+type TransportActivityType = 'request_started' | 'response_received' | 'response_completed' | 'request_failed';
+type TransportResponseOutcome = 'ended' | 'errored' | 'aborted' | 'cancelled';
+interface TransportActivity {
+  type: TransportActivityType;
+  transportRequestId: string;
+  durationMs?: number; // response_received: time to headers; response_completed: total time
+  streaming?: boolean; // Uncaptured body: terminal observation follows consumption or abort
+  outcome?: TransportResponseOutcome; // response_completed only
+  bytes?: number; // Bytes forwarded before the terminal outcome; no stream payload retained
+}
+
+// Share discovery across request-local clients using an application-owned authorization identity.
+interface AgentDiscoveryCacheConfig {
+  cache: AgentDiscoveryCache; // get / set / delete; synchronous or asynchronous
+  authIdentity: string; // Trusted principal and authorization scope; never a token
+  ttlMs?: number; // Default: five minutes; maximum: 24 hours
+}
+const discoveryCache = createInMemoryAgentDiscoveryCache({ maxEntries: 256 });
+const client = new SingleAgentClient(agentConfig, {
+  discoveryCache: { cache: discoveryCache, authIdentity: 'tenant:buyer-scope', ttlMs: 300_000 },
+});
+// Public from @adcp/sdk, @adcp/sdk/client, and @adcp/sdk/advanced.
+await withMCPConnectionScope(async () => { await client.getCapabilities(); /* ...tool calls... */ });
+// closeScopedConnections() can close the current workflow early.
+interface AgentDiscoverySeed {
+  capabilities: AdcpCapabilities; // Authoritative evidence, never synthetic
+  toolSchemas?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+  endpoint?: { agentUri: string; mcpEra?: 'legacy' | 'modern' }; // Same origin, no URL userinfo
+}
+// client.primeDiscoveryCache(seed): Promise<boolean>; also available on AgentClient.
+// client.invalidateDiscoveryCache(): Promise<void>; refresh after a seller change.
+
 interface TaskOptions {
   skipStatusHandlers?: boolean; // Skip inline completion handlers, including continuations
   timeout?: number;             // Absolute whole-task deadline

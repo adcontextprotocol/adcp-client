@@ -1,7 +1,24 @@
 import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
 import { createHmac, randomUUID } from 'node:crypto';
+import { isMCPCallCompleted } from './mcp-call-context';
 
-export type TransportActivityType = 'request_started' | 'response_received' | 'request_failed';
+/**
+ * Lifecycle events for one transport request.
+ *
+ * - `request_started`: the request is about to be sent.
+ * - `response_received`: response **headers** arrived. For captured bodies,
+ *   dispatch waits for the bounded preview. Its `durationMs` is time to
+ *   headers, not time to completion; it does not mean the reply finished.
+ * - `response_completed`: the caller finished with a response body that was not
+ *   captured (SSE, no finite declared length, non-text, or over the capture
+ *   limit). Emitted at most once, with an `outcome`, total `bytes` and total
+ *   `durationMs`.
+ * - `request_failed`: the request failed before response headers arrived.
+ */
+export type TransportActivityType = 'request_started' | 'response_received' | 'response_completed' | 'request_failed';
+
+/** How an uncaptured response body finished. */
+export type TransportResponseOutcome = 'ended' | 'errored' | 'aborted' | 'cancelled';
 
 export interface TransportActivityContext {
   agentId: string;
@@ -39,6 +56,23 @@ export interface TransportActivity {
   responseHeaders?: Record<string, string>;
   responseBody?: string;
   responseBodyTruncated?: boolean;
+  /**
+   * On `response_received`: `true` when the body is streamed uncaptured, so a
+   * `response_completed` event will follow once the caller finishes reading,
+   * cancels, or aborts it. The event then means "headers received", not
+   * "reply finished".
+   */
+  streaming?: boolean;
+  /**
+   * On `response_completed`: how the body ended. `ended` is EOF, `errored` is a
+   * stream error, `aborted` is an `AbortSignal` abort (including a cancel after the
+   * signal fired) or abort-style error, and `cancelled` is the consumer
+   * cancelling the body without an abort, including SDK cleanup after it has
+   * delivered a successful MCP result.
+   */
+  outcome?: TransportResponseOutcome;
+  /** On `response_completed`: body bytes that passed through before the outcome. */
+  bytes?: number;
   errorName?: string;
   errorMessage?: string;
 }
@@ -147,7 +181,9 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
     const url = sanitizeTransportUrl(getUrl(input));
     const requestHeaders = sanitizeTransportHeaders(mergeRequestHeaders(input, init));
     const requestBody = bodySnippet(init?.body);
-    const baseEvent = {
+    // Correlation fields only. The terminal stream observer outlives the
+    // diagnostics scope, so it must not retain request payload previews.
+    const correlation = {
       agentId: slot.agentId,
       protocol: slot.protocol,
       transportRequestId,
@@ -159,11 +195,15 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
       method,
       url,
       requestHeaders,
+      startedAt,
+    };
+    const signal = getSignal(input, init);
+    const baseEvent = {
+      ...correlation,
       ...(requestBody && {
         requestBody: requestBody.body,
         requestBodyTruncated: requestBody.truncated,
       }),
-      startedAt,
     };
 
     emitTransportActivity(handler, {
@@ -189,16 +229,23 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
       if (!responseBody) {
         // Non-text bodies, SSE, bodies without a finite declared size, and
         // bodies declared over the capture limit are never cloned. An absent
-        // body is complete; a present but uncaptured body is truncated.
-        emitTransportActivity(
-          handler,
-          response.body
-            ? {
-                ...responseEvent,
-                responseBodyTruncated: true,
-              }
-            : responseEvent
-        );
+        // body is complete; a present but uncaptured body is truncated and is
+        // observed through a pass-through stream that reports its terminal
+        // outcome in a later response_completed event.
+        if (!response.body) {
+          emitTransportActivity(handler, responseEvent);
+          return response;
+        }
+        const observer = observeResponseBody(response, handler, correlation, startedAtMs, signal);
+        emitTransportActivity(handler, {
+          ...responseEvent,
+          responseBodyTruncated: true,
+          ...(observer && { streaming: true }),
+        });
+        // Only start watching for a terminal outcome once the headers event is
+        // queued, so response_completed can never precede response_received.
+        observer?.start();
+        return observer?.response ?? response;
       } else {
         // Body capture is fire-and-forget. The response_received event fires
         // when capture completes, which may be after the diagnostics scope exits.
@@ -235,8 +282,24 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
 }
 
 function emitTransportActivity(handler: TransportActivityHandler, event: TransportActivity): Promise<void> | undefined {
+  return dispatchTransportActivity(handler, event, true);
+}
+
+/**
+ * Terminal stream events fire whenever the caller finishes the body, possibly
+ * long after (or inside) a diagnostics scope. They are never added to
+ * `slot.pending`, so the scope never waits for them.
+ */
+function emitUntrackedTransportActivity(handler: TransportActivityHandler, event: TransportActivity): void {
+  void dispatchTransportActivity(handler, event, false);
+}
+
+function dispatchTransportActivity(
+  handler: TransportActivityHandler,
+  event: TransportActivity,
+  track: boolean
+): Promise<void> | undefined {
   try {
-    const slot = transportDiagnosticsStorage.getStore();
     const frozen = Object.freeze(structuredClone(event));
     const pending = Promise.resolve()
       .then(() => handler(frozen))
@@ -244,12 +307,148 @@ function emitTransportActivity(handler: TransportActivityHandler, event: Transpo
         () => {},
         () => {}
       );
-    slot?.pending.push(pending);
+    if (track) transportDiagnosticsStorage.getStore()?.pending.push(pending);
     return pending;
   } catch {
     // Observability hooks must not change protocol behavior.
     return undefined;
   }
+}
+
+/**
+ * Wrap an uncaptured response body in a pass-through stream that reports one
+ * terminal event. Chunks are forwarded untouched with pull-driven (zero
+ * read-ahead) backpressure; only a byte count is kept, never content. Returns
+ * undefined, leaving the response untouched, if it cannot be rebuilt.
+ */
+function observeResponseBody(
+  response: Response,
+  handler: TransportActivityHandler,
+  correlation: Record<string, unknown>,
+  startedAtMs: number,
+  signal: AbortSignal | undefined
+): { response: Response; start: () => void } | undefined {
+  const source = response.body;
+  if (!source) return undefined;
+  let reader: ReadableStreamDefaultReader<Uint8Array>;
+  try {
+    reader = source.getReader();
+  } catch {
+    return undefined;
+  }
+
+  // Copied so the long-lived observer does not retain the original Response.
+  const { status: httpStatus, statusText } = response;
+  let bytes = 0;
+  let finished = false;
+  const release = () => {
+    // Only called with no read in flight, so the source lock is freed as soon
+    // as the outcome is known.
+    try {
+      reader.releaseLock();
+    } catch {
+      // Already released.
+    }
+  };
+  const onAbort = () => finish(isMCPCallCompleted(signal?.reason) ? 'cancelled' : 'aborted', signal?.reason);
+  const finish = (outcome: 'ended' | 'errored' | 'aborted' | 'cancelled', error?: unknown) => {
+    if (finished) return;
+    finished = true;
+    signal?.removeEventListener('abort', onAbort);
+    try {
+      // A custom abort reason can surface as any error type, and cancelling a
+      // body after the signal fired is still an abort.
+      const resolved =
+        outcome !== 'ended' && signal?.aborted
+          ? isMCPCallCompleted(signal.reason)
+            ? 'cancelled'
+            : 'aborted'
+          : outcome;
+      const event: Record<string, unknown> = {
+        ...correlation,
+        type: 'response_completed',
+        timestamp: new Date().toISOString(),
+        durationMs: Date.now() - startedAtMs,
+        httpStatus,
+        statusText,
+        outcome: resolved,
+        bytes,
+      };
+      if (error !== undefined && (resolved === 'errored' || resolved === 'aborted')) {
+        event.errorName = error instanceof Error ? error.name : typeof error;
+        event.errorMessage = sanitizeDiagnosticText(error instanceof Error ? error.message : String(error));
+      }
+      emitUntrackedTransportActivity(handler, event as unknown as TransportActivity);
+    } catch {
+      // Observability hooks must not change protocol behavior.
+    }
+  };
+  const classify = (error: unknown) =>
+    error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError') ? 'aborted' : 'errored';
+
+  const stream = new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        try {
+          const { done, value } = await reader.read();
+          if (done) {
+            finish('ended');
+            release();
+            controller.close();
+            return;
+          }
+          if (typeof value?.byteLength === 'number') bytes += value.byteLength;
+          controller.enqueue(value);
+        } catch (error) {
+          finish(classify(error), error);
+          release();
+          throw error;
+        }
+      },
+      cancel(reason) {
+        finish('cancelled', reason);
+        return reader.cancel(reason).finally(release);
+      },
+    },
+    { highWaterMark: 0 }
+  );
+
+  let rebuilt: Response;
+  try {
+    rebuilt = new Response(stream, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  } catch {
+    reader.releaseLock();
+    return undefined;
+  }
+  preserveResponseMetadata(response, rebuilt);
+
+  const start = () => {
+    // An abort or upstream error with no read in flight would otherwise go
+    // unnoticed until the caller next reads.
+    reader.closed.catch(error => finish(classify(error), error));
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener('abort', onAbort, { once: true });
+  };
+  return { response: rebuilt, start };
+}
+
+function preserveResponseMetadata(from: Response, to: Response): void {
+  for (const key of ['url', 'redirected', 'type'] as const) {
+    try {
+      Object.defineProperty(to, key, { value: from[key], enumerable: true, configurable: true });
+    } catch {
+      // Metadata is best effort; the body and status are already faithful.
+    }
+  }
+}
+
+function getSignal(input: RequestInfo | URL, init?: RequestInit): AbortSignal | undefined {
+  if (init?.signal) return init.signal;
+  return input instanceof Request ? input.signal : undefined;
 }
 
 function getUrl(input: RequestInfo | URL): string {

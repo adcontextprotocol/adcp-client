@@ -561,10 +561,15 @@ test('transport diagnostics does not deadlock on responses larger than the snipp
   }
 
   assert.equal(consumedBody, largeBody);
-  assert.equal(events.length, 2);
-  assert.equal(events[1].type, 'response_received');
+  await waitFor(() => events.length === 3);
+  assert.deepEqual(
+    events.map(event => event.type),
+    ['request_started', 'response_received', 'response_completed']
+  );
   assert.equal(events[1].responseBody, undefined);
   assert.equal(events[1].responseBodyTruncated, true);
+  assert.equal(events[2].outcome, 'ended');
+  assert.equal(events[2].bytes, Buffer.byteLength(largeBody));
 });
 
 test('transport diagnostics does not mark an absent response body as truncated', async () => {
@@ -694,3 +699,352 @@ test('transport diagnostics preserves safe headers from a foreign Undici Headers
     'x-correlation-id': 'foreign-correlation',
   });
 });
+
+// --- Streamed (uncaptured) response bodies: response_completed ---------------
+
+const sseHeaders = { 'content-type': 'text/event-stream', 'x-request-id': 'sse-req-1' };
+
+function controlledStream(onPull) {
+  let controller;
+  const stream = new ReadableStream(
+    {
+      start(c) {
+        controller = c;
+      },
+      pull: onPull,
+    },
+    { highWaterMark: 0 }
+  );
+  return { stream, controller: () => controller };
+}
+
+function completions(events) {
+  return events.filter(event => event.type === 'response_completed');
+}
+
+async function runStreamed(api, upstream, init) {
+  const events = [];
+  const instrumentedFetch = api.wrapFetchWithTransportDiagnostics(upstream);
+  const response = await api.withTransportDiagnostics(
+    {
+      agentId: 'stream-agent',
+      protocol: 'mcp',
+      tool: 'get_products',
+      onTransportActivity: event => events.push(event),
+    },
+    () => instrumentedFetch('https://seller.example/mcp?token=secret', init)
+  );
+  return { events, response };
+}
+
+const streamApis = {
+  cjs: () => require('../../dist/lib/protocols/index.js'),
+  esm: () => import('../../dist/lib/protocols/index.mjs'),
+};
+
+for (const [format, loadApi] of Object.entries(streamApis)) {
+  test(`${format}: SSE aborted after headers emits one aborted response_completed and never delays the scope`, async () => {
+    const api = await loadApi();
+    const abort = new AbortController();
+    const { stream, controller } = controlledStream();
+    const upstream = async () => new Response(stream, { headers: sseHeaders });
+    const events = [];
+    const instrumentedFetch = api.wrapFetchWithTransportDiagnostics(upstream);
+
+    const startedAt = Date.now();
+    const response = await api.withTransportDiagnostics(
+      { agentId: 'sse-abort-agent', protocol: 'mcp', onTransportActivity: event => events.push(event) },
+      () => instrumentedFetch('https://seller.example/mcp', { method: 'POST', signal: abort.signal, body: '{}' })
+    );
+    assert.equal(Date.now() - startedAt < 500, true, 'scope and Response are not delayed by the open stream');
+    assert.deepEqual(
+      events.map(event => event.type),
+      ['request_started', 'response_received']
+    );
+    assert.equal(events[1].streaming, true);
+    assert.equal(events[1].responseBodyTruncated, true);
+
+    const reading = response.body
+      .getReader()
+      .read()
+      .catch(() => {});
+    // The upstream stream does not observe fetch signals in this fake, so
+    // surface the abort the way undici does: erroring the body.
+    abort.abort();
+    controller().error(abort.signal.reason);
+    await waitFor(() => completions(events).length === 1);
+    await reading.catch(() => {});
+    assert.equal(completions(events).length, 1);
+    const [done] = completions(events);
+    assert.equal(done.outcome, 'aborted');
+    assert.equal(done.bytes, 0);
+    assert.equal(done.transportRequestId, events[0].transportRequestId);
+    assert.equal(done.httpStatus, 200);
+    assert.equal(done.durationMs >= events[1].durationMs, true);
+    assert.equal(done.requestBody, undefined);
+    assert.equal(done.url, 'https://seller.example/mcp');
+    assert.equal(done.responseBody, undefined);
+  });
+
+  test(`${format}: SSE with a result then EOF is byte-identical and reports ended with bytes and duration`, async () => {
+    const api = await loadApi();
+    const payload = 'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n\n';
+    const bytes = new TextEncoder().encode(payload);
+    const { stream, controller } = controlledStream();
+    const upstream = async () => {
+      const response = new Response(stream, { status: 200, statusText: 'OK', headers: sseHeaders });
+      Object.defineProperty(response, 'url', { value: 'https://seller.example/final' });
+      Object.defineProperty(response, 'redirected', { value: true });
+      Object.defineProperty(response, 'type', { value: 'cors' });
+      return response;
+    };
+    const { events, response } = await runStreamed(api, upstream);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.statusText, 'OK');
+    assert.equal(response.url, 'https://seller.example/final');
+    assert.equal(response.redirected, true);
+    assert.equal(response.type, 'cors');
+    assert.equal(response.headers.get('content-type'), 'text/event-stream');
+    assert.equal(response.headers.get('x-request-id'), 'sse-req-1');
+    assert.deepEqual(
+      events.map(event => event.type),
+      ['request_started', 'response_received']
+    );
+
+    const reader = response.body.getReader();
+    controller().enqueue(bytes.slice(0, 10));
+    const first = await reader.read();
+    await new Promise(resolve => setTimeout(resolve, 60));
+    controller().enqueue(bytes.slice(10));
+    const second = await reader.read();
+    assert.equal(completions(events).length, 0, 'not completed before EOF');
+    controller().close();
+    assert.equal((await reader.read()).done, true);
+    await waitFor(() => completions(events).length === 1);
+
+    assert.deepEqual(Buffer.concat([first.value, second.value]), Buffer.from(bytes));
+    const [done] = completions(events);
+    assert.equal(done.outcome, 'ended');
+    assert.equal(done.bytes, bytes.byteLength);
+    assert.equal(done.durationMs >= 60, true);
+    assert.equal(done.durationMs >= events[1].durationMs, true);
+    assert.equal(done.errorName, undefined);
+    assert.equal(done.url, 'https://seller.example/mcp', 'query string is stripped');
+  });
+
+  test(`${format}: streamed body error reports errored and rethrows the same error`, async () => {
+    const api = await loadApi();
+    const boom = new Error('upstream exploded Bearer abc.def https://x.example/p?token=s');
+    const { stream, controller } = controlledStream();
+    const { events, response } = await runStreamed(api, async () => new Response(stream, { headers: sseHeaders }));
+    const reader = response.body.getReader();
+    controller().enqueue(new Uint8Array([1, 2, 3]));
+    assert.equal((await reader.read()).value.byteLength, 3);
+    const failing = reader.read();
+    controller().error(boom);
+    await assert.rejects(failing, error => error === boom);
+    await waitFor(() => completions(events).length === 1);
+    const [done] = completions(events);
+    assert.equal(done.outcome, 'errored');
+    assert.equal(done.bytes, 3);
+    assert.equal(done.errorName, 'Error');
+    assert.equal(done.errorMessage.includes('abc.def'), false);
+    assert.equal(done.errorMessage.includes('token=s'), false);
+  });
+
+  test(`${format}: consumer cancel reports cancelled and cancels upstream`, async () => {
+    const api = await loadApi();
+    let upstreamCancelReason;
+    const stream = new ReadableStream(
+      {
+        pull() {},
+        cancel(reason) {
+          upstreamCancelReason = reason;
+        },
+      },
+      { highWaterMark: 0 }
+    );
+    const { events, response } = await runStreamed(api, async () => new Response(stream, { headers: sseHeaders }));
+    await response.body.cancel('enough');
+    await waitFor(() => completions(events).length === 1);
+    assert.equal(upstreamCancelReason, 'enough');
+    assert.equal(completions(events)[0].outcome, 'cancelled');
+    // A later signal or reader outcome does not produce a second event.
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(completions(events).length, 1);
+  });
+
+  test(`${format}: abort classification covers custom reasons, Request signals, and already-aborted signals`, async () => {
+    const api = await loadApi();
+
+    // Custom abort reason surfaced by the upstream read as a non-AbortError.
+    const abort = new AbortController();
+    const custom = Object.assign(new Error('deadline'), { name: 'CustomDeadline' });
+    const first = controlledStream();
+    const withReason = await runStreamed(api, async () => new Response(first.stream, { headers: sseHeaders }), {
+      signal: abort.signal,
+    });
+    const pendingRead = withReason.response.body.getReader().read();
+    abort.abort(custom);
+    first.controller().error(custom);
+    await pendingRead.catch(() => {});
+    await waitFor(() => completions(withReason.events).length === 1);
+    assert.equal(completions(withReason.events)[0].outcome, 'aborted');
+
+    // The signal lives on a Request input and init.signal is absent.
+    const requestAbort = new AbortController();
+    const second = controlledStream();
+    const instrumentedFetch = api.wrapFetchWithTransportDiagnostics(
+      async () => new Response(second.stream, { headers: sseHeaders })
+    );
+    const events = [];
+    await api.withTransportDiagnostics(
+      { agentId: 'request-signal-agent', protocol: 'mcp', onTransportActivity: event => events.push(event) },
+      () => instrumentedFetch(new Request('https://seller.example/mcp', { signal: requestAbort.signal }))
+    );
+    requestAbort.abort();
+    await waitFor(() => completions(events).length === 1);
+    assert.equal(completions(events)[0].outcome, 'aborted');
+
+    // Already aborted when headers arrive: a single aborted event, no read needed.
+    const done = new AbortController();
+    done.abort();
+    const third = controlledStream();
+    const already = await runStreamed(api, async () => new Response(third.stream, { headers: sseHeaders }), {
+      signal: done.signal,
+    });
+    await waitFor(() => completions(already.events).length === 1);
+    assert.equal(completions(already.events)[0].outcome, 'aborted');
+    await already.response.body.cancel().catch(() => {});
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(completions(already.events).length, 1);
+  });
+
+  test(`${format}: a signal aborted before headers resolve still orders response_received first`, async () => {
+    const api = await loadApi();
+    const abort = new AbortController();
+    const { stream } = controlledStream();
+    // A custom upstream that resolves even though the signal already fired.
+    const upstream = async () => {
+      abort.abort();
+      return new Response(stream, { headers: sseHeaders });
+    };
+    const events = [];
+    const instrumentedFetch = api.wrapFetchWithTransportDiagnostics(upstream);
+    await api.withTransportDiagnostics(
+      { agentId: 'ordering-agent', protocol: 'mcp', onTransportActivity: event => events.push(event) },
+      () => instrumentedFetch('https://seller.example/mcp', { signal: abort.signal })
+    );
+    await waitFor(() => completions(events).length === 1);
+    assert.deepEqual(
+      events.map(event => event.type),
+      ['request_started', 'response_received', 'response_completed']
+    );
+    assert.equal(events[2].outcome, 'aborted');
+  });
+
+  test(`${format}: a foreign undici Response keeps status, headers, and bytes`, async () => {
+    const api = await loadApi();
+    const { Response: UndiciResponse } = require('undici');
+    const payload = 'event: message\ndata: {"result":{}}\n\n';
+    const upstream = async () =>
+      new UndiciResponse(payload, {
+        status: 201,
+        statusText: 'Created',
+        headers: { ...sseHeaders, 'x-extra': 'kept' },
+      });
+    const { events, response } = await runStreamed(api, upstream);
+    assert.equal(response.status, 201);
+    assert.equal(response.statusText, 'Created');
+    assert.equal(response.headers.get('x-extra'), 'kept');
+    assert.equal(response.headers.get('content-type'), 'text/event-stream');
+    assert.equal(await response.text(), payload);
+    await waitFor(() => completions(events).length === 1);
+    assert.equal(events[1].streaming, true);
+    assert.equal(completions(events)[0].bytes, Buffer.byteLength(payload));
+  });
+
+  test(`${format}: EOF followed by a late abort emits only ended`, async () => {
+    const api = await loadApi();
+    const abort = new AbortController();
+    const { events, response } = await runStreamed(
+      api,
+      async () => new Response('data: {}\n\n', { headers: sseHeaders }),
+      { signal: abort.signal }
+    );
+    assert.equal(await response.text(), 'data: {}\n\n');
+    await waitFor(() => completions(events).length === 1);
+    abort.abort();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.deepEqual(
+      completions(events).map(event => event.outcome),
+      ['ended']
+    );
+  });
+
+  test(`${format}: terminal events never join the scope's pending observers, even when consumed inside the scope`, async () => {
+    const api = await loadApi();
+    const calls = [];
+    const instrumentedFetch = api.wrapFetchWithTransportDiagnostics(
+      async () => new Response('data: {}\n\n', { headers: sseHeaders })
+    );
+    const startedAt = Date.now();
+    const text = await api.withTransportDiagnostics(
+      {
+        agentId: 'in-scope-agent',
+        protocol: 'mcp',
+        onTransportActivity: event => {
+          calls.push(event.type);
+          // Only the terminal observer stalls; start/received flush normally.
+          if (event.type === 'response_completed') return new Promise(() => {});
+        },
+      },
+      async () => (await instrumentedFetch('https://seller.example/mcp')).text()
+    );
+    assert.equal(text, 'data: {}\n\n');
+    assert.equal(Date.now() - startedAt < 1000, true, 'scope did not wait for the stalled terminal observer');
+    assert.equal(calls.includes('response_completed'), true);
+  });
+
+  test(`${format}: stream observation keeps pull-driven backpressure and does not buffer`, async () => {
+    const api = await loadApi();
+    let pulls = 0;
+    const stream = new ReadableStream(
+      {
+        pull(controller) {
+          pulls += 1;
+          controller.enqueue(new Uint8Array(1024));
+        },
+      },
+      { highWaterMark: 0 }
+    );
+    const { events, response } = await runStreamed(api, async () => new Response(stream, { headers: sseHeaders }));
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(pulls, 0, 'no read-ahead before the consumer reads');
+    const reader = response.body.getReader();
+    await reader.read();
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(pulls <= 1, true, 'at most the requested chunk is pulled');
+    await reader.cancel();
+    await waitFor(() => completions(events).length === 1);
+    assert.equal(completions(events)[0].bytes, 1024);
+  });
+
+  test(`${format}: captured, bodyless, and metadata-only responses emit no response_completed`, async () => {
+    const api = await loadApi();
+    const captured = await runStreamed(
+      api,
+      async () =>
+        new Response('{"ok":true}', { headers: { 'content-type': 'application/json', 'content-length': '11' } })
+    );
+    assert.equal(await captured.response.text(), '{"ok":true}');
+    await waitFor(() => captured.events.some(event => event.type === 'response_received'));
+    const bodyless = await runStreamed(api, async () => new Response(null, { status: 204 }));
+    assert.equal(bodyless.response.status, 204);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(completions(captured.events).length + completions(bodyless.events).length, 0);
+    assert.equal(captured.events.find(event => event.type === 'response_received').streaming, undefined);
+    assert.equal(bodyless.events.find(event => event.type === 'response_received').streaming, undefined);
+  });
+}

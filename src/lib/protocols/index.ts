@@ -25,10 +25,10 @@ export async function closeConnections(protocol: 'mcp' | 'a2a' = 'mcp'): Promise
   }
 }
 
-/** Close only the current runner's MCP scope; fall back to legacy global cleanup. */
+/** Close the current MCP scope. Without an active MCP scope, leave other callers' sessions open. */
 export async function closeScopedConnections(protocol: 'mcp' | 'a2a' = 'mcp'): Promise<void> {
   if (protocol === 'mcp') {
-    if (!(await closeCurrentMCPConnectionScope())) await closeMCPConnections();
+    await closeCurrentMCPConnectionScope();
   } else {
     closeA2AConnections();
   }
@@ -87,7 +87,13 @@ export {
   withTransportDiagnostics,
   wrapFetchWithTransportDiagnostics,
 } from './transportDiagnostics';
-export type { TransportActivity, TransportActivityContext, TransportActivityHandler } from './transportDiagnostics';
+export type {
+  TransportActivity,
+  TransportActivityContext,
+  TransportActivityHandler,
+  TransportActivityType,
+  TransportResponseOutcome,
+} from './transportDiagnostics';
 
 export type VersionEnvelopeMode = 'auto' | 'none' | 'major-only';
 

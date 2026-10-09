@@ -46,5 +46,14 @@ export {
   callA2ATool,
   createMCPClient,
   createA2AClient,
+  closeConnections,
+  closeScopedConnections,
+  withMCPConnectionScope,
 } from './protocols';
-export type { MCPCallOptions, MCPConnectionResult } from './protocols';
+export type {
+  MCPCallOptions,
+  MCPConnectionResult,
+  TransportActivity,
+  TransportActivityType,
+  TransportResponseOutcome,
+} from './protocols';

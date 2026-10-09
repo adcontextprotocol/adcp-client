@@ -66,6 +66,21 @@ export async function closeCurrentMCPConnectionScope(): Promise<boolean> {
  * Isolate connection reuse to one runner/workflow and close it on every exit.
  * Nested callers join the existing scope so a storyboard still gets exactly
  * one reusable session rather than one session per helper layer.
+ *
+ * Every MCP call made inside `fn` — endpoint probe, capability discovery,
+ * `tools/list`, and tool calls — reuses one negotiated session per
+ * (endpoint, credential, tenant headers, signing identity, transport policy).
+ * Per-call correlation headers, `AbortSignal`s and timeouts do not choose the
+ * session. The scope terminates its sessions once, when `fn` settles; pass
+ * `{ isolate: true }` to force a fresh scope even when called from inside one.
+ *
+ * @example
+ * ```ts
+ * await withMCPConnectionScope(async () => {
+ *   await client.syncAccounts(accounts);
+ *   await client.getProducts(brief); // same MCP session, one `initialize`
+ * });
+ * ```
  */
 export async function withMCPConnectionScope<T>(fn: () => Promise<T>, options: { isolate?: boolean } = {}): Promise<T> {
   if (scopeStorage.getStore() && options.isolate !== true) return fn();

@@ -77,21 +77,52 @@ The submitted continuation's `waitForCompletion` function is deliberately proces
 Do not catch every outcome into a string. Switch on `result.status`; use `result.adcpError` for failed results, and catch thrown cancellation/configuration errors separately. Internal transport retries reuse an idempotency key. A new application intent must receive a new key; after an ambiguous timeout, reconcile by the persisted natural key before deciding to retry.
 
 Transport diagnostics never delay delivery of the operational `Response`.
-SSE, non-text, and explicitly over-limit bodies are not cloned; their single
-response event is emitted immediately with `responseBodyTruncated: true`. Other
-diagnostic text bodies, including chunked responses without `Content-Length`
-and responses with an invalid length, are cloned synchronously and captured in
-the background up to 64 KiB for at most `BODY_SNIPPET_TIMEOUT_MS` (currently 1
-second). Their single response event is emitted when capture completes,
-truncates, or expires, while the original response stream remains exclusively
-available to the protocol client. The enclosing task then waits within
+Each request emits `request_started`, then `response_received`, then (for
+streamed replies) `response_completed`. `response_received` means **response
+headers arrived**: its `durationMs` is time to headers. For an MCP server that
+answers over `text/event-stream`, that is not the end of the reply, so do not
+record it as a finished call.
+
+Bodies are captured only when they are text-like and declare a finite
+`Content-Length` of at most 64 KiB. Those are cloned synchronously and read in
+the background for at most `BODY_SNIPPET_TIMEOUT_MS` (currently 1 second), and
+their single `response_received` event is emitted when capture completes,
+truncates, or expires. The enclosing task then waits within
 `OBSERVER_FLUSH_TIMEOUT_MS` for that event's asynchronous observer, so
-short-lived processes do not lose the final audit record. Observer
-failures remain isolated. Applications should synchronously enqueue each event into their own
-bounded in-memory or durable queue and return promptly; flushing that queue is
-an application lifecycle concern.
+short-lived processes do not lose the final audit record.
+
+Every other body is never cloned or buffered: SSE, non-text content, chunked
+responses or responses with a missing or invalid `Content-Length`, and bodies
+declared over the limit. Their `response_received` event is emitted
+immediately with `responseBodyTruncated: true` and, when the body can be observed, `streaming: true`; `streaming` is the signal that a `response_completed` event will follow. The body
+is passed through an observing stream with the same bytes, status, headers,
+`url`, `redirected`, and `type`, and with pull-driven backpressure. When the
+caller finishes with it, exactly one `response_completed` event reports
+`outcome`, total `bytes`, and `durationMs` measured from `startedAt`:
+
+| `outcome`   | Meaning                                                                    |
+| ----------- | -------------------------------------------------------------------------- |
+| `ended`     | The caller read the stream to EOF.                                         |
+| `errored`   | The stream failed (`errorName` / sanitized `errorMessage` are set).        |
+| `aborted`   | The request's `AbortSignal` fired (also when the body is cancelled after it fired), or the stream failed with an abort error. |
+| `cancelled` | The consumer cancelled the body, including SDK cleanup after delivering a successful MCP result. |
+
+A streamed call that never answers therefore shows `response_received` with no
+matching `response_completed` until the caller aborts it (for example, when its
+deadline fires an `AbortSignal` on the request), then an `aborted` completion. `response_completed` is fire-and-forget: it can arrive
+after the diagnostics scope exits, the scope never waits for it, and a body
+that is never read or aborted never emits one. It carries the request correlation
+fields, `httpStatus`, and `statusText`, but no request or response bodies and no
+response headers. The SDK does not parse SSE messages, so it cannot say whether
+a stream carried a final result.
+
+Observer failures remain isolated. Applications should synchronously enqueue
+each event into their own bounded in-memory or durable queue and return
+promptly; flushing that queue is an application lifecycle concern.
 
 ## Reuse scoped capability evidence
+
+For evidence shared across separate client instances, use the opt-in [discovery cache](./DISCOVERY-CACHE-AND-SESSION-REUSE.md). That guide also covers MCP connection scopes and per-call session reuse.
 
 An application factory that already performs a bounded seller preflight can
 construct and prime the specific client instance before exposing it for task

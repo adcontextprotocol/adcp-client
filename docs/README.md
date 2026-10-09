@@ -23,7 +23,7 @@ list_products → buy_products → control_media_buy
 
 Use the [buyer quick start](./guides/BUYER-QUICKSTART-3.2.md). For the complete
 tool and type inventory, use [llms.txt](./llms.txt) and the
-[type summary](./TYPE-SUMMARY.md).
+[type summary](./TYPE-SUMMARY.md). For server-side callers that create a client per request, see [discovery caching and MCP session reuse](./guides/DISCOVERY-CACHE-AND-SESSION-REUSE.md).
 
 ## Upgrade from SDK 14.0
 

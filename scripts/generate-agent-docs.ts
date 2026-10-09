@@ -796,6 +796,10 @@ function generateLlmsTxt(
     `**Existing applications.** The [thin existing-platform recipe](./guides/EXISTING-PLATFORM.md) shows one SDK task inside application-owned auth and transactions, durable submitted-task recording, the error/cancellation matrix, non-blocking bounded diagnostics, and same-instance capability evidence reuse with \`AgentClient.createWithCapabilityPreflight()\` (or the lower-level \`getCapabilityEvidenceScope()\` + \`primeCapabilities()\` pair). The SDK 14 release represented by the checkout, its registry integrity check, peer/runtime ranges, wire pin, and a historical rc.33/rc.35 → rc.36 example are generated in [the release worksheet](./migration-14.x-rc-worksheet.md).`
   );
   ln();
+  ln(
+    `**Request-local clients.** Share endpoint and capability discovery with an application-owned \`discoveryCache\` and explicit authorization identity. The public \`withMCPConnectionScope()\` groups a workflow's MCP calls onto reusable sessions; correlation headers, cancellation and deadlines remain per call. See [Discovery cache and session reuse](./guides/DISCOVERY-CACHE-AND-SESSION-REUSE.md).`
+  );
+  ln();
 
   ln(`## Canonical Reference Resolver`);
   ln();
@@ -1463,6 +1467,39 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`  requestTimeoutMs?: number;`);
   ln(`  legacyCompat?: A2ALegacyCompatOptions; // A2A only`);
   ln(`}`);
+  ln();
+  ln(`// Selected transport observer fields; correlate all events by transportRequestId.`);
+  ln(`type TransportActivityType = 'request_started' | 'response_received' | 'response_completed' | 'request_failed';`);
+  ln(`type TransportResponseOutcome = 'ended' | 'errored' | 'aborted' | 'cancelled';`);
+  ln(`interface TransportActivity {`);
+  ln(`  type: TransportActivityType;`);
+  ln(`  transportRequestId: string;`);
+  ln(`  durationMs?: number; // response_received: time to headers; response_completed: total time`);
+  ln(`  streaming?: boolean; // Uncaptured body: terminal observation follows consumption or abort`);
+  ln(`  outcome?: TransportResponseOutcome; // response_completed only`);
+  ln(`  bytes?: number; // Bytes forwarded before the terminal outcome; no stream payload retained`);
+  ln(`}`);
+  ln();
+  ln(`// Share discovery across request-local clients using an application-owned authorization identity.`);
+  ln(`interface AgentDiscoveryCacheConfig {`);
+  ln(`  cache: AgentDiscoveryCache; // get / set / delete; synchronous or asynchronous`);
+  ln(`  authIdentity: string; // Trusted principal and authorization scope; never a token`);
+  ln(`  ttlMs?: number; // Default: five minutes; maximum: 24 hours`);
+  ln(`}`);
+  ln(`const discoveryCache = createInMemoryAgentDiscoveryCache({ maxEntries: 256 });`);
+  ln(`const client = new SingleAgentClient(agentConfig, {`);
+  ln(`  discoveryCache: { cache: discoveryCache, authIdentity: 'tenant:buyer-scope', ttlMs: 300_000 },`);
+  ln(`});`);
+  ln(`// Public from @adcp/sdk, @adcp/sdk/client, and @adcp/sdk/advanced.`);
+  ln(`await withMCPConnectionScope(async () => { await client.getCapabilities(); /* ...tool calls... */ });`);
+  ln(`// closeScopedConnections() can close the current workflow early.`);
+  ln(`interface AgentDiscoverySeed {`);
+  ln(`  capabilities: AdcpCapabilities; // Authoritative evidence, never synthetic`);
+  ln(`  toolSchemas?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;`);
+  ln(`  endpoint?: { agentUri: string; mcpEra?: 'legacy' | 'modern' }; // Same origin, no URL userinfo`);
+  ln(`}`);
+  ln(`// client.primeDiscoveryCache(seed): Promise<boolean>; also available on AgentClient.`);
+  ln(`// client.invalidateDiscoveryCache(): Promise<void>; refresh after a seller change.`);
   ln();
   ln(`interface TaskOptions {`);
   ln(`  skipStatusHandlers?: boolean; // Skip inline completion handlers, including continuations`);
