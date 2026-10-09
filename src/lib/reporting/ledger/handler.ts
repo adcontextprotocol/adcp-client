@@ -542,6 +542,20 @@ export function createReportingStatusHandler<TContext = unknown>(
  */
 export const REPORTING_STATUS_REVISION_VIEW_MAX_ROWS = 10_000;
 
+/**
+ * Nondisclosing not-found for exact revision reads. Unknown, unauthorized,
+ * expired and compacted revisions, and an unusable pagination cursor, all
+ * return this identical error so a response never reveals whether a revision
+ * exists for another account. It is correctable/terminal, never transient: the
+ * reference will not start resolving by retrying.
+ */
+function reportingRevisionNotFound(): AdcpError {
+  return new AdcpError('REFERENCE_NOT_FOUND', {
+    message: 'Reporting revision is unavailable',
+    field: 'reporting_revision_id',
+  });
+}
+
 /** Exact revision reader for createAdcpServer's getMediaBuyDelivery slot. */
 export function createReportingDeliveryHandler(store: ReportingLedgerStore): ReportingDeliveryHandlerV1 {
   const activeReadsByAccount = new Map<string, number>();
@@ -561,14 +575,15 @@ export function createReportingDeliveryHandler(store: ReportingLedgerStore): Rep
     try {
       const raw = request as unknown as Record<string, unknown>;
       if (typeof raw.reporting_revision_id !== 'string' || !raw.reporting_revision_id) {
-        throw new Error('Ledger delivery reads require reporting_revision_id');
+        throw new AdcpError('VALIDATION_ERROR', {
+          message: 'Ledger delivery reads require reporting_revision_id',
+          field: 'reporting_revision_id',
+        });
       }
       const revision = await getRevisionMetadataFromStore(store, raw.reporting_revision_id, accountId);
-      if (!revision) throw new Error('Reporting revision is unavailable');
+      if (!revision) throw reportingRevisionNotFound();
       const obligation = await store.getObligation(revision.reporting_obligation_id);
-      if (!obligation || obligation.account.account_id !== accountId) {
-        throw new Error('Reporting revision is unavailable');
-      }
+      if (!obligation || obligation.account.account_id !== accountId) throw reportingRevisionNotFound();
       const pagination = isRecord(raw.pagination) ? raw.pagination : {};
       const maxResults =
         typeof pagination.max_results === 'number' && Number.isFinite(pagination.max_results)
@@ -593,7 +608,7 @@ export function createReportingDeliveryHandler(store: ReportingLedgerStore): Rep
           }
           offset = cursor.offset;
         } catch {
-          throw new Error('Reporting delivery cursor is invalid');
+          throw reportingRevisionNotFound();
         }
       }
       let reportingRows: Record<string, unknown>[] = [];
@@ -612,14 +627,23 @@ export function createReportingDeliveryHandler(store: ReportingLedgerStore): Rep
           // corrupt rows inside the retention window are never reported as
           // absent and never released unverified.
           if (isReportingRowStoreError(error)) {
-            if (error.code === 'ROWS_EXPIRED') throw new Error('Reporting revision is unavailable');
+            if (error.code === 'ROWS_EXPIRED') throw reportingRevisionNotFound();
             throw new AdcpError('SERVICE_UNAVAILABLE', {
               message: 'Reporting revision rows are temporarily unavailable',
             });
           }
           throw error;
         }
-        if (!page || page.total !== totalCount) throw new Error('Reporting revision is unavailable');
+        // The revision vanished between the metadata read and the row read:
+        // it is gone, which reads like any other unknown revision.
+        if (!page) throw reportingRevisionNotFound();
+        // A retained revision whose stored rows disagree with its committed
+        // binding is an integrity failure, never not-found and never released.
+        if (page.total !== totalCount) {
+          throw new AdcpError('SERVICE_UNAVAILABLE', {
+            message: 'Reporting revision rows are temporarily unavailable',
+          });
+        }
         reportingRows = page.rows;
       }
       const nextOffset = offset + reportingRows.length;
