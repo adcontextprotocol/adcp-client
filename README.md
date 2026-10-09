@@ -57,7 +57,22 @@ Large workspaces should keep the generated schema surface out of the default typ
 | Client, server, signing, and response helpers | `@adcp/sdk`, `@adcp/sdk/client`, `@adcp/sdk/server`, or another focused runtime subpath |
 | One tool's request/response types             | `@adcp/sdk/types/<tool>` such as `@adcp/sdk/types/sync-accounts`                        |
 | Runtime Zod schemas and tool schema maps      | `@adcp/sdk/schemas`                                                                     |
+| Runtime Zod schemas in browser UIs            | `@adcp/sdk/schemas/browser`                                                             |
 | Broad generated protocol type barrel          | `@adcp/sdk/types`                                                                       |
+
+Browser widgets and dashboards can validate AdCP objects with the generated Zod schemas:
+
+```ts
+import {
+  EventSourceHealthSchema,
+  SyncAudiencesResponseSchema,
+  SyncEventSourcesResponseSchema,
+} from '@adcp/sdk/schemas/browser';
+
+const health = EventSourceHealthSchema.parse(rawHealth);
+```
+
+The browser entry also exports `GetProductsRequestSchema` and `LegacyGetProductsRequestSchema`, `BiddingPolicySchema`, `CanonicalBudgetAllocationSchema`, and the strict `SyncCreatives*` validators, with the same validation behavior as the Node entry. It has no Node built-ins in its import graph. JSON Schema loading and tool registration helpers remain available from `@adcp/sdk/schemas`. The generated schemas still initialize together, so importing one schema can retain the full generated module in a browser bundle; per-schema tree-shaking is tracked in [#3178](https://github.com/adcontextprotocol/adcp-client/issues/3178).
 
 ### Focused client runtime (`@adcp/sdk/client/core`)
 

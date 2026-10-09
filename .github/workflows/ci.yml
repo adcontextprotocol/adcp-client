@@ -306,6 +306,9 @@ jobs:
       - name: Guard public Zod OpenAPI portability
         run: npm run test:zod-openapi-portability
 
+      - name: Guard browser schema bundles
+        run: npm run test:schemas-browser
+
       - name: Enforce publish-size budgets
         run: npm run check:package-size
 

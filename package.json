@@ -284,6 +284,16 @@
         "default": "./dist/lib/schemas/index.js"
       }
     },
+    "./schemas/browser": {
+      "import": {
+        "types": "./dist/lib/schemas/browser.d.mts",
+        "default": "./dist/lib/schemas/browser.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/schemas/browser.d.ts",
+        "default": "./dist/lib/schemas/browser.js"
+      }
+    },
     "./compliance-fixtures": {
       "import": {
         "types": "./dist/lib/compliance-fixtures/index.d.mts",
@@ -519,6 +529,9 @@
       "schemas": [
         "dist/lib/schemas/index.d.ts"
       ],
+      "schemas/browser": [
+        "dist/lib/schemas/browser.d.ts"
+      ],
       "compliance-fixtures": [
         "dist/lib/compliance-fixtures/index.d.ts"
       ],
@@ -723,6 +736,7 @@
     "ci:validate": "node scripts/ci-validate.js",
     "ci:quick": "npm run format:check && npm run typecheck && npm run build:lib && npm test",
     "test:zod-openapi-portability": "node --test test/lib/zod-openapi-portability.test.js",
+    "test:schemas-browser": "node --test-timeout=60000 --test test/lib/schemas-browser.test.js",
     "ci:schema-check": "npm run sync-schemas && npm run generate-types && npm run generate-registry-types -- --sync && git diff --exit-code -I '// Generated at:' src/lib/types/ src/lib/agents/ src/lib/media-buy/action-metadata.generated.ts src/lib/media-buy/update-fields.generated.ts src/lib/registry/types.generated.ts schemas/registry/registry.yaml || (echo '⚠️  Generated files are out of sync. Run: npm run sync-schemas && npm run generate-types && npm run generate-registry-types -- --sync' && exit 1)",
     "ci:codegen-strict": "tsx scripts/check-no-loose-oneof.ts",
     "ci:docs-check": "npm run generate-agent-docs && npm run generate-release-worksheet && git diff --exit-code -I '> Generated at:' docs/llms.txt docs/TYPE-SUMMARY.md docs/migration-14.x-rc-worksheet.md || (echo '⚠️  Generated docs are out of sync. Run: npm run generate-agent-docs && npm run generate-release-worksheet' && exit 1)",
