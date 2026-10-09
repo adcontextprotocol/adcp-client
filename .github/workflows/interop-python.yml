@@ -102,7 +102,7 @@ jobs:
         node: ['20.19.0', '24']
     services:
       postgres:
-        image: postgres:16
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: postgres
           POSTGRES_HOST_AUTH_METHOD: trust
