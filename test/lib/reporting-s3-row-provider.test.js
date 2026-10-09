@@ -29,7 +29,8 @@ function s3Error(status, name) {
 }
 
 function createFakeS3({
-  versioned = false,
+  versioned = true,
+  versioningStatus = versioned ? 'Enabled' : undefined,
   ignoreIfNoneMatch = false,
   conditionalDeletes = true,
   conflictsBeforePut = 0,
@@ -60,6 +61,9 @@ function createFakeS3({
     HeadBucketCommand(input) {
       if (!buckets.includes(input.Bucket)) throw s3Error(404, 'NotFound');
       return {};
+    },
+    GetBucketVersioningCommand() {
+      return versioningStatus ? { Status: versioningStatus } : {};
     },
     GetBucketPolicyStatusCommand() {
       return { PolicyStatus: { IsPublic: isPublic } };
@@ -185,40 +189,65 @@ const secretFree = error => {
   return true;
 };
 
-for (const versioned of [false, true]) {
-  test(`passes the shared provider conformance suite (${versioned ? 'versioned' : 'unversioned'})`, async () => {
-    const client = createFakeS3({ versioned });
-    const provider = createS3ReportingRowObjectProviderV1({ client });
-    const passed = await runReportingRowObjectProviderConformanceV1(provider, { ...base, prefix: 'adcp-rows' });
-    assert.deepEqual(passed, [
-      'probe',
-      'create',
-      'create-only',
-      'ranged-read',
-      'version-pinned-read',
-      'exact-version-delete',
-    ]);
-    assert.equal(client.store.size === 0 || [...client.store.values()].every(v => v.length === 0), true);
-    assert.ok(client.calls.every(call => call.abortSignal instanceof AbortSignal));
-  });
-}
+test('passes the shared provider conformance suite', async () => {
+  const client = createFakeS3();
+  const provider = createS3ReportingRowObjectProviderV1({ client });
+  const passed = await runReportingRowObjectProviderConformanceV1(provider, { ...base, prefix: 'adcp-rows' });
+  assert.deepEqual(passed, [
+    'probe',
+    'create',
+    'create-only',
+    'ranged-read',
+    'version-pinned-read',
+    'exact-version-delete',
+    'write-unique-version',
+  ]);
+  assert.equal(client.store.size === 0 || [...client.store.values()].every(v => v.length === 0), true);
+  assert.ok(client.calls.every(call => call.abortSignal instanceof AbortSignal));
+});
 
-test('create-only put sends If-None-Match and records VersionId or quoted ETag', async () => {
-  const unversioned = createFakeS3();
-  const provider = createS3ReportingRowObjectProviderV1({ client: unversioned });
+test('create-only put sends If-None-Match and records the VersionId', async () => {
+  const client = createFakeS3();
+  const provider = createS3ReportingRowObjectProviderV1({ client });
   const created = await put(provider, 'adcp-rows/ns/a.jsonl.gz');
   assert.equal(created.created, true);
-  assert.match(created.nativeVersion, /^"[0-9a-f]{32}"$/);
-  const call = unversioned.calls.find(item => item.op === 'PutObjectCommand');
+  assert.match(created.nativeVersion, /^[0-9a-f-]{36}$/);
+  const call = client.calls.find(item => item.op === 'PutObjectCommand');
   assert.equal(call.input.IfNoneMatch, '*');
   assert.equal(call.input.ContentType, 'application/gzip');
   assert.equal(call.input.ContentEncoding, undefined);
   assert.deepEqual(call.input.Metadata, { 'adcp-installation': 'inst', 'adcp-intent': 'intent' });
+});
 
-  const versioned = createFakeS3({ versioned: true });
-  const versionedProvider = createS3ReportingRowObjectProviderV1({ client: versioned });
-  const v = await put(versionedProvider, 'adcp-rows/ns/a.jsonl.gz');
-  assert.match(v.nativeVersion, /^[0-9a-f-]{36}$/);
+test('writes and adoption refuse results without a VersionId (never fall back to the ETag)', async () => {
+  const unversioned = createFakeS3({ versioned: false });
+  const provider = createS3ReportingRowObjectProviderV1({ client: unversioned });
+  await assert.rejects(put(provider, 'adcp-rows/ns/a.jsonl'), error => {
+    assert.ok(isCode('UNSAFE_BINDING')(error));
+    assert.match(error.message, /versioning must be enabled/);
+    return secretFree(error);
+  });
+  // The key exists now: the 412 adopt path must refuse too.
+  await assert.rejects(put(provider, 'adcp-rows/ns/a.jsonl'), isCode('UNSAFE_BINDING'));
+  // The literal `null` version of an object written before versioning is not write-unique.
+  const nullVersion = createFakeS3();
+  const send = nullVersion.send.bind(nullVersion);
+  nullVersion.send = async (command, options) => {
+    const output = await send(command, options);
+    return command.constructor.name === 'PutObjectCommand' ? { ...output, VersionId: 'null' } : output;
+  };
+  await assert.rejects(
+    put(createS3ReportingRowObjectProviderV1({ client: nullVersion }), 'adcp-rows/ns/n.jsonl'),
+    isCode('UNSAFE_BINDING')
+  );
+  const key = 'adcp-rows/ns/a.jsonl';
+  assert.equal(await provider.get({ ...base, key, nativeVersion: 'null', maxBytes: 9 }, signal()), null);
+  assert.equal(await provider.delete({ ...base, key, nativeVersion: 'null' }, signal()), 'absent');
+  assert.equal(
+    await provider.get({ ...base, key, nativeVersion: '"0123"', maxBytes: 9 }, signal()),
+    null,
+    'quoted ETags are no longer versions'
+  );
 });
 
 test('412 adopts the existing version; 409 is retried once', async () => {
@@ -247,9 +276,9 @@ test('412 adopts the existing version; 409 is retried once', async () => {
   });
 });
 
-test('reads pin VersionId or If-Match and honour ranges and the byte cap', async () => {
-  for (const versioned of [false, true]) {
-    const client = createFakeS3({ versioned });
+test('reads pin VersionId and honour ranges and the byte cap', async () => {
+  {
+    const client = createFakeS3();
     const provider = createS3ReportingRowObjectProviderV1({ client });
     const key = 'adcp-rows/ns/r.jsonl';
     const { nativeVersion } = await put(provider, key, '0123456789abcdef');
@@ -260,8 +289,8 @@ test('reads pin VersionId or If-Match and honour ranges and the byte cap', async
     assert.equal(Buffer.from(ranged).toString(), '456789');
     const call = client.calls.filter(item => item.op === 'GetObjectCommand').at(-1);
     assert.equal(call.input.Range, 'bytes=4-9');
-    if (versioned) assert.equal(call.input.VersionId, nativeVersion);
-    else assert.equal(call.input.IfMatch, nativeVersion);
+    assert.equal(call.input.VersionId, nativeVersion);
+    assert.equal(call.input.IfMatch, undefined);
 
     assert.equal(await provider.get({ ...base, key, nativeVersion: '"0000"', maxBytes: 100 }, signal()), null);
     assert.equal(await provider.get({ ...base, key, nativeVersion: 'not-a-version', maxBytes: 100 }, signal()), null);
@@ -286,7 +315,7 @@ test('reads pin VersionId or If-Match and honour ranges and the byte cap', async
   }
 });
 
-test('a store that ignores versionId or If-Match never serves or deletes a different version', async () => {
+test('a store that ignores VersionId never serves or deletes a different version', async () => {
   const client = createFakeS3();
   const provider = createS3ReportingRowObjectProviderV1({ client });
   const key = 'adcp-rows/ns/v.jsonl';
@@ -295,10 +324,9 @@ test('a store that ignores versionId or If-Match never serves or deletes a diffe
   client.send = (command, options) => {
     // Emulate a store that drops the version selectors and answers from the current object.
     delete command.input.VersionId;
-    delete command.input.IfMatch;
     return send(command, options);
   };
-  for (const foreign of ['"0000"', 'some-version']) {
+  for (const foreign of ['other-version', 'some-version']) {
     assert.equal(await provider.get({ ...base, key, nativeVersion: foreign, maxBytes: 100 }, signal()), null);
     assert.equal(
       await provider.get(
@@ -329,26 +357,34 @@ test('streaming cap applies even when ContentLength is absent', async () => {
 });
 
 test('delete removes only the exact version and is idempotent', async () => {
-  for (const versioned of [false, true]) {
-    const client = createFakeS3({ versioned });
-    const provider = createS3ReportingRowObjectProviderV1({ client });
-    const key = 'adcp-rows/ns/d.jsonl';
-    const { nativeVersion } = await put(provider, key);
-    assert.equal(await provider.delete({ ...base, key, nativeVersion: '"0000"' }, signal()), 'absent');
-    assert.equal(await provider.delete({ ...base, key, nativeVersion: 'not-a-version' }, signal()), 'absent');
-    assert.equal(client.store.get(key).length, 1);
-    assert.equal(await provider.delete({ ...base, key, nativeVersion }, signal()), 'deleted');
-    const deletes = client.calls.filter(item => item.op === 'DeleteObjectCommand');
-    if (versioned) assert.equal(deletes.at(-1).input.VersionId, nativeVersion);
-    else assert.equal(deletes.at(-1).input.IfMatch, nativeVersion);
-    assert.equal(await provider.delete({ ...base, key, nativeVersion }, signal()), 'absent');
-  }
-  // Stores without conditional deletes fall back to HEAD-compare then delete.
-  const legacy = createFakeS3({ conditionalDeletes: false });
-  const provider = createS3ReportingRowObjectProviderV1({ client: legacy });
-  const { nativeVersion } = await put(provider, 'adcp-rows/ns/l.jsonl');
-  assert.equal(await provider.delete({ ...base, key: 'adcp-rows/ns/l.jsonl', nativeVersion }, signal()), 'deleted');
-  assert.equal(legacy.store.get('adcp-rows/ns/l.jsonl').length, 0);
+  const client = createFakeS3();
+  const provider = createS3ReportingRowObjectProviderV1({ client });
+  const key = 'adcp-rows/ns/d.jsonl';
+  const { nativeVersion } = await put(provider, key);
+  assert.equal(await provider.delete({ ...base, key, nativeVersion: '"0000"' }, signal()), 'absent');
+  assert.equal(await provider.delete({ ...base, key, nativeVersion: 'not-a-version' }, signal()), 'absent');
+  assert.equal(client.store.get(key).length, 1);
+  assert.equal(await provider.delete({ ...base, key, nativeVersion }, signal()), 'deleted');
+  const deletes = client.calls.filter(item => item.op === 'DeleteObjectCommand');
+  assert.equal(deletes.at(-1).input.VersionId, nativeVersion);
+  assert.equal(deletes.at(-1).input.IfMatch, undefined);
+  assert.equal(client.store.get(key).length, 0, 'deleting a VersionId removes the version without a delete marker');
+  assert.equal(await provider.delete({ ...base, key, nativeVersion }, signal()), 'absent');
+});
+
+test('a delayed delete of an old version never removes an identical re-creation', async () => {
+  const client = createFakeS3();
+  const provider = createS3ReportingRowObjectProviderV1({ client });
+  const key = 'adcp-rows/ns/fence.jsonl';
+  const first = await put(provider, key, 'same bytes\n');
+  assert.equal(await provider.delete({ ...base, key, nativeVersion: first.nativeVersion }, signal()), 'deleted');
+  const second = await put(provider, key, 'same bytes\n');
+  assert.equal(second.created, true);
+  assert.notEqual(second.nativeVersion, first.nativeVersion);
+  assert.equal(await provider.delete({ ...base, key, nativeVersion: first.nativeVersion }, signal()), 'absent');
+  const bytes = await provider.get({ ...base, key, nativeVersion: second.nativeVersion, maxBytes: 100 }, signal());
+  assert.equal(Buffer.from(bytes).toString(), 'same bytes\n');
+  assert.equal(client.store.get(key).length, 1);
 });
 
 test('probe refuses unsafe buckets and stores that ignore If-None-Match', async () => {
@@ -357,9 +393,26 @@ test('probe refuses unsafe buckets and stores that ignore If-None-Match', async 
   const safe = createFakeS3();
   await probe(safe);
   assert.equal([...safe.store.values()].flat().length, 0, 'probe objects are cleaned up');
-  const versioned = createFakeS3({ versioned: true });
-  await probe(versioned);
-  assert.equal([...versioned.store.values()].flat().length, 0);
+  for (const versioningStatus of [undefined, 'Suspended']) {
+    const unversioned = createFakeS3({ versioned: false, versioningStatus });
+    await assert.rejects(probe(unversioned), error => {
+      assert.ok(isCode('UNSAFE_BINDING')(error));
+      assert.match(error.message, /versioning must be enabled/);
+      return secretFree(error);
+    });
+    assert.equal(
+      unversioned.calls.some(call => call.op === 'PutObjectCommand'),
+      false,
+      'no probe writes happen on an unversioned bucket'
+    );
+  }
+  const versioningDenied = createFakeS3();
+  versioningDenied.failures.GetBucketVersioningCommand = s3Error(403, 'AccessDenied');
+  await assert.rejects(probe(versioningDenied), isCode('UNSAFE_BINDING'));
+  // A store that reports versioning Enabled but returns no VersionId on writes is refused by the probe write.
+  const lying = createFakeS3({ versioned: false, versioningStatus: 'Enabled' });
+  await assert.rejects(probe(lying), isCode('UNSAFE_BINDING'));
+  assert.equal([...lying.store.values()].flat().length, 0, 'probe objects are cleaned up when refused');
 
   const ignoring = createFakeS3({ ignoreIfNoneMatch: true, versioned: true });
   await assert.rejects(probe(ignoring), error => {
@@ -470,7 +523,7 @@ test('deadlines and cancellation propagate as abortSignal and stable codes', asy
   );
   const controller = new AbortController();
   const pending = provider.get(
-    { ...base, key: 'adcp-rows/ns/x', nativeVersion: '"abc"', maxBytes: 10 },
+    { ...base, key: 'adcp-rows/ns/x', nativeVersion: 'abc', maxBytes: 10 },
     { signal: controller.signal }
   );
   controller.abort();
@@ -500,8 +553,12 @@ describe('S3-compatible emulator', { skip: !ENDPOINT && 'REPORTING_S3_TEST_ENDPO
         );
       }
       const location = { bucket: Bucket };
+      if (!versioned) {
+        await assert.rejects(provider.probe({ location, prefix: 'adcp-rows' }, signal()), isCode('UNSAFE_BINDING'));
+        continue;
+      }
       const passed = await runReportingRowObjectProviderConformanceV1(provider, { location, prefix: 'adcp-rows' });
-      assert.equal(passed.length, 6);
+      assert.equal(passed.length, 7);
       const created = await provider.putIfAbsent(
         {
           location,
@@ -512,9 +569,8 @@ describe('S3-compatible emulator', { skip: !ENDPOINT && 'REPORTING_S3_TEST_ENDPO
         },
         signal()
       );
-      if (versioned) assert.doesNotMatch(created.nativeVersion, /^"/);
-      else assert.match(created.nativeVersion, /^"/);
-      const foreign = versioned ? created.nativeVersion.replace(/.$/, c => (c === 'a' ? 'b' : 'a')) : '"0000"';
+      assert.doesNotMatch(created.nativeVersion, /^"/);
+      const foreign = created.nativeVersion.replace(/.$/, c => (c === 'a' ? 'b' : 'a'));
       const pinned = { location, key: 'adcp-rows/ns/emulator.jsonl' };
       assert.equal(await provider.get({ ...pinned, nativeVersion: foreign, maxBytes: 100 }, signal()), null);
       assert.equal(await provider.delete({ ...pinned, nativeVersion: foreign }, signal()), 'absent');

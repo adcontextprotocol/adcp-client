@@ -5,10 +5,8 @@ import type { ReportingRowObjectProviderV1 } from '../ledger/row-storage-object'
 import {
   assertReportingRowLocationKeys,
   assertReportingRowReadBounds,
-  isReportingRowEtagVersion,
   readReportingRowStream,
   reportingRowClientMap,
-  reportingRowEtagVersion,
   runReportingRowProviderOperation,
   selectReportingRowClient,
 } from '../ledger/row-storage-provider-io';
@@ -26,7 +24,7 @@ export interface CreateAzureBlobReportingRowObjectProviderOptionsV1 {
 
 const ACCOUNT = /^[a-z0-9]{3,24}$/;
 const CONTAINER = /^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){2,62}$/;
-// Version IDs are RFC 3339 timestamps; ETags are kept quoted, which version IDs never are.
+// Version IDs are RFC 3339 timestamps.
 const VERSION_ID = /^[0-9A-Za-z:.+-]{1,64}$/;
 
 type AzureError = { statusCode?: unknown; code?: unknown; details?: { errorCode?: unknown } };
@@ -46,22 +44,24 @@ const isConflict = (error: unknown) =>
 const isMissing = (error: unknown) => statusOf(error) === 404 || statusOf(error) === 412;
 const isForbidden = (error: unknown) => statusOf(error) === 401 || statusOf(error) === 403;
 
-function versionOf(response: { versionId?: string; etag?: string }): string {
-  if (typeof response.versionId === 'string' && VERSION_ID.test(response.versionId)) return response.versionId;
-  if (typeof response.etag === 'string' && response.etag.length > 0 && response.etag.length <= 1024) {
-    return reportingRowEtagVersion(response.etag);
+/**
+ * The native version is the blob `versionId`, which is unique per write. ETags are
+ * content-derived in practice and are never accepted as a version identity.
+ */
+function versionOf(response: { versionId?: string }): string {
+  const id = response.versionId;
+  if (typeof id !== 'string' || !VERSION_ID.test(id)) {
+    throw new ReportingRowStoreError(
+      'UNSAFE_BINDING',
+      'store returned no blob versionId; blob versioning must be enabled on the storage account so deletes are fenced to one write'
+    );
   }
-  throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'blob version is missing');
+  return id;
 }
 
-/** Whether a response came from the pinned version (echoed `versionId`, or the matching ETag). */
-function servedVersion(
-  response: { versionId?: string; etag?: string },
-  versionId: string | undefined,
-  nativeVersion: string
-): boolean {
-  if (versionId !== undefined) return response.versionId === versionId;
-  return typeof response.etag === 'string' && reportingRowEtagVersion(response.etag) === nativeVersion;
+/** Whether a response came from the pinned version (echoed `versionId`). */
+function servedVersion(response: { versionId?: string }, versionId: string): boolean {
+  return response.versionId === versionId;
 }
 
 /** Blob metadata names must be C# identifiers; `adcp-intent` is stored as `adcp_intent`. */
@@ -80,9 +80,12 @@ function metadataOf(metadata: Readonly<Record<string, string>>): Record<string, 
  * Inject official `BlobServiceClient`s with host-owned credentials (managed
  * identity, workload identity). Bindings use `location: { account, container }`;
  * the selected client must belong to `account`. Writes are block-blob uploads
- * with `If-None-Match: *`; the recorded native version is the `versionId` when
- * blob versioning is enabled, else the quoted ETag, and pins every read and
- * delete. The probe proves create-only behaviour empirically.
+ * with `If-None-Match: *`. Blob versioning must be enabled on the storage account:
+ * the recorded native version is the write-unique `versionId` and pins every read
+ * and delete, so a delayed delete can never remove a later write that re-created
+ * identical bytes at the same key (ETags are content-derived and cannot fence that).
+ * The probe refuses accounts without versioning and proves create-only behaviour
+ * empirically.
  */
 export function createAzureBlobReportingRowObjectProviderV1(
   options: CreateAzureBlobReportingRowObjectProviderOptionsV1
@@ -130,18 +133,11 @@ export function createAzureBlobReportingRowObjectProviderV1(
     }
     return containerFor(input).getBlockBlobClient(input.key);
   };
-  /** Pinned blob client plus download/delete conditions, or `null` when the version is unusable. */
-  const pinned = (blob: BlobClient, nativeVersion: string) => {
-    if (typeof nativeVersion !== 'string') return null;
-    if (isReportingRowEtagVersion(nativeVersion)) {
-      return nativeVersion.length <= 1026
-        ? { blob, conditions: { ifMatch: nativeVersion }, versionId: undefined }
-        : null;
-    }
-    return VERSION_ID.test(nativeVersion)
-      ? { blob: blob.withVersion(nativeVersion), conditions: {}, versionId: nativeVersion }
+  /** Version-pinned blob client, or `null` when the recorded version is unusable. */
+  const pinned = (blob: BlobClient, nativeVersion: string) =>
+    typeof nativeVersion === 'string' && VERSION_ID.test(nativeVersion)
+      ? { blob: blob.withVersion(nativeVersion), versionId: nativeVersion }
       : null;
-  };
 
   async function assertCreateOnlyEnforced(container: ContainerClient, prefix: string, signal: AbortSignal) {
     const blob = container.getBlockBlobClient(`${prefix}/.adcp-probe/${randomUUID()}`);
@@ -156,6 +152,7 @@ export function createAzureBlobReportingRowObjectProviderV1(
       });
       written = true;
       if (response.versionId) versionIds.push(response.versionId);
+      versionOf(response);
     };
     try {
       await upload('{"probe":1}\n');
@@ -230,18 +227,14 @@ export function createAzureBlobReportingRowObjectProviderV1(
         if (target === null) return null;
         try {
           if (input.range?.length === 0) {
-            const properties = await target.blob.getProperties({
-              conditions: target.conditions,
-              abortSignal: context.signal,
-            });
-            if (!servedVersion(properties, target.versionId, input.nativeVersion)) return null;
+            const properties = await target.blob.getProperties({ abortSignal: context.signal });
+            if (!servedVersion(properties, target.versionId)) return null;
             if (input.range.offset > Number(properties.contentLength ?? 0)) {
               throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', 'requested range exceeds the stored object');
             }
             return Buffer.alloc(0);
           }
           const response = await target.blob.download(input.range?.offset ?? 0, input.range?.length, {
-            conditions: target.conditions,
             abortSignal: context.signal,
           });
           const body = response.readableStreamBody as
@@ -251,7 +244,7 @@ export function createAzureBlobReportingRowObjectProviderV1(
             throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'blob body is not a stream');
           }
           // Stores without blob versioning ignore `versionid`; only an echoed exact version counts.
-          if (!servedVersion(response, target.versionId, input.nativeVersion)) {
+          if (!servedVersion(response, target.versionId)) {
             body.destroy?.();
             return null;
           }
@@ -263,7 +256,7 @@ export function createAzureBlobReportingRowObjectProviderV1(
         } catch (error) {
           if (isMissing(error)) return null;
           // A malformed or foreign version ID is not this blob.
-          if (target.versionId !== undefined && statusOf(error) === 400) return null;
+          if (statusOf(error) === 400) return null;
           if (statusOf(error) === 416 || codeOf(error) === 'InvalidRange') {
             throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', 'requested range exceeds the stored object');
           }
@@ -277,15 +270,6 @@ export function createAzureBlobReportingRowObjectProviderV1(
         const target = pinned(blob, input.nativeVersion);
         if (target === null) return 'absent' as const;
         const signal = context.signal;
-        if (target.versionId === undefined) {
-          try {
-            await blob.delete({ conditions: target.conditions, abortSignal: signal });
-            return 'deleted' as const;
-          } catch (error) {
-            if (isMissing(error)) return 'absent' as const;
-            throw error;
-          }
-        }
         // Confirm the store resolved the exact version; stores without versioning ignore `versionid`.
         try {
           const recorded = await target.blob.getProperties({ abortSignal: signal });

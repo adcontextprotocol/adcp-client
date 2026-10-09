@@ -3,6 +3,7 @@ import {
   DeleteObjectCommand,
   GetBucketLifecycleConfigurationCommand,
   GetBucketPolicyStatusCommand,
+  GetBucketVersioningCommand,
   GetObjectCommand,
   HeadBucketCommand,
   HeadObjectCommand,
@@ -17,10 +18,8 @@ import type { ReportingRowObjectProviderV1 } from '../ledger/row-storage-object'
 import {
   assertReportingRowLocationKeys,
   assertReportingRowReadBounds,
-  isReportingRowEtagVersion,
   readReportingRowStream,
   reportingRowClientMap,
-  reportingRowEtagVersion,
   reportingRowPrefixFilterOverlaps,
   runReportingRowProviderOperation,
   selectReportingRowClient,
@@ -40,7 +39,7 @@ export interface CreateS3ReportingRowObjectProviderOptionsV1 {
 
 const BUCKET = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
 const REGION = /^[a-z0-9][a-z0-9-]{0,30}[a-z0-9]$/;
-// Version IDs are opaque printable tokens; ETags are kept quoted, which version IDs never are.
+// Version IDs are opaque printable tokens (never the literal `null` of an unversioned object).
 const VERSION_ID = /^[\x21\x23-\x7e]{1,1024}$/;
 
 type S3Error = { name?: unknown; Code?: unknown; $metadata?: { httpStatusCode?: unknown } };
@@ -64,28 +63,31 @@ const isNotImplemented = (error: unknown) => statusOf(error) === 501 || nameOf(e
 const isForbidden = (error: unknown) => statusOf(error) === 401 || statusOf(error) === 403;
 const isRangeError = (error: unknown) => statusOf(error) === 416 || nameOf(error) === 'InvalidRange';
 
-function versionOf(output: { VersionId?: string; ETag?: string }): string {
-  if (typeof output.VersionId === 'string' && VERSION_ID.test(output.VersionId)) return output.VersionId;
-  if (typeof output.ETag === 'string' && output.ETag.length > 0 && output.ETag.length <= 1024) {
-    return reportingRowEtagVersion(output.ETag);
+/**
+ * The native version is the S3 `VersionId`, which is unique per write. ETags are
+ * content-derived (identical bytes give identical ETags), so they can never identify
+ * one write and are not accepted as a version.
+ */
+function versionOf(output: { VersionId?: string }): string {
+  const id = output.VersionId;
+  if (typeof id !== 'string' || id === 'null' || !VERSION_ID.test(id)) {
+    throw new ReportingRowStoreError(
+      'UNSAFE_BINDING',
+      'store returned no object VersionId; S3 bucket versioning must be enabled so deletes are fenced to one write'
+    );
   }
-  throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'object version is missing');
+  return id;
 }
 
-/** `VersionId` for versioned objects, `IfMatch` for ETag versions, or `null` when unusable. */
-function selectorOf(nativeVersion: string): { VersionId: string } | { IfMatch: string } | null {
-  if (typeof nativeVersion !== 'string') return null;
-  if (isReportingRowEtagVersion(nativeVersion)) return nativeVersion.length <= 1026 ? { IfMatch: nativeVersion } : null;
+/** `VersionId` selector, or `null` when the recorded version is unusable. */
+function selectorOf(nativeVersion: string): { VersionId: string } | null {
+  if (typeof nativeVersion !== 'string' || nativeVersion === 'null') return null;
   return VERSION_ID.test(nativeVersion) ? { VersionId: nativeVersion } : null;
 }
 
-/** Whether a response came from the pinned version (echoed `VersionId`, or the matching ETag). */
-function servedVersion(
-  output: { VersionId?: string; ETag?: string },
-  selector: { VersionId: string } | { IfMatch: string }
-): boolean {
-  if ('VersionId' in selector) return output.VersionId === selector.VersionId;
-  return typeof output.ETag === 'string' && reportingRowEtagVersion(output.ETag) === selector.IfMatch;
+/** Whether a response came from the pinned version (echoed `VersionId`). */
+function servedVersion(output: { VersionId?: string }, selector: { VersionId: string }): boolean {
+  return output.VersionId === selector.VersionId;
 }
 
 function liveExpirationCovers(rule: LifecycleRule, prefix: string): boolean {
@@ -104,11 +106,13 @@ function liveExpirationCovers(rule: LifecycleRule, prefix: string): boolean {
  * credentials). Bindings use `location: { bucket, region? }`; when `region` is
  * set the probe requires the selected client to be configured for it.
  *
- * Writes use `PutObject` with `If-None-Match: *`. The recorded native version
- * is the `VersionId` on versioned buckets, else the quoted ETag; reads pin it
- * with `VersionId` or `If-Match`. Because S3-compatible stores may silently
- * ignore `If-None-Match`, the probe proves create-only behaviour empirically
- * before any binding is used.
+ * Writes use `PutObject` with `If-None-Match: *`. Bucket versioning must be
+ * enabled: the recorded native version is the write-unique `VersionId`, and every
+ * read and delete is pinned to it, so a delayed delete can never remove a later
+ * write that re-created identical bytes at the same key (ETags are content-derived
+ * and cannot fence that). The probe refuses unversioned or suspended buckets.
+ * Because S3-compatible stores may silently ignore `If-None-Match`, the probe
+ * also proves create-only behaviour empirically before any binding is used.
  */
 export function createS3ReportingRowObjectProviderV1(
   options: CreateS3ReportingRowObjectProviderOptionsV1
@@ -162,6 +166,25 @@ export function createS3ReportingRowObjectProviderV1(
     }
   }
 
+  /** Fail closed unless versioning is `Enabled`; `Suspended` or absent versioning yields no unique VersionId. */
+  async function assertVersioningEnabled(client: S3Client, Bucket: string, signal: AbortSignal) {
+    let status: string | undefined;
+    try {
+      status = (await client.send(new GetBucketVersioningCommand({ Bucket }), { abortSignal: signal })).Status;
+    } catch (error) {
+      if (isForbidden(error) || isNotImplemented(error)) {
+        throw new ReportingRowStoreError('UNSAFE_BINDING', 'bucket versioning status cannot be verified');
+      }
+      throw error;
+    }
+    if (status !== 'Enabled') {
+      throw new ReportingRowStoreError(
+        'UNSAFE_BINDING',
+        'S3 bucket versioning must be enabled so row object deletes are fenced to one write'
+      );
+    }
+  }
+
   async function assertCreateOnlyEnforced(client: S3Client, Bucket: string, prefix: string, signal: AbortSignal) {
     const Key = `${prefix}/.adcp-probe/${randomUUID()}`;
     const written: PutObjectCommandOutput[] = [];
@@ -172,6 +195,7 @@ export function createS3ReportingRowObjectProviderV1(
         signal
       );
       written.push(output);
+      versionOf(output);
     };
     try {
       try {
@@ -255,6 +279,7 @@ export function createS3ReportingRowObjectProviderV1(
         if (rules.some(rule => liveExpirationCovers(rule, input.prefix))) {
           throw new ReportingRowStoreError('UNSAFE_BINDING', 'a bucket lifecycle rule can expire live row objects');
         }
+        await assertVersioningEnabled(client, Bucket, signal);
         await assertCreateOnlyEnforced(client, Bucket, input.prefix, signal);
       });
     },
@@ -322,7 +347,7 @@ export function createS3ReportingRowObjectProviderV1(
           if (!body || typeof body[Symbol.asyncIterator] !== 'function') {
             throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'object body is not a stream');
           }
-          // Some S3-compatible stores ignore `versionId` or `If-Match`; only an echoed exact version counts.
+          // Some S3-compatible stores ignore `versionId`; only an echoed exact version counts.
           if (!servedVersion(output, selector)) {
             body.destroy?.();
             return null;
@@ -335,7 +360,7 @@ export function createS3ReportingRowObjectProviderV1(
         } catch (error) {
           if (isNotFound(error) || isPreconditionFailed(error)) return null;
           // A malformed or foreign version ID is not this object.
-          if ('VersionId' in selector && statusOf(error) === 400 && nameOf(error) !== 'InvalidRange') return null;
+          if (statusOf(error) === 400 && nameOf(error) !== 'InvalidRange') return null;
           if (isRangeError(error)) {
             throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', 'requested range exceeds the stored object');
           }
@@ -358,28 +383,13 @@ export function createS3ReportingRowObjectProviderV1(
         } catch (error) {
           if (isNotFound(error) || isPreconditionFailed(error)) return 'absent' as const;
           // 400: malformed or foreign version ID; 405: the version is a delete marker.
-          if ('VersionId' in selector && (statusOf(error) === 400 || statusOf(error) === 405)) {
-            return 'absent' as const;
-          }
+          if (statusOf(error) === 400 || statusOf(error) === 405) return 'absent' as const;
           throw error;
         }
-        if ('VersionId' in selector) {
-          await client.send(new DeleteObjectCommand({ Bucket, Key, VersionId: selector.VersionId }), {
-            abortSignal: signal,
-          });
-          return 'deleted' as const;
-        }
-        try {
-          await client.send(new DeleteObjectCommand({ Bucket, Key, IfMatch: selector.IfMatch }), {
-            abortSignal: signal,
-          });
-          return 'deleted' as const;
-        } catch (error) {
-          if (isNotFound(error) || isPreconditionFailed(error)) return 'absent' as const;
-          if (!isNotImplemented(error)) throw error;
-        }
-        // Stores without conditional deletes: the HEAD above matched the ETag, so delete the key.
-        await client.send(new DeleteObjectCommand({ Bucket, Key }), { abortSignal: signal });
+        // Deleting a specific VersionId permanently removes that version (no delete marker).
+        await client.send(new DeleteObjectCommand({ Bucket, Key, VersionId: selector.VersionId }), {
+          abortSignal: signal,
+        });
         return 'deleted' as const;
       });
     },

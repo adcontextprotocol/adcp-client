@@ -376,6 +376,14 @@ await store.readyRowStorage();
 - Every read verifies the stored bytes against the recorded physical digest
   before decompressing, then verifies segments, chunks and the revision binding.
 - Keep a retired binding configured while revisions still reference it.
+- The filesystem provider identifies each write by inode, birth time, mtime
+  and size, stamping a random sub-millisecond mtime on every write. It needs a
+  filesystem with sub-second mtime and, ideally, birth time (ext4, XFS, APFS,
+  NTFS). On a coarse filesystem (FAT, some NFS mounts, ext3), a reused inode
+  re-created with identical bytes in the same second gets the same version,
+  so a delayed delete could remove the replacement. The conformance check
+  `write-unique-version` fails on such filesystems. That failure means the
+  filesystem is wrong, not the code.
 - Custom providers implement `ReportingRowObjectProviderV1`. Run
   `runReportingRowObjectProviderConformanceV1(provider, { location, prefix })`
   against a dedicated test prefix before using one.
@@ -434,12 +442,19 @@ const s3 = createS3ReportingRowObjectProviderV1({
 - Endpoint, region, credentials and path style come only from the client you
   inject; `location` accepts just `bucket` and an optional `region`, which the
   probe checks against the client.
-- Writes use `PutObject` with `If-None-Match: *` (a 409 is retried once). The
-  recorded native version is the `VersionId` on versioned buckets, else the
-  quoted ETag. Reads pin it with `VersionId` or `If-Match`; deletes confirm the
-  exact version with `HeadObject`, then delete by `VersionId` or with
-  `If-Match`. Prefer versioned buckets: an ETag identifies content, not a
-  write, so it cannot tell a deleted object from an identical re-upload.
+- **Bucket versioning is required.** Writes use `PutObject` with
+  `If-None-Match: *` (a 409 is retried once). The recorded native version is
+  the write-unique `VersionId`; reads pin it with `VersionId`, and deletes
+  confirm the exact version with `HeadObject`, then delete by `VersionId`.
+  Deletes must be fenced to one write, and an ETag identifies content, not a
+  write: a delayed delete (for example an intent sweep removing an abandoned
+  upload) pinned to an ETag would also remove a replacement object later
+  re-created with identical bytes at the same key. The probe therefore refuses
+  any bucket whose `GetBucketVersioning` status is not `Enabled` (suspended or
+  unversioned), and `putIfAbsent` refuses a result with no `VersionId`.
+  Deleting a specific `VersionId` permanently removes that version without
+  leaving a delete marker, so retention still frees storage; noncurrent-version
+  lifecycle rules are not needed for rows this provider deletes.
 - S3-compatible stores may ignore `If-None-Match`, so the probe writes a probe
   key under the binding prefix twice and requires the second write to fail with
   412, then deletes it. It also refuses missing or inaccessible buckets, a
@@ -447,8 +462,8 @@ const s3 = createS3ReportingRowObjectProviderV1({
   that can match the prefix. The probe cannot verify Block Public Access on
   every store, so keep row buckets private.
 - The client needs `s3:ListBucket` (HeadBucket),
-  `s3:GetLifecycleConfiguration`, object put/get/delete, and on versioned
-  buckets `s3:GetObjectVersion` and `s3:DeleteObjectVersion`.
+  `s3:GetLifecycleConfiguration`, `s3:GetBucketVersioning`, object put/get,
+  `s3:GetObjectVersion` and `s3:DeleteObjectVersion`.
   `s3:GetBucketPolicyStatus` is optional. For stores without flexible
   checksums, construct the client with `requestChecksumCalculation: 'WHEN_REQUIRED'`.
 
@@ -470,19 +485,25 @@ const azure = createAzureBlobReportingRowObjectProviderV1({
 - `location` names the storage `account` and `container`; the selected client
   must belong to that account. The endpoint and credentials come only from
   the client.
-- Writes are block-blob uploads with `If-None-Match: *`. A 409
-  `BlobAlreadyExists` or 412 adopts the existing blob. The recorded native
-  version is the `versionId` when blob versioning is enabled, else the quoted
-  ETag. Reads and deletes pin it, and only count a response that echoes that
-  exact version. Metadata names are stored as C# identifiers (`adcp_intent`).
+- **Blob versioning is required** on the storage account. Writes are
+  block-blob uploads with `If-None-Match: *`. A 409 `BlobAlreadyExists` or 412
+  adopts the existing blob. The recorded native version is the write-unique
+  `versionId`; reads and deletes pin it, and only count a response that echoes
+  that exact version. ETags are content-derived, so they cannot fence a delayed
+  delete away from an identical re-upload at the same key. The probe's
+  create-only write must return a `versionId` (otherwise `UNSAFE_BINDING`), and
+  `putIfAbsent` refuses a result without one. Deleting a specific version
+  permanently removes it, so retention still frees storage. Azurite does not
+  implement blob versioning and cannot back this provider. Metadata names are
+  stored as C# identifiers (`adcp_intent`).
 - The probe refuses missing or inaccessible containers and containers with
   anonymous access. Like S3, it proves create-only writes empirically with a
   probe blob under the prefix. Lifecycle management policies are account-level
   and are not visible to the data-plane client, so make sure none can delete
   blobs under the binding prefix.
 - The client needs read, write and delete on blobs in the container (for
-  example `Storage Blob Data Contributor`), plus permission to delete versions
-  when versioning is enabled.
+  example `Storage Blob Data Contributor`), plus permission to delete
+  versions.
 
 ### Retention
 

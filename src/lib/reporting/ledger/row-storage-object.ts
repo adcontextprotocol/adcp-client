@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'crypto';
+import { createHash, randomInt, randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 
@@ -211,10 +211,14 @@ export function createFilesystemReportingRowObjectProviderV1(
     }
     return target;
   };
-  const version = async (target: string) => {
-    const stat = await fs.stat(target);
-    return `${stat.ino}:${stat.mtimeMs}:${stat.size}`;
-  };
+  // Write-unique: inode numbers are reused after a delete, so the version also carries
+  // nanosecond birth and modify times (not ctime, which changes when the temporary link is
+  // removed). `putIfAbsent` stamps a random sub-millisecond mtime so an identical
+  // re-creation inside one coarse timestamp tick still differs. Filesystems with whole-second
+  // mtime truncate the stamp away; `write-unique-version` conformance refuses them.
+  const versionOf = (stat: { ino: bigint; birthtimeNs: bigint; mtimeNs: bigint; size: bigint }) =>
+    `${stat.ino}:${stat.birthtimeNs}:${stat.mtimeNs}:${stat.size}`;
+  const version = async (target: string) => versionOf(await fs.stat(target, { bigint: true }));
   return {
     name: 'filesystem',
     rangedReads: true,
@@ -237,6 +241,8 @@ export function createFilesystemReportingRowObjectProviderV1(
       const handle = await fs.open(temporary, 'wx');
       try {
         await handle.writeFile(input.bytes);
+        const mtime = Date.now() / 1000 + randomInt(0, 1000) / 1_000_000;
+        await handle.utimes(mtime, mtime);
         await handle.sync();
       } finally {
         await handle.close();
@@ -264,11 +270,12 @@ export function createFilesystemReportingRowObjectProviderV1(
         throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'filesystem read failed');
       }
       try {
-        const stat = await handle.stat();
-        if (`${stat.ino}:${stat.mtimeMs}:${stat.size}` !== input.nativeVersion) return null;
+        const stat = await handle.stat({ bigint: true });
+        if (versionOf(stat) !== input.nativeVersion) return null;
+        const size = Number(stat.size);
         const offset = input.range?.offset ?? 0;
-        const length = input.range?.length ?? stat.size - offset;
-        if (offset < 0 || length < 0 || offset + length > stat.size) {
+        const length = input.range?.length ?? size - offset;
+        if (offset < 0 || length < 0 || offset + length > size) {
           throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', 'requested range exceeds the stored object');
         }
         if (length > input.maxBytes) {
@@ -355,6 +362,30 @@ export async function runReportingRowObjectProviderConformanceV1(
     throw new Error('repeated delete was not idempotent');
   }
   passed.push('exact-version-delete');
+  // A delayed delete of an old version must never remove a later write at the same key, even
+  // one with identical bytes: native versions must be unique per write, not content-derived.
+  const recreated = await provider.putIfAbsent(
+    { ...base, key, bytes: first, contentType: 'application/x-ndjson', metadata },
+    context
+  );
+  if (!recreated.created || !recreated.nativeVersion) throw new Error('putIfAbsent did not re-create a deleted object');
+  if (recreated.nativeVersion === created.nativeVersion) {
+    throw new Error('re-creating identical bytes produced the same native version; versions must be write-unique');
+  }
+  if ((await provider.delete({ ...base, key, nativeVersion: created.nativeVersion }, context)) !== 'absent') {
+    throw new Error('delete of a stale version removed or reported a later write');
+  }
+  const survivor = await provider.get(
+    { ...base, key, nativeVersion: recreated.nativeVersion, maxBytes: 1024 },
+    context
+  );
+  if (!survivor || !Buffer.from(survivor).equals(first)) {
+    throw new Error('delete of a stale version removed a later write with identical bytes');
+  }
+  if ((await provider.delete({ ...base, key, nativeVersion: recreated.nativeVersion }, context)) !== 'deleted') {
+    throw new Error('delete did not remove the re-created version');
+  }
+  passed.push('write-unique-version');
   return passed;
 }
 

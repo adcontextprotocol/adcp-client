@@ -4,8 +4,11 @@
  * getContainerClient, getBlockBlobClient, upload, getProperties, download,
  * delete, withVersion).
  *
- * Opt-in emulator run (not in CI), e.g. with `npx azurite-blob --inMemoryPersistence`:
+ * Opt-in run (not in CI), e.g. with `npx azurite-blob --inMemoryPersistence`:
  * REPORTING_AZURE_TEST_CONNECTION_STRING=UseDevelopmentStorage=true node --test test/lib/reporting-azure-row-provider.test.js
+ * Azurite does not implement blob versioning, so against it the test asserts the probe refuses the
+ * account. Set REPORTING_AZURE_TEST_VERSIONED=1 with a connection string for a storage account that
+ * has blob versioning enabled to run the full conformance suite.
  */
 const assert = require('node:assert/strict');
 const { Readable } = require('node:stream');
@@ -185,43 +188,51 @@ const secretFree = error => {
 };
 const liveBlobs = client => [...client.blobs.values()].flat();
 
-for (const versioned of [false, true]) {
-  test(`passes the shared provider conformance suite (${versioned ? 'versioned' : 'unversioned'})`, async () => {
-    const client = createFakeAzure({ versioned });
-    const provider = createAzureBlobReportingRowObjectProviderV1({ client });
-    const passed = await runReportingRowObjectProviderConformanceV1(provider, { ...base, prefix: 'adcp-rows' });
-    assert.deepEqual(passed, [
-      'probe',
-      'create',
-      'create-only',
-      'ranged-read',
-      'version-pinned-read',
-      'exact-version-delete',
-    ]);
-    assert.equal(liveBlobs(client).length, 0, 'probe and conformance blobs and versions are removed');
-    assert.ok(client.calls.every(call => call.options?.abortSignal instanceof AbortSignal));
-  });
-}
+test('passes the shared provider conformance suite', async () => {
+  const client = createFakeAzure({ versioned: true });
+  const provider = createAzureBlobReportingRowObjectProviderV1({ client });
+  const passed = await runReportingRowObjectProviderConformanceV1(provider, { ...base, prefix: 'adcp-rows' });
+  assert.deepEqual(passed, [
+    'probe',
+    'create',
+    'create-only',
+    'ranged-read',
+    'version-pinned-read',
+    'exact-version-delete',
+    'write-unique-version',
+  ]);
+  assert.equal(liveBlobs(client).length, 0, 'probe and conformance blobs and versions are removed');
+  assert.ok(client.calls.every(call => call.options?.abortSignal instanceof AbortSignal));
+});
 
 test('create-only upload: If-None-Match, content headers, identifier-safe metadata', async () => {
-  const client = createFakeAzure();
+  const client = createFakeAzure({ versioned: true });
   const provider = createAzureBlobReportingRowObjectProviderV1({ client });
   const created = await put(provider, 'adcp-rows/ns/a.jsonl.gz');
   assert.equal(created.created, true);
-  assert.match(created.nativeVersion, /^"0x[0-9A-F]+"$/);
+  assert.match(created.nativeVersion, /^\d{4}-\d{2}-\d{2}T/);
   const upload = client.calls.find(call => call.op === 'upload').options;
   assert.deepEqual(upload.conditions, { ifNoneMatch: '*' });
   assert.equal(upload.blobHTTPHeaders.blobContentType, 'application/gzip');
   assert.equal(upload.blobHTTPHeaders.blobContentEncoding, undefined);
   assert.deepEqual(upload.metadata, { adcp_installation: 'inst', adcp_intent: 'intent' });
+});
 
-  const versioned = createAzureBlobReportingRowObjectProviderV1({ client: createFakeAzure({ versioned: true }) });
-  assert.match((await put(versioned, 'adcp-rows/ns/a.jsonl.gz')).nativeVersion, /^\d{4}-\d{2}-\d{2}T/);
+test('upload and adopt refuse stores that return no versionId (versioning disabled)', async () => {
+  const client = createFakeAzure();
+  const provider = createAzureBlobReportingRowObjectProviderV1({ client });
+  await assert.rejects(put(provider, 'adcp-rows/ns/a.jsonl'), error => {
+    assert.ok(isCode('UNSAFE_BINDING')(error));
+    assert.match(error.message, /versioning must be enabled/);
+    return secretFree(error);
+  });
+  // The blob exists now, so the adopt path must refuse too rather than fall back to the ETag.
+  await assert.rejects(put(provider, 'adcp-rows/ns/a.jsonl'), isCode('UNSAFE_BINDING'));
 });
 
 test('409 BlobAlreadyExists or 412 adopts the existing version', async () => {
-  for (const versioned of [false, true]) {
-    const client = createFakeAzure({ versioned });
+  {
+    const client = createFakeAzure({ versioned: true });
     const provider = createAzureBlobReportingRowObjectProviderV1({ client });
     const first = await put(provider, 'adcp-rows/ns/a.jsonl', 'first\n');
     assert.deepEqual(await put(provider, 'adcp-rows/ns/a.jsonl', 'second\n'), {
@@ -241,9 +252,9 @@ test('409 BlobAlreadyExists or 412 adopts the existing version', async () => {
   }
 });
 
-test('reads pin versionId or If-Match and honour ranges and the byte cap', async () => {
-  for (const versioned of [false, true]) {
-    const client = createFakeAzure({ versioned });
+test('reads pin versionId and honour ranges and the byte cap', async () => {
+  {
+    const client = createFakeAzure({ versioned: true });
     const provider = createAzureBlobReportingRowObjectProviderV1({ client });
     const key = 'adcp-rows/ns/r.jsonl';
     const { nativeVersion } = await put(provider, key, '0123456789abcdef');
@@ -255,8 +266,8 @@ test('reads pin versionId or If-Match and honour ranges and the byte cap', async
     const call = client.calls.filter(item => item.op === 'download').at(-1).options;
     assert.equal(call.offset, 4);
     assert.equal(call.count, 6);
-    if (versioned) assert.equal(call.versionId, nativeVersion);
-    else assert.deepEqual(call.conditions, { ifMatch: nativeVersion });
+    assert.equal(call.versionId, nativeVersion);
+    assert.equal(call.conditions, undefined, 'ETags never participate in version pinning');
 
     assert.equal(await provider.get({ ...base, key, nativeVersion: '"0x0"', maxBytes: 100 }, signal()), null);
     assert.equal(await provider.get({ ...base, key, nativeVersion: 'not-a-version', maxBytes: 100 }, signal()), null);
@@ -285,11 +296,11 @@ test('reads pin versionId or If-Match and honour ranges and the byte cap', async
 });
 
 test('a store that ignores versionid never serves or deletes a different version', async () => {
-  const client = createFakeAzure();
+  const client = createFakeAzure({ versioned: true });
   const provider = createAzureBlobReportingRowObjectProviderV1({ client });
   const key = 'adcp-rows/ns/v.jsonl';
   const { nativeVersion } = await put(provider, key);
-  // Without versioning the fake, like Azurite, answers pinned requests from the base blob.
+  // The fake drops the version pin, like a store without versioning, and answers from the base blob.
   const container = client.getContainerClient;
   client.getContainerClient = name => {
     const inner = container(name);
@@ -308,7 +319,7 @@ test('a store that ignores versionid never serves or deletes a different version
 });
 
 test('streaming cap applies even when contentLength is absent', async () => {
-  const client = createFakeAzure();
+  const client = createFakeAzure({ versioned: true });
   const provider = createAzureBlobReportingRowObjectProviderV1({ client });
   const { nativeVersion } = await put(provider, 'adcp-rows/ns/big.jsonl', 'x'.repeat(64));
   const container = client.getContainerClient;
@@ -336,8 +347,8 @@ test('streaming cap applies even when contentLength is absent', async () => {
 });
 
 test('delete removes only the exact version and is idempotent', async () => {
-  for (const versioned of [false, true]) {
-    const client = createFakeAzure({ versioned });
+  {
+    const client = createFakeAzure({ versioned: true });
     const provider = createAzureBlobReportingRowObjectProviderV1({ client });
     const key = 'adcp-rows/ns/d.jsonl';
     const { nativeVersion } = await put(provider, key);
@@ -351,14 +362,33 @@ test('delete removes only the exact version and is idempotent', async () => {
   }
 });
 
-test('probe refuses missing, public and non-create-only containers', async () => {
+test('a delayed delete of an old version never removes an identical re-creation', async () => {
+  const client = createFakeAzure({ versioned: true });
+  const provider = createAzureBlobReportingRowObjectProviderV1({ client });
+  const key = 'adcp-rows/ns/fence.jsonl';
+  const first = await put(provider, key, 'same bytes\n');
+  assert.equal(await provider.delete({ ...base, key, nativeVersion: first.nativeVersion }, signal()), 'deleted');
+  const second = await put(provider, key, 'same bytes\n');
+  assert.equal(second.created, true);
+  assert.notEqual(second.nativeVersion, first.nativeVersion);
+  assert.equal(await provider.delete({ ...base, key, nativeVersion: first.nativeVersion }, signal()), 'absent');
+  const bytes = await provider.get({ ...base, key, nativeVersion: second.nativeVersion, maxBytes: 100 }, signal());
+  assert.equal(Buffer.from(bytes).toString(), 'same bytes\n');
+});
+
+test('probe refuses missing, public, unversioned and non-create-only containers', async () => {
   const probe = (client, location = base.location) =>
     createAzureBlobReportingRowObjectProviderV1({ client }).probe({ location, prefix: 'adcp-rows' }, signal());
-  for (const versioned of [false, true]) {
-    const client = createFakeAzure({ versioned });
-    await probe(client);
-    assert.equal(liveBlobs(client).length, 0, 'probe blobs are cleaned up');
-  }
+  const versioned = createFakeAzure({ versioned: true });
+  await probe(versioned);
+  assert.equal(liveBlobs(versioned).length, 0, 'probe blobs are cleaned up');
+  const unversioned = createFakeAzure();
+  await assert.rejects(probe(unversioned), error => {
+    assert.ok(isCode('UNSAFE_BINDING')(error));
+    assert.match(error.message, /blob versioning must be enabled/);
+    return secretFree(error);
+  });
+  assert.equal(liveBlobs(unversioned).length, 0, 'probe blobs are cleaned up when refused');
   const ignoring = createFakeAzure({ ignoreIfNoneMatch: true, versioned: true });
   await assert.rejects(probe(ignoring), error => {
     assert.ok(isCode('UNSAFE_BINDING')(error));
@@ -379,8 +409,8 @@ test('probe refuses missing, public and non-create-only containers', async () =>
 });
 
 test('credentialRef selects from a closed client map; locations never carry endpoints', async () => {
-  const primary = createFakeAzure();
-  const tenant = createFakeAzure();
+  const primary = createFakeAzure({ versioned: true });
+  const tenant = createFakeAzure({ versioned: true });
   const provider = createAzureBlobReportingRowObjectProviderV1({ client: primary, clients: { tenant } });
   await put(provider, 'adcp-rows/ns/default.jsonl');
   await put(provider, 'adcp-rows/ns/tenant.jsonl', 'x', { credentialRef: 'tenant' });
@@ -411,7 +441,7 @@ test('credentialRef selects from a closed client map; locations never carry endp
 });
 
 test('provider errors map to stable, secret-free codes', async () => {
-  const client = createFakeAzure();
+  const client = createFakeAzure({ versioned: true });
   const provider = createAzureBlobReportingRowObjectProviderV1({ client });
   client.failures.upload = restError(500, 'InternalError');
   await assert.rejects(put(provider, 'adcp-rows/ns/e.jsonl'), error => {
@@ -436,7 +466,7 @@ test('deadlines and cancellation propagate as abortSignal and stable codes', asy
   // no active I/O to keep the event loop alive while that deadline expires.
   const keepAlive = setInterval(() => {}, 1000);
   t.after(() => clearInterval(keepAlive));
-  const client = createFakeAzure();
+  const client = createFakeAzure({ versioned: true });
   client.hang = true;
   const provider = createAzureBlobReportingRowObjectProviderV1({ client });
   await assert.rejects(
@@ -445,7 +475,7 @@ test('deadlines and cancellation propagate as abortSignal and stable codes', asy
   );
   const controller = new AbortController();
   const pending = provider.get(
-    { ...base, key: 'adcp-rows/ns/x', nativeVersion: '"0x1"', maxBytes: 10 },
+    { ...base, key: 'adcp-rows/ns/x', nativeVersion: '2026-01-01T00:00:00.0000000Z', maxBytes: 10 },
     { signal: controller.signal }
   );
   controller.abort();
@@ -454,34 +484,59 @@ test('deadlines and cancellation propagate as abortSignal and stable codes', asy
 });
 
 const CONNECTION_STRING = process.env.REPORTING_AZURE_TEST_CONNECTION_STRING;
+const VERSIONED = process.env.REPORTING_AZURE_TEST_VERSIONED === '1';
 describe(
   'Azure Blob emulator',
   { skip: !CONNECTION_STRING && 'REPORTING_AZURE_TEST_CONNECTION_STRING not set' },
   () => {
-    test('conformance against a real endpoint with the official client', async () => {
-      const { BlobServiceClient } = require('@azure/storage-blob');
-      const client = BlobServiceClient.fromConnectionString(CONNECTION_STRING);
-      const container = `adcp-rows-${process.pid}`;
-      await client.getContainerClient(container).createIfNotExists();
-      const provider = createAzureBlobReportingRowObjectProviderV1({ client });
-      const location = { account: client.accountName, container };
-      const passed = await runReportingRowObjectProviderConformanceV1(provider, { location, prefix: 'adcp-rows' });
-      assert.equal(passed.length, 6);
-      const key = 'adcp-rows/ns/emulator.jsonl';
-      const created = await provider.putIfAbsent(
-        {
-          location,
-          key,
-          bytes: Buffer.from('{"a":1}\n'),
-          contentType: 'application/x-ndjson',
-          metadata: { 'adcp-installation': 'emulator' },
-        },
-        signal()
-      );
-      assert.equal(await provider.get({ location, key, nativeVersion: '"0x0"', maxBytes: 100 }, signal()), null);
-      assert.equal(await provider.delete({ location, key, nativeVersion: '"0x0"' }, signal()), 'absent');
-      assert.equal(await provider.delete({ location, key, nativeVersion: created.nativeVersion }, signal()), 'deleted');
-      await client.getContainerClient(container).deleteIfExists();
-    });
+    test(
+      'probe refuses accounts without blob versioning (Azurite)',
+      { skip: VERSIONED && 'versioned account' },
+      async () => {
+        const { BlobServiceClient } = require('@azure/storage-blob');
+        const client = BlobServiceClient.fromConnectionString(CONNECTION_STRING);
+        const container = `adcp-rows-nv-${process.pid}`;
+        await client.getContainerClient(container).createIfNotExists();
+        const provider = createAzureBlobReportingRowObjectProviderV1({ client });
+        await assert.rejects(
+          provider.probe({ location: { account: client.accountName, container }, prefix: 'adcp-rows' }, signal()),
+          error => isCode('UNSAFE_BINDING')(error) && /blob versioning must be enabled/.test(error.message)
+        );
+        await client.getContainerClient(container).deleteIfExists();
+      }
+    );
+
+    test(
+      'conformance against a versioning-enabled account with the official client',
+      { skip: !VERSIONED && 'REPORTING_AZURE_TEST_VERSIONED not set (Azurite has no blob versioning)' },
+      async () => {
+        const { BlobServiceClient } = require('@azure/storage-blob');
+        const client = BlobServiceClient.fromConnectionString(CONNECTION_STRING);
+        const container = `adcp-rows-${process.pid}`;
+        await client.getContainerClient(container).createIfNotExists();
+        const provider = createAzureBlobReportingRowObjectProviderV1({ client });
+        const location = { account: client.accountName, container };
+        const passed = await runReportingRowObjectProviderConformanceV1(provider, { location, prefix: 'adcp-rows' });
+        assert.equal(passed.length, 7);
+        const key = 'adcp-rows/ns/emulator.jsonl';
+        const created = await provider.putIfAbsent(
+          {
+            location,
+            key,
+            bytes: Buffer.from('{"a":1}\n'),
+            contentType: 'application/x-ndjson',
+            metadata: { 'adcp-installation': 'emulator' },
+          },
+          signal()
+        );
+        assert.equal(await provider.get({ location, key, nativeVersion: '"0x0"', maxBytes: 100 }, signal()), null);
+        assert.equal(await provider.delete({ location, key, nativeVersion: '"0x0"' }, signal()), 'absent');
+        assert.equal(
+          await provider.delete({ location, key, nativeVersion: created.nativeVersion }, signal()),
+          'deleted'
+        );
+        await client.getContainerClient(container).deleteIfExists();
+      }
+    );
   }
 );

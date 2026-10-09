@@ -92,8 +92,13 @@ for configuration details.
 3. **Object storage.** Create a dedicated private bucket, container or prefix
    for rows, separate from Managed Delivery buckets. Configure the binding in
    host code and run `runReportingRowObjectProviderConformanceV1` against a
-   test prefix first. Prefer versioned buckets on S3 and Azure: an ETag-only
-   version cannot tell an identical re-upload from the recorded object. Do not
+   test prefix first. S3 bucket versioning and Azure blob versioning are
+   **required**, and the providers' probes refuse unversioned buckets and
+   accounts: deletes must be fenced to one write, and ETags are content-derived,
+   so an ETag-pinned delayed delete (for example an intent sweep) could remove a
+   replacement object re-created with identical bytes at the same key. Deleting
+   a specific `VersionId` permanently removes that version (no delete marker),
+   so retention still frees storage. Do not
    attach lifecycle rules that can delete live rows sooner than
    `max(statusRetentionDays, recordRetentionDays)` plus the restatement window.
    The GCS probe refuses them; for S3 and Azure, policies outside the client's

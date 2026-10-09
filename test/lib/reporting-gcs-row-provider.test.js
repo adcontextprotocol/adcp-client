@@ -182,6 +182,7 @@ test('passes the shared provider conformance suite', async () => {
     'ranged-read',
     'version-pinned-read',
     'exact-version-delete',
+    'write-unique-version',
   ]);
 });
 
@@ -473,7 +474,7 @@ test('official client wire contract against a local JSON API stub', async () => 
     const provider = createGcsReportingRowObjectProviderV1({ storage });
     await runReportingRowObjectProviderConformanceV1(provider, { ...base, prefix: 'adcp-rows' });
     const uploads = requests.filter(request => request.url.pathname.startsWith('/upload/'));
-    assert.equal(uploads.length, 2);
+    assert.equal(uploads.length, 3);
     for (const upload of uploads) {
       assert.equal(upload.url.searchParams.get('uploadType'), 'multipart');
       assert.equal(upload.url.searchParams.get('ifGenerationMatch'), '0');
