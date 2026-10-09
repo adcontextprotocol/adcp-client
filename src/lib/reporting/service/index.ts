@@ -53,6 +53,14 @@ import {
   projectListAccountsReportingWebhookActivityV1,
   type PostgresReportingWebhookActivityV1,
 } from '../webhook-activity';
+import {
+  assertReportingLedgerMaintenanceOptions,
+  runReportingLedgerMaintenance,
+  type ReportingChangeFeedMaintenanceOptionsV1,
+  type ReportingLedgerMaintenanceStoreV1,
+  type ReportingLedgerMaintenanceTaskResultV1,
+  type ReportingRetentionOptionsV1,
+} from './maintenance';
 import type { InlineReportingReplayRetentionV1 } from '../source';
 import { assertReportingCalendarDaySource, reportingCalendarDayOrigin } from '../ledger/schedule';
 import {
@@ -241,7 +249,33 @@ export interface CreateReliableReportingServiceOptionsV1<TCtxMeta = Record<strin
   /** Ledger metadata retention commitment advertised to buyers. */
   statusRetentionDays: number;
   subscribers?: CreateReportingProducerOptionsV1['subscribers'];
+  /**
+   * Opt in to scheduled ledger maintenance for a Core-only deployment on a
+   * `PostgresReportingLedgerStore`. `start()` runs it at most once per
+   * `intervalMilliseconds`; `runMaintenance()` runs it on demand for a host
+   * with its own scheduler. The production service does this itself and does
+   * not take this option.
+   *
+   * Always swept: expired cursor snapshots and checkpoints, and abandoned row
+   * uploads. `retention` and `changeFeed` have the same shape and meaning as
+   * on `createPostgresReliableReportingProductionService`. Retention uses
+   * this service's `statusRetentionDays`, so it can never retire a period
+   * earlier than the retention advertised to buyers. `changeFeed` requires the
+   * store to be built with `changeFeed: true`.
+   */
+  maintenance?: ReliableReportingMaintenanceOptionsV1;
 }
+
+export interface ReliableReportingMaintenanceOptionsV1 {
+  /** Minimum time between scheduled maintenance passes. Defaults to 300000 (5 minutes). */
+  intervalMilliseconds?: number;
+  /** Period-aligned retention; see the production service's `retention`. */
+  retention?: ReportingRetentionOptionsV1;
+  /** Change-feed pruning and consumer hold; see the production service's `changeFeed`. */
+  changeFeed?: ReportingChangeFeedMaintenanceOptionsV1;
+}
+
+const DEFAULT_MAINTENANCE_INTERVAL_MILLISECONDS = 300_000;
 
 export interface ReliableReportingSetupV1 {
   readonly component: 'reliable-reporting-core';
@@ -277,6 +311,12 @@ export interface ReliableReportingServiceV1<TCtxMeta = Record<string, unknown>> 
     notReady: number;
     failed: number;
   }>;
+  /**
+   * Run one ledger-maintenance pass now and return each task's outcome. For
+   * hosts that run their own scheduler instead of `start()`. A task failure is
+   * reported in its result, not thrown. Requires the `maintenance` option.
+   */
+  runMaintenance(options?: { signal?: AbortSignal }): Promise<ReportingLedgerMaintenanceTaskResultV1[]>;
   start(options: ReliableReportingSchedulerOptionsV1): void;
   stop(): Promise<void>;
 }
@@ -375,6 +415,59 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
   if (hasConsumerStatus) assertConsumerStatusStore(options.store);
   const retentionDays = options.statusRetentionDays;
   positiveInteger(retentionDays, 'statusRetentionDays');
+  const maintenance = options.maintenance;
+  let maintenanceStore: ReportingLedgerMaintenanceStoreV1 & {
+    sweepExpiredState?: PostgresReportingLedgerStore['sweepExpiredState'];
+    changeFeedEnabled?: boolean;
+  };
+  let maintenanceIntervalMilliseconds = DEFAULT_MAINTENANCE_INTERVAL_MILLISECONDS;
+  if (maintenance !== undefined) {
+    if (maintenance === null || typeof maintenance !== 'object') {
+      throw new TypeError('maintenance must be an options object');
+    }
+    // Duck-typed rather than `instanceof`: a host that loads two copies of the
+    // SDK still holds a real store, and a non-Postgres store has no maintenance
+    // to run. Failing here beats a scheduler that silently never retires.
+    const candidate = options.store as Partial<ReportingLedgerMaintenanceStoreV1> & {
+      sweepExpiredState?: PostgresReportingLedgerStore['sweepExpiredState'];
+      changeFeedEnabled?: boolean;
+    };
+    for (const method of ['retireExpiredPeriods', 'pruneChanges', 'sweepRowWriteIntents'] as const) {
+      if (typeof candidate[method] !== 'function') {
+        throw new TypeError(
+          `maintenance requires a PostgresReportingLedgerStore (or a store with ${method}); the configured store cannot run ledger maintenance`
+        );
+      }
+    }
+    maintenanceStore = candidate as typeof maintenanceStore;
+    if (maintenance.changeFeed && maintenanceStore.changeFeedEnabled === false) {
+      throw new TypeError(
+        'maintenance.changeFeed requires the store to be built with changeFeed: true; otherwise pruning silently does nothing'
+      );
+    }
+    if (maintenance.intervalMilliseconds !== undefined) {
+      positiveInteger(maintenance.intervalMilliseconds, 'maintenance.intervalMilliseconds');
+      maintenanceIntervalMilliseconds = maintenance.intervalMilliseconds;
+    }
+    assertReportingLedgerMaintenanceOptions(maintenance, retentionDays);
+  }
+  // Snapshot/checkpoint sweeping needs the pool, which only the store holds.
+  // A store without `sweepExpiredState` simply skips that task.
+  const runLedgerMaintenance = (
+    signal: AbortSignal | undefined,
+    report?: (error: unknown) => Promise<void>
+  ): Promise<ReportingLedgerMaintenanceTaskResultV1[]> =>
+    runReportingLedgerMaintenance({
+      store: maintenanceStore,
+      ...(typeof maintenanceStore.sweepExpiredState === 'function'
+        ? { sweepSnapshots: (limit: number) => maintenanceStore.sweepExpiredState!(limit) }
+        : {}),
+      statusRetentionDays: retentionDays,
+      retention: maintenance!.retention,
+      changeFeed: maintenance!.changeFeed,
+      signal,
+      ...(report ? { report } : {}),
+    });
 
   const capabilities = deepFreeze({
     supported: true as const,
@@ -581,12 +674,30 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       return { planned: planned.length, ...result };
     },
 
+    async runMaintenance(maintenanceOptions) {
+      if (maintenance === undefined) {
+        throw new TypeError('runMaintenance requires the maintenance option');
+      }
+      maintenanceOptions?.signal?.throwIfAborted();
+      return runLedgerMaintenance(maintenanceOptions?.signal);
+    },
+
     start(scheduler) {
       if (schedulerPromise) throw new Error('Reliable reporting scheduler is already running');
       positiveInteger(scheduler.intervalMilliseconds, 'intervalMilliseconds');
       schedulerAbort = new AbortController();
       const signal = schedulerAbort.signal;
-      schedulerPromise = schedulerLoop(service, scheduler, signal, options.store).finally(() => {
+      const scheduledMaintenance =
+        maintenance === undefined
+          ? undefined
+          : {
+              intervalMilliseconds: maintenanceIntervalMilliseconds,
+              run: () =>
+                runLedgerMaintenance(signal, error =>
+                  reportSchedulerError(scheduler, signal, error, { phase: 'maintenance' })
+                ),
+            };
+      schedulerPromise = schedulerLoop(service, scheduler, signal, options.store, scheduledMaintenance).finally(() => {
         schedulerPromise = undefined;
         schedulerAbort = undefined;
       });
@@ -609,7 +720,7 @@ type ProductionNotificationOptions = Omit<
 
 export type CreatePostgresReliableReportingProductionServiceOptionsV1<TCtxMeta = Record<string, unknown>> = Omit<
   CreateReliableReportingServiceOptionsV1<TCtxMeta>,
-  'store' | 'subscribers'
+  'store' | 'subscribers' | 'maintenance'
 > & {
   db: ReportingPgPool;
   /** Stable, non-secret deployment namespace shared by reporting workers. */
@@ -633,7 +744,7 @@ export type CreatePostgresReliableReportingProductionServiceOptionsV1<TCtxMeta =
    * period is also held until every live registered feed consumer (updated
    * within `changeFeed.maxFeedHoldDays`, default 7) has read its changes.
    */
-  retention?: { enabled: true; recordRetentionDays?: number; limit?: number };
+  retention?: ReportingRetentionOptionsV1;
   /**
    * Maintain the host change feed (`changesAfter`, `getCurrentRevision`,
    * `listCurrentRevisions` on `stores.core`). Adds
@@ -641,7 +752,7 @@ export type CreatePostgresReliableReportingProductionServiceOptionsV1<TCtxMeta =
    * changes older than `changeRetentionDays` (default 30) unless a registered
    * consumer updated within `maxFeedHoldDays` (default 7) still needs them.
    */
-  changeFeed?: boolean | { changeRetentionDays?: number; maxFeedHoldDays?: number };
+  changeFeed?: ReportingChangeFeedMaintenanceOptionsV1;
   notifications: ProductionNotificationOptions;
   managedDelivery: {
     adapter: ReportingManagedDeliveryAdapterV1;
@@ -949,82 +1060,15 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
     for (const result of pruneResults) {
       if (result.status === 'rejected' && !signal.aborted) await reportAuxiliaryError(scheduler, result.reason);
     }
-    const ledgerMaintenance: [string, Promise<unknown>][] = [
-      ['snapshot sweep', sweepExpiredReportingLedgerState(options.db, 1_000)],
-      ['row upload sweep', coreStore.sweepRowWriteIntents({ limit: 100, signal })],
-      ...(options.changeFeed
-        ? ([
-            [
-              'change-feed pruning',
-              coreStore.pruneChanges(
-                typeof options.changeFeed === 'object'
-                  ? {
-                      ...(options.changeFeed.changeRetentionDays !== undefined
-                        ? { changeRetentionDays: options.changeFeed.changeRetentionDays }
-                        : {}),
-                      ...(options.changeFeed.maxFeedHoldDays !== undefined
-                        ? { maxFeedHoldDays: options.changeFeed.maxFeedHoldDays }
-                        : {}),
-                    }
-                  : {}
-              ),
-            ],
-          ] as [string, Promise<unknown>][])
-        : []),
-      ...(options.retention?.enabled
-        ? ([
-            [
-              'retention',
-              coreStore.retireExpiredPeriods({
-                statusRetentionDays: options.statusRetentionDays,
-                ...(options.retention.recordRetentionDays !== undefined
-                  ? { recordRetentionDays: options.retention.recordRetentionDays }
-                  : {}),
-                ...(typeof options.changeFeed === 'object' && options.changeFeed.maxFeedHoldDays !== undefined
-                  ? { maxFeedHoldDays: options.changeFeed.maxFeedHoldDays }
-                  : {}),
-                limit: options.retention.limit ?? 100,
-                signal,
-              }),
-            ],
-          ] as [string, Promise<unknown>][])
-        : []),
-    ];
-    const maintenanceResults = await Promise.allSettled(ledgerMaintenance.map(([, task]) => task));
-    for (const [index, result] of maintenanceResults.entries()) {
-      const name = ledgerMaintenance[index]![0];
-      if (result.status === 'rejected') {
-        if (!signal.aborted) await reportAuxiliaryError(scheduler, result.reason);
-        continue;
-      }
-      // Partial failures resolve rather than reject; surface them so a period
-      // or upload that fails every pass is visible to error reporting.
-      const value = result.value as
-        | {
-            failed?: number | readonly string[];
-            failures?: readonly { reporting_obligation_id: string; cause: string }[];
-          }
-        | undefined;
-      const failed = Array.isArray(value?.failed)
-        ? value.failed.length
-        : typeof value?.failed === 'number'
-          ? value.failed
-          : 0;
-      if (failed > 0 && !signal.aborted) {
-        await reportAuxiliaryError(
-          scheduler,
-          new ReportingMaintenancePartialFailureError(
-            name,
-            failed,
-            value?.failures?.length
-              ? value.failures.map(entry => `${entry.reporting_obligation_id} (${entry.cause})`)
-              : Array.isArray(value?.failed)
-                ? value.failed
-                : []
-          )
-        );
-      }
-    }
+    await runReportingLedgerMaintenance({
+      store: coreStore,
+      sweepSnapshots: limit => sweepExpiredReportingLedgerState(options.db, limit),
+      statusRetentionDays: options.statusRetentionDays,
+      retention: options.retention,
+      changeFeed: options.changeFeed,
+      signal,
+      report: error => reportAuxiliaryError(scheduler, error),
+    });
     const accountIds = rotate(await deploymentWideAccountIds(coreStore), auxiliaryRotation);
     auxiliaryRotation += 1;
     for (const accountId of accountIds) {
@@ -1186,12 +1230,14 @@ async function schedulerLoop<TCtxMeta>(
   service: ReliableReportingServiceV1<TCtxMeta>,
   options: ReliableReportingSchedulerOptionsV1,
   signal: AbortSignal,
-  store: ReportingLedgerStore
+  store: ReportingLedgerStore,
+  maintenance?: { intervalMilliseconds: number; run: () => Promise<unknown> }
 ): Promise<void> {
   // Rotation cursor. Without it the same ledger order runs every interval, so a
   // tenant early in that order can consume the whole per-pass budget and the
   // tenants behind it never produce.
   let rotation = 0;
+  let lastMaintenanceAt: number | undefined;
   while (!signal.aborted) {
     let accountIds: Array<string | undefined> = [];
     try {
@@ -1241,12 +1287,28 @@ async function schedulerLoop<TCtxMeta>(
         await reportSchedulerError(options, signal, error, { phase: 'cycle', accountId });
       }
     }
+    // Maintenance is paced independently of the cycle interval: it runs on the
+    // first pass and then at most once per its own interval, after the tenants'
+    // cycles so it never delays them.
+    if (
+      maintenance &&
+      !signal.aborted &&
+      (lastMaintenanceAt === undefined || Date.now() - lastMaintenanceAt >= maintenance.intervalMilliseconds)
+    ) {
+      lastMaintenanceAt = Date.now();
+      try {
+        await maintenance.run();
+      } catch (error) {
+        // A failing maintenance pass must not stop the producer loop.
+        await reportSchedulerError(options, signal, error, { phase: 'maintenance' });
+      }
+    }
     if (!signal.aborted) await abortableDelay(options.intervalMilliseconds, signal);
   }
 }
 
 interface SchedulerFailureSiteV1 {
-  readonly phase: 'roster' | 'cycle';
+  readonly phase: 'roster' | 'cycle' | 'maintenance';
   readonly accountId?: string | undefined;
 }
 
@@ -1280,9 +1342,11 @@ function warnSchedulerFailure(
   const where =
     site.phase === 'roster'
       ? 'could not resolve its account roster, so this pass ran no tenants'
-      : site.accountId === undefined
-        ? 'deployment-wide cycle failed; the scheduler continues'
-        : `cycle failed for account ${site.accountId}; later tenants continue`;
+      : site.phase === 'maintenance'
+        ? 'ledger maintenance failed; the scheduler continues'
+        : site.accountId === undefined
+          ? 'deployment-wide cycle failed; the scheduler continues'
+          : `cycle failed for account ${site.accountId}; later tenants continue`;
   const observed =
     observerError === undefined ? '' : ` (the configured onError also threw: ${safeMessage(observerError)})`;
   const message = `[adcp/reporting] scheduler ${where}: ${safeMessage(error)}${observed}`;
@@ -2057,21 +2121,11 @@ function deepFreeze<T>(value: T): T {
 }
 
 export * from './conformance';
-
-/**
- * A scheduled maintenance pass completed but could not process some items
- * (for example, a retention period whose objects could not be deleted). The
- * pass resumes them next time; repeated reports need operator attention.
- */
-export class ReportingMaintenancePartialFailureError extends Error {
-  constructor(
-    readonly task: string,
-    readonly failedCount: number,
-    readonly failedIds: readonly string[]
-  ) {
-    super(
-      `Reporting ${task} could not process ${failedCount} item(s)${failedIds.length ? `: ${failedIds.slice(0, 20).join(', ')}` : ''}`
-    );
-    this.name = 'ReportingMaintenancePartialFailureError';
-  }
-}
+export {
+  ReportingMaintenancePartialFailureError,
+  type ReportingChangeFeedMaintenanceOptionsV1,
+  type ReportingLedgerMaintenanceStoreV1,
+  type ReportingLedgerMaintenanceTaskNameV1,
+  type ReportingLedgerMaintenanceTaskResultV1,
+  type ReportingRetentionOptionsV1,
+} from './maintenance';
