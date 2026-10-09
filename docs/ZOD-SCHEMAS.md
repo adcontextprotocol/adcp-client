@@ -30,7 +30,17 @@ import { EventSourceHealthSchema } from '@adcp/sdk/schemas/browser';
 const health = EventSourceHealthSchema.parse(rawHealth);
 ```
 
-This entry has no Node built-ins in its import graph and shares the Node entry's portable validators, including canonical and legacy get-products selectors. JSON Schema loading and tool registration helpers are available from `@adcp/sdk/schemas`. Importing one schema can still retain the full generated module; per-schema tree-shaking is tracked in [#3178](https://github.com/adcontextprotocol/adcp-client/issues/3178).
+This entry has no Node built-ins in its import graph and shares the Node entry's portable validators, including canonical and legacy get-products selectors. Named ESM imports let bundlers remove unused validators while preserving the selected schema's dependencies. JSON Schema loading and tool registration helpers are available from `@adcp/sdk/schemas`.
+
+`npm run test:schemas-browser` bundles a single `EventSourceHealthSchema` import with esbuild (`platform: 'browser'`, `format: 'iife'`, `target: 'es2022'`, `minify: true`). The standalone bundle includes Zod and ajv-formats, with no external dependencies. Measurements for esbuild 0.28.2 and Zod 4.4.3:
+
+| Measure | Before tree-shaking | With pure schema initializers | CI maximum |
+| --- | ---: | ---: | ---: |
+| Minified bundle | 1,539,250 B | 336,182 B | 375,000 B |
+| Gzipped bundle | 265,418 B | 67,420 B | 75,000 B |
+| Generated validators retained | 1,203,529 B | 744 B | 2,048 B |
+
+The total-size limits leave roughly 11% headroom for dependency changes. The separate generated-code limit catches unrelated validators being retained even if dependencies become smaller. The check also verifies that product, media-buy, and reporting-obligation validators disappear and that the bundled schema still validates without Node globals. Existing tests exercise all exports through ESM and CommonJS, declaration paths, and portable cross-field validation.
 
 ## Why Zod Schemas?
 

@@ -8,7 +8,7 @@ const BIDDING_CONTROL_KEYS = ['automatic', 'bid_amount', 'max_bid', 'cost_per', 
  * bidding-policy contract. Unknown extension fields retain the generated
  * schema's passthrough behavior, but do not count as a bidding control.
  */
-export const BiddingPolicySchema = GeneratedBiddingPolicySchema.superRefine((policy, ctx) => {
+export const BiddingPolicySchema = /* @__PURE__ */ GeneratedBiddingPolicySchema.superRefine((policy, ctx) => {
   const presentControls = BIDDING_CONTROL_KEYS.filter(key => policy[key] !== undefined);
 
   if (presentControls.length === 0) {

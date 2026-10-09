@@ -25,11 +25,12 @@ export type LooseObjectSchemaFor<T extends object> = {
 export const LegacyGetProductsRequestSchema = GeneratedGetProductsRequestSchema;
 
 type CanonicalGetProductsField = NonNullable<CanonicalGetProductsRequest['fields']>[number];
-const canonicalGetProductsFields = GetProductsRequest_FieldsValues.filter(
+const canonicalGetProductsFields = /* @__PURE__ */ GetProductsRequest_FieldsValues.filter(
   (field): field is CanonicalGetProductsField => field !== 'format_ids'
 ) as [CanonicalGetProductsField, ...CanonicalGetProductsField[]];
 
 /** Primary request schema; legacy `format_ids` selection is rejected. */
-export const GetProductsRequestSchema = GeneratedGetProductsRequestSchema.safeExtend({
-  fields: z.array(z.enum(canonicalGetProductsFields)).optional(),
-}) as unknown as LooseObjectSchemaFor<CanonicalGetProductsRequest>;
+export const GetProductsRequestSchema = /* @__PURE__ */ (() =>
+  GeneratedGetProductsRequestSchema.safeExtend({
+    fields: z.array(z.enum(canonicalGetProductsFields)).optional(),
+  }))() as unknown as LooseObjectSchemaFor<CanonicalGetProductsRequest>;

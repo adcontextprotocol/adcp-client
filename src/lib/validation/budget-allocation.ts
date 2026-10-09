@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { CanonicalBudgetAllocationSchema as GeneratedCanonicalBudgetAllocationSchema } from '../types/schemas.generated';
 
 /** Canonical allocation shape with the seller-optimized non-empty invariant. */
-export const CanonicalBudgetAllocationSchema = GeneratedCanonicalBudgetAllocationSchema.superRefine(
+export const CanonicalBudgetAllocationSchema = /* @__PURE__ */ GeneratedCanonicalBudgetAllocationSchema.superRefine(
   (allocation, ctx) => {
     if (allocation.mode === 'seller_optimized' && allocation.optimization_goals.length === 0) {
       ctx.addIssue({
