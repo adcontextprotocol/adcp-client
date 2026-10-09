@@ -420,7 +420,8 @@ export class ReportingRowStorageV1 {
   async writeInTransaction(
     transaction: QueryableV1,
     prepared: ReportingPreparedRowSetV1,
-    locators?: readonly ReportingRowChunkLocatorV1[]
+    locators?: readonly ReportingRowChunkLocatorV1[],
+    sharedFromRowSetId?: string
   ): Promise<void> {
     const { input, encoded } = prepared;
     if (prepared.binding.kind === 'object' && locators?.length !== encoded.chunks.length) {
@@ -429,8 +430,9 @@ export class ReportingRowStorageV1 {
     const inserted = await transaction.query(
       `INSERT INTO adcp_reporting_row_sets
          (row_set_id, row_set_kind, account_id, obligation_id, encoding, digest_profile, content_sha256,
-          canonical_byte_count, row_count, row_manifest_sha256, chunk_count, row_binding_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          canonical_byte_count, row_count, row_manifest_sha256, chunk_count, row_binding_id,
+          rows_shared_from_row_set_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        ON CONFLICT (row_set_id) DO NOTHING`,
       [
         input.rowSetId,
@@ -445,6 +447,7 @@ export class ReportingRowStorageV1 {
         encoded.rowManifestSha256,
         encoded.chunks.length,
         prepared.bindingId,
+        sharedFromRowSetId ?? null,
       ]
     );
     if (inserted.rowCount !== 1) {
@@ -691,6 +694,59 @@ export class ReportingRowStorageV1 {
         )
       );
     }
+  }
+
+  /**
+   * A live row set in the same obligation and binding whose rows are
+   * byte-identical (same manifest digest), with its chunk locations. Sharing
+   * never crosses obligations, so it never crosses consumers.
+   */
+  async findShareable(
+    queryable: QueryableV1,
+    prepared: ReportingPreparedRowSetV1
+  ): Promise<{ rowSetId: string; locators: ReportingRowChunkLocatorV1[] } | undefined> {
+    if (prepared.encoded.chunks.length === 0) return undefined;
+    const found = await queryable.query<{ row_set_id: string }>(
+      `SELECT row_set_id FROM adcp_reporting_row_sets
+        WHERE obligation_id = $1 AND account_id = $2 AND row_binding_id = $3 AND row_manifest_sha256 = $4
+          AND rows_state = 'live' AND row_set_id <> $5
+        ORDER BY recorded_at DESC, row_set_id LIMIT 1
+        FOR SHARE`,
+      [
+        prepared.input.obligationId,
+        prepared.input.accountId,
+        prepared.bindingId,
+        prepared.encoded.rowManifestSha256,
+        prepared.input.rowSetId,
+      ]
+    );
+    const rowSetId = found.rows[0]?.row_set_id;
+    if (!rowSetId) return undefined;
+    const chunks = await queryable.query<{
+      object_key: string | null;
+      native_version: string | null;
+      compression: 'none' | 'gzip';
+      physical_sha256: string | null;
+      physical_byte_count: string | number | null;
+    }>(
+      `SELECT object_key, native_version, compression, physical_sha256, physical_byte_count
+         FROM adcp_reporting_row_chunks WHERE row_set_id = $1 ORDER BY chunk_index`,
+      [rowSetId]
+    );
+    if (chunks.rows.length !== prepared.encoded.chunks.length) return undefined;
+    if (prepared.binding.kind === 'postgres') return { rowSetId, locators: [] };
+    if (chunks.rows.some(chunk => chunk.object_key === null)) return undefined;
+    return {
+      rowSetId,
+      locators: chunks.rows.map(chunk => ({
+        objectKey: chunk.object_key!,
+        nativeVersion: chunk.native_version!,
+        compression: chunk.compression,
+        physicalSha256: chunk.physical_sha256!,
+        physicalByteCount: Number(chunk.physical_byte_count),
+        created: false,
+      })),
+    };
   }
 
   /** Installation identity and namespace key; available after `ready()`. */

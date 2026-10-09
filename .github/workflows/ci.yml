@@ -805,6 +805,8 @@ jobs:
           test/lib/reporting-row-storage-migration-pg.test.js
           test/lib/reporting-row-storage-pg.test.js
           test/lib/reporting-row-storage-object-pg.test.js
+          test/lib/reporting-row-retention-pg.test.js
+          test/lib/reporting-host-reads-pg.test.js
           test/reliable-reporting-lifecycle-pg.test.js
 
       - name: Run PostgreSQL reporting contracts with chunked row storage

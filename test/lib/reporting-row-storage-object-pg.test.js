@@ -129,6 +129,25 @@ describe('object-storage revision rows', { skip: !DATABASE_URL && 'PostgreSQL UR
       { rows: rows.slice(480, 540), total: rows.length }
     );
 
+    // An unchanged pulse becomes a header-only revision: new identity and
+    // binding, the same stored objects, nothing uploaded.
+    const filesBeforePulse = listFiles(root).length;
+    const pulse = fixture.revision('rrev_obj_2', 2, rows, { supersedes_reporting_revision_id: 'rrev_obj_1' });
+    assert.equal((await store.commitRevision(pulse, fixture.lease)).inserted, true);
+    assert.equal(listFiles(root).length, filesBeforePulse, 'a header-only revision uploads nothing');
+    const sharedRow = (
+      await pool.query(
+        `SELECT row_set.rows_shared_from_row_set_id AS shared, chunk.object_key
+           FROM adcp_reporting_row_sets row_set
+           JOIN adcp_reporting_row_chunks chunk ON chunk.row_set_id = row_set.row_set_id
+          WHERE row_set.row_set_id = 'rrev_obj_2'`
+      )
+    ).rows[0];
+    assert.equal(sharedRow.shared, 'rrev_obj_1');
+    assert.equal(sharedRow.object_key, chunk.object_key);
+    assert.deepEqual((await store.getRevision('rrev_obj_2', fixture.request.account.account_id)).rows, rows);
+    assert.equal(Number((await pool.query('SELECT count(*) AS n FROM adcp_reporting_row_write_intents')).rows[0].n), 0);
+
     // Another store instance with the same configuration reads the same objects.
     const reader = newStore();
     assert.deepEqual((await reader.getRevision('rrev_obj_1', fixture.request.account.account_id)).rows, rows);
@@ -161,6 +180,11 @@ describe('object-storage revision rows', { skip: !DATABASE_URL && 'PostgreSQL UR
     await assert.rejects(
       () => store.getRevision('rrev_obj_1', fixture.request.account.account_id),
       isCode('ROWS_UNAVAILABLE')
+    );
+    await assert.rejects(
+      () => store.getRevision('rrev_obj_2', fixture.request.account.account_id),
+      isCode('ROWS_UNAVAILABLE'),
+      "a header-only revision shares its predecessor's objects"
     );
     const deliver = ledger.createReportingDeliveryHandler(store);
     await assert.rejects(

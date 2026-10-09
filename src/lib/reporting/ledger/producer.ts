@@ -159,6 +159,7 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
           left.configurationId.localeCompare(right.configurationId)
       );
       const obligationsByAccount = new Map<string, ReportingLedgerObligationV1[]>();
+      const retiredByAccount = new Map<string, { configurationId: string; periodOrdinal: number }[]>();
       for (const configuration of configurations) {
         const successor = reportingLedgerSuccessor(configuration, configurations);
         const anchor = instant(configuration.schedule.anchor, 'schedule.anchor');
@@ -213,9 +214,22 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
           accountObligations = await options.store.listObligations(configuration.account.account_id);
           obligationsByAccount.set(configuration.account.account_id, accountObligations);
         }
-        const existingOrdinals = accountObligations
-          .filter(value => value.configurationId === configuration.configurationId)
-          .map(value => value.periodOrdinal);
+        let accountRetired = retiredByAccount.get(configuration.account.account_id);
+        if (!accountRetired) {
+          accountRetired =
+            (await options.store.listRetiredObligationOrdinals?.(configuration.account.account_id)) ?? [];
+          retiredByAccount.set(configuration.account.account_id, accountRetired);
+        }
+        // Retired periods count as covered: their records were deleted by
+        // retention and must never be planned again.
+        const existingOrdinals = [
+          ...accountObligations
+            .filter(value => value.configurationId === configuration.configurationId)
+            .map(value => value.periodOrdinal),
+          ...accountRetired
+            .filter(value => value.configurationId === configuration.configurationId)
+            .map(value => value.periodOrdinal),
+        ];
         const candidates = missingOrdinals(first, last, existingOrdinals, maxObligations - attempted);
         for (const ordinal of candidates) {
           attempted += 1;
