@@ -492,6 +492,17 @@ recordRetentionDays)`, no worker holds its lease, and no Managed Delivery
 materialization still references it. Superseded snapshots stay readable for the
 whole window, as the protocol requires.
 
+When the change feed is installed, retention also waits for registered feed
+consumers. A period is held while any live consumer (one whose cursor was saved
+within `maxFeedHoldDays`, default 7) has not yet passed that period's change
+rows, in the consumer's own feed order. This is the same rule `pruneChanges`
+uses, so a warehouse sink that is briefly down does not lose revisions it has
+not loaded. A held period is simply not retired on this pass. A consumer silent
+for longer than `maxFeedHoldDays` stops holding, so a dead consumer cannot block
+retention forever; it has then fallen behind retention (see the warehouse sink
+below). Pass `maxFeedHoldDays` to `retireExpiredPeriods`; the production service
+passes `changeFeed.maxFeedHoldDays` for you so retention and feed pruning agree.
+
 ```ts
 await store.retireExpiredPeriods({ statusRetentionDays: 30, recordRetentionDays: 45, limit: 100 });
 await store.sweepRowWriteIntents({ limit: 100 }); // abandoned object uploads
@@ -545,6 +556,10 @@ await store.saveFeedConsumerCursor('pacing', page.cursor); // holds back pruning
   that every consumer updated within `maxFeedHoldDays` (default 7) has passed.
   An older cursor throws `ReportingChangeCursorExpiredError`; resynchronize from
   `listCurrentRevisions`.
+- Period retention honours the same hold: `retireExpiredPeriods` does not retire
+  a period while a live consumer has not read its changes. A consumer that
+  stays silent past `maxFeedHoldDays` stops holding, and its unread changes can
+  then point at revisions whose period was retired.
 - The production service accepts `changeFeed: true | { changeRetentionDays,
   maxFeedHoldDays }` and prunes the feed on its scheduler.
 
@@ -596,8 +611,17 @@ setInterval(() => void sink.runOnce(), 15 * 60_000);
   cumulative, so summing across revisions double-counts. The view keeps each
   obligation's current revision.
 - The sink registers as a change-feed consumer, so `pruneChanges` keeps changes
-  it has not loaded yet. Superseded snapshots are the intraday pacing curve, and
-  the warehouse may keep them as long as you like.
+  it has not loaded yet, and `retireExpiredPeriods` keeps the periods it has not
+  loaded yet, in both cases only while its cursor was saved within
+  `maxFeedHoldDays`. Superseded snapshots are the intraday pacing curve, and the
+  warehouse may keep them as long as you like.
+- `runOnce()` resolves with `{ idle, revisions, rows, missing }`. `missing`
+  lists revision IDs the feed announced that were retired before the batch ran.
+  A non-empty `missing` means the sink fell behind retention (it was down longer
+  than `maxFeedHoldDays` plus the retention window): the warehouse lacks those
+  revisions. Backfill them from another source or accept the gap. The cursor
+  still advances so the sink is not stuck. After a crash and replay of a planned
+  batch, a listed revision may already have been loaded by the first attempt.
 - The sink uses only `dataset().table().load()`, `job().getMetadata()` and
   `query()` from the official client you construct. It adds no dependency.
 

@@ -121,6 +121,10 @@ Alert on these row-storage signals:
   configured.
 - `ReportingChangeCursorExpiredError` in a consumer. That consumer fell behind
   retention and must resynchronize from `listCurrentRevisions`.
+- A non-empty `missing` from the warehouse sink's `runOnce()`. The sink was down
+  longer than `maxFeedHoldDays`, retention stopped waiting for it, and the
+  warehouse lacks those revisions. Backfill them or accept the gap, and keep
+  `maxFeedHoldDays` above your longest tolerated sink outage.
 
 ## Service objectives and alerts
 
