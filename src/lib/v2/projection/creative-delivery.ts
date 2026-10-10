@@ -39,6 +39,7 @@ import {
   transferLegacyCreativeMetadata,
 } from './legacy-metadata';
 import type { CanonicalFormatDeclaration } from './legacy-metadata';
+import { canonicalize as canonicalizeJson } from '../../utils/jcs';
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, Extract<keyof T, K>> : never;
 
@@ -1571,6 +1572,118 @@ export function projectSyncCreativesForDelivery<T>(
   return (changed ? { ...requestRecord, creatives } : request) as
     | ProjectedSyncCreativeRequest<T, 'canonical'>
     | ProjectedSyncCreativeRequest<T, 'legacy'>;
+}
+
+/** The direct canonical selector for a format option the seller did not declare. */
+export interface UndeclaredFormatOptionSelector {
+  format_kind: string;
+  params?: unknown;
+}
+
+/**
+ * Looks up a format option the SDK derived from a seller's legacy `format_ids`.
+ * Returns undefined for options the seller declared in its own `format_options[]`.
+ */
+export type UndeclaredFormatOptionLookup = (
+  ref: FormatOptionReference,
+  productId: string | undefined
+) => UndeclaredFormatOptionSelector | undefined;
+
+function stripUndeclaredCreativeOptionRef(
+  creativeValue: unknown,
+  productId: string | undefined,
+  lookup: UndeclaredFormatOptionLookup
+): unknown {
+  const creative = record(creativeValue);
+  const ref = creative ? optionReference(creative.format_option_ref) : undefined;
+  if (!creative || !ref || !lookup(ref, productId)) return creativeValue;
+  const next: Record<string, unknown> = { ...creative };
+  delete next.format_option_ref;
+  return next;
+}
+
+function directSelectorForUndeclaredOptions(
+  pkg: Record<string, unknown>,
+  operation: string,
+  lookup: UndeclaredFormatOptionLookup
+): Record<string, unknown> {
+  const refs = Array.isArray(pkg.format_option_refs)
+    ? pkg.format_option_refs.flatMap(value => {
+        const ref = optionReference(value);
+        return ref ? [ref] : [];
+      })
+    : [];
+  const productId = typeof pkg.product_id === 'string' ? pkg.product_id : undefined;
+  const selectors = refs.map(ref => lookup(ref, productId));
+  if (!selectors.some(selector => selector !== undefined)) return pkg;
+  const distinct = [
+    ...new Map(
+      selectors.map(selector => [
+        selector ? canonicalizeJson({ format_kind: selector.format_kind, params: selector.params ?? null }) : '',
+        selector,
+      ])
+    ).values(),
+  ];
+  const selector = distinct.length === 1 ? distinct[0] : undefined;
+  if (!selector || pkg.format_kind !== undefined || pkg.params !== undefined) {
+    throw new CreativeFormatProjectionError(
+      operation,
+      '(package selector)',
+      'the seller did not declare the selected format options in its product format_options; select options that one format_kind + params selector can express'
+    );
+  }
+  const next: Record<string, unknown> = { ...pkg, format_kind: selector.format_kind };
+  delete next.format_option_refs;
+  if (selector.params !== undefined) next.params = structuredClone(selector.params);
+  return next;
+}
+
+/**
+ * Canonical-wire counterpart to legacy downgrade for format options the seller
+ * never declared. AdCP 3.x products may carry only legacy `format_ids`; the SDK
+ * upgrades them for the buyer and mints the option ids itself. A seller only
+ * resolves `format_option_refs` against its own `format_options[]`, so a
+ * package selecting such options is sent as the equivalent `format_kind` +
+ * `params` selector, and creative pins to them are dropped. A selection that
+ * one direct selector cannot express fails closed before dispatch.
+ */
+export function projectUndeclaredFormatOptionSelectors<T>(
+  request: T,
+  operation: 'create_media_buy' | 'update_media_buy' | 'sync_creatives',
+  lookup: UndeclaredFormatOptionLookup
+): T {
+  const requestRecord = record(request);
+  if (!requestRecord) return request;
+  let changed = false;
+  const next: Record<string, unknown> = { ...requestRecord };
+  for (const key of ['packages', 'new_packages'] as const) {
+    const packages = requestRecord[key];
+    if (!Array.isArray(packages)) continue;
+    next[key] = packages.map(packageValue => {
+      const pkg = record(packageValue);
+      if (!pkg) return packageValue;
+      const productId = typeof pkg.product_id === 'string' ? pkg.product_id : undefined;
+      let projected = directSelectorForUndeclaredOptions(pkg, operation, lookup);
+      if (Array.isArray(pkg.creatives)) {
+        const creatives = pkg.creatives.map(creative => stripUndeclaredCreativeOptionRef(creative, productId, lookup));
+        if (creatives.some((creative, index) => creative !== (pkg.creatives as unknown[])[index])) {
+          projected = { ...projected, creatives };
+        }
+      }
+      if (projected !== pkg) changed = true;
+      return projected;
+    });
+  }
+  if (Array.isArray(requestRecord.creatives)) {
+    const creatives = requestRecord.creatives.map(creative =>
+      stripUndeclaredCreativeOptionRef(creative, undefined, lookup)
+    );
+    if (creatives.some((creative, index) => creative !== (requestRecord.creatives as unknown[])[index])) {
+      next.creatives = creatives;
+      changed = true;
+    }
+  }
+  return (changed ? next : request) as T;
 }
 
 type CreativeProtocolRelease = { major: number; minor: number; label: string };
