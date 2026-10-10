@@ -3407,6 +3407,46 @@ function alignOptionalWithNullish(typeDefinitions: string): string {
 }
 
 // Remove numbered type duplicates like EventType1, Catalog1 that are identical to EventType, Catalog.
+function collectNormalizedTypeBodies(typeDefinitions: string): Map<string, string> {
+  const bodies = new Map<string, string>();
+  const typePattern = /^(export (?:type|interface) (\w+)(?:[^{=]*?)(?:\{[^}]*\}|=[^;]+;))/gm;
+  let match;
+  while ((match = typePattern.exec(typeDefinitions)) !== null) {
+    const [, fullDef, name] = match;
+    bodies.set(name, fullDef.replace(/\s+/g, ' ').trim());
+  }
+  return bodies;
+}
+
+// A priority extracted type keeps only its own declaration, so a reference to a
+// numbered auxiliary from the same compile (json-schema-to-typescript numbers a
+// $ref repeated across union branches) would dangle. Point each such reference
+// at its base when the compile emitted an identical body for both; leave
+// genuine variants alone and say so, since they need an explicit alias.
+export function collapseSuppressedNumberedReferences(
+  extractedType: string,
+  compiledTypes: string,
+  typeName: string
+): string {
+  const bodies = collectNormalizedTypeBodies(compiledTypes);
+  let result = extractedType;
+  for (const [name, body] of bodies) {
+    if (name === typeName) continue;
+    const base = name.match(/^(.+?)\d+$/)?.[1];
+    if (!base || !bodies.has(base)) continue;
+    if (!new RegExp(`\\b${name}\\b`).test(result)) continue;
+    const reference = new RegExp(`\\b${name}\\b`, 'g');
+    if (body.replace(reference, base) === bodies.get(base)) {
+      result = result.replace(reference, base);
+    } else {
+      console.warn(
+        `⚠️  ${typeName} references ${name}, which differs from ${base}; add an explicit numberedReferenceAliases entry if they are equivalent`
+      );
+    }
+  }
+  return result;
+}
+
 // The json-schema-to-typescript compiler appends numbers when it encounters the same $ref multiple
 // times within a single compilation unit. We replace all references to the numbered variant with
 // the canonical name and remove the duplicate definition.
@@ -3425,12 +3465,7 @@ function removeNumberedTypeDuplicatesOnce(
   // (SignalID1, EventType1, etc.) are all union types that use the =[^;]+; branch, which works
   // correctly. Interface duplicates with nested objects (e.g. CreativeManifest1) pre-exist in
   // the upstream generator output and are not regressed by this function.
-  const typePattern = /^(export (?:type|interface) (\w+)(?:[^{=]*?)(?:\{[^}]*\}|=[^;]+;))/gm;
-  let match;
-  while ((match = typePattern.exec(typeDefinitions)) !== null) {
-    const [, fullDef, name] = match;
-    typeBodyMap.set(name, fullDef.replace(/\s+/g, ' ').trim());
-  }
+  for (const [name, body] of collectNormalizedTypeBodies(typeDefinitions)) typeBodyMap.set(name, body);
 
   for (const [name] of typeBodyMap) {
     const numberedMatch = name.match(/^(.+?)(\d+)$/);
@@ -4684,6 +4719,7 @@ async function generateTypes() {
       for (const baseName of numberedReferenceAliases) {
         extractedType = extractedType.replace(new RegExp(`\\b${baseName}\\d+\\b`, 'g'), baseName);
       }
+      extractedType = collapseSuppressedNumberedReferences(extractedType, types, typeName);
       if (!new RegExp(`^export (?:type|interface) ${typeName}\\b`, 'm').test(extractedType)) {
         throw new Error(`Unable to isolate ${typeName} from ${ref}`);
       }
