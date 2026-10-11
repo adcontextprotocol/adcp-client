@@ -60,6 +60,8 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // variance and the operations runbook.
 // Core-only ledger maintenance, the not-found error mapping and the 15.7.0
 // changelog measure 20,335,129 bytes packed; allow 25 KB for compressor variance.
+// Snapshot compaction and its key-template guard measure 20,360,760 bytes packed;
+// allow 25 KB for compressor variance.
 // Canonical creative selector projection, private seller-origin cache evidence,
 // and its delivery guide measure 20,364,177 bytes in the combined CI artifact
 // on both Node floors. Preserve the existing 25 KB compressor margin; unpacked,

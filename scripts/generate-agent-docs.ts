@@ -1335,6 +1335,7 @@ function generateLlmsTxt(
     ['Conformance (property-based fuzzing)', 'guides/CONFORMANCE.md'],
     ['Reporting source executor (seller adapters)', 'guides/REPORTING-SOURCE-EXECUTOR.md'],
     ['Seller reporting ledger', 'guides/REPORTING-LEDGER.md'],
+    ['Reporting ledger cutover from custom tables', 'guides/REPORTING-LEDGER-CUTOVER.md'],
     ['Buyer reporting reconciliation', 'guides/REPORTING-RECONCILIATION.md'],
     ['Reliable Reporting production operations', 'guides/REPORTING-OPERATIONS.md'],
     ['Validate your agent (5-command checklist)', 'guides/VALIDATE-YOUR-AGENT.md'],

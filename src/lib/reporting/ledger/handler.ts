@@ -38,6 +38,7 @@ import type {
   ReportingLedgerSnapshotQueryV1,
   ReportingLedgerStore,
   ReportingManagedDeliveryBindingV1,
+  CreateReportingDeliveryHandlerOptionsV1,
   ReportingDeliveryHandlerV1,
   ReportingStatusHandlerV1,
 } from './types';
@@ -556,10 +557,30 @@ function reportingRevisionNotFound(): AdcpError {
   });
 }
 
-/** Exact revision reader for createAdcpServer's getMediaBuyDelivery slot. */
-export function createReportingDeliveryHandler(store: ReportingLedgerStore): ReportingDeliveryHandlerV1 {
+/** The SDK ledger holds no revision of this id for the resolved account. */
+const SDK_REVISION_NOT_OWNED = Symbol('sdk-revision-not-owned');
+
+/**
+ * Exact revision reader for createAdcpServer's getMediaBuyDelivery slot.
+ *
+ * With `legacyRevisionReader`, a revision the SDK ledger does not hold for the
+ * resolved account is offered to that reader (see
+ * {@link ReportingLegacyRevisionReaderV1}). The SDK always answers first, and
+ * only that one not-found case falls through.
+ */
+export function createReportingDeliveryHandler(
+  store: ReportingLedgerStore,
+  options: CreateReportingDeliveryHandlerOptionsV1 = {}
+): ReportingDeliveryHandlerV1 {
+  const legacyRevisionReader = options.legacyRevisionReader;
+  if (legacyRevisionReader !== undefined && typeof legacyRevisionReader !== 'function') {
+    throw new TypeError('legacyRevisionReader must be a function');
+  }
   const activeReadsByAccount = new Map<string, number>();
-  return async (request, context) => {
+  const readFromSdkLedger = async (
+    request: Parameters<ReportingDeliveryHandlerV1>[0],
+    context: Parameters<ReportingDeliveryHandlerV1>[1]
+  ): Promise<Awaited<ReturnType<ReportingDeliveryHandlerV1>> | typeof SDK_REVISION_NOT_OWNED> => {
     const accountId = resolvedAccountId(context.account);
     let releaseReadSlot: () => void;
     try {
@@ -581,9 +602,9 @@ export function createReportingDeliveryHandler(store: ReportingLedgerStore): Rep
         });
       }
       const revision = await getRevisionMetadataFromStore(store, raw.reporting_revision_id, accountId);
-      if (!revision) throw reportingRevisionNotFound();
+      if (!revision) return SDK_REVISION_NOT_OWNED;
       const obligation = await store.getObligation(revision.reporting_obligation_id);
-      if (!obligation || obligation.account.account_id !== accountId) throw reportingRevisionNotFound();
+      if (!obligation || obligation.account.account_id !== accountId) return SDK_REVISION_NOT_OWNED;
       const pagination = isRecord(raw.pagination) ? raw.pagination : {};
       const maxResults =
         typeof pagination.max_results === 'number' && Number.isFinite(pagination.max_results)
@@ -682,6 +703,16 @@ export function createReportingDeliveryHandler(store: ReportingLedgerStore): Rep
     } finally {
       releaseReadSlot();
     }
+  };
+  return async (request, context) => {
+    const result = await readFromSdkLedger(request, context);
+    if (result !== SDK_REVISION_NOT_OWNED) return result;
+    // The SDK read slot is released: a slow legacy reader must not starve SDK
+    // reads for the account. The adopter bounds its own reader's concurrency.
+    if (!legacyRevisionReader) throw reportingRevisionNotFound();
+    const legacy = await legacyRevisionReader(request, context);
+    if (legacy === null || legacy === undefined) throw reportingRevisionNotFound();
+    return legacy;
   };
 }
 

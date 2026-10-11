@@ -259,6 +259,31 @@ export class ReportingRowStorageV1 {
     return this.writeDeadline;
   }
 
+  /**
+   * Refuse a configuration in which compaction could delete an object a concurrent commit is
+   * adopting. An object binding whose key template omits `{revision_key}` can map two revisions
+   * with identical chunk content to one object key, and a create-only write adopts an existing
+   * object with identical bytes. Compaction deleting that object at the same moment would leave
+   * the newer revision without its rows. The default template includes `{revision_key}`.
+   */
+  assertCompactionSafeKeyTemplates(): void {
+    const unsafe = Object.entries(this.bindings)
+      .filter(
+        ([, binding]) =>
+          binding.kind === 'object' &&
+          !(binding.keyTemplate ?? REPORTING_ROW_DEFAULT_KEY_TEMPLATE).includes('{revision_key}')
+      )
+      .map(([id]) => id);
+    if (unsafe.length > 0) {
+      throw new ReportingRowStoreError(
+        'INVALID_INPUT',
+        `snapshot compaction requires every object row binding's keyTemplate to include {revision_key}; ` +
+          `binding(s) ${unsafe.join(', ')} omit it, so two revisions with identical content could share an object ` +
+          `that compaction deletes while a concurrent commit adopts it`
+      );
+    }
+  }
+
   /** Probe the schema and every provider, and register (or verify) every configured binding. Idempotent. */
   ready(): Promise<void> {
     this.readied ??= this.register().catch(error => {

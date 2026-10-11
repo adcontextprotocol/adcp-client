@@ -233,6 +233,14 @@ empty revision association. A deployment with per-tenant workers should pass
 the resolved `account_id` to both `planObligations()` and `runWorker()`;
 omitting it intentionally runs a deployment-wide worker.
 
+### Already running your own ledger tables?
+
+Do not dual-write, and do not migrate data. Cut over at a period boundary: the
+SDK ledger produces and serves new periods, and your old tables become
+read-only behind the optional `legacyRevisionReader`, which answers exact
+`get_media_buy_delivery` reads only for revisions the SDK ledger does not hold.
+See [Cutting over to the SDK reporting ledger](REPORTING-LEDGER-CUTOVER.md).
+
 ### Migrating an existing manual lifecycle
 
 Keep the same `PostgresReportingLedgerStore` and run the same
@@ -373,6 +381,8 @@ await store.readyRowStorage();
   segment, never a raw account ID. Override `keyTemplate` with the placeholders
   in `REPORTING_ROW_KEY_PLACEHOLDERS`; templates must include
   `{content_sha256}` and `{chunk_index}`.
+  Enabling snapshot compaction additionally requires `{revision_key}` (see
+  [Compacting superseded snapshots](#compacting-superseded-snapshots-opt-in)).
 - An upload runs only while the obligation lease still covers
   `writeDeadlineMilliseconds` plus five seconds. A fenced write intent records
   every object the upload created, and the ledger commit closes the intent in
@@ -546,6 +556,111 @@ because the retired obligations no longer exist.
 always sweeps abandoned row uploads and expired cursor snapshots and
 checkpoints, and retires periods when retention is enabled.
 
+### Compacting superseded snapshots (opt-in)
+
+> **Do not enable this in production before the next eligible AdCP minor after
+> November 20, 2026.** Until then the published protocol still describes
+> superseded snapshots as preserved. The option is off by default, and
+> retaining the whole chain, as the ledger does by default, stays conformant.
+
+[adcontextprotocol/adcp#8100](https://github.com/adcontextprotocol/adcp/pull/8100)
+separates the two things `status_retention_days` covers. **Metadata** for every
+revision stays queryable for the whole window. **Content** (the rows) is owed
+only for the revisions a buyer is likely to read, so a seller that publishes a
+snapshot every 15 minutes need not keep thousands of full snapshots per period.
+
+The window runs from the revision's `created_at`. Once a later revision names it
+in `supersedes_reporting_revision_id`, it runs from that successor's
+`created_at` instead. Within its window the seller must keep content readable
+by exact read when the revision is:
+
+- (a) the current, unsuperseded revision of its slice, which includes every
+  official revision;
+- (b) the revision the current revision supersedes;
+- (c) a superseded snapshot inside its recovery grace, `max(automated recovery
+  window, one hour)` after its successor's `created_at`;
+- (d) named, for the requesting caller, by that caller's own reporting receipt
+  in any status, or by its current consumer status statement with status
+  `received`, `unreadable` or `content_mismatch`.
+
+Any other superseded snapshot may be compacted to metadata only. An exact read
+of a compacted revision returns the same nondisclosing `REFERENCE_NOT_FOUND` as
+an unknown ID. A revision in (a) to (d) whose content cannot be served is
+`SERVICE_UNAVAILABLE` (`REVISION_UNREADABLE`), never not-found.
+
+```ts
+// Core-only service
+createReliableReportingService({
+  // ...
+  maintenance: { compaction: { enabled: true, limit: 100 } },
+});
+
+// Production service
+await createPostgresReliableReportingProductionService({
+  // ...
+  compaction: { enabled: true, limit: 100 },
+});
+
+// Or call the store directly
+await store.compactSupersededSnapshots({
+  statusRetentionDays: 30,
+  automatedRecoveryWindowSeconds: 3600,
+  limit: 100,
+});
+```
+
+Both options take `{ enabled: true; limit?: number }` (default `limit` 100 per
+pass) and reuse the service's `statusRetentionDays` and
+`automatedRecoveryWindowSeconds`. The maintenance task is named
+`snapshot compaction`.
+
+A snapshot is compacted only when all of these hold:
+
+- A later revision supersedes it, and it is not the revision the current
+  revision supersedes. Current and official revisions are never compacted.
+- Its recovery grace has passed: `max(automatedRecoveryWindowSeconds, 3600)`
+  seconds since its successor's `created_at`.
+- No caller is owed it. The check spans every caller: a receipt in any status
+  (current or superseded), or a current `received`, `unreadable` or
+  `content_mismatch` consumer status statement, from any caller keeps the
+  revision while its window (`statusRetentionDays` from its successor's
+  `created_at`) is open. After that window nothing is owed any more.
+- The obligation holds no live worker lease, no Managed Delivery
+  materialization of that revision is still `pending`, and no live change-feed
+  consumer (updated within `maxFeedHoldDays`) has yet to pass that revision's
+  change row. This is the same hold retirement applies, narrowed to the
+  revision.
+- It has rows. A revision with no rows has nothing to reclaim.
+
+Compaction drops row content only. The revision header, its manifest and every
+metadata listing stay, and `listRevisionMetadata` and the status views keep
+listing it. `listRevisions`, which hydrates rows, omits compacted revisions.
+The `revision` view of `get_reporting_status` for a compacted revision answers
+as an unavailable lookup, like an exact read.
+
+It uses the same three resumable phases as retirement. Under the account lock it
+re-checks eligibility and marks the row set `pruning` (reads answer as expired;
+no new revision can share its chunks). It then deletes external objects at their
+recorded versions through the fenced delete path, skipping any object a row set
+that is not being pruned still references. Finally it deletes the chunk
+manifest and any PostgreSQL chunk body nothing else uses, and marks the row set
+`pruned`. A crash after the first phase leaves a `pruning` row set that the next
+pass finishes. Chunks shared by byte-identical revisions survive until the last
+revision referencing them is compacted.
+
+Compaction records no change-feed row: the revision's metadata did not change,
+and a sink still catching up holds the revision back (above).
+
+Compaction requires every object row binding's `keyTemplate` to include
+`{revision_key}` (the default template does). Without it, two revisions with
+identical chunk content can name one object key, and a concurrent commit could
+adopt the existing object (a create-only write with identical bytes) at the
+moment compaction deletes it, leaving the new revision without its rows. The
+SDK fails closed: `createReliableReportingService` and
+`createPostgresReliableReportingProductionService` throw at construction when
+compaction is enabled and a binding's template omits `{revision_key}`, and
+`compactSupersededSnapshots` throws the same error before deleting anything.
+
 ### Core-only setup with row storage, change feed and retention
 
 You do not need the production service (managed delivery, notifications and
@@ -611,6 +726,7 @@ Tasks, in order:
 | `row upload sweep`    | always                                            | Resolves abandoned object uploads (100 per pass); no-op without row storage. |
 | `change-feed pruning` | when `maintenance.changeFeed` is set              | `pruneChanges` with `changeRetentionDays` and `maxFeedHoldDays`.     |
 | `retention`           | when `maintenance.retention.enabled` is `true`    | `retireExpiredPeriods` with the service's `statusRetentionDays` and the feed's `maxFeedHoldDays`. |
+| `snapshot compaction` | when `maintenance.compaction.enabled` is `true`   | `compactSupersededSnapshots` with the service's `statusRetentionDays` and `automatedRecoveryWindowSeconds` (see [Compacting superseded snapshots](#compacting-superseded-snapshots-opt-in)). |
 
 Notes:
 
