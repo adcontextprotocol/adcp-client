@@ -60,7 +60,11 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // variance and the operations runbook.
 // Core-only ledger maintenance, the not-found error mapping and the 15.7.0
 // changelog measure 20,335,129 bytes packed; allow 25 KB for compressor variance.
-const MAX_PACKED_TARBALL_BYTES = 20_360_000;
+// Canonical creative selector projection, private seller-origin cache evidence,
+// and its delivery guide measure 20,364,177 bytes in the combined CI artifact
+// on both Node floors. Preserve the existing 25 KB compressor margin; unpacked,
+// file-count, bundled-schema, and declaration budgets stay fixed.
+const MAX_PACKED_TARBALL_BYTES = 20_390_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
