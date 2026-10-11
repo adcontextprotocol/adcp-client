@@ -1544,8 +1544,14 @@ ${managedDueArm}       )
    * Record a named durable consumer's position. Registered consumers hold
    * back change-table pruning until `maxFeedHoldDays` after their last update.
    * Within the same feed scope, delayed checkpoints cannot move backward.
+   * Set `refreshUnchanged: false` to recover an acknowledgment without
+   * renewing the retention hold when its position has not advanced.
    */
-  async saveFeedConsumerCursor(name: string, cursor: string): Promise<void> {
+  async saveFeedConsumerCursor(
+    name: string,
+    cursor: string,
+    options: { refreshUnchanged?: boolean } = {}
+  ): Promise<void> {
     if (!this.changeFeed) throw new Error('saveFeedConsumerCursor requires the store changeFeed option');
     let account: string | null;
     try {
@@ -1564,9 +1570,12 @@ ${managedDueArm}       )
         WHERE adcp_reporting_feed_consumers.account_id IS DISTINCT FROM EXCLUDED.account_id
            OR CASE WHEN EXCLUDED.account_id IS NULL
               THEN (adcp_reporting_feed_consumers.cursor_xid, adcp_reporting_feed_consumers.cursor_seq)
-                   <= (EXCLUDED.cursor_xid, EXCLUDED.cursor_seq)
-              ELSE adcp_reporting_feed_consumers.cursor_seq <= EXCLUDED.cursor_seq END`,
-      [name, account, account === null ? decoded.xid! : null, decoded.seq]
+                   < (EXCLUDED.cursor_xid, EXCLUDED.cursor_seq)
+                OR ($5::boolean AND (adcp_reporting_feed_consumers.cursor_xid, adcp_reporting_feed_consumers.cursor_seq)
+                   = (EXCLUDED.cursor_xid, EXCLUDED.cursor_seq))
+              ELSE adcp_reporting_feed_consumers.cursor_seq < EXCLUDED.cursor_seq
+                OR ($5::boolean AND adcp_reporting_feed_consumers.cursor_seq = EXCLUDED.cursor_seq) END`,
+      [name, account, account === null ? decoded.xid! : null, decoded.seq, options.refreshUnchanged !== false]
     );
   }
 

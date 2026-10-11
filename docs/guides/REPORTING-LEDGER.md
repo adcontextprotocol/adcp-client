@@ -857,8 +857,11 @@ setInterval(() => {
   `runOnce()` on the next tick. Empty-feed cursor initialization uses the
   same claim and commit rules. Replicas sharing a sink name must use identical
   feed scope, destination, location and row mapping. Use a new name when that
-  configuration changes. Each tick refreshes the last committed feed
-  checkpoint, including recovery after a failed acknowledgment.
+  configuration changes. An idle tick drains non-revision changes through the
+  same fenced checkpoint. An idle tick also recovers a failed acknowledgment
+  without refreshing an unchanged checkpoint. Failed loads and idle ticks
+  behind the deployment feed's transaction fence can still age out after
+  `maxFeedHoldDays`.
 - Stop old sink workers before relying on these overlap guarantees. If an
   earlier overlapping run left a plan whose starting cursor differs from the
   committed cursor, the sink rejects it before loading. Reconcile the retained
@@ -872,7 +875,9 @@ setInterval(() => {
   loaded yet, in both cases only while its cursor was saved within
   `maxFeedHoldDays`. Superseded snapshots are the intraday pacing curve, and the
   warehouse may keep them as long as you like.
-- `runOnce()` resolves with `{ idle, revisions, rows, missing }`. `missing`
+- `runOnce()` resolves with `{ idle, revisions, rows, missing }`. `idle` means
+  no revision changes were selected for this batch; an idle tick can still advance
+  past non-revision feed changes without submitting load jobs. `missing`
   lists revision IDs the feed announced that were retired before the batch ran.
   A non-empty `missing` means the sink fell behind retention (it was down longer
   than `maxFeedHoldDays` plus the retention window): the warehouse lacks those

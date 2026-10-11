@@ -60,7 +60,7 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
       });
     const read = async () =>
       (await pool.query('SELECT * FROM adcp_reporting_feed_consumers WHERE consumer_name = $1', [name])).rows[0];
-    await store.saveFeedConsumerCursor(name, checkpoint('acct_checkpoint', '20'));
+    await store.saveFeedConsumerCursor(name, checkpoint('acct_checkpoint', '20'), { refreshUnchanged: false });
     await store.saveFeedConsumerCursor(name, checkpoint('acct_checkpoint', '10'));
     assert.equal((await read()).cursor_seq, '20');
     await pool.query(
@@ -68,8 +68,12 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
       [name]
     );
     const old = (await read()).updated_at;
+    await store.saveFeedConsumerCursor(name, checkpoint('acct_checkpoint', '20'), { refreshUnchanged: false });
+    assert.equal((await read()).updated_at.getTime(), old.getTime());
     await store.saveFeedConsumerCursor(name, checkpoint('acct_checkpoint', '20'));
     assert.ok((await read()).updated_at > old);
+    await store.saveFeedConsumerCursor(name, checkpoint('acct_checkpoint', '21'), { refreshUnchanged: false });
+    assert.equal((await read()).cursor_seq, '21');
     // Reassigning a name to another feed preserves the existing API behavior.
     await store.saveFeedConsumerCursor(name, checkpoint(null, '200', '100'));
     await store.saveFeedConsumerCursor(name, checkpoint(null, '1', '101'));
@@ -79,6 +83,12 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
     await store.saveFeedConsumerCursor(name, checkpoint(null, '2', '101'));
     await store.saveFeedConsumerCursor(name, checkpoint(null, '1', '101'));
     assert.equal((await read()).cursor_seq, '2');
+    const unchanged = await read();
+    await store.saveFeedConsumerCursor(name, checkpoint(null, '2', '101'), { refreshUnchanged: false });
+    assert.deepEqual(await read(), unchanged);
+    await store.saveFeedConsumerCursor(name, checkpoint(null, '0', '102'), { refreshUnchanged: false });
+    assert.equal((await read()).cursor_xid, '102');
+    assert.equal((await read()).cursor_seq, '0');
     await store.saveFeedConsumerCursor(name, checkpoint('acct_other_checkpoint', '1'));
     assert.equal((await read()).account_id, 'acct_other_checkpoint');
     assert.equal((await read()).cursor_seq, '1');

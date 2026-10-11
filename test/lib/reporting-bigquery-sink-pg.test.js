@@ -358,7 +358,7 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     });
   }
 
-  test('empty-feed initialization cannot erase a concurrently completed plan', async () => {
+  test('an empty revision plan cannot erase a concurrently completed plan', async () => {
     const isolated = await createRowStorageFixture({ store, suffix: 'overlap_empty', accountId: 'acct_overlap_empty' });
     const account = isolated.request.account.account_id;
     const read = latch();
@@ -370,9 +370,11 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
       store: wrapStore(store, {
         async changesAfter(input) {
           const page = await store.changesAfter(input);
-          assert.equal(page.records.length, 0);
-          read.resolve();
-          await resume.promise;
+          assert.ok(page.records.every(record => record.kind !== 'revision'));
+          if (!input.kinds) {
+            read.resolve();
+            await resume.promise;
+          }
           return page;
         },
       }),
@@ -390,6 +392,38 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     await assert.rejects(pending, /plan changed/);
     assert.equal((await second.runOnce()).idle, true);
     assert.equal(bigquery.tables.get('reporting.revision_rows').length, 1);
+  });
+
+  test('the unfiltered fallback loads a revision committed between feed reads', async () => {
+    const account = 'acct_fallback_revision';
+    const isolated = await createRowStorageFixture({ store, suffix: 'fallback_revision', accountId: account });
+    const bigquery = fakeBigQuery();
+    let injected = false;
+    const sink = newSink(bigquery, {
+      name: 'fallback_revision',
+      account_id: account,
+      store: wrapStore(store, {
+        async changesAfter(input) {
+          const page = await store.changesAfter(input);
+          if (!injected && input.kinds) {
+            assert.equal(page.records.length, 0);
+            injected = true;
+            await store.commitRevision(
+              isolated.revision('rrev_fallback_revision_1', 1, rows.slice(0, 1)),
+              isolated.lease
+            );
+          }
+          return page;
+        },
+      }),
+    });
+    assert.deepEqual(await sink.runOnce(), { idle: false, revisions: 1, rows: 1, missing: [] });
+    assert.deepEqual(
+      bigquery.tables.get('reporting.revision_rows').map(row => row.reporting_revision_id),
+      ['rrev_fallback_revision_1']
+    );
+    assert.deepEqual(await sink.runOnce(), { idle: true, revisions: 0, rows: 0, missing: [] });
+    assert.equal(bigquery.jobs.size, 2);
   });
 
   test('a stale replay cannot commit over a newer batch', async () => {
@@ -578,6 +612,162 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
         .rows[0],
       before
     );
+  });
+
+  async function expireAccount(account) {
+    await pool.query(
+      `UPDATE adcp_reporting_obligations
+          SET period_start = period_start - INTERVAL '40 days', period_end = period_end - INTERVAL '40 days',
+              created_at = created_at - INTERVAL '40 days', lease_expires_at = clock_timestamp() - INTERVAL '1 second'
+        WHERE account_id = $1`,
+      [account]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_revisions SET recorded_at = recorded_at - INTERVAL '40 days'
+        WHERE obligation_id IN (
+          SELECT obligation_id FROM adcp_reporting_obligations WHERE account_id = $1
+        )`,
+      [account]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_changes SET recorded_at = recorded_at - INTERVAL '40 days' WHERE account_id = $1`,
+      [account]
+    );
+  }
+
+  test('idle ticks drain non-revision changes without blocking retention', async () => {
+    const account = 'acct_idle_retention';
+    const bigquery = fakeBigQuery();
+    const sink = newSink(bigquery, { name: 'idle_retention', account_id: account, maxRevisionsPerBatch: 1 });
+    await sink.runOnce();
+    await createRowStorageFixture({ store, suffix: 'idle_retention', accountId: account });
+    await expireAccount(account);
+    const tail = (
+      await pool.query('SELECT MAX(seq)::text AS seq FROM adcp_reporting_changes WHERE account_id = $1', [account])
+    ).rows[0].seq;
+    assert.ok(tail);
+    for (let tick = 0; tick < 3; tick++) {
+      assert.deepEqual(await sink.runOnce(), { idle: true, revisions: 0, rows: 0, missing: [] });
+    }
+    const checkpoint = (
+      await pool.query('SELECT cursor_seq FROM adcp_reporting_feed_consumers WHERE consumer_name = $1', [
+        'idle_retention',
+      ])
+    ).rows[0].cursor_seq;
+    assert.equal(checkpoint, tail);
+    assert.equal(bigquery.jobs.size, 0);
+    await store.pruneChanges({ changeRetentionDays: 30, maxFeedHoldDays: 7 });
+    assert.equal(
+      (await pool.query('SELECT COUNT(*)::int AS n FROM adcp_reporting_changes WHERE account_id = $1', [account]))
+        .rows[0].n,
+      0
+    );
+    assert.deepEqual(
+      await store.retireExpiredPeriods({ statusRetentionDays: 30, maxFeedHoldDays: 7, account_id: account }),
+      { retired: 1, failed: [], failures: [] }
+    );
+  });
+
+  test("failed retries do not renew a stalled consumer's retention hold", async () => {
+    const account = 'acct_failed_retention';
+    const isolated = await createRowStorageFixture({ store, suffix: 'failed_retention', accountId: account });
+    const bigquery = fakeBigQuery();
+    const sink = newSink(bigquery, { name: 'failed_retention', account_id: account });
+    await store.commitRevision(isolated.revision('rrev_failed_retention_1', 1, rows.slice(0, 1)), isolated.lease);
+    await sink.runOnce();
+    await store.commitRevision(
+      isolated.revision('rrev_failed_retention_2', 2, rows.slice(0, 1), {
+        supersedes_reporting_revision_id: 'rrev_failed_retention_1',
+      }),
+      isolated.lease
+    );
+    await expireAccount(account);
+    const checkpoint = (
+      await pool.query(
+        `UPDATE adcp_reporting_feed_consumers SET updated_at = clock_timestamp() - INTERVAL '8 days'
+          WHERE consumer_name = $1 RETURNING cursor_seq, updated_at`,
+        ['failed_retention']
+      )
+    ).rows[0];
+    for (let tick = 0; tick < 3; tick++) {
+      bigquery.failNext('revision_rows', 'network');
+      await assert.rejects(sink.runOnce(), /socket hang up/);
+    }
+    assert.deepEqual(
+      (
+        await pool.query('SELECT cursor_seq, updated_at FROM adcp_reporting_feed_consumers WHERE consumer_name = $1', [
+          'failed_retention',
+        ])
+      ).rows[0],
+      checkpoint
+    );
+    await store.pruneChanges({ changeRetentionDays: 30, maxFeedHoldDays: 7 });
+    assert.equal(
+      (await pool.query('SELECT COUNT(*)::int AS n FROM adcp_reporting_changes WHERE account_id = $1', [account]))
+        .rows[0].n,
+      0
+    );
+    assert.deepEqual(
+      await store.retireExpiredPeriods({ statusRetentionDays: 30, maxFeedHoldDays: 7, account_id: account }),
+      { retired: 1, failed: [], failures: [] }
+    );
+  });
+
+  test('an xmin-blocked deployment backlog does not renew an idle retention hold', async () => {
+    const account = 'acct_blocked_retention';
+    const bigquery = fakeBigQuery();
+    const sink = newSink(bigquery, { name: 'blocked_retention', account_id: undefined });
+    await sink.runOnce();
+    await sink.runOnce();
+    const jobsBefore = bigquery.jobs.size;
+    const blocker = await pool.connect();
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query('SELECT pg_current_xact_id()');
+      const isolated = await createRowStorageFixture({ store, suffix: 'blocked_retention', accountId: account });
+      await store.commitRevision(isolated.revision('rrev_blocked_retention_1', 1, rows.slice(0, 1)), isolated.lease);
+      await expireAccount(account);
+      const committed = (
+        await pool.query('SELECT committed_cursor FROM adcp_reporting_warehouse_sinks WHERE sink_name = $1', [
+          'blocked_retention',
+        ])
+      ).rows[0].committed_cursor;
+      assert.ok((await store.changesAfter({ account_id: account })).records.some(record => record.kind === 'revision'));
+      assert.deepEqual((await store.changesAfter({ cursor: committed })).records, []);
+      const checkpoint = (
+        await pool.query(
+          `UPDATE adcp_reporting_feed_consumers SET updated_at = clock_timestamp() - INTERVAL '8 days'
+            WHERE consumer_name = $1 RETURNING cursor_xid, cursor_seq, updated_at`,
+          ['blocked_retention']
+        )
+      ).rows[0];
+      for (let tick = 0; tick < 3; tick++) {
+        assert.deepEqual(await sink.runOnce(), { idle: true, revisions: 0, rows: 0, missing: [] });
+      }
+      assert.deepEqual(
+        (
+          await pool.query(
+            'SELECT cursor_xid, cursor_seq, updated_at FROM adcp_reporting_feed_consumers WHERE consumer_name = $1',
+            ['blocked_retention']
+          )
+        ).rows[0],
+        checkpoint
+      );
+      assert.equal(bigquery.jobs.size, jobsBefore);
+      await store.pruneChanges({ changeRetentionDays: 30, maxFeedHoldDays: 7 });
+      assert.equal(
+        (await pool.query('SELECT COUNT(*)::int AS n FROM adcp_reporting_changes WHERE account_id = $1', [account]))
+          .rows[0].n,
+        0
+      );
+      assert.deepEqual(
+        await store.retireExpiredPeriods({ statusRetentionDays: 30, maxFeedHoldDays: 7, account_id: account }),
+        { retired: 1, failed: [], failures: [] }
+      );
+    } finally {
+      await blocker.query('ROLLBACK');
+      blocker.release();
+    }
   });
 
   test('a failed feed acknowledgment is recovered by an idle tick', async () => {

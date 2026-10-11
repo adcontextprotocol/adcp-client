@@ -106,7 +106,8 @@ export interface CreateBigQueryReportingWarehouseSinkOptionsV1 {
 
 export interface BigQueryReportingWarehouseSinkV1 {
   /**
-   * Load at most one batch. Resolves with what was loaded; `idle` when nothing new committed.
+   * Load at most one batch. Resolves with what was loaded; `idle` when no
+   * revision changes were selected. Idle ticks can advance past other feed changes.
    * An overlapping run that loses its plan or cursor claim rejects. Retry
    * `runOnce()` to resume the current durable plan or committed cursor.
    *
@@ -237,11 +238,6 @@ export function createBigQueryReportingWarehouseSinkV1(
           'Warehouse sink has an inconsistent retained plan; reconcile the plan and BigQuery jobs before resuming'
         );
       }
-      // Recover an acknowledgment lost after the cursor commit, and refresh
-      // retention liveness even when this tick has no new revisions.
-      if (state.committed_cursor) {
-        await options.store.saveFeedConsumerCursor(options.name, state.committed_cursor);
-      }
       let plan =
         state.planned_to_cursor && state.planned_revisions
           ? {
@@ -253,21 +249,33 @@ export function createBigQueryReportingWarehouseSinkV1(
             }
           : undefined;
       if (!plan) {
-        const page = await options.store.changesAfter({
+        const position = {
           ...(state.committed_cursor ? { cursor: state.committed_cursor } : {}),
           ...(options.account_id ? { account_id: options.account_id } : {}),
-          kinds: ['revision'],
           limit: maxRevisions,
-        });
+        };
+        let page = await options.store.changesAfter({ ...position, kinds: ['revision'] });
         if (page.records.length === 0) {
-          if (page.cursor === state.committed_cursor) {
+          // Drain changes that do not require a warehouse load, so idle
+          // heartbeats cannot indefinitely hold an unread non-revision tail.
+          page = await options.store.changesAfter(position);
+          if (page.records.length === 0 && page.cursor === state.committed_cursor) {
+            // Recover a lost acknowledgment without renewing an unchanged
+            // hold. A deployment feed can look empty behind its xmin fence.
+            if (state.committed_cursor) {
+              await options.store.saveFeedConsumerCursor(options.name, state.committed_cursor, {
+                refreshUnchanged: false,
+              });
+            }
             return { idle: true, revisions: 0, rows: 0, missing: [] };
           }
         }
         plan = {
           from: state.committed_cursor,
           to: page.cursor,
-          revisions: page.records.map(record => ({ id: record.record_id, account_id: record.account_id })),
+          revisions: page.records
+            .filter(record => record.kind === 'revision')
+            .map(record => ({ id: record.record_id, account_id: record.account_id })),
           rowsAttempt: 0,
           revisionsAttempt: 0,
         };
