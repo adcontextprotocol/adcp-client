@@ -1133,7 +1133,10 @@ function wireCoverage(coverage: ReportingLedgerCoverageV1) {
   };
 }
 
-function validUnreadableRevisionIssue(issue: ReportingLedgerIssueV1, revisions: readonly Pick<ReportingLedgerRevisionSnapshotV1, 'reporting_revision_id'>[]): boolean {
+function validUnreadableRevisionIssue(
+  issue: ReportingLedgerIssueV1,
+  revisions: readonly Pick<ReportingLedgerRevisionSnapshotV1, 'reporting_revision_id'>[]
+): boolean {
   const id = /^[A-Za-z0-9_.:-]{1,255}$/;
   return (
     issue.responsibleParty === 'seller' &&
