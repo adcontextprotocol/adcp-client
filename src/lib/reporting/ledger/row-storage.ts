@@ -265,6 +265,10 @@ export class ReportingRowStorageV1 {
    * with identical chunk content to one object key, and a create-only write adopts an existing
    * object with identical bytes. Compaction deleting that object at the same moment would leave
    * the newer revision without its rows. The default template includes `{revision_key}`.
+   *
+   * Since the reference-checked, per-object-locked delete this is no longer the only guard: every
+   * delete path now skips an object another row set still references. It is kept as defense in
+   * depth for compaction, the one path that deletes content while the obligation stays live.
    */
   assertCompactionSafeKeyTemplates(): void {
     const unsafe = Object.entries(this.bindings)
@@ -718,6 +722,45 @@ export class ReportingRowStorageV1 {
           context
         )
       );
+    }
+  }
+
+  /**
+   * Prove each object is still present at its recorded version with the recorded bytes.
+   * A commit that adopted an object another row set created calls this under the object's
+   * lock, so a concurrent delete either finished first (this throws, the commit fails and
+   * the writer re-uploads) or sees the commit's chunk reference and skips the delete.
+   */
+  async assertObjectsPresent(
+    bindingId: string,
+    objects: readonly { objectKey: string; nativeVersion: string; physicalSha256: string }[],
+    signal?: AbortSignal
+  ): Promise<void> {
+    await this.ready();
+    const binding = this.bindings[bindingId];
+    if (!binding || binding.kind !== 'object') {
+      throw new ReportingRowStoreError('STATE_UNAVAILABLE', `row binding ${bindingId} is not configured for objects`);
+    }
+    const provider = this.providers[binding.provider]!;
+    const context = { signal: deadlineSignal(this.writeDeadline, signal) };
+    for (const object of objects) {
+      const bytes = await this.provider(() =>
+        provider.get(
+          {
+            ...providerLocation(binding),
+            key: object.objectKey,
+            nativeVersion: object.nativeVersion,
+            maxBytes: MAX_ADOPTED_OBJECT_BYTES,
+          },
+          context
+        )
+      );
+      if (!bytes || sha256Hex(bytes) !== object.physicalSha256) {
+        throw new ReportingRowStoreError(
+          'STATE_UNAVAILABLE',
+          'an adopted row object was deleted or replaced before its commit; retry the upload'
+        );
+      }
     }
   }
 

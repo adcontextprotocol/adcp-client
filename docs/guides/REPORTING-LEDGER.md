@@ -383,6 +383,20 @@ await store.readyRowStorage();
   `{content_sha256}` and `{chunk_index}`.
   Enabling snapshot compaction additionally requires `{revision_key}` (see
   [Compacting superseded snapshots](#compacting-superseded-snapshots-opt-in)).
+- A custom `keyTemplate` without `{account_key}` and `{revision_key}` can map
+  row sets from different obligations or accounts with identical chunk content
+  (an adjustment's digest covers its rows alone) to one object, which the
+  second writer adopts. Every delete path (period retirement, compaction and
+  the intent sweep) therefore skips an object while a live row set outside the
+  operation still references the same binding, key and native version, or an
+  open write intent created it. The reference check and the delete run in one
+  transaction under a per-object advisory lock, and a commit that adopts an
+  existing object takes the same lock, re-reads the object and holds the lock
+  until its chunk rows commit. A delete that wins the lock makes the adopting
+  commit fail with `STATE_UNAVAILABLE` (the writer re-uploads once its intent
+  lapses); a commit that wins is seen by the delete, which skips. A skipped
+  object is deleted by the retirement, compaction or sweep of the last row set
+  that referenced it, so it is not leaked.
 - An upload runs only while the obligation lease still covers
   `writeDeadlineMilliseconds` plus five seconds. A fenced write intent records
   every object the upload created, and the ledger commit closes the intent in
@@ -652,11 +666,11 @@ Compaction records no change-feed row: the revision's metadata did not change,
 and a sink still catching up holds the revision back (above).
 
 Compaction requires every object row binding's `keyTemplate` to include
-`{revision_key}` (the default template does). Without it, two revisions with
-identical chunk content can name one object key, and a concurrent commit could
-adopt the existing object (a create-only write with identical bytes) at the
-moment compaction deletes it, leaving the new revision without its rows. The
-SDK fails closed: `createReliableReportingService` and
+`{revision_key}` (the default template does). Deletes now skip objects another
+row set still references (see [Object storage](#object-storage-bindings)),
+so this is defense in depth rather than the only guard: with `{revision_key}`
+no two revisions ever name the same object, so compaction never depends on the
+reference check. The SDK fails closed: `createReliableReportingService` and
 `createPostgresReliableReportingProductionService` throw at construction when
 compaction is enabled and a binding's template omits `{revision_key}`, and
 `compactSupersededSnapshots` throws the same error before deleting anything.
