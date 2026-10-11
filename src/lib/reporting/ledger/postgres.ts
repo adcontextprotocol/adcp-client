@@ -1502,6 +1502,8 @@ ${managedDueArm}       )
       obligation_id: string;
       recorded_at: string;
     };
+    // Sort keys below are table-qualified on purpose: a bare `ORDER BY seq` binds to
+    // the `seq::text AS seq` output column and sorts as text ('100' < '95').
     const columns = `seq::text AS seq, xid::text AS xid, account_id, record_kind, record_id, obligation_id,
       to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS recorded_at`;
     const result =
@@ -1509,7 +1511,7 @@ ${managedDueArm}       )
         ? await this.query<ChangeRow>(
             `SELECT ${columns} FROM adcp_reporting_changes
               WHERE account_id = $1 AND seq > $2::bigint AND ($3::text[] IS NULL OR record_kind = ANY($3))
-              ORDER BY seq LIMIT $4`,
+              ORDER BY adcp_reporting_changes.seq LIMIT $4`,
             [account, position.seq, kinds, limit]
           )
         : await this.query<ChangeRow>(
@@ -1517,7 +1519,7 @@ ${managedDueArm}       )
               WHERE (xid, seq) > ($1::text::xid8, $2::bigint)
                 AND xid < pg_snapshot_xmin(pg_current_snapshot())
                 AND ($3::text[] IS NULL OR record_kind = ANY($3))
-              ORDER BY xid, seq LIMIT $4`,
+              ORDER BY adcp_reporting_changes.xid, adcp_reporting_changes.seq LIMIT $4`,
             [position.xid ?? '0', position.seq, kinds, limit]
           );
     const last = result.rows.at(-1);
