@@ -120,6 +120,15 @@ service runs for you. See
    `status_retention_days` is the window you intend to keep. Retirement deletes
    rows and ledger records for whole periods and cannot be undone. Keep backups
    for any longer audit requirement.
+7. **Snapshot compaction (optional).** Off by default; enable `compaction`
+   (`maintenance.compaction` on the Core-only service) only to reclaim the
+   content of superseded snapshots. Do not enable it in production before the
+   next eligible AdCP minor after November 20, 2026, when the protocol takes
+   compaction into effect. Roll it out after retention, with a small `limit`,
+   and watch the `snapshot compaction` task's `failed` IDs. See
+   [Compacting superseded snapshots](REPORTING-LEDGER.md#compacting-superseded-snapshots-opt-in)
+   for the rule and what it keeps. Compaction cannot be undone; backups hold
+   any longer evidence.
 
 Alert on these row-storage signals:
 
@@ -127,6 +136,9 @@ Alert on these row-storage signals:
   normal, and buyers see `SERVICE_UNAVAILABLE` for the affected revision.
 - A growing count of `adcp_reporting_row_write_intents` in `sweeping` state,
   or `sweepRowWriteIntents` reporting failures. Provider deletes are failing.
+- The `snapshot compaction` task reporting `failed` revisions. Provider deletes
+  are failing; the revisions stay `pruning` (reads already answer not-found) and
+  the next pass resumes them.
 - `retireExpiredPeriods` returning `failed` IDs. Usually a binding was removed
   from configuration while revisions still reference it; keep retired bindings
   configured.

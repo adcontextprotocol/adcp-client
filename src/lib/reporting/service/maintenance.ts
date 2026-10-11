@@ -13,6 +13,21 @@ export interface ReportingRetentionOptionsV1 {
   limit?: number;
 }
 
+/**
+ * Opt-in compaction of superseded snapshot revisions to metadata only, as
+ * adcontextprotocol/adcp#8100 permits. Off unless `enabled: true`. Uses the
+ * service's `statusRetentionDays` and `automatedRecoveryWindowSeconds`, so it
+ * can never drop content earlier than the commitments advertised to buyers.
+ *
+ * Compaction takes effect in the AdCP release after November 20, 2026; do not
+ * enable it in production before then. See `docs/guides/REPORTING-OPERATIONS.md`.
+ */
+export interface ReportingCompactionOptionsV1 {
+  enabled: true;
+  /** Revisions compacted per pass. Defaults to 100. */
+  limit?: number;
+}
+
 /** Change-feed pruning window and the consumer hold shared with retention. */
 export type ReportingChangeFeedMaintenanceOptionsV1 =
   | boolean
@@ -22,13 +37,15 @@ export type ReportingChangeFeedMaintenanceOptionsV1 =
 export type ReportingLedgerMaintenanceStoreV1 = Pick<
   PostgresReportingLedgerStore,
   'sweepRowWriteIntents' | 'pruneChanges' | 'retireExpiredPeriods'
->;
+> &
+  Partial<Pick<PostgresReportingLedgerStore, 'compactSupersededSnapshots'>>;
 
 interface ReportingLedgerMaintenanceTaskOutcomesV1 {
   'snapshot sweep': Awaited<ReturnType<PostgresReportingLedgerStore['sweepExpiredState']>>;
   'row upload sweep': Awaited<ReturnType<PostgresReportingLedgerStore['sweepRowWriteIntents']>>;
   'change-feed pruning': Awaited<ReturnType<PostgresReportingLedgerStore['pruneChanges']>>;
   retention: Awaited<ReturnType<PostgresReportingLedgerStore['retireExpiredPeriods']>>;
+  'snapshot compaction': Awaited<ReturnType<PostgresReportingLedgerStore['compactSupersededSnapshots']>>;
 }
 
 export type ReportingLedgerMaintenanceTaskNameV1 = keyof ReportingLedgerMaintenanceTaskOutcomesV1;
@@ -76,7 +93,10 @@ export interface RunReportingLedgerMaintenanceInputV1 {
    */
   sweepSnapshots?: (limit: number) => Promise<ReportingLedgerMaintenanceTaskOutcomesV1['snapshot sweep']>;
   statusRetentionDays: number;
+  /** The service's advertised `automated_recovery_window_seconds`; required when `compaction` is enabled. */
+  automatedRecoveryWindowSeconds?: number | undefined;
   retention?: ReportingRetentionOptionsV1 | undefined;
+  compaction?: ReportingCompactionOptionsV1 | undefined;
   changeFeed?: ReportingChangeFeedMaintenanceOptionsV1 | undefined;
   signal?: AbortSignal | undefined;
   /**
@@ -99,7 +119,7 @@ type StartedTask = [ReportingLedgerMaintenanceTaskNameV1, Promise<unknown>];
 export async function runReportingLedgerMaintenance(
   input: RunReportingLedgerMaintenanceInputV1
 ): Promise<ReportingLedgerMaintenanceTaskResultV1[]> {
-  const { store, signal, changeFeed, retention } = input;
+  const { store, signal, changeFeed, retention, compaction } = input;
   // Each task starts inside `start`, so a synchronous throw becomes that
   // task's rejection instead of aborting the list: the tasks after it still
   // run and the ones already started are never orphaned.
@@ -146,6 +166,27 @@ export async function runReportingLedgerMaintenance(
               ...(signal ? { signal } : {}),
             })
           ),
+        ]
+      : []),
+    ...(compaction?.enabled
+      ? [
+          start('snapshot compaction', () => {
+            if (typeof store.compactSupersededSnapshots !== 'function') {
+              throw new TypeError('compaction requires a store with compactSupersededSnapshots');
+            }
+            if (input.automatedRecoveryWindowSeconds === undefined) {
+              throw new TypeError('compaction requires automatedRecoveryWindowSeconds');
+            }
+            return store.compactSupersededSnapshots({
+              statusRetentionDays: input.statusRetentionDays,
+              automatedRecoveryWindowSeconds: input.automatedRecoveryWindowSeconds,
+              ...(typeof changeFeed === 'object' && changeFeed.maxFeedHoldDays !== undefined
+                ? { maxFeedHoldDays: changeFeed.maxFeedHoldDays }
+                : {}),
+              limit: compaction.limit ?? 100,
+              ...(signal ? { signal } : {}),
+            });
+          }),
         ]
       : []),
   ];
@@ -201,6 +242,7 @@ export async function runReportingLedgerMaintenance(
 export function assertReportingLedgerMaintenanceOptions(
   input: {
     retention?: ReportingRetentionOptionsV1 | undefined;
+    compaction?: ReportingCompactionOptionsV1 | undefined;
     changeFeed?: ReportingChangeFeedMaintenanceOptionsV1 | undefined;
   },
   statusRetentionDays: number
@@ -210,7 +252,13 @@ export function assertReportingLedgerMaintenanceOptions(
       throw new TypeError(`${field} must be a positive safe integer`);
     }
   };
-  const { retention, changeFeed } = input;
+  const { retention, changeFeed, compaction } = input;
+  if (compaction !== undefined) {
+    if (compaction === null || typeof compaction !== 'object' || compaction.enabled !== true) {
+      throw new TypeError('maintenance.compaction must be { enabled: true, ... }');
+    }
+    if (compaction.limit !== undefined) positive(compaction.limit, 'maintenance.compaction.limit');
+  }
   if (retention !== undefined) {
     if (retention === null || typeof retention !== 'object' || retention.enabled !== true) {
       throw new TypeError('maintenance.retention must be { enabled: true, ... }');
