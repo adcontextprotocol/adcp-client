@@ -36,6 +36,8 @@ export function concealLegacyFormatRefs(
   const { v1_format_ref: refs, ...canonical } = declaration as ProductFormatDeclaration;
   const existingHidden = legacyRefsByDeclaration.get(declaration as object);
   const refsToConceal = Array.isArray(existingHidden) && existingHidden.length > 0 ? existingHidden : refs;
+  const declared = sellerDeclaredByDeclaration.get(declaration as object);
+  if (declared !== undefined) sellerDeclaredByDeclaration.set(canonical, declared);
   if (Array.isArray(refsToConceal) && refsToConceal.length > 0) {
     legacyRefsByDeclaration.set(
       canonical,

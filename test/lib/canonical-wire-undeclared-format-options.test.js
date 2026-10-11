@@ -18,14 +18,14 @@ const AAO = 'https://creative.adcontextprotocol.org/';
 const PRICING_OPTIONS = [{ pricing_option_id: 'po_cpm', pricing_model: 'cpm', currency: 'USD', fixed_price: 5 }];
 const ACCOUNT = { account_id: 'acct-canonical' };
 
-async function canonicalSeller(products, config = {}, { cacheScope, conditional = false } = {}) {
+async function canonicalSeller(products, config = {}, { cacheScope, conditional = false, version = '3.2.1' } = {}) {
   const captured = { productReads: [] };
   const server = new McpServer({ name: 'canonical-seller', version: '1.0.0' });
   server.registerTool('get_adcp_capabilities', { inputSchema: {} }, async () => {
     const capabilities = {
-      adcp: { major_versions: [3], supported_versions: ['3.2.1'] },
+      adcp: { major_versions: [3], supported_versions: [version] },
       supported_protocols: ['media_buy'],
-      media_buy: { features: { canonical_creatives: true } },
+      media_buy: { features: { canonical_creatives: !version.startsWith('3.0') } },
     };
     return { content: [{ type: 'text', text: '{}' }], structuredContent: capabilities };
   });
@@ -111,6 +111,23 @@ function mediaBuy(pkg) {
 }
 
 describe('canonical wire: format options the seller did not declare', () => {
+  test("legacy wire still downgrades selected options to the seller's format_ids", async () => {
+    const formatId = { agent_url: AAO, id: 'display_300x250_image' };
+    const seller = await canonicalSeller([legacyOnlyProduct('legacy-shaped', [formatId])], {}, { version: '3.0.25' });
+    try {
+      const products = await seller.agent.getProducts({ buying_mode: 'brief', brief: 'Display', account: ACCOUNT });
+      const product = products.data.products[0];
+      const selected = packageRefsForFormatOptions(product, [product.format_options[0].format_option_id]);
+      await seller.agent.createMediaBuy(mediaBuy({ product_id: product.product_id, ...selected }));
+      const pkg = seller.captured.create.packages[0];
+      assert.deepStrictEqual(pkg.format_ids, [formatId]);
+      assert.strictEqual(pkg.format_option_refs, undefined);
+      assert.strictEqual(pkg.format_kind, undefined);
+    } finally {
+      await seller.close();
+    }
+  });
+
   for (const cacheScope of [undefined, 'account']) {
     test(`preserves seller origin with a product cache (${cacheScope ?? 'uncacheable response'})`, async () => {
       const seller = await canonicalSeller(
@@ -188,7 +205,12 @@ describe('canonical wire: format options the seller did not declare', () => {
       products[0] = {
         ...products[0],
         format_options: [
-          { format_option_id: option.format_option_id, format_kind: option.format_kind, params: option.params },
+          {
+            format_option_id: option.format_option_id,
+            format_kind: option.format_kind,
+            params: option.params,
+            v1_format_ref: [{ agent_url: AAO, id: 'display_300x250_image' }],
+          },
         ],
       };
       delete products[0].format_ids;
@@ -228,6 +250,72 @@ describe('canonical wire: format options the seller did not declare', () => {
         assert.strictEqual(wireCreative.format_id, undefined);
         assert.strictEqual(wireCreative.format_option_ref, undefined);
       }
+    } finally {
+      await seller.close();
+    }
+  });
+
+  test('undeclared custom formats fail before dispatch instead of losing schema identity', async () => {
+    const seller = await canonicalSeller(
+      [legacyOnlyProduct('custom-product', [{ agent_url: 'https://seller.example', id: 'takeover' }])],
+      {
+        legacyFormatConverter: () => ({
+          format_option_id: 'takeover',
+          format_kind: 'custom',
+          format_shape: 'homepage_takeover',
+          format_schema: {
+            uri: 'https://seller.example/formats/takeover.json',
+            digest: `sha256:${'a'.repeat(64)}`,
+          },
+          params: {},
+        }),
+      }
+    );
+    try {
+      const products = await seller.agent.getProducts({ buying_mode: 'brief', brief: 'Takeover', account: ACCOUNT });
+      const product = products.data.products[0];
+      const selected = packageRefsForFormatOptions(product, ['takeover']);
+      const isProjectionError = error => error.code === 'ADCP_CREATIVE_FORMAT_PROJECTION_FAILED';
+      await assert.rejects(
+        seller.agent.createMediaBuy(mediaBuy({ product_id: product.product_id, ...selected })),
+        isProjectionError
+      );
+      await assert.rejects(
+        seller.agent.syncCreatives({
+          account: ACCOUNT,
+          creatives: [
+            {
+              creative_id: 'custom-creative',
+              name: 'Takeover',
+              format_kind: 'custom',
+              format_option_ref: selected.format_option_refs[0],
+              assets: {},
+            },
+          ],
+        }),
+        isProjectionError
+      );
+      assert.strictEqual(seller.captured.create, undefined);
+      assert.strictEqual(seller.captured.sync, undefined);
+    } finally {
+      await seller.close();
+    }
+  });
+
+  test("discovery under one account does not rewrite another account's format selection", async () => {
+    const seller = await canonicalSeller([
+      legacyOnlyProduct('legacy-shaped', [{ agent_url: AAO, id: 'display_300x250_image' }]),
+    ]);
+    try {
+      const products = await seller.agent.getProducts({ buying_mode: 'brief', brief: 'Display', account: ACCOUNT });
+      const product = products.data.products[0];
+      const selected = packageRefsForFormatOptions(product, [product.format_options[0].format_option_id]);
+      await seller.agent.createMediaBuy({
+        ...mediaBuy({ product_id: product.product_id, ...selected }),
+        account: { account_id: 'another-account' },
+      });
+      assert.deepStrictEqual(seller.captured.create.packages[0].format_option_refs, selected.format_option_refs);
+      assert.strictEqual(seller.captured.create.packages[0].format_kind, undefined);
     } finally {
       await seller.close();
     }
@@ -362,7 +450,14 @@ describe('canonical wire: format options the seller did not declare', () => {
         product_id: 'canonical-product',
         name: 'Canonical product',
         description: 'Seller-declared canonical options',
-        format_options: [{ format_option_id: declaredId, format_kind: 'image', params: { width: 300, height: 250 } }],
+        format_options: [
+          {
+            format_option_id: declaredId,
+            format_kind: 'image',
+            params: { width: 300, height: 250 },
+            v1_format_ref: [{ agent_url: AAO, id: 'display_300x250_image' }],
+          },
+        ],
         pricing_options: PRICING_OPTIONS,
       },
     ]);

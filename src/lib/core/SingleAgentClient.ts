@@ -2687,11 +2687,15 @@ export class SingleAgentClient {
           productId: product.product_id,
           optionRef: ref,
           refs,
-          ...(declared === false && typeof option.format_kind === 'string'
+          ...(declared === false
             ? {
                 undeclaredSelector: {
-                  format_kind: option.format_kind,
+                  format_kind: typeof option.format_kind === 'string' ? option.format_kind : '',
                   ...(option.params !== undefined && { params: structuredClone(option.params) }),
+                  ...((typeof option.format_kind !== 'string' ||
+                    option.format_kind === 'custom' ||
+                    option.format_shape !== undefined ||
+                    option.format_schema !== undefined) && { unrepresentable: true as const }),
                 },
               }
             : {}),

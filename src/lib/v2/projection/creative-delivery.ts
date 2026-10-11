@@ -1578,6 +1578,8 @@ export function projectSyncCreativesForDelivery<T>(
 export interface UndeclaredFormatOptionSelector {
   format_kind: string;
   params?: unknown;
+  /** Custom/schema-backed formats cannot retain identity in a direct selector. */
+  unrepresentable?: true;
 }
 
 /**
@@ -1592,11 +1594,21 @@ export type UndeclaredFormatOptionLookup = (
 function stripUndeclaredCreativeOptionRef(
   creativeValue: unknown,
   productId: string | undefined,
+  operation: string,
   lookup: UndeclaredFormatOptionLookup
 ): unknown {
   const creative = record(creativeValue);
   const ref = creative ? optionReference(creative.format_option_ref) : undefined;
-  if (!creative || !ref || !lookup(ref, productId)) return creativeValue;
+  if (!creative || !ref) return creativeValue;
+  const selector = lookup(ref, productId);
+  if (!selector) return creativeValue;
+  if (selector.unrepresentable || creative.format_kind === 'custom') {
+    throw new CreativeFormatProjectionError(
+      operation,
+      typeof creative.creative_id === 'string' ? creative.creative_id : '(unknown)',
+      'the seller did not declare this format option and its schema identity cannot be expressed without a seller-declared format_option_ref'
+    );
+  }
   const next: Record<string, unknown> = { ...creative };
   delete next.format_option_ref;
   return next;
@@ -1616,6 +1628,16 @@ function directSelectorForUndeclaredOptions(
   const productId = typeof pkg.product_id === 'string' ? pkg.product_id : undefined;
   const selectors = refs.map(ref => lookup(ref, productId));
   if (!selectors.some(selector => selector !== undefined)) return pkg;
+  if (
+    refs.length !== (pkg.format_option_refs as unknown[]).length ||
+    selectors.some(selector => selector?.unrepresentable)
+  ) {
+    throw new CreativeFormatProjectionError(
+      operation,
+      '(package selector)',
+      'the selected undeclared format options cannot be expressed as a direct selector; custom formats require a seller-declared format option'
+    );
+  }
   const distinct = [
     ...new Map(
       selectors.map(selector => [
@@ -1665,7 +1687,9 @@ export function projectUndeclaredFormatOptionSelectors<T>(
       const productId = typeof pkg.product_id === 'string' ? pkg.product_id : undefined;
       let projected = directSelectorForUndeclaredOptions(pkg, operation, lookup);
       if (Array.isArray(pkg.creatives)) {
-        const creatives = pkg.creatives.map(creative => stripUndeclaredCreativeOptionRef(creative, productId, lookup));
+        const creatives = pkg.creatives.map(creative =>
+          stripUndeclaredCreativeOptionRef(creative, productId, operation, lookup)
+        );
         if (creatives.some((creative, index) => creative !== (pkg.creatives as unknown[])[index])) {
           projected = { ...projected, creatives };
         }
@@ -1676,7 +1700,7 @@ export function projectUndeclaredFormatOptionSelectors<T>(
   }
   if (Array.isArray(requestRecord.creatives)) {
     const creatives = requestRecord.creatives.map(creative =>
-      stripUndeclaredCreativeOptionRef(creative, undefined, lookup)
+      stripUndeclaredCreativeOptionRef(creative, undefined, operation, lookup)
     );
     if (creatives.some((creative, index) => creative !== (requestRecord.creatives as unknown[])[index])) {
       next.creatives = creatives;

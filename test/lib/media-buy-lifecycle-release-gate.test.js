@@ -597,6 +597,10 @@ for (const version of ['3.0.25', '3.1.18', '3.2.1']) {
         const [option] = listed.data.products[0].format_options;
         assert.equal(createWire.packages[0].format_kind, option.format_kind);
         assert.deepEqual(createWire.packages[0].params, option.params);
+      } else {
+        // This 3.0 intent selects no format; keep the wire selector absent.
+        assert.equal(createWire.packages[0].format_ids, undefined);
+        assert.equal(createWire.packages[0].format_kind, undefined);
       }
     });
   });
