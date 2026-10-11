@@ -74,16 +74,16 @@ const FALLBACK_CALLER_AGENT_URL = 'https://e2e-orchestrator.adcontextprotocol.or
  * precedence internally.
  */
 const FIXTURE_AWARE_ENRICHERS = new Set<string>([
-  'create_media_buy', // merges discovery-derived product_id / pricing_option_id INTO fixture packages[0]
+  'create_media_buy', // preserves authored accounts and merges discovered identifiers INTO fixture packages[0]
   'comply_test_controller', // forces account.sandbox: true regardless of fixture
   'check_governance', // preserves the authored intent-vs-delivery request shape
-  'get_products', // preserves wholesale fixture fields while keeping resolved account scope authoritative
-  'get_signals', // preserves discovery fields while keeping async task account scope authoritative
-  'get_task_status', // preserves task filters while keeping resolved account scope authoritative
-  'list_tasks', // preserves reconciliation filters while keeping resolved account scope authoritative
-  'update_media_buy', // resolves account via resolveAccount(options) so sandbox routing matches create_media_buy
-  'get_media_buys', // resolves account via resolveAccount(options) so sandbox routing matches create_media_buy
-  'get_media_buy_delivery', // resolves account via resolveAccount(options) so sandbox routing matches create_media_buy
+  'get_products', // preserves discovery fields and authored account identities
+  'get_signals', // preserves discovery fields and authored account identities
+  'get_task_status', // preserves task filters and authored account identities
+  'list_tasks', // preserves reconciliation filters and authored account identities
+  'update_media_buy', // fills missing account identity and carries sandbox routing into authored natural keys
+  'get_media_buys', // fills missing account identity and carries sandbox routing into authored natural keys
+  'get_media_buy_delivery', // fills missing account identity and carries sandbox routing into authored natural keys
 ]);
 
 function hasUnresolvedContextReference(value: unknown): boolean {
@@ -162,26 +162,23 @@ function runClockMs(runnerVars: RunnerVariables | undefined): number {
 }
 
 function resolveMediaBuyAccount(fixtureAccount: unknown, contextAccount: unknown, options: TestOptions): unknown {
-  const resolvedAccount = contextAccount ?? resolveAccount(options);
-  // Preserve a fixture-authored natural-key operator: it identifies the
-  // buyer acting for the brand and is not interchangeable with brand.domain.
-  // A context account remains authoritative, while the harness still owns
-  // sandbox routing for fixture-authored natural keys.
-  if (
-    contextAccount === undefined &&
-    fixtureAccount !== null &&
-    typeof fixtureAccount === 'object' &&
-    !Array.isArray(fixtureAccount) &&
-    typeof (fixtureAccount as Record<string, unknown>).operator === 'string' &&
-    typeof (fixtureAccount as Record<string, unknown>).account_id !== 'string'
-  ) {
-    const sandbox = (resolvedAccount as { sandbox?: boolean }).sandbox;
+  // Authored identities win after placeholder resolution. Stable IDs must
+  // reach the seller unchanged; natural keys retain their complete identity
+  // while carrying over the context/harness sandbox routing.
+  if (hasAuthoredAccountIdentity(fixtureAccount)) {
+    // Keep missing tokens visible to the runner's unresolved-context guard,
+    // including deliberately malformed expect_error fixtures.
+    if (hasUnresolvedContextReference(fixtureAccount)) return fixtureAccount;
+    if (typeof fixtureAccount.account_id === 'string') return fixtureAccount;
+    const sandbox =
+      (contextAccount as { sandbox?: boolean } | undefined)?.sandbox ??
+      (resolveAccount(options) as { sandbox?: boolean }).sandbox;
     return {
-      ...(fixtureAccount as Record<string, unknown>),
+      ...fixtureAccount,
       ...(sandbox !== undefined && { sandbox }),
     };
   }
-  return resolvedAccount;
+  return contextAccount ?? resolveAccount(options);
 }
 
 function resolveDiscoveryAccount(
@@ -190,21 +187,11 @@ function resolveDiscoveryAccount(
   contextAccount: unknown,
   options: TestOptions
 ): unknown {
-  if (
-    ACCOUNT_FREE_DISCOVERY_TASKS.has(task) &&
-    contextAccount === undefined &&
-    hasUnresolvedContextReference(fixtureAccount)
-  )
-    return undefined;
+  // Discovery keeps its existing unresolved-reference fallback (#2654),
+  // and must not invent an unprovisioned account when context is absent.
+  if (ACCOUNT_FREE_DISCOVERY_TASKS.has(task) && hasUnresolvedContextReference(fixtureAccount)) return contextAccount;
   if (ACCOUNT_FREE_DISCOVERY_TASKS.has(task) && fixtureAccount === undefined && contextAccount === undefined)
     return undefined;
-  if (
-    contextAccount === undefined &&
-    fixtureAccount &&
-    typeof fixtureAccount === 'object' &&
-    'account_id' in fixtureAccount
-  )
-    return fixtureAccount;
   return resolveMediaBuyAccount(fixtureAccount, contextAccount, options);
 }
 
@@ -540,10 +527,9 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
   update_media_buy(step, context, options) {
     // Fixture-aware: spread the storyboard's sample_request first so hand-authored
     // intent (targeting_overlay swaps, creative assignments, pause/resume/cancel)
-    // is preserved verbatim. Account resolution matches create_media_buy: context
-    // and opaque harness scope remain authoritative, while an authored natural-key
-    // operator is retained and only sandbox routing is normalized. Otherwise an
-    // update can silently land in a different partition from the create/read chain.
+    // is preserved verbatim. Account resolution matches create_media_buy: authored
+    // identities win, natural keys carry over sandbox routing, and context/harness
+    // scope fills in only when an identity is not authored.
     // Envelope fields are dropped from the local spread; the outer enrichRequest
     // re-injects them with `runnerVars` so mustache substitutions expand.
     const fixtureFields = step.sample_request
@@ -581,8 +567,8 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
 
   get_media_buys(step, context, options) {
     // Spread fixture fields so storyboards can author filters, status, pagination, etc.
-    // Account resolution matches create_media_buy: trusted context wins, while a
-    // fixture-authored natural key retains its operator. Envelope fields are dropped
+    // Account resolution matches create_media_buy: authored identities win, while
+    // context/harness scope fills missing identities. Envelope fields are dropped
     // from the local spread so the outer enrichRequest re-injects them with `runnerVars`
     // (mustache substitutions expand against the runner's webhook base).
     const fixtureFields = step.sample_request
@@ -1142,8 +1128,8 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
 
   comply_test_controller(step, context, options) {
     // The test controller requires account.sandbox: true to be set.
-    // Async directives and media-buy state simulations follow their
-    // operation's trusted context scope.
+    // Async directives and media-buy state simulations use the same account
+    // resolution as their operation, including authored identity precedence.
     // seed_account uses the authorized caller, not the account being created.
     // Other scenarios honor an authored ID or operator before falling back
     // to context or harness scope. The run brand invariant still applies.

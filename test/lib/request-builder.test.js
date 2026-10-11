@@ -1233,28 +1233,25 @@ describe('Request Builder', () => {
       assert.deepStrictEqual(result.media_buy_ids, ['buy-42']);
     });
 
-    test('always includes account from harness — fixture raw account cannot override (#1487)', () => {
-      // Regression guard: fixture-authored account without sandbox:true must not win
-      // over the harness-resolved account. FIXTURE_AWARE_ENRICHERS path keeps the
-      // harness account authoritative so namespace routing matches create_media_buy.
-      const fixtureAccount = { account_id: 'prod-acct', sandbox: false };
+    test('uses the harness account when the fixture has no account identity', () => {
+      const fixtureAccount = { sandbox: false };
       const result = buildRequest(
         step('get_media_buys', { sample_request: { account: fixtureAccount } }),
         {},
         DEFAULT_OPTIONS
       );
       assert.ok(result.account, 'account must be present');
-      assert.notDeepStrictEqual(
-        result.account,
-        fixtureAccount,
-        'harness-resolved account must win over fixture raw account'
-      );
+      assert.deepStrictEqual(result.account, {
+        brand: DEFAULT_OPTIONS.brand,
+        operator: DEFAULT_OPTIONS.brand.domain,
+        sandbox: undefined,
+      });
     });
 
-    test('uses context.account when set, ignoring fixture account (#1487)', () => {
+    test('uses context.account when the fixture omits an account (#1487)', () => {
       const contextAccount = { account_id: 'sandbox-acct-123', sandbox: true };
       const result = buildRequest(
-        step('get_media_buys', { sample_request: { account: { account_id: 'prod-acct' } } }),
+        step('get_media_buys', { sample_request: {} }),
         { media_buy_id: 'buy-7', account: contextAccount },
         DEFAULT_OPTIONS
       );
@@ -1295,26 +1292,25 @@ describe('Request Builder', () => {
       assert.deepStrictEqual(result.media_buy_ids, ['buy-99']);
     });
 
-    test('get_media_buy_delivery — harness account wins over fixture raw account (#1487)', () => {
-      // Mirror of get_media_buys regression guard — same FIXTURE_AWARE fix applies.
-      const fixtureAccount = { account_id: 'prod-acct', sandbox: false };
+    test('get_media_buy_delivery uses the harness account when the fixture has no account identity', () => {
+      const fixtureAccount = { sandbox: false };
       const result = buildRequest(
         step('get_media_buy_delivery', { sample_request: { account: fixtureAccount } }),
         {},
         DEFAULT_OPTIONS
       );
       assert.ok(result.account, 'account must be present');
-      assert.notDeepStrictEqual(
-        result.account,
-        fixtureAccount,
-        'harness-resolved account must win over fixture raw account'
-      );
+      assert.deepStrictEqual(result.account, {
+        brand: DEFAULT_OPTIONS.brand,
+        operator: DEFAULT_OPTIONS.brand.domain,
+        sandbox: undefined,
+      });
     });
 
-    test('get_media_buy_delivery — uses context.account when set, ignoring fixture account (#1487)', () => {
+    test('get_media_buy_delivery uses context.account when the fixture omits an account (#1487)', () => {
       const contextAccount = { account_id: 'sandbox-acct-456', sandbox: true };
       const result = buildRequest(
-        step('get_media_buy_delivery', { sample_request: { account: { account_id: 'prod-acct' } } }),
+        step('get_media_buy_delivery', { sample_request: {} }),
         { media_buy_id: 'buy-11', account: contextAccount },
         DEFAULT_OPTIONS
       );
@@ -1372,13 +1368,8 @@ describe('Request Builder', () => {
       assert.strictEqual(result.idempotency_key, 'fixture-key');
     });
 
-    test('harness account wins over fixture account so update writes match create namespace (#1505)', () => {
-      // Regression: before this fix, update_media_buy was NOT in
-      // FIXTURE_AWARE_ENRICHERS, so the generic merge let the storyboard's
-      // raw account override the harness-resolved one. That routed update
-      // writes to a different partition than create, which surfaced as
-      // stale targeting_overlay on the subsequent get_media_buys.
-      const fixtureAccount = { account_id: 'prod-acct', sandbox: false };
+    test('uses the harness account when the update fixture has no account identity', () => {
+      const fixtureAccount = { sandbox: false };
       const result = buildRequest(
         step('update_media_buy', {
           sample_request: { account: fixtureAccount, media_buy_id: 'buy-7' },
@@ -1387,18 +1378,18 @@ describe('Request Builder', () => {
         DEFAULT_OPTIONS
       );
       assert.ok(result.account, 'account must be present');
-      assert.notDeepStrictEqual(
-        result.account,
-        fixtureAccount,
-        'harness-resolved account must win over fixture raw account'
-      );
+      assert.deepStrictEqual(result.account, {
+        brand: DEFAULT_OPTIONS.brand,
+        operator: DEFAULT_OPTIONS.brand.domain,
+        sandbox: undefined,
+      });
     });
 
-    test('uses context.account when set so create→update→get all share namespace (#1505)', () => {
+    test('uses context.account when the update fixture omits an account (#1505)', () => {
       const contextAccount = { account_id: 'sandbox-acct-1', sandbox: true };
       const result = buildRequest(
         step('update_media_buy', {
-          sample_request: { account: { account_id: 'prod-acct' }, media_buy_id: 'buy-7' },
+          sample_request: { media_buy_id: 'buy-7' },
         }),
         { account: contextAccount, media_buy_id: 'buy-7' },
         DEFAULT_OPTIONS
@@ -1449,7 +1440,7 @@ describe('Request Builder', () => {
         },
         DEFAULT_OPTIONS
       );
-      // account: present, harness-resolved (matches context override rule from #1505)
+      // account: the authored natural key remains present on the wire.
       assert.ok(result.account, 'account must be present on the wire');
       // idempotency_key: resolved from `$generate:` placeholder to a real UUID v4
       assert.ok(result.idempotency_key, 'idempotency_key must be present on the wire');
