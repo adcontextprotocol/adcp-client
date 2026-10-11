@@ -7567,7 +7567,14 @@ export class SingleAgentClient {
     if (resolved === 'unknown' && canonicalRequiredByBuyerPin) {
       // Older SDKs wrote only property maps to shared backends. Rediscover
       // once before refusing a referenced schema whose document was lost.
-      if (canRediscover && !usesScopedFetch && this.capabilitiesFromSharedCache && !document) {
+      if (
+        canRediscover &&
+        !usesScopedFetch &&
+        this.normalizedAgent.protocol === 'mcp' &&
+        this.capabilitiesFromSharedCache &&
+        toolSchemas?.has(taskType) &&
+        !toolInputSchemasByProperties.has(toolSchemas)
+      ) {
         await this.invalidateDiscoveryCache(options);
         return this.resolveCreativeWireMode(taskType, options, false);
       }

@@ -343,6 +343,25 @@ describe('creative schema local references', () => {
     assert.equal(await second.resolveCreativeFormatWireMode('sync_creatives'), 'legacy');
   });
 
+  test('a missing tool does not invalidate modern shared evidence or rediscover', async () => {
+    const cache = createInMemoryAgentDiscoveryCache();
+    const config = { discoveryCache: { cache, authIdentity: 'missing-tool-cache' } };
+    let deletes = 0;
+    const remove = cache.delete;
+    cache.delete = key => {
+      deletes++;
+      remove(key);
+    };
+    const first = new SingleAgentClient(AGENT, config);
+    stubDiscovery(first, {});
+    first.getAgentInfo = async () => ({ tools: [{ name: 'get_adcp_capabilities', inputSchema: { properties: {} } }] });
+    await first.getCapabilities();
+    const second = new SingleAgentClient(AGENT, config);
+    stubDiscovery(second, {}, () => assert.fail('a missing tool is not lost schema evidence'));
+    await assert.rejects(second.resolveCreativeFormatWireMode('sync_creatives'), CreativeFormatCapabilityError);
+    assert.equal(deletes, 0);
+  });
+
   test('older shared property-only entries rediscover local-reference evidence once', async () => {
     const cache = createInMemoryAgentDiscoveryCache();
     const config = { discoveryCache: { cache, authIdentity: 'older-sdk-cache' } };
