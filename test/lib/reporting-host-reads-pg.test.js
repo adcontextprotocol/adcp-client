@@ -94,6 +94,78 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
     assert.equal((await read()).cursor_seq, '1');
   });
 
+  for (const scope of ['account', 'deployment']) {
+    for (const coldStart of [false, true]) {
+      test(`${scope === 'account' ? 'an' : 'a'} ${scope} feed rejects a prune between its horizon and page reads (${coldStart ? 'initial horizon' : 'saved cursor'})`, async () => {
+        const { Pool } = require('pg');
+        const suffix = `${scope}_${coldStart ? 'cold' : 'warm'}`;
+        const isolatedSchema = `${schema}_${suffix}`;
+        await bootstrapPool.query(`CREATE SCHEMA "${isolatedSchema}"`);
+        const isolatedPool = new Pool({
+          connectionString: DATABASE_URL,
+          options: `-c search_path="${isolatedSchema}"`,
+        });
+        try {
+          await isolatedPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+          await isolatedPool.query(ledger.REPORTING_LEDGER_CHANGES_MIGRATION);
+          const realStore = new ledger.PostgresReportingLedgerStore(isolatedPool, {
+            acknowledgeIsolatedDatabase: true,
+            changeFeed: true,
+          });
+          const account = `acct_horizon_${suffix}`;
+          const position = scope === 'account' ? { account_id: account } : {};
+          const savedCursor = (await realStore.changesAfter(position)).cursor;
+          const old = await createRowStorageFixture({ store: realStore, suffix: `old_${suffix}`, accountId: account });
+          const revisionId = `rrev_horizon_${suffix}`;
+          await realStore.commitRevision(old.revision(revisionId, 1, rows), old.lease);
+          await isolatedPool.query(
+            "UPDATE adcp_reporting_changes SET recorded_at = clock_timestamp() - INTERVAL '40 days' WHERE obligation_id = $1",
+            [old.obligation.reporting_obligation_id]
+          );
+          const fresh = await createRowStorageFixture({
+            store: realStore,
+            suffix: `fresh_${suffix}`,
+            accountId: account,
+          });
+          let intercepted = false;
+          let deleted;
+          const observedStore = new ledger.PostgresReportingLedgerStore(
+            {
+              connect: isolatedPool.connect.bind(isolatedPool),
+              async query(sql, values) {
+                const result = await isolatedPool.query(sql, values);
+                if (!intercepted && sql.includes('SELECT pruned_through')) {
+                  intercepted = true;
+                  deleted = (await realStore.pruneChanges({ changeRetentionDays: 30 })).deleted;
+                }
+                return result;
+              },
+            },
+            { acknowledgeIsolatedDatabase: true, changeFeed: true }
+          );
+          await assert.rejects(
+            observedStore.changesAfter({ ...position, ...(coldStart ? {} : { cursor: savedCursor }) }),
+            ledger.ReportingChangeCursorExpiredError
+          );
+          assert.ok(intercepted, 'retention ran after the initial horizon result and before the page query');
+          assert.equal(deleted, 2, 'retention removed the old obligation and revision changes');
+          assert.ok(
+            await realStore.getRevisionMetadata(revisionId, account),
+            'the missed revision is still recoverable'
+          );
+          assert.deepEqual(
+            (await realStore.changesAfter({ account_id: account })).records.map(record => record.record_id),
+            [fresh.obligation.reporting_obligation_id],
+            'a fresh read starts after the new horizon and sees the surviving change'
+          );
+        } finally {
+          await isolatedPool.end();
+          await bootstrapPool.query(`DROP SCHEMA IF EXISTS "${isolatedSchema}" CASCADE`);
+        }
+      });
+    }
+  }
+
   test('reads the current revision and pages current revisions by period', async () => {
     const accountId = first.request.account.account_id;
     const current = await store.getCurrentRevision({

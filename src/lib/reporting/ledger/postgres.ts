@@ -1461,7 +1461,7 @@ ${managedDueArm}       )
     // The pruned horizon in this feed's own order. A supplied cursor below it
     // may have missed a pruned change and fails closed; a consumer starting
     // without a cursor begins at it, which is the oldest retained change.
-    const horizon =
+    const readHorizon = async (): Promise<{ seq: string; xid?: string }> =>
       account !== null
         ? {
             seq:
@@ -1479,20 +1479,21 @@ ${managedDueArm}       )
                  FROM adcp_reporting_change_horizon WHERE singleton`
             )
           ).rows[0] ?? { xid: '0', seq: '0' });
-    if (cursor) {
+    const assertRetained = (position: { seq: string; xid?: string }, horizon: { seq: string; xid?: string }) => {
       const behind =
         account !== null
-          ? BigInt(horizon.seq) > BigInt(cursor.seq)
-          : BigInt((horizon as { xid: string }).xid) > BigInt(cursor.xid!) ||
-            (BigInt((horizon as { xid: string }).xid) === BigInt(cursor.xid!) &&
-              BigInt(horizon.seq) > BigInt(cursor.seq));
+          ? BigInt(horizon.seq) > BigInt(position.seq)
+          : BigInt(horizon.xid!) > BigInt(position.xid!) ||
+            (BigInt(horizon.xid!) === BigInt(position.xid!) && BigInt(horizon.seq) > BigInt(position.seq));
       if (behind) throw new ReportingChangeCursorExpiredError();
-    }
+    };
+    const horizon = await readHorizon();
+    if (cursor) assertRetained(cursor, horizon);
     const position = cursor ?? {
       v: 1 as const,
       account,
       seq: horizon.seq,
-      ...(account === null ? { xid: (horizon as { xid: string }).xid } : {}),
+      ...(account === null ? { xid: horizon.xid! } : {}),
     };
     const kinds = input.kinds?.length ? [...input.kinds] : null;
     type ChangeRow = {
@@ -1524,6 +1525,9 @@ ${managedDueArm}       )
               ORDER BY adcp_reporting_changes.xid, adcp_reporting_changes.seq LIMIT $4`,
             [position.xid ?? '0', position.seq, kinds, limit]
           );
+    // Pruning can commit between the horizon and page queries. Check the
+    // original position again so a missing change cannot become a new cursor.
+    assertRetained(position, await readHorizon());
     const last = result.rows.at(-1);
     const next = last
       ? encodeReportingChangeCursorV1({ v: 1, account, seq: last.seq, ...(account === null ? { xid: last.xid } : {}) })

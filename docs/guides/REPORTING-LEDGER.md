@@ -862,6 +862,11 @@ setInterval(() => {
   without refreshing an unchanged checkpoint. Failed loads and idle ticks
   behind the deployment feed's transaction fence can still age out after
   `maxFeedHoldDays`.
+- Feed reads recheck the retention horizon before returning a page. If pruning
+  overtakes the starting position during a read, `runOnce()` rejects with
+  `ReportingChangeCursorExpiredError` without advancing its warehouse cursor.
+  The non-revision fallback preserves the first read's cursor, including on
+  initial startup. Resynchronize from current revisions before resuming.
 - Stop old sink workers before relying on these overlap guarantees. If an
   earlier overlapping run left a plan whose starting cursor differs from the
   committed cursor, the sink rejects it before loading. Reconcile the retained

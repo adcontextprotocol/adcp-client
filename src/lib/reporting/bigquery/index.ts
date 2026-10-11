@@ -258,7 +258,8 @@ export function createBigQueryReportingWarehouseSinkV1(
         if (page.records.length === 0) {
           // Drain changes that do not require a warehouse load, so idle
           // heartbeats cannot indefinitely hold an unread non-revision tail.
-          page = await options.store.changesAfter(position);
+          // Preserve the first read's retention horizon on cold start.
+          page = await options.store.changesAfter({ ...position, cursor: page.cursor });
           if (page.records.length === 0 && page.cursor === state.committed_cursor) {
             // Recover a lost acknowledgment without renewing an unchanged
             // hold. A deployment feed can look empty behind its xmin fence.

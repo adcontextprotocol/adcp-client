@@ -713,9 +713,9 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     );
   });
 
-  test('an xmin-blocked deployment backlog does not renew an idle retention hold', async t => {
+  async function isolatedWarehouseStore(t, suffix) {
     const { Pool } = require('pg');
-    const isolatedSchema = `${schema}_blocked_retention`;
+    const isolatedSchema = `${schema}_${suffix}`;
     await bootstrapPool.query(`CREATE SCHEMA "${isolatedSchema}"`);
     const pool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${isolatedSchema}"` });
     t.after(async () => {
@@ -732,6 +732,11 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
       changeFeed: true,
     });
     await store.readyRowStorage();
+    return { pool, store };
+  }
+
+  test('an xmin-blocked deployment backlog does not renew an idle retention hold', async t => {
+    const { pool, store } = await isolatedWarehouseStore(t, 'blocked_retention');
     const account = 'acct_blocked_retention';
     const bigquery = fakeBigQuery();
     const sink = newSink(bigquery, { name: 'blocked_retention', account_id: undefined, store, db: pool });
@@ -785,6 +790,134 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     } finally {
       await blocker.query('ROLLBACK');
       blocker.release();
+    }
+  });
+
+  test('the non-revision fallback cannot silently advance past a concurrently pruned revision', async t => {
+    const { pool, store: realStore } = await isolatedWarehouseStore(t, 'horizon_race');
+    const bigquery = fakeBigQuery();
+    let blocker;
+    let blockerOpen = false;
+    let armed = false;
+    let fallback = false;
+    let intercepted = false;
+    let deleted;
+    const observedStore = new ledger.PostgresReportingLedgerStore(
+      {
+        connect: pool.connect.bind(pool),
+        async query(sql, values) {
+          const result = await pool.query(sql, values);
+          if (armed && fallback && !intercepted && sql.includes('SELECT pruned_through')) {
+            intercepted = true;
+            await blocker.query('COMMIT');
+            blockerOpen = false;
+            deleted = (await realStore.pruneChanges({ changeRetentionDays: 30, maxFeedHoldDays: 7 })).deleted;
+          }
+          return result;
+        },
+      },
+      { acknowledgeIsolatedDatabase: true, rowStorage: true, changeFeed: true }
+    );
+    const sink = newSink(bigquery, {
+      name: 'horizon_race',
+      account_id: undefined,
+      db: pool,
+      store: wrapStore(observedStore, {
+        async changesAfter(input) {
+          fallback = !input.kinds;
+          return observedStore.changesAfter(input);
+        },
+      }),
+    });
+    try {
+      await sink.runOnce();
+      const before = (await pool.query('SELECT * FROM adcp_reporting_warehouse_sinks')).rows[0];
+      blocker = await pool.connect();
+      await blocker.query('BEGIN');
+      blockerOpen = true;
+      await blocker.query('SELECT pg_current_xact_id()');
+      const account = 'acct_horizon_old';
+      const isolated = await createRowStorageFixture({ store: realStore, suffix: 'horizon_old', accountId: account });
+      const revisionId = 'rrev_horizon_old';
+      await realStore.commitRevision(isolated.revision(revisionId, 1, rows.slice(0, 1)), isolated.lease);
+      await pool.query(
+        `UPDATE adcp_reporting_changes SET recorded_at = clock_timestamp() - INTERVAL '40 days'
+          WHERE obligation_id = $1`,
+        [isolated.obligation.reporting_obligation_id]
+      );
+      await createRowStorageFixture({ store: realStore, suffix: 'horizon_fresh', accountId: 'acct_horizon_fresh' });
+      await pool.query(`UPDATE adcp_reporting_feed_consumers SET updated_at = clock_timestamp() - INTERVAL '8 days'`);
+      assert.deepEqual((await realStore.changesAfter({ cursor: before.committed_cursor })).records, []);
+      assert.ok(
+        (await realStore.changesAfter({ account_id: account })).records.some(record => record.kind === 'revision')
+      );
+      armed = true;
+      await assert.rejects(sink.runOnce(), ledger.ReportingChangeCursorExpiredError);
+      assert.equal(intercepted, true);
+      assert.equal(deleted, 2);
+      assert.ok(await realStore.getRevisionMetadata(revisionId, account));
+      assert.deepEqual((await pool.query('SELECT * FROM adcp_reporting_warehouse_sinks')).rows[0], before);
+      assert.equal(bigquery.jobs.size, 0);
+      await assert.rejects(sink.runOnce(), ledger.ReportingChangeCursorExpiredError);
+    } finally {
+      if (blockerOpen) await blocker.query('ROLLBACK');
+      blocker?.release();
+    }
+  });
+
+  test('a cold-start fallback preserves the completed revision page cursor across pruning', async t => {
+    const { pool, store } = await isolatedWarehouseStore(t, 'cold_horizon_race');
+    const bigquery = fakeBigQuery();
+    let blocker;
+    let blockerOpen = false;
+    let intercepted = false;
+    let deleted;
+    try {
+      blocker = await pool.connect();
+      await blocker.query('BEGIN');
+      blockerOpen = true;
+      await blocker.query('SELECT pg_current_xact_id()');
+      const account = 'acct_cold_horizon_old';
+      const isolated = await createRowStorageFixture({ store, suffix: 'cold_horizon_old', accountId: account });
+      const revisionId = 'rrev_cold_horizon_old';
+      await store.commitRevision(isolated.revision(revisionId, 1, rows.slice(0, 1)), isolated.lease);
+      await pool.query(
+        `UPDATE adcp_reporting_changes SET recorded_at = clock_timestamp() - INTERVAL '40 days'
+          WHERE obligation_id = $1`,
+        [isolated.obligation.reporting_obligation_id]
+      );
+      await createRowStorageFixture({ store, suffix: 'cold_horizon_fresh', accountId: 'acct_cold_horizon_fresh' });
+      assert.ok((await store.changesAfter({ account_id: account })).records.some(record => record.kind === 'revision'));
+      const sink = newSink(bigquery, {
+        name: 'cold_horizon_race',
+        account_id: undefined,
+        db: pool,
+        store: wrapStore(store, {
+          async changesAfter(input) {
+            const page = await store.changesAfter(input);
+            if (!intercepted && input.kinds?.includes('revision')) {
+              intercepted = true;
+              assert.equal(input.cursor, undefined, 'the sink has no committed starting cursor');
+              assert.deepEqual(page.records, [], 'the open transaction hides the committed revision');
+              await blocker.query('COMMIT');
+              blockerOpen = false;
+              deleted = (await store.pruneChanges({ changeRetentionDays: 30 })).deleted;
+            }
+            return page;
+          },
+        }),
+      });
+      await assert.rejects(sink.runOnce(), ledger.ReportingChangeCursorExpiredError);
+      assert.equal(intercepted, true);
+      assert.equal(deleted, 2);
+      assert.ok(await store.getRevisionMetadata(revisionId, account));
+      const state = (await pool.query('SELECT * FROM adcp_reporting_warehouse_sinks')).rows[0];
+      assert.equal(state.committed_cursor, null);
+      assert.equal(state.planned_to_cursor, null);
+      assert.equal(bigquery.jobs.size, 0);
+    } finally {
+      if (blockerOpen) await blocker.query('ROLLBACK');
+      blocker?.release();
     }
   });
 
