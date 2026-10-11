@@ -27,6 +27,8 @@ export interface AgentDiscoveryEntry {
   capabilities?: AdcpCapabilities;
   /** `tools/list` input-schema properties keyed by tool name. */
   toolSchemas?: Record<string, Record<string, unknown>>;
+  /** Complete listed input schemas, including local reference targets; absent in older entries. Backends must allow space for both these documents and their property maps. */
+  toolInputSchemas?: Record<string, Record<string, unknown>>;
   /** Epoch milliseconds when this evidence was observed. */
   observedAt: number;
   /** Epoch milliseconds after which the entry must not be used. Enforced by the SDK on read. */

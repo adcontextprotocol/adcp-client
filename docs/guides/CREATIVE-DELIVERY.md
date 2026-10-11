@@ -135,6 +135,12 @@ tool is never reused. Unknown peers receive a legacy projection only when the
 selected product provides one unambiguous ref. Ambiguous or unavailable mappings throw
 `CreativeFormatProjectionError` before transport.
 
+Schema inspection follows local JSON Pointer `$ref` targets, including `$defs`,
+and retains the complete listed document through shared discovery-cache reuse.
+Unused definitions and annotations do not establish support. External references,
+named anchors, and dynamic references are not resolved; inspection never fetches
+schema URLs. Cycles and traversal limits cannot force a guessed wire mode.
+
 Before building creatives, ask the client which mode that write will use:
 
 ```ts

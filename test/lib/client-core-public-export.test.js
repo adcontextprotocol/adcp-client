@@ -36,6 +36,20 @@ function runColdProbe(moduleFormat) {
   const script = `
     ${isEsm ? '' : "const { createRequire } = require('node:module');"}
     const core = ${load('@adcp/sdk/client/core')};
+    const schemaProbeAgent = { id: 'schema-probe', name: 'Schema probe', agent_uri: 'https://seller.example/mcp', protocol: 'mcp' };
+    const schemaProbeClient = new core.SingleAgentClient(schemaProbeAgent, { wireAdcpVersion: '3.2' });
+    schemaProbeClient.getAgentInfo = async () => ({ tools: [
+      { name: 'get_adcp_capabilities', inputSchema: { properties: {} } },
+      { name: 'sync_creatives', inputSchema: {
+        properties: { creatives: { items: { $ref: '#/$defs/Creative' } } },
+        $defs: { Creative: { properties: { creative_id: {}, format_kind: {} } } }
+      } }
+    ] });
+    schemaProbeClient.ensureEndpointDiscovered = async () => schemaProbeAgent;
+    schemaProbeClient.executor.executeTask = async () => ({ success: true, data: { adcp: { major_versions: [3], supported_versions: ['3.1'] } } });
+    if (await schemaProbeClient.resolveCreativeFormatWireMode('sync_creatives') !== 'canonical') {
+      throw new Error('creative schema inspection lazy path failed');
+    }
     ${
       isEsm
         ? ''

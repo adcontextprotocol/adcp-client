@@ -329,6 +329,9 @@ type CapabilityProbeRequestOptions = Pick<
   'signal' | 'transport' | 'disableWebhook' | 'delegatedOperatorAuthorization'
 >;
 type ToolSchemaMap = Map<string, Record<string, unknown>>;
+// Complete documents share the property map's scope and lifetime, without
+// changing the property-map contract used by adaptive request filtering.
+const toolInputSchemasByProperties = new WeakMap<ToolSchemaMap, ToolSchemaMap>();
 type CapabilityDiscoveryContext = {
   toolSchemas?: ToolSchemaMap;
   capabilities?: AdcpCapabilities;
@@ -398,33 +401,6 @@ function selectA2AJsonRpcUrl(agentCard: any, protocolVersion: string, configured
     );
   }
   return resolved.toString();
-}
-
-function creativeSchemaSupport(value: unknown, depth = 0): CreativeFormatWireMode {
-  if (depth > 24 || value === null || typeof value !== 'object') return 'unknown';
-  if (Array.isArray(value)) {
-    let legacy = false;
-    for (const item of value) {
-      const support = creativeSchemaSupport(item, depth + 1);
-      if (support === 'canonical') return support;
-      if (support === 'legacy') legacy = true;
-    }
-    return legacy ? 'legacy' : 'unknown';
-  }
-  const object = value as Record<string, unknown>;
-  const properties = object.properties;
-  if (properties !== null && typeof properties === 'object' && !Array.isArray(properties)) {
-    const keys = properties as Record<string, unknown>;
-    if ('creative_id' in keys && 'format_kind' in keys) return 'canonical';
-    if ('creative_id' in keys && 'format_id' in keys) return 'legacy';
-  }
-  let legacy = false;
-  for (const child of Object.values(object)) {
-    const support = creativeSchemaSupport(child, depth + 1);
-    if (support === 'canonical') return support;
-    if (support === 'legacy') legacy = true;
-  }
-  return legacy ? 'legacy' : 'unknown';
 }
 
 function hasMediaBuyCreativeFormatData(request: unknown): boolean {
@@ -7555,6 +7531,14 @@ export class SingleAgentClient {
     taskType: 'sync_creatives' | 'create_media_buy' | 'update_media_buy',
     options?: ReadRequestOptions
   ): Promise<CreativeFormatWireMode> {
+    return this.resolveCreativeWireMode(taskType, options, true);
+  }
+
+  private async resolveCreativeWireMode(
+    taskType: 'sync_creatives' | 'create_media_buy' | 'update_media_buy',
+    options: ReadRequestOptions | undefined,
+    canRediscover: boolean
+  ): Promise<CreativeFormatWireMode> {
     const discoveryContext: CapabilityDiscoveryContext = {};
     const capabilities = await this.getCapabilities({
       ...options,
@@ -7568,7 +7552,10 @@ export class SingleAgentClient {
     // guarantees follow the release pin this client actually emits.
     const wireRelease = this.config.wireAdcpVersion ?? this.resolvedAdcpVersion;
     const declared = resolveCreativeFormatWireMode(capabilities, wireRelease);
-    const schema = creativeSchemaSupport(toolSchemas?.get(taskType));
+    const document = toolSchemas && toolInputSchemasByProperties.get(toolSchemas)?.get(taskType);
+    const { creativeSchemaSupport } = await import('./creative-schema-support');
+    throwIfAborted(options?.signal);
+    const schema = creativeSchemaSupport(document ?? { properties: toolSchemas?.get(taskType) });
     if (declared !== 'unknown' && schema !== 'unknown' && declared !== schema) {
       throw new CreativeFormatCapabilityError(
         `Seller capability and ${taskType} input schema disagree about canonical creative support`
@@ -7579,6 +7566,19 @@ export class SingleAgentClient {
     const canonicalRequiredByBuyerPin =
       release !== null && (Number(release[1]) > 3 || (Number(release[1]) === 3 && Number(release[2]) >= 2));
     if (resolved === 'unknown' && canonicalRequiredByBuyerPin) {
+      // Older SDKs wrote only property maps to shared backends. Rediscover
+      // once before refusing a referenced schema whose document was lost.
+      if (
+        canRediscover &&
+        !usesScopedFetch &&
+        this.normalizedAgent.protocol === 'mcp' &&
+        this.capabilitiesFromSharedCache &&
+        toolSchemas?.has(taskType) &&
+        !toolInputSchemasByProperties.has(toolSchemas)
+      ) {
+        await this.invalidateDiscoveryCache(options);
+        return this.resolveCreativeWireMode(taskType, options, false);
+      }
       throw new CreativeFormatCapabilityError(
         `Cannot prove which AdCP release the seller serves for ${taskType}; a 3.2+ client will not guess a legacy creative wire shape`
       );
@@ -9734,6 +9734,9 @@ export class SingleAgentClient {
     if (toolSchemas !== undefined && !isToolSchemaRecord(toolSchemas)) {
       return undefined;
     }
+    if (entry.toolInputSchemas !== undefined && (!toolSchemas || !isToolSchemaRecord(entry.toolInputSchemas))) {
+      return undefined;
+    }
     let installed: AdcpCapabilities;
     let schemas: Map<string, Record<string, unknown>> | undefined;
     try {
@@ -9741,6 +9744,12 @@ export class SingleAgentClient {
       schemas = toolSchemas
         ? new Map(Object.entries(toolSchemas).map(([tool, properties]) => [tool, structuredClone(properties)]))
         : undefined;
+      if (schemas && entry.toolInputSchemas) {
+        toolInputSchemasByProperties.set(
+          schemas,
+          new Map(Object.entries(entry.toolInputSchemas).map(([tool, schema]) => [tool, structuredClone(schema)]))
+        );
+      }
     } catch {
       // A malformed entry from a custom backend is a miss, not a failed call.
       return undefined;
@@ -9775,11 +9784,13 @@ export class SingleAgentClient {
     // Make raw tool schemas available for field-level compatibility checks
     // (e.g. buying_mode on get_products). Scoped fetch keeps them in the
     // request-local discovery context; unscoped calls may share the cache.
-    const discoveredToolSchemas = new Map(
-      agentInfo.tools
-        .filter(t => t.inputSchema?.properties)
-        .map(t => [t.name, t.inputSchema!.properties as Record<string, unknown>])
+    const discoveredInputSchemas = new Map(
+      agentInfo.tools.filter(t => t.inputSchema).map(t => [t.name, t.inputSchema! as Record<string, unknown>])
     );
+    const discoveredToolSchemas = new Map(
+      [...discoveredInputSchemas].map(([name, schema]) => [name, (schema.properties ?? {}) as Record<string, unknown>])
+    );
+    toolInputSchemasByProperties.set(discoveredToolSchemas, discoveredInputSchemas);
     if (discoveryContext) discoveryContext.toolSchemas = discoveredToolSchemas;
     if (!usesScopedFetch && !superseded()) this.cachedToolSchemas = discoveredToolSchemas;
 
@@ -9850,6 +9861,7 @@ export class SingleAgentClient {
                 {
                   capabilities: structuredClone(capabilities),
                   toolSchemas: Object.fromEntries(discoveredToolSchemas),
+                  toolInputSchemas: Object.fromEntries(discoveredInputSchemas),
                 },
                 false,
                 startedAtEpoch
@@ -10378,7 +10390,7 @@ export class SingleAgentClient {
    */
   private async writeSharedDiscovery(
     options: ReadRequestOptions | undefined,
-    patch: Pick<AgentDiscoveryEntry, 'endpoint' | 'capabilities' | 'toolSchemas'>,
+    patch: Pick<AgentDiscoveryEntry, 'endpoint' | 'capabilities' | 'toolSchemas' | 'toolInputSchemas'>,
     replace = false,
     epoch = this.discoveryEpochSnapshot(options)
   ): Promise<AgentDiscoveryEntry | undefined> {
@@ -10387,7 +10399,11 @@ export class SingleAgentClient {
     // URL queries and fragments can carry credentials. Keep such endpoints
     // local, while still allowing their capabilities and schemas to be shared.
     if (patch.endpoint && !this.isDiscoverableEndpoint(patch.endpoint.agentUri)) {
-      patch = { capabilities: patch.capabilities, toolSchemas: patch.toolSchemas };
+      patch = {
+        capabilities: patch.capabilities,
+        toolSchemas: patch.toolSchemas,
+        toolInputSchemas: patch.toolInputSchemas,
+      };
       if (!patch.capabilities && !patch.toolSchemas) return undefined;
     }
     const config = this.config.discoveryCache!;
@@ -10435,10 +10451,18 @@ export class SingleAgentClient {
           const entry: AgentDiscoveryEntry = {
             ...(existing?.capabilities && { capabilities: existing.capabilities }),
             ...(existing?.toolSchemas && { toolSchemas: existing.toolSchemas }),
+            // Endpoint-only writes retain schema documents. Fresh tool evidence
+            // replaces them together, including clearing older full documents
+            // when the caller supplies only a property map.
+            ...(patch.toolSchemas === undefined &&
+              existing?.toolInputSchemas && {
+                toolInputSchemas: existing.toolInputSchemas,
+              }),
             ...(existing?.endpoint && { endpoint: existing.endpoint }),
             ...(patch.endpoint && { endpoint: { ...patch.endpoint, observedAt: now } }),
             ...(patch.capabilities && { capabilities: patch.capabilities }),
             ...(patch.toolSchemas && { toolSchemas: patch.toolSchemas }),
+            ...(patch.toolInputSchemas && { toolInputSchemas: patch.toolInputSchemas }),
             observedAt: restartsClock || !existing ? now : Math.min(existing.observedAt, now),
             expiresAt: restartsClock || !existing ? now + ttl : Math.min(existing.expiresAt, now + ttl),
           };
