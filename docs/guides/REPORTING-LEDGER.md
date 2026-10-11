@@ -381,6 +381,8 @@ await store.readyRowStorage();
   segment, never a raw account ID. Override `keyTemplate` with the placeholders
   in `REPORTING_ROW_KEY_PLACEHOLDERS`; templates must include
   `{content_sha256}` and `{chunk_index}`.
+  Enabling snapshot compaction additionally requires `{revision_key}` (see
+  [Compacting superseded snapshots](#compacting-superseded-snapshots-opt-in)).
 - An upload runs only while the obligation lease still covers
   `writeDeadlineMilliseconds` plus five seconds. A fenced write intent records
   every object the upload created, and the ledger commit closes the intent in
@@ -647,9 +649,17 @@ pass finishes. Chunks shared by byte-identical revisions survive until the last
 revision referencing them is compacted.
 
 Compaction records no change-feed row: the revision's metadata did not change,
-and a sink still catching up holds the revision back (above). With custom object
-key templates that omit `{revision_key}`, two revisions with identical content
-can name one object; the default template cannot collide.
+and a sink still catching up holds the revision back (above).
+
+Compaction requires every object row binding's `keyTemplate` to include
+`{revision_key}` (the default template does). Without it, two revisions with
+identical chunk content can name one object key, and a concurrent commit could
+adopt the existing object (a create-only write with identical bytes) at the
+moment compaction deletes it, leaving the new revision without its rows. The
+SDK fails closed: `createReliableReportingService` and
+`createPostgresReliableReportingProductionService` throw at construction when
+compaction is enabled and a binding's template omits `{revision_key}`, and
+`compactSupersededSnapshots` throws the same error before deleting anything.
 
 ### Core-only setup with row storage, change feed and retention
 
