@@ -463,10 +463,54 @@ describe('reporting snapshot compaction', { skip: !DATABASE_URL && 'PostgreSQL U
     await assert.rejects(() => compact({ maxFeedHoldDays: 0 }), RangeError);
   });
 
+  const unsafeTemplate = '{prefix}/{namespace_key}/{account_key}/{period_date}/{content_sha256}/{chunk_index}';
+  const withTemplate = keyTemplate =>
+    new ledger.PostgresReportingLedgerStore(pool, {
+      acknowledgeIsolatedDatabase: true,
+      rowStorage: {
+        bindings: {
+          objects: {
+            kind: 'object',
+            provider: 'filesystem',
+            location: { root: 'rows' },
+            prefix: 'guarded',
+            keyTemplate,
+          },
+        },
+        providers: { filesystem: ledger.createFilesystemReportingRowObjectProviderV1({ roots: { rows: root } }) },
+      },
+    });
+  const refusal = error =>
+    error instanceof ledger.ReportingRowStoreError &&
+    error.code === 'INVALID_INPUT' &&
+    /keyTemplate to include \{revision_key\}/.test(error.message);
+
+  describe('object key template guard', () => {
+    test('compactSupersededSnapshots refuses before deleting anything', async () => {
+      const { ids } = await buildChain(store, pool, [null, '3 hours', null]);
+      const unsafe = withTemplate(unsafeTemplate);
+      await assert.rejects(() => compact({}, unsafe), refusal);
+      assert.deepEqual(await states(ids), ['live', 'live', 'live']);
+      assert.throws(() => unsafe.assertCompactionSafeRowBindings(), refusal);
+    });
+
+    test('the default and explicit {revision_key} templates are accepted', async () => {
+      store.assertCompactionSafeRowBindings();
+      pgStore.assertCompactionSafeRowBindings();
+      const explicit = withTemplate(ledger.REPORTING_ROW_DEFAULT_KEY_TEMPLATE);
+      explicit.assertCompactionSafeRowBindings();
+      assert.deepEqual(await compact({ account_id: 'no-such-account' }, explicit), {
+        compacted: 0,
+        failed: [],
+        failures: [],
+      });
+    });
+  });
+
   describe('maintenance wiring', () => {
     let reporting;
 
-    function createService(maintenance) {
+    function createService(maintenance, target = store) {
       const source = require('../../dist/lib/reporting/source/index.js');
       const sourceOffering = structuredClone(source.redactedReportingSourceOfferingV1);
       sourceOffering.cadence = {
@@ -509,7 +553,7 @@ describe('reporting snapshot compaction', { skip: !DATABASE_URL && 'PostgreSQL U
         }),
       };
       return reporting.createReliableReportingService({
-        store,
+        store: target,
         adapters: { fixture: adapter },
         contact: { name: 'Reporting operations', email: 'reporting@example.com' },
         automatedRecoveryWindowSeconds: RECOVERY_SECONDS,
@@ -568,6 +612,13 @@ describe('reporting snapshot compaction', { skip: !DATABASE_URL && 'PostgreSQL U
       assert.throws(() => createService({ compaction: { enabled: false } }), TypeError);
       assert.throws(() => createService({ compaction: { enabled: true, limit: 0 } }), TypeError);
       assert.throws(() => createService({ compaction: true }), TypeError);
+    });
+
+    test('compaction refuses an unsafe key template at construction, and only when enabled', () => {
+      const unsafe = withTemplate(unsafeTemplate);
+      assert.throws(() => createService({ compaction: { enabled: true } }, unsafe), refusal);
+      assert.doesNotThrow(() => createService({ retention: { enabled: true } }, unsafe));
+      assert.doesNotThrow(() => createService({ compaction: { enabled: true } }));
     });
 
     test('a per-revision failure is reported as a partial failure', async () => {

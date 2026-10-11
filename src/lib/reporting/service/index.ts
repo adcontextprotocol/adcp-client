@@ -465,6 +465,11 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       }
     }
     maintenanceStore = candidate as typeof maintenanceStore;
+    if (maintenance.compaction) {
+      // Fail at construction, not on the first scheduled pass: key templates without
+      // {revision_key} let compaction delete an object a concurrent commit is adopting.
+      (candidate as { assertCompactionSafeRowBindings?: () => void }).assertCompactionSafeRowBindings?.();
+    }
     if (maintenance.changeFeed && maintenanceStore.changeFeedEnabled === false) {
       throw new TypeError(
         'maintenance.changeFeed requires the store to be built with changeFeed: true; otherwise pruning silently does nothing'
@@ -956,6 +961,8 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
     ...(options.rowStorage ? { rowStorage: options.rowStorage } : {}),
     ...(options.changeFeed ? { changeFeed: true } : {}),
   });
+  // Fail at construction, not on the first scheduled pass (see createReliableReportingService).
+  if (options.compaction) coreStore.assertCompactionSafeRowBindings();
   const managedStore = new PostgresReportingManagedDeliveryStore(options.db, {
     ...options.managedDelivery.store,
     statusRetentionDays: options.statusRetentionDays,

@@ -624,6 +624,15 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     );
   }
 
+  /**
+   * Throws `INVALID_INPUT` when any configured object row binding's key template omits
+   * `{revision_key}`, which makes snapshot compaction unsafe (see `compactSupersededSnapshots`).
+   * Called by `compactSupersededSnapshots` and by service construction when compaction is enabled.
+   */
+  assertCompactionSafeRowBindings(): void {
+    this.rowStorage.assertCompactionSafeKeyTemplates();
+  }
+
   /** Probe and register row storage when enabled. Safe to call repeatedly. */
   async readyRowStorage(): Promise<void> {
     if (this.rowStorageWrites) await this.rowStorage.ready();
@@ -1876,6 +1885,7 @@ ${managedDueArm}       )
     /** Secret-free cause per failed revision: a row-store code or the error class name. */
     failures: { reporting_obligation_id: string; reporting_revision_id: string; cause: string }[];
   }> {
+    this.assertCompactionSafeRowBindings();
     positiveInteger(input.statusRetentionDays, 'statusRetentionDays');
     positiveInteger(input.automatedRecoveryWindowSeconds, 'automatedRecoveryWindowSeconds');
     const limit = input.limit ?? 100;
