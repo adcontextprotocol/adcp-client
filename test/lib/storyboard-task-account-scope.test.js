@@ -69,7 +69,7 @@ test('media-buy seeding keeps the later list account scope with a synced natural
   const list = effectiveRequest('get_media_buys', { account: authoredAccount }, context);
 
   assert.deepStrictEqual(controller.account, { ...list.account, sandbox: true });
-  assert.deepStrictEqual(list.account, context.account);
+  assert.deepStrictEqual(list.account, authoredAccount);
 });
 
 test('Core revision controller and exact delivery read use the same authored account ID (#3044)', () => {
@@ -278,17 +278,17 @@ test('create_media_buy and get_task_status retain one authored natural account s
   assert.strictEqual(poll.task_id, 'task_async_media_buy_lifecycle_q3');
 });
 
-test('natural fixture preservation does not override trusted context or admit fixture account IDs', () => {
+test('authored natural keys and account IDs take precedence across the media-buy lifecycle (#3195)', () => {
   const trustedContextAccount = { account_id: 'account_resolved_by_framework' };
   const contextScoped = effectiveRequest('create_media_buy', { account: ACCOUNT }, { account: trustedContextAccount });
-  assert.deepStrictEqual(contextScoped.account, trustedContextAccount);
+  assert.deepStrictEqual(contextScoped.account, ACCOUNT);
 
   const proposalContextScoped = effectiveRequest(
     'create_media_buy',
     { account: ACCOUNT, proposal_id: 'proposal_context_scope', total_budget: 10_000 },
     { account: trustedContextAccount }
   );
-  assert.deepStrictEqual(proposalContextScoped.account, trustedContextAccount);
+  assert.deepStrictEqual(proposalContextScoped.account, ACCOUNT);
 
   const pollContextScoped = effectiveRequest(
     'get_task_status',
@@ -300,19 +300,15 @@ test('natural fixture preservation does not override trusted context or admit fi
     { account: { account_id: 'fixture_list_account' }, filters: { statuses: ['submitted'] } },
     { account: trustedContextAccount }
   );
-  assert.deepStrictEqual(pollContextScoped.account, trustedContextAccount);
-  assert.deepStrictEqual(listContextScoped.account, trustedContextAccount);
+  assert.deepStrictEqual(pollContextScoped.account, ACCOUNT);
+  assert.deepStrictEqual(listContextScoped.account, { account_id: 'fixture_list_account' });
 
   const fixtureOpaque = effectiveRequest(
     'create_media_buy',
     { account: { account_id: 'fixture_supplied_account' } },
     {}
   );
-  assert.deepStrictEqual(fixtureOpaque.account, {
-    brand: BRAND,
-    operator: BRAND.domain,
-    sandbox: true,
-  });
+  assert.deepStrictEqual(fixtureOpaque.account, { account_id: 'fixture_supplied_account' });
 
   const proposalNatural = effectiveRequest(
     'create_media_buy',
@@ -330,22 +326,14 @@ test('natural fixture preservation does not override trusted context or admit fi
     },
     {}
   );
-  assert.deepStrictEqual(proposalOpaque.account, {
-    brand: BRAND,
-    operator: BRAND.domain,
-    sandbox: true,
-  });
+  assert.deepStrictEqual(proposalOpaque.account, { account_id: 'fixture_supplied_proposal_account' });
 
   const pollOpaque = effectiveRequest(
     'get_task_status',
     { account: { account_id: 'fixture_poll_account' }, task_id: 'task_opaque_scope' },
     {}
   );
-  assert.deepStrictEqual(pollOpaque.account, {
-    brand: BRAND,
-    operator: BRAND.domain,
-    sandbox: true,
-  });
+  assert.deepStrictEqual(pollOpaque.account, { account_id: 'fixture_poll_account' });
 });
 
 test('get_products controller arm retains the operation natural account scope', () => {
@@ -368,7 +356,7 @@ test('get_products controller arm retains the operation natural account scope', 
   assert.deepStrictEqual(discovery.account, ACCOUNT);
 });
 
-test('async discovery operations and controller arms use trusted context scope', () => {
+test('async discovery operations and controller arms share authored account scope (#3195)', () => {
   const trustedContextAccount = { account_id: 'trusted_discovery_account' };
   const context = { account: trustedContextAccount };
   const productsController = effectiveRequest(
@@ -400,10 +388,10 @@ test('async discovery operations and controller arms use trusted context scope',
     context
   );
 
-  assert.deepStrictEqual(productsController.account, { ...trustedContextAccount, sandbox: true });
-  assert.deepStrictEqual(products.account, trustedContextAccount);
-  assert.deepStrictEqual(signalsController.account, { ...trustedContextAccount, sandbox: true });
-  assert.deepStrictEqual(signals.account, trustedContextAccount);
+  assert.deepStrictEqual(productsController.account, ACCOUNT);
+  assert.deepStrictEqual(products.account, ACCOUNT);
+  assert.deepStrictEqual(signalsController.account, ACCOUNT);
+  assert.deepStrictEqual(signals.account, ACCOUNT);
 
   const productsOpaque = effectiveRequest(
     'get_products',
