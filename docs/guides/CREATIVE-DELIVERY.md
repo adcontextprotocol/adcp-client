@@ -181,6 +181,16 @@ including polling, deferred, and webhook completions. A creative assigned to
 multiple packages downgrades only when every package resolves to the same
 legacy ref set.
 
+For a canonical seller whose product declares only legacy `format_ids`, those
+authored option refs name IDs minted locally by the SDK. After discovering the
+product with the same client, create/update writes send the equivalent
+`format_kind` + `params` selector and sync writes drop undeclared creative pins.
+Product-cache snapshots retain this seller-origin evidence privately. A selection
+that needs multiple direct selectors, or an undeclared custom format that needs
+its schema identity, fails with `ADCP_CREATIVE_FORMAT_PROJECTION_FAILED` before
+dispatch. Seller-declared option refs remain unchanged. Re-run `getProducts()`
+after restarting before writing selections derived from legacy-only products.
+
 After a process restart, re-run product and media-buy reads that carry enough
 selector context or configure the explicit canonical-to-legacy resolver below.
 An accountless write never consumes a tenant-scoped cached package route based

@@ -288,6 +288,7 @@ import {
   projectMediaBuyCreativesForDelivery,
   projectCreativeForDelivery,
   projectSyncCreativesForDelivery,
+  projectUndeclaredFormatOptionSelectors,
   resolveCreativeFormatWireMode,
   stripLegacyCreativeIdentity,
   type CanonicalCreateMediaBuyInput,
@@ -304,6 +305,7 @@ import {
   type CreativeFormatWireMode,
   type CreativeFormatSelectorContainer,
   type SyncCreativeFormatProjection,
+  type UndeclaredFormatOptionSelector,
 } from '../v2/projection/creative-delivery';
 import type { LegacyFormatConverter } from '../v2/projection/v1-to-v2';
 import {
@@ -314,6 +316,8 @@ import type { CanonicalFormatLegacyResolutionContext, CanonicalFormatLegacyResol
 import { toCanonicalOnlyResponse } from '../v2/projection/augment-response';
 import {
   legacyFormatRefsForDeclaration,
+  rememberSellerDeclaredFormatOption,
+  sellerDeclaredFormatOption,
   structuredCloneWithLegacyCreativeMetadata,
 } from '../v2/projection/legacy-metadata';
 import { isProjectionProductInput, type V1FormatId, type V1Product } from '../v2/projection/types';
@@ -548,6 +552,8 @@ type CanonicalLegacyRoute =
       productId: string;
       optionRef: CanonicalLegacyOptionRef;
       refs: readonly V1FormatId[];
+      /** Present when the seller's own product did not declare this option. */
+      undeclaredSelector?: UndeclaredFormatOptionSelector;
     }
   | {
       kind: 'package';
@@ -2646,10 +2652,11 @@ export class SingleAgentClient {
   private rememberCanonicalProductRoutes(
     products: readonly unknown[],
     account: unknown,
-    authoritativeProducts: readonly unknown[] = products
+    authoritativeProducts?: readonly unknown[]
   ): void {
-    this.invalidateCanonicalProductRoutes(authoritativeProducts, account);
+    this.invalidateCanonicalProductRoutes(authoritativeProducts ?? products, account);
     const accountScope = this.canonicalAccountScope(account);
+    const declaredOptions = authoritativeProducts ? this.sellerDeclaredFormatOptions(authoritativeProducts) : undefined;
     for (const value of products) {
       if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
       const product = value as Record<string, unknown>;
@@ -2668,15 +2675,103 @@ export class SingleAgentClient {
             : { scope: 'product' as const, format_option_id: option.format_option_id };
         const refs = legacyFormatRefsForDeclaration(option);
         if (refs.length === 0) continue;
+        // Cached canonical products carry the original seller evidence out of
+        // band; their SDK-minted ids are not new seller declarations.
+        const declared = declaredOptions
+          ? declaredOptions.get(product.product_id)?.some(declaredRef => this.sameCanonicalOptionRef(declaredRef, ref))
+          : sellerDeclaredFormatOption(option);
+        if (declared !== undefined) rememberSellerDeclaredFormatOption(option, declared);
         this.rememberCanonicalLegacyRoute(this.canonicalLegacyRouteKey(account, product.product_id, ref), {
           kind: 'product',
           accountScope,
           productId: product.product_id,
           optionRef: ref,
           refs,
+          ...(declared === false
+            ? {
+                undeclaredSelector: {
+                  format_kind: typeof option.format_kind === 'string' ? option.format_kind : '',
+                  ...(option.params !== undefined && { params: structuredClone(option.params) }),
+                  ...((typeof option.format_kind !== 'string' ||
+                    option.format_kind === 'custom' ||
+                    option.format_shape !== undefined ||
+                    option.format_schema !== undefined) && { unrepresentable: true as const }),
+                },
+              }
+            : {}),
         });
       }
     }
+  }
+
+  /**
+   * Option refs each product declared in the seller's own response. A product
+   * absent from the response yields no entry, so its options are treated as
+   * declared rather than guessed undeclared.
+   */
+  private sellerDeclaredFormatOptions(
+    authoritativeProducts: readonly unknown[]
+  ): Map<string, CanonicalLegacyOptionRef[]> {
+    const declared = new Map<string, CanonicalLegacyOptionRef[]>();
+    for (const value of authoritativeProducts) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      const product = value as Record<string, unknown>;
+      if (typeof product.product_id !== 'string') continue;
+      const refs: CanonicalLegacyOptionRef[] = [];
+      for (const optionValue of Array.isArray(product.format_options) ? product.format_options : []) {
+        if (!optionValue || typeof optionValue !== 'object' || Array.isArray(optionValue)) continue;
+        const option = optionValue as Record<string, unknown>;
+        if (typeof option.format_option_id !== 'string') continue;
+        refs.push(
+          typeof option.publisher_domain === 'string'
+            ? {
+                scope: 'publisher',
+                publisher_domain: option.publisher_domain,
+                format_option_id: option.format_option_id,
+              }
+            : { scope: 'product', format_option_id: option.format_option_id }
+        );
+      }
+      declared.set(product.product_id, refs);
+    }
+    return declared;
+  }
+
+  /**
+   * The direct selector for an option this client derived from the seller's
+   * legacy `format_ids`. Without a product id, every remembered route for the
+   * option must agree that the seller did not declare it.
+   */
+  private undeclaredFormatOptionSelector(
+    account: unknown,
+    ref: CanonicalLegacyOptionRef,
+    productId: string | undefined
+  ): UndeclaredFormatOptionSelector | undefined {
+    if (productId !== undefined) {
+      const route = this.routeForOption(account, productId, ref);
+      return route?.kind === 'product' ? route.undeclaredSelector : undefined;
+    }
+    const accountScope = this.canonicalAccountScope(account);
+    const routes = [...this.canonicalLegacyRoutes.values()].filter(
+      (route): route is Extract<CanonicalLegacyRoute, { kind: 'product' }> =>
+        route.kind === 'product' &&
+        (route.accountScope === accountScope || route.accountScope === 'none') &&
+        this.sameCanonicalOptionRef(route.optionRef, ref)
+    );
+    if (routes.length === 0 || routes.some(route => route.undeclaredSelector === undefined)) return undefined;
+    return routes[0]!.undeclaredSelector;
+  }
+
+  private projectUndeclaredFormatOptions<T>(
+    request: T,
+    operation: 'create_media_buy' | 'update_media_buy' | 'sync_creatives',
+    wireMode: CreativeFormatWireMode,
+    account: unknown
+  ): T {
+    if (wireMode !== 'canonical') return request;
+    return projectUndeclaredFormatOptionSelectors(request, operation, (ref, productId) =>
+      this.undeclaredFormatOptionSelector(account, ref, productId)
+    );
   }
 
   private rememberCanonicalProductRoutesForCompletion(
@@ -6879,7 +6974,7 @@ export class SingleAgentClient {
         if (hit) {
           throwIfAborted(effectiveOptions.signal);
           if (hit.success && hit.status === 'completed')
-            this.rememberCanonicalProductRoutes(hit.data.products ?? [], account, hit.data.products ?? []);
+            this.rememberCanonicalProductRoutes(hit.data.products ?? [], account);
           return attachMatch(
             await this.applyProductPropertyPolicy(
               hit,
@@ -6935,11 +7030,7 @@ export class SingleAgentClient {
               [SKIP_PRODUCT_CACHE]: true,
             } as CanonicalReadTaskOptions);
           }
-          this.rememberCanonicalProductRoutes(
-            cachedResult.data.products ?? [],
-            account,
-            cachedResult.data.products ?? []
-          );
+          this.rememberCanonicalProductRoutes(cachedResult.data.products ?? [], account);
         }
         if (cachedResult.submitted) {
           const submitted = cachedResult.submitted;
@@ -7179,12 +7270,17 @@ export class SingleAgentClient {
     const result = await this.executeAndHandle<CreateMediaBuyResponse>(
       'create_media_buy',
       'onCreateMediaBuyStatusChange',
-      projectMediaBuyCreativesForDelivery(
-        wireParams,
-        wireMode,
+      this.projectUndeclaredFormatOptions(
+        projectMediaBuyCreativesForDelivery(
+          wireParams,
+          wireMode,
+          'create_media_buy',
+          effectiveLegacyFormatConverter,
+          effectiveCanonicalFormatLegacyResolver
+        ),
         'create_media_buy',
-        effectiveLegacyFormatConverter,
-        effectiveCanonicalFormatLegacyResolver
+        wireMode,
+        wireParams.account
       ),
       inputHandler,
       taskOptions,
@@ -7285,12 +7381,17 @@ export class SingleAgentClient {
     const result = await this.executeAndHandle<UpdateMediaBuyResponse>(
       'update_media_buy',
       'onUpdateMediaBuyStatusChange',
-      projectMediaBuyCreativesForDelivery(
-        params,
-        wireMode,
+      this.projectUndeclaredFormatOptions(
+        projectMediaBuyCreativesForDelivery(
+          params,
+          wireMode,
+          'update_media_buy',
+          effectiveLegacyFormatConverter,
+          effectiveCanonicalFormatLegacyResolver
+        ),
         'update_media_buy',
-        effectiveLegacyFormatConverter,
-        effectiveCanonicalFormatLegacyResolver
+        wireMode,
+        params.account
       ),
       inputHandler,
       taskOptions,
@@ -7396,12 +7497,17 @@ export class SingleAgentClient {
             : []
         )
       : [];
-    const wireParams = projectSyncCreativesForDelivery(
-      params,
-      [...configuredSelectorContainers, ...assignmentPackageContainers],
+    const wireParams = this.projectUndeclaredFormatOptions(
+      projectSyncCreativesForDelivery(
+        params,
+        [...configuredSelectorContainers, ...assignmentPackageContainers],
+        wireMode,
+        effectiveLegacyFormatConverter,
+        effectiveCanonicalFormatLegacyResolver
+      ),
+      'sync_creatives',
       wireMode,
-      effectiveLegacyFormatConverter,
-      effectiveCanonicalFormatLegacyResolver
+      params.account
     );
     return this.executeAndHandle<SyncCreativesResponse>(
       'sync_creatives',

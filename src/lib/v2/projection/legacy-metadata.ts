@@ -2,9 +2,9 @@ import type { ProductFormatDeclaration } from '../../types/tools.generated';
 import type { V1FormatId, V2ProductFormatDeclaration } from './types';
 
 /**
- * SDK-private downgrade metadata held out-of-band. WeakMaps keep legacy
- * routing identifiers absent from canonical objects even under reflective
- * inspection while still allowing object-spread package authoring.
+ * SDK-private projection metadata held out-of-band. WeakMaps keep seller
+ * origin evidence and legacy routing identifiers absent from canonical objects
+ * even under reflective inspection while still allowing object-spread package authoring.
  */
 
 export type CanonicalFormatDeclaration = Omit<V2ProductFormatDeclaration, 'v1_format_ref'> & {
@@ -19,6 +19,16 @@ export type PackageSelectionMetadata = {
 
 const legacyRefsByDeclaration = new WeakMap<object, readonly V1FormatId[]>();
 const selectedOptionsByRefs = new WeakMap<object, readonly DeclarationWithMetadata[]>();
+const sellerDeclaredByDeclaration = new WeakMap<object, boolean>();
+
+/** Keep seller-origin evidence private while canonical products pass through the cache. */
+export function rememberSellerDeclaredFormatOption(declaration: object, declared: boolean): void {
+  sellerDeclaredByDeclaration.set(declaration, declared);
+}
+
+export function sellerDeclaredFormatOption(declaration: object): boolean | undefined {
+  return sellerDeclaredByDeclaration.get(declaration);
+}
 
 export function concealLegacyFormatRefs(
   declaration: ProductFormatDeclaration | V2ProductFormatDeclaration | CanonicalFormatDeclaration
@@ -26,6 +36,8 @@ export function concealLegacyFormatRefs(
   const { v1_format_ref: refs, ...canonical } = declaration as ProductFormatDeclaration;
   const existingHidden = legacyRefsByDeclaration.get(declaration as object);
   const refsToConceal = Array.isArray(existingHidden) && existingHidden.length > 0 ? existingHidden : refs;
+  const declared = sellerDeclaredByDeclaration.get(declaration as object);
+  if (declared !== undefined) sellerDeclaredByDeclaration.set(canonical, declared);
   if (Array.isArray(refsToConceal) && refsToConceal.length > 0) {
     legacyRefsByDeclaration.set(
       canonical,
@@ -64,6 +76,8 @@ export function transferLegacyCreativeMetadata(source: object, target: object): 
   if (refs) legacyRefsByDeclaration.set(target, refs);
   const selected = selectedOptionsByRefs.get(source);
   if (selected) selectedOptionsByRefs.set(target, selected);
+  const declared = sellerDeclaredByDeclaration.get(source);
+  if (declared !== undefined) sellerDeclaredByDeclaration.set(target, declared);
 }
 
 /**
@@ -79,6 +93,8 @@ export function structuredCloneWithLegacyCreativeMetadata<T>(value: T): T {
   const visited = new WeakMap<object, object>();
 
   const snapshotMetadata = (source: object, target: object): void => {
+    const declared = sellerDeclaredByDeclaration.get(source);
+    if (declared !== undefined) sellerDeclaredByDeclaration.set(target, declared);
     const refs = legacyRefsByDeclaration.get(source);
     if (refs) legacyRefsByDeclaration.set(target, structuredClone(refs));
     const selected = selectedOptionsByRefs.get(source);

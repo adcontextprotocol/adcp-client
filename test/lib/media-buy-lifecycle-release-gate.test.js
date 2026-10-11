@@ -589,8 +589,19 @@ for (const version of ['3.0.25', '3.1.18', '3.2.1']) {
       assert.equal(createWire.packages[0].impressions, 10_000);
       assert.equal(createWire.packages[0].pacing, 'even');
       assert.deepEqual(createWire.packages[0].targeting_overlay, {});
-      if (version.startsWith('3.0')) assert.equal(createWire.packages[0].format_option_refs, undefined);
-      else assert.deepEqual(createWire.packages[0].format_option_refs, purchase.format_option_refs);
+      // The seller's product declares only legacy format_ids, so it has no
+      // format_options[] entry for the SDK-minted option id. A canonical write
+      // addresses that option by its direct format_kind + params selector.
+      assert.equal(createWire.packages[0].format_option_refs, undefined);
+      if (!version.startsWith('3.0')) {
+        const [option] = listed.data.products[0].format_options;
+        assert.equal(createWire.packages[0].format_kind, option.format_kind);
+        assert.deepEqual(createWire.packages[0].params, option.params);
+      } else {
+        // This 3.0 intent selects no format; keep the wire selector absent.
+        assert.equal(createWire.packages[0].format_ids, undefined);
+        assert.equal(createWire.packages[0].format_kind, undefined);
+      }
     });
   });
 
