@@ -614,22 +614,22 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     );
   });
 
-  async function expireAccount(account) {
-    await pool.query(
+  async function expireAccount(account, db = pool) {
+    await db.query(
       `UPDATE adcp_reporting_obligations
           SET period_start = period_start - INTERVAL '40 days', period_end = period_end - INTERVAL '40 days',
               created_at = created_at - INTERVAL '40 days', lease_expires_at = clock_timestamp() - INTERVAL '1 second'
         WHERE account_id = $1`,
       [account]
     );
-    await pool.query(
+    await db.query(
       `UPDATE adcp_reporting_revisions SET recorded_at = recorded_at - INTERVAL '40 days'
         WHERE obligation_id IN (
           SELECT obligation_id FROM adcp_reporting_obligations WHERE account_id = $1
         )`,
       [account]
     );
-    await pool.query(
+    await db.query(
       `UPDATE adcp_reporting_changes SET recorded_at = recorded_at - INTERVAL '40 days' WHERE account_id = $1`,
       [account]
     );
@@ -713,20 +713,38 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     );
   });
 
-  test('an xmin-blocked deployment backlog does not renew an idle retention hold', async () => {
+  test('an xmin-blocked deployment backlog does not renew an idle retention hold', async t => {
+    const { Pool } = require('pg');
+    const isolatedSchema = `${schema}_blocked_retention`;
+    await bootstrapPool.query(`CREATE SCHEMA "${isolatedSchema}"`);
+    const pool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${isolatedSchema}"` });
+    t.after(async () => {
+      await pool.end();
+      await bootstrapPool.query(`DROP SCHEMA IF EXISTS "${isolatedSchema}" CASCADE`);
+    });
+    await pool.query(ledger.REPORTING_LEDGER_MIGRATION);
+    await pool.query(ledger.REPORTING_ROW_STORAGE_MIGRATION);
+    await pool.query(ledger.REPORTING_LEDGER_CHANGES_MIGRATION);
+    await pool.query(sinkModule.REPORTING_WAREHOUSE_SINK_MIGRATION);
+    const store = new ledger.PostgresReportingLedgerStore(pool, {
+      acknowledgeIsolatedDatabase: true,
+      rowStorage: true,
+      changeFeed: true,
+    });
+    await store.readyRowStorage();
     const account = 'acct_blocked_retention';
     const bigquery = fakeBigQuery();
-    const sink = newSink(bigquery, { name: 'blocked_retention', account_id: undefined });
-    await sink.runOnce();
+    const sink = newSink(bigquery, { name: 'blocked_retention', account_id: undefined, store, db: pool });
     await sink.runOnce();
     const jobsBefore = bigquery.jobs.size;
+    assert.equal(jobsBefore, 0);
     const blocker = await pool.connect();
     try {
       await blocker.query('BEGIN');
       await blocker.query('SELECT pg_current_xact_id()');
       const isolated = await createRowStorageFixture({ store, suffix: 'blocked_retention', accountId: account });
       await store.commitRevision(isolated.revision('rrev_blocked_retention_1', 1, rows.slice(0, 1)), isolated.lease);
-      await expireAccount(account);
+      await expireAccount(account, pool);
       const committed = (
         await pool.query('SELECT committed_cursor FROM adcp_reporting_warehouse_sinks WHERE sink_name = $1', [
           'blocked_retention',
