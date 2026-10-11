@@ -59,6 +59,7 @@ import {
   type ReportingChangeFeedMaintenanceOptionsV1,
   type ReportingLedgerMaintenanceStoreV1,
   type ReportingLedgerMaintenanceTaskResultV1,
+  type ReportingCompactionOptionsV1,
   type ReportingRetentionOptionsV1,
 } from './maintenance';
 import type { InlineReportingReplayRetentionV1 } from '../source';
@@ -271,6 +272,8 @@ export interface ReliableReportingMaintenanceOptionsV1 {
   intervalMilliseconds?: number;
   /** Period-aligned retention; see the production service's `retention`. */
   retention?: ReportingRetentionOptionsV1;
+  /** Opt-in snapshot compaction; see the production service's `compaction`. */
+  compaction?: ReportingCompactionOptionsV1;
   /** Change-feed pruning and consumer hold; see the production service's `changeFeed`. */
   changeFeed?: ReportingChangeFeedMaintenanceOptionsV1;
 }
@@ -432,7 +435,12 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       sweepExpiredState?: PostgresReportingLedgerStore['sweepExpiredState'];
       changeFeedEnabled?: boolean;
     };
-    for (const method of ['retireExpiredPeriods', 'pruneChanges', 'sweepRowWriteIntents'] as const) {
+    for (const method of [
+      'retireExpiredPeriods',
+      'pruneChanges',
+      'sweepRowWriteIntents',
+      ...(maintenance.compaction ? (['compactSupersededSnapshots'] as const) : []),
+    ] as const) {
       if (typeof candidate[method] !== 'function') {
         throw new TypeError(
           `maintenance requires a PostgresReportingLedgerStore (or a store with ${method}); the configured store cannot run ledger maintenance`
@@ -463,7 +471,9 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
         ? { sweepSnapshots: (limit: number) => maintenanceStore.sweepExpiredState!(limit) }
         : {}),
       statusRetentionDays: retentionDays,
+      automatedRecoveryWindowSeconds: options.automatedRecoveryWindowSeconds,
       retention: maintenance!.retention,
+      compaction: maintenance!.compaction,
       changeFeed: maintenance!.changeFeed,
       signal,
       ...(report ? { report } : {}),
@@ -746,6 +756,18 @@ export type CreatePostgresReliableReportingProductionServiceOptionsV1<TCtxMeta =
    */
   retention?: ReportingRetentionOptionsV1;
   /**
+   * Opt in to compacting superseded snapshot revisions to metadata only, as
+   * adcontextprotocol/adcp#8100 permits. Off by default. Each scheduler pass
+   * drops the row content of snapshots that are superseded, past their
+   * recovery grace and not owed to any caller (receipts, current
+   * `received` / `unreadable` / `content_mismatch` statements), while every
+   * revision's metadata stays. Official revisions are never compacted. Uses
+   * this service's `statusRetentionDays` and `automatedRecoveryWindowSeconds`.
+   * The protocol takes compaction into effect only in the next eligible minor
+   * after November 20, 2026: do not enable this in production before then.
+   */
+  compaction?: ReportingCompactionOptionsV1;
+  /**
    * Maintain the host change feed (`changesAfter`, `getCurrentRevision`,
    * `listCurrentRevisions` on `stores.core`). Adds
    * `REPORTING_LEDGER_CHANGES_MIGRATION` (PostgreSQL 13+); the scheduler prunes
@@ -836,6 +858,7 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
   if (typeof options.activity?.tenantScopeForAccount !== 'function') {
     throw new TypeError('Reliable Reporting production service requires activity.tenantScopeForAccount');
   }
+  assertReportingLedgerMaintenanceOptions({ compaction: options.compaction }, options.statusRetentionDays);
   if (
     Object.values(options.adapters).some(
       adapter => adapter.deliveryOffering.reconciliation_mode === 'consumer_receipt'
@@ -1064,7 +1087,9 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
       store: coreStore,
       sweepSnapshots: limit => sweepExpiredReportingLedgerState(options.db, limit),
       statusRetentionDays: options.statusRetentionDays,
+      automatedRecoveryWindowSeconds: options.automatedRecoveryWindowSeconds,
       retention: options.retention,
+      compaction: options.compaction,
       changeFeed: options.changeFeed,
       signal,
       report: error => reportAuxiliaryError(scheduler, error),
@@ -2124,6 +2149,7 @@ export * from './conformance';
 export {
   ReportingMaintenancePartialFailureError,
   type ReportingChangeFeedMaintenanceOptionsV1,
+  type ReportingCompactionOptionsV1,
   type ReportingLedgerMaintenanceStoreV1,
   type ReportingLedgerMaintenanceTaskNameV1,
   type ReportingLedgerMaintenanceTaskResultV1,

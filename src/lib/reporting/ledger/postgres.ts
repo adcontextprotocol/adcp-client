@@ -1208,7 +1208,16 @@ ${managedDueArm}       )
       [obligationId]
     );
     const revisions: ReportingLedgerRevisionV1[] = [];
-    for (const row of result.rows) revisions.push(await this.hydrateRevision(clone(row.data), row.account_id));
+    for (const row of result.rows) {
+      try {
+        revisions.push(await this.hydrateRevision(clone(row.data), row.account_id));
+      } catch (error) {
+        // Compacted content is gone by design (see compactSupersededSnapshots);
+        // `listRevisionMetadata` still lists the revision.
+        if (isReportingRowStoreError(error) && error.code === 'ROWS_EXPIRED') continue;
+        throw error;
+      }
+    }
     return revisions;
   }
 
@@ -1814,6 +1823,274 @@ ${managedDueArm}       )
   }
 
   /**
+   * Compact superseded snapshot revisions to metadata only, as adcontextprotocol/adcp#8100
+   * permits (`reporting-revision.json` `content_retention`). Opt-in: nothing calls this
+   * unless the host enables `compaction` in maintenance, and it must not be enabled in
+   * production before the AdCP release that takes compaction into effect (the next
+   * eligible minor after November 20, 2026).
+   *
+   * A snapshot revision is compacted only when every one of these holds:
+   *
+   * - it is superseded: a later revision names it in `supersedes_reporting_revision_id`
+   *   (so a current revision, and every official revision, is never compacted);
+   * - it is not the revision the current, unsuperseded revision names;
+   * - its recovery grace has passed: `max(automatedRecoveryWindowSeconds, 3600)` seconds
+   *   since its successor's `created_at`;
+   * - while its window is open (`statusRetentionDays` since its successor's `created_at`),
+   *   no caller's reporting receipt (any status) names it and no caller's current consumer
+   *   status statement of `received`, `unreadable` or `content_mismatch` names it. The
+   *   check spans every caller, so content any caller is entitled to is kept;
+   * - it has rows (nothing to reclaim otherwise, and an empty exact read is still correct);
+   * - no live obligation lease, no pending materialization of it, and no live change-feed
+   *   consumer that has not yet passed its change row (the holds retirement applies,
+   *   narrowed to this revision).
+   *
+   * Only row content is dropped: the revision header, its manifest and every metadata
+   * listing stay. The row set is marked `pruned`, so an exact read answers
+   * `ROWS_EXPIRED`, which the handlers surface as the same nondisclosing
+   * `REFERENCE_NOT_FOUND` as an unknown ID. No change-feed row is recorded: the revision's
+   * metadata is unchanged, and a sink still catching up holds compaction back.
+   *
+   * Compaction is resumable and runs in the same three phases as retirement, under the
+   * account lock where eligibility is decided:
+   *
+   * 1. re-check eligibility and mark the row set `pruning`, so reads answer as expired and
+   *    no new revision can share its chunks;
+   * 2. delete external objects at their recorded versions, skipping any object another
+   *    row set that is not being pruned still references (chunk sharing);
+   * 3. delete the chunk manifest rows and any PostgreSQL chunk body nothing else
+   *    references, and mark the row set `pruned`.
+   *
+   * A crash after phase 1 leaves a `pruning` row set that the next pass resumes.
+   */
+  async compactSupersededSnapshots(input: {
+    statusRetentionDays: number;
+    automatedRecoveryWindowSeconds: number;
+    maxFeedHoldDays?: number;
+    limit?: number;
+    account_id?: string;
+    signal?: AbortSignal;
+  }): Promise<{
+    compacted: number;
+    failed: string[];
+    /** Secret-free cause per failed revision: a row-store code or the error class name. */
+    failures: { reporting_obligation_id: string; reporting_revision_id: string; cause: string }[];
+  }> {
+    positiveInteger(input.statusRetentionDays, 'statusRetentionDays');
+    positiveInteger(input.automatedRecoveryWindowSeconds, 'automatedRecoveryWindowSeconds');
+    const limit = input.limit ?? 100;
+    positiveInteger(limit, 'limit');
+    const holdDays = input.maxFeedHoldDays ?? 7;
+    positiveInteger(holdDays, 'maxFeedHoldDays');
+    const tables = await this.optionalTables();
+    if (!tables.has('adcp_reporting_row_sets')) return { compacted: 0, failed: [], failures: [] };
+    // A recovery grace is never shorter than one hour, per the protocol.
+    const graceSeconds = Math.max(input.automatedRecoveryWindowSeconds, 3600);
+    const eligible = `
+      FROM adcp_reporting_revisions revision
+      JOIN adcp_reporting_obligations obligation ON obligation.obligation_id = revision.obligation_id
+      JOIN adcp_reporting_row_sets row_set
+        ON row_set.row_set_id = revision.revision_id AND row_set.row_set_kind = 'revision'
+      JOIN LATERAL (
+        SELECT MAX(later.created_at) AS created_at FROM adcp_reporting_revisions later
+         WHERE later.supersedes_revision_id = revision.revision_id
+      ) successor ON successor.created_at IS NOT NULL
+      WHERE revision.finality = 'snapshot' AND revision.kind = 'snapshot'
+        AND ($4::text IS NULL OR obligation.account_id = $4)
+        AND ($5::text IS NULL OR revision.revision_id = $5)
+        AND $3::integer > 0
+        AND row_set.row_count > 0
+        AND row_set.rows_state IN ('live', 'unavailable')
+        AND successor.created_at + ($2::bigint * INTERVAL '1 second') <= clock_timestamp()
+        AND NOT EXISTS (
+          SELECT 1 FROM adcp_reporting_revisions current_revision
+           WHERE current_revision.supersedes_revision_id = revision.revision_id
+             AND NOT EXISTS (
+               SELECT 1 FROM adcp_reporting_revisions next_revision
+                WHERE next_revision.supersedes_revision_id = current_revision.revision_id
+             )
+        )
+        AND (obligation.lease_expires_at IS NULL OR obligation.lease_expires_at <= clock_timestamp())
+        AND NOT EXISTS (SELECT 1 FROM adcp_reporting_obligation_tombstones tombstone
+                         WHERE tombstone.obligation_id = obligation.obligation_id)
+        AND (
+          successor.created_at + ($1::integer * INTERVAL '1 day') <= clock_timestamp()
+          OR (
+            NOT EXISTS (
+              SELECT 1 FROM adcp_reporting_consumer_statuses statement
+               WHERE statement.revision_id = revision.revision_id AND statement.is_current
+                 AND COALESCE(statement.data->>'consumer_status', statement.data->'status'->>'consumer_status')
+                     IN ('received', 'unreadable', 'content_mismatch')
+            )
+            ${
+              tables.has('adcp_reporting_receipts')
+                ? `AND NOT EXISTS (
+                     SELECT 1 FROM adcp_reporting_receipts receipt
+                      WHERE receipt.receipt_kind = 'revision' AND receipt.subject_id = revision.revision_id
+                   )`
+                : ''
+            }
+          )
+        )
+        ${
+          tables.has('adcp_reporting_materializations')
+            ? `AND NOT EXISTS (
+                 SELECT 1 FROM adcp_reporting_materializations hold
+                  WHERE hold.revision_id = revision.revision_id AND hold.status = 'pending'
+               )`
+            : ''
+        }
+        ${
+          tables.has('adcp_reporting_changes') && tables.has('adcp_reporting_feed_consumers')
+            ? `AND NOT EXISTS (
+                 SELECT 1 FROM adcp_reporting_changes change
+                   JOIN adcp_reporting_feed_consumers consumer
+                     ON consumer.updated_at > clock_timestamp() - ($3::integer * INTERVAL '1 day')
+                  WHERE change.record_kind = 'revision' AND change.record_id = revision.revision_id
+                    AND ((consumer.account_id IS NULL
+                          AND (change.xid, change.seq) > (consumer.cursor_xid, consumer.cursor_seq))
+                      OR (consumer.account_id = change.account_id AND change.seq > consumer.cursor_seq)))`
+            : ''
+        }`;
+    const baseValues = [input.statusRetentionDays, graceSeconds, holdDays, input.account_id ?? null];
+    const candidates = await this.query<{ revision_id: string; obligation_id: string; account_id: string }>(
+      `SELECT revision_id, obligation_id, account_id FROM (
+         SELECT row_set.row_set_id AS revision_id, row_set.obligation_id, row_set.account_id, 0 AS resume,
+                row_set.recorded_at
+           FROM adcp_reporting_row_sets row_set
+          WHERE row_set.row_set_kind = 'revision' AND row_set.rows_state = 'pruning'
+            AND ($4::text IS NULL OR row_set.account_id = $4)
+            AND EXISTS (SELECT 1 FROM adcp_reporting_revisions revision
+                         WHERE revision.revision_id = row_set.row_set_id)
+            AND NOT EXISTS (SELECT 1 FROM adcp_reporting_obligation_tombstones tombstone
+                             WHERE tombstone.obligation_id = row_set.obligation_id)
+         UNION ALL
+         SELECT revision.revision_id, revision.obligation_id, obligation.account_id, 1, row_set.recorded_at
+           ${eligible}
+       ) candidate
+       ORDER BY resume, recorded_at, revision_id
+       LIMIT $6`,
+      [...baseValues, null, limit]
+    );
+    let compacted = 0;
+    const failed: string[] = [];
+    const failures: { reporting_obligation_id: string; reporting_revision_id: string; cause: string }[] = [];
+    for (const candidate of candidates.rows) {
+      input.signal?.throwIfAborted();
+      try {
+        const done = await this.compactSnapshot(
+          candidate.revision_id,
+          candidate.obligation_id,
+          candidate.account_id,
+          eligible,
+          baseValues,
+          input.signal
+        );
+        if (done) compacted += 1;
+      } catch (error) {
+        failed.push(candidate.revision_id);
+        failures.push({
+          reporting_obligation_id: candidate.obligation_id,
+          reporting_revision_id: candidate.revision_id,
+          cause: isReportingRowStoreError(error) ? error.code : error instanceof Error ? error.name : 'Error',
+        });
+      }
+    }
+    return { compacted, failed, failures };
+  }
+
+  private async compactSnapshot(
+    revisionId: string,
+    obligationId: string,
+    accountId: string,
+    eligible: string,
+    baseValues: readonly unknown[],
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    // Phase 1: under the account lock, decide eligibility again and mark the row
+    // set `pruning` in the same statement. A row set already `pruning` is a
+    // compaction a crashed pass left behind; it resumes at phase 2.
+    const claimed = await this.transaction(
+      async client => {
+        const marked = await client.query(
+          `UPDATE adcp_reporting_row_sets SET rows_state = 'pruning', rows_state_changed_at = clock_timestamp()
+            WHERE row_set_id = $5 AND rows_state IN ('live', 'unavailable')
+              AND row_set_id IN (SELECT revision.revision_id ${eligible})`,
+          [...baseValues, revisionId]
+        );
+        if (marked.rowCount === 1) return true;
+        const resumed = await client.query(
+          `SELECT 1 FROM adcp_reporting_row_sets row_set
+            WHERE row_set.row_set_id = $1 AND row_set.rows_state = 'pruning'
+              AND NOT EXISTS (SELECT 1 FROM adcp_reporting_obligation_tombstones tombstone
+                               WHERE tombstone.obligation_id = row_set.obligation_id)`,
+          [revisionId]
+        );
+        return resumed.rows.length === 1;
+      },
+      { preBeginAdvisoryLock: accountLock(accountId) }
+    );
+    if (!claimed) return false;
+    // Phase 2: external bytes at their recorded versions, except any object a
+    // row set that is not being pruned still references (chunk sharing).
+    const binding = await this.query<{ row_binding_id: string }>(
+      `SELECT row_binding_id FROM adcp_reporting_row_sets WHERE row_set_id = $1`,
+      [revisionId]
+    );
+    // Retirement of the whole period can finish first and delete the row set.
+    if (binding.rows.length === 0) return false;
+    const objects = await this.query<{ object_key: string; native_version: string }>(
+      `SELECT DISTINCT chunk.object_key, chunk.native_version
+         FROM adcp_reporting_row_chunks chunk
+        WHERE chunk.row_set_id = $1 AND chunk.object_key IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM adcp_reporting_row_chunks other
+              JOIN adcp_reporting_row_sets other_set ON other_set.row_set_id = other.row_set_id
+             WHERE other.object_key = chunk.object_key AND other.native_version = chunk.native_version
+               AND other.row_set_id <> chunk.row_set_id
+               AND other_set.rows_state NOT IN ('pruning', 'pruned')
+          )`,
+      [revisionId]
+    );
+    if (objects.rows.length > 0) {
+      await this.rowStorage.deleteObjects(
+        binding.rows[0]!.row_binding_id,
+        objects.rows.map(row => ({ objectKey: row.object_key, nativeVersion: row.native_version })),
+        signal
+      );
+    }
+    // Phase 3: the chunk manifest and any PostgreSQL body nothing else uses.
+    await this.transaction(
+      async client => {
+        const dropped = await client.query<{ sha256: string; object_key: string | null }>(
+          `DELETE FROM adcp_reporting_row_chunks WHERE row_set_id = $1 RETURNING sha256, object_key`,
+          [revisionId]
+        );
+        const bodies = [...new Set(dropped.rows.filter(row => row.object_key === null).map(row => row.sha256))];
+        if (bodies.length > 0) {
+          await client.query(
+            `DELETE FROM adcp_reporting_chunk_bodies body
+              WHERE body.account_id = $1 AND body.obligation_id = $2 AND body.sha256 = ANY($3::text[])
+                AND NOT EXISTS (
+                  SELECT 1 FROM adcp_reporting_row_chunks other
+                   WHERE other.account_id = body.account_id AND other.obligation_id = body.obligation_id
+                     AND other.sha256 = body.sha256 AND other.object_key IS NULL
+                )`,
+            [accountId, obligationId, bodies]
+          );
+        }
+        await client.query(
+          `UPDATE adcp_reporting_row_sets SET rows_state = 'pruned', rows_state_changed_at = clock_timestamp()
+            WHERE row_set_id = $1 AND rows_state = 'pruning'`,
+          [revisionId]
+        );
+      },
+      { preBeginAdvisoryLock: accountLock(accountId) }
+    );
+    return true;
+  }
+
+  /**
    * Resolve abandoned object uploads (spec §4.3). An expired `open` write
    * intent whose ledger commit never happened is moved to `sweeping` under
    * the account lock, so no writer can commit against it, then only the
@@ -1890,7 +2167,7 @@ ${managedDueArm}       )
         WHERE table_schema = current_schema()
           AND table_name IN ('adcp_reporting_row_sets', 'adcp_reporting_row_write_intents',
                              'adcp_reporting_materializations', 'adcp_reporting_changes',
-                             'adcp_reporting_feed_consumers')`
+                             'adcp_reporting_feed_consumers', 'adcp_reporting_receipts')`
     );
     return new Set(result.rows.map(row => row.name));
   }
