@@ -1,6 +1,7 @@
 import type { TaskResult } from './ConversationTypes';
 import { accountReferenceKey } from './account-key';
 import type { AccountReference } from '../types';
+import { structuredCloneWithLegacyCreativeMetadata } from '../v2/projection/legacy-metadata';
 
 export interface ProductCacheOptions {
   maxEntries?: number;
@@ -62,7 +63,7 @@ export class ProductCache {
     if (!allowExpired && Date.now() - entry.storedAt >= ttl) return undefined;
     return {
       ...entry.result,
-      data: structuredClone(entry.result.data),
+      data: structuredCloneWithLegacyCreativeMetadata(entry.result.data),
       metadata: structuredClone(entry.result.metadata),
       ...(entry.result.debug_logs && { debug_logs: structuredClone(entry.result.debug_logs) }),
     } as TaskResult<T>;
@@ -115,14 +116,14 @@ export class ProductCache {
         return result;
       // Only materialize our own conditional request; caller-owned validators pass through.
       if (params.if_wholesale_feed_version !== undefined || params.if_pricing_version !== undefined) return result;
-      completed = { ...result, data: structuredClone(oldData) as T };
+      completed = { ...result, data: structuredCloneWithLegacyCreativeMetadata(oldData) as T };
     } else if (!Array.isArray(data.products)) return result;
     if (!this.entries.has(key) && this.entries.size >= (this.options.maxEntries ?? 1000))
       this.entries.delete(this.entries.keys().next().value!);
     this.entries.set(key, {
       result: {
         ...completed,
-        data: structuredClone(completed.data),
+        data: structuredCloneWithLegacyCreativeMetadata(completed.data),
         metadata: structuredClone(completed.metadata),
         ...(completed.debug_logs && { debug_logs: structuredClone(completed.debug_logs) }),
       },

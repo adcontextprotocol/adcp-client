@@ -12,14 +12,14 @@ const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
 const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
 const z = require('zod');
 
-const { AgentClient, packageRefsForFormatOptions } = require('../../dist/lib/index.js');
+const { AgentClient, createProductCache, packageRefsForFormatOptions } = require('../../dist/lib/index.js');
 
 const AAO = 'https://creative.adcontextprotocol.org/';
 const PRICING_OPTIONS = [{ pricing_option_id: 'po_cpm', pricing_model: 'cpm', currency: 'USD', fixed_price: 5 }];
 const ACCOUNT = { account_id: 'acct-canonical' };
 
-async function canonicalSeller(products) {
-  const captured = {};
+async function canonicalSeller(products, config = {}, { cacheScope, conditional = false } = {}) {
+  const captured = { productReads: [] };
   const server = new McpServer({ name: 'canonical-seller', version: '1.0.0' });
   server.registerTool('get_adcp_capabilities', { inputSchema: {} }, async () => {
     const capabilities = {
@@ -29,10 +29,26 @@ async function canonicalSeller(products) {
     };
     return { content: [{ type: 'text', text: '{}' }], structuredContent: capabilities };
   });
-  server.registerTool('get_products', { inputSchema: { brief: z.string().optional() } }, async () => ({
-    content: [{ type: 'text', text: '{}' }],
-    structuredContent: { products },
-  }));
+  server.registerTool(
+    'get_products',
+    {
+      inputSchema: {
+        brief: z.string().optional(),
+        if_wholesale_feed_version: z.string().optional(),
+        if_pricing_version: z.string().optional(),
+      },
+    },
+    async args => {
+      captured.productReads.push(args);
+      return {
+        content: [{ type: 'text', text: '{}' }],
+        structuredContent: {
+          ...(conditional && args.if_wholesale_feed_version === 'feed-1' ? { unchanged: true } : { products }),
+          ...(cacheScope && { cache_scope: cacheScope, wholesale_feed_version: 'feed-1', pricing_version: 'price-1' }),
+        },
+      };
+    }
+  );
   server.registerTool('create_media_buy', { inputSchema: { packages: z.array(z.any()).optional() } }, async args => {
     captured.create = args;
     return {
@@ -63,7 +79,7 @@ async function canonicalSeller(products) {
   await server.connect(serverTransport);
   const mcp = new Client({ name: 'canonical-buyer', version: '1.0.0' });
   await mcp.connect(clientTransport);
-  const agent = AgentClient.fromMCPClient(mcp, { validation: { responses: 'off' } });
+  const agent = AgentClient.fromMCPClient(mcp, { validation: { responses: 'off' }, ...config });
   return {
     agent,
     captured,
@@ -95,6 +111,128 @@ function mediaBuy(pkg) {
 }
 
 describe('canonical wire: format options the seller did not declare', () => {
+  for (const cacheScope of [undefined, 'account']) {
+    test(`preserves seller origin with a product cache (${cacheScope ?? 'uncacheable response'})`, async () => {
+      const seller = await canonicalSeller(
+        [legacyOnlyProduct('legacy-shaped', [{ agent_url: AAO, id: 'display_300x250_image' }])],
+        { productCache: createProductCache() },
+        { cacheScope }
+      );
+      try {
+        const request = { buying_mode: 'brief', brief: 'Display', account: ACCOUNT };
+        const first = await seller.agent.getProducts(request);
+        const product = first.data.products[0];
+        const selected = packageRefsForFormatOptions(product, [product.format_options[0].format_option_id]);
+        await seller.agent.createMediaBuy(mediaBuy({ product_id: product.product_id, ...selected }));
+        assert.strictEqual(seller.captured.create.packages[0].format_option_refs, undefined);
+        assert.strictEqual(seller.captured.create.packages[0].format_kind, product.format_options[0].format_kind);
+
+        // Cache hits restore discovery routes from cloned canonical products,
+        // including the original seller evidence held outside the wire data.
+        const cached = await seller.agent.getProducts(request);
+        assert.strictEqual(seller.captured.productReads.length, cacheScope ? 1 : 2);
+        const cachedProduct = cached.data.products[0];
+        const cachedSelected = packageRefsForFormatOptions(cachedProduct, [
+          cachedProduct.format_options[0].format_option_id,
+        ]);
+        await seller.agent.createMediaBuy(mediaBuy({ product_id: cachedProduct.product_id, ...cachedSelected }));
+        const pkg = seller.captured.create.packages[0];
+        assert.strictEqual(pkg.format_option_refs, undefined);
+        assert.strictEqual(pkg.format_kind, product.format_options[0].format_kind);
+        assert.deepStrictEqual(pkg.params, product.format_options[0].params);
+        assert.deepStrictEqual(
+          Reflect.ownKeys(cachedProduct.format_options[0]),
+          Reflect.ownKeys(product.format_options[0])
+        );
+      } finally {
+        await seller.close();
+      }
+    });
+  }
+
+  test('conditional cache revalidation preserves undeclared selectors', async () => {
+    const seller = await canonicalSeller(
+      [legacyOnlyProduct('legacy-shaped', [{ agent_url: AAO, id: 'display_300x250_image' }])],
+      { productCache: createProductCache({ accountTtl: 0 }) },
+      { cacheScope: 'account', conditional: true }
+    );
+    try {
+      const request = { buying_mode: 'brief', brief: 'Display', account: ACCOUNT };
+      await seller.agent.getProducts(request);
+      const revalidated = await seller.agent.getProducts(request);
+      assert.strictEqual(seller.captured.productReads.length, 2);
+      assert.strictEqual(seller.captured.productReads[1].if_wholesale_feed_version, 'feed-1');
+      const product = revalidated.data.products[0];
+      const selected = packageRefsForFormatOptions(product, [product.format_options[0].format_option_id]);
+      await seller.agent.createMediaBuy(mediaBuy({ product_id: product.product_id, ...selected }));
+      const pkg = seller.captured.create.packages[0];
+      assert.strictEqual(pkg.format_option_refs, undefined);
+      assert.strictEqual(pkg.format_kind, product.format_options[0].format_kind);
+      assert.deepStrictEqual(pkg.params, product.format_options[0].params);
+    } finally {
+      await seller.close();
+    }
+  });
+
+  test('fresh seller declarations replace cached undeclared evidence', async () => {
+    const products = [legacyOnlyProduct('legacy-shaped', [{ agent_url: AAO, id: 'display_300x250_image' }])];
+    const seller = await canonicalSeller(
+      products,
+      { productCache: createProductCache({ accountTtl: 0 }) },
+      { cacheScope: 'account' }
+    );
+    try {
+      const request = { buying_mode: 'brief', brief: 'Display', account: ACCOUNT };
+      const first = await seller.agent.getProducts(request);
+      const option = first.data.products[0].format_options[0];
+      products[0] = {
+        ...products[0],
+        format_options: [
+          { format_option_id: option.format_option_id, format_kind: option.format_kind, params: option.params },
+        ],
+      };
+      delete products[0].format_ids;
+      const refreshed = await seller.agent.getProducts(request);
+      const product = refreshed.data.products[0];
+      const selected = packageRefsForFormatOptions(product, [option.format_option_id]);
+      await seller.agent.createMediaBuy(mediaBuy({ product_id: product.product_id, ...selected }));
+      assert.strictEqual(seller.captured.productReads.length, 2);
+      assert.deepStrictEqual(seller.captured.create.packages[0].format_option_refs, selected.format_option_refs);
+      assert.strictEqual(seller.captured.create.packages[0].format_kind, undefined);
+    } finally {
+      await seller.close();
+    }
+  });
+
+  test('creative normalization does not reintroduce undeclared pins', async () => {
+    const seller = await canonicalSeller(
+      [legacyOnlyProduct('legacy-shaped', [{ agent_url: AAO, id: 'display_300x250_image' }])],
+      { validation: { requests: 'off', responses: 'off' } }
+    );
+    try {
+      const products = await seller.agent.getProducts({ buying_mode: 'brief', brief: 'Display', account: ACCOUNT });
+      const product = products.data.products[0];
+      const selected = packageRefsForFormatOptions(product, [product.format_options[0].format_option_id]);
+      const creative = {
+        creative_id: 'legacy-creative',
+        name: 'Image for normalization',
+        format_id: { agent_url: AAO, id: 'display_300x250_image' },
+        assets: {},
+      };
+      await seller.agent.createMediaBuy(
+        mediaBuy({ product_id: product.product_id, ...selected, creatives: [creative] })
+      );
+      await seller.agent.syncCreatives({ account: ACCOUNT, creatives: [creative] });
+      for (const wireCreative of [seller.captured.create.packages[0].creatives[0], seller.captured.sync.creatives[0]]) {
+        assert.strictEqual(wireCreative.format_kind, 'image');
+        assert.strictEqual(wireCreative.format_id, undefined);
+        assert.strictEqual(wireCreative.format_option_ref, undefined);
+      }
+    } finally {
+      await seller.close();
+    }
+  });
+
   test('create and update address an undeclared option by format_kind + params', async () => {
     const seller = await canonicalSeller([
       legacyOnlyProduct('legacy-shaped', [{ agent_url: AAO, id: 'display_300x250_image' }]),
