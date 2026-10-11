@@ -1777,8 +1777,10 @@ ${managedDueArm}       )
       },
       { preBeginAdvisoryLock: accountLock(accountId) }
     );
-    // Phase 2: external bytes, at their recorded versions. Sharing never
-    // crosses obligations, so every object here belongs to this period.
+    // Phase 2: external bytes, at their recorded versions. A key template
+    // without {revision_key} lets row sets in other obligations or accounts
+    // adopt the same object, so each delete is skipped while a live row set
+    // outside this period still references it (see deleteUnreferencedObjects).
     if (rowStorage) {
       const objects = await this.query<{ row_binding_id: string; object_key: string; native_version: string }>(
         `SELECT DISTINCT row_set.row_binding_id, chunk.object_key, chunk.native_version
@@ -1793,7 +1795,9 @@ ${managedDueArm}       )
         list.push({ objectKey: row.object_key, nativeVersion: row.native_version });
         byBinding.set(row.row_binding_id, list);
       }
-      for (const [bindingId, list] of byBinding) await this.rowStorage.deleteObjects(bindingId, list, signal);
+      for (const [bindingId, list] of byBinding) {
+        await this.deleteUnreferencedObjects(bindingId, list, { obligationId }, signal);
+      }
     }
     // Phase 3: the period's ledger records, together.
     await this.transaction(
@@ -2052,20 +2056,14 @@ ${managedDueArm}       )
     const objects = await this.query<{ object_key: string; native_version: string }>(
       `SELECT DISTINCT chunk.object_key, chunk.native_version
          FROM adcp_reporting_row_chunks chunk
-        WHERE chunk.row_set_id = $1 AND chunk.object_key IS NOT NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM adcp_reporting_row_chunks other
-              JOIN adcp_reporting_row_sets other_set ON other_set.row_set_id = other.row_set_id
-             WHERE other.object_key = chunk.object_key AND other.native_version = chunk.native_version
-               AND other.row_set_id <> chunk.row_set_id
-               AND other_set.rows_state NOT IN ('pruning', 'pruned')
-          )`,
+        WHERE chunk.row_set_id = $1 AND chunk.object_key IS NOT NULL`,
       [revisionId]
     );
     if (objects.rows.length > 0) {
-      await this.rowStorage.deleteObjects(
+      await this.deleteUnreferencedObjects(
         binding.rows[0]!.row_binding_id,
         objects.rows.map(row => ({ objectKey: row.object_key, nativeVersion: row.native_version })),
+        { rowSetId: revisionId },
         signal
       );
     }
@@ -2148,27 +2146,84 @@ ${managedDueArm}       )
           { preBeginAdvisoryLock: accountLock(intent.account_id) }
         );
         if (!claimed) continue;
-        const orphaned: { objectKey: string; nativeVersion: string }[] = [];
-        for (const object of claimed) {
-          const referenced = await this.query(
-            `SELECT 1 FROM adcp_reporting_row_chunks WHERE object_key = $1 AND native_version = $2 LIMIT 1`,
-            [object.objectKey, object.nativeVersion]
-          );
-          if (referenced.rows.length === 0) orphaned.push(object);
-        }
-        if (orphaned.length > 0) await this.rowStorage.deleteObjects(intent.row_binding_id, orphaned, input.signal);
+        // Only objects no committed chunk and no other open upload references are removed.
+        const deleted = await this.deleteUnreferencedObjects(intent.row_binding_id, claimed, {}, input.signal);
         await this.query(
           `DELETE FROM adcp_reporting_row_write_intents
             WHERE row_binding_id = $1 AND row_set_id = $2 AND content_sha256 = $3 AND state = 'sweeping'`,
           key
         );
         swept += 1;
-        objectsDeleted += orphaned.length;
+        objectsDeleted += deleted;
       } catch {
         failed += 1;
       }
     }
     return { swept, objectsDeleted, failed };
+  }
+
+  /**
+   * Delete external row objects, skipping any object another row set still references.
+   *
+   * A custom `keyTemplate` need only include `{content_sha256}` and `{chunk_index}`, so row sets
+   * from different obligations or accounts with identical chunk content can share one object (a
+   * create-only write adopts an existing object). An object is therefore deleted only when no
+   * chunk of a live (or unavailable) row set outside this operation references the same binding,
+   * key and native version, and no other open write intent created it. Row sets already `pruning`
+   * or `pruned` do not count: their own operation deletes the object, and counting them would let
+   * two concurrent retirements each skip the object and leak it. `scope` names what this
+   * operation is deleting: an obligation (retirement) or a row set (compaction).
+   *
+   * The check and the provider delete run in one transaction under a per-object advisory lock.
+   * A commit that adopts an existing object takes the same lock before it inserts its chunk rows
+   * and re-verifies the object under it (`writePreparedRowSet`), and holds it until commit. So
+   * either the delete wins the lock and the adopting commit then fails cleanly, or the commit wins
+   * and the delete sees its chunk rows and skips. A skipped object stays for the row set that owns
+   * it: that row set's own retirement, compaction or sweep deletes it, because by then nothing
+   * else references it. Locks are taken one object at a time, never while waiting on the account
+   * lock, so commits (account lock, then object locks) cannot deadlock with these deletes.
+   */
+  private async deleteUnreferencedObjects(
+    bindingId: string,
+    objects: readonly { objectKey: string; nativeVersion: string }[],
+    scope: { obligationId?: string; rowSetId?: string },
+    signal?: AbortSignal
+  ): Promise<number> {
+    let deleted = 0;
+    for (const object of objects) {
+      signal?.throwIfAborted();
+      const removed = await this.transaction(async client => {
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+          objectLock(bindingId, object.objectKey),
+        ]);
+        const referenced = await client.query(
+          `(SELECT 1 FROM adcp_reporting_row_chunks chunk
+              JOIN adcp_reporting_row_sets row_set ON row_set.row_set_id = chunk.row_set_id
+             WHERE row_set.row_binding_id = $1 AND chunk.object_key = $2 AND chunk.native_version = $3
+               AND row_set.rows_state IN ('live', 'unavailable')
+               AND ($4::text IS NULL OR chunk.obligation_id <> $4)
+               AND ($5::text IS NULL OR chunk.row_set_id <> $5)
+             LIMIT 1)
+           UNION ALL
+           (SELECT 1 FROM adcp_reporting_row_write_intents intent
+             WHERE intent.row_binding_id = $1 AND intent.state = 'open' AND intent.created_objects @> $6::jsonb
+             LIMIT 1)`,
+          [
+            bindingId,
+            object.objectKey,
+            object.nativeVersion,
+            scope.obligationId ?? null,
+            scope.rowSetId ?? null,
+            JSON.stringify([{ objectKey: object.objectKey, nativeVersion: object.nativeVersion }]),
+          ]
+        );
+        if (referenced.rows.length > 0) return false;
+        await this.rowStorage.deleteObjects(bindingId, [object], signal);
+        return true;
+      });
+      if (removed) deleted += 1;
+    }
+    return deleted;
   }
 
   private async optionalTables(): Promise<ReadonlySet<string>> {
@@ -2295,6 +2350,21 @@ ${managedDueArm}       )
       if (closed.rowCount !== 1) {
         throw new ReportingRowStoreError('STATE_UNAVAILABLE', 'the row upload intent was taken over or swept');
       }
+    }
+    if (!upload.sharedFrom) {
+      // A create-only write that found an object already there adopted it. Lock each adopted
+      // object (in key order) until this transaction ends, then prove it is still there: a
+      // delete holding the lock finished first and fails this commit, any later delete sees the
+      // chunk rows inserted below and skips (`deleteUnreferencedObjects`).
+      const adopted = upload.locators
+        .filter(locator => !locator.created)
+        .sort((left, right) => (left.objectKey < right.objectKey ? -1 : left.objectKey > right.objectKey ? 1 : 0));
+      for (const locator of adopted) {
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+          objectLock(prepared.bindingId, locator.objectKey),
+        ]);
+      }
+      if (adopted.length > 0) await this.rowStorage.assertObjectsPresent(prepared.bindingId, adopted);
     }
     await this.rowStorage.writeInTransaction(client, prepared, upload.locators, upload.sharedFrom);
   }
@@ -5122,6 +5192,11 @@ function rfc3339Microseconds(expression: string): string {
 
 function accountLock(accountId: string): string {
   return `adcp-reporting-account:${accountId}`;
+}
+
+/** Serializes deleting an external row object against a commit that adopts it. */
+function objectLock(bindingId: string, objectKey: string): string {
+  return `adcp-reporting-object:${bindingId}:${objectKey}`;
 }
 
 /**
