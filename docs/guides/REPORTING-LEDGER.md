@@ -233,6 +233,14 @@ empty revision association. A deployment with per-tenant workers should pass
 the resolved `account_id` to both `planObligations()` and `runWorker()`;
 omitting it intentionally runs a deployment-wide worker.
 
+### Already running your own ledger tables?
+
+Do not dual-write, and do not migrate data. Cut over at a period boundary: the
+SDK ledger produces and serves new periods, and your old tables become
+read-only behind the optional `legacyRevisionReader`, which answers exact
+`get_media_buy_delivery` reads only for revisions the SDK ledger does not hold.
+See [Cutting over to the SDK reporting ledger](REPORTING-LEDGER-CUTOVER.md).
+
 ### Migrating an existing manual lifecycle
 
 Keep the same `PostgresReportingLedgerStore` and run the same

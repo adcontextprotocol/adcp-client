@@ -23,6 +23,7 @@ import { createReportingDeliveryHandler, createReportingStatusHandler } from './
 import type { ReportingStatusConsumerScopeOptionsV1 } from './handler';
 import type {
   ReportingLedgerAdjustmentV1,
+  ReportingLegacyRevisionReaderV1,
   ReportingLedgerObligationV1,
   ReportingLedgerRevisionV1,
   ReportingLedgerStore,
@@ -299,6 +300,8 @@ export interface CreateReportingManagedDeliveryRuntimeOptionsV1<
   TContext extends { account?: unknown } = { account?: unknown },
 > {
   coreStore: ReportingLedgerStore;
+  /** Exact-revision fallback for revisions the SDK ledger does not hold. */
+  legacyRevisionReader?: ReportingLegacyRevisionReaderV1;
   store: ReportingManagedDeliveryStore & Required<Pick<ReportingManagedDeliveryStore, 'adoptAdvertisedPolicies'>>;
   adapter: ReportingManagedDeliveryAdapterV1;
   offerings: ReportingDeliveryCapabilities['offerings'];
@@ -401,7 +404,10 @@ export async function createReportingManagedDeliveryRuntime<
       }
     : undefined;
   const getReportingStatus = createReportingStatusHandler(options.coreStore, statusOptions);
-  const getMediaBuyDelivery = createReportingDeliveryHandler(options.coreStore);
+  const getMediaBuyDelivery = createReportingDeliveryHandler(
+    options.coreStore,
+    options.legacyRevisionReader ? { legacyRevisionReader: options.legacyRevisionReader } : {}
+  );
   const syncReportingReceipts = reconciledBilling
     ? createSyncReportingReceiptsHandler(options.store, options.resolveConsumerId!)
     : undefined;

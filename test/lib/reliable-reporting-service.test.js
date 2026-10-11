@@ -284,6 +284,57 @@ describe('ReliableReportingService', () => {
     );
   });
 
+  test('legacyRevisionReader serves revisions the SDK ledger does not hold and never shadows SDK revisions', async () => {
+    const legacyCalls = [];
+    const legacyResponse = { reporting_rows: [{ source: 'legacy' }] };
+    const calls = [];
+    const { service, store } = serviceFixture({
+      adapters: { fixture: adapter(calls) },
+      legacyRevisionReader: async (request, context) => {
+        legacyCalls.push({ request, context });
+        return request.reporting_revision_id === 'rrev_legacy' && context.account.id === 'account-a'
+          ? legacyResponse
+          : null;
+      },
+    });
+    const now = new Date();
+    const boundary = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const anchor = new Date(boundary - 86_400_000).toISOString();
+    const input = configuration();
+    input.schedule.anchor = anchor;
+    const installed = await service.installConfiguration(input, { account: { id: 'account-a', ctx_metadata: {} } });
+    store.configurations.get(installed.configurationId).installedAt = anchor;
+    await service.runCycle({ deploymentWide: true, maxObligations: 1, maxWorkerIterations: 1 });
+    const obligation = (await store.listObligations('account-a'))[0];
+    const revision = (await store.listRevisions(obligation.reporting_obligation_id))[0];
+
+    const context = { account: { id: 'account-a' } };
+    const sdk = await service.platform.getMediaBuyDelivery(
+      { reporting_revision_id: revision.reporting_revision_id },
+      context
+    );
+    assert.equal(sdk.reporting_revision.reporting_revision_id, revision.reporting_revision_id);
+    assert.equal(legacyCalls.length, 0);
+
+    assert.equal(
+      await service.platform.getMediaBuyDelivery({ reporting_revision_id: 'rrev_legacy' }, context),
+      legacyResponse
+    );
+    assert.equal(legacyCalls.length, 1);
+    await assert.rejects(
+      service.platform.getMediaBuyDelivery({ reporting_revision_id: 'rrev_legacy' }, { account: { id: 'account-b' } }),
+      error => error.code === 'REFERENCE_NOT_FOUND'
+    );
+    // account-b asking for account-a's SDK revision is offered to legacy, which scopes it away.
+    await assert.rejects(
+      service.platform.getMediaBuyDelivery(
+        { reporting_revision_id: revision.reporting_revision_id },
+        { account: { id: 'account-b' } }
+      ),
+      error => error.code === 'REFERENCE_NOT_FOUND'
+    );
+  });
+
   test('plans, produces, and serves one exact revision through the installed service', async () => {
     const calls = [];
     const reportingAdapter = adapter(calls);

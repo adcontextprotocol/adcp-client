@@ -1108,6 +1108,37 @@ export type ReportingDeliveryHandlerV1 = (
   context: HandlerContext<unknown>
 ) => Promise<AdcpToolMap['get_media_buy_delivery']['result']>;
 
+/**
+ * Exact-revision reader for revisions the SDK ledger does not own, typically a
+ * seller's pre-cutover ledger tables. It receives the same request and context
+ * as `get_media_buy_delivery` and returns the protocol response, or
+ * `null`/`undefined` when it has no such revision.
+ *
+ * Authorization is the reader's responsibility. The SDK has already resolved
+ * the account (`context.account`) and cannot tell whether a legacy revision
+ * belongs to it, so the reader MUST scope the lookup by that account and return
+ * `null` for a revision that belongs to another one. Never return a response
+ * for a revision the resolved account cannot read.
+ */
+export type ReportingLegacyRevisionReaderV1 = (
+  request: AdcpToolMap['get_media_buy_delivery']['params'],
+  context: HandlerContext<unknown>
+) => Promise<AdcpToolMap['get_media_buy_delivery']['result'] | null | undefined>;
+
+export interface CreateReportingDeliveryHandlerOptionsV1 {
+  /**
+   * Consulted only when the SDK ledger has no such revision for the resolved
+   * account (unknown id, or an id owned by a different account). Never
+   * consulted for an SDK-owned revision that is expired, has unavailable or
+   * corrupt rows, or carries an unusable cursor, nor for capacity or other
+   * errors: falling back there could serve different content under an id the
+   * SDK owns. A `null`/`undefined` result is the same nondisclosing
+   * `REFERENCE_NOT_FOUND` the SDK returns itself; an error the reader throws
+   * propagates unchanged.
+   */
+  legacyRevisionReader?: ReportingLegacyRevisionReaderV1;
+}
+
 export interface CreateReportingProducerOptionsV1 {
   store: ReportingLedgerStore;
   source: ReportingSourceWithReaderV1;

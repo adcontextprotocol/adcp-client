@@ -24,6 +24,7 @@ Welcome to the official documentation for `@adcp/sdk`, the TypeScript/JavaScript
 - [Principal lifecycle](./guides/PRINCIPAL-LIFECYCLE.md) — guarded buyer configuration, destination readiness, and declaration negotiation
 - [Reporting source executor](./guides/REPORTING-SOURCE-EXECUTOR.md) — seller adapter contract, manifest evidence, and conformance
 - [Seller reporting ledger](./guides/REPORTING-LEDGER.md) — obligation planning, leased production, and status reads
+- [Reporting ledger cutover](./guides/REPORTING-LEDGER-CUTOVER.md) — move from your own ledger tables to the SDK ledger at a period boundary
 - [Python/TypeScript Reliable Reporting parity](./development/RELIABLE-REPORTING-PARITY.md) — cross-SDK release gates and implementation map
 - [Conformance](./guides/CONFORMANCE.md) — property-based fuzzing against bundled JSON schemas
 - Worked reference adapters: `examples/hello_*` family (pick by specialism)
