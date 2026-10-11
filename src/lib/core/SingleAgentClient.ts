@@ -265,7 +265,6 @@ import {
 } from '../errors';
 import { BuyerAccountRegistry, type AccountPolicy, type BuyerAccountStorage } from './buyer-account-registry';
 import type { ProductCache } from './product-cache';
-import { creativeSchemaSupport } from './creative-schema-support';
 import { sameCountrySet, selectListedAccount, type ResolveAccountOptions } from './account-resolution';
 
 import { normalizeRequestParams } from '../utils/request-normalizer';
@@ -7554,6 +7553,8 @@ export class SingleAgentClient {
     const wireRelease = this.config.wireAdcpVersion ?? this.resolvedAdcpVersion;
     const declared = resolveCreativeFormatWireMode(capabilities, wireRelease);
     const document = toolSchemas && toolInputSchemasByProperties.get(toolSchemas)?.get(taskType);
+    const { creativeSchemaSupport } = await import('./creative-schema-support');
+    throwIfAborted(options?.signal);
     const schema = creativeSchemaSupport(document ?? { properties: toolSchemas?.get(taskType) });
     if (declared !== 'unknown' && schema !== 'unknown' && declared !== schema) {
       throw new CreativeFormatCapabilityError(
