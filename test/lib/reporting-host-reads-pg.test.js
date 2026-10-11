@@ -94,6 +94,65 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
     assert.equal((await read()).cursor_seq, '1');
   });
 
+  for (const { scope, axis } of [
+    { scope: 'account', axis: 'sequence' },
+    { scope: 'deployment', axis: 'sequence' },
+    { scope: 'deployment', axis: 'transaction' },
+  ]) {
+    test(`${scope} feed pages use numeric ${axis} order across decimal digit boundaries`, async t => {
+      const { Pool } = require('pg');
+      const suffix = `${scope}_${axis}`;
+      const isolatedSchema = `${schema}_numeric_${suffix}`;
+      await bootstrapPool.query(`CREATE SCHEMA "${isolatedSchema}"`);
+      const isolatedPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${isolatedSchema}"` });
+      t.after(async () => {
+        await isolatedPool.end();
+        await bootstrapPool.query(`DROP SCHEMA IF EXISTS "${isolatedSchema}" CASCADE`);
+      });
+      await isolatedPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await isolatedPool.query(ledger.REPORTING_LEDGER_CHANGES_MIGRATION);
+      const isolatedStore = new ledger.PostgresReportingLedgerStore(isolatedPool, {
+        acknowledgeIsolatedDatabase: true,
+        changeFeed: true,
+      });
+      if (axis === 'sequence') await isolatedPool.query("SELECT setval('adcp_reporting_changes_seq_seq', 8)");
+      const account = `acct_numeric_${suffix}`;
+      const first = await createRowStorageFixture({
+        store: isolatedStore,
+        suffix: `first_${suffix}`,
+        accountId: account,
+      });
+      const second = await createRowStorageFixture({
+        store: isolatedStore,
+        suffix: `second_${suffix}`,
+        accountId: account,
+      });
+      if (scope === 'deployment') {
+        // Historical XIDs keep these changes visible despite concurrent
+        // suites' older transactions. The sequence case shares one XID.
+        await isolatedPool.query(
+          `UPDATE adcp_reporting_changes SET xid = CASE WHEN record_id = $1 THEN '9'::xid8 ELSE $2::text::xid8 END`,
+          [first.obligation.reporting_obligation_id, axis === 'sequence' ? '9' : '10']
+        );
+      }
+      const position = scope === 'account' ? { account_id: account } : {};
+      const firstPage = await isolatedStore.changesAfter({ ...position, limit: 1 });
+      assert.deepEqual(
+        firstPage.records.map(record => record.record_id),
+        [first.obligation.reporting_obligation_id]
+      );
+      const secondPage = await isolatedStore.changesAfter({ ...position, cursor: firstPage.cursor, limit: 1 });
+      assert.deepEqual(
+        secondPage.records.map(record => record.record_id),
+        [second.obligation.reporting_obligation_id]
+      );
+      assert.deepEqual(
+        (await isolatedStore.changesAfter({ ...position, cursor: secondPage.cursor, limit: 1 })).records,
+        []
+      );
+    });
+  }
+
   for (const scope of ['account', 'deployment']) {
     for (const coldStart of [false, true]) {
       test(`${scope === 'account' ? 'an' : 'a'} ${scope} feed rejects a prune between its horizon and page reads (${coldStart ? 'initial horizon' : 'saved cursor'})`, async () => {
@@ -143,10 +202,16 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
             },
             { acknowledgeIsolatedDatabase: true, changeFeed: true }
           );
+          let expired;
           await assert.rejects(
             observedStore.changesAfter({ ...position, ...(coldStart ? {} : { cursor: savedCursor }) }),
-            ledger.ReportingChangeCursorExpiredError
+            error => {
+              assert.ok(error instanceof ledger.ReportingChangeCursorExpiredError);
+              expired = error;
+              return true;
+            }
           );
+          assert.equal(ledger.decodeReportingChangeCursorV1(expired.cursor, position.account_id ?? null).seq, '0');
           assert.ok(intercepted, 'retention ran after the initial horizon result and before the page query');
           assert.equal(deleted, 2, 'retention removed the old obligation and revision changes');
           assert.ok(

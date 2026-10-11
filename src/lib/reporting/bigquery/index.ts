@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import * as path from 'path';
 
 import type { PostgresReportingLedgerStore, ReportingLedgerRevisionMetadataV1, ReportingPgPool } from '../ledger';
+import { decodeReportingChangeCursorV1, ReportingChangeCursorExpiredError } from '../ledger/change-feed';
 
 /**
  * BigQuery warehouse sink for Reliable Reporting (shared SDK persistence spec,
@@ -51,7 +52,7 @@ export interface ReportingBigQueryClientV1 {
       load(source: string, metadata: Record<string, unknown>): Promise<unknown>;
     };
   };
-  job(jobId: string, options?: { location?: string }): { getMetadata(): Promise<unknown> };
+  job(jobId: string, options?: { projectId?: string; location?: string }): { getMetadata(): Promise<unknown> };
   query(options: { query: string; location?: string }): Promise<unknown>;
 }
 
@@ -72,8 +73,9 @@ export interface CreateBigQueryReportingWarehouseSinkOptionsV1 {
   bigquery: ReportingBigQueryClientV1;
   /**
    * Stable sink and consumer name. All replicas sharing it must use the same
-   * feed scope, destination, location and row mapping. Use a new name when
-   * that configuration changes.
+   * ledger database, feed scope, destination, location and row mapping. Use
+   * a new name when that configuration changes. Names must also be unique
+   * across independent ledgers sharing a BigQuery project.
    */
   name: string;
   projectId?: string;
@@ -198,7 +200,17 @@ export function createBigQueryReportingWarehouseSinkV1(
         // cursor commit). Accept it only if it finished cleanly.
         const metadata = await withinDeadline(
           () =>
-            options.bigquery.job(jobId, options.location ? { location: options.location } : undefined).getMetadata(),
+            options.bigquery
+              .job(
+                jobId,
+                options.projectId || options.location
+                  ? {
+                      ...(options.projectId ? { projectId: options.projectId } : {}),
+                      ...(options.location ? { location: options.location } : {}),
+                    }
+                  : undefined
+              )
+              .getMetadata(),
           loadTimeout,
           signal
         );
@@ -254,22 +266,48 @@ export function createBigQueryReportingWarehouseSinkV1(
           ...(options.account_id ? { account_id: options.account_id } : {}),
           limit: maxRevisions,
         };
-        let page = await options.store.changesAfter({ ...position, kinds: ['revision'] });
-        if (page.records.length === 0) {
-          // Drain changes that do not require a warehouse load, so idle
-          // heartbeats cannot indefinitely hold an unread non-revision tail.
-          // Preserve the first read's retention horizon on cold start.
-          page = await options.store.changesAfter({ ...position, cursor: page.cursor });
-          if (page.records.length === 0 && page.cursor === state.committed_cursor) {
-            // Recover a lost acknowledgment without renewing an unchanged
-            // hold. A deployment feed can look empty behind its xmin fence.
-            if (state.committed_cursor) {
-              await options.store.saveFeedConsumerCursor(options.name, state.committed_cursor, {
-                refreshUnchanged: false,
-              });
-            }
-            return { idle: true, revisions: 0, rows: 0, missing: [] };
+        let page: Awaited<ReturnType<typeof options.store.changesAfter>>;
+        let readCursor = position.cursor;
+        try {
+          page = await options.store.changesAfter({ ...position, kinds: ['revision'] });
+          if (page.records.length === 0) {
+            // Drain changes that do not require a warehouse load, so idle
+            // heartbeats cannot indefinitely hold an unread non-revision tail.
+            // Preserve the first read's retention horizon on cold start.
+            readCursor = page.cursor;
+            page = await options.store.changesAfter({ ...position, cursor: readCursor });
           }
+        } catch (error) {
+          if (error instanceof ReportingChangeCursorExpiredError && state.committed_cursor === null) {
+            const cursor = readCursor ?? error.cursor;
+            if (cursor !== undefined) {
+              try {
+                decodeReportingChangeCursorV1(cursor, position.account_id ?? null);
+              } catch {
+                throw error;
+              }
+              // Keep a failed bootstrap's starting position across restarts.
+              // A newer horizon must not turn this explicit gap into an idle
+              // success. No acknowledgment or retention heartbeat is saved.
+              await options.db.query(
+                `UPDATE adcp_reporting_warehouse_sinks SET committed_cursor = $2, updated_at = clock_timestamp()
+                  WHERE sink_name = $1 AND committed_cursor IS NULL
+                    AND planned_from_cursor IS NULL AND planned_to_cursor IS NULL AND planned_revisions IS NULL`,
+                [options.name, cursor]
+              );
+            }
+          }
+          throw error;
+        }
+        if (page.records.length === 0 && page.cursor === state.committed_cursor) {
+          // Recover a lost acknowledgment without renewing an unchanged
+          // hold. A deployment feed can look empty behind its xmin fence.
+          if (state.committed_cursor) {
+            await options.store.saveFeedConsumerCursor(options.name, state.committed_cursor, {
+              refreshUnchanged: false,
+            });
+          }
+          return { idle: true, revisions: 0, rows: 0, missing: [] };
         }
         plan = {
           from: state.committed_cursor,

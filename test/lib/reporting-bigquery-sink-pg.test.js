@@ -199,6 +199,70 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     assert.ok(bigquery.tables.get('reporting.revisions').some(value => value.reporting_revision_id === 'rrev_sink_3'));
   });
 
+  for (const location of [undefined, 'asia-northeast1']) {
+    test(`a cross-project replay after a lost response looks up the upload project${location ? ' and location' : ''}`, async () => {
+      const suffix = location ? 'project_region' : 'project_default_region';
+      const isolated = await createRowStorageFixture({ store, suffix, accountId: `acct_${suffix}` });
+      await store.commitRevision(isolated.revision(`rrev_${suffix}`, 1, rows.slice(0, 1)), isolated.lease);
+      const bigquery = fakeBigQuery();
+      const dataset = bigquery.dataset.bind(bigquery);
+      const job = bigquery.job.bind(bigquery);
+      const lookups = [];
+      let loseResponse = true;
+      bigquery.dataset = (datasetId, options) => {
+        assert.equal(options.projectId, 'warehouse-project');
+        assert.equal(options.location, location);
+        const target = dataset(datasetId);
+        return {
+          table(tableId) {
+            const table = target.table(tableId);
+            return {
+              async load(file, metadata) {
+                const result = await table.load(file, metadata);
+                if (loseResponse && tableId === 'revision_rows') {
+                  loseResponse = false;
+                  throw new Error('lost upload response');
+                }
+                return result;
+              },
+            };
+          },
+        };
+      };
+      bigquery.job = (jobId, options) => ({
+        async getMetadata() {
+          lookups.push(options);
+          // The official client's default project differs from the dataset
+          // override. A GET without the override cannot find the upload.
+          if (options?.projectId !== 'warehouse-project') {
+            const error = new Error('Job not found in default-project');
+            error.code = 404;
+            throw error;
+          }
+          assert.equal(options.location, location);
+          return job(jobId).getMetadata();
+        },
+      });
+      const sink = newSink(bigquery, {
+        name: suffix,
+        account_id: isolated.request.account.account_id,
+        projectId: 'warehouse-project',
+        ...(location ? { location } : {}),
+      });
+      await assert.rejects(() => sink.runOnce(), /lost upload response/);
+      assert.deepEqual(await sink.runOnce(), { idle: false, revisions: 1, rows: 1, missing: [] });
+      assert.deepEqual(lookups, [{ projectId: 'warehouse-project', ...(location ? { location } : {}) }]);
+      assert.equal(bigquery.tables.get('reporting.revision_rows').length, 1, 'the accepted upload is not repeated');
+      assert.equal(bigquery.jobs.size, 2, 'both tables finish with their original job IDs');
+      const state = (await pool.query('SELECT * FROM adcp_reporting_warehouse_sinks WHERE sink_name = $1', [suffix]))
+        .rows[0];
+      assert.ok(state.committed_cursor);
+      assert.equal(state.planned_to_cursor, null);
+      assert.equal(state.planned_rows_attempt, 0);
+      assert.equal(state.planned_revisions_attempt, 0);
+    });
+  }
+
   test('a failed load job is retried under a new attempt without touching the other table', async () => {
     const bigquery = fakeBigQuery();
     const sink = newSink(bigquery, { name: 'failing' });
@@ -894,7 +958,16 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
         db: pool,
         store: wrapStore(store, {
           async changesAfter(input) {
-            const page = await store.changesAfter(input);
+            let page;
+            try {
+              page = await store.changesAfter(input);
+            } catch (error) {
+              if (intercepted && !input.kinds && error instanceof ledger.ReportingChangeCursorExpiredError) {
+                // An older compatible store does not attach a starting cursor.
+                throw new ledger.ReportingChangeCursorExpiredError();
+              }
+              throw error;
+            }
             if (!intercepted && input.kinds?.includes('revision')) {
               intercepted = true;
               assert.equal(input.cursor, undefined, 'the sink has no committed starting cursor');
@@ -908,17 +981,191 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
         }),
       });
       await assert.rejects(sink.runOnce(), ledger.ReportingChangeCursorExpiredError);
+      const retry = newSink(bigquery, {
+        name: 'cold_horizon_race',
+        account_id: undefined,
+        db: pool,
+        store,
+      });
+      await assert.rejects(retry.runOnce(), ledger.ReportingChangeCursorExpiredError);
+      await assert.rejects(retry.runOnce(), ledger.ReportingChangeCursorExpiredError);
       assert.equal(intercepted, true);
       assert.equal(deleted, 2);
       assert.ok(await store.getRevisionMetadata(revisionId, account));
       const state = (await pool.query('SELECT * FROM adcp_reporting_warehouse_sinks')).rows[0];
-      assert.equal(state.committed_cursor, null);
+      assert.equal(ledger.decodeReportingChangeCursorV1(state.committed_cursor, null).seq, '0');
       assert.equal(state.planned_to_cursor, null);
       assert.equal(bigquery.jobs.size, 0);
+      assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM adcp_reporting_feed_consumers')).rows[0].n, 0);
     } finally {
       if (blockerOpen) await blocker.query('ROLLBACK');
       blocker?.release();
     }
+  });
+
+  for (const scope of ['account', 'deployment']) {
+    test(`a cold-start ${scope} feed keeps an in-read expiry fenced across retries`, async t => {
+      const { pool, store: realStore } = await isolatedWarehouseStore(t, `initial_expiry_${scope}`);
+      const account = `acct_initial_expiry_${scope}`;
+      const bigquery = fakeBigQuery();
+      let blocker;
+      let blockerOpen = false;
+      let intercepted = false;
+      let deleted;
+      try {
+        if (scope === 'deployment') {
+          blocker = await pool.connect();
+          await blocker.query('BEGIN');
+          blockerOpen = true;
+          await blocker.query('SELECT pg_current_xact_id()');
+        }
+        const isolated = await createRowStorageFixture({
+          store: realStore,
+          suffix: `initial_expiry_${scope}`,
+          accountId: account,
+        });
+        const revisionId = `rrev_initial_expiry_${scope}`;
+        await realStore.commitRevision(isolated.revision(revisionId, 1, rows.slice(0, 1)), isolated.lease);
+        await pool.query(
+          `UPDATE adcp_reporting_changes SET recorded_at = clock_timestamp() - INTERVAL '40 days'
+            WHERE obligation_id = $1`,
+          [isolated.obligation.reporting_obligation_id]
+        );
+        await createRowStorageFixture({
+          store: realStore,
+          suffix: `initial_expiry_fresh_${scope}`,
+          accountId: account,
+        });
+        const observedStore = new ledger.PostgresReportingLedgerStore(
+          {
+            connect: pool.connect.bind(pool),
+            async query(sql, values) {
+              const result = await pool.query(sql, values);
+              if (!intercepted && sql.includes('SELECT pruned_through')) {
+                intercepted = true;
+                if (blockerOpen) {
+                  await blocker.query('COMMIT');
+                  blockerOpen = false;
+                }
+                deleted = (await realStore.pruneChanges({ changeRetentionDays: 30 })).deleted;
+              }
+              return result;
+            },
+          },
+          { acknowledgeIsolatedDatabase: true, rowStorage: true, changeFeed: true }
+        );
+        const options = {
+          name: `initial_expiry_${scope}`,
+          account_id: scope === 'account' ? account : undefined,
+          db: pool,
+          store: observedStore,
+        };
+        await assert.rejects(newSink(bigquery, options).runOnce(), ledger.ReportingChangeCursorExpiredError);
+        const before = (await pool.query('SELECT * FROM adcp_reporting_warehouse_sinks')).rows[0];
+        const retry = newSink(bigquery, options);
+        await assert.rejects(retry.runOnce(), ledger.ReportingChangeCursorExpiredError);
+        await assert.rejects(retry.runOnce(), ledger.ReportingChangeCursorExpiredError);
+        assert.ok(intercepted, 'pruning happened inside the first cursorless read');
+        assert.equal(deleted, 2);
+        assert.equal(
+          ledger.decodeReportingChangeCursorV1(before.committed_cursor, options.account_id ?? null).seq,
+          '0'
+        );
+        assert.deepEqual((await pool.query('SELECT * FROM adcp_reporting_warehouse_sinks')).rows[0], before);
+        assert.ok(await realStore.getRevisionMetadata(revisionId, account));
+        assert.equal(bigquery.jobs.size, 0);
+        assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM adcp_reporting_feed_consumers')).rows[0].n, 0);
+      } finally {
+        if (blockerOpen) await blocker.query('ROLLBACK');
+        blocker?.release();
+      }
+    });
+  }
+
+  test('a cold-start expiry pin cannot replace a competing pending plan', async t => {
+    const { pool, store: realStore } = await isolatedWarehouseStore(t, 'expiry_claim');
+    const account = 'acct_expiry_claim';
+    const isolated = await createRowStorageFixture({ store: realStore, suffix: 'expiry_claim', accountId: account });
+    await realStore.commitRevision(isolated.revision('rrev_expiry_claim', 1, rows.slice(0, 1)), isolated.lease);
+    await pool.query(`UPDATE adcp_reporting_changes SET recorded_at = clock_timestamp() - INTERVAL '40 days'`);
+    const horizonRead = latch();
+    const resumeRead = latch();
+    const winnerClaimed = latch();
+    const resumeWinner = latch();
+    let intercepted = false;
+    const observedStore = new ledger.PostgresReportingLedgerStore(
+      {
+        connect: pool.connect.bind(pool),
+        async query(sql, values) {
+          const result = await pool.query(sql, values);
+          if (!intercepted && sql.includes('SELECT pruned_through')) {
+            intercepted = true;
+            horizonRead.resolve();
+            await resumeRead.promise;
+          }
+          return result;
+        },
+      },
+      { acknowledgeIsolatedDatabase: true, rowStorage: true, changeFeed: true }
+    );
+    const bigquery = fakeBigQuery();
+    const options = { name: 'expiry_claim', account_id: account, db: pool };
+    const losing = newSink(bigquery, { ...options, store: observedStore }).runOnce();
+    losing.catch(() => {});
+    let winning;
+    try {
+      await horizonRead.promise;
+      winning = newSink(bigquery, {
+        ...options,
+        store: wrapStore(realStore, {
+          async getRevisionMetadata(...args) {
+            const revision = await realStore.getRevisionMetadata(...args);
+            winnerClaimed.resolve();
+            await resumeWinner.promise;
+            return revision;
+          },
+        }),
+      }).runOnce();
+      winning.catch(() => {});
+      await winnerClaimed.promise;
+      const plan = (await pool.query('SELECT * FROM adcp_reporting_warehouse_sinks')).rows[0];
+      assert.equal(plan.committed_cursor, null);
+      assert.ok(plan.planned_to_cursor);
+      assert.equal((await realStore.pruneChanges({ changeRetentionDays: 30 })).deleted, 2);
+      resumeRead.resolve();
+      await assert.rejects(losing, ledger.ReportingChangeCursorExpiredError);
+      assert.deepEqual((await pool.query('SELECT * FROM adcp_reporting_warehouse_sinks')).rows[0], plan);
+      assert.equal(bigquery.jobs.size, 0);
+    } finally {
+      resumeRead.resolve();
+      resumeWinner.resolve();
+      await Promise.allSettled([losing, ...(winning ? [winning] : [])]);
+    }
+    assert.equal((await winning).revisions, 1);
+    assert.equal(bigquery.tables.get('reporting.revisions').length, 1);
+    assert.equal(bigquery.tables.get('reporting.revision_rows').length, 1);
+  });
+
+  test('a cold-start expiry pin refuses a recovery cursor from another feed scope', async t => {
+    const { pool, store } = await isolatedWarehouseStore(t, 'expiry_scope');
+    const cursor = ledger.encodeReportingChangeCursorV1({ v: 1, account: 'acct_elsewhere', seq: '0' });
+    const expired = new ledger.ReportingChangeCursorExpiredError(cursor);
+    const bigquery = fakeBigQuery();
+    const sink = newSink(bigquery, {
+      name: 'expiry_scope',
+      account_id: 'acct_expiry_scope',
+      db: pool,
+      store: wrapStore(store, {
+        async changesAfter() {
+          throw expired;
+        },
+      }),
+    });
+    await assert.rejects(sink.runOnce(), error => error === expired);
+    const state = (await pool.query('SELECT * FROM adcp_reporting_warehouse_sinks')).rows[0];
+    assert.equal(state.committed_cursor, null);
+    assert.equal(state.planned_to_cursor, null);
+    assert.equal(bigquery.jobs.size, 0);
   });
 
   test('a failed feed acknowledgment is recovered by an idle tick', async () => {

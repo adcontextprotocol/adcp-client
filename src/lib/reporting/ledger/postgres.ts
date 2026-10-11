@@ -1485,7 +1485,16 @@ ${managedDueArm}       )
           ? BigInt(horizon.seq) > BigInt(position.seq)
           : BigInt(horizon.xid!) > BigInt(position.xid!) ||
             (BigInt(horizon.xid!) === BigInt(position.xid!) && BigInt(horizon.seq) > BigInt(position.seq));
-      if (behind) throw new ReportingChangeCursorExpiredError();
+      if (behind) {
+        throw new ReportingChangeCursorExpiredError(
+          encodeReportingChangeCursorV1({
+            v: 1,
+            account,
+            seq: position.seq,
+            ...(account === null ? { xid: position.xid! } : {}),
+          })
+        );
+      }
     };
     const horizon = await readHorizon();
     if (cursor) assertRetained(cursor, horizon);

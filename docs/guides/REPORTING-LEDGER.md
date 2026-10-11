@@ -835,7 +835,7 @@ const sink = createBigQueryReportingWarehouseSinkV1({
 await bigquery.query({ query: sink.defaultTablesSql }); // or create your own tables
 await bigquery.query({ query: sink.currentRowsViewSql });
 setInterval(() => {
-  void sink.runOnce().catch(error => console.error('Warehouse run failed; retrying next tick', error));
+  void sink.runOnce().catch(error => console.error('Warehouse run failed', error));
 }, 15 * 60_000);
 ```
 
@@ -850,28 +850,40 @@ setInterval(() => {
   same batch under the same job ID, which BigQuery refuses to run twice. A job
   that finished with an error is retried under a new attempt for that table
   only.
+- `projectId` scopes both load submission and replay status checks. When it is
+  omitted, both use the BigQuery client's default project. Each replica must
+  be able to read the BigQuery jobs submitted by the other replicas.
 - Overlapping runs atomically claim one durable batch. Replays use that
   batch's job IDs; attempts and cursor commits compare the full saved plan.
   A stale run rejects without replacing another batch or rewinding either
   the warehouse cursor or its feed checkpoint. Catch the rejection and retry
   `runOnce()` on the next tick. Empty-feed cursor initialization uses the
-  same claim and commit rules. Replicas sharing a sink name must use identical
-  feed scope, destination, location and row mapping. Use a new name when that
-  configuration changes. An idle tick drains non-revision changes through the
+  same claim and commit rules. Replicas sharing a sink name must use the same
+  ledger database, feed scope, destination, location and row mapping. Use a new
+  name when that configuration changes. Independent ledgers loading into the
+  same BigQuery project must use distinct sink names, even if their destination
+  tables differ. An idle tick drains non-revision changes through the
   same fenced checkpoint. An idle tick also recovers a failed acknowledgment
   without refreshing an unchanged checkpoint. Failed loads and idle ticks
   behind the deployment feed's transaction fence can still age out after
   `maxFeedHoldDays`.
 - Feed reads recheck the retention horizon before returning a page. If pruning
   overtakes the starting position during a read, `runOnce()` rejects with
-  `ReportingChangeCursorExpiredError` without advancing its warehouse cursor.
+  `ReportingChangeCursorExpiredError` before committing the page.
   The non-revision fallback preserves the first read's cursor, including on
-  initial startup. Resynchronize from current revisions before resuming.
+  initial startup. If retention overtakes the initial read, the sink records
+  that starting cursor before rejecting, so later ticks and restarted workers
+  continue to report the gap. This does not acknowledge the missing changes or
+  renew their retention hold. Resynchronize from current revisions before resuming.
 - Stop old sink workers before relying on these overlap guarantees. If an
   earlier overlapping run left a plan whose starting cursor differs from the
   committed cursor, the sink rejects it before loading. Reconcile the retained
   plan, its BigQuery jobs and warehouse rows before repairing the checkpoint.
   Do not discard the plan automatically: its load jobs may have succeeded.
+  Feed pages now sort numeric sequence and transaction values correctly across
+  decimal boundaries. If earlier reads already skipped or replayed revisions
+  because of text ordering, reconcile and backfill those exports separately;
+  upgrading does not repair previously committed cursors or warehouse rows.
 - Query `current_rows`, not the raw rows table. Pacing snapshots are
   cumulative, so summing across revisions double-counts. The view keeps each
   obligation's current revision.
