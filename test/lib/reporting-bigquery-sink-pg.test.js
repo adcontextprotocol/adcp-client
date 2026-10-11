@@ -12,6 +12,24 @@ const { createRowStorageFixture } = require('../helpers/reporting-row-storage-fi
 
 const DATABASE_URL = process.env.REPORTING_LEDGER_PG_URL;
 
+function latch() {
+  let resolve;
+  const promise = new Promise(done => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function wrapStore(store, overrides) {
+  return {
+    changesAfter: store.changesAfter.bind(store),
+    getRevisionMetadata: store.getRevisionMetadata.bind(store),
+    readRevisionRows: store.readRevisionRows.bind(store),
+    saveFeedConsumerCursor: store.saveFeedConsumerCursor.bind(store),
+    ...overrides,
+  };
+}
+
 function fakeBigQuery() {
   const tables = new Map();
   const jobs = new Map();
@@ -285,5 +303,368 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
       sinkModule.reportingWarehouseJobIdV1('warehouse', null, 'cursor'),
       sinkModule.reportingWarehouseJobIdV1('warehouse', null, 'cursor')
     );
+  });
+
+  for (const sharedInstance of [true, false]) {
+    test(`competing plans cannot duplicate rows or rewind the cursor (${sharedInstance ? 'one instance' : 'two instances'})`, async () => {
+      const suffix = sharedInstance ? 'overlap_same' : 'overlap_other';
+      const isolated = await createRowStorageFixture({ store, suffix, accountId: `acct_${suffix}` });
+      const account = isolated.request.account.account_id;
+      const ids = [1, 2].map(n => `rrev_${suffix}_${n}`);
+      const bigquery = fakeBigQuery();
+      await store.commitRevision(isolated.revision(ids[0], 1, rows.slice(0, 1)), isolated.lease);
+      const read = latch();
+      const resume = latch();
+      let pause = true;
+      const delayed = wrapStore(store, {
+        async changesAfter(input) {
+          const page = await store.changesAfter(input);
+          if (pause) {
+            pause = false;
+            read.resolve();
+            await resume.promise;
+          }
+          return page;
+        },
+      });
+      const first = newSink(bigquery, { name: suffix, account_id: account, store: delayed });
+      const second = sharedInstance ? first : newSink(bigquery, { name: suffix, account_id: account });
+      const pending = first.runOnce();
+      pending.catch(() => {});
+      await read.promise;
+      try {
+        await store.commitRevision(
+          isolated.revision(ids[1], 2, rows.slice(0, 1), { supersedes_reporting_revision_id: ids[0] }),
+          isolated.lease
+        );
+        assert.equal((await second.runOnce()).revisions, 2);
+      } finally {
+        resume.resolve();
+      }
+      await assert.rejects(pending, /plan changed.*retry runOnce/);
+      assert.deepEqual(
+        bigquery.tables.get('reporting.revision_rows').map(row => row.reporting_revision_id),
+        ids
+      );
+      assert.equal(bigquery.jobs.size, 2, 'the losing plan submitted no load jobs');
+      const committed = (await store.changesAfter({ account_id: account, kinds: ['revision'] })).cursor;
+      assert.equal(
+        (await pool.query('SELECT committed_cursor FROM adcp_reporting_warehouse_sinks WHERE sink_name = $1', [suffix]))
+          .rows[0].committed_cursor,
+        committed
+      );
+      assert.equal((await first.runOnce()).idle, true);
+      assert.equal(bigquery.tables.get('reporting.revision_rows').length, 2);
+    });
+  }
+
+  test('empty-feed initialization cannot erase a concurrently completed plan', async () => {
+    const isolated = await createRowStorageFixture({ store, suffix: 'overlap_empty', accountId: 'acct_overlap_empty' });
+    const account = isolated.request.account.account_id;
+    const read = latch();
+    const resume = latch();
+    const bigquery = fakeBigQuery();
+    const first = newSink(bigquery, {
+      name: 'overlap_empty',
+      account_id: account,
+      store: wrapStore(store, {
+        async changesAfter(input) {
+          const page = await store.changesAfter(input);
+          assert.equal(page.records.length, 0);
+          read.resolve();
+          await resume.promise;
+          return page;
+        },
+      }),
+    });
+    const second = newSink(bigquery, { name: 'overlap_empty', account_id: account });
+    const pending = first.runOnce();
+    pending.catch(() => {});
+    await read.promise;
+    try {
+      await store.commitRevision(isolated.revision('rrev_overlap_empty_1', 1, rows.slice(0, 1)), isolated.lease);
+      assert.equal((await second.runOnce()).revisions, 1);
+    } finally {
+      resume.resolve();
+    }
+    await assert.rejects(pending, /plan changed/);
+    assert.equal((await second.runOnce()).idle, true);
+    assert.equal(bigquery.tables.get('reporting.revision_rows').length, 1);
+  });
+
+  test('a stale replay cannot commit over a newer batch', async () => {
+    const isolated = await createRowStorageFixture({
+      store,
+      suffix: 'overlap_replay',
+      accountId: 'acct_overlap_replay',
+    });
+    const account = isolated.request.account.account_id;
+    const bigquery = fakeBigQuery();
+    const read = latch();
+    const resume = latch();
+    await store.commitRevision(isolated.revision('rrev_overlap_replay_1', 1, rows.slice(0, 1)), isolated.lease);
+    const first = newSink(bigquery, {
+      name: 'overlap_replay',
+      account_id: account,
+      store: wrapStore(store, {
+        async getRevisionMetadata(...args) {
+          const value = await store.getRevisionMetadata(...args);
+          read.resolve();
+          await resume.promise;
+          return value;
+        },
+      }),
+    });
+    const second = newSink(bigquery, { name: 'overlap_replay', account_id: account });
+    const pending = first.runOnce();
+    pending.catch(() => {});
+    await read.promise;
+    let cursor;
+    try {
+      assert.equal((await second.runOnce()).revisions, 1);
+      await store.commitRevision(
+        isolated.revision('rrev_overlap_replay_2', 2, rows.slice(0, 1), {
+          supersedes_reporting_revision_id: 'rrev_overlap_replay_1',
+        }),
+        isolated.lease
+      );
+      assert.equal((await second.runOnce()).revisions, 1);
+      cursor = (
+        await pool.query('SELECT committed_cursor FROM adcp_reporting_warehouse_sinks WHERE sink_name = $1', [
+          'overlap_replay',
+        ])
+      ).rows[0].committed_cursor;
+    } finally {
+      resume.resolve();
+    }
+    await assert.rejects(pending, /plan changed/);
+    assert.equal(
+      (
+        await pool.query('SELECT committed_cursor FROM adcp_reporting_warehouse_sinks WHERE sink_name = $1', [
+          'overlap_replay',
+        ])
+      ).rows[0].committed_cursor,
+      cursor
+    );
+    assert.equal(bigquery.tables.get('reporting.revision_rows').length, 2);
+    assert.equal(bigquery.tables.get('reporting.revisions').length, 2);
+    assert.equal(bigquery.jobs.size, 4, 'replays reused the first batch job IDs');
+  });
+
+  test('concurrent failed-job observers advance an attempt only once', async () => {
+    const isolated = await createRowStorageFixture({ store, suffix: 'overlap_retry', accountId: 'acct_overlap_retry' });
+    const account = isolated.request.account.account_id;
+    const bigquery = fakeBigQuery();
+    const first = newSink(bigquery, { name: 'overlap_retry', account_id: account });
+    const second = newSink(bigquery, { name: 'overlap_retry', account_id: account });
+    await store.commitRevision(isolated.revision('rrev_overlap_retry_1', 1, rows.slice(0, 1)), isolated.lease);
+    bigquery.failNext('revision_rows', 'job');
+    await assert.rejects(first.runOnce(), /Job failed/);
+    const bothRead = latch();
+    const resume = latch();
+    let reads = 0;
+    const job = bigquery.job.bind(bigquery);
+    bigquery.job = id => ({
+      async getMetadata() {
+        const metadata = await job(id).getMetadata();
+        if (++reads === 2) bothRead.resolve();
+        await resume.promise;
+        return metadata;
+      },
+    });
+    const pending = Promise.allSettled([first.runOnce(), second.runOnce()]);
+    await bothRead.promise;
+    resume.resolve();
+    const outcomes = await pending;
+    assert.ok(outcomes.every(outcome => outcome.status === 'rejected'));
+    assert.equal(
+      (
+        await pool.query('SELECT planned_rows_attempt FROM adcp_reporting_warehouse_sinks WHERE sink_name = $1', [
+          'overlap_retry',
+        ])
+      ).rows[0].planned_rows_attempt,
+      1
+    );
+    assert.equal((await first.runOnce()).rows, 1);
+    assert.equal(bigquery.tables.get('reporting.revision_rows').length, 1);
+    assert.ok([...bigquery.jobs.keys()].some(id => id.endsWith('_rows_a1')));
+    assert.ok(![...bigquery.jobs.keys()].some(id => id.endsWith('_rows_a2')));
+  });
+
+  test('a stale failure callback cannot increment a replacement plan', async () => {
+    const isolated = await createRowStorageFixture({
+      store,
+      suffix: 'overlap_stale_failure',
+      accountId: 'acct_overlap_stale_failure',
+    });
+    const account = isolated.request.account.account_id;
+    const bigquery = fakeBigQuery();
+    const first = newSink(bigquery, { name: 'overlap_stale_failure', account_id: account });
+    const second = newSink(bigquery, { name: 'overlap_stale_failure', account_id: account });
+    await store.commitRevision(isolated.revision('rrev_overlap_stale_failure_1', 1, rows.slice(0, 1)), isolated.lease);
+    bigquery.failNext('revision_rows', 'job');
+    await assert.rejects(first.runOnce(), /Job failed/);
+    const read = latch();
+    const resume = latch();
+    const job = bigquery.job.bind(bigquery);
+    let pause = true;
+    bigquery.job = id => ({
+      async getMetadata() {
+        const metadata = await job(id).getMetadata();
+        if (pause) {
+          pause = false;
+          read.resolve();
+          await resume.promise;
+        }
+        return metadata;
+      },
+    });
+    const pending = first.runOnce();
+    pending.catch(() => {});
+    await read.promise;
+    let replacement;
+    const state = async () =>
+      (
+        await pool.query(
+          'SELECT planned_to_cursor, planned_revisions, planned_rows_attempt, planned_revisions_attempt FROM adcp_reporting_warehouse_sinks WHERE sink_name = $1',
+          ['overlap_stale_failure']
+        )
+      ).rows[0];
+    try {
+      await assert.rejects(second.runOnce(), /will be retried as a new attempt/);
+      await second.runOnce();
+      await store.commitRevision(
+        isolated.revision('rrev_overlap_stale_failure_2', 2, rows.slice(0, 1), {
+          supersedes_reporting_revision_id: 'rrev_overlap_stale_failure_1',
+        }),
+        isolated.lease
+      );
+      bigquery.failNext('revisions', 'network');
+      await assert.rejects(second.runOnce(), /socket hang up/);
+      replacement = await state();
+      assert.equal(replacement.planned_rows_attempt, 0);
+    } finally {
+      resume.resolve();
+    }
+    await assert.rejects(pending, /will be retried as a new attempt/);
+    assert.deepEqual(await state(), replacement);
+    await second.runOnce();
+    assert.equal(bigquery.tables.get('reporting.revision_rows').length, 2);
+    assert.equal(bigquery.tables.get('reporting.revisions').length, 2);
+  });
+
+  test('an inconsistent legacy plan requires reconciliation before loading', async () => {
+    const bigquery = fakeBigQuery();
+    const sink = newSink(bigquery, { name: 'legacy_overlap' });
+    await pool.query(
+      `INSERT INTO adcp_reporting_warehouse_sinks
+         (sink_name, committed_cursor, planned_from_cursor, planned_to_cursor, planned_revisions)
+       VALUES ($1, $2, $3, $4, $5::jsonb)`,
+      [
+        'legacy_overlap',
+        'newer_cursor',
+        'older_cursor',
+        'pending_cursor',
+        JSON.stringify([{ id: 'rrev_legacy', account_id: fixture.request.account.account_id }]),
+      ]
+    );
+    const before = (
+      await pool.query('SELECT * FROM adcp_reporting_warehouse_sinks WHERE sink_name = $1', ['legacy_overlap'])
+    ).rows[0];
+    await assert.rejects(sink.runOnce(), /inconsistent retained plan; reconcile/);
+    assert.equal(bigquery.jobs.size, 0);
+    assert.deepEqual(
+      (await pool.query('SELECT * FROM adcp_reporting_warehouse_sinks WHERE sink_name = $1', ['legacy_overlap']))
+        .rows[0],
+      before
+    );
+  });
+
+  test('a failed feed acknowledgment is recovered by an idle tick', async () => {
+    const isolated = await createRowStorageFixture({
+      store,
+      suffix: 'overlap_ack_failure',
+      accountId: 'acct_overlap_ack_failure',
+    });
+    const account = isolated.request.account.account_id;
+    const bigquery = fakeBigQuery();
+    let fail = true;
+    const sink = newSink(bigquery, {
+      name: 'overlap_ack_failure',
+      account_id: account,
+      store: wrapStore(store, {
+        async saveFeedConsumerCursor(...args) {
+          if (fail) {
+            fail = false;
+            throw new Error('checkpoint unavailable');
+          }
+          return store.saveFeedConsumerCursor(...args);
+        },
+      }),
+    });
+    await store.commitRevision(isolated.revision('rrev_overlap_ack_failure_1', 1, rows.slice(0, 1)), isolated.lease);
+    await assert.rejects(sink.runOnce(), /checkpoint unavailable/);
+    assert.equal((await sink.runOnce()).idle, true);
+    const cursor = (await store.changesAfter({ account_id: account, kinds: ['revision'] })).cursor;
+    const expected = ledger.decodeReportingChangeCursorV1(cursor, account).seq;
+    assert.equal(
+      (
+        await pool.query('SELECT cursor_seq FROM adcp_reporting_feed_consumers WHERE consumer_name = $1', [
+          'overlap_ack_failure',
+        ])
+      ).rows[0].cursor_seq,
+      expected
+    );
+    assert.equal(bigquery.jobs.size, 2, 'recovering the checkpoint submitted no new jobs');
+  });
+
+  test('delayed feed acknowledgment cannot rewind a newer committed checkpoint', async () => {
+    const isolated = await createRowStorageFixture({ store, suffix: 'overlap_ack', accountId: 'acct_overlap_ack' });
+    const account = isolated.request.account.account_id;
+    const bigquery = fakeBigQuery();
+    const read = latch();
+    const resume = latch();
+    await store.commitRevision(isolated.revision('rrev_overlap_ack_1', 1, rows.slice(0, 1)), isolated.lease);
+    const first = newSink(bigquery, {
+      name: 'overlap_ack',
+      account_id: account,
+      store: wrapStore(store, {
+        async saveFeedConsumerCursor(...args) {
+          read.resolve();
+          await resume.promise;
+          return store.saveFeedConsumerCursor(...args);
+        },
+      }),
+    });
+    const second = newSink(bigquery, { name: 'overlap_ack', account_id: account });
+    const pending = first.runOnce();
+    await read.promise;
+    let checkpoint;
+    try {
+      await store.commitRevision(
+        isolated.revision('rrev_overlap_ack_2', 2, rows.slice(0, 1), {
+          supersedes_reporting_revision_id: 'rrev_overlap_ack_1',
+        }),
+        isolated.lease
+      );
+      await second.runOnce();
+      checkpoint = (
+        await pool.query('SELECT cursor_seq FROM adcp_reporting_feed_consumers WHERE consumer_name = $1', [
+          'overlap_ack',
+        ])
+      ).rows[0].cursor_seq;
+    } finally {
+      resume.resolve();
+    }
+    await pending;
+    assert.equal(
+      (
+        await pool.query('SELECT cursor_seq FROM adcp_reporting_feed_consumers WHERE consumer_name = $1', [
+          'overlap_ack',
+        ])
+      ).rows[0].cursor_seq,
+      checkpoint
+    );
+    assert.equal(bigquery.tables.get('reporting.revision_rows').length, 2);
   });
 });

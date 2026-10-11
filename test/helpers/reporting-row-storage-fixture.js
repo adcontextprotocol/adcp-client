@@ -4,10 +4,17 @@
  */
 const { createHash } = require('node:crypto');
 
-async function createRowStorageFixture({ store, now = Date.now(), suffix = 'rows', leaseMilliseconds = 600_000 }) {
+async function createRowStorageFixture({
+  store,
+  now = Date.now(),
+  suffix = 'rows',
+  leaseMilliseconds = 600_000,
+  accountId,
+}) {
   const source = require('../../dist/lib/reporting/source/index.js');
   const { canonicalize } = require('../../dist/lib/utils/jcs.js');
   const request = source.redactedReportingSourceRequestV1();
+  if (accountId !== undefined) request.account = { ...request.account, account_id: accountId };
   const configuration = {
     configurationId: `rcfg_${suffix}`,
     account: request.account,

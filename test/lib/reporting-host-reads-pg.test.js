@@ -49,6 +49,41 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
     }
   });
 
+  test('consumer checkpoints advance in their own feed order and equal positions refresh liveness', async () => {
+    const name = 'ordered-checkpoint';
+    const checkpoint = (account, seq, xid) =>
+      ledger.encodeReportingChangeCursorV1({
+        v: 1,
+        account,
+        seq,
+        ...(xid === undefined ? {} : { xid }),
+      });
+    const read = async () =>
+      (await pool.query('SELECT * FROM adcp_reporting_feed_consumers WHERE consumer_name = $1', [name])).rows[0];
+    await store.saveFeedConsumerCursor(name, checkpoint('acct_checkpoint', '20'));
+    await store.saveFeedConsumerCursor(name, checkpoint('acct_checkpoint', '10'));
+    assert.equal((await read()).cursor_seq, '20');
+    await pool.query(
+      "UPDATE adcp_reporting_feed_consumers SET updated_at = clock_timestamp() - INTERVAL '1 day' WHERE consumer_name = $1",
+      [name]
+    );
+    const old = (await read()).updated_at;
+    await store.saveFeedConsumerCursor(name, checkpoint('acct_checkpoint', '20'));
+    assert.ok((await read()).updated_at > old);
+    // Reassigning a name to another feed preserves the existing API behavior.
+    await store.saveFeedConsumerCursor(name, checkpoint(null, '200', '100'));
+    await store.saveFeedConsumerCursor(name, checkpoint(null, '1', '101'));
+    await store.saveFeedConsumerCursor(name, checkpoint(null, '300', '100'));
+    assert.equal((await read()).cursor_xid, '101');
+    assert.equal((await read()).cursor_seq, '1');
+    await store.saveFeedConsumerCursor(name, checkpoint(null, '2', '101'));
+    await store.saveFeedConsumerCursor(name, checkpoint(null, '1', '101'));
+    assert.equal((await read()).cursor_seq, '2');
+    await store.saveFeedConsumerCursor(name, checkpoint('acct_other_checkpoint', '1'));
+    assert.equal((await read()).account_id, 'acct_other_checkpoint');
+    assert.equal((await read()).cursor_seq, '1');
+  });
+
   test('reads the current revision and pages current revisions by period', async () => {
     const accountId = first.request.account.account_id;
     const current = await store.getCurrentRevision({

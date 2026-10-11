@@ -1543,6 +1543,7 @@ ${managedDueArm}       )
   /**
    * Record a named durable consumer's position. Registered consumers hold
    * back change-table pruning until `maxFeedHoldDays` after their last update.
+   * Within the same feed scope, delayed checkpoints cannot move backward.
    */
   async saveFeedConsumerCursor(name: string, cursor: string): Promise<void> {
     if (!this.changeFeed) throw new Error('saveFeedConsumerCursor requires the store changeFeed option');
@@ -1559,7 +1560,12 @@ ${managedDueArm}       )
        VALUES ($1, $2, $3::text::xid8, $4::bigint)
        ON CONFLICT (consumer_name) DO UPDATE
           SET account_id = EXCLUDED.account_id, cursor_xid = EXCLUDED.cursor_xid,
-              cursor_seq = EXCLUDED.cursor_seq, updated_at = clock_timestamp()`,
+              cursor_seq = EXCLUDED.cursor_seq, updated_at = clock_timestamp()
+        WHERE adcp_reporting_feed_consumers.account_id IS DISTINCT FROM EXCLUDED.account_id
+           OR CASE WHEN EXCLUDED.account_id IS NULL
+              THEN (adcp_reporting_feed_consumers.cursor_xid, adcp_reporting_feed_consumers.cursor_seq)
+                   <= (EXCLUDED.cursor_xid, EXCLUDED.cursor_seq)
+              ELSE adcp_reporting_feed_consumers.cursor_seq <= EXCLUDED.cursor_seq END`,
       [name, account, account === null ? decoded.xid! : null, decoded.seq]
     );
   }

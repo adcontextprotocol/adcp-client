@@ -818,10 +818,11 @@ import {
 } from '@adcp/sdk/reporting/bigquery';
 
 await pool.query(REPORTING_WAREHOUSE_SINK_MIGRATION); // after REPORTING_LEDGER_CHANGES_MIGRATION
+const bigquery = new BigQuery({ projectId: 'analytics-prod' }); // ADC / workload identity
 const sink = createBigQueryReportingWarehouseSinkV1({
   store, // PostgresReportingLedgerStore with changeFeed: true
   db: pool,
-  bigquery: new BigQuery({ projectId: 'analytics-prod' }), // ADC / workload identity
+  bigquery,
   name: 'warehouse',
   projectId: 'analytics-prod',
   datasetId: 'reporting',
@@ -833,7 +834,9 @@ const sink = createBigQueryReportingWarehouseSinkV1({
 });
 await bigquery.query({ query: sink.defaultTablesSql }); // or create your own tables
 await bigquery.query({ query: sink.currentRowsViewSql });
-setInterval(() => void sink.runOnce(), 15 * 60_000);
+setInterval(() => {
+  void sink.runOnce().catch(error => console.error('Warehouse run failed; retrying next tick', error));
+}, 15 * 60_000);
 ```
 
 - Each run follows the change feed and reads every revision's rows through the
@@ -847,6 +850,20 @@ setInterval(() => void sink.runOnce(), 15 * 60_000);
   same batch under the same job ID, which BigQuery refuses to run twice. A job
   that finished with an error is retried under a new attempt for that table
   only.
+- Overlapping runs atomically claim one durable batch. Replays use that
+  batch's job IDs; attempts and cursor commits compare the full saved plan.
+  A stale run rejects without replacing another batch or rewinding either
+  the warehouse cursor or its feed checkpoint. Catch the rejection and retry
+  `runOnce()` on the next tick. Empty-feed cursor initialization uses the
+  same claim and commit rules. Replicas sharing a sink name must use identical
+  feed scope, destination, location and row mapping. Use a new name when that
+  configuration changes. Each tick refreshes the last committed feed
+  checkpoint, including recovery after a failed acknowledgment.
+- Stop old sink workers before relying on these overlap guarantees. If an
+  earlier overlapping run left a plan whose starting cursor differs from the
+  committed cursor, the sink rejects it before loading. Reconcile the retained
+  plan, its BigQuery jobs and warehouse rows before repairing the checkpoint.
+  Do not discard the plan automatically: its load jobs may have succeeded.
 - Query `current_rows`, not the raw rows table. Pacing snapshots are
   cumulative, so summing across revisions double-counts. The view keeps each
   obligation's current revision.

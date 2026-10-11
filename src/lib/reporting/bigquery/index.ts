@@ -22,6 +22,8 @@ import type { PostgresReportingLedgerStore, ReportingLedgerRevisionMetadataV1, R
  * BigQuery refuses to run twice. A failed load job is retried under a new
  * attempt suffix only after BigQuery reports that job finished with an error,
  * and each table keeps its own attempt count, so no batch lands twice.
+ * Concurrent runs claim one durable plan with compare-and-swap. Replays of
+ * that plan share job IDs; stale runs cannot change its attempts or cursor.
  */
 
 /** Apply after `REPORTING_LEDGER_CHANGES_MIGRATION`. Holds one row per sink. */
@@ -68,7 +70,11 @@ export interface CreateBigQueryReportingWarehouseSinkOptionsV1 {
   db: Pick<ReportingPgPool, 'query'>;
   /** Host-constructed official BigQuery client. */
   bigquery: ReportingBigQueryClientV1;
-  /** Stable sink name; also the registered change-feed consumer name. */
+  /**
+   * Stable sink and consumer name. All replicas sharing it must use the same
+   * feed scope, destination, location and row mapping. Use a new name when
+   * that configuration changes.
+   */
   name: string;
   projectId?: string;
   datasetId: string;
@@ -101,6 +107,8 @@ export interface CreateBigQueryReportingWarehouseSinkOptionsV1 {
 export interface BigQueryReportingWarehouseSinkV1 {
   /**
    * Load at most one batch. Resolves with what was loaded; `idle` when nothing new committed.
+   * An overlapping run that loses its plan or cursor claim rejects. Retry
+   * `runOnce()` to resume the current durable plan or committed cursor.
    *
    * `missing` lists revision IDs the change feed announced that no longer
    * exist in the ledger because their period was retired before this batch
@@ -156,6 +164,12 @@ export function createBigQueryReportingWarehouseSinkV1(
     ...(options.projectId ? { projectId: options.projectId } : {}),
     ...(options.location ? { location: options.location } : {}),
   });
+  const matchesPlan = `WHERE sink_name = $1
+    AND committed_cursor IS NOT DISTINCT FROM $2
+    AND planned_from_cursor IS NOT DISTINCT FROM $2
+    AND planned_to_cursor = $3 AND planned_revisions = $4::jsonb
+    AND planned_rows_attempt = $5 AND planned_revisions_attempt = $6`;
+  const stalePlan = () => new Error('Warehouse sink plan changed during an overlapping run; retry runOnce()');
 
   async function loadOnce(tableId: string, jobId: string, lines: string[], signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
@@ -218,6 +232,16 @@ export function createBigQueryReportingWarehouseSinkV1(
           [options.name]
         )
       ).rows[0]!;
+      if (state.planned_to_cursor !== null && state.planned_from_cursor !== state.committed_cursor) {
+        throw new Error(
+          'Warehouse sink has an inconsistent retained plan; reconcile the plan and BigQuery jobs before resuming'
+        );
+      }
+      // Recover an acknowledgment lost after the cursor commit, and refresh
+      // retention liveness even when this tick has no new revisions.
+      if (state.committed_cursor) {
+        await options.store.saveFeedConsumerCursor(options.name, state.committed_cursor);
+      }
       let plan =
         state.planned_to_cursor && state.planned_revisions
           ? {
@@ -236,8 +260,9 @@ export function createBigQueryReportingWarehouseSinkV1(
           limit: maxRevisions,
         });
         if (page.records.length === 0) {
-          if (page.cursor !== state.committed_cursor) await commit(page.cursor);
-          return { idle: true, revisions: 0, rows: 0, missing: [] };
+          if (page.cursor === state.committed_cursor) {
+            return { idle: true, revisions: 0, rows: 0, missing: [] };
+          }
         }
         plan = {
           from: state.committed_cursor,
@@ -246,14 +271,25 @@ export function createBigQueryReportingWarehouseSinkV1(
           rowsAttempt: 0,
           revisionsAttempt: 0,
         };
-        await options.db.query(
+        const claimed = await options.db.query(
           `UPDATE adcp_reporting_warehouse_sinks
               SET planned_from_cursor = $2, planned_to_cursor = $3, planned_revisions = $4::jsonb,
                   planned_rows_attempt = 0, planned_revisions_attempt = 0, updated_at = clock_timestamp()
-            WHERE sink_name = $1`,
+            WHERE sink_name = $1 AND committed_cursor IS NOT DISTINCT FROM $2
+              AND planned_to_cursor IS NULL AND planned_revisions IS NULL
+            RETURNING sink_name`,
           [options.name, plan.from, plan.to, JSON.stringify(plan.revisions)]
         );
+        if (claimed.rows.length === 0) throw stalePlan();
       }
+      const planValues = [
+        options.name,
+        plan.from,
+        plan.to,
+        JSON.stringify(plan.revisions),
+        plan.rowsAttempt,
+        plan.revisionsAttempt,
+      ];
 
       const rowLines: string[] = [];
       const revisionLines: string[] = [];
@@ -329,29 +365,26 @@ export function createBigQueryReportingWarehouseSinkV1(
             const column = step.kind === 'rows' ? 'planned_rows_attempt' : 'planned_revisions_attempt';
             await options.db.query(
               `UPDATE adcp_reporting_warehouse_sinks SET ${column} = ${column} + 1,
-                      updated_at = clock_timestamp() WHERE sink_name = $1`,
-              [options.name]
+                      updated_at = clock_timestamp() ${matchesPlan}`,
+              planValues
             );
           }
           throw error;
         }
       }
-      await commit(plan.to);
-      return { idle: false, revisions: revisionLines.length, rows: rowLines.length, missing };
+      const committed = await options.db.query(
+        `UPDATE adcp_reporting_warehouse_sinks
+            SET committed_cursor = $3, planned_from_cursor = NULL, planned_to_cursor = NULL,
+                planned_revisions = NULL, planned_rows_attempt = 0, planned_revisions_attempt = 0,
+                updated_at = clock_timestamp()
+          ${matchesPlan} RETURNING sink_name`,
+        planValues
+      );
+      if (committed.rows.length === 0) throw stalePlan();
+      await options.store.saveFeedConsumerCursor(options.name, plan.to);
+      return { idle: plan.revisions.length === 0, revisions: revisionLines.length, rows: rowLines.length, missing };
     },
   };
-
-  async function commit(cursor: string): Promise<void> {
-    await options.db.query(
-      `UPDATE adcp_reporting_warehouse_sinks
-          SET committed_cursor = $2, planned_from_cursor = NULL, planned_to_cursor = NULL,
-              planned_revisions = NULL, planned_rows_attempt = 0, planned_revisions_attempt = 0,
-              updated_at = clock_timestamp()
-        WHERE sink_name = $1`,
-      [options.name, cursor]
-    );
-    await options.store.saveFeedConsumerCursor(options.name, cursor);
-  }
 }
 
 /** Deterministic load job ID for one planned change-feed range. */
