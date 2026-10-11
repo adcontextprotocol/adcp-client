@@ -2040,6 +2040,102 @@ function postProcessReportingEvidenceStrictness(content: string): string {
   return result;
 }
 
+/** Restore code-specific issue constraints lost by the TypeScript projection. */
+function postProcessReportingStatusIssueConstraints(
+  content: string,
+  source = JSON.parse(
+    readFileSync(path.join(__dirname, '../schemas/cache/latest/core/reporting-status-issue.json'), 'utf8')
+  )
+): string {
+  const rules: Record<
+    string,
+    {
+      required: string[];
+      constants: Record<string, string>;
+      action?: { severity: string; then: string; else: string };
+    }
+  > = {};
+  for (const arm of source.allOf) {
+    const code = arm.if?.properties?.code?.const;
+    if (
+      typeof code !== 'string' ||
+      rules[code] ||
+      !source.properties.code.enum.includes(code) ||
+      !isDeepStrictEqual(arm.if, { properties: { code: { const: code } }, required: ['code'] }) ||
+      Object.keys(arm).some(key => !['if', 'then'].includes(key))
+    )
+      throw new Error('Unsupported reporting issue code conditional');
+    const required: string[] = arm.then.required ?? [];
+    const constants: Record<string, string> = {};
+    for (const [field, constraint] of Object.entries(arm.then.properties ?? {})) {
+      const value = (constraint as { const?: unknown }).const;
+      if (
+        typeof value !== 'string' ||
+        !isDeepStrictEqual(constraint, { const: value }) ||
+        !source.properties[field]?.enum?.includes(value)
+      ) {
+        throw new Error(`Unsupported reporting issue constant for ${code}.${field}`);
+      }
+      constants[field] = value;
+    }
+    if (
+      !Array.isArray(required) ||
+      required.some(field => !Object.hasOwn(source.properties, field)) ||
+      Object.keys(arm.then).some(key => !['required', 'properties', 'if', 'then', 'else'].includes(key))
+    ) {
+      throw new Error(`Unsupported reporting issue constraints for ${code}`);
+    }
+    const rule: (typeof rules)[string] = { required, constants };
+    if (arm.then.if || arm.then.then || arm.then.else) {
+      const severity = arm.then.if?.properties?.severity?.const;
+      const thenAction = arm.then.then?.properties?.recommended_action?.const;
+      const elseAction = arm.then.else?.properties?.recommended_action?.const;
+      if (
+        !source.properties.severity ||
+        typeof severity !== 'string' ||
+        !isDeepStrictEqual(arm.then.if, { properties: { severity: { const: severity } } }) ||
+        !isDeepStrictEqual(arm.then.then, { properties: { recommended_action: { const: thenAction } } }) ||
+        !isDeepStrictEqual(arm.then.else, { properties: { recommended_action: { const: elseAction } } }) ||
+        !source.properties.recommended_action.enum.includes(thenAction) ||
+        !source.properties.recommended_action.enum.includes(elseAction)
+      ) {
+        throw new Error(`Unsupported reporting issue action conditional for ${code}`);
+      }
+      rule.action = { severity, then: thenAction, else: elseAction };
+    }
+    rules[code] = rule;
+  }
+  const target = findSchemaExportExpressions(content).find(entry => entry.name === 'ReportingStatusIssueSchema');
+  if (!target) throw new Error('ReportingStatusIssueSchema was not generated');
+  const expression = `${target.expression}.superRefine((value, ctx) => {
+      // reporting issue canonical code constraints
+      const rules: Record<string, {
+          required: string[];
+          constants: Record<string, string>;
+          action?: { severity: string; then: string; else: string };
+      }> = ${JSON.stringify(rules)};
+      const rule = Object.hasOwn(rules, value.code) ? rules[value.code] : undefined;
+      if (!rule) return;
+      for (const field of rule.required) {
+          if ((value as Record<string, unknown>)[field] === undefined) {
+              ctx.addIssue({ code: "custom", path: [field], message: field + " is required for " + value.code });
+          }
+      }
+      for (const [field, expected] of Object.entries(rule.constants)) {
+          if ((value as Record<string, unknown>)[field] !== expected) {
+              ctx.addIssue({ code: "custom", path: [field], message: "Expected " + expected });
+          }
+      }
+      if (rule.action) {
+          const expected = value.severity === rule.action.severity ? rule.action.then : rule.action.else;
+          if (value.recommended_action !== expected) {
+              ctx.addIssue({ code: "custom", path: ["recommended_action"], message: "Expected " + expected });
+          }
+      }
+  })`;
+  return content.slice(0, target.expressionStart) + expression + content.slice(target.expressionEnd);
+}
+
 /**
  * Restore sync_reporting_status constraints that are context-sensitive in the
  * canonical schemas and are lost by the JSON Schema -> TypeScript -> Zod
@@ -5692,6 +5788,7 @@ async function generateZodSchemas() {
     // global extension passthrough policy intentionally does not cover.
     zodSchemas = postProcessGetReportingStatusViewRequiredFields(zodSchemas, reportingStatusRequiredByView);
     zodSchemas = postProcessReportingEvidenceStrictness(zodSchemas);
+    zodSchemas = postProcessReportingStatusIssueConstraints(zodSchemas);
     zodSchemas = postProcessReportingConsumerStatusConstraints(zodSchemas);
     zodSchemas = postProcessGetReportingStatusEvidenceStrictness(zodSchemas, reportingStatusClosedStructuresBySource);
     zodSchemas = postProcessReportingFileManifestStrictness(zodSchemas, reportingFileManifestClosedStructuresBySource);

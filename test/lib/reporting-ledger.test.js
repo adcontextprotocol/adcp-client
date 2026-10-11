@@ -1065,6 +1065,92 @@ describe('seller reporting ledger', () => {
     await Promise.all(calls.slice(0, 16));
   });
 
+  test('unreadable published revisions degrade health until the issue retires', async () => {
+    const store = new MemoryLedgerStore();
+    const obligation = healthObligation();
+    store.obligations.set(obligation.reporting_obligation_id, obligation);
+    store.ledgerAsOf = obligation.recoveryDeadlineAt;
+    store.revisions.set('revision-unreadable-1', {
+      reporting_revision_id: 'revision-unreadable-1',
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      revisionNumber: 1,
+      finality: 'official',
+      createdAt: obligation.expectedAt,
+    });
+    const handler = createReportingStatusHandler(store);
+    const read = view => handler({ account: obligation.account, view }, { account: obligation.account });
+    assert.equal((await read('summary')).health, 'complete');
+    const issue = {
+      issueId: 'revision_unreadable_1',
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      reporting_revision_id: 'revision-unreadable-1',
+      code: 'REVISION_UNREADABLE',
+      responsibleParty: 'seller',
+      openedAt: obligation.expectedAt,
+      observedAt: obligation.expectedAt,
+    };
+    for (const [severity, recommendedAction] of [
+      ['delayed', 'wait_for_retry'],
+      ['action_required', 'contact_seller'],
+    ]) {
+      await store.putIssue({ ...issue, severity, recommendedAction });
+      for (const view of ['summary', 'periods']) {
+        const result = await read(view);
+        const projection = view === 'summary' ? result : result.periods[0];
+        assert.equal(projection.health, severity);
+        const unreadable = projection.issues.find(value => value.code === 'REVISION_UNREADABLE');
+        assert.ok(unreadable);
+        assert.equal(unreadable.responsible_party, 'seller');
+        assert.equal(unreadable.reporting_obligation_id, obligation.reporting_obligation_id);
+        assert.equal(unreadable.reporting_revision_id, 'revision-unreadable-1');
+      }
+    }
+    for (const issueState of ['resolved', 'waived']) {
+      await store.putIssue({ ...issue, severity: 'action_required', recommendedAction: 'contact_seller', issueState });
+      assert.equal((await read('summary')).health, 'complete');
+      assert.equal((await read('summary')).issues.length, 0);
+    }
+  });
+
+  test('custom stores cannot emit unattributed or invalid unreadable revisions', async () => {
+    const store = new MemoryLedgerStore();
+    const obligation = healthObligation();
+    store.obligations.set(obligation.reporting_obligation_id, obligation);
+    store.ledgerAsOf = obligation.recoveryDeadlineAt;
+    store.revisions.set('revision-unreadable-1', {
+      reporting_revision_id: 'revision-unreadable-1',
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      revisionNumber: 1,
+      finality: 'official',
+      createdAt: obligation.expectedAt,
+    });
+    const issue = {
+      issueId: 'revision_unreadable_1',
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      reporting_revision_id: 'revision-unreadable-1',
+      code: 'REVISION_UNREADABLE',
+      severity: 'action_required',
+      responsibleParty: 'seller',
+      recommendedAction: 'contact_seller',
+      openedAt: obligation.expectedAt,
+      observedAt: obligation.expectedAt,
+    };
+    const handler = createReportingStatusHandler(store);
+    for (const change of [
+      { reporting_revision_id: undefined },
+      { reporting_revision_id: 'other-tenant-revision' },
+      { reporting_revision_id: 'https://seller.example/revision' },
+      { reporting_obligation_id: 'scope' },
+      { responsibleParty: 'buyer' },
+      { recommendedAction: 'wait_for_retry' },
+    ]) {
+      await store.putIssue({ ...issue, ...change });
+      const result = await handler({ account: obligation.account, view: 'summary' }, { account: obligation.account });
+      assert.equal(result.health, 'complete');
+      assert.equal(result.issues.length, 0);
+    }
+  });
+
   test('advances terminal failures when their recovery deadline elapses', async () => {
     const store = new MemoryLedgerStore();
     const obligation = { ...healthObligation(), state: 'terminal' };

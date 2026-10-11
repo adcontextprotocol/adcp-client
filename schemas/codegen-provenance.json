@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "source_repository": "adcontextprotocol/adcp",
+  "source_commit": "07c301e9d364f05fdcfa19d49f9bd638cded0177",
+  "published_version": "3.2.4",
+  "bundle_sha256": "2d367232c6e2d1408af70fb39ecceeccdb66fa6a05d7d8c2d4ac40fa83b2d5f9"
+}

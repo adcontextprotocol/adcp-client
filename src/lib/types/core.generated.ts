@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.2.3
-// Generated at: 2026-10-07T19:16:04.017Z
+// Generated AdCP core types from official schemas v3.2.4
+// Generated at: 2026-10-11T15:40:59.336Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -16468,6 +16468,7 @@ export type ReportingPackageID = string;
  */
 export type ReportingStatusIssue = {
 } & {
+} & {
   /**
    * Seller-issued stable identifier for this logical issue: re-emissions and later polls of the same unresolved condition reuse it, and resolution retires it, so consumers can project AdCP reporting issues into durable work items. A recurrence after resolution receives a new id.
    */
@@ -16482,6 +16483,7 @@ export type ReportingStatusIssue = {
     | 'RESOURCE_EXPIRED'
     | 'READER_INCOMPATIBLE'
     | 'HISTORY_UNAVAILABLE'
+    | 'REVISION_UNREADABLE'
     | 'RECEIPT_REQUIRED'
     | 'RECEIPT_REJECTED'
     | 'ADJUSTMENT_RECEIPT_REQUIRED'
@@ -16515,6 +16517,10 @@ export type ReportingStatusIssue = {
    */
   message?: string;
   reporting_obligation_id?: string;
+  /**
+   * Published revision this issue concerns. Required when code is REVISION_UNREADABLE.
+   */
+  reporting_revision_id?: string;
   /**
    * Current authenticated consumer status statement that caused this mismatch.
    */
@@ -16548,6 +16554,7 @@ export type ReportingStatusIssue = {
     | 'RESOURCE_EXPIRED'
     | 'READER_INCOMPATIBLE'
     | 'HISTORY_UNAVAILABLE'
+    | 'REVISION_UNREADABLE'
     | 'RECEIPT_REQUIRED'
     | 'RECEIPT_REJECTED'
     | 'ADJUSTMENT_RECEIPT_REQUIRED'
@@ -16581,6 +16588,10 @@ export type ReportingStatusIssue = {
    */
   message?: string;
   reporting_obligation_id?: string;
+  /**
+   * Published revision this issue concerns. Required when code is REVISION_UNREADABLE.
+   */
+  reporting_revision_id?: string;
   /**
    * Current authenticated consumer status statement that caused this mismatch.
    */
@@ -20711,6 +20722,18 @@ export type GetProductsRejected = AdCPVersionEnvelope &
     ext?: ExtensionObject;
   };
 /**
+ * Bounded submitted envelope shared by the compact lifecycle tools.
+ */
+export type CompactTaskSubmitted = AdCPVersionEnvelope &
+  ProtocolEnvelope & {
+    status: 'submitted';
+    task_id: string;
+    message?: string;
+    errors?: Error[];
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
+/**
  * Resolved selected pricing terms. Optional on buy_products input, where pricing_option_id plus the versioned feed identifies the offer; required inside accepted commercial_terms. Its pricing_option_id MUST match the sibling field.
  */
 export type CanonicalPricingOption = {
@@ -22155,7 +22178,7 @@ export interface MCPWebhookPayload {
   result?: AdCPAsyncResponseData;
 }
 /**
- * Release-precision AdCP protocol version negotiation fields. Composed via `allOf` into every AdCP request and response schema so the version semantics live in exactly one place. Distinct from `core/protocol-envelope.json`, which wraps responses at the transport layer (context_id / task_id / status / payload). This envelope is part of the payload itself.
+ * Release-precision AdCP protocol version negotiation fields. Composed via `allOf` into AdCP request schemas and shared response components so the version semantics live in one place. Strict (`additionalProperties: false`) request schemas also redeclare these two fields in their own `properties` via `$ref`, because draft-07 does not evaluate properties across `allOf`. The Trusted Match match requests are the exception: they inline both fields for their strict privacy boundary. Distinct from `core/protocol-envelope.json`, which wraps responses at the transport layer (context_id / task_id / status / payload). This envelope is part of the payload itself.
  */
 export interface AdCPVersionEnvelope {
   /**
@@ -22433,17 +22456,6 @@ export interface GetProductsAsyncSubmitted {
   /**
    * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
    */
-  errors?: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Bounded submitted envelope shared by the compact lifecycle tools.
- */
-export interface CompactTaskSubmitted {
-  status: 'submitted';
-  task_id: string;
-  message?: string;
   errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
