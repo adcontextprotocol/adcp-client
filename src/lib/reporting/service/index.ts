@@ -35,6 +35,7 @@ import {
   type ReportingConsumerStatusLedgerStore,
   type ReportingLedgerConfigurationV1,
   type ReportingLedgerStore,
+  type ReportingLegacyRevisionReaderV1,
   type ReportingProducerContactV1,
   type ReportingProducerV1,
   type ReportingManagedDeliveryAdapterV1,
@@ -264,6 +265,22 @@ export interface CreateReliableReportingServiceOptionsV1<TCtxMeta = Record<strin
    * store to be built with `changeFeed: true`.
    */
   maintenance?: ReliableReportingMaintenanceOptionsV1;
+  /**
+   * Serve exact revision reads (`get_media_buy_delivery`) for revisions this
+   * ledger does not hold, such as a seller's pre-cutover ledger tables. The
+   * SDK ledger answers first; the reader is called with the same request and
+   * context only when the SDK has no such revision for the resolved account.
+   * It is never called for an SDK-owned revision that is expired or has
+   * unavailable or corrupt rows, nor on capacity or other errors. A
+   * `null`/`undefined` result becomes the SDK's own nondisclosing
+   * `REFERENCE_NOT_FOUND`.
+   *
+   * The reader owns authorization: it MUST scope its lookup by
+   * `context.account` and return `null` for another account's revision. Read
+   * only; never write to the SDK ledger from it. See
+   * `docs/guides/REPORTING-LEDGER-CUTOVER.md`.
+   */
+  legacyRevisionReader?: ReportingLegacyRevisionReaderV1;
 }
 
 export interface ReliableReportingMaintenanceOptionsV1 {
@@ -492,7 +509,10 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
           : {}),
       })
     : createReportingStatusHandler(options.store);
-  const getMediaBuyDelivery = createReportingDeliveryHandler(options.store);
+  const getMediaBuyDelivery = createReportingDeliveryHandler(
+    options.store,
+    options.legacyRevisionReader ? { legacyRevisionReader: options.legacyRevisionReader } : {}
+  );
   const syncReportingStatus = options.resolveConsumerId
     ? createSyncReportingStatusHandler(options.store as unknown as ReportingConsumerStatusLedgerStore, {
         resolveConsumerId: options.resolveConsumerId,
@@ -942,6 +962,7 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
 
   const managed = await createReportingManagedDeliveryRuntime<RequestContext<Account<TCtxMeta>>>({
     coreStore,
+    ...(options.legacyRevisionReader ? { legacyRevisionReader: options.legacyRevisionReader } : {}),
     store: managedStore,
     adapter: options.managedDelivery.adapter,
     offerings: core.capabilities.offerings,
