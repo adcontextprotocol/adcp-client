@@ -2156,11 +2156,8 @@ export class SingleAgentClient {
         'acquire_rights',
       ].includes(task);
       // Payment-required accounts can still manage creatives for existing buys.
-      if (
-        policy !== 'off' &&
-        (commitsSpend || (task === 'sync_creatives' && known.status !== 'payment_required')) &&
-        known.status !== 'active'
-      ) {
+      const allowedStatuses = task === 'sync_creatives' ? ['active', 'payment_required'] : ['active'];
+      if (policy !== 'off' && (commitsSpend || task === 'sync_creatives') && !allowedStatuses.includes(known.status)) {
         if (known.status === 'pending_approval') throw new AccountPendingApprovalError(ref, known.account_id);
         if (known.status === 'payment_required') throw new AccountPaymentRequiredError();
         throw new AccountSetupRequiredError(
