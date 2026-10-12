@@ -19,6 +19,8 @@ import {
   reportingEffectiveConsumerMismatchEscalationV1,
   projectReportingConsumerStatusMismatchV1,
   projectReportingObligationHealthV1,
+  projectReportingUnreadableRevisionHealthV1,
+  ReportingLedgerIssueIntegrityError,
 } from './health';
 import { compareReportingInstants } from './instant';
 import { getRevisionMetadataFromStore, readRevisionRowsFromStore } from './revision-metadata';
@@ -230,15 +232,16 @@ export function createReportingStatusHandler<TContext = unknown>(
             (projection.health === 'delayed' ||
               projection.health === 'action_required' ||
               issue.code === 'REVISION_UNREADABLE') &&
-            (issue.code !== 'REVISION_UNREADABLE' || validUnreadableRevisionIssue(issue, revisions)) &&
             // Retiring an issue removes it from the projection rather
             // than publishing it at a terminal state, which is what lets
             // a reader treat a nonempty `issues[]` as degradation.
             issue.issueState !== 'resolved' &&
             issue.issueState !== 'waived'
         );
-        const persistedHealth = persistedIssues.reduce(
-          (health, issue) => moreSevereReportingHealthV1(health, issue.severity),
+        const persistedHealth = projectReportingUnreadableRevisionHealthV1(
+          obligation,
+          revisions,
+          page.snapshot.issues,
           projection.health
         );
         const consumerStatusHistory = (page.snapshot.consumerStatuses ?? []).filter(value =>
@@ -536,6 +539,9 @@ export function createReportingStatusHandler<TContext = unknown>(
         ),
         issues: issues.map(wireIssue),
       } as never;
+    } catch (error) {
+      if (error instanceof ReportingLedgerIssueIntegrityError) return operationalUnavailable(view);
+      throw error;
     } finally {
       releaseReadSlot();
     }
@@ -1131,23 +1137,6 @@ function wireCoverage(coverage: ReportingLedgerCoverageV1) {
     unknown_package_ids: [],
     limitations: [],
   };
-}
-
-function validUnreadableRevisionIssue(
-  issue: ReportingLedgerIssueV1,
-  revisions: readonly Pick<ReportingLedgerRevisionSnapshotV1, 'reporting_revision_id'>[]
-): boolean {
-  const id = /^[A-Za-z0-9_.:-]{1,255}$/;
-  return (
-    issue.responsibleParty === 'seller' &&
-    issue.reporting_obligation_id !== 'scope' &&
-    id.test(issue.reporting_obligation_id) &&
-    typeof issue.reporting_revision_id === 'string' &&
-    id.test(issue.reporting_revision_id) &&
-    revisions.some(revision => revision.reporting_revision_id === issue.reporting_revision_id) &&
-    ((issue.severity === 'delayed' && issue.recommendedAction === 'wait_for_retry') ||
-      (issue.severity === 'action_required' && issue.recommendedAction === 'contact_seller'))
-  );
 }
 
 function wireIssue(issue: ReportingLedgerIssueV1) {

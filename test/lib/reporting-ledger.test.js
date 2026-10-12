@@ -1112,7 +1112,7 @@ describe('seller reporting ledger', () => {
     }
   });
 
-  test('custom stores cannot emit unattributed or invalid unreadable revisions', async () => {
+  test('invalid owned unreadable revisions fail safely without exposing issue data', async () => {
     const store = new MemoryLedgerStore();
     const obligation = healthObligation();
     store.obligations.set(obligation.reporting_obligation_id, obligation);
@@ -1120,6 +1120,13 @@ describe('seller reporting ledger', () => {
     store.revisions.set('revision-unreadable-1', {
       reporting_revision_id: 'revision-unreadable-1',
       reporting_obligation_id: obligation.reporting_obligation_id,
+      revisionNumber: 1,
+      finality: 'official',
+      createdAt: obligation.expectedAt,
+    });
+    store.revisions.set('other-tenant-revision', {
+      reporting_revision_id: 'other-tenant-revision',
+      reporting_obligation_id: 'other-tenant-obligation',
       revisionNumber: 1,
       finality: 'official',
       createdAt: obligation.expectedAt,
@@ -1140,15 +1147,51 @@ describe('seller reporting ledger', () => {
       { reporting_revision_id: undefined },
       { reporting_revision_id: 'other-tenant-revision' },
       { reporting_revision_id: 'https://seller.example/revision' },
-      { reporting_obligation_id: 'scope' },
       { responsibleParty: 'buyer' },
       { recommendedAction: 'wait_for_retry' },
     ]) {
       await store.putIssue({ ...issue, ...change });
-      const result = await handler({ account: obligation.account, view: 'summary' }, { account: obligation.account });
-      assert.equal(result.health, 'complete');
-      assert.equal(result.issues.length, 0);
+      for (const view of ['summary', 'periods']) {
+        const result = await handler({ account: obligation.account, view }, { account: obligation.account });
+        assert.equal(result.status, 'failed');
+        assert.equal(result.failure_kind, 'operational');
+        assert.equal(result.health, undefined);
+        assert.equal(result.issues, undefined);
+        assert.equal(result.periods, undefined);
+        assert.equal(JSON.stringify(result).includes('other-tenant-revision'), false);
+        assert.equal(JSON.stringify(result).includes('seller.example'), false);
+      }
     }
+    await store.putIssue({ ...issue, reporting_obligation_id: 'scope' });
+    const scopeResult = await handler(
+      { account: obligation.account, view: 'summary' },
+      { account: obligation.account }
+    );
+    assert.equal(scopeResult.health, 'complete');
+    assert.equal(scopeResult.issues.length, 0);
+  });
+
+  test('unreadable support preserves existing persisted issue health', async () => {
+    const store = new MemoryLedgerStore();
+    const obligation = healthObligation();
+    store.obligations.set(obligation.reporting_obligation_id, obligation);
+    store.ledgerAsOf = obligation.expectedAt;
+    await store.putIssue({
+      issueId: 'existing_issue',
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      code: 'ACCESS_REQUIRED',
+      severity: 'action_required',
+      responsibleParty: 'seller',
+      recommendedAction: 'repair_access',
+      openedAt: obligation.expectedAt,
+      observedAt: obligation.expectedAt,
+    });
+    const result = await createReportingStatusHandler(store)(
+      { account: obligation.account, view: 'summary' },
+      { account: obligation.account }
+    );
+    assert.equal(result.health, 'delayed');
+    assert.ok(result.issues.some(issue => issue.code === 'ACCESS_REQUIRED'));
   });
 
   test('advances terminal failures when their recovery deadline elapses', async () => {
