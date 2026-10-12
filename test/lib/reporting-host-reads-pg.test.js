@@ -49,6 +49,239 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
     }
   });
 
+  test('consumer checkpoints advance in their own feed order and equal positions refresh liveness', async () => {
+    const name = 'ordered-checkpoint';
+    const checkpoint = (account, seq, xid) =>
+      ledger.encodeReportingChangeCursorV1({
+        v: 1,
+        account,
+        seq,
+        ...(xid === undefined ? {} : { xid }),
+      });
+    const read = async () =>
+      (await pool.query('SELECT * FROM adcp_reporting_feed_consumers WHERE consumer_name = $1', [name])).rows[0];
+    await store.saveFeedConsumerCursor(name, checkpoint('acct_checkpoint', '20'), { refreshUnchanged: false });
+    await store.saveFeedConsumerCursor(name, checkpoint('acct_checkpoint', '10'));
+    assert.equal((await read()).cursor_seq, '20');
+    await pool.query(
+      "UPDATE adcp_reporting_feed_consumers SET updated_at = clock_timestamp() - INTERVAL '1 day' WHERE consumer_name = $1",
+      [name]
+    );
+    const old = (await read()).updated_at;
+    await store.saveFeedConsumerCursor(name, checkpoint('acct_checkpoint', '20'), { refreshUnchanged: false });
+    assert.equal((await read()).updated_at.getTime(), old.getTime());
+    await store.saveFeedConsumerCursor(name, checkpoint('acct_checkpoint', '20'));
+    assert.ok((await read()).updated_at > old);
+    await store.saveFeedConsumerCursor(name, checkpoint('acct_checkpoint', '21'), { refreshUnchanged: false });
+    assert.equal((await read()).cursor_seq, '21');
+    // Reassigning a name to another feed preserves the existing API behavior.
+    await store.saveFeedConsumerCursor(name, checkpoint(null, '200', '100'));
+    await store.saveFeedConsumerCursor(name, checkpoint(null, '1', '101'));
+    await store.saveFeedConsumerCursor(name, checkpoint(null, '300', '100'));
+    assert.equal((await read()).cursor_xid, '101');
+    assert.equal((await read()).cursor_seq, '1');
+    await store.saveFeedConsumerCursor(name, checkpoint(null, '2', '101'));
+    await store.saveFeedConsumerCursor(name, checkpoint(null, '1', '101'));
+    assert.equal((await read()).cursor_seq, '2');
+    const unchanged = await read();
+    await store.saveFeedConsumerCursor(name, checkpoint(null, '2', '101'), { refreshUnchanged: false });
+    assert.deepEqual(await read(), unchanged);
+    await store.saveFeedConsumerCursor(name, checkpoint(null, '0', '102'), { refreshUnchanged: false });
+    assert.equal((await read()).cursor_xid, '102');
+    assert.equal((await read()).cursor_seq, '0');
+    await store.saveFeedConsumerCursor(name, checkpoint('acct_other_checkpoint', '1'));
+    assert.equal((await read()).account_id, 'acct_other_checkpoint');
+    assert.equal((await read()).cursor_seq, '1');
+  });
+
+  test('saveFeedConsumerCursor reports whether it applied, and rewinds only on request', async () => {
+    const name = 'rewind-checkpoint';
+    const read = async () =>
+      (await pool.query('SELECT * FROM adcp_reporting_feed_consumers WHERE consumer_name = $1', [name])).rows[0];
+    const account = seq => ledger.encodeReportingChangeCursorV1({ v: 1, account: 'acct_rewind', seq });
+    const deployment = (xid, seq) => ledger.encodeReportingChangeCursorV1({ v: 1, account: null, seq, xid });
+
+    assert.equal(await store.saveFeedConsumerCursor(name, account('20')), true, 'first save registers the consumer');
+    assert.equal(await store.saveFeedConsumerCursor(name, account('30')), true, 'forward moves apply');
+    assert.equal(await store.saveFeedConsumerCursor(name, account('10')), false, 'a backward write is ignored');
+    assert.equal((await read()).cursor_seq, '30');
+    assert.equal(await store.saveFeedConsumerCursor(name, account('30')), true, 'an equal write renews the hold');
+    assert.equal(
+      await store.saveFeedConsumerCursor(name, account('30'), { refreshUnchanged: false }),
+      false,
+      'an equal write that must not renew the hold is not applied'
+    );
+    assert.equal(await store.saveFeedConsumerCursor(name, account('10'), { rewind: false }), false);
+
+    // An explicit rewind moves the saved position and the retention hold back.
+    await pool.query(
+      "UPDATE adcp_reporting_feed_consumers SET updated_at = clock_timestamp() - INTERVAL '1 day' WHERE consumer_name = $1",
+      [name]
+    );
+    const stale = (await read()).updated_at;
+    assert.equal(await store.saveFeedConsumerCursor(name, account('10'), { rewind: true }), true);
+    assert.equal((await read()).cursor_seq, '10');
+    assert.ok((await read()).updated_at > stale, 'a rewind renews the retention hold');
+
+    // Moving to another account replaces the position even at a lower sequence.
+    const otherAccount = ledger.encodeReportingChangeCursorV1({ v: 1, account: 'acct_rewind_b', seq: '1' });
+    assert.equal(await store.saveFeedConsumerCursor(name, otherAccount), true);
+    assert.equal((await read()).account_id, 'acct_rewind_b');
+    assert.equal((await read()).cursor_seq, '1');
+    assert.equal(await store.saveFeedConsumerCursor(name, account('10'), { rewind: true }), true);
+
+    // The same holds for the deployment feed's (xid, seq) order.
+    assert.equal(await store.saveFeedConsumerCursor(name, deployment('200', '5')), true, 'a scope switch replaces');
+    assert.equal(await store.saveFeedConsumerCursor(name, deployment('199', '9')), false);
+    assert.equal(await store.saveFeedConsumerCursor(name, deployment('200', '4')), false);
+    assert.equal(await store.saveFeedConsumerCursor(name, deployment('199', '9'), { rewind: true }), true);
+    assert.equal((await read()).cursor_xid, '199');
+    assert.equal((await read()).cursor_seq, '9');
+
+    assert.equal(await store.removeFeedConsumer(name), true);
+    assert.equal(await read(), undefined);
+    assert.equal(await store.removeFeedConsumer(name), false, 'removing an unknown consumer reports false');
+    assert.equal(await store.saveFeedConsumerCursor(name, account('1')), true, 'a removed consumer can register again');
+    await store.removeFeedConsumer(name);
+  });
+
+  for (const { scope, axis } of [
+    { scope: 'account', axis: 'sequence' },
+    { scope: 'deployment', axis: 'sequence' },
+    { scope: 'deployment', axis: 'transaction' },
+  ]) {
+    test(`${scope} feed pages use numeric ${axis} order across decimal digit boundaries`, async t => {
+      const { Pool } = require('pg');
+      const suffix = `${scope}_${axis}`;
+      const isolatedSchema = `${schema}_numeric_${suffix}`;
+      await bootstrapPool.query(`CREATE SCHEMA "${isolatedSchema}"`);
+      const isolatedPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${isolatedSchema}"` });
+      t.after(async () => {
+        await isolatedPool.end();
+        await bootstrapPool.query(`DROP SCHEMA IF EXISTS "${isolatedSchema}" CASCADE`);
+      });
+      await isolatedPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await isolatedPool.query(ledger.REPORTING_LEDGER_CHANGES_MIGRATION);
+      const isolatedStore = new ledger.PostgresReportingLedgerStore(isolatedPool, {
+        acknowledgeIsolatedDatabase: true,
+        changeFeed: true,
+      });
+      if (axis === 'sequence') await isolatedPool.query("SELECT setval('adcp_reporting_changes_seq_seq', 8)");
+      const account = `acct_numeric_${suffix}`;
+      const first = await createRowStorageFixture({
+        store: isolatedStore,
+        suffix: `first_${suffix}`,
+        accountId: account,
+      });
+      const second = await createRowStorageFixture({
+        store: isolatedStore,
+        suffix: `second_${suffix}`,
+        accountId: account,
+      });
+      if (scope === 'deployment') {
+        // Historical XIDs keep these changes visible despite concurrent
+        // suites' older transactions. The sequence case shares one XID.
+        await isolatedPool.query(
+          `UPDATE adcp_reporting_changes SET xid = CASE WHEN record_id = $1 THEN '9'::xid8 ELSE $2::text::xid8 END`,
+          [first.obligation.reporting_obligation_id, axis === 'sequence' ? '9' : '10']
+        );
+      }
+      const position = scope === 'account' ? { account_id: account } : {};
+      const firstPage = await isolatedStore.changesAfter({ ...position, limit: 1 });
+      assert.deepEqual(
+        firstPage.records.map(record => record.record_id),
+        [first.obligation.reporting_obligation_id]
+      );
+      const secondPage = await isolatedStore.changesAfter({ ...position, cursor: firstPage.cursor, limit: 1 });
+      assert.deepEqual(
+        secondPage.records.map(record => record.record_id),
+        [second.obligation.reporting_obligation_id]
+      );
+      assert.deepEqual(
+        (await isolatedStore.changesAfter({ ...position, cursor: secondPage.cursor, limit: 1 })).records,
+        []
+      );
+    });
+  }
+
+  for (const scope of ['account', 'deployment']) {
+    for (const coldStart of [false, true]) {
+      test(`${scope === 'account' ? 'an' : 'a'} ${scope} feed rejects a prune between its horizon and page reads (${coldStart ? 'initial horizon' : 'saved cursor'})`, async () => {
+        const { Pool } = require('pg');
+        const suffix = `${scope}_${coldStart ? 'cold' : 'warm'}`;
+        const isolatedSchema = `${schema}_${suffix}`;
+        await bootstrapPool.query(`CREATE SCHEMA "${isolatedSchema}"`);
+        const isolatedPool = new Pool({
+          connectionString: DATABASE_URL,
+          options: `-c search_path="${isolatedSchema}"`,
+        });
+        try {
+          await isolatedPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+          await isolatedPool.query(ledger.REPORTING_LEDGER_CHANGES_MIGRATION);
+          const realStore = new ledger.PostgresReportingLedgerStore(isolatedPool, {
+            acknowledgeIsolatedDatabase: true,
+            changeFeed: true,
+          });
+          const account = `acct_horizon_${suffix}`;
+          const position = scope === 'account' ? { account_id: account } : {};
+          const savedCursor = (await realStore.changesAfter(position)).cursor;
+          const old = await createRowStorageFixture({ store: realStore, suffix: `old_${suffix}`, accountId: account });
+          const revisionId = `rrev_horizon_${suffix}`;
+          await realStore.commitRevision(old.revision(revisionId, 1, rows), old.lease);
+          await isolatedPool.query(
+            "UPDATE adcp_reporting_changes SET recorded_at = clock_timestamp() - INTERVAL '40 days' WHERE obligation_id = $1",
+            [old.obligation.reporting_obligation_id]
+          );
+          const fresh = await createRowStorageFixture({
+            store: realStore,
+            suffix: `fresh_${suffix}`,
+            accountId: account,
+          });
+          let intercepted = false;
+          let deleted;
+          const observedStore = new ledger.PostgresReportingLedgerStore(
+            {
+              connect: isolatedPool.connect.bind(isolatedPool),
+              async query(sql, values) {
+                const result = await isolatedPool.query(sql, values);
+                if (!intercepted && sql.includes('SELECT pruned_through')) {
+                  intercepted = true;
+                  deleted = (await realStore.pruneChanges({ changeRetentionDays: 30 })).deleted;
+                }
+                return result;
+              },
+            },
+            { acknowledgeIsolatedDatabase: true, changeFeed: true }
+          );
+          let expired;
+          await assert.rejects(
+            observedStore.changesAfter({ ...position, ...(coldStart ? {} : { cursor: savedCursor }) }),
+            error => {
+              assert.ok(error instanceof ledger.ReportingChangeCursorExpiredError);
+              expired = error;
+              return true;
+            }
+          );
+          assert.equal(ledger.decodeReportingChangeCursorV1(expired.cursor, position.account_id ?? null).seq, '0');
+          assert.ok(intercepted, 'retention ran after the initial horizon result and before the page query');
+          assert.equal(deleted, 2, 'retention removed the old obligation and revision changes');
+          assert.ok(
+            await realStore.getRevisionMetadata(revisionId, account),
+            'the missed revision is still recoverable'
+          );
+          assert.deepEqual(
+            (await realStore.changesAfter({ account_id: account })).records.map(record => record.record_id),
+            [fresh.obligation.reporting_obligation_id],
+            'a fresh read starts after the new horizon and sees the surviving change'
+          );
+        } finally {
+          await isolatedPool.end();
+          await bootstrapPool.query(`DROP SCHEMA IF EXISTS "${isolatedSchema}" CASCADE`);
+        }
+      });
+    }
+  }
+
   test('reads the current revision and pages current revisions by period', async () => {
     const accountId = first.request.account.account_id;
     const current = await store.getCurrentRevision({

@@ -1443,6 +1443,13 @@ ${managedDueArm}       )
    * transaction still in flight, so no commit is ever skipped. A cursor older
    * than the retained history throws `ReportingChangeCursorExpiredError`;
    * resynchronize from `listCurrentRevisions`.
+   *
+   * A read without a `cursor` can throw `ReportingChangeCursorExpiredError`
+   * (`code === 'CURSOR_EXPIRED'`) too. The horizon is re-read after the page,
+   * so a prune that commits mid-read rejects the page instead of returning one
+   * that silently skips the pruned changes. Retrying the read starts from the
+   * new, later horizon. Match on `error.code` rather than `instanceof`, which
+   * fails when the error crosses a CJS/ESM module boundary.
    */
   async changesAfter(
     input: {
@@ -1461,7 +1468,7 @@ ${managedDueArm}       )
     // The pruned horizon in this feed's own order. A supplied cursor below it
     // may have missed a pruned change and fails closed; a consumer starting
     // without a cursor begins at it, which is the oldest retained change.
-    const horizon =
+    const readHorizon = async (): Promise<{ seq: string; xid?: string }> =>
       account !== null
         ? {
             seq:
@@ -1479,20 +1486,30 @@ ${managedDueArm}       )
                  FROM adcp_reporting_change_horizon WHERE singleton`
             )
           ).rows[0] ?? { xid: '0', seq: '0' });
-    if (cursor) {
+    const assertRetained = (position: { seq: string; xid?: string }, horizon: { seq: string; xid?: string }) => {
       const behind =
         account !== null
-          ? BigInt(horizon.seq) > BigInt(cursor.seq)
-          : BigInt((horizon as { xid: string }).xid) > BigInt(cursor.xid!) ||
-            (BigInt((horizon as { xid: string }).xid) === BigInt(cursor.xid!) &&
-              BigInt(horizon.seq) > BigInt(cursor.seq));
-      if (behind) throw new ReportingChangeCursorExpiredError();
-    }
+          ? BigInt(horizon.seq) > BigInt(position.seq)
+          : BigInt(horizon.xid!) > BigInt(position.xid!) ||
+            (BigInt(horizon.xid!) === BigInt(position.xid!) && BigInt(horizon.seq) > BigInt(position.seq));
+      if (behind) {
+        throw new ReportingChangeCursorExpiredError(
+          encodeReportingChangeCursorV1({
+            v: 1,
+            account,
+            seq: position.seq,
+            ...(account === null ? { xid: position.xid! } : {}),
+          })
+        );
+      }
+    };
+    const horizon = await readHorizon();
+    if (cursor) assertRetained(cursor, horizon);
     const position = cursor ?? {
       v: 1 as const,
       account,
       seq: horizon.seq,
-      ...(account === null ? { xid: (horizon as { xid: string }).xid } : {}),
+      ...(account === null ? { xid: horizon.xid! } : {}),
     };
     const kinds = input.kinds?.length ? [...input.kinds] : null;
     type ChangeRow = {
@@ -1524,6 +1541,9 @@ ${managedDueArm}       )
               ORDER BY adcp_reporting_changes.xid, adcp_reporting_changes.seq LIMIT $4`,
             [position.xid ?? '0', position.seq, kinds, limit]
           );
+    // Pruning can commit between the horizon and page queries. Check the
+    // original position again so a missing change cannot become a new cursor.
+    assertRetained(position, await readHorizon());
     const last = result.rows.at(-1);
     const next = last
       ? encodeReportingChangeCursorV1({ v: 1, account, seq: last.seq, ...(account === null ? { xid: last.xid } : {}) })
@@ -1543,8 +1563,30 @@ ${managedDueArm}       )
   /**
    * Record a named durable consumer's position. Registered consumers hold
    * back change-table pruning until `maxFeedHoldDays` after their last update.
+   *
+   * Checkpoints are forward-only within a feed scope: a cursor behind the
+   * saved one is ignored, so a delayed or stale acknowledgment cannot pull the
+   * retention hold back. Resolves `true` when the checkpoint was written and
+   * `false` when it was ignored (behind the saved position, or equal with
+   * `refreshUnchanged: false`). To rewind a consumer deliberately, for example
+   * to replay changes, pass `rewind: true`; the saved position and retention
+   * hold then move to `cursor` and the write always applies, even with
+   * `refreshUnchanged: false`. The cursor is not checked against the
+   * retention horizon: it must still be inside the retained history or the
+   * next read throws `ReportingChangeCursorExpiredError`. Any change of
+   * `account_id` (account to deployment, deployment to account, or between
+   * accounts) always replaces the position. The feed scope is read from the
+   * cursor itself, so only pass cursors your own code obtained from
+   * `changesAfter`, never ones supplied by an untrusted caller.
+   *
+   * Set `refreshUnchanged: false` to recover an acknowledgment without
+   * renewing the retention hold when its position has not advanced.
    */
-  async saveFeedConsumerCursor(name: string, cursor: string): Promise<void> {
+  async saveFeedConsumerCursor(
+    name: string,
+    cursor: string,
+    options: { refreshUnchanged?: boolean; rewind?: boolean } = {}
+  ): Promise<boolean> {
     if (!this.changeFeed) throw new Error('saveFeedConsumerCursor requires the store changeFeed option');
     let account: string | null;
     try {
@@ -1554,14 +1596,46 @@ ${managedDueArm}       )
       throw new RangeError('feed consumer cursor is invalid');
     }
     const decoded = decodeReportingChangeCursorV1(cursor, account);
-    await this.query(
+    const result = await this.query(
       `INSERT INTO adcp_reporting_feed_consumers (consumer_name, account_id, cursor_xid, cursor_seq)
        VALUES ($1, $2, $3::text::xid8, $4::bigint)
        ON CONFLICT (consumer_name) DO UPDATE
           SET account_id = EXCLUDED.account_id, cursor_xid = EXCLUDED.cursor_xid,
-              cursor_seq = EXCLUDED.cursor_seq, updated_at = clock_timestamp()`,
-      [name, account, account === null ? decoded.xid! : null, decoded.seq]
+              cursor_seq = EXCLUDED.cursor_seq, updated_at = clock_timestamp()
+        WHERE $6::boolean
+           OR adcp_reporting_feed_consumers.account_id IS DISTINCT FROM EXCLUDED.account_id
+           OR CASE WHEN EXCLUDED.account_id IS NULL
+              THEN (adcp_reporting_feed_consumers.cursor_xid, adcp_reporting_feed_consumers.cursor_seq)
+                   < (EXCLUDED.cursor_xid, EXCLUDED.cursor_seq)
+                OR ($5::boolean AND (adcp_reporting_feed_consumers.cursor_xid, adcp_reporting_feed_consumers.cursor_seq)
+                   = (EXCLUDED.cursor_xid, EXCLUDED.cursor_seq))
+              ELSE adcp_reporting_feed_consumers.cursor_seq < EXCLUDED.cursor_seq
+                OR ($5::boolean AND adcp_reporting_feed_consumers.cursor_seq = EXCLUDED.cursor_seq) END
+       RETURNING consumer_name`,
+      [
+        name,
+        account,
+        account === null ? decoded.xid! : null,
+        decoded.seq,
+        options.refreshUnchanged !== false,
+        options.rewind === true,
+      ]
     );
+    return result.rows.length > 0;
+  }
+
+  /**
+   * Unregister a durable consumer so it stops holding back change-table
+   * pruning and period retention. Resolves `true` when a registration was
+   * removed. Saving a cursor under the same name registers it again.
+   */
+  async removeFeedConsumer(name: string): Promise<boolean> {
+    if (!this.changeFeed) throw new Error('removeFeedConsumer requires the store changeFeed option');
+    const result = await this.query(
+      `DELETE FROM adcp_reporting_feed_consumers WHERE consumer_name = $1 RETURNING consumer_name`,
+      [name]
+    );
+    return result.rows.length > 0;
   }
 
   /**

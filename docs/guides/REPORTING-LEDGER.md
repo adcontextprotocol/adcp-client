@@ -796,6 +796,27 @@ await store.saveFeedConsumerCursor('pacing', page.cursor); // holds back pruning
   that every consumer updated within `maxFeedHoldDays` (default 7) has passed.
   An older cursor throws `ReportingChangeCursorExpiredError`; resynchronize from
   `listCurrentRevisions`.
+- A read with no cursor can throw `ReportingChangeCursorExpiredError` too. `changesAfter`
+  re-reads the retention horizon after the page, so a prune that commits during
+  a consumer's first read rejects that page instead of returning one that skips
+  the pruned changes. Host startup code must handle `CURSOR_EXPIRED` on a first
+  read the same way as on a saved cursor: retry (the new read starts at the later
+  horizon) or resynchronize from `listCurrentRevisions`. Match on
+  `error.code === 'CURSOR_EXPIRED'` rather than `instanceof`, which fails when
+  the store and your code load through different module formats (CJS and ESM).
+- Consumer checkpoints are forward-only. `saveFeedConsumerCursor(name, cursor)`
+  ignores a cursor behind the saved one in the same feed scope, so a delayed or
+  stale acknowledgment cannot pull the retention hold backward. It resolves
+  `true` when the checkpoint was written and `false` when it was ignored (an
+  equal position also resolves `false` with `{ refreshUnchanged: false }`). To
+  rewind a consumer on purpose, for example to replay changes, pass
+  `{ rewind: true }`; the saved position and retention hold move back to that
+  cursor (the write always applies, and the cursor is not checked against the
+  retention horizon, so it must still be inside the retained history). Without it a rewound
+  consumer would keep its old, newer hold, pruning could remove exactly what it
+  is about to read, and its next read would throw `CURSOR_EXPIRED`.
+  `removeFeedConsumer(name)` unregisters a consumer so it stops holding back
+  pruning; it resolves `true` when a registration was removed.
 - Period retention honours the same hold: `retireExpiredPeriods` does not retire
   a period while a live consumer has not read its changes. A consumer that
   stays silent past `maxFeedHoldDays` stops holding, and its unread changes can
@@ -818,10 +839,11 @@ import {
 } from '@adcp/sdk/reporting/bigquery';
 
 await pool.query(REPORTING_WAREHOUSE_SINK_MIGRATION); // after REPORTING_LEDGER_CHANGES_MIGRATION
+const bigquery = new BigQuery({ projectId: 'analytics-prod' }); // ADC / workload identity
 const sink = createBigQueryReportingWarehouseSinkV1({
   store, // PostgresReportingLedgerStore with changeFeed: true
   db: pool,
-  bigquery: new BigQuery({ projectId: 'analytics-prod' }), // ADC / workload identity
+  bigquery,
   name: 'warehouse',
   projectId: 'analytics-prod',
   datasetId: 'reporting',
@@ -833,7 +855,9 @@ const sink = createBigQueryReportingWarehouseSinkV1({
 });
 await bigquery.query({ query: sink.defaultTablesSql }); // or create your own tables
 await bigquery.query({ query: sink.currentRowsViewSql });
-setInterval(() => void sink.runOnce(), 15 * 60_000);
+setInterval(() => {
+  void sink.runOnce().catch(error => console.error('Warehouse run failed', error));
+}, 15 * 60_000);
 ```
 
 - Each run follows the change feed and reads every revision's rows through the
@@ -847,6 +871,54 @@ setInterval(() => void sink.runOnce(), 15 * 60_000);
   same batch under the same job ID, which BigQuery refuses to run twice. A job
   that finished with an error is retried under a new attempt for that table
   only.
+- `projectId` scopes both load submission and replay status checks. When it is
+  omitted, both use the BigQuery client's default project. Each replica must
+  be able to read the BigQuery jobs submitted by the other replicas.
+- Overlapping runs atomically claim one durable batch. Replays use that
+  batch's job IDs; attempts and cursor commits compare the full saved plan.
+  A stale run rejects without replacing another batch or rewinding either
+  the warehouse cursor or its feed checkpoint. Catch the rejection and retry
+  `runOnce()` on the next tick. Empty-feed cursor initialization uses the
+  same claim and commit rules. Replicas sharing a sink name must use the same
+  ledger database, feed scope, destination, location and row mapping. Use a new
+  name when that configuration changes. Independent ledgers loading into the
+  same BigQuery project must use distinct sink names, even if their destination
+  tables differ. An idle tick drains non-revision changes through the
+  same fenced checkpoint. An idle tick also recovers a failed acknowledgment
+  without refreshing an unchanged checkpoint. Failed loads and idle ticks
+  behind the deployment feed's transaction fence can still age out after
+  `maxFeedHoldDays`.
+- Feed reads recheck the retention horizon before returning a page. If pruning
+  overtakes the starting position during a read, `runOnce()` rejects with
+  `ReportingChangeCursorExpiredError` before committing the page.
+  The non-revision fallback preserves the first read's cursor, including on
+  initial startup. If retention overtakes the initial read, the sink records
+  that starting cursor before rejecting, so later ticks and restarted workers
+  continue to report the gap. This does not acknowledge the missing changes or
+  renew their retention hold. Resynchronize from current revisions before resuming.
+- A brand-new sink can hit that rejection from a harmless startup race: pruning
+  commits during its very first read, after the changes it lost were already
+  past retention and held by nobody. Every later tick then rejects with
+  `CURSOR_EXPIRED` because the sink keeps reporting that gap. Clear it with
+  `await sink.reset()`, which resets the sink to start from the oldest retained
+  change and unregisters its feed consumer (stop every worker with that sink
+  name first; do not edit `adcp_reporting_warehouse_sinks` by hand). `reset()`
+  refuses while a batch plan is retained, because that batch's BigQuery load
+  jobs may have succeeded; reconcile the plan against BigQuery, then call
+  `reset({ discardRetainedPlan: true })`. It does not touch the warehouse: a sink
+  that already loaded history reloads the retained revisions, so empty the
+  destination tables first or use a new sink name against new tables. Every
+  reset starts a new job ID generation, so reloaded batches submit fresh BigQuery
+  jobs instead of matching the finished jobs of the earlier history. Nothing holds
+  change retention between `reset()` and the first committed batch. If `reset()`
+  rejects after clearing the sink (it could not unregister the consumer), call
+  it again before restarting workers. Re-run `REPORTING_WAREHOUSE_SINK_MIGRATION`
+  after upgrading: it adds the `reset_generation` column.
+- Stop old sink workers before relying on these overlap guarantees. If an
+  earlier overlapping run left a plan whose starting cursor differs from the
+  committed cursor, the sink rejects it before loading. Reconcile the retained
+  plan, its BigQuery jobs and warehouse rows before repairing the checkpoint.
+  Do not discard the plan automatically: its load jobs may have succeeded.
 - Query `current_rows`, not the raw rows table. Pacing snapshots are
   cumulative, so summing across revisions double-counts. The view keeps each
   obligation's current revision.
@@ -855,7 +927,9 @@ setInterval(() => void sink.runOnce(), 15 * 60_000);
   loaded yet, in both cases only while its cursor was saved within
   `maxFeedHoldDays`. Superseded snapshots are the intraday pacing curve, and the
   warehouse may keep them as long as you like.
-- `runOnce()` resolves with `{ idle, revisions, rows, missing }`. `missing`
+- `runOnce()` resolves with `{ idle, revisions, rows, missing }`. `idle` means
+  no revision changes were selected for this batch; an idle tick can still advance
+  past non-revision feed changes without submitting load jobs. `missing`
   lists revision IDs the feed announced that were retired before the batch ran.
   A non-empty `missing` means the sink fell behind retention (it was down longer
   than `maxFeedHoldDays` plus the retention window): the warehouse lacks those

@@ -111,7 +111,8 @@ service runs for you. See
    view are the operator's responsibility.
 4. **Change feed.** Apply `REPORTING_LEDGER_CHANGES_MIGRATION` (PostgreSQL 13+)
    or pass `changeFeed`. Register each durable consumer with
-   `saveFeedConsumerCursor`, and size `maxFeedHoldDays` so one stalled consumer
+   `saveFeedConsumerCursor` (checkpoints are forward-only; pass `{ rewind: true }`
+   to move a consumer back), and size `maxFeedHoldDays` so one stalled consumer
    cannot hold the table indefinitely.
 5. **Warehouse sink.** Apply `REPORTING_WAREHOUSE_SINK_MIGRATION`, create the
    tables, and the `current_rows` view, then schedule `runOnce`. Point analysts
@@ -142,8 +143,11 @@ Alert on these row-storage signals:
 - `retireExpiredPeriods` returning `failed` IDs. Usually a binding was removed
   from configuration while revisions still reference it; keep retired bindings
   configured.
-- `ReportingChangeCursorExpiredError` in a consumer. That consumer fell behind
-  retention and must resynchronize from `listCurrentRevisions`.
+- `ReportingChangeCursorExpiredError` (`code === 'CURSOR_EXPIRED'`) in a
+  consumer. Usually it fell behind retention and must resynchronize from
+  `listCurrentRevisions`. A first read with no cursor can also throw it when a
+  prune commits mid-read; retry it. A new warehouse sink stuck on it after such
+  a race recovers with `sink.reset()`.
 - A non-empty `missing` from the warehouse sink's `runOnce()`. The sink was down
   longer than `maxFeedHoldDays`, retention stopped waiting for it, and the
   warehouse lacks those revisions. Backfill them or accept the gap, and keep
