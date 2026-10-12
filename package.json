@@ -719,6 +719,7 @@
     "check:package-size": "node scripts/check-package-size.mjs",
     "check:publish-protocol-artifacts": "node scripts/check-publish-protocol-artifacts.mjs",
     "verify:package": "node scripts/verify-package.mjs",
+    "validate:reporting-gcp": "node scripts/validate-reporting-gcp.mjs",
     "check:adopter-types": "tsx scripts/check-adopter-types.ts",
     "check:adopter-types-narrow": "tsx scripts/check-adopter-types-narrow.ts",
     "sync-version": "tsx scripts/sync-version.ts",
