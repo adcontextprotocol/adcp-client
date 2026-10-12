@@ -2148,16 +2148,17 @@ export class SingleAgentClient {
       if (scope !== this.accountScope()) throw new AccountNotProvisionedError(ref, task);
     }
     if (known && !['unknown', 'provisioning', 'failed_provisioning'].includes(known.status)) {
+      const commitsSpend = [
+        'create_media_buy',
+        'buy_products',
+        'accept_proposal',
+        'activate_signal',
+        'acquire_rights',
+      ].includes(task);
+      // Payment-required accounts can still manage creatives for existing buys.
       if (
         policy !== 'off' &&
-        [
-          'create_media_buy',
-          'buy_products',
-          'accept_proposal',
-          'activate_signal',
-          'acquire_rights',
-          'sync_creatives',
-        ].includes(task) &&
+        (commitsSpend || (task === 'sync_creatives' && known.status !== 'payment_required')) &&
         known.status !== 'active'
       ) {
         if (known.status === 'pending_approval') throw new AccountPendingApprovalError(ref, known.account_id);
