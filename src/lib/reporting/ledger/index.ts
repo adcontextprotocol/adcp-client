@@ -8,6 +8,7 @@ export * from './handler';
 export * from './status-ingest';
 export * from './consumer-status-identity';
 export * from './managed';
+export * from './managed-router';
 export * from './managed-postgres';
 export * from './object-writes';
 export * from './notification-activity';
