@@ -108,7 +108,10 @@ export function decodeReportingChangeCursorV1(value: string, account: string | n
 /** Thrown when a change cursor is older than the retained change history. */
 export class ReportingChangeCursorExpiredError extends Error {
   readonly code = 'CURSOR_EXPIRED' as const;
-  /** Original feed position, when available, so a cold-start consumer can retain its recovery boundary. */
+  /**
+   * Original feed position, when available, so a cold-start consumer can retain its recovery
+   * boundary. It encodes the feed's account scope: do not serialize it to other tenants.
+   */
   constructor(readonly cursor?: string) {
     super('Reporting change cursor is older than the retained change history; resynchronize from current revisions');
     this.name = 'ReportingChangeCursorExpiredError';

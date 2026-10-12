@@ -811,7 +811,8 @@ await store.saveFeedConsumerCursor('pacing', page.cursor); // holds back pruning
   equal position also resolves `false` with `{ refreshUnchanged: false }`). To
   rewind a consumer on purpose, for example to replay changes, pass
   `{ rewind: true }`; the saved position and retention hold move back to that
-  cursor, which must still be inside the retained history. Without it a rewound
+  cursor (the write always applies, and the cursor is not checked against the
+  retention horizon, so it must still be inside the retained history). Without it a rewound
   consumer would keep its old, newer hold, pruning could remove exactly what it
   is about to read, and its next read would throw `CURSOR_EXPIRED`.
   `removeFeedConsumer(name)` unregisters a consumer so it stops holding back
@@ -901,23 +902,23 @@ setInterval(() => {
   `CURSOR_EXPIRED` because the sink keeps reporting that gap. Clear it with
   `await sink.reset()`, which resets the sink to start from the oldest retained
   change and unregisters its feed consumer (stop every worker with that sink
-  name first). Without the API, the equivalent by hand is
-  `UPDATE adcp_reporting_warehouse_sinks SET committed_cursor = NULL WHERE sink_name = '<name>'`
-  followed by `store.removeFeedConsumer('<name>')`. `reset()` refuses while a
-  batch plan is retained, because that batch's BigQuery load jobs may have
-  succeeded; reconcile the plan against BigQuery, then call
+  name first; do not edit `adcp_reporting_warehouse_sinks` by hand). `reset()`
+  refuses while a batch plan is retained, because that batch's BigQuery load
+  jobs may have succeeded; reconcile the plan against BigQuery, then call
   `reset({ discardRetainedPlan: true })`. It does not touch the warehouse: a sink
   that already loaded history reloads the retained revisions, so empty the
-  destination tables first or use a new sink name against new tables.
+  destination tables first or use a new sink name against new tables. Every
+  reset starts a new job ID generation, so reloaded batches submit fresh BigQuery
+  jobs instead of matching the finished jobs of the earlier history. Nothing holds
+  change retention between `reset()` and the first committed batch. If `reset()`
+  rejects after clearing the sink (it could not unregister the consumer), call
+  it again before restarting workers. Re-run `REPORTING_WAREHOUSE_SINK_MIGRATION`
+  after upgrading: it adds the `reset_generation` column.
 - Stop old sink workers before relying on these overlap guarantees. If an
   earlier overlapping run left a plan whose starting cursor differs from the
   committed cursor, the sink rejects it before loading. Reconcile the retained
   plan, its BigQuery jobs and warehouse rows before repairing the checkpoint.
   Do not discard the plan automatically: its load jobs may have succeeded.
-  Feed pages now sort numeric sequence and transaction values correctly across
-  decimal boundaries. If earlier reads already skipped or replayed revisions
-  because of text ordering, reconcile and backfill those exports separately;
-  upgrading does not repair previously committed cursors or warehouse rows.
 - Query `current_rows`, not the raw rows table. Pacing snapshots are
   cumulative, so summing across revisions double-counts. The view keeps each
   obligation's current revision.

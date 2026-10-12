@@ -37,9 +37,12 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_warehouse_sinks (
   planned_revisions JSONB,
   planned_rows_attempt INTEGER NOT NULL DEFAULT 0 CHECK (planned_rows_attempt >= 0),
   planned_revisions_attempt INTEGER NOT NULL DEFAULT 0 CHECK (planned_revisions_attempt >= 0),
+  reset_generation INTEGER NOT NULL DEFAULT 0 CHECK (reset_generation >= 0),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   CHECK ((planned_to_cursor IS NULL) = (planned_revisions IS NULL))
 );
+ALTER TABLE adcp_reporting_warehouse_sinks
+  ADD COLUMN IF NOT EXISTS reset_generation INTEGER NOT NULL DEFAULT 0 CHECK (reset_generation >= 0);
 `.trim();
 
 /** Structural subset of the official `@google-cloud/bigquery` client the sink uses. */
@@ -65,8 +68,10 @@ export interface CreateBigQueryReportingWarehouseSinkOptionsV1 {
   /** Ledger store with `changeFeed: true`. */
   store: Pick<
     PostgresReportingLedgerStore,
-    'changesAfter' | 'saveFeedConsumerCursor' | 'removeFeedConsumer' | 'getRevisionMetadata' | 'readRevisionRows'
-  >;
+    'changesAfter' | 'saveFeedConsumerCursor' | 'getRevisionMetadata' | 'readRevisionRows'
+  > &
+    /** Needed only by `reset()`; custom store wrappers that predate it keep compiling. */
+    Partial<Pick<PostgresReportingLedgerStore, 'removeFeedConsumer'>>;
   /** PostgreSQL pool holding `REPORTING_WAREHOUSE_SINK_MIGRATION`. */
   db: Pick<ReportingPgPool, 'query'>;
   /** Host-constructed official BigQuery client. */
@@ -139,6 +144,12 @@ export interface BigQueryReportingWarehouseSinkV1 {
    * reconciled it against BigQuery. The warehouse is not touched: a sink that
    * already loaded history will load the retained revisions again, so empty
    * the destination tables first, or use a new sink name against new tables.
+   * Each reset starts a new job ID generation, so reloaded batches submit
+   * fresh BigQuery jobs instead of matching the finished jobs of the earlier
+   * history. Nothing holds change retention between `reset()` and the first
+   * committed batch. If `reset()` rejects after clearing the sink's state
+   * (the consumer could not be unregistered), call it again before restarting
+   * workers; it is idempotent. Needs a store with `removeFeedConsumer`.
    * Resolves with whether a saved sink state existed.
    */
   reset(options?: { discardRetainedPlan?: boolean }): Promise<{ cleared: boolean }>;
@@ -188,7 +199,8 @@ export function createBigQueryReportingWarehouseSinkV1(
     AND committed_cursor IS NOT DISTINCT FROM $2
     AND planned_from_cursor IS NOT DISTINCT FROM $2
     AND planned_to_cursor = $3 AND planned_revisions = $4::jsonb
-    AND planned_rows_attempt = $5 AND planned_revisions_attempt = $6`;
+    AND planned_rows_attempt = $5 AND planned_revisions_attempt = $6
+    AND reset_generation = $7`;
   const stalePlan = () => new Error('Warehouse sink plan changed during an overlapping run; retry runOnce()');
 
   async function loadOnce(tableId: string, jobId: string, lines: string[], signal?: AbortSignal): Promise<void> {
@@ -196,7 +208,7 @@ export function createBigQueryReportingWarehouseSinkV1(
     const directory = await fs.mkdtemp(path.join(tmpdir(), 'adcp-warehouse-'));
     const file = path.join(directory, `${jobId}.ndjson`);
     try {
-      await fs.writeFile(file, lines.length ? lines.join('\n') + '\n' : '');
+      await fs.writeFile(file, lines.length ? lines.join('\n') + '\n' : '', { mode: 0o600 });
       try {
         await withinDeadline(
           () =>
@@ -242,11 +254,15 @@ export function createBigQueryReportingWarehouseSinkV1(
     defaultTablesSql: reportingWarehouseDefaultTablesSqlV1(tables),
     currentRowsViewSql: reportingWarehouseCurrentRowsViewSqlV1(tables),
     async reset(resetOptions = {}) {
+      const removeConsumer = options.store.removeFeedConsumer?.bind(options.store);
+      if (!removeConsumer) {
+        throw new TypeError('reset() needs a store with removeFeedConsumer (PostgresReportingLedgerStore has it)');
+      }
       const cleared = await options.db.query(
         `UPDATE adcp_reporting_warehouse_sinks
             SET committed_cursor = NULL, planned_from_cursor = NULL, planned_to_cursor = NULL,
                 planned_revisions = NULL, planned_rows_attempt = 0, planned_revisions_attempt = 0,
-                updated_at = clock_timestamp()
+                reset_generation = reset_generation + 1, updated_at = clock_timestamp()
           WHERE sink_name = $1 AND ($2::boolean OR planned_to_cursor IS NULL)
           RETURNING sink_name`,
         [options.name, resetOptions.discardRetainedPlan === true]
@@ -262,7 +278,14 @@ export function createBigQueryReportingWarehouseSinkV1(
         }
       }
       // Drop the old checkpoint's retention hold; the next committed batch registers a fresh one.
-      await options.store.removeFeedConsumer(options.name);
+      try {
+        await removeConsumer(options.name);
+      } catch (cause) {
+        throw new Error(
+          'Warehouse sink state was cleared but its feed consumer could not be unregistered; call reset() again before restarting workers',
+          { cause }
+        );
+      }
       return { cleared: cleared.rows.length > 0 };
     },
     async runOnce(runOptions = {}) {
@@ -272,23 +295,40 @@ export function createBigQueryReportingWarehouseSinkV1(
         [options.name]
       );
       const state = (
-        await options.db.query<{
-          committed_cursor: string | null;
-          planned_from_cursor: string | null;
-          planned_to_cursor: string | null;
-          planned_revisions: { id: string; account_id: string }[] | null;
-          planned_rows_attempt: number;
-          planned_revisions_attempt: number;
-        }>(
-          `SELECT committed_cursor, planned_from_cursor, planned_to_cursor, planned_revisions,
-                  planned_rows_attempt, planned_revisions_attempt
+        await options.db
+          .query<{
+            committed_cursor: string | null;
+            planned_from_cursor: string | null;
+            planned_to_cursor: string | null;
+            planned_revisions: { id: string; account_id: string }[] | null;
+            planned_rows_attempt: number;
+            planned_revisions_attempt: number;
+            reset_generation: number;
+          }>(
+            `SELECT committed_cursor, planned_from_cursor, planned_to_cursor, planned_revisions,
+                  planned_rows_attempt, planned_revisions_attempt, reset_generation
              FROM adcp_reporting_warehouse_sinks WHERE sink_name = $1`,
-          [options.name]
-        )
+            [options.name]
+          )
+          .catch(error => {
+            // 42703 undefined_column: a sink table created before reset_generation existed.
+            if ((error as { code?: unknown } | null)?.code === '42703') {
+              throw new Error(
+                'The adcp_reporting_warehouse_sinks table is missing columns; apply REPORTING_WAREHOUSE_SINK_MIGRATION again (it is idempotent)',
+                { cause: error }
+              );
+            }
+            throw error;
+          })
       ).rows[0]!;
       if (state.planned_to_cursor !== null && state.planned_from_cursor !== state.committed_cursor) {
         throw new Error(
           'Warehouse sink has an inconsistent retained plan; reconcile the plan and BigQuery jobs before resuming'
+        );
+      }
+      if (options.account_id && state.planned_revisions?.some(planned => planned.account_id !== options.account_id)) {
+        throw new Error(
+          'Warehouse sink has a retained plan for another account; this sink name is shared across feed scopes'
         );
       }
       let plan =
@@ -335,9 +375,9 @@ export function createBigQueryReportingWarehouseSinkV1(
               // success. No acknowledgment or retention heartbeat is saved.
               await options.db.query(
                 `UPDATE adcp_reporting_warehouse_sinks SET committed_cursor = $2, updated_at = clock_timestamp()
-                  WHERE sink_name = $1 AND committed_cursor IS NULL
+                  WHERE sink_name = $1 AND committed_cursor IS NULL AND reset_generation = $3
                     AND planned_from_cursor IS NULL AND planned_to_cursor IS NULL AND planned_revisions IS NULL`,
-                [options.name, cursor]
+                [options.name, cursor, state.reset_generation]
               );
             }
           }
@@ -367,9 +407,9 @@ export function createBigQueryReportingWarehouseSinkV1(
               SET planned_from_cursor = $2, planned_to_cursor = $3, planned_revisions = $4::jsonb,
                   planned_rows_attempt = 0, planned_revisions_attempt = 0, updated_at = clock_timestamp()
             WHERE sink_name = $1 AND committed_cursor IS NOT DISTINCT FROM $2
-              AND planned_to_cursor IS NULL AND planned_revisions IS NULL
+              AND planned_to_cursor IS NULL AND planned_revisions IS NULL AND reset_generation = $5
             RETURNING sink_name`,
-          [options.name, plan.from, plan.to, JSON.stringify(plan.revisions)]
+          [options.name, plan.from, plan.to, JSON.stringify(plan.revisions), state.reset_generation]
         );
         if (claimed.rows.length === 0) throw stalePlan();
       }
@@ -380,6 +420,7 @@ export function createBigQueryReportingWarehouseSinkV1(
         JSON.stringify(plan.revisions),
         plan.rowsAttempt,
         plan.revisionsAttempt,
+        state.reset_generation,
       ];
 
       const rowLines: string[] = [];
@@ -438,7 +479,7 @@ export function createBigQueryReportingWarehouseSinkV1(
         );
       }
 
-      const baseJobId = reportingWarehouseJobIdV1(options.name, plan.from, plan.to);
+      const baseJobId = reportingWarehouseJobIdV1(options.name, plan.from, plan.to, state.reset_generation);
       const suffix = (attempt: number) => (attempt ? `_a${attempt}` : '');
       // Rows first, then revisions: a revision row implies its rows landed,
       // and `current_rows` joins through the revisions table. A rows job that
@@ -479,9 +520,10 @@ export function createBigQueryReportingWarehouseSinkV1(
 }
 
 /** Deterministic load job ID for one planned change-feed range. */
-export function reportingWarehouseJobIdV1(name: string, from: string | null, to: string): string {
+export function reportingWarehouseJobIdV1(name: string, from: string | null, to: string, generation = 0): string {
+  // Generation 0 hashes exactly as before, so job IDs of in-flight plans survive an upgrade.
   return `adcp_rr_${createHash('sha256')
-    .update(JSON.stringify([name, from, to]))
+    .update(JSON.stringify(generation > 0 ? [name, from, to, generation] : [name, from, to]))
     .digest('hex')
     .slice(0, 40)}`;
 }

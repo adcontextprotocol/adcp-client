@@ -123,6 +123,13 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
     assert.equal((await read()).cursor_seq, '10');
     assert.ok((await read()).updated_at > stale, 'a rewind renews the retention hold');
 
+    // Moving to another account replaces the position even at a lower sequence.
+    const otherAccount = ledger.encodeReportingChangeCursorV1({ v: 1, account: 'acct_rewind_b', seq: '1' });
+    assert.equal(await store.saveFeedConsumerCursor(name, otherAccount), true);
+    assert.equal((await read()).account_id, 'acct_rewind_b');
+    assert.equal((await read()).cursor_seq, '1');
+    assert.equal(await store.saveFeedConsumerCursor(name, account('10'), { rewind: true }), true);
+
     // The same holds for the deployment feed's (xid, seq) order.
     assert.equal(await store.saveFeedConsumerCursor(name, deployment('200', '5')), true, 'a scope switch replaces');
     assert.equal(await store.saveFeedConsumerCursor(name, deployment('199', '9')), false);

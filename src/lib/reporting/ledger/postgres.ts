@@ -1570,10 +1570,14 @@ ${managedDueArm}       )
    * `false` when it was ignored (behind the saved position, or equal with
    * `refreshUnchanged: false`). To rewind a consumer deliberately, for example
    * to replay changes, pass `rewind: true`; the saved position and retention
-   * hold then move to `cursor`, which must still be inside the retained
-   * history or the next read throws `ReportingChangeCursorExpiredError`.
-   * Switching the feed scope (account to deployment or back) always replaces
-   * the position.
+   * hold then move to `cursor` and the write always applies, even with
+   * `refreshUnchanged: false`. The cursor is not checked against the
+   * retention horizon: it must still be inside the retained history or the
+   * next read throws `ReportingChangeCursorExpiredError`. Any change of
+   * `account_id` (account to deployment, deployment to account, or between
+   * accounts) always replaces the position. The feed scope is read from the
+   * cursor itself, so only pass cursors your own code obtained from
+   * `changesAfter`, never ones supplied by an untrusted caller.
    *
    * Set `refreshUnchanged: false` to recover an acknowledgment without
    * renewing the retention hold when its position has not advanced.
