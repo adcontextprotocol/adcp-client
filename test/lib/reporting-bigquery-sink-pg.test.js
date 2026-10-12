@@ -228,6 +228,78 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     );
   });
 
+  test("period_date is the period start's calendar date in its source_timezone, not the UTC date", async () => {
+    const cases = [
+      // 07:00Z is local midnight in Los Angeles (PDT): the same date as UTC.
+      { suffix: 'pd_la', zone: 'America/Los_Angeles', start: '2026-10-02T07:00:00.000Z', date: '2026-10-02' },
+      // 06:00Z is 23:00 the evening before in Los Angeles, though the UTC date is the 2nd.
+      {
+        suffix: 'pd_la_eve',
+        zone: 'America/Los_Angeles',
+        start: '2026-10-02T06:00:00.000Z',
+        date: '2026-10-01',
+        differs: true,
+      },
+      // 15:00Z on the 1st is already midnight of the 2nd in Tokyo.
+      { suffix: 'pd_tokyo', zone: 'Asia/Tokyo', start: '2026-10-01T15:00:00.000Z', date: '2026-10-02', differs: true },
+      // The spring-forward day in Los Angeles starts at 08:00Z.
+      { suffix: 'pd_dst', zone: 'America/Los_Angeles', start: '2026-03-08T08:00:00.000Z', date: '2026-03-08' },
+      { suffix: 'pd_utc', zone: 'UTC', start: '2026-10-01T15:00:00.000Z', date: '2026-10-01' },
+    ];
+    for (const { suffix, zone, start, date, differs = false } of cases) {
+      const local = await createRowStorageFixture({
+        store,
+        suffix,
+        accountId: `acct_${suffix}`,
+        sourceTimezone: zone,
+        periodStart: start,
+        periodEnd: new Date(Date.parse(start) + 86_400_000).toISOString(),
+      });
+      await store.commitRevision(local.revision(`rrev_${suffix}`, 1, rows.slice(0, 3)), local.lease);
+      const bigquery = fakeBigQuery();
+      const sink = newSink(bigquery, { name: `period_${suffix}`, account_id: `acct_${suffix}` });
+      assert.deepEqual(await sink.runOnce(), { idle: false, revisions: 1, rows: 3, missing: [] });
+      const loaded = bigquery.tables.get('reporting.revision_rows');
+      assert.deepEqual(
+        [...new Set(loaded.map(row => row.period_date))],
+        [date],
+        `${zone} period starting ${start} loads as ${date}`
+      );
+      assert.equal(start.slice(0, 10) !== date, differs, 'the cases meant to differ from the UTC date do');
+    }
+  });
+
+  test('a revision whose period or timezone cannot give a date fails the batch instead of loading a guessed date', async () => {
+    const bad = await createRowStorageFixture({ store, suffix: 'pd_bad', accountId: 'acct_pd_bad' });
+    await store.commitRevision(bad.revision('rrev_pd_bad', 1, rows.slice(0, 3)), bad.lease);
+    const bigquery = fakeBigQuery();
+    for (const [label, period] of [
+      [
+        'an unknown timezone',
+        { start: '2026-10-02T07:00:00Z', end: '2026-10-03T07:00:00Z', source_timezone: 'Mars/Base' },
+      ],
+      [
+        'an offset instead of a zone',
+        { start: '2026-10-02T07:00:00Z', end: '2026-10-03T07:00:00Z', source_timezone: '+05:30' },
+      ],
+      ['an unusable start', { start: 'yesterday', end: 'today', source_timezone: 'UTC' }],
+      ['no period', undefined],
+    ]) {
+      const sink = newSink(bigquery, {
+        name: `period_bad_${label.replace(/\W+/g, '_')}`,
+        account_id: 'acct_pd_bad',
+        store: wrapStore(store, {
+          async getRevisionMetadata(...args) {
+            const metadata = await store.getRevisionMetadata(...args);
+            return metadata && { ...metadata, wireRevision: { ...metadata.wireRevision, period } };
+          },
+        }),
+      });
+      await assert.rejects(() => sink.runOnce(), /Cannot compute period_date for revision rrev_pd_bad/, label);
+    }
+    assert.equal(bigquery.tables.get('reporting.revision_rows'), undefined, 'nothing was loaded');
+  });
+
   test('a crash after the rows load never duplicates rows', async () => {
     const bigquery = fakeBigQuery();
     const sink = newSink(bigquery, { name: 'crashy' });

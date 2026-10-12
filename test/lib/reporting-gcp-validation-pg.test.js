@@ -162,6 +162,8 @@ describe(
         'row and revision counts in BigQuery match, with no duplicates',
         'load jobs exist in the destination project and location with deterministic job IDs',
         'current_rows returns exactly one revision per obligation',
+        'period_date: set up non-UTC obligations and load them',
+        'period_date in BigQuery is the period start in its source timezone',
         'crash replay: no duplicate rows or revisions in BigQuery',
         'runReportingRowObjectProviderConformanceV1',
         'read the revision back from GCS, verified against the recorded digests',

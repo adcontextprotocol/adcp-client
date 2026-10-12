@@ -150,6 +150,11 @@ function createFakeBigQuery({ clientProject = 'client-project', jobProject = 'de
     }
     if (handled) return [[]];
 
+    if (/SELECT DISTINCT reporting_obligation_id, CAST\(period_date AS STRING\) AS period_date/.test(sql)) {
+      const seen = new Map();
+      for (const row of rowsOf(tableIn(sql))) seen.set(row.reporting_obligation_id, row.period_date);
+      return [[...seen].map(([reporting_obligation_id, period_date]) => ({ reporting_obligation_id, period_date }))];
+    }
     if (/COUNT\(DISTINCT CONCAT\(reporting_revision_id/.test(sql)) {
       const rows = rowsOf(tableIn(sql));
       const distinct = new Set(rows.map(row => `${row.reporting_revision_id}:${row.ordinal}`));

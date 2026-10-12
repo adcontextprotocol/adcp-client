@@ -139,7 +139,7 @@ const sink = createBigQueryReportingWarehouseSinkV1({
 
 Give the sink its **own new tables** rather than your legacy ones. It adds its
 own fixed columns (`reporting_revision_id`, `reporting_obligation_id`,
-`account_id`, `revision_number`, `finality`, `period_date`, `ordinal`), and
+`account_id`, `revision_number`, `finality`, `period_date` (the period start's date in its source timezone), `ordinal`), and
 loading into a table another writer owns invites double counting. Give analysts
 one view that `UNION ALL`s the legacy table, bounded to periods before the
 cutover boundary, with the sink's `current_rows` view, bounded to periods from

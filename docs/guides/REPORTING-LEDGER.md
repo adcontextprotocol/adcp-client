@@ -953,8 +953,15 @@ setInterval(() => {
   store's verified reader. It loads rows first and revision metadata second,
   in one load job per table per tick. The sink always adds
   `reporting_revision_id`, `reporting_obligation_id`, `account_id`,
-  `revision_number`, `finality`, `period_date` (the period's date in its source
-  timezone) and `ordinal` to your mapped columns.
+  `revision_number`, `finality`, `period_date` and `ordinal` to your mapped
+  columns. `period_date` is a `DATE`: the calendar date of the period start in
+  the period's `source_timezone` (AdCP's `YYYY-MM-DD`), never the UTC date. A
+  period starting `2026-10-02T07:00:00Z` in `America/Los_Angeles` is
+  `2026-10-02`; one starting `2026-10-01T15:00:00Z` in `Asia/Tokyo` is also
+  `2026-10-02`. The sink computes it with the same helper that renders
+  `{period_date}` in object keys, and it fails the batch rather than load a row
+  with a guessed date when the period or timezone is missing or invalid, so the
+  table's `PARTITION BY period_date` never splits a source-local day.
 - Batches are planned durably before loading, and job IDs derive from the
   change-feed range. A crash between a load and the cursor commit replays the
   same batch under the same job ID, which BigQuery refuses to run twice. A job
