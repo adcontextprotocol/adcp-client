@@ -724,18 +724,24 @@ async function bigquerySection(ctx) {
     });
     if (!ready) return;
     await check(ctx, BQ, 'period_date in BigQuery is the period start in its source timezone', async () => {
-      const result = await query(
-        `SELECT DISTINCT reporting_obligation_id, CAST(period_date AS STRING) AS period_date FROM ${table(tables.rows)}`
-      );
-      const byObligation = new Map(result.map(row => [row.reporting_obligation_id, row.period_date]));
-      expectEqual(byObligation.size, periods.length, 'one period_date per obligation');
-      periods.forEach((period, index) => {
-        expectEqual(
-          byObligation.get(fixtures[index].obligation.reporting_obligation_id),
-          period.date,
-          `period_date for a ${period.zone} period starting ${period.start} (the UTC date is ${period.start.slice(0, 10)})`
+      for (const tableId of [tables.rows, tables.revisions]) {
+        // CAST is also what makes a STRING column in place of DATE show up: DATE_DIFF refuses one.
+        const result = await query(
+          `SELECT DISTINCT reporting_obligation_id, CAST(period_date AS STRING) AS period_date ` +
+            `FROM ${table(tableId)} WHERE DATE_DIFF(period_date, DATE '1970-01-01', DAY) IS NOT NULL`
         );
-      });
+        // One (obligation, date) pair each: a regression that splits an obligation across dates adds rows.
+        expectEqual(result.length, periods.length, `distinct (obligation, period_date) pairs in ${tableId}`);
+        const byObligation = new Map(result.map(row => [row.reporting_obligation_id, row.period_date]));
+        periods.forEach((period, index) => {
+          expectEqual(
+            byObligation.get(fixtures[index].obligation.reporting_obligation_id),
+            period.date,
+            `${tableId}.period_date for a ${period.zone} period starting ${period.start} ` +
+              `(the UTC date is ${period.start.slice(0, 10)})`
+          );
+        });
+      }
       return periods.map(period => `${period.zone} ${period.start} -> ${period.date}`).join('; ');
     });
   }

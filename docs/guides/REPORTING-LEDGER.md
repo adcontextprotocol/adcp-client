@@ -955,13 +955,19 @@ setInterval(() => {
   `reporting_revision_id`, `reporting_obligation_id`, `account_id`,
   `revision_number`, `finality`, `period_date` and `ordinal` to your mapped
   columns. `period_date` is a `DATE`: the calendar date of the period start in
-  the period's `source_timezone` (AdCP's `YYYY-MM-DD`), never the UTC date. A
+  the period's `source_timezone`, as `YYYY-MM-DD` (an SDK column derived from
+  AdCP's `period`), not the UTC date unless that is the source timezone. A
   period starting `2026-10-02T07:00:00Z` in `America/Los_Angeles` is
   `2026-10-02`; one starting `2026-10-01T15:00:00Z` in `Asia/Tokyo` is also
-  `2026-10-02`. The sink computes it with the same helper that renders
-  `{period_date}` in object keys, and it fails the batch rather than load a row
-  with a guessed date when the period or timezone is missing or invalid, so the
-  table's `PARTITION BY period_date` never splits a source-local day.
+  `2026-10-02`. It is the start's date only, not a coverage range: a period
+  that crosses local midnight or spans several days is one `period_date`, so
+  `PARTITION BY period_date` holds source-local days and a UTC "yesterday"
+  filter can straddle partitions. The sink computes it with the same helper
+  that renders `{period_date}` in object keys. It fails the batch rather than
+  load a guessed date when a revision's period or timezone is missing or
+  invalid. The batch stays retained, so the sink stops until that revision's
+  period is repaired (or the runtime's timezone data is upgraded); reset with
+  `discardRetainedPlan` restarts from the beginning, so empty the tables first.
 - Batches are planned durably before loading, and job IDs derive from the
   change-feed range. A crash between a load and the cursor commit replays the
   same batch under the same job ID, which BigQuery refuses to run twice. A job

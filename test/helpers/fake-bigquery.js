@@ -28,7 +28,12 @@ function apiError(code, message) {
   return Object.assign(new Error(message), { code });
 }
 
-function createFakeBigQuery({ clientProject = 'client-project', jobProject = 'destination' } = {}) {
+// `transformLoadedLine(tableId, line)` models a service-side fault: it may rewrite each loaded line.
+function createFakeBigQuery({
+  clientProject = 'client-project',
+  jobProject = 'destination',
+  transformLoadedLine,
+} = {}) {
   const state = {
     datasets: new Map(), // `${project}.${dataset}` -> { labels, location }
     tables: new Map(), // `${project}.${dataset}.${table}` -> row objects
@@ -78,7 +83,8 @@ function createFakeBigQuery({ clientProject = 'client-project', jobProject = 'de
             const lines = readFileSync(file, 'utf8')
               .split('\n')
               .filter(Boolean)
-              .map(line => JSON.parse(line));
+              .map(line => JSON.parse(line))
+              .map(line => (transformLoadedLine ? transformLoadedLine(tableId, line) : line));
             const { jobId, ...load } = metadata;
             const dropped = JOB_LEVEL_FIELDS.filter(field => field in load);
             for (const field of dropped) delete load[field];
@@ -151,9 +157,15 @@ function createFakeBigQuery({ clientProject = 'client-project', jobProject = 'de
     if (handled) return [[]];
 
     if (/SELECT DISTINCT reporting_obligation_id, CAST\(period_date AS STRING\) AS period_date/.test(sql)) {
-      const seen = new Map();
-      for (const row of rowsOf(tableIn(sql))) seen.set(row.reporting_obligation_id, row.period_date);
-      return [[...seen].map(([reporting_obligation_id, period_date]) => ({ reporting_obligation_id, period_date }))];
+      // One row per distinct (obligation, date) pair, like SELECT DISTINCT, so a split date shows twice.
+      const pairs = new Map();
+      for (const row of rowsOf(tableIn(sql))) {
+        pairs.set(JSON.stringify([row.reporting_obligation_id, row.period_date]), {
+          reporting_obligation_id: row.reporting_obligation_id,
+          period_date: row.period_date,
+        });
+      }
+      return [[...pairs.values()]];
     }
     if (/COUNT\(DISTINCT CONCAT\(reporting_revision_id/.test(sql)) {
       const rows = rowsOf(tableIn(sql));
