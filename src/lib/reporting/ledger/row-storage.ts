@@ -4,7 +4,8 @@ import { gunzipSync, gzipSync } from 'zlib';
 import { canonicalize } from '../../utils/jcs';
 import {
   REPORTING_ROW_CHUNK_MAX_BYTES,
-  REPORTING_ROW_ENCODING_V1,
+  REPORTING_ROW_ALGORITHM_V1,
+  REPORTING_ROW_FORMAT_V1,
   createReportingRevisionEnvelopeHasherV1,
   createReportingRowsOnlyHasherV1,
   decodeVerifiedReportingRowSegmentsV1,
@@ -20,6 +21,7 @@ import { probeReportingRowStorageSchemaV1 } from './row-storage-migration';
 import { ReportingRowStoreError, isReportingRowStoreError } from './row-storage-errors';
 import {
   REPORTING_ROW_DEFAULT_KEY_TEMPLATE,
+  REPORTING_ROW_NATIVE_VERSION_REF_MAX_LENGTH,
   assertReportingRowKeyTemplateV1,
   assertReportingRowPrefixV1,
   renderReportingRowObjectKeyV1,
@@ -72,7 +74,7 @@ export interface ReportingRowBindingSelectionInputV1 {
   row_set_kind: 'revision' | 'adjustment';
   finality?: 'snapshot' | 'official';
   row_count: number;
-  canonical_byte_count: number;
+  content_size_bytes: number;
 }
 
 export interface ReportingRowStorageOptionsV1 {
@@ -104,8 +106,10 @@ export interface ReportingRowSetPrepareInputV1 {
   obligationId: string;
   rows: readonly Record<string, unknown>[];
   finality?: 'snapshot' | 'official';
-  /** Reporting period start, used for `{period_date}` in object keys. */
+  /** Reporting period start, used with `sourceTimezone` for `{period_date}` in object keys. */
   periodStart?: string;
+  /** The period's `source_timezone` (required with `periodStart`): `{period_date}` is the local calendar date. */
+  sourceTimezone?: string;
   /** Committed protocol binding the chunks must reproduce. */
   binding: { sha256: string; byteCount: number; rowCount: number };
   /** Required for revisions (`revision_envelope_v1`); omitted for adjustments (`rows_v1`). */
@@ -115,7 +119,7 @@ export interface ReportingRowSetPrepareInputV1 {
 }
 
 interface PreparedObjectV1 {
-  readonly key: string;
+  readonly objectRef: string;
   readonly physicalBytes: Buffer;
   readonly physicalSha256: string;
   readonly compression: 'none' | 'gzip';
@@ -133,11 +137,15 @@ export interface ReportingPreparedRowSetV1 {
 
 /** Where one chunk was stored; recorded in the chunk manifest. */
 export interface ReportingRowChunkLocatorV1 {
-  objectKey: string;
-  nativeVersion: string;
+  /** AdCP `object_ref`: decoded, destination-relative, 1 to 1024 characters. */
+  objectRef: string;
+  /** AdCP `native_version_ref`: decoded provider-native immutable version, 1 to 1024 characters. */
+  nativeVersionRef: string;
   compression: 'none' | 'gzip';
+  /** SHA-256 of the stored (possibly compressed) object bytes. */
   physicalSha256: string;
-  physicalByteCount: number;
+  /** AdCP `size_bytes`: the stored object's size, after any compression. */
+  sizeBytes: number;
   /** Whether this upload created the object (as opposed to adopting identical bytes). */
   created: boolean;
 }
@@ -156,7 +164,7 @@ interface RowSetRecordV1 {
   obligation_id: string;
   digest_profile: 'revision_envelope_v1' | 'rows_v1';
   content_sha256: string;
-  canonical_byte_count: string | number;
+  content_size_bytes: string | number;
   row_count: string | number;
   row_manifest_sha256: string;
   chunk_count: number;
@@ -171,14 +179,14 @@ interface ChunkRecordV1 {
   chunk_index: number;
   first_ordinal: string | number;
   row_count: number;
-  byte_count: string | number;
+  canonical_size_bytes: string | number;
   sha256: string;
   segments: ReportingRowSegmentManifestV1[];
-  object_key: string | null;
-  native_version: string | null;
+  object_ref: string | null;
+  native_version_ref: string | null;
   compression: 'none' | 'gzip';
   physical_sha256: string | null;
-  physical_byte_count: string | number | null;
+  size_bytes: string | number | null;
 }
 
 /** A row set whose chunk manifest has been verified against its committed digest. */
@@ -189,7 +197,11 @@ export interface ReportingRowSetHandleV1 {
   readonly obligationId: string;
   readonly digestProfile: 'revision_envelope_v1' | 'rows_v1';
   readonly contentSha256: string;
-  readonly canonicalByteCount: number;
+  /**
+   * Byte count of the content `contentSha256` covers (the committed binding's `byteCount`): for a revision it includes
+   * the envelope, so it is not the sum of the chunks' `canonical_size_bytes`.
+   */
+  readonly contentSizeBytes: number;
   readonly rowCount: number;
   readonly rowManifestSha256: string;
   readonly bindingId: string;
@@ -342,7 +354,7 @@ export class ReportingRowStorageV1 {
             row_set_kind: input.rowSetKind,
             ...(input.finality ? { finality: input.finality } : {}),
             row_count: input.rows.length,
-            canonical_byte_count: digest.byteCount,
+            content_size_bytes: digest.byteCount,
           })
         : ids.length === 1
           ? ids[0]!
@@ -355,13 +367,14 @@ export class ReportingRowStorageV1 {
     const objects = encoded.chunks.map(chunk => {
       const physicalBytes = compression === 'gzip' ? gzipSync(chunk.bytes, { level: 6 }) : chunk.bytes;
       return Object.freeze({
-        key: renderReportingRowObjectKeyV1({
+        objectRef: renderReportingRowObjectKeyV1({
           template: binding.keyTemplate ?? REPORTING_ROW_DEFAULT_KEY_TEMPLATE,
           prefix: binding.prefix,
           namespaceKey,
           accountId: input.accountId,
           rowSetId: input.rowSetId,
           ...(input.periodStart ? { periodStart: input.periodStart } : {}),
+          ...(input.sourceTimezone ? { sourceTimezone: input.sourceTimezone } : {}),
           ...(input.finality ? { finality: input.finality } : {}),
           contentSha256: input.binding.sha256,
           chunkIndex: chunk.manifest.chunk_index,
@@ -385,7 +398,7 @@ export class ReportingRowStorageV1 {
   async upload(
     prepared: ReportingPreparedRowSetV1,
     intentId: string,
-    onCreated: (object: { objectKey: string; nativeVersion: string }) => Promise<void>,
+    onCreated: (object: { objectRef: string; nativeVersionRef: string }) => Promise<void>,
     signal?: AbortSignal
   ): Promise<ReportingRowChunkLocatorV1[]> {
     const binding = prepared.binding;
@@ -402,7 +415,7 @@ export class ReportingRowStorageV1 {
         provider.putIfAbsent(
           {
             ...location,
-            key: object.key,
+            objectRef: object.objectRef,
             bytes: object.physicalBytes,
             contentType: object.compression === 'gzip' ? 'application/gzip' : 'application/x-ndjson',
             metadata: {
@@ -414,20 +427,29 @@ export class ReportingRowStorageV1 {
         )
       );
       if (put.created) {
-        await onCreated({ objectKey: object.key, nativeVersion: put.nativeVersion });
+        // Record the object before validating its version, so a provider that returns a malformed version
+        // still leaves the intent naming what it created for the sweep.
+        await onCreated({ objectRef: object.objectRef, nativeVersionRef: put.nativeVersionRef });
+        assertNativeVersionRef(put.nativeVersionRef);
         locators.push({
-          objectKey: object.key,
-          nativeVersion: put.nativeVersion,
+          objectRef: object.objectRef,
+          nativeVersionRef: put.nativeVersionRef,
           compression: object.compression,
           physicalSha256: object.physicalSha256,
-          physicalByteCount: object.physicalBytes.byteLength,
+          sizeBytes: object.physicalBytes.byteLength,
           created: true,
         });
         continue;
       }
+      assertNativeVersionRef(put.nativeVersionRef);
       const existing = await this.provider(() =>
         provider.get(
-          { ...location, key: object.key, nativeVersion: put.nativeVersion, maxBytes: MAX_ADOPTED_OBJECT_BYTES },
+          {
+            ...location,
+            objectRef: object.objectRef,
+            nativeVersionRef: put.nativeVersionRef,
+            maxBytes: MAX_ADOPTED_OBJECT_BYTES,
+          },
           context
         )
       );
@@ -436,11 +458,11 @@ export class ReportingRowStorageV1 {
         throw new ReportingRowStoreError('CONTENT_CONFLICT', `object for chunk ${index} holds different bytes`);
       }
       locators.push({
-        objectKey: object.key,
-        nativeVersion: put.nativeVersion,
+        objectRef: object.objectRef,
+        nativeVersionRef: put.nativeVersionRef,
         compression: object.compression,
         physicalSha256: sha256Hex(existing),
-        physicalByteCount: existing.byteLength,
+        sizeBytes: existing.byteLength,
         created: false,
       });
     }
@@ -465,17 +487,18 @@ export class ReportingRowStorageV1 {
     }
     const inserted = await transaction.query(
       `INSERT INTO adcp_reporting_row_sets
-         (row_set_id, row_set_kind, account_id, obligation_id, encoding, digest_profile, content_sha256,
-          canonical_byte_count, row_count, row_manifest_sha256, chunk_count, row_binding_id,
+         (row_set_id, row_set_kind, account_id, obligation_id, format, algorithm, digest_profile, content_sha256,
+          content_size_bytes, row_count, row_manifest_sha256, chunk_count, row_binding_id,
           rows_shared_from_row_set_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        ON CONFLICT (row_set_id) DO NOTHING`,
       [
         input.rowSetId,
         input.rowSetKind,
         input.accountId,
         input.obligationId,
-        REPORTING_ROW_ENCODING_V1,
+        REPORTING_ROW_FORMAT_V1,
+        REPORTING_ROW_ALGORITHM_V1,
         prepared.digestProfile,
         input.binding.sha256,
         input.binding.byteCount,
@@ -513,8 +536,8 @@ export class ReportingRowStorageV1 {
       }
       await transaction.query(
         `INSERT INTO adcp_reporting_row_chunks
-           (row_set_id, chunk_index, account_id, obligation_id, first_ordinal, row_count, byte_count, sha256, segments,
-            object_key, native_version, compression, physical_sha256, physical_byte_count)
+           (row_set_id, chunk_index, account_id, obligation_id, first_ordinal, row_count, canonical_size_bytes, sha256,
+            segments, object_ref, native_version_ref, compression, physical_sha256, size_bytes)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14)`,
         [
           input.rowSetId,
@@ -526,11 +549,11 @@ export class ReportingRowStorageV1 {
           manifest.byte_count,
           manifest.sha256,
           JSON.stringify(manifest.segments),
-          locator?.objectKey ?? null,
-          locator?.nativeVersion ?? null,
+          locator?.objectRef ?? null,
+          locator?.nativeVersionRef ?? null,
           locator?.compression ?? 'none',
           locator?.physicalSha256 ?? null,
-          locator?.physicalByteCount ?? null,
+          locator?.sizeBytes ?? null,
         ]
       );
     }
@@ -549,7 +572,7 @@ export class ReportingRowStorageV1 {
   ): Promise<ReportingRowSetHandleV1 | null> {
     const found = await queryable.query<RowSetRecordV1 & Record<string, unknown>>(
       `SELECT row_set.row_set_id, row_set.row_set_kind, row_set.account_id, row_set.obligation_id,
-              row_set.digest_profile, row_set.content_sha256, row_set.canonical_byte_count, row_set.row_count,
+              row_set.digest_profile, row_set.content_sha256, row_set.content_size_bytes, row_set.row_count,
               row_set.row_manifest_sha256, row_set.chunk_count, row_set.row_binding_id,
               row_set.row_location_version, row_set.rows_state, binding.kind, binding.identity_sha256
          FROM adcp_reporting_row_sets row_set
@@ -564,8 +587,8 @@ export class ReportingRowStorageV1 {
     }
     if (record.rows_state === 'unavailable') throw new ReportingRowStoreError('ROWS_UNAVAILABLE');
     const chunks = await queryable.query<ChunkRecordV1 & Record<string, unknown>>(
-      `SELECT chunk_index, first_ordinal, row_count, byte_count, sha256, segments,
-              object_key, native_version, compression, physical_sha256, physical_byte_count
+      `SELECT chunk_index, first_ordinal, row_count, canonical_size_bytes, sha256, segments,
+              object_ref, native_version_ref, compression, physical_sha256, size_bytes
          FROM adcp_reporting_row_chunks WHERE row_set_id = $1 ORDER BY chunk_index`,
       [rowSetId]
     );
@@ -573,7 +596,7 @@ export class ReportingRowStorageV1 {
       chunk_index: chunk.chunk_index,
       first_ordinal: Number(chunk.first_ordinal),
       row_count: chunk.row_count,
-      byte_count: Number(chunk.byte_count),
+      byte_count: Number(chunk.canonical_size_bytes),
       sha256: chunk.sha256,
       segments: chunk.segments.map(segment => ({
         first_ordinal: Number(segment.first_ordinal),
@@ -594,17 +617,17 @@ export class ReportingRowStorageV1 {
       throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', 'chunk count does not match the row set');
     }
     const locators = chunks.rows.map(chunk => {
-      const hasLocation = chunk.object_key !== null;
+      const hasLocation = chunk.object_ref !== null;
       if (hasLocation !== (record.kind === 'object')) {
         throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', 'chunk location does not match its binding kind');
       }
       return hasLocation
         ? Object.freeze({
-            objectKey: chunk.object_key!,
-            nativeVersion: chunk.native_version!,
+            objectRef: chunk.object_ref!,
+            nativeVersionRef: chunk.native_version_ref!,
             compression: chunk.compression,
             physicalSha256: chunk.physical_sha256!,
-            physicalByteCount: Number(chunk.physical_byte_count),
+            sizeBytes: Number(chunk.size_bytes),
           })
         : undefined;
     });
@@ -615,7 +638,7 @@ export class ReportingRowStorageV1 {
       obligationId: record.obligation_id,
       digestProfile: record.digest_profile,
       contentSha256: record.content_sha256,
-      canonicalByteCount: Number(record.canonical_byte_count),
+      contentSizeBytes: Number(record.content_size_bytes),
       rowCount,
       rowManifestSha256: record.row_manifest_sha256,
       bindingId: record.row_binding_id,
@@ -674,7 +697,7 @@ export class ReportingRowStorageV1 {
     controlTotals?: readonly unknown[],
     options: { maxBytes?: number; signal?: AbortSignal } = {}
   ): Promise<Record<string, unknown>[]> {
-    if (options.maxBytes !== undefined && handle.canonicalByteCount > options.maxBytes) {
+    if (options.maxBytes !== undefined && handle.contentSizeBytes > options.maxBytes) {
       throw new ReportingRowStoreError('INVALID_INPUT', 'row set exceeds the hydration byte limit');
     }
     const hasher =
@@ -696,7 +719,7 @@ export class ReportingRowStorageV1 {
       );
     }
     const digest = this.decode(() => hasher.digest());
-    if (digest.sha256 !== handle.contentSha256 || digest.byteCount !== handle.canonicalByteCount) {
+    if (digest.sha256 !== handle.contentSha256 || digest.byteCount !== handle.contentSizeBytes) {
       throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', 'rows do not reproduce the committed binding');
     }
     return rows;
@@ -708,7 +731,7 @@ export class ReportingRowStorageV1 {
    */
   async deleteObjects(
     bindingId: string,
-    objects: readonly { objectKey: string; nativeVersion: string }[],
+    objects: readonly { objectRef: string; nativeVersionRef: string }[],
     signal?: AbortSignal
   ): Promise<void> {
     await this.ready();
@@ -720,12 +743,12 @@ export class ReportingRowStorageV1 {
     const ownedPrefix = `${binding.prefix}/${this.installation!.namespaceKey}/`;
     const context = { signal: deadlineSignal(this.writeDeadline, signal) };
     for (const object of objects) {
-      if (!object.objectKey.startsWith(ownedPrefix)) {
+      if (!object.objectRef.startsWith(ownedPrefix)) {
         throw new ReportingRowStoreError('UNSAFE_BINDING', 'refusing to delete an object outside the owned prefix');
       }
       await this.provider(() =>
         provider.delete(
-          { ...providerLocation(binding), key: object.objectKey, nativeVersion: object.nativeVersion },
+          { ...providerLocation(binding), objectRef: object.objectRef, nativeVersionRef: object.nativeVersionRef },
           context
         )
       );
@@ -733,14 +756,20 @@ export class ReportingRowStorageV1 {
   }
 
   /**
-   * Prove each object is still present at its recorded version with the recorded bytes.
+   * Prove each object is still present at its recorded version with the recorded size.
    * A commit that adopted an object another row set created calls this under the object's
    * lock, so a concurrent delete either finished first (this throws, the commit fails and
    * the writer re-uploads) or sees the commit's chunk reference and skips the delete.
+   *
+   * Native versions are write-unique (S3 VersionId, Azure versionId, GCS generation, filesystem
+   * `ino:birthtime:mtime:size`), so a version-pinned metadata check, "this exact version exists at the
+   * recorded size", proves the object unchanged without downloading it while the commit holds its
+   * locks. Bytes were verified when the object was uploaded or adopted. A custom provider without
+   * `stat` falls back to reading the whole object and comparing its physical digest.
    */
   async assertObjectsPresent(
     bindingId: string,
-    objects: readonly { objectKey: string; nativeVersion: string; physicalSha256: string }[],
+    objects: readonly { objectRef: string; nativeVersionRef: string; physicalSha256: string; sizeBytes: number }[],
     signal?: AbortSignal
   ): Promise<void> {
     await this.ready();
@@ -750,24 +779,32 @@ export class ReportingRowStorageV1 {
     }
     const provider = this.providers[binding.provider]!;
     const context = { signal: deadlineSignal(this.writeDeadline, signal) };
-    for (const object of objects) {
-      const bytes = await this.provider(() =>
-        provider.get(
-          {
-            ...providerLocation(binding),
-            key: object.objectKey,
-            nativeVersion: object.nativeVersion,
-            maxBytes: MAX_ADOPTED_OBJECT_BYTES,
-          },
-          context
-        )
+    const location = providerLocation(binding);
+    const changed = () =>
+      new ReportingRowStoreError(
+        'STATE_UNAVAILABLE',
+        'an adopted row object was deleted or replaced before its commit; retry the upload'
       );
-      if (!bytes || sha256Hex(bytes) !== object.physicalSha256) {
-        throw new ReportingRowStoreError(
-          'STATE_UNAVAILABLE',
-          'an adopted row object was deleted or replaced before its commit; retry the upload'
-        );
+    for (const object of objects) {
+      const identity = { ...location, objectRef: object.objectRef, nativeVersionRef: object.nativeVersionRef };
+      if (provider.stat) {
+        const stat = await this.provider(() => provider.stat!(identity, context));
+        // The provider must echo the exact version it checked; one that ignores the pin and reports the current
+        // object would otherwise vouch for a version that is gone.
+        if (
+          !stat ||
+          stat.nativeVersionRef !== object.nativeVersionRef ||
+          !Number.isSafeInteger(stat.sizeBytes) ||
+          stat.sizeBytes !== object.sizeBytes
+        ) {
+          throw changed();
+        }
+        continue;
       }
+      const bytes = await this.provider(() =>
+        provider.get({ ...identity, maxBytes: MAX_ADOPTED_OBJECT_BYTES }, context)
+      );
+      if (!bytes || sha256Hex(bytes) !== object.physicalSha256) throw changed();
     }
   }
 
@@ -798,27 +835,27 @@ export class ReportingRowStorageV1 {
     const rowSetId = found.rows[0]?.row_set_id;
     if (!rowSetId) return undefined;
     const chunks = await queryable.query<{
-      object_key: string | null;
-      native_version: string | null;
+      object_ref: string | null;
+      native_version_ref: string | null;
       compression: 'none' | 'gzip';
       physical_sha256: string | null;
-      physical_byte_count: string | number | null;
+      size_bytes: string | number | null;
     }>(
-      `SELECT object_key, native_version, compression, physical_sha256, physical_byte_count
+      `SELECT object_ref, native_version_ref, compression, physical_sha256, size_bytes
          FROM adcp_reporting_row_chunks WHERE row_set_id = $1 ORDER BY chunk_index`,
       [rowSetId]
     );
     if (chunks.rows.length !== prepared.encoded.chunks.length) return undefined;
     if (prepared.binding.kind === 'postgres') return { rowSetId, locators: [] };
-    if (chunks.rows.some(chunk => chunk.object_key === null)) return undefined;
+    if (chunks.rows.some(chunk => chunk.object_ref === null)) return undefined;
     return {
       rowSetId,
       locators: chunks.rows.map(chunk => ({
-        objectKey: chunk.object_key!,
-        nativeVersion: chunk.native_version!,
+        objectRef: chunk.object_ref!,
+        nativeVersionRef: chunk.native_version_ref!,
         compression: chunk.compression,
         physicalSha256: chunk.physical_sha256!,
-        physicalByteCount: Number(chunk.physical_byte_count),
+        sizeBytes: Number(chunk.size_bytes),
         created: false,
       })),
     };
@@ -861,8 +898,8 @@ export class ReportingRowStorageV1 {
         provider.get(
           {
             ...location,
-            key: locator.objectKey,
-            nativeVersion: locator.nativeVersion,
+            objectRef: locator.objectRef,
+            nativeVersionRef: locator.nativeVersionRef,
             range: { offset: byteOffset, length: byteCount },
             maxBytes: byteCount,
           },
@@ -880,9 +917,9 @@ export class ReportingRowStorageV1 {
       provider.get(
         {
           ...location,
-          key: locator.objectKey,
-          nativeVersion: locator.nativeVersion,
-          maxBytes: locator.physicalByteCount,
+          objectRef: locator.objectRef,
+          nativeVersionRef: locator.nativeVersionRef,
+          maxBytes: locator.sizeBytes,
         },
         context
       )
@@ -890,7 +927,7 @@ export class ReportingRowStorageV1 {
     if (!stored)
       throw new ReportingRowStoreError('ROWS_UNAVAILABLE', `chunk ${manifest.chunk_index} object is missing`);
     const physical = Buffer.from(stored);
-    if (physical.byteLength !== locator.physicalByteCount || sha256Hex(physical) !== locator.physicalSha256) {
+    if (physical.byteLength !== locator.sizeBytes || sha256Hex(physical) !== locator.physicalSha256) {
       throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', `chunk ${manifest.chunk_index} stored bytes differ`);
     }
     const logical = this.inflate(physical, locator.compression, manifest.byte_count);
@@ -1013,6 +1050,13 @@ function providerLocation(binding: ReportingObjectRowBindingV1): {
 function deadlineSignal(milliseconds: number, signal?: AbortSignal): AbortSignal {
   const timeout = AbortSignal.timeout(milliseconds);
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+/** AdCP `native_version_ref` bound (`reporting-native-version-ref.json`): 1 to 1024 characters. */
+function assertNativeVersionRef(value: unknown): void {
+  if (typeof value !== 'string' || value.length < 1 || value.length > REPORTING_ROW_NATIVE_VERSION_REF_MAX_LENGTH) {
+    throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'provider returned an invalid native version reference');
+  }
 }
 
 function positiveMilliseconds(value: number, name: string): number {

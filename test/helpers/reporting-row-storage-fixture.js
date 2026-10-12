@@ -10,6 +10,9 @@ async function createRowStorageFixture({
   suffix = 'rows',
   leaseMilliseconds = 600_000,
   accountId,
+  sourceTimezone = 'UTC',
+  periodStart,
+  periodEnd,
 }) {
   const source = require('../../dist/lib/reporting/source/index.js');
   const { canonicalize } = require('../../dist/lib/utils/jcs.js');
@@ -29,7 +32,7 @@ async function createRowStorageFixture({
     requestedDimensions: request.requestedDimensions,
     constituents: request.coverage.constituents,
     mediaBuyIds: request.coverage.mediaBuyIds,
-    sourceTimezone: 'UTC',
+    sourceTimezone,
     schedule: {
       anchor: new Date(now - 3_600_000).toISOString(),
       periodMilliseconds: 3_600_000,
@@ -55,9 +58,9 @@ async function createRowStorageFixture({
     requiredFinality: 'snapshot',
     periodOrdinal: 0,
     period: {
-      start: new Date(now - 3_600_000).toISOString(),
-      end: new Date(now - 1_000).toISOString(),
-      sourceTimezone: 'UTC',
+      start: periodStart ?? new Date(now - 3_600_000).toISOString(),
+      end: periodEnd ?? new Date(now - 1_000).toISOString(),
+      sourceTimezone,
     },
     schedule: configuration.schedule,
     scopeResolvedAt: new Date(now - 1_000).toISOString(),
@@ -118,7 +121,7 @@ async function createRowStorageFixture({
         reporting_revision_id: id,
         revision_content_sha256: sha256,
         control_totals: [],
-        period: { start: obligation.period.start, end: obligation.period.end, source_timezone: 'UTC' },
+        period: { start: obligation.period.start, end: obligation.period.end, source_timezone: sourceTimezone },
       },
       ...extra,
     };

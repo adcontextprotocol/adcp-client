@@ -4,6 +4,7 @@ import * as path from 'path';
 
 import { canonicalize } from '../../utils/jcs';
 import { ReportingRowStoreError } from './row-storage-errors';
+import { reportingPeriodDate } from './schedule';
 
 /**
  * Object-storage providers for revision row chunks (shared SDK persistence
@@ -26,8 +27,17 @@ export interface ReportingRowObjectLocationV1 {
   readonly credentialRef?: string;
 }
 
+/**
+ * Bounds AdCP puts on `object_ref` and `native_version_ref`
+ * (`reporting-file-object-ref.json`, `reporting-native-version-ref.json`):
+ * 1 to 1024 characters. The row-storage `CHECK` constraints enforce the same.
+ */
+export const REPORTING_ROW_OBJECT_REF_MAX_LENGTH = 1024;
+export const REPORTING_ROW_NATIVE_VERSION_REF_MAX_LENGTH = 1024;
+
 export interface ReportingRowObjectPutInputV1 extends ReportingRowObjectLocationV1 {
-  key: string;
+  /** AdCP `object_ref`: decoded, destination-relative object key. */
+  objectRef: string;
   bytes: Uint8Array;
   contentType: 'application/x-ndjson' | 'application/gzip';
   /** Non-secret object metadata (installation and intent identifiers). */
@@ -35,9 +45,9 @@ export interface ReportingRowObjectPutInputV1 extends ReportingRowObjectLocation
 }
 
 export interface ReportingRowObjectGetInputV1 extends ReportingRowObjectLocationV1 {
-  key: string;
-  /** Exact native version recorded at write time. */
-  nativeVersion: string;
+  objectRef: string;
+  /** AdCP `native_version_ref`: the exact native version recorded at write time. */
+  nativeVersionRef: string;
   /** Byte range within the stored object; omit for the whole object. */
   range?: { offset: number; length: number };
   /** Hard cap on bytes read; providers abort beyond it. */
@@ -45,8 +55,13 @@ export interface ReportingRowObjectGetInputV1 extends ReportingRowObjectLocation
 }
 
 export interface ReportingRowObjectDeleteInputV1 extends ReportingRowObjectLocationV1 {
-  key: string;
-  nativeVersion: string;
+  objectRef: string;
+  nativeVersionRef: string;
+}
+
+export interface ReportingRowObjectStatInputV1 extends ReportingRowObjectLocationV1 {
+  objectRef: string;
+  nativeVersionRef: string;
 }
 
 export interface ReportingRowObjectProviderV1 {
@@ -69,14 +84,30 @@ export interface ReportingRowObjectProviderV1 {
   putIfAbsent(
     input: ReportingRowObjectPutInputV1,
     context: ReportingRowObjectContextV1
-  ): Promise<{ created: boolean; nativeVersion: string }>;
+  ): Promise<{ created: boolean; nativeVersionRef: string }>;
   /** Bytes at the exact native version, or `null` when that version is absent. */
   get(input: ReportingRowObjectGetInputV1, context: ReportingRowObjectContextV1): Promise<Uint8Array | null>;
+  /**
+   * Metadata of the exact native version without reading its bytes: the version it resolved (which must equal the
+   * requested `nativeVersionRef`) and its stored size (`size_bytes`), or `null` when that version is absent. Optional. The commit transaction uses it to
+   * prove an adopted object is unchanged (native versions are write-unique, so the same version at
+   * the recorded size is the same bytes) without downloading it under the account lock. A provider
+   * without `stat` falls back to a full read there. Never return a size for a different version.
+   */
+  stat?(
+    input: ReportingRowObjectStatInputV1,
+    context: ReportingRowObjectContextV1
+  ): Promise<{ nativeVersionRef: string; sizeBytes: number } | null>;
   /** Delete the exact native version. Idempotent: `absent` is success. */
   delete(input: ReportingRowObjectDeleteInputV1, context: ReportingRowObjectContextV1): Promise<'deleted' | 'absent'>;
 }
 
-/** Placeholders allowed in object key templates. */
+/**
+ * Placeholders allowed in object key templates. `{period_date}` renders AdCP's `YYYY-MM-DD`: the calendar
+ * date of the period start in the period's `source_timezone` (never UTC, unless that is the source
+ * timezone). It is one path segment, so the default layout is
+ * `.../{account_key}/2026-10-02/{finality}/...`.
+ */
 export const REPORTING_ROW_KEY_PLACEHOLDERS = Object.freeze([
   'prefix',
   'namespace_key',
@@ -143,7 +174,10 @@ export function renderReportingRowObjectKeyV1(input: {
   namespaceKey: string;
   accountId: string;
   rowSetId: string;
+  /** Period start instant; with `sourceTimezone`, renders `{period_date}`. Absent renders `undated`. */
   periodStart?: string;
+  /** The period's `source_timezone`; required whenever `periodStart` is set. Invalid values fail closed. */
+  sourceTimezone?: string;
   finality?: 'snapshot' | 'official';
   contentSha256: string;
   chunkIndex: number;
@@ -153,7 +187,10 @@ export function renderReportingRowObjectKeyV1(input: {
     prefix: input.prefix,
     namespace_key: input.namespaceKey,
     account_key: reportingRowAccountKeyV1(input.namespaceKey, input.accountId),
-    period_date: periodDate(input.periodStart),
+    // Rendered only when the template uses it, so a template without {period_date} needs no timezone.
+    period_date: input.template.includes('{period_date}')
+      ? renderedPeriodDate(input.periodStart, input.sourceTimezone)
+      : '',
     finality: input.finality ?? 'adjustment',
     revision_key: reportingRowRevisionKeyV1(input.rowSetId),
     content_sha256: input.contentSha256,
@@ -169,14 +206,31 @@ export function renderReportingRowObjectKeyV1(input: {
   ) {
     throw new ReportingRowStoreError('INVALID_INPUT', 'rendered object key escapes the binding prefix');
   }
+  if (key.length > REPORTING_ROW_OBJECT_REF_MAX_LENGTH) {
+    throw new ReportingRowStoreError(
+      'INVALID_INPUT',
+      `rendered object key exceeds ${REPORTING_ROW_OBJECT_REF_MAX_LENGTH} characters (AdCP object_ref bound)`
+    );
+  }
   return key;
 }
 
-function periodDate(periodStart: string | undefined): string {
+function renderedPeriodDate(periodStart: string | undefined, sourceTimezone: string | undefined): string {
   if (!periodStart) return 'undated';
-  const parsed = new Date(periodStart);
-  if (Number.isNaN(parsed.getTime())) return 'undated';
-  return parsed.toISOString().slice(0, 10).replace(/-/g, '/');
+  if (!sourceTimezone) {
+    throw new ReportingRowStoreError(
+      'INVALID_INPUT',
+      'a period start needs its source_timezone to render {period_date}'
+    );
+  }
+  try {
+    return reportingPeriodDate(periodStart, sourceTimezone);
+  } catch {
+    throw new ReportingRowStoreError(
+      'INVALID_INPUT',
+      'period start or source_timezone is invalid; cannot render {period_date}'
+    );
+  }
 }
 
 export interface FilesystemReportingRowObjectProviderOptionsV1 {
@@ -235,7 +289,7 @@ export function createFilesystemReportingRowObjectProviderV1(
     },
     async putIfAbsent(input, context) {
       context.signal.throwIfAborted();
-      const target = resolve(input.location, input.key);
+      const target = resolve(input.location, input.objectRef);
       await fs.mkdir(path.dirname(target), { recursive: true });
       const temporary = `${target}.${randomUUID()}.tmp`;
       const handle = await fs.open(temporary, 'wx');
@@ -249,10 +303,10 @@ export function createFilesystemReportingRowObjectProviderV1(
       }
       try {
         await fs.link(temporary, target);
-        return { created: true, nativeVersion: await version(target) };
+        return { created: true, nativeVersionRef: await version(target) };
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-          return { created: false, nativeVersion: await version(target) };
+          return { created: false, nativeVersionRef: await version(target) };
         }
         throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'filesystem write failed');
       } finally {
@@ -261,7 +315,7 @@ export function createFilesystemReportingRowObjectProviderV1(
     },
     async get(input, context) {
       context.signal.throwIfAborted();
-      const target = resolve(input.location, input.key);
+      const target = resolve(input.location, input.objectRef);
       let handle;
       try {
         handle = await fs.open(target, 'r');
@@ -271,7 +325,7 @@ export function createFilesystemReportingRowObjectProviderV1(
       }
       try {
         const stat = await handle.stat({ bigint: true });
-        if (versionOf(stat) !== input.nativeVersion) return null;
+        if (versionOf(stat) !== input.nativeVersionRef) return null;
         const size = Number(stat.size);
         const offset = input.range?.offset ?? 0;
         const length = input.range?.length ?? size - offset;
@@ -288,11 +342,24 @@ export function createFilesystemReportingRowObjectProviderV1(
         await handle.close();
       }
     },
+    async stat(input, context) {
+      context.signal.throwIfAborted();
+      const target = resolve(input.location, input.objectRef);
+      try {
+        const stat = await fs.stat(target, { bigint: true });
+        return versionOf(stat) === input.nativeVersionRef
+          ? { nativeVersionRef: input.nativeVersionRef, sizeBytes: Number(stat.size) }
+          : null;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+        throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'filesystem stat failed');
+      }
+    },
     async delete(input, context) {
       context.signal.throwIfAborted();
-      const target = resolve(input.location, input.key);
+      const target = resolve(input.location, input.objectRef);
       try {
-        if ((await version(target)) !== input.nativeVersion) return 'absent';
+        if ((await version(target)) !== input.nativeVersionRef) return 'absent';
         await fs.unlink(target);
         return 'deleted';
       } catch (error) {
@@ -323,66 +390,121 @@ export async function runReportingRowObjectProviderConformanceV1(
   await provider.probe(input, context);
   passed.push('probe');
   const created = await provider.putIfAbsent(
-    { ...base, key, bytes: first, contentType: 'application/x-ndjson', metadata },
+    { ...base, objectRef: key, bytes: first, contentType: 'application/x-ndjson', metadata },
     context
   );
-  if (!created.created || !created.nativeVersion) throw new Error('putIfAbsent did not create a new object');
+  if (!created.created || !created.nativeVersionRef) throw new Error('putIfAbsent did not create a new object');
   passed.push('create');
   const conflict = await provider.putIfAbsent(
-    { ...base, key, bytes: Buffer.from('{"c":3}\n'), contentType: 'application/x-ndjson', metadata },
+    { ...base, objectRef: key, bytes: Buffer.from('{"c":3}\n'), contentType: 'application/x-ndjson', metadata },
     context
   );
-  if (conflict.created || conflict.nativeVersion !== created.nativeVersion) {
+  if (conflict.created || conflict.nativeVersionRef !== created.nativeVersionRef) {
     throw new Error('putIfAbsent replaced or re-versioned an existing object');
   }
-  const stored = await provider.get({ ...base, key, nativeVersion: created.nativeVersion, maxBytes: 1024 }, context);
+  const stored = await provider.get(
+    { ...base, objectRef: key, nativeVersionRef: created.nativeVersionRef, maxBytes: 1024 },
+    context
+  );
   if (!stored || !Buffer.from(stored).equals(first))
     throw new Error('create-only write did not preserve the first bytes');
   passed.push('create-only');
   if (provider.rangedReads) {
     const ranged = await provider.get(
-      { ...base, key, nativeVersion: created.nativeVersion, range: { offset: 8, length: 8 }, maxBytes: 1024 },
+      {
+        ...base,
+        objectRef: key,
+        nativeVersionRef: created.nativeVersionRef,
+        range: { offset: 8, length: 8 },
+        maxBytes: 1024,
+      },
       context
     );
     if (!ranged || Buffer.from(ranged).toString('utf8') !== '{"b":2}\n')
       throw new Error('ranged read returned wrong bytes');
     passed.push('ranged-read');
   }
-  if ((await provider.get({ ...base, key, nativeVersion: 'not-a-version', maxBytes: 1024 }, context)) !== null) {
+  if (
+    (await provider.get({ ...base, objectRef: key, nativeVersionRef: 'not-a-version', maxBytes: 1024 }, context)) !==
+    null
+  ) {
     throw new Error('get returned bytes for a version that does not exist');
   }
   passed.push('version-pinned-read');
-  if ((await provider.delete({ ...base, key, nativeVersion: 'not-a-version' }, context)) !== 'absent') {
+  if (provider.stat) {
+    const stat = await provider.stat({ ...base, objectRef: key, nativeVersionRef: created.nativeVersionRef }, context);
+    if (!stat || stat.sizeBytes !== first.byteLength) throw new Error('stat did not report the stored object size');
+    if (stat.nativeVersionRef !== created.nativeVersionRef) throw new Error('stat did not echo the version it checked');
+    if ((await provider.stat({ ...base, objectRef: key, nativeVersionRef: 'not-a-version' }, context)) !== null) {
+      throw new Error('stat returned metadata for a version that does not exist');
+    }
+    passed.push('version-pinned-stat');
+  }
+  if ((await provider.delete({ ...base, objectRef: key, nativeVersionRef: 'not-a-version' }, context)) !== 'absent') {
     throw new Error('delete removed an object at a different version');
   }
-  if ((await provider.delete({ ...base, key, nativeVersion: created.nativeVersion }, context)) !== 'deleted') {
+  if (
+    (await provider.delete({ ...base, objectRef: key, nativeVersionRef: created.nativeVersionRef }, context)) !==
+    'deleted'
+  ) {
     throw new Error('delete did not remove the exact version');
   }
-  if ((await provider.delete({ ...base, key, nativeVersion: created.nativeVersion }, context)) !== 'absent') {
+  if (
+    (await provider.delete({ ...base, objectRef: key, nativeVersionRef: created.nativeVersionRef }, context)) !==
+    'absent'
+  ) {
     throw new Error('repeated delete was not idempotent');
   }
   passed.push('exact-version-delete');
+  if (
+    provider.stat &&
+    (await provider.stat({ ...base, objectRef: key, nativeVersionRef: created.nativeVersionRef }, context)) !== null
+  ) {
+    throw new Error('stat returned metadata for a deleted version');
+  }
   // A delayed delete of an old version must never remove a later write at the same key, even
   // one with identical bytes: native versions must be unique per write, not content-derived.
   const recreated = await provider.putIfAbsent(
-    { ...base, key, bytes: first, contentType: 'application/x-ndjson', metadata },
+    { ...base, objectRef: key, bytes: first, contentType: 'application/x-ndjson', metadata },
     context
   );
-  if (!recreated.created || !recreated.nativeVersion) throw new Error('putIfAbsent did not re-create a deleted object');
-  if (recreated.nativeVersion === created.nativeVersion) {
+  if (!recreated.created || !recreated.nativeVersionRef)
+    throw new Error('putIfAbsent did not re-create a deleted object');
+  if (recreated.nativeVersionRef === created.nativeVersionRef) {
     throw new Error('re-creating identical bytes produced the same native version; versions must be write-unique');
   }
-  if ((await provider.delete({ ...base, key, nativeVersion: created.nativeVersion }, context)) !== 'absent') {
+  if (
+    (await provider.delete({ ...base, objectRef: key, nativeVersionRef: created.nativeVersionRef }, context)) !==
+    'absent'
+  ) {
     throw new Error('delete of a stale version removed or reported a later write');
   }
+  if (provider.stat) {
+    // A stale version must never be proven present by a later write at the same key, even with identical bytes.
+    if (
+      (await provider.stat({ ...base, objectRef: key, nativeVersionRef: created.nativeVersionRef }, context)) !== null
+    ) {
+      throw new Error('stat of a stale version reported a later write at the same key');
+    }
+    const current = await provider.stat(
+      { ...base, objectRef: key, nativeVersionRef: recreated.nativeVersionRef },
+      context
+    );
+    if (!current || current.sizeBytes !== first.byteLength || current.nativeVersionRef !== recreated.nativeVersionRef) {
+      throw new Error('stat did not report the re-created object');
+    }
+  }
   const survivor = await provider.get(
-    { ...base, key, nativeVersion: recreated.nativeVersion, maxBytes: 1024 },
+    { ...base, objectRef: key, nativeVersionRef: recreated.nativeVersionRef, maxBytes: 1024 },
     context
   );
   if (!survivor || !Buffer.from(survivor).equals(first)) {
     throw new Error('delete of a stale version removed a later write with identical bytes');
   }
-  if ((await provider.delete({ ...base, key, nativeVersion: recreated.nativeVersion }, context)) !== 'deleted') {
+  if (
+    (await provider.delete({ ...base, objectRef: key, nativeVersionRef: recreated.nativeVersionRef }, context)) !==
+    'deleted'
+  ) {
     throw new Error('delete did not remove the re-created version');
   }
   passed.push('write-unique-version');

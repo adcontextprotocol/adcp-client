@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { canonicalize } from '../../utils/jcs';
 import { reportingIsoDurationMillisecondsV1, type ReportingSourceOfferingV1 } from '../source';
+import { canonicalReportingInstant } from './instant';
 import type { ReportingCalendarRulesV1, ReportingLedgerConfigurationV1 } from './types';
 
 const DAY = 86_400_000;
@@ -63,6 +64,49 @@ function formatterFor(timeZone: string): Intl.DateTimeFormat {
   if (formatters.size >= MAX_FORMATTERS) formatters.delete(formatters.keys().next().value!);
   formatters.set(canonical, candidate);
   return candidate;
+}
+
+/**
+ * The calendar date, as AdCP's `YYYY-MM-DD`, of a reporting period's start in the
+ * period's `source_timezone`. A period starting 2026-10-02T07:00:00Z in
+ * `America/Los_Angeles` begins on 2026-10-02 local time, while the same instant
+ * in `Asia/Tokyo` is 2026-10-02 and 2026-10-01T16:00:00Z is already 2026-10-02
+ * there. The date is the civil date of the start instant: a period that starts
+ * on a daylight-saving boundary keeps the local date it begins on.
+ *
+ * Fails closed: an unparseable instant, a missing, non-IANA or unknown
+ * timezone, or a year outside 0001-9999 throws instead of falling back to UTC.
+ * The runtime's own default zone is never consulted.
+ */
+export function reportingPeriodDate(periodStart: string, sourceTimezone: string): string {
+  if (typeof periodStart !== 'string') throw new TypeError('Reporting period start must be an RFC 3339 instant');
+  if (typeof sourceTimezone !== 'string' || sourceTimezone.length === 0 || sourceTimezone.length > 255) {
+    throw new TypeError('Reporting period date requires the period source_timezone');
+  }
+  // Date.parse rolls impossible dates forward (February 30 becomes March 2, T24:00 the next day), which would
+  // render a plausible but wrong date, so check the literal calendar fields first.
+  const literal = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):/.exec(periodStart);
+  if (
+    !literal ||
+    Number(literal[2]) < 1 ||
+    Number(literal[2]) > 12 ||
+    Number(literal[3]) < 1 ||
+    Number(literal[3]) > new Date(Date.UTC(2000 + (Number(literal[1]) % 400), Number(literal[2]), 0)).getUTCDate() ||
+    Number(literal[4]) > 23
+  ) {
+    throw new TypeError('Reporting period start must be an RFC 3339 instant');
+  }
+  const instant = Date.parse(canonicalReportingInstant(periodStart));
+  if (!Number.isFinite(instant)) throw new TypeError('Reporting period start must be an RFC 3339 instant');
+  const parts = formatterFor(sourceTimezone).formatToParts(instant);
+  const field = (type: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === type)?.value;
+  const year = field('year');
+  const month = field('month');
+  const day = field('day');
+  if (field('era') !== 'AD' || !year || !month || !day || !/^\d{1,4}$/.test(year) || !/^\d+$/.test(month + day)) {
+    throw new RangeError('Reporting period date is outside the supported civil year range');
+  }
+  return `${year.padStart(4, '0')}-${month}-${day}`;
 }
 
 export function reportingCalendarDayRules(timeZone: string): ReportingCalendarRulesV1 {

@@ -43,8 +43,8 @@ describe('reporting snapshot compaction', { skip: !DATABASE_URL && 'PostgreSQL U
     (await db.query(`SELECT rows_state FROM adcp_reporting_row_sets WHERE row_set_id = $1`, [revisionId])).rows[0]
       ?.rows_state;
   const objectFiles = async revisionId =>
-    (await pool.query(`SELECT object_key FROM adcp_reporting_row_chunks WHERE row_set_id = $1`, [revisionId])).rows.map(
-      row => path.join(root, row.object_key)
+    (await pool.query(`SELECT object_ref FROM adcp_reporting_row_chunks WHERE row_set_id = $1`, [revisionId])).rows.map(
+      row => path.join(root, row.object_ref)
     );
   /** Age one revision's `created_at`, which is what its predecessor's window and grace run from. */
   const age = (db, revisionId, interval) =>

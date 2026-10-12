@@ -80,9 +80,9 @@ function versionOf(output: { VersionId?: string }): string {
 }
 
 /** `VersionId` selector, or `null` when the recorded version is unusable. */
-function selectorOf(nativeVersion: string): { VersionId: string } | null {
-  if (typeof nativeVersion !== 'string' || nativeVersion === 'null') return null;
-  return VERSION_ID.test(nativeVersion) ? { VersionId: nativeVersion } : null;
+function selectorOf(nativeVersionRef: string): { VersionId: string } | null {
+  if (typeof nativeVersionRef !== 'string' || nativeVersionRef === 'null') return null;
+  return VERSION_ID.test(nativeVersionRef) ? { VersionId: nativeVersionRef } : null;
 }
 
 /** Whether a response came from the pinned version (echoed `VersionId`). */
@@ -286,14 +286,14 @@ export function createS3ReportingRowObjectProviderV1(
     putIfAbsent(input, context) {
       return runReportingRowProviderOperation(context.signal, async () => {
         const { client, Bucket } = target(input);
-        assertKey(input.key);
+        assertKey(input.objectRef);
         const bytes = Buffer.from(input.bytes);
         try {
           const output = await putCreateOnly(
             client,
             {
               Bucket,
-              Key: input.key,
+              Key: input.objectRef,
               Body: bytes,
               ContentLength: bytes.byteLength,
               ContentType: input.contentType,
@@ -302,25 +302,25 @@ export function createS3ReportingRowObjectProviderV1(
             },
             context.signal
           );
-          return { created: true, nativeVersion: versionOf(output) };
+          return { created: true, nativeVersionRef: versionOf(output) };
         } catch (error) {
           if (!isPreconditionFailed(error)) throw error;
         }
         // The key is taken. Report the existing version; the caller adopts it only on identical bytes.
-        const head = await client.send(new HeadObjectCommand({ Bucket, Key: input.key }), {
+        const head = await client.send(new HeadObjectCommand({ Bucket, Key: input.objectRef }), {
           abortSignal: context.signal,
         });
-        return { created: false, nativeVersion: versionOf(head) };
+        return { created: false, nativeVersionRef: versionOf(head) };
       });
     },
     get(input, context) {
       return runReportingRowProviderOperation(context.signal, async () => {
         const { client, Bucket } = target(input);
-        assertKey(input.key);
+        assertKey(input.objectRef);
         assertReportingRowReadBounds(input);
-        const selector = selectorOf(input.nativeVersion);
+        const selector = selectorOf(input.nativeVersionRef);
         if (selector === null) return null;
-        const Key = input.key;
+        const Key = input.objectRef;
         try {
           if (input.range?.length === 0) {
             const head = await client.send(new HeadObjectCommand({ Bucket, Key, ...selector }), {
@@ -368,13 +368,39 @@ export function createS3ReportingRowObjectProviderV1(
         }
       });
     },
+    stat(input, context) {
+      return runReportingRowProviderOperation(context.signal, async () => {
+        const { client, Bucket } = target(input);
+        assertKey(input.objectRef);
+        const selector = selectorOf(input.nativeVersionRef);
+        if (selector === null) return null;
+        try {
+          // A VersionId-pinned HEAD: S3 versions are unique per write, and only an echoed exact version
+          // counts (some S3-compatible stores ignore `versionId`).
+          const head = await client.send(new HeadObjectCommand({ Bucket, Key: input.objectRef, ...selector }), {
+            abortSignal: context.signal,
+          });
+          if (!servedVersion(head, selector)) return null;
+          const size = head.ContentLength;
+          if (typeof size !== 'number' || !Number.isSafeInteger(size) || size < 0) {
+            throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'object metadata is malformed');
+          }
+          return { nativeVersionRef: selector.VersionId, sizeBytes: size };
+        } catch (error) {
+          if (isNotFound(error) || isPreconditionFailed(error)) return null;
+          // 400: malformed or foreign version ID; 405: the version is a delete marker.
+          if (statusOf(error) === 400 || statusOf(error) === 405) return null;
+          throw error;
+        }
+      });
+    },
     delete(input, context) {
       return runReportingRowProviderOperation(context.signal, async () => {
         const { client, Bucket } = target(input);
-        assertKey(input.key);
-        const selector = selectorOf(input.nativeVersion);
+        assertKey(input.objectRef);
+        const selector = selectorOf(input.nativeVersionRef);
         if (selector === null) return 'absent' as const;
-        const Key = input.key;
+        const Key = input.objectRef;
         const signal = context.signal;
         // S3 deletes succeed for missing keys and versions, so confirm the exact version first.
         try {

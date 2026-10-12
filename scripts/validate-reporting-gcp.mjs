@@ -963,6 +963,7 @@ async function gcsSection(ctx) {
       'create-only',
       'ranged-read',
       'version-pinned-read',
+      'version-pinned-stat',
       'exact-version-delete',
       'write-unique-version',
     ];
@@ -983,25 +984,25 @@ async function gcsSection(ctx) {
   });
   if (!ready) return;
 
-  let objectKey;
+  let objectRef;
   await check(ctx, GCS, 'commit a revision through the object binding and find its object in the bucket', async () => {
     ctx.gcsTouched = true;
     const result = await commit(ledger, fixture, revisionId, 1, rows);
     expect(result.inserted, 'commitRevision did not insert');
     const chunks = (
-      await ledger.pool.query(`SELECT object_key, compression FROM adcp_reporting_row_chunks WHERE row_set_id = $1`, [
+      await ledger.pool.query(`SELECT object_ref, compression FROM adcp_reporting_row_chunks WHERE row_set_id = $1`, [
         revisionId,
       ])
     ).rows;
     expect(chunks.length >= 1, 'no object chunk was recorded for the revision');
-    objectKey = chunks[0].object_key;
-    expect(objectKey.startsWith(`${rowsPrefix}/`), `object key is outside the binding prefix`);
+    objectRef = chunks[0].object_ref;
+    expect(objectRef.startsWith(`${rowsPrefix}/`), `object key is outside the binding prefix`);
     const listed = (await listRunObjects(ctx, bucket, `${rowsPrefix}/`)).map(file => file.name);
-    expect(listed.includes(objectKey), 'the recorded object is not in the bucket listing');
-    expect(!objectKey.includes(fixture.request.account.account_id), 'the object key carries the raw account id');
+    expect(listed.includes(objectRef), 'the recorded object is not in the bucket listing');
+    expect(!objectRef.includes(fixture.request.account.account_id), 'the object key carries the raw account id');
     return `${chunks.length} object(s), compression=${chunks[0].compression}`;
   });
-  if (!objectKey) return;
+  if (!objectRef) return;
 
   await check(ctx, GCS, 'read the revision back from GCS, verified against the recorded digests', async () => {
     const account = fixture.request.account.account_id;

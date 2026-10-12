@@ -5,7 +5,7 @@
  * REPORTING_LEDGER_PG_URL=postgres://localhost/test node --test test/lib/reporting-row-storage-object-pg.test.js
  */
 const assert = require('node:assert/strict');
-const { mkdtempSync, rmSync, readdirSync, writeFileSync } = require('node:fs');
+const { mkdtempSync, rmSync, readdirSync, statSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { after, before, describe, test } = require('node:test');
@@ -88,6 +88,7 @@ describe('object-storage revision rows', { skip: !DATABASE_URL && 'PostgreSQL UR
       'create-only',
       'ranged-read',
       'version-pinned-read',
+      'version-pinned-stat',
       'exact-version-delete',
       'write-unique-version',
     ]);
@@ -107,10 +108,23 @@ describe('object-storage revision rows', { skip: !DATABASE_URL && 'PostgreSQL UR
     assert.match(objects[0], /\.jsonl\.gz$/);
     assert.ok(!objects[0].includes(fixture.request.account.account_id), 'object keys never carry raw account IDs');
     const chunk = (
-      await pool.query(`SELECT object_key, compression FROM adcp_reporting_row_chunks WHERE row_set_id = 'rrev_obj_1'`)
+      await pool.query(`SELECT object_ref, compression FROM adcp_reporting_row_chunks WHERE row_set_id = 'rrev_obj_1'`)
     ).rows[0];
     assert.equal(chunk.compression, 'gzip');
-    assert.ok(chunk.object_key.startsWith('adcp-rows/'));
+    assert.ok(chunk.object_ref.startsWith('adcp-rows/'));
+    const sizes = (
+      await pool.query(
+        `SELECT chunk.size_bytes, chunk.canonical_size_bytes, row_set.content_size_bytes
+           FROM adcp_reporting_row_chunks chunk JOIN adcp_reporting_row_sets row_set USING (row_set_id)
+          WHERE chunk.row_set_id = 'rrev_obj_1'`
+      )
+    ).rows[0];
+    assert.equal(Number(sizes.size_bytes), statSync(objects[0]).size, 'size_bytes is the stored (gzip) object size');
+    assert.ok(
+      Number(sizes.canonical_size_bytes) > Number(sizes.size_bytes),
+      'canonical_size_bytes is the larger uncompressed size'
+    );
+    assert.ok(Number(sizes.content_size_bytes) > Number(sizes.canonical_size_bytes), 'the binding adds the envelope');
     assert.equal(Number((await pool.query('SELECT count(*) AS n FROM adcp_reporting_row_write_intents')).rows[0].n), 0);
     assert.equal(Number((await pool.query('SELECT count(*) AS n FROM adcp_reporting_chunk_bodies')).rows[0].n), 0);
 
@@ -138,14 +152,14 @@ describe('object-storage revision rows', { skip: !DATABASE_URL && 'PostgreSQL UR
     assert.equal(listFiles(root).length, filesBeforePulse, 'a header-only revision uploads nothing');
     const sharedRow = (
       await pool.query(
-        `SELECT row_set.rows_shared_from_row_set_id AS shared, chunk.object_key
+        `SELECT row_set.rows_shared_from_row_set_id AS shared, chunk.object_ref
            FROM adcp_reporting_row_sets row_set
            JOIN adcp_reporting_row_chunks chunk ON chunk.row_set_id = row_set.row_set_id
           WHERE row_set.row_set_id = 'rrev_obj_2'`
       )
     ).rows[0];
     assert.equal(sharedRow.shared, 'rrev_obj_1');
-    assert.equal(sharedRow.object_key, chunk.object_key);
+    assert.equal(sharedRow.object_ref, chunk.object_ref);
     assert.deepEqual((await store.getRevision('rrev_obj_2', fixture.request.account.account_id)).rows, rows);
     assert.equal(Number((await pool.query('SELECT count(*) AS n FROM adcp_reporting_row_write_intents')).rows[0].n), 0);
 
@@ -236,7 +250,7 @@ describe('object-storage revision rows', { skip: !DATABASE_URL && 'PostgreSQL UR
         rowCount: sample.length,
       },
     });
-    const key = path.join(root, prepared.objects[0].key);
+    const key = path.join(root, prepared.objects[0].objectRef);
     require('node:fs').mkdirSync(path.dirname(key), { recursive: true });
     writeFileSync(key, prepared.encoded.chunks[0].bytes);
     const created = [];
@@ -247,6 +261,114 @@ describe('object-storage revision rows', { skip: !DATABASE_URL && 'PostgreSQL UR
     rmSync(key);
     writeFileSync(key, Buffer.from('{"different":true}\n'));
     await assert.rejects(() => engine.upload(prepared, 'intent-conflict', async () => {}), isCode('CONTENT_CONFLICT'));
+  });
+
+  test('renders {period_date} as the period start in its source timezone, not in UTC', async () => {
+    const store = newStore();
+    await store.readyRowStorage();
+    const objectRefOf = async rowSetId =>
+      (await pool.query(`SELECT object_ref FROM adcp_reporting_row_chunks WHERE row_set_id = $1`, [rowSetId])).rows[0]
+        .object_ref;
+    const cases = [
+      // 07:00Z is local midnight in Los Angeles (PDT): the UTC date and the local date agree.
+      { suffix: 'tz_la', zone: 'America/Los_Angeles', start: '2026-10-02T07:00:00.000Z', date: '2026-10-02' },
+      // One second earlier is still 2026-10-01 in Los Angeles, though the UTC date is already 2026-10-02.
+      { suffix: 'tz_la_before', zone: 'America/Los_Angeles', start: '2026-10-02T06:59:59.000Z', date: '2026-10-01' },
+      // 15:00Z on 2026-10-01 is already 2026-10-02 00:00 in Tokyo, a day ahead of the UTC date.
+      { suffix: 'tz_tokyo', zone: 'Asia/Tokyo', start: '2026-10-01T15:00:00.000Z', date: '2026-10-02' },
+      { suffix: 'tz_utc', zone: 'UTC', start: '2026-10-01T15:00:00.000Z', date: '2026-10-01' },
+    ];
+    for (const { suffix, zone, start, date } of cases) {
+      const end = new Date(Date.parse(start) + 86_400_000).toISOString();
+      const fixture = await createRowStorageFixture({
+        store,
+        suffix,
+        sourceTimezone: zone,
+        periodStart: start,
+        periodEnd: end,
+      });
+      const id = `rrev_${suffix}`;
+      await store.commitRevision(fixture.revision(id, 1, rows.slice(0, 3)), fixture.lease);
+      const objectRef = await objectRefOf(id);
+      assert.ok(
+        objectRef.split('/').includes(date),
+        `${zone} period starting ${start} is dated ${date} in ${objectRef}`
+      );
+      assert.ok(!/\/\d{4}\/\d{2}\/\d{2}\//.test(objectRef), 'the date is one YYYY-MM-DD path segment');
+    }
+  });
+
+  test('refuses to render {period_date} for an unusable source timezone and uploads nothing', async () => {
+    const store = newStore();
+    await store.readyRowStorage();
+    const before = listFiles(root).length;
+    const fixture = await createRowStorageFixture({ store, suffix: 'tz_bad', sourceTimezone: 'Mars/Olympus_Mons' });
+    await assert.rejects(
+      () => store.commitRevision(fixture.revision('rrev_tz_bad', 1, rows.slice(0, 3)), fixture.lease),
+      isCode('INVALID_INPUT')
+    );
+    assert.equal(listFiles(root).length, before, 'no object is written under a guessed date');
+    assert.equal(
+      Number(
+        (await pool.query(`SELECT count(*) AS n FROM adcp_reporting_row_sets WHERE row_set_id = 'rrev_tz_bad'`)).rows[0]
+          .n
+      ),
+      0
+    );
+  });
+
+  test('a template without {period_date} needs no source timezone', async () => {
+    const store = newStore({
+      bindings: {
+        no_date: objectBinding({
+          keyTemplate: '{prefix}/{namespace_key}/{account_key}/{content_sha256}/{chunk_index}',
+        }),
+      },
+    });
+    await store.readyRowStorage();
+    const fixture = await createRowStorageFixture({ store, suffix: 'tz_unused', sourceTimezone: 'Mars/Olympus_Mons' });
+    assert.equal(
+      (await store.commitRevision(fixture.revision('rrev_tz_unused', 1, rows.slice(0, 3)), fixture.lease)).inserted,
+      true
+    );
+  });
+
+  test('the conformance runner rejects a stat that cannot prove one exact version', async () => {
+    const location = { location: { root: 'reports' }, prefix: 'adcp-rows' };
+    const cases = [
+      [
+        'a stat that ignores the version pin',
+        async input => ({ nativeVersionRef: input.nativeVersionRef, sizeBytes: 16 }),
+        /version that does not exist/,
+      ],
+      [
+        'a stat that reports the wrong size',
+        async (input, context) => {
+          const found = await provider.stat(input, context);
+          return found && { ...found, sizeBytes: found.sizeBytes + 1 };
+        },
+        /stored object size/,
+      ],
+      [
+        'a stat that does not echo the version it checked',
+        async (input, context) => {
+          const found = await provider.stat(input, context);
+          return found && { ...found, nativeVersionRef: 'other' };
+        },
+        /echo/,
+      ],
+    ];
+    for (const [label, stat, expected] of cases) {
+      await assert.rejects(
+        () => ledger.runReportingRowObjectProviderConformanceV1({ ...provider, stat }, location),
+        expected,
+        label
+      );
+    }
+    const withoutStat = { ...provider };
+    delete withoutStat.stat;
+    const passed = await ledger.runReportingRowObjectProviderConformanceV1(withoutStat, location);
+    assert.ok(!passed.includes('version-pinned-stat'), 'a provider without stat skips the optional check');
   });
 
   test('validates bindings before any write', async () => {

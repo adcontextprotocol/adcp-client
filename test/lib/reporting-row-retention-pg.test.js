@@ -79,10 +79,10 @@ describe('reporting retention', { skip: !DATABASE_URL && 'PostgreSQL URL not set
     );
     const objectKeys = (
       await pool.query(
-        `SELECT object_key FROM adcp_reporting_row_chunks WHERE obligation_id = $1 ORDER BY row_set_id`,
+        `SELECT object_ref FROM adcp_reporting_row_chunks WHERE obligation_id = $1 ORDER BY row_set_id`,
         [fixture.obligation.reporting_obligation_id]
       )
-    ).rows.map(row => path.join(root, row.object_key));
+    ).rows.map(row => path.join(root, row.object_ref));
     assert.equal(objectKeys.length, 2);
     assert.ok(objectKeys.every(existsSync));
 
@@ -193,10 +193,16 @@ describe('reporting retention', { skip: !DATABASE_URL && 'PostgreSQL URL not set
     const put = async name => {
       const key = `retained/${namespaceKey}/sweep/${name}.jsonl`;
       const result = await provider.putIfAbsent(
-        { ...location, key, bytes: Buffer.from('{"a":1}\n'), contentType: 'application/x-ndjson', metadata: {} },
+        {
+          ...location,
+          objectRef: key,
+          bytes: Buffer.from('{"a":1}\n'),
+          contentType: 'application/x-ndjson',
+          metadata: {},
+        },
         { signal: AbortSignal.timeout(5_000) }
       );
-      return { objectKey: key, nativeVersion: result.nativeVersion };
+      return { objectRef: key, nativeVersionRef: result.nativeVersionRef };
     };
     const orphan = await put('orphan');
     const fresh = await put('fresh');
@@ -204,7 +210,7 @@ describe('reporting retention', { skip: !DATABASE_URL && 'PostgreSQL URL not set
     await store.commitRevision(fixture.revision('rrev_sweep_1', 1, rows), fixture.lease);
     const committed = (
       await pool.query(
-        `SELECT object_key, native_version FROM adcp_reporting_row_chunks WHERE row_set_id = 'rrev_sweep_1'`
+        `SELECT object_ref, native_version_ref FROM adcp_reporting_row_chunks WHERE row_set_id = 'rrev_sweep_1'`
       )
     ).rows[0];
     const intent = async (rowSetId, objects, expiresSql) =>
@@ -212,11 +218,18 @@ describe('reporting retention', { skip: !DATABASE_URL && 'PostgreSQL URL not set
         `INSERT INTO adcp_reporting_row_write_intents
            (row_binding_id, account_id, row_set_id, content_sha256, state, owner_token, created_objects, expires_at)
          VALUES ('objects', $1, $2, $3, 'open', 'owner', $4::jsonb, ${expiresSql})`,
-        [fixture.request.account.account_id, rowSetId, 'c'.repeat(64), JSON.stringify(objects)]
+        [
+          fixture.request.account.account_id,
+          rowSetId,
+          'c'.repeat(64),
+          JSON.stringify(
+            objects.map(object => ({ object_ref: object.objectRef, native_version_ref: object.nativeVersionRef }))
+          ),
+        ]
       );
     await intent(
       'rrev_abandoned',
-      [orphan, { objectKey: committed.object_key, nativeVersion: committed.native_version }],
+      [orphan, { objectRef: committed.object_ref, nativeVersionRef: committed.native_version_ref }],
       `clock_timestamp() - INTERVAL '1 minute'`
     );
     await intent('rrev_in_flight', [fresh], `clock_timestamp() + INTERVAL '1 hour'`);
@@ -230,9 +243,9 @@ describe('reporting retention', { skip: !DATABASE_URL && 'PostgreSQL URL not set
       deferred: 0,
       overdue: 0,
     });
-    assert.equal(existsSync(path.join(root, orphan.objectKey)), false);
-    assert.equal(existsSync(path.join(root, committed.object_key)), true, 'committed objects are never swept');
-    assert.equal(existsSync(path.join(root, fresh.objectKey)), true, 'unexpired uploads are left alone');
+    assert.equal(existsSync(path.join(root, orphan.objectRef)), false);
+    assert.equal(existsSync(path.join(root, committed.object_ref)), true, 'committed objects are never swept');
+    assert.equal(existsSync(path.join(root, fresh.objectRef)), true, 'unexpired uploads are left alone');
     assert.deepEqual(
       (await pool.query('SELECT row_set_id FROM adcp_reporting_row_write_intents')).rows.map(row => row.row_set_id),
       ['rrev_in_flight']

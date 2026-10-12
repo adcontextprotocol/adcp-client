@@ -338,6 +338,19 @@ do {
 Removing rows from ledger documents frees space only after `VACUUM FULL` or an
 online repack of `adcp_reporting_revisions` and `adcp_reporting_adjustments`.
 
+### Stored field names
+
+Stored values use AdCP's names and bounds: a chunk's `object_ref` and
+`native_version_ref` (1 to 1024 characters each, enforced by `CHECK`
+constraints), `size_bytes` (the stored object's size after compression, as in
+the AdCP file manifest), and `canonical_size_bytes` (the uncompressed canonical
+bytes that the chunk digests cover; a row set's `content_size_bytes` is the
+byte count of the content its `content_sha256` covers). A row set records `format` (`jsonl`) and
+`algorithm` (`adcp_jcs_rows_v1`). Neither token feeds a digest. Installed
+databases upgrade in place when you re-apply `REPORTING_ROW_STORAGE_MIGRATION`;
+see [Breaking: reporting row storage field alignment](../migration-reporting-row-storage-alignment.md)
+for the old names, the API renames and the re-sync option.
+
 ### Object storage bindings
 
 Rows can live in object storage instead of PostgreSQL. A binding is defined in
@@ -368,7 +381,7 @@ const store = new PostgresReportingLedgerStore(pool, {
     providers: {
       filesystem: createFilesystemReportingRowObjectProviderV1({ roots: { reports: '/var/lib/adcp/rows' } }),
     },
-    selectRowBinding: ({ canonical_byte_count }) => (canonical_byte_count < 256 * 1024 ? 'inline' : 'reports'),
+    selectRowBinding: ({ content_size_bytes }) => (content_size_bytes < 256 * 1024 ? 'inline' : 'reports'),
   },
 });
 await store.readyRowStorage();
@@ -381,6 +394,15 @@ await store.readyRowStorage();
   segment, never a raw account ID. Override `keyTemplate` with the placeholders
   in `REPORTING_ROW_KEY_PLACEHOLDERS`; templates must include
   `{content_sha256}` and `{chunk_index}`.
+  `{period_date}` renders AdCP's `YYYY-MM-DD`: the calendar date of the period
+  start in the period's `source_timezone`, never UTC (a period starting
+  `2026-10-02T07:00:00Z` in `America/Los_Angeles` is `2026-10-02`; one starting
+  `2026-10-01T15:00:00Z` in `Asia/Tokyo` is also `2026-10-02`). It is one path
+  segment, so the default layout is
+  `{prefix}/{namespace_key}/{account_key}/2026-10-02/{finality}/...`, not
+  `2026/10/02/`. A missing, unknown or non-IANA timezone fails the write with
+  `INVALID_INPUT` rather than guessing a date. The rendered key must stay within
+  AdCP's 1024-character `object_ref` bound.
   Enabling snapshot compaction additionally requires `{revision_key}` (see
   [Compacting superseded snapshots](#compacting-superseded-snapshots-opt-in)).
 - A custom `keyTemplate` without `{account_key}` and `{revision_key}` can map
@@ -391,8 +413,8 @@ await store.readyRowStorage();
   operation still references the same binding, key and native version, or an
   open write intent created it. The reference check and the delete run in one
   transaction under a per-object advisory lock, and a commit that adopts an
-  existing object takes the same lock, re-reads the object and holds the lock
-  until its chunk rows commit. A delete that wins the lock makes the adopting
+  existing object takes the same lock, proves the object is still there and
+  holds the lock until its chunk rows commit. A delete that wins the lock makes the adopting
   commit fail with `STATE_UNAVAILABLE` (the writer re-uploads once its intent
   lapses); a commit that wins is seen by the delete, which skips. A skipped
   object is deleted by the retirement, compaction or sweep of the last row set
@@ -415,7 +437,16 @@ await store.readyRowStorage();
   filesystem is wrong, not the code.
 - Custom providers implement `ReportingRowObjectProviderV1`. Run
   `runReportingRowObjectProviderConformanceV1(provider, { location, prefix })`
-  against a dedicated test prefix before using one.
+  against a dedicated test prefix before using one. Provider calls take and
+  return AdCP's names: `objectRef` (the decoded, destination-relative object
+  key) and `nativeVersionRef` (the decoded provider-native version), each 1 to
+  1024 characters. Implement the optional `stat({ objectRef, nativeVersionRef })`,
+  which returns `{ sizeBytes }` for that exact version or `null` when it is
+  absent, without reading the body. The commit transaction uses it to prove an
+  adopted object is unchanged (native versions are write-unique, so the same
+  version at the recorded size is the same bytes) instead of downloading it
+  while holding the account and object locks. A provider without `stat` falls
+  back to reading the whole object there. All bundled providers implement it.
 
 #### Cloud providers
 

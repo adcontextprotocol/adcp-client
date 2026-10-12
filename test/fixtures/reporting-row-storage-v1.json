@@ -1,6 +1,7 @@
 {
   "contract": "reporting-row-storage",
-  "encoding": "adcp_canonical_jsonl_v1",
+  "format": "jsonl",
+  "algorithm": "adcp_jcs_rows_v1",
   "version": 1,
   "description": "Golden vectors for canonical JSONL row chunks, chunk/segment manifests, the row manifest digest and the streamed revision content binding. Both SDKs must reproduce every expected value byte for byte.",
   "vectors": [

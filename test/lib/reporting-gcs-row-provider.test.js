@@ -22,7 +22,7 @@ const put = (provider, key, body = '{"a":1}\n', extra = {}) =>
   provider.putIfAbsent(
     {
       ...base,
-      key,
+      objectRef: key,
       bytes: Buffer.from(body),
       contentType: 'application/gzip',
       metadata: { 'adcp-installation': 'inst', 'adcp-intent': 'intent' },
@@ -46,6 +46,7 @@ test('passes the shared provider conformance suite', async () => {
     'create-only',
     'ranged-read',
     'version-pinned-read',
+    'version-pinned-stat',
     'exact-version-delete',
     'write-unique-version',
   ]);
@@ -56,7 +57,7 @@ test('create-only upload: ifGenerationMatch 0, single request, no Content-Encodi
   const provider = createGcsReportingRowObjectProviderV1({ storage });
   const created = await put(provider, 'adcp-rows/ns/a.jsonl.gz');
   assert.equal(created.created, true);
-  assert.match(created.nativeVersion, /^[1-9][0-9]+$/);
+  assert.match(created.nativeVersionRef, /^[1-9][0-9]+$/);
   const save = storage.calls.find(call => call.op === 'save');
   assert.deepEqual(save.options.preconditionOpts, { ifGenerationMatch: 0 });
   assert.equal(save.options.resumable, false);
@@ -76,9 +77,9 @@ test('conflict adopts the existing generation without replacing it', async () =>
   const provider = createGcsReportingRowObjectProviderV1({ storage });
   const first = await put(provider, 'adcp-rows/ns/a.jsonl', 'first\n');
   const second = await put(provider, 'adcp-rows/ns/a.jsonl', 'second\n');
-  assert.deepEqual(second, { created: false, nativeVersion: first.nativeVersion });
+  assert.deepEqual(second, { created: false, nativeVersionRef: first.nativeVersionRef });
   const bytes = await provider.get(
-    { ...base, key: 'adcp-rows/ns/a.jsonl', nativeVersion: first.nativeVersion, maxBytes: 100 },
+    { ...base, objectRef: 'adcp-rows/ns/a.jsonl', nativeVersionRef: first.nativeVersionRef, maxBytes: 100 },
     signal()
   );
   assert.equal(Buffer.from(bytes).toString(), 'first\n');
@@ -87,31 +88,34 @@ test('conflict adopts the existing generation without replacing it', async () =>
 test('reads pin the generation, disable transcoding, and honour ranges', async () => {
   const storage = createFakeStorage();
   const provider = createGcsReportingRowObjectProviderV1({ storage });
-  const { nativeVersion } = await put(provider, 'adcp-rows/ns/r.jsonl', '0123456789abcdef');
+  const { nativeVersionRef } = await put(provider, 'adcp-rows/ns/r.jsonl', '0123456789abcdef');
   const ranged = await provider.get(
-    { ...base, key: 'adcp-rows/ns/r.jsonl', nativeVersion, range: { offset: 4, length: 6 }, maxBytes: 6 },
+    { ...base, objectRef: 'adcp-rows/ns/r.jsonl', nativeVersionRef, range: { offset: 4, length: 6 }, maxBytes: 6 },
     signal()
   );
   assert.equal(Buffer.from(ranged).toString(), '456789');
   const read = storage.calls.find(call => call.op === 'createReadStream');
-  assert.equal(read.generation, nativeVersion);
+  assert.equal(read.generation, nativeVersionRef);
   assert.equal(read.options.decompress, false);
   assert.equal(read.options.start, 4);
   assert.equal(read.options.end, 9);
   assert.equal(
-    await provider.get({ ...base, key: 'adcp-rows/ns/r.jsonl', nativeVersion: '17', maxBytes: 100 }, signal()),
+    await provider.get({ ...base, objectRef: 'adcp-rows/ns/r.jsonl', nativeVersionRef: '17', maxBytes: 100 }, signal()),
     null
   );
   assert.equal(
-    await provider.get({ ...base, key: 'adcp-rows/ns/r.jsonl', nativeVersion: 'abc', maxBytes: 100 }, signal()),
+    await provider.get(
+      { ...base, objectRef: 'adcp-rows/ns/r.jsonl', nativeVersionRef: 'abc', maxBytes: 100 },
+      signal()
+    ),
     null
   );
   assert.equal(
-    await provider.get({ ...base, key: 'adcp-rows/ns/missing', nativeVersion, maxBytes: 100 }, signal()),
+    await provider.get({ ...base, objectRef: 'adcp-rows/ns/missing', nativeVersionRef, maxBytes: 100 }, signal()),
     null
   );
   const empty = await provider.get(
-    { ...base, key: 'adcp-rows/ns/r.jsonl', nativeVersion, range: { offset: 3, length: 0 }, maxBytes: 0 },
+    { ...base, objectRef: 'adcp-rows/ns/r.jsonl', nativeVersionRef, range: { offset: 3, length: 0 }, maxBytes: 0 },
     signal()
   );
   assert.equal(empty.length, 0);
@@ -119,21 +123,33 @@ test('reads pin the generation, disable transcoding, and honour ranges', async (
 
 test('maxBytes caps streamed reads and out-of-range requests fail integrity', async () => {
   const provider = createGcsReportingRowObjectProviderV1({ storage: createFakeStorage() });
-  const { nativeVersion } = await put(provider, 'adcp-rows/ns/big.jsonl', 'x'.repeat(64));
+  const { nativeVersionRef } = await put(provider, 'adcp-rows/ns/big.jsonl', 'x'.repeat(64));
   await assert.rejects(
-    provider.get({ ...base, key: 'adcp-rows/ns/big.jsonl', nativeVersion, maxBytes: 10 }, signal()),
+    provider.get({ ...base, objectRef: 'adcp-rows/ns/big.jsonl', nativeVersionRef, maxBytes: 10 }, signal()),
     isCode('ROWS_INTEGRITY_FAILED')
   );
   await assert.rejects(
     provider.get(
-      { ...base, key: 'adcp-rows/ns/big.jsonl', nativeVersion, range: { offset: 0, length: 20 }, maxBytes: 10 },
+      {
+        ...base,
+        objectRef: 'adcp-rows/ns/big.jsonl',
+        nativeVersionRef,
+        range: { offset: 0, length: 20 },
+        maxBytes: 10,
+      },
       signal()
     ),
     isCode('ROWS_INTEGRITY_FAILED')
   );
   await assert.rejects(
     provider.get(
-      { ...base, key: 'adcp-rows/ns/big.jsonl', nativeVersion, range: { offset: 100, length: 4 }, maxBytes: 10 },
+      {
+        ...base,
+        objectRef: 'adcp-rows/ns/big.jsonl',
+        nativeVersionRef,
+        range: { offset: 100, length: 4 },
+        maxBytes: 10,
+      },
       signal()
     ),
     isCode('ROWS_INTEGRITY_FAILED')
@@ -143,15 +159,15 @@ test('maxBytes caps streamed reads and out-of-range requests fail integrity', as
 test('delete targets the exact generation and is idempotent', async () => {
   const storage = createFakeStorage();
   const provider = createGcsReportingRowObjectProviderV1({ storage });
-  const { nativeVersion } = await put(provider, 'adcp-rows/ns/d.jsonl');
+  const { nativeVersionRef } = await put(provider, 'adcp-rows/ns/d.jsonl');
   const key = 'adcp-rows/ns/d.jsonl';
-  assert.equal(await provider.delete({ ...base, key, nativeVersion: '17' }, signal()), 'absent');
-  assert.equal(await provider.delete({ ...base, key, nativeVersion: 'garbage' }, signal()), 'absent');
-  assert.equal(await provider.delete({ ...base, key, nativeVersion }, signal()), 'deleted');
-  assert.equal(storage.calls.filter(call => call.op === 'delete').at(-1).generation, nativeVersion);
-  assert.equal(await provider.delete({ ...base, key, nativeVersion }, signal()), 'absent');
+  assert.equal(await provider.delete({ ...base, objectRef: key, nativeVersionRef: '17' }, signal()), 'absent');
+  assert.equal(await provider.delete({ ...base, objectRef: key, nativeVersionRef: 'garbage' }, signal()), 'absent');
+  assert.equal(await provider.delete({ ...base, objectRef: key, nativeVersionRef }, signal()), 'deleted');
+  assert.equal(storage.calls.filter(call => call.op === 'delete').at(-1).generation, nativeVersionRef);
+  assert.equal(await provider.delete({ ...base, objectRef: key, nativeVersionRef }, signal()), 'absent');
   storage.failures.delete = apiError(412);
-  assert.equal(await provider.delete({ ...base, key, nativeVersion }, signal()), 'absent');
+  assert.equal(await provider.delete({ ...base, objectRef: key, nativeVersionRef }, signal()), 'absent');
 });
 
 test('probe refuses missing buckets, ACL/public buckets, and lifecycle deletes over the prefix', async () => {
@@ -244,15 +260,29 @@ test('provider errors map to stable codes without leaking provider messages', as
   });
   storage.failures['bucket.getMetadata'] = apiError(500);
   await assert.rejects(provider.probe({ ...base, prefix: 'adcp-rows' }, signal()), isCode('PROVIDER_UNAVAILABLE'));
-  const { nativeVersion } = await put(provider, 'adcp-rows/ns/e.jsonl');
+  const { nativeVersionRef } = await put(provider, 'adcp-rows/ns/e.jsonl');
   storage.failures.createReadStream = apiError(500);
   await assert.rejects(
-    provider.get({ ...base, key: 'adcp-rows/ns/e.jsonl', nativeVersion, maxBytes: 100 }, signal()),
+    provider.get({ ...base, objectRef: 'adcp-rows/ns/e.jsonl', nativeVersionRef, maxBytes: 100 }, signal()),
     error => isCode('PROVIDER_UNAVAILABLE')(error) && secretFree(error)
+  );
+  for (const code of [500, 403, 503]) {
+    storage.failures['file.getMetadata'] = apiError(code);
+    await assert.rejects(
+      provider.stat({ ...base, objectRef: 'adcp-rows/ns/e.jsonl', nativeVersionRef }, signal()),
+      error => isCode('PROVIDER_UNAVAILABLE')(error) && secretFree(error),
+      String(code)
+    );
+  }
+  storage.failures['file.getMetadata'] = apiError(404);
+  assert.equal(
+    await provider.stat({ ...base, objectRef: 'adcp-rows/ns/e.jsonl', nativeVersionRef }, signal()),
+    null,
+    'a 404 is the version being absent'
   );
   storage.failures.delete = apiError(403);
   await assert.rejects(
-    provider.delete({ ...base, key: 'adcp-rows/ns/e.jsonl', nativeVersion }, signal()),
+    provider.delete({ ...base, objectRef: 'adcp-rows/ns/e.jsonl', nativeVersionRef }, signal()),
     isCode('PROVIDER_UNAVAILABLE')
   );
 });
@@ -274,7 +304,13 @@ test('deadlines and cancellation settle even when the client hangs', async t => 
   );
   const controller = new AbortController();
   const pending = provider.putIfAbsent(
-    { ...base, key: 'adcp-rows/ns/h', bytes: Buffer.from('x'), contentType: 'application/x-ndjson', metadata: {} },
+    {
+      ...base,
+      objectRef: 'adcp-rows/ns/h',
+      bytes: Buffer.from('x'),
+      contentType: 'application/x-ndjson',
+      metadata: {},
+    },
     { signal: controller.signal }
   );
   controller.abort();
@@ -282,8 +318,40 @@ test('deadlines and cancellation settle even when the client hangs', async t => 
   const aborted = new AbortController();
   aborted.abort();
   await assert.rejects(
-    provider.get({ ...base, key: 'k', nativeVersion: '1', maxBytes: 1 }, { signal: aborted.signal }),
+    provider.get({ ...base, objectRef: 'k', nativeVersionRef: '1', maxBytes: 1 }, { signal: aborted.signal }),
     isCode('ABORTED')
+  );
+});
+
+test('stat reads only generation-pinned metadata', async () => {
+  const storage = createFakeStorage();
+  const provider = createGcsReportingRowObjectProviderV1({ storage });
+  const { nativeVersionRef } = await put(provider, 'adcp-rows/ns/stat.jsonl', '0123456789');
+  const mark = storage.calls.length;
+  assert.deepEqual(await provider.stat({ ...base, objectRef: 'adcp-rows/ns/stat.jsonl', nativeVersionRef }, signal()), {
+    nativeVersionRef,
+    sizeBytes: 10,
+  });
+  const ops = storage.calls.slice(mark);
+  assert.deepEqual(
+    ops.map(call => call.op),
+    ['file.getMetadata']
+  );
+  assert.equal(ops[0].generation, nativeVersionRef);
+  for (const foreign of ['17', 'abc', '', '0']) {
+    assert.equal(
+      await provider.stat({ ...base, objectRef: 'adcp-rows/ns/stat.jsonl', nativeVersionRef: foreign }, signal()),
+      null
+    );
+  }
+  assert.equal(
+    await provider.stat({ ...base, objectRef: 'adcp-rows/ns/missing.jsonl', nativeVersionRef }, signal()),
+    null
+  );
+  await provider.delete({ ...base, objectRef: 'adcp-rows/ns/stat.jsonl', nativeVersionRef }, signal());
+  assert.equal(
+    await provider.stat({ ...base, objectRef: 'adcp-rows/ns/stat.jsonl', nativeVersionRef }, signal()),
+    null
   );
 });
 
@@ -327,7 +395,9 @@ test('official client wire contract against a local JSON API stub', async () => 
         res.writeHead(204);
         return res.end();
       }
-      if (url.searchParams.get('alt') !== 'media') return json(200, { generation: object.generation });
+      if (url.searchParams.get('alt') !== 'media') {
+        return json(200, { generation: object.generation, size: String(object.bytes.length) });
+      }
       const range = req.headers.range?.match(/^bytes=(\d+)-(\d+)$/);
       res.writeHead(range ? 206 : 200);
       res.end(range ? object.bytes.subarray(Number(range[1]), Number(range[2]) + 1) : object.bytes);
