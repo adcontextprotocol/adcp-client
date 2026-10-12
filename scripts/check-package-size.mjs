@@ -72,7 +72,10 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // The router adds one dual-format module set. The combined signed 3.2.4
 // artifact measures 20,419,639 bytes locally; preserve the existing 25 KB
 // compressor margin, rounded up to the next 10 KB. Other byte budgets stay fixed.
-const MAX_PACKED_TARBALL_BYTES = 20_450_000;
+// Reporting row-storage field alignment (AdCP names, the source-timezone period date,
+// provider stat and the migration guide) measured 20,450,821 bytes in CI on both Node
+// floors. Allow 30 KB above that for compressor variance; other byte budgets stay fixed.
+const MAX_PACKED_TARBALL_BYTES = 20_480_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview

@@ -295,6 +295,32 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     assert.equal(existsSync(fileOf(chunkA)), false, 'nothing references it any more');
   });
 
+  test('an open upload from an older writer, recorded under the pre-alignment keys, still protects its object', async () => {
+    const { first, second, chunkA } = await sharedPair();
+    await pool.query(
+      `INSERT INTO adcp_reporting_row_write_intents
+         (row_binding_id, account_id, row_set_id, content_sha256, state, owner_token, created_objects, expires_at)
+       VALUES ('objects', $1, 'radj_old_writer', $2, 'open', 'owner', $3::jsonb,
+               clock_timestamp() + INTERVAL '1 hour')`,
+      [
+        accountId(first),
+        'e'.repeat(64),
+        JSON.stringify([{ objectKey: chunkA.object_ref, nativeVersion: chunkA.native_version_ref }]),
+      ]
+    );
+    await expire(first);
+    await expire(second);
+    assert.equal((await retire()).retired, 2);
+    assert.ok(existsSync(fileOf(chunkA)), 'the old writer may still commit the object it created');
+
+    await pool.query(
+      `UPDATE adcp_reporting_row_write_intents SET expires_at = clock_timestamp() - INTERVAL '1 minute'
+        WHERE row_set_id = 'radj_old_writer'`
+    );
+    assert.deepEqual(await store.sweepRowWriteIntents(), { swept: 1, objectsDeleted: 1, failed: 0 });
+    assert.equal(existsSync(fileOf(chunkA)), false, 'the sweep reads the old keys too');
+  });
+
   test('a commit whose adopted object was deleted after adoption fails cleanly and retries', async () => {
     sequence += 1;
     current = rows.map(row => ({ ...row, value: row.value + sequence * 100 }));

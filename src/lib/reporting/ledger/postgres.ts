@@ -2469,7 +2469,8 @@ ${managedDueArm}       )
              LIMIT 1)
            UNION ALL
            (SELECT 1 FROM adcp_reporting_row_write_intents intent
-             WHERE intent.row_binding_id = $1 AND intent.state = 'open' AND intent.created_objects @> $6::jsonb
+             WHERE intent.row_binding_id = $1 AND intent.state = 'open'
+               AND (intent.created_objects @> $6::jsonb OR intent.created_objects @> $7::jsonb)
              LIMIT 1)`,
           [
             bindingId,
@@ -2478,6 +2479,8 @@ ${managedDueArm}       )
             scope.obligationId ?? null,
             scope.rowSetId ?? null,
             JSON.stringify([{ object_ref: object.objectRef, native_version_ref: object.nativeVersionRef }]),
+            // An older writer still running during a rolling upgrade records the pre-alignment keys.
+            JSON.stringify([{ objectKey: object.objectRef, nativeVersion: object.nativeVersionRef }]),
           ]
         );
         if (referenced.rows.length > 0) return false;
