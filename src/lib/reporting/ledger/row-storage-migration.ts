@@ -134,6 +134,12 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_row_write_intents (
 CREATE INDEX IF NOT EXISTS adcp_reporting_row_write_intents_expiry
   ON adcp_reporting_row_write_intents (expires_at, account_id)
   WHERE state = 'open';
+-- Sweep retry state. An intent whose sweep fails backs off instead of holding
+-- the head of every pass.
+ALTER TABLE adcp_reporting_row_write_intents
+  ADD COLUMN IF NOT EXISTS sweep_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE adcp_reporting_row_write_intents
+  ADD COLUMN IF NOT EXISTS next_sweep_at TIMESTAMPTZ;
 
 CREATE OR REPLACE FUNCTION adcp_reporting_row_storage_immutable() RETURNS trigger
 LANGUAGE plpgsql AS $immutable$

@@ -9,7 +9,9 @@ import { ReportingRowStoreError } from './row-storage-errors';
  * adjustment and retirement in the same transaction as the record, taking the
  * sequence value only after the account lock, so per-account sequence order is
  * commit order. Deployment-wide readers order by `(xid, seq)` and stop below
- * the reading snapshot's `xmin`, so a slow commit is never skipped.
+ * the reading snapshot's `xmin`, so a slow commit is never skipped. Account
+ * readers order by `seq` and end the page before the first change at or above
+ * that `xmin`. Use exactly one writer SDK per ledger database.
  */
 export const REPORTING_LEDGER_CHANGES_MIGRATION = `
 CREATE TABLE IF NOT EXISTS adcp_reporting_changes (

@@ -565,6 +565,29 @@ ledger records together. The tombstone keeps the final revision ID and digest,
 and planners never re-create a retired period. `ledger_retained_from` advances
 because the retired obligations no longer exist.
 
+A period whose deletes fail (a removed binding, a permanent provider error)
+stays `retiring` and is retried with backoff rather than on every pass. The
+tombstone records `attempts`, `next_attempt_at` and `last_failure`; the wait
+starts at one minute, doubles per failure and is capped at six hours. Periods
+still backing off are skipped, retries take at most half of each pass (rounded
+up), and fresh periods get the rest, so a few stuck periods cannot stop others
+from retiring. The result reports `failed` and `failures` for this pass,
+`deferred` for periods backing off, and `stuck` (up to 20, with `attempts` and
+`cause`) for periods that have failed five or more times. The maintenance helper
+passes `stuck` and `deferred` to `onError`. Re-apply `REPORTING_LEDGER_MIGRATION`
+before upgrading; it adds the three tombstone columns idempotently.
+
+`sweepRowWriteIntents` backs off the same way (`sweep_attempts`, `next_sweep_at`,
+added idempotently by `REPORTING_ROW_STORAGE_MIGRATION`) and takes intents that
+never failed first. An intent with objects to delete through a binding this host
+does not configure is left untouched, since a host that configures it can finish
+the sweep. The result counts `swept`, `objectsDeleted`, `failed` (this pass),
+`skippedUnconfigured`, `deferred` and `overdue`; the last three describe what is
+still waiting after the pass. `overdue` counts intents expired for longer than
+`overdueAfterSeconds` (default 24 hours): no host is sweeping them and their
+objects are leaking, so check that some host configures every binding you have
+used.
+
 `createPostgresReliableReportingProductionService` accepts
 `retention: { enabled: true, recordRetentionDays?, limit? }`. Its scheduler
 always sweeps abandoned row uploads and expired cursor snapshots and
@@ -791,7 +814,26 @@ await store.saveFeedConsumerCursor('pacing', page.cursor); // holds back pruning
   changes. Account feeds order by sequence. The deployment-wide feed (omit
   `account_id`) orders by `(xid, seq)` and returns only changes whose
   transaction precedes every transaction still in flight, so a slow commit is
-  never skipped.
+  never skipped. The account feed applies the same guard: a page ends before the
+  first change whose transaction has not finished (`xid` at or above the reading
+  snapshot's `xmin`), so the cursor never passes a change that commits late. The
+  page is cut there rather than filtered, because seq order and xid order can
+  differ and a filter would hand out a later change while skipping an earlier
+  one it excluded. The cost is that any older open transaction on the cluster,
+  including an idle one in another database, holds both kinds of feed back until
+  it ends; keep transactions short.
+- **A ledger database has exactly one writer SDK.** The store writes each change
+  row under the account advisory lock, taking the sequence value only after it,
+  so per-account `seq` order equals commit order. The in-flight guard above is
+  defense in depth, not a substitute: a second SDK (for example a Python
+  deployment, or a hand-written writer) that takes a different lock key, or
+  writes change rows outside the account lock, can allocate a lower `seq` that
+  commits after a higher one. The guard narrows that window but cannot close it
+  for every interleaving, so run one writer SDK per ledger database and give
+  another SDK its own database. `pruneChanges` only deletes changes older than
+  `changeRetentionDays`, far longer than any transaction should stay open, and
+  consumer holds compare against cursors the feed itself returned, so neither
+  adds a new ordering assumption.
 - `pruneChanges` deletes changes older than `changeRetentionDays` (default 30)
   that every consumer updated within `maxFeedHoldDays` (default 7) has passed.
   An older cursor throws `ReportingChangeCursorExpiredError`; resynchronize from

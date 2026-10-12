@@ -172,9 +172,16 @@ describe('Reliable Reporting Core maintenance', { skip: !DATABASE_URL && 'Postgr
     );
     const byTask = Object.fromEntries(results.map(result => [result.task, result.result]));
     assert.deepEqual(Object.keys(byTask['snapshot sweep']).sort(), ['checkpointsDeleted', 'snapshotsDeleted']);
-    assert.deepEqual(Object.keys(byTask['row upload sweep']).sort(), ['failed', 'objectsDeleted', 'swept']);
+    assert.deepEqual(Object.keys(byTask['row upload sweep']).sort(), [
+      'deferred',
+      'failed',
+      'objectsDeleted',
+      'overdue',
+      'skippedUnconfigured',
+      'swept',
+    ]);
     assert.deepEqual(Object.keys(byTask['change-feed pruning']), ['deleted']);
-    assert.deepEqual(Object.keys(byTask.retention).sort(), ['failed', 'failures', 'retired']);
+    assert.deepEqual(Object.keys(byTask.retention).sort(), ['deferred', 'failed', 'failures', 'retired', 'stuck']);
 
     // Only the tasks that were asked for run: sweeps are always on.
     const minimal = await createService({}).runMaintenance();

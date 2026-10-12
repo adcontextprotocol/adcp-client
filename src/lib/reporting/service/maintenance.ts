@@ -59,10 +59,17 @@ export class ReportingMaintenancePartialFailureError extends Error {
   constructor(
     readonly task: string,
     readonly failedCount: number,
-    readonly failedIds: readonly string[]
+    readonly failedIds: readonly string[],
+    /**
+     * Backlog the task is not reaching: items backing off, items this host cannot
+     * handle, items that have failed persistently. Appended to the message so
+     * `onError` and the logs carry them.
+     */
+    readonly warnings: readonly string[] = []
   ) {
     super(
-      `Reporting ${task} could not process ${failedCount} item(s)${failedIds.length ? `: ${failedIds.slice(0, 20).join(', ')}` : ''}`
+      `Reporting ${task} could not process ${failedCount} item(s)${failedIds.length ? `: ${failedIds.slice(0, 20).join(', ')}` : ''}` +
+        (warnings.length ? `${failedCount > 0 ? '; ' : ' - '}${warnings.join('; ')}` : '')
     );
     this.name = 'ReportingMaintenancePartialFailureError';
   }
@@ -205,6 +212,12 @@ export async function runReportingLedgerMaintenance(
       | {
           failed?: number | readonly string[];
           failures?: readonly { reporting_obligation_id: string; cause: string }[];
+          // Retention: periods backing off, and periods that keep failing.
+          deferred?: number;
+          stuck?: readonly { reporting_obligation_id: string; attempts: number; cause: string }[];
+          // Row upload sweep: backlog the pass is not reaching.
+          skippedUnconfigured?: number;
+          overdue?: number;
         }
       | undefined;
     const failed = Array.isArray(value?.failed)
@@ -212,8 +225,30 @@ export async function runReportingLedgerMaintenance(
       : typeof value?.failed === 'number'
         ? value.failed
         : 0;
+    const warnings: string[] = [];
+    if (value?.stuck?.length) {
+      warnings.push(
+        `${value.stuck.length} period(s) keep failing: ${value.stuck
+          .slice(0, 20)
+          .map(entry => `${entry.reporting_obligation_id} (${entry.cause}, ${entry.attempts} attempts)`)
+          .join(', ')}`
+      );
+    }
+    if (typeof value?.deferred === 'number' && value.deferred > 0) {
+      warnings.push(`${value.deferred} item(s) backing off after a failure`);
+    }
+    if (typeof value?.skippedUnconfigured === 'number' && value.skippedUnconfigured > 0) {
+      warnings.push(
+        `${value.skippedUnconfigured} expired upload(s) skipped because this host does not configure their row binding`
+      );
+    }
+    if (typeof value?.overdue === 'number' && value.overdue > 0) {
+      warnings.push(
+        `${value.overdue} upload(s) expired long ago and still unswept; no host is handling them and their objects are leaking`
+      );
+    }
     let partialFailure: ReportingMaintenancePartialFailureError | undefined;
-    if (failed > 0) {
+    if (failed > 0 || warnings.length > 0) {
       partialFailure = new ReportingMaintenancePartialFailureError(
         name,
         failed,
@@ -221,7 +256,8 @@ export async function runReportingLedgerMaintenance(
           ? value.failures.map(entry => `${entry.reporting_obligation_id} (${entry.cause})`)
           : Array.isArray(value?.failed)
             ? value.failed
-            : []
+            : [],
+        warnings
       );
       if (!signal?.aborted) await input.report?.(partialFailure);
     }

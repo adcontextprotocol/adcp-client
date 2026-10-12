@@ -94,6 +94,8 @@ describe('reporting retention', { skip: !DATABASE_URL && 'PostgreSQL URL not set
       retired: 0,
       failed: [],
       failures: [],
+      deferred: 0,
+      stuck: [],
     });
 
     await expire(fixture.obligation.reporting_obligation_id);
@@ -107,7 +109,7 @@ describe('reporting retention', { skip: !DATABASE_URL && 'PostgreSQL URL not set
       [retained.obligation.reporting_obligation_id]
     );
     const result = await store.retireExpiredPeriods({ statusRetentionDays: 30 });
-    assert.deepEqual(result, { retired: 1, failed: [], failures: [] });
+    assert.deepEqual(result, { retired: 1, failed: [], failures: [], deferred: 0, stuck: [] });
 
     const obligationId = fixture.obligation.reporting_obligation_id;
     assert.equal(
@@ -158,11 +160,18 @@ describe('reporting retention', { skip: !DATABASE_URL && 'PostgreSQL URL not set
       retired: 0,
       failed: [fixture.obligation.reporting_obligation_id],
       failures: [{ reporting_obligation_id: fixture.obligation.reporting_obligation_id, cause: 'STATE_UNAVAILABLE' }],
+      deferred: 1,
+      stuck: [],
     });
     await assert.rejects(
       () => store.getRevision('rrev_resume_1', fixture.request.account.account_id),
       error => ledger.isReportingRowStoreError(error) && error.code === 'ROWS_EXPIRED'
     );
+    // The failure put the period into backoff, so the next pass leaves it alone.
+    const backingOff = await store.retireExpiredPeriods({ statusRetentionDays: 30 });
+    assert.equal(backingOff.retired, 0);
+    assert.equal(backingOff.deferred, 1);
+    await pool.query(`UPDATE adcp_reporting_obligation_tombstones SET next_attempt_at = NULL`);
     const resumed = await store.retireExpiredPeriods({ statusRetentionDays: 30 });
     assert.equal(resumed.retired, 1);
     assert.equal(
@@ -213,7 +222,14 @@ describe('reporting retention', { skip: !DATABASE_URL && 'PostgreSQL URL not set
     await intent('rrev_in_flight', [fresh], `clock_timestamp() + INTERVAL '1 hour'`);
 
     const swept = await store.sweepRowWriteIntents();
-    assert.deepEqual(swept, { swept: 1, objectsDeleted: 1, failed: 0 });
+    assert.deepEqual(swept, {
+      swept: 1,
+      objectsDeleted: 1,
+      failed: 0,
+      skippedUnconfigured: 0,
+      deferred: 0,
+      overdue: 0,
+    });
     assert.equal(existsSync(path.join(root, orphan.objectKey)), false);
     assert.equal(existsSync(path.join(root, committed.object_key)), true, 'committed objects are never swept');
     assert.equal(existsSync(path.join(root, fresh.objectKey)), true, 'unexpired uploads are left alone');
@@ -344,6 +360,8 @@ describe(
           retired: 0,
           failed: [],
           failures: [],
+          deferred: 0,
+          stuck: [],
         });
         assert.ok(await periodExists(obligationId));
         assert.equal((await store.getRevision(`rrev_hold_${kind}_1`, accountId)).rows.length, 5);
@@ -354,6 +372,8 @@ describe(
           retired: 1,
           failed: [],
           failures: [],
+          deferred: 0,
+          stuck: [],
         });
         assert.equal(await periodExists(obligationId), false);
       });
@@ -379,6 +399,8 @@ describe(
           retired: 1,
           failed: [],
           failures: [],
+          deferred: 0,
+          stuck: [],
         });
         assert.equal(await periodExists(obligationId), false);
       });

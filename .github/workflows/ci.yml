@@ -812,9 +812,20 @@ jobs:
           test/lib/reporting-row-shared-object-pg.test.js
           test/lib/reporting-snapshot-compaction-pg.test.js
           test/lib/reliable-reporting-core-maintenance-pg.test.js
+          test/reliable-reporting-lifecycle-pg.test.js
+
+      # These files hold a transaction open on purpose to test the change feeds' in-flight
+      # guard. `xmin` is cluster-wide, so they must not overlap other files' feed reads.
+      - name: Run PostgreSQL change-feed ordering contracts serially
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
+          REPORTING_LEDGER_PG_URL: postgresql://postgres@127.0.0.1:5432/postgres
+        run: >-
+          node --test --test-concurrency=1 --test-timeout=120000
           test/lib/reporting-host-reads-pg.test.js
           test/lib/reporting-bigquery-sink-pg.test.js
-          test/reliable-reporting-lifecycle-pg.test.js
+          test/lib/reporting-head-of-line-pg.test.js
 
       - name: Run PostgreSQL reporting contracts with chunked row storage
         env:
