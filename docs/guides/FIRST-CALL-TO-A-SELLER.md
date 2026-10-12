@@ -96,7 +96,10 @@ the registry knows the key. `'strict'` refuses every unknown account-carrying
 request. On stable-ID sellers, `'strict'` also refuses `get_products` and
 `list_products` without an account reference, even when public discovery is
 available; provision an account and supply its reference. Both policies require
-an active account before spend commitments and `sync_creatives`.
+an active account before spend commitments. `sync_creatives` accepts `active`
+and `payment_required` accounts; it refuses `pending_approval`, `suspended`,
+`rejected`, and `closed` accounts. `payment_required` blocks new spend, while
+allowing creative sync and management of existing buys.
 The natural-key override changes reference selection, not strict provisioning
 requirements. `AccountNotProvisionedError.account` is `undefined` when the
 request omitted its account; check for presence before inspecting the reference.

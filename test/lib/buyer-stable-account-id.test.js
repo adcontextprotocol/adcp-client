@@ -40,8 +40,15 @@ test('stable_account_id is opt-in evidence; malformed declarations never enable 
   }
 });
 
-for (const policy of ['off', 'auto', 'strict']) {
-  test(`stable-ID sellers receive the same ID for discovery, creatives, and buys (${policy})`, async t => {
+for (const [policy, status] of [
+  ['off', 'active'],
+  ['auto', 'active'],
+  ['strict', 'active'],
+  ['off', 'payment_required'],
+  ['auto', 'payment_required'],
+  ['strict', 'payment_required'],
+]) {
+  test(`stable-ID routing respects account policy (${policy}, ${status})`, async t => {
     const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
     const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
     const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
@@ -65,7 +72,7 @@ for (const policy of ['off', 'auto', 'strict']) {
       media_buy: { buying_modes: ['brief'] },
     }));
     tool('sync_accounts', params => ({
-      accounts: params.accounts.map(ref => ({ ...ref, account_id: 'seller-id', status: 'active', action: 'created' })),
+      accounts: params.accounts.map(ref => ({ ...ref, account_id: 'seller-id', status, action: 'created' })),
     }));
     tool('get_products', () => ({ products: [] }));
     tool('sync_creatives', () => ({ creatives: [] }));
@@ -85,21 +92,27 @@ for (const policy of ['off', 'auto', 'strict']) {
     });
     const provisioned = await buyer.accounts.ensure(account);
     assert.equal(provisioned.account_id, 'seller-id');
+    assert.equal(provisioned.status, status);
     assert.deepEqual(provisioned.account, account);
     assert.equal((await buyer.getProducts({ account, brief: 'Inventory' })).success, true);
     assert.equal((await buyer.syncCreativesLegacy({ account, creatives: [] })).success, true);
-    assert.equal(
-      (
-        await buyer.createMediaBuyLegacy({
-          account,
-          packages: [],
-          start_time: 'asap',
-          end_time: '2027-01-01T00:00:00Z',
-        })
-      ).success,
-      true
-    );
-    for (const name of ['get_products', 'sync_creatives', 'create_media_buy']) {
+    const buyParams = {
+      account,
+      packages: [],
+      start_time: 'asap',
+      end_time: '2027-01-01T00:00:00Z',
+    };
+    const canCommitSpend = policy === 'off' || status === 'active';
+    if (canCommitSpend) {
+      assert.equal((await buyer.createMediaBuyLegacy(buyParams)).success, true);
+    } else {
+      await assert.rejects(buyer.createMediaBuyLegacy(buyParams), AccountPaymentRequiredError);
+      assert.equal(
+        sent.some(call => call.name === 'create_media_buy'),
+        false
+      );
+    }
+    for (const name of ['get_products', 'sync_creatives', ...(canCommitSpend ? ['create_media_buy'] : [])]) {
       const call = sent.find(call => call.name === name);
       assert.ok(call, `${name} reached the seller`);
       assert.deepEqual(call.params.account, { account_id: 'seller-id' });
@@ -410,25 +423,44 @@ test('strict discovery requires an account on stable-ID sellers, including when 
   assert.deepEqual(await legacy.applyAccountPolicy('get_products', { brand: account.brand }), { brand: account.brand });
 });
 
-test('creative sync requires active provisioning and bypass options preserve governed payloads', async () => {
-  const c = client({ accountPolicy: 'strict' });
-  await assert.rejects(c.syncCreativesLegacy({ account, creatives: [] }), AccountNotProvisionedError);
-  for (const [status, error] of [
-    ['pending_approval', AccountPendingApprovalError],
-    ['payment_required', AccountPaymentRequiredError],
-    ['suspended', AccountSetupRequiredError],
-  ]) {
-    await c.accounts.observeSync([account], rows(status));
-    await assert.rejects(c.syncCreativesLegacy({ account, creatives: [] }), error);
-  }
-  await c.accounts.observeSync([account], rows());
-  const params = { account, creatives: [] };
-  for (const options of [{ preserveGovernedPayload: true }, { skipAccountValidation: true }]) {
-    assert.equal(await c.applyAccountPolicy('sync_creatives', params, options), params);
-  }
-  const filter = { account };
-  assert.equal(await c.applyAccountPolicy('list_accounts', filter), filter);
-});
+for (const policy of ['auto', 'strict']) {
+  test(`creative sync refuses unavailable accounts and preserves policy bypasses (${policy})`, async () => {
+    const c = client({ accountPolicy: policy });
+    await assert.rejects(c.syncCreativesLegacy({ account, creatives: [] }), AccountNotProvisionedError);
+    for (const [status, error] of [
+      ['pending_approval', AccountPendingApprovalError],
+      ['suspended', AccountSetupRequiredError],
+      ['rejected', AccountSetupRequiredError],
+      ['closed', AccountSetupRequiredError],
+    ]) {
+      await c.accounts.observeSync([account], rows(status));
+      for (const ref of [account, { account_id: 'seller-id' }]) {
+        await assert.rejects(c.syncCreativesLegacy({ account: ref, creatives: [] }), error);
+      }
+    }
+    const params = { account, creatives: [] };
+    for (const options of [{ preserveGovernedPayload: true }, { skipAccountValidation: true }]) {
+      assert.equal(await c.applyAccountPolicy('sync_creatives', params, options), params);
+    }
+    const filter = { account };
+    assert.equal(await c.applyAccountPolicy('list_accounts', filter), filter);
+  });
+
+  test(`payment-required accounts refuse spend commitments but permit management (${policy})`, async () => {
+    const c = client({ accountPolicy: policy });
+    await c.accounts.observeSync([account], rows('payment_required'));
+    for (const params of [{ account }, { account: { account_id: 'seller-id' } }, { account_id: 'seller-id' }]) {
+      for (const task of ['create_media_buy', 'buy_products', 'accept_proposal', 'activate_signal', 'acquire_rights']) {
+        await assert.rejects(c.applyAccountPolicy(task, params), AccountPaymentRequiredError);
+      }
+      for (const task of ['sync_creatives', 'update_media_buy', 'sync_catalogs', 'sync_event_sources']) {
+        const routed = await c.applyAccountPolicy(task, params);
+        if (params.account === account) assert.deepEqual(routed.account, { account_id: 'seller-id' });
+        else assert.equal(routed, params);
+      }
+    }
+  });
+}
 
 test('stable-ID declarations without an ID fail instead of sending a natural key', async () => {
   const c = client({ accountPolicy: 'auto' });
