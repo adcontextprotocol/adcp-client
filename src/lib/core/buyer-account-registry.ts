@@ -60,6 +60,8 @@ export interface BuyerAccountRegistryOptions {
   /** @internal The provision callback invokes beforeDispatch at its transport boundary. */
   provisionOwnsDispatchBoundary?: boolean;
   maxEntries?: number;
+  /** @internal Only implicit routing caches may evict; explicitly used provisioning registries retain their state. */
+  evictAtCapacity?: () => boolean;
   normalizeOptions?: (options: EnsureAccountOptions, taskOptions?: TaskOptions) => Promise<EnsureAccountOptions>;
 }
 type NaturalRef = Extract<AccountReference, { brand: unknown }>;
@@ -147,7 +149,7 @@ export class BuyerAccountRegistry {
   }
   private remember(key: string, entry: ProvisionedAccount): void {
     if (!this.entries.has(key) && this.entries.size >= this.maxEntries) {
-      if (!this.storage)
+      if (!this.storage && !this.registryOptions.evictAtCapacity?.())
         throw new AccountSetupRequiredError(
           'Account registry capacity reached; configure durable storage or increase maxEntries.'
         );
@@ -497,8 +499,11 @@ export class BuyerAccountRegistry {
     const aliases = new Map((priorId?.aliases ?? []).map(alias => [accountReferenceKey(alias), alias]));
     if (idRef) {
       aliases.set(accountReferenceKey(ref), structuredClone(ref));
-      if (aliases.size > this.maxEntries)
-        throw new AccountSetupRequiredError('Account alias capacity reached; increase registry maxEntries.');
+      if (aliases.size > this.maxEntries) {
+        if (!this.registryOptions.evictAtCapacity?.())
+          throw new AccountSetupRequiredError('Account alias capacity reached; increase registry maxEntries.');
+        aliases.delete(aliases.keys().next().value!);
+      }
     }
     if (!('account_id' in ref) && prior?.account_id && prior.account_id !== row.account_id) {
       const oldId = await this.get({ account_id: prior.account_id });
@@ -516,20 +521,22 @@ export class BuyerAccountRegistry {
     if ('account_id' in ref) {
       if (prior?.aliases) entry.aliases = prior.aliases;
     }
-    await this.write(entry, scope, isCurrent);
-    if (!idRef || scope !== this.scope() || !isCurrent()) return;
-    await this.write(
-      {
-        account: idRef,
-        revision: priorId?.revision,
-        account_id: row.account_id,
-        status: row.status!,
-        aliases: [...aliases.values()],
-        ...(preserveTerms && priorId?.setupTerms && { setupTerms: priorId.setupTerms }),
-      },
-      scope,
-      isCurrent
-    );
+    // Publish the ID alias before a natural-key reader can select that ID.
+    if (idRef) {
+      await this.write(
+        {
+          account: idRef,
+          revision: priorId?.revision,
+          account_id: row.account_id,
+          status: row.status!,
+          aliases: [...aliases.values()],
+          ...(preserveTerms && priorId?.setupTerms && { setupTerms: priorId.setupTerms }),
+        },
+        scope,
+        isCurrent
+      );
+    }
+    if (scope === this.scope() && isCurrent()) await this.write(entry, scope, isCurrent);
   }
   private enqueue(run: () => Promise<void>): Promise<void> {
     const next = this.writes.then(run);

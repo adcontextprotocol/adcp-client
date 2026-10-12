@@ -2015,6 +2015,7 @@ export class SingleAgentClient {
         ...this.config.accountRegistryOptions,
         provisionOwnsDispatchBoundary: true,
         maxEntries: this.config.accountRegistryMaxEntries,
+        evictAtCapacity: () => !this.accountRegistryExplicitlyAccessed && !this.accountRegistryOptedIn(),
         normalizeOptions: async (options, taskOptions) => {
           if (options.billing) return options;
           const caps = await this.getCapabilities(taskOptions);
@@ -8336,17 +8337,28 @@ export class SingleAgentClient {
             (!hints.timezone || row.timezone === hints.timezone) &&
             (row.sandbox === undefined || (row.sandbox === true) === (hints.sandbox === true))
         );
-        if (syncedRow?.status === 'pending_approval') {
-          throw new AccountPendingApprovalError(account, syncedRow.account_id);
-        }
-        if (!syncedRow || syncedRow.action === 'failed' || syncedRow.status !== 'active') {
+        if (!syncedRow || syncedRow.action === 'failed') {
           throw new AccountRequiredError(
             'implicit',
             'resolveAccount',
             'sync_accounts did not establish an active account for the requested brand and operator.'
           );
         }
-        return resolved(account, syncedRow.account_id);
+        const current = registry ? await registry.get(account) : syncedRow;
+        if (registry && registryScope !== this.accountScope())
+          throw new AccountRequiredError(
+            'implicit',
+            'resolveAccount',
+            'Caller credentials changed during provisioning.'
+          );
+        if (current?.status === 'pending_approval') throw new AccountPendingApprovalError(account, current.account_id);
+        if (current?.status !== 'active')
+          throw new AccountRequiredError(
+            'implicit',
+            'resolveAccount',
+            'sync_accounts did not establish an active account for the requested brand and operator.'
+          );
+        return resolved(account, current.account_id);
       }
       let synced;
       try {

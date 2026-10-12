@@ -97,7 +97,14 @@ request. On stable-ID sellers, `'strict'` also refuses `get_products` and
 `list_products` without an account reference, even when public discovery is
 available; provision an account and supply its reference. Both policies require
 an active account before spend commitments and `sync_creatives`.
+The natural-key override changes reference selection, not strict provisioning
+requirements. `AccountNotProvisionedError.account` is `undefined` when the
+request omitted its account; check for presence before inspecting the reference.
 Explicit account filters on `list_accounts` remain filters.
+For durable retries, persist the selected wire reference with the request and
+reuse it with the same idempotency key. Switching from a natural key to an ID
+between attempts changes the request body and can cause `IDEMPOTENCY_CONFLICT`;
+the natural-key override can preserve requests authored before ID routing was enabled.
 Call `listAccounts` first when adopting these policies with existing opaque
 account IDs so the registry knows those seller handles.
 
@@ -110,6 +117,10 @@ a snapshot, which avoids reordered deliveries overwriting current state.
 Use `client.accounts.getByAccountId(account_id)` to look up the ID alias;
 it includes `aliases` for the provisioned natural keys and is isolated by
 seller and caller scope. The lookup works in memory and after a storage-backed restart.
+Default-off stable-ID resolution also remembers recent bindings in a bounded
+routing cache while continuing to sync on every resolution. That automatic cache
+evicts old entries at capacity; explicitly used provisioning registries retain
+their capacity checks and setup state.
 
 The registry is in memory by default. Set `accountStorage` to an adapter with
 `get(key)` and `set(key, entry)` for persistence. The registry writes both

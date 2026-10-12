@@ -197,6 +197,97 @@ test('explicit ID references and provisioning references are preserved', async (
   assert.equal(await c.applyAccountPolicy('sync_accounts', params), params);
 });
 
+test('default resolution honours a newer status repair instead of an older active sync result', async () => {
+  for (const status of ['suspended', 'pending_approval']) {
+    const c = client();
+    await c.resolveAccount(account);
+    c.listAccounts = async () => result(status);
+    c.syncAccounts = async () => {
+      await c.accounts.applyStatusChange({ account_id: 'seller-id' });
+      return result();
+    };
+    await assert.rejects(
+      c.resolveAccount(account),
+      status === 'pending_approval' ? AccountPendingApprovalError : /did not establish an active account/
+    );
+    assert.equal((await c.accounts.get(account)).status, status);
+  }
+});
+
+test('the default routing cache evicts old bindings and still syncs every resolution', async () => {
+  const c = client();
+  let calls = 0;
+  c.syncAccounts = async params => {
+    calls++;
+    const ref = params.accounts[0];
+    return {
+      ...result(),
+      data: { accounts: [{ ...ref, account_id: ref.brand.domain, status: 'active', action: 'created' }] },
+    };
+  };
+  await c.resolveAccount(account);
+  c._accounts.maxEntries = 4;
+  for (let i = 0; i < 8; i++) {
+    const key = { ...account, brand: { domain: `brand${i}.example` } };
+    assert.deepEqual(await c.resolveAccount(key), { account_id: key.brand.domain });
+    assert.ok(c._accounts.entries.size <= 4);
+  }
+  assert.deepEqual(await c.resolveAccount(account), { account_id: account.brand.domain });
+  assert.equal(calls, 10);
+  assert.equal(c.accountRegistryExplicitlyAccessed, false);
+});
+
+test('automatic aliases are bounded, while explicitly used registries retain capacity checks', async () => {
+  const c = client();
+  c.syncAccounts = async params => ({
+    ...result(),
+    data: { accounts: [{ ...params.accounts[0], account_id: 'seller-id', status: 'active', action: 'created' }] },
+  });
+  await c.resolveAccount(account);
+  c._accounts.maxEntries = 4;
+  for (let i = 0; i < 8; i++) {
+    const key = { ...account, brand: { domain: `brand${i}.example` } };
+    assert.deepEqual(await c.resolveAccount(key), { account_id: 'seller-id' });
+    assert.ok((await c._accounts.getByAccountId('seller-id')).aliases.length <= 4);
+  }
+  await assert.rejects(c.accounts.ensure({ ...account, brand: { domain: 'new.example' } }), /capacity reached/);
+});
+
+test('a natural binding is only published after its ID alias is available', async () => {
+  const records = new Map();
+  let release;
+  let published;
+  const ready = new Promise(resolve => {
+    published = resolve;
+  });
+  const held = new Promise(resolve => {
+    release = resolve;
+  });
+  const c = client({
+    accountPolicy: 'strict',
+    accountStorage: {
+      get: async key => records.get(key),
+      set: async (key, value) => {
+        records.set(key, structuredClone(value));
+        if (key.includes('["natural"') && value.account_id && !value.setupTerms) {
+          published();
+          await held;
+        }
+      },
+    },
+  });
+  const setup = c.accounts.ensure(account);
+  await ready;
+  try {
+    const selected = await c.applyAccountPolicy('get_products', { account });
+    assert.deepEqual(selected.account, { account_id: 'seller-id' });
+    assert.deepEqual(await c.applyAccountPolicy('get_products', selected), selected);
+  } finally {
+    release();
+    await setup;
+  }
+});
+
 test('wrapper exposes detailed results and retains nested task sessions', async () => {
   const buyer = new AgentClient(agent);
   buyer.client.getCapabilities = client().getCapabilities;

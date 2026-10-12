@@ -152,7 +152,7 @@ export class AccountRequiredError extends ADCPError {
         `${taskName} requires an account for this ${accountModel}-account seller. ` +
           (accountModel === 'explicit'
             ? 'Call resolveAccount() to discover an account_id, then pass account: { account_id }.'
-            : 'Call resolveAccount({ brand, operator }) to sync the account, then pass its natural key.')
+            : 'Call resolveAccount({ brand, operator }) to sync the account, then pass the returned reference.')
     );
     this.details = { account_model: accountModel, task_name: taskName };
   }
@@ -209,7 +209,11 @@ export class AccountNotProvisionedError extends AccountNotFoundError {
     public readonly account: import('../types').AccountReference | undefined,
     public readonly taskName: string
   ) {
-    super(`${taskName} requires an account provisioned at this seller. Call client.accounts.ensure first.`);
+    super(
+      account
+        ? `${taskName} requires an account provisioned at this seller. Call client.accounts.ensure first.`
+        : `${taskName} requires a provisioned account reference. Call client.accounts.ensure and pass the account reference.`
+    );
   }
 }
 
