@@ -176,8 +176,8 @@ describe('request-signing grader — MCP transport vs. reference MCP agent', () 
     }
     assert.deepStrictEqual(failures, [], 'every non-profile vector grades as expected under MCP transport');
     assert.ok(report.passed, 'overall grade is PASS');
-    assert.strictEqual(report.positive.length, 12);
-    assert.strictEqual(report.negative.length, 28);
+    assert.strictEqual(report.positive.length, 15);
+    assert.strictEqual(report.negative.length, 31);
     assert.deepStrictEqual(
       report.positive.filter(vector => vector.skipped).map(vector => vector.vector_id),
       [
@@ -189,6 +189,7 @@ describe('request-signing grader — MCP transport vs. reference MCP agent', () 
         '010-percent-encoded-slash-preserved',
         '011-ipv6-authority',
         '012-ipv6-authority-default-port-stripped',
+        '015-bracketed-ipv6-host-with-port',
       ],
       'MCP must not claim URL canonicalization coverage after target reshaping'
     );

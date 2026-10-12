@@ -1575,7 +1575,7 @@ Flow: `get_products → create_media_buy → update_media_buy → get_media_buys
 Flow: `sync_accounts → create_media_buy → update_media_buy → get_media_buys → update_media_buy`
 
 **Seller handles typed proposal negotiation with constraints, product changes, and alternatives** — Verifies the AdCP 3.2 typed negotiation lifecycle: capability-gated constraint satisfaction, product changes, digest-verified alternatives, partial invariant, immutable lineage, finalize atomicity, and idempotent replay through refine_proposals.
-Flow: `get_adcp_capabilities → sync_accounts → get_products → refine_proposals → accept_proposal → refine_proposals`
+Flow: `get_adcp_capabilities → sync_accounts → request_proposals → refine_proposals → accept_proposal → refine_proposals`
 
 **Vendor-metric external catalog precondition** — Exercises the 3.1 SHOULD-window behavior for vendor_metric goals whose metric_id is absent from a seeded measurement.metrics[] catalog.
 Flow: `sync_accounts → comply_test_controller → create_media_buy`
@@ -1864,7 +1864,7 @@ Flow: `comply_test_controller`
 **OAuth discovery and metadata consistency** — Capability-gated evaluation of an agent's RFC 9728 protected-resource metadata and the complete RFC 8414 authorization-server graph it advertises.
 Flow: `get_adcp_capabilities`
 
-**Signed requests — RFC 9421 transport-layer verification** — Agent verifies RFC 9421 HTTP Signatures on incoming AdCP requests per the 3.1-compatible transport-layer profile. Universal capability-gated storyboard — runs for any agent advertising `request_signing.supported: true` regardless of `supported_protocols`. Graded against the legacy wire suite covering every 3.1 checklist step and canonicalization-edge rule.
+**Signed requests — RFC 9421 transport-layer verification** — Agent verifies RFC 9421 HTTP Signatures on incoming AdCP requests per the 3.1-compatible transport-layer profile. Universal capability-gated storyboard — runs for any agent advertising `request_signing.supported: true` regardless of `supported_protocols`. Graded against the legacy wire suite covering every 3.1 checklist step and canonicalization-edge rule; a verifier advertising `covers_content_digest: \
 Flow: `get_adcp_capabilities`
 
 **Trusted Match publisher authentication rejection** — Verifies that a TMP router deployment rejects schema-valid Context Match and Identity Match requests with absent or invalid publisher authentication using HTTP 401 and a WWW-Authenticate challenge.

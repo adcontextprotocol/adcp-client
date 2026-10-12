@@ -66,11 +66,13 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // and its delivery guide measure 20,364,177 bytes in the combined CI artifact
 // on both Node floors. Preserve the existing 25 KB compressor margin; unpacked,
 // file-count, bundled-schema, and declaration budgets stay fixed.
-// The managed-delivery adapter router (one new module set, CJS + ESM + both
-// declaration flavours), the authorization pattern/transport columns and their
-// guide sections measure 20,396,060 bytes packed locally; allow 25 KB for
-// compressor variance. Unpacked, schema and declaration budgets stay fixed.
-const MAX_PACKED_TARBALL_BYTES = 20_420_000;
+// AdCP 3.2.4 replaces the primary signed compliance corpus and adds 22
+// request-signing vectors. Its unreadable-revision validators and health
+// projection measured 20,403,623 bytes in CI before the managed-delivery router.
+// The router adds one dual-format module set. The combined signed 3.2.4
+// artifact measures 20,419,639 bytes locally; preserve the existing 25 KB
+// compressor margin, rounded up to the next 10 KB. Other byte budgets stay fixed.
+const MAX_PACKED_TARBALL_BYTES = 20_450_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -215,7 +217,8 @@ const MAX_PACKED_FILE_COUNT =
   8 + // Pending OAuth flow serialization and store conformance (two dual-format sets).
   8 + // Browser schemas entry and shared get-products validator (two dual-format runtime/declaration sets).
   4 + // Local creative-schema reference inspection (one dual-format runtime/declaration set).
-  4; // Managed-delivery adapter router (`reporting/ledger/managed-router`, one dual-format set).
+  4 + // Managed-delivery adapter router (`reporting/ledger/managed-router`, one dual-format set).
+  22; // AdCP 3.2.4 signed request-signing compliance vectors; no new runtime module sets.
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

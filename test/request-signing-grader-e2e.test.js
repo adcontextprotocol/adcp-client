@@ -163,8 +163,8 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
     }
     assert.deepStrictEqual(failures, [], 'every non-capability-profile vector grades as expected');
 
-    assert.strictEqual(report.positive.length, 12);
-    assert.strictEqual(report.negative.length, 28);
+    assert.strictEqual(report.positive.length, 15);
+    assert.strictEqual(report.negative.length, 31);
   });
 
   test('capability profile "required": vector 007 grades correctly', async () => {
@@ -251,6 +251,13 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
         agentContentDigestPolicy: 'either',
       });
       for (const p of report.positive) {
+        if (p.skipped) {
+          // Raw grading retargets onto this 127.0.0.1 server, which cannot present 015's IPv6-with-port
+          // authority; the grader reports that as a skip rather than a pass.
+          assert.strictEqual(p.vector_id, '015-bracketed-ipv6-host-with-port');
+          assert.strictEqual(p.skip_reason, 'transport_ungradable');
+          continue;
+        }
         assert.ok(p.passed, `positive/${p.vector_id} should pass: ${p.diagnostic}`);
         assert.ok(p.http_status >= 200 && p.http_status < 300, `${p.vector_id}: status ${p.http_status}`);
       }

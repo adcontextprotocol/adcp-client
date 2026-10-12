@@ -19,6 +19,8 @@ import {
   reportingEffectiveConsumerMismatchEscalationV1,
   projectReportingConsumerStatusMismatchV1,
   projectReportingObligationHealthV1,
+  projectReportingUnreadableRevisionHealthV1,
+  ReportingLedgerIssueIntegrityError,
 } from './health';
 import { compareReportingInstants } from './instant';
 import { getRevisionMetadataFromStore, readRevisionRowsFromStore } from './revision-metadata';
@@ -212,30 +214,36 @@ export function createReportingStatusHandler<TContext = unknown>(
           page.snapshot.ledgerAsOf,
           reportingLedgerScopeClosed(query, page.snapshot.ledgerAsOf, ledgerCoverage.complete)
         );
-        const persistedIssues =
-          projection.health === 'delayed' || projection.health === 'action_required'
-            ? page.snapshot.issues.filter(
-                issue =>
-                  issue.reporting_obligation_id === obligation.reporting_obligation_id &&
-                  !issue.resolvedAt &&
-                  // A CONSUMER_STATUS_MISMATCH is caller-scoped, but the issue
-                  // store is keyed by obligation alone and carries no consumer
-                  // dimension. Republishing a persisted one would hand every
-                  // other consumer on the same obligation the causing
-                  // `reporting_status_id`, its `opened_at` (i.e. another
-                  // tenant's exact ingest timing), and any `external_ref`
-                  // ticket key — the precise cross-tenant leak the field's own
-                  // contract forbids. This projection recomputes the mismatch
-                  // from the caller's current leaf on every read, so the
-                  // persisted copy is redundant as well as unsafe.
-                  issue.code !== 'CONSUMER_STATUS_MISMATCH' &&
-                  // Retiring an issue removes it from the projection rather
-                  // than publishing it at a terminal state, which is what lets
-                  // a reader treat a nonempty `issues[]` as degradation.
-                  issue.issueState !== 'resolved' &&
-                  issue.issueState !== 'waived'
-              )
-            : [];
+        const persistedIssues = page.snapshot.issues.filter(
+          issue =>
+            issue.reporting_obligation_id === obligation.reporting_obligation_id &&
+            !issue.resolvedAt &&
+            // A CONSUMER_STATUS_MISMATCH is caller-scoped, but the issue
+            // store is keyed by obligation alone and carries no consumer
+            // dimension. Republishing a persisted one would hand every
+            // other consumer on the same obligation the causing
+            // `reporting_status_id`, its `opened_at` (i.e. another
+            // tenant's exact ingest timing), and any `external_ref`
+            // ticket key — the precise cross-tenant leak the field's own
+            // contract forbids. This projection recomputes the mismatch
+            // from the caller's current leaf on every read, so the
+            // persisted copy is redundant as well as unsafe.
+            issue.code !== 'CONSUMER_STATUS_MISMATCH' &&
+            (projection.health === 'delayed' ||
+              projection.health === 'action_required' ||
+              issue.code === 'REVISION_UNREADABLE') &&
+            // Retiring an issue removes it from the projection rather
+            // than publishing it at a terminal state, which is what lets
+            // a reader treat a nonempty `issues[]` as degradation.
+            issue.issueState !== 'resolved' &&
+            issue.issueState !== 'waived'
+        );
+        const persistedHealth = projectReportingUnreadableRevisionHealthV1(
+          obligation,
+          revisions,
+          page.snapshot.issues,
+          projection.health
+        );
         const consumerStatusHistory = (page.snapshot.consumerStatuses ?? []).filter(value =>
           consumerStatusMatchesObligation(value, obligation)
         );
@@ -257,7 +265,7 @@ export function createReportingStatusHandler<TContext = unknown>(
                 obligation,
                 currentConsumerStatus,
                 revisions,
-                projection.health,
+                persistedHealth,
                 page.snapshot.ledgerAsOf,
                 consumerMismatchEscalation
               );
@@ -272,6 +280,7 @@ export function createReportingStatusHandler<TContext = unknown>(
           compareReportingInstants(page.snapshot.ledgerAsOf, obligation.recoveryDeadlineAt) > 0;
         const baseProjection = {
           ...projection,
+          health: persistedHealth,
           issues: uniqueIssues([...persistedIssues, ...projection.issues, ...(mismatch ? [mismatch.issue] : [])]),
         };
         const managed = projectManagedDelivery({
@@ -530,6 +539,9 @@ export function createReportingStatusHandler<TContext = unknown>(
         ),
         issues: issues.map(wireIssue),
       } as never;
+    } catch (error) {
+      if (error instanceof ReportingLedgerIssueIntegrityError) return operationalUnavailable(view);
+      throw error;
     } finally {
       releaseReadSlot();
     }
@@ -1142,6 +1154,7 @@ function wireIssue(issue: ReportingLedgerIssueV1) {
     ...(issue.issueState === 'open' || issue.issueState === 'acknowledged' ? { issue_state: issue.issueState } : {}),
     ...(issue.externalRef ? { external_ref: issue.externalRef } : {}),
     ...(issue.reporting_status_id ? { reporting_status_id: issue.reporting_status_id } : {}),
+    ...(issue.reporting_revision_id ? { reporting_revision_id: issue.reporting_revision_id } : {}),
     ...(issue.reporting_obligation_id === 'scope' ? {} : { reporting_obligation_id: issue.reporting_obligation_id }),
   };
 }

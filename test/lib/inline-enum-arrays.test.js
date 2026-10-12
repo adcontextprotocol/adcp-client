@@ -29,6 +29,38 @@ describe('Inline-union value arrays (inline-enums.generated)', () => {
     assert.deepEqual([...inlineEnums.EffectiveTimingConstraints_KindValues], ['effective_timing']);
   });
 
+  it('preserves the deprecated submitted-envelope status aliases published before AdCP 3.2.4', async () => {
+    // CompactTaskSubmitted gained the shared envelopes in 3.2.4; however the schema is composed,
+    // dropping these aliases would be a silent public-export removal.
+    if (!inlineEnums) inlineEnums = await import('../../dist/lib/types/inline-enums.generated.js');
+    for (const name of [
+      'CompactTaskSubmitted_StatusValues',
+      'RefineProposalsAsyncSubmitted_StatusValues',
+      'RequestProposalsAsyncSubmitted_StatusValues',
+    ]) {
+      assert.deepEqual([...inlineEnums[name]], ['submitted'], name);
+      assert.equal(
+        inlineEnums[name],
+        inlineEnums.BuildCreativeAsyncSubmitted_StatusValues,
+        `${name} aliases canonical`
+      );
+    }
+    // The strict wire validator is untouched: only `submitted` with a task_id is accepted.
+    if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
+    const strict = schemas.CompactTaskSubmittedSchema;
+    assert.equal(strict.safeParse({ status: 'submitted', task_id: 't1' }).success, true);
+    assert.equal(strict.safeParse({ status: 'working', task_id: 't1' }).success, false);
+    assert.equal(strict.safeParse({ status: 'submitted' }).success, false);
+    for (const entryPath of ['../../dist/lib/index.js', '../../dist/lib/types/index.js', '../../dist/lib/enums.js']) {
+      const entry = await import(entryPath);
+      assert.deepEqual(
+        [...entry.CompactTaskSubmitted_StatusValues],
+        ['submitted'],
+        `${entryPath} re-exports the alias`
+      );
+    }
+  });
+
   it('user-flagged values match the AdCP spec (image-asset-requirements.json formats enum)', async () => {
     if (!inlineEnums) inlineEnums = await import('../../dist/lib/types/inline-enums.generated.js');
     // Pinned to the spec's `properties.formats.items.enum` in

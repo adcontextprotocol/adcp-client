@@ -335,6 +335,83 @@ const withIssues = issues => {
   return value;
 };
 
+function unreadableRevisionCases() {
+  const issue = {
+    issue_id: 'revision_unreadable_1',
+    code: 'REVISION_UNREADABLE',
+    severity: 'delayed',
+    responsible_party: 'seller',
+    recommended_action: 'wait_for_retry',
+    reporting_obligation_id: 'obligation-billing',
+    reporting_revision_id: 'revision-august-official',
+  };
+  const cases = [
+    issue,
+    { ...issue, severity: 'action_required', recommended_action: 'contact_seller' },
+    { ...issue, reporting_obligation_id: 'x'.repeat(255), reporting_revision_id: 'r'.repeat(255) },
+    { ...issue, responsible_party: 'buyer' },
+    { ...issue, responsible_party: 'provider' },
+    { ...issue, reporting_obligation_id: undefined },
+    { ...issue, reporting_obligation_id: '' },
+    { ...issue, reporting_obligation_id: 'obligation/invalid' },
+    { ...issue, reporting_revision_id: undefined },
+    { ...issue, reporting_revision_id: '' },
+    { ...issue, reporting_revision_id: 'revision invalid' },
+    { ...issue, reporting_revision_id: 'https://seller.example/revision' },
+    { ...issue, reporting_revision_id: 'x'.repeat(256) },
+    { ...issue, recommended_action: 'contact_seller' },
+    { ...issue, severity: 'action_required', recommended_action: 'wait_for_retry' },
+  ].map(value => {
+    const result = withIssues([value]);
+    result.periods[0].health = value.severity;
+    result.periods[0].reconciliation_status = 'accepted';
+    result.periods[0].receipt_count = 1;
+    result.periods[0].accepted_receipt_count = 1;
+    return result;
+  });
+  const summary = summaryResponse();
+  summary.health = 'delayed';
+  summary.obligation_counts.healthy = 0;
+  summary.obligation_counts.delayed = 1;
+  summary.issues = [issue];
+  cases.push(summary);
+  return {
+    cases,
+    expected: [
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+    ],
+  };
+}
+
+test('current reporting-status guard accepts unreadable revisions with seller attribution', () => {
+  const { cases, expected } = unreadableRevisionCases();
+  assert.deepEqual(currentResponseOutcomes(cases), expected);
+});
+
+test('unreadable revision validation agrees across canonical, generated and current response guards', async () => {
+  const { cases, expected } = unreadableRevisionCases();
+  const validate = await authoritativeValidator();
+  const authoritative = cases.map(value => validate(value));
+  assert.deepEqual(authoritative, expected);
+  assert.deepEqual(generatedOutcomes(cases), authoritative);
+  assert.deepEqual(currentResponseOutcomes(cases), authoritative);
+});
+
 test('current reporting-status guard accepts the rc.3 consumer mismatch issue', () => {
   assert.deepEqual(
     currentResponseOutcomes([

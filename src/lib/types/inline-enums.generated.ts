@@ -1583,7 +1583,7 @@ export const ReportingScheduleOffering_PeriodTimezonePolicyValues = ["fixed", "a
 // ====== ReportingStatusIssue ======
 
 /** single | ReportingStatusIssue.code */
-export const ReportingStatusIssue_CodeValues = ["REPORT_OVERDUE", "PRODUCTION_FAILED", "DELIVERY_FAILED", "ACCESS_REQUIRED", "CONFIGURATION_REQUIRED", "REPORTING_COVERAGE_INCOMPLETE", "RESOURCE_EXPIRED", "READER_INCOMPATIBLE", "HISTORY_UNAVAILABLE", "RECEIPT_REQUIRED", "RECEIPT_REJECTED", "ADJUSTMENT_RECEIPT_REQUIRED", "ADJUSTMENT_RECEIPT_REJECTED", "CONSUMER_STATUS_MISMATCH"] as const;
+export const ReportingStatusIssue_CodeValues = ["REPORT_OVERDUE", "PRODUCTION_FAILED", "DELIVERY_FAILED", "ACCESS_REQUIRED", "CONFIGURATION_REQUIRED", "REPORTING_COVERAGE_INCOMPLETE", "RESOURCE_EXPIRED", "READER_INCOMPATIBLE", "HISTORY_UNAVAILABLE", "REVISION_UNREADABLE", "RECEIPT_REQUIRED", "RECEIPT_REJECTED", "ADJUSTMENT_RECEIPT_REQUIRED", "ADJUSTMENT_RECEIPT_REJECTED", "CONSUMER_STATUS_MISMATCH"] as const;
 /** single | ReportingStatusIssue.issue_state */
 export const ReportingStatusIssue_IssueStateValues = ["open", "acknowledged", "resolved", "waived"] as const;
 /** single | ReportingStatusIssue.recommended_action */

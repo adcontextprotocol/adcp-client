@@ -54,6 +54,15 @@ function isReportingStatusIssue(value: unknown): boolean {
     if (!isOffsetDateTime(value.opened_at)) return false;
     if (!isNonEmptyString(value.reporting_status_id)) return false;
   }
+  if (value.code === 'REVISION_UNREADABLE') {
+    if (value.responsible_party !== 'seller') return false;
+    const action = value.severity === 'delayed' ? 'wait_for_retry' : 'contact_seller';
+    if (value.recommended_action !== action) return false;
+    for (const field of ['reporting_obligation_id', 'reporting_revision_id']) {
+      const id = value[field];
+      if (!isNonEmptyString(id) || !/^[A-Za-z0-9_.:-]{1,255}$/.test(id)) return false;
+    }
+  }
   if (value.issue_state !== undefined && !['open', 'acknowledged'].includes(String(value.issue_state))) return false;
   // Inert correlation text. The character class excludes whitespace and the
   // solidus so the value cannot express a URL or a sentence; receivers display
@@ -80,6 +89,7 @@ function isReportingStatusIssue(value: unknown): boolean {
       'RESOURCE_EXPIRED',
       'READER_INCOMPATIBLE',
       'HISTORY_UNAVAILABLE',
+      'REVISION_UNREADABLE',
       'RECEIPT_REQUIRED',
       'RECEIPT_REJECTED',
       'ADJUSTMENT_RECEIPT_REQUIRED',

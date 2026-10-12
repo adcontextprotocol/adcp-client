@@ -15137,6 +15137,7 @@ export type ReportingPackageID = string;
  */
 export type ReportingStatusIssue = {
 } & {
+} & {
   /**
    * Seller-issued stable identifier for this logical issue: re-emissions and later polls of the same unresolved condition reuse it, and resolution retires it, so consumers can project AdCP reporting issues into durable work items. A recurrence after resolution receives a new id.
    */
@@ -15151,6 +15152,7 @@ export type ReportingStatusIssue = {
     | 'RESOURCE_EXPIRED'
     | 'READER_INCOMPATIBLE'
     | 'HISTORY_UNAVAILABLE'
+    | 'REVISION_UNREADABLE'
     | 'RECEIPT_REQUIRED'
     | 'RECEIPT_REJECTED'
     | 'ADJUSTMENT_RECEIPT_REQUIRED'
@@ -15184,6 +15186,10 @@ export type ReportingStatusIssue = {
    */
   message?: string;
   reporting_obligation_id?: string;
+  /**
+   * Published revision this issue concerns. Required when code is REVISION_UNREADABLE.
+   */
+  reporting_revision_id?: string;
   /**
    * Current authenticated consumer status statement that caused this mismatch.
    */
@@ -15217,6 +15223,7 @@ export type ReportingStatusIssue = {
     | 'RESOURCE_EXPIRED'
     | 'READER_INCOMPATIBLE'
     | 'HISTORY_UNAVAILABLE'
+    | 'REVISION_UNREADABLE'
     | 'RECEIPT_REQUIRED'
     | 'RECEIPT_REJECTED'
     | 'ADJUSTMENT_RECEIPT_REQUIRED'
@@ -15250,6 +15257,10 @@ export type ReportingStatusIssue = {
    */
   message?: string;
   reporting_obligation_id?: string;
+  /**
+   * Published revision this issue concerns. Required when code is REVISION_UNREADABLE.
+   */
+  reporting_revision_id?: string;
   /**
    * Current authenticated consumer status statement that caused this mismatch.
    */
@@ -35522,16 +35533,12 @@ export interface FailedPrincipalRead {
  */
 export interface ListAccountChangesRequest {
   /**
-   * Release-precision AdCP version. Flattened here so emitted MCP tool input schemas remain plain root objects for clients that reject top-level combinators.
-   * @pattern ^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
    */
   adcp_version?: string;
   /**
    * @deprecated
-   * Deprecated major-only version pin retained through 3.x.
-   * @minimum 1
-   * @maximum 99
-   * @format int
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   account: AccountReference;

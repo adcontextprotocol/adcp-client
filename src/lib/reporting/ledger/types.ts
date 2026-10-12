@@ -347,6 +347,7 @@ export interface ReportingLedgerIssueV1 {
     | 'RESOURCE_EXPIRED'
     | 'READER_INCOMPATIBLE'
     | 'HISTORY_UNAVAILABLE'
+    | 'REVISION_UNREADABLE'
     | 'RECEIPT_REQUIRED'
     | 'RECEIPT_REJECTED'
     | 'ADJUSTMENT_RECEIPT_REQUIRED'
@@ -370,6 +371,8 @@ export interface ReportingLedgerIssueV1 {
    * which is the variant to construct for that code.
    */
   reporting_status_id?: string;
+  /** Affected revision, required for REVISION_UNREADABLE. */
+  reporting_revision_id?: string;
   /**
    * When the seller first observed this logical condition.
    *
@@ -415,6 +418,16 @@ export interface ReportingLedgerIssueV1 {
   observedAt: string;
   resolvedAt?: string;
 }
+
+/** Seller-attributed unreadability of a previously published revision. */
+export type ReportingLedgerRevisionUnreadableIssueV1 = ReportingLedgerIssueV1 & {
+  code: 'REVISION_UNREADABLE';
+  reporting_revision_id: string;
+  responsibleParty: 'seller';
+} & (
+    | { severity: 'delayed'; recommendedAction: 'wait_for_retry' }
+    | { severity: 'action_required'; recommendedAction: 'contact_seller' }
+  );
 
 /**
  * Non-secret human escalation path for reporting issues the protocol cannot

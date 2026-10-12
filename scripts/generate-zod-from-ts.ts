@@ -1210,6 +1210,125 @@ function postProcessCanonicalFormatMarkerIntersections(content: string): string 
 }
 
 /**
+ * Keep `CompactTaskSubmittedSchema` (and the `RequestProposalsAsyncSubmitted` /
+ * `RefineProposalsAsyncSubmitted` aliases of it) a ZodObject.
+ *
+ * The canonical schema is `allOf: [version-envelope, protocol-envelope]` plus
+ * its own `properties`, so ts-to-zod emits `Envelope.merge(Envelope).and(z.object(...))`
+ * — a ZodIntersection with no `.shape`/`.extend()`/`.pick()`/`.omit()`, unlike the
+ * plain object this public export was in 3.2.3. `.merge()` lets the right side win
+ * on overlap, so it matches the intersection only while every top-level key the
+ * compact object shares with either envelope is a strict narrowing of the envelope's
+ * declaration (`status: TaskStatus` → `'submitted'`, optional `task_id` → required
+ * non-empty, `message` + `maxLength`) and all three objects keep the same
+ * unknown-key policy. This pass therefore pins the actual overlap SET and each
+ * overlapping declaration, and fails generation on any drift — including a new
+ * overlapping field — rather than silently dropping an envelope constraint.
+ */
+const COMPACT_TASK_SUBMITTED_KNOWN_OVERLAP: Readonly<Record<string, { envelope: string; compact: string }>> = {
+  status: { envelope: 'TaskStatusSchema', compact: 'z.literal("submitted")' },
+  task_id: { envelope: 'z.string().optional()', compact: 'z.string().min(1)' },
+  message: { envelope: 'z.string().optional()', compact: 'z.string().max(2000).optional()' },
+  context: { envelope: 'ContextObjectSchema.optional()', compact: 'ContextObjectSchema.optional()' },
+};
+
+function postProcessCompactTaskSubmittedEnvelope(content: string): string {
+  const fail = (reason: string): never => {
+    throw new Error(
+      `postProcessCompactTaskSubmittedEnvelope: ${reason}; merging would no longer match the canonical ` +
+        'allOf intersection. Review the envelope projection before changing this pass.'
+    );
+  };
+  const blockOf = (name: string): { start: number; end: number; text: string } => {
+    const start = content.indexOf(`export const ${name} = `);
+    const end = content.indexOf('\n\nexport const ', start + 1);
+    if (start === -1 || end === -1)
+      throw new Error(`postProcessCompactTaskSubmittedEnvelope: unable to locate ${name}.`);
+    return { start, end, text: content.slice(start, end) };
+  };
+  // Top-level keys (name -> initializer source) of the first `z.object({...})` in a schema
+  // declaration, plus whether it is directly `.passthrough()`. AST-based so nested objects'
+  // keys (e.g. inside `payload` or `errors`) are never mistaken for top-level fields.
+  const topLevelObject = (name: string, text: string): { keys: Map<string, string>; passthrough: boolean } => {
+    const source = ts.createSourceFile(`${name}.ts`, text, ts.ScriptTarget.Latest, true);
+    let found: ts.CallExpression | undefined;
+    const visit = (node: ts.Node): void => {
+      if (found) return;
+      if (ts.isCallExpression(node) && node.expression.getText(source) === 'z.object') {
+        found = node;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    const literal = found?.arguments[0];
+    if (!found || !literal || !ts.isObjectLiteralExpression(literal))
+      fail(`${name} no longer starts with z.object({...})`);
+    const keys = new Map<string, string>();
+    for (const property of (literal as ts.ObjectLiteralExpression).properties) {
+      if (
+        !ts.isPropertyAssignment(property) ||
+        !(ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))
+      ) {
+        fail(`${name} has a non-plain top-level property (${property.getText(source)})`);
+      }
+      const assignment = property as ts.PropertyAssignment;
+      keys.set((assignment.name as ts.Identifier | ts.StringLiteral).text, assignment.initializer.getText(source));
+    }
+    const access = found!.parent;
+    const passthrough =
+      ts.isPropertyAccessExpression(access) &&
+      access.name.text === 'passthrough' &&
+      ts.isCallExpression(access.parent) &&
+      access.parent.expression === access;
+    return { keys, passthrough };
+  };
+
+  const version = topLevelObject('AdCPVersionEnvelopeSchema', blockOf('AdCPVersionEnvelopeSchema').text);
+  const protocol = topLevelObject('ProtocolEnvelopeSchema', blockOf('ProtocolEnvelopeSchema').text);
+  const compact = blockOf('CompactTaskSubmittedSchema');
+  const own = topLevelObject('CompactTaskSubmittedSchema', compact.text);
+  const from = 'AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).and(z.object({';
+  if (!compact.text.includes(from)) {
+    throw new Error('postProcessCompactTaskSubmittedEnvelope: expected the generated envelope intersection.');
+  }
+
+  for (const [name, shape] of [
+    ['AdCPVersionEnvelopeSchema', version],
+    ['ProtocolEnvelopeSchema', protocol],
+    ['CompactTaskSubmittedSchema', own],
+  ] as const) {
+    if (!shape.passthrough) fail(`${name} is no longer a passthrough object (unknown-key policy differs)`);
+  }
+
+  // The overlap SET must equal the reviewed set: a new shared key (e.g. a future envelope field the
+  // compact object also declares) would be silently overridden by `.merge()`.
+  const overlap = new Map<string, { envelope: string; compact: string }>();
+  for (const [key, compactInit] of own.keys) {
+    const envelopeInits = [version.keys.get(key), protocol.keys.get(key)].filter((v): v is string => v !== undefined);
+    if (envelopeInits.length > 1) fail(`${key} is declared by both envelopes`);
+    if (envelopeInits.length === 1) overlap.set(key, { envelope: envelopeInits[0], compact: compactInit });
+  }
+  const actual = [...overlap.keys()].sort().join(',');
+  const expected = Object.keys(COMPACT_TASK_SUBMITTED_KNOWN_OVERLAP).sort().join(',');
+  if (actual !== expected) {
+    fail(`top-level overlap with the envelopes changed (expected {${expected}}, found {${actual}})`);
+  }
+  for (const [key, declared] of overlap) {
+    const reviewed = COMPACT_TASK_SUBMITTED_KNOWN_OVERLAP[key];
+    if (declared.envelope !== reviewed.envelope || declared.compact !== reviewed.compact) {
+      fail(
+        `overlapping field ${key} changed (envelope \`${declared.envelope}\` / compact \`${declared.compact}\`, ` +
+          `reviewed \`${reviewed.envelope}\` / \`${reviewed.compact}\`)`
+      );
+    }
+  }
+
+  const to = 'AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).merge(z.object({';
+  return content.slice(0, compact.start) + compact.text.replace(from, to) + content.slice(compact.end);
+}
+
+/**
  * Guard against lossy per-format `slots` projections.
  *
  * Canonical formats are compiled from their normalized standalone schemas, so
@@ -2038,6 +2157,102 @@ function postProcessReportingEvidenceStrictness(content: string): string {
     result = result.slice(0, target.expressionStart) + strict + result.slice(target.expressionEnd);
   }
   return result;
+}
+
+/** Restore code-specific issue constraints lost by the TypeScript projection. */
+function postProcessReportingStatusIssueConstraints(
+  content: string,
+  source = JSON.parse(
+    readFileSync(path.join(__dirname, '../schemas/cache/latest/core/reporting-status-issue.json'), 'utf8')
+  )
+): string {
+  const rules: Record<
+    string,
+    {
+      required: string[];
+      constants: Record<string, string>;
+      action?: { severity: string; then: string; else: string };
+    }
+  > = {};
+  for (const arm of source.allOf) {
+    const code = arm.if?.properties?.code?.const;
+    if (
+      typeof code !== 'string' ||
+      rules[code] ||
+      !source.properties.code.enum.includes(code) ||
+      !isDeepStrictEqual(arm.if, { properties: { code: { const: code } }, required: ['code'] }) ||
+      Object.keys(arm).some(key => !['if', 'then'].includes(key))
+    )
+      throw new Error('Unsupported reporting issue code conditional');
+    const required: string[] = arm.then.required ?? [];
+    const constants: Record<string, string> = {};
+    for (const [field, constraint] of Object.entries(arm.then.properties ?? {})) {
+      const value = (constraint as { const?: unknown }).const;
+      if (
+        typeof value !== 'string' ||
+        !isDeepStrictEqual(constraint, { const: value }) ||
+        !source.properties[field]?.enum?.includes(value)
+      ) {
+        throw new Error(`Unsupported reporting issue constant for ${code}.${field}`);
+      }
+      constants[field] = value;
+    }
+    if (
+      !Array.isArray(required) ||
+      required.some(field => !Object.hasOwn(source.properties, field)) ||
+      Object.keys(arm.then).some(key => !['required', 'properties', 'if', 'then', 'else'].includes(key))
+    ) {
+      throw new Error(`Unsupported reporting issue constraints for ${code}`);
+    }
+    const rule: (typeof rules)[string] = { required, constants };
+    if (arm.then.if || arm.then.then || arm.then.else) {
+      const severity = arm.then.if?.properties?.severity?.const;
+      const thenAction = arm.then.then?.properties?.recommended_action?.const;
+      const elseAction = arm.then.else?.properties?.recommended_action?.const;
+      if (
+        !source.properties.severity ||
+        typeof severity !== 'string' ||
+        !isDeepStrictEqual(arm.then.if, { properties: { severity: { const: severity } } }) ||
+        !isDeepStrictEqual(arm.then.then, { properties: { recommended_action: { const: thenAction } } }) ||
+        !isDeepStrictEqual(arm.then.else, { properties: { recommended_action: { const: elseAction } } }) ||
+        !source.properties.recommended_action.enum.includes(thenAction) ||
+        !source.properties.recommended_action.enum.includes(elseAction)
+      ) {
+        throw new Error(`Unsupported reporting issue action conditional for ${code}`);
+      }
+      rule.action = { severity, then: thenAction, else: elseAction };
+    }
+    rules[code] = rule;
+  }
+  const target = findSchemaExportExpressions(content).find(entry => entry.name === 'ReportingStatusIssueSchema');
+  if (!target) throw new Error('ReportingStatusIssueSchema was not generated');
+  const expression = `${target.expression}.superRefine((value, ctx) => {
+      // reporting issue canonical code constraints
+      const rules: Record<string, {
+          required: string[];
+          constants: Record<string, string>;
+          action?: { severity: string; then: string; else: string };
+      }> = ${JSON.stringify(rules)};
+      const rule = Object.hasOwn(rules, value.code) ? rules[value.code] : undefined;
+      if (!rule) return;
+      for (const field of rule.required) {
+          if ((value as Record<string, unknown>)[field] === undefined) {
+              ctx.addIssue({ code: "custom", path: [field], message: field + " is required for " + value.code });
+          }
+      }
+      for (const [field, expected] of Object.entries(rule.constants)) {
+          if ((value as Record<string, unknown>)[field] !== expected) {
+              ctx.addIssue({ code: "custom", path: [field], message: "Expected " + expected });
+          }
+      }
+      if (rule.action) {
+          const expected = value.severity === rule.action.severity ? rule.action.then : rule.action.else;
+          if (value.recommended_action !== expected) {
+              ctx.addIssue({ code: "custom", path: ["recommended_action"], message: "Expected " + expected });
+          }
+      }
+  })`;
+  return content.slice(0, target.expressionStart) + expression + content.slice(target.expressionEnd);
 }
 
 /**
@@ -5692,6 +5907,7 @@ async function generateZodSchemas() {
     // global extension passthrough policy intentionally does not cover.
     zodSchemas = postProcessGetReportingStatusViewRequiredFields(zodSchemas, reportingStatusRequiredByView);
     zodSchemas = postProcessReportingEvidenceStrictness(zodSchemas);
+    zodSchemas = postProcessReportingStatusIssueConstraints(zodSchemas);
     zodSchemas = postProcessReportingConsumerStatusConstraints(zodSchemas);
     zodSchemas = postProcessGetReportingStatusEvidenceStrictness(zodSchemas, reportingStatusClosedStructuresBySource);
     zodSchemas = postProcessReportingFileManifestStrictness(zodSchemas, reportingFileManifestClosedStructuresBySource);
@@ -5731,6 +5947,9 @@ async function generateZodSchemas() {
     zodSchemas = postProcessCanonicalVastAudioConstraints(zodSchemas);
     zodSchemas = postProcessPricingOptionConstraints(zodSchemas);
     zodSchemas = postProcessJsonSchemaUriFormats(zodSchemas);
+    // Inspect the final canonical primitive constraints before checking that
+    // the compact object's fields safely narrow the shared envelopes.
+    zodSchemas = postProcessCompactTaskSubmittedEnvelope(zodSchemas);
 
     // Compatibility aliases can make jsts emit repeated format/placement
     // intersections. Collapse them before annotation so adopter OpenAPI
@@ -5800,6 +6019,7 @@ export const __test__ = {
   postProcessMarkerUnionObjectIntersections,
   postProcessRepeatedProductIntersections,
   postProcessCanonicalFormatSlots,
+  postProcessCompactTaskSubmittedEnvelope,
   postProcessCreativeBriefRequiredDisclosures,
   reportingStatusViewRequiredFields,
   reportingStatusClosedStructures,

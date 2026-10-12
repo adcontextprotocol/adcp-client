@@ -48,6 +48,157 @@ describe('PostgresReportingLedgerStore', { skip: !DATABASE_URL && 'PostgreSQL UR
     }
   });
 
+  test('unreadable issues participate in PostgreSQL health-filtered snapshots', async t => {
+    const ledger = require('../../dist/lib/reporting/ledger/index.js');
+    const source = require('../../dist/lib/reporting/source/index.js');
+    const { Pool } = require('pg');
+    const unreadableSchema = `${schema}_unreadable`;
+    await bootstrapPool.query(`CREATE SCHEMA "${unreadableSchema}"`);
+    const unreadablePool = new Pool({
+      connectionString: DATABASE_URL,
+      options: `-c search_path="${unreadableSchema}"`,
+    });
+    t.after(async () => {
+      await unreadablePool.end();
+      await bootstrapPool.query(`DROP SCHEMA IF EXISTS "${unreadableSchema}" CASCADE`);
+    });
+    await unreadablePool.query(reportingLedgerMigrationForTest(ledger));
+    const store = newReportingLedgerStoreForTest(ledger, unreadablePool, { acknowledgeIsolatedDatabase: true });
+    const request = source.redactedReportingSourceRequestV1();
+    const now = Date.now();
+    const start = new Date(now - 3_600_000).toISOString();
+    const end = new Date(now - 1_000).toISOString();
+    const schedule = { anchor: start, periodMilliseconds: 3_600_000, deliverySlaMilliseconds: 0 };
+    const shared = {
+      account: request.account,
+      sourceScope: request.sourceScope,
+      delivery_config_id: 'rpt_unreadable_pg',
+      delivery_config_version: 1,
+      offeringId: request.offeringId,
+      report_definition_id: request.report_definition_id,
+      feedPurpose: 'analytics',
+      requiredFinality: 'official',
+      requestedMetrics: request.requestedMetrics,
+      requestedDimensions: request.requestedDimensions,
+      constituents: request.coverage.constituents,
+      mediaBuyIds: request.coverage.mediaBuyIds,
+      sourceSettings: request.sourceSettings,
+      contract: request.contract,
+    };
+    await store.putConfiguration({
+      ...shared,
+      configurationId: 'rcfg_unreadable_pg',
+      sourceTimezone: 'UTC',
+      schedule,
+      installedAt: start,
+      semanticFingerprint: 'sha256:unreadable-configuration',
+    });
+    const obligation = {
+      ...shared,
+      reporting_obligation_id: 'robl_unreadable_pg',
+      configurationId: 'rcfg_unreadable_pg',
+      periodOrdinal: 0,
+      period: { start, end, sourceTimezone: 'UTC' },
+      schedule,
+      scopeResolvedAt: end,
+      coverage: {
+        status: 'full',
+        evaluatedAt: end,
+        mediaBuyIds: request.coverage.mediaBuyIds,
+        fullyCoveredMediaBuyIds: request.coverage.mediaBuyIds,
+        partiallyCoveredMediaBuyIds: [],
+        unsupportedMediaBuyIds: [],
+        unknownMediaBuyIds: [],
+      },
+      expectedAt: end,
+      recoveryDeadlineAt: new Date(now + 3_600_000).toISOString(),
+      publicationOffsets: [],
+      nextAttemptAt: end,
+      attemptCount: 0,
+      state: 'pending',
+      semanticFingerprint: 'sha256:unreadable-obligation',
+      createdAt: new Date(now).toISOString(),
+    };
+    await store.putObligation(obligation);
+    const lease = await store.claimObligation({
+      owner: 'worker-unreadable',
+      now: new Date(now).toISOString(),
+      leaseMilliseconds: 60_000,
+    });
+    assert.equal(lease.obligation.reporting_obligation_id, obligation.reporting_obligation_id);
+    const revisionId = 'rrev_unreadable_pg';
+    const bytes = Buffer.from(
+      canonicalize({
+        reporting_revision_id: revisionId,
+        row_count: 0,
+        control_totals: [],
+        reporting_rows: [],
+      })
+    );
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    await store.commitRevision(
+      {
+        reporting_revision_id: revisionId,
+        reporting_obligation_id: obligation.reporting_obligation_id,
+        revisionNumber: 1,
+        finality: 'official',
+        kind: 'official',
+        rows: [],
+        manifest: { level: 'basic', objectRef: 'manifest', sha256: 'a'.repeat(64), byteCount: 1 },
+        sourcePublicationId: 'publication-unreadable-pg',
+        binding: { algorithm: 'rfc8785_jcs_v1', sha256, byteCount: bytes.byteLength, rowCount: 0 },
+        observedAt: new Date(now).toISOString(),
+        dataThrough: end,
+        sourceReadCutoffAt: end,
+        createdAt: new Date(now).toISOString(),
+        wireRevision: { reporting_revision_id: revisionId, revision_content_sha256: sha256, control_totals: [] },
+      },
+      lease
+    );
+    const issue = {
+      issueId: 'rpti_unreadable_pg',
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      reporting_revision_id: revisionId,
+      code: 'REVISION_UNREADABLE',
+      severity: 'delayed',
+      responsibleParty: 'seller',
+      recommendedAction: 'wait_for_retry',
+      openedAt: end,
+      observedAt: end,
+    };
+    await store.putIssue(issue);
+    const handler = ledger.createReportingStatusHandler(store);
+    const read = health =>
+      handler(
+        {
+          account: request.account,
+          view: 'periods',
+          health,
+          delivery_config_ids: [shared.delivery_config_id],
+          period: { start, end },
+        },
+        { account: request.account }
+      );
+    const delayed = await read(['delayed']);
+    assert.equal(delayed.status, 'completed');
+    assert.equal(delayed.periods.length, 1);
+    assert.equal(delayed.periods[0].health, 'delayed');
+    // Snapshot pagination counts the obligation and its retained revision header.
+    assert.equal(delayed.pagination.total_count, 2);
+    assert.equal((await read(['complete'])).periods.length, 0);
+    await store.putIssue({ ...issue, issueState: 'resolved' });
+    assert.equal((await read(['complete'])).periods.length, 1);
+    await store.putIssue({
+      ...issue,
+      issueId: 'rpti_invalid_unreadable_pg',
+      reporting_revision_id: 'unattributed_revision',
+    });
+    const invalid = await read(['delayed']);
+    assert.equal(invalid.failure_kind, 'operational');
+    assert.equal(invalid.periods, undefined);
+    assert.equal(JSON.stringify(invalid).includes('unattributed_revision'), false);
+  });
+
   test('fences stale workers and binds stored rows before snapshot reads', async () => {
     const source = require('../../dist/lib/reporting/source/index.js');
     const request = source.redactedReportingSourceRequestV1();

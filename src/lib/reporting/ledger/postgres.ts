@@ -14,6 +14,8 @@ import {
   assertReportingConsumerMismatchEscalation,
   projectReportingConsumerStatusMismatchV1,
   projectReportingObligationHealthV1,
+  projectReportingUnreadableRevisionHealthV1,
+  ReportingLedgerIssueIntegrityError,
 } from './health';
 import { compareReportingInstants } from './instant';
 import {
@@ -3382,12 +3384,18 @@ ${managedDueArm}       )
                 const obligationRevisions = revisions.filter(
                   item => item.reporting_obligation_id === value.reporting_obligation_id
                 );
-                const sellerHealth = projectReportingObligationHealthV1(
+                const coreProjection = projectReportingObligationHealthV1(
                   value,
                   obligationRevisions,
                   ledgerAsOf,
                   reportingLedgerScopeClosed(query, ledgerAsOf, ledgerCoverage.complete)
-                ).health;
+                );
+                const sellerHealth = projectReportingUnreadableRevisionHealthV1(
+                  value,
+                  obligationRevisions,
+                  issues,
+                  coreProjection.health
+                );
                 const statuses = consumerStatusProjection.filter(status => statusMatchesObligation(status, value));
                 const leaf = currentConsumerStatus(statuses);
                 // Must use the same projection the handler emits, not a second
@@ -3405,12 +3413,7 @@ ${managedDueArm}       )
                   ledgerAsOf,
                   this.consumerMismatchEscalation
                 );
-                const baseProjection = projectReportingObligationHealthV1(
-                  value,
-                  obligationRevisions,
-                  ledgerAsOf,
-                  reportingLedgerScopeClosed(query, ledgerAsOf, ledgerCoverage.complete)
-                );
+                const baseProjection = { ...coreProjection, health: sellerHealth };
                 const managed = projectManagedDelivery({
                   obligation: value,
                   binding: managedBindings.find(binding => binding.configurationId === value.configurationId),
@@ -4746,6 +4749,7 @@ ${managedDueArm}       )
       if (
         error instanceof ReportingLedgerLeaseLostError ||
         error instanceof ReportingLedgerContinuityError ||
+        error instanceof ReportingLedgerIssueIntegrityError ||
         error instanceof ReportingLedgerPeriodRetiredError ||
         error instanceof ReportingLedgerSnapshotUnavailableError ||
         error instanceof ReportingConsumerStatusConflictError ||

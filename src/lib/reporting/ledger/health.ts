@@ -23,6 +23,55 @@ export interface ReportingObligationHealthProjectionV1 {
   satisfied: boolean;
 }
 
+/** Invalid caller-scoped issue data cannot be treated as a completed report. */
+export class ReportingLedgerIssueIntegrityError extends Error {
+  constructor() {
+    super('Reporting ledger unreadable-revision issue is invalid');
+    this.name = 'ReportingLedgerIssueIntegrityError';
+  }
+}
+
+/** Shared by status projection and snapshot paging, before health filters run. */
+export function projectReportingUnreadableRevisionHealthV1(
+  obligation: Pick<ReportingLedgerObligationV1, 'reporting_obligation_id'>,
+  revisions: readonly Pick<ReportingLedgerRevisionSnapshotV1, 'reporting_revision_id' | 'reporting_obligation_id'>[],
+  issues: readonly ReportingLedgerIssueV1[],
+  health: ReportingHealthV1
+): ReportingHealthV1 {
+  const id = /^[A-Za-z0-9_.:-]{1,255}$/;
+  for (const issue of issues) {
+    if (
+      issue.code !== 'REVISION_UNREADABLE' ||
+      issue.reporting_obligation_id !== obligation.reporting_obligation_id ||
+      issue.resolvedAt ||
+      issue.issueState === 'resolved' ||
+      issue.issueState === 'waived'
+    ) {
+      continue;
+    }
+    if (
+      issue.responsibleParty !== 'seller' ||
+      issue.reporting_obligation_id === 'scope' ||
+      !id.test(issue.reporting_obligation_id) ||
+      typeof issue.reporting_revision_id !== 'string' ||
+      !id.test(issue.reporting_revision_id) ||
+      !revisions.some(
+        revision =>
+          revision.reporting_obligation_id === obligation.reporting_obligation_id &&
+          revision.reporting_revision_id === issue.reporting_revision_id
+      ) ||
+      !(
+        (issue.severity === 'delayed' && issue.recommendedAction === 'wait_for_retry') ||
+        (issue.severity === 'action_required' && issue.recommendedAction === 'contact_seller')
+      )
+    ) {
+      throw new ReportingLedgerIssueIntegrityError();
+    }
+    health = health === 'action_required' || issue.severity === 'action_required' ? 'action_required' : 'delayed';
+  }
+  return health;
+}
+
 /**
  * The complete set of facts needed to project Core reporting health.
  *
