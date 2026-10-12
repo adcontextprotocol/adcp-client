@@ -5,9 +5,20 @@
  *
  * Like BigQuery it enforces job-ID uniqueness per project, refuses loads into
  * tables that do not exist, and looks jobs up in the project the caller names
- * (the client's default project when none is given). Loaded job metadata
- * mirrors @google-cloud/bigquery 9.2.0, which places every load option,
- * including `labels` and `jobTimeoutMs`, inside `configuration.load`.
+ * (the client's default project when none is given).
+ *
+ * Job placement mirrors @google-cloud/bigquery 9.2.0 and the real service.
+ * For a local-file load the client puts every load option, including `labels`
+ * and `jobTimeoutMs`, inside `configuration.load`, and there is no way to set
+ * `configuration.labels` or `configuration.jobTimeoutMs`. BigQuery defines
+ * those two at `configuration.*` only, so it silently drops them from
+ * `configuration.load`. The fake does the same and records the drop in
+ * `state.droppedLoadFields`, so a sink that relies on them is caught offline.
+ * `state.loadOptions` records the options each load call carried.
+ *
+ * `job().cancel()` is recorded in `state.cancels` and finishes a RUNNING job
+ * with a `stopped` error, like BigQuery; `holdNext(tableId)` makes the next
+ * load on that table accept its job (RUNNING) and never respond.
  *
  * `query()` understands only the DDL and SELECT shapes the validation script
  * issues; anything else throws, so drift is loud.
@@ -26,7 +37,13 @@ function createFakeBigQuery({ clientProject = 'client-project', jobProject = 'de
     jobs: new Map(), // `${project}/${jobId}` -> job resource
     deletedDatasets: [],
     queries: [],
+    loadOptions: [], // { tableId, options } for every load call
+    droppedLoadFields: [], // { jobId, fields } the service ignored inside configuration.load
+    cancels: [], // { jobId, projectId, location } for every job().cancel()
   };
+  const holds = new Set();
+  // Fields BigQuery defines on JobConfiguration, not on JobConfigurationLoad.
+  const JOB_LEVEL_FIELDS = ['labels', 'jobTimeoutMs'];
 
   const keyOf = (project, datasetId) => `${project}.${datasetId}`;
 
@@ -58,35 +75,58 @@ function createFakeBigQuery({ clientProject = 'client-project', jobProject = 'de
             if (!state.tables.has(tableKey)) throw apiError(404, `Not found: Table ${tableKey}`);
             const owner = jobProject === 'client' ? clientProject : project;
             const jobKey = `${owner}/${metadata.jobId}`;
+            state.loadOptions.push({ tableId, options: structuredClone(metadata) });
             if (state.jobs.has(jobKey)) throw apiError(409, `Already Exists: Job ${jobKey}`);
             const lines = readFileSync(file, 'utf8')
               .split('\n')
               .filter(Boolean)
               .map(line => JSON.parse(line));
-            state.tables.get(tableKey).push(...lines);
             const { jobId, ...load } = metadata;
+            const dropped = JOB_LEVEL_FIELDS.filter(field => field in load);
+            for (const field of dropped) delete load[field];
+            if (dropped.length) state.droppedLoadFields.push({ jobId, fields: dropped });
             const resource = {
               jobReference: { projectId: owner, jobId, location: options.location },
-              status: { state: 'DONE' },
+              status: { state: holds.has(tableId) ? 'RUNNING' : 'DONE' },
               configuration: {
                 load: { destinationTable: { projectId: project, datasetId, tableId }, ...load },
               },
               statistics: { load: { outputRows: String(lines.length) } },
+              _lines: lines,
+              _tableKey: tableKey,
             };
             state.jobs.set(jobKey, resource);
-            return [resource];
+            if (holds.delete(tableId)) return new Promise(() => {});
+            state.tables.get(tableKey).push(...lines);
+            return [publicJob(resource)];
           },
         };
       },
     };
   }
 
+  // Resources hold their pending rows privately; callers see the REST shape only.
+  const publicJob = ({ _lines, _tableKey, ...resource }) => resource;
+
   function job(jobId, options = {}) {
+    const project = options.projectId ?? clientProject;
     return {
       async getMetadata() {
-        const resource = state.jobs.get(`${options.projectId ?? clientProject}/${jobId}`);
-        if (!resource) throw apiError(404, `Not found: Job ${options.projectId ?? clientProject}:${jobId}`);
-        return [resource];
+        const resource = state.jobs.get(`${project}/${jobId}`);
+        if (!resource) throw apiError(404, `Not found: Job ${project}:${jobId}`);
+        return [publicJob(resource)];
+      },
+      async cancel() {
+        state.cancels.push({ jobId, projectId: options.projectId, location: options.location });
+        const resource = state.jobs.get(`${project}/${jobId}`);
+        if (!resource) throw apiError(404, `Not found: Job ${project}:${jobId}`);
+        if (resource.status.state === 'RUNNING') {
+          resource.status = {
+            state: 'DONE',
+            errorResult: { reason: 'stopped', message: 'Job execution was cancelled' },
+          };
+        }
+        return [{ kind: 'bigquery#jobCancelResponse', job: publicJob(resource) }];
       },
     };
   }
@@ -160,7 +200,15 @@ function createFakeBigQuery({ clientProject = 'client-project', jobProject = 'de
     throw new Error(`fake BigQuery does not understand: ${sql.slice(0, 120)}`);
   }
 
-  return { state, dataset, job, query };
+  return {
+    state,
+    dataset,
+    job,
+    query,
+    holdNext(tableId) {
+      holds.add(tableId);
+    },
+  };
 }
 
 module.exports = { createFakeBigQuery };

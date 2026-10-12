@@ -31,21 +31,35 @@ function wrapStore(store, overrides) {
   };
 }
 
+// Models the real client and service for local-file loads: every option lands in
+// configuration.load, and BigQuery drops the two fields it defines on
+// configuration.* only (labels, jobTimeoutMs), which the client cannot set.
 function fakeBigQuery() {
   const tables = new Map();
   const jobs = new Map();
   const failures = [];
+  const loadOptions = [];
+  const dropped = [];
+  const cancels = [];
+  const holds = new Set();
   return {
     tables,
     jobs,
+    loadOptions,
+    dropped,
+    cancels,
     failNext(tableId, how) {
       failures.push({ tableId, how });
     },
-    dataset(datasetId) {
+    holdNext(tableId) {
+      holds.add(tableId);
+    },
+    dataset(datasetId, datasetOptions = {}) {
       return {
         table(tableId) {
           return {
             async load(file, metadata) {
+              loadOptions.push({ tableId, options: structuredClone(metadata) });
               if (jobs.has(metadata.jobId)) {
                 const error = new Error('Already Exists: Job');
                 error.code = 409;
@@ -63,16 +77,39 @@ function fakeBigQuery() {
                 .filter(Boolean)
                 .map(line => JSON.parse(line));
               const key = `${datasetId}.${tableId}`;
+              const { jobId, ...load } = metadata;
+              const lost = ['labels', 'jobTimeoutMs'].filter(field => field in load);
+              for (const field of lost) delete load[field];
+              if (lost.length) dropped.push({ jobId, fields: lost });
+              const held = holds.delete(tableId);
+              jobs.set(jobId, {
+                status: { state: held ? 'RUNNING' : 'DONE' },
+                table: key,
+                lines,
+                jobReference: { jobId, projectId: datasetOptions.projectId, location: datasetOptions.location },
+                configuration: { load },
+              });
+              if (held) return new Promise(() => {});
               tables.set(key, [...(tables.get(key) ?? []), ...lines]);
-              jobs.set(metadata.jobId, { status: { state: 'DONE' }, table: key, metadata });
-              return [{ id: metadata.jobId }];
+              return [{ id: jobId }];
             },
           };
         },
       };
     },
-    job(jobId) {
-      return { getMetadata: async () => [jobs.get(jobId)] };
+    job(jobId, options = {}) {
+      return {
+        getMetadata: async () => [jobs.get(jobId)],
+        async cancel() {
+          cancels.push({ jobId, ...options });
+          const job = jobs.get(jobId);
+          if (!job) throw Object.assign(new Error(`Not found: Job ${jobId}`), { code: 404 });
+          if (job.status.state === 'RUNNING') {
+            job.status = { state: 'DONE', errorResult: { reason: 'stopped' } };
+          }
+          return [{ kind: 'bigquery#jobCancelResponse' }];
+        },
+      };
     },
     async query() {
       return [[]];
@@ -317,9 +354,119 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     await assert.rejects(() => first.runOnce(), /exceeded its deadline/);
     assert.deepEqual(await first.runOnce(), { idle: false, revisions: 1, rows: 2, missing: [] });
     assert.equal(bigquery.tables.get('reporting.revision_rows').length, rowsBefore + 2, 'rows landed exactly once');
-    const sentTimeout = [...bigquery.jobs.values()].find(job => job.metadata?.jobTimeoutMs)?.metadata.jobTimeoutMs;
-    assert.equal(sentTimeout, '1000');
+    assert.deepEqual(bigquery.dropped, [], 'no job-level field is sent where BigQuery would drop it');
     assert.throws(() => newSink(bigquery, { loadTimeoutMilliseconds: 10 }), /loadTimeoutMilliseconds/);
+  });
+
+  test('a load past its deadline is cancelled by its deterministic job ID and retried as a new attempt', async t => {
+    const { pool, store: realStore } = await isolatedWarehouseStore(t, 'deadline_cancel');
+    const account = 'acct_deadline_cancel';
+    const isolated = await createRowStorageFixture({ store: realStore, suffix: 'deadline_cancel', accountId: account });
+    await realStore.commitRevision(isolated.revision('rrev_deadline_cancel', 1, rows.slice(0, 3)), isolated.lease);
+    const bigquery = fakeBigQuery();
+    const sink = newSink(bigquery, {
+      name: 'deadline_cancel',
+      account_id: account,
+      db: pool,
+      store: realStore,
+      location: 'US',
+      loadTimeoutMilliseconds: 1_000,
+    });
+    // BigQuery accepts the rows job, then it keeps running past the client deadline.
+    bigquery.holdNext('revision_rows');
+    await assert.rejects(sink.runOnce(), /exceeded its deadline/);
+    const plan = (await pool.query('SELECT * FROM adcp_reporting_warehouse_sinks')).rows[0];
+    const baseJobId = sinkModule.reportingWarehouseJobIdV1(
+      'deadline_cancel',
+      plan.planned_from_cursor,
+      plan.planned_to_cursor
+    );
+    assert.deepEqual(
+      bigquery.cancels,
+      [{ jobId: `${baseJobId}_rows`, projectId: 'adcp-reporting', location: 'US' }],
+      'only the stuck job is cancelled, in the destination project and location'
+    );
+    assert.equal(bigquery.jobs.get(`${baseJobId}_rows`).status.errorResult.reason, 'stopped');
+    assert.equal(bigquery.tables.get('reporting.revision_rows'), undefined, 'the cancelled load wrote nothing');
+    // The cancelled job finished with an error, so the next runs retry that table under a new attempt.
+    await assert.rejects(sink.runOnce(), /will be retried as a new attempt/);
+    assert.deepEqual(await sink.runOnce(), { idle: false, revisions: 1, rows: 3, missing: [] });
+    assert.equal(bigquery.tables.get('reporting.revision_rows').length, 3, 'rows landed exactly once');
+    assert.ok(bigquery.jobs.has(`${baseJobId}_rows_a1`));
+    assert.equal(bigquery.cancels.length, 1, 'a healthy retry is not cancelled');
+    assert.deepEqual(bigquery.dropped, []);
+  });
+
+  test('a failed cancel never masks the deadline error, and an abort does not cancel', async t => {
+    const { pool, store: realStore } = await isolatedWarehouseStore(t, 'cancel_failure');
+    const account = 'acct_cancel_failure';
+    const isolated = await createRowStorageFixture({ store: realStore, suffix: 'cancel_failure', accountId: account });
+    await realStore.commitRevision(isolated.revision('rrev_cancel_failure', 1, rows.slice(0, 1)), isolated.lease);
+    const bigquery = fakeBigQuery();
+    const realJob = bigquery.job;
+    bigquery.job = (jobId, options) => ({
+      ...realJob(jobId, options),
+      async cancel() {
+        bigquery.cancels.push({ jobId, ...options, failed: true });
+        throw Object.assign(new Error('backend unavailable'), { code: 503 });
+      },
+    });
+    const sink = newSink(bigquery, {
+      name: 'cancel_failure',
+      account_id: account,
+      db: pool,
+      store: realStore,
+      loadTimeoutMilliseconds: 1_000,
+    });
+    bigquery.holdNext('revision_rows');
+    await assert.rejects(sink.runOnce(), /exceeded its deadline/);
+    assert.equal(bigquery.cancels.length, 1);
+    assert.equal(bigquery.cancels[0].failed, true);
+
+    // Aborting is the caller's own decision, not a deadline: the job is left alone.
+    const abortSink = newSink(bigquery, {
+      name: 'cancel_failure_abort',
+      account_id: account,
+      db: pool,
+      store: realStore,
+      loadTimeoutMilliseconds: 30_000,
+    });
+    bigquery.cancels.length = 0;
+    const controller = new AbortController();
+    bigquery.holdNext('revision_rows');
+    const aborting = abortSink.runOnce({ signal: controller.signal });
+    setTimeout(() => controller.abort(new Error('shutting down')), 300);
+    await assert.rejects(aborting, /shutting down/);
+    assert.deepEqual(bigquery.cancels, [], 'an abort does not cancel the load');
+  });
+
+  test('labels are ignored with a warning, and no job-level field is sent where BigQuery would drop it', async () => {
+    const bigquery = fakeBigQuery();
+    const warnings = [];
+    const onWarning = warning => warnings.push(warning);
+    process.on('warning', onWarning);
+    let sink;
+    try {
+      sink = newSink(bigquery, { name: 'labelled', labels: { team: 'ads' }, loadTimeoutMilliseconds: 30_000 });
+      await new Promise(resolve => setImmediate(resolve));
+    } finally {
+      process.off('warning', onWarning);
+    }
+    assert.ok(
+      warnings.some(warning => warning.code === 'ADCP_BIGQUERY_SINK_LABELS_IGNORED'),
+      'setting labels warns that they have no effect'
+    );
+    await sink.runOnce();
+    assert.ok(bigquery.loadOptions.length >= 1, 'the sink submitted loads');
+    for (const { options } of bigquery.loadOptions) {
+      assert.ok(!('labels' in options), 'labels are not sent inside configuration.load');
+      assert.ok(!('jobTimeoutMs' in options), 'jobTimeoutMs is not sent inside configuration.load');
+    }
+    assert.deepEqual(bigquery.dropped, [], 'BigQuery would have dropped nothing the sink sent');
+    for (const job of bigquery.jobs.values()) {
+      assert.equal(job.configuration.labels, undefined);
+      assert.equal(job.configuration.jobTimeoutMs, undefined);
+    }
   });
 
   test('reports revisions retired before the batch ran as missing, and still advances', async () => {

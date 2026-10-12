@@ -355,18 +355,10 @@ async function sinkState(ledger, name) {
 // ---------------------------------------------------------------------------
 // BigQuery section
 
-function describePlacement(configuration, key) {
-  const spots = [];
-  if (configuration && Object.prototype.hasOwnProperty.call(configuration, key)) spots.push(`configuration.${key}`);
-  if (configuration?.load && Object.prototype.hasOwnProperty.call(configuration.load, key)) {
-    spots.push(`configuration.load.${key}`);
-  }
-  return spots;
-}
-
-function faultInjectingClient(real) {
+function faultInjectingClient(real, sentLoads = []) {
   const failures = new Map();
   return {
+    sentLoads,
     failNext(tableId, error) {
       failures.set(tableId, error);
     },
@@ -377,6 +369,7 @@ function faultInjectingClient(real) {
           const table = dataset.table(tableId);
           return {
             async load(file, metadata) {
+              sentLoads.push({ tableId, options: structuredClone(metadata) });
               const failure = failures.get(tableId);
               if (failure) {
                 failures.delete(tableId);
@@ -445,11 +438,13 @@ async function bigquerySection(ctx) {
   });
   if (!created) return;
 
+  const sentLoads = [];
+  const recorder = faultInjectingClient(bigquery, sentLoads);
   const sinkFor = (ledger, name, tables, extra = {}) =>
     sdk.bigquery.createBigQueryReportingWarehouseSinkV1({
       store: ledger.store,
       db: ledger.pool,
-      bigquery,
+      bigquery: recorder,
       name: `${config.sinkPrefix}-${name}`,
       projectId: dest,
       datasetId: config.datasetId,
@@ -459,7 +454,6 @@ async function bigquerySection(ctx) {
       // Scoped to the fixture account so unrelated open transactions in the
       // database cannot hold back the feed's snapshot horizon.
       account_id: ledger.accountId,
-      labels: config.labels,
       loadTimeoutMilliseconds: 120_000,
       maxRevisionsPerBatch: 50,
       ...extra,
@@ -596,29 +590,44 @@ async function bigquerySection(ctx) {
       });
     }
 
-    await probe(ctx, BQ, 'where BigQuery stored labels and jobTimeoutMs', async () => {
-      const metadata = jobMetadata?.rows;
-      if (!metadata) return { detail: 'skipped: no job metadata' };
-      const configuration = metadata.configuration ?? {};
-      const labelSpots = describePlacement(configuration, 'labels');
-      const timeoutSpots = describePlacement(configuration, 'jobTimeoutMs');
-      const valueAt = (spot, key) =>
-        spot.startsWith('configuration.load.') ? configuration.load[key] : configuration[key];
-      const describe = (key, spots) =>
-        spots.length
-          ? `${key} at ${spots.map(spot => `${spot} = ${JSON.stringify(valueAt(spot, key))}`).join(' and ')}`
-          : `${key} NOT FOUND in configuration or configuration.load`;
-      return {
-        detail:
-          `${describe('labels', labelSpots)}; ${describe('jobTimeoutMs', timeoutSpots)} ` +
-          `(sent labels=${JSON.stringify(config.labels)} jobTimeoutMs=120000; ` +
-          `Google's JobConfiguration reference puts both at configuration.*, not configuration.load.*)`,
-        block: JSON.stringify(
-          { jobReference: metadata.jobReference, configuration, statistics_load: metadata.statistics?.load },
-          null,
-          2
-        ).slice(0, 4_000),
-      };
+    // `labels` and `jobTimeoutMs` belong at configuration.*, but the official client builds a
+    // local-file load's configuration.load from the load options and cannot set them there, and
+    // BigQuery silently drops them from configuration.load (#3220). The sink therefore must not
+    // send them, and enforces its deadline client-side by cancelling the job.
+    await check(
+      ctx,
+      BQ,
+      'the sink sends no job-level fields (labels, jobTimeoutMs) that BigQuery drops from configuration.load',
+      async () => {
+        expect(sentLoads.length >= 2, `expected the sink's load calls to be recorded, saw ${sentLoads.length}`);
+        for (const { tableId, options } of sentLoads) {
+          for (const field of ['labels', 'jobTimeoutMs']) {
+            expect(!(field in options), `a load into ${tableId} sent ${field} inside configuration.load`);
+          }
+        }
+        const configuration = jobMetadata?.rows?.configuration ?? {};
+        for (const field of ['labels', 'jobTimeoutMs']) {
+          expect(
+            !(field in (configuration.load ?? {})),
+            `BigQuery stored ${field} inside configuration.load (the service is expected to drop it)`
+          );
+        }
+        return `${sentLoads.length} load calls carried neither field; stored job configuration keys: ${Object.keys(configuration).join(', ')}`;
+      }
+    );
+
+    await check(ctx, BQ, 'cancelling a job is addressed to the destination project and location', async () => {
+      // Cancelling an already-finished job is accepted and changes nothing, so this proves the
+      // addressing the sink uses on a client-side deadline (job(id, { projectId, location }).cancel()).
+      const jobId = jobMetadata?.rows?.jobReference?.jobId;
+      expect(jobId, 'no job id to cancel');
+      const [response] = await bigquery.job(jobId, { projectId: dest, location: config.location }).cancel();
+      expectEqual(response?.job?.jobReference?.projectId, dest, 'cancel response jobReference.projectId');
+      expectEqual(response?.job?.jobReference?.jobId, jobId, 'cancel response jobReference.jobId');
+      const [after] = await bigquery.job(jobId, { projectId: dest, location: config.location }).getMetadata();
+      expectEqual(after.status?.state, 'DONE', 'job state after the cancel request');
+      expect(!after.status?.errorResult, 'cancelling a finished job must not fail it');
+      return `${jobId} stayed DONE`;
     });
 
     await check(ctx, BQ, 'a second runOnce is idle and loads nothing', async () => {
@@ -661,7 +670,7 @@ async function bigquerySection(ctx) {
       const fixture = await newObligation(ctx, ledger, 'crash');
       await commit(ledger, fixture, `rrev_${config.runId}_c1`, 1, sequenceRows(20));
       await commit(ledger, fixture, `rrev_${config.runId}_c2`, 2, sequenceRows(5), `rrev_${config.runId}_c1`);
-      faulty = faultInjectingClient(bigquery);
+      faulty = faultInjectingClient(bigquery, sentLoads);
       sink = sinkFor(ledger, 'crash', tables, { bigquery: faulty });
       await createTables(sink, false);
       return 'one obligation, revisions of 20 and 5 rows';

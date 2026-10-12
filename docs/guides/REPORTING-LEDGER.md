@@ -851,7 +851,6 @@ const sink = createBigQueryReportingWarehouseSinkV1({
   revisionsTableId: 'media_buy_delivery_revisions',
   location: 'US',
   mapRow: row => ({ media_buy_id: row.media_buy_id, impressions: row.impressions, spend: row.spend }),
-  labels: { component: 'adcp-reporting' },
 });
 await bigquery.query({ query: sink.defaultTablesSql }); // or create your own tables
 await bigquery.query({ query: sink.currentRowsViewSql });
@@ -874,6 +873,20 @@ setInterval(() => {
 - `projectId` scopes both load submission and replay status checks. When it is
   omitted, both use the BigQuery client's default project. Each replica must
   be able to read the BigQuery jobs submitted by the other replicas.
+- `loadTimeoutMilliseconds` (default 10 minutes) is a client-side deadline for
+  one load. When a load passes it, the sink asks BigQuery to cancel that job by
+  its deterministic ID, in `projectId` and `location`, and rejects with the
+  plan retained. The next run finds the cancelled job finished with an error
+  and retries that table under a new attempt; if the cancel has not taken
+  effect yet it waits for the job. Set the deadline above your slowest expected
+  load, because a load that always needs longer is cancelled and retried every
+  run. BigQuery's server-side `jobTimeoutMs` is not used: the official client
+  builds a local-file load's `configuration.load` from the load options and
+  cannot set job-level fields, and BigQuery silently drops `labels` and
+  `jobTimeoutMs` found inside `configuration.load`. For the same reason the
+  `labels` option has no effect (it warns and is deprecated). Attribute load
+  cost through `INFORMATION_SCHEMA.JOBS`, filtering on `destination_table` or
+  on the `adcp_rr_` job ID prefix.
 - Overlapping runs atomically claim one durable batch. Replays use that
   batch's job IDs; attempts and cursor commits compare the full saved plan.
   A stale run rejects without replacing another batch or rewinding either
