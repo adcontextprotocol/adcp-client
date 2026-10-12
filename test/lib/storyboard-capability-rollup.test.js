@@ -345,7 +345,11 @@ function loadGovernanceScenarios() {
     // Premise guards: the rules below apply only to this declared shape. If
     // upstream changes it, this regression should fail loudly here.
     assert.ok(storyboard.requires_capability !== undefined, `${storyboard.id} gates on a declared capability`);
-    assert.deepEqual(storyboard.requires, ['multi_agent'], `${storyboard.id} declares multi_agent`);
+    assert.deepEqual(
+      storyboard.requires,
+      ['multi_agent', 'controller'],
+      `${storyboard.id} declares multi_agent and controller for seeding`
+    );
     assert.equal(storyboard.adcp_version, ADCP_VERSION, `${storyboard.id} carries the loader-stamped version`);
   }
   return storyboards;

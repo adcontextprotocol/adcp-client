@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-10-11T15:45:05.496Z
+// Generated at: 2026-10-12T10:25:55.256Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -4122,7 +4122,7 @@ export const GetProductsRejectedSchema = /* @__PURE__ */ (() => (AdCPVersionEnve
     ext: ExtensionObjectSchema.optional()
 }).passthrough())))();
 
-export const CompactTaskSubmittedSchema = /* @__PURE__ */ (() => (AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).and(z.object({
+export const CompactTaskSubmittedSchema = /* @__PURE__ */ (() => (AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).merge(z.object({
     status: z.literal("submitted"),
     task_id: z.string().min(1),
     message: z.string().max(2000).optional(),

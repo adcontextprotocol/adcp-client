@@ -1,4 +1,4 @@
-import { createPrivateKey, randomBytes, randomUUID, sign as nodeSign, type JsonWebKey } from 'crypto';
+import { createHash, createPrivateKey, randomBytes, randomUUID, sign as nodeSign, type JsonWebKey } from 'crypto';
 import {
   buildSignatureBase,
   computeContentDigest,
@@ -99,10 +99,76 @@ export function buildPositiveRequest(
   options: BuildOptions = {}
 ): SignedHttpRequest {
   const key = signerKeyFor(vector, keys);
-  return sign(key, vector, {
+  // A fixture's Host header is its authority on the wire. Once the request is
+  // retargeted the signer signs the retargeted URL's authority, so a stale
+  // fixture Host would contradict the signature; the HTTP client derives the
+  // real one from the URL.
+  const retargeted = options.baseUrl !== undefined || (options.transport ?? 'raw') !== 'raw';
+  const fixture = retargeted ? withoutFixtureHost(vector) : vector;
+  const shape = POSITIVE_SHAPES[positiveShapeKey(vector.id)];
+  if (shape) return shape(key, fixture, options);
+  return sign(key, fixture, {
     coverContentDigest: vector.verifier_capability.covers_content_digest === 'required',
     ...options,
   });
+}
+
+function withoutFixtureHost<V extends PositiveVector | NegativeVector>(vector: V): V {
+  const headers = Object.fromEntries(
+    Object.entries(vector.request.headers).filter(([name]) => name.toLowerCase() !== 'host')
+  );
+  return { ...vector, request: { ...vector.request, headers } };
+}
+
+/**
+ * Positive vectors whose wire shape is the thing under test. The generic
+ * signer re-emits one `sig1` and one `sha-256` member, which would let these
+ * pass without ever presenting the shape they exist to grade.
+ */
+const POSITIVE_SHAPES: Record<
+  string,
+  (key: SignerKey, vector: PositiveVector, options: BuildOptions) => SignedHttpRequest
+> = {
+  // Two distinct labels on both headers. `sig1` is a real signature; `sig2`
+  // keeps the fixture's well-formed, correctly sized, non-verifying value and
+  // a different covered-component set and nonce. A verifier must process
+  // exactly one label and ignore the rest.
+  '013-two-signature-labels-distinct': (key, vector, options) => {
+    const signed = sign(key, vector, options);
+    const fixtureSig2 = /(?:^|,\s*)(sig2=:[^:,\s]+:)/.exec(vector.request.headers['Signature'] ?? '')?.[1];
+    if (!fixtureSig2) throw new Error(`${vector.id}: fixture Signature carries no sig2 member`);
+    const sig1Input = signed.headers['Signature-Input'] ?? '';
+    const sig2Input = sig1Input
+      .replace(/^sig1=\([^)]*\)/, 'sig2=("@method" "@target-uri" "@authority")')
+      .replace(/nonce="[^"]*"/, `nonce="${randomNonce()}"`);
+    if (sig2Input === sig1Input) throw new Error(`${vector.id}: could not derive the sig2 member`);
+    return {
+      ...signed,
+      headers: {
+        ...signed.headers,
+        'Signature-Input': `${sig1Input}, ${sig2Input}`,
+        Signature: `${signed.headers['Signature']}, ${fixtureSig2}`,
+      },
+    };
+  },
+
+  // Content-Digest lists sha-256 and sha-512, each correct for the body that
+  // is actually sent, and the signature covers that exact header value.
+  '014-content-digest-two-algorithms': (key, vector, options) =>
+    signWithComponents(
+      key,
+      vector,
+      options,
+      ['@method', '@target-uri', '@authority', 'content-type', 'content-digest'],
+      (body, encoding) =>
+        `${computeContentDigest(body, encoding)}, sha-512=:${createHash('sha512')
+          .update(body)
+          .digest(encoding === 'legacy-base64url' ? 'base64url' : 'base64')}:`
+    ),
+};
+
+function positiveShapeKey(id: string): string {
+  return id.replace(/^profile-3\.2\/positive\//, '');
 }
 
 /**
@@ -295,6 +361,44 @@ const MUTATIONS: Record<string, Mutator> = {
     return sign(key, vector, options);
   },
 
+  // The Signature header repeats label `sig1`. Both members carry the same real
+  // signature over a well-formed Signature-Input, so a verifier that keeps
+  // either the first or the last member finds no second fault and must refuse
+  // the duplicate itself.
+  '029-duplicate-signature-label': (vector, keys, options) => {
+    const signed = sign(signerKeyFor(vector, keys), vector, options);
+    const member = /^sig1=:[^:,\s]+:$/.exec(signed.headers['Signature'] ?? '')?.[0];
+    if (!member) throw new Error(`${vector.id}: signer did not emit a single sig1 member`);
+    return { ...signed, headers: { ...signed.headers, Signature: `${member}, ${member}` } };
+  },
+
+  // Content-Digest carries `SHA-256` and `sha-256`, both correct for the body
+  // that is sent, covered by a real signature. The uppercase dictionary key is
+  // the only fault.
+  '030-content-digest-key-case': (vector, keys, options) =>
+    signWithComponents(
+      signerKeyFor(vector, keys),
+      vector,
+      options,
+      ['@method', '@target-uri', '@authority', 'content-type', 'content-digest'],
+      (body, encoding) => {
+        const digest = computeContentDigest(body, encoding);
+        return `SHA-256${digest.slice('sha-256'.length)}, ${digest}`;
+      }
+    ),
+
+  // The signature is real over the base for the URL authority; the fixture's
+  // `Host` header (an unbracketed IPv6 literal) is the only fault, so it must
+  // reach the output unchanged.
+  '031-malformed-host-authority': (vector, keys, options) => {
+    const signed = sign(signerKeyFor(vector, keys), vector, options);
+    const fixtureHost = Object.entries(vector.request.headers).find(([name]) => name.toLowerCase() === 'host');
+    if (!fixtureHost) throw new Error(`${vector.id}: fixture carries no Host header`);
+    const emitted = Object.entries(signed.headers).find(([name]) => name.toLowerCase() === 'host');
+    if (emitted?.[1] !== fixtureHost[1]) throw new Error(`${vector.id}: the fixture Host header was not preserved`);
+    return signed;
+  },
+
   // Vectors 021-026 ship their exact malformed headers in the fixture — the
   // adversarial shape (duplicate sig-input label, multi-valued content-type
   // / content-digest, unquoted string param, malformed JWK, non-ASCII host)
@@ -327,7 +431,16 @@ const MUTATIONS: Record<string, Mutator> = {
   // transport-ungradable by the live probe because no HTTP client can route
   // to that intentionally invalid host spelling.
   'profile-3.2/negative/001-base64url-sf-binary': (vector, _keys, options) => passthrough(vector, options),
-  'profile-3.2/negative/001-no-signature-header': delegateToRoot('001-no-signature-header'),
+  // The unsigned 3.2 mirrors ship a correct Content-Digest alongside the missing
+  // signature, so the step-0 refusal is their only fault. Keep the digest,
+  // recomputed for the body actually sent after any transport reshaping.
+  'profile-3.2/negative/001-no-signature-header': (vector, _keys, options) => {
+    const shaped = applyTransport(vector, options);
+    const headers = Object.fromEntries(
+      Object.entries(shaped.headers).filter(([name]) => !/^signature(-input)?$/i.test(name))
+    );
+    return withRefreshedDigest(vector, { method: shaped.method, url: shaped.url, headers, body: shaped.body });
+  },
   'profile-3.2/negative/002-multiple-trailing-dots': (vector, _keys, options) => passthrough(vector, options),
   'profile-3.2/negative/002-wrong-tag': delegateToRoot('002-wrong-tag'),
   'profile-3.2/negative/003-expired-signature': delegateToRoot('003-expired-signature'),
@@ -366,10 +479,13 @@ const MUTATIONS: Record<string, Mutator> = {
   'profile-3.2/negative/024-unquoted-string-param': delegateToRoot('024-unquoted-string-param'),
   'profile-3.2/negative/025-jwk-alg-crv-mismatch': delegateToRoot('025-jwk-alg-crv-mismatch'),
   'profile-3.2/negative/026-non-ascii-host': delegateToRoot('026-non-ascii-host'),
-  'profile-3.2/negative/027-webhook-registration-authentication-unsigned': delegateToRoot(
-    '027-webhook-registration-authentication-unsigned'
-  ),
-  'profile-3.2/negative/028-unsigned-protocol-method-required': delegateToRoot('028-unsigned-protocol-method-required'),
+  'profile-3.2/negative/027-webhook-registration-authentication-unsigned': (vector, _keys, options) =>
+    withRefreshedDigest(vector, passthrough(vector, options)),
+  'profile-3.2/negative/028-unsigned-protocol-method-required': (vector, _keys, options) =>
+    withRefreshedDigest(vector, protocolMethodPassthrough(vector, options)),
+  'profile-3.2/negative/029-duplicate-signature-label': delegateToRoot('029-duplicate-signature-label'),
+  'profile-3.2/negative/030-content-digest-key-case': delegateToRoot('030-content-digest-key-case'),
+  'profile-3.2/negative/031-malformed-host-authority': delegateToRoot('031-malformed-host-authority'),
 };
 
 function delegateToRoot(rootId: string): Mutator {
@@ -377,6 +493,19 @@ function delegateToRoot(rootId: string): Mutator {
     const mutation = MUTATIONS[rootId];
     if (!mutation) throw new Error(`Missing root request-signing mutation "${rootId}"`);
     return mutation(vector, keys, options);
+  };
+}
+
+function withRefreshedDigest(vector: NegativeVector, request: SignedHttpRequest): SignedHttpRequest {
+  if (!Object.keys(vector.request.headers).some(name => name.toLowerCase() === 'content-digest')) return request;
+  return {
+    ...request,
+    headers: mergeHeadersCaseInsensitively(request.headers, {
+      'Content-Digest': computeContentDigest(
+        request.body ?? '',
+        requestSigningEncodingForVersion(vector.signing_profile_version)
+      ),
+    }),
   };
 }
 
@@ -698,10 +827,10 @@ function signWithComponents(
   vector: PositiveVector | NegativeVector,
   options: BuildOptions,
   components: string[],
-  refreshDigest = false
+  refreshDigest: boolean | DigestShaper = false
 ): SignedHttpRequest {
   const shaped = applyTransport(vector, options);
-  if (refreshDigest) refreshContentDigest(shaped, vector);
+  if (refreshDigest) refreshContentDigest(shaped, vector, refreshDigest === true ? undefined : refreshDigest);
   const url = shaped.url;
   const request: RequestLike = {
     method: shaped.method,
@@ -734,12 +863,18 @@ function signWithComponents(
   };
 }
 
-function refreshContentDigest(shaped: TransportShapedRequest, vector: PositiveVector | NegativeVector): void {
+/** Builds the Content-Digest header value for the body that will be sent. */
+type DigestShaper = (body: string, encoding: ReturnType<typeof requestSigningEncodingForVersion>) => string;
+
+function refreshContentDigest(
+  shaped: TransportShapedRequest,
+  vector: PositiveVector | NegativeVector,
+  shape?: DigestShaper
+): void {
+  const encoding = requestSigningEncodingForVersion(vector.signing_profile_version);
+  const body = shaped.body ?? '';
   shaped.headers = mergeHeadersCaseInsensitively(shaped.headers, {
-    'Content-Digest': computeContentDigest(
-      shaped.body ?? '',
-      requestSigningEncodingForVersion(vector.signing_profile_version)
-    ),
+    'Content-Digest': shape ? shape(body, encoding) : computeContentDigest(body, encoding),
   });
 }
 

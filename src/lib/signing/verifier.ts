@@ -1,6 +1,7 @@
 import { parseDictionary } from 'structured-headers';
 import {
   buildSignatureBase,
+  canonicalAuthority,
   canonicalTargetUri,
   getHeaderValue,
   rejectNonAsciiHost,
@@ -260,6 +261,19 @@ export async function verifyRequestSignature(
       12,
       `Per-keyid replay cache cap exceeded for keyid=${jwk.kid}`
     );
+  }
+
+  // The profile derives @authority from the as-received Host header, while the
+  // signature base below uses the request URL's authority. Judge a Host header
+  // the URL does not carry here, so a malformed one is refused even when the
+  // signature verifies over the clean URL authority.
+  const receivedHost = getHeaderValue(request.headers, 'Host');
+  if (receivedHost !== undefined) {
+    if (/[\s/?#@\\]/.test(receivedHost)) {
+      throw new RequestSignatureError('request_target_uri_malformed', 10, 'Host header is not a valid authority');
+    }
+    rejectNonAsciiHost(`https://${receivedHost}/`);
+    canonicalAuthority(`https://${receivedHost}/`, '3.2');
   }
 
   // Step 10: cryptographic verify. Use the received Signature-Input value

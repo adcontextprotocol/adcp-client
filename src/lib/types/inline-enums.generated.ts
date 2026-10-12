@@ -2120,6 +2120,9 @@ export const CatalogItemAvailabilityUpdateResult_AvailabilityValues = CatalogIte
 // --- CommitmentSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, CommitmentSubmitted.status duplicates the canonical export. */
 export const CommitmentSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
+// --- CompactTaskSubmitted ---
+/** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, CompactTaskSubmitted.status duplicates the canonical export. */
+export const CompactTaskSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
 // --- ContextMatchResponseProviderRouter ---
 /** @deprecated use `ContextMatchResponse_TypeValues` — same literal set, ContextMatchResponseProviderRouter.type duplicates the canonical export. */
 export const ContextMatchResponseProviderRouter_TypeValues = ContextMatchResponse_TypeValues;
@@ -2422,6 +2425,9 @@ export const RecordedReportingConsumerStatus_ResultValues = RecordedReportingAdj
 // --- RecordedReportingReceipt ---
 /** @deprecated use `RecordedReportingAdjustmentReceipt_ResultValues` — same literal set, RecordedReportingReceipt.result duplicates the canonical export. */
 export const RecordedReportingReceipt_ResultValues = RecordedReportingAdjustmentReceipt_ResultValues;
+// --- RefineProposalsAsyncSubmitted ---
+/** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, RefineProposalsAsyncSubmitted.status duplicates the canonical export. */
+export const RefineProposalsAsyncSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
 // --- ReplaceTargetingValue ---
 /** @deprecated use `ReplaceAssignment_OperationValues` — same literal set, ReplaceTargetingValue.operation duplicates the canonical export. */
 export const ReplaceTargetingValue_OperationValues = ReplaceAssignment_OperationValues;
@@ -2470,6 +2476,9 @@ export const ReportingStatusChangedWebhook_NotificationTypeValues = ReportingDel
 // --- ReportPlanAdjustmentResponse ---
 /** @deprecated use `ReportPlanAdjustmentRequest_AdjustmentTypeValues` — same literal set, ReportPlanAdjustmentResponse.adjustment_type duplicates the canonical export. */
 export const ReportPlanAdjustmentResponse_AdjustmentTypeValues = ReportPlanAdjustmentRequest_AdjustmentTypeValues;
+// --- RequestProposalsAsyncSubmitted ---
+/** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, RequestProposalsAsyncSubmitted.status duplicates the canonical export. */
+export const RequestProposalsAsyncSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
 // --- SearchBrandResult ---
 /** @deprecated use `GetBrandIdentitySuccess_KellerTypeValues` — same literal set, SearchBrandResult.keller_type duplicates the canonical export. */
 export const SearchBrandResult_KellerTypeValues = GetBrandIdentitySuccess_KellerTypeValues;

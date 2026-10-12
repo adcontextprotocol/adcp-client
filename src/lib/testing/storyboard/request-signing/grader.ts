@@ -283,8 +283,10 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
   // Avoid allocating an MCP session (or making authenticated egress) when
   // every vector is skipped or handled entirely by the local verifier.
   const hasRunnableNetworkVector =
-    selected.positive.some(vector => !preflightSkip(vector, 'positive', contract, options)) ||
-    selected.negative.some(vector => !vector.jwks_override && !preflightSkip(vector, 'negative', contract, options));
+    selected.positive.some(vector => !preflightSkip(vector, 'positive', contract, options, agentUrl)) ||
+    selected.negative.some(
+      vector => !vector.jwks_override && !preflightSkip(vector, 'negative', contract, options, agentUrl)
+    );
 
   // Auto-initialize MCP session once before all vectors. A single session
   // covers the full batch — the session ID is injected post-signing so
@@ -318,7 +320,7 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
 
   const positive: VectorGradeResult[] = [];
   for (const vector of selected.positive) {
-    const skip = preflightSkip(vector, 'positive', contract, options);
+    const skip = preflightSkip(vector, 'positive', contract, options, agentUrl);
     if (skip) {
       positive.push(skip);
       continue;
@@ -331,7 +333,7 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
 
   const negative: VectorGradeResult[] = [];
   for (const vector of selected.negative) {
-    const skip = preflightSkip(vector, 'negative', contract, options);
+    const skip = preflightSkip(vector, 'negative', contract, options, agentUrl);
     if (skip) {
       negative.push(skip);
       continue;
@@ -403,7 +405,27 @@ const MCP_FLATTENED_VECTORS = new Set([
   'profile-3.2/positive/010-percent-encoded-slash-preserved',
   'profile-3.2/positive/011-ipv6-authority',
   'profile-3.2/positive/012-ipv6-authority-default-port-stripped',
+  '015-bracketed-ipv6-host-with-port',
+  'profile-3.2/positive/015-bracketed-ipv6-host-with-port',
 ]);
+
+// Positive vectors whose subject is a bracketed IPv6 literal with a non-default
+// port in the request authority. Under raw transport they are only a live
+// witness when the agent's own URL has that shape.
+const RAW_AUTHORITY_SHAPE_VECTORS = new Set([
+  '015-bracketed-ipv6-host-with-port',
+  'profile-3.2/positive/015-bracketed-ipv6-host-with-port',
+]);
+
+function targetCarriesBracketedIpv6WithPort(agentUrl: string): boolean {
+  try {
+    const target = new URL(agentUrl);
+    // `URL.port` is empty for the scheme's default port.
+    return target.hostname.startsWith('[') && target.port !== '';
+  } catch {
+    return false;
+  }
+}
 
 // Vectors whose failure mode can't reach a live agent through HTTP. Document
 // why each entry can't be graded via probe so adding a new entry isn't a
@@ -419,6 +441,14 @@ const TRANSPORT_UNGRADABLE: Record<string, string> = {
     'HTTP transport punycodes U-labels before the request leaves the client; verified at the library level.',
   'profile-3.2/negative/002-multiple-trailing-dots':
     'HTTP transport cannot route to an intentionally malformed DNS authority; verified at the library level.',
+  // The fault is a Host header the URL does not carry. fetch() derives Host
+  // from the request URL and ignores a caller-supplied value, so the agent would
+  // receive a well-formed Host and a valid signature, and a conformant verifier
+  // would correctly accept it.
+  '031-malformed-host-authority':
+    'HTTP transport derives the Host header from the request URL, so the malformed Host cannot reach the agent; verified at the library level.',
+  'profile-3.2/negative/031-malformed-host-authority':
+    'HTTP transport derives the Host header from the request URL, so the malformed Host cannot reach the agent; verified at the library level.',
 };
 
 /** A vector excluded on its own terms, independent of the run's transport. */
@@ -469,7 +499,8 @@ function preflightSkip(
   vector: PositiveVector | NegativeVector,
   kind: 'positive' | 'negative',
   contract: SignedRequestsRunnerContract | undefined,
-  options: GradeOptions
+  options: GradeOptions,
+  agentUrl: string
 ): VectorGradeResult | undefined {
   const expected_error_code = kind === 'negative' ? (vector as NegativeVector).expected_error_code : undefined;
   const base = {
@@ -555,6 +586,29 @@ function preflightSkip(
         `that ${options.transport ?? 'mcp'} mode neutralizes by routing every vector to the one ` +
         `endpoint the agent exposes. Grade this edge with \`--transport raw\` against a ` +
         `per-operation AdCP agent.`,
+    };
+  }
+  // Raw mode retargets the vector onto the agent's own authority and the HTTP
+  // client derives `Host` from that URL, so a vector whose subject is the
+  // authority itself reaches the agent only when the agent's authority already
+  // has that shape. Anything else would grade an ordinary request and report
+  // the edge as covered.
+  if (
+    kind === 'positive' &&
+    !flattensUrlEdges &&
+    RAW_AUTHORITY_SHAPE_VECTORS.has(vector.id) &&
+    !targetCarriesBracketedIpv6WithPort(agentUrl)
+  ) {
+    return {
+      ...base,
+      skipped: true,
+      skip_reason: 'transport_ungradable',
+      diagnostic:
+        `Vector ${vector.id} presents a bracketed IPv6 literal with a non-default port as the request ` +
+        `authority. Raw mode sends the request to the agent's own authority, which is not a bracketed ` +
+        `IPv6 literal with an explicit non-default port, so that authority never reaches the agent; ` +
+        `verified at the library level. Point the grader at such an endpoint (for example ` +
+        `http://[::1]:3001) to grade it live.`,
     };
   }
   if (kind === 'negative') {
@@ -703,7 +757,7 @@ export async function gradeOneVector(
       : selected.negative.find(v => v.id === vectorId);
   if (!vector) throw new Error(`Unknown ${kind} vector "${vectorId}"`);
 
-  const skip = preflightSkip(vector, kind, contract, options);
+  const skip = preflightSkip(vector, kind, contract, options, agentUrl);
   if (skip) return skip;
 
   // Per-vector session initialization for the storyboard-runner path.
