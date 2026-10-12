@@ -569,9 +569,11 @@ A period whose deletes fail (a removed binding, a permanent provider error)
 stays `retiring` and is retried with backoff rather than on every pass. The
 tombstone records `attempts`, `next_attempt_at` and `last_failure`; the wait
 starts at one minute, doubles per failure and is capped at six hours. Periods
-still backing off are skipped, retries take at most half of each pass (rounded
-up), and fresh periods get the rest, so a few stuck periods cannot stop others
-from retiring. The result reports `failed` and `failures` for this pass,
+still backing off are skipped. Ready retries go ahead of fresh periods for up to
+half of each pass (rounded up) and only fill slots fresh periods leave empty, so
+a retry backlog still drains at full speed when nothing else is eligible and a
+few stuck periods cannot stop others from retiring (each leaves the head of the
+queue for its backoff after one failed attempt). The result reports `failed` and `failures` for this pass,
 `deferred` for periods backing off, and `stuck` (up to 20, with `attempts` and
 `cause`) for periods that have failed five or more times. The maintenance helper
 passes `stuck` and `deferred` to `onError`. Re-apply `REPORTING_LEDGER_MIGRATION`
@@ -821,7 +823,8 @@ await store.saveFeedConsumerCursor('pacing', page.cursor); // holds back pruning
   differ and a filter would hand out a later change while skipping an earlier
   one it excluded. The cost is that any older open transaction on the cluster,
   including an idle one in another database, holds both kinds of feed back until
-  it ends; keep transactions short.
+  it ends; keep transactions short. An empty page therefore means either caught
+  up or held back, so poll again rather than treating it as the end of the feed.
 - **A ledger database has exactly one writer SDK.** The store writes each change
   row under the account advisory lock, taking the sequence value only after it,
   so per-account `seq` order equals commit order. The in-flight guard above is

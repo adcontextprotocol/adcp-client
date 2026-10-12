@@ -368,13 +368,24 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_obligation_tombstones (
 CREATE INDEX IF NOT EXISTS adcp_reporting_obligation_tombstones_account
   ON adcp_reporting_obligation_tombstones (account_id, configuration_id, period_ordinal);
 -- Retirement retry state. A period whose external deletes fail on every pass
--- backs off instead of holding a slot at the head of every pass.
-ALTER TABLE adcp_reporting_obligation_tombstones
-  ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE adcp_reporting_obligation_tombstones
-  ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ;
-ALTER TABLE adcp_reporting_obligation_tombstones
-  ADD COLUMN IF NOT EXISTS last_failure TEXT;
+-- backs off instead of holding a slot at the head of every pass. Guarded on the
+-- catalog because ADD COLUMN IF NOT EXISTS takes ACCESS EXCLUSIVE even when the
+-- column exists, which would block a rerun behind ordinary traffic.
+DO $tombstone_retry$
+DECLARE
+  tombstones regclass := to_regclass('adcp_reporting_obligation_tombstones');
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = tombstones AND attname = 'attempts' AND NOT attisdropped) THEN
+    ALTER TABLE adcp_reporting_obligation_tombstones ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = tombstones AND attname = 'next_attempt_at' AND NOT attisdropped) THEN
+    ALTER TABLE adcp_reporting_obligation_tombstones ADD COLUMN next_attempt_at TIMESTAMPTZ;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = tombstones AND attname = 'last_failure' AND NOT attisdropped) THEN
+    ALTER TABLE adcp_reporting_obligation_tombstones ADD COLUMN last_failure TEXT;
+  END IF;
+END
+$tombstone_retry$;
 `.trim();
 
 /** Constraint installed by {@link REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION}. */
@@ -1460,9 +1471,11 @@ ${managedDueArm}       )
    * Account-scoped feeds order by sequence; the deployment-wide feed orders by
    * `(xid, seq)` and returns only changes whose transaction precedes every
    * transaction still in flight, so no commit is ever skipped. An account page
-   * ends before the first change whose transaction has not finished, so it never
-   * passes a change that commits late. A ledger database must have exactly one
-   * writer SDK; see `docs/guides/REPORTING-LEDGER.md`. A cursor older
+   * also ends before the first change whose transaction has not finished, as
+   * defense in depth against a change that commits late. An empty page can
+   * therefore mean either caught up or held back by an older open transaction.
+   * A ledger database must have exactly one writer SDK; see
+   * `docs/guides/REPORTING-LEDGER.md`. A cursor older
    * than the retained history throws `ReportingChangeCursorExpiredError`;
    * resynchronize from `listCurrentRevisions`.
    *
@@ -1548,11 +1561,13 @@ ${managedDueArm}       )
     const columns = `seq::text AS seq, xid::text AS xid, account_id, record_kind, record_id, obligation_id,
       to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS recorded_at`;
     // The account feed orders by seq, which equals commit order only when every writer takes the
-    // account lock before nextval. Do not rely on that alone: stop the page at the first change
-    // whose transaction is not below every in-flight transaction (`xid >= xmin`). A plain
-    // `xid < xmin` filter would not do, because seq order and xid order can differ, and it would
-    // hand out a later change while skipping an earlier one it excluded. Truncating keeps the page
-    // a prefix of seq order, so a cursor never passes a change from an unfinished transaction.
+    // account lock before nextval. Defense in depth for a writer that does not: stop the page at
+    // the first change whose transaction is not below every in-flight transaction
+    // (`xid >= xmin`). A plain `xid < xmin` filter would not do, because seq order and xid order
+    // can differ, and it would hand out a later change while skipping an earlier one it
+    // excluded. Truncating keeps the page a prefix of seq order. This narrows the window for a
+    // second writer but does not close it for every interleaving: one writer SDK per database
+    // remains the contract.
     // The row scan is still served by the (account_id, seq) index.
     const result =
       account !== null
@@ -1812,20 +1827,21 @@ ${managedDueArm}       )
                            AND (change.xid, change.seq) > (consumer.cursor_xid, consumer.cursor_seq))
                        OR (consumer.account_id = change.account_id AND change.seq > consumer.cursor_seq)))`
         : '';
-    // Resumes (tombstoned, interrupted or failed periods) are capped at half the
-    // pass, rounded up, so fresh periods always keep a share. A resume that
-    // failed is excluded until its backoff elapses, so a period that fails on
-    // every pass cannot hold a slot at the head of the queue.
+    // Resumes (tombstoned, interrupted or failed periods) are guaranteed at most half
+    // the pass, rounded up, ahead of fresh periods; a resume beyond that only fills
+    // slots fresh periods leave empty. A resume that failed is excluded until its
+    // backoff elapses, so a period that fails on every pass cannot hold a slot at the
+    // head of the queue.
     const candidates = await this.query<{ obligation_id: string; account_id: string }>(
       `SELECT obligation_id, account_id FROM (
-         (SELECT tombstone.obligation_id, tombstone.account_id, 0 AS resume, tombstone.attempts, tombstone.period_end
-            FROM adcp_reporting_obligation_tombstones tombstone
-           WHERE tombstone.state = 'retiring' AND ($2::text IS NULL OR tombstone.account_id = $2)
-             AND (tombstone.next_attempt_at IS NULL OR tombstone.next_attempt_at <= clock_timestamp())
-           ORDER BY tombstone.attempts, tombstone.period_end, tombstone.obligation_id
-           LIMIT (($1::integer + 1) / 2))
+         SELECT tombstone.obligation_id, tombstone.account_id, 0 AS resume, tombstone.attempts, tombstone.period_end,
+                CASE WHEN row_number() OVER (ORDER BY tombstone.attempts, tombstone.period_end, tombstone.obligation_id)
+                          <= (($1::integer + 1) / 2) THEN 0 ELSE 1 END AS tier
+           FROM adcp_reporting_obligation_tombstones tombstone
+          WHERE tombstone.state = 'retiring' AND ($2::text IS NULL OR tombstone.account_id = $2)
+            AND (tombstone.next_attempt_at IS NULL OR tombstone.next_attempt_at <= clock_timestamp())
          UNION ALL
-         SELECT obligation.obligation_id, obligation.account_id, 1, 0, obligation.period_end
+         (SELECT obligation.obligation_id, obligation.account_id, 1, 0, obligation.period_end, 0
            FROM adcp_reporting_obligations obligation
           WHERE ($2::text IS NULL OR obligation.account_id = $2)
             AND obligation.period_end + ($3::integer * INTERVAL '1 day') <= clock_timestamp()
@@ -1840,8 +1856,10 @@ ${managedDueArm}       )
                              WHERE tombstone.obligation_id = obligation.obligation_id)
             ${materializationHold}
             ${feedHold}
+          ORDER BY obligation.period_end, obligation.obligation_id
+          LIMIT $1)
        ) candidate
-       ORDER BY resume, attempts, period_end, obligation_id
+       ORDER BY tier, resume, attempts, period_end, obligation_id
        LIMIT $1`,
       feedHold ? [limit, input.account_id ?? null, recordDays, holdDays] : [limit, input.account_id ?? null, recordDays]
     );
@@ -2290,8 +2308,9 @@ ${managedDueArm}       )
     /** Expired intents backing off after a failed sweep, not attempted this pass. */
     deferred: number;
     /**
-     * Intents expired for longer than `overdueAfterSeconds` (default 24 hours) and still not swept.
-     * No host is handling them and their objects are leaking.
+     * Intents expired for longer than `overdueAfterSeconds` (default 24 hours) and still not swept,
+     * including ones backing off. Their objects are leaking: check that a host configures their
+     * binding and that provider deletes succeed.
      */
     overdue: number;
   }> {

@@ -808,14 +808,13 @@ jobs:
           test/lib/reporting-row-storage-migration-pg.test.js
           test/lib/reporting-row-storage-pg.test.js
           test/lib/reporting-row-storage-object-pg.test.js
-          test/lib/reporting-row-retention-pg.test.js
           test/lib/reporting-row-shared-object-pg.test.js
           test/lib/reporting-snapshot-compaction-pg.test.js
-          test/lib/reliable-reporting-core-maintenance-pg.test.js
           test/reliable-reporting-lifecycle-pg.test.js
 
-      # These files hold a transaction open on purpose to test the change feeds' in-flight
-      # guard. `xmin` is cluster-wide, so they must not overlap other files' feed reads.
+      # The change feeds hold a page back while an older transaction is open, and `xmin` is
+      # cluster-wide. These files either hold a transaction open on purpose or read the feed
+      # until it is empty, so they must not overlap other files' write transactions.
       - name: Run PostgreSQL change-feed ordering contracts serially
         env:
           NODE_ENV: test
@@ -826,6 +825,8 @@ jobs:
           test/lib/reporting-host-reads-pg.test.js
           test/lib/reporting-bigquery-sink-pg.test.js
           test/lib/reporting-head-of-line-pg.test.js
+          test/lib/reporting-row-retention-pg.test.js
+          test/lib/reliable-reporting-core-maintenance-pg.test.js
 
       - name: Run PostgreSQL reporting contracts with chunked row storage
         env:

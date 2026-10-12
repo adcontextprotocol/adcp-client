@@ -68,8 +68,10 @@ export class ReportingMaintenancePartialFailureError extends Error {
     readonly warnings: readonly string[] = []
   ) {
     super(
-      `Reporting ${task} could not process ${failedCount} item(s)${failedIds.length ? `: ${failedIds.slice(0, 20).join(', ')}` : ''}` +
-        (warnings.length ? `${failedCount > 0 ? '; ' : ' - '}${warnings.join('; ')}` : '')
+      (failedCount > 0
+        ? `Reporting ${task} could not process ${failedCount} item(s)${failedIds.length ? `: ${failedIds.slice(0, 20).join(', ')}` : ''}`
+        : `Reporting ${task} needs attention`) +
+        (warnings.length ? `${failedCount > 0 ? '; ' : ': '}${warnings.join('; ')}` : '')
     );
     this.name = 'ReportingMaintenancePartialFailureError';
   }
@@ -244,7 +246,7 @@ export async function runReportingLedgerMaintenance(
     }
     if (typeof value?.overdue === 'number' && value.overdue > 0) {
       warnings.push(
-        `${value.overdue} upload(s) expired long ago and still unswept; no host is handling them and their objects are leaking`
+        `${value.overdue} upload(s) expired long ago and still unswept; their objects are leaking (check that a host configures their binding and that provider deletes succeed)`
       );
     }
     let partialFailure: ReportingMaintenancePartialFailureError | undefined;

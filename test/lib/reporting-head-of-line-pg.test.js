@@ -24,6 +24,7 @@ describe('reporting retention and sweep head-of-line blocking', { skip }, () => 
   let store;
   let namespaceKey;
   const failingKeys = new Set();
+  let onFailingDelete;
   const rows = Array.from({ length: 5 }, (_, index) => ({ ordinal: index, value: index }));
 
   async function expire(obligationId, days) {
@@ -94,7 +95,10 @@ describe('reporting retention and sweep head-of-line blocking', { skip }, () => 
       get(target, property) {
         if (property === 'delete') {
           return async (location, context) => {
-            if (failingKeys.has(location.key)) throw new Error('provider unavailable');
+            if (failingKeys.has(location.key)) {
+              onFailingDelete?.();
+              throw new Error('provider unavailable');
+            }
             return target.delete(location, context);
           };
         }
@@ -122,6 +126,7 @@ describe('reporting retention and sweep head-of-line blocking', { skip }, () => 
 
   beforeEach(async () => {
     failingKeys.clear();
+    onFailingDelete = undefined;
     await pool.query('DELETE FROM adcp_reporting_row_write_intents');
   });
 
@@ -207,13 +212,35 @@ describe('reporting retention and sweep head-of-line blocking', { skip }, () => 
       assert.equal((await tombstone(stuck)).attempts, 41);
       const capped = await backoffSeconds(stuck);
       assert.ok(capped > 6 * 3600 - 30 && capped <= 6 * 3600, `capped at six hours, got ${capped}s`);
+    });
 
-      // An abort is shutdown, not a fault: it never records a failure.
-      await clearBackoff();
+    test('an abort during a delete is shutdown, not a failure: no attempt is recorded', async () => {
+      const stuck = await createPeriod('retire_abort', { failing: true });
+      await expire(stuck, 40);
       const abort = new AbortController();
-      abort.abort();
-      await assert.rejects(() => store.retireExpiredPeriods({ statusRetentionDays: 30, signal: abort.signal }));
-      assert.equal((await tombstone(stuck)).attempts, 41);
+      onFailingDelete = () => abort.abort();
+      const result = await store.retireExpiredPeriods({ statusRetentionDays: 30, signal: abort.signal });
+      assert.deepEqual(result.failed, [stuck]);
+      const row = await tombstone(stuck);
+      assert.equal(row.attempts, 0);
+      assert.equal(row.next_attempt_at, null);
+    });
+
+    test('with only retries ready, the cap does not slow the drain', async () => {
+      const periods = [
+        await createPeriod('retire_drain_a', { failing: true }),
+        await createPeriod('retire_drain_b', { failing: true }),
+        await createPeriod('retire_drain_c', { failing: true }),
+      ];
+      await Promise.all(periods.map((id, index) => expire(id, 60 - index)));
+      const failed = await store.retireExpiredPeriods({ statusRetentionDays: 30, limit: 3 });
+      assert.equal(failed.failed.length, 3);
+      failingKeys.clear();
+      await clearBackoff();
+      // Three retries are ready and nothing else is eligible: both slots go to retries.
+      const pass = await store.retireExpiredPeriods({ statusRetentionDays: 30, limit: 2 });
+      assert.equal(pass.retired, 2);
+      assert.deepEqual(pass.failed, []);
     });
 
     test('fresh periods keep a share of the pass when failing periods are ready to retry', async () => {
@@ -319,6 +346,36 @@ describe('reporting retention and sweep head-of-line blocking', { skip }, () => 
       assert.equal(skipped.next_sweep_at, null);
     });
 
+    test('an unconfigured binding at the head of the queue does not take the slot', async () => {
+      await addIntent('rrev_ghost_head', { binding: 'ghost', objects: ['ghost_head'], expires: `INTERVAL '3 days'` });
+      await addIntent('rrev_local_next', { objects: ['local_next'], expires: `INTERVAL '1 hour'` });
+      const result = await store.sweepRowWriteIntents({ limit: 1 });
+      assert.equal(result.swept, 1);
+      assert.equal(result.skippedUnconfigured, 1);
+      assert.equal(await intentRow('rrev_local_next'), undefined);
+    });
+
+    test('an abort during a delete is shutdown, not a failure: no attempt is recorded', async () => {
+      failingKeys.add(objectKey('abort_me'));
+      await addIntent('rrev_abort', { objects: ['abort_me'], expires: `INTERVAL '2 hours'` });
+      const abort = new AbortController();
+      onFailingDelete = () => abort.abort();
+      const result = await store.sweepRowWriteIntents({ signal: abort.signal });
+      assert.equal(result.failed, 1);
+      const row = await intentRow('rrev_abort');
+      assert.equal(row.sweep_attempts, 0);
+      assert.equal(row.next_sweep_at, null);
+    });
+
+    test('a sweeping intent backs off like an open one', async () => {
+      failingKeys.add(objectKey('sweeping'));
+      await addIntent('rrev_sweeping', { objects: ['sweeping'], expires: `INTERVAL '2 hours'`, state: 'sweeping' });
+      await addIntent('rrev_after_sweeping', { objects: ['after'], expires: `INTERVAL '1 hour'` });
+      assert.equal((await store.sweepRowWriteIntents({ limit: 1 })).failed, 1);
+      assert.equal((await store.sweepRowWriteIntents({ limit: 1 })).swept, 1);
+      assert.equal(await intentRow('rrev_after_sweeping'), undefined);
+    });
+
     test('flags intents expired far longer than the sweep interval, and the threshold is adjustable', async () => {
       await addIntent('rrev_recent', { binding: 'ghost', objects: ['recent'], expires: `INTERVAL '2 hours'` });
       assert.equal((await store.sweepRowWriteIntents()).overdue, 0);
@@ -384,6 +441,7 @@ describe('account change feed ordering', { skip }, () => {
       assert.equal(during.cursor, start.cursor, 'the cursor does not move past it');
       await slow.query('COMMIT');
     } finally {
+      await slow.query('ROLLBACK').catch(() => undefined);
       slow.release();
     }
     const after = await until(
@@ -411,8 +469,11 @@ describe('account change feed ordering', { skip }, () => {
       // cursor past rrev_first, which would then never be seen.
       const during = await store.changesAfter({ account_id: account, cursor: start.cursor });
       assert.deepEqual(ids(during), []);
+      assert.equal(during.cursor, start.cursor, 'the cursor does not move past the held-back change');
       await blocker.query('COMMIT');
     } finally {
+      await early.query('ROLLBACK').catch(() => undefined);
+      await blocker.query('ROLLBACK').catch(() => undefined);
       early.release();
       blocker.release();
     }
@@ -423,17 +484,51 @@ describe('account change feed ordering', { skip }, () => {
     assert.deepEqual(ids(after), ['rrev_first', 'rrev_second']);
   });
 
-  test('the account feed query is served by the (account_id, seq) index', async () => {
+  test('a committed prefix is returned and the cursor stops before the first in-flight change', async () => {
+    const start = await store.changesAfter({ account_id: account });
+    await insert(pool, 'rrev_prefix_a');
+    const open = await pool.connect();
+    try {
+      await open.query('BEGIN');
+      await insert(open, 'rrev_prefix_b'); // in flight
+      await insert(pool, 'rrev_prefix_c'); // committed after it
+      const during = await until(
+        () => store.changesAfter({ account_id: account, cursor: start.cursor }),
+        ['rrev_prefix_a']
+      );
+      assert.deepEqual(ids(during), ['rrev_prefix_a'], 'truncated, not filtered: c is not handed out past b');
+      await open.query('COMMIT');
+      const rest = await until(
+        () => store.changesAfter({ account_id: account, cursor: during.cursor }),
+        ['rrev_prefix_b', 'rrev_prefix_c']
+      );
+      assert.deepEqual(ids(rest), ['rrev_prefix_b', 'rrev_prefix_c']);
+    } finally {
+      await open.query('ROLLBACK').catch(() => undefined);
+      open.release();
+    }
+  });
+
+  test('the account feed query the store runs is served by the (account_id, seq) index', async () => {
     await pool.query(
       `INSERT INTO adcp_reporting_changes (account_id, record_kind, record_id, obligation_id)
        SELECT 'acct_filler_' || n, 'revision', 'rrev_filler_' || n, 'robl_filler' FROM generate_series(1, 2000) n`
     );
     await pool.query('ANALYZE adcp_reporting_changes');
-    const plan = await pool.query(
-      `EXPLAIN SELECT seq, xid >= pg_snapshot_xmin(pg_current_snapshot()) AS in_flight
-         FROM adcp_reporting_changes WHERE account_id = $1 AND seq > 0::bigint ORDER BY seq LIMIT 500`,
-      [account]
-    );
+    const executed = [];
+    const spy = {
+      connect: pool.connect.bind(pool),
+      query: (sql, values) => {
+        executed.push({ sql, values });
+        return pool.query(sql, values);
+      },
+    };
+    const ledger = require('../../dist/lib/reporting/ledger/index.js');
+    const spied = new ledger.PostgresReportingLedgerStore(spy, { acknowledgeIsolatedDatabase: true, changeFeed: true });
+    await spied.changesAfter({ account_id: account });
+    const page = executed.find(call => /FROM adcp_reporting_changes\s+WHERE account_id/.test(call.sql));
+    assert.ok(page, 'the account feed page query ran');
+    const plan = await pool.query(`EXPLAIN ${page.sql}`, page.values);
     assert.match(plan.rows.map(row => row['QUERY PLAN']).join('\n'), /adcp_reporting_changes_account/);
   });
 });

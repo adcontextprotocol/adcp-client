@@ -1078,7 +1078,8 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
           'blocked_retention',
         ])
       ).rows[0].committed_cursor;
-      // The change row exists; the account feed itself holds it back while the blocker is in flight.
+      // The change row exists, and the account feed holds it back while the blocker is in flight.
+      assert.deepEqual((await store.changesAfter({ account_id: account })).records, []);
       assert.equal(
         (
           await pool.query(`SELECT 1 FROM adcp_reporting_changes WHERE account_id = $1 AND record_kind = 'revision'`, [
@@ -1179,7 +1180,8 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
       await createRowStorageFixture({ store: realStore, suffix: 'horizon_fresh', accountId: 'acct_horizon_fresh' });
       await pool.query(`UPDATE adcp_reporting_feed_consumers SET updated_at = clock_timestamp() - INTERVAL '8 days'`);
       assert.deepEqual((await realStore.changesAfter({ cursor: before.committed_cursor })).records, []);
-      // The change row exists; the account feed itself holds it back while the blocker is in flight.
+      // The change row exists, and the account feed holds it back while the blocker is in flight.
+      assert.deepEqual((await realStore.changesAfter({ account_id: account })).records, []);
       assert.equal(
         (
           await pool.query(`SELECT 1 FROM adcp_reporting_changes WHERE account_id = $1 AND record_kind = 'revision'`, [
@@ -1224,7 +1226,8 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
         [isolated.obligation.reporting_obligation_id]
       );
       await createRowStorageFixture({ store, suffix: 'cold_horizon_fresh', accountId: 'acct_cold_horizon_fresh' });
-      // The change row exists; the account feed itself holds it back while the blocker is in flight.
+      // The change row exists, and the account feed holds it back while the blocker is in flight.
+      assert.deepEqual((await store.changesAfter({ account_id: account })).records, []);
       assert.equal(
         (
           await pool.query(`SELECT 1 FROM adcp_reporting_changes WHERE account_id = $1 AND record_kind = 'revision'`, [
