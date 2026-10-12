@@ -889,6 +889,9 @@ await managedStore.authorizeDestination({
   destination_ref: destinationRef,
   generation: 1,
   authorized_at: new Date().toISOString(),
+  // The delivery contract this generation serves, recorded once and immutable.
+  pattern: 'file_transfer',
+  transport: 'gcs',
 });
 await managedStore.installBinding(
   reportingManagedDeliveryBindingV1({
@@ -924,6 +927,15 @@ const reportingDelivery = managed.reportingDeliveryCapabilities;
 // Run from a durable scheduler; replicas safely share SKIP LOCKED leases.
 await managed.runWorker({ maxIterations: 100 });
 ```
+
+### Pattern and transport on a destination authorization
+
+A destination has exactly one delivery pattern, and a change to its delivery contract mints a new `destination_ref` generation, so the pattern and transport are fixed for an authorization generation. Pass `pattern` (`file_transfer`, `dataset_share`, `warehouse_materialization`) and `transport` (the same lowercase token the offering's `method.transport` uses, such as `gcs` or `s3`) to `authorizeDestination()` when you create the generation. The store records them in `pattern`/`transport` columns and returns them on the authorization that `claimRevocation()` hands to `adapter.revoke()`, so a revocation can be routed to the transport that holds the provider grant instead of being guessed or fanned out.
+
+- Both are optional, and `transport` requires `pattern`. A generation recorded without them stays valid and revocable; it is simply unroutable by transport.
+- They are immutable. Replaying `authorizeDestination()` for the current generation may omit them but cannot state different values, and it cannot add them to a generation recorded without. Change the contract by minting a new generation.
+- `installBinding()` rejects a binding whose `method` or `transport` differs from what its generation recorded, so one generation can never be delivered through one transport and revoked through another.
+- Upgrading: `REPORTING_MANAGED_DELIVERY_MIGRATION` is additive (`ADD COLUMN IF NOT EXISTS`) and safe to re-run. The run that adds the columns backfills each existing generation from the bindings that reference it, but only where every such binding names the same method and the same transport. A generation whose bindings disagree, name no transport, or do not exist is left NULL, and the migration raises a `NOTICE` with how many. Later runs do nothing, so a NULL generation is never re-decided by a binding that arrived afterwards. `managedStore.listDestinationAuthorizationsWithoutContract()` lists the NULL generations with a `reason` (`no_binding`, `binding_without_transport`, `bindings_disagree`, `not_recorded`) so you can see which still need handling.
 
 Deployment-wide materialization planning is durably round-robin. The PostgreSQL
 store advances an agent-wide cursor before processing its bounded account page

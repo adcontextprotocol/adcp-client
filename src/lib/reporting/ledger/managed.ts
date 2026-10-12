@@ -44,11 +44,39 @@ const MAX_RECEIPT_RESULTS = 100;
 /** Maximum serialized size of one receipt evidence item. */
 const MAX_RECEIPT_EVIDENCE_BYTES = 64 * 1024;
 
+/** The delivery pattern a destination authorization generation serves. */
+export type ReportingDestinationPatternV1 = ReportingManagedDeliveryBindingV1['method'];
+
+/** Delivery patterns, in the order the protocol lists them. */
+export const REPORTING_DESTINATION_PATTERNS_V1: readonly ReportingDestinationPatternV1[] = Object.freeze([
+  'file_transfer',
+  'dataset_share',
+  'warehouse_materialization',
+]);
+
+/** Same constraint the protocol puts on `method.transport`. */
+export const REPORTING_DESTINATION_TRANSPORT_PATTERN_V1 = /^[a-z][a-z0-9_.-]{0,63}$/;
+
 export interface ReportingDestinationAuthorizationV1 {
   account_id: string;
   destination_ref: string;
   generation: number;
   authorized_at: string;
+  /**
+   * Delivery pattern this generation serves, recorded when the generation is
+   * created. A destination has exactly one pattern, and a change to its
+   * delivery contract mints a new `destination_ref` generation, so this never
+   * changes for a generation. Absent on generations recorded before it
+   * existed (and on ones whose bindings did not agree when backfilled).
+   */
+  pattern?: ReportingDestinationPatternV1;
+  /**
+   * Transport (`s3`, `gcs`, ...) that holds this generation's provider grant,
+   * recorded and immutable like `pattern`. This is what lets `revoke()` be
+   * routed to the transport that holds the grant. Absent for the same legacy
+   * reasons as `pattern`.
+   */
+  transport?: string;
   revoked_at?: string;
   cleanup_completed_at?: string;
 }
