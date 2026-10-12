@@ -240,3 +240,76 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
     assert.deepEqual(ids((await store.changesAfter({ cursor: resumed.cursor })).records, ['rrev_a', 'rrev_b']), []);
   });
 });
+
+// A bare `ORDER BY seq` in the page query once bound to the `seq::text AS seq`
+// output column and sorted pages as text, so a page that crossed a power of ten
+// returned 100-104 before 95-99 and the cursor then skipped 95-99 for good.
+// This suite forces both the sequence and the transaction id across that
+// boundary and pages with a small limit.
+describe(
+  'reporting change feed ordering across decimal boundaries',
+  { skip: !DATABASE_URL && 'PostgreSQL URL not set' },
+  () => {
+    const schema = `adcp_reporting_feed_numeric_${process.pid}`;
+    let bootstrapPool;
+    let pool;
+    let store;
+    const expected = Array.from({ length: 10 }, (_, index) => 95 + index);
+
+    before(async () => {
+      const { Pool } = require('pg');
+      const ledger = require('../../dist/lib/reporting/ledger/index.js');
+      bootstrapPool = new Pool({ connectionString: DATABASE_URL });
+      await bootstrapPool.query(`CREATE SCHEMA "${schema}"`);
+      pool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${schema}"` });
+      await pool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await pool.query(ledger.REPORTING_LEDGER_CHANGES_MIGRATION);
+      store = new ledger.PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true, changeFeed: true });
+      // Next seq is 95; the rows span 95..104, crossing 99 -> 100. Explicit low
+      // xids (also 95..104) are far below the cluster's oldest running
+      // transaction, so the deployment feed releases them immediately.
+      await pool.query(`SELECT setval(pg_get_serial_sequence('adcp_reporting_changes', 'seq'), 94)`);
+      for (const n of expected) {
+        await pool.query(
+          `INSERT INTO adcp_reporting_changes (xid, account_id, record_kind, record_id, obligation_id)
+         VALUES ($1::text::xid8, 'acct_numeric', 'revision', $2, 'robl_numeric')`,
+          [String(n), `rrev_numeric_${n}`]
+        );
+      }
+    });
+
+    after(async () => {
+      if (pool) await pool.end();
+      if (bootstrapPool) {
+        await bootstrapPool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+        await bootstrapPool.end();
+      }
+    });
+
+    async function pageAll(input) {
+      const seen = [];
+      let cursor;
+      for (let guard = 0; guard < 20; guard += 1) {
+        const page = await store.changesAfter({ ...input, ...(cursor ? { cursor } : {}), limit: 3 });
+        seen.push(...page.records.map(record => record.record_id));
+        cursor = page.cursor;
+        if (page.records.length === 0) return seen;
+      }
+      throw new Error('change feed did not drain');
+    }
+
+    test('the account feed returns every change once in numeric order across 99 -> 100', async () => {
+      assert.deepEqual(
+        await pageAll({ account_id: 'acct_numeric' }),
+        expected.map(n => `rrev_numeric_${n}`)
+      );
+    });
+
+    test('the deployment feed returns every change once in numeric order across 99 -> 100', async () => {
+      assert.deepEqual(
+        await pageAll({}),
+        expected.map(n => `rrev_numeric_${n}`)
+      );
+    });
+  }
+);
