@@ -376,6 +376,15 @@ describe('reporting retention and sweep head-of-line blocking', { skip }, () => 
       assert.equal(await intentRow('rrev_after_sweeping'), undefined);
     });
 
+    test('overdue also counts a configured intent that keeps failing, alongside deferred', async () => {
+      failingKeys.add(objectKey('provider_down'));
+      await addIntent('rrev_provider_down', { objects: ['provider_down'], expires: `INTERVAL '2 days'` });
+      assert.equal((await store.sweepRowWriteIntents()).failed, 1);
+      // Backing off, still unswept after the threshold: counted as deferred and overdue, not as
+      // skipped, because this host configures the binding and the provider is the fault.
+      assert.deepEqual(await store.sweepRowWriteIntents(), counts({ deferred: 1, overdue: 1 }));
+    });
+
     test('flags intents expired far longer than the sweep interval, and the threshold is adjustable', async () => {
       await addIntent('rrev_recent', { binding: 'ghost', objects: ['recent'], expires: `INTERVAL '2 hours'` });
       assert.equal((await store.sweepRowWriteIntents()).overdue, 0);
