@@ -94,6 +94,50 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
     assert.equal((await read()).cursor_seq, '1');
   });
 
+  test('saveFeedConsumerCursor reports whether it applied, and rewinds only on request', async () => {
+    const name = 'rewind-checkpoint';
+    const read = async () =>
+      (await pool.query('SELECT * FROM adcp_reporting_feed_consumers WHERE consumer_name = $1', [name])).rows[0];
+    const account = seq => ledger.encodeReportingChangeCursorV1({ v: 1, account: 'acct_rewind', seq });
+    const deployment = (xid, seq) => ledger.encodeReportingChangeCursorV1({ v: 1, account: null, seq, xid });
+
+    assert.equal(await store.saveFeedConsumerCursor(name, account('20')), true, 'first save registers the consumer');
+    assert.equal(await store.saveFeedConsumerCursor(name, account('30')), true, 'forward moves apply');
+    assert.equal(await store.saveFeedConsumerCursor(name, account('10')), false, 'a backward write is ignored');
+    assert.equal((await read()).cursor_seq, '30');
+    assert.equal(await store.saveFeedConsumerCursor(name, account('30')), true, 'an equal write renews the hold');
+    assert.equal(
+      await store.saveFeedConsumerCursor(name, account('30'), { refreshUnchanged: false }),
+      false,
+      'an equal write that must not renew the hold is not applied'
+    );
+    assert.equal(await store.saveFeedConsumerCursor(name, account('10'), { rewind: false }), false);
+
+    // An explicit rewind moves the saved position and the retention hold back.
+    await pool.query(
+      "UPDATE adcp_reporting_feed_consumers SET updated_at = clock_timestamp() - INTERVAL '1 day' WHERE consumer_name = $1",
+      [name]
+    );
+    const stale = (await read()).updated_at;
+    assert.equal(await store.saveFeedConsumerCursor(name, account('10'), { rewind: true }), true);
+    assert.equal((await read()).cursor_seq, '10');
+    assert.ok((await read()).updated_at > stale, 'a rewind renews the retention hold');
+
+    // The same holds for the deployment feed's (xid, seq) order.
+    assert.equal(await store.saveFeedConsumerCursor(name, deployment('200', '5')), true, 'a scope switch replaces');
+    assert.equal(await store.saveFeedConsumerCursor(name, deployment('199', '9')), false);
+    assert.equal(await store.saveFeedConsumerCursor(name, deployment('200', '4')), false);
+    assert.equal(await store.saveFeedConsumerCursor(name, deployment('199', '9'), { rewind: true }), true);
+    assert.equal((await read()).cursor_xid, '199');
+    assert.equal((await read()).cursor_seq, '9');
+
+    assert.equal(await store.removeFeedConsumer(name), true);
+    assert.equal(await read(), undefined);
+    assert.equal(await store.removeFeedConsumer(name), false, 'removing an unknown consumer reports false');
+    assert.equal(await store.saveFeedConsumerCursor(name, account('1')), true, 'a removed consumer can register again');
+    await store.removeFeedConsumer(name);
+  });
+
   for (const { scope, axis } of [
     { scope: 'account', axis: 'sequence' },
     { scope: 'deployment', axis: 'sequence' },

@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import * as path from 'path';
 
 import type { PostgresReportingLedgerStore, ReportingLedgerRevisionMetadataV1, ReportingPgPool } from '../ledger';
-import { decodeReportingChangeCursorV1, ReportingChangeCursorExpiredError } from '../ledger/change-feed';
+import { decodeReportingChangeCursorV1 } from '../ledger/change-feed';
 
 /**
  * BigQuery warehouse sink for Reliable Reporting (shared SDK persistence spec,
@@ -65,7 +65,7 @@ export interface CreateBigQueryReportingWarehouseSinkOptionsV1 {
   /** Ledger store with `changeFeed: true`. */
   store: Pick<
     PostgresReportingLedgerStore,
-    'changesAfter' | 'saveFeedConsumerCursor' | 'getRevisionMetadata' | 'readRevisionRows'
+    'changesAfter' | 'saveFeedConsumerCursor' | 'removeFeedConsumer' | 'getRevisionMetadata' | 'readRevisionRows'
   >;
   /** PostgreSQL pool holding `REPORTING_WAREHOUSE_SINK_MIGRATION`. */
   db: Pick<ReportingPgPool, 'query'>;
@@ -125,6 +125,23 @@ export interface BigQueryReportingWarehouseSinkV1 {
   runOnce(options?: {
     signal?: AbortSignal;
   }): Promise<{ idle: boolean; revisions: number; rows: number; missing: string[] }>;
+  /**
+   * Clear the sink's saved state so the next `runOnce()` starts again from the
+   * oldest retained change, and unregister its feed consumer so the old
+   * checkpoint stops holding back retention. This is the way out of a sink
+   * that keeps rejecting with `CURSOR_EXPIRED`: a brand-new sink whose first
+   * read lost a startup race with pruning, or a sink that fell behind
+   * retention and has been resynchronized from current revisions. Stop every
+   * worker using this sink name first.
+   *
+   * It refuses while a batch plan is retained, because that batch's load jobs
+   * may already have succeeded; pass `discardRetainedPlan: true` once you have
+   * reconciled it against BigQuery. The warehouse is not touched: a sink that
+   * already loaded history will load the retained revisions again, so empty
+   * the destination tables first, or use a new sink name against new tables.
+   * Resolves with whether a saved sink state existed.
+   */
+  reset(options?: { discardRetainedPlan?: boolean }): Promise<{ cleared: boolean }>;
   /** DDL for the default rows and revisions tables (partitioned and clustered). */
   readonly defaultTablesSql: string;
   /** DDL for the reference `current_rows` view. */
@@ -224,6 +241,30 @@ export function createBigQueryReportingWarehouseSinkV1(
   return {
     defaultTablesSql: reportingWarehouseDefaultTablesSqlV1(tables),
     currentRowsViewSql: reportingWarehouseCurrentRowsViewSqlV1(tables),
+    async reset(resetOptions = {}) {
+      const cleared = await options.db.query(
+        `UPDATE adcp_reporting_warehouse_sinks
+            SET committed_cursor = NULL, planned_from_cursor = NULL, planned_to_cursor = NULL,
+                planned_revisions = NULL, planned_rows_attempt = 0, planned_revisions_attempt = 0,
+                updated_at = clock_timestamp()
+          WHERE sink_name = $1 AND ($2::boolean OR planned_to_cursor IS NULL)
+          RETURNING sink_name`,
+        [options.name, resetOptions.discardRetainedPlan === true]
+      );
+      if (cleared.rows.length === 0) {
+        const exists = await options.db.query(`SELECT 1 FROM adcp_reporting_warehouse_sinks WHERE sink_name = $1`, [
+          options.name,
+        ]);
+        if (exists.rows.length > 0) {
+          throw new Error(
+            'Warehouse sink has a retained batch plan whose load jobs may have succeeded; reconcile it against BigQuery, then call reset({ discardRetainedPlan: true })'
+          );
+        }
+      }
+      // Drop the old checkpoint's retention hold; the next committed batch registers a fresh one.
+      await options.store.removeFeedConsumer(options.name);
+      return { cleared: cleared.rows.length > 0 };
+    },
     async runOnce(runOptions = {}) {
       const signal = runOptions.signal;
       await options.db.query(
@@ -278,8 +319,11 @@ export function createBigQueryReportingWarehouseSinkV1(
             page = await options.store.changesAfter({ ...position, cursor: readCursor });
           }
         } catch (error) {
-          if (error instanceof ReportingChangeCursorExpiredError && state.committed_cursor === null) {
-            const cursor = readCursor ?? error.cursor;
+          // Compare the code, not the class: the store and the sink may load
+          // through different module formats (CJS and ESM).
+          if ((error as { code?: unknown } | null)?.code === 'CURSOR_EXPIRED' && state.committed_cursor === null) {
+            const cursor = readCursor ?? (error as { cursor?: unknown }).cursor;
+            if (cursor !== undefined && typeof cursor !== 'string') throw error;
             if (cursor !== undefined) {
               try {
                 decodeReportingChangeCursorV1(cursor, position.account_id ?? null);

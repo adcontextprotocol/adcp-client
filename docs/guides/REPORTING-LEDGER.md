@@ -796,6 +796,26 @@ await store.saveFeedConsumerCursor('pacing', page.cursor); // holds back pruning
   that every consumer updated within `maxFeedHoldDays` (default 7) has passed.
   An older cursor throws `ReportingChangeCursorExpiredError`; resynchronize from
   `listCurrentRevisions`.
+- A read with no cursor can throw `ReportingChangeCursorExpiredError` too. `changesAfter`
+  re-reads the retention horizon after the page, so a prune that commits during
+  a consumer's first read rejects that page instead of returning one that skips
+  the pruned changes. Host startup code must handle `CURSOR_EXPIRED` on a first
+  read the same way as on a saved cursor: retry (the new read starts at the later
+  horizon) or resynchronize from `listCurrentRevisions`. Match on
+  `error.code === 'CURSOR_EXPIRED'` rather than `instanceof`, which fails when
+  the store and your code load through different module formats (CJS and ESM).
+- Consumer checkpoints are forward-only. `saveFeedConsumerCursor(name, cursor)`
+  ignores a cursor behind the saved one in the same feed scope, so a delayed or
+  stale acknowledgment cannot pull the retention hold backward. It resolves
+  `true` when the checkpoint was written and `false` when it was ignored (an
+  equal position also resolves `false` with `{ refreshUnchanged: false }`). To
+  rewind a consumer on purpose, for example to replay changes, pass
+  `{ rewind: true }`; the saved position and retention hold move back to that
+  cursor, which must still be inside the retained history. Without it a rewound
+  consumer would keep its old, newer hold, pruning could remove exactly what it
+  is about to read, and its next read would throw `CURSOR_EXPIRED`.
+  `removeFeedConsumer(name)` unregisters a consumer so it stops holding back
+  pruning; it resolves `true` when a registration was removed.
 - Period retention honours the same hold: `retireExpiredPeriods` does not retire
   a period while a live consumer has not read its changes. A consumer that
   stays silent past `maxFeedHoldDays` stops holding, and its unread changes can
@@ -875,6 +895,20 @@ setInterval(() => {
   that starting cursor before rejecting, so later ticks and restarted workers
   continue to report the gap. This does not acknowledge the missing changes or
   renew their retention hold. Resynchronize from current revisions before resuming.
+- A brand-new sink can hit that rejection from a harmless startup race: pruning
+  commits during its very first read, after the changes it lost were already
+  past retention and held by nobody. Every later tick then rejects with
+  `CURSOR_EXPIRED` because the sink keeps reporting that gap. Clear it with
+  `await sink.reset()`, which resets the sink to start from the oldest retained
+  change and unregisters its feed consumer (stop every worker with that sink
+  name first). Without the API, the equivalent by hand is
+  `UPDATE adcp_reporting_warehouse_sinks SET committed_cursor = NULL WHERE sink_name = '<name>'`
+  followed by `store.removeFeedConsumer('<name>')`. `reset()` refuses while a
+  batch plan is retained, because that batch's BigQuery load jobs may have
+  succeeded; reconcile the plan against BigQuery, then call
+  `reset({ discardRetainedPlan: true })`. It does not touch the warehouse: a sink
+  that already loaded history reloads the retained revisions, so empty the
+  destination tables first or use a new sink name against new tables.
 - Stop old sink workers before relying on these overlap guarantees. If an
   earlier overlapping run left a plan whose starting cursor differs from the
   committed cursor, the sink rejects it before loading. Reconcile the retained

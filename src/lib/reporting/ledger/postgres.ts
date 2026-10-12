@@ -1443,6 +1443,13 @@ ${managedDueArm}       )
    * transaction still in flight, so no commit is ever skipped. A cursor older
    * than the retained history throws `ReportingChangeCursorExpiredError`;
    * resynchronize from `listCurrentRevisions`.
+   *
+   * A read without a `cursor` can throw `ReportingChangeCursorExpiredError`
+   * (`code === 'CURSOR_EXPIRED'`) too. The horizon is re-read after the page,
+   * so a prune that commits mid-read rejects the page instead of returning one
+   * that silently skips the pruned changes. Retrying the read starts from the
+   * new, later horizon. Match on `error.code` rather than `instanceof`, which
+   * fails when the error crosses a CJS/ESM module boundary.
    */
   async changesAfter(
     input: {
@@ -1556,15 +1563,26 @@ ${managedDueArm}       )
   /**
    * Record a named durable consumer's position. Registered consumers hold
    * back change-table pruning until `maxFeedHoldDays` after their last update.
-   * Within the same feed scope, delayed checkpoints cannot move backward.
+   *
+   * Checkpoints are forward-only within a feed scope: a cursor behind the
+   * saved one is ignored, so a delayed or stale acknowledgment cannot pull the
+   * retention hold back. Resolves `true` when the checkpoint was written and
+   * `false` when it was ignored (behind the saved position, or equal with
+   * `refreshUnchanged: false`). To rewind a consumer deliberately, for example
+   * to replay changes, pass `rewind: true`; the saved position and retention
+   * hold then move to `cursor`, which must still be inside the retained
+   * history or the next read throws `ReportingChangeCursorExpiredError`.
+   * Switching the feed scope (account to deployment or back) always replaces
+   * the position.
+   *
    * Set `refreshUnchanged: false` to recover an acknowledgment without
    * renewing the retention hold when its position has not advanced.
    */
   async saveFeedConsumerCursor(
     name: string,
     cursor: string,
-    options: { refreshUnchanged?: boolean } = {}
-  ): Promise<void> {
+    options: { refreshUnchanged?: boolean; rewind?: boolean } = {}
+  ): Promise<boolean> {
     if (!this.changeFeed) throw new Error('saveFeedConsumerCursor requires the store changeFeed option');
     let account: string | null;
     try {
@@ -1574,22 +1592,46 @@ ${managedDueArm}       )
       throw new RangeError('feed consumer cursor is invalid');
     }
     const decoded = decodeReportingChangeCursorV1(cursor, account);
-    await this.query(
+    const result = await this.query(
       `INSERT INTO adcp_reporting_feed_consumers (consumer_name, account_id, cursor_xid, cursor_seq)
        VALUES ($1, $2, $3::text::xid8, $4::bigint)
        ON CONFLICT (consumer_name) DO UPDATE
           SET account_id = EXCLUDED.account_id, cursor_xid = EXCLUDED.cursor_xid,
               cursor_seq = EXCLUDED.cursor_seq, updated_at = clock_timestamp()
-        WHERE adcp_reporting_feed_consumers.account_id IS DISTINCT FROM EXCLUDED.account_id
+        WHERE $6::boolean
+           OR adcp_reporting_feed_consumers.account_id IS DISTINCT FROM EXCLUDED.account_id
            OR CASE WHEN EXCLUDED.account_id IS NULL
               THEN (adcp_reporting_feed_consumers.cursor_xid, adcp_reporting_feed_consumers.cursor_seq)
                    < (EXCLUDED.cursor_xid, EXCLUDED.cursor_seq)
                 OR ($5::boolean AND (adcp_reporting_feed_consumers.cursor_xid, adcp_reporting_feed_consumers.cursor_seq)
                    = (EXCLUDED.cursor_xid, EXCLUDED.cursor_seq))
               ELSE adcp_reporting_feed_consumers.cursor_seq < EXCLUDED.cursor_seq
-                OR ($5::boolean AND adcp_reporting_feed_consumers.cursor_seq = EXCLUDED.cursor_seq) END`,
-      [name, account, account === null ? decoded.xid! : null, decoded.seq, options.refreshUnchanged !== false]
+                OR ($5::boolean AND adcp_reporting_feed_consumers.cursor_seq = EXCLUDED.cursor_seq) END
+       RETURNING consumer_name`,
+      [
+        name,
+        account,
+        account === null ? decoded.xid! : null,
+        decoded.seq,
+        options.refreshUnchanged !== false,
+        options.rewind === true,
+      ]
     );
+    return result.rows.length > 0;
+  }
+
+  /**
+   * Unregister a durable consumer so it stops holding back change-table
+   * pruning and period retention. Resolves `true` when a registration was
+   * removed. Saving a cursor under the same name registers it again.
+   */
+  async removeFeedConsumer(name: string): Promise<boolean> {
+    if (!this.changeFeed) throw new Error('removeFeedConsumer requires the store changeFeed option');
+    const result = await this.query(
+      `DELETE FROM adcp_reporting_feed_consumers WHERE consumer_name = $1 RETURNING consumer_name`,
+      [name]
+    );
+    return result.rows.length > 0;
   }
 
   /**
