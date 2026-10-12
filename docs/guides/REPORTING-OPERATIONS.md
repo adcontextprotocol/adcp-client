@@ -136,13 +136,20 @@ Alert on these row-storage signals:
 - `ROWS_INTEGRITY_FAILED` or `ROWS_UNAVAILABLE` from reads. These are never
   normal, and buyers see `SERVICE_UNAVAILABLE` for the affected revision.
 - A growing count of `adcp_reporting_row_write_intents` in `sweeping` state,
-  or `sweepRowWriteIntents` reporting failures. Provider deletes are failing.
+  or `sweepRowWriteIntents` reporting failures. Provider deletes are failing;
+  failed intents back off (one minute, doubling, capped at six hours) rather than
+  blocking others. `skippedUnconfigured` counts expired uploads whose binding this
+  host does not configure, and `overdue` (expired more than 24 hours ago, still
+  unswept) means no host is handling them and their objects are leaking. The
+  maintenance helper reports both through `onError`.
 - The `snapshot compaction` task reporting `failed` revisions. Provider deletes
   are failing; the revisions stay `pruning` (reads already answer not-found) and
   the next pass resumes them.
-- `retireExpiredPeriods` returning `failed` IDs. Usually a binding was removed
-  from configuration while revisions still reference it; keep retired bindings
-  configured.
+- `retireExpiredPeriods` returning `failed` IDs or a non-empty `stuck` list.
+  Usually a binding was removed from configuration while revisions still
+  reference it; keep retired bindings configured. A failing period retries with
+  backoff (up to six hours) and does not block other periods; `stuck` lists
+  those that have failed five or more times, with their cause.
 - `ReportingChangeCursorExpiredError` (`code === 'CURSOR_EXPIRED'`) in a
   consumer. Usually it fell behind retention and must resynchronize from
   `listCurrentRevisions`. A first read with no cursor can also throw it when a

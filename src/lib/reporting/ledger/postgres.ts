@@ -367,6 +367,25 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_obligation_tombstones (
 );
 CREATE INDEX IF NOT EXISTS adcp_reporting_obligation_tombstones_account
   ON adcp_reporting_obligation_tombstones (account_id, configuration_id, period_ordinal);
+-- Retirement retry state. A period whose external deletes fail on every pass
+-- backs off instead of holding a slot at the head of every pass. Guarded on the
+-- catalog because ADD COLUMN IF NOT EXISTS takes ACCESS EXCLUSIVE even when the
+-- column exists, which would block a rerun behind ordinary traffic.
+DO $tombstone_retry$
+DECLARE
+  tombstones regclass := to_regclass('adcp_reporting_obligation_tombstones');
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = tombstones AND attname = 'attempts' AND NOT attisdropped) THEN
+    ALTER TABLE adcp_reporting_obligation_tombstones ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = tombstones AND attname = 'next_attempt_at' AND NOT attisdropped) THEN
+    ALTER TABLE adcp_reporting_obligation_tombstones ADD COLUMN next_attempt_at TIMESTAMPTZ;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = tombstones AND attname = 'last_failure' AND NOT attisdropped) THEN
+    ALTER TABLE adcp_reporting_obligation_tombstones ADD COLUMN last_failure TEXT;
+  END IF;
+END
+$tombstone_retry$;
 `.trim();
 
 /** Constraint installed by {@link REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION}. */
@@ -520,6 +539,17 @@ export class ReportingLedgerContinuityError extends Error {
     super(message);
     this.name = 'ReportingLedgerContinuityError';
   }
+}
+
+/** Attempts after which a still-failing retirement or sweep is reported as persistent. */
+const REPORTING_PERSISTENT_FAILURE_ATTEMPTS = 5;
+
+/**
+ * SQL interval for retrying after `attemptsExpr` consecutive failures: one minute, doubling
+ * each time, capped at six hours.
+ */
+function backoffIntervalSql(attemptsExpr: string): string {
+  return `(LEAST(21600, 60 * power(2, LEAST(${attemptsExpr} - 1, 12))) * INTERVAL '1 second')`;
 }
 
 /** Bounded global cleanup for expired cursor snapshots and changes checkpoints. */
@@ -1440,7 +1470,12 @@ ${managedDueArm}       )
    * Host change feed. Omit `cursor` to start from the oldest retained change.
    * Account-scoped feeds order by sequence; the deployment-wide feed orders by
    * `(xid, seq)` and returns only changes whose transaction precedes every
-   * transaction still in flight, so no commit is ever skipped. A cursor older
+   * transaction still in flight, so no commit is ever skipped. An account page
+   * also ends before the first change whose transaction has not finished, as
+   * defense in depth against a change that commits late. An empty page can
+   * therefore mean either caught up or held back by an older open transaction.
+   * A ledger database must have exactly one writer SDK; see
+   * `docs/guides/REPORTING-LEDGER.md`. A cursor older
    * than the retained history throws `ReportingChangeCursorExpiredError`;
    * resynchronize from `listCurrentRevisions`.
    *
@@ -1525,10 +1560,20 @@ ${managedDueArm}       )
     // the `seq::text AS seq` output column and sorts as text ('100' < '95').
     const columns = `seq::text AS seq, xid::text AS xid, account_id, record_kind, record_id, obligation_id,
       to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS recorded_at`;
+    // The account feed orders by seq, which equals commit order only when every writer takes the
+    // account lock before nextval. Defense in depth for a writer that does not: stop the page at
+    // the first change whose transaction is not below every in-flight transaction
+    // (`xid >= xmin`). A plain `xid < xmin` filter would not do, because seq order and xid order
+    // can differ, and it would hand out a later change while skipping an earlier one it
+    // excluded. Truncating keeps the page a prefix of seq order. This narrows the window for a
+    // second writer but does not close it for every interleaving: one writer SDK per database
+    // remains the contract.
+    // The row scan is still served by the (account_id, seq) index.
     const result =
       account !== null
-        ? await this.query<ChangeRow>(
-            `SELECT ${columns} FROM adcp_reporting_changes
+        ? await this.query<ChangeRow & { in_flight: boolean }>(
+            `SELECT ${columns}, xid >= pg_snapshot_xmin(pg_current_snapshot()) AS in_flight
+               FROM adcp_reporting_changes
               WHERE account_id = $1 AND seq > $2::bigint AND ($3::text[] IS NULL OR record_kind = ANY($3))
               ORDER BY adcp_reporting_changes.seq LIMIT $4`,
             [account, position.seq, kinds, limit]
@@ -1541,6 +1586,10 @@ ${managedDueArm}       )
               ORDER BY adcp_reporting_changes.xid, adcp_reporting_changes.seq LIMIT $4`,
             [position.xid ?? '0', position.seq, kinds, limit]
           );
+    if (account !== null) {
+      const blocked = (result.rows as (ChangeRow & { in_flight: boolean })[]).findIndex(row => row.in_flight);
+      if (blocked !== -1) result.rows.length = blocked;
+    }
     // Pruning can commit between the horizon and page queries. Check the
     // original position again so a missing change cannot become a new cursor.
     assertRetained(position, await readHorizon());
@@ -1741,8 +1790,16 @@ ${managedDueArm}       )
   }): Promise<{
     retired: number;
     failed: string[];
-    /** Secret-free cause per failed period: a row-store code or the error class name. */
+    /** Secret-free cause per period that failed this pass: a row-store code or the error class name. */
     failures: { reporting_obligation_id: string; cause: string }[];
+    /** Retiring periods currently backing off after a failure; they are not attempted this pass. */
+    deferred: number;
+    /**
+     * Periods that have failed at least five attempts and
+     * are still retiring (at most 20, worst first). They need operator attention, for example a
+     * removed binding or a permanent provider error.
+     */
+    stuck: { reporting_obligation_id: string; attempts: number; cause: string }[];
   }> {
     if (!Number.isSafeInteger(input.statusRetentionDays) || input.statusRetentionDays < 1) {
       throw new RangeError('statusRetentionDays must be a positive integer');
@@ -1770,13 +1827,21 @@ ${managedDueArm}       )
                            AND (change.xid, change.seq) > (consumer.cursor_xid, consumer.cursor_seq))
                        OR (consumer.account_id = change.account_id AND change.seq > consumer.cursor_seq)))`
         : '';
+    // Resumes (tombstoned, interrupted or failed periods) are guaranteed at most half
+    // the pass, rounded up, ahead of fresh periods; a resume beyond that only fills
+    // slots fresh periods leave empty. A resume that failed is excluded until its
+    // backoff elapses, so a period that fails on every pass cannot hold a slot at the
+    // head of the queue.
     const candidates = await this.query<{ obligation_id: string; account_id: string }>(
       `SELECT obligation_id, account_id FROM (
-         SELECT tombstone.obligation_id, tombstone.account_id, 0 AS resume, tombstone.period_end
+         SELECT tombstone.obligation_id, tombstone.account_id, 0 AS resume, tombstone.attempts, tombstone.period_end,
+                CASE WHEN row_number() OVER (ORDER BY tombstone.attempts, tombstone.period_end, tombstone.obligation_id)
+                          <= (($1::integer + 1) / 2) THEN 0 ELSE 1 END AS tier
            FROM adcp_reporting_obligation_tombstones tombstone
           WHERE tombstone.state = 'retiring' AND ($2::text IS NULL OR tombstone.account_id = $2)
+            AND (tombstone.next_attempt_at IS NULL OR tombstone.next_attempt_at <= clock_timestamp())
          UNION ALL
-         SELECT obligation.obligation_id, obligation.account_id, 1, obligation.period_end
+         (SELECT obligation.obligation_id, obligation.account_id, 1, 0, obligation.period_end, 0
            FROM adcp_reporting_obligations obligation
           WHERE ($2::text IS NULL OR obligation.account_id = $2)
             AND obligation.period_end + ($3::integer * INTERVAL '1 day') <= clock_timestamp()
@@ -1791,8 +1856,10 @@ ${managedDueArm}       )
                              WHERE tombstone.obligation_id = obligation.obligation_id)
             ${materializationHold}
             ${feedHold}
+          ORDER BY obligation.period_end, obligation.obligation_id
+          LIMIT $1)
        ) candidate
-       ORDER BY resume, period_end, obligation_id
+       ORDER BY tier, resume, attempts, period_end, obligation_id
        LIMIT $1`,
       feedHold ? [limit, input.account_id ?? null, recordDays, holdDays] : [limit, input.account_id ?? null, recordDays]
     );
@@ -1806,14 +1873,56 @@ ${managedDueArm}       )
         retired += 1;
       } catch (error) {
         if (error instanceof ReportingLedgerPeriodRetiredError) continue;
+        const cause = isReportingRowStoreError(error) ? error.code : error instanceof Error ? error.name : 'Error';
         failed.push(candidate.obligation_id);
-        failures.push({
-          reporting_obligation_id: candidate.obligation_id,
-          cause: isReportingRowStoreError(error) ? error.code : error instanceof Error ? error.name : 'Error',
-        });
+        failures.push({ reporting_obligation_id: candidate.obligation_id, cause });
+        // An abort is shutdown, not a fault: it must not push the period into backoff.
+        if (!input.signal?.aborted) await this.recordRetirementFailure(candidate.obligation_id, cause);
       }
     }
-    return { retired, failed, failures };
+    const scope = input.account_id ?? null;
+    const deferred = Number(
+      (
+        await this.query<{ n: string }>(
+          `SELECT count(*) AS n FROM adcp_reporting_obligation_tombstones
+            WHERE state = 'retiring' AND next_attempt_at > clock_timestamp()
+              AND ($1::text IS NULL OR account_id = $1)`,
+          [scope]
+        )
+      ).rows[0]!.n
+    );
+    const stuck = (
+      await this.query<{ obligation_id: string; attempts: number; last_failure: string | null }>(
+        `SELECT obligation_id, attempts, last_failure FROM adcp_reporting_obligation_tombstones
+          WHERE state = 'retiring' AND attempts >= $2 AND ($1::text IS NULL OR account_id = $1)
+          ORDER BY attempts DESC, retiring_at, obligation_id LIMIT 20`,
+        [scope, REPORTING_PERSISTENT_FAILURE_ATTEMPTS]
+      )
+    ).rows.map(row => ({
+      reporting_obligation_id: row.obligation_id,
+      attempts: row.attempts,
+      cause: row.last_failure ?? 'Error',
+    }));
+    return { retired, failed, failures, deferred, stuck };
+  }
+
+  /**
+   * Record a failed retirement attempt on the period's tombstone and push its next
+   * attempt out by an exponential backoff. Best effort: a failure to record only
+   * means the period is retried on the next pass.
+   */
+  private async recordRetirementFailure(obligationId: string, cause: string): Promise<void> {
+    try {
+      await this.query(
+        `UPDATE adcp_reporting_obligation_tombstones
+            SET attempts = attempts + 1, last_failure = $2,
+                next_attempt_at = clock_timestamp() + ${backoffIntervalSql('attempts + 1')}
+          WHERE obligation_id = $1 AND state = 'retiring'`,
+        [obligationId, cause]
+      );
+    } catch {
+      // Retried on the next pass without backoff.
+    }
   }
 
   private async retirePeriod(
@@ -2185,12 +2294,39 @@ ${managedDueArm}       )
    * Interrupted sweeps resume.
    */
   async sweepRowWriteIntents(
-    input: { limit?: number; account_id?: string; signal?: AbortSignal } = {}
-  ): Promise<{ swept: number; objectsDeleted: number; failed: number }> {
+    input: { limit?: number; account_id?: string; overdueAfterSeconds?: number; signal?: AbortSignal } = {}
+  ): Promise<{
+    swept: number;
+    objectsDeleted: number;
+    /** Intents whose sweep failed this pass. Each backs off before its next attempt. */
+    failed: number;
+    /**
+     * Expired intents with objects to delete through a binding this host does not configure. They
+     * are left untouched for a host that configures it; they are not failures of this host.
+     */
+    skippedUnconfigured: number;
+    /** Expired intents backing off after a failed sweep, not attempted this pass. */
+    deferred: number;
+    /**
+     * Intents expired for longer than `overdueAfterSeconds` (default 24 hours) and still not swept,
+     * including ones backing off. Their objects are leaking: check that a host configures their
+     * binding and that provider deletes succeed.
+     */
+    overdue: number;
+  }> {
     const limit = input.limit ?? 100;
     positiveInteger(limit, 'limit');
+    const overdueAfter = input.overdueAfterSeconds ?? 24 * 3600;
+    positiveInteger(overdueAfter, 'overdueAfterSeconds');
     const tables = await this.optionalTables();
-    if (!tables.has('adcp_reporting_row_write_intents')) return { swept: 0, objectsDeleted: 0, failed: 0 };
+    if (!tables.has('adcp_reporting_row_write_intents')) {
+      return { swept: 0, objectsDeleted: 0, failed: 0, skippedUnconfigured: 0, deferred: 0, overdue: 0 };
+    }
+    const configured = this.rowStorage.objectBindingIds();
+    const due = `($1::text IS NULL OR account_id = $1) AND (state = 'sweeping' OR expires_at <= clock_timestamp())`;
+    // An intent with no recorded objects needs no binding to sweep. One with objects is skipped
+    // unless this host configures its binding. Intents that failed before back off, and fresh
+    // intents are taken ahead of retries, so a failing intent cannot hold the head of every pass.
     const expired = await this.query<{
       row_binding_id: string;
       account_id: string;
@@ -2198,10 +2334,11 @@ ${managedDueArm}       )
       content_sha256: string;
     }>(
       `SELECT row_binding_id, account_id, row_set_id, content_sha256 FROM adcp_reporting_row_write_intents
-        WHERE ($2::text IS NULL OR account_id = $2)
-          AND (state = 'sweeping' OR expires_at <= clock_timestamp())
-        ORDER BY expires_at LIMIT $1`,
-      [limit, input.account_id ?? null]
+        WHERE ${due}
+          AND (next_sweep_at IS NULL OR next_sweep_at <= clock_timestamp())
+          AND (row_binding_id = ANY($2::text[]) OR created_objects = '[]'::jsonb)
+        ORDER BY sweep_attempts, expires_at LIMIT $3`,
+      [input.account_id ?? null, configured, limit]
     );
     let swept = 0;
     let objectsDeleted = 0;
@@ -2235,9 +2372,38 @@ ${managedDueArm}       )
         objectsDeleted += deleted;
       } catch {
         failed += 1;
+        // An abort is shutdown, not a fault: it must not push the intent into backoff.
+        if (!input.signal?.aborted) {
+          await this.query(
+            `UPDATE adcp_reporting_row_write_intents
+                SET sweep_attempts = sweep_attempts + 1,
+                    next_sweep_at = clock_timestamp() + ${backoffIntervalSql('sweep_attempts + 1')}
+              WHERE row_binding_id = $1 AND row_set_id = $2 AND content_sha256 = $3`,
+            key
+          ).catch(() => undefined);
+        }
       }
     }
-    return { swept, objectsDeleted, failed };
+    // What is still waiting after this pass, so a host can see work no pass is reaching.
+    const backlog = (
+      await this.query<{ skipped: string; deferred: string; overdue: string }>(
+        `SELECT count(*) FILTER (WHERE row_binding_id <> ALL($2::text[]) AND created_objects <> '[]'::jsonb) AS skipped,
+                count(*) FILTER (WHERE (row_binding_id = ANY($2::text[]) OR created_objects = '[]'::jsonb)
+                                   AND next_sweep_at > clock_timestamp()) AS deferred,
+                count(*) FILTER (WHERE expires_at <= clock_timestamp() - ($3::integer * INTERVAL '1 second')) AS overdue
+           FROM adcp_reporting_row_write_intents
+          WHERE ${due}`,
+        [input.account_id ?? null, configured, overdueAfter]
+      )
+    ).rows[0]!;
+    return {
+      swept,
+      objectsDeleted,
+      failed,
+      skippedUnconfigured: Number(backlog.skipped),
+      deferred: Number(backlog.deferred),
+      overdue: Number(backlog.overdue),
+    };
   }
 
   /**

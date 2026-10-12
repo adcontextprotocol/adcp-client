@@ -288,6 +288,13 @@ export class ReportingRowStorageV1 {
     }
   }
 
+  /** IDs of the object bindings this host configures, the only ones it can delete objects through. */
+  objectBindingIds(): string[] {
+    return Object.entries(this.bindings)
+      .filter(([, binding]) => binding.kind === 'object')
+      .map(([id]) => id);
+  }
+
   /** Probe the schema and every provider, and register (or verify) every configured binding. Idempotent. */
   ready(): Promise<void> {
     this.readied ??= this.register().catch(error => {

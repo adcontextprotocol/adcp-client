@@ -184,7 +184,7 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
   test('retiring one period leaves the object for the other, and retiring both removes it', async () => {
     const { first, second, chunkA } = await sharedPair();
     await expire(first);
-    assert.deepEqual(await retire(), { retired: 1, failed: [], failures: [] });
+    assert.deepEqual(await retire(), { retired: 1, failed: [], failures: [], deferred: 0, stuck: [] });
     assert.equal(
       await count(`SELECT count(*) AS n FROM adcp_reporting_row_sets WHERE obligation_id = $1`, [
         first.fixture.obligation.reporting_obligation_id,
@@ -195,7 +195,7 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     assert.deepEqual(await adjustmentRows(second), current);
 
     await expire(second);
-    assert.deepEqual(await retire(), { retired: 1, failed: [], failures: [] });
+    assert.deepEqual(await retire(), { retired: 1, failed: [], failures: [], deferred: 0, stuck: [] });
     assert.equal(existsSync(fileOf(chunkA)), false, 'the last referencing period deletes the object');
   });
 
@@ -203,7 +203,7 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     const { first, second, chunkA } = await sharedPair();
     await expire(first);
     await expire(second);
-    assert.deepEqual(await retire(), { retired: 2, failed: [], failures: [] });
+    assert.deepEqual(await retire(), { retired: 2, failed: [], failures: [], deferred: 0, stuck: [] });
     assert.equal(existsSync(fileOf(chunkA)), false);
   });
 
@@ -241,7 +241,14 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
         JSON.stringify([{ objectKey: chunkA.object_key, nativeVersion: chunkA.native_version }]),
       ]
     );
-    assert.deepEqual(await store.sweepRowWriteIntents(), { swept: 1, objectsDeleted: 0, failed: 0 });
+    assert.deepEqual(await store.sweepRowWriteIntents(), {
+      swept: 1,
+      objectsDeleted: 0,
+      failed: 0,
+      skippedUnconfigured: 0,
+      deferred: 0,
+      overdue: 0,
+    });
     assert.ok(existsSync(fileOf(chunkA)), 'a committed reference keeps the swept object');
     assert.deepEqual(await adjustmentRows(first), current);
 
@@ -273,7 +280,14 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
       `UPDATE adcp_reporting_row_write_intents SET expires_at = clock_timestamp() - INTERVAL '1 minute'
         WHERE row_set_id = 'radj_inflight_creator'`
     );
-    assert.deepEqual(await store.sweepRowWriteIntents(), { swept: 1, objectsDeleted: 1, failed: 0 });
+    assert.deepEqual(await store.sweepRowWriteIntents(), {
+      swept: 1,
+      objectsDeleted: 1,
+      failed: 0,
+      skippedUnconfigured: 0,
+      deferred: 0,
+      overdue: 0,
+    });
     assert.equal(existsSync(fileOf(chunkA)), false, 'nothing references it any more');
   });
 
