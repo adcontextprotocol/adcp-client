@@ -35,6 +35,8 @@ export interface ProvisionedAccount {
 export interface BuyerAccountStorage {
   get(key: string): Promise<ProvisionedAccount | undefined>;
   set(key: string, account: ProvisionedAccount): Promise<void>;
+  /** Read the ID alias within this exact seller/caller scope, equivalent to get(scope + ':' + accountReferenceKey({ account_id })). */
+  getByAccountId?(accountId: string, scope: string): Promise<ProvisionedAccount | undefined>;
   /** Atomically insert (undefined revision) or replace. Store the supplied new revision. Required for multi-process safety. */
   compareAndSet?(key: string, expectedRevision: number | undefined, account: ProvisionedAccount): Promise<boolean>;
 }
@@ -154,11 +156,16 @@ export class BuyerAccountRegistry {
     this.entries.set(key, structuredClone(entry));
   }
   async get(account: AccountReference): Promise<ProvisionedAccount | undefined> {
+    const scope = this.scope();
     const key = this.key(account);
     let entry = this.storage?.compareAndSet ? await this.storage.get(key) : this.entries.get(key);
     if (!entry && !this.storage?.compareAndSet) {
       const persisted = await this.storage?.get(key);
       entry = this.entries.get(key) ?? persisted; // A setup may have settled while storage was reading.
+    }
+    if (!entry && 'account_id' in account && this.storage?.getByAccountId) {
+      const persisted = await this.storage.getByAccountId(account.account_id, scope);
+      entry = this.storage.compareAndSet ? persisted : (this.entries.get(key) ?? persisted);
     }
     if (key !== this.key(account) || (entry && accountReferenceKey(entry.account) !== accountReferenceKey(account)))
       return undefined;
@@ -168,6 +175,10 @@ export class BuyerAccountRegistry {
     if (entry?.account_id && this.invalidatedHandles.has(this.key({ account_id: entry.account_id })))
       return { ...structuredClone(entry), status: 'unknown' };
     return entry ? structuredClone(entry) : undefined;
+  }
+  /** Lookup by seller-issued ID, partitioned by the registry's seller and caller. */
+  async getByAccountId(accountId: string): Promise<ProvisionedAccount | undefined> {
+    return this.get({ account_id: accountId });
   }
   async ensure(
     account: AccountReference,

@@ -2,7 +2,7 @@
 
 An account reference selects a provisioned account at that seller. Discovery
 does not provision it. Until setup is complete, send a top-level `brand` on
-tools that support public discovery, and omit `account`.
+tools that support public discovery, and omit `account`, when your account policy permits it.
 
 ```ts
 import { AgentClient, createProductCache } from '@adcp/sdk';
@@ -50,15 +50,53 @@ completed rows to `accounts.observeSync([key], rows)` (or let the original
 `syncAccounts` completion handle update the registry). Do not resubmit unresolved tasks.
 
 For a seller that requires operator authentication, use `resolveAccount()` to
-select an active account returned by `list_accounts`. An account ID echoed by
-`sync_accounts` is a seller handle; implicit sellers still require the natural
-key on subsequent calls. Do not replace it with `{ account_id }` automatically.
+select an active account returned by `list_accounts`.
 
-`accountPolicy` defaults to `'off'` to preserve existing requests. Opt-in
+For implicit sellers, the default `accountReferenceMode: 'auto'` selects
+`{ account_id }` after provisioning only when the seller declares
+`account.stable_account_id: true` (normalized as `capabilities.account.stableAccountId`),
+or both the effective wire version and seller contract require IDs under AdCP 4+.
+For these sellers, `resolveAccount()` returns the ID reference, and requests
+using a provisioned natural key are rewritten to the same ID across discovery,
+creative sync, media buys, and other account-scoped tasks. `sync_accounts`
+provisioning and explicit `list_accounts` filters keep their authored references.
+An ID returned by a legacy implicit seller alone does not establish that IDs
+are accepted; those sellers still receive the natural key. Set
+`accountReferenceMode: 'natural-key'` to retain natural-key selection on implicit
+sellers. Explicitly supplied ID references are preserved in either mode.
+
+`resolveAccount()` still returns a wire reference by default, so existing code
+can pass the result directly as `account`. To retain the seller's handle even
+on a legacy implicit seller, request the detailed result:
+
+```ts
+const resolved = await client.resolveAccount({
+  ...account,
+  includeDetails: true,
+});
+// reference follows the seller's contract; account_id is the returned seller ID.
+const catalog = await client.getProducts({
+  account: resolved.reference,
+  buying_mode: 'brief',
+  brief: 'Display inventory',
+});
+console.log(resolved.account_id, resolved.naturalKey);
+```
+
+`naturalKey` is present for implicit provisioning; `account_id` is omitted if
+a legacy seller did not return one. A seller declaring stable IDs must return
+an ID; otherwise reference selection refuses the request with `AccountSetupRequiredError`.
+
+`accountPolicy` defaults to `'off'` to disable provisioning gates. ID selection
+still applies to known registry entries, including entries created by `accounts.ensure()`.
+Opt-in
 `'auto'` omits unknown accounts on public discovery tools that support `brand`;
 it refuses required-account discovery, async discovery, and mutations until
 the registry knows the key. `'strict'` refuses every unknown account-carrying
-request. Both policies require an active account before spend commitments.
+request. On stable-ID sellers, `'strict'` also refuses `get_products` and
+`list_products` without an account reference, even when public discovery is
+available; provision an account and supply its reference. Both policies require
+an active account before spend commitments and `sync_creatives`.
 Explicit account filters on `list_accounts` remain filters.
 Call `listAccounts` first when adopting these policies with existing opaque
 account IDs so the registry knows those seller handles.
@@ -69,9 +107,15 @@ runs do not establish accounts. After verifying an `account.status_changed`
 notification, call `client.accounts.applyStatusChange({ account_id })` to repair
 from authoritative `list_accounts`. The notification's status is not trusted as
 a snapshot, which avoids reordered deliveries overwriting current state.
+Use `client.accounts.getByAccountId(account_id)` to look up the ID alias;
+it includes `aliases` for the provisioned natural keys and is isolated by
+seller and caller scope. The lookup works in memory and after a storage-backed restart.
 
 The registry is in memory by default. Set `accountStorage` to an adapter with
-`get(key)` and `set(key, entry)` for persistence. For multiple processes, add
+`get(key)` and `set(key, entry)` for persistence. The registry writes both
+natural-key entries and ID aliases. An optional `getByAccountId(accountId, scope)`
+storage method can read those aliases through an index; existing get/set adapters
+continue to work. For multiple processes, add
 revision-checked `compareAndSet` writes and dispatch ledger hooks; see
 [buyer storage and scheduling](BUYER-STORAGE.md). Keys partition by seller URI,
 protocol, and caller scope. Client-credentials OAuth uses the stable client ID, token endpoint, scopes, and resource. Authorization-code OAuth pins this client's initial grant fingerprint, keeping distinct user grants apart while automatic refreshes preserve its partition. Create a new client when switching users. Other credential modes fingerprint credentials;

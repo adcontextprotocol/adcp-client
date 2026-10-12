@@ -78,5 +78,5 @@ export type {
   TaskResultMetadata,
 } from '../core/ConversationTypes';
 export type { AgentConfig } from '../types/adcp';
-export type { ResolveAccountOptions, ListedAccount } from '../core/account-resolution';
+export type { ResolveAccountOptions, ResolveAccountResult, ListedAccount } from '../core/account-resolution';
 export type { CreativeFormatWireMode } from '../v2/projection/creative-delivery';

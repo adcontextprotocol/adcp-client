@@ -89,6 +89,8 @@ export interface MediaBuyFeatures {
  * Account management capabilities declared by the seller
  */
 export interface AccountCapabilities {
+  /** Seller-issued IDs are stable and accepted wherever an account reference is used. */
+  stableAccountId?: boolean;
   /** Optional account change feed; absence does not imply support. */
   changeFeed?: AccountChangeFeedCapabilities;
   /**
@@ -683,6 +685,9 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
   let account: AccountCapabilities | undefined;
   if (response.account) {
     account = {
+      ...(typeof response.account.stable_account_id === 'boolean' && {
+        stableAccountId: response.account.stable_account_id,
+      }),
       requireOperatorAuth: response.account.require_operator_auth ?? false,
       authorizationEndpoint: response.account.authorization_endpoint,
       supportedBilling: response.account.supported_billing ?? [],

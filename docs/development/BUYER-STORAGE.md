@@ -58,6 +58,14 @@ retry delivery, not acknowledgement.
 ## Account provisioning
 
 Legacy `BuyerAccountStorage.get/set` adapters retain single-process coalescing.
+The registry persists an ID alias as well as the natural-key row whenever the
+seller returns `account_id`. `client.accounts.getByAccountId(id)` reads that
+alias, including its natural-key `aliases`, in the current seller/caller scope.
+Adapters may optionally implement `getByAccountId(accountId, scope)` to retrieve
+the same ID-alias row as `get(scope + ':' + accountReferenceKey({ account_id: accountId }))`.
+Return an entry whose `account` is `{ account_id: accountId }`; CAS adapters must
+return the ID alias's own revision. Apply the exact supplied scope to the lookup,
+never a global account-ID index. Existing get/set adapters need no changes.
 Multi-process and crash-uncertainty protection require
 `compareAndSet(key, expectedRevision, entry)`. An undefined expected revision
 means insert only. Store the supplied `(expectedRevision ?? 0) + 1` revision

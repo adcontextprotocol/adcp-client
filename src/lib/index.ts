@@ -2061,7 +2061,7 @@ export type {
   ToolInfo,
   FeatureName,
 } from './utils/capabilities';
-export type { ResolveAccountOptions, ListedAccount } from './core/account-resolution';
+export type { ResolveAccountOptions, ResolveAccountResult, ListedAccount } from './core/account-resolution';
 
 // Buyer-side creative delivery helpers
 export { inlineCreativesForPackages, inlineCreativesForPackagesLegacy } from './utils/creative-delivery';

@@ -206,7 +206,7 @@ export class AccountPaymentRequiredError extends BuyerSetupError {
 }
 export class AccountNotProvisionedError extends AccountNotFoundError {
   constructor(
-    public readonly account: import('../types').AccountReference,
+    public readonly account: import('../types').AccountReference | undefined,
     public readonly taskName: string
   ) {
     super(`${taskName} requires an account provisioned at this seller. Call client.accounts.ensure first.`);
