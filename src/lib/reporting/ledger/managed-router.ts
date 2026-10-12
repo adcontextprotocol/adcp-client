@@ -1,5 +1,6 @@
 import type { ReportingVerification } from '../../types';
 import {
+  REPORTING_ADAPTER_PROBE_DEADLINE_MILLISECONDS_V1,
   REPORTING_DESTINATION_PATTERNS_V1,
   REPORTING_DESTINATION_TRANSPORT_PATTERN_V1,
   type ReportingDestinationAuthorizationV1,
@@ -100,7 +101,10 @@ export interface CreateReportingManagedDeliveryAdapterRouterOptionsV1 {
    * route's pattern.
    */
   legacyDefault?: string;
-  /** Per-route budget for `probe()`. Defaults to 10 seconds. */
+  /**
+   * Per-route budget for `probe()`. Defaults to 10 seconds and must be below the
+   * runtime's 30 second probe deadline, so a hung route is still named in the startup error.
+   */
   probeTimeoutMilliseconds?: number;
 }
 
@@ -164,6 +168,13 @@ export function createReportingManagedDeliveryAdapterRouterV1(
   const probeTimeout = options.probeTimeoutMilliseconds ?? DEFAULT_ROUTE_PROBE_TIMEOUT_MILLISECONDS;
   if (!Number.isSafeInteger(probeTimeout) || probeTimeout <= 0) {
     throw new RangeError('probeTimeoutMilliseconds must be a positive safe integer');
+  }
+  if (probeTimeout >= REPORTING_ADAPTER_PROBE_DEADLINE_MILLISECONDS_V1) {
+    // The runtime bounds the whole probe. A longer per-route budget would let
+    // that deadline fire first, and the startup error would no longer name the route.
+    throw new RangeError(
+      `probeTimeoutMilliseconds must be below the runtime's ${REPORTING_ADAPTER_PROBE_DEADLINE_MILLISECONDS_V1} ms probe deadline`
+    );
   }
 
   const routes: InternalRoute[] = [];

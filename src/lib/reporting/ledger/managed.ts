@@ -34,8 +34,13 @@ const DEFAULT_LEASE_MILLISECONDS = 65_000;
 const DEFAULT_DELIVERY_DEADLINE_MILLISECONDS = 60_000;
 const MINIMUM_SETTLEMENT_GRACE_MILLISECONDS = 5_000;
 const DEFAULT_RESOURCE_MAX_BYTES = 64 * 1024 * 1024;
-/** Upper bound on an adapter's startup probe, so a hung provider cannot hang startup. */
-const ADAPTER_PROBE_DEADLINE_MILLISECONDS = 30_000;
+/**
+ * Upper bound on an adapter's startup probe, so a hung provider cannot hang startup.
+ * A router's per-route probe budget must stay under it, or this deadline fires
+ * first and the failing route's id never reaches the startup error.
+ */
+export const REPORTING_ADAPTER_PROBE_DEADLINE_MILLISECONDS_V1 = 30_000;
+const ADAPTER_PROBE_DEADLINE_MILLISECONDS = REPORTING_ADAPTER_PROBE_DEADLINE_MILLISECONDS_V1;
 const MAX_DESCRIPTOR_BYTES = 1024 * 1024;
 const MAX_NODE_TIMER_DELAY_MILLISECONDS = 2_147_483_647;
 const NANOSECONDS_PER_MILLISECOND = 1_000_000n;

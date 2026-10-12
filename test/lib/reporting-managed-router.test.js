@@ -179,6 +179,9 @@ describe('createReportingManagedDeliveryAdapterRouterV1', () => {
       );
       assert.throws(build({ routes: [gcs()], legacyDefault: 'nope' }), /legacyDefault "nope" is not a route id/);
       assert.throws(build({ routes: [gcs()], probeTimeoutMilliseconds: 0 }), /probeTimeoutMilliseconds/);
+      // At or above the runtime's own probe deadline the route id would be lost from the startup error.
+      assert.throws(build({ routes: [gcs()], probeTimeoutMilliseconds: 30_000 }), /below the runtime's 30000 ms/);
+      assert.doesNotThrow(build({ routes: [gcs()], probeTimeoutMilliseconds: 29_999 }));
       assert.doesNotThrow(build({ routes: [gcs(), s3()], legacyDefault: 's3' }));
     });
   });
