@@ -175,12 +175,17 @@ describe(
         ),
         'PASS'
       );
-      assert.equal(statusOf(report, 'cancelling a job is addressed to the destination project and location'), 'PASS');
+      assert.equal(
+        statusOf(
+          report,
+          'BigQuery accepts a cancel addressed with the destination project and location, and refuses wrong addresses'
+        ),
+        'PASS'
+      );
       assert.deepEqual(bigquery.state.droppedLoadFields, [], 'the service dropped nothing the sink sent');
-      assert.ok(bigquery.state.cancels.length >= 1, 'the cancel addressing check reached the client');
       assert.ok(
-        bigquery.state.cancels.every(entry => entry.projectId === 'dest-project-1' && entry.location === 'US'),
-        'cancel is addressed to the destination project and location'
+        bigquery.state.cancels.some(entry => entry.projectId === 'dest-project-1' && entry.location === 'US'),
+        'the addressing check cancelled a job in the destination project and location'
       );
       const probes = report.entries.filter(entry => /#3196/.test(entry.name));
       assert.equal(probes.length, 2);

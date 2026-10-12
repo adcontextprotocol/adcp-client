@@ -876,17 +876,26 @@ setInterval(() => {
 - `loadTimeoutMilliseconds` (default 10 minutes) is a client-side deadline for
   one load. When a load passes it, the sink asks BigQuery to cancel that job by
   its deterministic ID, in `projectId` and `location`, and rejects with the
-  plan retained. The next run finds the cancelled job finished with an error
-  and retries that table under a new attempt; if the cancel has not taken
-  effect yet it waits for the job. Set the deadline above your slowest expected
-  load, because a load that always needs longer is cancelled and retried every
-  run. BigQuery's server-side `jobTimeoutMs` is not used: the official client
-  builds a local-file load's `configuration.load` from the load options and
-  cannot set job-level fields, and BigQuery silently drops `labels` and
-  `jobTimeoutMs` found inside `configuration.load`. For the same reason the
-  `labels` option has no effect (it warns and is deprecated). Attribute load
-  cost through `INFORMATION_SCHEMA.JOBS`, filtering on `destination_table` or
-  on the `adcp_rr_` job ID prefix.
+  plan retained. The next run finds the cancelled job finished with an error,
+  advances that table's attempt and rejects; the run after that loads under the
+  new attempt. If the cancel has not taken effect yet it waits for the job.
+  Each attempt doubles the load deadline (up to 6 hours), so a slow but healthy
+  load converges; set the deadline above your slowest expected load to avoid
+  the cancelled attempts. Cancellation is best effort (BigQuery may finish the
+  job anyway, which the next run then accepts), a failed cancel other than "not
+  found" raises a `ADCP_BIGQUERY_SINK_CANCEL_FAILED` process warning, and a
+  status check that times out is not cancelled. BigQuery's server-side
+  `jobTimeoutMs` is not used: for a local-file load the official client builds
+  `configuration.load` from the load options and cannot set job-level fields,
+  and BigQuery silently drops `labels` and `jobTimeoutMs` found inside
+  `configuration.load`. (Staging the file in GCS and submitting the load with
+  `bigquery.createJob` can set both; the sink does not stage files.) For the
+  same reason the `labels` option has no effect (it warns once per process and
+  is deprecated). To attribute load cost, query
+  `` `region-<location>`.INFORMATION_SCHEMA.JOBS_BY_PROJECT `` (needs
+  `bigquery.jobs.listAll`; about 180 days of history), filtering on
+  `STARTS_WITH(job_id, 'adcp_rr_')` or on `destination_table`, and summing
+  `total_slot_ms` or `total_bytes_billed`.
 - Overlapping runs atomically claim one durable batch. Replays use that
   batch's job IDs; attempts and cursor commits compare the full saved plan.
   A stale run rejects without replacing another batch or rewinding either

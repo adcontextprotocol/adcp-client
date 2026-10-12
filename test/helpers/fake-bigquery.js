@@ -16,9 +16,8 @@
  * `state.droppedLoadFields`, so a sink that relies on them is caught offline.
  * `state.loadOptions` records the options each load call carried.
  *
- * `job().cancel()` is recorded in `state.cancels` and finishes a RUNNING job
- * with a `stopped` error, like BigQuery; `holdNext(tableId)` makes the next
- * load on that table accept its job (RUNNING) and never respond.
+ * `job().cancel()` is recorded in `state.cancels` (project and location as
+ * addressed) and, like BigQuery, answers 404 for a job it does not know.
  *
  * `query()` understands only the DDL and SELECT shapes the validation script
  * issues; anything else throws, so drift is loud.
@@ -41,7 +40,6 @@ function createFakeBigQuery({ clientProject = 'client-project', jobProject = 'de
     droppedLoadFields: [], // { jobId, fields } the service ignored inside configuration.load
     cancels: [], // { jobId, projectId, location } for every job().cancel()
   };
-  const holds = new Set();
   // Fields BigQuery defines on JobConfiguration, not on JobConfigurationLoad.
   const JOB_LEVEL_FIELDS = ['labels', 'jobTimeoutMs'];
 
@@ -87,7 +85,7 @@ function createFakeBigQuery({ clientProject = 'client-project', jobProject = 'de
             if (dropped.length) state.droppedLoadFields.push({ jobId, fields: dropped });
             const resource = {
               jobReference: { projectId: owner, jobId, location: options.location },
-              status: { state: holds.has(tableId) ? 'RUNNING' : 'DONE' },
+              status: { state: 'DONE' },
               configuration: {
                 load: { destinationTable: { projectId: project, datasetId, tableId }, ...load },
               },
@@ -96,7 +94,6 @@ function createFakeBigQuery({ clientProject = 'client-project', jobProject = 'de
               _tableKey: tableKey,
             };
             state.jobs.set(jobKey, resource);
-            if (holds.delete(tableId)) return new Promise(() => {});
             state.tables.get(tableKey).push(...lines);
             return [publicJob(resource)];
           },
@@ -120,12 +117,6 @@ function createFakeBigQuery({ clientProject = 'client-project', jobProject = 'de
         state.cancels.push({ jobId, projectId: options.projectId, location: options.location });
         const resource = state.jobs.get(`${project}/${jobId}`);
         if (!resource) throw apiError(404, `Not found: Job ${project}:${jobId}`);
-        if (resource.status.state === 'RUNNING') {
-          resource.status = {
-            state: 'DONE',
-            errorResult: { reason: 'stopped', message: 'Job execution was cancelled' },
-          };
-        }
         return [{ kind: 'bigquery#jobCancelResponse', job: publicJob(resource) }];
       },
     };
@@ -205,9 +196,6 @@ function createFakeBigQuery({ clientProject = 'client-project', jobProject = 'de
     dataset,
     job,
     query,
-    holdNext(tableId) {
-      holds.add(tableId);
-    },
   };
 }
 

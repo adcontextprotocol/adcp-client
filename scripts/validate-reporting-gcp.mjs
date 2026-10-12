@@ -454,6 +454,9 @@ async function bigquerySection(ctx) {
       // Scoped to the fixture account so unrelated open transactions in the
       // database cannot hold back the feed's snapshot horizon.
       account_id: ledger.accountId,
+      // Deprecated and ignored by the sink; passed so the check below catches a regression
+      // that would send it where BigQuery drops it.
+      labels: config.labels,
       loadTimeoutMilliseconds: 120_000,
       maxRevisionsPerBatch: 50,
       ...extra,
@@ -616,19 +619,47 @@ async function bigquerySection(ctx) {
       }
     );
 
-    await check(ctx, BQ, 'cancelling a job is addressed to the destination project and location', async () => {
-      // Cancelling an already-finished job is accepted and changes nothing, so this proves the
-      // addressing the sink uses on a client-side deadline (job(id, { projectId, location }).cancel()).
-      const jobId = jobMetadata?.rows?.jobReference?.jobId;
-      expect(jobId, 'no job id to cancel');
-      const [response] = await bigquery.job(jobId, { projectId: dest, location: config.location }).cancel();
-      expectEqual(response?.job?.jobReference?.projectId, dest, 'cancel response jobReference.projectId');
-      expectEqual(response?.job?.jobReference?.jobId, jobId, 'cancel response jobReference.jobId');
-      const [after] = await bigquery.job(jobId, { projectId: dest, location: config.location }).getMetadata();
-      expectEqual(after.status?.state, 'DONE', 'job state after the cancel request');
-      expect(!after.status?.errorResult, 'cancelling a finished job must not fail it');
-      return `${jobId} stayed DONE`;
-    });
+    await check(
+      ctx,
+      BQ,
+      'BigQuery accepts a cancel addressed with the destination project and location, and refuses wrong addresses',
+      async () => {
+        // Cancelling an already-finished job is accepted and changes nothing, so this proves the
+        // addressing the sink uses on a client-side deadline (job(id, { projectId, location }).cancel()).
+        const jobId = jobMetadata?.rows?.jobReference?.jobId;
+        expect(jobId, 'no job id to cancel');
+        const [response] = await bigquery.job(jobId, { projectId: dest, location: config.location }).cancel();
+        expectEqual(response?.job?.jobReference?.projectId, dest, 'cancel response jobReference.projectId');
+        expectEqual(response?.job?.jobReference?.jobId, jobId, 'cancel response jobReference.jobId');
+        const [after] = await bigquery.job(jobId, { projectId: dest, location: config.location }).getMetadata();
+        expectEqual(after.status?.state, 'DONE', 'job state after the cancel request');
+        expect(!after.status?.errorResult, 'cancelling a finished job must not fail it');
+        // Negative controls: a cancel is only meaningful if a wrong address is refused. A job that
+        // does not exist is a 404, and so is the right job addressed through the client's default
+        // project when the destination project differs.
+        const refused = async (id, jobOptions) => {
+          try {
+            await bigquery.job(id, jobOptions).cancel();
+            return false;
+          } catch (error) {
+            return error?.code === 404;
+          }
+        };
+        expect(
+          await refused(`${jobId}_does_not_exist`, { projectId: dest, location: config.location }),
+          'cancelling an unknown job was not refused with 404'
+        );
+        if (crossProject) {
+          expect(
+            await refused(jobId, { location: config.location }),
+            'cancelling the job through the client default project was not refused with 404'
+          );
+        }
+        return crossProject
+          ? `${jobId} stayed DONE; unknown job and wrong-project cancels were refused (404)`
+          : `${jobId} stayed DONE; an unknown job cancel was refused (404). Same project: set GCP_CLIENT_PROJECT to a different project to also prove the project addressing`;
+      }
+    );
 
     await check(ctx, BQ, 'a second runOnce is idle and loads nothing', async () => {
       const result = await sink.runOnce();
