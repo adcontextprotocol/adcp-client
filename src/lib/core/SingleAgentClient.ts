@@ -309,6 +309,11 @@ import {
 } from '../v2/projection/creative-delivery';
 import type { LegacyFormatConverter } from '../v2/projection/v1-to-v2';
 import {
+  formatOptionOriginFromRoutes,
+  undeclaredFormatOptionSelector,
+  type FormatOptionOrigin,
+} from '../v2/projection/legacy-routes';
+import {
   legacyFormatConverterFromCatalogSnapshots,
   type ProjectionCatalogSnapshot,
 } from '../v2/projection/catalog-snapshot';
@@ -2663,18 +2668,7 @@ export class SingleAgentClient {
           productId: product.product_id,
           optionRef: ref,
           refs,
-          ...(declared === false
-            ? {
-                undeclaredSelector: {
-                  format_kind: typeof option.format_kind === 'string' ? option.format_kind : '',
-                  ...(option.params !== undefined && { params: structuredClone(option.params) }),
-                  ...((typeof option.format_kind !== 'string' ||
-                    option.format_kind === 'custom' ||
-                    option.format_shape !== undefined ||
-                    option.format_schema !== undefined) && { unrepresentable: true as const }),
-                },
-              }
-            : {}),
+          ...(declared === false ? { undeclaredSelector: undeclaredFormatOptionSelector(option) } : {}),
         });
       }
     }
@@ -2714,18 +2708,22 @@ export class SingleAgentClient {
   }
 
   /**
-   * The direct selector for an option this client derived from the seller's
-   * legacy `format_ids`. Without a product id, every remembered route for the
-   * option must agree that the seller did not declare it.
+   * What this client's own discovery recorded about an option's origin.
+   * Without a product id, every remembered route for the option must agree
+   * that the seller did not declare it.
    */
-  private undeclaredFormatOptionSelector(
+  private cachedFormatOptionOrigin(
     account: unknown,
     ref: CanonicalLegacyOptionRef,
     productId: string | undefined
-  ): UndeclaredFormatOptionSelector | undefined {
+  ): FormatOptionOrigin | undefined {
+    const originOf = (route: Extract<CanonicalLegacyRoute, { kind: 'product' }>): FormatOptionOrigin =>
+      route.undeclaredSelector
+        ? { seller_declared: false, selector: route.undeclaredSelector }
+        : { seller_declared: true };
     if (productId !== undefined) {
       const route = this.routeForOption(account, productId, ref);
-      return route?.kind === 'product' ? route.undeclaredSelector : undefined;
+      return route?.kind === 'product' ? originOf(route) : undefined;
     }
     const accountScope = this.canonicalAccountScope(account);
     const routes = [...this.canonicalLegacyRoutes.values()].filter(
@@ -2734,19 +2732,39 @@ export class SingleAgentClient {
         (route.accountScope === accountScope || route.accountScope === 'none') &&
         this.sameCanonicalOptionRef(route.optionRef, ref)
     );
-    if (routes.length === 0 || routes.some(route => route.undeclaredSelector === undefined)) return undefined;
-    return routes[0]!.undeclaredSelector;
+    if (routes.length === 0) return undefined;
+    return originOf(routes.find(route => route.undeclaredSelector === undefined) ?? routes[0]!);
+  }
+
+  /**
+   * The direct selector for an option the seller did not declare, from the
+   * first source that knows the option's origin: the per-call resolver, this
+   * client's discovery, then the configured resolver. Resolvers carry origin
+   * only when built from persisted routes.
+   */
+  private undeclaredSelectorFor(
+    account: unknown,
+    ref: CanonicalLegacyOptionRef,
+    productId: string | undefined,
+    override: CanonicalFormatLegacyResolver | undefined
+  ) {
+    const origin =
+      formatOptionOriginFromRoutes(override, ref, productId) ??
+      this.cachedFormatOptionOrigin(account, ref, productId) ??
+      formatOptionOriginFromRoutes(this.config.canonicalFormatLegacyResolver, ref, productId);
+    return origin && !origin.seller_declared ? origin.selector : undefined;
   }
 
   private projectUndeclaredFormatOptions<T>(
     request: T,
     operation: 'create_media_buy' | 'update_media_buy' | 'sync_creatives',
     wireMode: CreativeFormatWireMode,
-    account: unknown
+    account: unknown,
+    override: CanonicalFormatLegacyResolver | undefined
   ): T {
     if (wireMode !== 'canonical') return request;
     return projectUndeclaredFormatOptionSelectors(request, operation, (ref, productId) =>
-      this.undeclaredFormatOptionSelector(account, ref, productId)
+      this.undeclaredSelectorFor(account, ref, productId, override)
     );
   }
 
@@ -7256,7 +7274,8 @@ export class SingleAgentClient {
         ),
         'create_media_buy',
         wireMode,
-        wireParams.account
+        wireParams.account,
+        canonicalFormatLegacyResolver
       ),
       inputHandler,
       taskOptions,
@@ -7367,7 +7386,8 @@ export class SingleAgentClient {
         ),
         'update_media_buy',
         wireMode,
-        params.account
+        params.account,
+        canonicalFormatLegacyResolver
       ),
       inputHandler,
       taskOptions,
@@ -7483,7 +7503,8 @@ export class SingleAgentClient {
       ),
       'sync_creatives',
       wireMode,
-      params.account
+      params.account,
+      canonicalFormatLegacyResolver
     );
     return this.executeAndHandle<SyncCreativesResponse>(
       'sync_creatives',

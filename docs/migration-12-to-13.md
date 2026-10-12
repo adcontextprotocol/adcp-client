@@ -391,6 +391,15 @@ Each `CanonicalFormatLegacyRoute` contains `product_id`, the stable
 resolver to `AgentClient` or `createAdcpServerFromPlatform()` without changing
 the existing resolver callback contract.
 
+Routes built with `legacyRoutesForProduct()` from products returned by
+`getProducts()` also record `seller_declared`. It is `false` when the SDK derived
+the option from a seller's legacy `format_ids`; such a route also carries
+`canonical_selector`, the `format_kind` + `params` that a canonical-wire write
+sends in place of the SDK-minted `format_option_id`, which the seller cannot
+resolve. An `AgentClient` given a resolver rebuilt from these routes applies
+that rewrite in another process, as it does after its own discovery. Routes
+without `seller_declared` leave canonical writes unchanged.
+
 Compatibility consumers that must retain top-level `format_ids[]` while
 publishing URL-free canonical declarations can use the additive projection:
 
