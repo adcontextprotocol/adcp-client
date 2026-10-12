@@ -317,7 +317,14 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
       `UPDATE adcp_reporting_row_write_intents SET expires_at = clock_timestamp() - INTERVAL '1 minute'
         WHERE row_set_id = 'radj_old_writer'`
     );
-    assert.deepEqual(await store.sweepRowWriteIntents(), { swept: 1, objectsDeleted: 1, failed: 0 });
+    assert.deepEqual(await store.sweepRowWriteIntents(), {
+      swept: 1,
+      objectsDeleted: 1,
+      failed: 0,
+      skippedUnconfigured: 0,
+      deferred: 0,
+      overdue: 0,
+    });
     assert.equal(existsSync(fileOf(chunkA)), false, 'the sweep reads the old keys too');
   });
 
