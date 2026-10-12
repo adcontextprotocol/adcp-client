@@ -270,6 +270,19 @@ version with the chunk manifest, restore the exact recorded version from bucket
 versioning or backups, and verify by reading the revision through `getRevision`.
 Never edit a chunk manifest or digest to match the stored bytes.
 
+Multi-transport managed delivery: when one runtime delivers through several
+transports behind the managed-delivery router, key alerts on the per-route
+worker counts (`deliveryFailuresByRoute`, `revocationFailuresByRoute`,
+`overdueByRoute`) instead of the totals, so one failing transport is not
+averaged away. A non-zero `~unrouted` count is a configuration problem, not a
+provider outage: a binding or destination authorization has no route (often a
+legacy authorization with no recorded transport and no `legacyDefault`). List
+those authorizations with `listDestinationAuthorizationsWithoutContract()`,
+then add the route or a `legacyDefault`. A startup probe failure names the
+failing route; fix that route's provider access before restarting, because
+offerings are not withdrawn at runtime. See "Multi-transport delivery with the
+router" in `REPORTING-LEDGER.md`.
+
 Clock skew: remove the host from service. Lease and event times use PostgreSQL
 where correctness needs a shared clock, while provider deadlines and process
 timeouts still depend on healthy host clocks.

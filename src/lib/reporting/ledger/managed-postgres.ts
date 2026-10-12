@@ -432,6 +432,7 @@ export class PostgresReportingManagedDeliveryStore
   private readonly statusRetentionDays: number | undefined;
   private readonly pendingRecoveryWindowSeconds: number | undefined;
   private policyRegistered = false;
+  private bindingAdmission: ((binding: ReportingManagedDeliveryBindingV1) => void) | undefined;
   private readonly notificationActivityPort?: ReportingLedgerNotificationActivityPortV1<ReportingLedgerTransactionV1>;
   /**
    * Durably records the agent-wide advertised recovery window.
@@ -1172,6 +1173,10 @@ export class PostgresReportingManagedDeliveryStore
     });
   }
 
+  setBindingAdmission(admit: ((binding: ReportingManagedDeliveryBindingV1) => void) | undefined): void {
+    this.bindingAdmission = admit;
+  }
+
   async installBinding(binding: ReportingManagedDeliveryBindingV1): Promise<{ inserted: boolean }> {
     positiveInteger(binding.resource_retention_days, 'resource_retention_days');
     if (binding.reconciliation_mode === 'consumer_receipt' && binding.verification_profile !== 'canonical_digest') {
@@ -1185,6 +1190,11 @@ export class PostgresReportingManagedDeliveryStore
     if (binding.semantic_fingerprint !== expectedFingerprint) {
       throw new Error('Managed binding semantic fingerprint does not match its immutable content');
     }
+    // Before any lock or write, and outside the transaction, so a refusal
+    // reaches the caller as the admission's own typed error rather than as a
+    // wrapped transaction failure. A delivery route can only be consulted
+    // about the immutable binding itself; everything stateful is checked below.
+    this.bindingAdmission?.(binding);
     await this.ensurePolicyRegistered();
     return this.transaction(async client => {
       // One lock order everywhere in this store: the exclusive policy
