@@ -1418,8 +1418,131 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     await pool.query('ALTER TABLE adcp_reporting_warehouse_sinks DROP COLUMN reset_generation');
     const sink = newSink(bigquery, { name: 'old_table', account_id: 'acct_old_table', db: pool, store: realStore });
     await assert.rejects(sink.runOnce(), /apply REPORTING_WAREHOUSE_SINK_MIGRATION again/);
+    await assert.rejects(sink.reset(), /apply REPORTING_WAREHOUSE_SINK_MIGRATION again/);
     await pool.query(sinkModule.REPORTING_WAREHOUSE_SINK_MIGRATION);
     assert.deepEqual(await sink.runOnce(), { idle: true, revisions: 0, rows: 0, missing: [] });
+  });
+
+  test('a run planned before reset() cannot commit over the identical plan claimed after it', async t => {
+    const { pool, store: realStore } = await isolatedWarehouseStore(t, 'gen_commit');
+    const account = 'acct_gen_commit';
+    const isolated = await createRowStorageFixture({ store: realStore, suffix: 'gen_commit', accountId: account });
+    await realStore.commitRevision(isolated.revision('rrev_gen_commit', 1, rows.slice(0, 1)), isolated.lease);
+    const bigquery = fakeBigQuery();
+    const staleClaimed = latch();
+    const resumeStale = latch();
+    const winnerClaimed = latch();
+    const resumeWinner = latch();
+    const gated = (claimed, resume) => {
+      let first = true;
+      return wrapStore(realStore, {
+        async getRevisionMetadata(...args) {
+          if (first) {
+            first = false;
+            claimed.resolve();
+            await resume.promise;
+          }
+          return realStore.getRevisionMetadata(...args);
+        },
+      });
+    };
+    const options = { name: 'gen_commit', account_id: account, db: pool };
+    const stale = newSink(bigquery, { ...options, store: gated(staleClaimed, resumeStale) }).runOnce();
+    stale.catch(() => {});
+    await staleClaimed.promise;
+    // The operator discards that plan and resets; the next run claims an identical plan (same range, same revisions).
+    await newSink(bigquery, options).reset({ discardRetainedPlan: true });
+    const winner = newSink(bigquery, { ...options, store: gated(winnerClaimed, resumeWinner) }).runOnce();
+    winner.catch(() => {});
+    await winnerClaimed.promise;
+    resumeStale.resolve();
+    await assert.rejects(stale, /plan changed/);
+    const mid = (await pool.query('SELECT * FROM adcp_reporting_warehouse_sinks')).rows[0];
+    assert.equal(mid.committed_cursor, null, 'the stale run did not commit the new generation’s plan');
+    assert.equal(mid.planned_rows_attempt, 0);
+    assert.equal(mid.reset_generation, 1);
+    resumeWinner.resolve();
+    assert.equal((await winner).revisions, 1);
+    assert.notEqual(
+      (await pool.query('SELECT committed_cursor FROM adcp_reporting_warehouse_sinks')).rows[0].committed_cursor,
+      null
+    );
+  });
+
+  test('a run that read its state before reset() cannot claim a plan after it', async t => {
+    const { pool, store: realStore } = await isolatedWarehouseStore(t, 'gen_claim');
+    const account = 'acct_gen_claim';
+    const isolated = await createRowStorageFixture({ store: realStore, suffix: 'gen_claim', accountId: account });
+    await realStore.commitRevision(isolated.revision('rrev_gen_claim', 1, rows.slice(0, 1)), isolated.lease);
+    const bigquery = fakeBigQuery();
+    const read = latch();
+    const resume = latch();
+    let paused = false;
+    const options = { name: 'gen_claim', account_id: account, db: pool };
+    const stale = newSink(bigquery, {
+      ...options,
+      store: wrapStore(realStore, {
+        async changesAfter(input) {
+          const page = await realStore.changesAfter(input);
+          if (!paused) {
+            paused = true;
+            read.resolve();
+            await resume.promise;
+          }
+          return page;
+        },
+      }),
+    }).runOnce();
+    stale.catch(() => {});
+    await read.promise;
+    await newSink(bigquery, options).reset();
+    resume.resolve();
+    await assert.rejects(stale, /plan changed/);
+    assert.equal(bigquery.jobs.size, 0, 'the stale run submitted nothing');
+    assert.equal(
+      (await pool.query('SELECT planned_to_cursor FROM adcp_reporting_warehouse_sinks')).rows[0].planned_to_cursor,
+      null
+    );
+  });
+
+  test('a cold-start expiry pin from before reset() is not written after it', async t => {
+    const { pool, store: realStore } = await isolatedWarehouseStore(t, 'gen_pin');
+    const account = 'acct_gen_pin';
+    const isolated = await createRowStorageFixture({ store: realStore, suffix: 'gen_pin', accountId: account });
+    await realStore.commitRevision(isolated.revision('rrev_gen_pin', 1, rows.slice(0, 1)), isolated.lease);
+    await pool.query(`UPDATE adcp_reporting_changes SET recorded_at = clock_timestamp() - INTERVAL '40 days'`);
+    const horizonRead = latch();
+    const resumeRead = latch();
+    let intercepted = false;
+    const observedStore = new ledger.PostgresReportingLedgerStore(
+      {
+        connect: pool.connect.bind(pool),
+        async query(sql, values) {
+          const result = await pool.query(sql, values);
+          if (!intercepted && sql.includes('SELECT pruned_through')) {
+            intercepted = true;
+            horizonRead.resolve();
+            await resumeRead.promise;
+          }
+          return result;
+        },
+      },
+      { acknowledgeIsolatedDatabase: true, rowStorage: true, changeFeed: true }
+    );
+    const bigquery = fakeBigQuery();
+    const options = { name: 'gen_pin', account_id: account, db: pool };
+    const losing = newSink(bigquery, { ...options, store: observedStore }).runOnce();
+    losing.catch(() => {});
+    await horizonRead.promise;
+    await newSink(bigquery, { ...options, store: realStore }).reset();
+    assert.equal((await realStore.pruneChanges({ changeRetentionDays: 30 })).deleted, 2);
+    resumeRead.resolve();
+    await assert.rejects(losing, { code: 'CURSOR_EXPIRED' });
+    assert.equal(
+      (await pool.query('SELECT committed_cursor FROM adcp_reporting_warehouse_sinks')).rows[0].committed_cursor,
+      null,
+      'a pin read before the reset must not wedge the reset sink again'
+    );
   });
 
   test('a cold-start expiry pin cannot replace a competing pending plan', async t => {

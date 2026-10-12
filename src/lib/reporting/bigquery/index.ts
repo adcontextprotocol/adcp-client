@@ -258,15 +258,17 @@ export function createBigQueryReportingWarehouseSinkV1(
       if (!removeConsumer) {
         throw new TypeError('reset() needs a store with removeFeedConsumer (PostgresReportingLedgerStore has it)');
       }
-      const cleared = await options.db.query(
-        `UPDATE adcp_reporting_warehouse_sinks
+      const cleared = await options.db
+        .query(
+          `UPDATE adcp_reporting_warehouse_sinks
             SET committed_cursor = NULL, planned_from_cursor = NULL, planned_to_cursor = NULL,
                 planned_revisions = NULL, planned_rows_attempt = 0, planned_revisions_attempt = 0,
                 reset_generation = reset_generation + 1, updated_at = clock_timestamp()
           WHERE sink_name = $1 AND ($2::boolean OR planned_to_cursor IS NULL)
           RETURNING sink_name`,
-        [options.name, resetOptions.discardRetainedPlan === true]
-      );
+          [options.name, resetOptions.discardRetainedPlan === true]
+        )
+        .catch(missingMigration);
       if (cleared.rows.length === 0) {
         const exists = await options.db.query(`SELECT 1 FROM adcp_reporting_warehouse_sinks WHERE sink_name = $1`, [
           options.name,
@@ -310,16 +312,7 @@ export function createBigQueryReportingWarehouseSinkV1(
              FROM adcp_reporting_warehouse_sinks WHERE sink_name = $1`,
             [options.name]
           )
-          .catch(error => {
-            // 42703 undefined_column: a sink table created before reset_generation existed.
-            if ((error as { code?: unknown } | null)?.code === '42703') {
-              throw new Error(
-                'The adcp_reporting_warehouse_sinks table is missing columns; apply REPORTING_WAREHOUSE_SINK_MIGRATION again (it is idempotent)',
-                { cause: error }
-              );
-            }
-            throw error;
-          })
+          .catch(missingMigration)
       ).rows[0]!;
       if (state.planned_to_cursor !== null && state.planned_from_cursor !== state.committed_cursor) {
         throw new Error(
@@ -517,6 +510,17 @@ export function createBigQueryReportingWarehouseSinkV1(
       return { idle: plan.revisions.length === 0, revisions: revisionLines.length, rows: rowLines.length, missing };
     },
   };
+}
+
+/** 42703 undefined_column: a sink table created before `reset_generation` existed. */
+function missingMigration(error: unknown): never {
+  if ((error as { code?: unknown } | null)?.code === '42703') {
+    throw new Error(
+      'The adcp_reporting_warehouse_sinks table is missing columns; apply REPORTING_WAREHOUSE_SINK_MIGRATION again (it is idempotent)',
+      { cause: error }
+    );
+  }
+  throw error;
 }
 
 /** Deterministic load job ID for one planned change-feed range. */
