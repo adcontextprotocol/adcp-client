@@ -35,4 +35,4 @@ async function useResult() {
   void key;
 }
 
-void [oldSingle, oldAgent, defaultSingle, defaultAgent, explicitFalse, detailedSingle, dynamic, useResult];
+void [oldSingle, oldAgent, defaultSingle, defaultAgent, explicitFalse, detailedSingle, dynamic, dynamicWire, useResult];
