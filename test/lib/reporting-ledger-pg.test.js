@@ -48,9 +48,22 @@ describe('PostgresReportingLedgerStore', { skip: !DATABASE_URL && 'PostgreSQL UR
     }
   });
 
-  test('unreadable issues participate in PostgreSQL health-filtered snapshots', async () => {
+  test('unreadable issues participate in PostgreSQL health-filtered snapshots', async t => {
     const ledger = require('../../dist/lib/reporting/ledger/index.js');
     const source = require('../../dist/lib/reporting/source/index.js');
+    const { Pool } = require('pg');
+    const unreadableSchema = `${schema}_unreadable`;
+    await bootstrapPool.query(`CREATE SCHEMA "${unreadableSchema}"`);
+    const unreadablePool = new Pool({
+      connectionString: DATABASE_URL,
+      options: `-c search_path="${unreadableSchema}"`,
+    });
+    t.after(async () => {
+      await unreadablePool.end();
+      await bootstrapPool.query(`DROP SCHEMA IF EXISTS "${unreadableSchema}" CASCADE`);
+    });
+    await unreadablePool.query(reportingLedgerMigrationForTest(ledger));
+    const store = newReportingLedgerStoreForTest(ledger, unreadablePool, { acknowledgeIsolatedDatabase: true });
     const request = source.redactedReportingSourceRequestV1();
     const now = Date.now();
     const start = new Date(now - 3_600_000).toISOString();

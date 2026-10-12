@@ -610,7 +610,7 @@
     ".claude-plugin/**/*",
     "compliance/cache/3.0.25/**/*",
     "compliance/cache/3.1.24/**/*",
-    "compliance/cache/3.2.3/**/*",
+    "compliance/cache/3.2.4/**/*",
     "ADCP_VERSION",
     "docs/README.md",
     "docs/TYPE-SUMMARY.md",

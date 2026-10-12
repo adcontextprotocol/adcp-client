@@ -13,7 +13,7 @@
  * `src/lib/types/error-codes.ts`.
  *
  * Source: `schemas/cache/3.2.4/manifest.json` (adcp_version: 3.2.4, generated_at:
- * 2026-10-11T15:40:08.526Z). Re-run `npm run sync-schemas` then
+ * 2026-10-11T21:23:01.435Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
