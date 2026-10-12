@@ -2015,7 +2015,7 @@ export class SingleAgentClient {
         ...this.config.accountRegistryOptions,
         provisionOwnsDispatchBoundary: true,
         maxEntries: this.config.accountRegistryMaxEntries,
-        evictAtCapacity: () => !this.accountRegistryExplicitlyAccessed && !this.accountRegistryOptedIn(),
+        evictAtCapacity: () => !this.accountRegistryOptedIn(),
         normalizeOptions: async (options, taskOptions) => {
           if (options.billing) return options;
           const caps = await this.getCapabilities(taskOptions);
@@ -8326,7 +8326,7 @@ export class SingleAgentClient {
               'Caller credentials changed during provisioning.'
             );
         }
-        const syncedRow = result.data.accounts.find(
+        const matchingRows = result.data.accounts.filter(
           row =>
             row.brand?.domain === hints.brand!.domain &&
             row.operator === hints.operator &&
@@ -8337,6 +8337,13 @@ export class SingleAgentClient {
             (!hints.timezone || row.timezone === hints.timezone) &&
             (row.sandbox === undefined || (row.sandbox === true) === (hints.sandbox === true))
         );
+        if (registry && matchingRows.length > 1)
+          throw new AccountRequiredError(
+            'implicit',
+            'resolveAccount',
+            'sync_accounts returned ambiguous rows for the requested account.'
+          );
+        const syncedRow = matchingRows[0];
         if (!syncedRow || syncedRow.action === 'failed') {
           throw new AccountRequiredError(
             'implicit',
@@ -8344,12 +8351,27 @@ export class SingleAgentClient {
             'sync_accounts did not establish an active account for the requested brand and operator.'
           );
         }
-        const current = registry ? await registry.get(account) : syncedRow;
+        let current = registry ? await registry.get(account) : syncedRow;
         if (registry && registryScope !== this.accountScope())
           throw new AccountRequiredError(
             'implicit',
             'resolveAccount',
             'Caller credentials changed during provisioning.'
+          );
+        if (registry && !current && registry.captureObservation() === observationEpoch) {
+          // An automatic cache eviction is not a seller status change. Fall back
+          // only when no newer authoritative repair could have superseded this row.
+          current = syncedRow;
+        }
+        if (
+          current &&
+          current.account_id !== syncedRow.account_id &&
+          registry?.captureObservation() === observationEpoch
+        )
+          throw new AccountRequiredError(
+            'implicit',
+            'resolveAccount',
+            'The seller account binding changed during resolution. Resolve the account again.'
           );
         if (current?.status === 'pending_approval') throw new AccountPendingApprovalError(account, current.account_id);
         if (current?.status !== 'active')

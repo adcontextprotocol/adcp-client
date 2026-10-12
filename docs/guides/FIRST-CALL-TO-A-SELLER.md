@@ -119,8 +119,9 @@ it includes `aliases` for the provisioned natural keys and is isolated by
 seller and caller scope. The lookup works in memory and after a storage-backed restart.
 Default-off stable-ID resolution also remembers recent bindings in a bounded
 routing cache while continuing to sync on every resolution. That automatic cache
-evicts old entries at capacity; explicitly used provisioning registries retain
-their capacity checks and setup state.
+evicts old entries at capacity, including after read-only ID lookups. Calling
+`accounts.ensure()` or opting into registry configuration retains provisioning
+state and capacity checks.
 
 The registry is in memory by default. Set `accountStorage` to an adapter with
 `get(key)` and `set(key, entry)` for persistence. The registry writes both

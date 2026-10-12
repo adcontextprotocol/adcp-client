@@ -115,6 +115,7 @@ export class BuyerAccountRegistry {
   private observationFloor = 0;
   private statusEpochs = new Map<string, number>();
   private readonly maxEntries: number;
+  private provisioningAccessed = false;
   private readonly normalizeOptions?: BuyerAccountRegistryOptions['normalizeOptions'];
   constructor(
     private scope: () => string,
@@ -149,7 +150,7 @@ export class BuyerAccountRegistry {
   }
   private remember(key: string, entry: ProvisionedAccount): void {
     if (!this.entries.has(key) && this.entries.size >= this.maxEntries) {
-      if (!this.storage && !this.registryOptions.evictAtCapacity?.())
+      if (!this.storage && !this.canEvict())
         throw new AccountSetupRequiredError(
           'Account registry capacity reached; configure durable storage or increase maxEntries.'
         );
@@ -159,6 +160,9 @@ export class BuyerAccountRegistry {
     // binding cannot evict the ID that was just published for it.
     this.entries.delete(key);
     this.entries.set(key, structuredClone(entry));
+  }
+  private canEvict(): boolean {
+    return !this.provisioningAccessed && this.registryOptions.evictAtCapacity?.() === true;
   }
   async get(account: AccountReference): Promise<ProvisionedAccount | undefined> {
     const scope = this.scope();
@@ -191,6 +195,7 @@ export class BuyerAccountRegistry {
     taskOptions?: TaskOptions,
     onTaskResult?: (result: TaskResult<unknown>) => void
   ): Promise<ProvisionedAccount> {
+    this.provisioningAccessed = true;
     throwIfAborted(taskOptions?.signal);
     if (
       taskOptions?.timeout !== undefined &&
@@ -503,7 +508,7 @@ export class BuyerAccountRegistry {
     if (idRef) {
       aliases.set(accountReferenceKey(ref), structuredClone(ref));
       if (aliases.size > this.maxEntries) {
-        if (!this.registryOptions.evictAtCapacity?.())
+        if (!this.canEvict())
           throw new AccountSetupRequiredError('Account alias capacity reached; increase registry maxEntries.');
         aliases.delete(aliases.keys().next().value!);
       }

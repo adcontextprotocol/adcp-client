@@ -248,9 +248,27 @@ test('automatic aliases are bounded, while explicitly used registries retain cap
   for (let i = 0; i < 8; i++) {
     const key = { ...account, brand: { domain: `brand${i}.example` } };
     assert.deepEqual(await c.resolveAccount(key), { account_id: 'seller-id' });
-    assert.ok((await c._accounts.getByAccountId('seller-id')).aliases.length <= 4);
+    assert.ok((await c.accounts.getByAccountId('seller-id')).aliases.length <= 4);
   }
   await assert.rejects(c.accounts.ensure({ ...account, brand: { domain: 'new.example' } }), /capacity reached/);
+});
+
+test('stable-ID resolution rejects ambiguous rows instead of reusing a cached active binding', async () => {
+  const c = client();
+  await c.resolveAccount(account);
+  c.syncAccounts = async () => ({ ...result(), data: { accounts: [...rows('suspended'), ...rows()] } });
+  await assert.rejects(c.resolveAccount(account), /ambiguous rows/);
+});
+
+test('automatic cache eviction after observation does not turn a successful sync into an error', async () => {
+  const c = client();
+  await c.resolveAccount(account);
+  const observe = c._accounts.observeSync.bind(c._accounts);
+  c._accounts.observeSync = async (...args) => {
+    await observe(...args);
+    c._accounts.entries.clear();
+  };
+  assert.deepEqual(await c.resolveAccount(account), { account_id: 'seller-id' });
 });
 
 test('a natural binding is only published after its ID alias is available', async () => {
