@@ -3,7 +3,7 @@
 import type { Client as MCPClient } from '@modelcontextprotocol/sdk/client/index.js';
 import { randomUUID } from 'node:crypto';
 import type { AccountReference, AgentConfig } from '../types';
-import type { ResolveAccountOptions } from './account-resolution';
+import type { ResolveAccountOptions, ResolveAccountResult } from './account-resolution';
 import type {
   MCPWebhookPayload,
   GetBrandIdentityRequest,
@@ -1614,7 +1614,22 @@ export class AgentClient {
   }
 
   /** Resolve the seller's account contract into a reusable wire account reference. */
-  async resolveAccount(hints: ResolveAccountOptions = {}, options?: TaskOptions): Promise<AccountReference> {
+  async resolveAccount(
+    hints: ResolveAccountOptions & { includeDetails: true },
+    options?: TaskOptions
+  ): Promise<ResolveAccountResult>;
+  async resolveAccount(
+    hints?: ResolveAccountOptions & { includeDetails?: false },
+    options?: TaskOptions
+  ): Promise<AccountReference>;
+  async resolveAccount(
+    hints: ResolveAccountOptions & { includeDetails?: boolean },
+    options?: TaskOptions
+  ): Promise<AccountReference | ResolveAccountResult>;
+  async resolveAccount(
+    hints: ResolveAccountOptions & { includeDetails?: boolean } = {},
+    options?: TaskOptions
+  ): Promise<AccountReference | ResolveAccountResult> {
     return this.client.resolveAccount(hints, this.withSession('resolve_account', options), result =>
       this.retainSession(result)
     );

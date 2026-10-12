@@ -4,6 +4,13 @@ import { AccountAmbiguousError, AccountRequiredError } from '../errors';
 export type ListedAccount = ListAccountsResponse['accounts'][number];
 type NaturalAccountReference = Extract<AccountReference, { brand: unknown }>;
 
+/** Account selection plus the seller handle, even when a legacy seller still needs the natural key. */
+export interface ResolveAccountResult {
+  reference: AccountReference;
+  account_id?: string;
+  naturalKey?: NaturalAccountReference;
+}
+
 export function sameCountrySet(expected?: readonly string[], actual?: readonly string[]): boolean {
   if (expected === undefined) return true;
   if (!actual || expected.length !== actual.length) return false;

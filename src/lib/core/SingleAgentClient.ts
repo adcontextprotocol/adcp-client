@@ -265,7 +265,12 @@ import {
 } from '../errors';
 import { BuyerAccountRegistry, type AccountPolicy, type BuyerAccountStorage } from './buyer-account-registry';
 import type { ProductCache } from './product-cache';
-import { sameCountrySet, selectListedAccount, type ResolveAccountOptions } from './account-resolution';
+import {
+  sameCountrySet,
+  selectListedAccount,
+  type ResolveAccountOptions,
+  type ResolveAccountResult,
+} from './account-resolution';
 
 import { normalizeRequestParams } from '../utils/request-normalizer';
 import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
@@ -1353,8 +1358,10 @@ export interface StatusHandlerErrorContext {
  * Configuration for SingleAgentClient (and multi-agent client)
  */
 export interface SingleAgentClientConfig extends ConversationConfig {
-  /** Default off preserves existing wire requests; auto/strict use the provisioning registry. */
+  /** Default off disables provisioning gates; auto/strict use the provisioning registry. */
   accountPolicy?: AccountPolicy;
+  /** Auto selects seller IDs only with stable_account_id or an AdCP 4+ wire contract. Natural-key preserves legacy implicit references. */
+  accountReferenceMode?: 'auto' | 'natural-key';
   accountStorage?: BuyerAccountStorage;
   accountRegistryMaxEntries?: number;
   accountRegistryOptions?: Pick<
@@ -2008,6 +2015,7 @@ export class SingleAgentClient {
         ...this.config.accountRegistryOptions,
         provisionOwnsDispatchBoundary: true,
         maxEntries: this.config.accountRegistryMaxEntries,
+        evictAtCapacity: () => !this.accountRegistryOptedIn(),
         normalizeOptions: async (options, taskOptions) => {
           if (options.billing) return options;
           const caps = await this.getCapabilities(taskOptions);
@@ -2066,28 +2074,90 @@ export class SingleAgentClient {
     };
   }
 
+  private usesStableAccountIds(capabilities: AdcpCapabilities): boolean {
+    if (capabilities._synthetic) return false;
+    return (
+      capabilities.account?.stableAccountId === true ||
+      (isAdcpVersionAtLeast(this.config.wireAdcpVersion ?? this.resolvedAdcpVersion, '4.0.0') &&
+        (isAdcpVersionAtLeast(capabilities.servedVersion, '4.0.0') ||
+          (!capabilities.servedVersion &&
+            capabilities.supportedVersions?.some(version => isAdcpVersionAtLeast(version, '4.0.0')) === true)))
+    );
+  }
+
+  private accountWireReference(
+    account: AccountReference,
+    accountId: string | undefined,
+    capabilities: AdcpCapabilities
+  ): AccountReference {
+    if (
+      'account_id' in account ||
+      this.config.accountReferenceMode === 'natural-key' ||
+      !this.usesStableAccountIds(capabilities)
+    )
+      return account;
+    if (!accountId)
+      throw new AccountSetupRequiredError(
+        'The seller declares stable account IDs but did not return an account_id. Reconcile with syncAccounts.'
+      );
+    return { account_id: accountId };
+  }
+
   private async applyAccountPolicy(task: string, params: any, options?: TaskOptions): Promise<any> {
     const policy = this.config.accountPolicy ?? 'off';
     const ref =
       params?.account ?? (typeof params?.account_id === 'string' ? { account_id: params.account_id } : undefined);
     if (
-      policy === 'off' ||
       options?.skipAccountValidation ||
       options?.preserveGovernedPayload ||
-      !ref ||
-      task === 'list_accounts'
+      task === 'list_accounts' ||
+      task === 'sync_accounts'
     )
       return params;
+    if (!ref) {
+      if (
+        policy === 'strict' &&
+        ['get_products', 'list_products'].includes(task) &&
+        this.usesStableAccountIds(await this.getCapabilities(options))
+      )
+        throw new AccountNotProvisionedError(undefined, task);
+      return params;
+    }
+    if (policy === 'off' && !this._accounts) return params;
     if (
       typeof ref !== 'object' ||
       ref === null ||
       (!('account_id' in ref) && (typeof ref.brand?.domain !== 'string' || typeof ref.operator !== 'string'))
     )
       return params; // Let normal request validation report malformed references.
-    const known = await this.getAccountRegistry().get(ref);
+    const registry = this.getAccountRegistry();
+    let known = await registry.get(ref);
+    let capabilities: AdcpCapabilities | undefined;
+    if (
+      known &&
+      !['unknown', 'provisioning', 'failed_provisioning'].includes(known.status) &&
+      !('account_id' in ref) &&
+      this.config.accountReferenceMode !== 'natural-key'
+    ) {
+      const scope = this.accountScope();
+      capabilities = await this.getCapabilities(options);
+      if (scope !== this.accountScope()) throw new AccountNotProvisionedError(ref, task);
+      // Capability discovery may await transport I/O. Recheck status and binding
+      // so a concurrent repair or explicit sync cannot inject an obsolete ID.
+      known = await registry.get(ref);
+      if (scope !== this.accountScope()) throw new AccountNotProvisionedError(ref, task);
+    }
     if (known && !['unknown', 'provisioning', 'failed_provisioning'].includes(known.status)) {
       if (
-        ['create_media_buy', 'buy_products', 'accept_proposal', 'activate_signal', 'acquire_rights'].includes(task) &&
+        policy !== 'off' &&
+        [
+          'create_media_buy',
+          'buy_products',
+          'accept_proposal',
+          'activate_signal',
+          'acquire_rights',
+          'sync_creatives',
+        ].includes(task) &&
         known.status !== 'active'
       ) {
         if (known.status === 'pending_approval') throw new AccountPendingApprovalError(ref, known.account_id);
@@ -2096,8 +2166,13 @@ export class SingleAgentClient {
           `Account status is ${known.status}. Refresh it with client.accounts.applyStatusChange or complete seller setup.`
         );
       }
+      if (capabilities) {
+        const account = this.accountWireReference(ref, known.account_id, capabilities);
+        if (account !== ref) return { ...params, account };
+      }
       return params;
     }
+    if (policy === 'off') return params;
     if (
       policy === 'strict' ||
       ![
@@ -8061,14 +8136,30 @@ export class SingleAgentClient {
   /**
    * Resolve an account for the authenticated caller. Explicit-account sellers
    * are discovered with list_accounts; implicit-account sellers are registered
-   * with sync_accounts and addressed by their natural key.
+   * with sync_accounts. Stable-ID sellers are addressed by ID; legacy implicit
+   * sellers keep their natural key. includeDetails also exposes the seller handle.
    */
   async resolveAccount(
-    hints: ResolveAccountOptions = {},
+    hints: ResolveAccountOptions & { includeDetails: true },
+    options?: TaskOptions,
+    onTaskResult?: (result: TaskResult<unknown>) => void
+  ): Promise<ResolveAccountResult>;
+  async resolveAccount(
+    hints?: ResolveAccountOptions & { includeDetails?: false },
+    options?: TaskOptions,
+    onTaskResult?: (result: TaskResult<unknown>) => void
+  ): Promise<AccountReference>;
+  async resolveAccount(
+    hints: ResolveAccountOptions & { includeDetails?: boolean },
+    options?: TaskOptions,
+    onTaskResult?: (result: TaskResult<unknown>) => void
+  ): Promise<AccountReference | ResolveAccountResult>;
+  async resolveAccount(
+    hints: ResolveAccountOptions & { includeDetails?: boolean } = {},
     options?: TaskOptions,
     /** @internal Allows the AgentClient wrapper to retain nested task session ids. */
     onTaskResult?: (result: TaskResult<unknown>) => void
-  ): Promise<AccountReference> {
+  ): Promise<AccountReference | ResolveAccountResult> {
     return withTaskDeadline(snapshotTaskOptions(options), async effectiveOptions => {
       const capabilities = await this.getCapabilities(effectiveOptions);
       if (capabilities._synthetic || !capabilities.account) {
@@ -8078,6 +8169,16 @@ export class SingleAgentClient {
           'The seller did not provide an account contract. Probe get_adcp_capabilities or pass an account reference explicitly.'
         );
       }
+      const resolved = (account: AccountReference, accountId?: string): AccountReference | ResolveAccountResult => {
+        const reference = this.accountWireReference(account, accountId, capabilities);
+        return hints.includeDetails
+          ? {
+              reference,
+              ...(accountId && { account_id: accountId }),
+              ...(!('account_id' in account) && { naturalKey: structuredClone(account) }),
+            }
+          : reference;
+      };
       if (capabilities.account.requireOperatorAuth) {
         const accounts: ListAccountsResponse['accounts'] = [];
         const seenCursors = new Set<string>();
@@ -8103,7 +8204,10 @@ export class SingleAgentClient {
             throw new Error('list_accounts did not return a completed account list.');
           }
           accounts.push(...result.data.accounts);
-          if (!result.data.pagination?.has_more) return selectListedAccount(accounts, hints);
+          if (!result.data.pagination?.has_more) {
+            const selected = selectListedAccount(accounts, hints);
+            return resolved(selected, 'account_id' in selected ? selected.account_id : undefined);
+          }
           const nextCursor = result.data.pagination.cursor;
           if (!nextCursor || seenCursors.has(nextCursor)) break;
           seenCursors.add(nextCursor);
@@ -8180,6 +8284,9 @@ export class SingleAgentClient {
       if (!this.accountRegistryOptedIn()) {
         // SDK 14.0 behavior: sync on every call so callers observe the
         // seller's current status. The memoized registry path is opt-in.
+        const registry = this.usesStableAccountIds(capabilities) ? this.getAccountRegistry() : undefined;
+        const registryScope = registry ? this.accountScope() : undefined;
+        const observationEpoch = registry?.captureObservation();
         const result = await this.syncAccounts(
           {
             accounts: [
@@ -8204,7 +8311,22 @@ export class SingleAgentClient {
         ) {
           throw new Error('sync_accounts did not return a completed account result.');
         }
-        const syncedRow = result.data.accounts.find(
+        if (registry) {
+          if (registryScope !== this.accountScope())
+            throw new AccountRequiredError(
+              'implicit',
+              'resolveAccount',
+              'Caller credentials changed during provisioning.'
+            );
+          await registry.observeSync([account], result.data.accounts, false, observationEpoch);
+          if (registryScope !== this.accountScope())
+            throw new AccountRequiredError(
+              'implicit',
+              'resolveAccount',
+              'Caller credentials changed during provisioning.'
+            );
+        }
+        const matchingRows = result.data.accounts.filter(
           row =>
             row.brand?.domain === hints.brand!.domain &&
             row.operator === hints.operator &&
@@ -8215,17 +8337,50 @@ export class SingleAgentClient {
             (!hints.timezone || row.timezone === hints.timezone) &&
             (row.sandbox === undefined || (row.sandbox === true) === (hints.sandbox === true))
         );
-        if (syncedRow?.status === 'pending_approval') {
-          throw new AccountPendingApprovalError(account, syncedRow.account_id);
-        }
-        if (!syncedRow || syncedRow.action === 'failed' || syncedRow.status !== 'active') {
+        if (registry && matchingRows.length > 1)
+          throw new AccountRequiredError(
+            'implicit',
+            'resolveAccount',
+            'sync_accounts returned ambiguous rows for the requested account.'
+          );
+        const syncedRow = matchingRows[0];
+        if (!syncedRow || syncedRow.action === 'failed') {
           throw new AccountRequiredError(
             'implicit',
             'resolveAccount',
             'sync_accounts did not establish an active account for the requested brand and operator.'
           );
         }
-        return account;
+        let current = registry ? await registry.get(account) : syncedRow;
+        if (registry && registryScope !== this.accountScope())
+          throw new AccountRequiredError(
+            'implicit',
+            'resolveAccount',
+            'Caller credentials changed during provisioning.'
+          );
+        if (registry && !current && registry.captureObservation() === observationEpoch) {
+          // An automatic cache eviction is not a seller status change. Fall back
+          // only when no newer authoritative repair could have superseded this row.
+          current = syncedRow;
+        }
+        if (
+          current &&
+          current.account_id !== syncedRow.account_id &&
+          registry?.captureObservation() === observationEpoch
+        )
+          throw new AccountRequiredError(
+            'implicit',
+            'resolveAccount',
+            'The seller account binding changed during resolution. Resolve the account again.'
+          );
+        if (current?.status === 'pending_approval') throw new AccountPendingApprovalError(account, current.account_id);
+        if (current?.status !== 'active')
+          throw new AccountRequiredError(
+            'implicit',
+            'resolveAccount',
+            'sync_accounts did not establish an active account for the requested brand and operator.'
+          );
+        return resolved(account, current.account_id);
       }
       let synced;
       try {
@@ -8247,7 +8402,7 @@ export class SingleAgentClient {
       if (synced.status === 'pending_approval') throw new AccountPendingApprovalError(account, synced.account_id);
       if (synced.status !== 'active')
         throw new AccountRequiredError('implicit', 'resolveAccount', 'The account is not active.');
-      return account;
+      return resolved(account, synced.account_id);
     });
   }
 

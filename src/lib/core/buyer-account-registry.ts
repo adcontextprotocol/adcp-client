@@ -35,6 +35,8 @@ export interface ProvisionedAccount {
 export interface BuyerAccountStorage {
   get(key: string): Promise<ProvisionedAccount | undefined>;
   set(key: string, account: ProvisionedAccount): Promise<void>;
+  /** Read the ID alias within this exact seller/caller scope, equivalent to get(scope + ':' + accountReferenceKey({ account_id })). */
+  getByAccountId?(accountId: string, scope: string): Promise<ProvisionedAccount | undefined>;
   /** Atomically insert (undefined revision) or replace. Store the supplied new revision. Required for multi-process safety. */
   compareAndSet?(key: string, expectedRevision: number | undefined, account: ProvisionedAccount): Promise<boolean>;
 }
@@ -58,6 +60,8 @@ export interface BuyerAccountRegistryOptions {
   /** @internal The provision callback invokes beforeDispatch at its transport boundary. */
   provisionOwnsDispatchBoundary?: boolean;
   maxEntries?: number;
+  /** @internal Only implicit routing caches may evict; explicitly used provisioning registries retain their state. */
+  evictAtCapacity?: () => boolean;
   normalizeOptions?: (options: EnsureAccountOptions, taskOptions?: TaskOptions) => Promise<EnsureAccountOptions>;
 }
 type NaturalRef = Extract<AccountReference, { brand: unknown }>;
@@ -111,6 +115,7 @@ export class BuyerAccountRegistry {
   private observationFloor = 0;
   private statusEpochs = new Map<string, number>();
   private readonly maxEntries: number;
+  private provisioningAccessed = false;
   private readonly normalizeOptions?: BuyerAccountRegistryOptions['normalizeOptions'];
   constructor(
     private scope: () => string,
@@ -145,20 +150,31 @@ export class BuyerAccountRegistry {
   }
   private remember(key: string, entry: ProvisionedAccount): void {
     if (!this.entries.has(key) && this.entries.size >= this.maxEntries) {
-      if (!this.storage)
+      if (!this.storage && !this.canEvict())
         throw new AccountSetupRequiredError(
           'Account registry capacity reached; configure durable storage or increase maxEntries.'
         );
       this.entries.delete(this.entries.keys().next().value!);
     }
+    // Refresh recency when updating an existing alias, so the following natural
+    // binding cannot evict the ID that was just published for it.
+    this.entries.delete(key);
     this.entries.set(key, structuredClone(entry));
   }
+  private canEvict(): boolean {
+    return !this.provisioningAccessed && this.registryOptions.evictAtCapacity?.() === true;
+  }
   async get(account: AccountReference): Promise<ProvisionedAccount | undefined> {
+    const scope = this.scope();
     const key = this.key(account);
     let entry = this.storage?.compareAndSet ? await this.storage.get(key) : this.entries.get(key);
     if (!entry && !this.storage?.compareAndSet) {
       const persisted = await this.storage?.get(key);
       entry = this.entries.get(key) ?? persisted; // A setup may have settled while storage was reading.
+    }
+    if (!entry && 'account_id' in account && this.storage?.getByAccountId) {
+      const persisted = await this.storage.getByAccountId(account.account_id, scope);
+      entry = this.storage.compareAndSet ? persisted : (this.entries.get(key) ?? persisted);
     }
     if (key !== this.key(account) || (entry && accountReferenceKey(entry.account) !== accountReferenceKey(account)))
       return undefined;
@@ -169,12 +185,17 @@ export class BuyerAccountRegistry {
       return { ...structuredClone(entry), status: 'unknown' };
     return entry ? structuredClone(entry) : undefined;
   }
+  /** Lookup by seller-issued ID, partitioned by the registry's seller and caller. */
+  async getByAccountId(accountId: string): Promise<ProvisionedAccount | undefined> {
+    return this.get({ account_id: accountId });
+  }
   async ensure(
     account: AccountReference,
     options: EnsureAccountOptions = {},
     taskOptions?: TaskOptions,
     onTaskResult?: (result: TaskResult<unknown>) => void
   ): Promise<ProvisionedAccount> {
+    this.provisioningAccessed = true;
     throwIfAborted(taskOptions?.signal);
     if (
       taskOptions?.timeout !== undefined &&
@@ -486,8 +507,11 @@ export class BuyerAccountRegistry {
     const aliases = new Map((priorId?.aliases ?? []).map(alias => [accountReferenceKey(alias), alias]));
     if (idRef) {
       aliases.set(accountReferenceKey(ref), structuredClone(ref));
-      if (aliases.size > this.maxEntries)
-        throw new AccountSetupRequiredError('Account alias capacity reached; increase registry maxEntries.');
+      if (aliases.size > this.maxEntries) {
+        if (!this.canEvict())
+          throw new AccountSetupRequiredError('Account alias capacity reached; increase registry maxEntries.');
+        aliases.delete(aliases.keys().next().value!);
+      }
     }
     if (!('account_id' in ref) && prior?.account_id && prior.account_id !== row.account_id) {
       const oldId = await this.get({ account_id: prior.account_id });
@@ -505,20 +529,22 @@ export class BuyerAccountRegistry {
     if ('account_id' in ref) {
       if (prior?.aliases) entry.aliases = prior.aliases;
     }
-    await this.write(entry, scope, isCurrent);
-    if (!idRef || scope !== this.scope() || !isCurrent()) return;
-    await this.write(
-      {
-        account: idRef,
-        revision: priorId?.revision,
-        account_id: row.account_id,
-        status: row.status!,
-        aliases: [...aliases.values()],
-        ...(preserveTerms && priorId?.setupTerms && { setupTerms: priorId.setupTerms }),
-      },
-      scope,
-      isCurrent
-    );
+    // Publish the ID alias before a natural-key reader can select that ID.
+    if (idRef) {
+      await this.write(
+        {
+          account: idRef,
+          revision: priorId?.revision,
+          account_id: row.account_id,
+          status: row.status!,
+          aliases: [...aliases.values()],
+          ...(preserveTerms && priorId?.setupTerms && { setupTerms: priorId.setupTerms }),
+        },
+        scope,
+        isCurrent
+      );
+    }
+    if (scope === this.scope() && isCurrent()) await this.write(entry, scope, isCurrent);
   }
   private enqueue(run: () => Promise<void>): Promise<void> {
     const next = this.writes.then(run);
