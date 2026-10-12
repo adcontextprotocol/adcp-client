@@ -38,6 +38,8 @@ import {
   adjustmentReceiptEvidenceMatches,
   assertMaterializationOutcome,
   receiptEvidenceMatches,
+  REPORTING_DESTINATION_PATTERNS_V1,
+  REPORTING_DESTINATION_TRANSPORT_PATTERN_V1,
   type ReportingDestinationAuthorizationV1,
   type ReportingDestinationRevocationLeaseV1,
   type ReportingManagedDeliveryLeaseV1,
@@ -271,6 +273,60 @@ CREATE INDEX IF NOT EXISTS adcp_reporting_materialization_tombstones_obligation
 
 ALTER TABLE adcp_reporting_destination_authorizations
   ADD COLUMN IF NOT EXISTS cleanup_lease_issued_at TIMESTAMPTZ;
+
+-- Delivery pattern and transport recorded on the authorization generation, so
+-- a revocation can be routed to the transport that holds the provider grant.
+-- Both are immutable for a generation (a new delivery contract mints a new
+-- destination_ref generation) and NULL for a generation whose contract is not
+-- known. The block runs once, in the same statement batch that adds the
+-- columns: it backfills a row only when every binding on that exact
+-- (account_id, destination_ref, generation) agrees on the method and carries
+-- the same transport, and otherwise leaves the row NULL. A later re-run finds
+-- the columns present and does nothing, so a generation that was left NULL
+-- stays NULL rather than being re-decided by whichever binding arrived since.
+DO $pattern_transport$
+DECLARE
+  unresolved BIGINT;
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = current_schema()
+       AND table_name = 'adcp_reporting_destination_authorizations'
+       AND column_name = 'transport'
+  ) THEN
+    ALTER TABLE adcp_reporting_destination_authorizations ADD COLUMN IF NOT EXISTS pattern TEXT;
+    ALTER TABLE adcp_reporting_destination_authorizations ADD COLUMN IF NOT EXISTS transport TEXT;
+    WITH agreed AS (
+      SELECT authz.account_id, authz.destination_ref, authz.generation,
+             MIN(binding.data->>'method') AS pattern,
+             MIN(binding.data->>'transport') AS transport
+        FROM adcp_reporting_destination_authorizations authz
+        JOIN adcp_reporting_managed_bindings binding
+          ON binding.account_id = authz.account_id
+         AND binding.destination_ref = authz.destination_ref
+         AND binding.authorization_generation = authz.generation
+       WHERE authz.pattern IS NULL AND authz.transport IS NULL
+       GROUP BY authz.account_id, authz.destination_ref, authz.generation
+      HAVING COUNT(*) = COUNT(binding.data->>'method')
+         AND COUNT(DISTINCT binding.data->>'method') = 1
+         AND COUNT(*) = COUNT(binding.data->>'transport')
+         AND COUNT(DISTINCT binding.data->>'transport') = 1
+    )
+    UPDATE adcp_reporting_destination_authorizations authz
+       SET pattern = agreed.pattern,
+           transport = agreed.transport,
+           data = authz.data || jsonb_build_object('pattern', agreed.pattern, 'transport', agreed.transport)
+      FROM agreed
+     WHERE authz.account_id = agreed.account_id
+       AND authz.destination_ref = agreed.destination_ref
+       AND authz.generation = agreed.generation;
+    SELECT COUNT(*) INTO unresolved FROM adcp_reporting_destination_authorizations WHERE transport IS NULL;
+    IF unresolved > 0 THEN
+      RAISE NOTICE 'adcp_reporting_destination_authorizations: % generation(s) left without pattern/transport; list them with PostgresReportingManagedDeliveryStore.listDestinationAuthorizationsWithoutContract()', unresolved;
+    END IF;
+  END IF;
+END
+$pattern_transport$;
 `.trim();
 
 const GENERIC_RECEIPT_MESSAGE = 'Receipt does not match authorized current reporting evidence';
@@ -376,6 +432,7 @@ export class PostgresReportingManagedDeliveryStore
   private readonly statusRetentionDays: number | undefined;
   private readonly pendingRecoveryWindowSeconds: number | undefined;
   private policyRegistered = false;
+  private bindingAdmission: ((binding: ReportingManagedDeliveryBindingV1) => void) | undefined;
   private readonly notificationActivityPort?: ReportingLedgerNotificationActivityPortV1<ReportingLedgerTransactionV1>;
   /**
    * Durably records the agent-wide advertised recovery window.
@@ -1003,16 +1060,43 @@ export class PostgresReportingManagedDeliveryStore
     input: Omit<ReportingDestinationAuthorizationV1, 'revoked_at' | 'cleanup_completed_at'>
   ): Promise<void> {
     positiveInteger(input.generation, 'generation');
+    const pattern = input.pattern ?? null;
+    const transport = input.transport ?? null;
+    if (pattern !== null && !REPORTING_DESTINATION_PATTERNS_V1.includes(pattern)) {
+      throw new TypeError(
+        'Destination authorization pattern must be file_transfer, dataset_share, or warehouse_materialization'
+      );
+    }
+    if (transport !== null) {
+      if (pattern === null) throw new TypeError('Destination authorization transport requires its pattern');
+      if (typeof transport !== 'string' || !REPORTING_DESTINATION_TRANSPORT_PATTERN_V1.test(transport)) {
+        throw new TypeError('Destination authorization transport must match ^[a-z][a-z0-9_.-]{0,63}$');
+      }
+    }
     await this.transaction(async client => {
       await advisoryLock(client, accountLock(input.account_id));
       await advisoryLock(client, authLock(input.account_id, input.destination_ref));
-      const current = await client.query<QueryRow & { generation: string }>(
-        `SELECT generation::text FROM adcp_reporting_destination_authorizations
+      const current = await client.query<
+        QueryRow & { generation: string; pattern: string | null; transport: string | null }
+      >(
+        `SELECT generation::text, pattern, transport FROM adcp_reporting_destination_authorizations
           WHERE account_id = $1 AND destination_ref = $2 AND revoked_at IS NULL`,
         [input.account_id, input.destination_ref]
       );
       if (current.rowCount) {
-        if (Number(current.rows[0]!.generation) === input.generation) return;
+        if (Number(current.rows[0]!.generation) === input.generation) {
+          // A replay may omit what it does not know, but it can never state a
+          // different contract: pattern and transport are fixed for a
+          // generation, and revoke is routed on what was recorded here.
+          const recorded = current.rows[0]!;
+          if (
+            (pattern !== null && pattern !== recorded.pattern) ||
+            (transport !== null && transport !== recorded.transport)
+          ) {
+            throw new Error('Destination authorization pattern and transport are immutable for a generation');
+          }
+          return;
+        }
         throw new Error('A destination authorization generation is already current');
       }
       const latest = await client.query<QueryRow & { generation: string | null }>(
@@ -1029,12 +1113,20 @@ export class PostgresReportingManagedDeliveryStore
         // `revoked_at` also violates the table's own ordering check whenever
         // the caller's clock runs ahead.
         `INSERT INTO adcp_reporting_destination_authorizations
-          (account_id, destination_ref, generation, authorized_at, data)
-         VALUES ($1, $2, $3, clock_timestamp(),
+          (account_id, destination_ref, generation, authorized_at, pattern, transport, data)
+         VALUES ($1, $2, $3, clock_timestamp(), $6::text, $7::text,
                  $4::jsonb || jsonb_build_object(
                    'authorized_at', ${rfc3339Micro('clock_timestamp()')},
                    'requested_authorized_at', $5::text))`,
-        [input.account_id, input.destination_ref, input.generation, JSON.stringify(input), input.authorized_at]
+        [
+          input.account_id,
+          input.destination_ref,
+          input.generation,
+          JSON.stringify(input),
+          input.authorized_at,
+          pattern,
+          transport,
+        ]
       );
     });
   }
@@ -1081,6 +1173,10 @@ export class PostgresReportingManagedDeliveryStore
     });
   }
 
+  setBindingAdmission(admit: ((binding: ReportingManagedDeliveryBindingV1) => void) | undefined): void {
+    this.bindingAdmission = admit;
+  }
+
   async installBinding(binding: ReportingManagedDeliveryBindingV1): Promise<{ inserted: boolean }> {
     positiveInteger(binding.resource_retention_days, 'resource_retention_days');
     if (binding.reconciliation_mode === 'consumer_receipt' && binding.verification_profile !== 'canonical_digest') {
@@ -1094,6 +1190,11 @@ export class PostgresReportingManagedDeliveryStore
     if (binding.semantic_fingerprint !== expectedFingerprint) {
       throw new Error('Managed binding semantic fingerprint does not match its immutable content');
     }
+    // Before any lock or write, and outside the transaction, so a refusal
+    // reaches the caller as the admission's own typed error rather than as a
+    // wrapped transaction failure. A delivery route can only be consulted
+    // about the immutable binding itself; everything stateful is checked below.
+    this.bindingAdmission?.(binding);
     await this.ensurePolicyRegistered();
     return this.transaction(async client => {
       // One lock order everywhere in this store: the exclusive policy
@@ -1120,9 +1221,13 @@ export class PostgresReportingManagedDeliveryStore
             canonicalization?: unknown;
             schedule?: { recoveryWindowMilliseconds?: number };
           };
+          authz_pattern: string | null;
+          authz_transport: string | null;
         }
       >(
-        `SELECT configuration.data AS configuration FROM adcp_reporting_configurations configuration
+        `SELECT configuration.data AS configuration,
+                authz.pattern AS authz_pattern, authz.transport AS authz_transport
+           FROM adcp_reporting_configurations configuration
           JOIN adcp_reporting_destination_authorizations authz
             ON authz.account_id = $2 AND authz.destination_ref = $5
            AND authz.generation = $6 AND authz.revoked_at IS NULL
@@ -1143,6 +1248,18 @@ export class PostgresReportingManagedDeliveryStore
       );
       if (!eligible.rowCount) throw new Error('Managed binding is not authorized for the exact Core configuration');
       const configuration = eligible.rows[0]!.configuration;
+      // The generation's contract is fixed, and its revocation is routed on
+      // what it recorded. A binding that names another pattern or transport
+      // would be delivered through one route and revoked through another.
+      const recordedContract = eligible.rows[0]!;
+      if (recordedContract.authz_pattern !== null && binding.method !== recordedContract.authz_pattern) {
+        throw new Error('Managed binding method differs from the pattern recorded on its destination authorization');
+      }
+      if (recordedContract.authz_transport !== null && binding.transport !== recordedContract.authz_transport) {
+        throw new Error(
+          'Managed binding transport differs from the transport recorded on its destination authorization'
+        );
+      }
       // Same bound the runtime checks at startup, applied on the authoritative
       // write path so a binding installed after start — or concurrently with
       // another install — cannot widen the deployment past what is published.
@@ -1827,7 +1944,10 @@ export class PostgresReportingManagedDeliveryStore
           FROM candidate
          WHERE target.account_id = candidate.account_id AND target.destination_ref = candidate.destination_ref
            AND target.generation = candidate.generation
-         RETURNING target.data, target.cleanup_lease_generation::text AS generation,
+         RETURNING target.data || jsonb_strip_nulls(
+                     jsonb_build_object('pattern', target.pattern, 'transport', target.transport)
+                   ) AS data,
+                   target.cleanup_lease_generation::text AS generation,
                    target.cleanup_lease_expires_at AS expires_at,
                    target.revoked_at AS revoked_at,
                    CASE WHEN $4::bigint IS NULL THEN NULL
@@ -2208,6 +2328,76 @@ export class PostgresReportingManagedDeliveryStore
         throw new ReportingObjectWriteConflictError();
       return plan;
     }, context.signal);
+  }
+
+  /**
+   * Generations that carry no recorded pattern/transport, with why the
+   * migration backfill could not infer them. These are routed to a router's
+   * `legacyDefault` (or fail revocation with a typed error) until the host
+   * supplies the contract. Read-only; it never edits a row.
+   *
+   * `no_binding`: nothing to infer from. `binding_without_transport`: at least
+   * one binding names no transport. `bindings_disagree`: the bindings name
+   * different methods or transports. `not_recorded`: the bindings agree, but
+   * the generation was created without a contract after the one-time backfill
+   * ran, so nothing records it.
+   */
+  async listDestinationAuthorizationsWithoutContract(input: { account_id?: string; limit?: number } = {}): Promise<
+    Array<{
+      account_id: string;
+      destination_ref: string;
+      generation: number;
+      reason: 'no_binding' | 'binding_without_transport' | 'bindings_disagree' | 'not_recorded';
+    }>
+  > {
+    const limit = input.limit ?? 1_000;
+    positiveInteger(limit, 'limit');
+    if (limit > MAX_PLAN) throw new RangeError(`limit must not exceed ${MAX_PLAN}`);
+    const result = await this.query<
+      QueryRow & {
+        account_id: string;
+        destination_ref: string;
+        generation: string;
+        bindings: string;
+        methods: string;
+        transports: string;
+        with_transport: string;
+      }
+    >(
+      `SELECT authz.account_id, authz.destination_ref, authz.generation::text AS generation,
+              COUNT(binding.configuration_id)::text AS bindings,
+              COUNT(DISTINCT binding.data->>'method')::text AS methods,
+              COUNT(DISTINCT binding.data->>'transport')::text AS transports,
+              COUNT(binding.data->>'transport')::text AS with_transport
+         FROM adcp_reporting_destination_authorizations authz
+         LEFT JOIN adcp_reporting_managed_bindings binding
+           ON binding.account_id = authz.account_id
+          AND binding.destination_ref = authz.destination_ref
+          AND binding.authorization_generation = authz.generation
+        WHERE (authz.pattern IS NULL OR authz.transport IS NULL)
+          AND ($1::text IS NULL OR authz.account_id = $1)
+        GROUP BY authz.account_id, authz.destination_ref, authz.generation
+        ORDER BY authz.account_id, authz.destination_ref, authz.generation
+        LIMIT $2`,
+      [input.account_id ?? null, limit]
+    );
+    return result.rows.map(row => {
+      const bindings = Number(row.bindings);
+      const reason =
+        bindings === 0
+          ? 'no_binding'
+          : Number(row.with_transport) < bindings
+            ? 'binding_without_transport'
+            : Number(row.methods) > 1 || Number(row.transports) > 1
+              ? 'bindings_disagree'
+              : 'not_recorded';
+      return {
+        account_id: row.account_id,
+        destination_ref: row.destination_ref,
+        generation: Number(row.generation),
+        reason,
+      } as const;
+    });
   }
 
   async isAuthorizationCurrent(input: { account_id: string; destination_ref: string; generation: number }) {

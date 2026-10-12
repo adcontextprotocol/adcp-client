@@ -889,6 +889,9 @@ await managedStore.authorizeDestination({
   destination_ref: destinationRef,
   generation: 1,
   authorized_at: new Date().toISOString(),
+  // The delivery contract this generation serves, recorded once and immutable.
+  pattern: 'file_transfer',
+  transport: 'gcs',
 });
 await managedStore.installBinding(
   reportingManagedDeliveryBindingV1({
@@ -924,6 +927,56 @@ const reportingDelivery = managed.reportingDeliveryCapabilities;
 // Run from a durable scheduler; replicas safely share SKIP LOCKED leases.
 await managed.runWorker({ maxIterations: 100 });
 ```
+
+### Pattern and transport on a destination authorization
+
+A destination has exactly one delivery pattern, and a change to its delivery contract mints a new `destination_ref` generation, so the pattern and transport are fixed for an authorization generation. Pass `pattern` (`file_transfer`, `dataset_share`, `warehouse_materialization`) and `transport` (the same lowercase token the offering's `method.transport` uses, such as `gcs` or `s3`) to `authorizeDestination()` when you create the generation. The store records them in `pattern`/`transport` columns and returns them on the authorization that `claimRevocation()` hands to `adapter.revoke()`, so a revocation can be routed to the transport that holds the provider grant instead of being guessed or fanned out.
+
+- Both are optional, and `transport` requires `pattern`. A generation recorded without them stays valid and revocable; it is simply unroutable by transport.
+- They are immutable. Replaying `authorizeDestination()` for the current generation may omit them but cannot state different values, and it cannot add them to a generation recorded without. Change the contract by minting a new generation.
+- `installBinding()` rejects a binding whose `method` or `transport` differs from what its generation recorded, so one generation can never be delivered through one transport and revoked through another.
+- Upgrading: `REPORTING_MANAGED_DELIVERY_MIGRATION` is additive (`ADD COLUMN IF NOT EXISTS`) and safe to re-run. The run that adds the columns backfills each existing generation from the bindings that reference it, but only where every such binding names the same method and the same transport. A generation whose bindings disagree, name no transport, or do not exist is left NULL, and the migration raises a `NOTICE` with how many. Later runs do nothing, so a NULL generation is never re-decided by a binding that arrived afterwards. `managedStore.listDestinationAuthorizationsWithoutContract()` lists the NULL generations with a `reason` (`no_binding`, `binding_without_transport`, `bindings_disagree`, `not_recorded`) so you can see which still need handling.
+
+### Multi-transport delivery with the router
+
+A seller often delivers one feed through several transports: one buyer takes files in a GCS bucket, another in S3. A runtime takes one adapter, so install a router that is itself a `ReportingManagedDeliveryAdapterV1` and dispatches to one adapter per `(pattern, transport)`. The router is pure dispatch with no state of its own, so the store and worker keep every fence they provide today: leases, the authorization-generation check, settlement, the retry and attempt cap, and revocation SLA accounting, per materialization and whichever route served it.
+
+```ts
+import {
+  createReportingManagedDeliveryAdapterRouterV1,
+  createReportingManagedDeliveryRuntime,
+} from '@adcp/sdk/reporting/ledger';
+
+const adapter = createReportingManagedDeliveryAdapterRouterV1({
+  routes: [
+    { id: 'gcs', match: { pattern: 'file_transfer', transport: 'gcs' }, adapter: gcsAdapter },
+    { id: 's3', match: { pattern: 'file_transfer', transport: 's3' }, adapter: s3Adapter },
+  ],
+  // Optional. Only for bindings and authorizations recorded before a transport was.
+  legacyDefault: 'gcs',
+});
+
+const managed = await createReportingManagedDeliveryRuntime({ /* ... */ adapter });
+// or: createPostgresReliableReportingProductionService({ /* ... */ managedDelivery: { adapter, /* ... */ } })
+```
+
+How a route is chosen:
+
+- `deliver()` and `read()` select from the immutable binding alone: `binding.method` (the pattern) and `binding.transport`. They never look at request input, materialization state or the resource.
+- `revoke()` selects from the `pattern` and `transport` recorded on the destination authorization generation (see above). It calls exactly one adapter and never fans out.
+- Anything that cannot be routed throws a typed `ReportingManagedDeliveryRoutingErrorV1` (`code`: `REPORTING_ROUTE_NOT_FOUND`, `REPORTING_ROUTE_TRANSPORT_REQUIRED`, `REPORTING_ROUTE_CONTRACT_UNRECORDED`, `REPORTING_ROUTE_VERIFICATION_UNSUPPORTED`) before any adapter is called. A failed delivery is an ordinary failed attempt and counts toward the attempt cap. A failed revocation is released for retry and counted as overdue once it outlives `authorization_revocation_seconds`, so an unroutable grant is visible, not silent.
+- A binding with no `transport`, and an authorization with no recorded pattern/transport, go to `legacyDefault` if you configured one (and, for a pattern that is stated, only if it is that route's pattern); otherwise they fail as above. A recorded transport with no route never falls back to `legacyDefault`: the router will not guess which provider holds the grant.
+
+Construction throws if route ids repeat, if two routes match the same `(pattern, transport)`, if a route adapter does not declare `revocationFencesDeliveryGenerations: true`, or if a route has an empty `verificationProfiles`. The router's own `verificationProfiles` is the union of its routes' and exists only for compatibility; it never admits a binding.
+
+Admission happens at install and at startup, not at first delivery:
+
+- `createReportingManagedDeliveryRuntime` registers the router's `admitBinding` with the store (`setBindingAdmission`), so `installBinding` refuses a binding whose pattern/transport has no route, or whose `verification_profile` is not one of that route's `verificationProfiles`, before it writes anything. The refusal is the router's own typed error. A runtime whose adapter provides `admitBinding` refuses a store that cannot enforce it. Single adapters define no such hook and behave exactly as before.
+- At runtime construction every advertised managed offering's `method` (pattern and transport) must have a route, and a consumer-receipt offering needs a route that supports `canonical_digest`. Bindings installed before you adopted the router are not re-checked at startup; they fail at delivery with the typed error unless `legacyDefault` takes them.
+
+Optional adapter probe: an adapter may define `probe({ signal })`, which must not mutate provider state. The router probes every route that defines one, concurrently and each within `probeTimeoutMilliseconds` (default 10 seconds; it must be below the runtime's 30 second probe deadline so a hung route is still named), and the runtime calls it before it adopts any durable policy. A failure stops startup with an error naming the failing route id (`Managed Delivery adapter probe failed for route "s3"`); the provider's own message stays on `cause` and out of the message. Offerings are not withdrawn dynamically: fix the route or remove it, then restart.
+
+Observability: when the adapter is a router, `runWorker()` results also carry per-route counts keyed by route id: `deliveriesByRoute`, `deliveryFailuresByRoute`, `revocationsByRoute`, `revocationFailuresByRoute` and `overdueByRoute`. Work no route could take is counted under `UNROUTED_REPORTING_ROUTE_KEY_V1` (`'~unrouted'`, which no route id can equal). The counts carry route ids only, never credentials, locations or provider messages. A single-adapter runtime's result shape is unchanged.
 
 Deployment-wide materialization planning is durably round-robin. The PostgreSQL
 store advances an agent-wide cursor before processing its bounded account page

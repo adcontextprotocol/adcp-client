@@ -34,6 +34,13 @@ const DEFAULT_LEASE_MILLISECONDS = 65_000;
 const DEFAULT_DELIVERY_DEADLINE_MILLISECONDS = 60_000;
 const MINIMUM_SETTLEMENT_GRACE_MILLISECONDS = 5_000;
 const DEFAULT_RESOURCE_MAX_BYTES = 64 * 1024 * 1024;
+/**
+ * Upper bound on an adapter's startup probe, so a hung provider cannot hang startup.
+ * A router's per-route probe budget must stay under it, or this deadline fires
+ * first and the failing route's id never reaches the startup error.
+ */
+export const REPORTING_ADAPTER_PROBE_DEADLINE_MILLISECONDS_V1 = 30_000;
+const ADAPTER_PROBE_DEADLINE_MILLISECONDS = REPORTING_ADAPTER_PROBE_DEADLINE_MILLISECONDS_V1;
 const MAX_DESCRIPTOR_BYTES = 1024 * 1024;
 const MAX_NODE_TIMER_DELAY_MILLISECONDS = 2_147_483_647;
 const NANOSECONDS_PER_MILLISECOND = 1_000_000n;
@@ -44,11 +51,39 @@ const MAX_RECEIPT_RESULTS = 100;
 /** Maximum serialized size of one receipt evidence item. */
 const MAX_RECEIPT_EVIDENCE_BYTES = 64 * 1024;
 
+/** The delivery pattern a destination authorization generation serves. */
+export type ReportingDestinationPatternV1 = ReportingManagedDeliveryBindingV1['method'];
+
+/** Delivery patterns, in the order the protocol lists them. */
+export const REPORTING_DESTINATION_PATTERNS_V1: readonly ReportingDestinationPatternV1[] = Object.freeze([
+  'file_transfer',
+  'dataset_share',
+  'warehouse_materialization',
+]);
+
+/** Same constraint the protocol puts on `method.transport`. */
+export const REPORTING_DESTINATION_TRANSPORT_PATTERN_V1 = /^[a-z][a-z0-9_.-]{0,63}$/;
+
 export interface ReportingDestinationAuthorizationV1 {
   account_id: string;
   destination_ref: string;
   generation: number;
   authorized_at: string;
+  /**
+   * Delivery pattern this generation serves, recorded when the generation is
+   * created. A destination has exactly one pattern, and a change to its
+   * delivery contract mints a new `destination_ref` generation, so this never
+   * changes for a generation. Absent on generations recorded before it
+   * existed (and on ones whose bindings did not agree when backfilled).
+   */
+  pattern?: ReportingDestinationPatternV1;
+  /**
+   * Transport (`s3`, `gcs`, ...) that holds this generation's provider grant,
+   * recorded and immutable like `pattern`. This is what lets `revoke()` be
+   * routed to the transport that holds the grant. Absent for the same legacy
+   * reasons as `pattern`.
+   */
+  transport?: string;
   revoked_at?: string;
   cleanup_completed_at?: string;
 }
@@ -168,6 +203,18 @@ export interface ReportingManagedDeliveryStore {
     revoked_at: string;
   }): Promise<boolean>;
   installBinding(binding: ReportingManagedDeliveryBindingV1): Promise<{ inserted: boolean }>;
+  /**
+   * Installs the check `installBinding` applies to every new binding before it
+   * writes anything. A thrown error refuses the install and reaches the caller
+   * as-is. Pass `undefined` to remove it.
+   *
+   * The runtime registers the adapter's `admitBinding` here, so a binding no
+   * installed delivery route can serve is refused at install instead of
+   * failing at its first delivery. Optional on the structural interface so
+   * existing custom stores stay source-compatible; a runtime whose adapter
+   * supplies `admitBinding` refuses a store that cannot enforce it.
+   */
+  setBindingAdmission?(admit: ((binding: ReportingManagedDeliveryBindingV1) => void) | undefined): void;
   planMaterializations(input?: { account_id?: string; limit?: number }): Promise<number>;
   /**
    * Fails materializations that have used every delivery attempt.
@@ -258,6 +305,68 @@ export interface ReportingManagedDeliveryAdapterV1 {
     input: Readonly<{ authorization: ReportingDestinationAuthorizationV1 }>,
     context: { signal: AbortSignal }
   ): Promise<void>;
+  /**
+   * Optional startup check that the adapter can reach what it delivers to.
+   * The runtime calls it once, before it adopts any durable policy, and
+   * refuses to start if it rejects. It must not mutate provider state.
+   */
+  probe?(context: { signal: AbortSignal }): Promise<void>;
+  /**
+   * Optional install-time admission. Throw to refuse a binding this adapter
+   * could not deliver. The runtime wires it into the store's `installBinding`.
+   * A single adapter has no reason to define it; the delivery router does.
+   */
+  admitBinding?(binding: ReportingManagedDeliveryBindingV1): void;
+  /**
+   * Optional startup admission for an advertised managed offering. Throw if
+   * the adapter has no way to serve it. Called once per offering at runtime
+   * construction.
+   */
+  admitOffering?(offering: { method: { pattern: string; transport: string }; reconciliation_mode?: string }): void;
+  /**
+   * Optional observability hook: the id of the route a binding or an
+   * authorization is dispatched to, or `undefined` if none. Only the id may be
+   * returned. The worker keys its per-route counts on it, so it must never
+   * carry credentials, locations or any other provider detail.
+   */
+  routeIdFor?(
+    target: Readonly<
+      { binding: ReportingManagedDeliveryBindingV1 } | { authorization: ReportingDestinationAuthorizationV1 }
+    >
+  ): string | undefined;
+}
+
+/**
+ * Per-route counts keyed by delivery route id. Present on a worker result only
+ * when the installed adapter is a router, so a single-adapter runtime's result
+ * shape is unchanged. Work that no route could take is counted under
+ * `UNROUTED_REPORTING_ROUTE_KEY_V1`, which no route id can equal.
+ */
+export interface ReportingManagedDeliveryRouteCountsV1 {
+  /** Materializations settled as delivered, by the route that delivered them. */
+  deliveriesByRoute: Record<string, number>;
+  /** Materializations that failed (including an unroutable binding), by route. */
+  deliveryFailuresByRoute: Record<string, number>;
+  /** Provider revocations completed, by the route that performed them. */
+  revocationsByRoute: Record<string, number>;
+  /** Revocation attempts that failed and were released for retry, by route. */
+  revocationFailuresByRoute: Record<string, number>;
+  /** Revocations that had already outlived the advertised window when claimed, by route. */
+  overdueByRoute: Record<string, number>;
+}
+
+/** Key for work no delivery route could take. Not a valid route id. */
+export const UNROUTED_REPORTING_ROUTE_KEY_V1 = '~unrouted';
+
+export interface ReportingManagedDeliveryWorkerResultV1 extends Partial<ReportingManagedDeliveryRouteCountsV1> {
+  planned: number;
+  claimed: number;
+  delivered: number;
+  failed: number;
+  revocationsCompleted: number;
+  revocationsOverdue: number;
+  /** Materializations failed for using every delivery attempt. */
+  exhausted: number;
 }
 
 export interface ReportingManagedDeliveryWorkerOptionsV1 {
@@ -321,16 +430,7 @@ export interface ReportingManagedDeliveryRuntimeV1<TContext extends { account?: 
     request: AdcpToolMap['sync_reporting_receipts']['params'],
     context: TContext & { account?: unknown }
   ) => Promise<SyncReportingReceiptsResponse>;
-  runWorker(options?: ReportingManagedDeliveryWorkerOptionsV1): Promise<{
-    planned: number;
-    claimed: number;
-    delivered: number;
-    failed: number;
-    revocationsCompleted: number;
-    revocationsOverdue: number;
-    /** Materializations failed for using every delivery attempt. */
-    exhausted: number;
-  }>;
+  runWorker(options?: ReportingManagedDeliveryWorkerOptionsV1): Promise<ReportingManagedDeliveryWorkerResultV1>;
   readResource(input: {
     account_id: string;
     resource_ref: string;
@@ -386,6 +486,21 @@ export async function createReportingManagedDeliveryRuntime<
   ) {
     throw new Error(
       'Consumer-receipt offerings require an authenticated receipt handler and canonical-digest verifier'
+    );
+  }
+  // An adapter that dispatches (the router) must have somewhere to send every
+  // offering this runtime is about to advertise; a single adapter does not
+  // define the hook and keeps its current behaviour.
+  if (typeof options.adapter.admitOffering === 'function') {
+    for (const offering of options.offerings) {
+      const method = offering.method as { pattern: string; transport: string } | undefined;
+      if (method === undefined) continue;
+      options.adapter.admitOffering({ method, reconciliation_mode: offering.reconciliation_mode });
+    }
+  }
+  if (typeof options.adapter.admitBinding === 'function' && typeof options.store.setBindingAdmission !== 'function') {
+    throw new Error(
+      'This Managed Delivery adapter admits bindings at install, but the store cannot enforce an install-time admission'
     );
   }
   const reconciledBilling = reconciledOfferings.length > 0;
@@ -447,6 +562,10 @@ export async function createReportingManagedDeliveryRuntime<
   // honours it; going later does not. So one agent-wide value is truthful
   // exactly when it is at least every installed window, and the conservative
   // agent-wide policy is to require that bound and nothing more.
+  // The only I/O before the durable write. A provider that is down must stop
+  // startup before this runtime registers promises it cannot keep, and the
+  // failure names the route so the operator knows which transport to fix.
+  if (typeof options.adapter.probe === 'function') await probeAdapter(options.adapter);
   // Every side-effect-free validation and construction above completes before
   // the durable write. Otherwise a malformed adapter or offering could
   // register policy that no runtime ever published, then reject a corrected
@@ -472,6 +591,11 @@ export async function createReportingManagedDeliveryRuntime<
     adoptedPolicy.authorizationRevocationSeconds > options.authorizationRevocationSeconds
   ) {
     throw new Error('Managed Delivery policy adoption returned values weaker than the capability being published');
+  }
+  // Last, so a startup that failed above leaves the store's admission alone.
+  if (typeof options.adapter.admitBinding === 'function') {
+    const adapter = options.adapter;
+    options.store.setBindingAdmission?.(binding => adapter.admitBinding!(binding));
   }
 
   return {
@@ -769,7 +893,7 @@ export async function runManagedDeliveryWorker(
     (await store.failExhaustedMaterializations?.({
       ...(options.account_id ? { account_id: options.account_id } : {}),
     })) ?? 0;
-  const counts = {
+  const counts: ReportingManagedDeliveryWorkerResultV1 = {
     exhausted,
     planned: await store.planMaterializations({ ...(options.account_id ? { account_id: options.account_id } : {}) }),
     claimed: 0,
@@ -777,6 +901,33 @@ export async function runManagedDeliveryWorker(
     failed: 0,
     revocationsCompleted: 0,
     revocationsOverdue: 0,
+  };
+  // Per-route counts exist only for an adapter that can name a route, so every
+  // other runtime's result keeps exactly its current shape.
+  const routed =
+    typeof adapter.routeIdFor === 'function'
+      ? {
+          deliveriesByRoute: {} as Record<string, number>,
+          deliveryFailuresByRoute: {} as Record<string, number>,
+          revocationsByRoute: {} as Record<string, number>,
+          revocationFailuresByRoute: {} as Record<string, number>,
+          overdueByRoute: {} as Record<string, number>,
+        }
+      : undefined;
+  if (routed) Object.assign(counts, routed);
+  const countRoute = (
+    bucket: keyof ReportingManagedDeliveryRouteCountsV1,
+    target: Parameters<NonNullable<ReportingManagedDeliveryAdapterV1['routeIdFor']>>[0]
+  ) => {
+    if (!routed) return;
+    let id: string | undefined;
+    try {
+      id = adapter.routeIdFor!(target);
+    } catch {
+      id = undefined;
+    }
+    const key = typeof id === 'string' && id !== '' ? id : UNROUTED_REPORTING_ROUTE_KEY_V1;
+    routed[bucket][key] = (routed[bucket][key] ?? 0) + 1;
   };
 
   for (let index = 0; index < maxIterations; index += 1) {
@@ -805,7 +956,10 @@ export async function runManagedDeliveryWorker(
     const remaining =
       revocation.remaining_milliseconds ?? remainingRevocationMilliseconds(revocation, revocationWindow, now());
     const overdue = revocation.overdue ?? (remaining !== undefined && remaining <= 0);
-    if (overdue) counts.revocationsOverdue += 1;
+    if (overdue) {
+      counts.revocationsOverdue += 1;
+      countRoute('overdueByRoute', { authorization: revocation.authorization });
+    }
     // Never give an attempt a budget that would itself run past the promised
     // instant. Once the window is already spent there is no bound left to
     // honour and withholding cleanup would strand the grant forever, so the
@@ -823,8 +977,10 @@ export async function runManagedDeliveryWorker(
       );
       if (await store.completeRevocation({ lease: revocation, completed_at: now().toISOString() })) {
         counts.revocationsCompleted += 1;
+        countRoute('revocationsByRoute', { authorization: revocation.authorization });
       }
     } catch {
+      countRoute('revocationFailuresByRoute', { authorization: revocation.authorization });
       // Release immediately rather than holding the lease as a backoff. The
       // lease is not an SLA instrument: holding it deferred the next attempt
       // by up to a full lease and left the grant unreclaimable, so a short
@@ -895,9 +1051,13 @@ export async function runManagedDeliveryWorker(
             minimumResourceRetentionDays
           ),
         })
-      )
+      ) {
         counts.delivered += 1;
-      else counts.failed += 1;
+        countRoute('deliveriesByRoute', { binding: lease.binding });
+      } else {
+        counts.failed += 1;
+        countRoute('deliveryFailuresByRoute', { binding: lease.binding });
+      }
     } catch {
       await store.settleMaterialization({
         lease,
@@ -905,9 +1065,35 @@ export async function runManagedDeliveryWorker(
         outcome: { status: 'failed', failure_code: 'DELIVERY_FAILED' },
       });
       counts.failed += 1;
+      countRoute('deliveryFailuresByRoute', { binding: lease.binding });
     }
   }
   return counts;
+}
+
+/**
+ * Runs the adapter's own startup probe. A router rejects with the ids of the
+ * routes that failed; they are named here, and only the ids, because the
+ * provider's message can carry endpoint or credential detail. The original
+ * error stays reachable as `cause` for seller logs.
+ */
+async function probeAdapter(adapter: ReportingManagedDeliveryAdapterV1): Promise<void> {
+  try {
+    await withinDeadline(
+      signal => Promise.resolve().then(() => adapter.probe!({ signal })),
+      ADAPTER_PROBE_DEADLINE_MILLISECONDS,
+      'Managed Delivery adapter probe deadline elapsed'
+    );
+  } catch (cause) {
+    const failed = (cause as { failedRouteIds?: unknown } | null)?.failedRouteIds;
+    const routes = Array.isArray(failed) ? failed.filter((id): id is string => typeof id === 'string') : [];
+    throw new Error(
+      routes.length
+        ? `Managed Delivery adapter probe failed for route ${routes.map(id => JSON.stringify(id)).join(', ')}`
+        : 'Managed Delivery adapter probe failed',
+      { cause }
+    );
+  }
 }
 
 /**
