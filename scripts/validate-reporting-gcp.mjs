@@ -224,6 +224,7 @@ export class Report {
     };
     const cell = text =>
       masked(text)
+        .replace(/\\/g, '\\\\')
         .replace(/\|/g, '\\|')
         .replace(/\s*\n\s*/g, ' ');
     const overall = this.failures.length ? 'FAIL' : 'PASS';
@@ -998,7 +999,6 @@ async function gcsSection(ctx) {
 
 async function cleanup(ctx) {
   const { config, report } = ctx;
-  const secrets = ctx.secrets;
   const closePools = async () => {
     for (const pool of ctx.pools) await pool.end().catch(() => {});
     ctx.pools.length = 0;
