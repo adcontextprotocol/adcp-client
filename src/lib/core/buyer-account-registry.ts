@@ -155,6 +155,9 @@ export class BuyerAccountRegistry {
         );
       this.entries.delete(this.entries.keys().next().value!);
     }
+    // Refresh recency when updating an existing alias, so the following natural
+    // binding cannot evict the ID that was just published for it.
+    this.entries.delete(key);
     this.entries.set(key, structuredClone(entry));
   }
   async get(account: AccountReference): Promise<ProvisionedAccount | undefined> {
