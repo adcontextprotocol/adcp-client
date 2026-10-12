@@ -325,9 +325,11 @@ What it checks:
   destination project and location under the deterministic job IDs, that a
   crash after the rows load (an injected failing revisions load) replays with no
   duplicate rows, and that `current_rows` returns one revision per obligation.
-  It also records, as `INFO`, where BigQuery stored `labels` and `jobTimeoutMs`
-  (`configuration.*` or `configuration.load.*`) and prints the stored job
-  configuration, so the question is answered by what BigQuery kept.
+  It also asserts (`PASS`/`FAIL`) that the sink sends no `labels` or
+  `jobTimeoutMs` inside `configuration.load`, where BigQuery silently drops
+  them, and that a job cancel addressed with the destination project and
+  location (what the sink sends when a load passes its client-side deadline) is
+  accepted by BigQuery.
 - **Overlapping runs** (`INFO`, never a failure). Two concurrent `runOnce()`
   calls over one pending batch, and a deterministic reproduction of #3196: one
   run reads its sink state, another completes the batch and a new revision

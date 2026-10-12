@@ -55,7 +55,14 @@ export interface ReportingBigQueryClientV1 {
       load(source: string, metadata: Record<string, unknown>): Promise<unknown>;
     };
   };
-  job(jobId: string, options?: { projectId?: string; location?: string }): { getMetadata(): Promise<unknown> };
+  job(
+    jobId: string,
+    options?: { projectId?: string; location?: string }
+  ): {
+    getMetadata(): Promise<unknown>;
+    /** Request cancellation. Optional so wrappers written before the sink used it still type-check. */
+    cancel?(): Promise<unknown>;
+  };
   query(options: { query: string; location?: string }): Promise<unknown>;
 }
 
@@ -103,13 +110,29 @@ export interface CreateBigQueryReportingWarehouseSinkOptionsV1 {
   mapRow?(row: Record<string, unknown>, context: ReportingWarehouseRowContextV1): Record<string, unknown>;
   /** Revisions per batch. Default 200. */
   maxRevisionsPerBatch?: number;
-  /** Job labels for cost attribution. */
+  /**
+   * @deprecated Has no effect, and the sink warns when it is set. The official
+   * client submits a local-file load by uploading a job resource whose
+   * `configuration.load` is built from the load options, and offers no way to
+   * set `configuration.labels`; BigQuery silently drops `labels` found inside
+   * `configuration.load`. For cost attribution, filter
+   * `INFORMATION_SCHEMA.JOBS` on `destination_table` or on the `adcp_rr_`
+   * job ID prefix instead.
+   */
   labels?: Readonly<Record<string, string>>;
   /**
-   * Deadline for one load (and its status check). Default 10 minutes. It is
-   * also sent as the job's `jobTimeoutMs`. A run that times out leaves its
-   * plan in place; the next run reuses the same job ID and waits for, or
-   * accepts, the job BigQuery is still running.
+   * Deadline for one load (and for each status check). Default 10 minutes.
+   * When a load exceeds it, the sink asks BigQuery to cancel that job by its
+   * deterministic ID (in `projectId` and `location`) and rejects, leaving the
+   * plan in place. The next run finds the cancelled job finished with an
+   * error, advances that table's attempt and rejects; the run after that
+   * loads under the new attempt. If the cancel has not taken effect yet the
+   * next run waits for the job. Each attempt doubles the load deadline (up to
+   * 6 hours), so a load that is slow but healthy converges; set this above
+   * your slowest expected load to avoid the cancelled attempts. A status
+   * check that times out is not cancelled. This is a client-side deadline:
+   * BigQuery's server-side `jobTimeoutMs` cannot be set on a local-file load
+   * through the official client, and cancellation is best effort.
    */
   loadTimeoutMilliseconds?: number;
 }
@@ -162,6 +185,8 @@ export interface BigQueryReportingWarehouseSinkV1 {
   readonly currentRowsViewSql: string;
 }
 
+const MAX_LOAD_TIMEOUT = 6 * 3_600_000;
+let warnedLabelsIgnored = false;
 const PROJECT = /^[a-z][a-z0-9-]{4,61}[a-z0-9]$/;
 const DATASET_OR_TABLE = /^[A-Za-z_][A-Za-z0-9_]{0,1023}$/;
 const NAME = /^[A-Za-z0-9_.:-]{1,128}$/;
@@ -181,12 +206,19 @@ export function createBigQueryReportingWarehouseSinkV1(
     if (!DATASET_OR_TABLE.test(value)) throw new TypeError(`BigQuery ${label} is invalid`);
   }
   const loadTimeout = options.loadTimeoutMilliseconds ?? 600_000;
-  if (!Number.isSafeInteger(loadTimeout) || loadTimeout < 1_000 || loadTimeout > 6 * 3_600_000) {
+  if (!Number.isSafeInteger(loadTimeout) || loadTimeout < 1_000 || loadTimeout > MAX_LOAD_TIMEOUT) {
     throw new RangeError('loadTimeoutMilliseconds must be between 1 second and 6 hours');
   }
   const maxRevisions = options.maxRevisionsPerBatch ?? 200;
   if (!Number.isSafeInteger(maxRevisions) || maxRevisions < 1 || maxRevisions > 10_000) {
     throw new RangeError('maxRevisionsPerBatch must be between 1 and 10000');
+  }
+  if (options.labels && Object.keys(options.labels).length > 0 && !warnedLabelsIgnored) {
+    warnedLabelsIgnored = true;
+    process.emitWarning(
+      "BigQuery warehouse sink option `labels` has no effect: BigQuery ignores labels inside a load job's configuration.load and the official client cannot set configuration.labels for local-file loads. Attribute cost through INFORMATION_SCHEMA.JOBS by destination table or the adcp_rr_ job ID prefix.",
+      { code: 'ADCP_BIGQUERY_SINK_LABELS_IGNORED', type: 'DeprecationWarning' }
+    );
   }
   const tables = {
     projectId: options.projectId,
@@ -206,7 +238,47 @@ export function createBigQueryReportingWarehouseSinkV1(
     AND reset_generation = $7`;
   const stalePlan = () => new Error('Warehouse sink plan changed during an overlapping run; retry runOnce()');
 
-  async function loadOnce(tableId: string, jobId: string, lines: string[], signal?: AbortSignal): Promise<void> {
+  const jobOptions =
+    options.projectId || options.location
+      ? {
+          ...(options.projectId ? { projectId: options.projectId } : {}),
+          ...(options.location ? { location: options.location } : {}),
+        }
+      : undefined;
+
+  /**
+   * Best effort: ask BigQuery to stop a load the client gave up on. Failures
+   * never replace the deadline error, because the plan and deterministic job
+   * ID make a job that keeps running harmless. A failure other than "not
+   * found" (the job was never submitted) is surfaced as a process warning so
+   * an operator can see a job that may still be running and billing.
+   */
+  async function cancelLoad(jobId: string, signal?: AbortSignal): Promise<void> {
+    try {
+      const job = options.bigquery.job(jobId, jobOptions);
+      if (typeof job.cancel !== 'function') return;
+      const cancel = job.cancel.bind(job);
+      await withinDeadline(cancel, Math.min(loadTimeout, 30_000), signal);
+    } catch (error) {
+      const code = (error as { code?: unknown } | null)?.code;
+      if (code === 404 || signal?.aborted) return;
+      process.emitWarning(
+        `Cancelling BigQuery load job ${jobId} failed (${typeof code === 'number' || typeof code === 'string' ? code : 'no status code'}); the job may still be running`,
+        { code: 'ADCP_BIGQUERY_SINK_CANCEL_FAILED' }
+      );
+    }
+  }
+
+  async function loadOnce(
+    tableId: string,
+    jobId: string,
+    lines: string[],
+    attempt: number,
+    signal?: AbortSignal
+  ): Promise<void> {
+    // Each attempt doubles the load deadline, so a load that is healthy but slower than the
+    // deadline is cancelled at most a few times and then fits.
+    const loadDeadline = Math.min(loadTimeout * 2 ** Math.min(attempt, 16), MAX_LOAD_TIMEOUT);
     signal?.throwIfAborted();
     const directory = await fs.mkdtemp(path.join(tmpdir(), 'adcp-warehouse-'));
     const file = path.join(directory, `${jobId}.ndjson`);
@@ -219,30 +291,18 @@ export function createBigQueryReportingWarehouseSinkV1(
               jobId,
               sourceFormat: 'NEWLINE_DELIMITED_JSON',
               writeDisposition: 'WRITE_APPEND',
-              jobTimeoutMs: String(loadTimeout),
               ...(options.location ? { location: options.location } : {}),
-              ...(options.labels ? { labels: { ...options.labels } } : {}),
             }),
-          loadTimeout,
+          loadDeadline,
           signal
         );
       } catch (error) {
+        if (isDeadlineExceeded(error)) await cancelLoad(jobId, signal);
         if (!isAlreadyExists(error)) throw error;
         // The job ran before (a crash or timeout after submission, before the
         // cursor commit). Accept it only if it finished cleanly.
         const metadata = await withinDeadline(
-          () =>
-            options.bigquery
-              .job(
-                jobId,
-                options.projectId || options.location
-                  ? {
-                      ...(options.projectId ? { projectId: options.projectId } : {}),
-                      ...(options.location ? { location: options.location } : {}),
-                    }
-                  : undefined
-              )
-              .getMetadata(),
+          () => options.bigquery.job(jobId, jobOptions).getMetadata(),
           loadTimeout,
           signal
         );
@@ -487,7 +547,13 @@ export function createBigQueryReportingWarehouseSinkV1(
       for (const step of steps) {
         if (!step.lines.length) continue;
         try {
-          await loadOnce(step.table, `${baseJobId}_${step.kind}${suffix(step.attempt)}`, [...step.lines], signal);
+          await loadOnce(
+            step.table,
+            `${baseJobId}_${step.kind}${suffix(step.attempt)}`,
+            [...step.lines],
+            step.attempt,
+            signal
+          );
         } catch (error) {
           if (isFinishedWithError(error)) {
             const column = step.kind === 'rows' ? 'planned_rows_attempt' : 'planned_revisions_attempt';
@@ -634,10 +700,11 @@ async function withinDeadline<T>(operation: () => Promise<T>, milliseconds: numb
     return await Promise.race([
       operation(),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error('BigQuery call exceeded its deadline; the batch will be retried')),
-          milliseconds
-        );
+        timer = setTimeout(() => {
+          const error = new Error('BigQuery call exceeded its deadline; the batch will be retried');
+          Object.defineProperty(error, 'adcpDeadlineExceeded', { value: true });
+          reject(error);
+        }, milliseconds);
         if (signal) {
           onAbort = () => reject(signal.reason ?? new Error('aborted'));
           signal.addEventListener('abort', onAbort, { once: true });
@@ -648,6 +715,10 @@ async function withinDeadline<T>(operation: () => Promise<T>, milliseconds: numb
     if (timer) clearTimeout(timer);
     if (signal && onAbort) signal.removeEventListener('abort', onAbort);
   }
+}
+
+function isDeadlineExceeded(error: unknown): boolean {
+  return (error as { adcpDeadlineExceeded?: unknown } | undefined)?.adcpDeadlineExceeded === true;
 }
 
 function isAlreadyExists(error: unknown): boolean {

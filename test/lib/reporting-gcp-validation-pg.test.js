@@ -168,10 +168,25 @@ describe(
       ]) {
         assert.equal(statusOf(report, name), 'PASS', name);
       }
-      const placement = report.entries.find(entry => entry.name === 'where BigQuery stored labels and jobTimeoutMs');
-      assert.match(placement.detail, /labels at configuration\.load\.labels/);
-      assert.match(placement.detail, /jobTimeoutMs at configuration\.load\.jobTimeoutMs = "120000"/);
-      assert.match(placement.block, /"jobReference"/);
+      assert.equal(
+        statusOf(
+          report,
+          'the sink sends no job-level fields (labels, jobTimeoutMs) that BigQuery drops from configuration.load'
+        ),
+        'PASS'
+      );
+      assert.equal(
+        statusOf(
+          report,
+          'BigQuery accepts a cancel addressed with the destination project and location, and refuses wrong addresses'
+        ),
+        'PASS'
+      );
+      assert.deepEqual(bigquery.state.droppedLoadFields, [], 'the service dropped nothing the sink sent');
+      assert.ok(
+        bigquery.state.cancels.some(entry => entry.projectId === 'dest-project-1' && entry.location === 'US'),
+        'the addressing check cancelled a job in the destination project and location'
+      );
       const probes = report.entries.filter(entry => /#3196/.test(entry.name));
       assert.equal(probes.length, 2);
       assert.ok(probes.every(entry => entry.status === 'INFO'));
