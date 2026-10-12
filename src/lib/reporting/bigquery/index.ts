@@ -66,12 +66,15 @@ export interface ReportingWarehouseRowContextV1 {
 
 export interface CreateBigQueryReportingWarehouseSinkOptionsV1 {
   /** Ledger store with `changeFeed: true`. */
-  store: Pick<
-    PostgresReportingLedgerStore,
-    'changesAfter' | 'saveFeedConsumerCursor' | 'getRevisionMetadata' | 'readRevisionRows'
-  > &
-    /** Needed only by `reset()`; custom store wrappers that predate it keep compiling. */
-    Partial<Pick<PostgresReportingLedgerStore, 'removeFeedConsumer'>>;
+  store: Pick<PostgresReportingLedgerStore, 'changesAfter' | 'getRevisionMetadata' | 'readRevisionRows'> & {
+    /**
+     * The sink ignores the result, so wrappers written when this resolved
+     * `void` keep compiling.
+     */
+    saveFeedConsumerCursor(name: string, cursor: string, options?: { refreshUnchanged?: boolean }): Promise<unknown>;
+  } & /** Needed only by `reset()`; custom store wrappers that predate it keep compiling. */ Partial<
+      Pick<PostgresReportingLedgerStore, 'removeFeedConsumer'>
+    >;
   /** PostgreSQL pool holding `REPORTING_WAREHOUSE_SINK_MIGRATION`. */
   db: Pick<ReportingPgPool, 'query'>;
   /** Host-constructed official BigQuery client. */
