@@ -22,7 +22,20 @@ import { canonicalize } from '../../utils/jcs';
  * Digests always cover uncompressed canonical bytes.
  */
 
-export const REPORTING_ROW_ENCODING_V1 = 'adcp_canonical_jsonl_v1' as const;
+/**
+ * Stored row format and canonicalization algorithm, as AdCP names them
+ * (`reporting-file-manifest.json` `format`, `reporting-canonicalization-contract.json`
+ * `algorithm`). Neither value is an input to any digest: segment, chunk and
+ * manifest digests cover chunk bytes and manifest fields, and the protocol
+ * `revision_content_sha256` covers the envelope and rows. They label the
+ * encoding and are pinned by the row-set `CHECK` constraints.
+ *
+ * `adcp_jcs_rows_v1` names the per-row RFC 8785 canonicalization. The stored
+ * chunk layout is one canonical row per line (`jsonl`); the protocol content
+ * digest is still computed by the streaming hashers below.
+ */
+export const REPORTING_ROW_FORMAT_V1 = 'jsonl' as const;
+export const REPORTING_ROW_ALGORITHM_V1 = 'adcp_jcs_rows_v1' as const;
 export const REPORTING_ROW_SEGMENT_MAX_ROWS = 500;
 export const REPORTING_ROW_CHUNK_MAX_SEGMENTS = 20;
 export const REPORTING_ROW_CHUNK_MAX_ROWS = REPORTING_ROW_SEGMENT_MAX_ROWS * REPORTING_ROW_CHUNK_MAX_SEGMENTS;
@@ -82,7 +95,8 @@ export interface ReportingRowChunkV1 {
 }
 
 export interface ReportingEncodedRowsV1 {
-  encoding: typeof REPORTING_ROW_ENCODING_V1;
+  format: typeof REPORTING_ROW_FORMAT_V1;
+  algorithm: typeof REPORTING_ROW_ALGORITHM_V1;
   rowCount: number;
   /** Total canonical JSONL bytes across all chunks. */
   byteCount: number;
@@ -159,7 +173,8 @@ export function encodeReportingRowsV1(rows: readonly unknown[]): ReportingEncode
 
   const manifests = chunks.map(chunk => chunk.manifest);
   return {
-    encoding: REPORTING_ROW_ENCODING_V1,
+    format: REPORTING_ROW_FORMAT_V1,
+    algorithm: REPORTING_ROW_ALGORITHM_V1,
     rowCount: rows.length,
     byteCount: chunks.reduce((total, chunk) => total + chunk.manifest.byte_count, 0),
     chunks,

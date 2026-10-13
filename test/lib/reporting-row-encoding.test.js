@@ -6,7 +6,9 @@ const { describe, test } = require('node:test');
 
 const {
   REPORTING_ROW_CHUNK_MAX_BYTES,
+  REPORTING_ROW_ALGORITHM_V1,
   REPORTING_ROW_CHUNK_MAX_ROWS,
+  REPORTING_ROW_FORMAT_V1,
   REPORTING_ROW_SEGMENT_MAX_ROWS,
   assertReportingRevisionEnvelopeV1,
   createReportingRevisionEnvelopeHasherV1,
@@ -248,6 +250,22 @@ describe('reporting canonical JSONL row encoding', () => {
         byteCount: bytes.byteLength,
       });
     }
+  });
+
+  test('labels the rows with the AdCP format and algorithm, which feed no digest', () => {
+    assert.equal(REPORTING_ROW_FORMAT_V1, 'jsonl');
+    assert.equal(REPORTING_ROW_ALGORITHM_V1, 'adcp_jcs_rows_v1');
+    assert.equal(FIXTURE.format, REPORTING_ROW_FORMAT_V1);
+    assert.equal(FIXTURE.algorithm, REPORTING_ROW_ALGORITHM_V1);
+    assert.equal(FIXTURE.encoding, undefined, 'the retired adcp_canonical_jsonl_v1 token is gone from the fixture');
+    const encoded = encodeReportingRowsV1(rowsOf(3));
+    assert.equal(encoded.format, 'jsonl');
+    assert.equal(encoded.algorithm, 'adcp_jcs_rows_v1');
+    assert.equal(encoded.encoding, undefined);
+    // The labels name the encoding; nothing hashes them. Manifests carry no token and the chunk bytes are
+    // plain canonical rows, so changing the label cannot change a digest.
+    assert.ok(encoded.manifests.every(manifest => !JSON.stringify(manifest).includes('jsonl')));
+    assert.ok(encoded.chunks.every(chunk => !chunk.bytes.toString('utf8').includes('adcp_')));
   });
 
   test('matches the shared golden fixture byte for byte', () => {

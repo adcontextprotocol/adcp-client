@@ -41,11 +41,11 @@ function generationOf(metadata: FileMetadata | undefined): string {
   return generation;
 }
 
-function pinnedGeneration(nativeVersion: string): string | null {
-  return typeof nativeVersion === 'string' &&
-    GENERATION.test(nativeVersion) &&
-    Number.isSafeInteger(Number(nativeVersion))
-    ? nativeVersion
+function pinnedGeneration(nativeVersionRef: string): string | null {
+  return typeof nativeVersionRef === 'string' &&
+    GENERATION.test(nativeVersionRef) &&
+    Number.isSafeInteger(Number(nativeVersionRef))
+    ? nativeVersionRef
     : null;
 }
 
@@ -147,8 +147,8 @@ export function createGcsReportingRowObjectProviderV1(
     putIfAbsent(input, context) {
       return runReportingRowProviderOperation(context.signal, async () => {
         const bucket = bucketFor(input);
-        assertKey(input.key);
-        const file = bucket.file(input.key);
+        assertKey(input.objectRef);
+        const file = bucket.file(input.objectRef);
         try {
           const bytes = Buffer.from(input.bytes);
           await file.save(bytes, {
@@ -171,24 +171,24 @@ export function createGcsReportingRowObjectProviderV1(
           if (status(error) !== 412) throw error;
           context.signal.throwIfAborted();
           // The key is taken. Report the existing generation; the caller adopts it only on identical bytes.
-          const [existing] = await bucket.file(input.key).getMetadata();
-          return { created: false, nativeVersion: generationOf(existing) };
+          const [existing] = await bucket.file(input.objectRef).getMetadata();
+          return { created: false, nativeVersionRef: generationOf(existing) };
         }
         if (file.metadata?.generation !== undefined) {
-          return { created: true, nativeVersion: generationOf(file.metadata) };
+          return { created: true, nativeVersionRef: generationOf(file.metadata) };
         }
         const [created] = await file.getMetadata();
-        return { created: true, nativeVersion: generationOf(created) };
+        return { created: true, nativeVersionRef: generationOf(created) };
       });
     },
     get(input, context) {
       return runReportingRowProviderOperation(context.signal, async () => {
         const bucket = bucketFor(input);
-        assertKey(input.key);
+        assertKey(input.objectRef);
         assertReportingRowReadBounds(input);
-        const generation = pinnedGeneration(input.nativeVersion);
+        const generation = pinnedGeneration(input.nativeVersionRef);
         if (generation === null) return null;
-        const file: File = bucket.file(input.key, { generation });
+        const file: File = bucket.file(input.objectRef, { generation });
         try {
           if (input.range?.length === 0) {
             const [metadata] = await file.getMetadata();
@@ -216,18 +216,41 @@ export function createGcsReportingRowObjectProviderV1(
         }
       });
     },
+    stat(input, context) {
+      return runReportingRowProviderOperation(context.signal, async () => {
+        const bucket = bucketFor(input);
+        assertKey(input.objectRef);
+        const generation = pinnedGeneration(input.nativeVersionRef);
+        if (generation === null) return null;
+        try {
+          // A generation-pinned metadata read: 404 for any other generation, so a hit proves this exact
+          // write (generations are unique per write) and its stored size without reading the bytes.
+          const [metadata] = await bucket.file(input.objectRef, { generation }).getMetadata();
+          const size = Number(metadata.size);
+          // A store that ignores the pin and answers for another generation is not this object.
+          if (String(metadata.generation) !== generation) return null;
+          if (!Number.isSafeInteger(size) || size < 0) {
+            throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'object metadata is malformed');
+          }
+          return { nativeVersionRef: generation, sizeBytes: size };
+        } catch (error) {
+          if (status(error) === 404) return null;
+          throw error;
+        }
+      });
+    },
     delete(input, context) {
       return runReportingRowProviderOperation(context.signal, async () => {
         const bucket = bucketFor(input);
-        assertKey(input.key);
-        const generation = pinnedGeneration(input.nativeVersion);
+        assertKey(input.objectRef);
+        const generation = pinnedGeneration(input.nativeVersionRef);
         if (generation === null) return 'absent' as const;
         try {
           // The generation parameter is the exact-version precondition: it deletes only the
           // recorded object (live or noncurrent) and returns 404 for any other generation. An
           // extra `ifGenerationMatch` would strand a recorded noncurrent generation on versioned
           // buckets, so it is deliberately not added.
-          await bucket.file(input.key, { generation }).delete();
+          await bucket.file(input.objectRef, { generation }).delete();
           return 'deleted' as const;
         } catch (error) {
           const code = status(error);

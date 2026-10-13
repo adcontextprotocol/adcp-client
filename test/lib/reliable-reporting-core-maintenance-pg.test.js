@@ -196,8 +196,8 @@ describe('Reliable Reporting Core maintenance', { skip: !DATABASE_URL && 'Postgr
     await store.commitRevision(fixture.revision('rrev_core_retired_1', 1, rows), fixture.lease);
     const obligationId = fixture.obligation.reporting_obligation_id;
     const objectKeys = (
-      await pool.query(`SELECT object_key FROM adcp_reporting_row_chunks WHERE obligation_id = $1`, [obligationId])
-    ).rows.map(row => path.join(root, row.object_key));
+      await pool.query(`SELECT object_ref FROM adcp_reporting_row_chunks WHERE obligation_id = $1`, [obligationId])
+    ).rows.map(row => path.join(root, row.object_ref));
     assert.ok(objectKeys.length > 0 && objectKeys.every(existsSync));
 
     const service = createService({ retention: { enabled: true } });

@@ -43,8 +43,8 @@ describe('reporting snapshot compaction', { skip: !DATABASE_URL && 'PostgreSQL U
     (await db.query(`SELECT rows_state FROM adcp_reporting_row_sets WHERE row_set_id = $1`, [revisionId])).rows[0]
       ?.rows_state;
   const objectFiles = async revisionId =>
-    (await pool.query(`SELECT object_key FROM adcp_reporting_row_chunks WHERE row_set_id = $1`, [revisionId])).rows.map(
-      row => path.join(root, row.object_key)
+    (await pool.query(`SELECT object_ref FROM adcp_reporting_row_chunks WHERE row_set_id = $1`, [revisionId])).rows.map(
+      row => path.join(root, row.object_ref)
     );
   /** Age one revision's `created_at`, which is what its predecessor's window and grace run from. */
   const age = (db, revisionId, interval) =>
@@ -464,7 +464,7 @@ describe('reporting snapshot compaction', { skip: !DATABASE_URL && 'PostgreSQL U
   });
 
   const unsafeTemplate = '{prefix}/{namespace_key}/{account_key}/{period_date}/{content_sha256}/{chunk_index}';
-  const withTemplate = keyTemplate =>
+  const withTemplate = (keyTemplate, readOnly = false) =>
     new ledger.PostgresReportingLedgerStore(pool, {
       acknowledgeIsolatedDatabase: true,
       rowStorage: {
@@ -475,23 +475,25 @@ describe('reporting snapshot compaction', { skip: !DATABASE_URL && 'PostgreSQL U
             location: { root: 'rows' },
             prefix: 'guarded',
             keyTemplate,
+            ...(readOnly ? { readOnly: true } : {}),
           },
         },
         providers: { filesystem: ledger.createFilesystemReportingRowObjectProviderV1({ roots: { rows: root } }) },
       },
     });
-  const refusal = error =>
+  const writeRefusal = error =>
     error instanceof ledger.ReportingRowStoreError &&
     error.code === 'INVALID_INPUT' &&
-    /keyTemplate to include \{revision_key\}/.test(error.message);
+    /row binding objects: key templates must include \{revision_key\}/.test(error.message);
 
   describe('object key template guard', () => {
-    test('compactSupersededSnapshots refuses before deleting anything', async () => {
-      const { ids } = await buildChain(store, pool, [null, '3 hours', null]);
-      const unsafe = withTemplate(unsafeTemplate);
-      await assert.rejects(() => compact({}, unsafe), refusal);
-      assert.deepEqual(await states(ids), ['live', 'live', 'live']);
-      assert.throws(() => unsafe.assertCompactionSafeRowBindings(), refusal);
+    test('a writable binding without {revision_key} is refused when the store is configured', () => {
+      assert.throws(() => withTemplate(unsafeTemplate), writeRefusal);
+    });
+
+    test('a read-only binding for older rows is exempt: nothing can adopt through it', () => {
+      const readOnly = withTemplate(unsafeTemplate, true);
+      readOnly.assertCompactionSafeRowBindings();
     });
 
     test('the default and explicit {revision_key} templates are accepted', async () => {
@@ -614,10 +616,10 @@ describe('reporting snapshot compaction', { skip: !DATABASE_URL && 'PostgreSQL U
       assert.throws(() => createService({ compaction: true }), TypeError);
     });
 
-    test('compaction refuses an unsafe key template at construction, and only when enabled', () => {
-      const unsafe = withTemplate(unsafeTemplate);
-      assert.throws(() => createService({ compaction: { enabled: true } }, unsafe), refusal);
-      assert.doesNotThrow(() => createService({ retention: { enabled: true } }, unsafe));
+    test('compaction can be enabled alongside a read-only binding for older rows', () => {
+      const readOnly = withTemplate(unsafeTemplate, true);
+      assert.doesNotThrow(() => createService({ compaction: { enabled: true } }, readOnly));
+      assert.doesNotThrow(() => createService({ retention: { enabled: true } }, readOnly));
       assert.doesNotThrow(() => createService({ compaction: { enabled: true } }));
     });
 

@@ -90,6 +90,9 @@ service runs for you. See
    verified chunks. Existing revisions keep their inline rows, and every
    binary built with row storage reads both forms. Do not run a writer older
    than this release once chunked revisions exist: it cannot read them.
+   Upgrading from 15.8.x? Row storage renamed its stored fields to AdCP's
+   names; re-apply the migration before starting new binaries (see
+   [Breaking: reporting row storage field alignment](../migration-reporting-row-storage-alignment.md)).
 2. **Existing inline rows (optional).** Run `migrateInlineRows` in bounded
    batches from a maintenance job until it returns no cursor. Alert on any
    `quarantined` IDs: those revisions no longer reproduce their committed

@@ -174,7 +174,7 @@ const put = (provider, key, body = '{"a":1}\n', extra = {}) =>
   provider.putIfAbsent(
     {
       ...base,
-      key,
+      objectRef: key,
       bytes: Buffer.from(body),
       contentType: 'application/gzip',
       metadata: { 'adcp-installation': 'inst', 'adcp-intent': 'intent' },
@@ -199,6 +199,7 @@ test('passes the shared provider conformance suite', async () => {
     'create-only',
     'ranged-read',
     'version-pinned-read',
+    'version-pinned-stat',
     'exact-version-delete',
     'write-unique-version',
   ]);
@@ -211,7 +212,7 @@ test('create-only put sends If-None-Match and records the VersionId', async () =
   const provider = createS3ReportingRowObjectProviderV1({ client });
   const created = await put(provider, 'adcp-rows/ns/a.jsonl.gz');
   assert.equal(created.created, true);
-  assert.match(created.nativeVersion, /^[0-9a-f-]{36}$/);
+  assert.match(created.nativeVersionRef, /^[0-9a-f-]{36}$/);
   const call = client.calls.find(item => item.op === 'PutObjectCommand');
   assert.equal(call.input.IfNoneMatch, '*');
   assert.equal(call.input.ContentType, 'application/gzip');
@@ -241,10 +242,10 @@ test('writes and adoption refuse results without a VersionId (never fall back to
     isCode('UNSAFE_BINDING')
   );
   const key = 'adcp-rows/ns/a.jsonl';
-  assert.equal(await provider.get({ ...base, key, nativeVersion: 'null', maxBytes: 9 }, signal()), null);
-  assert.equal(await provider.delete({ ...base, key, nativeVersion: 'null' }, signal()), 'absent');
+  assert.equal(await provider.get({ ...base, objectRef: key, nativeVersionRef: 'null', maxBytes: 9 }, signal()), null);
+  assert.equal(await provider.delete({ ...base, objectRef: key, nativeVersionRef: 'null' }, signal()), 'absent');
   assert.equal(
-    await provider.get({ ...base, key, nativeVersion: '"0123"', maxBytes: 9 }, signal()),
+    await provider.get({ ...base, objectRef: key, nativeVersionRef: '"0123"', maxBytes: 9 }, signal()),
     null,
     'quoted ETags are no longer versions'
   );
@@ -256,10 +257,10 @@ test('412 adopts the existing version; 409 is retried once', async () => {
   const first = await put(provider, 'adcp-rows/ns/a.jsonl', 'first\n');
   assert.deepEqual(await put(provider, 'adcp-rows/ns/a.jsonl', 'second\n'), {
     created: false,
-    nativeVersion: first.nativeVersion,
+    nativeVersionRef: first.nativeVersionRef,
   });
   const bytes = await provider.get(
-    { ...base, key: 'adcp-rows/ns/a.jsonl', nativeVersion: first.nativeVersion, maxBytes: 100 },
+    { ...base, objectRef: 'adcp-rows/ns/a.jsonl', nativeVersionRef: first.nativeVersionRef, maxBytes: 100 },
     signal()
   );
   assert.equal(Buffer.from(bytes).toString(), 'first\n');
@@ -281,34 +282,46 @@ test('reads pin VersionId and honour ranges and the byte cap', async () => {
     const client = createFakeS3();
     const provider = createS3ReportingRowObjectProviderV1({ client });
     const key = 'adcp-rows/ns/r.jsonl';
-    const { nativeVersion } = await put(provider, key, '0123456789abcdef');
+    const { nativeVersionRef } = await put(provider, key, '0123456789abcdef');
     const ranged = await provider.get(
-      { ...base, key, nativeVersion, range: { offset: 4, length: 6 }, maxBytes: 6 },
+      { ...base, objectRef: key, nativeVersionRef, range: { offset: 4, length: 6 }, maxBytes: 6 },
       signal()
     );
     assert.equal(Buffer.from(ranged).toString(), '456789');
     const call = client.calls.filter(item => item.op === 'GetObjectCommand').at(-1);
     assert.equal(call.input.Range, 'bytes=4-9');
-    assert.equal(call.input.VersionId, nativeVersion);
+    assert.equal(call.input.VersionId, nativeVersionRef);
     assert.equal(call.input.IfMatch, undefined);
 
-    assert.equal(await provider.get({ ...base, key, nativeVersion: '"0000"', maxBytes: 100 }, signal()), null);
-    assert.equal(await provider.get({ ...base, key, nativeVersion: 'not-a-version', maxBytes: 100 }, signal()), null);
-    assert.equal(await provider.get({ ...base, key, nativeVersion: 'bad version', maxBytes: 100 }, signal()), null);
     assert.equal(
-      await provider.get({ ...base, key: 'adcp-rows/ns/missing', nativeVersion, maxBytes: 100 }, signal()),
+      await provider.get({ ...base, objectRef: key, nativeVersionRef: '"0000"', maxBytes: 100 }, signal()),
+      null
+    );
+    assert.equal(
+      await provider.get({ ...base, objectRef: key, nativeVersionRef: 'not-a-version', maxBytes: 100 }, signal()),
+      null
+    );
+    assert.equal(
+      await provider.get({ ...base, objectRef: key, nativeVersionRef: 'bad version', maxBytes: 100 }, signal()),
+      null
+    );
+    assert.equal(
+      await provider.get({ ...base, objectRef: 'adcp-rows/ns/missing', nativeVersionRef, maxBytes: 100 }, signal()),
       null
     );
     await assert.rejects(
-      provider.get({ ...base, key, nativeVersion, maxBytes: 8 }, signal()),
+      provider.get({ ...base, objectRef: key, nativeVersionRef, maxBytes: 8 }, signal()),
       isCode('ROWS_INTEGRITY_FAILED')
     );
     await assert.rejects(
-      provider.get({ ...base, key, nativeVersion, range: { offset: 99, length: 2 }, maxBytes: 8 }, signal()),
+      provider.get(
+        { ...base, objectRef: key, nativeVersionRef, range: { offset: 99, length: 2 }, maxBytes: 8 },
+        signal()
+      ),
       isCode('ROWS_INTEGRITY_FAILED')
     );
     const empty = await provider.get(
-      { ...base, key, nativeVersion, range: { offset: 2, length: 0 }, maxBytes: 0 },
+      { ...base, objectRef: key, nativeVersionRef, range: { offset: 2, length: 0 }, maxBytes: 0 },
       signal()
     );
     assert.equal(empty.length, 0);
@@ -319,7 +332,7 @@ test('a store that ignores VersionId never serves or deletes a different version
   const client = createFakeS3();
   const provider = createS3ReportingRowObjectProviderV1({ client });
   const key = 'adcp-rows/ns/v.jsonl';
-  const { nativeVersion } = await put(provider, key);
+  const { nativeVersionRef } = await put(provider, key);
   const send = client.send.bind(client);
   client.send = (command, options) => {
     // Emulate a store that drops the version selectors and answers from the current object.
@@ -327,23 +340,57 @@ test('a store that ignores VersionId never serves or deletes a different version
     return send(command, options);
   };
   for (const foreign of ['other-version', 'some-version']) {
-    assert.equal(await provider.get({ ...base, key, nativeVersion: foreign, maxBytes: 100 }, signal()), null);
+    assert.equal(
+      await provider.get({ ...base, objectRef: key, nativeVersionRef: foreign, maxBytes: 100 }, signal()),
+      null
+    );
     assert.equal(
       await provider.get(
-        { ...base, key, nativeVersion: foreign, range: { offset: 0, length: 0 }, maxBytes: 0 },
+        { ...base, objectRef: key, nativeVersionRef: foreign, range: { offset: 0, length: 0 }, maxBytes: 0 },
         signal()
       ),
       null
     );
-    assert.equal(await provider.delete({ ...base, key, nativeVersion: foreign }, signal()), 'absent');
+    assert.equal(await provider.delete({ ...base, objectRef: key, nativeVersionRef: foreign }, signal()), 'absent');
   }
-  assert.ok(await provider.get({ ...base, key, nativeVersion, maxBytes: 100 }, signal()));
+  assert.ok(await provider.get({ ...base, objectRef: key, nativeVersionRef, maxBytes: 100 }, signal()));
+});
+
+test('stat proves one exact version and its size with a HEAD, never a body read', async () => {
+  const client = createFakeS3();
+  const provider = createS3ReportingRowObjectProviderV1({ client });
+  const key = 'adcp-rows/ns/stat.jsonl';
+  const { nativeVersionRef } = await put(provider, key, '0123456789');
+  const mark = client.calls.length;
+  assert.deepEqual(await provider.stat({ ...base, objectRef: key, nativeVersionRef }, signal()), {
+    nativeVersionRef,
+    sizeBytes: 10,
+  });
+  assert.deepEqual(
+    client.calls.slice(mark).map(call => call.op),
+    ['HeadObjectCommand']
+  );
+  assert.equal(client.calls.at(-1).input.VersionId, nativeVersionRef);
+  for (const foreign of ['null', 'not-a-version', 'bad version', '"0000"', '']) {
+    assert.equal(await provider.stat({ ...base, objectRef: key, nativeVersionRef: foreign }, signal()), null);
+  }
+  assert.equal(await provider.stat({ ...base, objectRef: 'adcp-rows/ns/missing', nativeVersionRef }, signal()), null);
+  // A store that drops the version selector answers from the current object; only an echoed version counts.
+  const send = client.send.bind(client);
+  client.send = (command, options) => {
+    delete command.input.VersionId;
+    return send(command, options);
+  };
+  assert.equal(await provider.stat({ ...base, objectRef: key, nativeVersionRef: 'other-version' }, signal()), null);
+  client.send = send;
+  await provider.delete({ ...base, objectRef: key, nativeVersionRef }, signal());
+  assert.equal(await provider.stat({ ...base, objectRef: key, nativeVersionRef }, signal()), null);
 });
 
 test('streaming cap applies even when ContentLength is absent', async () => {
   const client = createFakeS3();
   const provider = createS3ReportingRowObjectProviderV1({ client });
-  const { nativeVersion } = await put(provider, 'adcp-rows/ns/big.jsonl', 'x'.repeat(64));
+  const { nativeVersionRef } = await put(provider, 'adcp-rows/ns/big.jsonl', 'x'.repeat(64));
   const send = client.send.bind(client);
   client.send = async (command, options) => {
     const output = await send(command, options);
@@ -351,7 +398,7 @@ test('streaming cap applies even when ContentLength is absent', async () => {
     return output;
   };
   await assert.rejects(
-    provider.get({ ...base, key: 'adcp-rows/ns/big.jsonl', nativeVersion, maxBytes: 10 }, signal()),
+    provider.get({ ...base, objectRef: 'adcp-rows/ns/big.jsonl', nativeVersionRef, maxBytes: 10 }, signal()),
     isCode('ROWS_INTEGRITY_FAILED')
   );
 });
@@ -360,16 +407,19 @@ test('delete removes only the exact version and is idempotent', async () => {
   const client = createFakeS3();
   const provider = createS3ReportingRowObjectProviderV1({ client });
   const key = 'adcp-rows/ns/d.jsonl';
-  const { nativeVersion } = await put(provider, key);
-  assert.equal(await provider.delete({ ...base, key, nativeVersion: '"0000"' }, signal()), 'absent');
-  assert.equal(await provider.delete({ ...base, key, nativeVersion: 'not-a-version' }, signal()), 'absent');
+  const { nativeVersionRef } = await put(provider, key);
+  assert.equal(await provider.delete({ ...base, objectRef: key, nativeVersionRef: '"0000"' }, signal()), 'absent');
+  assert.equal(
+    await provider.delete({ ...base, objectRef: key, nativeVersionRef: 'not-a-version' }, signal()),
+    'absent'
+  );
   assert.equal(client.store.get(key).length, 1);
-  assert.equal(await provider.delete({ ...base, key, nativeVersion }, signal()), 'deleted');
+  assert.equal(await provider.delete({ ...base, objectRef: key, nativeVersionRef }, signal()), 'deleted');
   const deletes = client.calls.filter(item => item.op === 'DeleteObjectCommand');
-  assert.equal(deletes.at(-1).input.VersionId, nativeVersion);
+  assert.equal(deletes.at(-1).input.VersionId, nativeVersionRef);
   assert.equal(deletes.at(-1).input.IfMatch, undefined);
   assert.equal(client.store.get(key).length, 0, 'deleting a VersionId removes the version without a delete marker');
-  assert.equal(await provider.delete({ ...base, key, nativeVersion }, signal()), 'absent');
+  assert.equal(await provider.delete({ ...base, objectRef: key, nativeVersionRef }, signal()), 'absent');
 });
 
 test('a delayed delete of an old version never removes an identical re-creation', async () => {
@@ -377,12 +427,21 @@ test('a delayed delete of an old version never removes an identical re-creation'
   const provider = createS3ReportingRowObjectProviderV1({ client });
   const key = 'adcp-rows/ns/fence.jsonl';
   const first = await put(provider, key, 'same bytes\n');
-  assert.equal(await provider.delete({ ...base, key, nativeVersion: first.nativeVersion }, signal()), 'deleted');
+  assert.equal(
+    await provider.delete({ ...base, objectRef: key, nativeVersionRef: first.nativeVersionRef }, signal()),
+    'deleted'
+  );
   const second = await put(provider, key, 'same bytes\n');
   assert.equal(second.created, true);
-  assert.notEqual(second.nativeVersion, first.nativeVersion);
-  assert.equal(await provider.delete({ ...base, key, nativeVersion: first.nativeVersion }, signal()), 'absent');
-  const bytes = await provider.get({ ...base, key, nativeVersion: second.nativeVersion, maxBytes: 100 }, signal());
+  assert.notEqual(second.nativeVersionRef, first.nativeVersionRef);
+  assert.equal(
+    await provider.delete({ ...base, objectRef: key, nativeVersionRef: first.nativeVersionRef }, signal()),
+    'absent'
+  );
+  const bytes = await provider.get(
+    { ...base, objectRef: key, nativeVersionRef: second.nativeVersionRef, maxBytes: 100 },
+    signal()
+  );
   assert.equal(Buffer.from(bytes).toString(), 'same bytes\n');
   assert.equal(client.store.get(key).length, 1);
 });
@@ -496,16 +555,59 @@ test('provider errors map to stable, secret-free codes', async () => {
     assert.ok(isCode('PROVIDER_UNAVAILABLE')(error));
     return secretFree(error);
   });
-  const { nativeVersion } = await put(provider, 'adcp-rows/ns/e.jsonl');
+  const { nativeVersionRef } = await put(provider, 'adcp-rows/ns/e.jsonl');
   client.failures.GetObjectCommand = s3Error(403, 'AccessDenied');
   await assert.rejects(
-    provider.get({ ...base, key: 'adcp-rows/ns/e.jsonl', nativeVersion, maxBytes: 100 }, signal()),
+    provider.get({ ...base, objectRef: 'adcp-rows/ns/e.jsonl', nativeVersionRef, maxBytes: 100 }, signal()),
     error => isCode('PROVIDER_UNAVAILABLE')(error) && secretFree(error)
   );
   client.failures.HeadObjectCommand = s3Error(503, 'SlowDown');
   await assert.rejects(
-    provider.delete({ ...base, key: 'adcp-rows/ns/e.jsonl', nativeVersion }, signal()),
+    provider.delete({ ...base, objectRef: 'adcp-rows/ns/e.jsonl', nativeVersionRef }, signal()),
     isCode('PROVIDER_UNAVAILABLE')
+  );
+  // An outage is never reported as "this version is gone": stat rejects instead of returning null.
+  for (const status of [
+    [500, 'InternalError'],
+    [403, 'AccessDenied'],
+    [503, 'SlowDown'],
+  ]) {
+    client.failures.HeadObjectCommand = s3Error(...status);
+    await assert.rejects(
+      provider.stat({ ...base, objectRef: 'adcp-rows/ns/e.jsonl', nativeVersionRef }, signal()),
+      error => isCode('PROVIDER_UNAVAILABLE')(error) && secretFree(error)
+    );
+  }
+  // A delete marker (405), a precondition failure and a malformed version are not this object.
+  for (const status of [
+    [405, 'MethodNotAllowed'],
+    [412, 'PreconditionFailed'],
+    [400, 'BadRequest'],
+    [404, 'NotFound'],
+  ]) {
+    client.failures.HeadObjectCommand = s3Error(...status);
+    assert.equal(
+      await provider.stat({ ...base, objectRef: 'adcp-rows/ns/e.jsonl', nativeVersionRef }, signal()),
+      null,
+      String(status[0])
+    );
+  }
+  // Malformed metadata fails closed instead of reporting a size.
+  const send = client.send.bind(client);
+  for (const length of [undefined, -1, 1.5, '10']) {
+    client.send = async (command, options) => ({ ...(await send(command, options)), ContentLength: length });
+    await assert.rejects(
+      provider.stat({ ...base, objectRef: 'adcp-rows/ns/e.jsonl', nativeVersionRef }, signal()),
+      isCode('PROVIDER_UNAVAILABLE'),
+      String(length)
+    );
+  }
+  client.send = send;
+  const aborted = new AbortController();
+  aborted.abort();
+  await assert.rejects(
+    provider.stat({ ...base, objectRef: 'adcp-rows/ns/e.jsonl', nativeVersionRef }, { signal: aborted.signal }),
+    isCode('ABORTED')
   );
 });
 
@@ -523,7 +625,7 @@ test('deadlines and cancellation propagate as abortSignal and stable codes', asy
   );
   const controller = new AbortController();
   const pending = provider.get(
-    { ...base, key: 'adcp-rows/ns/x', nativeVersion: 'abc', maxBytes: 10 },
+    { ...base, objectRef: 'adcp-rows/ns/x', nativeVersionRef: 'abc', maxBytes: 10 },
     { signal: controller.signal }
   );
   controller.abort();
@@ -558,25 +660,25 @@ describe('S3-compatible emulator', { skip: !ENDPOINT && 'REPORTING_S3_TEST_ENDPO
         continue;
       }
       const passed = await runReportingRowObjectProviderConformanceV1(provider, { location, prefix: 'adcp-rows' });
-      assert.equal(passed.length, 7);
+      assert.equal(passed.length, 8);
       const created = await provider.putIfAbsent(
         {
           location,
-          key: 'adcp-rows/ns/emulator.jsonl',
+          objectRef: 'adcp-rows/ns/emulator.jsonl',
           bytes: Buffer.from('{"a":1}\n'),
           contentType: 'application/x-ndjson',
           metadata: { 'adcp-installation': 'emulator' },
         },
         signal()
       );
-      assert.doesNotMatch(created.nativeVersion, /^"/);
-      const foreign = created.nativeVersion.replace(/.$/, c => (c === 'a' ? 'b' : 'a'));
-      const pinned = { location, key: 'adcp-rows/ns/emulator.jsonl' };
-      assert.equal(await provider.get({ ...pinned, nativeVersion: foreign, maxBytes: 100 }, signal()), null);
-      assert.equal(await provider.delete({ ...pinned, nativeVersion: foreign }, signal()), 'absent');
+      assert.doesNotMatch(created.nativeVersionRef, /^"/);
+      const foreign = created.nativeVersionRef.replace(/.$/, c => (c === 'a' ? 'b' : 'a'));
+      const pinned = { location, objectRef: 'adcp-rows/ns/emulator.jsonl' };
+      assert.equal(await provider.get({ ...pinned, nativeVersionRef: foreign, maxBytes: 100 }, signal()), null);
+      assert.equal(await provider.delete({ ...pinned, nativeVersionRef: foreign }, signal()), 'absent');
       assert.equal(
         await provider.delete(
-          { location, key: 'adcp-rows/ns/emulator.jsonl', nativeVersion: created.nativeVersion },
+          { location, objectRef: 'adcp-rows/ns/emulator.jsonl', nativeVersionRef: created.nativeVersionRef },
           signal()
         ),
         'deleted'

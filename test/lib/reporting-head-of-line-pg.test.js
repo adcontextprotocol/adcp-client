@@ -54,10 +54,10 @@ describe('reporting retention and sweep head-of-line blocking', { skip }, () => 
     const obligationId = fixture.obligation.reporting_obligation_id;
     if (failing) {
       const keys = await pool.query(
-        `SELECT object_key FROM adcp_reporting_row_chunks WHERE obligation_id = $1 AND object_key IS NOT NULL`,
+        `SELECT object_ref FROM adcp_reporting_row_chunks WHERE obligation_id = $1 AND object_ref IS NOT NULL`,
         [obligationId]
       );
-      for (const row of keys.rows) failingKeys.add(row.object_key);
+      for (const row of keys.rows) failingKeys.add(row.object_ref);
     }
     return obligationId;
   }
@@ -95,7 +95,7 @@ describe('reporting retention and sweep head-of-line blocking', { skip }, () => 
       get(target, property) {
         if (property === 'delete') {
           return async (location, context) => {
-            if (failingKeys.has(location.key)) {
+            if (failingKeys.has(location.objectRef)) {
               onFailingDelete?.();
               throw new Error('provider unavailable');
             }
@@ -279,7 +279,7 @@ describe('reporting retention and sweep head-of-line blocking', { skip }, () => 
           rowSetId,
           'd'.repeat(64),
           state,
-          JSON.stringify(objects.map(name => ({ objectKey: objectKey(name), nativeVersion: 'v1' }))),
+          JSON.stringify(objects.map(name => ({ object_ref: objectKey(name), native_version_ref: 'v1' }))),
         ]
       );
     const intentRow = async rowSetId =>

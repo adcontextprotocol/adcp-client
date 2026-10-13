@@ -657,9 +657,11 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
   }
 
   /**
-   * Throws `INVALID_INPUT` when any configured object row binding's key template omits
-   * `{revision_key}`, which makes snapshot compaction unsafe (see `compactSupersededSnapshots`).
-   * Called by `compactSupersededSnapshots` and by service construction when compaction is enabled.
+   * Defense in depth for snapshot compaction (see `compactSupersededSnapshots`): throws `INVALID_INPUT`
+   * if a writable object row binding's key template omits `{revision_key}`. Every such binding is
+   * already refused when the store is configured, so this only guards a configuration changed after
+   * construction; `readOnly` bindings are skipped. Called by `compactSupersededSnapshots` and by
+   * service construction when compaction is enabled.
    */
   assertCompactionSafeRowBindings(): void {
     this.rowStorage.assertCompactionSafeKeyTemplates();
@@ -1103,6 +1105,7 @@ ${managedDueArm}       )
           rows: revision.rows,
           finality: revision.finality,
           periodStart: lease.obligation.period.start,
+          sourceTimezone: lease.obligation.period.sourceTimezone,
           binding: revision.binding,
           controlTotals: revision.wireRevision.control_totals,
         })
@@ -1284,6 +1287,7 @@ ${managedDueArm}       )
           obligationId: adjustment.reporting_obligation_id,
           rows: adjustment.rows,
           periodStart: lease.obligation.period.start,
+          sourceTimezone: lease.obligation.period.sourceTimezone,
           binding: adjustment.binding,
         })
       : undefined;
@@ -1964,22 +1968,22 @@ ${managedDueArm}       )
       },
       { preBeginAdvisoryLock: accountLock(accountId) }
     );
-    // Phase 2: external bytes, at their recorded versions. A key template
-    // without {revision_key} lets row sets in other obligations or accounts
-    // adopt the same object, so each delete is skipped while a live row set
-    // outside this period still references it (see deleteUnreferencedObjects).
+    // Phase 2: external bytes, at their recorded versions. Row sets written under an older
+    // template without {revision_key} can name an object another obligation or account also
+    // references, so each delete is skipped while a live row set outside this period still
+    // references it (see deleteUnreferencedObjects).
     if (rowStorage) {
-      const objects = await this.query<{ row_binding_id: string; object_key: string; native_version: string }>(
-        `SELECT DISTINCT row_set.row_binding_id, chunk.object_key, chunk.native_version
+      const objects = await this.query<{ row_binding_id: string; object_ref: string; native_version_ref: string }>(
+        `SELECT DISTINCT row_set.row_binding_id, chunk.object_ref, chunk.native_version_ref
            FROM adcp_reporting_row_chunks chunk
            JOIN adcp_reporting_row_sets row_set ON row_set.row_set_id = chunk.row_set_id
-          WHERE chunk.obligation_id = $1 AND chunk.object_key IS NOT NULL`,
+          WHERE chunk.obligation_id = $1 AND chunk.object_ref IS NOT NULL`,
         [obligationId]
       );
-      const byBinding = new Map<string, { objectKey: string; nativeVersion: string }[]>();
+      const byBinding = new Map<string, { objectRef: string; nativeVersionRef: string }[]>();
       for (const row of objects.rows) {
         const list = byBinding.get(row.row_binding_id) ?? [];
-        list.push({ objectKey: row.object_key, nativeVersion: row.native_version });
+        list.push({ objectRef: row.object_ref, nativeVersionRef: row.native_version_ref });
         byBinding.set(row.row_binding_id, list);
       }
       for (const [bindingId, list] of byBinding) {
@@ -2240,16 +2244,16 @@ ${managedDueArm}       )
     );
     // Retirement of the whole period can finish first and delete the row set.
     if (binding.rows.length === 0) return false;
-    const objects = await this.query<{ object_key: string; native_version: string }>(
-      `SELECT DISTINCT chunk.object_key, chunk.native_version
+    const objects = await this.query<{ object_ref: string; native_version_ref: string }>(
+      `SELECT DISTINCT chunk.object_ref, chunk.native_version_ref
          FROM adcp_reporting_row_chunks chunk
-        WHERE chunk.row_set_id = $1 AND chunk.object_key IS NOT NULL`,
+        WHERE chunk.row_set_id = $1 AND chunk.object_ref IS NOT NULL`,
       [revisionId]
     );
     if (objects.rows.length > 0) {
       await this.deleteUnreferencedObjects(
         binding.rows[0]!.row_binding_id,
-        objects.rows.map(row => ({ objectKey: row.object_key, nativeVersion: row.native_version })),
+        objects.rows.map(row => ({ objectRef: row.object_ref, nativeVersionRef: row.native_version_ref })),
         { rowSetId: revisionId },
         signal
       );
@@ -2257,11 +2261,11 @@ ${managedDueArm}       )
     // Phase 3: the chunk manifest and any PostgreSQL body nothing else uses.
     await this.transaction(
       async client => {
-        const dropped = await client.query<{ sha256: string; object_key: string | null }>(
-          `DELETE FROM adcp_reporting_row_chunks WHERE row_set_id = $1 RETURNING sha256, object_key`,
+        const dropped = await client.query<{ sha256: string; object_ref: string | null }>(
+          `DELETE FROM adcp_reporting_row_chunks WHERE row_set_id = $1 RETURNING sha256, object_ref`,
           [revisionId]
         );
-        const bodies = [...new Set(dropped.rows.filter(row => row.object_key === null).map(row => row.sha256))];
+        const bodies = [...new Set(dropped.rows.filter(row => row.object_ref === null).map(row => row.sha256))];
         if (bodies.length > 0) {
           await client.query(
             `DELETE FROM adcp_reporting_chunk_bodies body
@@ -2269,7 +2273,7 @@ ${managedDueArm}       )
                 AND NOT EXISTS (
                   SELECT 1 FROM adcp_reporting_row_chunks other
                    WHERE other.account_id = body.account_id AND other.obligation_id = body.obligation_id
-                     AND other.sha256 = body.sha256 AND other.object_key IS NULL
+                     AND other.sha256 = body.sha256 AND other.object_ref IS NULL
                 )`,
             [accountId, obligationId, bodies]
           );
@@ -2349,14 +2353,31 @@ ${managedDueArm}       )
       try {
         const claimed = await this.transaction(
           async client => {
-            const updated = await client.query<{ created_objects: { objectKey: string; nativeVersion: string }[] }>(
+            // An older writer still running during a rolling upgrade may append the pre-alignment keys
+            // (`objectKey`, `nativeVersion`); read both so its objects are still swept.
+            const updated = await client.query<{
+              created_objects: {
+                object_ref?: string;
+                native_version_ref?: string;
+                objectKey?: string;
+                nativeVersion?: string;
+              }[];
+            }>(
               `UPDATE adcp_reporting_row_write_intents SET state = 'sweeping'
                 WHERE row_binding_id = $1 AND row_set_id = $2 AND content_sha256 = $3
                   AND (state = 'sweeping' OR expires_at <= clock_timestamp())
                 RETURNING created_objects`,
               key
             );
-            return updated.rows[0]?.created_objects;
+            return updated.rows[0]?.created_objects
+              .map(object => ({
+                objectRef: object.object_ref ?? object.objectKey,
+                nativeVersionRef: object.native_version_ref ?? object.nativeVersion,
+              }))
+              .filter(
+                (object): object is { objectRef: string; nativeVersionRef: string } =>
+                  typeof object.objectRef === 'string' && typeof object.nativeVersionRef === 'string'
+              );
           },
           { preBeginAdvisoryLock: accountLock(intent.account_id) }
         );
@@ -2409,9 +2430,9 @@ ${managedDueArm}       )
   /**
    * Delete external row objects, skipping any object another row set still references.
    *
-   * A custom `keyTemplate` need only include `{content_sha256}` and `{chunk_index}`, so row sets
-   * from different obligations or accounts with identical chunk content can share one object (a
-   * create-only write adopts an existing object). An object is therefore deleted only when no
+   * Object keys are unique per row set (every writable template includes `{revision_key}`), but header-only
+   * revisions share chunks within an obligation and rows written under an older template can name one
+   * object from several row sets. An object is therefore deleted only when no
    * chunk of a live (or unavailable) row set outside this operation references the same binding,
    * key and native version, and no other open write intent created it. Row sets already `pruning`
    * or `pruned` do not count: their own operation deletes the object, and counting them would let
@@ -2429,7 +2450,7 @@ ${managedDueArm}       )
    */
   private async deleteUnreferencedObjects(
     bindingId: string,
-    objects: readonly { objectKey: string; nativeVersion: string }[],
+    objects: readonly { objectRef: string; nativeVersionRef: string }[],
     scope: { obligationId?: string; rowSetId?: string },
     signal?: AbortSignal
   ): Promise<number> {
@@ -2438,27 +2459,30 @@ ${managedDueArm}       )
       signal?.throwIfAborted();
       const removed = await this.transaction(async client => {
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
-          objectLock(bindingId, object.objectKey),
+          objectLock(bindingId, object.objectRef),
         ]);
         const referenced = await client.query(
           `(SELECT 1 FROM adcp_reporting_row_chunks chunk
               JOIN adcp_reporting_row_sets row_set ON row_set.row_set_id = chunk.row_set_id
-             WHERE row_set.row_binding_id = $1 AND chunk.object_key = $2 AND chunk.native_version = $3
+             WHERE row_set.row_binding_id = $1 AND chunk.object_ref = $2 AND chunk.native_version_ref = $3
                AND row_set.rows_state IN ('live', 'unavailable')
                AND ($4::text IS NULL OR chunk.obligation_id <> $4)
                AND ($5::text IS NULL OR chunk.row_set_id <> $5)
              LIMIT 1)
            UNION ALL
            (SELECT 1 FROM adcp_reporting_row_write_intents intent
-             WHERE intent.row_binding_id = $1 AND intent.state = 'open' AND intent.created_objects @> $6::jsonb
+             WHERE intent.row_binding_id = $1 AND intent.state = 'open'
+               AND (intent.created_objects @> $6::jsonb OR intent.created_objects @> $7::jsonb)
              LIMIT 1)`,
           [
             bindingId,
-            object.objectKey,
-            object.nativeVersion,
+            object.objectRef,
+            object.nativeVersionRef,
             scope.obligationId ?? null,
             scope.rowSetId ?? null,
-            JSON.stringify([{ objectKey: object.objectKey, nativeVersion: object.nativeVersion }]),
+            JSON.stringify([{ object_ref: object.objectRef, native_version_ref: object.nativeVersionRef }]),
+            // An older writer still running during a rolling upgrade records the pre-alignment keys.
+            JSON.stringify([{ objectKey: object.objectRef, nativeVersion: object.nativeVersionRef }]),
           ]
         );
         if (referenced.rows.length > 0) return false;
@@ -2553,7 +2577,11 @@ ${managedDueArm}       )
             SET created_objects = created_objects || $5::jsonb
           WHERE row_binding_id = $1 AND row_set_id = $2 AND content_sha256 = $3
             AND owner_token = $4 AND state = 'open'`,
-        [...intentKey, ownerToken, JSON.stringify([object])]
+        [
+          ...intentKey,
+          ownerToken,
+          JSON.stringify([{ object_ref: object.objectRef, native_version_ref: object.nativeVersionRef }]),
+        ]
       );
       if (recorded.rowCount !== 1) {
         throw new ReportingRowStoreError('STATE_UNAVAILABLE', 'the row upload intent was taken over or swept');
@@ -2602,10 +2630,10 @@ ${managedDueArm}       )
       // chunk rows inserted below and skips (`deleteUnreferencedObjects`).
       const adopted = upload.locators
         .filter(locator => !locator.created)
-        .sort((left, right) => (left.objectKey < right.objectKey ? -1 : left.objectKey > right.objectKey ? 1 : 0));
+        .sort((left, right) => (left.objectRef < right.objectRef ? -1 : left.objectRef > right.objectRef ? 1 : 0));
       for (const locator of adopted) {
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
-          objectLock(prepared.bindingId, locator.objectKey),
+          objectLock(prepared.bindingId, locator.objectRef),
         ]);
       }
       if (adopted.length > 0) await this.rowStorage.assertObjectsPresent(prepared.bindingId, adopted);
@@ -5441,8 +5469,8 @@ function accountLock(accountId: string): string {
 }
 
 /** Serializes deleting an external row object against a commit that adopts it. */
-function objectLock(bindingId: string, objectKey: string): string {
-  return `adcp-reporting-object:${bindingId}:${objectKey}`;
+function objectLock(bindingId: string, objectRef: string): string {
+  return `adcp-reporting-object:${bindingId}:${objectRef}`;
 }
 
 /**

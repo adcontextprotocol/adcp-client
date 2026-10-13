@@ -172,7 +172,7 @@ const put = (provider, key, body = '{"a":1}\n', extra = {}) =>
   provider.putIfAbsent(
     {
       ...base,
-      key,
+      objectRef: key,
       bytes: Buffer.from(body),
       contentType: 'application/gzip',
       metadata: { 'adcp-installation': 'inst', 'adcp-intent': 'intent' },
@@ -198,6 +198,7 @@ test('passes the shared provider conformance suite', async () => {
     'create-only',
     'ranged-read',
     'version-pinned-read',
+    'version-pinned-stat',
     'exact-version-delete',
     'write-unique-version',
   ]);
@@ -210,7 +211,7 @@ test('create-only upload: If-None-Match, content headers, identifier-safe metada
   const provider = createAzureBlobReportingRowObjectProviderV1({ client });
   const created = await put(provider, 'adcp-rows/ns/a.jsonl.gz');
   assert.equal(created.created, true);
-  assert.match(created.nativeVersion, /^\d{4}-\d{2}-\d{2}T/);
+  assert.match(created.nativeVersionRef, /^\d{4}-\d{2}-\d{2}T/);
   const upload = client.calls.find(call => call.op === 'upload').options;
   assert.deepEqual(upload.conditions, { ifNoneMatch: '*' });
   assert.equal(upload.blobHTTPHeaders.blobContentType, 'application/gzip');
@@ -237,15 +238,15 @@ test('409 BlobAlreadyExists or 412 adopts the existing version', async () => {
     const first = await put(provider, 'adcp-rows/ns/a.jsonl', 'first\n');
     assert.deepEqual(await put(provider, 'adcp-rows/ns/a.jsonl', 'second\n'), {
       created: false,
-      nativeVersion: first.nativeVersion,
+      nativeVersionRef: first.nativeVersionRef,
     });
     client.failures.upload = restError(412, 'ConditionNotMet');
     assert.deepEqual(await put(provider, 'adcp-rows/ns/a.jsonl', 'third\n'), {
       created: false,
-      nativeVersion: first.nativeVersion,
+      nativeVersionRef: first.nativeVersionRef,
     });
     const bytes = await provider.get(
-      { ...base, key: 'adcp-rows/ns/a.jsonl', nativeVersion: first.nativeVersion, maxBytes: 100 },
+      { ...base, objectRef: 'adcp-rows/ns/a.jsonl', nativeVersionRef: first.nativeVersionRef, maxBytes: 100 },
       signal()
     );
     assert.equal(Buffer.from(bytes).toString(), 'first\n');
@@ -257,38 +258,50 @@ test('reads pin versionId and honour ranges and the byte cap', async () => {
     const client = createFakeAzure({ versioned: true });
     const provider = createAzureBlobReportingRowObjectProviderV1({ client });
     const key = 'adcp-rows/ns/r.jsonl';
-    const { nativeVersion } = await put(provider, key, '0123456789abcdef');
+    const { nativeVersionRef } = await put(provider, key, '0123456789abcdef');
     const ranged = await provider.get(
-      { ...base, key, nativeVersion, range: { offset: 4, length: 6 }, maxBytes: 6 },
+      { ...base, objectRef: key, nativeVersionRef, range: { offset: 4, length: 6 }, maxBytes: 6 },
       signal()
     );
     assert.equal(Buffer.from(ranged).toString(), '456789');
     const call = client.calls.filter(item => item.op === 'download').at(-1).options;
     assert.equal(call.offset, 4);
     assert.equal(call.count, 6);
-    assert.equal(call.versionId, nativeVersion);
+    assert.equal(call.versionId, nativeVersionRef);
     assert.equal(call.conditions, undefined, 'ETags never participate in version pinning');
 
-    assert.equal(await provider.get({ ...base, key, nativeVersion: '"0x0"', maxBytes: 100 }, signal()), null);
-    assert.equal(await provider.get({ ...base, key, nativeVersion: 'not-a-version', maxBytes: 100 }, signal()), null);
     assert.equal(
-      await provider.get({ ...base, key, nativeVersion: '2020-01-01T00:00:00.0000000Z', maxBytes: 100 }, signal()),
+      await provider.get({ ...base, objectRef: key, nativeVersionRef: '"0x0"', maxBytes: 100 }, signal()),
       null
     );
     assert.equal(
-      await provider.get({ ...base, key: 'adcp-rows/ns/missing', nativeVersion, maxBytes: 100 }, signal()),
+      await provider.get({ ...base, objectRef: key, nativeVersionRef: 'not-a-version', maxBytes: 100 }, signal()),
+      null
+    );
+    assert.equal(
+      await provider.get(
+        { ...base, objectRef: key, nativeVersionRef: '2020-01-01T00:00:00.0000000Z', maxBytes: 100 },
+        signal()
+      ),
+      null
+    );
+    assert.equal(
+      await provider.get({ ...base, objectRef: 'adcp-rows/ns/missing', nativeVersionRef, maxBytes: 100 }, signal()),
       null
     );
     await assert.rejects(
-      provider.get({ ...base, key, nativeVersion, maxBytes: 8 }, signal()),
+      provider.get({ ...base, objectRef: key, nativeVersionRef, maxBytes: 8 }, signal()),
       isCode('ROWS_INTEGRITY_FAILED')
     );
     await assert.rejects(
-      provider.get({ ...base, key, nativeVersion, range: { offset: 99, length: 2 }, maxBytes: 8 }, signal()),
+      provider.get(
+        { ...base, objectRef: key, nativeVersionRef, range: { offset: 99, length: 2 }, maxBytes: 8 },
+        signal()
+      ),
       isCode('ROWS_INTEGRITY_FAILED')
     );
     const empty = await provider.get(
-      { ...base, key, nativeVersion, range: { offset: 2, length: 0 }, maxBytes: 0 },
+      { ...base, objectRef: key, nativeVersionRef, range: { offset: 2, length: 0 }, maxBytes: 0 },
       signal()
     );
     assert.equal(empty.length, 0);
@@ -299,7 +312,7 @@ test('a store that ignores versionid never serves or deletes a different version
   const client = createFakeAzure({ versioned: true });
   const provider = createAzureBlobReportingRowObjectProviderV1({ client });
   const key = 'adcp-rows/ns/v.jsonl';
-  const { nativeVersion } = await put(provider, key);
+  const { nativeVersionRef } = await put(provider, key);
   // The fake drops the version pin, like a store without versioning, and answers from the base blob.
   const container = client.getContainerClient;
   client.getContainerClient = name => {
@@ -313,15 +326,53 @@ test('a store that ignores versionid never serves or deletes a different version
     };
   };
   const foreign = '2020-01-01T00:00:00.0000000Z';
-  assert.equal(await provider.get({ ...base, key, nativeVersion: foreign, maxBytes: 100 }, signal()), null);
-  assert.equal(await provider.delete({ ...base, key, nativeVersion: foreign }, signal()), 'absent');
-  assert.ok(await provider.get({ ...base, key, nativeVersion, maxBytes: 100 }, signal()));
+  assert.equal(
+    await provider.get({ ...base, objectRef: key, nativeVersionRef: foreign, maxBytes: 100 }, signal()),
+    null
+  );
+  assert.equal(await provider.delete({ ...base, objectRef: key, nativeVersionRef: foreign }, signal()), 'absent');
+  assert.ok(await provider.get({ ...base, objectRef: key, nativeVersionRef, maxBytes: 100 }, signal()));
+});
+
+test('stat proves one exact version and its size from blob properties, never a download', async () => {
+  const client = createFakeAzure({ versioned: true });
+  const provider = createAzureBlobReportingRowObjectProviderV1({ client });
+  const key = 'adcp-rows/ns/stat.jsonl';
+  const { nativeVersionRef } = await put(provider, key, '0123456789');
+  assert.deepEqual(await provider.stat({ ...base, objectRef: key, nativeVersionRef }, signal()), {
+    nativeVersionRef,
+    sizeBytes: 10,
+  });
+  assert.equal(
+    client.calls.some(call => call.op === 'download'),
+    false
+  );
+  for (const foreign of ['not-a-version', '"0x0"', '2020-01-01T00:00:00.0000000Z', '']) {
+    assert.equal(await provider.stat({ ...base, objectRef: key, nativeVersionRef: foreign }, signal()), null);
+  }
+  assert.equal(await provider.stat({ ...base, objectRef: 'adcp-rows/ns/missing', nativeVersionRef }, signal()), null);
+  // A store without blob versioning ignores the pin and answers from the base blob; only an echoed version counts.
+  const container = client.getContainerClient;
+  client.getContainerClient = name => {
+    const inner = container(name);
+    return {
+      ...inner,
+      getBlockBlobClient(blobKey) {
+        const blob = inner.getBlockBlobClient(blobKey);
+        return { ...blob, withVersion: () => blob };
+      },
+    };
+  };
+  assert.equal(
+    await provider.stat({ ...base, objectRef: key, nativeVersionRef: '2020-01-01T00:00:00.0000000Z' }, signal()),
+    null
+  );
 });
 
 test('streaming cap applies even when contentLength is absent', async () => {
   const client = createFakeAzure({ versioned: true });
   const provider = createAzureBlobReportingRowObjectProviderV1({ client });
-  const { nativeVersion } = await put(provider, 'adcp-rows/ns/big.jsonl', 'x'.repeat(64));
+  const { nativeVersionRef } = await put(provider, 'adcp-rows/ns/big.jsonl', 'x'.repeat(64));
   const container = client.getContainerClient;
   client.getContainerClient = name => {
     const inner = container(name);
@@ -341,7 +392,7 @@ test('streaming cap applies even when contentLength is absent', async () => {
     };
   };
   await assert.rejects(
-    provider.get({ ...base, key: 'adcp-rows/ns/big.jsonl', nativeVersion, maxBytes: 10 }, signal()),
+    provider.get({ ...base, objectRef: 'adcp-rows/ns/big.jsonl', nativeVersionRef, maxBytes: 10 }, signal()),
     isCode('ROWS_INTEGRITY_FAILED')
   );
 });
@@ -351,14 +402,14 @@ test('delete removes only the exact version and is idempotent', async () => {
     const client = createFakeAzure({ versioned: true });
     const provider = createAzureBlobReportingRowObjectProviderV1({ client });
     const key = 'adcp-rows/ns/d.jsonl';
-    const { nativeVersion } = await put(provider, key);
+    const { nativeVersionRef } = await put(provider, key);
     for (const foreign of ['"0x0"', 'not-a-version', '2020-01-01T00:00:00.0000000Z']) {
-      assert.equal(await provider.delete({ ...base, key, nativeVersion: foreign }, signal()), 'absent');
+      assert.equal(await provider.delete({ ...base, objectRef: key, nativeVersionRef: foreign }, signal()), 'absent');
     }
     assert.equal(liveBlobs(client).length, 1);
-    assert.equal(await provider.delete({ ...base, key, nativeVersion }, signal()), 'deleted');
+    assert.equal(await provider.delete({ ...base, objectRef: key, nativeVersionRef }, signal()), 'deleted');
     assert.equal(liveBlobs(client).length, 0);
-    assert.equal(await provider.delete({ ...base, key, nativeVersion }, signal()), 'absent');
+    assert.equal(await provider.delete({ ...base, objectRef: key, nativeVersionRef }, signal()), 'absent');
   }
 });
 
@@ -367,12 +418,21 @@ test('a delayed delete of an old version never removes an identical re-creation'
   const provider = createAzureBlobReportingRowObjectProviderV1({ client });
   const key = 'adcp-rows/ns/fence.jsonl';
   const first = await put(provider, key, 'same bytes\n');
-  assert.equal(await provider.delete({ ...base, key, nativeVersion: first.nativeVersion }, signal()), 'deleted');
+  assert.equal(
+    await provider.delete({ ...base, objectRef: key, nativeVersionRef: first.nativeVersionRef }, signal()),
+    'deleted'
+  );
   const second = await put(provider, key, 'same bytes\n');
   assert.equal(second.created, true);
-  assert.notEqual(second.nativeVersion, first.nativeVersion);
-  assert.equal(await provider.delete({ ...base, key, nativeVersion: first.nativeVersion }, signal()), 'absent');
-  const bytes = await provider.get({ ...base, key, nativeVersion: second.nativeVersion, maxBytes: 100 }, signal());
+  assert.notEqual(second.nativeVersionRef, first.nativeVersionRef);
+  assert.equal(
+    await provider.delete({ ...base, objectRef: key, nativeVersionRef: first.nativeVersionRef }, signal()),
+    'absent'
+  );
+  const bytes = await provider.get(
+    { ...base, objectRef: key, nativeVersionRef: second.nativeVersionRef, maxBytes: 100 },
+    signal()
+  );
   assert.equal(Buffer.from(bytes).toString(), 'same bytes\n');
 });
 
@@ -448,15 +508,32 @@ test('provider errors map to stable, secret-free codes', async () => {
     assert.ok(isCode('PROVIDER_UNAVAILABLE')(error));
     return secretFree(error);
   });
-  const { nativeVersion } = await put(provider, 'adcp-rows/ns/e.jsonl');
+  const { nativeVersionRef } = await put(provider, 'adcp-rows/ns/e.jsonl');
   client.failures.download = restError(403, 'AuthorizationFailure');
   await assert.rejects(
-    provider.get({ ...base, key: 'adcp-rows/ns/e.jsonl', nativeVersion, maxBytes: 100 }, signal()),
+    provider.get({ ...base, objectRef: 'adcp-rows/ns/e.jsonl', nativeVersionRef, maxBytes: 100 }, signal()),
     error => isCode('PROVIDER_UNAVAILABLE')(error) && secretFree(error)
+  );
+  for (const status of [
+    [500, 'InternalError'],
+    [403, 'AuthorizationFailure'],
+    [503, 'ServerBusy'],
+  ]) {
+    client.failures.getProperties = restError(...status);
+    await assert.rejects(
+      provider.stat({ ...base, objectRef: 'adcp-rows/ns/e.jsonl', nativeVersionRef }, signal()),
+      error => isCode('PROVIDER_UNAVAILABLE')(error) && secretFree(error)
+    );
+  }
+  client.failures.getProperties = restError(400, 'InvalidQueryParameterValue');
+  assert.equal(
+    await provider.stat({ ...base, objectRef: 'adcp-rows/ns/e.jsonl', nativeVersionRef }, signal()),
+    null,
+    'a malformed version is not this blob'
   );
   client.failures.delete = restError(503, 'ServerBusy');
   await assert.rejects(
-    provider.delete({ ...base, key: 'adcp-rows/ns/e.jsonl', nativeVersion }, signal()),
+    provider.delete({ ...base, objectRef: 'adcp-rows/ns/e.jsonl', nativeVersionRef }, signal()),
     isCode('PROVIDER_UNAVAILABLE')
   );
 });
@@ -475,7 +552,7 @@ test('deadlines and cancellation propagate as abortSignal and stable codes', asy
   );
   const controller = new AbortController();
   const pending = provider.get(
-    { ...base, key: 'adcp-rows/ns/x', nativeVersion: '2026-01-01T00:00:00.0000000Z', maxBytes: 10 },
+    { ...base, objectRef: 'adcp-rows/ns/x', nativeVersionRef: '2026-01-01T00:00:00.0000000Z', maxBytes: 10 },
     { signal: controller.signal }
   );
   controller.abort();
@@ -517,22 +594,28 @@ describe(
         const provider = createAzureBlobReportingRowObjectProviderV1({ client });
         const location = { account: client.accountName, container };
         const passed = await runReportingRowObjectProviderConformanceV1(provider, { location, prefix: 'adcp-rows' });
-        assert.equal(passed.length, 7);
+        assert.equal(passed.length, 8);
         const key = 'adcp-rows/ns/emulator.jsonl';
         const created = await provider.putIfAbsent(
           {
             location,
-            key,
+            objectRef: key,
             bytes: Buffer.from('{"a":1}\n'),
             contentType: 'application/x-ndjson',
             metadata: { 'adcp-installation': 'emulator' },
           },
           signal()
         );
-        assert.equal(await provider.get({ location, key, nativeVersion: '"0x0"', maxBytes: 100 }, signal()), null);
-        assert.equal(await provider.delete({ location, key, nativeVersion: '"0x0"' }, signal()), 'absent');
         assert.equal(
-          await provider.delete({ location, key, nativeVersion: created.nativeVersion }, signal()),
+          await provider.get({ location, objectRef: key, nativeVersionRef: '"0x0"', maxBytes: 100 }, signal()),
+          null
+        );
+        assert.equal(
+          await provider.delete({ location, objectRef: key, nativeVersionRef: '"0x0"' }, signal()),
+          'absent'
+        );
+        assert.equal(
+          await provider.delete({ location, objectRef: key, nativeVersionRef: created.nativeVersionRef }, signal()),
           'deleted'
         );
         await client.getContainerClient(container).deleteIfExists();

@@ -338,6 +338,19 @@ do {
 Removing rows from ledger documents frees space only after `VACUUM FULL` or an
 online repack of `adcp_reporting_revisions` and `adcp_reporting_adjustments`.
 
+### Stored field names
+
+Stored values use AdCP's names and bounds: a chunk's `object_ref` and
+`native_version_ref` (1 to 1024 characters each, enforced by `CHECK`
+constraints), `size_bytes` (the stored object's size after compression, as in
+the AdCP file manifest), and `canonical_size_bytes` (the uncompressed canonical
+bytes that the chunk digests cover; a row set's `content_size_bytes` is the
+byte count of the content its `content_sha256` covers). A row set records `format` (`jsonl`) and
+`algorithm` (`adcp_jcs_rows_v1`). Neither token feeds a digest. Installed
+databases upgrade in place when you re-apply `REPORTING_ROW_STORAGE_MIGRATION`;
+see [Breaking: reporting row storage field alignment](../migration-reporting-row-storage-alignment.md)
+for the old names, the API renames and the re-sync option.
+
 ### Object storage bindings
 
 Rows can live in object storage instead of PostgreSQL. A binding is defined in
@@ -368,7 +381,7 @@ const store = new PostgresReportingLedgerStore(pool, {
     providers: {
       filesystem: createFilesystemReportingRowObjectProviderV1({ roots: { reports: '/var/lib/adcp/rows' } }),
     },
-    selectRowBinding: ({ canonical_byte_count }) => (canonical_byte_count < 256 * 1024 ? 'inline' : 'reports'),
+    selectRowBinding: ({ content_size_bytes }) => (content_size_bytes < 256 * 1024 ? 'inline' : 'reports'),
   },
 });
 await store.readyRowStorage();
@@ -380,19 +393,41 @@ await store.readyRowStorage();
 - Keys always start with `{prefix}/{namespace_key}/` and use a hashed account
   segment, never a raw account ID. Override `keyTemplate` with the placeholders
   in `REPORTING_ROW_KEY_PLACEHOLDERS`; templates must include
-  `{content_sha256}` and `{chunk_index}`.
-  Enabling snapshot compaction additionally requires `{revision_key}` (see
-  [Compacting superseded snapshots](#compacting-superseded-snapshots-opt-in)).
-- A custom `keyTemplate` without `{account_key}` and `{revision_key}` can map
-  row sets from different obligations or accounts with identical chunk content
-  (an adjustment's digest covers its rows alone) to one object, which the
-  second writer adopts. Every delete path (period retirement, compaction and
-  the intent sweep) therefore skips an object while a live row set outside the
+  `{content_sha256}`, `{chunk_index}` and `{revision_key}`. `{revision_key}` is
+  required on every writable binding, so each row set writes its own object
+  keys (it hashes the row-set ID, so two uploads never name the same key). The store refuses a
+  template without it when it is configured and again in `readyRowStorage`,
+  with `INVALID_INPUT`.
+  `{period_date}` renders AdCP's `YYYY-MM-DD`: the calendar date of the period
+  start in the period's `source_timezone`, never UTC (a period starting
+  `2026-10-02T07:00:00Z` in `America/Los_Angeles` is `2026-10-02`; one starting
+  `2026-10-01T15:00:00Z` in `Asia/Tokyo` is also `2026-10-02`). It is one path
+  segment, so the default layout is
+  `{prefix}/{namespace_key}/{account_key}/2026-10-02/{finality}/...`, not
+  `2026/10/02/`. A missing, unknown or non-IANA timezone fails the write with
+  `INVALID_INPUT` rather than guessing a date. The rendered key must stay within
+  AdCP's 1024-character `object_ref` bound.
+- Rows written under an older template without `{revision_key}` stay readable:
+  every read uses the chunk's recorded `object_ref`, never a re-rendered key.
+  Changing a template needs a new binding ID, and the old definition must stay
+  configured while revisions reference it. Mark that old definition
+  `readOnly: true` to keep it configured without `{revision_key}`: it is
+  exempt from the requirement, never selected for new writes, and still used
+  for reads and retirement. A read-only binding is still registered and
+  probed by `readyRowStorage`, so keep its location reachable (and keep
+  enforcing `readOnly` in every process that shares the database: it is not
+  stored).
+- Header-only revisions share their predecessor's chunks within an obligation,
+  and chunk rows written under an older template can name one object from
+  several row sets. Every delete path (period retirement, compaction and the
+  intent sweep) therefore skips an object while a live row set outside the
   operation still references the same binding, key and native version, or an
-  open write intent created it. The reference check and the delete run in one
+  open write intent created it. (With unique keys, a create-only write only
+  finds an existing object when a writer retries the same row set.) The check
+  and delete run under the per-object lock described below. The reference check and the delete run in one
   transaction under a per-object advisory lock, and a commit that adopts an
-  existing object takes the same lock, re-reads the object and holds the lock
-  until its chunk rows commit. A delete that wins the lock makes the adopting
+  existing object takes the same lock, proves the object is still there and
+  holds the lock until its chunk rows commit. A delete that wins the lock makes the adopting
   commit fail with `STATE_UNAVAILABLE` (the writer re-uploads once its intent
   lapses); a commit that wins is seen by the delete, which skips. A skipped
   object is deleted by the retirement, compaction or sweep of the last row set
@@ -415,7 +450,16 @@ await store.readyRowStorage();
   filesystem is wrong, not the code.
 - Custom providers implement `ReportingRowObjectProviderV1`. Run
   `runReportingRowObjectProviderConformanceV1(provider, { location, prefix })`
-  against a dedicated test prefix before using one.
+  against a dedicated test prefix before using one. Provider calls take and
+  return AdCP's names: `objectRef` (the decoded, destination-relative object
+  key) and `nativeVersionRef` (the decoded provider-native version), each 1 to
+  1024 characters. Implement the optional `stat({ objectRef, nativeVersionRef })`,
+  which returns `{ sizeBytes }` for that exact version or `null` when it is
+  absent, without reading the body. The commit transaction uses it to prove an
+  adopted object is unchanged (native versions are write-unique, so the same
+  version at the recorded size is the same bytes) instead of downloading it
+  while holding the account and object locks. A provider without `stat` falls
+  back to reading the whole object there. All bundled providers implement it.
 
 #### Cloud providers
 
@@ -690,15 +734,16 @@ revision referencing them is compacted.
 Compaction records no change-feed row: the revision's metadata did not change,
 and a sink still catching up holds the revision back (above).
 
-Compaction requires every object row binding's `keyTemplate` to include
-`{revision_key}` (the default template does). Deletes now skip objects another
-row set still references (see [Object storage](#object-storage-bindings)),
-so this is defense in depth rather than the only guard: with `{revision_key}`
-no two revisions ever name the same object, so compaction never depends on the
-reference check. The SDK fails closed: `createReliableReportingService` and
-`createPostgresReliableReportingProductionService` throw at construction when
-compaction is enabled and a binding's template omits `{revision_key}`, and
-`compactSupersededSnapshots` throws the same error before deleting anything.
+Every writable object row binding's `keyTemplate` must include
+`{revision_key}` (the default template does), so two uploads never name the
+same object. Deletes skip objects another row set still references (see
+[Object storage](#object-storage-bindings)), which still matters for header-only
+revisions that share chunks within an obligation and for rows written under an
+older template, so compaction does not depend on key uniqueness alone. A
+`readOnly` binding for older rows is exempt: it never takes commits, so nothing
+can adopt through it. The SDK fails closed when the store is configured, and
+`createReliableReportingService`, `createPostgresReliableReportingProductionService`
+and `compactSupersededSnapshots` re-check before compacting.
 
 ### Core-only setup with row storage, change feed and retention
 

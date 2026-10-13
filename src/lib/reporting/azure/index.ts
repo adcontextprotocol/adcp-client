@@ -127,16 +127,20 @@ export function createAzureBlobReportingRowObjectProviderV1(
     }
     return client.getContainerClient(input.location.container!);
   };
-  const blobFor = (input: { location: Readonly<Record<string, string>>; credentialRef?: string; key: string }) => {
-    if (typeof input.key !== 'string' || input.key.length === 0 || input.key.length > 1024) {
+  const blobFor = (input: {
+    location: Readonly<Record<string, string>>;
+    credentialRef?: string;
+    objectRef: string;
+  }) => {
+    if (typeof input.objectRef !== 'string' || input.objectRef.length === 0 || input.objectRef.length > 1024) {
       throw new ReportingRowStoreError('INVALID_INPUT', 'object key is invalid');
     }
-    return containerFor(input).getBlockBlobClient(input.key);
+    return containerFor(input).getBlockBlobClient(input.objectRef);
   };
   /** Version-pinned blob client, or `null` when the recorded version is unusable. */
-  const pinned = (blob: BlobClient, nativeVersion: string) =>
-    typeof nativeVersion === 'string' && VERSION_ID.test(nativeVersion)
-      ? { blob: blob.withVersion(nativeVersion), versionId: nativeVersion }
+  const pinned = (blob: BlobClient, nativeVersionRef: string) =>
+    typeof nativeVersionRef === 'string' && VERSION_ID.test(nativeVersionRef)
+      ? { blob: blob.withVersion(nativeVersionRef), versionId: nativeVersionRef }
       : null;
 
   async function assertCreateOnlyEnforced(container: ContainerClient, prefix: string, signal: AbortSignal) {
@@ -210,20 +214,20 @@ export function createAzureBlobReportingRowObjectProviderV1(
             metadata: metadataOf(input.metadata),
             abortSignal: context.signal,
           });
-          return { created: true, nativeVersion: versionOf(response) };
+          return { created: true, nativeVersionRef: versionOf(response) };
         } catch (error) {
           if (!isConflict(error)) throw error;
         }
         // The key is taken. Report the existing version; the caller adopts it only on identical bytes.
         const existing = await blob.getProperties({ abortSignal: context.signal });
-        return { created: false, nativeVersion: versionOf(existing) };
+        return { created: false, nativeVersionRef: versionOf(existing) };
       });
     },
     get(input, context) {
       return runReportingRowProviderOperation(context.signal, async () => {
         const blob = blobFor(input);
         assertReportingRowReadBounds(input);
-        const target = pinned(blob, input.nativeVersion);
+        const target = pinned(blob, input.nativeVersionRef);
         if (target === null) return null;
         try {
           if (input.range?.length === 0) {
@@ -264,10 +268,31 @@ export function createAzureBlobReportingRowObjectProviderV1(
         }
       });
     },
+    stat(input, context) {
+      return runReportingRowProviderOperation(context.signal, async () => {
+        const blob = blobFor(input);
+        const target = pinned(blob, input.nativeVersionRef);
+        if (target === null) return null;
+        try {
+          // A versionId-pinned properties read: only an echoed exact version counts (stores without blob
+          // versioning ignore `versionid`), and versions are unique per write.
+          const properties = await target.blob.getProperties({ abortSignal: context.signal });
+          if (!servedVersion(properties, target.versionId)) return null;
+          const size = properties.contentLength;
+          if (typeof size !== 'number' || !Number.isSafeInteger(size) || size < 0) {
+            throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'blob metadata is malformed');
+          }
+          return { nativeVersionRef: target.versionId, sizeBytes: size };
+        } catch (error) {
+          if (isMissing(error) || statusOf(error) === 400) return null;
+          throw error;
+        }
+      });
+    },
     delete(input, context) {
       return runReportingRowProviderOperation(context.signal, async () => {
         const blob = blobFor(input);
-        const target = pinned(blob, input.nativeVersion);
+        const target = pinned(blob, input.nativeVersionRef);
         if (target === null) return 'absent' as const;
         const signal = context.signal;
         // Confirm the store resolved the exact version; stores without versioning ignore `versionid`.

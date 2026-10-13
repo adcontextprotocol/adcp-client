@@ -1,15 +1,17 @@
 /**
  * PostgreSQL integration tests for external row objects shared between row sets.
- * A custom `keyTemplate` need only include `{content_sha256}` and `{chunk_index}`, and an
- * adjustment's `content_sha256` digests its rows alone, so identical corrections in two
- * obligations map to one object. Every delete path must leave an object another row set still
- * references, and must not leak it once the last reference is gone.
+ * Object keys are unique per row set (every writable binding's key template includes `{revision_key}`),
+ * but header-only revisions share chunks within an obligation (covered by the compaction tests below
+ * and the object-storage suite) and chunk rows written under an older template can name one object
+ * from several row sets. These tests re-point chunk rows at a shared object to model the latter. Every delete path must leave an object another row set still references,
+ * and must not leak it once the last reference is gone; a commit that adopts an object another
+ * writer created (a retry of the same row set) must prove it is still there under the object lock.
  *
  * REPORTING_LEDGER_PG_URL=postgres://localhost/test node --test test/lib/reporting-row-shared-object-pg.test.js
  */
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
-const { existsSync, mkdtempSync, rmSync } = require('node:fs');
+const { existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { after, before, describe, test } = require('node:test');
@@ -19,7 +21,6 @@ const { createRowStorageFixture } = require('../helpers/reporting-row-storage-fi
 process.env.NODE_ENV = 'test';
 const DATABASE_URL = process.env.REPORTING_LEDGER_PG_URL;
 
-const MINIMAL_TEMPLATE = '{prefix}/{namespace_key}/{content_sha256}/{chunk_index}';
 const rows = Array.from({ length: 30 }, (_, index) => ({ ordinal: index, value: index }));
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
@@ -35,17 +36,21 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
   // Distinct per test, so one test never shares objects with another test's obligations.
   let current = rows;
   let afterAdoptedRead;
+  let providerCalls = { get: 0, stat: 0 };
+  let binding;
+  let provider;
+  let baseProvider;
 
   const count = async (sql, values = []) => Number((await pool.query(sql, values)).rows[0].n);
   const accountId = target => target.fixture.request.account.account_id;
   const chunksOf = async rowSetId =>
     (
       await pool.query(
-        `SELECT object_key, native_version FROM adcp_reporting_row_chunks WHERE row_set_id = $1 ORDER BY chunk_index`,
+        `SELECT object_ref, native_version_ref FROM adcp_reporting_row_chunks WHERE row_set_id = $1 ORDER BY chunk_index`,
         [rowSetId]
       )
     ).rows;
-  const fileOf = row => path.join(root, row.object_key);
+  const fileOf = row => path.join(root, row.object_ref);
   const adjustmentRows = async target =>
     (await store.listAdjustments(target.fixture.obligation.reporting_obligation_id))[0]?.rows;
 
@@ -110,7 +115,7 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     };
   }
 
-  /** Two obligations, each with an adjustment of identical rows, which share one object. */
+  /** Two obligations, each with an adjustment of identical rows, whose chunk rows name one object (as rows written under an older template could). */
   async function sharedPair() {
     sequence += 1;
     current = rows.map(row => ({ ...row, value: row.value + sequence * 100 }));
@@ -119,6 +124,14 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     await store.commitAdjustment(adjustmentFor(first), first.fixture.lease);
     await store.commitAdjustment(adjustmentFor(second), second.fixture.lease);
     const [chunkA] = await chunksOf(first.adjustmentId);
+    const [ownB] = await chunksOf(second.adjustmentId);
+    assert.notEqual(ownB.object_ref, chunkA.object_ref, 'identical rows still get a unique key per row set');
+    // Point the second row set's chunk at the first's object (location columns are mutable) and drop its own.
+    await pool.query(
+      `UPDATE adcp_reporting_row_chunks SET object_ref = $2, native_version_ref = $3 WHERE row_set_id = $1`,
+      [second.adjustmentId, chunkA.object_ref, chunkA.native_version_ref]
+    );
+    rmSync(fileOf(ownB));
     const [chunkB] = await chunksOf(second.adjustmentId);
     return { first, second, chunkA, chunkB };
   }
@@ -134,11 +147,17 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     await pool.query(ledger.REPORTING_LEDGER_MIGRATION);
     await pool.query(ledger.REPORTING_ROW_STORAGE_MIGRATION);
     const base = ledger.createFilesystemReportingRowObjectProviderV1({ roots: { rows: root } });
+    baseProvider = base;
     // After an adopting writer reads the existing object, run a hook (once): the window between
     // adoption and the writer's ledger commit.
-    const provider = {
+    provider = {
       ...base,
+      async stat(input, context) {
+        providerCalls.stat += 1;
+        return base.stat(input, context);
+      },
       async get(input, context) {
+        providerCalls.get += 1;
         const bytes = await base.get(input, context);
         const hook = afterAdoptedRead;
         afterAdoptedRead = undefined;
@@ -146,20 +165,15 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
         return bytes;
       },
     };
+    binding = {
+      kind: 'object',
+      provider: 'filesystem',
+      location: { root: 'rows' },
+      prefix: 'shared',
+    };
     store = new ledger.PostgresReportingLedgerStore(pool, {
       acknowledgeIsolatedDatabase: true,
-      rowStorage: {
-        bindings: {
-          objects: {
-            kind: 'object',
-            provider: 'filesystem',
-            location: { root: 'rows' },
-            prefix: 'shared',
-            keyTemplate: MINIMAL_TEMPLATE,
-          },
-        },
-        providers: { filesystem: provider },
-      },
+      rowStorage: { bindings: { objects: binding }, providers: { filesystem: provider } },
     });
     await store.readyRowStorage();
   });
@@ -173,7 +187,7 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     if (root) rmSync(root, { recursive: true, force: true });
   });
 
-  test('two obligations with identical adjustment rows share one object under a minimal template', async () => {
+  test('chunk rows re-pointed at one object (as older-template rows can be) both read it', async () => {
     const { first, second, chunkA, chunkB } = await sharedPair();
     assert.deepEqual(chunkB, chunkA);
     assert.ok(existsSync(fileOf(chunkA)));
@@ -207,24 +221,66 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     assert.equal(existsSync(fileOf(chunkA)), false);
   });
 
+  /** Resolves once a session is blocked waiting for an advisory lock. */
+  async function lockWaiter() {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const waiting = await count(`SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`);
+      if (waiting > 0) return;
+      await sleep(25);
+    }
+    assert.fail('no session ever waited on the object lock');
+  }
+
   test('a delete waits for the object lock a committing adopter holds', async () => {
     const { first, second, chunkA } = await sharedPair();
+    // Both periods expire, so only the lock (not a surviving reference) can protect the object.
     await expire(first);
-    const lock = `adcp-reporting-object:objects:${chunkA.object_key}`;
+    await expire(second);
+    const lock = `adcp-reporting-object:objects:${chunkA.object_ref}`;
     const client = await pool.connect();
+    let settled = false;
     try {
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [lock]);
-      const retiring = retire();
-      await sleep(400);
-      assert.ok(existsSync(fileOf(chunkA)));
+      const retiring = retire().then(result => {
+        settled = true;
+        return result;
+      });
+      await lockWaiter();
+      assert.equal(settled, false, 'retirement is blocked on the object lock');
+      assert.ok(existsSync(fileOf(chunkA)), 'the object survives while the lock is held');
       await client.query('COMMIT');
-      assert.equal((await retiring).retired, 1);
+      assert.equal((await retiring).retired, 2);
     } finally {
       client.release();
     }
-    assert.ok(existsSync(fileOf(chunkA)), 'the other obligation still references the object');
-    assert.deepEqual(await adjustmentRows(second), current);
+    assert.equal(existsSync(fileOf(chunkA)), false, 'once the lock is released the unreferenced object is deleted');
+  });
+
+  test('an adopting commit takes the object lock before it proves the object', async () => {
+    const { target, objectRef, file } = await preUploaded('adoptlock');
+    const lock = `adcp-reporting-object:objects:${objectRef}`;
+    const client = await pool.connect();
+    let committed = false;
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [lock]);
+      providerCalls = { get: 0, stat: 0 };
+      const committing = store.commitAdjustment(adjustmentFor(target), target.fixture.lease).then(result => {
+        committed = true;
+        return result;
+      });
+      await lockWaiter();
+      assert.equal(committed, false, 'the adopter waits for the object lock');
+      assert.equal(providerCalls.stat, 0, 'it has not proven the object yet');
+      await client.query('COMMIT');
+      assert.equal((await committing).inserted, true);
+    } finally {
+      client.release();
+    }
+    assert.equal(providerCalls.stat, 1);
+    assert.ok(existsSync(file));
+    assert.deepEqual(await adjustmentRows(target), current);
   });
 
   test('the intent sweep leaves an object a committed row set references, and retirement then frees it', async () => {
@@ -238,7 +294,7 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
       [
         accountId(first),
         'c'.repeat(64),
-        JSON.stringify([{ objectKey: chunkA.object_key, nativeVersion: chunkA.native_version }]),
+        JSON.stringify([{ object_ref: chunkA.object_ref, native_version_ref: chunkA.native_version_ref }]),
       ]
     );
     assert.deepEqual(await store.sweepRowWriteIntents(), {
@@ -268,7 +324,7 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
       [
         accountId(first),
         'd'.repeat(64),
-        JSON.stringify([{ objectKey: chunkA.object_key, nativeVersion: chunkA.native_version }]),
+        JSON.stringify([{ object_ref: chunkA.object_ref, native_version_ref: chunkA.native_version_ref }]),
       ]
     );
     await expire(first);
@@ -291,40 +347,258 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     assert.equal(existsSync(fileOf(chunkA)), false, 'nothing references it any more');
   });
 
-  test('a commit whose adopted object was deleted after adoption fails cleanly and retries', async () => {
+  test('an open upload from an older writer, recorded under the pre-alignment keys, still protects its object', async () => {
+    const { first, second, chunkA } = await sharedPair();
+    await pool.query(
+      `INSERT INTO adcp_reporting_row_write_intents
+         (row_binding_id, account_id, row_set_id, content_sha256, state, owner_token, created_objects, expires_at)
+       VALUES ('objects', $1, 'radj_old_writer', $2, 'open', 'owner', $3::jsonb,
+               clock_timestamp() + INTERVAL '1 hour')`,
+      [
+        accountId(first),
+        'e'.repeat(64),
+        JSON.stringify([{ objectKey: chunkA.object_ref, nativeVersion: chunkA.native_version_ref }]),
+      ]
+    );
+    await expire(first);
+    await expire(second);
+    assert.equal((await retire()).retired, 2);
+    assert.ok(existsSync(fileOf(chunkA)), 'the old writer may still commit the object it created');
+
+    await pool.query(
+      `UPDATE adcp_reporting_row_write_intents SET expires_at = clock_timestamp() - INTERVAL '1 minute'
+        WHERE row_set_id = 'radj_old_writer'`
+    );
+    assert.deepEqual(await store.sweepRowWriteIntents(), {
+      swept: 1,
+      objectsDeleted: 1,
+      failed: 0,
+      skippedUnconfigured: 0,
+      deferred: 0,
+      overdue: 0,
+    });
+    assert.equal(existsSync(fileOf(chunkA)), false, 'the sweep reads the old keys too');
+  });
+
+  /**
+   * An obligation whose next adjustment's object already sits at its planned key, as an abandoned upload
+   * of the same row set leaves it, so the commit adopts it. Keys are unique per row set, so adoption only
+   * ever happens for a retry of the same row set.
+   */
+  async function preUploaded(suffix) {
     sequence += 1;
     current = rows.map(row => ({ ...row, value: row.value + sequence * 100 }));
-    const first = await officialObligation(`race_a${sequence}`);
-    const second = await officialObligation(`race_b${sequence}`);
-    await store.commitAdjustment(adjustmentFor(first), first.fixture.lease);
-    const [chunkA] = await chunksOf(first.adjustmentId);
-    await expire(first);
-
-    // The adopter has read the shared object; the only other reference is then retired.
-    afterAdoptedRead = async () => {
-      assert.equal((await retire()).retired, 1);
-    };
-    await assert.rejects(
-      () => store.commitAdjustment(adjustmentFor(second), second.fixture.lease),
-      error => ledger.isReportingRowStoreError(error) && error.code === 'STATE_UNAVAILABLE'
+    const target = await officialObligation(`${suffix}${sequence}`);
+    const adjustment = adjustmentFor(target);
+    const engine = new ledger.ReportingRowStorageV1(pool, {
+      bindings: { objects: binding },
+      providers: { filesystem: provider },
+    });
+    const prepared = await engine.prepare({
+      rowSetId: adjustment.reporting_adjustment_id,
+      rowSetKind: 'adjustment',
+      accountId: accountId(target),
+      obligationId: target.fixture.obligation.reporting_obligation_id,
+      rows: adjustment.rows,
+      periodStart: target.fixture.obligation.period.start,
+      sourceTimezone: target.fixture.obligation.period.sourceTimezone,
+      binding: adjustment.binding,
+    });
+    const [planned] = prepared.objects;
+    const created = await baseProvider.putIfAbsent(
+      {
+        location: { root: 'rows' },
+        objectRef: planned.objectRef,
+        bytes: planned.physicalBytes,
+        contentType: 'application/gzip',
+        metadata: {},
+      },
+      { signal: AbortSignal.timeout(5_000) }
     );
-    assert.equal(existsSync(fileOf(chunkA)), false);
+    return {
+      target,
+      objectRef: planned.objectRef,
+      nativeVersionRef: created.nativeVersionRef,
+      file: path.join(root, planned.objectRef),
+    };
+  }
+
+  const isStateUnavailable = error => ledger.isReportingRowStoreError(error) && error.code === 'STATE_UNAVAILABLE';
+
+  test('a commit whose adopted object was deleted after adoption fails cleanly and retries', async () => {
+    const { target, objectRef, nativeVersionRef, file } = await preUploaded('race');
+    // After the adopter has verified the object, an abandoned upload recorded as its creator is swept.
+    // (Keys are unique per row set, so the only other writer that can have created this object is an
+    // earlier attempt at the same row set; the intent below stands in for it.)
+    let hookRan = false;
+    afterAdoptedRead = async () => {
+      hookRan = true;
+      await pool.query(
+        `INSERT INTO adcp_reporting_row_write_intents
+           (row_binding_id, account_id, row_set_id, content_sha256, state, owner_token, created_objects, expires_at)
+         VALUES ('objects', $1, 'radj_other_creator', $2, 'open', 'owner', $3::jsonb,
+                 clock_timestamp() - INTERVAL '1 minute')`,
+        [
+          accountId(target),
+          'f'.repeat(64),
+          JSON.stringify([{ object_ref: objectRef, native_version_ref: nativeVersionRef }]),
+        ]
+      );
+      assert.equal((await store.sweepRowWriteIntents()).objectsDeleted, 1);
+    };
+    await assert.rejects(() => store.commitAdjustment(adjustmentFor(target), target.fixture.lease), isStateUnavailable);
+    assert.equal(hookRan, true, 'the object was swept between adoption and commit');
+    assert.equal(existsSync(file), false);
     assert.equal(
-      await count(`SELECT count(*) AS n FROM adcp_reporting_row_chunks WHERE row_set_id = $1`, [second.adjustmentId]),
+      await count(`SELECT count(*) AS n FROM adcp_reporting_row_chunks WHERE row_set_id = $1`, [target.adjustmentId]),
       0
     );
-    assert.equal((await store.listAdjustments(second.fixture.obligation.reporting_obligation_id)).length, 0);
+    assert.equal((await store.listAdjustments(target.fixture.obligation.reporting_obligation_id)).length, 0);
 
     // The writer's intent is still open; once it lapses the upload re-creates the object.
     await pool.query(
       `UPDATE adcp_reporting_row_write_intents SET expires_at = clock_timestamp() - INTERVAL '1 minute'
         WHERE row_set_id = $1`,
-      [second.adjustmentId]
+      [target.adjustmentId]
     );
-    await store.commitAdjustment(adjustmentFor(second), second.fixture.lease);
-    assert.deepEqual(await adjustmentRows(second), current);
-    const [chunkB] = await chunksOf(second.adjustmentId);
-    assert.ok(existsSync(fileOf(chunkB)));
+    await store.commitAdjustment(adjustmentFor(target), target.fixture.lease);
+    assert.deepEqual(await adjustmentRows(target), current);
+    assert.ok(existsSync(file));
+  });
+
+  test('the commit proves an adopted object with a version-pinned stat instead of downloading it again', async () => {
+    const { target, file } = await preUploaded('stat');
+    providerCalls = { get: 0, stat: 0 };
+    await store.commitAdjustment(adjustmentFor(target), target.fixture.lease);
+    // One read verifies the adopted bytes before the transaction; the commit itself only stats.
+    assert.deepEqual(providerCalls, { get: 1, stat: 1 });
+    assert.deepEqual(await adjustmentRows(target), current);
+    const size = (
+      await pool.query(`SELECT size_bytes FROM adcp_reporting_row_chunks WHERE row_set_id = $1`, [target.adjustmentId])
+    ).rows[0].size_bytes;
+    assert.equal(Number(size), readFileSync(file).byteLength, 'size_bytes is the stored object size');
+  });
+
+  test('a commit whose adopted object was replaced at the same key with identical bytes fails the stat', async () => {
+    const { target, file } = await preUploaded('swap');
+    // After the adopter verified the object, someone deletes it and re-creates identical bytes.
+    // The native version differs, so the version-pinned stat finds nothing at the recorded version.
+    afterAdoptedRead = async () => {
+      const bytes = readFileSync(file);
+      const before = statSync(file);
+      rmSync(file);
+      writeFileSync(file, bytes);
+      // Coarse kernel timestamps and inode reuse could otherwise reproduce the old version by chance.
+      const later = before.mtimeMs / 1000 + 2;
+      utimesSync(file, later, later);
+    };
+    providerCalls = { get: 0, stat: 0 };
+    await assert.rejects(() => store.commitAdjustment(adjustmentFor(target), target.fixture.lease), isStateUnavailable);
+    assert.equal(providerCalls.stat, 1, 'the stat, not another check, rejected the commit');
+    assert.equal(
+      await count(`SELECT count(*) AS n FROM adcp_reporting_row_chunks WHERE row_set_id = $1`, [target.adjustmentId]),
+      0
+    );
+    assert.equal(
+      await count(`SELECT count(*) AS n FROM adcp_reporting_row_sets WHERE row_set_id = $1`, [target.adjustmentId]),
+      0
+    );
+    assert.equal((await store.listAdjustments(target.fixture.obligation.reporting_obligation_id)).length, 0);
+    assert.ok(existsSync(file), 'the replacement object is left alone');
+  });
+
+  test('an adopter rejects a stat that cannot vouch for the exact recorded version', async () => {
+    const variants = [
+      [
+        'reports a different size',
+        async (input, context) => ({ ...(await provider.stat(input, context)), sizeBytes: 1 }),
+        'STATE_UNAVAILABLE',
+      ],
+      ['finds nothing', async () => null, 'STATE_UNAVAILABLE'],
+      [
+        'answers for a different version',
+        async (input, context) => ({ ...(await provider.stat(input, context)), nativeVersionRef: 'someone-else' }),
+        'STATE_UNAVAILABLE',
+      ],
+      [
+        'reports a non-integer size',
+        async () => ({ nativeVersionRef: undefined, sizeBytes: Number.NaN }),
+        'STATE_UNAVAILABLE',
+      ],
+      [
+        'fails',
+        async () => {
+          throw new Error('storage unavailable token=secret');
+        },
+        'PROVIDER_UNAVAILABLE',
+      ],
+    ];
+    for (const [label, stat, code] of variants) {
+      const { target } = await preUploaded('vouch');
+      const strict = new ledger.PostgresReportingLedgerStore(pool, {
+        acknowledgeIsolatedDatabase: true,
+        rowStorage: { bindings: { objects: binding }, providers: { filesystem: { ...provider, stat } } },
+      });
+      await strict.readyRowStorage();
+      await assert.rejects(
+        () => strict.commitAdjustment(adjustmentFor(target), target.fixture.lease),
+        error => ledger.isReportingRowStoreError(error) && error.code === code && !/secret/.test(error.message),
+        label
+      );
+      assert.equal(
+        await count(`SELECT count(*) AS n FROM adcp_reporting_row_sets WHERE row_set_id = $1`, [target.adjustmentId]),
+        0,
+        `${label}: no row set is recorded`
+      );
+    }
+  });
+
+  test('a custom provider without stat falls back to reading the whole object under the lock', async () => {
+    const { target } = await preUploaded('nostat');
+    const { stat: _stat, ...withoutStat } = provider;
+    const fallback = new ledger.PostgresReportingLedgerStore(pool, {
+      acknowledgeIsolatedDatabase: true,
+      rowStorage: { bindings: { objects: binding }, providers: { filesystem: withoutStat } },
+    });
+    await fallback.readyRowStorage();
+    providerCalls = { get: 0, stat: 0 };
+    await fallback.commitAdjustment(adjustmentFor(target), target.fixture.lease);
+    assert.deepEqual(providerCalls, { get: 2, stat: 0 }, 'adoption read plus the full read under the lock');
+    assert.deepEqual(await adjustmentRows(target), current);
+
+    // And it still fails closed when the object is deleted after adoption.
+    const other = await preUploaded('nostat_gone');
+    afterAdoptedRead = async () => rmSync(other.file);
+    await assert.rejects(
+      () => fallback.commitAdjustment(adjustmentFor(other.target), other.target.fixture.lease),
+      isStateUnavailable
+    );
+  });
+
+  test('without stat the full read under the lock still refuses bytes that differ from the recorded digest', async () => {
+    const { target } = await preUploaded('lying');
+    const { stat: _stat, ...withoutStat } = provider;
+    let reads = 0;
+    const lying = new ledger.PostgresReportingLedgerStore(pool, {
+      acknowledgeIsolatedDatabase: true,
+      rowStorage: {
+        bindings: { objects: binding },
+        providers: {
+          filesystem: {
+            ...withoutStat,
+            async get(input, context) {
+              const bytes = await withoutStat.get(input, context);
+              reads += 1;
+              // The adoption read (first) is honest; the read under the commit lock (second) is tampered.
+              return reads === 1 || !bytes ? bytes : Buffer.concat([Buffer.from(bytes), Buffer.from('x')]);
+            },
+          },
+        },
+      },
+    });
+    await lying.readyRowStorage();
+    await assert.rejects(() => lying.commitAdjustment(adjustmentFor(target), target.fixture.lease), isStateUnavailable);
+    assert.equal(reads, 2);
   });
 });
 
@@ -396,14 +670,14 @@ describe('reporting compaction with a shared object', { skip: !DATABASE_URL && '
     const b = await chain('cmp_b');
     // Re-point b's first revision at a's first object, as a minimal key template would have.
     await pool.query(
-      `UPDATE adcp_reporting_row_chunks target SET object_key = source.object_key, native_version = source.native_version
+      `UPDATE adcp_reporting_row_chunks target SET object_ref = source.object_ref, native_version_ref = source.native_version_ref
          FROM adcp_reporting_row_chunks source
         WHERE target.row_set_id = $1 AND source.row_set_id = $2 AND target.chunk_index = source.chunk_index`,
       [b.ids[0], a.ids[0]]
     );
     const shared = (
-      await pool.query(`SELECT object_key FROM adcp_reporting_row_chunks WHERE row_set_id = $1`, [a.ids[0]])
-    ).rows[0].object_key;
+      await pool.query(`SELECT object_ref FROM adcp_reporting_row_chunks WHERE row_set_id = $1`, [a.ids[0]])
+    ).rows[0].object_ref;
     const file = path.join(root, shared);
     assert.ok(existsSync(file));
     const compact = limit =>
