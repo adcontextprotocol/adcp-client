@@ -270,18 +270,17 @@ describe('creative delivery matches dimensions from catalog-backed bare IDs (#32
   });
 
   test('refuses a single ref whose explicit duration contradicts the creative duration', () => {
+    const ref = { ...bare('video_standard_30s'), duration_ms: 30000 };
+    const creative = {
+      creative_id: 'video_30s',
+      name: 'Video 30s',
+      format_kind: 'video_hosted',
+      format_parameters: { duration_ms: 30000 },
+      assets: { video: { asset_type: 'video', url: 'https://cdn.example.com/video.mp4' } },
+    };
+    assert.deepEqual(syncLegacy(creative, [ref]).format_id, ref);
     assert.throws(
-      () =>
-        syncLegacy(
-          {
-            creative_id: 'video_60s',
-            name: 'Video 60s',
-            format_kind: 'video',
-            format_parameters: { duration_ms: 60000 },
-            assets: { video: { asset_type: 'video', url: 'https://cdn.example.com/video.mp4' } },
-          },
-          [{ ...bare('video_standard_30s'), duration_ms: 30000 }]
-        ),
+      () => syncLegacy({ ...creative, creative_id: 'video_60s', format_parameters: { duration_ms: 60000 } }, [ref]),
       CreativeFormatProjectionError
     );
   });
