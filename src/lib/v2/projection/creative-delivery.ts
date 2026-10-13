@@ -928,15 +928,40 @@ function creativeFormatParameterConstraints(
   return { width, height, durationMs };
 }
 
+function legacyRefParameterConstraints(ref: V1FormatId): CreativeFormatParameterConstraints {
+  // Catalog dimensions fill missing constraints without changing the seller's wire reference.
+  const params =
+    typeof ref.width !== 'number' || typeof ref.height !== 'number'
+      ? record(canonicalDeclarationFromBareId(ref.id, { agentUrl: ref.agent_url })?.params)
+      : undefined;
+  return {
+    width: typeof ref.width === 'number' ? ref.width : typeof params?.width === 'number' ? params.width : undefined,
+    height:
+      typeof ref.height === 'number' ? ref.height : typeof params?.height === 'number' ? params.height : undefined,
+    durationMs: ref.duration_ms,
+  };
+}
+
 function refContradictsConstraints(ref: V1FormatId, constraints: CreativeFormatParameterConstraints): boolean {
-  if (constraints.width !== undefined && typeof ref.width === 'number' && ref.width !== constraints.width) return true;
-  if (constraints.height !== undefined && typeof ref.height === 'number' && ref.height !== constraints.height) {
+  const refConstraints = legacyRefParameterConstraints(ref);
+  if (
+    constraints.width !== undefined &&
+    refConstraints.width !== undefined &&
+    refConstraints.width !== constraints.width
+  ) {
+    return true;
+  }
+  if (
+    constraints.height !== undefined &&
+    refConstraints.height !== undefined &&
+    refConstraints.height !== constraints.height
+  ) {
     return true;
   }
   if (
     constraints.durationMs !== undefined &&
-    typeof ref.duration_ms === 'number' &&
-    ref.duration_ms !== constraints.durationMs
+    typeof refConstraints.durationMs === 'number' &&
+    refConstraints.durationMs !== constraints.durationMs
   ) {
     return true;
   }
@@ -944,9 +969,10 @@ function refContradictsConstraints(ref: V1FormatId, constraints: CreativeFormatP
 }
 
 function refPinsConstraints(ref: V1FormatId, constraints: CreativeFormatParameterConstraints): boolean {
-  if (constraints.width !== undefined && typeof ref.width !== 'number') return false;
-  if (constraints.height !== undefined && typeof ref.height !== 'number') return false;
-  if (constraints.durationMs !== undefined && typeof ref.duration_ms !== 'number') return false;
+  const refConstraints = legacyRefParameterConstraints(ref);
+  if (constraints.width !== undefined && refConstraints.width === undefined) return false;
+  if (constraints.height !== undefined && refConstraints.height === undefined) return false;
+  if (constraints.durationMs !== undefined && typeof refConstraints.durationMs !== 'number') return false;
   return true;
 }
 
@@ -963,28 +989,33 @@ function legacyIdPinsDimensions(ref: V1FormatId): boolean | undefined {
 }
 
 function refConstraintKey(ref: V1FormatId): string {
-  return [agentIdentity(ref.agent_url), ref.width ?? '', ref.height ?? '', ref.duration_ms ?? ''].join('|');
+  const constraints = legacyRefParameterConstraints(ref);
+  return [
+    agentIdentity(ref.agent_url),
+    constraints.width ?? '',
+    constraints.height ?? '',
+    constraints.durationMs ?? '',
+  ].join('|');
 }
 
 /**
  * Most-constrained-wins for a canonical creative facing several legacy refs of
- * its kind. Drop refs that contradict the creative's own `format_parameters`,
+ * its kind. Compare explicit dimensions or the catalog-backed ID's dimensions
+ * with the creative's own `format_parameters`. Drop contradictory refs,
  * prefer refs that pin them, and among refs imposing identical constraints (a
  * seller listing `display_html` at 300x250 next to `display_300x250_html`)
  * prefer the legacy id whose own declaration pins that size over a generic
- * parametrized id. Refs that still differ in their constraints stay ambiguous
- * and the caller keeps failing closed.
+ * parametrized id. No compatible ref, or refs that still differ in their
+ * constraints, leave the caller failing closed.
  */
 function preferMostConstrainedLegacyCandidates(
   candidates: LegacyCandidate[],
   creative: Record<string, unknown>
 ): LegacyCandidate[] {
-  if (candidates.length <= 1) return candidates;
   let remaining = candidates;
   const constraints = creativeFormatParameterConstraints(creative);
   if (constraints) {
-    const compatible = remaining.filter(candidate => !refContradictsConstraints(candidate.ref, constraints));
-    if (compatible.length > 0) remaining = compatible;
+    remaining = remaining.filter(candidate => !refContradictsConstraints(candidate.ref, constraints));
     const pinned = remaining.filter(candidate => refPinsConstraints(candidate.ref, constraints));
     if (pinned.length > 0) remaining = pinned;
   }
