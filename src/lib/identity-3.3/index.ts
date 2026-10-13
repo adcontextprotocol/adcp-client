@@ -30,3 +30,4 @@ export {
 } from './server';
 
 export { createIdentity33StateStores } from './store';
+export { deliveryWebhookRegistrationId } from '../core/webhook-registration';

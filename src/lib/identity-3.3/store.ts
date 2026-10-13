@@ -184,7 +184,8 @@ export function createIdentity33StateStores(options: {
   }
   async function reserveRevocationBudget(origin: string, keys: number): Promise<void> {
     const operator = eTldPlusOne(origin);
-    const hasBinding = !!(await identity.getBinding(origin));
+    const binding = await identity.getBinding(origin);
+    const hasBinding = !!binding && !binding.openAccess;
     await update<RevocationBudget>('revocation-budget', 'tenant', prior => {
       const budget = prior ?? { schemaVersion: 1, tenantId, origins: {}, keys: 0 };
       if (

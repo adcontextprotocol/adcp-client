@@ -2475,6 +2475,19 @@ export class SingleAgentClient {
     };
     validateWebhookRegistrationAuthorization(registration);
     try {
+      if (args.deliveryKind) {
+        const previous = await this.webhookRegistrationStore.get(args.agent.id, args.operationId);
+        if (
+          previous &&
+          previous.expiresAt > nowMs &&
+          (previous.signingProfile ?? 'adcp/webhook-signing/v1') !==
+            (registration.signingProfile ?? 'adcp/webhook-signing/v1')
+        )
+          throw new ConfigurationError(
+            `${args.deliveryKind} callback is already registered with ${previous.signingProfile ?? 'adcp/webhook-signing/v1'}. Use a new callback URL or delete its old registration after outstanding deliveries finish.`,
+            `${args.deliveryKind}_webhook.signing_profile`
+          );
+      }
       await this.webhookRegistrationStore.putIfAbsent(registration);
       const persisted = await this.webhookRegistrationStore.get(args.agent.id, args.operationId);
       if (
@@ -2490,6 +2503,12 @@ export class SingleAgentClient {
         );
       }
     } catch (cause) {
+      if (
+        args.deliveryKind &&
+        cause instanceof ConfigurationError &&
+        cause.configField === `${args.deliveryKind}_webhook.signing_profile`
+      )
+        throw cause;
       // RFC 9421 has no safe fallback without seller-pinned provenance. Legacy
       // HMAC remains verifiable from the configured global secret only for the
       // explicit recordless read-only allowlist. Mutation and unknown-task

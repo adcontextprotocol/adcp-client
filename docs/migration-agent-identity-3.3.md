@@ -288,7 +288,7 @@ keys remain revoked forever, `keyCompromise` cannot be weakened, and the earlies
 `invalidity_date` is retained. Revocation never pauses or cancels committed buys.
 
 Permanent revocation storage reserves separate bounded capacity for audited bound
-origins and anonymous origins, so first-contact traffic cannot exhaust the bound
+origins and anonymous/self-service origins, so first-contact traffic cannot exhaust the bound
 pool. Storage failures deny reads and mutations without outage grace; inspect the
 non-enumerable error cause and raise `createIdentity33StateStores.revocationLimits`
 when capacity is exhausted. Existing facts must remain stored. Outage grace is
@@ -342,10 +342,14 @@ Use a new callback URL when changing its signing profile while old deliveries ar
 still outstanding. A live URL's verifier remains immutable; changing it requires
 explicitly deleting the old registration, which also stops accepting old deliveries.
 
+Compute the deletion key with `deliveryWebhookRegistrationId` from
+`@adcp/sdk/identity-3.3`, then call
+`store.delete(agentId, deliveryWebhookRegistrationId('reporting', callbackUrl))`.
+
 The standard principal resolver automatically fences RFC signatures for already-bound origins. Custom resolvers must supply `assertLegacyOriginAllowed`; legacy keys must resolve an unambiguous agent origin. Preserve an existing operator principal during approved migration by passing `principalKind: "operator"` to `bindPrincipal`. WBA authenticators enforce signature presence and must use `requireSignatureWhenPresent` for bearer coexistence.
 
 Signing capabilities include the experimental `wba_draft_revision` field next to `profiles`, identifying `draft-ietf-webbotauth-httpsig-protocol-00` as required by ratified R2. Reporting and artifact callback choices are persisted by destination before dispatch, including update calls; their receivers pass the trusted request URL and `taskType` (`media_buy_delivery` or `artifact_delivery`) to `verifyAndParseWebhook`. These deliveries preserve the original payload in `result` after authentication and schema validation; `envelope` adds SDK routing/status metadata. PostgreSQL migrations also add optional `delivery_kind`.
 
-Revocation stores allocate no permanent row for an empty list. Each bound/unbound pool reserves a tenant-wide CAS budget (10,000 origins and 100,000 keys; each operator is limited to 256 origins and 16,384 keys per pool). Binding promotes existing facts without deleting them. Failed writes may conservatively reserve capacity; facts are never evicted to regain it. Store/quota failures return `SERVICE_UNAVAILABLE` for every operation. In-memory revocation storage is for development/tests; production sellers use shared persistent stores.
+Revocation stores allocate no permanent row for an empty list. Each audited/unbound pool reserves a tenant-wide CAS budget (10,000 origins and 100,000 keys; each operator is limited to 256 origins and 16,384 keys per pool). Audited bindings promote existing facts without deleting them; self-service `openAccess` bindings stay in the unbound pool. Failed writes may conservatively reserve capacity; facts are never evicted to regain it. Store/quota failures return `SERVICE_UNAVAILABLE` for every operation. In-memory revocation storage is for development/tests; production sellers use shared persistent stores.
 
 Unbound callers use an internal per-origin anonymous scope to isolate task/proposal state; this is not a durable principal and is never returned by `get_principal`. Only the explicit anonymous tool policy is allowed.

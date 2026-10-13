@@ -1229,6 +1229,9 @@ test('anonymous revocation capacity cannot consume the audited bound pool and fa
     principalId: origin,
     audit: { approvedBy: 'seller', approvedAt: new Date().toISOString(), reason: 'Audited test binding' },
   });
+  const open = 'https://open.buyer-7k3q.com';
+  await stores.identity.bind({ ...binding(open), openAccess: { sandbox: true } });
+  await assert.rejects(stores.revocations.merge(open, snapshot(open, ['open-key'])));
   await stores.identity.bind(binding(bound));
   await stores.revocations.merge(bound, snapshot(bound, ['c', 'd']));
   assert(await stores.revocations.get(bound, 'd'));
