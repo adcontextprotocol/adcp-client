@@ -99,6 +99,42 @@ function routeRef(value: unknown): FormatOptionReference | undefined {
   return { scope: 'product', format_option_id: record.format_option_id };
 }
 
+/** Whether two option refs name the same format option. Publisher domains compare case-insensitively. */
+export function sameFormatOptionRef(left: FormatOptionReference, right: FormatOptionReference): boolean {
+  return (
+    left.scope === right.scope &&
+    left.format_option_id === right.format_option_id &&
+    (left.scope !== 'publisher' ||
+      (right.scope === 'publisher' && left.publisher_domain.toLowerCase() === right.publisher_domain.toLowerCase()))
+  );
+}
+
+/**
+ * Option refs a product declares in its own `format_options[]`, read from the
+ * product exactly as the seller returned it. Options the SDK derives from the
+ * seller's legacy `format_ids` never appear here.
+ */
+export function sellerDeclaredFormatOptionRefs(sellerProduct: unknown): FormatOptionReference[] {
+  if (!sellerProduct || typeof sellerProduct !== 'object' || Array.isArray(sellerProduct)) return [];
+  const options = (sellerProduct as Record<string, unknown>).format_options;
+  const refs: FormatOptionReference[] = [];
+  for (const optionValue of Array.isArray(options) ? options : []) {
+    if (!optionValue || typeof optionValue !== 'object' || Array.isArray(optionValue)) continue;
+    const option = optionValue as Record<string, unknown>;
+    if (typeof option.format_option_id !== 'string') continue;
+    refs.push(
+      typeof option.publisher_domain === 'string'
+        ? {
+            scope: 'publisher',
+            publisher_domain: option.publisher_domain,
+            format_option_id: option.format_option_id,
+          }
+        : { scope: 'product', format_option_id: option.format_option_id }
+    );
+  }
+  return refs;
+}
+
 function routeKey(productId: string, ref: FormatOptionReference): string {
   return JSON.stringify([
     productId,
@@ -129,16 +165,36 @@ function uniqueFormatIds(refs: readonly V1FormatId[]): V1FormatId[] {
   ];
 }
 
-/** Extract persistable routes from canonical declarations, including concealed migration metadata. */
+export interface LegacyRoutesForProductOptions {
+  /**
+   * The product exactly as the seller returned it from `get_products`. When
+   * given, an option is seller-declared exactly when this product's own
+   * `format_options[]` names it. Use it when the declarations were projected
+   * from a stored seller response in a process that never ran discovery, so
+   * the SDK holds no origin metadata for them.
+   */
+  sellerProduct?: unknown;
+}
+
+/**
+ * Extract persistable routes from canonical declarations, including concealed
+ * migration metadata. Pass `sellerProduct` to record each option's origin from
+ * the seller's own response instead of that metadata.
+ */
 export function legacyRoutesForProduct(
   productId: string,
-  declarations: readonly V2ProductFormatDeclaration[]
+  declarations: readonly V2ProductFormatDeclaration[],
+  options: LegacyRoutesForProductOptions = {}
 ): CanonicalFormatLegacyRoute[] {
+  const declaredRefs =
+    options.sellerProduct === undefined ? undefined : sellerDeclaredFormatOptionRefs(options.sellerProduct);
   return declarations.flatMap(declaration => {
     const formatOptionRef = routeRef(declaration);
     const formatIds = uniqueFormatIds(legacyFormatRefsForDeclaration(declaration));
     if (!formatOptionRef || formatIds.length === 0) return [];
-    const declared = sellerDeclaredFormatOption(declaration);
+    const declared = declaredRefs
+      ? declaredRefs.some(ref => sameFormatOptionRef(ref, formatOptionRef))
+      : sellerDeclaredFormatOption(declaration);
     const selector =
       declared === false
         ? undeclaredFormatOptionSelector(declaration as unknown as Readonly<Record<string, unknown>>)
