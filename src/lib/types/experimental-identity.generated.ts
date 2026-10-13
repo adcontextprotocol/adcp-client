@@ -18,7 +18,7 @@
  *   trust/v1/trust.json — adcp#8169 @ a874bc8d6ed6
  *   core/identity-relying-party.json — adcp#8169 @ a874bc8d6ed6
  */
-import type { BillingParty, BrandReference, ExtensionObject, RightType, RightUse } from './core.generated';
+import type { BrandReference, ExtensionObject, RightType, RightUse } from './core.generated';
 
 export type IdentityPreview = AgentOnboardingPosture | BuyerOnboardingPosture | PrincipalRelationship | TrustJson;
 /**

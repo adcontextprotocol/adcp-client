@@ -211,8 +211,13 @@ ${provenance}
     style: { semi: true, singleQuote: true },
   });
   const prettierConfig = (await resolveConfig(TYPES_OUT)) ?? {};
-  const imports = `import type { ${Object.values(STABLE_TYPES).sort().join(', ')} } from './core.generated';\n\n`;
-  const types = await format(header + imports + removeNumberedTypeDuplicates(compiled), {
+  const body = removeNumberedTypeDuplicates(compiled);
+  // Import only the stable 3.2 types the generated declarations reference.
+  const referenced = Object.values(STABLE_TYPES)
+    .filter(name => new RegExp(`\\b${name}\\b`).test(body))
+    .sort();
+  const imports = referenced.length ? `import type { ${referenced.join(', ')} } from './core.generated';\n\n` : '';
+  const types = await format(header + imports + body, {
     ...prettierConfig,
     parser: 'typescript',
     filepath: TYPES_OUT,
