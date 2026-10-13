@@ -1,7 +1,0 @@
----
-'@adcp/sdk': patch
----
-
-Synchronize with AdCP 3.2.4 and regenerate protocol types and validators. Accept the experimental `REVISION_UNREADABLE` issue with its seller attribution, obligation/revision identifiers, and severity-specific action. Preserve canonical conditional requirements in generated Zod validators. Open issues on published revisions keep the affected obligation degraded until they retire, including health-filtered snapshot pages. Invalid unreadable-revision records on an owned obligation fail with a nondisclosing operational response; unrelated records remain excluded. Existing issue-code health behavior is preserved. AdCP 3.2.4 composes the compact submitted envelope (`CompactTaskSubmitted`, and the proposal submitted types that alias it) with the shared version and protocol envelopes: the generated type is now an intersection with only optional envelope additions. `CompactTaskSubmittedSchema`, `RequestProposalsAsyncSubmittedSchema`, and `RefineProposalsAsyncSubmittedSchema` remain `ZodObject`s (so `.shape`, `.extend()`, `.pick()` and `.omit()` keep working, now including the envelope fields) with unchanged accept/reject behavior, and the deprecated `*_StatusValues` exports for those three remain.
-
-Refresh the canonical principal and reporting-core fixture provenance to the same verified 3.2.4 release, with unchanged YAML bytes and per-file digests, so their runner selects the compliance cache shipped with this SDK.
