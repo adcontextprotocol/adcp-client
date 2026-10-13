@@ -238,6 +238,13 @@ describe('creative delivery matches dimensions from catalog-backed bare IDs (#32
     assert.deepEqual(projected.format_id, sized('display_html', 320, 50));
   });
 
+  test('preserves a seller-owned creative-agent URL when standard IDs are aliases', () => {
+    const sellerAgentUrl = 'https://creative.example.com';
+    const sellerRefs = formatIds.map(ref => bare(ref.id, sellerAgentUrl));
+    const projected = syncLegacy(html5Creative(300, 250), sellerRefs);
+    assert.deepEqual(projected.format_id, bare('display_300x250_html', sellerAgentUrl));
+  });
+
   test('refuses a multi-size catalog without creative dimensions', () => {
     const creative = html5Creative(300, 250);
     delete creative.format_parameters;
@@ -251,6 +258,30 @@ describe('creative delivery matches dimensions from catalog-backed bare IDs (#32
   test('refuses even a single catalog ref that contradicts the creative dimensions', () => {
     assert.throws(
       () => syncLegacy(html5Creative(728, 90), [bare('display_300x250_html')]),
+      CreativeFormatProjectionError
+    );
+  });
+
+  test('refuses a single explicitly sized ref that contradicts the creative dimensions', () => {
+    assert.throws(
+      () => syncLegacy(html5Creative(728, 90), [sized('display_html', 300, 250)]),
+      CreativeFormatProjectionError
+    );
+  });
+
+  test('refuses a single ref whose explicit duration contradicts the creative duration', () => {
+    assert.throws(
+      () =>
+        syncLegacy(
+          {
+            creative_id: 'video_60s',
+            name: 'Video 60s',
+            format_kind: 'video',
+            format_parameters: { duration_ms: 60000 },
+            assets: { video: { asset_type: 'video', url: 'https://cdn.example.com/video.mp4' } },
+          },
+          [{ ...bare('video_standard_30s'), duration_ms: 30000 }]
+        ),
       CreativeFormatProjectionError
     );
   });

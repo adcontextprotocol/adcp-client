@@ -930,7 +930,10 @@ function creativeFormatParameterConstraints(
 
 function legacyRefParameterConstraints(ref: V1FormatId): CreativeFormatParameterConstraints {
   // Catalog dimensions fill missing constraints without changing the seller's wire reference.
-  const params = record(canonicalDeclarationFromBareId(ref.id, { agentUrl: ref.agent_url })?.params);
+  const params =
+    typeof ref.width !== 'number' || typeof ref.height !== 'number'
+      ? record(canonicalDeclarationFromBareId(ref.id, { agentUrl: ref.agent_url })?.params)
+      : undefined;
   return {
     width: typeof ref.width === 'number' ? ref.width : typeof params?.width === 'number' ? params.width : undefined,
     height:
@@ -997,12 +1000,13 @@ function refConstraintKey(ref: V1FormatId): string {
 
 /**
  * Most-constrained-wins for a canonical creative facing several legacy refs of
- * its kind. Drop refs that contradict the creative's own `format_parameters`,
+ * its kind. Compare explicit dimensions or the catalog-backed ID's dimensions
+ * with the creative's own `format_parameters`. Drop contradictory refs,
  * prefer refs that pin them, and among refs imposing identical constraints (a
  * seller listing `display_html` at 300x250 next to `display_300x250_html`)
  * prefer the legacy id whose own declaration pins that size over a generic
- * parametrized id. Refs that still differ in their constraints stay ambiguous
- * and the caller keeps failing closed.
+ * parametrized id. No compatible ref, or refs that still differ in their
+ * constraints, leave the caller failing closed.
  */
 function preferMostConstrainedLegacyCandidates(
   candidates: LegacyCandidate[],
