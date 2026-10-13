@@ -2655,9 +2655,10 @@ export class SingleAgentClient {
               }
             : { scope: 'product' as const, format_option_id: option.format_option_id };
         const refs = legacyFormatRefsForDeclaration(option);
-        if (refs.length === 0) continue;
         // Cached canonical products carry the original seller evidence out of
         // band; their SDK-minted ids are not new seller declarations.
+        // Keep origin even without legacy refs so fresh seller declarations
+        // can override an older persisted undeclared route.
         const declared = declaredOptions
           ? declaredOptions.get(product.product_id)?.some(declaredRef => this.sameCanonicalOptionRef(declaredRef, ref))
           : sellerDeclaredFormatOption(option);
@@ -2907,7 +2908,7 @@ export class SingleAgentClient {
     const resolved: V1FormatId[] = [];
     for (const ref of optionRefs) {
       const route = this.routeForOption(account, productId, ref);
-      if (!route) return undefined;
+      if (!route || route.refs.length === 0) return undefined;
       resolved.push(...route.refs.map(value => ({ ...value })));
     }
     return resolved;

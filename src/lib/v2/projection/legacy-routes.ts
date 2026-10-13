@@ -234,7 +234,7 @@ function routeLookupContext(context: CanonicalFormatLegacyResolutionContext): Ro
  */
 const originsByResolver = new WeakMap<
   CanonicalFormatLegacyResolver,
-  ReadonlyArray<{ productId: string; ref: FormatOptionReference; origin: FormatOptionOrigin }>
+  ReadonlyArray<{ productId: string; ref: FormatOptionReference; origin: FormatOptionOrigin | undefined }>
 >();
 
 function sameRouteRef(left: FormatOptionReference, right: FormatOptionReference): boolean {
@@ -257,15 +257,19 @@ export function formatOptionOriginFromRoutes(
     entry => sameRouteRef(entry.ref, ref) && (productId === undefined || entry.productId === productId)
   );
   if (matching.length === 0) return undefined;
-  const declared = matching.find(entry => entry.origin.seller_declared);
-  return declared ? declared.origin : matching[0]!.origin;
+  const declared = matching.find(entry => entry.origin?.seller_declared);
+  if (declared) return declared.origin;
+  // Old persisted routes do not prove that their seller omitted this option.
+  // They must participate in the agreement check for an unscoped reference.
+  if (matching.some(entry => entry.origin === undefined)) return undefined;
+  return matching[0]!.origin;
 }
 
 export function canonicalFormatLegacyResolverFromRoutes(
   routes: readonly CanonicalFormatLegacyRoute[]
 ): CanonicalFormatLegacyResolver {
   const index = new Map<string, V1FormatId[]>();
-  const origins: Array<{ productId: string; ref: FormatOptionReference; origin: FormatOptionOrigin }> = [];
+  const origins: Array<{ productId: string; ref: FormatOptionReference; origin: FormatOptionOrigin | undefined }> = [];
   for (const route of routes) {
     const ref = routeRef(route.format_option_ref);
     if (
@@ -279,7 +283,7 @@ export function canonicalFormatLegacyResolverFromRoutes(
     const key = routeKey(route.product_id, ref);
     index.set(key, uniqueFormatIds([...(index.get(key) ?? []), ...route.format_ids]));
     const origin = routeOrigin(route);
-    if (origin) origins.push({ productId: route.product_id, ref, origin });
+    origins.push({ productId: route.product_id, ref, origin });
   }
   const resolver: CanonicalFormatLegacyResolver = context => {
     const lookups = routeLookupContext(context);

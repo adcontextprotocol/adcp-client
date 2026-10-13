@@ -618,4 +618,99 @@ describe('canonical wire: persisted routes carry whether the seller declared eac
       await execution.close();
     }
   });
+
+  test('fresh seller declarations without legacy aliases override configured persisted origin', async () => {
+    const { product, routes } = await discoverAndPersist([
+      legacyOnlyProduct('legacy-shaped', [{ agent_url: AAO, id: 'display_300x250_image' }]),
+    ]);
+    const [option] = product.format_options;
+    // The seller now declares the formerly derived option and no longer
+    // advertises a legacy alias. The configured routes predate that change.
+    const execution = await canonicalSeller([product], {
+      canonicalFormatLegacyResolver: canonicalFormatLegacyResolverFromRoutes(routes),
+    });
+    try {
+      const fresh = await execution.agent.getProducts({ buying_mode: 'brief', brief: 'Display', account: ACCOUNT });
+      const freshProduct = fresh.data.products[0];
+      const selected = packageRefsForFormatOptions(freshProduct, [option.format_option_id]);
+      const creative = {
+        creative_id: 'creative-fresh',
+        name: 'Fresh seller declaration',
+        format_kind: 'image',
+        format_option_ref: selected.format_option_refs[0],
+        assets: {},
+      };
+
+      await execution.agent.createMediaBuy(
+        mediaBuy({ product_id: product.product_id, ...selected, creatives: [creative] })
+      );
+      await execution.agent.updateMediaBuy({
+        account: ACCOUNT,
+        media_buy_id: 'mb-canonical',
+        new_packages: [mediaBuy({ product_id: product.product_id, ...selected }).packages[0]],
+      });
+      await execution.agent.syncCreatives({ account: ACCOUNT, creatives: [creative] });
+
+      for (const pkg of [execution.captured.create.packages[0], execution.captured.update.new_packages[0]]) {
+        assert.deepStrictEqual(pkg.format_option_refs, selected.format_option_refs);
+        assert.strictEqual(pkg.format_kind, undefined);
+      }
+      for (const wireCreative of [
+        execution.captured.create.packages[0].creatives[0],
+        execution.captured.sync.creatives[0],
+      ]) {
+        assert.deepStrictEqual(wireCreative.format_option_ref, creative.format_option_ref);
+      }
+    } finally {
+      await execution.close();
+    }
+  });
+
+  for (const oldRouteFirst of [false, true]) {
+    test(`mixed old and new routes preserve an unscoped creative pin (old route first: ${oldRouteFirst})`, async () => {
+      const { product, routes } = await discoverAndPersist([
+        legacyOnlyProduct('legacy-shaped', [{ agent_url: AAO, id: 'display_300x250_image' }]),
+      ]);
+      const [derivedRoute] = routes;
+      const oldRoute = {
+        product_id: 'declared-product',
+        format_option_ref: derivedRoute.format_option_ref,
+        format_ids: derivedRoute.format_ids,
+      };
+      const execution = await canonicalSeller([], {
+        canonicalFormatLegacyResolver: canonicalFormatLegacyResolverFromRoutes(
+          oldRouteFirst ? [oldRoute, derivedRoute] : [derivedRoute, oldRoute]
+        ),
+      });
+      try {
+        const creative = {
+          creative_id: 'creative-old-route',
+          name: 'Old route origin is unknown',
+          format_kind: 'image',
+          format_option_ref: oldRoute.format_option_ref,
+          assets: {},
+        };
+        await execution.agent.syncCreatives({ account: ACCOUNT, creatives: [creative] }, undefined, {
+          creativeFormatProjection: {
+            selectorContainers: [{ product_id: oldRoute.product_id, format_option_refs: [oldRoute.format_option_ref] }],
+          },
+        });
+        assert.deepStrictEqual(execution.captured.sync.creatives[0].format_option_ref, creative.format_option_ref);
+
+        // A scoped selection can still use the new route's known origin.
+        await execution.agent.createMediaBuy(
+          mediaBuy({ product_id: product.product_id, format_option_refs: [derivedRoute.format_option_ref] })
+        );
+        assert.strictEqual(execution.captured.create.packages[0].format_option_refs, undefined);
+        assert.strictEqual(execution.captured.create.packages[0].format_kind, 'image');
+
+        await execution.agent.createMediaBuy(
+          mediaBuy({ product_id: oldRoute.product_id, format_option_refs: [oldRoute.format_option_ref] })
+        );
+        assert.deepStrictEqual(execution.captured.create.packages[0].format_option_refs, [oldRoute.format_option_ref]);
+      } finally {
+        await execution.close();
+      }
+    });
+  }
 });
