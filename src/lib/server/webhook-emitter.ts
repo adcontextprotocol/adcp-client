@@ -1,3 +1,4 @@
+import { signWebBotAuth, type WebBotSigningKey } from '../signing/web-bot-auth';
 /**
  * Publisher-side webhook emitter — the symmetric counterpart to PR #629's
  * receiver-side dedup. A seller / governance agent / rights agent building
@@ -94,6 +95,7 @@ export interface WebhookDeliveryProposal {
 
 /** Exact caller-owned state required to reconstruct a delivery after restart. */
 export interface WebhookDeliverySnapshot {
+  signingProfile?: 'adcp/webhook-signing/v1' | 'web-bot-auth';
   url: string;
   payload: Record<string, unknown>;
   authentication: WebhookAuthentication;
@@ -257,6 +259,9 @@ export interface WebhookRetryOptions {
 }
 
 export interface WebhookEmitterOptions {
+  /** Experimental profile must be selected by trusted subscription configuration. */
+  webBotAuth?: { origin: string; key: WebBotSigningKey };
+  signingProfile?: 'adcp/webhook-signing/v1' | 'web-bot-auth';
   /**
    * In-process JWK signing key. Its JWKS entry SHOULD carry
    * `adcp_use: "request-signing"` — webhooks are signed with the agent's
@@ -405,6 +410,7 @@ export interface WebhookEmitParams {
    * 9421 default.
    */
   authentication?: WebhookAuthentication;
+  signingProfile?: 'adcp/webhook-signing/v1' | 'web-bot-auth';
   /** Per-emit retries override. */
   retries?: WebhookRetryOptions;
   /**
@@ -448,6 +454,7 @@ export type WebhookAttemptAuthorizationDecision =
       decision: 'allow';
       /** Optional just-in-time override; `null` explicitly selects RFC 9421. */
       authentication?: WebhookAuthentication;
+      signingProfile?: 'adcp/webhook-signing/v1' | 'web-bot-auth';
       /** Durable transport ordinal allocated by the pre-POST checkpoint. */
       attemptOrdinal?: number;
     }
@@ -571,6 +578,7 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
         payload: delivery.snapshot.payload,
         authentication: delivery.snapshot.authentication,
         retries: delivery.snapshot.retries,
+        signingProfile: delivery.snapshot.signingProfile ?? 'adcp/webhook-signing/v1',
         ...(delivery.snapshot.attemptAuthorizationContext === undefined
           ? {}
           : { attemptAuthorizationContext: delivery.snapshot.attemptAuthorizationContext }),
@@ -592,7 +600,15 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
         throw new TypeError('delivery_id must be a non-empty string');
       }
       const url = params.url;
+      const signingProfile = params.signingProfile ?? options.signingProfile ?? 'adcp/webhook-signing/v1';
+      if (
+        !['adcp/webhook-signing/v1', 'web-bot-auth'].includes(signingProfile) ||
+        (signingProfile === 'web-bot-auth' && !options.webBotAuth)
+      )
+        throw new TypeError('Unsupported or unconfigured webhook signing profile');
       const payloadSnapshot = structuredClone(params.payload);
+      if (params.signingProfile === 'web-bot-auth' && params.authentication != null)
+        throw new TypeError('Web Bot Auth cannot be combined with legacy webhook authentication');
       const authentication = params.authentication == null ? null : structuredClone(params.authentication);
       const attemptAuthorizationContext =
         params.attemptAuthorizationContext === undefined
@@ -611,6 +627,7 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
           payload: structuredClone(payloadSnapshot),
           authentication: authentication === null ? null : structuredClone(authentication),
           retries: { ...retries },
+          ...((signingProfile === 'web-bot-auth' || options.signingProfile === 'web-bot-auth') && { signingProfile }),
           ...(attemptAuthorizationContext === undefined
             ? {}
             : { attemptAuthorizationContext: structuredClone(attemptAuthorizationContext) }),
@@ -679,6 +696,7 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
           let attemptInfo: WebhookEmitAttempt = { ...candidate, attempt: resolvedAttempt };
 
           let attemptAuthentication = authentication;
+          let attemptSigningProfile = signingProfile;
           if (options.authorizeAttempt) {
             let authorization: WebhookAttemptAuthorizationDecision;
             try {
@@ -718,6 +736,14 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
               assertPositiveInteger(authorization.attemptOrdinal, 'authorized webhook attempt ordinal', 1_000_000);
               attemptInfo = { ...attemptInfo, attempt: authorization.attemptOrdinal };
             }
+            if (authorization.signingProfile !== undefined) {
+              if (
+                !['adcp/webhook-signing/v1', 'web-bot-auth'].includes(authorization.signingProfile) ||
+                (authorization.signingProfile === 'web-bot-auth' && !options.webBotAuth)
+              )
+                throw new TypeError('Attempt selected an unsupported webhook signing profile');
+              attemptSigningProfile = authorization.signingProfile;
+            }
             if ('authentication' in authorization) {
               attemptAuthentication =
                 authorization.authentication == null ? null : structuredClone(authorization.authentication);
@@ -742,6 +768,8 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
                 bodyBytes,
                 signerKey: options.signerKey,
                 signerProvider: options.signerProvider,
+                webBotAuth: options.webBotAuth,
+                signingProfile: attemptSigningProfile,
                 authentication: attemptAuthentication,
                 tag: options.tag,
                 userAgent: options.userAgent,
@@ -1043,6 +1071,8 @@ async function deliverOnce(args: {
   signerKey?: SignerKey;
   signerProvider?: SigningProvider;
   authentication: WebhookAuthentication;
+  webBotAuth?: { origin: string; key: WebBotSigningKey };
+  signingProfile?: 'adcp/webhook-signing/v1' | 'web-bot-auth';
   tag?: string;
   userAgent?: string;
   fetch: typeof fetch;
@@ -1069,6 +1099,8 @@ async function buildHeaders(args: {
   signerKey?: SignerKey;
   signerProvider?: SigningProvider;
   authentication: WebhookAuthentication;
+  webBotAuth?: { origin: string; key: WebBotSigningKey };
+  signingProfile?: 'adcp/webhook-signing/v1' | 'web-bot-auth';
   tag?: string;
   userAgent?: string;
   suppressLegacyWarnings?: boolean;
@@ -1111,6 +1143,10 @@ async function buildHeaders(args: {
     headers: baseHeaders,
     body: args.bodyBytes,
   };
+  if (args.signingProfile === 'web-bot-auth') {
+    if (!args.webBotAuth) throw new TypeError('Selected Web Bot Auth profile has no configured signing identity');
+    return signWebBotAuth(request, args.webBotAuth.key, { origin: args.webBotAuth.origin });
+  }
   const signOpts = args.tag !== undefined ? { tag: args.tag } : {};
   const signed = args.signerProvider
     ? await signWebhookAsync(request, args.signerProvider, signOpts)

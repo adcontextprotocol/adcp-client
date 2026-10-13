@@ -1,4 +1,4 @@
-import { ParseError, parseDictionary, serializeInnerList, type InnerList } from 'structured-headers';
+import { ParseError, parseDictionary, serializeInnerList, serializeItem, type InnerList } from 'structured-headers';
 import { RequestSignatureError } from './errors';
 import { isPaddedStandardBase64, type SfBinaryEncoding } from './content-digest';
 
@@ -35,7 +35,7 @@ function malformed(message: string): never {
   throw new RequestSignatureError('request_signature_header_malformed', 1, message);
 }
 
-export function parseSignatureInput(headerValue: string): ParsedSignatureInput {
+export function parseSignatureInput(headerValue: string, expectedLabel?: string): ParsedSignatureInput {
   rejectDuplicateDictionaryKeys(headerValue, 'Signature-Input');
   let dict;
   try {
@@ -45,7 +45,8 @@ export function parseSignatureInput(headerValue: string): ParsedSignatureInput {
     throw e;
   }
   if (dict.size === 0) malformed('Signature-Input header is empty');
-  const label = dict.has('sig1') ? 'sig1' : (dict.keys().next().value as string);
+  const label = expectedLabel ?? (dict.has('sig1') ? 'sig1' : (dict.keys().next().value as string));
+  if (!dict.has(label)) malformed('Signature-Input label is missing');
   const entry = dict.get(label)!;
   if (!isInnerList(entry)) {
     malformed('Signature-Input value must be a parenthesized component list');
@@ -53,7 +54,10 @@ export function parseSignatureInput(headerValue: string): ParsedSignatureInput {
   const components: string[] = [];
   for (const [bare, itemParams] of entry[0]) {
     if (typeof bare !== 'string') malformed('Signature-Input components must all be strings');
-    components.push(itemParams instanceof Map && itemParams.get('req') === true ? `${bare};req` : bare);
+    // Preserve parameters rather than verifying a different component when
+    // a sender selects a dictionary member or an unsupported parameter.
+    const serialized = serializeItem([bare, itemParams]);
+    components.push(`${bare}${serialized.slice(serialized.indexOf('"', 1) + 1)}`);
   }
   const params: Record<string, string | number> = {};
   for (const [key, value] of entry[1]) {

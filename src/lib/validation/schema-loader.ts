@@ -246,6 +246,27 @@ export function toReleasePrecisionWire(bundleKeyOrVersion: string): string {
  * surface the error; the construction-time fence in `resolveAdcpVersion`
  * catches most cross-major mistakes before this point.
  */
+const identity33Scope = new AsyncLocalStorage<boolean>();
+/** @internal Draft schema resolution is scoped to an explicitly configured instance. */
+export function isIdentity33SchemaScope(): boolean {
+  return identity33Scope.getStore() === true;
+}
+export function withIdentity33SchemaScope<T>(fn: () => T, enabled = true): T {
+  return identity33Scope.run(enabled, fn);
+}
+export function bindIdentity33SchemaScope<T extends object>(instance: T): T {
+  return new Proxy(instance, {
+    get(target, property, receiver) {
+      const value = withIdentity33SchemaScope(() => Reflect.get(target, property, receiver));
+      const descriptor = Reflect.getOwnPropertyDescriptor(target, property);
+      if (descriptor && !descriptor.configurable && 'value' in descriptor && !descriptor.writable) return value;
+      return typeof value === 'function'
+        ? (...args: unknown[]) => withIdentity33SchemaScope(() => value.apply(target, args))
+        : value;
+    },
+  });
+}
+
 function resolveSchemaRoot(version: string): string {
   const key = resolveBundleKey(version);
   const scopedRoot = scopedExternalSchemaRoots.getStore()?.get(key);
@@ -254,6 +275,7 @@ function resolveSchemaRoot(version: string): string {
   const externalRoot = externalSchemaRoots.get(key);
   if (externalRoot && existsSync(externalRoot)) return externalRoot;
 
+  if (isIdentity33SchemaScope() && key === '3.3') return resolveSchemaRoot(ADCP_VERSION);
   const distCandidate = path.join(__dirname, '..', 'schemas-data', key);
   if (existsSync(distCandidate)) return distCandidate;
 
@@ -579,6 +601,7 @@ export function withExternalSchemaRoot<T>(version: string, root: string | undefi
  */
 export function isExternalSchemaRootActive(version: string): boolean {
   const key = resolveBundleKey(version);
+  if (isIdentity33SchemaScope() && key === '3.3') return true;
   const scopedRoot = scopedExternalSchemaRoots.getStore()?.get(key);
   if (scopedRoot && existsSync(scopedRoot)) return true;
   const registeredRoot = externalSchemaRoots.get(key);
@@ -1059,7 +1082,7 @@ export function getSchemaValidatorByRef(
   });
   addFormats(ajv);
   for (const keyword of keywords ?? []) ajv.addKeyword(keyword);
-  const rawSchema = loadJson(file);
+  const rawSchema = identity33ReferenceSchema(loadJson(file), version);
   const dependencySchemas: LoadedSchema[] = [];
   const registeredIds = new Map<string, LoadedSchema>();
   for (const schemaFile of walkJsonFiles(root)) {
@@ -1070,7 +1093,7 @@ export function getSchemaValidatorByRef(
       continue;
     }
     if (schemaFile === file) continue;
-    const schema = loadJson(schemaFile);
+    const schema = identity33ReferenceSchema(loadJson(schemaFile), version);
     if ((keywords || allErrors) && typeof schema.$id === 'string') {
       const previous = schema.$id === rawSchema.$id ? rawSchema : registeredIds.get(schema.$id);
       // Bundles intentionally mirror async-response refs. Identical copies
@@ -1221,6 +1244,22 @@ export function getRegisteredSchemaIds(version: string = ADCP_VERSION): readonly
   const registry = (s.ajv as unknown as { schemas?: Record<string, unknown> }).schemas;
   const bundledRegistry = (s.bundledAjv as unknown as { schemas?: Record<string, unknown> }).schemas;
   return [...new Set([...Object.keys(registry ?? {}), ...Object.keys(bundledRegistry ?? {})])];
+}
+
+/** Keep new invalidation reasons isolated to explicitly enabled draft references. */
+function identity33ReferenceSchema(schema: LoadedSchema, version: string): LoadedSchema {
+  if (!isIdentity33SchemaScope() || resolveBundleKey(version) !== '3.3') return schema;
+  const clone = structuredClone(schema);
+  const pending: unknown[] = [clone];
+  while (pending.length) {
+    const node = pending.pop();
+    if (!node || typeof node !== 'object') continue;
+    const object = node as Record<string, unknown>;
+    if (Array.isArray(object.enum) && object.enum.includes('destination_state_changed'))
+      object.enum = [...object.enum, 'relationship_changed', 'relationship_expiring'];
+    for (const value of Object.values(object)) if (typeof value === 'object') pending.push(value);
+  }
+  return clone;
 }
 
 /** Suffix used in the suffix table — exported for testing. */

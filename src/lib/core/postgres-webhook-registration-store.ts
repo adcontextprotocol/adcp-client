@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS ${table} (
   callback_url                     TEXT NOT NULL,
   method                           TEXT NOT NULL,
   mode                             TEXT NOT NULL,
+  signing_profile                  TEXT CHECK (signing_profile IS NULL OR (mode = 'rfc9421' AND signing_profile IN ('adcp/webhook-signing/v1', 'web-bot-auth'))),
   authorization_context_version    SMALLINT,
   delegated_operator_authorization JSONB,
   preview_mode                     TEXT,
@@ -99,6 +100,9 @@ CREATE TABLE IF NOT EXISTS ${table} (
   CONSTRAINT ${tableName}_valid_expiry CHECK (expires_at > created_at)
 );
 
+ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS signing_profile TEXT
+  CHECK (signing_profile IS NULL OR (mode = 'rfc9421' AND signing_profile IN ('adcp/webhook-signing/v1', 'web-bot-auth')));
+
 CREATE INDEX IF NOT EXISTS idx_${tableName}_expires_at
   ON ${table}(expires_at);
 `.trim();
@@ -116,6 +120,7 @@ const RETURNING_REGISTRATION = `
   callback_url,
   method,
   mode,
+  signing_profile,
   authorization_context_version,
   delegated_operator_authorization,
   preview_mode,
@@ -181,6 +186,7 @@ function registrationFromRow(
         callbackUrl: requiredString(row, 'callback_url'),
         method: requiredString(row, 'method'),
         mode: requiredString(row, 'mode'),
+        ...(row.signing_profile != null && { signingProfile: optionalString(row, 'signing_profile') }),
         ...(authorizationContextVersion === 1 && { authorizationContextVersion }),
         ...(delegatedOperatorAuthorization !== null && { delegatedOperatorAuthorization }),
         ...(previewMode !== undefined && { previewMode }),
@@ -253,18 +259,18 @@ export function pgWebhookRegistrationStore(
          INSERT INTO ${table} AS existing (
            agent_id, operation_id, agent_url, protocol, task_type, callback_url,
            method, mode, authorization_context_version, delegated_operator_authorization,
-           preview_mode, requires_durable_settlement, created_at, expires_at
+           preview_mode, requires_durable_settlement, created_at, expires_at, signing_profile
          )
          SELECT
            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12,
            to_timestamp($13::double precision / 1000.0),
-           to_timestamp($14::double precision / 1000.0)
+           to_timestamp($14::double precision / 1000.0), $15
          FROM backend_clock
          WHERE to_timestamp($14::double precision / 1000.0) > backend_clock.now
          ON CONFLICT (agent_id, operation_id) DO UPDATE SET (
            agent_url, protocol, task_type, callback_url, method, mode,
            authorization_context_version, delegated_operator_authorization,
-           preview_mode, requires_durable_settlement, created_at, expires_at
+           preview_mode, requires_durable_settlement, created_at, expires_at, signing_profile
          ) = (
            SELECT
              CASE WHEN existing.expires_at <= backend_clock.now THEN EXCLUDED.agent_url
@@ -290,7 +296,9 @@ export function pgWebhookRegistrationStore(
              CASE WHEN existing.expires_at <= backend_clock.now THEN EXCLUDED.created_at
                ELSE existing.created_at END,
              CASE WHEN existing.expires_at <= backend_clock.now THEN EXCLUDED.expires_at
-               ELSE existing.expires_at END
+               ELSE existing.expires_at END,
+             CASE WHEN existing.expires_at <= backend_clock.now THEN EXCLUDED.signing_profile
+               ELSE existing.signing_profile END
            FROM backend_clock
          )
          RETURNING ${RETURNING_REGISTRATION},
@@ -310,6 +318,7 @@ export function pgWebhookRegistrationStore(
           proposed.requiresDurableSettlement ?? null,
           proposed.createdAt,
           proposed.expiresAt,
+          proposed.signingProfile ?? null,
         ]
       );
       const row = result.rows[0];

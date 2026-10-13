@@ -1975,6 +1975,7 @@ COMMANDS:
                               the per-step trace. Triages request_signature_brand_*
                               rejections.
   signing <subcommand>        RFC 9421 signing key tools (generate, verify)
+  identity <subcommand>       Experimental 3.3 trust validation and signed directory authoring
   check-network               Validate managed publisher network deployment
   diagnose-auth <alias|url>   Diagnose OAuth handshake with ranked hypotheses
                               (alias: "adcp diagnose oauth <alias|url>")
@@ -5835,6 +5836,7 @@ function formatVerdict(verdict) {
 
 async function main() {
   const args = process.argv.slice(2);
+  if (args[0] === 'identity') return require('./adcp-identity.js').handleIdentityCommand(args.slice(1));
 
   // `--version` / `-v` is handled before subcommands and before the
   // staleness probe — it should be a fast, side-effect-free identity

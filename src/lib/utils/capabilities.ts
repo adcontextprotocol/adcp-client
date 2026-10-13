@@ -89,6 +89,7 @@ export interface MediaBuyFeatures {
  * Account management capabilities declared by the seller
  */
 export interface AccountCapabilities {
+  agentOnboarding?: import('../identity-3.3/types').AgentOnboarding;
   /** Seller-issued IDs are stable and accepted wherever an account reference is used. */
   stableAccountId?: boolean;
   /** Optional account change feed; absence does not imply support. */
@@ -692,6 +693,12 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
       authorizationEndpoint: response.account.authorization_endpoint,
       supportedBilling: response.account.supported_billing ?? [],
       defaultBilling: response.account.default_billing,
+      ...((response.account as { agent_onboarding?: import('../identity-3.3/types').AgentOnboarding })
+        .agent_onboarding && {
+        agentOnboarding: structuredClone(
+          (response.account as { agent_onboarding: import('../identity-3.3/types').AgentOnboarding }).agent_onboarding
+        ),
+      }),
       supportedAccountCurrencyModes: response.account.supported_account_currency_modes,
       ...(response.account.timezone && {
         timezone: {

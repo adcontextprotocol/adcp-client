@@ -1,3 +1,4 @@
+import { getWebBotAuthLegacyOriginGate } from '../signing/web-bot-auth';
 /**
  * Bridge between {@link verifyRequestSignature} and the {@link Authenticator}
  * surface so RFC 9421 signatures compose with bearer / API-key auth via
@@ -40,6 +41,12 @@
 import type { IncomingMessage } from 'http';
 import type { RequestLike } from '../signing/canonicalize';
 import { RequestSignatureError } from '../signing/errors';
+import {
+  selectSignatureProfile,
+  verifyWebBotAuth,
+  WebBotAuthError,
+  type VerifiedWebBotSigner,
+} from '../signing/web-bot-auth';
 import type { JwksResolver } from '../signing/jwks';
 import { InMemoryReplayStore, type ReplayStore } from '../signing/replay';
 import { InMemoryRevocationStore, type RevocationStore } from '../signing/revocation';
@@ -71,6 +78,18 @@ import {
 } from './auth';
 
 export interface VerifySignatureAsAuthenticatorOptions {
+  /** Explicit experimental profile. Verification never creates a principal or fetches trust.json. */
+  webBotAuth?: {
+    directory: import('../signing/web-bot-auth').SignatureDirectoryResolver;
+    isRevoked: (origin: string, keyid: string) => Promise<boolean>;
+    /** Resolve only an existing audited binding; handle identity-established callers with anonymous scope. */
+    resolvePrincipal: (
+      signers: readonly VerifiedWebBotSigner[],
+      operation: ResolvedOperation
+    ) => Promise<AuthPrincipal>;
+  };
+  /** Refuse legacy credentials for an origin already bound to Web Bot Auth. */
+  assertLegacyOriginAllowed?: (agentUrl: string) => Promise<void>;
   /** Verifier capability block. `required_for` is not enforced here — unsigned
    *  requests fall through to the next authenticator — so set it to whatever
    *  your `request_signing` capability claim advertises. */
@@ -154,6 +173,12 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
   // authenticator shares the same replay/revocation state — lazy
   // per-request construction would defeat replay detection entirely.
   const replayStore = options.replayStore ?? new InMemoryReplayStore();
+  const legacyOriginGate =
+    options.assertLegacyOriginAllowed ?? getWebBotAuthLegacyOriginGate(options.webBotAuth?.resolvePrincipal);
+  if (options.webBotAuth && !legacyOriginGate)
+    throw new TypeError(
+      'Web Bot Auth requires an origin-binding migration fence; use createIdentity33PrincipalResolver or supply assertLegacyOriginAllowed'
+    );
   const revocationStore = options.revocationStore ?? new InMemoryRevocationStore();
 
   const authenticator: Authenticator = async req => {
@@ -170,6 +195,49 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
 
     let result: VerifyResult;
     try {
+      if (selectSignatureProfile(requestLike) === 'web-bot-auth') {
+        if (
+          (!options.getUrl && !getServeRequestContext(req)?.publicUrl) ||
+          !options.webBotAuth ||
+          !options.capability.profiles?.includes('web-bot-auth')
+        )
+          throw new WebBotAuthError(403, 'profile_disabled');
+        if (req.method !== 'GET' && (req as IncomingMessage & { rawBody?: string }).rawBody === undefined)
+          throw new WebBotAuthError(403, 'raw_body_missing');
+        const signers = await verifyWebBotAuth(requestLike, {
+          directory: options.webBotAuth.directory,
+          deferAuthorizationErrors: true,
+          replayStore,
+          isRevoked: options.webBotAuth.isRevoked,
+          now: options.now,
+          requireFreshRevocation: ![
+            'get_adcp_capabilities',
+            'get_principal',
+            'list_creative_formats',
+            'list_accounts',
+          ].includes(String(options.resolveOperation(req as IncomingMessage & { rawBody?: string }))),
+        });
+        const principal = await options.webBotAuth.resolvePrincipal(
+          signers,
+          options.resolveOperation(req as IncomingMessage & { rawBody?: string })
+        );
+        const signer = signers[signers.length - 1]!;
+        (req as IncomingMessage & { verifiedSigner?: VerifiedSigner }).verifiedSigner = {
+          keyid: signer.keyid,
+          agent_url: signer.origin,
+          verified_at: signer.verified_at,
+        };
+        const failed = signers.find(s => s.authorizationFailure);
+        return failed
+          ? {
+              ...principal,
+              extra: {
+                ...principal.extra,
+                webBotAuthAuthorization: { signer: failed, authorizationFailure: failed.authorizationFailure },
+              },
+            }
+          : principal;
+      }
       result = await verifyRequestSignature(requestLike, {
         capability: options.capability,
         jwks: options.jwks,
@@ -180,7 +248,18 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
         operation: options.resolveOperation(req as IncomingMessage & { rawBody?: string }),
         agentUrlForKeyid: options.agentUrlForKeyid,
       });
+      if (result.status === 'verified' && legacyOriginGate) {
+        if (!result.agent_url)
+          throw new RequestSignatureError(
+            'request_signature_key_unknown',
+            7,
+            'Legacy signer must resolve an agent origin when migration fencing is enabled'
+          );
+        await legacyOriginGate!(result.agent_url);
+      }
     } catch (err) {
+      if (err instanceof WebBotAuthError)
+        throw new AuthError(err.message, { cause: err, status: err.status, headers: err.headers, body: err.body });
       if (err instanceof RequestSignatureError) {
         throw new AuthError(`Signature rejected (${err.code}).`, { cause: err });
       }
@@ -214,7 +293,8 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
     return principal;
   };
 
-  return tagAuthenticatorNeedsRawBody(authenticator);
+  const tagged = tagAuthenticatorNeedsRawBody(authenticator);
+  return options.webBotAuth ? tagAuthenticatorPresenceGated(tagged) : tagged;
 }
 
 /**
@@ -656,7 +736,11 @@ function hasSignatureHeader(req: IncomingMessage): boolean {
   // it to the fallback would mean a half-formed signing attempt (e.g., client
   // bug that dropped the Signature-Input header) silently auths via bearer.
   // Fail closed: send it to the signature authenticator, which will throw.
-  return nonEmptyHeader(req.headers['signature-input']) || nonEmptyHeader(req.headers['signature']);
+  return (
+    req.headers['signature-agent'] !== undefined ||
+    nonEmptyHeader(req.headers['signature-input']) ||
+    nonEmptyHeader(req.headers['signature'])
+  );
 }
 
 function nonEmptyHeader(v: string | string[] | undefined): boolean {

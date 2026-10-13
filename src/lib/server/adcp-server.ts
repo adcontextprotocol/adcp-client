@@ -783,6 +783,12 @@ export function wrapMcpServer(
     return handler({ method: request.method, params: request.params ?? {} }, extra);
   };
   const invoke = async (options: AdcpInvokeOptions): Promise<McpToolResponse> => {
+    if (options.authInfo?.extra?.identity33 || options.authInfo?.extra?.webBotAuthAuthorization) {
+      const { getWebBotAuthAuthorizationFailure, webBotAuthToolFailure } =
+        require('../signing/web-bot-auth') as typeof import('../signing/web-bot-auth');
+      const failure = getWebBotAuthAuthorizationFailure(options.authInfo.extra);
+      if (failure) return webBotAuthToolFailure(failure, adcpVersion);
+    }
     const tool = getRegisteredTool(mcp, options.toolName);
     if (!tool) {
       throw new Error(`AdcpServer.invoke: tool "${options.toolName}" is not registered`);

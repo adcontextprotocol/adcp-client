@@ -459,6 +459,16 @@
         "types": "./dist/lib/reporting/bigquery/index.d.ts",
         "default": "./dist/lib/reporting/bigquery/index.js"
       }
+    },
+    "./identity-3.3": {
+      "import": {
+        "types": "./dist/lib/identity-3.3/index.d.mts",
+        "default": "./dist/lib/identity-3.3/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/identity-3.3/index.d.ts",
+        "default": "./dist/lib/identity-3.3/index.js"
+      }
     }
   },
   "typesVersions": {

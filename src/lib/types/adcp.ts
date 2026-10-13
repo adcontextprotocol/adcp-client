@@ -344,6 +344,8 @@ export type AgentRequestSigningConfig = AgentRequestSigningConfigInline | AgentR
 
 /** Operation-list overrides shared by both `request_signing` shapes. */
 export interface AgentRequestSigningOperationOverrides {
+  /** Experimental 3.3 opt-in. Omitted retains the RFC 9421 AdCP profile. */
+  profile?: 'rfc9421' | 'web-bot-auth';
   /**
    * AdCP operation names to sign regardless of the seller's advertisement.
    * Useful during pilots before a counterparty flips an op into `required_for`.
@@ -426,6 +428,8 @@ export interface AgentRequestSigningConfigProvider extends AgentRequestSigningOp
    * KMS adapter.
    */
   provider: SigningProvider;
+  /** Required for Web Bot Auth: public JWK used to derive the RFC 7638 kid. */
+  public_key?: import('../signing/types').AdcpJsonWebKey;
   /** Agent base URL — same semantics as the inline shape. */
   agent_url: string;
 }

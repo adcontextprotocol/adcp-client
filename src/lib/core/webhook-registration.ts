@@ -24,6 +24,7 @@ export interface WebhookRegistration {
   callbackUrl: string;
   method: 'POST';
   mode: WebhookAuthenticationMode;
+  signingProfile?: 'adcp/webhook-signing/v1' | 'web-bot-auth';
   /** Versioned marker distinguishing tuple-aware registrations from legacy rows. */
   authorizationContextVersion?: 1;
   /** Trusted local tuple used to re-authorize delegated seller keys after restart. */
@@ -224,6 +225,11 @@ export function parseWebhookRegistration(
   if (input.requiresDurableSettlement !== undefined && typeof input.requiresDurableSettlement !== 'boolean') {
     throw new TypeError('Webhook registration requiresDurableSettlement must be boolean.');
   }
+  if (
+    input.signingProfile !== undefined &&
+    (input.mode !== 'rfc9421' || !['adcp/webhook-signing/v1', 'web-bot-auth'].includes(input.signingProfile as string))
+  )
+    throw new TypeError('Invalid registered webhook signing profile');
   const createdAt = requireEpochMs('createdAt', input.createdAt);
   const expiresAt = requireEpochMs('expiresAt', input.expiresAt);
   if (expiresAt <= createdAt) {
@@ -264,6 +270,9 @@ export function parseWebhookRegistration(
     callbackUrl,
     method: 'POST',
     mode: input.mode,
+    ...(input.signingProfile !== undefined && {
+      signingProfile: input.signingProfile as WebhookRegistration['signingProfile'],
+    }),
     ...(input.authorizationContextVersion === 1 && { authorizationContextVersion: 1 }),
     ...(delegatedOperatorAuthorization !== undefined && {
       delegatedOperatorAuthorization: { ...delegatedOperatorAuthorization },
@@ -369,6 +378,7 @@ export function webhookRegistrationFingerprint(registration: Readonly<WebhookReg
     parsed.previewMode ?? null,
     parsed.authorizationContextVersion ?? null,
     canonicalDelegatedOperatorAuthorization(parsed.delegatedOperatorAuthorization),
+    ...(parsed.signingProfile === 'web-bot-auth' ? [parsed.signingProfile] : []),
   ]);
 }
 

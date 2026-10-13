@@ -44,6 +44,8 @@ export interface PendingPrincipalNotification {
   changedAt: string;
   firedAt: string;
   reason:
+    | 'relationship_changed'
+    | 'relationship_expiring'
     | 'destination_state_changed'
     | 'setup_expiring'
     | 'setup_expired'

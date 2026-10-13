@@ -54,6 +54,17 @@ async function createHarness(factory) {
  * belongs in each adapter's own tests.
  */
 function runWebhookRegistrationStoreContract(name, factory, options = {}) {
+  test(`${name}: signing profile survives storage and cannot be changed on an existing route`, async () => {
+    const { store } = await createHarness(factory);
+    const input = registration('identity33-profile', {
+      signingProfile: 'web-bot-auth',
+      delegatedOperatorAuthorization: undefined,
+    });
+    await store.putIfAbsent(input);
+    assert.equal((await store.get(input.agentId, input.operationId)).signingProfile, 'web-bot-auth');
+    await assert.rejects(store.putIfAbsent({ ...input, signingProfile: 'adcp/webhook-signing/v1' }));
+  });
+
   test(`${name}: full round-trip is immutable and store-owned`, async () => {
     const { store } = await createHarness(factory);
     const input = registration('roundtrip');
