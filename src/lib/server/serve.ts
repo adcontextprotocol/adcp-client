@@ -762,6 +762,11 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
         try {
           principal = await options.authenticate(req);
         } catch (err) {
+          if (err instanceof AuthError && err.status) {
+            res.writeHead(err.status, { ...err.headers, 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(err.body ?? { error: err.publicMessage }));
+            return;
+          }
           // Surface only sanitized messages to the client; log internal cause server-side.
           const publicMessage = err instanceof AuthError ? err.publicMessage : 'Credentials rejected.';
           console.error('[adcp/auth] rejected:', err);

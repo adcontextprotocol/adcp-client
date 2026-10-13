@@ -58,6 +58,7 @@ export interface WebhookAuthenticationContext {
 }
 
 export interface StoredWebhookDeliverySnapshot {
+  signingProfile?: 'adcp/webhook-signing/v1' | 'web-bot-auth';
   url: string;
   payload: Record<string, unknown>;
   /** Non-secret live-authorization context; never serialized into the webhook body. */
@@ -537,6 +538,7 @@ async function protectSnapshot(
   if (cleartextPayloadToken !== undefined) delete payload.token;
   const base = {
     url: snapshot.url,
+    ...(snapshot.signingProfile !== undefined && { signingProfile: snapshot.signingProfile }),
     payload,
     retries: { ...snapshot.retries },
     ...(snapshot.attemptAuthorizationContext === undefined
@@ -603,6 +605,7 @@ async function resolveSnapshot(
     }
     return {
       url: snapshot.url,
+      ...(snapshot.signingProfile !== undefined && { signingProfile: snapshot.signingProfile }),
       payload,
       authentication,
       retries: { ...snapshot.retries },
@@ -618,7 +621,10 @@ async function resolveSnapshot(
 
 function authenticationContext(
   key: Readonly<WebhookDeliveryKey>,
-  snapshot: Pick<StoredWebhookDeliverySnapshot, 'url' | 'payload' | 'retries' | 'attemptAuthorizationContext'>,
+  snapshot: Pick<
+    StoredWebhookDeliverySnapshot,
+    'url' | 'payload' | 'retries' | 'attemptAuthorizationContext' | 'signingProfile'
+  >,
   purpose?: 'payload_token'
 ): WebhookAuthenticationContext {
   const base = {
@@ -648,6 +654,7 @@ function authenticationContext(
       purpose,
       key,
       url: snapshot.url,
+      ...(snapshot.signingProfile !== undefined && { signingProfile: snapshot.signingProfile }),
       payload: snapshot.payload,
       retries: snapshot.retries,
       ...(snapshot.attemptAuthorizationContext === undefined
@@ -719,6 +726,7 @@ function snapshotFingerprint(snapshot: StoredWebhookDeliverySnapshot): string {
   return canonicalJsonSha256({
     url: snapshot.url,
     payload: snapshot.payload,
+    ...(snapshot.signingProfile !== undefined && { signingProfile: snapshot.signingProfile }),
     retries: snapshot.retries,
     ...(snapshot.attemptAuthorizationContext === undefined
       ? {}

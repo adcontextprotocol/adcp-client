@@ -44,8 +44,8 @@ export class StrictJsonError extends Error {
  * 256 KiB brand.json budget — both are linear, the constant factor is small,
  * and we never trust the tokenizer to produce the value (it's only a guard).
  */
-export function parseStrictJson(text: string): unknown {
-  rejectDuplicateJsonKeys(text);
+export function parseStrictJson(text: string, maxDepth = Number.POSITIVE_INFINITY): unknown {
+  rejectDuplicateJsonKeys(text, maxDepth);
   try {
     return sjp.parse(text, null, { protoAction: 'error', constructorAction: 'error' });
   } catch (err) {
@@ -67,7 +67,7 @@ export function parseStrictJson(text: string): unknown {
  *   - whether the next quoted-string at object scope is the key half of
  *     a key-value pair.
  */
-export function rejectDuplicateJsonKeys(text: string): void {
+export function rejectDuplicateJsonKeys(text: string, maxDepth = Number.POSITIVE_INFINITY): void {
   type Scope = { kind: 'object'; keys: Set<string> } | { kind: 'array' };
   const stack: Scope[] = [];
   /** True when at an object scope and the next string token is a key. */
@@ -82,6 +82,7 @@ export function rejectDuplicateJsonKeys(text: string): void {
       continue;
     }
     if (ch === '{') {
+      if (stack.length >= maxDepth) throw new StrictJsonError('invalid_json', 'JSON nesting exceeds limit');
       stack.push({ kind: 'object', keys: new Set<string>() });
       expectingKey = true;
       i++;
@@ -94,6 +95,7 @@ export function rejectDuplicateJsonKeys(text: string): void {
       continue;
     }
     if (ch === '[') {
+      if (stack.length >= maxDepth) throw new StrictJsonError('invalid_json', 'JSON nesting exceeds limit');
       stack.push({ kind: 'array' });
       expectingKey = false;
       i++;

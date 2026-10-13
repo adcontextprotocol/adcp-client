@@ -16,6 +16,7 @@ export type NotificationEventAnchor = 'caller' | 'account';
 /** Structural input accepted from either generated notification-config shape. */
 export interface NotificationSubscriptionConfigInput {
   subscriber_id: string;
+  signing_profile?: 'adcp/webhook-signing/v1' | 'web-bot-auth';
   url: string;
   event_types: readonly string[];
   all_authorized_accounts?: boolean;
@@ -38,6 +39,7 @@ export interface StoredNotificationAuthentication {
 
 export interface StoredNotificationSubscription {
   subscriberId: string;
+  signingProfile?: 'adcp/webhook-signing/v1' | 'web-bot-auth';
   url: string;
   eventTypes: string[];
   active: boolean;
@@ -186,6 +188,7 @@ export interface NotificationProofAdapter {
 export type NotificationDestinationValidator = (input: {
   scope: Readonly<NotificationSubscriptionScope>;
   subscriberId: string;
+  signingProfile?: 'adcp/webhook-signing/v1' | 'web-bot-auth';
   url: string;
   signal: AbortSignal;
 }) => MaybePromise<{ allowed: true } | { allowed: false }>;
@@ -307,6 +310,7 @@ export type NotificationSuppressionDisposition = 'terminal' | 'retryable';
 
 export interface NotificationSubscriptionView {
   subscriber_id: string;
+  signing_profile?: 'adcp/webhook-signing/v1' | 'web-bot-auth';
   url: string;
   event_types: string[];
   active: boolean;
@@ -407,6 +411,7 @@ export interface PersistentNotificationRuntimeOptions {
   /** Build the emitter with the supplied mandatory per-attempt authorizer. */
   createEmitter(authorizeAttempt: WebhookAttemptAuthorizer): RecoverableWebhookEmitter;
   supportedCallerEventTypes?: readonly string[];
+  supportedSigningProfiles?: readonly ('adcp/webhook-signing/v1' | 'web-bot-auth')[];
   supportedAccountEventTypes?: readonly string[];
   /**
    * Later-version caller-only events safe for `include_future_event_types`.

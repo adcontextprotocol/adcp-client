@@ -1,4 +1,13 @@
 import {
+  isIdentity33SchemaScope,
+  withIdentity33SchemaScope,
+  bindIdentity33SchemaScope,
+} from '../validation/schema-loader';
+function loadWebBotAuth(): typeof import('../signing/web-bot-auth') {
+  return require('../signing/web-bot-auth') as typeof import('../signing/web-bot-auth');
+}
+import { canonicalAgentOrigin } from '../signing/agent-resolver/canonicalize';
+import {
   annotateProductsSupplyPaths,
   type ListProductsResponseWithSupplyPath,
   type ProductSupplyPathOptions,
@@ -177,6 +186,7 @@ import {
   canonicalDelegatedOperatorAuthorization,
   InMemoryWebhookRegistrationStore,
   parseWebhookRegistration,
+  deliveryWebhookRegistrationId,
   sameWebhookRegistration,
   WebhookRegistrationIntegrityError,
   type WebhookRegistration,
@@ -315,6 +325,8 @@ import {
 import type { LegacyFormatConverter } from '../v2/projection/v1-to-v2';
 import {
   formatOptionOriginFromRoutes,
+  sameFormatOptionRef,
+  sellerDeclaredFormatOptionRefs,
   undeclaredFormatOptionSelector,
   type FormatOptionOrigin,
 } from '../v2/projection/legacy-routes';
@@ -1211,6 +1223,10 @@ export type WebhookParseErrorCode =
   | 'webhook_verification_unavailable';
 
 export interface WebhookVerificationConfig {
+  webBotAuth?: {
+    directory: import('../signing/web-bot-auth').SignatureDirectoryResolver;
+    isRevoked: (origin: string, keyid: string) => Promise<boolean>;
+  };
   /** Applicable pins from persisted media-buy records. Reuse refresh callbacks bound to the seller/publisher/tenant across deliveries to share their cooldown. Never use webhook payload fields. */
   publisherPins?: (
     registration: Readonly<WebhookRegistration>
@@ -1363,6 +1379,9 @@ export interface StatusHandlerErrorContext {
  * Configuration for SingleAgentClient (and multi-agent client)
  */
 export interface SingleAgentClientConfig extends ConversationConfig {
+  /** Enable pinned draft identity schemas and positively negotiated 3.3 webhook rules. */
+  experimentalIdentity33?: boolean;
+  webhookSigningProfile?: 'adcp/webhook-signing/v1' | 'web-bot-auth';
   /** Default off disables provisioning gates; auto/strict use the provisioning registry. */
   accountPolicy?: AccountPolicy;
   /** Auto selects seller IDs only with stable_account_id or an AdCP 4+ wire contract. Natural-key preserves legacy implicit references. */
@@ -2203,9 +2222,9 @@ export class SingleAgentClient {
     return { ...publicRequest, brand: params.brand ?? ref.brand };
   }
 
-  private executor: TaskExecutor;
+  private executor!: TaskExecutor;
   private asyncHandler?: AsyncHandler;
-  private normalizedAgent: InternalAgentConfig;
+  private normalizedAgent!: InternalAgentConfig;
   private discoveredEndpoint?: string; // Cache discovered MCP endpoint
   private discoveredAgent?: AgentConfig; // Stable post-discovery config for protocol/provider caches
   private discoveredMcpEra?: 'legacy' | 'modern';
@@ -2230,10 +2249,10 @@ export class SingleAgentClient {
   private readonly canonicalCreativeTaskAssociations = new Map<string, CanonicalCreativeTaskAssociation>();
   private readonly previewCreativeHandlersByTask = new Map<string, 'canonical' | 'legacy'>();
   private readonly canonicalLegacyRoutes = new Map<string, CanonicalLegacyRoute>();
-  private readonly resolvedAdcpVersion: string;
-  private readonly webhookRegistrationStore: WebhookRegistrationStore;
-  private readonly webhookReplayStore: ReplayStore;
-  private readonly webhookRevocationStore: RevocationStore;
+  private readonly resolvedAdcpVersion!: string;
+  private readonly webhookRegistrationStore!: WebhookRegistrationStore;
+  private readonly webhookReplayStore!: ReplayStore;
+  private readonly webhookRevocationStore!: RevocationStore;
   private readonly webhookJwksResolvers = new Map<string, JwksResolver>();
   private readonly durableSettlementRecoverers = new Set<
     (
@@ -2263,6 +2282,11 @@ export class SingleAgentClient {
     private agent: AgentConfig,
     private config: SingleAgentClientConfig = {}
   ) {
+    if ((config.experimentalIdentity33 === true) !== isIdentity33SchemaScope())
+      return withIdentity33SchemaScope(() => {
+        const instance = Reflect.construct(SingleAgentClient, [agent, config], new.target) as SingleAgentClient;
+        return config.experimentalIdentity33 ? bindIdentity33SchemaScope(instance) : instance;
+      }, config.experimentalIdentity33 === true);
     // Own the nested trust-boundary object at construction. Normalization
     // historically returns the input object unchanged for the preferred
     // `trustedFetchFn` spelling, so clone first while retaining function identity.
@@ -2286,7 +2310,9 @@ export class SingleAgentClient {
     // Validate the configured adcpVersion at construction time. Throws
     // ConfigurationError if the pin's major differs from ADCP_MAJOR_VERSION
     // — cross-major support lands in Stage 3 of the multi-version refactor.
-    this.resolvedAdcpVersion = resolveAdcpVersion(config.adcpVersion);
+    this.resolvedAdcpVersion = resolveAdcpVersion(
+      config.adcpVersion ?? (config.experimentalIdentity33 ? '3.3' : undefined)
+    );
     this.webhookRegistrationStore = config.webhookRegistrationStore ?? new InMemoryWebhookRegistrationStore();
     this.webhookReplayStore = config.webhookVerification?.replayStore ?? new InMemoryReplayStore();
     this.webhookRevocationStore = config.webhookVerification?.revocationStore ?? new InMemoryRevocationStore();
@@ -2354,6 +2380,10 @@ export class SingleAgentClient {
       webhookUrlTemplate: config.webhookUrlTemplate,
       agentId: agent.id,
       webhookSecret: config.webhookSecret,
+      identity33SchemaExperiment: config.experimentalIdentity33,
+      experimentalIdentity33: () => this.config.experimentalIdentity33 === true && this.usesIdentity33Schemas(),
+      signedIdentity33Webhooks: () => this.usesSigned33Webhooks(),
+      webhookSigningProfile: () => this.selectedWebhookSigningProfile(),
       onWebhookRegistration: registration => this.persistWebhookRegistration(registration),
       onDurableSettlementRequired: operationId => this.markWebhookDurableSettlementRequired(operationId),
       externalTaskSettlementRetentionMs: registrationTtl * 1000,
@@ -2387,6 +2417,8 @@ export class SingleAgentClient {
     operationId: string;
     callbackUrl: string;
     mode: WebhookRegistration['mode'];
+    signingProfile?: WebhookRegistration['signingProfile'];
+    deliveryKind?: WebhookRegistration['deliveryKind'];
     delegatedOperatorAuthorization?: DelegatedOperatorAuthorizationContext;
   }): Promise<void> {
     const nowMs = this.config.webhookVerification?.now
@@ -2416,18 +2448,20 @@ export class SingleAgentClient {
     persistedAgentUrl.username = '';
     persistedAgentUrl.password = '';
     persistedAgentUrl.hash = '';
-    const delegatedOperatorAuthorization = this.effectiveDelegatedOperatorAuthorization(
-      args.delegatedOperatorAuthorization
-    );
+    const delegatedOperatorAuthorization = args.deliveryKind
+      ? undefined
+      : this.effectiveDelegatedOperatorAuthorization(args.delegatedOperatorAuthorization);
     const registration: WebhookRegistration = {
       agentId: args.agent.id,
       agentUrl: persistedAgentUrl.toString(),
       protocol: args.agent.protocol,
       operationId: args.operationId,
       taskType: args.taskType,
-      callbackUrl: args.callbackUrl,
+      callbackUrl: args.deliveryKind ? canonicalTargetUri(args.callbackUrl, '3.2') : args.callbackUrl,
       method: 'POST',
       mode: args.mode,
+      ...(args.signingProfile && { signingProfile: args.signingProfile }),
+      ...(args.deliveryKind && { deliveryKind: args.deliveryKind }),
       authorizationContextVersion: 1,
       ...(delegatedOperatorAuthorization !== undefined && { delegatedOperatorAuthorization }),
       ...(previewMode && { previewMode }),
@@ -2436,6 +2470,19 @@ export class SingleAgentClient {
     };
     validateWebhookRegistrationAuthorization(registration);
     try {
+      if (args.deliveryKind) {
+        const previous = await this.webhookRegistrationStore.get(args.agent.id, args.operationId);
+        if (
+          previous &&
+          previous.expiresAt > nowMs &&
+          (previous.signingProfile ?? 'adcp/webhook-signing/v1') !==
+            (registration.signingProfile ?? 'adcp/webhook-signing/v1')
+        )
+          throw new ConfigurationError(
+            `${args.deliveryKind} callback is already registered with ${previous.signingProfile ?? 'adcp/webhook-signing/v1'}. Use a new callback URL or delete its old registration after outstanding deliveries finish.`,
+            `${args.deliveryKind}_webhook.signing_profile`
+          );
+      }
       await this.webhookRegistrationStore.putIfAbsent(registration);
       const persisted = await this.webhookRegistrationStore.get(args.agent.id, args.operationId);
       if (
@@ -2451,6 +2498,12 @@ export class SingleAgentClient {
         );
       }
     } catch (cause) {
+      if (
+        args.deliveryKind &&
+        cause instanceof ConfigurationError &&
+        cause.configField === `${args.deliveryKind}_webhook.signing_profile`
+      )
+        throw cause;
       // RFC 9421 has no safe fallback without seller-pinned provenance. Legacy
       // HMAC remains verifiable from the configured global secret only for the
       // explicit recordless read-only allowlist. Mutation and unknown-task
@@ -2666,12 +2719,7 @@ export class SingleAgentClient {
   }
 
   private sameCanonicalOptionRef(left: CanonicalLegacyOptionRef, right: CanonicalLegacyOptionRef): boolean {
-    return (
-      left.scope === right.scope &&
-      left.format_option_id === right.format_option_id &&
-      (left.scope !== 'publisher' ||
-        (right.scope === 'publisher' && left.publisher_domain.toLowerCase() === right.publisher_domain.toLowerCase()))
-    );
+    return sameFormatOptionRef(left, right);
   }
 
   private rememberCanonicalLegacyRoute(key: string, route: CanonicalLegacyRoute): void {
@@ -2761,22 +2809,7 @@ export class SingleAgentClient {
       if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
       const product = value as Record<string, unknown>;
       if (typeof product.product_id !== 'string') continue;
-      const refs: CanonicalLegacyOptionRef[] = [];
-      for (const optionValue of Array.isArray(product.format_options) ? product.format_options : []) {
-        if (!optionValue || typeof optionValue !== 'object' || Array.isArray(optionValue)) continue;
-        const option = optionValue as Record<string, unknown>;
-        if (typeof option.format_option_id !== 'string') continue;
-        refs.push(
-          typeof option.publisher_domain === 'string'
-            ? {
-                scope: 'publisher',
-                publisher_domain: option.publisher_domain,
-                format_option_id: option.format_option_id,
-              }
-            : { scope: 'product', format_option_id: option.format_option_id }
-        );
-      }
-      declared.set(product.product_id, refs);
+      declared.set(product.product_id, sellerDeclaredFormatOptionRefs(product));
     }
     return declared;
   }
@@ -4007,8 +4040,7 @@ export class SingleAgentClient {
   async verifyAndParseWebhook(options: VerifyAndParseWebhookOptions): Promise<WebhookParseResult> {
     const rawBody = options.rawBody ?? rawBodyFromUnknown(options.body);
     const authHeaders = inspectWebhookAuthenticationHeaders(options.headers, options.signature, options.timestamp);
-    const trustedOperationId =
-      options.operationId && options.operationId !== 'unknown' ? options.operationId : undefined;
+    let trustedOperationId = options.operationId && options.operationId !== 'unknown' ? options.operationId : undefined;
     let registration: Readonly<WebhookRegistration> | undefined;
     if (trustedOperationId) {
       let stored: Readonly<WebhookRegistration> | undefined;
@@ -4053,6 +4085,28 @@ export class SingleAgentClient {
             cause,
           };
         }
+      }
+    }
+    if (
+      !registration &&
+      options.requestUrl &&
+      ['media_buy_delivery', 'artifact_delivery'].includes(options.taskType ?? '')
+    ) {
+      const kind = options.taskType === 'artifact_delivery' ? 'artifact' : 'reporting';
+      const routeId = deliveryWebhookRegistrationId(kind, options.requestUrl);
+      try {
+        const stored = await this.webhookRegistrationStore.get(this.agent.id, routeId);
+        if (stored) {
+          registration = parseWebhookRegistration(stored, { agentId: this.agent.id, operationId: routeId });
+          trustedOperationId = routeId;
+        }
+      } catch (cause) {
+        return {
+          ok: false,
+          code: 'webhook_registration_store_unavailable',
+          message: 'Delivery registration state is unavailable',
+          cause,
+        };
       }
     }
     if (registration) {
@@ -4146,6 +4200,7 @@ export class SingleAgentClient {
       }
     }
     if (registration?.mode === 'rfc9421') {
+      const { verifyWebBotAuth, selectSignatureProfile, WebBotAuthError } = loadWebBotAuth();
       const requestMethod = options.requestMethod;
       const requestUrl = options.requestUrl;
       if (rawBody === undefined || !options.headers || !trustedOperationId || !requestMethod || !requestUrl) {
@@ -4159,31 +4214,73 @@ export class SingleAgentClient {
       const normalizedHeaders = normalizeRfc9421WebhookHeaders(options.headers);
       if (!normalizedHeaders.ok) return normalizedHeaders.failure;
       try {
-        const delegatedOperatorAuthorization = this.delegatedOperatorAuthorizationForRegistration(registration);
-        await verifyRfc9421WebhookSignature(
-          {
-            method: requestMethod,
-            url: requestUrl,
-            headers: normalizedHeaders.headers,
-            body: rawBody,
-          },
-          {
-            jwks: this.webhookJwksFor(registration),
-            publisherPins: await this.config.webhookVerification?.publisherPins?.(registration),
-            onKeyResolutionError: this.config.webhookVerification?.onKeyResolutionError,
-            replayStore: this.webhookReplayStore,
-            revocationStore: this.webhookRevocationStore,
-            ...(this.config.webhookVerification?.now && { now: this.config.webhookVerification.now }),
-            agentUrlForKeyid: () => registration.agentUrl,
-            ...(registration.authorizationContextVersion === 1 && {
-              replayScopeBinding: `delegated-operator:v1:${crypto
-                .createHash('sha256')
-                .update(canonicalDelegatedOperatorAuthorization(delegatedOperatorAuthorization))
-                .digest('base64url')}`,
-            }),
-          }
-        );
+        const actualProfile = selectSignatureProfile({ headers: normalizedHeaders.headers });
+        if (registration.signingProfile === 'web-bot-auth') {
+          if (
+            registration.delegatedOperatorAuthorization ||
+            (await this.config.webhookVerification?.publisherPins?.(registration))
+          )
+            throw new WebBotAuthError(403, 'legacy_webhook_authorization_requires_rfc_profile');
+          const config = this.config.webhookVerification?.webBotAuth;
+          if (!config) throw new WebBotAuthError(403, 'webhook_profile_not_configured');
+          const signers = await verifyWebBotAuth(
+            {
+              method: requestMethod,
+              url: requestUrl,
+              headers: normalizedHeaders.headers,
+              body: typeof rawBody === 'string' ? rawBody : new TextDecoder('utf-8', { fatal: true }).decode(rawBody),
+            },
+            {
+              directory: config.directory,
+              replayStore: this.webhookReplayStore,
+              isRevoked: config.isRevoked,
+              now: this.config.webhookVerification?.now,
+            }
+          );
+          if (signers.length !== 1 || signers[0]!.origin !== canonicalAgentOrigin(registration.agentUrl))
+            throw new WebBotAuthError(403, 'webhook_signer_mismatch');
+        } else {
+          if (actualProfile === 'web-bot-auth') throw new WebBotAuthError(403, 'webhook_profile_mismatch');
+          const delegatedOperatorAuthorization = this.delegatedOperatorAuthorizationForRegistration(registration);
+          await verifyRfc9421WebhookSignature(
+            {
+              method: requestMethod,
+              url: requestUrl,
+              headers: normalizedHeaders.headers,
+              body: rawBody,
+            },
+            {
+              jwks: this.webhookJwksFor(registration),
+              publisherPins: await this.config.webhookVerification?.publisherPins?.(registration),
+              onKeyResolutionError: this.config.webhookVerification?.onKeyResolutionError,
+              replayStore: this.webhookReplayStore,
+              revocationStore: this.webhookRevocationStore,
+              ...(this.config.webhookVerification?.now && { now: this.config.webhookVerification.now }),
+              agentUrlForKeyid: () => registration.agentUrl,
+              ...(registration.authorizationContextVersion === 1 && {
+                replayScopeBinding: `delegated-operator:v1:${crypto
+                  .createHash('sha256')
+                  .update(canonicalDelegatedOperatorAuthorization(delegatedOperatorAuthorization))
+                  .digest('base64url')}`,
+              }),
+            }
+          );
+        }
       } catch (cause) {
+        if (cause instanceof WebBotAuthError)
+          return {
+            ok: false,
+            code: [
+              'directory_unavailable',
+              'revocation_unavailable',
+              'verification_unavailable',
+              'directory_fetch_limit',
+            ].includes(cause.reason)
+              ? 'webhook_verification_unavailable'
+              : 'webhook_signature_invalid',
+            message: cause.message,
+            cause,
+          };
         if (cause instanceof WebhookSignatureError) {
           if (cause.retryable)
             return {
@@ -4279,6 +4376,61 @@ export class SingleAgentClient {
       return parsedPayload;
     }
 
+    if (registration?.deliveryKind) {
+      const loader = require('../validation/schema-loader') as typeof import('../validation/schema-loader');
+      const body = parsedPayload.payload as Record<string, unknown>;
+      const isReport = registration.deliveryKind === 'reporting';
+      const payload = isReport ? body.result : body;
+      const schemaRef = isReport
+        ? 'media-buy/media-buy-delivery-webhook-result.json'
+        : 'content-standards/artifact-webhook-payload.json';
+      const validator = loader.getSchemaValidatorByRef(schemaRef, this.resolvedAdcpVersion);
+      const envelopeValidator = isReport
+        ? loader.getSchemaValidatorByRef('core/mcp-webhook-payload.json', this.resolvedAdcpVersion)
+        : undefined;
+      if (
+        !validator ||
+        !validator(payload) ||
+        (isReport && (!envelopeValidator || !envelopeValidator(body) || body.task_type !== 'media_buy_delivery'))
+      )
+        return {
+          ok: false,
+          code: 'webhook_envelope_invalid',
+          message: 'Authenticated delivery does not match its registered payload kind',
+        };
+      const taskId =
+        isReport && typeof body.task_id === 'string'
+          ? body.task_id
+          : typeof body.media_buy_id === 'string'
+            ? body.media_buy_id
+            : registration.operationId;
+      const operationId =
+        isReport && typeof body.operation_id === 'string' ? body.operation_id : registration.operationId;
+      const status = isReport && isAdcpStatus(body.status) ? body.status : 'completed';
+      return {
+        ok: true,
+        protocol: registration.protocol,
+        envelope: isReport
+          ? (body as unknown as MCPWebhookPayload)
+          : ({
+              ...body,
+              task_type: registration.taskType,
+              operation_id: operationId,
+              task_id: taskId,
+              status,
+              result: payload,
+            } as MCPWebhookPayload),
+        result: payload,
+        metadata: {
+          taskId,
+          taskType: registration.taskType,
+          operationId,
+          status,
+          ...(typeof body.timestamp === 'string' && { timestamp: body.timestamp }),
+          ...(typeof body.idempotency_key === 'string' && { idempotencyKey: body.idempotency_key }),
+        },
+      };
+    }
     const topLevelTaskType =
       isObjectRecord(parsedPayload.payload) && typeof parsedPayload.payload.task_type === 'string'
         ? parsedPayload.payload.task_type
@@ -7233,6 +7385,8 @@ export class SingleAgentClient {
       params.account
     );
     const hasCreativeFormatData = hasMediaBuyCreativeFormatData(params);
+    if (this.config.experimentalIdentity33) await this.getCapabilities(taskOptions);
+    const signed33Webhooks = this.usesSigned33Webhooks();
     // Merge library defaults with consumer-provided reporting_webhook config
     // Library provides url/auth/frequency defaults, consumer can override any field
     // Generates a media_buy_delivery webhook URL using operation_id pattern: delivery_report_{agent_id}_{YYYY-MM}
@@ -7262,9 +7416,10 @@ export class SingleAgentClient {
           const consumerAuth = consumerReportingWebhook?.authentication;
           const consumerUrl = consumerReportingWebhook?.url;
           const consumerFrequency = consumerReportingWebhook?.reporting_frequency;
-          const defaultAuth = this.config.webhookSecret
-            ? { schemes: ['HMAC-SHA256'] as const, credentials: this.config.webhookSecret }
-            : undefined;
+          const defaultAuth =
+            !signed33Webhooks && this.config.webhookSecret
+              ? { schemes: ['HMAC-SHA256'] as const, credentials: this.config.webhookSecret }
+              : undefined;
           // The client secret is bound to the client-generated callback URL.
           // A caller-controlled endpoint must bring its own complete auth block
           // so the SDK never pairs a shared client credential with another host.
@@ -7278,7 +7433,7 @@ export class SingleAgentClient {
           // nothing real to put there — registering a placeholder would tell the
           // seller its delivery reports are authenticated by a constant that ships
           // in this file. Skip the auto-injection instead and say why.
-          if (resolvedAuth === undefined || resolvedAuth === null) {
+          if ((!signed33Webhooks && resolvedAuth === undefined) || resolvedAuth === null) {
             // A caller who asked for a `reporting_webhook` explicitly gets an
             // error, not a silent edit: the request cannot be made spec-valid
             // without a credential, and quietly dropping a field the caller wrote
@@ -7286,7 +7441,7 @@ export class SingleAgentClient {
             // it. Only the library's OWN auto-injection is skipped silently.
             if (consumerReportingWebhook) {
               throw new Error(
-                'reporting_webhook requires an `authentication` block for all of AdCP 3.x, and no credential ' +
+                'reporting_webhook requires an `authentication` block without positively negotiated 3.3 signed webhooks, and no credential ' +
                   'is available: set `webhookSecret` on the client, or pass `reporting_webhook.authentication` ' +
                   'explicitly. Remove `reporting_webhook` from the request if you do not need automated ' +
                   'delivery reports — the media buy itself does not require it.'
@@ -7315,9 +7470,21 @@ export class SingleAgentClient {
                 url: consumerUrl !== undefined ? consumerUrl : deliveryWebhookUrl,
                 reporting_frequency:
                   consumerFrequency !== undefined ? consumerFrequency : libraryDefaults.reporting_frequency,
-                authentication: resolvedAuth,
+                ...(resolvedAuth !== undefined && { authentication: resolvedAuth }),
+                ...(resolvedAuth === undefined &&
+                  this.selectedWebhookSigningProfile() && { signing_profile: this.selectedWebhookSigningProfile() }),
               },
             } as CanonicalCreateMediaBuyInput;
+            if (signed33Webhooks && resolvedAuth === undefined) {
+              await this.persistWebhookRegistration({
+                agent: this.normalizedAgent,
+                taskType: 'media_buy_delivery',
+                operationId,
+                callbackUrl: consumerUrl ?? deliveryWebhookUrl,
+                mode: 'rfc9421',
+                signingProfile: this.selectedWebhookSigningProfile(),
+              });
+            }
           }
         }
       }
@@ -8111,8 +8278,8 @@ export class SingleAgentClient {
     params: GetPrincipalRequest = {},
     inputHandler?: InputHandler,
     options?: TaskOptions
-  ): Promise<TaskResult<GetPrincipalResponse>> {
-    return this.executeAndHandle<GetPrincipalResponse>(
+  ): Promise<TaskResult<import('../identity-3.3/types').Identity33GetPrincipalResponse>> {
+    return this.executeAndHandle<import('../identity-3.3/types').Identity33GetPrincipalResponse>(
       'get_principal',
       'onGetPrincipalStatusChange',
       params,
@@ -11408,7 +11575,46 @@ export class SingleAgentClient {
    * injected fields before the adapter gets a chance to clean them up, so
    * the two passes have to agree on "extra keys are fine."
    */
+  private usesIdentity33Schemas(): boolean {
+    return (
+      this.config.experimentalIdentity33 === true &&
+      this.cachedCapabilities?._synthetic === false &&
+      isAdcpVersionAtLeast(this.cachedCapabilities.servedVersion, '3.3.0')
+    );
+  }
+  private usesSigned33Webhooks(): boolean {
+    const capabilities = this.cachedCapabilities;
+    return (
+      this.config.experimentalIdentity33 === true &&
+      capabilities?._synthetic === false &&
+      isAdcpVersionAtLeast(capabilities.servedVersion, '3.3.0') &&
+      (capabilities._raw?.webhook_signing as { supported?: boolean } | undefined)?.supported === true
+    );
+  }
+  private selectedWebhookSigningProfile(): 'adcp/webhook-signing/v1' | 'web-bot-auth' | undefined {
+    if (!this.usesSigned33Webhooks()) return undefined;
+    const advertisement = this.cachedCapabilities?._raw?.webhook_signing as
+      | { profiles?: string[]; profile?: string }
+      | undefined;
+    const profile =
+      this.config.webhookSigningProfile ??
+      (advertisement?.profile === 'web-bot-auth' ||
+      (advertisement?.profiles?.length === 1 && advertisement.profiles[0] === 'web-bot-auth')
+        ? 'web-bot-auth'
+        : 'adcp/webhook-signing/v1');
+    if (profile === 'web-bot-auth' && !advertisement?.profiles?.includes(profile))
+      throw new ConfigurationError(
+        'Seller did not advertise the selected Web Bot Auth webhook profile',
+        'webhookSigningProfile'
+      );
+    return profile;
+  }
+
   private validateRequest(taskType: string, params: any): void {
+    if (this.config.experimentalIdentity33 && this.usesIdentity33Schemas()) {
+      this.executor.validateRequest(taskType, params);
+      return;
+    }
     const schema = this.getRequestSchema(taskType);
     if (!schema) {
       return; // No schema available for this task type
@@ -11569,6 +11775,7 @@ function normalizeRfc9421WebhookHeaders(
   const singletonHeaders = new Set([
     'signature',
     'signature-input',
+    'signature-agent',
     'content-digest',
     'content-type',
     'x-adcp-signature',

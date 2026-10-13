@@ -251,6 +251,7 @@ export function createPersistentNotificationRuntime(
       return {
         decision: 'allow',
         authentication: null,
+        ...(subscription.signingProfile && { signingProfile: subscription.signingProfile }),
         ...(checkpoint.attemptOrdinal === undefined ? {} : { attemptOrdinal: checkpoint.attemptOrdinal }),
       };
     }
@@ -342,6 +343,7 @@ export function createPersistentNotificationRuntime(
             accountEventTypes,
             callerEventTypes,
             callerOnlyEventTypes,
+            supportedSigningProfiles: options.supportedSigningProfiles,
             credentialAdapter: options.credentialAdapter,
             credentialStages,
             adopterCallbackTimeoutMs,
@@ -588,6 +590,7 @@ interface NormalizeConfigInput {
   accountEventTypes: ReadonlySet<string>;
   callerEventTypes: ReadonlySet<string>;
   callerOnlyEventTypes: ReadonlySet<string>;
+  supportedSigningProfiles?: PersistentNotificationRuntimeOptions['supportedSigningProfiles'];
   credentialAdapter?: PersistentNotificationRuntimeOptions['credentialAdapter'];
   credentialStages: PreparedCredentialStage[];
   adopterCallbackTimeoutMs: number;
@@ -656,10 +659,17 @@ async function normalizeConfig(input: NormalizeConfigInput): Promise<StoredNotif
     throw validation('product_payload_view requires a product.* event type', input.index, 'product_payload_view');
   }
 
+  if (
+    config.signing_profile !== undefined &&
+    (!(input.supportedSigningProfiles ?? ['adcp/webhook-signing/v1']).includes(config.signing_profile) ||
+      config.authentication !== undefined)
+  )
+    throw validation('Unsupported or ambiguous signing_profile', input.index, 'signing_profile');
   const authentication = await normalizeAuthentication(input);
   const destinationGeneration = `dest_${canonicalJsonSha256({
     scope,
     subscriberId: config.subscriber_id,
+    ...(config.signing_profile !== undefined && { signingProfile: config.signing_profile }),
     url,
     authentication,
     eventTypes,
@@ -669,6 +679,7 @@ async function normalizeConfig(input: NormalizeConfigInput): Promise<StoredNotif
   })}`;
   return {
     subscriberId: config.subscriber_id,
+    ...(config.signing_profile !== undefined && { signingProfile: config.signing_profile }),
     url,
     eventTypes,
     active: config.active !== false,
@@ -820,6 +831,7 @@ function projectSubscription(
 ): NotificationSubscriptionView {
   return {
     subscriber_id: subscription.subscriberId,
+    ...(subscription.signingProfile !== undefined && { signing_profile: subscription.signingProfile }),
     url: subscription.url,
     event_types: [...subscription.eventTypes],
     active: subscription.active && subscription.deactivationNotificationId === undefined,
@@ -851,6 +863,7 @@ export function projectNotificationSubscriptionReadback(
       : { include_future_event_types: view.include_future_event_types }),
     ...(view.product_payload_view === undefined ? {} : { product_payload_view: view.product_payload_view }),
     ...(view.authentication === undefined ? {} : { authentication: view.authentication }),
+    ...(view.signing_profile !== undefined && { signing_profile: view.signing_profile }),
   }));
 }
 

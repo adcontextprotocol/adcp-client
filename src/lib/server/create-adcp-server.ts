@@ -1,3 +1,21 @@
+import { getWebBotAuthLegacyOriginGate } from '../signing/web-bot-auth';
+import {
+  isIdentity33SchemaScope,
+  withIdentity33SchemaScope,
+  bindIdentity33SchemaScope,
+} from '../validation/schema-loader';
+import { validateAgentOnboarding } from '../identity-3.3/lifecycle';
+import { isIdentity33UnboundContext } from '../identity-3.3/server';
+import {
+  WEB_BOT_AUTH_DRAFT_REVISION,
+  getWebBotAuthAuthorizationFailure,
+  webBotAuthToolFailure,
+  selectSignatureProfile,
+  verifyWebBotAuth,
+  WebBotAuthError,
+} from '../signing/web-bot-auth';
+import { validateIdentity33Payload } from '../identity-3.3/validation';
+import { IdentityAuthorizationError } from '../identity-3.3/trust';
 /**
  * Declarative AdCP server builder.
  *
@@ -1257,7 +1275,7 @@ export interface AdcpCapabilitiesConfig {
    */
   supported_versions?: string[];
   features?: Partial<MediaBuyFeatures>;
-  account?: Partial<AccountCapabilities>;
+  account?: Partial<AccountCapabilities> & { agent_onboarding?: import('../identity-3.3/types').AgentOnboarding };
   creative?: Partial<CreativeCapabilities>;
   extensions_supported?: readonly string[];
   /**
@@ -1274,7 +1292,9 @@ export interface AdcpCapabilitiesConfig {
    * claim without a working verifier is graded as FAIL by the conformance
    * runner (see `@adcp/sdk/testing/storyboard/request-signing`).
    */
-  request_signing?: NonNullable<GetAdCPCapabilitiesResponse['request_signing']>;
+  request_signing?: NonNullable<GetAdCPCapabilitiesResponse['request_signing']> & {
+    profiles?: ('adcp/request-signing/v1' | 'web-bot-auth')[];
+  };
   /**
    * Specialism claims the agent supports. Each entry maps to a storyboard
    * bundle under `/compliance/{version}/specialisms/{id}/`; the AAO
@@ -1348,9 +1368,17 @@ export interface AdcpCapabilitiesOverrides {
   experimental_features?: GetAdCPCapabilitiesResponse['experimental_features'] | null;
   account?: Partial<NonNullable<GetAdCPCapabilitiesResponse['account']>> | null;
   compliance_testing?: GetAdCPCapabilitiesResponse['compliance_testing'] | null;
-  webhook_signing?: GetAdCPCapabilitiesResponse['webhook_signing'] | null;
+  webhook_signing?:
+    | (NonNullable<GetAdCPCapabilitiesResponse['webhook_signing']> & {
+        profiles?: ('adcp/webhook-signing/v1' | 'web-bot-auth')[];
+      })
+    | null;
   identity?: GetAdCPCapabilitiesResponse['identity'] | null;
-  request_signing?: GetAdCPCapabilitiesResponse['request_signing'] | null;
+  request_signing?:
+    | (NonNullable<GetAdCPCapabilitiesResponse['request_signing']> & {
+        profiles?: ('adcp/request-signing/v1' | 'web-bot-auth')[];
+      })
+    | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1392,6 +1420,8 @@ export interface AdcpCapabilitiesOverrides {
  * abuse / replay-detection guards would be per-request (i.e. broken).
  */
 export interface SignedRequestsConfig {
+  webBotAuth?: import('./auth-signature').VerifySignatureAsAuthenticatorOptions['webBotAuth'];
+  assertLegacyOriginAllowed?: (agentUrl: string) => Promise<void>;
   /** Resolves verification keys by `keyid`. */
   jwks: JwksResolver;
   /** Stores `(keyid, signature-bytes, expires)` tuples for replay detection. */
@@ -1711,6 +1741,8 @@ export type WebhooksConfig = Pick<
   WebhookEmitterOptions,
   | 'signerKey'
   | 'signerProvider'
+  | 'webBotAuth'
+  | 'signingProfile'
   | 'retries'
   | 'deliveryStore'
   | 'idempotencyKeyStore'
@@ -1735,6 +1767,11 @@ export type WebhooksConfig = Pick<
 };
 
 export interface AdcpServerConfig<TAccount = unknown> {
+  /** Experimental 3.3 authorization, invoked before idempotency and handler side effects. */
+  identity33?: {
+    authorize: (ctx: HandlerContext<TAccount>, tool: string, params: unknown) => Promise<void>;
+  };
+
   name: string;
   version: string;
 
@@ -3265,7 +3302,8 @@ function validateFrameworkPayload(
   direction: 'request' | 'response',
   payload: unknown,
   version: Parameters<typeof validateRequest>[2],
-  proposalCapabilities?: ProposalRefinementCapabilities
+  proposalCapabilities?: ProposalRefinementCapabilities,
+  identity33 = false
 ) {
   // `sync_reporting_status` is intentionally a partial-success batch. Validate
   // the official envelope here while leaving each item to the registered
@@ -3273,6 +3311,8 @@ function validateFrameworkPayload(
   if (toolName === 'sync_reporting_status' && direction === 'request') {
     return validateSyncReportingStatusEnvelope(payload, version);
   }
+  if (identity33 && toolName !== 'refine_proposals' && toolName !== 'sync_reporting_status')
+    return validateIdentity33Payload(toolName, direction, payload, version);
   if (toolName !== 'refine_proposals') {
     return direction === 'request'
       ? validateRequest(toolName, payload, version)
@@ -4411,6 +4451,13 @@ function buildSignedRequestsPreTransport(
   effectiveRequestSigning: EffectiveSignedRequestPolicy,
   adcpVersion?: string
 ): AdcpPreTransport {
+  const legacyOriginGate =
+    signedRequests.assertLegacyOriginAllowed ??
+    getWebBotAuthLegacyOriginGate(signedRequests.webBotAuth?.resolvePrincipal);
+  if (signedRequests.webBotAuth && !legacyOriginGate)
+    throw new Error(
+      'Web Bot Auth requires an origin-binding migration fence; use createIdentity33PrincipalResolver or supply assertLegacyOriginAllowed'
+    );
   const requiredFor = effectiveRequestSigning.required_for ?? [];
   const verifier = createExpressVerifier({
     capability: {
@@ -4435,6 +4482,55 @@ function buildSignedRequestsPreTransport(
   return async function adcpPreTransport(req, res) {
     const serveContext = getServeRequestContext(req);
     const canonicalPublicUrl = serveContext?.publicUrl ? new URL(serveContext.publicUrl) : undefined;
+    if (selectSignatureProfile({ headers: req.headers }) === 'web-bot-auth') {
+      try {
+        if (!signedRequests.webBotAuth || !canonicalPublicUrl) throw new WebBotAuthError(403, 'profile_disabled');
+        if (req.method !== 'GET' && req.rawBody === undefined) throw new WebBotAuthError(403, 'raw_body_missing');
+        const requestTarget = canonicalPublicUrl.origin + (req.url?.startsWith('/') ? req.url : '/' + (req.url ?? ''));
+        const signers = await verifyWebBotAuth(
+          { method: req.method ?? 'POST', url: requestTarget, headers: req.headers, body: req.rawBody ?? '' },
+          {
+            directory: signedRequests.webBotAuth.directory,
+            deferAuthorizationErrors:
+              typeof resolveRequestOperation({ rawBody: req.rawBody, method: req.method, url: req.url }) === 'string',
+            replayStore: signedRequests.replayStore,
+            isRevoked: signedRequests.webBotAuth.isRevoked,
+            requireFreshRevocation: ![
+              'get_adcp_capabilities',
+              'get_principal',
+              'list_creative_formats',
+              'list_accounts',
+            ].includes(String(resolveRequestOperation({ rawBody: req.rawBody, method: req.method, url: req.url }))),
+          }
+        );
+        const operation = resolveRequestOperation({ rawBody: req.rawBody, method: req.method, url: req.url });
+        const principal = await signedRequests.webBotAuth.resolvePrincipal(signers, operation);
+        const signer = signers[signers.length - 1]!;
+        const failed = signers.find(s => s.authorizationFailure);
+        const guardedPrincipal = {
+          ...principal,
+          extra: {
+            ...principal.extra,
+            webBotAuthAuthorization: {
+              signer: failed ?? signer,
+              ...(failed && { authorizationFailure: failed.authorizationFailure }),
+            },
+          },
+        };
+        attachVerifiedSignerAuth(req, guardedPrincipal, {
+          keyid: signer.keyid,
+          agent_url: signer.origin,
+          verified_at: signer.verified_at,
+        });
+        return false;
+      } catch (error) {
+        const rejected = error instanceof WebBotAuthError ? error : new WebBotAuthError(403, 'identity_rejected');
+        res.writeHead(rejected.status, { ...rejected.headers, 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(rejected.body));
+        return true;
+      }
+    }
+
     const reqShim: ExpressLike = {
       method: req.method ?? 'POST',
       url: req.url ?? '/mcp',
@@ -4491,6 +4587,7 @@ function buildSignedRequestsPreTransport(
         resolve();
       };
       res.once('finish', () => {
+        verifierCompleted = true;
         if (res.writableEnded) handled = true;
         done();
       });
@@ -4498,8 +4595,7 @@ function buildSignedRequestsPreTransport(
         if (!verifierCompleted) handled = true;
         done();
       });
-      verifier(reqShim, resShim, err => {
-        verifierCompleted = true;
+      verifier(reqShim, resShim, async err => {
         if (err) {
           // Log internally; a leaked stack trace to the caller would
           // enumerate the verifier pipeline (js/stack-trace-exposure).
@@ -4519,6 +4615,11 @@ function buildSignedRequestsPreTransport(
         const verifiedSigner = reqShim.verifiedSigner as import('../signing/types').VerifiedSigner | undefined;
         if (!err && verifiedSigner) {
           try {
+            if (legacyOriginGate) {
+              if (!verifiedSigner.agent_url)
+                throw new AuthError('Legacy signer origin is required for migration fencing');
+              await legacyOriginGate(verifiedSigner.agent_url);
+            }
             const principal = principalForVerifiedSigner(verifiedSigner, signedRequests.makePrincipal);
             attachVerifiedSignerAuth(req, principal, verifiedSigner);
           } catch (identityError) {
@@ -4538,6 +4639,7 @@ function buildSignedRequestsPreTransport(
             handled = true;
           }
         }
+        verifierCompleted = true;
         if (res.writableEnded) handled = true;
         done();
       });
@@ -5089,6 +5191,11 @@ function isAuthDerivedAccountNotFound(err: unknown): boolean {
  * `get_adcp_capabilities` is auto-generated from registered tools.
  */
 export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TAccount>): AdcpServer {
+  if (Boolean(config.identity33) !== isIdentity33SchemaScope())
+    return withIdentity33SchemaScope(() => {
+      const instance = createAdcpServer(config);
+      return config.identity33 ? bindIdentity33SchemaScope(instance) : instance;
+    }, Boolean(config.identity33));
   const {
     name,
     version,
@@ -5227,7 +5334,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // but make this server instance negotiate and advertise the release it
   // actually serves. An explicit older pin is rejected below.
   const adcpVersion = resolveAdcpVersion(
-    configuredAdcpVersion ?? (config.proposalNegotiation ? ADCP_VERSION : undefined)
+    configuredAdcpVersion ?? (config.identity33 ? '3.3' : config.proposalNegotiation ? ADCP_VERSION : undefined)
   );
   const toolVersionRanges = parseToolVersionRanges(config.toolVersions);
   const toolAvailableForRelease = (toolName: string, release: string): boolean =>
@@ -5345,6 +5452,27 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // the failure path so both spec-mandated layers ride on every
   // failing response. Tools without an Error arm are untouched.
   // RFC: docs/proposals/adcperror-two-layer-emission.md.
+  const identityOnboarding = capConfig?.account?.agent_onboarding ?? capConfig?.account?.agentOnboarding;
+  if (identityOnboarding) {
+    if (!config.identity33) throw new Error('agent_onboarding requires the identity33 experiment');
+    validateAgentOnboarding(
+      identityOnboarding,
+      { sandbox: capConfig?.account?.sandbox, supported_billing: capConfig?.account?.supportedBilling },
+      capConfig?.overrides?.experimental_features ?? []
+    );
+  }
+  if (
+    signedRequests?.webBotAuth &&
+    (!config.identity33 ||
+      !(capConfig?.overrides?.request_signing?.profiles ?? capConfig?.request_signing?.profiles)?.includes(
+        'web-bot-auth'
+      ))
+  )
+    throw new Error('Web Bot Auth verifier requires identity33 and request_signing.profiles advertisement');
+  if (config.webhooks?.signingProfile === 'web-bot-auth')
+    throw new Error('Select Web Bot Auth on each trusted webhook registration, not as a server-wide default');
+  if (config.webhooks?.webBotAuth && !config.identity33)
+    throw new Error('Web Bot Auth webhook signing requires the identity33 experiment');
   const toolsWithErrorArm = getToolsWithErrorArm(adcpVersion);
 
   // Defaults gated on `process.env.NODE_ENV`:
@@ -6219,7 +6347,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       const hasAccount = 'account' in schema.shape;
 
       const wrap = meta?.wrap ?? ((data: any, summary?: string) => genericResponse(toolName, data, summary));
-      const toolHandler = async (params: any, extra: any) => {
+      const toolHandler = async (params: any, extra: any): Promise<any> => {
+        const authorizationFailure = getWebBotAuthAuthorizationFailure(extra?.authInfo?.extra);
+        if (authorizationFailure) return webBotAuthToolFailure(authorizationFailure, servedAdcpVersion);
+        if (config.identity33 && !isIdentity33SchemaScope())
+          return withIdentity33SchemaScope(() => toolHandler(params, extra));
         const callRequestValidationMode = effectiveRequestValidationMode(extra);
         let notificationFailureRows = new Map<number, Record<string, unknown>>();
         const releaseSelection = selectServedAdcpRelease(params, capConfig, adcpVersion, defaultAdcpVersion);
@@ -6304,6 +6436,29 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               },
             })
           );
+        }
+        for (const field of ['push_notification_config', 'reporting_webhook', 'artifact_webhook']) {
+          const registration = params[field];
+          if (!registration || typeof registration !== 'object' || Array.isArray(registration)) continue;
+          const selectedProfile = (registration as { signing_profile?: unknown }).signing_profile;
+          if (selectedProfile === undefined) continue;
+          const offered = (capabilitiesData.webhook_signing as { profiles?: string[] } | undefined)?.profiles ?? [
+            'adcp/webhook-signing/v1',
+          ];
+          if (
+            typeof selectedProfile !== 'string' ||
+            !offered.includes(selectedProfile) ||
+            (selectedProfile === 'web-bot-auth' &&
+              (!config.identity33 || !isAdcpVersionAtLeast(requestRelease.wireVersion, '3.3'))) ||
+            (selectedProfile === 'web-bot-auth' &&
+              (registration as { authentication?: unknown }).authentication !== undefined)
+          )
+            return finalize(
+              adcpError('INVALID_REQUEST', {
+                message: 'Unsupported or ambiguous webhook signing profile',
+                field: `${field}.signing_profile`,
+              })
+            );
         }
         const operationIdError = pushOperationIdError(params, requestRelease);
         if (operationIdError) return finalize(operationIdError);
@@ -6726,7 +6881,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             'request',
             params,
             requestRelease.validationVersion,
-            proposalRefinementCapabilities
+            proposalRefinementCapabilities,
+            !!config.identity33 && isAdcpVersionAtLeast(requestRelease.wireVersion, '3.3')
           );
           if (!outcome.valid) {
             if ('refinementError' in outcome && outcome.refinementError?.code === 'UNSUPPORTED_FEATURE') {
@@ -6817,6 +6973,22 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 }
               );
             }
+          }
+        }
+
+        if (config.identity33) {
+          try {
+            await config.identity33.authorize(ctx, toolName, params);
+          } catch (error) {
+            if (error instanceof IdentityAuthorizationError)
+              return finalize(
+                adcpError('PERMISSION_DENIED', {
+                  message: error.message,
+                  ...(error.details && { details: { ...error.details } }),
+                })
+              );
+            if (error instanceof AdcpError) return finalize(projectThrownAdcpError(error));
+            return finalize(adcpError('PERMISSION_DENIED', { message: 'Agent authorization failed' }));
           }
         }
 
@@ -7124,11 +7296,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
         }
         const callerScopedResolver =
-          toolName === 'sync_agent_notification_configs'
-            ? config.protocol?.resolveScope
-            : toolName === 'get_principal' || toolName === 'sync_principal'
-              ? config.protocol?.resolvePrincipalScope
-              : undefined;
+          config.identity33 &&
+          (toolName === 'get_principal' || (toolName === 'sync_principal' && params.dry_run === true)) &&
+          isIdentity33UnboundContext(ctx)
+            ? undefined
+            : toolName === 'sync_agent_notification_configs'
+              ? config.protocol?.resolveScope
+              : toolName === 'get_principal' || toolName === 'sync_principal'
+                ? config.protocol?.resolvePrincipalScope
+                : undefined;
         if (callerScopedResolver || toolName === 'report_plan_adjustment') {
           if (ctx.authInfo === undefined && ctx.agent === undefined) {
             return finalize(
@@ -7425,7 +7601,22 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             const tenantScope = webhookTenantScopeForContext(ctx);
             const scopedEmitter =
               tenantScope === undefined ? configuredWebhookEmitter! : webhookEmitter.forTenantScope(tenantScope);
-            ctx.emitWebhook = scopedEmitter.emit.bind(scopedEmitter);
+            const profileBindings = ['push_notification_config', 'reporting_webhook', 'artifact_webhook'].flatMap(
+              field => {
+                const value = params[field] as
+                  | { url?: string; signing_profile?: 'adcp/webhook-signing/v1' | 'web-bot-auth' }
+                  | undefined;
+                return value?.url && value.signing_profile ? [{ url: value.url, profile: value.signing_profile }] : [];
+              }
+            );
+            ctx.emitWebhook = delivery =>
+              scopedEmitter.emit({
+                ...delivery,
+                ...(delivery.signingProfile === undefined &&
+                  profileBindings.some(binding => binding.url === delivery.url) && {
+                    signingProfile: profileBindings.find(binding => binding.url === delivery.url)!.profile,
+                  }),
+              });
           }
           // Preserve the original params through authorization and replay
           // lookup above. Filter only at dispatch, so the replay fingerprint
@@ -8134,7 +8325,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // their shape is enforced by the adcpError() builder.
           if (responseValidationMode !== 'off' && !isErrorResponse(formatted)) {
             const payload = formatted.structuredContent;
-            const outcome = validateFrameworkPayload(toolName, 'response', payload, requestRelease.validationVersion);
+            const outcome = validateFrameworkPayload(
+              toolName,
+              'response',
+              payload,
+              requestRelease.validationVersion,
+              undefined,
+              !!config.identity33 && isAdcpVersionAtLeast(requestRelease.wireVersion, '3.3')
+            );
             if (!outcome.valid) {
               logger.warn(
                 `Schema validation warning (response) for ${toolName}: ${formatIssues(outcome.issues, 3, { rootSchemaId: outcome.schemaId })}`,
@@ -8557,6 +8755,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         _meta: frameworkToolMeta,
       },
       (async (params: any, extra: any) => {
+        const identityError = await authorizeAuxiliaryIdentityTool('get_task_status', params, extra);
+        if (identityError) return finalizeProtocolTaskToolResponse('get_task_status', params ?? {}, identityError);
         const credentialError = taskToolCredentialPolicyError('get_task_status', params ?? {}, extra);
         if (credentialError) {
           return finalizeProtocolTaskToolResponse('get_task_status', params ?? {}, credentialError, {
@@ -8657,6 +8857,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         _meta: frameworkToolMeta,
       },
       (async (params: any, extra: any) => {
+        const identityError = await authorizeAuxiliaryIdentityTool('list_tasks', params, extra);
+        if (identityError) return finalizeProtocolTaskToolResponse('list_tasks', params ?? {}, identityError);
         const credentialError = taskToolCredentialPolicyError('list_tasks', params ?? {}, extra);
         if (credentialError) {
           return finalizeProtocolTaskToolResponse('list_tasks', params ?? {}, credentialError, { echoContext: false });
@@ -8802,6 +9004,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         );
       };
       const wrappedHandler = (async (...args: unknown[]) => {
+        const identityError = await authorizeAuxiliaryIdentityTool(customName, args[0], args[args.length - 1]);
+        if (identityError) return finalizeCustomResponse(identityError);
         // Preserve the MCP SDK's runtime callback shape exactly. In
         // particular, legacy dispatch may still pass a request arguments
         // object to schema-less custom tools; version selection must inspect
@@ -8980,6 +9184,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       ...(capConfig.account.defaultBilling && { default_billing: capConfig.account.defaultBilling }),
       required_for_products: capConfig.account.requiredForProducts ?? false,
       sandbox: capConfig.account.sandbox ?? false,
+      ...(identityOnboarding && { agent_onboarding: identityOnboarding }),
       ...(capConfig.account.changeFeed !== undefined && { change_feed: capConfig.account.changeFeed }),
     };
   }
@@ -9028,7 +9233,21 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       ...capabilitiesData.webhook_signing,
       supported: true,
       profile,
-      algorithms: [algorithm],
+      algorithms: [
+        ...new Set([
+          algorithm,
+          ...(webhooks.webBotAuth
+            ? [
+                ('privateKey' in webhooks.webBotAuth.key
+                  ? webhooks.webBotAuth.key.privateKey.crv
+                  : webhooks.webBotAuth.key.publicKey.crv) === 'P-256'
+                  ? 'ecdsa-p256-sha256'
+                  : 'ed25519',
+              ]
+            : []),
+        ]),
+      ] as ('ed25519' | 'ecdsa-p256-sha256')[],
+      ...(webhooks.webBotAuth && { profiles: ['adcp/webhook-signing/v1', 'web-bot-auth'] }),
       legacy_hmac_fallback: capabilitiesData.webhook_signing?.legacy_hmac_fallback ?? false,
       delivery_retry_horizon_seconds: webhooks.deliveryRetryHorizonSeconds ?? 86_400,
     };
@@ -9096,6 +9315,42 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // formally defines library_version in a future AdCP minor.
   (capabilitiesData as unknown as Record<string, unknown>).library_version = `@adcp/client@${LIBRARY_VERSION}`;
 
+  async function authorizeAuxiliaryIdentityTool(
+    toolName: string,
+    params: unknown,
+    extra: any
+  ): Promise<McpToolResponse | undefined> {
+    const failure = getWebBotAuthAuthorizationFailure(extra?.authInfo?.extra);
+    if (failure) return webBotAuthToolFailure(failure, servedAdcpVersion);
+    if (!config.identity33) return undefined;
+    try {
+      await config.identity33.authorize(
+        withImmutableServedAdcpVersion(
+          { toolName, stateStore, authInfo: extra?.authInfo, logger } as unknown as HandlerContext<TAccount>,
+          adcpVersion
+        ),
+        toolName,
+        params
+      );
+    } catch (error) {
+      if (error instanceof IdentityAuthorizationError)
+        return adcpError('PERMISSION_DENIED', {
+          message: error.message,
+          ...(error.details && { details: { ...error.details } }),
+        });
+      if (error instanceof AdcpError) return projectThrownAdcpError(error);
+      return adcpError('PERMISSION_DENIED', { message: 'Agent authorization failed' });
+    }
+    return undefined;
+  }
+
+  for (const field of ['request_signing', 'webhook_signing'] as const) {
+    const signing = (
+      capabilitiesData as unknown as Record<string, { profiles?: string[]; wba_draft_revision?: string }>
+    )[field];
+    if (signing?.profiles?.includes('web-bot-auth')) signing.wba_draft_revision = WEB_BOT_AUTH_DRAFT_REVISION;
+  }
+
   // Passthrough inputSchema — framework validation is authoritative on
   // both transports (#909). Same rationale as the domain-tool loop above.
   server.registerTool(
@@ -9106,6 +9361,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       _meta: frameworkToolMeta,
     },
     (async (params: any, extra: { authInfo?: ResolvedAuthInfo } = {}) => {
+      const authorizationFailure = getWebBotAuthAuthorizationFailure(extra.authInfo?.extra);
+      if (authorizationFailure) return webBotAuthToolFailure(authorizationFailure, servedAdcpVersion);
+      const identityError = await authorizeAuxiliaryIdentityTool('get_adcp_capabilities', params, extra);
+      if (identityError) return identityError;
       const callRequestValidationMode = effectiveRequestValidationMode(extra);
       const requestParams = isPlainObject(params) ? params : {};
       const releaseSelection = selectServedAdcpRelease(requestParams, capConfig, adcpVersion, defaultAdcpVersion);
@@ -9269,7 +9528,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           delete validationPayload.media_buy.proposal_refinement;
           delete validationPayload.media_buy.lifecycle_tools;
         }
-        const responseOutcome = validateResponse('get_adcp_capabilities', validationPayload, release.validationVersion);
+        const responseOutcome =
+          config.identity33 && isAdcpVersionAtLeast(release.wireVersion, '3.3')
+            ? validateIdentity33Payload(
+                'get_adcp_capabilities',
+                'response',
+                validationPayload,
+                release.validationVersion
+              )
+            : validateResponse('get_adcp_capabilities', validationPayload, release.validationVersion);
         if (!responseOutcome.valid) {
           logger.warn(
             `Schema validation warning (response) for get_adcp_capabilities: ${formatIssues(responseOutcome.issues, 3, { rootSchemaId: responseOutcome.schemaId })}`,
@@ -9580,6 +9847,30 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     tools: [...registeredToolNames],
     protocols,
     signedRequests: signedRequestsState,
+  });
+
+  if (config.identity33) {
+    for (const method of [
+      'initialize',
+      'tools/list',
+      'tools/call',
+      'resources/list',
+      'resources/read',
+      'prompts/list',
+      'prompts/get',
+      'tasks/get',
+      'tasks/list',
+      'tasks/cancel',
+      'tasks/result',
+    ])
+      wrapSdkRequestHandler(server, method, (original, request, extra) =>
+        withIdentity33SchemaScope(() => original(request, extra))
+      );
+  }
+
+  wrapSdkRequestHandler(server, 'tools/call', (original, request, extra) => {
+    const failure = getWebBotAuthAuthorizationFailure((extra as { authInfo?: ResolvedAuthInfo })?.authInfo?.extra);
+    return failure ? webBotAuthToolFailure(failure, servedAdcpVersion) : original(request, extra);
   });
 
   return wrapped;

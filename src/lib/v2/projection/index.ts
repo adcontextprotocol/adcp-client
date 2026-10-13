@@ -66,6 +66,7 @@ export {
   canonicalFormatLegacyResolverFromRoutes,
   legacyRoutesForProduct,
   type CanonicalFormatLegacyRoute,
+  type LegacyRoutesForProductOptions,
 } from './legacy-routes';
 
 export {

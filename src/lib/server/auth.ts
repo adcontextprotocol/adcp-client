@@ -178,10 +178,24 @@ export type Authenticator = (req: IncomingMessage) => AuthResult | Promise<AuthR
  */
 export class AuthError extends Error {
   readonly publicMessage: string;
-  constructor(publicMessage: string, options?: { cause?: unknown }) {
+  readonly status?: 400 | 403 | 429;
+  readonly body?: Record<string, unknown>;
+  readonly headers?: Record<string, string>;
+  constructor(
+    publicMessage: string,
+    options?: {
+      cause?: unknown;
+      status?: 400 | 403 | 429;
+      headers?: Record<string, string>;
+      body?: Record<string, unknown>;
+    }
+  ) {
     super(publicMessage);
     this.name = 'AuthError';
     this.publicMessage = publicMessage;
+    this.body = options?.body;
+    this.status = options?.status;
+    this.headers = options?.headers;
     if (options?.cause !== undefined) (this as Error & { cause?: unknown }).cause = options.cause;
   }
 }
