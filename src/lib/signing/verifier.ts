@@ -356,7 +356,9 @@ export async function verifyRequestSignature(
   // prior checks have passed. Floor the TTL at one max-window + skew so a
   // signer minting tiny validity windows can't replay outside the configured
   // replay horizon, and so cross-replica eventual consistency has headroom.
-  const remaining = parsedInput.params.expires - now + CLOCK_SKEW_TOLERANCE_SECONDS;
+  // The window check accepts through `expires + skew` inclusive, so the
+  // nonce must outlive that instant by one second.
+  const remaining = parsedInput.params.expires - now + CLOCK_SKEW_TOLERANCE_SECONDS + 1;
   const ttl = Math.max(remaining, MAX_SIGNATURE_WINDOW_SECONDS + CLOCK_SKEW_TOLERANCE_SECONDS);
   const insertResult = await options.replayStore.insert(jwk.kid, replayScope, parsedInput.params.nonce, ttl, now);
   if (insertResult === 'replayed') {

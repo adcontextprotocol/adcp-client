@@ -32,6 +32,8 @@ export const WEB_BOT_AUTH_DRAFT_REVISION = 'draft-ietf-webbotauth-httpsig-protoc
 export const SIGNATURE_DIRECTORY_PATH = '/.well-known/http-message-signatures-directory';
 export const SIGNATURE_DIRECTORY_MEDIA_TYPE = 'application/http-message-signatures-directory+json';
 const DIRECTORY_TAG = 'http-message-signatures-directory';
+/** Directory proofs are backdated by, and verified with, this much clock skew. */
+const DIRECTORY_CLOCK_SKEW_SECONDS = 60;
 const TEST_KIDS = new Set([
   '6WsKMCObba49V3uN0vIENnk1BKAk7c9zjBJcWKyQ9_I',
   'hHurKlVBnPJ4AGiPyl6HWMhxgkIcRBzaC8qWwEtnuVI',
@@ -95,7 +97,10 @@ function denied(reason: string): never {
 }
 
 function dictionary(value: string | undefined, field: string) {
-  if (!value || value.length > 64 * 1024) return bad('headers');
+  // An absent field is a verification failure (403 with Accept-Signature);
+  // only a field that is present but does not parse is malformed (400).
+  if (value === undefined || value === '') return denied('headers_missing');
+  if (value.length > 64 * 1024) return bad('headers');
   try {
     rejectDuplicateDictionaryKeys(value, field);
     return parseDictionary(value);
@@ -451,7 +456,8 @@ export async function verifyWebBotAuth(
         signer.origin,
         WEB_BOT_AUTH_PROFILE,
         input.params.nonce,
-        Math.max(1, input.params.expires + 60 - now),
+        // Acceptance is inclusive of expires + 60, so the nonce must outlive it.
+        input.params.expires + 60 - now + 1,
         now
       );
       if (result !== 'ok')
@@ -523,7 +529,7 @@ export function verifySignatureDirectory(
         !proof.components.includes('content-digest') ||
         !Number.isInteger(proof.params.created) ||
         !Number.isInteger(proof.params.expires) ||
-        proof.params.created > now ||
+        proof.params.created > now + DIRECTORY_CLOCK_SKEW_SECONDS ||
         proof.params.expires <= now ||
         proof.params.expires <= proof.params.created
       )
@@ -600,7 +606,8 @@ export class SignatureDirectoryResolver implements JwksResolver {
         timeoutMs: 10_000,
         maxBodyBytes: 256 * 1024,
       });
-      const body = new TextDecoder('utf-8', { fatal: true }).decode(result.body);
+      // ignoreBOM: the digest covers the exact bytes, including any BOM.
+      const body = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(result.body);
       const directory = verifySignatureDirectory(
         { status: result.status, headers: result.headers, body, request: { method: 'GET', url } },
         now,
@@ -678,6 +685,15 @@ export async function signWebBotAuth(
   const nonce = options.nonce ?? randomBytes(32).toString('base64url');
   if (!Number.isInteger(window) || window < 1 || window > 300 || !/^[A-Za-z0-9_+\/-]{22,256}={0,2}$/.test(nonce))
     throw new TypeError('Invalid Web Bot Auth lifetime or nonce');
+  if (
+    !options.relay &&
+    ['signature', 'signature-input', 'signature-agent'].some(
+      name => getHeaderValue(request.headers, name) !== undefined
+    )
+  )
+    throw new TypeError(
+      'Request already carries signature fields; pass relay: true to add a covering signature instead of replacing them'
+    );
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries(request.headers))
     if (
@@ -759,7 +775,8 @@ export async function createSignedSignatureDirectory(
     signatures: string[] = [];
   for (let i = 0; i < keys.length; i++) {
     const label = `key${i + 1}`;
-    const value = `${label}=("@authority";req "content-digest");created=${now};expires=${now + lifetime};keyid="${keys[i]!.kid}";alg="${algorithm(keys[i]!)}";tag="${DIRECTORY_TAG}"`;
+    // Backdate created so verifiers whose clocks run slightly behind accept a fresh proof.
+    const value = `${label}=("@authority";req "content-digest");created=${now - DIRECTORY_CLOCK_SKEW_SECONDS};expires=${now + lifetime};keyid="${keys[i]!.kid}";alg="${algorithm(keys[i]!)}";tag="${DIRECTORY_TAG}"`;
     const input = parseSignatureInput(value, label);
     const bytes = await signBase(
       buildWebBotAuthSignatureBase(input, { method: 'GET', url: response.request.url, headers: {} }, response),
@@ -791,7 +808,8 @@ export function createWebBotAuthFetch(
     if (init?.body != null) {
       if (typeof init.body === 'string') body = init.body;
       else if (init.body instanceof Uint8Array || init.body instanceof ArrayBuffer)
-        body = new TextDecoder('utf-8', { fatal: true }).decode(init.body);
+        // ignoreBOM: sign and send exactly the caller's bytes.
+        body = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(init.body);
       else throw new TypeError('Web Bot Auth fetch requires a UTF-8 string or byte body');
     }
     const headers: Record<string, string> = {};

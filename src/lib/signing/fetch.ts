@@ -134,7 +134,7 @@ function bodyToString(body: RequestInit['body']): string | undefined {
  */
 function decodeUtf8Strict(bytes: Uint8Array): string {
   try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
     throw new TypeError(
       'createSigningFetch received a Uint8Array/ArrayBuffer body that is not valid UTF-8. ' +

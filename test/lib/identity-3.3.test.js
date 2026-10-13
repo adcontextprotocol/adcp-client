@@ -85,7 +85,9 @@ test('signed directory vector, exact audit bytes, tampering, wrong origin, futur
       true
     )
   );
-  assert.throws(() => wba.verifySignatureDirectory(response, 1790840999, true));
+  // Directory proofs tolerate a verifier clock up to 60 s behind `created`, no more.
+  assert.equal(wba.verifySignatureDirectory(response, 1790840999, true).proof.body, v.response.body);
+  assert.throws(() => wba.verifySignatureDirectory(response, 1790841000 - 61, true));
 });
 for (const curve of ['ed25519', 'ec'])
   test(`signing and directory authoring roundtrip: ${curve}`, async () => {
