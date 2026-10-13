@@ -348,7 +348,9 @@ async function commit(ledger, fixture, id, revisionNumber, rows, supersedes) {
 
 async function sinkState(ledger, name) {
   const { rows } = await ledger.pool.query(
-    `SELECT committed_cursor, planned_to_cursor FROM adcp_reporting_warehouse_sinks WHERE sink_name = $1`,
+    `SELECT committed_cursor, planned_to_cursor, planned_rows_attempt, planned_revisions_attempt,
+            planned_rows_timeouts, planned_revisions_timeouts
+       FROM adcp_reporting_warehouse_sinks WHERE sink_name = $1`,
     [name]
   );
   return rows[0];
@@ -417,7 +419,7 @@ function faultInjectingClient(real, sentLoads = [], cancels = []) {
 /**
  * Wraps the real client so each sink load is submitted with `createLoadJob` (what `table.load`
  * does internally) and then awaited to completion. Every submission is recorded in `submissions`
- * as `{ jobId, ms, result }`: how long BigQuery took to create the job or refuse it (the upload
+ * as `{ jobId, startedAt, ms, result }`: when the sink submitted it and how long BigQuery took to create the job or refuse it (the upload
  * comes first either way), measured from the sink's call. Job cancels go to `cancels`.
  */
 function submissionTimingClient(real) {
@@ -434,7 +436,7 @@ function submissionTimingClient(real) {
           return {
             async load(file, metadata) {
               const started = Date.now();
-              const entry = { jobId: metadata.jobId, ms: undefined, result: 'pending' };
+              const entry = { jobId: metadata.jobId, startedAt: started, ms: undefined, result: 'pending' };
               submissions.push(entry);
               let job;
               try {
@@ -680,7 +682,7 @@ async function bigquerySection(ctx) {
     // `labels` and `jobTimeoutMs` belong at configuration.*, but the official client builds a
     // local-file load's configuration.load from the load options and cannot set them there, and
     // BigQuery silently drops them from configuration.load (#3220). The sink therefore must not
-    // send them, and enforces its deadline client-side by cancelling the job.
+    // send them. Its client-side deadline bounds a run, not the job: the sink never cancels.
     await check(
       ctx,
       BQ,
@@ -700,48 +702,6 @@ async function bigquerySection(ctx) {
           );
         }
         return `${sentLoads.length} load calls carried neither field; stored job configuration keys: ${Object.keys(configuration).join(', ')}`;
-      }
-    );
-
-    await check(
-      ctx,
-      BQ,
-      'BigQuery accepts a cancel addressed with the destination project and location, and refuses wrong addresses',
-      async () => {
-        // Cancelling an already-finished job is accepted and changes nothing, so this proves the
-        // addressing the sink uses on a client-side deadline (job(id, { projectId, location }).cancel()).
-        const jobId = jobMetadata?.rows?.jobReference?.jobId;
-        expect(jobId, 'no job id to cancel');
-        const [response] = await bigquery.job(jobId, { projectId: dest, location: config.location }).cancel();
-        expectEqual(response?.job?.jobReference?.projectId, dest, 'cancel response jobReference.projectId');
-        expectEqual(response?.job?.jobReference?.jobId, jobId, 'cancel response jobReference.jobId');
-        const [after] = await bigquery.job(jobId, { projectId: dest, location: config.location }).getMetadata();
-        expectEqual(after.status?.state, 'DONE', 'job state after the cancel request');
-        expect(!after.status?.errorResult, 'cancelling a finished job must not fail it');
-        // Negative controls: a cancel is only meaningful if a wrong address is refused. A job that
-        // does not exist is a 404, and so is the right job addressed through the client's default
-        // project when the destination project differs.
-        const refused = async (id, jobOptions) => {
-          try {
-            await bigquery.job(id, jobOptions).cancel();
-            return false;
-          } catch (error) {
-            return error?.code === 404;
-          }
-        };
-        expect(
-          await refused(`${jobId}_does_not_exist`, { projectId: dest, location: config.location }),
-          'cancelling an unknown job was not refused with 404'
-        );
-        if (crossProject) {
-          expect(
-            await refused(jobId, { location: config.location }),
-            'cancelling the job through the client default project was not refused with 404'
-          );
-        }
-        return crossProject
-          ? `${jobId} stayed DONE; unknown job and wrong-project cancels were refused (404)`
-          : `${jobId} stayed DONE; an unknown job cancel was refused (404). Same project: set GCP_CLIENT_PROJECT to a different project to also prove the project addressing`;
       }
     );
 
@@ -828,21 +788,21 @@ async function bigquerySection(ctx) {
     });
   }
 
-  // -- 1c. A load that outlives its deadline is cancelled, then the sink converges
+  // -- 1c. A load that outlives a run's deadline is found, not cancelled or uploaded again
   async function deadlineScenario() {
     const tables = { rows: 'deadline_rows', revisions: 'deadline_revisions' };
     const name = `${config.sinkPrefix}-deadline`;
     const rowCount = 200;
-    // The smallest deadline the sink accepts, for the run that gets cancelled only: it is about
-    // one BigQuery round trip, so later runs use the sink's normal deadline. The first load's
-    // result is held past it, so the deadline always fires; whether BigQuery is still running the
-    // job at that moment is up to BigQuery, and the report says which case happened.
+    // The smallest deadline the sink accepts, for the first run only: it is about one BigQuery
+    // round trip, so later runs use the sink's normal deadline. The first load's result is held
+    // past it, so the deadline always fires; whether BigQuery is still running the job at that
+    // moment is up to BigQuery. Either way the next run must find the job by its ID.
     const loadTimeout = 1_000;
     let ledger;
     let sink;
     let client;
     let jobId;
-    const ready = await check(ctx, BQ, 'deadline cancel: set up ledger, tables and a pending batch', async () => {
+    const ready = await check(ctx, BQ, 'deadline: set up ledger, tables and a pending batch', async () => {
       ledger = await openLedger(ctx, 'deadline', { sink: true });
       const fixture = await newObligation(ctx, ledger, 'deadline');
       await commit(ledger, fixture, `rrev_${config.runId}_d1`, 1, sequenceRows(rowCount));
@@ -853,10 +813,10 @@ async function bigquerySection(ctx) {
     });
     if (!ready) return;
 
-    const cancelled = await check(
+    const timedOut = await check(
       ctx,
       BQ,
-      'deadline cancel: a load past its deadline is rejected and its job cancelled in the destination project and location',
+      'deadline: a run past its deadline rejects, keeps the plan and the job ID, and grows that table deadline',
       async () => {
         client.holdNext(loadTimeout + 500);
         let rejected;
@@ -867,65 +827,80 @@ async function bigquerySection(ctx) {
         }
         expect(rejected, 'runOnce resolved although its load was held past the deadline');
         expect(
-          /exceeded its deadline/.test(String(rejected.message)),
+          /exceeded this run's \d+ ms deadline/.test(String(rejected.message)),
           `unexpected error: ${errText(rejected, ctx.secrets)}`
         );
         jobId = client.sentLoads[0]?.options?.jobId;
         expect(jobId, 'no load was sent');
-        const cancel = client.cancels.find(entry => entry.jobId === jobId);
-        expect(cancel, `the sink did not cancel ${jobId}`);
-        expectEqual(cancel.projectId, dest, 'cancel projectId');
-        expectEqual(String(cancel.location ?? '').toLowerCase(), config.location.toLowerCase(), 'cancel location');
+        expectEqual(client.cancels.length, 0, 'job cancels sent by the sink');
         const state = await sinkState(ledger, name);
         expect(!state.committed_cursor && state.planned_to_cursor, 'expected a retained plan and no committed cursor');
-        return `${jobId} cancelled after ${loadTimeout} ms; the plan is retained`;
+        expectEqual(state.planned_rows_attempt, 0, 'rows attempt (a timeout must not change the job ID)');
+        expectEqual(state.planned_rows_timeouts, 1, 'persisted rows timeouts');
+        return `${jobId} outlasted ${loadTimeout} ms; the plan is retained under the same job ID with a longer deadline next run`;
       }
     );
-    if (!cancelled) return;
+    if (!timedOut) return;
 
     await check(
       ctx,
       BQ,
-      'deadline cancel: the cancelled job ends DONE, either stopped by the cancel or finished',
+      'deadline: the job BigQuery created ends DONE without an error (nothing cancelled it)',
       async () => {
         let metadata;
-        for (let poll = 0; poll < 60; poll++) {
+        let notFound = 0;
+        for (let poll = 0; poll < 60 && notFound < 10; poll++) {
           try {
             [metadata] = await bigquery.job(jobId, { projectId: dest, location: config.location }).getMetadata();
+            notFound = 0;
           } catch (error) {
-            // A 404 means the upload was still in flight when the sink cancelled; the job appears once it lands.
+            // A 404 means the upload was still in flight when the run ended; the job appears once it lands.
             if (error?.code !== 404) throw error;
             metadata = undefined;
+            notFound++;
           }
           if (metadata?.status?.state === 'DONE') break;
-          await ctx.sleep(1_000);
+          await sleepReal(1_000);
         }
         expect(metadata, `job ${jobId} never appeared in the destination project`);
         expectEqual(metadata.status?.state, 'DONE', `job ${jobId} state`);
-        const error = metadata.status?.errorResult;
-        expect(!error || error.reason === 'stopped', `job ${jobId} failed with ${JSON.stringify(error)}`);
-        return error
-          ? `BigQuery stopped the running job (${error.reason}: ${error.message}); no rows from it can land`
-          : 'the job finished before the cancel took effect; the next run must accept it, not load again';
+        expect(
+          !metadata.status?.errorResult,
+          `job ${jobId} failed with ${JSON.stringify(metadata.status?.errorResult)}`
+        );
+        return `${jobId} finished by itself; the next run must accept it, not load again`;
       }
     );
 
-    await check(ctx, BQ, 'deadline cancel: later runs converge with no duplicate rows or revisions', async () => {
-      // Same sink name, so the same retained plan, at the normal deadline.
-      const drained = await drain(ctx, sinkFor(ledger, 'deadline', tables, { bigquery: client }));
-      expect(drained.idle, `the sink did not reach idle: ${drained.outcomes.join('; ')}`);
-      const rowTotals = await rowCounts(tables.rows);
-      const revisionTotals = await revisionCounts(tables.revisions);
-      expectEqual(rowTotals.n, rowCount, 'rows table count');
-      expectEqual(rowTotals.distinct, rowCount, 'rows table distinct count');
-      expectEqual(revisionTotals.n, 1, 'revisions table count');
-      const state = await sinkState(ledger, name);
-      expect(state.committed_cursor && !state.planned_to_cursor, 'the cursor did not commit');
-      const rowJobs = [
-        ...new Set(client.sentLoads.filter(load => load.tableId === tables.rows).map(load => load.options.jobId)),
-      ];
-      return `rows=${rowCount} revisions=1, cursor committed; rows job IDs used: ${rowJobs.join(', ')}; runs: ${drained.outcomes.join('; ')}`;
-    });
+    await check(
+      ctx,
+      BQ,
+      'deadline: later runs converge with the rows loaded once, the same job ID and no second upload',
+      async () => {
+        // Same sink name, so the same retained plan, at the normal deadline.
+        const drained = await drain(ctx, sinkFor(ledger, 'deadline', tables, { bigquery: client }));
+        expect(drained.idle, `the sink did not reach idle: ${drained.outcomes.join('; ')}`);
+        const rowTotals = await rowCounts(tables.rows);
+        const revisionTotals = await revisionCounts(tables.revisions);
+        expectEqual(rowTotals.n, rowCount, 'rows table count');
+        expectEqual(rowTotals.distinct, rowCount, 'rows table distinct count');
+        expectEqual(revisionTotals.n, 1, 'revisions table count');
+        const state = await sinkState(ledger, name);
+        expect(state.committed_cursor && !state.planned_to_cursor, 'the cursor did not commit');
+        const rowUploads = client.sentLoads.filter(load => load.tableId === tables.rows);
+        expectEqual(
+          rowUploads.length,
+          1,
+          'uploads into the rows table (the rerun must find the job, not upload again)'
+        );
+        expect(
+          rowUploads.every(load => load.options.jobId === jobId),
+          `the rows load changed job ID: ${rowUploads.map(load => load.options.jobId).join(', ')}`
+        );
+        expectEqual(client.cancels.length, 0, 'job cancels sent by the sink');
+        return `rows=${rowCount} revisions=1, cursor committed; rows job ${jobId} uploaded once; runs: ${drained.outcomes.join('; ')}`;
+      }
+    );
   }
 
   // -- 1d. What BigQuery does with a cancel of a running load (service behavior, INFO)
@@ -961,7 +936,7 @@ async function bigquerySection(ctx) {
             `${Number(count?.n ?? 0)} rows landed. ` +
             (error
               ? 'BigQuery honored the cancel.'
-              : 'BigQuery accepted the cancel but let the load finish: the sink cannot rely on a deadline cancel to stop a load (#3234).'),
+              : 'BigQuery accepted the cancel but let the load finish, which is why the sink never cancels a load and finds it by job ID instead (#3234).'),
         };
       } finally {
         rmSync(directory, { recursive: true, force: true });
@@ -969,18 +944,21 @@ async function bigquerySection(ctx) {
     });
   }
 
-  // -- 1e. #3234: an upload slower than the load deadline (reproduction, INFO)
+  // -- 1e. #3234: an upload slower than the load deadline converges
   async function slowUploadScenario() {
-    const label = '[#3234 reproduction: upload slower than the load deadline]';
+    const label = '[#3234] an upload slower than the load deadline';
     const tables = { rows: 'upload_rows', revisions: 'upload_revisions' };
+    const name = `${config.sinkPrefix}-upload`;
     // About 12 MB of NDJSON: uploading it takes longer than the 1 s deadline on most links.
     const rowCount = 50_000;
     const loadTimeout = 1_000;
-    const runs = 5;
+    const runs = 8;
+    // A job that exists is never uploaded again; allow for a lookup that raced the job's creation.
+    const toleranceMs = 250;
     let ledger;
     let sink;
     let client;
-    const ready = await check(ctx, BQ, 'slow upload: set up ledger, tables and a large pending batch', async () => {
+    const ready = await check(ctx, BQ, `${label}: set up ledger, tables and a large pending batch`, async () => {
       ledger = await openLedger(ctx, 'upload', { sink: true });
       const fixture = await newObligation(ctx, ledger, 'upload');
       await commit(ledger, fixture, `rrev_${config.runId}_u1`, 1, sequenceRows(rowCount));
@@ -990,39 +968,55 @@ async function bigquerySection(ctx) {
       return `one obligation, ${rowCount} rows pending, load deadline ${loadTimeout} ms`;
     });
     if (!ready) return;
-    await probe(ctx, BQ, `${label} runs`, async () => {
-      const outcomes = [];
-      let converged = false;
-      for (let run = 0; run < runs && !converged; run++) {
-        try {
-          const result = await sink.runOnce();
-          outcomes.push(`ok ${JSON.stringify(result)}`);
-          converged = result.idle;
-        } catch (error) {
-          outcomes.push(`error ${errText(error, ctx.secrets)}`);
-          await ctx.sleep(2_000);
+    await check(
+      ctx,
+      BQ,
+      `${label} converges, loads the rows once, and is not uploaded again once its job exists`,
+      async () => {
+        const outcomes = [];
+        let converged = false;
+        for (let run = 0; run < runs && !converged; run++) {
+          try {
+            const result = await sink.runOnce();
+            outcomes.push(`ok ${JSON.stringify(result)}`);
+            converged = result.idle;
+          } catch (error) {
+            outcomes.push(`error ${errText(error, ctx.secrets)}`);
+            await ctx.sleep(2_000);
+          }
         }
-      }
-      // Let abandoned uploads finish so the counts reflect everything that will land.
-      await ctx.sleep(10_000);
-      const rowTotals = await rowCounts(tables.rows);
-      const rowsJobs = client.submissions.filter(entry => /_rows(_a\d+)?$/.test(entry.jobId));
-      const attemptAdvanced = rowsJobs.some(entry => /_a\d+$/.test(entry.jobId));
-      const firstUpload = rowsJobs[0];
-      const verdict = converged
-        ? `converged after ${outcomes.length} run(s)`
-        : `DID NOT CONVERGE in ${runs} runs: each rerun re-uploaded the file before BigQuery could answer 409, ` +
-          `outlasted the deadline, and the attempt ${attemptAdvanced ? 'advanced' : 'never advanced'} (#3234)`;
-      return {
-        detail:
-          `${label} ${verdict}. Rows table: ${rowTotals.n} rows (distinct ${rowTotals.distinct}, expected ${rowCount}). ` +
-          `Rows job submissions (ms until created or refused): ${rowsJobs
-            .map(entry => `${entry.jobId.slice(-12)} ${entry.result} ${entry.ms ?? '?'}`)
+        expect(converged, `the sink did not reach idle in ${runs} runs: ${outcomes.join('; ')}`);
+        const rowTotals = await rowCounts(tables.rows);
+        expectEqual(rowTotals.n, rowCount, 'rows table count');
+        expectEqual(rowTotals.distinct, rowCount, 'rows table distinct count');
+        const state = await sinkState(ledger, name);
+        expect(state.committed_cursor && !state.planned_to_cursor, 'the cursor did not commit');
+        const rowsJobs = client.submissions.filter(entry => /_rows(_a\d+)?$/.test(entry.jobId));
+        expect(
+          rowsJobs.every(entry => !/_a\d+$/.test(entry.jobId)),
+          `a timeout changed the job ID: ${rowsJobs.map(entry => entry.jobId.slice(-12)).join(', ')}`
+        );
+        const created = rowsJobs.find(entry => entry.result === 'created');
+        expect(created, 'no rows upload ever created the job');
+        const createdAt = created.startedAt + created.ms;
+        const late = rowsJobs.filter(entry => entry.startedAt > createdAt + toleranceMs);
+        expectEqual(
+          late.length,
+          0,
+          `rows uploads started after the job existed (${late.map(entry => `+${entry.startedAt - createdAt} ms`).join(', ')})`
+        );
+        expectEqual(client.cancels.length, 0, 'job cancels sent by the sink');
+        const firstUpload = rowsJobs[0];
+        return (
+          `converged after ${outcomes.length} run(s); rows ${rowTotals.n} (distinct ${rowTotals.distinct}); ` +
+          `rows job submissions (ms until created or refused): ${rowsJobs
+            .map(entry => `${entry.result} ${entry.ms ?? '?'}`)
             .join(', ')}. ` +
-          `${firstUpload?.ms !== undefined && firstUpload.ms < loadTimeout ? 'The first upload beat the deadline, so this link is too fast to reproduce it. ' : ''}` +
-          `Runs: ${outcomes.join('; ')}`,
-      };
-    });
+          `${firstUpload?.ms !== undefined && firstUpload.ms < loadTimeout ? 'The first upload beat the deadline, so this link is too fast to exercise the timeout path. ' : ''}` +
+          `Runs: ${outcomes.join('; ')}`
+        );
+      }
+    );
   }
 
   // -- 2. Crash after the rows load, before the cursor commits ----------------
