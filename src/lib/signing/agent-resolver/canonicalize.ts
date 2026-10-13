@@ -53,22 +53,31 @@ export function canonicalizeHost(host: string): string {
  * canonicalized host of the declared `key_origins.{purpose}` value.
  */
 export function canonicalizeOrigin(originOrUrl: string): string {
+  // Origin locators can contain userinfo, tokens in paths, or query secrets.
+  // Keep the existing error shape without reflecting the supplied URL.
+  const errorMeta = { input: '[redacted]' };
   if (typeof originOrUrl !== 'string' || originOrUrl.length === 0) {
-    throw new CanonicalizeError('Empty origin', { input: originOrUrl });
+    throw new CanonicalizeError('Empty origin', errorMeta);
+  }
+  // WHATWG parsing repairs backslashes and drops tabs/newlines. Reject them
+  // in the raw authority before they can change the origin being compared.
+  const authority = /^[a-z][a-z0-9+.\-]*:\/\/([^/?#]*)/i.exec(originOrUrl)?.[1];
+  if (!authority || /[\u0000-\u0020\u007f\\]/.test(authority)) {
+    throw new CanonicalizeError('Malformed origin authority', errorMeta);
   }
   let parsed: URL;
   try {
     parsed = new URL(originOrUrl);
   } catch {
-    throw new CanonicalizeError(`Invalid origin: ${originOrUrl}`, { input: originOrUrl });
+    throw new CanonicalizeError('Invalid origin', errorMeta);
   }
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-    throw new CanonicalizeError(`Unsupported scheme: ${parsed.protocol}`, { input: originOrUrl });
+    throw new CanonicalizeError('Unsupported origin scheme', errorMeta);
   }
   try {
     return `${parsed.protocol}//${canonicalAuthority(originOrUrl, '3.2')}`;
   } catch {
-    throw new CanonicalizeError(`Invalid origin: ${originOrUrl}`, { input: originOrUrl });
+    throw new CanonicalizeError('Invalid origin authority', errorMeta);
   }
 }
 

@@ -91,6 +91,39 @@ describe('origin canonicalizer', () => {
       assert.equal(originsEqual(url, 'https://example.com'), false);
     }
   });
+  it('rejects backslashes and raw control characters before URL parsing can repair an authority', () => {
+    for (const url of [
+      String.raw`https://seller.example\@other.example`,
+      String.raw`https://bücher.example\@other.example`,
+      String.raw`https://seller.example\path`,
+      'https://sell\ter.example.com',
+      'https://sell\ner.example.com',
+      'https://sell\rer.example.com',
+      'https://seller.example.com ',
+    ]) {
+      assert.throws(() => canonicalizeOrigin(url), CanonicalizeError);
+      assert.equal(originsEqual(url, 'https://seller.example.com'), false);
+    }
+  });
+  it('does not expose userinfo, paths, or query values in origin errors', () => {
+    for (const url of [
+      'https://user:secret@missing../private-token?access_token=query-secret',
+      'https://user:secret@/private-token?access_token=query-secret',
+      'ftp://user:secret@example.com/private-token?access_token=query-secret',
+    ]) {
+      assert.throws(
+        () => canonicalizeOrigin(url),
+        error => {
+          assert.ok(error instanceof CanonicalizeError);
+          assert.deepEqual(error.meta, { input: '[redacted]' });
+          for (const secret of ['user', 'secret', 'private-token', 'query-secret']) {
+            assert.ok(!error.message.includes(secret));
+          }
+          return true;
+        }
+      );
+    }
+  });
   it('originsEqual byte-compares after canonicalization', () => {
     assert.ok(originsEqual('https://Example.COM/foo', 'https://example.com/bar'));
     assert.ok(!originsEqual('https://example.com/', 'http://example.com/')); // scheme matters

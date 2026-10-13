@@ -189,6 +189,9 @@ describe('capability-bound discovery and cache freshness', () => {
       'https://user:secret@missing..',
       '',
       'https://Bücher.example',
+      `${origin}\\@other.example`,
+      origin.replace('127', '12\t7'),
+      origin.replace('127', '12\n7'),
     ]) {
       await assert.rejects(
         resolver.resolve(publicKey.kid, invalidOrigin),
@@ -212,10 +215,12 @@ describe('capability-bound discovery and cache freshness', () => {
         throw new Error('Unexpected discovery');
       },
     });
-    await assert.rejects(
-      resolver.resolveWithMetadata(publicKey.kid, 'https://bücher.example'),
-      error => error.code === 'request_signature_key_unknown'
-    );
+    for (const signerOrigin of ['https://bücher.example', String.raw`https://bücher.example\@other.example`]) {
+      await assert.rejects(
+        resolver.resolveWithMetadata(publicKey.kid, signerOrigin),
+        error => error.code === 'request_signature_key_unknown'
+      );
+    }
     assert.equal(discoveryCalls, 0);
   });
 
@@ -269,6 +274,24 @@ describe('capability-bound discovery and cache freshness', () => {
       );
     }
     assert.equal(hits.length, hitCount);
+  });
+
+  it('keeps legacy first-contact onboarding on the configured chain before checking context', async () => {
+    const resolver = new BrandJsonJwksResolver(`${origin}/operator.json`, { ...stage(), agentType: 'sales' });
+    await assert.rejects(
+      resolver.resolveWithMetadata(publicKey.kid, 'https://other.example.com'),
+      error => error.code === 'request_signature_key_unknown'
+    );
+    assert.equal(resolver.agentUrl, `${origin}/mcp`);
+    assert.ok(hits.includes('/operator.json'));
+    assert.ok(hits.includes('/keys.json'));
+    const hitCount = hits.length;
+    await assert.rejects(
+      resolver.resolve(publicKey.kid, 'https://other.example.com'),
+      error => error.code === 'request_signature_key_unknown'
+    );
+    assert.equal(hits.length, hitCount);
+    assert.deepEqual(await resolver.resolve(publicKey.kid, origin), publicKey);
   });
 
   it('rejects invalid standalone configuration before onboarding or network access', () => {

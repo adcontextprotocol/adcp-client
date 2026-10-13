@@ -83,7 +83,8 @@ export class ResolvedAgentJwksResolver implements JwksResolver {
       try {
         // Context is a wire locator: unlike producer normalization, reject
         // raw non-ASCII hostnames and malformed authorities before comparing.
-        requestedOrigin = canonicalAgentOrigin(canonicalAgentUrl(signerOrigin));
+        requestedOrigin = canonicalAgentOrigin(signerOrigin);
+        canonicalAgentUrl(signerOrigin);
       } catch {
         throw new AgentResolverError('request_signature_key_unknown', 'Signer origin is malformed.');
       }

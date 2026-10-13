@@ -127,6 +127,7 @@ export {
   resolveAgent,
   ResolvedAgentJwksResolver,
   canonicalAgentOrigin,
+  CanonicalizeError,
   getAgentJwks,
   createAgentJwksSet,
   AgentResolverError,

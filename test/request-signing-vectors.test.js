@@ -85,6 +85,12 @@ describe('AdCP 3.3 canonical agent origins', () => {
       );
       const esm = await import(`../dist/lib/signing/${entry}.mjs`);
       assert.strictEqual(esm.canonicalAgentOrigin('https://EXAMPLE.com/mcp'), 'https://example.com');
+      for (const api of [require(`../dist/lib/signing/${entry}.js`), esm]) {
+        assert.throws(
+          () => api.canonicalAgentOrigin(String.raw`https://example.com\@other.example`),
+          api.CanonicalizeError
+        );
+      }
     }
   });
 });

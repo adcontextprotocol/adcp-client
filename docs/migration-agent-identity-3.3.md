@@ -20,7 +20,8 @@ The helper is also exported from `@adcp/sdk/signing/server` and
 scheme and host case normalization, one trailing DNS root dot removed,
 userinfo and default ports stripped, and non-default ports preserved. Path,
 query, and fragment do not participate in origin comparison. Malformed
-authorities and IPv6 zone identifiers are rejected. Producer inputs with IDN
+authorities, raw authority backslashes or control characters, and IPv6 zone
+identifiers are rejected. Producer inputs with IDN
 U-labels normalize to Punycode A-labels. Wire comparers must separately reject
 raw non-ASCII hostnames before comparing, as the existing `canonicalAgentUrl`
 helper does.
@@ -29,6 +30,9 @@ The existing `canonicalizeOrigin` / `originsEqual` primitives and
 `identity.key_origins` comparisons use this same authority validation. A
 single trailing DNS root dot now compares equal to its dotless form;
 malformed authorities that the URL parser previously repaired are rejected.
+`CanonicalizeError` is exported from the same signing entry points. Origin
+errors use fixed messages and redact the input in `meta.input`, including
+userinfo, path, and query values.
 
 Origin normalization does not verify a signature or grant authority. Continue
 to use full canonical agent URLs for existing RFC 9421 identities, governance
@@ -51,8 +55,9 @@ origins retain the full capability-confirmed `agentUrl` in discovery metadata.
 `BrandJsonJwksResolver` forwards the context through both lookup methods,
 including after legacy onboarding has selected and pinned an agent URL.
 When legacy brand configuration omits `agentUrl`, initial onboarding must
-read the configured operator record to select an agent URL before it can
-compare origin context. Subsequent lookups check the pinned origin. The
+complete the configured operator, capability, and JWKS discovery chain to
+confirm and pin an agent URL before it compares origin context. Subsequent
+lookups check the pinned origin before fetching keys. The
 context never changes the onboarding fetch target.
 
 Custom wrappers must forward both the argument and discovery metadata:
@@ -75,7 +80,9 @@ Origin-aware caches and concurrent-lookup coalescing must use
 `(canonicalAgentOrigin(signerOrigin), keyid)` as their key. A shared `kid`
 must never select another origin's key or metadata. Keep context-free lookups
 separate, and treat the origin as an unverified locator until signature
-verification succeeds. On request verification, metadata remains necessary
+verification succeeds. Validate request-derived locators against the wire
+rules before forming a cache key; producer normalization alone does not
+reject raw IDN U-labels. On request verification, metadata remains necessary
 to reject webhook-only fallback keys and expired operator delegations.
 
 ## Remaining rollout
