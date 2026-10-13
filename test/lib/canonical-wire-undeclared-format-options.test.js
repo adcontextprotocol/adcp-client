@@ -487,8 +487,8 @@ describe('canonical wire: format options the seller did not declare', () => {
 describe('canonical wire: persisted routes carry whether the seller declared each option', () => {
   const persist = value => JSON.parse(JSON.stringify(value));
 
-  async function discoverAndPersist(products) {
-    const discovery = await canonicalSeller(products);
+  async function discoverAndPersist(products, config = {}) {
+    const discovery = await canonicalSeller(products, config);
     try {
       const result = await discovery.agent.getProducts({ buying_mode: 'brief', brief: 'Display', account: ACCOUNT });
       const product = result.data.products[0];
@@ -556,6 +556,69 @@ describe('canonical wire: persisted routes carry whether the seller declared eac
       await execution.close();
     }
   });
+
+  for (const configured of [false, true]) {
+    test(`persisted undeclared custom formats fail before dispatch (configured resolver: ${configured})`, async () => {
+      const products = [legacyOnlyProduct('custom-product', [{ agent_url: 'https://seller.example', id: 'takeover' }])];
+      const { product, routes } = await discoverAndPersist(products, {
+        legacyFormatConverter: () => ({
+          format_option_id: 'takeover',
+          format_kind: 'custom',
+          format_shape: 'homepage_takeover',
+          format_schema: {
+            uri: 'https://seller.example/formats/takeover.json',
+            digest: `sha256:${'a'.repeat(64)}`,
+          },
+          params: {},
+        }),
+      });
+      assert.strictEqual(routes.length, 1);
+      assert.strictEqual(routes[0].seller_declared, false);
+      assert.strictEqual(routes[0].canonical_selector, undefined);
+      const resolver = { canonicalFormatLegacyResolver: canonicalFormatLegacyResolverFromRoutes(routes) };
+      const execution = await canonicalSeller(products, configured ? resolver : {});
+      try {
+        const options = configured ? undefined : resolver;
+        const selected = packageRefsForFormatOptions(product, ['takeover']);
+        const pkg = mediaBuy({ product_id: product.product_id, ...selected }).packages[0];
+        const isProjectionError = error => error.code === 'ADCP_CREATIVE_FORMAT_PROJECTION_FAILED';
+
+        await assert.rejects(execution.agent.createMediaBuy(mediaBuy(pkg), undefined, options), isProjectionError);
+        await assert.rejects(
+          execution.agent.updateMediaBuy(
+            { account: ACCOUNT, media_buy_id: 'mb-canonical', new_packages: [pkg] },
+            undefined,
+            options
+          ),
+          isProjectionError
+        );
+        await assert.rejects(
+          execution.agent.syncCreatives(
+            {
+              account: ACCOUNT,
+              creatives: [
+                {
+                  creative_id: 'custom-creative',
+                  name: 'Takeover',
+                  format_kind: 'custom',
+                  format_option_ref: selected.format_option_refs[0],
+                  assets: {},
+                },
+              ],
+            },
+            undefined,
+            options
+          ),
+          isProjectionError
+        );
+        assert.strictEqual(execution.captured.create, undefined);
+        assert.strictEqual(execution.captured.update, undefined);
+        assert.strictEqual(execution.captured.sync, undefined);
+      } finally {
+        await execution.close();
+      }
+    });
+  }
 
   test('persisted routes for seller-declared options keep format_option_refs', async () => {
     const declaredId = `migrated_${'b'.repeat(32)}`;
