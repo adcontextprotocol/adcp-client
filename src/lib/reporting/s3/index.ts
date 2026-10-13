@@ -1,3 +1,12 @@
+/**
+ * Amazon S3 row-object provider for Reliable Reporting.
+ *
+ * Every export of this subpath is `@experimental` and may change in minor releases.
+ *
+ * Stability policy: https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ *
+ * @packageDocumentation
+ */
 import { randomUUID } from 'node:crypto';
 import {
   DeleteObjectCommand,
@@ -25,6 +34,9 @@ import {
   selectReportingRowClient,
 } from '../ledger/row-storage-provider-io';
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface CreateS3ReportingRowObjectProviderOptionsV1 {
   /** Official client used by bindings without a `credentialRef`. */
   client?: S3Client;
@@ -113,6 +125,8 @@ function liveExpirationCovers(rule: LifecycleRule, prefix: string): boolean {
  * and cannot fence that). The probe refuses unversioned or suspended buckets.
  * Because S3-compatible stores may silently ignore `If-None-Match`, the probe
  * also proves create-only behaviour empirically before any binding is used.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function createS3ReportingRowObjectProviderV1(
   options: CreateS3ReportingRowObjectProviderOptionsV1

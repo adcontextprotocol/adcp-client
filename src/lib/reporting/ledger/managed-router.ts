@@ -15,7 +15,11 @@ type VerificationProfile = ReportingVerification['verification_profile'];
 const ROUTE_ID_PATTERN = /^[a-z][a-z0-9_.-]{0,63}$/;
 const DEFAULT_ROUTE_PROBE_TIMEOUT_MILLISECONDS = 10_000;
 
-/** Why a delivery, read, revocation or admission could not be routed. */
+/**
+ * Why a delivery, read, revocation or admission could not be routed.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export type ReportingManagedDeliveryRoutingErrorCodeV1 =
   /** No route is installed for the pattern and transport. */
   | 'REPORTING_ROUTE_NOT_FOUND'
@@ -26,6 +30,9 @@ export type ReportingManagedDeliveryRoutingErrorCodeV1 =
   /** The binding's verification profile is not one its route can verify. */
   | 'REPORTING_ROUTE_VERIFICATION_UNSUPPORTED';
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export type ReportingManagedDeliveryRoutingOperationV1 =
   | 'deliver'
   | 'read'
@@ -36,6 +43,8 @@ export type ReportingManagedDeliveryRoutingOperationV1 =
 /**
  * Raised by the router before it touches any adapter. The fields are the
  * non-secret routing facts only: no destination, location or credential.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export class ReportingManagedDeliveryRoutingErrorV1 extends Error {
   readonly code: ReportingManagedDeliveryRoutingErrorCodeV1;
@@ -64,6 +73,8 @@ export class ReportingManagedDeliveryRoutingErrorV1 extends Error {
  * Raised by `router.probe()` when at least one route's probe failed. Carries
  * the ids of the failing routes and nothing else from the provider; the
  * individual errors are on `cause` (an `AggregateError`) for seller logs only.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export class ReportingManagedDeliveryProbeErrorV1 extends Error {
   readonly failedRouteIds: readonly string[];
@@ -77,6 +88,9 @@ export class ReportingManagedDeliveryProbeErrorV1 extends Error {
   }
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingManagedDeliveryRouteV1 {
   /** Stable id used in per-route counts and probe failures. Lowercase token, at most 64 characters. */
   id: string;
@@ -90,6 +104,9 @@ export interface ReportingManagedDeliveryRouteV1 {
   adapter: ReportingManagedDeliveryAdapterV1;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface CreateReportingManagedDeliveryAdapterRouterOptionsV1 {
   routes: readonly ReportingManagedDeliveryRouteV1[];
   /**
@@ -108,7 +125,11 @@ export interface CreateReportingManagedDeliveryAdapterRouterOptionsV1 {
   probeTimeoutMilliseconds?: number;
 }
 
-/** What a router exposes about a route. The adapter itself stays private to the router. */
+/**
+ * What a router exposes about a route. The adapter itself stays private to the router.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingManagedDeliveryRouteDescriptionV1 {
   readonly id: string;
   readonly match: Readonly<{ pattern: ReportingDestinationPatternV1; transport: string }>;
@@ -118,6 +139,8 @@ export interface ReportingManagedDeliveryRouteDescriptionV1 {
 /**
  * A `ReportingManagedDeliveryAdapterV1` that dispatches to one adapter per
  * (pattern, transport). The optional hooks are always present on a router.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export interface ReportingManagedDeliveryAdapterRouterV1 extends ReportingManagedDeliveryAdapterV1 {
   readonly routes: readonly ReportingManagedDeliveryRouteDescriptionV1[];
@@ -158,6 +181,8 @@ const hasText = (value: unknown): value is string => typeof value === 'string' &
  *   authorization generation. It never fans out.
  * - Nothing that cannot be routed reaches an adapter: the router throws a
  *   `ReportingManagedDeliveryRoutingErrorV1` first.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function createReportingManagedDeliveryAdapterRouterV1(
   options: CreateReportingManagedDeliveryAdapterRouterOptionsV1

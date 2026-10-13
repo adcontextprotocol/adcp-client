@@ -12,6 +12,9 @@ import {
   selectReportingRowClient,
 } from '../ledger/row-storage-provider-io';
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface CreateGcsReportingRowObjectProviderOptionsV1 {
   /** Official client used by bindings without a `credentialRef`. */
   storage?: Storage;
@@ -56,6 +59,8 @@ function pinnedGeneration(nativeVersionRef: string): string | null {
  * public access prevention, and any lifecycle `Delete` rule that can match a
  * live object under the binding prefix (no prefix filter, or a prefix that
  * overlaps it). Rules limited to noncurrent versions are allowed.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function assertGcsReportingRowBucketPolicyV1(metadata: BucketMetadata, prefix: string): void {
   if (!metadata || typeof metadata !== 'object') {
@@ -89,6 +94,8 @@ export function assertGcsReportingRowBucketPolicyV1(metadata: BucketMetadata, pr
  * object generation, and reads and deletes pin it. Objects are stored without
  * `Content-Encoding`, and reads request raw stored bytes, so GCS never
  * transcodes them.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function createGcsReportingRowObjectProviderV1(
   options: CreateGcsReportingRowObjectProviderOptionsV1

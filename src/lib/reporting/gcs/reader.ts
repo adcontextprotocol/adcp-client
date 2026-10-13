@@ -14,11 +14,17 @@ import { assertReportingObjectWriteScope, type ReportingObjectWriteScopeV1 } fro
 import { ReportingGcsFenceError, isReportingGcsFenceError } from './errors';
 import { activeGcsSignal, readGcsBytes, withGcsDeadline } from './io';
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface GcsReportingReadScopeV1 extends ReportingObjectWriteScopeV1 {
   /** Non-secret identity from the host's authenticated principal registry. Never a bearer. */
   principal_id: string;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface GcsReportingReadAuthorizationV1 {
   scope: Readonly<GcsReportingReadScopeV1>;
   bucket: string;
@@ -26,6 +32,9 @@ export interface GcsReportingReadAuthorizationV1 {
   objectName: string;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface GcsReportingReaderOptionsV1 {
   scope: GcsReportingReadScopeV1;
   bucket: string;
@@ -41,7 +50,11 @@ export interface GcsReportingReaderOptionsV1 {
   maxBytes?: number;
 }
 
-/** Restrictive provider-native URL grammar: no credentials, queries, encoding or traversal. */
+/**
+ * Restrictive provider-native URL grammar: no credentials, queries, encoding or traversal.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function gcsReportingObjectFromUriV1(uri: string, bucket: string, prefix: string): string {
   if (typeof uri !== 'string' || uri.length > 2048) throw new ReportingGcsFenceError('INVALID_INPUT');
   const expectedBase = `https://storage.googleapis.com/${bucket}/`;
@@ -68,6 +81,9 @@ export function gcsReportingObjectFromUriV1(uri: string, bucket: string, prefix:
   return name;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function createGcsScopedObjectReadV1(options: GcsReportingReaderOptionsV1) {
   let scope: GcsReportingReadScopeV1;
   try {
@@ -163,7 +179,11 @@ export function createGcsScopedObjectReadV1(options: GcsReportingReaderOptionsV1
     );
 }
 
-/** Destination-bound manifest/object reader. The caller never supplies bucket or credential scope. */
+/**
+ * Destination-bound manifest/object reader. The caller never supplies bucket or credential scope.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function createGcsReportingResourceReaderV1(options: GcsReportingReaderOptionsV1): ReportingResourceReader {
   const read = createGcsScopedObjectReadV1(options);
   const scope = structuredClone(options.scope);
@@ -200,7 +220,11 @@ export function createGcsReportingResourceReaderV1(options: GcsReportingReaderOp
   };
 }
 
-/** Digest-pinned private contract resolver; all resolutions re-authorize and bypass caches. */
+/**
+ * Digest-pinned private contract resolver; all resolutions re-authorize and bypass caches.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function createGcsReportingReferenceResolverV1(
   options: GcsReportingReaderOptionsV1
 ): CanonicalReferenceResolver {

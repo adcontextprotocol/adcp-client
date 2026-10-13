@@ -63,6 +63,9 @@ function matchingBinding(input: Pick<DeliveryInput, 'materialization' | 'binding
     throw new ReportingGcsFenceError('INVALID_INPUT');
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface CreateGcsReportingManagedDeliveryAdapterOptionsV1 {
   storage: Storage;
   coreStore: ReportingLedgerStore;
@@ -79,7 +82,11 @@ export interface CreateGcsReportingManagedDeliveryAdapterOptionsV1 {
   minimumResourceRetentionDays?: number;
 }
 
-/** Complete file-transfer adapter. Availability and cleanup lease commits remain with the managed runtime. */
+/**
+ * Complete file-transfer adapter. Availability and cleanup lease commits remain with the managed runtime.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export async function createGcsReportingManagedDeliveryAdapterV1(
   options: CreateGcsReportingManagedDeliveryAdapterOptionsV1,
   context: { signal?: AbortSignal } = {}

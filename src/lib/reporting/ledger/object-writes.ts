@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 import { canonicalize } from '../../utils/jcs';
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export class ReportingObjectWriteConflictError extends Error {
   constructor() {
     super('Reporting object-write plan conflict');
@@ -9,7 +12,11 @@ export class ReportingObjectWriteConflictError extends Error {
   }
 }
 
-/** Symbol branding preserves errors when CJS stores are paired with ESM fences. */
+/**
+ * Symbol branding preserves errors when CJS stores are paired with ESM fences.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function isReportingObjectWriteConflictError(error: unknown): boolean {
   return (
     !!error &&
@@ -18,6 +25,9 @@ export function isReportingObjectWriteConflictError(error: unknown): boolean {
   );
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export class ReportingObjectWriteNotRevokedError extends Error {
   constructor() {
     super('Reporting object-write generation is not revoked');
@@ -26,6 +36,9 @@ export class ReportingObjectWriteNotRevokedError extends Error {
   }
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function isReportingObjectWriteNotRevokedError(error: unknown): boolean {
   return (
     !!error &&
@@ -34,13 +47,20 @@ export function isReportingObjectWriteNotRevokedError(error: unknown): boolean {
   );
 }
 
-/** Non-secret destination identity, scoped to the store's isolated tenant database. */
+/**
+ * Non-secret destination identity, scoped to the store's isolated tenant database.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingObjectWriteScopeV1 {
   account_id: string;
   destination_ref: string;
   generation: number;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingObjectWriteV1 {
   bucket: string;
   object_name: string;
@@ -48,16 +68,25 @@ export interface ReportingObjectWriteV1 {
   size_bytes: number;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingObjectWriteBindingV1 {
   bucket: string;
   /** SHA-256 of a host-owned deployment namespace; immutable per authorization generation. */
   namespace_key: string;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingObjectWriteContextV1 {
   signal?: AbortSignal;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function reportingObjectWriteScopeKey(scope: ReportingObjectWriteScopeV1): string {
   assertReportingObjectWriteScope(scope);
   return createHash('sha256')
@@ -65,6 +94,9 @@ export function reportingObjectWriteScopeKey(scope: ReportingObjectWriteScopeV1)
     .digest('hex');
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function reportingObjectWriteName(
   scope: ReportingObjectWriteScopeV1,
   binding: ReportingObjectWriteBindingV1,
@@ -74,6 +106,9 @@ export function reportingObjectWriteName(
   return `adcp-reporting/${binding.namespace_key}/${reportingObjectWriteScopeKey(scope)}/${planId}/${index}`;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingObjectWritePlanV1 extends ReportingObjectWriteScopeV1 {
   provider: ReportingObjectWriteBindingV1;
   /** Stable opaque identity for the same logical delivery across retries. */
@@ -81,11 +116,17 @@ export interface ReportingObjectWritePlanV1 extends ReportingObjectWriteScopeV1 
   objects: readonly ReportingObjectWriteV1[];
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingObjectWriteCursorV1 {
   plan_id: string;
   object_index: number;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingObjectWriteStoreV1 {
   /** Registration and destination revocation MUST share one authority/lock boundary. */
   registerObjectWritePlan(
@@ -110,7 +151,11 @@ export interface ReportingObjectWriteStoreV1 {
   ): Promise<void>;
 }
 
-/** Apply after REPORTING_MANAGED_DELIVERY_MIGRATION. Additive and independently opt-in. */
+/**
+ * Apply after REPORTING_MANAGED_DELIVERY_MIGRATION. Additive and independently opt-in.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export const REPORTING_OBJECT_WRITE_MIGRATION = `
 CREATE TABLE IF NOT EXISTS adcp_reporting_object_write_bindings (
   account_id TEXT NOT NULL,
@@ -151,6 +196,9 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_object_writes (
 );
 `;
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function assertReportingObjectWriteScope(scope: ReportingObjectWriteScopeV1): void {
   if (
     !scope ||
@@ -161,6 +209,9 @@ export function assertReportingObjectWriteScope(scope: ReportingObjectWriteScope
     throw new Error('Invalid reporting object-write scope');
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function reportingObjectWritePlanFingerprint(plan: ReportingObjectWritePlanV1): string {
   assertReportingObjectWriteScope(plan);
   if (
@@ -212,7 +263,11 @@ export function reportingObjectWritePlanFingerprint(plan: ReportingObjectWritePl
     .digest('hex');
 }
 
-/** Opt-in authority for complete provider adapters; the original primitive store port is unchanged. */
+/**
+ * Opt-in authority for complete provider adapters; the original primitive store port is unchanged.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingObjectWriteAuthorityStoreV1 extends ReportingObjectWriteStoreV1 {
   probeObjectWriteAuthority(context?: ReportingObjectWriteContextV1): Promise<boolean>;
   getObjectWriteAuthorityId(context?: ReportingObjectWriteContextV1): Promise<string>;
@@ -227,7 +282,11 @@ export interface ReportingObjectWriteAuthorityStoreV1 extends ReportingObjectWri
   ): Promise<ReportingObjectWritePlanV1 | null>;
 }
 
-/** PostgreSQL 13+; apply after REPORTING_OBJECT_WRITE_MIGRATION. Identity survives replica/worker restart. */
+/**
+ * PostgreSQL 13+; apply after REPORTING_OBJECT_WRITE_MIGRATION. Identity survives replica/worker restart.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export const REPORTING_OBJECT_WRITE_AUTHORITY_MIGRATION = `
 CREATE TABLE IF NOT EXISTS adcp_reporting_object_write_authority (
   singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),

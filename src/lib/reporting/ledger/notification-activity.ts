@@ -46,6 +46,9 @@ interface ReportingAccountActivityBaseV1 {
   occurredAt: string;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingLifecycleActivityV1 extends ReportingAccountActivityBaseV1 {
   activityType: 'reporting.lifecycle_changed';
   notificationType?: 'reporting.status_changed';
@@ -63,6 +66,9 @@ export interface ReportingLifecycleActivityV1 extends ReportingAccountActivityBa
   };
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingLedgerChangedActivityV1 extends ReportingAccountActivityBaseV1 {
   activityType: 'reporting.ledger_changed';
   notificationType: 'reporting.ledger_changed';
@@ -74,6 +80,9 @@ export interface ReportingLedgerChangedActivityV1 extends ReportingAccountActivi
   adjusts_reporting_revision_id?: string;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingDeliveryReadyActivityV1 extends ReportingAccountActivityBaseV1 {
   activityType: 'reporting.delivery_ready';
   notificationType: 'reporting.delivery_ready';
@@ -87,14 +96,24 @@ export interface ReportingDeliveryReadyActivityV1 extends ReportingAccountActivi
   data_through: string | null;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export type ReportingNotificationActivityV1 =
   | ReportingLifecycleActivityV1
   | ReportingLedgerChangedActivityV1
   | ReportingDeliveryReadyActivityV1;
 
-/** Backwards-compatible lifecycle activity surface returned by listActivity(). */
+/**
+ * Backwards-compatible lifecycle activity surface returned by listActivity().
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingAccountActivityV1 extends ReportingLifecycleActivityV1 {}
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingAccountActivityRecordV1 extends ReportingAccountActivityV1 {
   recordedAt: string;
   notificationProjectedAt?: string;
@@ -102,24 +121,36 @@ export interface ReportingAccountActivityRecordV1 extends ReportingAccountActivi
   notificationAbandonedAt?: string;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export type ReportingNotificationActivityRecordV1 = ReportingNotificationActivityV1 & {
   recordedAt: string;
   notificationProjectedAt?: string;
   notificationAbandonedAt?: string;
 };
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingAccountActivityPageV1 {
   activities: ReportingAccountActivityRecordV1[];
   hasMore: boolean;
   nextCursor?: string;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingNotificationActivityPageV1 {
   activities: ReportingNotificationActivityRecordV1[];
   hasMore: boolean;
   nextCursor?: string;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingNotificationRecoveryMetricsV1 {
   claimed: number;
   matched: number;
@@ -134,6 +165,8 @@ export interface ReportingNotificationRecoveryMetricsV1 {
  * Raised when live delivery authority failed closed for an operational reason
  * rather than a deliberate one. The claim is released and retried; the activity
  * is never projected as delivered.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export class ReportingNotificationRetryableSuppressionError extends Error {
   override readonly name = 'ReportingNotificationRetryableSuppressionError';
@@ -142,6 +175,9 @@ export class ReportingNotificationRetryableSuppressionError extends Error {
   }
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingNotificationProjectionErrorV1 {
   transitionId: string;
   tenantId: string;
@@ -149,6 +185,9 @@ export interface ReportingNotificationProjectionErrorV1 {
   attemptCount: number;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface PostgresReportingNotificationActivityOptions {
   db: ReportingLedgerTransactionV1;
   /**
@@ -232,6 +271,9 @@ export interface PostgresReportingNotificationActivityOptions {
   maxAttempts?: number;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface PostgresReportingNotificationActivityRuntime {
   readonly port: ReportingLedgerNotificationActivityPortV1<ReportingLedgerTransactionV1>;
   readonly migrations: { activity: string; all: readonly string[] };
@@ -292,6 +334,9 @@ const MAX_TRANSITION_ID_BYTES = 512;
  */
 const MAX_RECIPIENT_TABLE_BYTES = 53;
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function getReportingNotificationActivityMigration(options: { tableName?: string } = {}): string {
   const raw = options.tableName ?? DEFAULT_TABLE;
   const table = quoteIdentifier(raw);
@@ -533,11 +578,18 @@ END $$;
 `.trim();
 }
 
-/** Child table holding one row per frozen recipient. */
+/**
+ * Child table holding one row per frozen recipient.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function recipientTableName(tableName: string = DEFAULT_TABLE): string {
   return `${tableName}_recipients`;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export const REPORTING_NOTIFICATION_ACTIVITY_MIGRATION = getReportingNotificationActivityMigration();
 
 /**
@@ -555,7 +607,11 @@ export const REPORTING_NOTIFICATION_ACTIVITY_MIGRATION = getReportingNotificatio
  * lease: a checkpoint only ever makes a recipient less revisable, which is the
  * safe direction, and an outbox worker legitimately holds no activity lease.
  */
-/** Durable store a checkpoint is bound to, so a mismatched pairing cannot be silent. */
+/**
+ * Durable store a checkpoint is bound to, so a mismatched pairing cannot be silent.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingNotificationAttemptCheckpointV1 {
   (input: Readonly<NotificationDeliveryAttemptCheckpointInput>): Promise<void | number>;
   /**
@@ -567,6 +623,9 @@ export interface ReportingNotificationAttemptCheckpointV1 {
   readonly activityStore?: Readonly<{ db: ReportingLedgerTransactionV1; namespace: string; tableName: string }>;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function createPostgresReportingNotificationAttemptCheckpoint(options: {
   db: ReportingLedgerTransactionV1;
   namespace?: string;
@@ -625,6 +684,9 @@ export function createPostgresReportingNotificationAttemptCheckpoint(options: {
   }) as ReportingNotificationAttemptCheckpointV1;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function createPostgresReportingNotificationActivityRuntime(
   options: PostgresReportingNotificationActivityOptions
 ): PostgresReportingNotificationActivityRuntime {

@@ -1,3 +1,14 @@
+/**
+ * Reliable Reporting ledger, row storage, change feed, managed-delivery runtime and router.
+ *
+ * Exports tagged `@experimental` (storage, rows, change feed, managed delivery, notification activity)
+ * may change in minor releases. The protocol-facing handlers, producer, status ingest, health,
+ * coverage, lifecycle and schedule helpers follow normal semver.
+ *
+ * Stability policy: https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ *
+ * @packageDocumentation
+ */
 export * from './types';
 export * from './health';
 export * from './coverage';
