@@ -8,6 +8,7 @@ const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const { after, before, describe, test } = require('node:test');
 
+const { createFakeBigQuery } = require('../helpers/fake-bigquery.js');
 const { createRowStorageFixture } = require('../helpers/reporting-row-storage-fixture.js');
 
 const DATABASE_URL = process.env.REPORTING_LEDGER_PG_URL;
@@ -40,25 +41,13 @@ function fakeBigQuery() {
   const failures = [];
   const loadOptions = [];
   const dropped = [];
-  const cancels = [];
-  const holds = new Set();
-  const delays = new Map();
-  const settings = { hangMetadata: false, hangCancel: false };
   return {
     tables,
     jobs,
-    settings,
     loadOptions,
     dropped,
-    cancels,
     failNext(tableId, how) {
       failures.push({ tableId, how });
-    },
-    holdNext(tableId) {
-      holds.add(tableId);
-    },
-    delayNext(tableId, milliseconds) {
-      delays.set(tableId, milliseconds);
     },
     dataset(datasetId, datasetOptions = {}) {
       return {
@@ -66,11 +55,6 @@ function fakeBigQuery() {
           return {
             async load(file, metadata) {
               loadOptions.push({ tableId, options: structuredClone(metadata) });
-              if (delays.has(tableId)) {
-                const milliseconds = delays.get(tableId);
-                delays.delete(tableId);
-                await new Promise(resolve => setTimeout(resolve, milliseconds));
-              }
               if (jobs.has(metadata.jobId)) {
                 const error = new Error('Already Exists: Job');
                 error.code = 409;
@@ -92,15 +76,13 @@ function fakeBigQuery() {
               const lost = ['labels', 'jobTimeoutMs'].filter(field => field in load);
               for (const field of lost) delete load[field];
               if (lost.length) dropped.push({ jobId, fields: lost });
-              const held = holds.delete(tableId);
               jobs.set(jobId, {
-                status: { state: held ? 'RUNNING' : 'DONE' },
+                status: { state: 'DONE' },
                 table: key,
                 lines,
                 jobReference: { jobId, projectId: datasetOptions.projectId, location: datasetOptions.location },
                 configuration: { load },
               });
-              if (held) return new Promise(() => {});
               tables.set(key, [...(tables.get(key) ?? []), ...lines]);
               return [{ id: jobId }];
             },
@@ -111,16 +93,9 @@ function fakeBigQuery() {
     job(jobId, options = {}) {
       return {
         getMetadata: async () => {
-          if (settings.hangMetadata) return new Promise(() => {});
-          return [jobs.get(jobId)];
-        },
-        async cancel() {
-          cancels.push({ jobId, ...options });
-          if (settings.hangCancel) return new Promise(() => {});
           const job = jobs.get(jobId);
           if (!job) throw Object.assign(new Error(`Not found: Job ${jobId}`), { code: 404 });
-          if (job.status.state === 'RUNNING') job.status = { state: 'DONE', errorResult: { reason: 'stopped' } };
-          return [{ kind: 'bigquery#jobCancelResponse' }];
+          return [job];
         },
       };
     },
@@ -302,7 +277,10 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
       });
       await assert.rejects(() => sink.runOnce(), /lost upload response/);
       assert.deepEqual(await sink.runOnce(), { idle: false, revisions: 1, rows: 1, missing: [] });
-      assert.deepEqual(lookups, [{ projectId: 'warehouse-project', ...(location ? { location } : {}) }]);
+      assert.ok(lookups.length >= 2, 'every submission is preceded by a lookup, and the replay finds the upload');
+      for (const lookup of lookups) {
+        assert.deepEqual(lookup, { projectId: 'warehouse-project', ...(location ? { location } : {}) });
+      }
       assert.equal(bigquery.tables.get('reporting.revision_rows').length, 1, 'the accepted upload is not repeated');
       assert.equal(bigquery.jobs.size, 2, 'both tables finish with their original job IDs');
       const state = (await pool.query('SELECT * FROM adcp_reporting_warehouse_sinks WHERE sink_name = $1', [suffix]))
@@ -333,7 +311,7 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     assert.ok(![...bigquery.jobs.keys()].some(id => id.endsWith('_rows_a1')));
   });
 
-  test('a hung load times out and the retry waits for the same job instead of loading twice', async () => {
+  test('a response that never arrives times out, and the retry finds the finished job instead of loading twice', async () => {
     const bigquery = fakeBigQuery();
     const sink = newSink(bigquery, { name: 'hung', loadTimeoutMilliseconds: 1_000 });
     await sink.runOnce();
@@ -364,133 +342,11 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
       };
     };
     const first = newSink(bigquery, { name: 'hung', loadTimeoutMilliseconds: 1_000 });
-    await assert.rejects(() => first.runOnce(), /exceeded its deadline/);
+    await assert.rejects(() => first.runOnce(), /exceeded this run's 1000 ms deadline/);
     assert.deepEqual(await first.runOnce(), { idle: false, revisions: 1, rows: 2, missing: [] });
     assert.equal(bigquery.tables.get('reporting.revision_rows').length, rowsBefore + 2, 'rows landed exactly once');
     assert.deepEqual(bigquery.dropped, [], 'no job-level field is sent where BigQuery would drop it');
     assert.throws(() => newSink(bigquery, { loadTimeoutMilliseconds: 10 }), /loadTimeoutMilliseconds/);
-  });
-
-  test('a load past its deadline is cancelled by its deterministic job ID and retried as a new attempt', async t => {
-    const { pool, store: realStore } = await isolatedWarehouseStore(t, 'deadline_cancel');
-    const account = 'acct_deadline_cancel';
-    const isolated = await createRowStorageFixture({ store: realStore, suffix: 'deadline_cancel', accountId: account });
-    await realStore.commitRevision(isolated.revision('rrev_deadline_cancel', 1, rows.slice(0, 3)), isolated.lease);
-    const bigquery = fakeBigQuery();
-    const sink = newSink(bigquery, {
-      name: 'deadline_cancel',
-      account_id: account,
-      db: pool,
-      store: realStore,
-      location: 'US',
-      loadTimeoutMilliseconds: 1_000,
-    });
-    // BigQuery accepts the rows job, then it keeps running past the client deadline.
-    bigquery.holdNext('revision_rows');
-    await assert.rejects(sink.runOnce(), /exceeded its deadline/);
-    const plan = (await pool.query('SELECT * FROM adcp_reporting_warehouse_sinks')).rows[0];
-    const baseJobId = sinkModule.reportingWarehouseJobIdV1(
-      'deadline_cancel',
-      plan.planned_from_cursor,
-      plan.planned_to_cursor
-    );
-    assert.deepEqual(
-      bigquery.cancels,
-      [{ jobId: `${baseJobId}_rows`, projectId: 'adcp-reporting', location: 'US' }],
-      'only the stuck job is cancelled, in the destination project and location'
-    );
-    assert.equal(bigquery.jobs.get(`${baseJobId}_rows`).status.errorResult.reason, 'stopped');
-    assert.equal(bigquery.tables.get('reporting.revision_rows'), undefined, 'the cancelled load wrote nothing');
-    // The cancelled job finished with an error, so the next runs retry that table under a new attempt.
-    await assert.rejects(sink.runOnce(), /will be retried as a new attempt/);
-    assert.deepEqual(await sink.runOnce(), { idle: false, revisions: 1, rows: 3, missing: [] });
-    assert.equal(bigquery.tables.get('reporting.revision_rows').length, 3, 'rows landed exactly once');
-    assert.ok(bigquery.jobs.has(`${baseJobId}_rows_a1`));
-    assert.equal(bigquery.cancels.length, 1, 'a healthy retry is not cancelled');
-    assert.deepEqual(bigquery.dropped, []);
-  });
-
-  test('each attempt doubles the load deadline, so a slow but healthy load converges', async t => {
-    const { pool, store: realStore } = await isolatedWarehouseStore(t, 'deadline_escalation');
-    const account = 'acct_deadline_escalation';
-    const isolated = await createRowStorageFixture({
-      store: realStore,
-      suffix: 'deadline_escalation',
-      accountId: account,
-    });
-    await realStore.commitRevision(isolated.revision('rrev_deadline_escalation', 1, rows.slice(0, 2)), isolated.lease);
-    const bigquery = fakeBigQuery();
-    const sink = newSink(bigquery, {
-      name: 'deadline_escalation',
-      account_id: account,
-      db: pool,
-      store: realStore,
-      loadTimeoutMilliseconds: 1_000,
-    });
-    bigquery.holdNext('revision_rows');
-    await assert.rejects(sink.runOnce(), /exceeded its deadline/);
-    await assert.rejects(sink.runOnce(), /will be retried as a new attempt/);
-    // Attempt 1 gets a 2 second deadline: a 1.5 second load that the first deadline would have cancelled fits.
-    bigquery.delayNext('revision_rows', 1_500);
-    assert.deepEqual(await sink.runOnce(), { idle: false, revisions: 1, rows: 2, missing: [] });
-    assert.equal(bigquery.cancels.length, 1, 'only the first, too-short attempt was cancelled');
-    assert.equal(bigquery.tables.get('reporting.revision_rows').length, 2);
-  });
-
-  test('a failed cancel never masks the deadline error, and an abort does not cancel', async t => {
-    const { pool, store: realStore } = await isolatedWarehouseStore(t, 'cancel_failure');
-    const account = 'acct_cancel_failure';
-    const isolated = await createRowStorageFixture({ store: realStore, suffix: 'cancel_failure', accountId: account });
-    await realStore.commitRevision(isolated.revision('rrev_cancel_failure', 1, rows.slice(0, 1)), isolated.lease);
-    const bigquery = fakeBigQuery();
-    const realJob = bigquery.job;
-    bigquery.job = (jobId, options) => ({
-      ...realJob(jobId, options),
-      async cancel() {
-        bigquery.cancels.push({ jobId, ...options, failed: true });
-        throw Object.assign(new Error('backend unavailable'), { code: 503 });
-      },
-    });
-    const sink = newSink(bigquery, {
-      name: 'cancel_failure',
-      account_id: account,
-      db: pool,
-      store: realStore,
-      loadTimeoutMilliseconds: 1_000,
-    });
-    const warnings = [];
-    const onWarning = warning => warnings.push(warning);
-    process.on('warning', onWarning);
-    bigquery.holdNext('revision_rows');
-    try {
-      await assert.rejects(sink.runOnce(), /exceeded its deadline/);
-      await new Promise(resolve => setImmediate(resolve));
-    } finally {
-      process.off('warning', onWarning);
-    }
-    assert.equal(bigquery.cancels.length, 1);
-    assert.equal(bigquery.cancels[0].failed, true);
-    assert.ok(
-      warnings.some(w => w.code === 'ADCP_BIGQUERY_SINK_CANCEL_FAILED' && /\(503\)/.test(w.message)),
-      'a failed cancel is visible as a process warning'
-    );
-
-    // Aborting is the caller's own decision, not a deadline: the job is left alone.
-    const abortSink = newSink(bigquery, {
-      name: 'cancel_failure_abort',
-      account_id: account,
-      db: pool,
-      store: realStore,
-      loadTimeoutMilliseconds: 30_000,
-    });
-    bigquery.cancels.length = 0;
-    const controller = new AbortController();
-    bigquery.holdNext('revision_rows');
-    const aborting = abortSink.runOnce({ signal: controller.signal });
-    while (bigquery.loadOptions.length === 0) await new Promise(resolve => setImmediate(resolve));
-    controller.abort(new Error('shutting down'));
-    await assert.rejects(aborting, /shutting down/);
-    assert.deepEqual(bigquery.cancels, [], 'an abort does not cancel the load');
   });
 
   test('labels are ignored with a warning, and no job-level field is sent where BigQuery would drop it', async t => {
@@ -534,50 +390,362 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     }
   });
 
-  test('a hanging cancel is bounded, a cancel that has not taken effect is waited for, and a status-check timeout is not cancelled', async t => {
-    const { pool, store: realStore } = await isolatedWarehouseStore(t, 'cancel_async');
-    const account = 'acct_cancel_async';
-    const isolated = await createRowStorageFixture({ store: realStore, suffix: 'cancel_async', accountId: account });
-    await realStore.commitRevision(isolated.revision('rrev_cancel_async', 1, rows.slice(0, 2)), isolated.lease);
-    const bigquery = fakeBigQuery();
-    const sink = newSink(bigquery, {
-      name: 'cancel_async',
-      account_id: account,
+  // Convergence of a load that outlasts its deadline (#3234). BigQuery does not stop a load the client gives up
+  // on, and it refuses a resubmitted job ID only after the whole file is uploaded again, so the sink looks the
+  // deterministic job up before every submission instead.
+  async function convergenceHarness(
+    t,
+    suffix,
+    { fake = {}, sink: sinkOptions = {}, tables = true, rowCount = 3 } = {}
+  ) {
+    const { pool, store: realStore } = await isolatedWarehouseStore(t, suffix);
+    const account = `acct_${suffix}`;
+    const isolated = await createRowStorageFixture({ store: realStore, suffix, accountId: account });
+    await realStore.commitRevision(isolated.revision(`rrev_${suffix}`, 1, rows.slice(0, rowCount)), isolated.lease);
+    const bigquery = createFakeBigQuery({ clientProject: 'client-project', ...fake });
+    // Everything the sink sends, in order, so a test can see that a lookup came before an upload.
+    const events = [];
+    const settings = { hangLookups: false };
+    const instrumented = {
+      dataset(datasetId, options) {
+        const dataset = bigquery.dataset(datasetId, options);
+        return {
+          table: tableId => ({
+            load(file, metadata) {
+              events.push(`upload ${tableId} ${metadata.jobId}`);
+              return dataset.table(tableId).load(file, metadata);
+            },
+          }),
+        };
+      },
+      job(jobId, options) {
+        const job = bigquery.job(jobId, options);
+        return {
+          getMetadata: () => {
+            events.push(`lookup ${jobId}`);
+            return settings.hangLookups ? new Promise(() => {}) : job.getMetadata();
+          },
+          cancel: () => {
+            events.push(`cancel ${jobId}`);
+            return job.cancel();
+          },
+        };
+      },
+      query: (...args) => bigquery.query(...args),
+    };
+    const makeSink = (extra = {}) =>
+      newSink(instrumented, {
+        name: suffix,
+        account_id: account,
+        db: pool,
+        store: realStore,
+        location: 'US',
+        loadTimeoutMilliseconds: 1_000,
+        ...sinkOptions,
+        ...extra,
+      });
+    const sink = makeSink();
+    await bigquery.dataset('reporting', { projectId: 'adcp-reporting', location: 'US' }).create();
+    const createTables = () => bigquery.query({ query: sink.defaultTablesSql });
+    if (tables) await createTables();
+    const harness = {
+      pool,
+      bigquery,
+      events,
+      settings,
+      sink,
+      makeSink,
+      createTables,
+      state: async () =>
+        (await pool.query('SELECT * FROM adcp_reporting_warehouse_sinks WHERE sink_name = $1', [suffix])).rows[0],
+      rowsLoaded: () => bigquery.state.tables.get('adcp-reporting.reporting.revision_rows')?.length ?? 0,
+      uploads: tableId => bigquery.state.loadOptions.filter(entry => entry.tableId === tableId).length,
+      jobIds: () => [...bigquery.state.jobs.keys()].map(key => key.split('/')[1]),
+      // The retained plan's job ID, after a run that planned the batch but could not load it (no tables yet).
+      async retainPlan() {
+        await assert.rejects(sink.runOnce(), /Not found: Table/);
+        const state = await harness.state();
+        assert.ok(state.planned_to_cursor, 'the batch is planned and retained');
+        const baseJobId = sinkModule.reportingWarehouseJobIdV1(
+          suffix,
+          state.planned_from_cursor,
+          state.planned_to_cursor,
+          state.reset_generation
+        );
+        await createTables();
+        events.length = 0;
+        return baseJobId;
+      },
+      seedJob(jobId, status) {
+        const resource = { jobReference: { projectId: 'adcp-reporting', jobId, location: 'US' }, status };
+        bigquery.state.jobs.set(`adcp-reporting/${jobId}`, resource);
+        return resource;
+      },
+    };
+    return harness;
+  }
+
+  const waitFor = async (condition, description) => {
+    for (let waited = 0; waited < 10_000; waited += 25) {
+      if (condition()) return;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    assert.fail(`timed out waiting for ${description}`);
+  };
+
+  test('an upload slower than the deadline converges: rows load once and the job is found, not uploaded again (#3234)', async t => {
+    const h = await convergenceHarness(t, 'slow_upload', {
+      fake: { uploadMs: tableId => (tableId === 'revision_rows' ? 1_600 : 0) },
+    });
+    await assert.rejects(h.sink.runOnce(), /exceeded this run's 1000 ms deadline/);
+    let state = await h.state();
+    assert.ok(state.planned_to_cursor, 'the plan is retained');
+    assert.equal(state.planned_rows_attempt, 0, 'a timeout never changes the job ID');
+    assert.equal(state.planned_rows_timeouts, 1, 'the table remembers the timeout');
+    assert.equal(state.planned_revisions_timeouts, 0);
+    // The abandoned upload still reaches BigQuery and creates the job in the background.
+    await waitFor(() => h.jobIds().some(id => id.endsWith('_rows')), 'the background upload to create the job');
+    assert.deepEqual(await h.sink.runOnce(), { idle: false, revisions: 1, rows: 3, missing: [] });
+    assert.equal(h.uploads('revision_rows'), 1, 'the rerun found the job and did not upload the file again');
+    assert.equal(h.rowsLoaded(), 3, 'rows landed exactly once');
+    assert.deepEqual(
+      h
+        .jobIds()
+        .map(id => id.replace(/^adcp_rr_[0-9a-f]+/, ''))
+        .sort(),
+      ['_revs', '_rows']
+    );
+    state = await h.state();
+    assert.equal(state.planned_to_cursor, null);
+    assert.equal(state.planned_rows_timeouts, 0, 'the committed batch clears the table deadline growth');
+    assert.deepEqual(h.bigquery.state.cancels, [], 'the sink never cancels a load');
+    assert.deepEqual(await h.sink.runOnce(), { idle: true, revisions: 0, rows: 0, missing: [] });
+  });
+
+  test('a job that is not there yet is looked up first, and a 404 means upload', async t => {
+    const h = await convergenceHarness(t, 'missing_job');
+    assert.deepEqual(await h.sink.runOnce(), { idle: false, revisions: 1, rows: 3, missing: [] });
+    assert.deepEqual(
+      h.events.map(event => event.replace(/adcp_rr_[0-9a-f]+/, '')),
+      ['lookup _rows', 'upload revision_rows _rows', 'lookup _revs', 'upload revisions _revs'],
+      'a 404 on the lookup means upload'
+    );
+    assert.equal(h.rowsLoaded(), 3);
+  });
+
+  test('a job still running on the rerun is waited for, not uploaded again', async t => {
+    const h = await convergenceHarness(t, 'running_job', { tables: false });
+    const baseJobId = await h.retainPlan();
+    const running = h.seedJob(`${baseJobId}_rows`, { state: 'RUNNING' });
+    setTimeout(() => {
+      running.status = { state: 'DONE' };
+    }, 500);
+    assert.deepEqual(await h.sink.runOnce(), { idle: false, revisions: 1, rows: 3, missing: [] });
+    assert.equal(h.uploads('revision_rows'), 0, 'the running job was awaited, never uploaded again');
+    assert.equal(h.uploads('revisions'), 1, 'the other table, with no job yet, was uploaded');
+    assert.ok(h.events.filter(event => event === `lookup ${baseJobId}_rows`).length >= 2, 'the job was polled');
+    assert.deepEqual(h.bigquery.state.cancels, []);
+    assert.equal((await h.state()).planned_to_cursor, null);
+  });
+
+  test('a job still running when the deadline ends the run leaves the plan unchanged for the next run to check', async t => {
+    const h = await convergenceHarness(t, 'running_past_deadline', { tables: false });
+    const baseJobId = await h.retainPlan();
+    const running = h.seedJob(`${baseJobId}_rows`, { state: 'PENDING' });
+    const before = await h.state();
+    await assert.rejects(h.sink.runOnce(), /Waiting for the running load job exceeded this run's 1000 ms deadline/);
+    const after = await h.state();
+    for (const column of [
+      'committed_cursor',
+      'planned_from_cursor',
+      'planned_to_cursor',
+      'planned_rows_attempt',
+      'planned_revisions_attempt',
+    ]) {
+      assert.equal(after[column], before[column], `${column} did not advance`);
+    }
+    assert.equal(after.planned_rows_timeouts, 1, 'only the deadline grew');
+    assert.equal(h.uploads('revision_rows'), 0);
+    assert.equal(h.uploads('revisions'), 0, 'the batch stops at the table whose job is still running');
+    assert.deepEqual(h.bigquery.state.cancels, [], 'the running job is not cancelled');
+    // The next run checks the same job again, and finishes once it has finished.
+    running.status = { state: 'DONE' };
+    assert.deepEqual(await h.sink.runOnce(), { idle: false, revisions: 1, rows: 3, missing: [] });
+    assert.equal(h.uploads('revision_rows'), 0);
+  });
+
+  test('a job that finished with an error is found without uploading, and only then does the attempt advance', async t => {
+    const h = await convergenceHarness(t, 'failed_job', { tables: false });
+    const baseJobId = await h.retainPlan();
+    h.seedJob(`${baseJobId}_rows`, { state: 'DONE', errorResult: { reason: 'invalid', message: 'bad row' } });
+    await assert.rejects(h.sink.runOnce(), /will be retried as a new attempt/);
+    const state = await h.state();
+    assert.equal(state.planned_rows_attempt, 1, 'that table advanced to the next job ID');
+    assert.equal(state.planned_revisions_attempt, 0);
+    assert.equal(state.planned_rows_timeouts, 0, 'a failure is not a timeout');
+    assert.equal(
+      h.uploads('revision_rows'),
+      0,
+      'the failed job was identified by its ID, not by uploading the file again'
+    );
+    assert.deepEqual(await h.sink.runOnce(), { idle: false, revisions: 1, rows: 3, missing: [] });
+    assert.ok(h.jobIds().includes(`${baseJobId}_rows_a1`), 'the retry used the new job ID');
+    assert.equal(h.rowsLoaded(), 3);
+  });
+
+  test('the deadline grows with each timeout, persists across runs and sink instances, and grows once under overlapping runs', async t => {
+    const h = await convergenceHarness(t, 'deadline_growth', { tables: false });
+    const baseJobId = await h.retainPlan();
+    const running = h.seedJob(`${baseJobId}_rows`, { state: 'RUNNING' });
+    await assert.rejects(h.sink.runOnce(), /exceeded this run's 1000 ms deadline/);
+    assert.equal((await h.state()).planned_rows_timeouts, 1);
+    // A different sink instance (a restarted process) reads the grown deadline from the plan.
+    const restarted = h.makeSink();
+    await assert.rejects(restarted.runOnce(), /exceeded this run's 2000 ms deadline/);
+    const state = await h.state();
+    assert.equal(state.planned_rows_timeouts, 2);
+    assert.equal(state.planned_rows_attempt, 0, 'the job ID never changed');
+    assert.deepEqual(h.jobIds(), [`${baseJobId}_rows`]);
+    running.status = { state: 'DONE' };
+    assert.deepEqual(await restarted.runOnce(), { idle: false, revisions: 1, rows: 3, missing: [] });
+
+    // Two runs that time out together on the same observed value grow it once.
+    const other = await convergenceHarness(t, 'deadline_growth_overlap', { tables: false });
+    const otherBase = await other.retainPlan();
+    other.seedJob(`${otherBase}_rows`, { state: 'RUNNING' });
+    const results = await Promise.allSettled([other.sink.runOnce(), other.makeSink().runOnce()]);
+    assert.ok(
+      results.every(result => result.status === 'rejected' && /exceeded this run's/.test(result.reason.message)),
+      results.map(result => result.reason?.message ?? result.status).join('; ')
+    );
+    assert.equal((await other.state()).planned_rows_timeouts, 1);
+  });
+
+  test('a rerun in the same process waits for the upload its previous run abandoned instead of uploading again', async t => {
+    const h = await convergenceHarness(t, 'inflight_upload', {
+      fake: { uploadMs: tableId => (tableId === 'revision_rows' ? 2_200 : 0) },
+    });
+    await assert.rejects(h.sink.runOnce(), /Uploading the load exceeded this run's 1000 ms deadline/);
+    assert.equal(h.jobIds().length, 0, 'the job does not exist yet: the upload is still in flight');
+    // The lookup finds nothing, but the abandoned upload is still running here: wait for it.
+    assert.deepEqual(await h.sink.runOnce(), { idle: false, revisions: 1, rows: 3, missing: [] });
+    assert.equal(h.uploads('revision_rows'), 1, 'one upload of the file served both runs');
+    assert.equal(h.rowsLoaded(), 3);
+    assert.equal((await h.state()).planned_to_cursor, null);
+  });
+
+  test('an upload refused with 409 because another process created the job moves on to that job', async t => {
+    const h = await convergenceHarness(t, 'duplicate_upload', {
+      fake: { uploadMs: tableId => (tableId === 'revision_rows' ? 1_600 : 0) },
+    });
+    await assert.rejects(h.sink.runOnce(), /exceeded this run's 1000 ms deadline/);
+    // A second sink instance has no knowledge of the first one's upload (another process): the lookup still
+    // finds no job, its own upload is refused after the background upload created it, and it then finds the job.
+    const other = h.makeSink();
+    assert.deepEqual(await other.runOnce(), { idle: false, revisions: 1, rows: 3, missing: [] });
+    assert.equal(h.uploads('revision_rows'), 2, 'the second process uploaded and was refused');
+    assert.equal(h.rowsLoaded(), 3, 'rows landed exactly once');
+    assert.equal(h.jobIds().filter(id => /_rows/.test(id)).length, 1);
+  });
+
+  test('a refused job ID that cannot be found says which settings to check', async t => {
+    const h = await convergenceHarness(t, 'unfindable_job', { tables: false, fake: { jobProject: 'client' } });
+    const baseJobId = await h.retainPlan();
+    // The job exists, but under another project than the sink looks in.
+    h.bigquery.state.jobs.set(`client-project/${baseJobId}_rows`, { status: { state: 'DONE' } });
+    await assert.rejects(h.sink.runOnce(), /already existing, but the job cannot be found.*projectId and location/);
+    assert.equal(h.uploads('revision_rows'), 1);
+  });
+
+  test('the revisions table keeps its own deadline growth and finds its own job', async t => {
+    const h = await convergenceHarness(t, 'revisions_job', { tables: false });
+    const baseJobId = await h.retainPlan();
+    h.seedJob(`${baseJobId}_rows`, { state: 'DONE' });
+    const running = h.seedJob(`${baseJobId}_revs`, { state: 'RUNNING' });
+    await assert.rejects(h.sink.runOnce(), /Waiting for the running load job exceeded this run's 1000 ms deadline/);
+    const state = await h.state();
+    assert.equal(state.planned_revisions_timeouts, 1);
+    assert.equal(state.planned_rows_timeouts, 0);
+    assert.equal(h.uploads('revision_rows') + h.uploads('revisions'), 0, 'both tables found their jobs');
+    running.status = { state: 'DONE' };
+    assert.deepEqual(await h.sink.runOnce(), { idle: false, revisions: 1, rows: 3, missing: [] });
+    assert.equal(h.uploads('revision_rows') + h.uploads('revisions'), 0);
+  });
+
+  test('an abort ends the wait for a running job without growing the deadline or advancing anything', async t => {
+    const h = await convergenceHarness(t, 'abort_wait', { tables: false });
+    const baseJobId = await h.retainPlan();
+    h.seedJob(`${baseJobId}_rows`, { state: 'RUNNING' });
+    const controller = new AbortController();
+    const running = h.sink.runOnce({ signal: controller.signal });
+    await waitFor(() => h.events.filter(event => event === `lookup ${baseJobId}_rows`).length >= 2, 'a poll');
+    controller.abort(new Error('shutting down'));
+    await assert.rejects(running, /shutting down/);
+    const state = await h.state();
+    assert.equal(state.planned_rows_timeouts, 0);
+    assert.equal(state.planned_rows_attempt, 0);
+    assert.ok(state.planned_to_cursor, 'the plan is retained');
+    assert.deepEqual(h.bigquery.state.cancels, []);
+  });
+
+  test('a job that disappears while it is awaited fails the run without being treated as a timeout', async t => {
+    const h = await convergenceHarness(t, 'vanishing_job', { tables: false });
+    const baseJobId = await h.retainPlan();
+    h.seedJob(`${baseJobId}_rows`, { state: 'RUNNING' });
+    setTimeout(() => h.bigquery.state.jobs.delete(`adcp-reporting/${baseJobId}_rows`), 300);
+    await assert.rejects(h.sink.runOnce(), /disappeared while it was awaited/);
+    assert.equal((await h.state()).planned_rows_timeouts, 0);
+  });
+
+  test('a status check that hangs is bounded by the base deadline and does not grow the load deadline', async t => {
+    const h = await convergenceHarness(t, 'hung_lookup', { tables: false });
+    const baseJobId = await h.retainPlan();
+    h.seedJob(`${baseJobId}_rows`, { state: 'RUNNING' });
+    h.settings.hangLookups = true;
+    await assert.rejects(h.sink.runOnce(), /BigQuery call exceeded its deadline/);
+    h.settings.hangLookups = false;
+    const state = await h.state();
+    assert.equal(state.planned_rows_timeouts, 0, 'a lookup that never answered says nothing about the load');
+    assert.ok(state.planned_to_cursor);
+  });
+
+  test('reset() clears the deadline growth together with the plan', async t => {
+    const h = await convergenceHarness(t, 'reset_growth', { tables: false });
+    const baseJobId = await h.retainPlan();
+    h.seedJob(`${baseJobId}_rows`, { state: 'RUNNING' });
+    await assert.rejects(h.sink.runOnce(), /exceeded this run's 1000 ms deadline/);
+    assert.equal((await h.state()).planned_rows_timeouts, 1);
+    await h.sink.reset({ discardRetainedPlan: true });
+    const state = await h.state();
+    assert.equal(state.planned_rows_timeouts, 0);
+    assert.equal(state.planned_revisions_timeouts, 0);
+    assert.equal(state.planned_to_cursor, null);
+  });
+
+  test('the load deadline doubles per timeout and is capped at 6 hours', () => {
+    const deadline = sinkModule.reportingWarehouseLoadDeadlineV1;
+    assert.equal(deadline(1_000, 0), 1_000);
+    assert.equal(deadline(1_000, 1), 2_000);
+    assert.equal(deadline(1_000, 3), 8_000);
+    assert.equal(deadline(600_000, 5), 19_200_000);
+    assert.equal(deadline(600_000, 6), 21_600_000, 'capped at 6 hours');
+    assert.equal(deadline(1_000, 1_000_000), 21_600_000);
+    assert.equal(deadline(21_600_000, 0), 21_600_000);
+    assert.equal(deadline(1_000, -3), 1_000);
+  });
+
+  test('a sink table from before the deadline columns asks for the idempotent migration', async t => {
+    const { pool, store: realStore } = await isolatedWarehouseStore(t, 'no_timeout_columns');
+    await pool.query('ALTER TABLE adcp_reporting_warehouse_sinks DROP COLUMN planned_rows_timeouts');
+    const sink = newSink(fakeBigQuery(), {
+      name: 'no_timeout_columns',
+      account_id: 'acct_no_timeout_columns',
       db: pool,
       store: realStore,
-      loadTimeoutMilliseconds: 1_000,
     });
-    const within = (promise, milliseconds) =>
-      Promise.race([
-        promise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timed out waiting')), milliseconds)),
-      ]);
-
-    // A cancel call that never answers must not hang runOnce(); it has its own bound.
-    bigquery.settings.hangCancel = true;
-    bigquery.holdNext('revision_rows');
-    await assert.rejects(within(sink.runOnce(), 5_000), /exceeded its deadline/);
-    assert.equal(bigquery.cancels.length, 1);
-    bigquery.settings.hangCancel = false;
-
-    // The job is still RUNNING (BigQuery cancels asynchronously): the next run waits, and does not cancel again.
-    await assert.rejects(sink.runOnce(), /still running/);
-    assert.equal(bigquery.cancels.length, 1, 'waiting for a running job does not cancel it');
-    assert.equal(bigquery.tables.get('reporting.revision_rows'), undefined);
-
-    // A status check that times out says nothing about the job, so it is not cancelled either.
-    bigquery.settings.hangMetadata = true;
-    await assert.rejects(within(sink.runOnce(), 5_000), /exceeded its deadline/);
-    bigquery.settings.hangMetadata = false;
-    assert.equal(bigquery.cancels.length, 1);
-
-    // The cancel finally takes effect: the failure advances the attempt, and the run after that loads once.
-    bigquery.jobs.forEach((job, jobId) => {
-      if (job.status.state === 'RUNNING') job.status = { state: 'DONE', errorResult: { reason: 'stopped' } };
-    });
-    await assert.rejects(sink.runOnce(), /will be retried as a new attempt/);
-    assert.deepEqual(await sink.runOnce(), { idle: false, revisions: 1, rows: 2, missing: [] });
-    assert.equal(bigquery.tables.get('reporting.revision_rows').length, 2, 'rows landed exactly once');
+    await assert.rejects(sink.runOnce(), /apply REPORTING_WAREHOUSE_SINK_MIGRATION again/);
+    await pool.query(sinkModule.REPORTING_WAREHOUSE_SINK_MIGRATION);
+    assert.deepEqual(await sink.runOnce(), { idle: true, revisions: 0, rows: 0, missing: [] });
   });
 
   test('reports revisions retired before the batch ran as missing, and still advances', async () => {
