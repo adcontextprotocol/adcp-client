@@ -78,7 +78,13 @@ export async function existingSyncAccounts(
       : null;
     // A ref-ignoring singleton resolver is valid for some discovery tools,
     // but is not evidence that this natural key has already been synced.
-    existing.push(account?.brand && account.operator !== undefined ? account : null);
+    existing.push(
+      typeof account?.brand?.domain === 'string' &&
+        account.brand.domain.length > 0 &&
+        typeof account.operator === 'string'
+        ? account
+        : null
+    );
   }
   return existing;
 }
