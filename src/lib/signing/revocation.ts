@@ -45,7 +45,11 @@ const REASONS = [
   'cACompromise',
   'keyCompromise',
 ];
-/** @internal Permanent facts retain the most severe reason and earliest valid date. */
+/**
+ * @internal Permanent facts retain the most severe reason and earliest valid
+ * date. A `keyCompromise` entry without an `invalidity_date` exposes every
+ * receipt, so no later dated entry can narrow it.
+ */
 export function mergeRevocationDetails(
   prior: RevocationDetail | undefined,
   detail: RevocationDetail
@@ -54,6 +58,13 @@ export function mergeRevocationDetails(
     REASONS.indexOf(detail.reason ?? 'unspecified') > REASONS.indexOf(prior?.reason ?? 'unspecified')
       ? detail.reason
       : (prior?.reason ?? detail.reason);
+  const hasValidDate = (entry: RevocationDetail | undefined) =>
+    !!entry?.invalidity_date && Number.isFinite(Date.parse(entry.invalidity_date));
+  if (
+    reason === 'keyCompromise' &&
+    [prior, detail].some(entry => entry?.reason === 'keyCompromise' && !hasValidDate(entry))
+  )
+    return { reason };
   const dates = [prior?.invalidity_date, detail.invalidity_date]
     .filter((s): s is string => !!s && Number.isFinite(Date.parse(s)))
     .sort((a, b) => Date.parse(a) - Date.parse(b));

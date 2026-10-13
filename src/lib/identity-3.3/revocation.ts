@@ -38,15 +38,36 @@ export interface MonotonicOriginRevocationStore {
   merge(origin: string, snapshot: OriginRevocationSnapshot): Promise<void>;
   get(origin: string, keyid: string): Promise<RevocationDetail | undefined>;
 }
+/**
+ * Process-local revocation history for development and tests. Public
+ * deployments need durable history (`createIdentity33StateStores`) so a
+ * restart never forgets a revocation.
+ *
+ * Capacity is bounded per origin, per operator (registrable domain) and in
+ * total. The operator budget keeps one registrable domain with wildcard
+ * subdomains from consuming the whole store and locking out every other
+ * operator's history. Facts are never evicted to regain capacity.
+ */
 export class InMemoryOriginRevocationStore implements MonotonicOriginRevocationStore {
   readonly durability = 'process-local' as const;
   private readonly revoked = new Map<string, RevocationDetail>();
-  constructor(private readonly limits = { perOrigin: 16384, total: 100000 }) {}
+  private readonly originKeys = new Map<string, number>();
+  private readonly operatorKeys = new Map<string, number>();
+  private readonly limits: { perOrigin: number; perOperator: number; total: number };
+  constructor(limits: { perOrigin?: number; perOperator?: number; total?: number } = {}) {
+    this.limits = { perOrigin: 16384, perOperator: 16384, total: 100000, ...limits };
+  }
   async merge(origin: string, snapshot: OriginRevocationSnapshot): Promise<void> {
     origin = canonicalAgentOrigin(origin);
+    const operator = operatorOf(origin);
     const additions = new Set(snapshot.revoked_kids.filter(kid => !this.revoked.has(JSON.stringify([origin, kid]))));
-    const count = [...this.revoked.keys()].filter(key => (JSON.parse(key) as string[])[0] === origin).length;
-    if (count + additions.size > this.limits.perOrigin || this.revoked.size + additions.size > this.limits.total)
+    const originCount = this.originKeys.get(origin) ?? 0,
+      operatorCount = this.operatorKeys.get(operator) ?? 0;
+    if (
+      originCount + additions.size > this.limits.perOrigin ||
+      operatorCount + additions.size > this.limits.perOperator ||
+      this.revoked.size + additions.size > this.limits.total
+    )
       throw new WebBotAuthError(403, 'revocation_storage_limit');
     for (const kid of snapshot.revoked_kids) {
       const key = JSON.stringify([origin, kid]),
@@ -54,10 +75,22 @@ export class InMemoryOriginRevocationStore implements MonotonicOriginRevocationS
         detail = snapshot.revocation_details?.[kid] ?? {};
       this.revoked.set(key, mergeRevocationDetail(prior, detail));
     }
+    if (additions.size) {
+      this.originKeys.set(origin, originCount + additions.size);
+      this.operatorKeys.set(operator, operatorCount + additions.size);
+    }
   }
   async get(origin: string, keyid: string): Promise<RevocationDetail | undefined> {
     const entry = this.revoked.get(JSON.stringify([canonicalAgentOrigin(origin), keyid]));
     return entry && { ...entry };
+  }
+}
+function operatorOf(origin: string): string {
+  try {
+    return eTldPlusOne(origin);
+  } catch {
+    // No registrable domain (IP literal, unlisted suffix): the host is its own bucket.
+    return new URL(origin).hostname;
   }
 }
 export class OriginRevocationResolver {
@@ -100,9 +133,12 @@ export class OriginRevocationResolver {
       if (!promise) {
         if (
           this.pending.size >= 16 ||
-          [...this.pending.keys()].filter(pendingOrigin => eTldPlusOne(pendingOrigin) === eTldPlusOne(origin)).length >=
-            2
+          [...this.pending.keys()].filter(pendingOrigin => operatorOf(pendingOrigin) === operatorOf(origin)).length >= 2
         ) {
+          // Refresh capacity is shared across attacker-selectable origins; a
+          // full queue must not fail an origin whose signed list is still
+          // within its outage grace.
+          if ((this.graceUntil.get(origin) ?? 0) > now) return !!(await this.readStored(origin, keyid));
           throw new WebBotAuthError(403, 'revocation_unavailable');
         }
         promise = this.refresh(origin).catch(error => {
@@ -222,10 +258,10 @@ export class OriginRevocationResolver {
         snapshot.issuer !== origin ||
         !Number.isFinite(updated) ||
         !Number.isFinite(next) ||
-        updated > now ||
+        // Tolerate a publisher clock slightly ahead, as for request `created`.
+        updated > now + 60 ||
         next <= now ||
         next <= updated ||
-        next > now + 1800 ||
         !Array.isArray(snapshot.revoked_kids) ||
         snapshot.revoked_kids.length > 4096 ||
         snapshot.revoked_kids.some(k => typeof k !== 'string' || k.length > 256) ||
@@ -253,6 +289,8 @@ export class OriginRevocationResolver {
         this.updated.delete(oldest);
         this.graceUntil.delete(oldest);
       }
+      // Staleness follows the signed next_update (plus grace). The polling
+      // interval only schedules the next fetch; it never shortens validity.
       this.graceUntil.set(origin, next + 4 * (this.options.pollingIntervalSeconds ?? 300));
       this.updated.set(origin, updated);
       this.freshness.set(origin, Math.min(next, now + (this.options.pollingIntervalSeconds ?? 300)));

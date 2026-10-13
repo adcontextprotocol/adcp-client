@@ -149,7 +149,12 @@ to sign a list of revoked key thumbprints and optional reasons/dates.
 `createSignedOriginRevocationList` provides the same authoring API. The SDK
 supports Ed25519 and P-256 identity keys. Observed key revocations are permanent;
 refresh failures use the last verified list only within the published grace
-window. First-contact identity reads may proceed when no list is available;
+window. Staleness follows the list's signed `next_update`: a list may declare a
+longer cadence (for example daily), the verifier still re-polls at least every
+polling interval (at most 30 minutes), and a list fails closed only after
+`next_update` plus four polling intervals. A list whose `updated` is more than
+60 seconds ahead of the verifier clock, or whose `next_update` has passed, is
+refused. First-contact identity reads may proceed when no list is available;
 mutating operations fail closed without a current or grace-valid signed list.
 
 For positively negotiated 3.3 sellers advertising signed webhooks, experimental
@@ -291,9 +296,10 @@ Permanent revocation storage reserves separate bounded capacity for audited boun
 origins and anonymous/self-service origins, so first-contact traffic cannot exhaust the bound
 pool. Storage failures deny reads and mutations without outage grace; inspect the
 non-enumerable error cause and raise `createIdentity33StateStores.revocationLimits`
-when capacity is exhausted. Existing facts must remain stored. Outage grace is
-available only after that origin's fetch fails, never merely because the global
-fetch limiter is full.
+when capacity is exhausted. Existing facts must remain stored. When the shared
+refresh limiter is full (attacker-selected origins can occupy it), an origin
+whose last verified list is still inside `next_update` plus grace keeps that
+status, exactly as if its own fetch had failed; past grace it fails closed.
 
 ## Authoring and pinned sources
 
@@ -350,6 +356,6 @@ The standard principal resolver automatically fences RFC signatures for already-
 
 Signing capabilities include the experimental `wba_draft_revision` field next to `profiles`, identifying `draft-ietf-webbotauth-httpsig-protocol-00` as required by ratified R2. Reporting and artifact callback choices are persisted by destination before dispatch, including update calls; their receivers pass the trusted request URL and `taskType` (`media_buy_delivery` or `artifact_delivery`) to `verifyAndParseWebhook`. These deliveries preserve the original payload in `result` after authentication and schema validation; `envelope` adds SDK routing/status metadata. PostgreSQL migrations also add optional `delivery_kind`.
 
-Revocation stores allocate no permanent row for an empty list. Each audited/unbound pool reserves a tenant-wide CAS budget (10,000 origins and 100,000 keys; each operator is limited to 256 origins and 16,384 keys per pool). Audited bindings promote existing facts without deleting them; self-service `openAccess` bindings stay in the unbound pool. Failed writes may conservatively reserve capacity; facts are never evicted to regain it. Store/quota failures return `SERVICE_UNAVAILABLE` for every operation. In-memory revocation storage is for development/tests; production sellers use shared persistent stores.
+Revocation stores allocate no permanent row for an empty list. Each audited/unbound pool reserves a tenant-wide CAS budget (10,000 origins and 100,000 keys; each operator is limited to 256 origins and 16,384 keys per pool). Audited bindings promote existing facts without deleting them; self-service `openAccess` bindings stay in the unbound pool. Failed writes may conservatively reserve capacity; facts are never evicted to regain it. Store/quota failures return `SERVICE_UNAVAILABLE` for every operation. In-memory revocation storage is for development/tests and is bounded per origin, per operator (registrable domain, default 16,384 keys) and in total, so wildcard subdomains of one operator cannot exhaust it; production sellers use shared persistent stores.
 
 Unbound callers use an internal per-origin anonymous scope to isolate task/proposal state; this is not a durable principal and is never returned by `get_principal`. Only the explicit anonymous tool policy is allowed.
