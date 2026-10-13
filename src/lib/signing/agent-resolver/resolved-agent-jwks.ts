@@ -1,6 +1,8 @@
 import type { AdcpJsonWebKey } from '../types';
 import type { JwksResolution, JwksResolver } from '../jwks';
 import { AgentResolverError } from './errors';
+import { canonicalAgentOrigin } from './canonicalize';
+import { canonicalAgentUrl } from './select-agent';
 import { resolveAgent, type AgentProtocol, type AgentResolution, type ResolveAgentOptions } from './resolve-agent';
 
 export interface ResolvedAgentJwksResolverOptions extends Pick<
@@ -34,6 +36,7 @@ export class ResolvedAgentJwksResolver implements JwksResolver {
   private readonly unknownKidCooldownSeconds: number;
   private readonly resolveAgentFn: (agentUrl: string, options: ResolveAgentOptions) => Promise<AgentResolution>;
   private canonicalAgentUrl?: string;
+  private configuredOrigin?: string;
   private legacyWebhookFallback?: boolean;
   private operatorRecord?: JwksResolution['operatorRecord'];
   get resolvedAgentUrl(): string | undefined {
@@ -63,11 +66,34 @@ export class ResolvedAgentJwksResolver implements JwksResolver {
     this.resolveAgentFn = options.resolve ?? resolveAgent;
   }
 
-  async resolve(keyid: string): Promise<AdcpJsonWebKey | null> {
-    return (await this.resolveWithMetadata(keyid)).jwk;
+  async resolve(keyid: string, signerOrigin?: string): Promise<AdcpJsonWebKey | null> {
+    return (await this.resolveWithMetadata(keyid, signerOrigin)).jwk;
   }
 
-  async resolveWithMetadata(keyid: string): Promise<JwksResolution> {
+  async resolveWithMetadata(keyid: string, signerOrigin?: string): Promise<JwksResolution> {
+    // Context may narrow this pinned source, but must never retarget its keys.
+    // Check before cache access so a shared kid cannot cross origin boundaries.
+    if (signerOrigin !== undefined) {
+      try {
+        this.configuredOrigin ??= canonicalAgentOrigin(this.agentUrl);
+      } catch {
+        throw new AgentResolverError('request_signature_key_unknown', 'Configured agent origin is malformed.');
+      }
+      let requestedOrigin: string;
+      try {
+        // Context is a wire locator: unlike producer normalization, reject
+        // raw non-ASCII hostnames and malformed authorities before comparing.
+        requestedOrigin = canonicalAgentOrigin(canonicalAgentUrl(signerOrigin));
+      } catch {
+        throw new AgentResolverError('request_signature_key_unknown', 'Signer origin is malformed.');
+      }
+      if (requestedOrigin !== this.configuredOrigin) {
+        throw new AgentResolverError(
+          'request_signature_key_unknown',
+          'Signer origin does not match the configured agent origin.'
+        );
+      }
+    }
     const now = this.now();
     let refreshed = false;
     if (now >= this.expiresAt) {

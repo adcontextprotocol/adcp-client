@@ -126,6 +126,7 @@ export { signResponseAsync } from './signer-async';
 export {
   resolveAgent,
   ResolvedAgentJwksResolver,
+  canonicalAgentOrigin,
   getAgentJwks,
   createAgentJwksSet,
   AgentResolverError,

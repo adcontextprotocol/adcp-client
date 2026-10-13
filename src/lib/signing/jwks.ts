@@ -12,9 +12,17 @@ export interface JwksResolution {
 }
 
 export interface JwksResolver {
-  resolve(keyid: string): Promise<AdcpJsonWebKey | null>;
+  /**
+   * Optional signer-origin locator for resolvers serving multiple signers.
+   * It is unverified request context, never proof of identity or authority.
+   * Origin-aware caches must scope entries by (canonical origin, keyid).
+   * Wrappers must forward it on both lookup methods. Existing one-argument
+   * implementations remain valid; static and HTTPS resolvers stay pinned to
+   * their configured key source and do not attribute identity from this value.
+   */
+  resolve(keyid: string, signerOrigin?: string): Promise<AdcpJsonWebKey | null>;
   /** Optional metadata-aware lookup used by verifiers that must enforce delegation expiry at acceptance time. */
-  resolveWithMetadata?(keyid: string): Promise<JwksResolution>;
+  resolveWithMetadata?(keyid: string, signerOrigin?: string): Promise<JwksResolution>;
 }
 
 export class StaticJwksResolver implements JwksResolver {
@@ -24,7 +32,7 @@ export class StaticJwksResolver implements JwksResolver {
     for (const k of keys) this.byKid.set(k.kid, k);
   }
 
-  async resolve(keyid: string): Promise<AdcpJsonWebKey | null> {
+  async resolve(keyid: string, _signerOrigin?: string): Promise<AdcpJsonWebKey | null> {
     return this.byKid.get(keyid) ?? null;
   }
 }
