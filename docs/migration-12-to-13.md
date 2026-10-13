@@ -400,6 +400,13 @@ resolve. An `AgentClient` given a resolver rebuilt from these routes applies
 that rewrite in another process, as it does after its own discovery. Routes
 without `seller_declared` leave canonical writes unchanged.
 
+A buyer that stored the seller's raw `get_products` product, and projects it
+again in a process that never ran discovery, can record the same origin by
+passing that stored product: `legacyRoutesForProduct(productId,
+projected.format_options, { sellerProduct: storedProduct })`. An option is then
+seller-declared exactly when the stored product's own `format_options[]` names
+it, which is the rule the SDK applies after its own discovery.
+
 Compatibility consumers that must retain top-level `format_ids[]` while
 publishing URL-free canonical declarations can use the additive projection:
 

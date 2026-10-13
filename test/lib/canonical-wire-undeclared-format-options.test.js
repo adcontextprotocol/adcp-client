@@ -18,6 +18,7 @@ const {
   createProductCache,
   legacyRoutesForProduct,
   packageRefsForFormatOptions,
+  toAdditiveCanonicalProduct,
 } = require('../../dist/lib/index.js');
 
 const AAO = 'https://creative.adcontextprotocol.org/';
@@ -776,4 +777,87 @@ describe('canonical wire: persisted routes carry whether the seller declared eac
       }
     });
   }
+});
+
+describe('canonical wire: routes built from a stored seller response', () => {
+  // A buyer that stored the seller's raw get_products product projects it again
+  // in a process that never ran discovery, so the SDK holds no origin metadata.
+  const projectStored = sellerProduct => {
+    const projected = toAdditiveCanonicalProduct(structuredClone(sellerProduct));
+    return projected.product ?? projected;
+  };
+
+  test('an option derived from legacy format_ids is undeclared and records its direct selector', () => {
+    const stored = legacyOnlyProduct('legacy-shaped', [{ agent_url: AAO, id: 'display_300x250_image' }]);
+    const product = projectStored(stored);
+    const [option] = product.format_options;
+
+    const routes = legacyRoutesForProduct(stored.product_id, product.format_options, { sellerProduct: stored });
+
+    assert.strictEqual(routes.length, 1);
+    assert.strictEqual(routes[0].seller_declared, false);
+    assert.deepStrictEqual(routes[0].canonical_selector, { format_kind: option.format_kind, params: option.params });
+  });
+
+  test("an option in the seller's own format_options is declared, even with an SDK-style id", () => {
+    const declaredId = `migrated_${'c'.repeat(32)}`;
+    const stored = {
+      product_id: 'declared',
+      name: 'declared',
+      description: 'Seller-declared canonical option with a legacy alias',
+      format_options: [
+        {
+          format_option_id: declaredId,
+          format_kind: 'image',
+          params: { width: 300, height: 250 },
+          v1_format_ref: [{ agent_url: AAO, id: 'display_300x250_image' }],
+        },
+      ],
+      pricing_options: PRICING_OPTIONS,
+    };
+    const product = projectStored(stored);
+
+    const routes = legacyRoutesForProduct(stored.product_id, product.format_options, { sellerProduct: stored });
+    const route = routes.find(candidate => candidate.format_option_ref.format_option_id === declaredId);
+
+    assert.ok(route);
+    assert.strictEqual(route.seller_declared, true);
+    assert.strictEqual(route.canonical_selector, undefined);
+  });
+
+  test('without sellerProduct, a stored projection records no origin', () => {
+    const stored = legacyOnlyProduct('legacy-shaped', [{ agent_url: AAO, id: 'display_300x250_image' }]);
+    const product = projectStored(stored);
+
+    const [route] = legacyRoutesForProduct(stored.product_id, product.format_options);
+
+    assert.strictEqual(route.seller_declared, undefined);
+    assert.strictEqual(route.canonical_selector, undefined);
+  });
+
+  test('a fresh client rewrites an undeclared option from routes built from the stored response', async () => {
+    const stored = legacyOnlyProduct('legacy-shaped', [{ agent_url: AAO, id: 'display_300x250_image' }]);
+    const product = projectStored(stored);
+    const [option] = product.format_options;
+    const routes = legacyRoutesForProduct(stored.product_id, product.format_options, { sellerProduct: stored });
+    const execution = await canonicalSeller([stored]);
+    try {
+      const created = await execution.agent.createMediaBuy(
+        mediaBuy({
+          product_id: product.product_id,
+          ...packageRefsForFormatOptions(product, [option.format_option_id]),
+        }),
+        undefined,
+        { canonicalFormatLegacyResolver: canonicalFormatLegacyResolverFromRoutes(routes) }
+      );
+
+      assert.strictEqual(created.success, true);
+      const pkg = execution.captured.create.packages[0];
+      assert.strictEqual(pkg.format_option_refs, undefined);
+      assert.strictEqual(pkg.format_kind, option.format_kind);
+      assert.deepStrictEqual(pkg.params, option.params);
+    } finally {
+      await execution.close();
+    }
+  });
 });
