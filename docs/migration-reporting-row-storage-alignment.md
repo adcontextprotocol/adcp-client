@@ -45,6 +45,25 @@ upgrade may sit at a different key than its earlier objects, and an upload that
 was in flight across the upgrade can leave its old-key object behind. Re-sync
 instead of upgrading in place if you want every object under the new layout.
 
+## Object key templates require `{revision_key}`
+
+Every writable object binding's `keyTemplate` must now include
+`{revision_key}`, not only when snapshot compaction is on, so no two row sets
+can ever name the same object key. The default template already includes it.
+The store throws `INVALID_INPUT` when a binding is configured and again in
+`readyRowStorage` if a template omits it. A custom template without it must
+add it, under a new binding ID (a binding's identity digest includes its
+template).
+
+Objects already written stay readable: reads use each chunk's recorded
+`object_ref`, not a re-rendered key. Keep the old binding definition
+configured while revisions reference it, and mark it `readOnly: true`; a
+read-only binding is exempt from the requirement, is never chosen for new
+writes, and is still used for reads and retirement. Snapshot compaction refuses
+to run while a read-only binding's template lacks `{revision_key}`. The
+reference-checked deletes and the per-object lock are unchanged, because
+header-only revisions still share chunks within an obligation.
+
 ## Renamed fields
 
 | Before                                          | After                                       | AdCP definition                                           |

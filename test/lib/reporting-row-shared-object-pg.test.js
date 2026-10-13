@@ -1,9 +1,11 @@
 /**
  * PostgreSQL integration tests for external row objects shared between row sets.
- * A custom `keyTemplate` need only include `{content_sha256}` and `{chunk_index}`, and an
- * adjustment's `content_sha256` digests its rows alone, so identical corrections in two
- * obligations map to one object. Every delete path must leave an object another row set still
- * references, and must not leak it once the last reference is gone.
+ * Object keys are unique per row set (every binding's key template includes `{revision_key}`), but
+ * header-only revisions share chunks within an obligation and chunk rows written under an older
+ * template can name one object from several row sets. These tests re-point chunk rows at a shared
+ * object to model that. Every delete path must leave an object another row set still references,
+ * and must not leak it once the last reference is gone; a commit that adopts an object another
+ * writer created (a retry of the same row set) must prove it is still there under the object lock.
  *
  * REPORTING_LEDGER_PG_URL=postgres://localhost/test node --test test/lib/reporting-row-shared-object-pg.test.js
  */
@@ -19,7 +21,6 @@ const { createRowStorageFixture } = require('../helpers/reporting-row-storage-fi
 process.env.NODE_ENV = 'test';
 const DATABASE_URL = process.env.REPORTING_LEDGER_PG_URL;
 
-const MINIMAL_TEMPLATE = '{prefix}/{namespace_key}/{content_sha256}/{chunk_index}';
 const rows = Array.from({ length: 30 }, (_, index) => ({ ordinal: index, value: index }));
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
@@ -38,6 +39,7 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
   let providerCalls = { get: 0, stat: 0 };
   let binding;
   let provider;
+  let baseProvider;
 
   const count = async (sql, values = []) => Number((await pool.query(sql, values)).rows[0].n);
   const accountId = target => target.fixture.request.account.account_id;
@@ -113,7 +115,7 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     };
   }
 
-  /** Two obligations, each with an adjustment of identical rows, which share one object. */
+  /** Two obligations, each with an adjustment of identical rows, whose chunk rows name one object (as rows written under an older template could). */
   async function sharedPair() {
     sequence += 1;
     current = rows.map(row => ({ ...row, value: row.value + sequence * 100 }));
@@ -122,6 +124,13 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     await store.commitAdjustment(adjustmentFor(first), first.fixture.lease);
     await store.commitAdjustment(adjustmentFor(second), second.fixture.lease);
     const [chunkA] = await chunksOf(first.adjustmentId);
+    const [ownB] = await chunksOf(second.adjustmentId);
+    // Point the second row set's chunk at the first's object (location columns are mutable) and drop its own.
+    await pool.query(
+      `UPDATE adcp_reporting_row_chunks SET object_ref = $2, native_version_ref = $3 WHERE row_set_id = $1`,
+      [second.adjustmentId, chunkA.object_ref, chunkA.native_version_ref]
+    );
+    rmSync(fileOf(ownB));
     const [chunkB] = await chunksOf(second.adjustmentId);
     return { first, second, chunkA, chunkB };
   }
@@ -137,6 +146,7 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     await pool.query(ledger.REPORTING_LEDGER_MIGRATION);
     await pool.query(ledger.REPORTING_ROW_STORAGE_MIGRATION);
     const base = ledger.createFilesystemReportingRowObjectProviderV1({ roots: { rows: root } });
+    baseProvider = base;
     // After an adopting writer reads the existing object, run a hook (once): the window between
     // adoption and the writer's ledger commit.
     provider = {
@@ -159,7 +169,6 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
       provider: 'filesystem',
       location: { root: 'rows' },
       prefix: 'shared',
-      keyTemplate: MINIMAL_TEMPLATE,
     };
     store = new ledger.PostgresReportingLedgerStore(pool, {
       acknowledgeIsolatedDatabase: true,
@@ -177,7 +186,7 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     if (root) rmSync(root, { recursive: true, force: true });
   });
 
-  test('two obligations with identical adjustment rows share one object under a minimal template', async () => {
+  test('chunk rows from two obligations can name one object, and both read it', async () => {
     const { first, second, chunkA, chunkB } = await sharedPair();
     assert.deepEqual(chunkB, chunkA);
     assert.ok(existsSync(fileOf(chunkA)));
@@ -328,95 +337,126 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     assert.equal(existsSync(fileOf(chunkA)), false, 'the sweep reads the old keys too');
   });
 
-  test('a commit whose adopted object was deleted after adoption fails cleanly and retries', async () => {
+  /**
+   * An obligation whose next adjustment's object already sits at its planned key, as an abandoned upload
+   * of the same row set leaves it, so the commit adopts it. Keys are unique per row set, so adoption only
+   * ever happens for a retry of the same row set.
+   */
+  async function preUploaded(suffix) {
     sequence += 1;
     current = rows.map(row => ({ ...row, value: row.value + sequence * 100 }));
-    const first = await officialObligation(`race_a${sequence}`);
-    const second = await officialObligation(`race_b${sequence}`);
-    await store.commitAdjustment(adjustmentFor(first), first.fixture.lease);
-    const [chunkA] = await chunksOf(first.adjustmentId);
-    await expire(first);
-
-    // The adopter has read the shared object; the only other reference is then retired.
-    afterAdoptedRead = async () => {
-      assert.equal((await retire()).retired, 1);
-    };
-    await assert.rejects(
-      () => store.commitAdjustment(adjustmentFor(second), second.fixture.lease),
-      error => ledger.isReportingRowStoreError(error) && error.code === 'STATE_UNAVAILABLE'
+    const target = await officialObligation(`${suffix}${sequence}`);
+    const adjustment = adjustmentFor(target);
+    const engine = new ledger.ReportingRowStorageV1(pool, {
+      bindings: { objects: binding },
+      providers: { filesystem: provider },
+    });
+    const prepared = await engine.prepare({
+      rowSetId: adjustment.reporting_adjustment_id,
+      rowSetKind: 'adjustment',
+      accountId: accountId(target),
+      obligationId: target.fixture.obligation.reporting_obligation_id,
+      rows: adjustment.rows,
+      periodStart: target.fixture.obligation.period.start,
+      sourceTimezone: target.fixture.obligation.period.sourceTimezone,
+      binding: adjustment.binding,
+    });
+    const [planned] = prepared.objects;
+    const created = await baseProvider.putIfAbsent(
+      {
+        location: { root: 'rows' },
+        objectRef: planned.objectRef,
+        bytes: planned.physicalBytes,
+        contentType: 'application/gzip',
+        metadata: {},
+      },
+      { signal: AbortSignal.timeout(5_000) }
     );
-    assert.equal(existsSync(fileOf(chunkA)), false);
+    return {
+      target,
+      objectRef: planned.objectRef,
+      nativeVersionRef: created.nativeVersionRef,
+      file: path.join(root, planned.objectRef),
+    };
+  }
+
+  const isStateUnavailable = error => ledger.isReportingRowStoreError(error) && error.code === 'STATE_UNAVAILABLE';
+
+  test('a commit whose adopted object was deleted after adoption fails cleanly and retries', async () => {
+    const { target, objectRef, nativeVersionRef, file } = await preUploaded('race');
+    // After the adopter has verified the object, another writer's abandoned upload that created it is swept.
+    afterAdoptedRead = async () => {
+      await pool.query(
+        `INSERT INTO adcp_reporting_row_write_intents
+           (row_binding_id, account_id, row_set_id, content_sha256, state, owner_token, created_objects, expires_at)
+         VALUES ('objects', $1, 'radj_other_creator', $2, 'open', 'owner', $3::jsonb,
+                 clock_timestamp() - INTERVAL '1 minute')`,
+        [
+          accountId(target),
+          'f'.repeat(64),
+          JSON.stringify([{ object_ref: objectRef, native_version_ref: nativeVersionRef }]),
+        ]
+      );
+      assert.equal((await store.sweepRowWriteIntents()).objectsDeleted, 1);
+    };
+    await assert.rejects(() => store.commitAdjustment(adjustmentFor(target), target.fixture.lease), isStateUnavailable);
+    assert.equal(existsSync(file), false);
     assert.equal(
-      await count(`SELECT count(*) AS n FROM adcp_reporting_row_chunks WHERE row_set_id = $1`, [second.adjustmentId]),
+      await count(`SELECT count(*) AS n FROM adcp_reporting_row_chunks WHERE row_set_id = $1`, [target.adjustmentId]),
       0
     );
-    assert.equal((await store.listAdjustments(second.fixture.obligation.reporting_obligation_id)).length, 0);
+    assert.equal((await store.listAdjustments(target.fixture.obligation.reporting_obligation_id)).length, 0);
 
     // The writer's intent is still open; once it lapses the upload re-creates the object.
     await pool.query(
       `UPDATE adcp_reporting_row_write_intents SET expires_at = clock_timestamp() - INTERVAL '1 minute'
         WHERE row_set_id = $1`,
-      [second.adjustmentId]
+      [target.adjustmentId]
     );
-    await store.commitAdjustment(adjustmentFor(second), second.fixture.lease);
-    assert.deepEqual(await adjustmentRows(second), current);
-    const [chunkB] = await chunksOf(second.adjustmentId);
-    assert.ok(existsSync(fileOf(chunkB)));
+    await store.commitAdjustment(adjustmentFor(target), target.fixture.lease);
+    assert.deepEqual(await adjustmentRows(target), current);
+    assert.ok(existsSync(file));
   });
+
   test('the commit proves an adopted object with a version-pinned stat instead of downloading it again', async () => {
-    sequence += 1;
-    current = rows.map(row => ({ ...row, value: row.value + sequence * 100 }));
-    const first = await officialObligation(`stat_a${sequence}`);
-    const second = await officialObligation(`stat_b${sequence}`);
-    await store.commitAdjustment(adjustmentFor(first), first.fixture.lease);
+    const { target, file } = await preUploaded('stat');
     providerCalls = { get: 0, stat: 0 };
-    await store.commitAdjustment(adjustmentFor(second), second.fixture.lease);
+    await store.commitAdjustment(adjustmentFor(target), target.fixture.lease);
     // One read verifies the adopted bytes before the transaction; the commit itself only stats.
     assert.deepEqual(providerCalls, { get: 1, stat: 1 });
-    assert.deepEqual(await adjustmentRows(second), current);
-    const [chunkA] = await chunksOf(first.adjustmentId);
-    const [chunkB] = await chunksOf(second.adjustmentId);
-    assert.equal(chunkB.object_ref, chunkA.object_ref);
+    assert.deepEqual(await adjustmentRows(target), current);
     const size = (
-      await pool.query(`SELECT size_bytes FROM adcp_reporting_row_chunks WHERE row_set_id = $1`, [second.adjustmentId])
+      await pool.query(`SELECT size_bytes FROM adcp_reporting_row_chunks WHERE row_set_id = $1`, [target.adjustmentId])
     ).rows[0].size_bytes;
-    assert.equal(Number(size), readFileSync(fileOf(chunkB)).byteLength, 'size_bytes is the stored object size');
+    assert.equal(Number(size), readFileSync(file).byteLength, 'size_bytes is the stored object size');
   });
 
   test('a commit whose adopted object was replaced at the same key with identical bytes fails the stat', async () => {
-    sequence += 1;
-    current = rows.map(row => ({ ...row, value: row.value + sequence * 100 }));
-    const first = await officialObligation(`swap_a${sequence}`);
-    const second = await officialObligation(`swap_b${sequence}`);
-    await store.commitAdjustment(adjustmentFor(first), first.fixture.lease);
-    const [chunkA] = await chunksOf(first.adjustmentId);
+    const { target, file } = await preUploaded('swap');
     // After the adopter verified the object, someone deletes it and re-creates identical bytes.
     // The native version differs, so the version-pinned stat finds nothing at the recorded version.
     afterAdoptedRead = async () => {
-      const bytes = readFileSync(fileOf(chunkA));
-      const before = statSync(fileOf(chunkA));
-      rmSync(fileOf(chunkA));
-      writeFileSync(fileOf(chunkA), bytes);
+      const bytes = readFileSync(file);
+      const before = statSync(file);
+      rmSync(file);
+      writeFileSync(file, bytes);
       // Coarse kernel timestamps and inode reuse could otherwise reproduce the old version by chance.
       const later = before.mtimeMs / 1000 + 2;
-      utimesSync(fileOf(chunkA), later, later);
+      utimesSync(file, later, later);
     };
     providerCalls = { get: 0, stat: 0 };
-    await assert.rejects(
-      () => store.commitAdjustment(adjustmentFor(second), second.fixture.lease),
-      error => ledger.isReportingRowStoreError(error) && error.code === 'STATE_UNAVAILABLE'
-    );
+    await assert.rejects(() => store.commitAdjustment(adjustmentFor(target), target.fixture.lease), isStateUnavailable);
     assert.equal(providerCalls.stat, 1, 'the stat, not another check, rejected the commit');
     assert.equal(
-      await count(`SELECT count(*) AS n FROM adcp_reporting_row_chunks WHERE row_set_id = $1`, [second.adjustmentId]),
+      await count(`SELECT count(*) AS n FROM adcp_reporting_row_chunks WHERE row_set_id = $1`, [target.adjustmentId]),
       0
     );
     assert.equal(
-      await count(`SELECT count(*) AS n FROM adcp_reporting_row_sets WHERE row_set_id = $1`, [second.adjustmentId]),
+      await count(`SELECT count(*) AS n FROM adcp_reporting_row_sets WHERE row_set_id = $1`, [target.adjustmentId]),
       0
     );
-    assert.equal((await store.listAdjustments(second.fixture.obligation.reporting_obligation_id)).length, 0);
-    assert.ok(existsSync(fileOf(chunkA)), 'the replacement object is left alone');
+    assert.equal((await store.listAdjustments(target.fixture.obligation.reporting_obligation_id)).length, 0);
+    assert.ok(existsSync(file), 'the replacement object is left alone');
   });
 
   test('an adopter rejects a stat that cannot vouch for the exact recorded version', async () => {
@@ -446,23 +486,19 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
       ],
     ];
     for (const [label, stat, code] of variants) {
-      sequence += 1;
-      current = rows.map(row => ({ ...row, value: row.value + sequence * 100 }));
-      const first = await officialObligation(`vouch_a${sequence}`);
-      const second = await officialObligation(`vouch_b${sequence}`);
-      await store.commitAdjustment(adjustmentFor(first), first.fixture.lease);
+      const { target } = await preUploaded('vouch');
       const strict = new ledger.PostgresReportingLedgerStore(pool, {
         acknowledgeIsolatedDatabase: true,
         rowStorage: { bindings: { objects: binding }, providers: { filesystem: { ...provider, stat } } },
       });
       await strict.readyRowStorage();
       await assert.rejects(
-        () => strict.commitAdjustment(adjustmentFor(second), second.fixture.lease),
+        () => strict.commitAdjustment(adjustmentFor(target), target.fixture.lease),
         error => ledger.isReportingRowStoreError(error) && error.code === code && !/secret/.test(error.message),
         label
       );
       assert.equal(
-        await count(`SELECT count(*) AS n FROM adcp_reporting_row_sets WHERE row_set_id = $1`, [second.adjustmentId]),
+        await count(`SELECT count(*) AS n FROM adcp_reporting_row_sets WHERE row_set_id = $1`, [target.adjustmentId]),
         0,
         `${label}: no row set is recorded`
       );
@@ -470,11 +506,7 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
   });
 
   test('a custom provider without stat falls back to reading the whole object under the lock', async () => {
-    sequence += 1;
-    current = rows.map(row => ({ ...row, value: row.value + sequence * 100 }));
-    const first = await officialObligation(`nostat_a${sequence}`);
-    const second = await officialObligation(`nostat_b${sequence}`);
-    await store.commitAdjustment(adjustmentFor(first), first.fixture.lease);
+    const { target } = await preUploaded('nostat');
     const { stat: _stat, ...withoutStat } = provider;
     const fallback = new ledger.PostgresReportingLedgerStore(pool, {
       acknowledgeIsolatedDatabase: true,
@@ -482,25 +514,21 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     });
     await fallback.readyRowStorage();
     providerCalls = { get: 0, stat: 0 };
-    await fallback.commitAdjustment(adjustmentFor(second), second.fixture.lease);
+    await fallback.commitAdjustment(adjustmentFor(target), target.fixture.lease);
     assert.deepEqual(providerCalls, { get: 2, stat: 0 }, 'adoption read plus the full read under the lock');
-    assert.deepEqual(await adjustmentRows(second), current);
+    assert.deepEqual(await adjustmentRows(target), current);
 
     // And it still fails closed when the object is deleted after adoption.
-    const third = await officialObligation(`nostat_c${sequence}`);
-    const [chunkA] = await chunksOf(first.adjustmentId);
-    afterAdoptedRead = async () => rmSync(fileOf(chunkA));
+    const other = await preUploaded('nostat_gone');
+    afterAdoptedRead = async () => rmSync(other.file);
     await assert.rejects(
-      () => fallback.commitAdjustment(adjustmentFor(third), third.fixture.lease),
-      error => ledger.isReportingRowStoreError(error) && error.code === 'STATE_UNAVAILABLE'
+      () => fallback.commitAdjustment(adjustmentFor(other.target), other.target.fixture.lease),
+      isStateUnavailable
     );
   });
+
   test('without stat the full read under the lock still refuses bytes that differ from the recorded digest', async () => {
-    sequence += 1;
-    current = rows.map(row => ({ ...row, value: row.value + sequence * 100 }));
-    const first = await officialObligation(`lying_a${sequence}`);
-    const second = await officialObligation(`lying_b${sequence}`);
-    await store.commitAdjustment(adjustmentFor(first), first.fixture.lease);
+    const { target } = await preUploaded('lying');
     const { stat: _stat, ...withoutStat } = provider;
     let reads = 0;
     const lying = new ledger.PostgresReportingLedgerStore(pool, {
@@ -521,10 +549,7 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
       },
     });
     await lying.readyRowStorage();
-    await assert.rejects(
-      () => lying.commitAdjustment(adjustmentFor(second), second.fixture.lease),
-      error => ledger.isReportingRowStoreError(error) && error.code === 'STATE_UNAVAILABLE'
-    );
+    await assert.rejects(() => lying.commitAdjustment(adjustmentFor(target), target.fixture.lease), isStateUnavailable);
     assert.equal(reads, 2);
   });
 });

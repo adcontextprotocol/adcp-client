@@ -126,14 +126,30 @@ const PREFIX = /^[A-Za-z0-9_.=-]+(?:\/[A-Za-z0-9_.=-]+)*$/;
 const KEY = /^[A-Za-z0-9_.=-]+(?:\/[A-Za-z0-9_.=-]+)*$/;
 const PLACEHOLDER = /\{([a-z0-9_]+)\}/g;
 
-/** Validate an object key template; throws `INVALID_INPUT`. */
-export function assertReportingRowKeyTemplateV1(template: string): void {
+/**
+ * Validate an object key template; throws `INVALID_INPUT`. Every template that writes must include
+ * `{revision_key}`, so no two row sets can ever name the same object key; `requireRevisionKey: false`
+ * is for a read-only binding that only reads rows written under an older template.
+ */
+export function assertReportingRowKeyTemplateV1(
+  template: string,
+  options: { requireRevisionKey?: boolean } = {}
+): void {
   if (!template.startsWith('{prefix}/{namespace_key}/')) {
     throw new ReportingRowStoreError('INVALID_INPUT', 'key templates must begin with {prefix}/{namespace_key}/');
   }
-  for (const required of ['{content_sha256}', '{chunk_index}']) {
+  const requiredPlaceholders = ['{content_sha256}', '{chunk_index}'];
+  if (options.requireRevisionKey ?? true) requiredPlaceholders.push('{revision_key}');
+  for (const required of requiredPlaceholders) {
     if (!template.includes(required)) {
-      throw new ReportingRowStoreError('INVALID_INPUT', `key templates must include ${required}`);
+      throw new ReportingRowStoreError(
+        'INVALID_INPUT',
+        required === '{revision_key}'
+          ? 'key templates must include {revision_key} so every row set has unique object keys; add it to the ' +
+              'template (rows already written stay readable at their recorded object_ref), or mark a binding that only ' +
+              'reads older rows `readOnly`'
+          : `key templates must include ${required}`
+      );
     }
   }
   const unknown = [...template.matchAll(PLACEHOLDER)]

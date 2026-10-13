@@ -464,7 +464,7 @@ describe('reporting snapshot compaction', { skip: !DATABASE_URL && 'PostgreSQL U
   });
 
   const unsafeTemplate = '{prefix}/{namespace_key}/{account_key}/{period_date}/{content_sha256}/{chunk_index}';
-  const withTemplate = keyTemplate =>
+  const withTemplate = (keyTemplate, readOnly = false) =>
     new ledger.PostgresReportingLedgerStore(pool, {
       acknowledgeIsolatedDatabase: true,
       rowStorage: {
@@ -475,6 +475,7 @@ describe('reporting snapshot compaction', { skip: !DATABASE_URL && 'PostgreSQL U
             location: { root: 'rows' },
             prefix: 'guarded',
             keyTemplate,
+            ...(readOnly ? { readOnly: true } : {}),
           },
         },
         providers: { filesystem: ledger.createFilesystemReportingRowObjectProviderV1({ roots: { rows: root } }) },
@@ -484,11 +485,19 @@ describe('reporting snapshot compaction', { skip: !DATABASE_URL && 'PostgreSQL U
     error instanceof ledger.ReportingRowStoreError &&
     error.code === 'INVALID_INPUT' &&
     /keyTemplate to include \{revision_key\}/.test(error.message);
+  const writeRefusal = error =>
+    error instanceof ledger.ReportingRowStoreError &&
+    error.code === 'INVALID_INPUT' &&
+    /include \{revision_key\}/.test(error.message);
 
   describe('object key template guard', () => {
-    test('compactSupersededSnapshots refuses before deleting anything', async () => {
+    test('a writable binding without {revision_key} is refused when the store is configured', () => {
+      assert.throws(() => withTemplate(unsafeTemplate), writeRefusal);
+    });
+
+    test('compactSupersededSnapshots refuses before deleting anything when a read-only binding is unsafe', async () => {
       const { ids } = await buildChain(store, pool, [null, '3 hours', null]);
-      const unsafe = withTemplate(unsafeTemplate);
+      const unsafe = withTemplate(unsafeTemplate, true);
       await assert.rejects(() => compact({}, unsafe), refusal);
       assert.deepEqual(await states(ids), ['live', 'live', 'live']);
       assert.throws(() => unsafe.assertCompactionSafeRowBindings(), refusal);
@@ -615,7 +624,7 @@ describe('reporting snapshot compaction', { skip: !DATABASE_URL && 'PostgreSQL U
     });
 
     test('compaction refuses an unsafe key template at construction, and only when enabled', () => {
-      const unsafe = withTemplate(unsafeTemplate);
+      const unsafe = withTemplate(unsafeTemplate, true);
       assert.throws(() => createService({ compaction: { enabled: true } }, unsafe), refusal);
       assert.doesNotThrow(() => createService({ retention: { enabled: true } }, unsafe));
       assert.doesNotThrow(() => createService({ compaction: { enabled: true } }));

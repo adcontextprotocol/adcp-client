@@ -393,7 +393,11 @@ await store.readyRowStorage();
 - Keys always start with `{prefix}/{namespace_key}/` and use a hashed account
   segment, never a raw account ID. Override `keyTemplate` with the placeholders
   in `REPORTING_ROW_KEY_PLACEHOLDERS`; templates must include
-  `{content_sha256}` and `{chunk_index}`.
+  `{content_sha256}`, `{chunk_index}` and `{revision_key}`. `{revision_key}` is
+  required on every writable binding, so each row set writes its own object
+  keys and two row sets never name the same object. The store refuses a
+  template without it when it is configured and again in `readyRowStorage`,
+  with `INVALID_INPUT`.
   `{period_date}` renders AdCP's `YYYY-MM-DD`: the calendar date of the period
   start in the period's `source_timezone`, never UTC (a period starting
   `2026-10-02T07:00:00Z` in `America/Los_Angeles` is `2026-10-02`; one starting
@@ -403,15 +407,21 @@ await store.readyRowStorage();
   `2026/10/02/`. A missing, unknown or non-IANA timezone fails the write with
   `INVALID_INPUT` rather than guessing a date. The rendered key must stay within
   AdCP's 1024-character `object_ref` bound.
-  Enabling snapshot compaction additionally requires `{revision_key}` (see
-  [Compacting superseded snapshots](#compacting-superseded-snapshots-opt-in)).
-- A custom `keyTemplate` without `{account_key}` and `{revision_key}` can map
-  row sets from different obligations or accounts with identical chunk content
-  (an adjustment's digest covers its rows alone) to one object, which the
-  second writer adopts. Every delete path (period retirement, compaction and
-  the intent sweep) therefore skips an object while a live row set outside the
+- Rows written under an older template without `{revision_key}` stay readable:
+  every read uses the chunk's recorded `object_ref`, never a re-rendered key.
+  Changing a template needs a new binding ID, and the old definition must stay
+  configured while revisions reference it. Mark that old definition
+  `readOnly: true` to keep it configured without `{revision_key}`: it is
+  exempt from the requirement, never selected for new writes, and still used
+  for reads and retirement. Compaction refuses to run while a read-only
+  binding's template lacks `{revision_key}`.
+- Header-only revisions share their predecessor's chunks within an obligation,
+  and chunk rows written under an older template can name one object from
+  several row sets. Every delete path (period retirement, compaction and the
+  intent sweep) therefore skips an object while a live row set outside the
   operation still references the same binding, key and native version, or an
-  open write intent created it. The reference check and the delete run in one
+  open write intent created it. (With unique keys, a create-only write only
+  finds an existing object when a writer retries the same row set.) The reference check and the delete run in one
   transaction under a per-object advisory lock, and a commit that adopts an
   existing object takes the same lock, proves the object is still there and
   holds the lock until its chunk rows commit. A delete that wins the lock makes the adopting
@@ -721,8 +731,9 @@ revision referencing them is compacted.
 Compaction records no change-feed row: the revision's metadata did not change,
 and a sink still catching up holds the revision back (above).
 
-Compaction requires every object row binding's `keyTemplate` to include
-`{revision_key}` (the default template does). Deletes now skip objects another
+Every writable object row binding's `keyTemplate` must include
+`{revision_key}` (the default template does), so compaction only refuses a
+`readOnly` binding for older rows whose template omits it. Deletes now skip objects another
 row set still references (see [Object storage](#object-storage-bindings)),
 so this is defense in depth rather than the only guard: with `{revision_key}`
 no two revisions ever name the same object, so compaction never depends on the

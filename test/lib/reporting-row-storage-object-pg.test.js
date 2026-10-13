@@ -321,7 +321,7 @@ describe('object-storage revision rows', { skip: !DATABASE_URL && 'PostgreSQL UR
     const store = newStore({
       bindings: {
         no_date: objectBinding({
-          keyTemplate: '{prefix}/{namespace_key}/{account_key}/{content_sha256}/{chunk_index}',
+          keyTemplate: '{prefix}/{namespace_key}/{account_key}/{revision_key}/{content_sha256}/{chunk_index}',
         }),
       },
     });
@@ -369,6 +369,110 @@ describe('object-storage revision rows', { skip: !DATABASE_URL && 'PostgreSQL UR
     delete withoutStat.stat;
     const passed = await ledger.runReportingRowObjectProviderConformanceV1(withoutStat, location);
     assert.ok(!passed.includes('version-pinned-stat'), 'a provider without stat skips the optional check');
+  });
+
+  test('every writable binding must include {revision_key}, so no two row sets share an object key', () => {
+    for (const keyTemplate of [
+      '{prefix}/{namespace_key}/{content_sha256}/{chunk_index}',
+      '{prefix}/{namespace_key}/{account_key}/{period_date}/{content_sha256}/{chunk_index}',
+    ]) {
+      assert.throws(
+        () => newStore({ bindings: { objects: objectBinding({ keyTemplate }) } }),
+        error =>
+          isCode('INVALID_INPUT')(error) && /row binding objects:.*\{revision_key\}.*readOnly/.test(error.message)
+      );
+    }
+    // The default template, and an explicit one with {revision_key}, are accepted.
+    newStore();
+    newStore({
+      bindings: {
+        objects: objectBinding({
+          keyTemplate: '{prefix}/{namespace_key}/{revision_key}/{content_sha256}/{chunk_index}',
+        }),
+      },
+    });
+    assert.ok(ledger.REPORTING_ROW_DEFAULT_KEY_TEMPLATE.includes('{revision_key}'));
+    assert.throws(
+      () => ledger.assertReportingRowKeyTemplateV1('{prefix}/{namespace_key}/{content_sha256}/{chunk_index}'),
+      isCode('INVALID_INPUT')
+    );
+    ledger.assertReportingRowKeyTemplateV1('{prefix}/{namespace_key}/{content_sha256}/{chunk_index}', {
+      requireRevisionKey: false,
+    });
+  });
+
+  test('rows written under an older template stay readable at their recorded object_ref, through a read-only binding', async () => {
+    const legacyTemplate = '{prefix}/{namespace_key}/{content_sha256}/{chunk_index}';
+    const writer = newStore();
+    await writer.readyRowStorage();
+    const fixture = await createRowStorageFixture({ store: writer, suffix: 'legacy_tpl' });
+    await writer.commitRevision(fixture.revision('rrev_legacy_tpl', 1, rows.slice(0, 40)), fixture.lease);
+    const recorded = (
+      await pool.query(
+        `SELECT object_ref, native_version_ref FROM adcp_reporting_row_chunks WHERE row_set_id = 'rrev_legacy_tpl'`
+      )
+    ).rows[0];
+    // Model an object written under the older template: a different key layout, same bytes and version
+    // (a rename keeps the inode, birth time, mtime and size the filesystem version is made of).
+    const legacyRef = recorded.object_ref.replace(/\/[^/]+\/[^/]+\/[^/]+\/([^/]+)\/([^/]+)$/, '/legacy-layout/$1-$2');
+    assert.notEqual(legacyRef, recorded.object_ref);
+    require('node:fs').mkdirSync(path.dirname(path.join(root, legacyRef)), { recursive: true });
+    require('node:fs').renameSync(path.join(root, recorded.object_ref), path.join(root, legacyRef));
+    await pool.query(`UPDATE adcp_reporting_row_chunks SET object_ref = $2 WHERE row_set_id = $1`, [
+      'rrev_legacy_tpl',
+      legacyRef,
+    ]);
+
+    // The old template is not accepted for writing, even under a new binding ID.
+    assert.throws(
+      () =>
+        newStore({ bindings: { objects: objectBinding(), legacy: objectBinding({ keyTemplate: legacyTemplate }) } }),
+      isCode('INVALID_INPUT')
+    );
+    // Kept as a read-only binding, it is accepted, registered and never used for new writes.
+    const readOnlyBindings = {
+      objects: objectBinding(),
+      legacy: objectBinding({ keyTemplate: legacyTemplate, readOnly: true }),
+    };
+    const reader = newStore({ bindings: readOnlyBindings });
+    await reader.readyRowStorage();
+    await pool.query(
+      `UPDATE adcp_reporting_row_sets SET row_binding_id = 'legacy', row_location_version = row_location_version + 1
+        WHERE row_set_id = 'rrev_legacy_tpl'`
+    );
+    const read = await reader.getRevision('rrev_legacy_tpl', fixture.request.account.account_id);
+    assert.deepEqual(read.rows, rows.slice(0, 40), 'the recorded object_ref is read, not a re-rendered key');
+    assert.deepEqual(
+      await reader.readRevisionRows({
+        reporting_revision_id: 'rrev_legacy_tpl',
+        account_id: fixture.request.account.account_id,
+        offset: 10,
+        limit: 5,
+      }),
+      { rows: rows.slice(10, 15), total: 40 }
+    );
+
+    const next = await createRowStorageFixture({ store: reader, suffix: 'legacy_tpl_next' });
+    await reader.commitRevision(next.revision('rrev_legacy_tpl_next', 1, rows.slice(0, 3)), next.lease);
+    const bindingOf = async id =>
+      (await pool.query(`SELECT row_binding_id FROM adcp_reporting_row_sets WHERE row_set_id = $1`, [id])).rows[0]
+        .row_binding_id;
+    assert.equal(await bindingOf('rrev_legacy_tpl_next'), 'objects', 'new row sets go to the writable binding');
+    const forced = newStore({
+      bindings: readOnlyBindings,
+      selectRowBinding: () => 'legacy',
+    });
+    const again = await createRowStorageFixture({ store: forced, suffix: 'legacy_tpl_forced' });
+    await assert.rejects(
+      () => forced.commitRevision(again.revision('rrev_legacy_tpl_forced', 1, rows.slice(0, 3)), again.lease),
+      error => isCode('INVALID_INPUT')(error) && /read-only/.test(error.message)
+    );
+    // Retirement still works through the read-only binding: deletes are reference-checked by recorded key.
+    assert.equal(
+      (await reader.sweepRowWriteIntents()).failed,
+      0,
+      'the read-only binding does not stop the sweep from running'
+    );
   });
 
   test('validates bindings before any write', async () => {

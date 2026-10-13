@@ -58,8 +58,18 @@ export interface ReportingObjectRowBindingV1 {
   location: Readonly<Record<string, string>>;
   /** Owned key prefix. Sweeps and deletes never touch keys outside it. */
   prefix: string;
-  /** Object key template; see `REPORTING_ROW_DEFAULT_KEY_TEMPLATE`. */
+  /**
+   * Object key template; see `REPORTING_ROW_DEFAULT_KEY_TEMPLATE`. It must include `{revision_key}`, so every
+   * row set writes its own object keys (a read-only binding is exempt).
+   */
   keyTemplate?: string;
+  /**
+   * Keep this binding configured only to read (and retire) row sets already written through it, for
+   * example under an older template without `{revision_key}`. A read-only binding is never selected for
+   * new writes and is exempt from the `{revision_key}` requirement; reads use each chunk's recorded
+   * `object_ref`, never a re-rendered key. Not part of the binding's identity.
+   */
+  readOnly?: boolean;
   /** Stored encoding; digests always cover uncompressed bytes. Default `gzip`. */
   compression?: 'none' | 'gzip';
   /** Host-mapped client reference passed to the provider; never a secret. */
@@ -252,12 +262,12 @@ export class ReportingRowStorageV1 {
       if (!provider) throw new ReportingRowStoreError('INVALID_INPUT', `row binding ${id} names an unknown provider`);
       provider.validateLocation(binding.location);
       assertReportingRowPrefixV1(binding.prefix);
-      assertReportingRowKeyTemplateV1(binding.keyTemplate ?? REPORTING_ROW_DEFAULT_KEY_TEMPLATE);
       if (binding.credentialRef !== undefined && !CREDENTIAL_REF.test(binding.credentialRef)) {
         throw new ReportingRowStoreError('INVALID_INPUT', `row binding ${id} has an invalid credentialRef`);
       }
     }
     this.bindings = Object.freeze({ ...bindings });
+    this.assertBindingKeyTemplates();
     this.deploymentNamespace = options.deploymentNamespace ?? 'default';
     if (!this.deploymentNamespace || this.deploymentNamespace.length > 256) {
       throw new ReportingRowStoreError('INVALID_INPUT', 'deploymentNamespace must be 1-256 characters');
@@ -271,12 +281,33 @@ export class ReportingRowStorageV1 {
     return this.writeDeadline;
   }
 
+  /** Every writable object binding's key template must include `{revision_key}`; throws `INVALID_INPUT`. */
+  private assertBindingKeyTemplates(): void {
+    for (const [id, binding] of Object.entries(this.bindings)) {
+      if (binding.kind !== 'object') continue;
+      try {
+        assertReportingRowKeyTemplateV1(binding.keyTemplate ?? REPORTING_ROW_DEFAULT_KEY_TEMPLATE, {
+          requireRevisionKey: binding.readOnly !== true,
+        });
+      } catch (error) {
+        if (isReportingRowStoreError(error)) {
+          throw new ReportingRowStoreError(
+            'INVALID_INPUT',
+            `row binding ${id}: ${error.message.replace(/^Reporting row store: INVALID_INPUT: /, '')}`
+          );
+        }
+        throw error;
+      }
+    }
+  }
+
   /**
    * Refuse a configuration in which compaction could delete an object a concurrent commit is
    * adopting. An object binding whose key template omits `{revision_key}` can map two revisions
    * with identical chunk content to one object key, and a create-only write adopts an existing
    * object with identical bytes. Compaction deleting that object at the same moment would leave
-   * the newer revision without its rows. The default template includes `{revision_key}`.
+   * the newer revision without its rows. Every writable binding is already required to include
+   * `{revision_key}`, so only a `readOnly` binding for older rows can still be unsafe here.
    *
    * Since the reference-checked, per-object-locked delete this is no longer the only guard: every
    * delete path now skips an object another row set still references. It is kept as defense in
@@ -344,7 +375,10 @@ export class ReportingRowStorageV1 {
     ) {
       throw new ReportingRowStoreError('INVALID_INPUT', 'rows do not reproduce their committed binding');
     }
-    const ids = Object.keys(this.bindings);
+    const writable = Object.keys(this.bindings).filter(id => {
+      const candidate = this.bindings[id]!;
+      return candidate.kind !== 'object' || candidate.readOnly !== true;
+    });
     const bindingId = input.bindingId
       ? input.bindingId
       : this.options.selectRowBinding
@@ -356,11 +390,17 @@ export class ReportingRowStorageV1 {
             row_count: input.rows.length,
             content_size_bytes: digest.byteCount,
           })
-        : ids.length === 1
-          ? ids[0]!
+        : writable.length === 1
+          ? writable[0]!
           : DEFAULT_BINDING_ID;
     const binding = this.bindings[bindingId];
     if (!binding) throw new ReportingRowStoreError('STATE_UNAVAILABLE', `row binding ${bindingId} is not configured`);
+    if (binding.kind === 'object' && binding.readOnly === true) {
+      throw new ReportingRowStoreError(
+        'INVALID_INPUT',
+        `row binding ${bindingId} is read-only and cannot take new row sets`
+      );
+    }
     if (binding.kind === 'postgres') return Object.freeze({ input, encoded, bindingId, binding, digestProfile });
     const compression = binding.compression ?? 'gzip';
     const namespaceKey = this.installation!.namespaceKey;
@@ -970,6 +1010,7 @@ export class ReportingRowStorageV1 {
   }
 
   private async register(): Promise<void> {
+    this.assertBindingKeyTemplates();
     const { installationId } = await probeReportingRowStorageSchemaV1(this.pool);
     const namespaceKey = sha256Hex(canonicalize(['adcp.rows.v1', this.deploymentNamespace, installationId]));
     this.installation = { installationId, namespaceKey };
