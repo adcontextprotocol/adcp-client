@@ -12,7 +12,13 @@ const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
 const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
 const z = require('zod');
 
-const { AgentClient, createProductCache, packageRefsForFormatOptions } = require('../../dist/lib/index.js');
+const {
+  AgentClient,
+  canonicalFormatLegacyResolverFromRoutes,
+  createProductCache,
+  legacyRoutesForProduct,
+  packageRefsForFormatOptions,
+} = require('../../dist/lib/index.js');
 
 const AAO = 'https://creative.adcontextprotocol.org/';
 const PRICING_OPTIONS = [{ pricing_option_id: 'po_cpm', pricing_model: 'cpm', currency: 'USD', fixed_price: 5 }];
@@ -476,4 +482,298 @@ describe('canonical wire: format options the seller did not declare', () => {
       await seller.close();
     }
   });
+});
+
+describe('canonical wire: persisted routes carry whether the seller declared each option', () => {
+  const persist = value => JSON.parse(JSON.stringify(value));
+
+  async function discoverAndPersist(products, config = {}) {
+    const discovery = await canonicalSeller(products, config);
+    try {
+      const result = await discovery.agent.getProducts({ buying_mode: 'brief', brief: 'Display', account: ACCOUNT });
+      const product = result.data.products[0];
+      return {
+        product: persist(product),
+        routes: persist(legacyRoutesForProduct(product.product_id, product.format_options)),
+      };
+    } finally {
+      await discovery.close();
+    }
+  }
+
+  test('a route for an option the seller did not declare records its direct selector', async () => {
+    const { product, routes } = await discoverAndPersist([
+      legacyOnlyProduct('legacy-shaped', [{ agent_url: AAO, id: 'display_300x250_image' }]),
+    ]);
+    const [option] = product.format_options;
+
+    assert.strictEqual(routes.length, 1);
+    assert.strictEqual(routes[0].seller_declared, false);
+    assert.deepStrictEqual(routes[0].canonical_selector, { format_kind: option.format_kind, params: option.params });
+  });
+
+  test('a fresh client rewrites an undeclared option from persisted routes alone', async () => {
+    const products = [legacyOnlyProduct('legacy-shaped', [{ agent_url: AAO, id: 'display_300x250_image' }])];
+    const { product, routes } = await discoverAndPersist(products);
+    const [option] = product.format_options;
+    const execution = await canonicalSeller(products);
+    try {
+      const created = await execution.agent.createMediaBuy(
+        mediaBuy({
+          product_id: product.product_id,
+          ...packageRefsForFormatOptions(product, [option.format_option_id]),
+        }),
+        undefined,
+        { canonicalFormatLegacyResolver: canonicalFormatLegacyResolverFromRoutes(routes) }
+      );
+
+      assert.strictEqual(created.success, true);
+      const pkg = execution.captured.create.packages[0];
+      assert.strictEqual(pkg.format_option_refs, undefined);
+      assert.strictEqual(pkg.format_kind, option.format_kind);
+      assert.deepStrictEqual(pkg.params, option.params);
+    } finally {
+      await execution.close();
+    }
+  });
+
+  test('a configured resolver from persisted routes also rewrites undeclared options', async () => {
+    const products = [legacyOnlyProduct('legacy-shaped', [{ agent_url: AAO, id: 'display_300x250_image' }])];
+    const { product, routes } = await discoverAndPersist(products);
+    const [option] = product.format_options;
+    const execution = await canonicalSeller(products, {
+      canonicalFormatLegacyResolver: canonicalFormatLegacyResolverFromRoutes(routes),
+    });
+    try {
+      await execution.agent.createMediaBuy(
+        mediaBuy({ product_id: product.product_id, ...packageRefsForFormatOptions(product, [option.format_option_id]) })
+      );
+
+      const pkg = execution.captured.create.packages[0];
+      assert.strictEqual(pkg.format_option_refs, undefined);
+      assert.strictEqual(pkg.format_kind, option.format_kind);
+    } finally {
+      await execution.close();
+    }
+  });
+
+  for (const configured of [false, true]) {
+    test(`persisted undeclared custom formats fail before dispatch (configured resolver: ${configured})`, async () => {
+      const products = [legacyOnlyProduct('custom-product', [{ agent_url: 'https://seller.example', id: 'takeover' }])];
+      const { product, routes } = await discoverAndPersist(products, {
+        legacyFormatConverter: () => ({
+          format_option_id: 'takeover',
+          format_kind: 'custom',
+          format_shape: 'homepage_takeover',
+          format_schema: {
+            uri: 'https://seller.example/formats/takeover.json',
+            digest: `sha256:${'a'.repeat(64)}`,
+          },
+          params: {},
+        }),
+      });
+      assert.strictEqual(routes.length, 1);
+      assert.strictEqual(routes[0].seller_declared, false);
+      assert.strictEqual(routes[0].canonical_selector, undefined);
+      const resolver = { canonicalFormatLegacyResolver: canonicalFormatLegacyResolverFromRoutes(routes) };
+      const execution = await canonicalSeller(products, configured ? resolver : {});
+      try {
+        const options = configured ? undefined : resolver;
+        const selected = packageRefsForFormatOptions(product, ['takeover']);
+        const pkg = mediaBuy({ product_id: product.product_id, ...selected }).packages[0];
+        const isProjectionError = error => error.code === 'ADCP_CREATIVE_FORMAT_PROJECTION_FAILED';
+
+        await assert.rejects(execution.agent.createMediaBuy(mediaBuy(pkg), undefined, options), isProjectionError);
+        await assert.rejects(
+          execution.agent.updateMediaBuy(
+            { account: ACCOUNT, media_buy_id: 'mb-canonical', new_packages: [pkg] },
+            undefined,
+            options
+          ),
+          isProjectionError
+        );
+        await assert.rejects(
+          execution.agent.syncCreatives(
+            {
+              account: ACCOUNT,
+              creatives: [
+                {
+                  creative_id: 'custom-creative',
+                  name: 'Takeover',
+                  format_kind: 'custom',
+                  format_option_ref: selected.format_option_refs[0],
+                  assets: {},
+                },
+              ],
+            },
+            undefined,
+            options
+          ),
+          isProjectionError
+        );
+        assert.strictEqual(execution.captured.create, undefined);
+        assert.strictEqual(execution.captured.update, undefined);
+        assert.strictEqual(execution.captured.sync, undefined);
+      } finally {
+        await execution.close();
+      }
+    });
+  }
+
+  test('persisted routes for seller-declared options keep format_option_refs', async () => {
+    const declaredId = `migrated_${'b'.repeat(32)}`;
+    const products = [
+      {
+        product_id: 'canonical-product',
+        name: 'Canonical product',
+        description: 'Seller-declared canonical options',
+        format_options: [
+          {
+            format_option_id: declaredId,
+            format_kind: 'image',
+            params: { width: 300, height: 250 },
+            v1_format_ref: [{ agent_url: AAO, id: 'display_300x250_image' }],
+          },
+        ],
+        pricing_options: PRICING_OPTIONS,
+      },
+    ];
+    const { product, routes } = await discoverAndPersist(products);
+    assert.strictEqual(routes[0].seller_declared, true);
+    assert.strictEqual(routes[0].canonical_selector, undefined);
+    const execution = await canonicalSeller(products);
+    try {
+      await execution.agent.createMediaBuy(
+        mediaBuy({ product_id: product.product_id, ...packageRefsForFormatOptions(product, [declaredId]) }),
+        undefined,
+        { canonicalFormatLegacyResolver: canonicalFormatLegacyResolverFromRoutes(routes) }
+      );
+
+      const pkg = execution.captured.create.packages[0];
+      assert.deepStrictEqual(pkg.format_option_refs, [{ scope: 'product', format_option_id: declaredId }]);
+      assert.strictEqual(pkg.format_kind, undefined);
+    } finally {
+      await execution.close();
+    }
+  });
+
+  test('routes persisted without seller origin keep format_option_refs unchanged', async () => {
+    const products = [legacyOnlyProduct('legacy-shaped', [{ agent_url: AAO, id: 'display_300x250_image' }])];
+    const { product, routes } = await discoverAndPersist(products);
+    const [option] = product.format_options;
+    const routesWithoutOrigin = routes.map(
+      ({ seller_declared: _declared, canonical_selector: _selector, ...route }) => route
+    );
+    const execution = await canonicalSeller(products);
+    try {
+      await execution.agent.createMediaBuy(
+        mediaBuy({
+          product_id: product.product_id,
+          ...packageRefsForFormatOptions(product, [option.format_option_id]),
+        }),
+        undefined,
+        { canonicalFormatLegacyResolver: canonicalFormatLegacyResolverFromRoutes(routesWithoutOrigin) }
+      );
+
+      const pkg = execution.captured.create.packages[0];
+      assert.deepStrictEqual(pkg.format_option_refs, [{ scope: 'product', format_option_id: option.format_option_id }]);
+    } finally {
+      await execution.close();
+    }
+  });
+
+  test('fresh seller declarations without legacy aliases override configured persisted origin', async () => {
+    const { product, routes } = await discoverAndPersist([
+      legacyOnlyProduct('legacy-shaped', [{ agent_url: AAO, id: 'display_300x250_image' }]),
+    ]);
+    const [option] = product.format_options;
+    // The seller now declares the formerly derived option and no longer
+    // advertises a legacy alias. The configured routes predate that change.
+    const execution = await canonicalSeller([product], {
+      canonicalFormatLegacyResolver: canonicalFormatLegacyResolverFromRoutes(routes),
+    });
+    try {
+      const fresh = await execution.agent.getProducts({ buying_mode: 'brief', brief: 'Display', account: ACCOUNT });
+      const freshProduct = fresh.data.products[0];
+      const selected = packageRefsForFormatOptions(freshProduct, [option.format_option_id]);
+      const creative = {
+        creative_id: 'creative-fresh',
+        name: 'Fresh seller declaration',
+        format_kind: 'image',
+        format_option_ref: selected.format_option_refs[0],
+        assets: {},
+      };
+
+      await execution.agent.createMediaBuy(
+        mediaBuy({ product_id: product.product_id, ...selected, creatives: [creative] })
+      );
+      await execution.agent.updateMediaBuy({
+        account: ACCOUNT,
+        media_buy_id: 'mb-canonical',
+        new_packages: [mediaBuy({ product_id: product.product_id, ...selected }).packages[0]],
+      });
+      await execution.agent.syncCreatives({ account: ACCOUNT, creatives: [creative] });
+
+      for (const pkg of [execution.captured.create.packages[0], execution.captured.update.new_packages[0]]) {
+        assert.deepStrictEqual(pkg.format_option_refs, selected.format_option_refs);
+        assert.strictEqual(pkg.format_kind, undefined);
+      }
+      for (const wireCreative of [
+        execution.captured.create.packages[0].creatives[0],
+        execution.captured.sync.creatives[0],
+      ]) {
+        assert.deepStrictEqual(wireCreative.format_option_ref, creative.format_option_ref);
+      }
+    } finally {
+      await execution.close();
+    }
+  });
+
+  for (const oldRouteFirst of [false, true]) {
+    test(`mixed old and new routes preserve an unscoped creative pin (old route first: ${oldRouteFirst})`, async () => {
+      const { product, routes } = await discoverAndPersist([
+        legacyOnlyProduct('legacy-shaped', [{ agent_url: AAO, id: 'display_300x250_image' }]),
+      ]);
+      const [derivedRoute] = routes;
+      const oldRoute = {
+        product_id: 'declared-product',
+        format_option_ref: derivedRoute.format_option_ref,
+        format_ids: derivedRoute.format_ids,
+      };
+      const execution = await canonicalSeller([], {
+        canonicalFormatLegacyResolver: canonicalFormatLegacyResolverFromRoutes(
+          oldRouteFirst ? [oldRoute, derivedRoute] : [derivedRoute, oldRoute]
+        ),
+      });
+      try {
+        const creative = {
+          creative_id: 'creative-old-route',
+          name: 'Old route origin is unknown',
+          format_kind: 'image',
+          format_option_ref: oldRoute.format_option_ref,
+          assets: {},
+        };
+        await execution.agent.syncCreatives({ account: ACCOUNT, creatives: [creative] }, undefined, {
+          creativeFormatProjection: {
+            selectorContainers: [{ product_id: oldRoute.product_id, format_option_refs: [oldRoute.format_option_ref] }],
+          },
+        });
+        assert.deepStrictEqual(execution.captured.sync.creatives[0].format_option_ref, creative.format_option_ref);
+
+        // A scoped selection can still use the new route's known origin.
+        await execution.agent.createMediaBuy(
+          mediaBuy({ product_id: product.product_id, format_option_refs: [derivedRoute.format_option_ref] })
+        );
+        assert.strictEqual(execution.captured.create.packages[0].format_option_refs, undefined);
+        assert.strictEqual(execution.captured.create.packages[0].format_kind, 'image');
+
+        await execution.agent.createMediaBuy(
+          mediaBuy({ product_id: oldRoute.product_id, format_option_refs: [oldRoute.format_option_ref] })
+        );
+        assert.deepStrictEqual(execution.captured.create.packages[0].format_option_refs, [oldRoute.format_option_ref]);
+      } finally {
+        await execution.close();
+      }
+    });
+  }
 });

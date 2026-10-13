@@ -123,6 +123,16 @@ describe('canonical legacy route cache', () => {
       c.resolveCanonicalFormatLegacyResolver(undefined, account)(selector('missing', 'opt')).id,
       'configured'
     );
+
+    // Origin-only cache entries must not shadow configured legacy mappings.
+    c.rememberCanonicalProductRoutes(
+      [{ product_id: 'canonical-only', format_options: [{ format_option_id: 'opt', format_kind: 'image' }] }],
+      account
+    );
+    assert.equal(
+      c.resolveCanonicalFormatLegacyResolver(undefined, account)(selector('canonical-only', 'opt')).id,
+      'configured'
+    );
   });
 
   test('records package routes for legal package-id-only update and sync selectors', () => {

@@ -39,6 +39,7 @@ import {
   transferLegacyCreativeMetadata,
 } from './legacy-metadata';
 import type { CanonicalFormatDeclaration } from './legacy-metadata';
+import type { UndeclaredFormatOptionSelector } from './legacy-routes';
 import { canonicalize as canonicalizeJson } from '../../utils/jcs';
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, Extract<keyof T, K>> : never;
@@ -1574,13 +1575,7 @@ export function projectSyncCreativesForDelivery<T>(
     | ProjectedSyncCreativeRequest<T, 'legacy'>;
 }
 
-/** The direct canonical selector for a format option the seller did not declare. */
-export interface UndeclaredFormatOptionSelector {
-  format_kind: string;
-  params?: unknown;
-  /** Custom/schema-backed formats cannot retain identity in a direct selector. */
-  unrepresentable?: true;
-}
+export type { UndeclaredFormatOptionSelector } from './legacy-routes';
 
 /**
  * Looks up a format option the SDK derived from a seller's legacy `format_ids`.

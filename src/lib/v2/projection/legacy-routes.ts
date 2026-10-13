@@ -1,5 +1,5 @@
 import type { FormatOptionReference } from '../../types/tools.generated';
-import { legacyFormatRefsForDeclaration } from './legacy-metadata';
+import { legacyFormatRefsForDeclaration, sellerDeclaredFormatOption } from './legacy-metadata';
 import type { CanonicalFormatLegacyResolutionContext, CanonicalFormatLegacyResolver } from './v2-to-v1';
 import type { V1FormatId, V2ProductFormatDeclaration } from './types';
 
@@ -15,6 +15,64 @@ export interface CanonicalFormatLegacyRoute {
   product_id: string;
   format_option_ref: FormatOptionReference;
   format_ids: V1FormatId[];
+  /**
+   * Whether the seller declared this option in its own `format_options[]`.
+   * `false` means the SDK derived the option from the seller's legacy
+   * `format_ids`, so the seller cannot resolve its `format_option_id` and a
+   * canonical-wire write addresses it by `canonical_selector` instead. Absent
+   * when the origin is unknown; such routes leave canonical writes unchanged.
+   */
+  seller_declared?: boolean;
+  /**
+   * The direct `format_kind` + `params` selector for an option the seller did
+   * not declare. Absent when no direct selector keeps the option's identity,
+   * such as a custom or schema-backed format, so a write selecting it fails
+   * before dispatch.
+   */
+  canonical_selector?: { format_kind: string; params?: unknown };
+}
+
+/** The direct canonical selector for a format option the seller did not declare. */
+export interface UndeclaredFormatOptionSelector {
+  format_kind: string;
+  params?: unknown;
+  /** Custom/schema-backed formats cannot retain identity in a direct selector. */
+  unrepresentable?: true;
+}
+
+/** Build the direct selector a canonical write sends for an option the seller did not declare. */
+export function undeclaredFormatOptionSelector(
+  declaration: Readonly<Record<string, unknown>>
+): UndeclaredFormatOptionSelector {
+  return {
+    format_kind: typeof declaration.format_kind === 'string' ? declaration.format_kind : '',
+    ...(declaration.params !== undefined && { params: structuredClone(declaration.params) }),
+    ...((typeof declaration.format_kind !== 'string' ||
+      declaration.format_kind === 'custom' ||
+      declaration.format_shape !== undefined ||
+      declaration.format_schema !== undefined) && { unrepresentable: true as const }),
+  };
+}
+
+/**
+ * What a route says about one option's origin: unknown (`undefined`), declared
+ * by the seller, or derived from legacy `format_ids` with its direct selector.
+ */
+export type FormatOptionOrigin =
+  | { seller_declared: true }
+  | { seller_declared: false; selector: UndeclaredFormatOptionSelector };
+
+function routeOrigin(route: CanonicalFormatLegacyRoute): FormatOptionOrigin | undefined {
+  if (route.seller_declared === true) return { seller_declared: true };
+  if (route.seller_declared !== false) return undefined;
+  const selector = route.canonical_selector;
+  return {
+    seller_declared: false,
+    selector:
+      selector && typeof selector.format_kind === 'string' && selector.format_kind.length > 0
+        ? undeclaredFormatOptionSelector(selector)
+        : { format_kind: '', unrepresentable: true },
+  };
 }
 
 function routeRef(value: unknown): FormatOptionReference | undefined {
@@ -79,9 +137,27 @@ export function legacyRoutesForProduct(
   return declarations.flatMap(declaration => {
     const formatOptionRef = routeRef(declaration);
     const formatIds = uniqueFormatIds(legacyFormatRefsForDeclaration(declaration));
-    return formatOptionRef && formatIds.length > 0
-      ? [{ product_id: productId, format_option_ref: formatOptionRef, format_ids: formatIds }]
-      : [];
+    if (!formatOptionRef || formatIds.length === 0) return [];
+    const declared = sellerDeclaredFormatOption(declaration);
+    const selector =
+      declared === false
+        ? undeclaredFormatOptionSelector(declaration as unknown as Readonly<Record<string, unknown>>)
+        : undefined;
+    return [
+      {
+        product_id: productId,
+        format_option_ref: formatOptionRef,
+        format_ids: formatIds,
+        ...(declared !== undefined && { seller_declared: declared }),
+        ...(selector &&
+          !selector.unrepresentable && {
+            canonical_selector: {
+              format_kind: selector.format_kind,
+              ...(selector.params !== undefined && { params: selector.params }),
+            },
+          }),
+      },
+    ];
   });
 }
 
@@ -156,10 +232,44 @@ function routeLookupContext(context: CanonicalFormatLegacyResolutionContext): Ro
  * storage. Inputs are snapshotted so later caller mutation cannot redirect a
  * creative delivery operation.
  */
+const originsByResolver = new WeakMap<
+  CanonicalFormatLegacyResolver,
+  ReadonlyArray<{ productId: string; ref: FormatOptionReference; origin: FormatOptionOrigin | undefined }>
+>();
+
+function sameRouteRef(left: FormatOptionReference, right: FormatOptionReference): boolean {
+  return routeKey('', left) === routeKey('', right);
+}
+
+/**
+ * The origin a resolver built by {@link canonicalFormatLegacyResolverFromRoutes}
+ * recorded for one option. Without a product id, every route for the option
+ * must agree that the seller did not declare it.
+ */
+export function formatOptionOriginFromRoutes(
+  resolver: CanonicalFormatLegacyResolver | undefined,
+  ref: FormatOptionReference,
+  productId: string | undefined
+): FormatOptionOrigin | undefined {
+  const origins = resolver ? originsByResolver.get(resolver) : undefined;
+  if (!origins) return undefined;
+  const matching = origins.filter(
+    entry => sameRouteRef(entry.ref, ref) && (productId === undefined || entry.productId === productId)
+  );
+  if (matching.length === 0) return undefined;
+  const declared = matching.find(entry => entry.origin?.seller_declared);
+  if (declared) return declared.origin;
+  // Old persisted routes do not prove that their seller omitted this option.
+  // They must participate in the agreement check for an unscoped reference.
+  if (matching.some(entry => entry.origin === undefined)) return undefined;
+  return matching[0]!.origin;
+}
+
 export function canonicalFormatLegacyResolverFromRoutes(
   routes: readonly CanonicalFormatLegacyRoute[]
 ): CanonicalFormatLegacyResolver {
   const index = new Map<string, V1FormatId[]>();
+  const origins: Array<{ productId: string; ref: FormatOptionReference; origin: FormatOptionOrigin | undefined }> = [];
   for (const route of routes) {
     const ref = routeRef(route.format_option_ref);
     if (
@@ -172,8 +282,10 @@ export function canonicalFormatLegacyResolverFromRoutes(
     }
     const key = routeKey(route.product_id, ref);
     index.set(key, uniqueFormatIds([...(index.get(key) ?? []), ...route.format_ids]));
+    const origin = routeOrigin(route);
+    origins.push({ productId: route.product_id, ref, origin });
   }
-  return context => {
+  const resolver: CanonicalFormatLegacyResolver = context => {
     const lookups = routeLookupContext(context);
     if (!lookups) return undefined;
     const resolved: V1FormatId[] = [];
@@ -190,4 +302,6 @@ export function canonicalFormatLegacyResolverFromRoutes(
     const formatIds = uniqueFormatIds(resolved);
     return formatIds.length > 0 ? formatIds : undefined;
   };
+  originsByResolver.set(resolver, Object.freeze(origins));
+  return resolver;
 }
