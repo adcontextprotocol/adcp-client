@@ -36,6 +36,8 @@ entries with `provisioning: false` before calling the batch method. The optional
 `ctx.existing` array is aligned with the entries passed to `upsert`; each element
 is the pre-write account snapshot or `null`. All natural-key dimensions are
 preserved, including brand countries, operator unit, currency, timezone and sandbox.
+Natural-key snapshots require the resolved account's own brand and operator;
+identity-free singleton resolvers supply no snapshot rather than matching every key.
 Use these snapshots to update the existing ID instead of creating another account.
 Snapshots are advisory: enforce uniqueness atomically in your own storage too.
 

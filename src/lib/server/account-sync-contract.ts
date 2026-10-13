@@ -70,14 +70,15 @@ export async function existingSyncAccounts(
   const existing: (Account | null)[] = [];
   for (const [index, entry] of entries.entries()) {
     const ref = accounts.resolution === 'derived' ? undefined : naturalRef(entry);
-    existing.push(
-      ref
-        ? await lookup(accounts, ref, ctx, () => {
-            if (logger)
-              diagnose(accounts, logger, { code: 'ACCOUNT_SYNC_LOOKUP_UNSUPPORTED', toolName: 'sync_accounts', index });
-          })
-        : null
-    );
+    const account = ref
+      ? await lookup(accounts, ref, ctx, () => {
+          if (logger)
+            diagnose(accounts, logger, { code: 'ACCOUNT_SYNC_LOOKUP_UNSUPPORTED', toolName: 'sync_accounts', index });
+        })
+      : null;
+    // A ref-ignoring singleton resolver is valid for some discovery tools,
+    // but is not evidence that this natural key has already been synced.
+    existing.push(account?.brand && account.operator !== undefined ? account : null);
   }
   return existing;
 }

@@ -316,3 +316,28 @@ test('strict mode rejects an agent billing remap and logging cannot fail a commi
   );
   assert.equal(result[0].action, 'created');
 });
+
+test('ref-ignoring singleton resolvers do not create false existing-account snapshots', async () => {
+  const { existingSyncAccounts, checkSyncAccountRows } = require('../../dist/lib/server/account-sync-contract.js');
+  const diagnostics = [];
+  const accounts = {
+    strictIdempotency: true,
+    resolve: async () => ({ id: 'default', name: 'Default', status: 'active', ctx_metadata: {} }),
+    onDiagnostic: d => diagnostics.push(d),
+  };
+  const entries = [entry, { ...entry, brand: { domain: 'another.example' } }];
+  const existing = await existingSyncAccounts(accounts, entries, {}, { warn() {} });
+  assert.deepEqual(existing, [null, null]);
+  const rows = entries.map((ref, index) => ({
+    ...row,
+    brand: ref.brand,
+    account_id: `new-${index}`,
+    action: 'created',
+  }));
+  const checked = await checkSyncAccountRows(accounts, entries, existing, rows, [0, 1], {}, { warn() {} });
+  assert.deepEqual(
+    checked.map(r => r.action),
+    ['created', 'created']
+  );
+  assert.deepEqual(diagnostics, []);
+});
