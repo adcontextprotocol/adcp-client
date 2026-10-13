@@ -28,7 +28,8 @@
  */
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -413,6 +414,58 @@ function faultInjectingClient(real, sentLoads = [], cancels = []) {
   };
 }
 
+/**
+ * Wraps the real client so each sink load is submitted with `createLoadJob` (what `table.load`
+ * does internally) and then awaited to completion. Every submission is recorded in `submissions`
+ * as `{ jobId, ms, result }`: how long BigQuery took to create the job or refuse it (the upload
+ * comes first either way), measured from the sink's call. Job cancels go to `cancels`.
+ */
+function submissionTimingClient(real) {
+  const submissions = [];
+  const cancels = [];
+  return {
+    submissions,
+    cancels,
+    dataset(datasetId, options) {
+      const dataset = real.dataset(datasetId, options);
+      return {
+        table(tableId) {
+          const table = dataset.table(tableId);
+          return {
+            async load(file, metadata) {
+              const started = Date.now();
+              const entry = { jobId: metadata.jobId, ms: undefined, result: 'pending' };
+              submissions.push(entry);
+              let job;
+              try {
+                [job] = await table.createLoadJob(file, metadata);
+                entry.result = 'created';
+              } catch (error) {
+                entry.result = error?.code === 409 ? '409' : `error ${error?.code ?? ''}`.trim();
+                throw error;
+              } finally {
+                entry.ms = Date.now() - started;
+              }
+              return job.promise();
+            },
+          };
+        },
+      };
+    },
+    job(jobId, options) {
+      const job = real.job(jobId, options);
+      return {
+        getMetadata: () => job.getMetadata(),
+        cancel: () => {
+          cancels.push({ jobId, projectId: options?.projectId, location: options?.location });
+          return job.cancel();
+        },
+      };
+    },
+    query: (...args) => real.query(...args),
+  };
+}
+
 async function drain(ctx, sink, attempts = 6) {
   const outcomes = [];
   for (let attempt = 0; attempt < attempts; attempt++) {
@@ -499,6 +552,8 @@ async function bigquerySection(ctx) {
   await staleReadScenario();
   await periodDateScenario();
   await deadlineScenario();
+  await runningCancelProbe();
+  await slowUploadScenario();
 
   // -- 1. Load, counts, jobs, labels and the current_rows view ----------------
   async function mainScenario() {
@@ -870,6 +925,103 @@ async function bigquerySection(ctx) {
         ...new Set(client.sentLoads.filter(load => load.tableId === tables.rows).map(load => load.options.jobId)),
       ];
       return `rows=${rowCount} revisions=1, cursor committed; rows job IDs used: ${rowJobs.join(', ')}; runs: ${drained.outcomes.join('; ')}`;
+    });
+  }
+
+  // -- 1d. What BigQuery does with a cancel of a running load (service behavior, INFO)
+  async function runningCancelProbe() {
+    const tableId = 'cancel_probe';
+    await probe(ctx, BQ, 'BigQuery and a cancel sent while a load job is running', async () => {
+      await query(`CREATE TABLE IF NOT EXISTS ${table(tableId)} (ordinal INT64, \`row\` JSON)`);
+      const directory = mkdtempSync(path.join(tmpdir(), 'adcp-cancel-probe-'));
+      try {
+        const file = path.join(directory, 'rows.ndjson');
+        const lines = Array.from({ length: 5_000 }, (_, ordinal) => JSON.stringify({ ordinal, row: { ordinal } }));
+        writeFileSync(file, lines.join('\n') + '\n');
+        const jobId = `adcp_cancel_probe_${config.runId}`;
+        const address = { projectId: dest, location: config.location };
+        await bigquery
+          .dataset(config.datasetId, address)
+          .table(tableId)
+          .createLoadJob(file, { jobId, sourceFormat: 'NEWLINE_DELIMITED_JSON', location: config.location });
+        // Cancel the moment the job exists, addressed the way the sink addresses it.
+        const [response] = await bigquery.job(jobId, address).cancel();
+        let metadata;
+        for (let poll = 0; poll < 60; poll++) {
+          [metadata] = await bigquery.job(jobId, address).getMetadata();
+          if (metadata?.status?.state === 'DONE') break;
+          await ctx.sleep(1_000);
+        }
+        const error = metadata?.status?.errorResult;
+        const [count] = await query(`SELECT COUNT(*) AS n FROM ${table(tableId)}`);
+        return {
+          detail:
+            `a 5000-row load cancelled as soon as it was created: the cancel response showed ${response?.job?.status?.state ?? '?'}, ` +
+            `the job ended ${metadata?.status?.state ?? '?'} ${error ? `stopped (${error.reason})` : 'successfully'}, ` +
+            `${Number(count?.n ?? 0)} rows landed. ` +
+            (error
+              ? 'BigQuery honored the cancel.'
+              : 'BigQuery accepted the cancel but let the load finish: the sink cannot rely on a deadline cancel to stop a load (#3234).'),
+        };
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
+  }
+
+  // -- 1e. #3234: an upload slower than the load deadline (reproduction, INFO)
+  async function slowUploadScenario() {
+    const label = '[#3234 reproduction: upload slower than the load deadline]';
+    const tables = { rows: 'upload_rows', revisions: 'upload_revisions' };
+    // About 12 MB of NDJSON: uploading it takes longer than the 1 s deadline on most links.
+    const rowCount = 50_000;
+    const loadTimeout = 1_000;
+    const runs = 5;
+    let ledger;
+    let sink;
+    let client;
+    const ready = await check(ctx, BQ, 'slow upload: set up ledger, tables and a large pending batch', async () => {
+      ledger = await openLedger(ctx, 'upload', { sink: true });
+      const fixture = await newObligation(ctx, ledger, 'upload');
+      await commit(ledger, fixture, `rrev_${config.runId}_u1`, 1, sequenceRows(rowCount));
+      client = submissionTimingClient(bigquery);
+      sink = sinkFor(ledger, 'upload', tables, { bigquery: client, loadTimeoutMilliseconds: loadTimeout });
+      await createTables(sink, false);
+      return `one obligation, ${rowCount} rows pending, load deadline ${loadTimeout} ms`;
+    });
+    if (!ready) return;
+    await probe(ctx, BQ, `${label} runs`, async () => {
+      const outcomes = [];
+      let converged = false;
+      for (let run = 0; run < runs && !converged; run++) {
+        try {
+          const result = await sink.runOnce();
+          outcomes.push(`ok ${JSON.stringify(result)}`);
+          converged = result.idle;
+        } catch (error) {
+          outcomes.push(`error ${errText(error, ctx.secrets)}`);
+          await ctx.sleep(2_000);
+        }
+      }
+      // Let abandoned uploads finish so the counts reflect everything that will land.
+      await ctx.sleep(10_000);
+      const rowTotals = await rowCounts(tables.rows);
+      const rowsJobs = client.submissions.filter(entry => /_rows(_a\d+)?$/.test(entry.jobId));
+      const attemptAdvanced = rowsJobs.some(entry => /_a\d+$/.test(entry.jobId));
+      const firstUpload = rowsJobs[0];
+      const verdict = converged
+        ? `converged after ${outcomes.length} run(s)`
+        : `DID NOT CONVERGE in ${runs} runs: each rerun re-uploaded the file before BigQuery could answer 409, ` +
+          `outlasted the deadline, and the attempt ${attemptAdvanced ? 'advanced' : 'never advanced'} (#3234)`;
+      return {
+        detail:
+          `${label} ${verdict}. Rows table: ${rowTotals.n} rows (distinct ${rowTotals.distinct}, expected ${rowCount}). ` +
+          `Rows job submissions (ms until created or refused): ${rowsJobs
+            .map(entry => `${entry.jobId.slice(-12)} ${entry.result} ${entry.ms ?? '?'}`)
+            .join(', ')}. ` +
+          `${firstUpload?.ms !== undefined && firstUpload.ms < loadTimeout ? 'The first upload beat the deadline, so this link is too fast to reproduce it. ' : ''}` +
+          `Runs: ${outcomes.join('; ')}`,
+      };
     });
   }
 

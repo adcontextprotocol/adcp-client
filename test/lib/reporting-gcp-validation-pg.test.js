@@ -306,6 +306,50 @@ describe(
       );
     });
 
+    const detailOf = (report, name) => report.entries.find(entry => entry.name === name)?.detail;
+    const cancelProbe = 'BigQuery and a cancel sent while a load job is running';
+    const slowUpload = '[#3234 reproduction: upload slower than the load deadline] runs';
+
+    test('the cancel probe reports whether the service stopped a running load', async () => {
+      const honoring = createFakeBigQuery({
+        clientProject: 'dest-project-1',
+        loadDurationMs: tableId => (tableId === 'cancel_probe' ? 5_000 : 0),
+      });
+      const stopped = await execute({}, ['--skip-gcs'], { clientProject: 'dest-project-1', bigquery: honoring });
+      assert.match(
+        detailOf(stopped.report, cancelProbe),
+        /cancel response showed RUNNING, the job ended DONE stopped \(stopped\), 0 rows landed\. BigQuery honored the cancel\./
+      );
+
+      const finishing = createFakeBigQuery({ clientProject: 'dest-project-1' });
+      const finished = await execute({}, ['--skip-gcs'], { clientProject: 'dest-project-1', bigquery: finishing });
+      assert.match(
+        detailOf(finished.report, cancelProbe),
+        /the job ended DONE successfully, 5000 rows landed\. BigQuery accepted the cancel but let the load finish/
+      );
+    });
+
+    test('the #3234 reproduction reports a sink that never converges when every upload outlasts the deadline', async () => {
+      const bigquery = createFakeBigQuery({
+        clientProject: 'dest-project-1',
+        uploadMs: tableId => (tableId === 'upload_rows' ? 1_300 : 0),
+      });
+      const { report } = await execute({}, ['--skip-gcs'], { clientProject: 'dest-project-1', bigquery });
+      assert.deepEqual(report.failures, []);
+      const detail = detailOf(report, slowUpload);
+      assert.match(detail, /DID NOT CONVERGE in 5 runs: .* the attempt never advanced \(#3234\)/);
+      assert.match(detail, /Rows table: 50000 rows \(distinct 50000, expected 50000\)/);
+      assert.match(detail, /created \d+, .*409 \d+/, 'the first upload created the job and reruns got 409');
+    });
+
+    test('the #3234 reproduction reports convergence when uploads beat the deadline', async () => {
+      const bigquery = createFakeBigQuery({ clientProject: 'dest-project-1' });
+      const { report } = await execute({}, ['--skip-gcs'], { clientProject: 'dest-project-1', bigquery });
+      const detail = detailOf(report, slowUpload);
+      assert.match(detail, /converged after 2 run\(s\)/);
+      assert.match(detail, /The first upload beat the deadline/);
+    });
+
     test('--skip-gcs and --skip-bigquery leave the other service untouched', async () => {
       const bigquery = createFakeBigQuery({ clientProject: 'dest-project-1' });
       const storage = createFakeStorage();
