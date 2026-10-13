@@ -109,7 +109,11 @@ export interface CreateBigQueryReportingWarehouseSinkOptionsV1 {
   datasetId: string;
   rowsTableId: string;
   revisionsTableId: string;
-  /** Dataset location, so jobs run in the dataset's region. */
+  /**
+   * Dataset location, so jobs run in the dataset's region. Set it for any dataset outside the US and EU
+   * multi-regions: BigQuery answers a job lookup without the right location with 404, and the sink then
+   * cannot find the jobs it created.
+   */
   location?: string;
   /** Restrict the sink to one account; omit for the deployment-wide feed. */
   account_id?: string;
@@ -192,7 +196,8 @@ export interface BigQueryReportingWarehouseSinkV1 {
    * the destination tables first, or use a new sink name against new tables.
    * Each reset starts a new job ID generation, so reloaded batches submit
    * fresh BigQuery jobs instead of matching the finished jobs of the earlier
-   * history. Nothing holds change retention between `reset()` and the first
+   * history. The sink never cancels a load, so stop every worker and let its
+   * in-flight uploads and jobs finish before emptying the destination tables. Nothing holds change retention between `reset()` and the first
    * committed batch. If `reset()` rejects after clearing the sink's state
    * (the consumer could not be unregistered), call it again before restarting
    * workers; it is idempotent. Needs a store with `removeFeedConsumer`.
@@ -268,15 +273,60 @@ export function createBigQueryReportingWarehouseSinkV1(
         }
       : undefined;
 
+  /** Uploads submitted by this process and not yet settled, by job ID, so a rerun can wait on one. */
+  const uploads = new Map<string, UploadEntry>();
+
+  /**
+   * Write the lines to a temporary file and submit the load. The temporary directory goes away when the
+   * upload settles, or when a later run replaces an upload that never settled (the client opened the file
+   * when it started, so deleting it does not disturb a running upload).
+   */
+  function startUpload(tableId: string, jobId: string, lines: string[]): Promise<unknown> {
+    const entry: UploadEntry = {
+      startedAt: Date.now(),
+      done: Promise.resolve(),
+    };
+    const cleanup = async () => {
+      if (uploads.get(jobId) === entry) uploads.delete(jobId);
+      if (entry.directory) await fs.rm(entry.directory, { recursive: true, force: true }).catch(() => {});
+    };
+    entry.done = (async () => {
+      const directory = await fs.mkdtemp(path.join(tmpdir(), 'adcp-warehouse-'));
+      entry.directory = directory;
+      const file = path.join(directory, `${jobId}.ndjson`);
+      await fs.writeFile(file, lines.length ? lines.join('\n') + '\n' : '', { mode: 0o600 });
+      return dataset.table(tableId).load(file, {
+        jobId,
+        sourceFormat: 'NEWLINE_DELIMITED_JSON',
+        writeDisposition: 'WRITE_APPEND',
+        ...(options.location ? { location: options.location } : {}),
+      });
+    })();
+    const replaced = uploads.get(jobId);
+    uploads.set(jobId, entry);
+    // Settling is handled here, so an abandoned upload that later fails is never an unhandled rejection.
+    void entry.done.then(cleanup, cleanup);
+    if (replaced?.directory) void fs.rm(replaced.directory, { recursive: true, force: true }).catch(() => {});
+    return entry.done;
+  }
+
   /**
    * Look the job up in the destination project and location. `missing` is a 404;
    * a job that finished with an error throws the retryable failure; anything not
    * DONE (PENDING, RUNNING, or a response without a state) is `running`.
    */
-  async function jobStatus(jobId: string, signal?: AbortSignal): Promise<'missing' | 'done' | 'running'> {
+  async function jobStatus(
+    jobId: string,
+    signal?: AbortSignal,
+    boundMilliseconds = loadTimeout
+  ): Promise<'missing' | 'done' | 'running'> {
     let metadata: unknown;
     try {
-      metadata = await withinDeadline(() => options.bigquery.job(jobId, jobOptions).getMetadata(), loadTimeout, signal);
+      metadata = await withinDeadline(
+        () => options.bigquery.job(jobId, jobOptions).getMetadata(),
+        boundMilliseconds,
+        signal
+      );
     } catch (error) {
       if ((error as { code?: unknown } | null)?.code === 404) return 'missing';
       throw error;
@@ -321,30 +371,28 @@ export function createBigQueryReportingWarehouseSinkV1(
       return error;
     };
     if (status === 'missing') {
-      const directory = await fs.mkdtemp(path.join(tmpdir(), 'adcp-warehouse-'));
-      const file = path.join(directory, `${jobId}.ndjson`);
       try {
-        await fs.writeFile(file, lines.length ? lines.join('\n') + '\n' : '', { mode: 0o600 });
-        await withinDeadline(
-          () =>
-            dataset.table(tableId).load(file, {
-              jobId,
-              sourceFormat: 'NEWLINE_DELIMITED_JSON',
-              writeDisposition: 'WRITE_APPEND',
-              ...(options.location ? { location: options.location } : {}),
-            }),
-          Math.max(deadlineAt - Date.now(), 1),
-          signal
-        );
+        // An upload an earlier run abandoned at its deadline is still running in this process (the client
+        // takes no abort signal), so wait for it instead of starting another upload of the same file. One
+        // that has been running longer than this run's deadline is replaced; BigQuery refuses a duplicate
+        // job ID, so a replacement can never load the batch twice.
+        const running = uploads.get(jobId);
+        const upload =
+          running && Date.now() - running.startedAt < loadDeadline ? running.done : startUpload(tableId, jobId, lines);
+        await withinDeadline(() => upload, Math.max(deadlineAt - Date.now(), 1), signal);
         return;
       } catch (error) {
         if (isDeadlineExceeded(error)) throw timedOut('Uploading the load');
         if (!isAlreadyExists(error)) throw error;
         // The job exists (a crash or timeout after submission, or a concurrent run). Check how it ended.
         status = await jobStatus(jobId, signal);
-        if (status === 'missing') throw error;
-      } finally {
-        await fs.rm(directory, { recursive: true, force: true });
+        if (status === 'missing') {
+          throw new Error(
+            'BigQuery refused the load job ID as already existing, but the job cannot be found. Check that projectId ' +
+              'and location match the dataset (location is required for datasets outside the US and EU multi-regions)',
+            { cause: error }
+          );
+        }
       }
     }
     // The job is pending or running: wait for it, never upload again.
@@ -353,7 +401,14 @@ export function createBigQueryReportingWarehouseSinkV1(
       const remaining = deadlineAt - Date.now();
       if (remaining <= 0) throw timedOut('Waiting for the running load job');
       await sleep(Math.min(pollMilliseconds, remaining), signal);
-      status = await jobStatus(jobId, signal);
+      const bound = Math.max(Math.min(loadTimeout, deadlineAt - Date.now()), 1);
+      try {
+        status = await jobStatus(jobId, signal, bound);
+      } catch (error) {
+        // A status call cut short by this run's remaining time is the run's deadline, not a failed check.
+        if (isDeadlineExceeded(error) && bound < loadTimeout) throw timedOut('Waiting for the running load job');
+        throw error;
+      }
       if (status === 'missing') throw new Error('A BigQuery load job for this batch disappeared while it was awaited');
     }
   }
@@ -668,7 +723,13 @@ export function createBigQueryReportingWarehouseSinkV1(
   };
 }
 
-/** 42703 undefined_column: a sink table created before `reset_generation` existed. */
+interface UploadEntry {
+  startedAt: number;
+  done: Promise<unknown>;
+  directory?: string;
+}
+
+/** 42703 undefined_column: a sink table created before `reset_generation` or the deadline columns existed. */
 function missingMigration(error: unknown): never {
   if ((error as { code?: unknown } | null)?.code === '42703') {
     throw new Error(

@@ -335,26 +335,32 @@ describe(
       assert.doesNotMatch(detail, /too fast to exercise/);
     });
 
-    test('the #3234 check fails for a sink that cannot find an existing job and uploads the file again every run', async () => {
-      const real = createFakeBigQuery({
-        clientProject: 'dest-project-1',
-        uploadMs: tableId => (tableId === 'upload_rows' ? 1_300 : 0),
-      });
-      // The old behavior: no lookup before submitting, so every rerun uploads and is refused with 409.
-      const blind = {
+    test('the #3234 check fails when the sink never converges', async () => {
+      const real = createFakeBigQuery({ clientProject: 'dest-project-1' });
+      // The service refuses every upload into the rows table, so no run can finish.
+      const refusing = {
         state: real.state,
-        dataset: real.dataset,
+        job: real.job,
         query: real.query,
-        job: (jobId, options) => ({
-          ...real.job(jobId, options),
-          getMetadata: async () => {
-            throw Object.assign(new Error('Not found: Job'), { code: 404 });
-          },
-        }),
+        dataset: (datasetId, options) => {
+          const dataset = real.dataset(datasetId, options);
+          return {
+            ...dataset,
+            table: tableId =>
+              tableId === 'upload_rows'
+                ? {
+                    ...dataset.table(tableId),
+                    createLoadJob: async () => {
+                      throw Object.assign(new Error('quota exceeded'), { code: 403 });
+                    },
+                  }
+                : dataset.table(tableId),
+          };
+        },
       };
-      const { report } = await execute({}, ['--skip-gcs'], { clientProject: 'dest-project-1', bigquery: blind });
+      const { report } = await execute({}, ['--skip-gcs'], { clientProject: 'dest-project-1', bigquery: refusing });
       assert.equal(statusOf(report, slowUpload), 'FAIL');
-      assert.match(detailOf(report, slowUpload), /did not reach idle in 8 runs|started after the job existed/);
+      assert.match(detailOf(report, slowUpload), /did not reach idle in 8 runs.*quota exceeded/);
     });
 
     test('the #3234 check notes a link too fast to exercise the timeout path, and still passes', async () => {

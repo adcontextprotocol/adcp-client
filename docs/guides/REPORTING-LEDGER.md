@@ -974,11 +974,18 @@ setInterval(() => {
   loaded, a job that is pending or running is waited for (never uploaded
   again), and only a missing job (404) is uploaded. A crash or timeout between a
   load and the cursor commit therefore replays the same batch under the same
-  job ID without a second upload. A job that finished with an error is retried
-  under a new attempt for that table only.
+  job ID without a second upload. An upload an earlier run abandoned at its
+  deadline is still running in the same process (the official client cannot
+  abort it), so the next run waits for it rather than starting another, until it
+  has been running longer than that run's deadline; BigQuery refuses a duplicate
+  job ID, so a replacement can never load the batch twice. A job that finished
+  with an error is retried under a new attempt for that table only.
 - `projectId` scopes both load submission and replay status checks. When it is
   omitted, both use the BigQuery client's default project. Each replica must
-  be able to read the BigQuery jobs submitted by the other replicas.
+  be able to read the BigQuery jobs submitted by the other replicas. Set
+  `location` for any dataset outside the US and EU multi-regions: BigQuery
+  answers a job lookup without the right location with 404, and the sink then
+  cannot find the jobs it created.
 - `loadTimeoutMilliseconds` (default 10 minutes) is the base deadline for one
   run's work on one load: uploading the file, or waiting for a job that is still
   running. It bounds a run, not the job. BigQuery does not stop a load when the
@@ -1043,7 +1050,9 @@ setInterval(() => {
   jobs may have succeeded; reconcile the plan against BigQuery, then call
   `reset({ discardRetainedPlan: true })`. It does not touch the warehouse: a sink
   that already loaded history reloads the retained revisions, so empty the
-  destination tables first or use a new sink name against new tables. Every
+  destination tables first (after stopping every worker and letting in-flight
+  uploads and jobs finish, since the sink never cancels a load) or use a new
+  sink name against new tables. Every
   reset starts a new job ID generation, so reloaded batches submit fresh BigQuery
   jobs instead of matching the finished jobs of the earlier history. Nothing holds
   change retention between `reset()` and the first committed batch. If `reset()`
