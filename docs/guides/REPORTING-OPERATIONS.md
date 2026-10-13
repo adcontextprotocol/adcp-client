@@ -337,23 +337,22 @@ What it checks:
   duplicate rows, and that `current_rows` returns one revision per obligation.
   It also asserts (`PASS`/`FAIL`) that the sink sends no `labels` or
   `jobTimeoutMs` inside `configuration.load`, where BigQuery silently drops
-  them, and that a job cancel addressed with the destination project and
-  location (what the sink sends when a load passes its client-side deadline) is
-  accepted by BigQuery. A deadline scenario then runs a sink with the minimum
-  1-second load deadline and holds the first load's result past it: the run must
-  reject and cancel that job in the destination project and location, the job
-  must end `DONE` (stopped by the cancel, or finished first; the report says
-  which), and later runs under the same sink name at the normal deadline must
-  converge with no duplicate rows. A
+  them. A deadline scenario runs a sink with the minimum 1-second load deadline
+  and holds the first load's result past it: the run must reject with the plan
+  and job ID unchanged and that table's persisted deadline grown, the job must
+  end `DONE` without an error (the sink never cancels it), and later runs under
+  the same sink name must converge with no duplicate rows, the same job ID and
+  no second upload. A #3234 scenario runs a sink whose upload of a 50,000-row
+  batch outlasts its 1-second deadline and asserts that it converges within 8
+  runs, loads every row exactly once, never changes the job ID, and never
+  starts an upload after the job exists (a link fast enough to beat the
+  deadline passes and says so). A
   `period_date` scenario checks that non-UTC periods land on their
   source-timezone date.
-- **Deadline behavior of the service** (`INFO`, never a failure). One probe
-  cancels a 5000-row load the moment it is created and reports whether BigQuery
-  stopped it; in practice it accepts the cancel and lets the load finish. A
-  reproduction of #3234 runs a sink whose upload outlasts its 1-second deadline
-  and reports whether it converges: a rerun must upload the whole file again
-  before BigQuery answers 409, so it times out again, and the attempt only
-  advances when a job fails.
+- **Cancel probe of the service** (`INFO`, never a failure). It cancels a
+  5000-row load the moment it is created and reports whether BigQuery stopped
+  it; in practice it accepts the cancel and lets the load finish, which is why
+  the sink never cancels a load and finds it by job ID instead.
 - **Overlapping runs** (`INFO`, never a failure). Two concurrent `runOnce()`
   calls over one pending batch, and a deterministic reproduction of #3196: one
   run reads its sink state, another completes the batch and a new revision
