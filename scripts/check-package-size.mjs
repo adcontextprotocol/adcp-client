@@ -75,7 +75,12 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // Reporting row-storage field alignment (AdCP names, the source-timezone period date,
 // provider stat and the migration guide) measured 20,450,821 bytes in CI on both Node
 // floors. Allow 30 KB above that for compressor variance; other byte budgets stay fixed.
-const MAX_PACKED_TARBALL_BYTES = 20_480_000;
+// Experimental AdCP 3.3 agent identity (Web Bot Auth signing/verification, key
+// directories, origin revocation, trust records, grants, and the pinned preview
+// types) adds about 91 KB of compressed modules plus the migration guide and
+// dispatcher/CLI wiring; the measured tarball is 20,600,227 bytes. Allow 30 KB
+// above that for compressor variance; other byte budgets stay fixed.
+const MAX_PACKED_TARBALL_BYTES = 20_630_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -223,7 +228,8 @@ const MAX_PACKED_FILE_COUNT =
   4 + // Managed-delivery adapter router (`reporting/ledger/managed-router`, one dual-format set).
   1 + // Reporting row-storage field-alignment migration guide.
   22 + // AdCP 3.2.4 signed request-signing compliance vectors; no new runtime module sets.
-  1; // Agent identity origin/resolver migration guide; byte budgets stay fixed.
+  1 + // Agent identity origin/resolver migration guide; byte budgets stay fixed.
+  92; // Experimental AdCP 3.3 agent identity: 23 dual-format module sets (14 wba, 6 trust, 2 preview types, 1 grant gate).
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

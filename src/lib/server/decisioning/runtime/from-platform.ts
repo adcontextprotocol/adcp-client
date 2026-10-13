@@ -3316,13 +3316,20 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         // `list_accounts` on the upstream-managed roster), natural key
         // refused. Explicit: no constraint.
         enforceAccountRefShapeForResolution(platform.accounts.resolution, ref);
+        const resolveCtx = toResolveCtx(ctx, ctx.toolName, ctx.input);
         const account = assertResolvedAccountMatchesRef(
           platform.accounts.resolution,
           ref,
-          await platform.accounts.resolve(ref, toResolveCtx(ctx, ctx.toolName, ctx.input)),
+          await platform.accounts.resolve(ref, resolveCtx),
           fwLogger,
           implicitIdentityPolicy
         );
+        if (account != null && platform.accounts.trustGrants && ctx.toolName !== 'sync_accounts') {
+          await platform.accounts.trustGrants.requireAccount(account, {
+            ...gateContext(resolveCtx),
+            operation: ctx.toolName,
+          });
+        }
         resolved = account != null;
         resolvedAccountId = account?.id;
         return account;
@@ -3371,7 +3378,14 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       const compactAccountRequired =
         COMPACT_MEDIA_BUY_MUTATION_TOOLS.has(ctx.toolName) && authenticatedPrincipalFor(ctx) !== undefined;
       try {
-        const account = await platform.accounts.resolve(undefined, toResolveCtx(ctx, ctx.toolName, ctx.input));
+        const resolveCtx = toResolveCtx(ctx, ctx.toolName, ctx.input);
+        const account = await platform.accounts.resolve(undefined, resolveCtx);
+        if (account != null && platform.accounts.trustGrants && ctx.toolName !== 'sync_accounts') {
+          await platform.accounts.trustGrants.requireAccount(account, {
+            ...gateContext(resolveCtx),
+            operation: ctx.toolName,
+          });
+        }
         resolved = account != null;
         resolvedAccountId = account?.id;
         if (account == null && compactAccountRequired) {
@@ -9006,6 +9020,32 @@ function enforceSyncAccountsCommercialPolicy<P extends DecisioningPlatform<any, 
   };
 }
 
+async function enforceSyncAccountsTrustGrants(
+  accounts: DecisioningPlatform<any, any>['accounts'],
+  params: Record<string, unknown>,
+  resolveCtx: ResolveContext
+): Promise<void> {
+  const gate = accounts.trustGrants!;
+  const entries = Array.isArray(params.accounts) ? (params.accounts as Record<string, unknown>[]) : [];
+  for (const entry of entries) {
+    const reference = entry?.account as { account_id?: unknown } | undefined;
+    if (entry && typeof reference?.account_id === 'string' && entry.brand === undefined) {
+      // Settings update on an existing account: check the seller's record.
+      const account = await accounts.resolve({ account_id: reference.account_id } as AccountReference, resolveCtx);
+      if (account) await gate.requireAccount(account, { ...gateContext(resolveCtx), operation: 'sync_accounts' });
+      continue;
+    }
+    await gate.requireDeclaration(entry, gateContext(resolveCtx));
+  }
+}
+
+function gateContext(ctx: ResolveContext): import('../trust-grants').TrustGrantContext {
+  return {
+    ...(ctx.agent !== undefined && { agent: ctx.agent }),
+    ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
+  };
+}
+
 function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
   platform: P,
   ctxFor: CtxForFn,
@@ -9029,6 +9069,11 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
   if (accounts.upsert) {
     handlers.syncAccounts = async (params, ctx) => {
       const resolveCtx = toResolveCtx(ctx, 'sync_accounts', params);
+      if (accounts.trustGrants) {
+        // Experimental AdCP 3.3 grants (DR-0025): every declaration is
+        // authorized before any upsert, so a missing grant changes nothing.
+        await enforceSyncAccountsTrustGrants(accounts, params as Record<string, unknown>, resolveCtx);
+      }
       const policy = enforceSyncAccountsCommercialPolicy(platform, params as Record<string, unknown>, resolveCtx);
       if (normalizeAccountResolution(accounts.resolution) === 'derived') {
         await assertDerivedSyncAccountEntriesReachable(accounts, policy.acceptedEntries, resolveCtx, logger);

@@ -1624,6 +1624,15 @@ export interface SingleAgentClientConfig extends ConversationConfig {
      */
     rejectProductsWithoutPricingOptions?: boolean;
     /**
+     * Experimental (AdCP 3.3): accept the draft `relationship` on
+     * `get_principal` results, validated against the pinned identity preview
+     * schema instead of being rejected by the 3.2 response schema. Enabled
+     * automatically when `request_signing.profile` is `'web-bot-auth'`.
+     *
+     * @default false
+     */
+    experimentalAgentIdentity?: boolean;
+    /**
      * Buyer-side property policy applied to completed `get_products`
      * responses before completion handlers and callers receive the product
      * list. A request-level `property_list` is enforced automatically by
@@ -2360,6 +2369,8 @@ export class SingleAgentClient {
       strictSchemaValidation: config.validation?.strictSchemaValidation !== false, // Default: true
       logSchemaViolations: config.validation?.logSchemaViolations !== false, // Default: true
       filterInvalidProducts: config.validation?.filterInvalidProducts === true, // Default: false
+      experimentalAgentIdentity:
+        config.validation?.experimentalAgentIdentity === true || agent.request_signing?.profile === 'web-bot-auth',
       validation: {
         ...(config.validation?.requests != null && { requests: config.validation.requests }),
         ...(config.validation?.responses != null && { responses: config.validation.responses }),
@@ -10390,6 +10401,8 @@ export class SingleAgentClient {
       alg: (provider ? provider.algorithm : (signing as { alg?: string }).alg) ?? null,
       alwaysSign: signing.always_sign ?? null,
       signSupported: signing.sign_supported ?? null,
+      // Only an explicit opt-in changes the key, so existing keys stay stable.
+      ...(signing.profile !== undefined && { profile: signing.profile }),
     };
   }
 

@@ -55,7 +55,21 @@ export type AdcpCredential =
       readonly scopes: readonly string[];
       readonly expires_at?: number;
     }
-  | { readonly kind: 'http_sig'; readonly keyid: string; readonly agent_url: string; readonly verified_at: number };
+  | {
+      readonly kind: 'http_sig';
+      readonly keyid: string;
+      readonly agent_url: string;
+      readonly verified_at: number;
+      /**
+       * Experimental (AdCP 3.3): `'web-bot-auth'` when the Web Bot Auth
+       * profile verified the signer. `agent_url` is then the verified
+       * canonical origin, and the credential exists only for an origin the
+       * seller bound to `principal_id`.
+       */
+      readonly profile?: 'web-bot-auth';
+      /** Experimental (AdCP 3.3): principal the WBA origin is bound to. */
+      readonly principal_id?: string;
+    };
 
 /**
  * Status of a buyer-agent record. Drives framework-level request gating:
@@ -311,7 +325,31 @@ export interface BuyerAgentRegistry {
    * buyer can retry; the inner error is logged server-side.
    */
   resolve(authInfo: BuyerAgentResolveInput): Promise<BuyerAgent | null>;
+
+  /**
+   * Experimental (AdCP 3.3) unknown-signer hook. Called with a verified Web
+   * Bot Auth origin that has no binding (identity-established, spec R5
+   * rule 1), e.g. to queue it for one-click approval. Such a request carries
+   * no credential, so `resolve` returns no agent for it: the origin maps to
+   * an agent only through an explicit binding (`webBotAuth.bindings`).
+   * Confers no authority; throwing is logged and ignored.
+   */
+  identityEstablished?(identity: EstablishedSignerIdentity): void | Promise<void>;
 }
+
+/** Experimental (AdCP 3.3): a verified, unbound Web Bot Auth signer. */
+export interface EstablishedSignerIdentity {
+  /** Verified canonical origin. */
+  readonly origin: string;
+  /** RFC 7638 thumbprint of the verifying key. */
+  readonly keyid: string;
+  readonly verified_at: number;
+  /** AdCP operation or JSON-RPC method the request carried. */
+  readonly operation?: string;
+}
+
+/** Experimental (AdCP 3.3) unknown-signer hook accepted by the registry factories. */
+export type OnIdentityEstablished = (identity: EstablishedSignerIdentity) => void | Promise<void>;
 
 /**
  * Resolver function type for the signed path. Receives the
@@ -447,12 +485,17 @@ function isVerifiedHttpSig(credential: AdcpCredential): boolean {
  *
  * @public
  */
-export function signingOnly(opts: { resolveByAgentUrl: ResolveBuyerAgentByAgentUrl }): BuyerAgentRegistry {
+export function signingOnly(opts: {
+  resolveByAgentUrl: ResolveBuyerAgentByAgentUrl;
+  /** Experimental (AdCP 3.3): see {@link BuyerAgentRegistry.identityEstablished}. */
+  onIdentityEstablished?: OnIdentityEstablished;
+}): BuyerAgentRegistry {
   if (typeof opts.resolveByAgentUrl !== 'function') {
     throw new TypeError('BuyerAgentRegistry.signingOnly: resolveByAgentUrl must be a function');
   }
   const resolveByAgentUrl = opts.resolveByAgentUrl;
   return {
+    ...identityHook(opts.onIdentityEstablished, 'signingOnly'),
     async resolve(authInfo) {
       const credential = authInfo.credential;
       if (credential === undefined || credential.kind !== 'http_sig') return null;
@@ -509,6 +552,8 @@ export function bearerOnly(opts: { resolveByCredential: ResolveBuyerAgentByCrede
 export function mixed(opts: {
   resolveByAgentUrl: ResolveBuyerAgentByAgentUrl;
   resolveByCredential: ResolveBuyerAgentByCredential;
+  /** Experimental (AdCP 3.3): see {@link BuyerAgentRegistry.identityEstablished}. */
+  onIdentityEstablished?: OnIdentityEstablished;
 }): BuyerAgentRegistry {
   if (typeof opts.resolveByAgentUrl !== 'function') {
     throw new TypeError('BuyerAgentRegistry.mixed: resolveByAgentUrl must be a function');
@@ -519,6 +564,7 @@ export function mixed(opts: {
   const resolveByAgentUrl = opts.resolveByAgentUrl;
   const resolveByCredential = opts.resolveByCredential;
   return {
+    ...identityHook(opts.onIdentityEstablished, 'mixed'),
     async resolve(authInfo) {
       const credential = authInfo.credential;
       const extra = authInfo.extra;
@@ -538,6 +584,17 @@ export function mixed(opts: {
       return resolveByCredential(credential, extra, authInfo.input);
     },
   };
+}
+
+function identityHook(
+  hook: OnIdentityEstablished | undefined,
+  factory: string
+): Pick<BuyerAgentRegistry, 'identityEstablished'> {
+  if (hook === undefined) return {};
+  if (typeof hook !== 'function') {
+    throw new TypeError(`BuyerAgentRegistry.${factory}: onIdentityEstablished must be a function`);
+  }
+  return { identityEstablished: identity => hook(identity) };
 }
 
 // ---------------------------------------------------------------------------
@@ -639,7 +696,11 @@ function cacheKeyForCredential(credential: AdcpCredential | undefined): string |
   if (credential === undefined) return null;
   switch (credential.kind) {
     case 'http_sig':
-      return `http_sig:${credential.agent_url}`;
+      // A bound Web Bot Auth origin never shares an entry with an RFC 9421
+      // agent URL that happens to be spelled the same way.
+      return credential.profile === 'web-bot-auth'
+        ? `http_sig:web-bot-auth:${credential.agent_url}`
+        : `http_sig:${credential.agent_url}`;
     case 'api_key':
       return `api_key:${credential.key_id}`;
     case 'oauth':
@@ -726,6 +787,9 @@ export function cached(inner: BuyerAgentRegistry, options: BuyerAgentCacheOption
   const inFlight = new Map<string, Promise<BuyerAgent | null>>();
 
   return {
+    ...(inner.identityEstablished !== undefined && {
+      identityEstablished: (identity: EstablishedSignerIdentity) => inner.identityEstablished!(identity),
+    }),
     async resolve(authInfo) {
       const key = cacheKeyForCredential(authInfo.credential);
       if (key === null) {

@@ -4,8 +4,18 @@ import { RequestSignatureError } from './errors';
 import { InMemoryReplayStore } from './replay';
 import { InMemoryRevocationStore } from './revocation';
 import { verifyRequestSignature, type VerifyRequestOptions } from './verifier';
-import type { ResolvedOperation } from './operation-resolution';
+import { isUnresolvableOperation, type ResolvedOperation } from './operation-resolution';
 import type { VerifiedSigner } from './types';
+import {
+  assertNoRfc9421Downgrade,
+  authenticateWebBotAuthRequest,
+  jsonRpcMethod,
+  resolveWebBotAuthConfig,
+  type WebBotAuthVerifierConfig,
+} from './wba/authorize';
+import { warnRfc9421ProfileDeprecated } from './wba/deprecation';
+import { WebBotAuthError } from './wba/errors';
+import { usesWebBotAuth } from './wba/verifier';
 
 declare module 'http' {
   interface IncomingMessage {
@@ -91,6 +101,17 @@ export interface ExpressMiddlewareOptions extends Omit<
    * Must return the exact URL the signer used (scheme + authority + path + query).
    */
   getUrl?: (req: ExpressLike) => string;
+  /**
+   * Experimental (AdCP 3.3): also accept the Web Bot Auth profile. A request
+   * carrying `Signature-Agent` or the `web-bot-auth` tag is verified under it
+   * only, never under the RFC 9421 profile, and failures answer with WBA
+   * statuses (`400`, `403` with `Accept-Signature`, `429`) instead of
+   * `request_signature_*` codes. RFC 9421 requests keep their behavior,
+   * except that an origin bound through `webBotAuth.bindings` is refused on
+   * that profile (no downgrade). Omitting this option keeps the RFC 9421
+   * profile only, which is deprecated in AdCP 3.3 and works through 3.x.
+   */
+  webBotAuth?: WebBotAuthVerifierConfig;
 }
 
 type NextFn = (err?: unknown) => void;
@@ -101,6 +122,9 @@ export function createExpressVerifier(options: ExpressMiddlewareOptions) {
   // would defeat replay detection entirely.
   const replayStore = options.replayStore ?? new InMemoryReplayStore();
   const revocationStore = options.revocationStore ?? new InMemoryRevocationStore();
+  const webBotAuth = options.webBotAuth ? resolveWebBotAuthConfig(options.webBotAuth) : undefined;
+  if (!webBotAuth) warnRfc9421ProfileDeprecated('verification');
+  const { webBotAuth: _webBotAuth, ...rfc9421Options } = options;
 
   return async function requestSignatureMiddleware(
     req: ExpressLike,
@@ -116,12 +140,32 @@ export function createExpressVerifier(options: ExpressMiddlewareOptions) {
         headers: req.headers,
         body,
       };
+      if (webBotAuth && usesWebBotAuth(req.headers)) {
+        const operation = options.resolveOperation(req);
+        if (isUnresolvableOperation(operation)) {
+          throw new WebBotAuthError('request body does not resolve to one operation', { status: 400 });
+        }
+        const rawHeaders = Array.isArray(req.rawHeaders) ? (req.rawHeaders as string[]) : undefined;
+        const { signer } = await authenticateWebBotAuthRequest(
+          { ...requestLike, ...(rawHeaders !== undefined && { rawHeaders }) },
+          webBotAuth,
+          {
+            replayStore,
+            ...(options.now !== undefined && { now: options.now }),
+            ...((operation ?? jsonRpcMethod(body)) !== undefined && { operation: operation ?? jsonRpcMethod(body) }),
+          }
+        );
+        req.verifiedSigner = signer;
+        next();
+        return;
+      }
       const result = await verifyRequestSignature(requestLike, {
-        ...options,
+        ...rfc9421Options,
         replayStore,
         revocationStore,
         operation: options.resolveOperation(req),
       });
+      if (result.status === 'verified' && webBotAuth) await assertNoRfc9421Downgrade(result.agent_url, webBotAuth);
       if (result.status === 'verified') {
         req.verifiedSigner = {
           keyid: result.keyid,
@@ -132,6 +176,13 @@ export function createExpressVerifier(options: ExpressMiddlewareOptions) {
       }
       next();
     } catch (err) {
+      if (err instanceof WebBotAuthError) {
+        // WBA reports failures by status and headers only; `reason` stays in
+        // server logs so callers cannot probe which check failed.
+        const [name, value] = Object.entries(err.headers)[0] ?? ['Cache-Control', 'no-store'];
+        res.status(err.status).set(name, value).json(err.responseBody());
+        return;
+      }
       if (err instanceof RequestSignatureError) {
         // `failed_step` is informational per spec; keep it in server-side logs
         // rather than the 401 body so anonymous callers can't enumerate the

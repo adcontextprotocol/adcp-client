@@ -1,6 +1,7 @@
 // Core task execution engine for ADCP conversation flow
 // Implements PR #78 async patterns: working/submitted/input-required/completed
 
+import { identityPreviewSchemaErrors } from '../signing/trust/schema';
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import type { AgentConfig } from '../types';
 import {
@@ -1000,6 +1001,8 @@ export class TaskExecutor {
       validation?: ValidationHookConfig;
       /** Filter out invalid products from get_products responses instead of rejecting the entire response (default: false) */
       filterInvalidProducts?: boolean;
+      /** Experimental (AdCP 3.3): validate draft identity fields against the pinned preview schemas. */
+      experimentalAgentIdentity?: boolean;
       /** Global activity callback for observability */
       onActivity?: (activity: Activity) => void | Promise<void>;
       /** Transport-level diagnostics callback for outbound HTTP requests. */
@@ -6002,6 +6005,8 @@ export class TaskExecutor {
     switch (taskName) {
       case 'get_products':
         return normalizeGetProductsResponse(stripped);
+      case 'get_principal':
+        return this.config.experimentalAgentIdentity === true ? withoutPreviewRelationship(stripped) : stripped;
       default:
         return stripped;
     }
@@ -6157,4 +6162,18 @@ export class TaskExecutor {
     // For now, return undefined and fall back to local tasks
     return undefined;
   }
+}
+
+/**
+ * Experimental (AdCP 3.3): the 3.2 schema closes `get_principal` results, so
+ * a draft `relationship` (spec R8) is validated against the pinned preview
+ * schema and removed from the copy the 3.2 validator sees. An invalid
+ * relationship is left in place so validation still fails.
+ */
+function withoutPreviewRelationship(response: Record<string, unknown>): Record<string, unknown> {
+  const result = response.result as Record<string, unknown> | undefined;
+  if (!result || typeof result !== 'object' || !('relationship' in result)) return response;
+  if (identityPreviewSchemaErrors(result.relationship, 'core/principal-relationship.json').length > 0) return response;
+  const { relationship: _relationship, ...rest } = result;
+  return { ...response, result: rest };
 }

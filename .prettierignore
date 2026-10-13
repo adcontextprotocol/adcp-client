@@ -36,3 +36,9 @@ test/fixtures/reporting-consumer-status/canonical-rc3.json
 # Canonical supply-path verdict vectors, byte-identical to the upstream corpus.
 test/fixtures/supply-path/vectors.json
 test/fixtures/request-signing-a2a/
+
+# Experimental AdCP 3.3 identity preview: draft schemas and Web Bot Auth
+# vectors vendored byte-for-byte from the upstream commits in
+# schemas/identity-preview/UPSTREAM.json and the fixture README.
+schemas/identity-preview/
+test/fixtures/wba-profile-vectors/

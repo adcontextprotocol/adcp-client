@@ -156,8 +156,20 @@ export type {
   AdcpCredential,
   ResolveBuyerAgentByAgentUrl,
   ResolveBuyerAgentByCredential,
+  EstablishedSignerIdentity,
+  OnIdentityEstablished,
 } from './buyer-agent';
 export { BuyerAgentRegistry } from './buyer-agent';
+
+// Experimental (AdCP 3.3, DR-0025) demand-side grant gate for `accounts.trustGrants`.
+export {
+  createTrustGrantGate,
+  MEDIA_BUYING_GRANT_OPERATIONS,
+  type TrustGrantClaim,
+  type TrustGrantContext,
+  type TrustGrantGate,
+  type TrustGrantGateOptions,
+} from './trust-grants';
 
 // Native status mapping
 export type { StatusMappers, AdcpMediaBuyStatus, AdcpCreativeStatus, AdcpPlanStatus } from './status-mappers';

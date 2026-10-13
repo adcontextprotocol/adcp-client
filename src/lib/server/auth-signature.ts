@@ -239,16 +239,24 @@ export function principalForVerifiedSigner(
     });
   }
 
+  const webBotAuth = signer.profile === 'web-bot-auth';
+  // A Web Bot Auth origin with no binding is identity-established: it gets
+  // no credential, so no BuyerAgentRegistry posture can map it to an agent
+  // record (even one that shares its URL). Bound origins carry the binding.
   const credential =
-    signer.agent_url !== undefined
+    signer.agent_url !== undefined && (!webBotAuth || signer.principal_id !== undefined)
       ? markVerifiedHttpSig({
           kind: 'http_sig',
           keyid: signer.keyid,
           agent_url: signer.agent_url,
           verified_at: signer.verified_at,
+          ...(webBotAuth && { profile: 'web-bot-auth' as const, principal_id: signer.principal_id! }),
         })
       : undefined;
-  if (makePrincipal !== undefined) {
+  // `makePrincipal` maps RFC 9421 signers. A Web Bot Auth origin's principal
+  // comes only from its explicit binding, so a legacy mapper keyed by agent URL
+  // can never hand an unbound (or differently bound) origin a principal.
+  if (makePrincipal !== undefined && !webBotAuth) {
     const custom = makePrincipal(signer);
     if (
       !custom ||
@@ -261,12 +269,15 @@ export function principalForVerifiedSigner(
     return credential !== undefined && custom.credential === undefined ? { ...custom, credential } : custom;
   }
   return {
-    principal: `signing:${signer.keyid}`,
+    // WBA identity is the origin, not a key: key rotation keeps the caller.
+    principal: webBotAuth ? (signer.principal_id ?? `web-bot-auth:${signer.agent_url}`) : `signing:${signer.keyid}`,
     claims: {
       signature: {
         keyid: signer.keyid,
         verified_at: signer.verified_at,
         ...(signer.agent_url !== undefined ? { agent_url: signer.agent_url } : {}),
+        ...(webBotAuth && { profile: 'web-bot-auth' }),
+        ...(signer.principal_id !== undefined && { principal_id: signer.principal_id }),
       },
     },
     ...(credential !== undefined && { credential }),

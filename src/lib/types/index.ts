@@ -453,3 +453,4 @@ export * from './error-details.aliases';
 // with `npm run generate-wellknown-schemas` when the spec bumps.
 export type { BrandJson, AdagentsJson } from './wellknown-schemas.generated';
 export { BrandJsonSchema, AdagentsJsonSchema } from './wellknown-schemas.generated';
+export * as ExperimentalIdentity from './experimental-identity';

@@ -17,9 +17,8 @@ import { probeAuthChallenge } from '../auth/oauth/authorization-required';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { isAgentCardPath, buildCardUrls } from '../utils/a2a-discovery';
 import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext } from '../signing/client';
-import { toSignerKey, isInlineSigningConfig, isProviderSigningConfig } from '../signing/agent-fetch';
-import { createSigningFetch, type FetchLike } from '../signing/fetch';
-import { createSigningFetchAsync } from '../signing/fetch-async';
+import { buildDirectSigningFetch } from '../signing/agent-fetch';
+import { type FetchLike } from '../signing/fetch';
 import type { AgentConfig } from '../types/adcp';
 import { redactArgsForLog } from '../utils/redact-args';
 import { wrapFetchWithCapture } from './rawResponseCapture';
@@ -271,10 +270,9 @@ export async function cancelA2ATask(
   // the `tasks/cancel` membership. The over-sign default stays as the
   // fallback for spec-silent sellers (3.0.x and earlier).
   let requestFetch: FetchLike = (input, init) => transportFetch(input as RequestInfo | URL, init);
-  if (agent.request_signing && isInlineSigningConfig(agent.request_signing)) {
-    requestFetch = createSigningFetch(requestFetch, toSignerKey(agent.request_signing));
-  } else if (agent.request_signing && isProviderSigningConfig(agent.request_signing)) {
-    requestFetch = createSigningFetchAsync(requestFetch, agent.request_signing.provider);
+  if (agent.request_signing) {
+    // Signs under the configured profile (RFC 9421, or opted-in Web Bot Auth).
+    requestFetch = buildDirectSigningFetch(requestFetch, agent.request_signing);
   }
 
   const timeoutSignal = AbortSignal.timeout(CANCEL_TIMEOUT_MS);

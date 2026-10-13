@@ -114,3 +114,32 @@ export {
 export { ensureCapabilityLoaded, CAPABILITY_OP } from './capability-priming';
 export { pemToAdcpJwk, type AdcpUse, type PemToAdcpJwkOptions } from './jwks-helpers';
 export { canonicalAgentOrigin, CanonicalizeError } from './agent-resolver/canonicalize';
+
+// Experimental (AdCP 3.3) Web Bot Auth signing and publishing helpers.
+export {
+  WEB_BOT_AUTH_TAG,
+  KEY_DIRECTORY_PATH,
+  KEY_DIRECTORY_MEDIA_TYPE,
+  RFC9421_REQUEST_SIGNING_PROFILE,
+  type RequestSigningProfile,
+  jwkThumbprint,
+  publicDirectoryKey,
+  webBotAuthOrigin,
+  WebBotAuthOriginError,
+  prepareWebBotAuthRequestSignature,
+  finalizeWebBotAuthRequestSignature,
+  signWebBotAuthRequest,
+  signWebBotAuthRequestAsync,
+  signKeyDirectory,
+  keyDirectoryNeedsRenewal,
+  keyDirectoryExpiry,
+  verifyKeyDirectoryResponse,
+  type KeyDirectoryResponse,
+  type PreparedWebBotAuthSignature,
+  type SignedKeyDirectory,
+  type SignedWebBotAuthRequest,
+  type SignKeyDirectoryOptions,
+  type SignWebBotAuthRequestOptions,
+  type WebBotAuthSignerKey,
+} from './wba';
+export { validateTrustRecord, trustRecordUrl, TrustRecordError } from './trust';

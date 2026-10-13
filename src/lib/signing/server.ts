@@ -156,3 +156,9 @@ export {
 } from './agent-resolver';
 
 export type { PublisherSigningKeyPin } from './publisher-pins';
+
+// Experimental (AdCP 3.3) agent identity: Web Bot Auth verification, origin
+// revocation, trust records, origin bindings, and demand-side grants.
+export * from './wba';
+export * from './trust';
+export type * from '../types/experimental-identity';

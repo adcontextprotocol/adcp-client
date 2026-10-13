@@ -1424,9 +1424,25 @@ export interface SignedRequestsConfig {
    * branded `http_sig` credential when `agentUrlForKeyid` resolves, unless
    * this callback explicitly supplies another credential. When `serve()` also
    * authenticates the request, this callback must resolve the signer to that
-   * same authenticated principal or the request is rejected.
+   * same authenticated principal or the request is rejected. Applies to the
+   * RFC 9421 profile only: a Web Bot Auth signer's principal is its binding.
    */
   makePrincipal?: (signer: import('../signing/types').VerifiedSigner) => AuthPrincipal;
+  /**
+   * Experimental (AdCP 3.3): also verify the Web Bot Auth profile
+   * (`web-bot-auth`). Identity is the signer's origin, keys come from that
+   * origin's key directory, and no capabilities call is made. A verified,
+   * unbound origin is identity-established: it reaches only
+   * `webBotAuth.unboundFor` and carries no credential, so the
+   * `BuyerAgentRegistry` resolves no agent for it. An origin bound through
+   * `webBotAuth.bindings` authenticates as that principal while its
+   * operator's trust record still lists it, and is refused on the RFC 9421
+   * profile (no downgrade). Failures answer with WBA statuses. Advertises
+   * `request_signing.profiles: ['adcp/request-signing/v1', 'web-bot-auth']`
+   * unless the capability block declares `profiles` itself. The wire pin
+   * stays AdCP 3.2.
+   */
+  webBotAuth?: import('../signing/wba/authorize').WebBotAuthVerifierConfig;
 }
 
 /**
@@ -4365,6 +4381,8 @@ type EffectiveSignedRequestPolicy = NonNullable<GetAdCPCapabilitiesResponse['req
   supported: true;
   covers_content_digest: ContentDigestPolicy;
   required_for: string[];
+  /** Experimental (AdCP 3.3, adcp#7894): accepted request-signing profiles. */
+  profiles?: string[];
 };
 
 function resolveEffectiveSignedRequestPolicy(
@@ -4381,12 +4399,17 @@ function resolveEffectiveSignedRequestPolicy(
     signedRequests.covers_content_digest ??
     capabilityRequestSigning?.covers_content_digest ??
     (signingRelease?.major === 3 && signingRelease.minor >= 2 ? 'required' : 'either');
+  const declaredProfiles = (capabilityRequestSigning as { profiles?: string[] } | undefined)?.profiles;
   return {
     ...capabilityRequestSigning,
     supported: true,
     covers_content_digest: coversContentDigest,
     required_for: requiredFor,
     ...(protocolMethodsRequiredFor ? { protocol_methods_required_for: protocolMethodsRequiredFor } : {}),
+    // Omission means the RFC 9421 profile only, so advertise WBA explicitly.
+    ...(signedRequests.webBotAuth && declaredProfiles === undefined
+      ? { profiles: ['adcp/request-signing/v1', 'web-bot-auth'] }
+      : {}),
   };
 }
 
@@ -4426,6 +4449,7 @@ function buildSignedRequestsPreTransport(
     revocationStore: signedRequests.revocationStore,
     adcpVersion,
     ...(signedRequests.agentUrlForKeyid ? { agentUrlForKeyid: signedRequests.agentUrlForKeyid } : {}),
+    ...(signedRequests.webBotAuth ? { webBotAuth: signedRequests.webBotAuth } : {}),
     // One resolver for MCP `tools/call` and A2A message methods; a body that
     // does not resolve to exactly one operation is rejected by the verifier
     // (`request_body_malformed`), never treated as "not in required_for".
@@ -4440,6 +4464,7 @@ function buildSignedRequestsPreTransport(
       url: req.url ?? '/mcp',
       originalUrl: req.url ?? '/mcp',
       headers: req.headers,
+      rawHeaders: req.rawHeaders,
       rawBody: req.rawBody ?? '',
       protocol: canonicalPublicUrl?.protocol.replace(/:$/, '') ?? 'http',
       get(name: string) {
@@ -9513,7 +9538,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // on the wrapper — it's a private contract between this function and
   // `serve()` for wiring, not part of the AdcpServer public API.
   if (signedRequests) {
-    const preTransport = buildSignedRequestsPreTransport(signedRequests, enforcedRequestSigningPolicy!, adcpVersion);
+    // The registry's unknown-signer hook receives verified, unbound WBA
+    // origins unless the webBotAuth config supplies its own.
+    const registryHook = agentRegistry?.identityEstablished?.bind(agentRegistry);
+    const transportSigning =
+      signedRequests.webBotAuth && !signedRequests.webBotAuth.onIdentityEstablished && registryHook
+        ? { ...signedRequests, webBotAuth: { ...signedRequests.webBotAuth, onIdentityEstablished: registryHook } }
+        : signedRequests;
+    const preTransport = buildSignedRequestsPreTransport(transportSigning, enforcedRequestSigningPolicy!, adcpVersion);
     Object.defineProperty(wrapped, ADCP_PRE_TRANSPORT, {
       value: preTransport,
       enumerable: false,

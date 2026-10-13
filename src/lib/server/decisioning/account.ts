@@ -689,6 +689,19 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
   resolve(ref: AccountReference | undefined, ctx?: ResolveContext): Promise<Account<TCtxMeta> | null>;
 
   /**
+   * Experimental (AdCP 3.3, DR-0025): demand-side grant gate from
+   * `createTrustGrantGate`. When set, every natural-key `sync_accounts`
+   * declaration is checked against the brand's trust.json before `upsert`,
+   * and each account-scoped call re-checks the resolved account (the
+   * evaluator's cache bounds freshness). A missing grant is a request-level
+   * `PERMISSION_DENIED` with `{ scope: "agent", reason: "grant_absent" }`;
+   * no account is created and no status changes. Put any brand.json
+   * fallback in the evaluator's `legacyAuthorization`: a 200 from the
+   * brand's trust.json disables it.
+   */
+  trustGrants?: import('./trust-grants').TrustGrantGate;
+
+  /**
    * sync_accounts API surface. Framework normalizes the wire request; platform
    * upserts and returns per-account result rows. `throw new AdcpError(...)`
    * for buyer-facing rejection.

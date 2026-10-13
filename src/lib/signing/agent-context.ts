@@ -107,7 +107,11 @@ export function buildAgentSigningContext(
   // requests with the other tenant's key (same `kid`, different material),
   // an impersonation. The hash includes `algorithm` so an Ed25519/P-256
   // swap on the same `kid+fingerprint` doesn't alias either.
-  const cacheKey = `sig=${cacheFingerprint};adcp=${adcpVersion}`;
+  // An opted-in Web Bot Auth identity never shares a transport with the
+  // same key signing under the RFC 9421 profile (or another origin).
+  const profileSuffix =
+    signing.profile === 'web-bot-auth' ? `;profile=web-bot-auth;origin=${encodeURIComponent(signing.agent_url)}` : '';
+  const cacheKey = `sig=${cacheFingerprint};adcp=${adcpVersion}${profileSuffix}`;
   const provider = signing.kind === 'provider' ? signing.provider : undefined;
 
   return {

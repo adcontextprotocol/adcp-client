@@ -17,6 +17,11 @@ import { containsWebhookAuthentication } from './webhook-auth-detection';
 import { ADCP_VERSION } from '../version';
 import { requestSigningEncodingForVersion } from './content-digest';
 import { resolveRequestOperation } from './operation-resolution';
+import { WEB_BOT_AUTH_TAG } from './wba/constants';
+import { warnRfc9421ProfileDeprecated } from './wba/deprecation';
+import { acceptsWebBotAuth, createWebBotAuthSigningFetch, type WebBotAuthSigner } from './wba/fetch';
+import { publicDirectoryKey } from './wba/keys';
+import { webBotAuthOrigin } from './wba/origin';
 export { requestSigningEncodingForVersion } from './content-digest';
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -170,6 +175,53 @@ export function toSignerKey(config: AgentRequestSigningConfigInline): SignerKey 
   };
 }
 
+/** Experimental (AdCP 3.3): whether a signing config opts into the Web Bot Auth profile. */
+export function isWebBotAuthSigningConfig(config: AgentRequestSigningConfig): boolean {
+  return config.profile === WEB_BOT_AUTH_TAG;
+}
+
+/**
+ * Experimental (AdCP 3.3): the Web Bot Auth signer for an opted-in config.
+ * Validates at wire-up that `agent_url` is an HTTPS origin and that the
+ * inline `kid` is the key's RFC 7638 thumbprint.
+ */
+export function toWebBotAuthSigner(config: AgentRequestSigningConfig): {
+  signer: WebBotAuthSigner;
+  agentOrigin: string;
+} {
+  const agentOrigin = webBotAuthOrigin(config.agent_url);
+  if (isProviderSigningConfig(config)) {
+    const provider = config.provider;
+    return {
+      agentOrigin,
+      signer: { keyid: provider.keyid, algorithm: provider.algorithm, sign: payload => provider.sign(payload) },
+    };
+  }
+  const thumbprint = publicDirectoryKey(config.private_key as AdcpPrivateJwk).kid;
+  if (config.kid !== thumbprint) {
+    throw new TypeError(
+      `Web Bot Auth request_signing.kid must be the key's RFC 7638 thumbprint (${thumbprint}); got '${config.kid}'`
+    );
+  }
+  return { agentOrigin, signer: { privateKey: config.private_key as AdcpPrivateJwk, keyid: config.kid } };
+}
+
+type AdcpPrivateJwk = import('./types').AdcpJsonWebKey;
+
+/**
+ * Experimental (AdCP 3.3): sign every selected request under the configured
+ * profile without consulting seller capabilities. Used for protocol-method
+ * calls such as A2A `tasks/cancel`.
+ */
+export function buildDirectSigningFetch(upstream: FetchLike, signing: AgentRequestSigningConfig): FetchLike {
+  if (isWebBotAuthSigningConfig(signing)) {
+    const { signer, agentOrigin } = toWebBotAuthSigner(signing);
+    return createWebBotAuthSigningFetch(upstream, signer, { agentOrigin });
+  }
+  if (isProviderSigningConfig(signing)) return createSigningFetchAsync(upstream, signing.provider);
+  return createSigningFetch(upstream, toSignerKey(signing));
+}
+
 /** Narrow predicate for the inline shape (kind absent or `'inline'`). */
 export function isInlineSigningConfig(config: AgentRequestSigningConfig): config is AgentRequestSigningConfigInline {
   return config.kind !== 'provider';
@@ -222,6 +274,24 @@ export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): 
     const entry = getCapability();
     return shouldSignOperation(operation, entry?.requestSigning, signing);
   };
+
+  if (isWebBotAuthSigningConfig(signing)) {
+    const { signer, agentOrigin } = toWebBotAuthSigner(signing);
+    return createWebBotAuthSigningFetch(upstream, signer, {
+      agentOrigin,
+      shouldSign,
+      beforeSign: () => {
+        // Omission of `profiles` means RFC 9421 only. Never downgrade a
+        // configured Web Bot Auth identity to the deprecated profile.
+        if (!acceptsWebBotAuth(getCapability()?.requestSigning)) {
+          throw new TypeError(
+            "Seller does not advertise request-signing profile 'web-bot-auth'; automatic signing cannot downgrade the configured identity"
+          );
+        }
+      },
+    });
+  }
+  warnRfc9421ProfileDeprecated('signing');
 
   const binaryEncoding = requestSigningEncodingForVersion(options.adcpVersion ?? ADCP_VERSION);
   const coverContentDigest: CoverContentDigestPredicate = (_url, _init) => {

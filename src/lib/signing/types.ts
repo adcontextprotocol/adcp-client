@@ -19,6 +19,12 @@ export interface VerifierCapability {
    * AdCP tool names such as `create_media_buy`.
    */
   protocol_methods_required_for?: string[];
+  /**
+   * Experimental (AdCP 3.3, adcp#7894): request-signing profiles the agent
+   * verifies, named by their `tag`. Omission means
+   * `['adcp/request-signing/v1']` only.
+   */
+  profiles?: string[];
 }
 
 export interface AdcpJsonWebKey {
@@ -67,6 +73,18 @@ export interface VerifiedSigner {
   /** Exact operator record selected during verified agent discovery. */
   operatorRecord?: { url: string; document: unknown };
   verified_at: number;
+  /**
+   * Experimental (AdCP 3.3): `'web-bot-auth'` when the Web Bot Auth profile
+   * verified this signer. Then `keyid` is the key's thumbprint and
+   * `agent_url` is the verified canonical origin. Absent means the RFC 9421
+   * profile.
+   */
+  profile?: 'web-bot-auth';
+  /**
+   * Experimental (AdCP 3.3): principal the seller bound the verified Web Bot
+   * Auth origin to. Absent means identity-established: no authority.
+   */
+  principal_id?: string;
 }
 
 /**

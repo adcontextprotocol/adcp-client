@@ -1,0 +1,57 @@
+{
+  "repository": "adcontextprotocol/adcp",
+  "sources": {
+    "core/agent-onboarding.json": {
+      "pr": 8170,
+      "commit": "8d3591e70e9a717c7fdfb513360a796fba24ca9a"
+    },
+    "core/agent-onboarding-tier.json": {
+      "pr": 8170,
+      "commit": "8d3591e70e9a717c7fdfb513360a796fba24ca9a"
+    },
+    "core/agent-onboarding-requirement.json": {
+      "pr": 8170,
+      "commit": "8d3591e70e9a717c7fdfb513360a796fba24ca9a"
+    },
+    "core/buyer-onboarding-posture.json": {
+      "pr": 8170,
+      "commit": "8d3591e70e9a717c7fdfb513360a796fba24ca9a"
+    },
+    "enums/agent-onboarding-mode.json": {
+      "pr": 8170,
+      "commit": "8d3591e70e9a717c7fdfb513360a796fba24ca9a"
+    },
+    "enums/agent-onboarding-requirement-kind.json": {
+      "pr": 8170,
+      "commit": "8d3591e70e9a717c7fdfb513360a796fba24ca9a"
+    },
+    "enums/buyer-onboarding-mode.json": {
+      "pr": 8170,
+      "commit": "8d3591e70e9a717c7fdfb513360a796fba24ca9a"
+    },
+    "core/principal-relationship.json": {
+      "pr": 8168,
+      "commit": "45540941dfd61e80ab8a463f780cb147c82a32f0"
+    },
+    "trust/v1/trust.json": {
+      "pr": 8169,
+      "commit": "3ce6a14d7afaa71fa78ddf2223ed0421e01205ae"
+    },
+    "core/identity-relying-party.json": {
+      "pr": 8169,
+      "commit": "3ce6a14d7afaa71fa78ddf2223ed0421e01205ae"
+    }
+  },
+  "baseline_dependencies": {
+    "directory": "schemas/cache/3.2.4",
+    "note": "Offline references not present in the preview sources resolve against the SDK's pinned AdCP 3.2.4 schema cache (populated by `npm run schemas:ensure`)."
+  },
+  "composition": {
+    "trust/v1/trust.json": [
+      "agent.profiles.adcp.onboarding from PR #8170",
+      "record_profiles.adcp.onboarding from PR #8170"
+    ]
+  },
+  "retrieved": "2026-10-13",
+  "matches": "adcontextprotocol/adcp-client-python#1502 src/adcp/signing/_identity_schemas (byte-identical sources and composition)"
+}

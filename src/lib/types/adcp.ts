@@ -370,6 +370,18 @@ export interface AgentRequestSigningOperationOverrides {
    * authoritative; this field documents intent.
    */
   jwks_uri?: string;
+  /**
+   * Experimental (AdCP 3.3): signing profile. Default
+   * `'adcp/request-signing/v1'` (the RFC 9421 profile, deprecated in 3.3 and
+   * supported through 3.x). `'web-bot-auth'` opts into the Web Bot Auth
+   * profile: requests carry a covered `Signature-Agent` naming the origin of
+   * `agent_url`, `tag="web-bot-auth"`, a nonce, and the key's RFC 7638
+   * thumbprint as `keyid` (so `kid` must be that thumbprint). Publish the key
+   * in the origin's signed key directory first (`signKeyDirectory`).
+   * Automatic signing then requires the seller to list `web-bot-auth` in
+   * `request_signing.profiles` and fails rather than downgrading.
+   */
+  profile?: 'adcp/request-signing/v1' | 'web-bot-auth';
 }
 
 /**
@@ -400,10 +412,12 @@ export interface AgentRequestSigningConfigInline extends AgentRequestSigningOper
    * suffix (`{agent_url}/.well-known/adcp-jwks.json`); a handful of deploys
    * override the path via seller-side resolver configuration.
    *
-   * The client does not read this field — the signer only needs the local
-   * private key — but it's carried here so the field sits next to `kid` /
-   * `alg` / `private_key` and is available to downstream audit logging or
-   * custom verifier wiring.
+   * Under the RFC 9421 profile the client does not read this field — the
+   * signer only needs the local private key — but it's carried here so the
+   * field sits next to `kid` / `alg` / `private_key` and is available to
+   * downstream audit logging or custom verifier wiring. Under the
+   * experimental `profile: 'web-bot-auth'`, its canonical origin is the
+   * identity named in `Signature-Agent`.
    */
   agent_url: string;
 }
