@@ -1,7 +1,7 @@
 /**
  * In-memory fake of the official `@google-cloud/bigquery` surface used by the
  * reporting warehouse sink and scripts/validate-reporting-gcp.mjs:
- * dataset().create/delete/table().load, job().getMetadata and query().
+ * dataset().create/delete, table().load/createLoadJob, job().getMetadata/cancel and query().
  *
  * Like BigQuery it enforces job-ID uniqueness per project, refuses loads into
  * tables that do not exist, and looks jobs up in the project the caller names
@@ -18,6 +18,9 @@
  *
  * `job().cancel()` is recorded in `state.cancels` (project and location as
  * addressed) and, like BigQuery, answers 404 for a job it does not know.
+ *
+ * `uploadMs` (milliseconds, or `tableId => milliseconds`) delays every submission before the job is
+ * created or a duplicate job ID is refused with 409, as the upload does for a local-file load.
  *
  * With `loadDurationMs` (milliseconds, or `tableId => milliseconds`), a load job stays RUNNING for that long before its rows
  * land and `load()` resolves. A cancel that reaches a running job stops it the
@@ -39,6 +42,7 @@ function createFakeBigQuery({
   jobProject = 'destination',
   transformLoadedLine,
   loadDurationMs = 0,
+  uploadMs = 0,
 } = {}) {
   const state = {
     datasets: new Map(), // `${project}.${dataset}` -> { labels, location }
@@ -77,59 +81,75 @@ function createFakeBigQuery({
         return [{}];
       },
       table(tableId) {
+        // Upload, then create the job (or refuse a duplicate ID, which BigQuery also does only
+        // after the upload). Resolves to the promise that settles when the job finishes.
+        async function submit(file, metadata) {
+          // The client opens the file when the call starts, so the caller may delete it mid-upload.
+          const contents = readFileSync(file, 'utf8');
+          const upload = typeof uploadMs === 'function' ? uploadMs(tableId) : uploadMs;
+          if (upload) await new Promise(resolve => setTimeout(resolve, upload));
+          const tableKey = `${key}.${tableId}`;
+          if (!state.datasets.has(key)) throw apiError(404, `Not found: Dataset ${key}`);
+          if (!state.tables.has(tableKey)) throw apiError(404, `Not found: Table ${tableKey}`);
+          const owner = jobProject === 'client' ? clientProject : project;
+          const jobKey = `${owner}/${metadata.jobId}`;
+          state.loadOptions.push({ tableId, options: structuredClone(metadata) });
+          if (state.jobs.has(jobKey)) throw apiError(409, `Already Exists: Job ${jobKey}`);
+          const lines = contents
+            .split('\n')
+            .filter(Boolean)
+            .map(line => JSON.parse(line))
+            .map(line => (transformLoadedLine ? transformLoadedLine(tableId, line) : line));
+          const { jobId, ...load } = metadata;
+          const dropped = JOB_LEVEL_FIELDS.filter(field => field in load);
+          for (const field of dropped) delete load[field];
+          if (dropped.length) state.droppedLoadFields.push({ jobId, fields: dropped });
+          const resource = {
+            jobReference: { projectId: owner, jobId, location: options.location },
+            status: { state: 'DONE' },
+            configuration: {
+              load: { destinationTable: { projectId: project, datasetId, tableId }, ...load },
+            },
+            statistics: { load: { outputRows: String(lines.length) } },
+            _lines: lines,
+            _tableKey: tableKey,
+          };
+          const duration = typeof loadDurationMs === 'function' ? loadDurationMs(tableId) : loadDurationMs;
+          if (duration) resource.status = { state: 'RUNNING' };
+          state.jobs.set(jobKey, resource);
+          if (!duration) {
+            state.tables.get(tableKey).push(...lines);
+            return { finished: Promise.resolve([publicJob(resource)]) };
+          }
+          const finished = new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+              resource._stop = undefined;
+              resource.status = { state: 'DONE' };
+              state.tables.get(tableKey).push(...lines);
+              resolve([publicJob(resource)]);
+            }, duration);
+            resource._stop = () => {
+              clearTimeout(timer);
+              resource._stop = undefined;
+              const errorResult = {
+                reason: 'stopped',
+                message: 'Job execution was cancelled: User requested cancellation',
+              };
+              resource.status = { state: 'DONE', errorResult, errors: [errorResult] };
+              reject(Object.assign(new Error(errorResult.message), { errors: [errorResult] }));
+            };
+          });
+          return { finished };
+        }
         return {
           async load(file, metadata) {
-            const tableKey = `${key}.${tableId}`;
-            if (!state.datasets.has(key)) throw apiError(404, `Not found: Dataset ${key}`);
-            if (!state.tables.has(tableKey)) throw apiError(404, `Not found: Table ${tableKey}`);
-            const owner = jobProject === 'client' ? clientProject : project;
-            const jobKey = `${owner}/${metadata.jobId}`;
-            state.loadOptions.push({ tableId, options: structuredClone(metadata) });
-            if (state.jobs.has(jobKey)) throw apiError(409, `Already Exists: Job ${jobKey}`);
-            const lines = readFileSync(file, 'utf8')
-              .split('\n')
-              .filter(Boolean)
-              .map(line => JSON.parse(line))
-              .map(line => (transformLoadedLine ? transformLoadedLine(tableId, line) : line));
-            const { jobId, ...load } = metadata;
-            const dropped = JOB_LEVEL_FIELDS.filter(field => field in load);
-            for (const field of dropped) delete load[field];
-            if (dropped.length) state.droppedLoadFields.push({ jobId, fields: dropped });
-            const resource = {
-              jobReference: { projectId: owner, jobId, location: options.location },
-              status: { state: 'DONE' },
-              configuration: {
-                load: { destinationTable: { projectId: project, datasetId, tableId }, ...load },
-              },
-              statistics: { load: { outputRows: String(lines.length) } },
-              _lines: lines,
-              _tableKey: tableKey,
-            };
-            const duration = typeof loadDurationMs === 'function' ? loadDurationMs(tableId) : loadDurationMs;
-            if (duration) resource.status = { state: 'RUNNING' };
-            state.jobs.set(jobKey, resource);
-            if (!duration) {
-              state.tables.get(tableKey).push(...lines);
-              return [publicJob(resource)];
-            }
-            return new Promise((resolve, reject) => {
-              const timer = setTimeout(() => {
-                resource._stop = undefined;
-                resource.status = { state: 'DONE' };
-                state.tables.get(tableKey).push(...lines);
-                resolve([publicJob(resource)]);
-              }, duration);
-              resource._stop = () => {
-                clearTimeout(timer);
-                resource._stop = undefined;
-                const errorResult = {
-                  reason: 'stopped',
-                  message: 'Job execution was cancelled: User requested cancellation',
-                };
-                resource.status = { state: 'DONE', errorResult, errors: [errorResult] };
-                reject(Object.assign(new Error(errorResult.message), { errors: [errorResult] }));
-              };
-            });
+            return (await submit(file, metadata)).finished;
+          },
+          // Resolves once the job exists; `promise()` settles when it finishes, like the client's Job.
+          async createLoadJob(file, metadata) {
+            const { finished } = await submit(file, metadata);
+            finished.catch(() => {});
+            return [{ id: metadata.jobId, promise: () => finished }, {}];
           },
         };
       },
@@ -151,8 +171,10 @@ function createFakeBigQuery({
         state.cancels.push({ jobId, projectId: options.projectId, location: options.location });
         const resource = state.jobs.get(`${project}/${jobId}`);
         if (!resource) throw apiError(404, `Not found: Job ${project}:${jobId}`);
+        // Like BigQuery, the response shows the job as it was when the cancel was accepted.
+        const response = { kind: 'bigquery#jobCancelResponse', job: publicJob(resource) };
         resource._stop?.();
-        return [{ kind: 'bigquery#jobCancelResponse', job: publicJob(resource) }];
+        return [response];
       },
     };
   }
@@ -204,6 +226,9 @@ function createFakeBigQuery({
     if (/COUNT\(DISTINCT reporting_revision_id\) AS distinct_n/.test(sql)) {
       const rows = rowsOf(tableIn(sql));
       return [[{ n: rows.length, distinct_n: new Set(rows.map(row => row.reporting_revision_id)).size }]];
+    }
+    if (/^SELECT COUNT\(\*\) AS n FROM `[^`]+`$/.test(sql)) {
+      return [[{ n: rowsOf(tableIn(sql)).length }]];
     }
     if (/SUM\(CAST\(JSON_VALUE\(/.test(sql)) {
       return [[{ total: rowsOf(tableIn(sql)).reduce((sum, row) => sum + Number(row.row?.impressions ?? 0), 0) }]];

@@ -347,6 +347,13 @@ What it checks:
   converge with no duplicate rows. A
   `period_date` scenario checks that non-UTC periods land on their
   source-timezone date.
+- **Deadline behavior of the service** (`INFO`, never a failure). One probe
+  cancels a 5000-row load the moment it is created and reports whether BigQuery
+  stopped it; in practice it accepts the cancel and lets the load finish. A
+  reproduction of #3234 runs a sink whose upload outlasts its 1-second deadline
+  and reports whether it converges: a rerun must upload the whole file again
+  before BigQuery answers 409, so it times out again, and the attempt only
+  advances when a job fails.
 - **Overlapping runs** (`INFO`, never a failure). Two concurrent `runOnce()`
   calls over one pending batch, and a deterministic reproduction of #3196: one
   run reads its sink state, another completes the batch and a new revision
