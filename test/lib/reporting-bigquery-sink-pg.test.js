@@ -228,6 +228,142 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     );
   });
 
+  test("period_date is the period start's calendar date in its source_timezone, not the UTC date", async () => {
+    const cases = [
+      // Local midnight in Los Angeles (PDT): the same date as UTC, but it rules out a fixed UTC-8 offset.
+      { suffix: 'pd_la', zone: 'America/Los_Angeles', start: '2026-10-02T07:00:00.000Z', date: '2026-10-02' },
+      // 23:00 the evening before in Los Angeles, though the UTC date is already the 2nd.
+      { suffix: 'pd_la_eve', zone: 'America/Los_Angeles', start: '2026-10-02T06:00:00.000Z', date: '2026-10-01' },
+      // Midnight of the 2nd in Tokyo, a day ahead of the UTC date.
+      { suffix: 'pd_tokyo', zone: 'Asia/Tokyo', start: '2026-10-01T15:00:00.000Z', date: '2026-10-02' },
+      // The same Tokyo instant expressed with an offset still dates by the instant.
+      { suffix: 'pd_tokyo_offset', zone: 'Asia/Tokyo', start: '2026-10-02T00:00:00+09:00', date: '2026-10-02' },
+      // A half-hour zone: 19:00Z is 00:30 on the 2nd in Kolkata.
+      { suffix: 'pd_kolkata', zone: 'Asia/Kolkata', start: '2026-10-01T19:00:00.000Z', date: '2026-10-02' },
+      // Daylight saving: after spring forward the offset is -7 (a fixed -8 would say 03-08 at 23:00),
+      // and after fall back the offset is -8 (a fixed -7 would say 11-02 at 00:30).
+      { suffix: 'pd_spring', zone: 'America/Los_Angeles', start: '2026-03-09T07:00:00.000Z', date: '2026-03-09' },
+      { suffix: 'pd_fall', zone: 'America/Los_Angeles', start: '2026-11-02T07:30:00.000Z', date: '2026-11-01' },
+      { suffix: 'pd_utc', zone: 'UTC', start: '2026-10-01T15:00:00.000Z', date: '2026-10-01' },
+    ];
+    const differsFromUtc = new Set(['pd_la_eve', 'pd_tokyo', 'pd_tokyo_offset', 'pd_kolkata', 'pd_fall']);
+    for (const { suffix, zone, start, date } of cases) {
+      assert.equal(
+        new Date(start).toISOString().slice(0, 10) !== date,
+        differsFromUtc.has(suffix),
+        `${suffix}: the case is meant ${differsFromUtc.has(suffix) ? 'to' : 'not to'} differ from the UTC date`
+      );
+      const local = await createRowStorageFixture({
+        store,
+        suffix,
+        accountId: `acct_${suffix}`,
+        sourceTimezone: zone,
+        periodStart: start,
+        periodEnd: new Date(Date.parse(start) + 86_400_000).toISOString(),
+      });
+      await store.commitRevision(local.revision(`rrev_${suffix}`, 1, rows.slice(0, 3)), local.lease);
+      const bigquery = fakeBigQuery();
+      const sink = newSink(bigquery, { name: `period_${suffix}`, account_id: `acct_${suffix}` });
+      assert.deepEqual(await sink.runOnce(), { idle: false, revisions: 1, rows: 3, missing: [] });
+      assert.deepEqual(
+        [...new Set(bigquery.tables.get('reporting.revision_rows').map(row => row.period_date))],
+        [date],
+        `${zone} period starting ${start} loads its rows as ${date}`
+      );
+      const [revision] = bigquery.tables.get('reporting.revisions');
+      assert.equal(revision.period_date, date, 'the revisions table carries the same date');
+      assert.equal(revision.source_timezone, zone);
+      assert.equal(Date.parse(revision.period_start), Date.parse(start), 'beside the unchanged period start');
+    }
+  });
+
+  describe('a revision whose period or timezone cannot give a date', () => {
+    const good = { start: '2026-10-02T07:00:00Z', end: '2026-10-03T07:00:00Z', source_timezone: 'America/Los_Angeles' };
+    const damaged = [
+      ['an unknown timezone', { ...good, source_timezone: 'Mars/Base' }, RangeError],
+      ['an offset instead of a zone', { ...good, source_timezone: '+05:30' }, TypeError],
+      ['a missing timezone', { ...good, source_timezone: undefined }, TypeError],
+      ['an empty timezone', { ...good, source_timezone: '' }, TypeError],
+      ['an unusable start', { ...good, start: 'yesterday' }, TypeError],
+      ['a missing start', { ...good, start: undefined }, TypeError],
+      ['a start that Date.parse would roll forward', { ...good, start: '2026-02-30T08:00:00Z' }, TypeError],
+      ['no period', undefined, TypeError],
+    ];
+
+    const damagedStore = (damagedId, period) =>
+      wrapStore(store, {
+        async getRevisionMetadata(id, accountId) {
+          const metadata = await store.getRevisionMetadata(id, accountId);
+          return id === damagedId ? { ...metadata, wireRevision: { ...metadata.wireRevision, period } } : metadata;
+        },
+      });
+    const sinkState = async name =>
+      (await pool.query('SELECT * FROM adcp_reporting_warehouse_sinks WHERE sink_name = $1', [name])).rows[0];
+
+    for (const [label, period, errorClass] of damaged) {
+      test(`${label} fails the batch before anything loads, and the plan recovers once the data is right`, async () => {
+        const slug = label.replace(/\W+/g, '_');
+        const account = `acct_pd_bad_${slug}`;
+        const fixtureBad = await createRowStorageFixture({ store, suffix: `pd_bad_${slug}`, accountId: account });
+        // A good revision ahead of the damaged one in the same batch must not load either.
+        await store.commitRevision(fixtureBad.revision(`rrev_pd_good_${slug}`, 1, rows.slice(0, 3)), fixtureBad.lease);
+        await store.commitRevision(
+          fixtureBad.revision(`rrev_pd_bad_${slug}`, 2, rows.slice(0, 2), {
+            supersedes_reporting_revision_id: `rrev_pd_good_${slug}`,
+          }),
+          fixtureBad.lease
+        );
+        const name = `period_bad_${slug}`;
+        const bigquery = fakeBigQuery();
+        const broken = newSink(bigquery, {
+          name,
+          account_id: account,
+          store: damagedStore(`rrev_pd_bad_${slug}`, period),
+        });
+        const expectFailure = error => {
+          assert.match(error.message, new RegExp(`Cannot compute period_date for revision rrev_pd_bad_${slug}`));
+          assert.match(error.message, /stays retained/);
+          assert.ok(error.cause instanceof errorClass, `${label}: cause is a ${errorClass.name}`);
+          return true;
+        };
+        await assert.rejects(() => broken.runOnce(), expectFailure);
+        assert.equal(bigquery.tables.size, 0, 'no table received a row');
+        assert.equal(bigquery.jobs.size, 0, 'no load job was submitted');
+        assert.equal(bigquery.loadOptions.length, 0);
+        const retained = await sinkState(name);
+        assert.equal(retained.committed_cursor, null, 'the cursor did not move');
+        assert.notEqual(retained.planned_to_cursor, null, 'the batch stays retained');
+        assert.equal(retained.planned_rows_attempt, 0, 'a dating failure does not burn a load attempt');
+        assert.equal(retained.planned_revisions_attempt, 0);
+        assert.equal(
+          Number(
+            (
+              await pool.query('SELECT count(*) AS n FROM adcp_reporting_feed_consumers WHERE consumer_name = $1', [
+                name,
+              ])
+            ).rows[0].n
+          ),
+          0,
+          'nothing was acknowledged'
+        );
+        // The poison persists across runs: it is deterministic, not transient.
+        await assert.rejects(() => broken.runOnce(), expectFailure);
+
+        // Once the revision can be dated, the same retained plan completes under its original job IDs.
+        const repaired = newSink(bigquery, { name, account_id: account });
+        assert.deepEqual(await repaired.runOnce(), { idle: false, revisions: 2, rows: 5, missing: [] });
+        assert.deepEqual(
+          [...new Set(bigquery.tables.get('reporting.revision_rows').map(row => row.period_date))],
+          [fixtureBad.obligation.period.start.slice(0, 10)],
+          'the repaired revisions load under their real (UTC fixture) date'
+        );
+        const completed = await sinkState(name);
+        assert.equal(completed.planned_to_cursor, null, 'the plan completed');
+        assert.notEqual(completed.committed_cursor, null);
+      });
+    }
+  });
+
   test('a crash after the rows load never duplicates rows', async () => {
     const bigquery = fakeBigQuery();
     const sink = newSink(bigquery, { name: 'crashy' });

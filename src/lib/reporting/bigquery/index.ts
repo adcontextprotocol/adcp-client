@@ -5,6 +5,7 @@ import * as path from 'path';
 
 import type { PostgresReportingLedgerStore, ReportingLedgerRevisionMetadataV1, ReportingPgPool } from '../ledger';
 import { decodeReportingChangeCursorV1 } from '../ledger/change-feed';
+import { reportingPeriodDate } from '../ledger/schedule';
 
 /**
  * BigQuery warehouse sink for Reliable Reporting (shared SDK persistence spec,
@@ -104,7 +105,9 @@ export interface CreateBigQueryReportingWarehouseSinkOptionsV1 {
   /**
    * Map one verified report row to the adopter's columns. The sink always adds
    * `reporting_revision_id`, `reporting_obligation_id`, `account_id`,
-   * `revision_number`, `finality`, `period_date` and `ordinal`. Default: the
+   * `revision_number`, `finality`, `period_date` (the period start's calendar date in its
+   * `source_timezone`, AdCP's `YYYY-MM-DD`; the batch fails if it cannot be computed) and
+   * `ordinal`. Default: the
    * row as a `row` JSON column.
    */
   mapRow?(row: Record<string, unknown>, context: ReportingWarehouseRowContextV1): Record<string, unknown>;
@@ -482,6 +485,14 @@ export function createBigQueryReportingWarehouseSinkV1(
       const rowLines: string[] = [];
       const revisionLines: string[] = [];
       const missing: string[] = [];
+      // Resolve every revision's metadata and period date before reading any rows, so a revision
+      // that cannot be dated fails the batch immediately instead of after re-reading the rows of
+      // the revisions ahead of it on every retry.
+      const resolved: {
+        planned: (typeof plan.revisions)[number];
+        revision: ReportingLedgerRevisionMetadataV1;
+        periodDate: string;
+      }[] = [];
       for (const planned of plan.revisions) {
         signal?.throwIfAborted();
         const revision = await options.store.getRevisionMetadata(planned.id, planned.account_id);
@@ -491,10 +502,10 @@ export function createBigQueryReportingWarehouseSinkV1(
           missing.push(planned.id);
           continue;
         }
-        const periodDate = sourceLocalDate(
-          revision.wireRevision.period?.start,
-          revision.wireRevision.period?.source_timezone
-        );
+        resolved.push({ planned, revision, periodDate: periodDateOf(revision) });
+      }
+      for (const { planned, revision, periodDate } of resolved) {
+        signal?.throwIfAborted();
         const base = {
           reporting_revision_id: revision.reporting_revision_id,
           reporting_obligation_id: revision.reporting_obligation_id,
@@ -523,9 +534,9 @@ export function createBigQueryReportingWarehouseSinkV1(
           JSON.stringify({
             ...base,
             supersedes_reporting_revision_id: revision.supersedes_reporting_revision_id ?? null,
-            period_start: revision.wireRevision.period?.start ?? null,
-            period_end: revision.wireRevision.period?.end ?? null,
-            source_timezone: revision.wireRevision.period?.source_timezone ?? null,
+            period_start: revision.wireRevision.period.start,
+            period_end: revision.wireRevision.period.end,
+            source_timezone: revision.wireRevision.period.source_timezone,
             observed_at: revision.observedAt,
             data_through: revision.dataThrough,
             revision_content_sha256: revision.binding.sha256,
@@ -670,20 +681,27 @@ SELECT row_data.*
  USING (reporting_obligation_id, reporting_revision_id);`.trim();
 }
 
-function sourceLocalDate(start: string | undefined, timeZone: string | undefined): string | null {
-  if (!start) return null;
-  const instant = new Date(start);
-  if (Number.isNaN(instant.getTime())) return null;
+/**
+ * The row's `period_date`: the calendar date of the period start in the period's `source_timezone`,
+ * as `YYYY-MM-DD`, via the same helper that renders object-key dates. It fails the batch rather
+ * than guess: a missing or unusable timezone must not become a UTC date that partitions the
+ * period into the wrong day. It is the start's date only, not a coverage range: a period that
+ * crosses local midnight, or spans several days, is still one `period_date`.
+ */
+function periodDateOf(revision: ReportingLedgerRevisionMetadataV1): string {
+  const period = revision.wireRevision.period;
   try {
-    const parts = new Intl.DateTimeFormat('en-CA', {
-      timeZone: timeZone ?? 'UTC',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(instant);
-    return parts;
-  } catch {
-    return instant.toISOString().slice(0, 10);
+    if (!period) throw new TypeError('the revision carries no period');
+    return reportingPeriodDate(period.start, period.source_timezone);
+  } catch (error) {
+    throw new Error(
+      `Cannot compute period_date for revision ${revision.reporting_revision_id}: ` +
+        `${error instanceof Error ? error.message : String(error)}. The batch stays retained and every run fails ` +
+        `until the revision's period is repaired (or, if this runtime's timezone data is older than the writer's, ` +
+        `until it is upgraded); reset({ discardRetainedPlan: true }) restarts from the beginning, so empty the ` +
+        `destination tables first.`,
+      { cause: error }
+    );
   }
 }
 

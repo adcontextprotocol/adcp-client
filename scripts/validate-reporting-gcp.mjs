@@ -324,11 +324,12 @@ async function openLedger(ctx, label, { sink = false, storeOptions = {} } = {}) 
   return { schema, pool, store };
 }
 
-async function newObligation(ctx, ledger, suffix) {
+async function newObligation(ctx, ledger, suffix, options = {}) {
   const fixture = await ctx.sdk.createRowStorageFixture({
     store: ledger.store,
     suffix,
     leaseMilliseconds: 1_800_000,
+    ...options,
   });
   ledger.accountId = fixture.request.account.account_id;
   return fixture;
@@ -470,6 +471,7 @@ async function bigquerySection(ctx) {
   await crashScenario();
   await concurrentScenario();
   await staleReadScenario();
+  await periodDateScenario();
 
   // -- 1. Load, counts, jobs, labels and the current_rows view ----------------
   async function mainScenario() {
@@ -686,6 +688,61 @@ async function bigquerySection(ctx) {
       expectEqual(b.reporting_revision_id, `rrev_${config.runId}_b1`, 'obligation B current revision');
       expectEqual(Number(b.n), 7, 'obligation B rows in the view');
       return 'A -> its second revision (10 rows), B -> its only revision (7 rows); 17 rows in total';
+    });
+  }
+
+  // -- 1b. period_date is the source-timezone calendar date, not the UTC date -----
+  async function periodDateScenario() {
+    const tables = { rows: 'period_rows', revisions: 'period_revisions' };
+    // Each period starts at an instant whose UTC date differs from its source-timezone date.
+    const periods = [
+      { suffix: 'pdla', zone: 'America/Los_Angeles', start: '2026-10-02T06:00:00.000Z', date: '2026-10-01' },
+      { suffix: 'pdtk', zone: 'Asia/Tokyo', start: '2026-10-01T15:00:00.000Z', date: '2026-10-02' },
+      { suffix: 'pdut', zone: 'UTC', start: '2026-10-01T15:00:00.000Z', date: '2026-10-01' },
+    ];
+    let ledger;
+    let sink;
+    const fixtures = [];
+    const ready = await check(ctx, BQ, 'period_date: set up non-UTC obligations and load them', async () => {
+      ledger = await openLedger(ctx, 'pdate', { sink: true });
+      for (const { suffix, zone, start } of periods) {
+        const fixture = await newObligation(ctx, ledger, suffix, {
+          sourceTimezone: zone,
+          periodStart: start,
+          periodEnd: new Date(Date.parse(start) + 86_400_000).toISOString(),
+        });
+        fixtures.push(fixture);
+        const result = await commit(ledger, fixture, `rrev_${config.runId}_${suffix}`, 1, sequenceRows(3));
+        expect(result.inserted, `revision for ${zone} was not inserted`);
+      }
+      sink = sinkFor(ledger, 'pdate', tables);
+      await createTables(sink, false);
+      const result = await sink.runOnce();
+      expectEqual(result.revisions, periods.length, 'revisions loaded');
+      expectEqual(result.rows, periods.length * 3, 'rows loaded');
+      return `${periods.length} obligations in ${periods.map(period => period.zone).join(', ')}`;
+    });
+    if (!ready) return;
+    await check(ctx, BQ, 'period_date in BigQuery is the period start in its source timezone', async () => {
+      for (const tableId of [tables.rows, tables.revisions]) {
+        // CAST is also what makes a STRING column in place of DATE show up: DATE_DIFF refuses one.
+        const result = await query(
+          `SELECT DISTINCT reporting_obligation_id, CAST(period_date AS STRING) AS period_date ` +
+            `FROM ${table(tableId)} WHERE DATE_DIFF(period_date, DATE '1970-01-01', DAY) IS NOT NULL`
+        );
+        // One (obligation, date) pair each: a regression that splits an obligation across dates adds rows.
+        expectEqual(result.length, periods.length, `distinct (obligation, period_date) pairs in ${tableId}`);
+        const byObligation = new Map(result.map(row => [row.reporting_obligation_id, row.period_date]));
+        periods.forEach((period, index) => {
+          expectEqual(
+            byObligation.get(fixtures[index].obligation.reporting_obligation_id),
+            period.date,
+            `${tableId}.period_date for a ${period.zone} period starting ${period.start} ` +
+              `(the UTC date is ${period.start.slice(0, 10)})`
+          );
+        });
+      }
+      return periods.map(period => `${period.zone} ${period.start} -> ${period.date}`).join('; ');
     });
   }
 

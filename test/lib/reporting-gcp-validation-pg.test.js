@@ -162,6 +162,8 @@ describe(
         'row and revision counts in BigQuery match, with no duplicates',
         'load jobs exist in the destination project and location with deterministic job IDs',
         'current_rows returns exactly one revision per obligation',
+        'period_date: set up non-UTC obligations and load them',
+        'period_date in BigQuery is the period start in its source timezone',
         'crash replay: no duplicate rows or revisions in BigQuery',
         'runReportingRowObjectProviderConformanceV1',
         'read the revision back from GCS, verified against the recorded digests',
@@ -240,6 +242,32 @@ describe(
         'FAIL'
       );
       assert.deepEqual(bigquery.state.deletedDatasets, [`dest-project-1.${config.datasetId}`]);
+    });
+
+    test('the period_date check fails when the service stores the UTC date or splits an obligation across dates', async () => {
+      const name = 'period_date in BigQuery is the period start in its source timezone';
+      const utcRegression = createFakeBigQuery({
+        clientProject: 'dest-project-1',
+        transformLoadedLine: (tableId, line) =>
+          tableId === 'period_revisions' ? { ...line, period_date: line.period_start.slice(0, 10) } : line,
+      });
+      const first = await execute({}, ['--skip-gcs'], { clientProject: 'dest-project-1', bigquery: utcRegression });
+      assert.equal(statusOf(first.report, name), 'FAIL');
+      const detail = first.report.entries.find(entry => entry.name === name).detail;
+      assert.match(detail, /period_revisions\.period_date for a America\/Los_Angeles period starting/);
+      assert.match(detail, /the UTC date is 2026-10-02/);
+
+      const split = createFakeBigQuery({
+        clientProject: 'dest-project-1',
+        transformLoadedLine: (tableId, line) =>
+          tableId === 'period_rows' && line.ordinal === 1 ? { ...line, period_date: '2000-01-01' } : line,
+      });
+      const second = await execute({}, ['--skip-gcs'], { clientProject: 'dest-project-1', bigquery: split });
+      assert.equal(statusOf(second.report, name), 'FAIL');
+      assert.match(
+        second.report.entries.find(entry => entry.name === name).detail,
+        /distinct \(obligation, period_date\) pairs in period_rows/
+      );
     });
 
     test('--skip-gcs and --skip-bigquery leave the other service untouched', async () => {
