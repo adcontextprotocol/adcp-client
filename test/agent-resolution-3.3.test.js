@@ -204,6 +204,7 @@ describe('capability-bound discovery and cache freshness', () => {
     // Existing one-argument callers keep the exact capability-bound URL identity.
     assert.deepEqual(await resolver.resolve(publicKey.kid), publicKey);
     assert.deepEqual(await resolver.resolve(publicKey.kid, origin.replace('://', '://user:secret@')), publicKey);
+    assert.deepEqual(await resolver.resolve(publicKey.kid, origin.replace('://', '://user%3Asecret@')), publicKey);
     assert.deepEqual(await resolver.resolveWithMetadata(publicKey.kid), resolution);
   });
 
@@ -215,12 +216,32 @@ describe('capability-bound discovery and cache freshness', () => {
         throw new Error('Unexpected discovery');
       },
     });
-    for (const signerOrigin of ['https://bücher.example', String.raw`https://bücher.example\@other.example`]) {
+    for (const signerOrigin of [
+      'https://bücher.example',
+      String.raw`https://bücher.example\@other.example`,
+      'https://b%C3%BCcher.example',
+      'https://xn--bcher%2Dkva.example',
+    ]) {
       await assert.rejects(
         resolver.resolveWithMetadata(publicKey.kid, signerOrigin),
         error => error.code === 'request_signature_key_unknown'
       );
     }
+    assert.equal(discoveryCalls, 0);
+  });
+
+  it('rejects percent-encoded characters that IDNA would erase from the signer host', async () => {
+    let discoveryCalls = 0;
+    const resolver = new ResolvedAgentJwksResolver('https://seller.example.com/mcp', 'mcp', {
+      resolve: async () => {
+        discoveryCalls++;
+        throw new Error('Unexpected discovery');
+      },
+    });
+    await assert.rejects(
+      resolver.resolveWithMetadata(publicKey.kid, 'https://sel%C2%ADler.example.com'),
+      error => error.code === 'request_signature_key_unknown' && error.message === 'Signer origin is malformed.'
+    );
     assert.equal(discoveryCalls, 0);
   });
 

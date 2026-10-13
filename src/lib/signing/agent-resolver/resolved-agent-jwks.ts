@@ -84,6 +84,12 @@ export class ResolvedAgentJwksResolver implements JwksResolver {
         // Context is a wire locator: unlike producer normalization, reject
         // raw non-ASCII hostnames and malformed authorities before comparing.
         requestedOrigin = canonicalAgentOrigin(signerOrigin);
+        // Validate the original, already checked authority: URL parsing can
+        // percent-decode an encoded U-label before applying IDNA mappings.
+        const authority = signerOrigin.slice(signerOrigin.indexOf('://') + 3).split(/[/?#]/, 1)[0]!;
+        if (authority.slice(authority.lastIndexOf('@') + 1).includes('%')) {
+          throw new TypeError('Signer origin host must use its ASCII spelling.');
+        }
         canonicalAgentUrl(signerOrigin);
       } catch {
         throw new AgentResolverError('request_signature_key_unknown', 'Signer origin is malformed.');

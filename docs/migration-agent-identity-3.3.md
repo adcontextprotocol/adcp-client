@@ -52,6 +52,9 @@ configured agent URL before discovery or cached-key access. A mismatch or
 malformed locator is rejected with `request_signature_key_unknown`; raw
 non-ASCII context hostnames are rejected before origin comparison. Matching
 origins retain the full capability-confirmed `agentUrl` in discovery metadata.
+Percent-encoded context hostnames are also rejected so escaped U-labels
+cannot bypass wire validation; percent escapes in stripped userinfo remain
+accepted. Producer origin normalization retains its existing behavior.
 `BrandJsonJwksResolver` forwards the context through both lookup methods,
 including after legacy onboarding has selected and pinned an agent URL.
 When legacy brand configuration omits `agentUrl`, initial onboarding must
@@ -79,7 +82,8 @@ function wrapResolver(inner: JwksResolver): JwksResolver {
 Origin-aware caches and concurrent-lookup coalescing must use
 `(canonicalAgentOrigin(signerOrigin), keyid)` as their key. A shared `kid`
 must never select another origin's key or metadata. Keep context-free lookups
-separate, and treat the origin as an unverified locator until signature
+separate. Use a structured key, such as nested maps or `JSON.stringify([origin, keyid])`,
+to prevent delimiter collisions. Treat the origin as an unverified locator until signature
 verification succeeds. Validate request-derived locators against the wire
 rules before forming a cache key; producer normalization alone does not
 reject raw IDN U-labels. On request verification, metadata remains necessary
