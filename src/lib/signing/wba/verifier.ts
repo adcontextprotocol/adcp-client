@@ -44,6 +44,12 @@ export interface VerifiedWebBotAuthSigner {
   verified_at: number;
   /** Whether the signature bound a non-empty body through `content-digest`. */
   body_authenticated: boolean;
+  /**
+   * `'unavailable'` when `requireRevocationStatus: false` let the request
+   * through without current revocation status. The caller decides whether
+   * that is acceptable (spend-committing operations of bound origins are not).
+   */
+  revocation_status: 'current' | 'unavailable';
 }
 
 export interface VerifyWebBotAuthRequestOptions {
@@ -58,6 +64,14 @@ export interface VerifyWebBotAuthRequestOptions {
   replayStore: ReplayStore;
   /** Required origin revocation check. */
   revocation: WebBotAuthRevocationCheck;
+  /**
+   * Whether unavailable revocation status fails the request. Default `true`.
+   * The spec requires failing closed for spend-committing operations; the
+   * transport passes `false` for reads, so a missing or unreachable list does
+   * not lock an identity out of anonymous-equivalent reads. A key the list
+   * does revoke is rejected either way.
+   */
+  requireRevocationStatus?: boolean;
   now?: () => number;
 }
 
@@ -137,6 +151,7 @@ export async function verifyWebBotAuthRequest(
         status: 403,
         label: error.label,
         labels,
+        withBody: (request.body ?? '').length > 0,
         freshNonce: error.freshNonce,
         cause: error.cause ?? error,
       });
@@ -229,14 +244,21 @@ async function verifyLabels(
       throw new WebBotAuthError('request digest mismatch', { label });
     }
     let revoked: boolean;
+    let revocationStatus: 'current' | 'unavailable' = 'current';
     try {
       revoked =
         typeof options.revocation === 'function'
           ? await options.revocation(origin, keyid)
           : await options.revocation.isRevoked(origin, keyid);
     } catch (error) {
-      if (error instanceof WebBotAuthError) throw error;
-      throw new WebBotAuthError('origin revocation status unavailable', { label, cause: error });
+      if (options.requireRevocationStatus === false) {
+        revoked = false;
+        revocationStatus = 'unavailable';
+      } else {
+        // An authorization outcome, not a signature defect: re-signing cannot
+        // help, so no Accept-Signature.
+        throw new WebBotAuthAuthorizationError('origin revocation status unavailable', { cause: error });
+      }
     }
     if (revoked) throw new WebBotAuthAuthorizationError('signing key revoked');
     verified.push({
@@ -248,6 +270,7 @@ async function verifyLabels(
         alg,
         verified_at: now,
         body_authenticated: body.length > 0,
+        revocation_status: revocationStatus,
       },
       nonce,
       expires: member[1].get('expires') as number,
@@ -270,7 +293,9 @@ async function verifyLabels(
   // Each signature's nonce is claimed in its own identity's replay state, so
   // a relay cannot hide a replayed inner signature behind a fresh one.
   for (const { signer, nonce, expires } of verified) {
-    const ttl = Math.max(expires - now + WBA_CLOCK_SKEW_SECONDS, WBA_CLOCK_SKEW_SECONDS);
+    // Retain one second past the last instant the window still accepts
+    // (`expires + skew`), so a replay at that boundary is still caught.
+    const ttl = Math.max(expires - now + WBA_CLOCK_SKEW_SECONDS + 1, WBA_CLOCK_SKEW_SECONDS);
     const result = await options.replayStore.insert(signer.origin, WBA_REPLAY_SCOPE, nonce, ttl, now);
     if (result === 'replayed') throw new WebBotAuthError('replayed nonce', { label: signer.label, freshNonce: true });
     if (result === 'rate_abuse') {

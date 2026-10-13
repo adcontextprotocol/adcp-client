@@ -9,6 +9,7 @@
  */
 import { ssrfSafeFetch, type SsrfDnsLookup } from '../../net';
 import { getHeaderValue } from '../canonicalize';
+import { eTldPlusOne } from '../agent-resolver/etld';
 import type { JwksResolution, JwksResolver } from '../jwks';
 import { parseStrictJson } from '../agent-resolver/strict-json';
 import type { AdcpJsonWebKey } from '../types';
@@ -26,6 +27,7 @@ import { WebBotAuthError } from './errors';
 import { directoryKeyAlgorithm, jwkThumbprint, tryJwkThumbprint } from './keys';
 import { webBotAuthOrigin } from './origin';
 import { sha256DigestMatches, type KeyDirectoryResponse } from './sign';
+import { serializeItem } from 'structured-headers';
 import { isInnerList, parseStrictDictionary, wbaSignatureBase } from './structured';
 import { verifyWbaSignatureBytes, wbaSignatureWindow } from './verify-common';
 
@@ -41,6 +43,14 @@ export function verifyKeyDirectoryResponse(
   response: KeyDirectoryResponse,
   options: { now?: number } = {}
 ): Map<string, AdcpJsonWebKey> {
+  return verifyDirectory(originOrUrl, response, options).keys;
+}
+
+function verifyDirectory(
+  originOrUrl: string,
+  response: KeyDirectoryResponse,
+  options: { now?: number }
+): { keys: Map<string, AdcpJsonWebKey>; expires: number } {
   const origin = webBotAuthOrigin(originOrUrl);
   const now = options.now ?? Math.floor(Date.now() / 1000);
   const mediaType = (getHeaderValue(response.headers, 'content-type') ?? '').split(';', 1)[0]!.trim().toLowerCase();
@@ -77,16 +87,17 @@ export function verifyKeyDirectoryResponse(
   const inputs = parseStrictDictionary(getHeaderValue(response.headers, 'signature-input'), 'Signature-Input');
   const signatures = parseStrictDictionary(getHeaderValue(response.headers, 'signature'), 'Signature');
   const verified = new Set<string>();
+  let earliest = Infinity;
   const request = { method: 'GET', url: origin + KEY_DIRECTORY_PATH, headers: response.headers };
   for (const [label, member] of inputs) {
     if (!isInnerList(member) || member[1].get('tag') !== KEY_DIRECTORY_TAG) {
       throw new WebBotAuthError('invalid key directory signature profile');
     }
     wbaSignatureWindow(member, now, { directory: true });
-    const covered = new Set(
-      member[0].map(([name, params]) => `${String(name)}${params.get('req') === true ? ';req' : ''}`)
-    );
-    if (!covered.has('@authority;req') || !covered.has('content-digest')) {
+    // Exact identifiers: a parameterized `"content-digest";key="sha-512"` is
+    // not the sha-256 digest this verifier checks.
+    const covered = new Set(member[0].map(component => serializeItem(component)));
+    if (!covered.has('"@authority";req') || !covered.has('"content-digest"')) {
       throw new WebBotAuthError('key directory signature does not bind authority and digest');
     }
     const keyid = member[1].get('keyid') as string;
@@ -100,6 +111,7 @@ export function verifyKeyDirectoryResponse(
       label
     );
     verified.add(keyid);
+    earliest = Math.min(earliest, member[1].get('expires') as number);
   }
   if (
     verified.size !== index.size ||
@@ -108,7 +120,7 @@ export function verifyKeyDirectoryResponse(
   ) {
     throw new WebBotAuthError('key directory requires one signature per key');
   }
-  return index;
+  return { keys: index, expires: earliest };
 }
 
 /** Fetches a key directory. Custom fetchers are a trusted seam and own SSRF policy. */
@@ -147,6 +159,8 @@ export interface WebBotAuthKeyDirectoryResolverOptions extends FetchKeyDirectory
   fetch?: KeyDirectoryFetcher;
   /** Maximum cached origins (and concurrent discoveries). Default 256. */
   maxOrigins?: number;
+  /** Maximum concurrent discoveries per operator domain. Default 8. */
+  maxPendingPerOperator?: number;
   /**
    * Resolver for context-free (RFC 9421 profile) lookups on the same
    * endpoint. Only lookups without a signer origin reach it; a failed WBA
@@ -158,10 +172,12 @@ export interface WebBotAuthKeyDirectoryResolverOptions extends FetchKeyDirectory
 }
 
 interface DirectoryCacheEntry {
-  response?: KeyDirectoryResponse;
+  response: KeyDirectoryResponse;
   keys: Map<string, AdcpJsonWebKey>;
+  /** Positive cache deadline: five minutes, never past the signatures. */
   expiresAt: number;
-  retryAfter: number;
+  /** Earliest signature `expires`: the evidence stays usable until then. */
+  signedExpires: number;
 }
 
 /**
@@ -171,16 +187,23 @@ interface DirectoryCacheEntry {
  *
  * Caching follows the draft: a verified directory is cached for at most five
  * minutes (and never past its signatures' `expires`); a directory that
- * resolves without the key is evidence of removal; a failed fetch is not and
- * is negatively cached for 60 seconds. Concurrent lookups coalesce per
- * origin without blocking other origins.
+ * resolves without the key is evidence of removal. A failed fetch is not
+ * evidence and does not evict a cached entry: its signed keys stay usable
+ * until their signatures expire, with a 60-second retry. A failure with no
+ * prior evidence is negatively cached for 60 seconds in a separate bounded
+ * table, so failing origins never displace good entries. Concurrent lookups
+ * coalesce per origin, and concurrent discoveries are bounded globally and
+ * per operator domain.
  */
 export class WebBotAuthKeyDirectoryResolver implements JwksResolver {
   private readonly fetcher: KeyDirectoryFetcher;
   private readonly maxOrigins: number;
+  private readonly maxPendingPerOperator: number;
   private readonly legacy: JwksResolver | undefined;
   private readonly now: () => number;
   private readonly cache = new Map<string, DirectoryCacheEntry>();
+  private readonly failures = new Map<string, number>();
+  private readonly retryAt = new Map<string, number>();
   private readonly pending = new Map<string, Promise<DirectoryCacheEntry>>();
 
   constructor(options: WebBotAuthKeyDirectoryResolverOptions = {}) {
@@ -192,6 +215,10 @@ export class WebBotAuthKeyDirectoryResolver implements JwksResolver {
     this.fetcher = options.fetch ?? (url => fetchKeyDirectory(url, fetchOptions));
     this.maxOrigins = options.maxOrigins ?? 256;
     if (!Number.isInteger(this.maxOrigins) || this.maxOrigins <= 0) throw new TypeError('maxOrigins must be positive');
+    this.maxPendingPerOperator = options.maxPendingPerOperator ?? 8;
+    if (!Number.isInteger(this.maxPendingPerOperator) || this.maxPendingPerOperator <= 0) {
+      throw new TypeError('maxPendingPerOperator must be positive');
+    }
     this.legacy = options.legacy;
     this.now = options.now ?? (() => Math.floor(Date.now() / 1000));
   }
@@ -224,68 +251,101 @@ export class WebBotAuthKeyDirectoryResolver implements JwksResolver {
     return response && { ...response, headers: { ...response.headers } };
   }
 
-  /** Drop cached state for an origin (e.g. after an operator delists it). */
+  /**
+   * Drop cached state for an origin (e.g. after an operator delists it). A
+   * discovery already in flight still completes and repopulates the cache.
+   */
   invalidate(origin: string): void {
-    this.cache.delete(webBotAuthOrigin(origin));
+    const canonical = webBotAuthOrigin(origin);
+    this.cache.delete(canonical);
+    this.failures.delete(canonical);
+    this.retryAt.delete(canonical);
   }
 
   private async entry(origin: string): Promise<DirectoryCacheEntry> {
     const now = this.now();
     const cached = this.cache.get(origin);
-    if (cached && cached.response && cached.expiresAt > now) {
+    if (cached && cached.expiresAt > now) {
       this.cache.delete(origin);
       this.cache.set(origin, cached);
       return cached;
     }
-    if (cached && cached.retryAfter > now) throw new WebBotAuthError('key directory discovery is cooling down');
+    // Retained evidence after a failed refresh: usable until its signatures
+    // expire, retried at most once a minute.
+    if (cached && cached.signedExpires > now && (this.retryAt.get(origin) ?? 0) > now) return cached;
+    if ((this.failures.get(origin) ?? 0) > now) throw new WebBotAuthError('key directory discovery is cooling down');
     let task = this.pending.get(origin);
     if (!task) {
-      if (this.pending.size >= this.maxOrigins) {
+      const operator = operatorOf(origin);
+      if (
+        this.pending.size >= this.maxOrigins ||
+        [...this.pending.keys()].filter(o => operatorOf(o) === operator).length >= this.maxPendingPerOperator
+      ) {
         throw new WebBotAuthError('key directory discovery capacity exceeded', { status: 429 });
       }
-      task = this.refresh(origin, cached);
+      task = this.refresh(origin);
       this.pending.set(origin, task);
-      // A caller that gives up must not leave an unobserved rejection behind.
-      task.catch(() => undefined);
+      const settled = task;
+      // Remove only this task, after registration (a custom fetcher may
+      // throw synchronously), and observe rejections a caller abandoned.
+      settled.then(
+        () => this.pending.get(origin) === settled && this.pending.delete(origin),
+        () => this.pending.get(origin) === settled && this.pending.delete(origin)
+      );
     }
     return task;
   }
 
-  private async refresh(origin: string, previous: DirectoryCacheEntry | undefined): Promise<DirectoryCacheEntry> {
+  private async refresh(origin: string): Promise<DirectoryCacheEntry> {
+    await undefined;
     try {
       const response = await this.fetcher(origin + KEY_DIRECTORY_PATH);
       const now = this.now();
-      const keys = verifyKeyDirectoryResponse(origin, response, { now });
-      const inputs = parseStrictDictionary(getHeaderValue(response.headers, 'signature-input'), 'Signature-Input');
-      let expiresAt = now + KEY_DIRECTORY_MAX_CACHE_SECONDS;
-      for (const member of inputs.values()) {
-        const expires = isInnerList(member) ? member[1].get('expires') : undefined;
-        if (typeof expires === 'number') expiresAt = Math.min(expiresAt, expires);
-      }
-      const fresh: DirectoryCacheEntry = { response, keys, expiresAt, retryAfter: 0 };
+      const { keys, expires } = verifyDirectory(origin, response, { now });
+      const fresh: DirectoryCacheEntry = {
+        response,
+        keys,
+        expiresAt: Math.min(now + KEY_DIRECTORY_MAX_CACHE_SECONDS, expires),
+        signedExpires: expires,
+      };
       this.store(origin, fresh);
+      this.failures.delete(origin);
+      this.retryAt.delete(origin);
       return fresh;
     } catch (error) {
-      // Keep the previous signed snapshot as evidence. Expired keys never
-      // authenticate, and a fetch failure never proves removal.
-      const failed: DirectoryCacheEntry = previous
-        ? { ...previous, expiresAt: 0, retryAfter: this.now() + DISCOVERY_NEGATIVE_CACHE_SECONDS }
-        : { keys: new Map(), expiresAt: 0, retryAfter: this.now() + DISCOVERY_NEGATIVE_CACHE_SECONDS };
-      this.store(origin, failed);
+      const now = this.now();
+      const previous = this.cache.get(origin);
+      // A failed fetch is not evidence of removal: keep serving the last
+      // signed snapshot while its signatures are valid.
+      if (previous && previous.signedExpires > now) {
+        this.retryAt.set(origin, now + DISCOVERY_NEGATIVE_CACHE_SECONDS);
+        trim(this.retryAt, this.maxOrigins);
+        return previous;
+      }
+      this.failures.delete(origin);
+      this.failures.set(origin, now + DISCOVERY_NEGATIVE_CACHE_SECONDS);
+      trim(this.failures, this.maxOrigins);
       if (error instanceof WebBotAuthError && error.status === 429) throw error;
       throw new WebBotAuthError('key directory discovery failed', { cause: error });
-    } finally {
-      this.pending.delete(origin);
     }
   }
 
   private store(origin: string, entry: DirectoryCacheEntry): void {
     this.cache.delete(origin);
     this.cache.set(origin, entry);
-    while (this.cache.size > this.maxOrigins) {
-      const oldest = this.cache.keys().next().value as string;
-      this.cache.delete(oldest);
-    }
+    trim(this.cache, this.maxOrigins);
+  }
+}
+
+function trim<K, V>(map: Map<K, V>, max: number): void {
+  while (map.size > max) map.delete(map.keys().next().value as K);
+}
+
+function operatorOf(origin: string): string {
+  try {
+    return eTldPlusOne(origin);
+  } catch {
+    return new URL(origin).hostname;
   }
 }
 
@@ -334,7 +394,7 @@ export class StaticWebBotAuthKeys implements JwksResolver {
 
 function decodeUtf8(bytes: Uint8Array): string {
   try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch (error) {
     throw new WebBotAuthError('key directory body is not UTF-8', { cause: error });
   }

@@ -1,7 +1,7 @@
 /**
  * eTLD+1 computation against a pinned, dated PSL snapshot. Backed by
- * `tldts`, which ships its PSL bundled into the published package — pinning
- * the resolved version in `package-lock.json` pins this repository's snapshot.
+ * `tldts`, which ships its PSL bundled into the published package; the exact
+ * version pin in `package.json` pins the snapshot for consumers too.
  * Runtime PSL fetches are never performed: a runtime fetch creates both a
  * denial-of-service oracle (PSL host outage stalls verification) and a
  * non-deterministic eTLD+1 across deployments running on different snapshot ages
@@ -18,7 +18,10 @@ import { parse as parseTld } from 'tldts';
 import { isSpecialUseBrandDomain } from '../../brand/domain';
 import { canonicalizeHost } from './canonicalize';
 
-export const PSL_SNAPSHOT_VERSION = 'tldts@7';
+// `package.json` pins tldts exactly so consumers get the same snapshot
+// (a range would let installs drift, and the PSL now decides trust-record
+// operators and grant domains).
+export const PSL_SNAPSHOT_VERSION = 'tldts@7.4.11';
 
 export class EtldComputationError extends Error {
   constructor(

@@ -237,7 +237,6 @@ export const IDENTITY_PREVIEW_SCHEMA_BUNDLE: {
                         type: 'array',
                         items: { $ref: '#/definitions/enums_disclosure_position' },
                         minItems: 1,
-                        uniqueItems: true,
                       },
                       ext: { $ref: '#/definitions/core_ext' },
                     },
@@ -292,7 +291,7 @@ export const IDENTITY_PREVIEW_SCHEMA_BUNDLE: {
       properties: {
         domain: { type: 'string', pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$' },
         brand_id: { $ref: '#/definitions/core_brand_id' },
-        countries: { type: 'array', items: { type: 'string', pattern: '^[A-Z]{2}$' }, minItems: 1, uniqueItems: true },
+        countries: { type: 'array', items: { type: 'string', pattern: '^[A-Z]{2}$' }, minItems: 1 },
         industries: { type: 'array', items: { type: 'string' } },
         data_subject_contestation: {
           type: 'object',
@@ -409,13 +408,8 @@ export const IDENTITY_PREVIEW_SCHEMA_BUNDLE: {
           type: 'object',
           properties: {
             url: { $ref: '#/definitions/trust_v1_trust/definitions/https_url' },
-            roles: {
-              type: 'array',
-              items: { $ref: '#/definitions/trust_v1_trust/definitions/role' },
-              minItems: 1,
-              uniqueItems: true,
-            },
-            protocols: { type: 'array', items: { type: 'string', enum: ['mcp', 'a2a'] }, uniqueItems: true },
+            roles: { type: 'array', items: { $ref: '#/definitions/trust_v1_trust/definitions/role' }, minItems: 1 },
+            protocols: { type: 'array', items: { type: 'string', enum: ['mcp', 'a2a'] } },
             id: { type: 'string' },
             description: { type: 'string' },
             countries: { type: 'array', items: { type: 'string', pattern: '^[A-Z]{2}$' } },
@@ -461,12 +455,7 @@ export const IDENTITY_PREVIEW_SCHEMA_BUNDLE: {
               items: { $ref: '#/definitions/trust_v1_trust/definitions/granted_agent' },
               minItems: 1,
             },
-            scopes: {
-              type: 'array',
-              items: { $ref: '#/definitions/trust_v1_trust/definitions/scope' },
-              minItems: 1,
-              uniqueItems: true,
-            },
+            scopes: { type: 'array', items: { $ref: '#/definitions/trust_v1_trust/definitions/scope' }, minItems: 1 },
             countries: { type: 'array', items: { type: 'string', pattern: '^[A-Z]{2}$' } },
             valid_from: { type: 'string', format: 'date-time' },
             valid_until: { type: 'string', format: 'date-time' },

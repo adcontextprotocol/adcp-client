@@ -63,3 +63,58 @@ describe('validation.experimentalAgentIdentity', () => {
     assert.equal(result.success, false);
   });
 });
+
+describe('inline relationship check matches the pinned preview schema', () => {
+  const { isPreviewPrincipalRelationship } = require('../../dist/lib/core/TaskExecutor.js');
+  const { identityPreviewSchemaErrors } = require('../../dist/lib/signing/server.js');
+  const corpus = [
+    { status: 'pending' },
+    { status: 'active', expires_at: '2026-10-13T00:00:00Z' },
+    { status: 'suspended', expires_at: '2026-10-13T00:00:00.123+02:00' },
+    { status: 'blocked', ext: {} },
+    {
+      status: 'pending',
+      setup: { message: 'Apply', url: 'https://seller.example.com/apply', expires_at: '2026-10-14T00:00:00Z' },
+    },
+    { status: 'pending', extra: true },
+    { status: 'approved' },
+    {},
+    { status: 'active', expires_at: '2026-13-45T99:99:99Z' },
+    { status: 'active', expires_at: '2026-02-30T00:00:00Z' },
+    { status: 'active', expires_at: 'tomorrow' },
+    { status: 'pending', setup: {} },
+    { status: 'pending', setup: { message: 1 } },
+    { status: 'pending', setup: { message: 'x', url: 'not a url' } },
+    { status: 'active', ext: [] },
+    'active',
+  ];
+  for (const value of corpus) {
+    it(`agrees on ${JSON.stringify(value)}`, () => {
+      const schemaValid = identityPreviewSchemaErrors(value, 'core/principal-relationship.json').length === 0;
+      assert.equal(isPreviewPrincipalRelationship(value), schemaValid);
+    });
+  }
+});
+
+describe('experimentalAgentIdentity is automatic for Web Bot Auth signers', () => {
+  it('enables the relationship check when request_signing.profile is web-bot-auth', () => {
+    const { SingleAgentClient } = require('../../dist/lib/index.js');
+    const { generateKeyPairSync } = require('node:crypto');
+    const { publicDirectoryKey } = require('../../dist/lib/signing/client.js');
+    const key = generateKeyPairSync('ed25519').privateKey;
+    const client = new SingleAgentClient({
+      id: 'seller',
+      name: 'Seller',
+      agent_uri: 'https://seller.example.com/mcp',
+      protocol: 'mcp',
+      request_signing: {
+        profile: 'web-bot-auth',
+        kid: publicDirectoryKey(key).kid,
+        alg: 'ed25519',
+        private_key: key.export({ format: 'jwk' }),
+        agent_url: 'https://buyer.example.com',
+      },
+    });
+    assert.equal(client.executor.config.experimentalAgentIdentity, true);
+  });
+});

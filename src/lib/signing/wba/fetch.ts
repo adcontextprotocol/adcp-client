@@ -96,7 +96,7 @@ function bodyToString(body: RequestInit['body']): string | undefined {
     throw new TypeError('Web Bot Auth signing requires a string, Uint8Array, or ArrayBuffer body');
   }
   try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
     throw new TypeError('Web Bot Auth signing received a body that is not valid UTF-8');
   }

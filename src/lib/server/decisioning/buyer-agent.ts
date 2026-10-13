@@ -471,7 +471,8 @@ export function markVerifiedHttpSig(
  * (or another caller that imported the symbol from this module — there
  * are none).
  */
-function isVerifiedHttpSig(credential: AdcpCredential): boolean {
+/** @internal Also used by the grant gate to trust credential profile fields. */
+export function isVerifiedHttpSig(credential: AdcpCredential): boolean {
   return credential.kind === 'http_sig' && (credential as Record<symbol, unknown>)[VERIFIED_HTTP_SIG_BRAND] === true;
 }
 

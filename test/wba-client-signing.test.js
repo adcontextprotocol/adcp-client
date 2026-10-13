@@ -185,3 +185,27 @@ describe('RFC 9421 profile deprecation notice', () => {
     assert.equal(warnings.filter(warning => warning.code === 'ADCP_RFC9421_VERIFICATION_PROFILE').length, 1);
   });
 });
+
+describe('Web Bot Auth signing fetch body bytes', () => {
+  it('signs a UTF-8 BOM body over the exact bytes it sends', async () => {
+    const { createWebBotAuthSigningFetch } = require('../dist/lib/signing/wba/fetch.js');
+    const { createHash } = require('node:crypto');
+    const bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...Buffer.from('{"a":1}')]);
+    let sent;
+    const fetch = createWebBotAuthSigningFetch(
+      async (_url, init) => {
+        sent = init;
+        return new Response('');
+      },
+      { privateKey },
+      { agentOrigin: ORIGIN }
+    );
+    await fetch('https://seller.example.com/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: bytes,
+    });
+    const digest = `sha-256=:${createHash('sha256').update(Buffer.from(sent.body)).digest('base64')}:`;
+    assert.equal(sent.headers['Content-Digest'], digest);
+  });
+});

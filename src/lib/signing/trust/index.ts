@@ -9,6 +9,7 @@ export {
   TrustRecordAbsentError,
   TrustRecordError,
   TrustRecordEvaluator,
+  TrustRecordMatchError,
   fetchTrustRecord,
   isPrivateSuffixOperator,
   matchTrustRecordAgent,
@@ -23,6 +24,7 @@ export {
 export {
   GRANT_ABSENT_DETAILS,
   TrustGrantEvaluator,
+  trustRecordUnavailableError,
   grantAbsentError,
   requireGrant,
   type GrantAuthorization,

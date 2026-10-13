@@ -79,19 +79,30 @@ export function parseRevocationDetails(value: unknown): RevocationDetails {
 }
 
 /**
- * Keep the most severe detail seen for a key: `keyCompromise` wins over any
- * other reason, and the earliest `invalidity_date` wins. Entries are never
- * withdrawn or weakened (spec R9 rule 3).
+ * Keep the most severe detail seen for a key (spec R9 rule 3): entries are
+ * never withdrawn or weakened.
+ *
+ * - `keyCompromise` wins over any other reason.
+ * - For a compromise, only compromise entries supply the invalidity date, and
+ *   a compromise entry without a date (every receipt exposed) beats any date.
+ *   Otherwise the earliest compromise date wins.
+ * - Without a compromise, the first reason seen is kept with the earliest date.
  */
 export function mergeRevocationDetails(
   seen: RevocationDetails | undefined,
   newer: RevocationDetails | undefined
 ): RevocationDetails {
-  const reasons = [seen?.reason, newer?.reason];
-  const reason = reasons.includes('keyCompromise') ? 'keyCompromise' : (seen?.reason ?? newer?.reason);
-  const dates = [seen?.invalidity_date, newer?.invalidity_date].filter((d): d is string => d !== undefined);
-  const earliest = dates.sort((a, b) => parseRfc3339(a)! - parseRfc3339(b)!)[0];
-  return { ...(reason !== undefined && { reason }), ...(earliest !== undefined && { invalidity_date: earliest }) };
+  const earliest = (dates: Array<string | undefined>) =>
+    dates.filter((d): d is string => d !== undefined).sort((a, b) => parseRfc3339(a)! - parseRfc3339(b)!)[0];
+  const compromises = [seen, newer].filter(d => d?.reason === 'keyCompromise') as RevocationDetails[];
+  if (compromises.length > 0) {
+    const undated = compromises.some(d => d.invalidity_date === undefined);
+    const date = undated ? undefined : earliest(compromises.map(d => d.invalidity_date));
+    return { reason: 'keyCompromise', ...(date !== undefined && { invalidity_date: date }) };
+  }
+  const reason = seen?.reason ?? newer?.reason;
+  const date = earliest([seen?.invalidity_date, newer?.invalidity_date]);
+  return { ...(reason !== undefined && { reason }), ...(date !== undefined && { invalidity_date: date }) };
 }
 
 /**
@@ -111,7 +122,11 @@ export function revocationExposes(details: RevocationDetails | undefined, receiv
  * identifiers must be strings, `revocation_details` may describe only keys in
  * `revoked_kids`, and the declared cadence must be at least 60 seconds.
  */
-export function parseRevocationListPayload(payload: unknown, expectedIssuer: string): RevocationListPayload {
+export function parseRevocationListPayload(
+  payload: unknown,
+  expectedIssuer: string,
+  options: { thumbprintKids?: boolean } = {}
+): RevocationListPayload {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload))
     throw new TypeError('revocation list must be an object');
   const list = payload as Record<string, unknown>;
@@ -136,6 +151,12 @@ export function parseRevocationListPayload(payload: unknown, expectedIssuer: str
   };
   const revoked_kids = strings(list.revoked_kids, 'revoked_kids');
   const revoked_jtis = strings(list.revoked_jtis, 'revoked_jtis');
+  if (revoked_kids.length > MAX_LIST_ENTRIES || revoked_jtis.length > MAX_LIST_ENTRIES) {
+    throw new TypeError('revocation list has too many entries');
+  }
+  if (options.thumbprintKids === true && revoked_kids.some(kid => !/^[A-Za-z0-9_-]{43}$/.test(kid))) {
+    throw new TypeError('Web Bot Auth revocation entries must be RFC 7638 thumbprints');
+  }
   let revocation_details: Record<string, RevocationDetails> | undefined;
   if (list.revocation_details !== undefined) {
     const raw = list.revocation_details;
@@ -167,9 +188,21 @@ export class RevocationHistory {
   private readonly jtis = new Set<string>();
   private readonly details = new Map<string, RevocationDetails>();
 
+  /**
+   * @param maxEntries Bound on retained identifiers. A list that would exceed
+   *   it is refused (status unavailable) rather than truncated, so history is
+   *   never silently forgotten. Default 4096.
+   */
+  constructor(private readonly maxEntries = 4096) {}
+
   merge(list: Pick<RevocationListPayload, 'revoked_kids' | 'revoked_jtis' | 'revocation_details'>): void {
-    for (const kid of list.revoked_kids) this.kids.add(kid);
-    for (const jti of list.revoked_jtis) this.jtis.add(jti);
+    const kids = list.revoked_kids.filter(kid => !this.kids.has(kid));
+    const jtis = list.revoked_jtis.filter(jti => !this.jtis.has(jti));
+    if (this.kids.size + kids.length > this.maxEntries || this.jtis.size + jtis.length > this.maxEntries) {
+      throw new TypeError('revocation history exceeds its retention bound');
+    }
+    for (const kid of kids) this.kids.add(kid);
+    for (const jti of jtis) this.jtis.add(jti);
     for (const [kid, detail] of Object.entries(list.revocation_details ?? {})) {
       this.details.set(kid, mergeRevocationDetails(this.details.get(kid), detail));
     }
@@ -218,13 +251,18 @@ export interface OriginRevocationCheckerOptions {
 interface OriginState {
   history: RevocationHistory;
   updatedMs: number;
-  nextUpdate: number;
+  /** Signed `next_update` (epoch seconds): the staleness reference. */
+  signedNextUpdate: number;
+  /** Polling interval: the declared cadence, capped at the 30 min ceiling. */
   interval: number;
+  /** When to poll next: the signed `next_update`, or sooner under the ceiling. */
+  pollAt: number;
   lastAttempt: number;
   refreshing?: Promise<void>;
 }
 
 const MAX_REVOCATION_LIST_BYTES = 1024 * 1024;
+const MAX_LIST_ENTRIES = 1024;
 const MAX_POLLING_INTERVAL_SECONDS = 30 * 60;
 const MIN_REFETCH_SECONDS = 30;
 
@@ -233,14 +271,17 @@ const MIN_REFETCH_SECONDS = 30;
  * revocation list, verified with keys from that origin's directory (the
  * resolver passed in, e.g. {@link WebBotAuthKeyDirectoryResolver}).
  *
- * - Polls on the list's `next_update` (60 s floor, 30 min ceiling) and fails
- *   closed past `next_update + grace`.
+ * - Polls at the list's signed `next_update`, and at least every 30 minutes
+ *   (the polling ceiling). Status is stale, and checks fail closed, only past
+ *   the signed `next_update` plus `graceMultiplier` polling intervals.
  * - Retains every revoked key and the most severe detail across refreshes,
  *   and refuses a list older than the one it holds.
- * - Admits an origin only after a signed list authenticates. A failed first
- *   discovery holds a bounded 60-second negative entry instead of a slot.
- * - Admission is bounded globally and per operator; larger deployments
- *   should supply a durable checker with seller-owned admission policy.
+ * - Admits an origin only after a fresh signed list authenticates. A failed
+ *   first discovery holds a bounded 60-second negative entry instead of a slot.
+ * - Admission is bounded globally and per operator. At capacity, the least
+ *   recently used origin with no revoked keys is evicted (nothing to forget);
+ *   when every admitted origin carries revocations, new origins get `429`.
+ *   Larger deployments should supply a durable checker.
  */
 export class OriginRevocationChecker {
   private readonly keys: JwksResolver;
@@ -252,6 +293,7 @@ export class OriginRevocationChecker {
   private readonly origins = new Map<string, OriginState>();
   private readonly pending = new Map<string, Promise<OriginState>>();
   private readonly failures = new Map<string, number>();
+  private readonly pinned = new Set<string>();
 
   constructor(keys: JwksResolver, options: OriginRevocationCheckerOptions = {}) {
     if (!keys?.resolveWithMetadata)
@@ -265,6 +307,9 @@ export class OriginRevocationChecker {
     if (!(this.maxOrigins > 0) || !(this.maxPerOperator > 0))
       throw new TypeError('origin admission limits must be positive');
     this.graceMultiplier = options.graceMultiplier ?? 4;
+    if (!Number.isFinite(this.graceMultiplier) || this.graceMultiplier < 0) {
+      throw new TypeError('graceMultiplier must be a finite, non-negative number');
+    }
     this.now = options.now ?? (() => Math.floor(Date.now() / 1000));
   }
 
@@ -273,6 +318,15 @@ export class OriginRevocationChecker {
     const state = await this.state(origin);
     return state.history.isRevoked(keyid);
   };
+
+  /**
+   * Keep `origin`'s history permanently (call it for bound origins).
+   * Unpinned origins are identity-established only and may be evicted at
+   * capacity; a revisit re-discovers their list.
+   */
+  pin(origin: string): void {
+    this.pinned.add(webBotAuthOrigin(origin));
+  }
 
   /** Most severe detail seen for a revoked key, if any. */
   revocationDetails(origin: string, keyid: string): RevocationDetails | undefined {
@@ -285,49 +339,87 @@ export class OriginRevocationChecker {
     return history?.isRevoked(keyid) === true && revocationExposes(history.detailsFor(keyid), receivedAt);
   }
 
+  private isStale(state: Pick<OriginState, 'signedNextUpdate' | 'interval'>, now = this.now()): boolean {
+    return now > state.signedNextUpdate + state.interval * this.graceMultiplier;
+  }
+
   private async state(rawOrigin: string): Promise<OriginState> {
     const origin = webBotAuthOrigin(rawOrigin, { wire: true });
     const now = this.now();
     const existing = this.origins.get(origin);
     if (existing) {
-      if (now >= existing.nextUpdate && now - existing.lastAttempt >= MIN_REFETCH_SECONDS) {
-        existing.refreshing ??= this.refresh(origin, existing).finally(() => {
-          existing.refreshing = undefined;
+      // LRU touch for eviction.
+      this.origins.delete(origin);
+      this.origins.set(origin, existing);
+      if (!existing.refreshing && now >= existing.pollAt && now - existing.lastAttempt >= MIN_REFETCH_SECONDS) {
+        const refreshing = this.refresh(origin, existing).finally(() => {
+          if (existing.refreshing === refreshing) existing.refreshing = undefined;
         });
-        await existing.refreshing.catch(() => undefined);
+        existing.refreshing = refreshing;
       }
-      if (this.now() > existing.nextUpdate + existing.interval * this.graceMultiplier) {
-        throw new WebBotAuthError('origin revocation list is stale');
-      }
+      // Join any refresh in progress, including one another caller started.
+      if (existing.refreshing) await existing.refreshing.catch(() => undefined);
+      if (this.isStale(existing)) throw new WebBotAuthError('origin revocation list is stale');
       return existing;
     }
     if ((this.failures.get(origin) ?? 0) > now)
       throw new WebBotAuthError('origin revocation discovery is cooling down');
     let task = this.pending.get(origin);
     if (!task) {
-      if (this.origins.size + this.pending.size >= this.maxOrigins) {
-        throw new WebBotAuthError('origin revocation capacity exceeded', { status: 429 });
-      }
-      const operator = operatorOf(origin);
-      const admitted = [...this.origins.keys(), ...this.pending.keys()].filter(o => operatorOf(o) === operator).length;
-      if (admitted >= this.maxPerOperator) {
-        throw new WebBotAuthError('operator revocation capacity exceeded', { status: 429 });
-      }
+      this.admit(origin);
       task = this.discover(origin);
       this.pending.set(origin, task);
-      task.catch(() => undefined);
+      const settled = task;
+      settled.then(
+        () => this.pending.get(origin) === settled && this.pending.delete(origin),
+        () => this.pending.get(origin) === settled && this.pending.delete(origin)
+      );
     }
     return task;
   }
 
+  private admit(origin: string): void {
+    const operator = operatorOf(origin);
+    const sameOperator = () => [...this.origins.keys(), ...this.pending.keys()].filter(o => operatorOf(o) === operator);
+    while (sameOperator().length >= this.maxPerOperator) {
+      if (!this.evictOne(o => operatorOf(o) === operator)) {
+        throw new WebBotAuthError('operator revocation capacity exceeded', { status: 429 });
+      }
+    }
+    while (this.origins.size + this.pending.size >= this.maxOrigins) {
+      if (!this.evictOne(() => true)) {
+        throw new WebBotAuthError('origin revocation capacity exceeded', { status: 429 });
+      }
+    }
+  }
+
+  /**
+   * Evict the least recently used unpinned origin, preferring one with
+   * nothing to forget. Pinned (bound) origins are never evicted.
+   */
+  private evictOne(matches: (origin: string) => boolean): boolean {
+    const candidates = [...this.origins].filter(
+      ([origin, state]) => matches(origin) && !this.pinned.has(origin) && !state.refreshing
+    );
+    const victim = candidates.find(([, state]) => state.history.revokedKids().length === 0) ?? candidates[0];
+    if (!victim) return false;
+    this.origins.delete(victim[0]);
+    return true;
+  }
+
   private async discover(origin: string): Promise<OriginState> {
+    // Defer the body so a synchronously throwing custom fetcher still runs
+    // after the caller has registered this task.
+    await undefined;
     try {
       const list = await this.fetchVerified(origin, undefined);
       const history = new RevocationHistory();
       history.merge(list);
       const state = this.stateFor(list, history);
-      // Reserve permanent history only after a signed list authenticated: a
-      // 404 or an attacker-induced outage must not consume an origin slot.
+      // A list already past next_update + grace authenticates nothing current.
+      if (this.isStale(state)) throw new Error('revocation list is stale');
+      // Reserve permanent history only after a fresh signed list authenticated:
+      // a 404 or an attacker-induced outage must not consume an origin slot.
       this.origins.set(origin, state);
       this.failures.delete(origin);
       return state;
@@ -336,28 +428,33 @@ export class OriginRevocationChecker {
       this.failures.set(origin, this.now() + DISCOVERY_NEGATIVE_CACHE_SECONDS);
       while (this.failures.size > this.maxOrigins) this.failures.delete(this.failures.keys().next().value as string);
       throw new WebBotAuthError('origin revocation status unavailable', { cause: error });
-    } finally {
-      this.pending.delete(origin);
     }
   }
 
   private async refresh(origin: string, state: OriginState): Promise<void> {
+    await undefined;
     state.lastAttempt = this.now();
     const list = await this.fetchVerified(origin, state.updatedMs);
     state.history.merge(list);
-    Object.assign(state, this.stateFor(list, state.history), { refreshing: state.refreshing });
+    const next = this.stateFor(list, state.history);
+    state.updatedMs = next.updatedMs;
+    state.signedNextUpdate = next.signedNextUpdate;
+    state.interval = next.interval;
+    state.pollAt = next.pollAt;
+    state.lastAttempt = next.lastAttempt;
   }
 
   private stateFor(list: RevocationListPayload, history: RevocationHistory): OriginState {
     const now = this.now();
     const updatedMs = parseRfc3339(list.updated)!;
-    const declared = Math.floor((parseRfc3339(list.next_update)! - updatedMs) / 1000);
-    const interval = Math.min(declared, MAX_POLLING_INTERVAL_SECONDS);
+    const signedNextUpdate = Math.floor(parseRfc3339(list.next_update)! / 1000);
+    const interval = Math.min(signedNextUpdate - Math.floor(updatedMs / 1000), MAX_POLLING_INTERVAL_SECONDS);
     return {
       history,
       updatedMs,
-      nextUpdate: Math.floor(updatedMs / 1000) + interval,
+      signedNextUpdate,
       interval,
+      pollAt: Math.min(signedNextUpdate, now + interval),
       lastAttempt: now,
     };
   }
@@ -368,7 +465,7 @@ export class OriginRevocationChecker {
     if (Buffer.byteLength(response.body, 'utf8') > MAX_REVOCATION_LIST_BYTES)
       throw new Error('revocation list is oversized');
     const payload = await verifyRevocationJws(response.body, origin, this.keys);
-    const list = parseRevocationListPayload(payload, origin);
+    const list = parseRevocationListPayload(payload, origin, { thumbprintKids: true });
     const updatedMs = parseRfc3339(list.updated)!;
     if (updatedMs > (this.now() + 60) * 1000) throw new Error('revocation list updated is in the future');
     if (currentUpdatedMs !== undefined && updatedMs < currentUpdatedMs) {
@@ -446,7 +543,10 @@ export async function fetchRevocationList(
     maxBodyBytes: MAX_REVOCATION_LIST_BYTES,
     ...(options.lookup !== undefined && { lookup: options.lookup }),
   });
-  return { status: response.status, body: new TextDecoder('utf-8', { fatal: true }).decode(response.body) };
+  return {
+    status: response.status,
+    body: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(response.body),
+  };
 }
 
 function operatorOf(origin: string): string {

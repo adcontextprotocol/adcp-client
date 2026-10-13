@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 const { generateKeyPairSync } = require('node:crypto');
-const { readFileSync, writeFileSync, existsSync } = require('node:fs');
+const { chmodSync, readFileSync, writeFileSync, existsSync } = require('node:fs');
 const path = require('node:path');
 
 const {
@@ -130,20 +130,21 @@ async function verifyVector(argv) {
     'request-signing',
     'keys.json'
   );
+  const vector = JSON.parse(readFileSync(vectorPath, 'utf8'));
+  if (vector.signing_profile === 'web-bot-auth') {
+    // A directory-response vector carries its own keys.
+    if (!keysPath && !vector.response) {
+      console.error('Web Bot Auth request vectors need --keys <wba-profile keys.json>.');
+      process.exit(2);
+    }
+    return verifyWebBotAuthVector(vector, keysPath);
+  }
   const keysJsonPath = keysPath ?? (existsSync(defaultKeys) ? defaultKeys : null);
   if (!keysJsonPath) {
     console.error(
       'No --keys file provided and no default spec keys.json found. Run `npm run sync-schemas` first, or pass --keys <path>.'
     );
     process.exit(2);
-  }
-  const vector = JSON.parse(readFileSync(vectorPath, 'utf8'));
-  if (vector.signing_profile === 'web-bot-auth') {
-    if (!keysPath) {
-      console.error('Web Bot Auth vectors need --keys <wba-profile keys.json>.');
-      process.exit(2);
-    }
-    return verifyWebBotAuthVector(vector, keysPath);
   }
   const keys = JSON.parse(readFileSync(keysJsonPath, 'utf8')).keys;
   const keysByKid = new Map(keys.map(k => [k.kid, k]));
@@ -214,6 +215,7 @@ function generateWebBotAuthKey(alg, kid, outPrivate, outPublic) {
   const privatePem = privateKey.export({ type: 'pkcs8', format: 'pem' });
   if (outPrivate) {
     writeFileSync(outPrivate, privatePem, { mode: 0o600 });
+    chmodSync(outPrivate, 0o600); // `mode` does not tighten an existing file
     console.log(`✔ Private key written: ${outPrivate}`);
   } else {
     process.stdout.write(privatePem);
@@ -292,6 +294,10 @@ async function keyDirectory(argv) {
     }
   }
   const expiresIn = flags['--expires-in'] !== undefined ? Number(flags['--expires-in']) : 86400;
+  if (!Number.isInteger(expiresIn) || expiresIn <= 0) {
+    console.error('--expires-in must be a positive integer number of seconds');
+    process.exit(2);
+  }
   const privateKeys = keys.map(file => readFileSync(file, 'utf8'));
   const directory = signKeyDirectory({ agentOrigin: origin, privateKeys, expiresInSeconds: expiresIn });
   writeFileSync(bodyPath, directory.body);
@@ -401,6 +407,71 @@ async function verifyWebBotAuthVector(vector, keysJsonPath) {
   }
 }
 
+// Experimental (AdCP 3.3): sign the origin's governance-revocations.json.
+async function revocationList(argv) {
+  const flags = parseFlags(
+    argv,
+    { '--origin': 'value', '--key': 'value', '--revoke': 'list', '--next-update-in': 'value', '--out': 'value' },
+    printRevocationListHelp
+  );
+  if (!flags['--origin'] || !flags['--key']) {
+    printRevocationListHelp();
+    process.exit(2);
+  }
+  const { signRevocationList } = loadIdentityModule();
+  const cadence = flags['--next-update-in'] !== undefined ? Number(flags['--next-update-in']) : 900;
+  if (!Number.isInteger(cadence) || cadence < 60 || cadence > 1800) {
+    console.error('--next-update-in must be an integer from 60 to 1800');
+    process.exit(2);
+  }
+  const revokedKids = [];
+  const revocationDetails = {};
+  for (const spec of flags['--revoke'] ?? []) {
+    // kid[:reason[:invalidity_date]]; the date may itself contain colons.
+    const [kid, reason, ...date] = spec.split(':');
+    revokedKids.push(kid);
+    if (reason || date.length > 0) {
+      revocationDetails[kid] = {
+        ...(reason && { reason }),
+        ...(date.length > 0 && { invalidity_date: date.join(':') }),
+      };
+    }
+  }
+  const list = signRevocationList({
+    agentOrigin: flags['--origin'],
+    privateKey: readFileSync(flags['--key'], 'utf8'),
+    revokedKids,
+    ...(Object.keys(revocationDetails).length > 0 && { revocationDetails }),
+    nextUpdateInSeconds: cadence,
+  });
+  const out = flags['--out'] ?? 'governance-revocations.json';
+  writeFileSync(out, list.body);
+  await writeJsonOutput({
+    outcome: 'signed',
+    file: out,
+    serve_at: list.url,
+    next_update: new Date(list.nextUpdate * 1000).toISOString(),
+  });
+}
+
+function printRevocationListHelp() {
+  console.log(`Usage: adcp signing revocation-list --origin <https-origin> --key <private.pem> [--revoke <kid[:reason[:date]]>]...
+
+EXPERIMENTAL (AdCP 3.3 Web Bot Auth). Sign the origin's revocation list
+(adcp-gov-revocation+jws) for <origin>/.well-known/governance-revocations.json.
+Verifiers fail closed for spend-committing requests without a current list,
+so republish before next_update. List every key ever revoked; lists never
+un-revoke. Reasons are RFC 5280 codes (keyCompromise, superseded, ...).
+
+Options:
+  --origin <url>           The agent's HTTPS origin.
+  --key <path>             PKCS#8 private key PEM of a key in the origin's directory.
+  --revoke <spec>          Revoked thumbprint, optionally :reason[:invalidity_date]. Repeatable.
+  --next-update-in <secs>  Cadence, 60-1800 (default 900).
+  --out <path>             Output file (default governance-revocations.json).
+`);
+}
+
 function printKeyDirectoryHelp() {
   console.log(`Usage: adcp signing key-directory --origin <https-origin> --key <private.pem> [--key ...] [options]
 
@@ -478,6 +549,7 @@ Subcommands:
   key-directory      Generate or re-sign a Web Bot Auth key directory (experimental).
   verify-directory   Verify a Web Bot Auth key directory (experimental).
   trust-json         Validate an authored trust.json (experimental).
+  revocation-list    Sign a Web Bot Auth origin's revocation list (experimental).
 `);
 }
 
@@ -495,6 +567,7 @@ async function handleSigningCommand(argv) {
   if (sub === 'key-directory') return keyDirectory(rest);
   if (sub === 'verify-directory') process.exit((await verifyDirectory(rest)) ? 0 : 1);
   if (sub === 'trust-json') process.exit((await trustJson(rest)) ? 0 : 1);
+  if (sub === 'revocation-list') return revocationList(rest);
   console.error(`Unknown signing subcommand: ${sub}`);
   printSigningHelp();
   process.exit(2);

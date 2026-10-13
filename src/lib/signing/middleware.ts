@@ -3,7 +3,7 @@ import { getHeaderValue } from './canonicalize';
 import { RequestSignatureError } from './errors';
 import { InMemoryReplayStore } from './replay';
 import { InMemoryRevocationStore } from './revocation';
-import { verifyRequestSignature, type VerifyRequestOptions } from './verifier';
+import { assertUnsignedRequestAllowed, verifyRequestSignature, type VerifyRequestOptions } from './verifier';
 import { isUnresolvableOperation, type ResolvedOperation } from './operation-resolution';
 import type { VerifiedSigner } from './types';
 import {
@@ -14,7 +14,7 @@ import {
   type WebBotAuthVerifierConfig,
 } from './wba/authorize';
 import { warnRfc9421ProfileDeprecated } from './wba/deprecation';
-import { WebBotAuthError } from './wba/errors';
+import { WebBotAuthAuthorizationError, WebBotAuthError } from './wba/errors';
 import { usesWebBotAuth } from './wba/verifier';
 
 declare module 'http' {
@@ -133,29 +133,54 @@ export function createExpressVerifier(options: ExpressMiddlewareOptions) {
   ): Promise<void> {
     try {
       const url = options.getUrl ? options.getUrl(req) : defaultUrl(req);
-      const body = resolveRawBody(req);
+      const wbaSelected = webBotAuth !== undefined && usesWebBotAuth(req.headers);
+      let body: string;
+      try {
+        body = resolveRawBody(req);
+      } catch (error) {
+        // A WBA request is answered with WBA statuses, never request_signature_* codes.
+        if (wbaSelected && error instanceof RequestSignatureError) {
+          throw new WebBotAuthError('raw request body is unavailable', { status: 400, cause: error });
+        }
+        throw error;
+      }
       const requestLike: RequestLike = {
         method: req.method,
         url,
         headers: req.headers,
         body,
       };
-      if (webBotAuth && usesWebBotAuth(req.headers)) {
+      if (wbaSelected) {
         const operation = options.resolveOperation(req);
         if (isUnresolvableOperation(operation)) {
           throw new WebBotAuthError('request body does not resolve to one operation', { status: 400 });
         }
         const rawHeaders = Array.isArray(req.rawHeaders) ? (req.rawHeaders as string[]) : undefined;
+        const resolvedOperation = operation ?? jsonRpcMethod(req.method, body);
         const { signer } = await authenticateWebBotAuthRequest(
           { ...requestLike, ...(rawHeaders !== undefined && { rawHeaders }) },
-          webBotAuth,
+          webBotAuth!,
           {
             replayStore,
             ...(options.now !== undefined && { now: options.now }),
-            ...((operation ?? jsonRpcMethod(body)) !== undefined && { operation: operation ?? jsonRpcMethod(body) }),
+            ...(resolvedOperation !== undefined && { operation: resolvedOperation }),
           }
         );
-        req.verifiedSigner = signer;
+        if (signer) {
+          req.verifiedSigner = signer;
+        } else {
+          // An unbound origin outside `unboundFor` proceeds exactly as an
+          // anonymous caller, so the unsigned-request rules apply: an
+          // operation that requires a signature needs a bound identity.
+          try {
+            assertUnsignedRequestAllowed(body, operation, options.capability);
+          } catch (error) {
+            if (error instanceof RequestSignatureError) {
+              throw new WebBotAuthAuthorizationError('signer identity is not bound', { cause: error });
+            }
+            throw error;
+          }
+        }
         next();
         return;
       }

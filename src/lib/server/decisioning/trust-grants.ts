@@ -3,10 +3,10 @@
  * after commercial identity is established and before any account side
  * effect. Wire it on `platform.accounts.trustGrants`.
  */
-import { requireGrant, type TrustGrantEvaluator } from '../../signing/trust/grants';
+import { grantAbsentError, requireGrant, type TrustGrantEvaluator } from '../../signing/trust/grants';
 import { AdcpError } from './async-outcome';
 import type { Account } from './account';
-import type { BuyerAgent, AdcpCredential } from './buyer-agent';
+import { isVerifiedHttpSig, type BuyerAgent, type AdcpCredential } from './buyer-agent';
 
 /** Acts-for claim the gate evaluates. Brand and operator come from seller-owned state or the declaration. */
 export interface TrustGrantClaim {
@@ -38,6 +38,7 @@ export interface TrustGrantGateOptions {
 export const MEDIA_BUYING_GRANT_OPERATIONS: ReadonlySet<string> = new Set([
   'sync_accounts',
   'get_products',
+  'list_products',
   'request_proposals',
   'refine_proposals',
   'decline_proposals',
@@ -54,6 +55,11 @@ export const MEDIA_BUYING_GRANT_OPERATIONS: ReadonlySet<string> = new Set([
   'sync_creatives',
   'list_creatives',
   'list_creative_formats',
+  'log_event',
+  'sync_audiences',
+  'sync_catalogs',
+  'sync_event_sources',
+  'sync_reporting_status',
 ]);
 
 /**
@@ -71,7 +77,7 @@ export interface TrustGrantGate {
 
 export interface TrustGrantContext {
   agent?: BuyerAgent;
-  authInfo?: { credential?: AdcpCredential };
+  authInfo?: { credential?: AdcpCredential; extra?: Record<string, unknown> };
 }
 
 /**
@@ -83,23 +89,42 @@ export interface TrustGrantContext {
  */
 export function createTrustGrantGate(options: TrustGrantGateOptions): TrustGrantGate {
   if (!options?.evaluator) throw new TypeError('createTrustGrantGate requires an evaluator');
-  const check = async (claim: TrustGrantClaim, ctx: TrustGrantContext): Promise<void> => {
+  const evaluate = async (claim: TrustGrantClaim, ctx: TrustGrantContext) => {
     const agent = ctx.agent;
     if (agent === undefined) throw unestablished();
-    const credential = ctx.authInfo?.credential;
-    const webBotAuth = credential?.kind === 'http_sig' && credential.profile === 'web-bot-auth';
-    requireGrant(
-      await options.evaluator.check({
-        agentOrigin: webBotAuth ? credential.agent_url : agent.agent_url,
-        brandDomain: claim.brandDomain,
-        accountOperator: claim.accountOperator,
-        ...(claim.brandId !== undefined && { brandId: claim.brandId }),
-        ...(claim.countries !== undefined && { countries: claim.countries }),
-        ...(claim.scope !== undefined && { scope: claim.scope }),
-        // Trusted transport metadata only; never a declaration field.
-        signingProfile: webBotAuth ? 'web-bot-auth' : 'adcp/request-signing/v1',
-      })
-    );
+    // Profile and operator-record fields count only on a verifier-branded
+    // credential; a custom authenticator cannot steer grant evaluation.
+    const raw = ctx.authInfo?.credential;
+    const credential = raw?.kind === 'http_sig' && isVerifiedHttpSig(raw) ? raw : undefined;
+    const webBotAuth = credential?.profile === 'web-bot-auth';
+    // An RFC 9421 signer's operator is the host of the brand.json record its
+    // verified discovery selected, when the verifier recorded one.
+    const signature = ctx.authInfo?.extra?.signature as { operator_record_url?: unknown } | undefined;
+    const operatorRecordUrl =
+      !webBotAuth && credential !== undefined && typeof signature?.operator_record_url === 'string'
+        ? signature.operator_record_url
+        : undefined;
+    let signerOperatorDomain: string | undefined;
+    try {
+      signerOperatorDomain = operatorRecordUrl ? new URL(operatorRecordUrl).hostname : undefined;
+    } catch {
+      signerOperatorDomain = undefined;
+    }
+    return options.evaluator.check({
+      agentOrigin: webBotAuth ? credential!.agent_url : agent.agent_url,
+      brandDomain: claim.brandDomain,
+      accountOperator: claim.accountOperator,
+      ...(claim.brandId !== undefined && { brandId: claim.brandId }),
+      ...(claim.countries !== undefined && { countries: claim.countries }),
+      ...(claim.scope !== undefined && { scope: claim.scope }),
+      // Trusted transport metadata only; never a declaration field. Bearer
+      // and OAuth callers take the RFC 9421 (pre-3.3) authority path.
+      signingProfile: webBotAuth ? 'web-bot-auth' : 'adcp/request-signing/v1',
+      ...(signerOperatorDomain !== undefined && { signerOperatorDomain }),
+    });
+  };
+  const check = async (claim: TrustGrantClaim, ctx: TrustGrantContext): Promise<void> => {
+    requireGrant(await evaluate(claim, ctx));
   };
   return {
     async requireDeclaration(declaration, ctx) {
@@ -109,8 +134,7 @@ export function createTrustGrantGate(options: TrustGrantGateOptions): TrustGrant
       };
       if (typeof entry.brand?.domain !== 'string' || typeof entry.operator !== 'string') {
         if (ctx.agent === undefined) throw unestablished();
-        requireGrant({ authorized: false, legacyFallbackAllowed: false });
-        return;
+        throw grantAbsentError();
       }
       await check(
         {
@@ -125,17 +149,31 @@ export function createTrustGrantGate(options: TrustGrantGateOptions): TrustGrant
     async requireAccount(account, ctx) {
       if (TASK_LIFECYCLE_OPERATIONS.has(ctx.operation)) return;
       if (ctx.agent === undefined) throw unestablished();
-      const claim = options.claimForAccount
-        ? await options.claimForAccount(account, ctx.agent, ctx.operation)
-        : defaultClaim(account);
-      if (claim === undefined) return;
+      let claim: TrustGrantClaim | undefined;
+      if (options.claimForAccount) {
+        claim = await options.claimForAccount(account, ctx.agent, ctx.operation);
+        // Only an explicit extractor may exempt an account.
+        if (claim === undefined) return;
+      } else {
+        claim = defaultClaim(account);
+        // Without a brand and operator there is no claim to authorize: fail closed.
+        if (claim === undefined) throw grantAbsentError();
+      }
       if (
         !MEDIA_BUYING_GRANT_OPERATIONS.has(ctx.operation) &&
         (claim.scope ?? 'adcp:media_buying') === 'adcp:media_buying'
       ) {
         // A media-buying grant cannot authorize another domain merely because
-        // both calls name an account; such operations need an explicit scope.
-        requireGrant({ authorized: false, legacyFallbackAllowed: false });
+        // both calls name an account. Implicit (same-domain) authority still
+        // applies; anything else needs an explicit scope from claimForAccount.
+        const result = await evaluate(claim, ctx);
+        if (result.authorized && result.basis === 'implicit') return;
+        if (!result.authorized && result.reason?.endsWith('_unavailable')) requireGrant(result);
+        throw new AdcpError('PERMISSION_DENIED', {
+          message: 'Operation requires an explicit grant scope',
+          recovery: 'correctable',
+          details: { scope: 'agent', reason: 'grant_absent' },
+        });
       }
       await check(claim, ctx);
     },

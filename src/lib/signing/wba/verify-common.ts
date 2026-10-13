@@ -62,7 +62,7 @@ export function verifyWbaSignatureBytes(
   try {
     valid = verifySignature(alg, jwkToPublicKey(jwk), Buffer.from(base, 'utf8'), new Uint8Array(signature[0]));
   } catch (error) {
-    throw new WebBotAuthError('invalid directory key', { label, cause: error });
+    throw new WebBotAuthError('invalid verification key', { label, cause: error });
   }
   if (!valid) throw new WebBotAuthError('signature did not verify', { label });
   return alg;

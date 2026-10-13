@@ -4,6 +4,8 @@ AdCP 3.0 supports [HTTP Message Signatures (RFC 9421)](https://www.rfc-editor.or
 
 Signing is **optional in AdCP 3.0** — sellers populate `request_signing.required_for` selectively during per-counterparty pilots. AdCP **4.0** (the next breaking-changes window) requires signed requests on **spend-committing operations** (`create_media_buy`, `acquire_*`, etc.). Agents that don't sign yet must still tolerate signature headers (`Signature`, `Signature-Input`, `Content-Digest`) on inbound requests without breaking.
 
+> **AdCP 3.3:** this guide covers the AdCP RFC 9421 profile (`adcp/request-signing/v1`), which is deprecated in 3.3 and keeps working through 3.x. The experimental Web Bot Auth profile identifies a signer by its origin and needs no capabilities endpoint or brand.json key chain. See [the agent identity migration guide](../migration-agent-identity-3.3.md).
+
 ## When You Need This
 
 | You are a... | You need to... | Why |

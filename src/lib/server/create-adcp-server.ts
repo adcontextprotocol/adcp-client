@@ -1432,9 +1432,11 @@ export interface SignedRequestsConfig {
    * Experimental (AdCP 3.3): also verify the Web Bot Auth profile
    * (`web-bot-auth`). Identity is the signer's origin, keys come from that
    * origin's key directory, and no capabilities call is made. A verified,
-   * unbound origin is identity-established: it reaches only
-   * `webBotAuth.unboundFor` and carries no credential, so the
-   * `BuyerAgentRegistry` resolves no agent for it. An origin bound through
+   * unbound origin is identity-established: outside `webBotAuth.unboundFor`
+   * it proceeds as an anonymous caller (or is refused under
+   * `unbound: 'reject'`); on `unboundFor` operations it is attached with no
+   * principal and no credential, so the `BuyerAgentRegistry` resolves no
+   * agent for it. An origin bound through
    * `webBotAuth.bindings` authenticates as that principal while its
    * operator's trust record still lists it, and is refused on the RFC 9421
    * profile (no downgrade). Failures answer with WBA statuses. Advertises
@@ -4541,7 +4543,16 @@ function buildSignedRequestsPreTransport(
           }
           handled = true;
         }
-        const verifiedSigner = reqShim.verifiedSigner as import('../signing/types').VerifiedSigner | undefined;
+        let verifiedSigner = reqShim.verifiedSigner as import('../signing/types').VerifiedSigner | undefined;
+        // An unbound Web Bot Auth origin adds nothing to a caller the server
+        // already authenticated (e.g. by bearer): keep that identity.
+        if (
+          verifiedSigner?.profile === 'web-bot-auth' &&
+          verifiedSigner.principal_id === undefined &&
+          (req as { auth?: AuthInfo }).auth !== undefined
+        ) {
+          verifiedSigner = undefined;
+        }
         if (!err && verifiedSigner) {
           try {
             const principal = principalForVerifiedSigner(verifiedSigner, signedRequests.makePrincipal);
@@ -4549,7 +4560,16 @@ function buildSignedRequestsPreTransport(
           } catch (identityError) {
             const errName = (identityError as Error).name || 'Error';
             console.error(`[adcp/signed-requests] signer identity rejected: ${errName}`);
-            if (!res.writableEnded) {
+            if (!res.writableEnded && verifiedSigner.profile === 'web-bot-auth') {
+              // WBA reports no signature-specific detail (spec R2).
+              res.statusCode = 403;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(
+                JSON.stringify({
+                  errors: [{ code: 'PERMISSION_DENIED', message: 'Agent is not authorized for this request' }],
+                })
+              );
+            } else if (!res.writableEnded) {
               res.statusCode = 401;
               res.setHeader('WWW-Authenticate', 'Signature error="request_signature_invalid"');
               res.setHeader('Content-Type', 'application/json');

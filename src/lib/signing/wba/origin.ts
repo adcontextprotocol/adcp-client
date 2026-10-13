@@ -32,6 +32,18 @@ export function webBotAuthOrigin(url: string, options: { wire?: boolean } = {}):
     if (options.wire === true) {
       if (authority.includes('%')) throw new TypeError('percent-encoded host');
       canonicalAgentUrl(url);
+      // A received identity names a DNS host: IP literals, single-label and
+      // `localhost` names are refused before any discovery fetch.
+      const host = new URL(origin).hostname;
+      if (
+        host.startsWith('[') ||
+        /^\d+(\.\d+){3}$/.test(host) ||
+        !host.includes('.') ||
+        host === 'localhost' ||
+        host.endsWith('.localhost')
+      ) {
+        throw new TypeError('signer origin must name a DNS host');
+      }
     }
   } catch {
     throw new WebBotAuthOriginError('Invalid Web Bot Auth origin');

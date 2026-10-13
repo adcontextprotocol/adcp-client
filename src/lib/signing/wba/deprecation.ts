@@ -2,7 +2,9 @@
  * Once-per-process deprecation notice for RFC 9421-profile configuration.
  * The profile is deprecated in AdCP 3.3, keeps working through 3.x, and is
  * removed in 4.0 (spec D5). Uses `process.emitWarning`, so `--no-deprecation`
- * silences it and `--throw-deprecation` cannot turn it into a failure.
+ * or `ADCP_SUPPRESS_RFC9421_DEPRECATION=1` silences it. Under
+ * `--throw-deprecation` Node raises it asynchronously, as it does for every
+ * deprecation: set the variable in processes that run with that flag.
  */
 const warned = new Set<string>();
 
@@ -22,6 +24,7 @@ const MESSAGES: Record<Rfc9421DeprecationSurface, string> = {
 export function warnRfc9421ProfileDeprecated(surface: Rfc9421DeprecationSurface): void {
   if (warned.has(surface)) return;
   warned.add(surface);
+  if (process.env.ADCP_SUPPRESS_RFC9421_DEPRECATION === '1') return;
   try {
     process.emitWarning(MESSAGES[surface], {
       type: 'DeprecationWarning',

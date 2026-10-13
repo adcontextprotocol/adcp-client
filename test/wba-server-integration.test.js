@@ -135,18 +135,20 @@ describe('createAdcpServer signedRequests.webBotAuth', () => {
     assert.match(text, /\\"profiles\\":\[\\"adcp\/request-signing\/v1\\",\\"web-bot-auth\\"\]/);
   });
 
-  it('gives an unbound origin the anonymous surface only, and calls the unknown-signer hook', async () => {
+  it('treats an unbound origin as an anonymous caller and calls the unknown-signer hook', async () => {
     const capabilities = await post(started.url, tool('get_adcp_capabilities'));
     assert.equal(capabilities.status, 200);
+    await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(
       established.map(identity => [identity.origin, identity.operation]),
       [[ORIGIN, 'get_adcp_capabilities']]
     );
-    const denied = await post(started.url, tool('get_products', { buying_mode: 'brief', brief: 'x' }));
-    assert.equal(denied.status, 403);
-    assert.equal(denied.headers.get('accept-signature'), null, 'authorization errors carry no Accept-Signature');
-    assert.equal((await denied.json()).errors[0].code, 'PERMISSION_DENIED');
-    assert.equal(seen.length, 0, 'the handler never ran');
+    // Outside unboundFor the request proceeds exactly as an unsigned one.
+    const anonymous = await post(started.url, tool('get_products', { buying_mode: 'brief', brief: 'x' }));
+    assert.equal(anonymous.status, 200);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].authInfo, undefined, 'nothing is attached for an unbound origin');
+    assert.equal(seen[0].agent, undefined);
   });
 
   it('answers WBA statuses instead of request_signature_* codes', async () => {
@@ -271,5 +273,26 @@ describe('identity-established callers on an allowed operation', () => {
       established.map(identity => identity.operation),
       ['get_products']
     );
+  });
+});
+
+describe("webBotAuth.unbound: 'reject'", () => {
+  let started;
+  before(async () => {
+    const config = seller();
+    config.signedRequests.webBotAuth.unbound = 'reject';
+    started = await start(() => createAdcpServer(config));
+  });
+  after(() => new Promise(resolve => started.server.close(resolve)));
+  beforeEach(() => {
+    seen = [];
+  });
+
+  it('denies an unbound origin outside unboundFor without Accept-Signature', async () => {
+    const denied = await post(started.url, tool('get_products', { buying_mode: 'brief', brief: 'x' }));
+    assert.equal(denied.status, 403);
+    assert.equal(denied.headers.get('accept-signature'), null);
+    assert.equal((await denied.json()).errors[0].code, 'PERMISSION_DENIED');
+    assert.equal(seen.length, 0);
   });
 });

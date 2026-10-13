@@ -92,6 +92,36 @@ describe('adcp signing (Web Bot Auth, experimental)', () => {
     assert.equal(json(wrongOrigin).outcome, 'invalid');
   });
 
+  it('signs a revocation list the origin checker accepts', async () => {
+    const out = path.join(dir, 'governance-revocations.json');
+    const revoked = JSON.parse(readFileSync(path.join(dir, 'k2.json'), 'utf8')).kid;
+    const result = run(
+      'revocation-list',
+      '--origin',
+      'https://buyer.example.com',
+      '--key',
+      path.join(dir, 'k1.pem'),
+      '--revoke',
+      `${revoked}:keyCompromise:2026-10-11T00:00:00Z`,
+      '--out',
+      out
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(json(result).serve_at, 'https://buyer.example.com/.well-known/governance-revocations.json');
+    const { OriginRevocationChecker, StaticWebBotAuthKeys } = require('../../dist/lib/signing/server.js');
+    const keys = new StaticWebBotAuthKeys({
+      'https://buyer.example.com': [JSON.parse(readFileSync(path.join(dir, 'k1.json'), 'utf8'))],
+    });
+    const checker = new OriginRevocationChecker(keys, {
+      fetch: async () => ({ status: 200, body: readFileSync(out, 'utf8') }),
+    });
+    assert.equal(await checker.isRevoked('https://buyer.example.com', revoked), true);
+    assert.deepEqual(checker.revocationDetails('https://buyer.example.com', revoked), {
+      reason: 'keyCompromise',
+      invalidity_date: '2026-10-11T00:00:00Z',
+    });
+  });
+
   it('validates an authored trust.json for its host', () => {
     const good = path.join(dir, 'trust.json');
     writeFileSync(good, JSON.stringify({ agents: [{ url: 'https://buyer.agency.com', roles: ['adcp:buying'] }] }));

@@ -19,7 +19,7 @@ import { requestSigningEncodingForVersion } from './content-digest';
 import { resolveRequestOperation } from './operation-resolution';
 import { WEB_BOT_AUTH_TAG } from './wba/constants';
 import { warnRfc9421ProfileDeprecated } from './wba/deprecation';
-import { acceptsWebBotAuth, createWebBotAuthSigningFetch, type WebBotAuthSigner } from './wba/fetch';
+import type { WebBotAuthSigner } from './wba/fetch';
 import { publicDirectoryKey } from './wba/keys';
 import { webBotAuthOrigin } from './wba/origin';
 export { requestSigningEncodingForVersion } from './content-digest';
@@ -192,6 +192,9 @@ export function toWebBotAuthSigner(config: AgentRequestSigningConfig): {
   const agentOrigin = webBotAuthOrigin(config.agent_url);
   if (isProviderSigningConfig(config)) {
     const provider = config.provider;
+    if (!/^[A-Za-z0-9_-]{43}$/.test(provider.keyid)) {
+      throw new TypeError("Web Bot Auth provider keyid must be the key's RFC 7638 thumbprint");
+    }
     return {
       agentOrigin,
       signer: { keyid: provider.keyid, algorithm: provider.algorithm, sign: payload => provider.sign(payload) },
@@ -209,6 +212,28 @@ export function toWebBotAuthSigner(config: AgentRequestSigningConfig): {
 type AdcpPrivateJwk = import('./types').AdcpJsonWebKey;
 
 /**
+ * Load the Web Bot Auth signer on first use, so RFC 9421-only clients never
+ * pull the WBA signing modules into their eager graph. Configuration is
+ * validated synchronously by {@link toWebBotAuthSigner}.
+ */
+function lazyWebBotAuthFetch(
+  upstream: FetchLike,
+  signer: WebBotAuthSigner,
+  options: import('./wba/fetch').WebBotAuthSigningFetchOptions
+): FetchLike {
+  let wrapped: Promise<FetchLike> | undefined;
+  return async (input, init) => {
+    wrapped ??= import('./wba/fetch')
+      .then(module => module.createWebBotAuthSigningFetch(upstream, signer, options))
+      .catch(error => {
+        wrapped = undefined; // a failed load is retried on the next request
+        throw error;
+      });
+    return (await wrapped)(input, init);
+  };
+}
+
+/**
  * Experimental (AdCP 3.3): sign every selected request under the configured
  * profile without consulting seller capabilities. Used for protocol-method
  * calls such as A2A `tasks/cancel`.
@@ -216,7 +241,7 @@ type AdcpPrivateJwk = import('./types').AdcpJsonWebKey;
 export function buildDirectSigningFetch(upstream: FetchLike, signing: AgentRequestSigningConfig): FetchLike {
   if (isWebBotAuthSigningConfig(signing)) {
     const { signer, agentOrigin } = toWebBotAuthSigner(signing);
-    return createWebBotAuthSigningFetch(upstream, signer, { agentOrigin });
+    return lazyWebBotAuthFetch(upstream, signer, { agentOrigin });
   }
   if (isProviderSigningConfig(signing)) return createSigningFetchAsync(upstream, signing.provider);
   return createSigningFetch(upstream, toSignerKey(signing));
@@ -277,13 +302,14 @@ export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): 
 
   if (isWebBotAuthSigningConfig(signing)) {
     const { signer, agentOrigin } = toWebBotAuthSigner(signing);
-    return createWebBotAuthSigningFetch(upstream, signer, {
+    return lazyWebBotAuthFetch(upstream, signer, {
       agentOrigin,
       shouldSign,
       beforeSign: () => {
         // Omission of `profiles` means RFC 9421 only. Never downgrade a
         // configured Web Bot Auth identity to the deprecated profile.
-        if (!acceptsWebBotAuth(getCapability()?.requestSigning)) {
+        const profiles = getCapability()?.requestSigning?.profiles;
+        if (!Array.isArray(profiles) || !profiles.includes(WEB_BOT_AUTH_TAG)) {
           throw new TypeError(
             "Seller does not advertise request-signing profile 'web-bot-auth'; automatic signing cannot downgrade the configured identity"
           );

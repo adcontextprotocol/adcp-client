@@ -16,6 +16,8 @@ Everything on this page is **experimental and opt-in**:
   through 3.x. It is deprecated in 3.3 and removed in 4.0; RFC 9421-only
   signing and verifier configuration emit a one-time `DeprecationWarning`
   (`ADCP_RFC9421_SIGNING_PROFILE`, `ADCP_RFC9421_VERIFICATION_PROFILE`).
+  Silence it with `--no-deprecation` or `ADCP_SUPPRESS_RFC9421_DEPRECATION=1`;
+  processes that run with `--throw-deprecation` should set the variable.
 - No signer emits `Signature-Agent` unless you select the WBA profile, and
   automatic signing then requires the seller to list `web-bot-auth` in
   `request_signing.profiles`. Some verifiers (the Go SDK today) reject extra
@@ -66,6 +68,19 @@ origin, every agent under the operator's registrable domain):
 ```bash
 npx @adcp/sdk signing trust-json validate trust.json --operator-domain agency.com
 ```
+
+Publish the identity's signed revocation list at
+`https://buyer.agency.com/.well-known/governance-revocations.json`, even when
+it revokes nothing: sellers fail spend-committing requests closed without a
+current list. Re-sign it before its `next_update` (900 s by default):
+
+```bash
+npx @adcp/sdk signing revocation-list --origin https://buyer.agency.com --key wba.pem --out ./public/governance-revocations.json
+# revoke a key: --revoke <thumbprint>[:keyCompromise[:2026-10-11T00:00:00Z]]
+```
+
+`signRevocationList` is the library form. Keep listing every key you ever
+revoked; verifiers retain revocations and never weaken an entry.
 
 Then opt the agent config into the profile. `kid` must be the key's RFC 7638
 thumbprint (printed by `generate-key`), and `agent_url`'s origin is the
@@ -121,83 +136,139 @@ createAdcpServer({
 ```
 
 The same option exists on `createExpressVerifier({ webBotAuth })`, and
-`verifyWebBotAuthRequest` is the standalone verifier.
+`verifyWebBotAuthRequest` is the standalone verifier. With `webBotAuth`, the
+server advertises `request_signing.profiles: ['adcp/request-signing/v1',
+'web-bot-auth']` unless the capability block declares `profiles`.
 
-- **Profile selection.** A request carrying `Signature-Agent` or the
-  `web-bot-auth` tag is verified under WBA only. A failure never falls back
-  to the RFC 9421 profile, and an uncovered `Signature-Agent` is never
-  attributed. Without `webBotAuth`, behavior is unchanged: a WBA signature
-  fails the RFC 9421 tag check.
-- **Keys.** `WebBotAuthKeyDirectoryResolver` resolves `(origin, thumbprint)`
-  from the covered `Signature-Agent` origin's signed directory: HTTPS,
-  resolved-address checks, no redirects, 256 KiB, 10 s, a five-minute
-  positive cache bounded by the signatures' `expires`, a 60 s negative cache,
-  and per-origin coalescing. It never calls capabilities or reads brand.json
-  or trust.json. The verifier itself checks that the resolved key came from
-  the named origin, so a resolver that looks keys up by `kid` alone cannot
-  attribute a foreign key. `legacy` handles context-free RFC 9421 lookups on
-  the same endpoint and is never a fallback for a failed WBA discovery.
-- **Checks.** Every `web-bot-auth` signature must verify; a relay must cover
-  the earlier labels' `signature-agent`, `signature-input`, and `signature`
-  members and every component they cover. Nonces are required (at least 128
-  bits) and claimed per identity origin in the replay store, so key rotation
-  cannot replay. Duplicate dictionary members or parameters, repeated
-  signature header lines, and non-strict JSON bodies are rejected.
-- **Errors.** Failures answer WBA statuses: `400` (headers do not parse),
-  `403` with `Accept-Signature` (sign again; a replay gets a fresh nonce), and
-  `429`. The body is the generic `AUTH_INVALID` / `RATE_LIMITED` error with
-  no signature-specific detail. `request_signature_*` codes stay with the
-  RFC 9421 profile.
-- **Revocation.** `OriginRevocationChecker` reads
-  `https://O/.well-known/governance-revocations.json`
-  (`adcp-gov-revocation+jws`, compact or JSON serialization) signed with a key
-  from O's directory, polls on `next_update` (60 s floor, 30 min ceiling),
-  fails closed past `next_update + 4×interval`, refuses rollback to an older
-  list, keeps every revoked key, and keeps the most severe
-  `revocation_details` entry per key (`keyCompromise`, earliest
-  `invalidity_date`). `exposes(origin, kid, receivedAt)` answers R9's
-  "suspect request" question using seller receipt time. Admission is bounded
-  (256 origins, 8 per operator); failed first discoveries hold only a 60 s
-  negative entry. A revoked key gets an AdCP authorization error
-  (`PERMISSION_DENIED`, no `Accept-Signature`). Revocation alone never
-  unwinds committed buys. Persist revocation history across restarts in a
-  durable checker.
-- **Identity-established.** A verified origin with no binding gets no
-  credential: `BuyerAgentRegistry` resolves no agent for it, even one that
-  shares its URL, and it may only call `webBotAuth.unboundFor` (default
-  `get_adcp_capabilities`, `get_principal`). Match that to your anonymous
-  surface, and add `sync_principal` only with an explicit `open` policy.
-  `BuyerAgentRegistry.signingOnly/mixed({ onIdentityEstablished })` (or
-  `webBotAuth.onIdentityEstablished`) receives each such origin, for example
-  to queue one-click approval; rate-limit per operator domain.
-- **Binding.** Bind only after the operator's record lists the origin with
-  the required role:
+**Profile selection.** A request carrying `Signature-Agent` or the
+`web-bot-auth` tag is verified under WBA only. A failure never falls back to
+the RFC 9421 profile, and an uncovered `Signature-Agent` is never attributed.
+Without `webBotAuth`, behavior is unchanged: a WBA signature fails the RFC
+9421 tag check.
 
-  ```ts
-  await trustRecords.bind(verifiedSigner, { principalId: 'principal_123', bindings });
-  // existing RFC 9421 principal: { existingRfc9421Principal: true, migrationApproved: true }
-  ```
+**Keys.** `WebBotAuthKeyDirectoryResolver` resolves `(origin, thumbprint)`
+from the covered `Signature-Agent` origin's signed directory. It never calls
+capabilities or reads brand.json or trust.json.
 
-  An origin binds to one principal and is never rebound. A bound origin
-  authenticates as that principal (`authInfo.clientId`, and an `http_sig`
-  credential with `profile: 'web-bot-auth'` and `principal_id`) while
-  `trustRecords` still lists it with `webBotAuth.bindingRole` (default
-  `adcp:buying`), re-evaluated within the polling interval. Delisting removes
-  authority but not the binding, and a bound origin is refused on the RFC
-  9421 profile (no downgrade). Persist bindings in your registry.
+- Fetches use HTTPS, resolved-address checks, no redirects, a 256 KiB cap,
+  and a 10 s deadline. IP-literal, single-label, and `localhost` origins are
+  refused before any fetch.
+- A verified directory is cached for at most five minutes, never past its
+  signatures. A failed refresh is not evidence of removal: the last signed
+  directory keeps verifying until its signatures expire. A failure with no
+  prior evidence is cached for 60 s in a separate table that never evicts
+  good entries.
+- Lookups coalesce per origin; discoveries are bounded globally (256) and per
+  operator domain (8).
+- The verifier itself checks that the key came from the named origin, so a
+  resolver that looks keys up by `kid` alone cannot attribute a foreign key.
+  `legacy` handles context-free RFC 9421 lookups on the same endpoint and is
+  never a fallback for a failed WBA discovery.
+
+**Checks.** Every `web-bot-auth` signature must verify; a relay must cover the
+earlier labels' `signature-agent`, `signature-input`, and `signature` members
+and every component they cover. Nonces are required (at least 128 bits) and
+claimed per identity origin, so key rotation cannot replay. Duplicate
+dictionary members or parameters, repeated signature header lines, and
+non-strict JSON bodies are rejected.
+
+**Errors.** Failures answer WBA statuses: `400` (headers do not parse), `403`
+with `Accept-Signature` naming every label's requirements (a replay gets a
+fresh nonce), and `429`. The body is the generic `AUTH_INVALID` or
+`RATE_LIMITED` error with no signature-specific detail. Authorization
+outcomes (revoked key, revocation status unavailable for a spend-committing
+operation, delisted origin) answer `PERMISSION_DENIED` without
+`Accept-Signature`. `request_signature_*` codes stay with the RFC 9421 profile.
+
+**Revocation.** `OriginRevocationChecker` reads
+`https://O/.well-known/governance-revocations.json`
+(`adcp-gov-revocation+jws`, compact or JSON serialization), signed with a key
+from O's directory.
+
+- It polls at the signed `next_update`, and at least every 30 minutes. Status
+  is stale only past the signed `next_update` plus four polling intervals,
+  and a list already stale on first discovery is refused.
+- It refuses rollback to an older list, keeps every revoked key, and keeps the
+  most severe `revocation_details` entry per key: `keyCompromise` beats any
+  other reason, an undated compromise beats a dated one, and otherwise the
+  earliest compromise `invalidity_date` wins.
+- Revoked kids must be thumbprints. History is bounded; a list that would
+  exceed the bound is refused, never truncated.
+- For a bound origin, unavailable status fails spend-committing (mutating)
+  operations closed (spec R3); its reads proceed. Unbound origins proceed as
+  anonymous callers regardless. A key the list revokes is always rejected.
+- `exposes(origin, kid, receivedAt)` answers R9's "suspect request" question
+  using seller receipt time. Revocation alone never unwinds committed buys.
+- Admission is bounded (256 origins, 8 per operator). Failed first
+  discoveries hold only a 60 s negative entry. At capacity the least recently
+  used unbound origin is evicted, preferring one with nothing to forget;
+  bound origins are pinned and never evicted. Persist history across
+  restarts in a durable checker.
+
+**Identity-established.** A verified origin with no binding gets what an
+anonymous caller gets (spec R5 rule 1).
+
+- Outside `webBotAuth.unboundFor`, the request proceeds exactly as an unsigned
+  one: nothing is attached, and the unsigned-request rules (`required_for`,
+  webhook-credential elevation) apply.
+- On `unboundFor` operations (default `get_adcp_capabilities`,
+  `get_principal`), the origin is attached as an authenticated caller with no
+  principal and no credential. `BuyerAgentRegistry` resolves no agent for it,
+  even one that shares its URL, and `signedRequests.makePrincipal` is never
+  applied to WBA signers. Add `sync_principal` only with an explicit `open`
+  policy.
+- `unbound: 'reject'` answers `PERMISSION_DENIED` instead (the Python SDK's
+  behavior). A request the server already authenticated, for example by
+  bearer, keeps that identity.
+- `BuyerAgentRegistry.signingOnly/mixed({ onIdentityEstablished })` (or
+  `webBotAuth.onIdentityEstablished`) receives such origins without delaying
+  the request, for example to queue one-click approval: at most one call in
+  flight and one per minute per origin. Rate-limit per operator domain.
+
+**Binding.** Bind only after the operator's record lists the origin with the
+required role:
+
+```ts
+await trustRecords.bind(verifiedSigner, { principalId: 'principal_123', bindings });
+// existing RFC 9421 principal: { existingRfc9421Principal: true, migrationApproved: true }
+```
+
+An origin binds to one principal and is never rebound. A bound origin
+authenticates as that principal (`authInfo.clientId`, and an `http_sig`
+credential with `profile: 'web-bot-auth'` and `principal_id`) while
+`trustRecords` still lists it with `webBotAuth.bindingRole` (default
+`adcp:buying`), re-evaluated within the polling interval. Delisting removes
+authority but not the binding, and a bound origin is refused on the RFC 9421
+profile (no downgrade). Persist bindings in your registry, and decide
+`existingRfc9421Principal` from it. `BuyerAgentRegistry` resolves a bound
+origin through `resolveByAgentUrl` with the canonical origin
+(`https://buyer.agency.com`), not an endpoint URL: key those records by
+origin, or map `credential.principal_id`.
 
 ## Trust records and grants
 
-`TrustRecordEvaluator` derives `https://{eTLD+1}/.well-known/trust.json`
-from the pinned ICANN+PRIVATE PSL snapshot (IP literals and public suffixes
-have no record), fetches under the SSRF rules with a 2 MiB cap and no
-redirects, parses strictly (duplicate keys rejected, depth 32), follows one
-`authoritative_location` hop whose target cannot point again, validates
-against the pinned schema while preserving unknown onboarding requirement
-kinds for readers, and caches no longer than the polling interval. The
-operator is always the evaluated origin's registrable domain, never a value
-inside the document. Fetch failures fail closed and are cached for 60 s. A
-200 permanently marks the host as published for the evaluator's lifetime.
+`TrustRecordEvaluator` derives `https://{eTLD+1}/.well-known/trust.json` from
+the pinned ICANN+PRIVATE PSL snapshot; IP literals and public suffixes have
+no record. It evaluates the record only at binding, grants, and `open`
+onboarding:
+
+- Fetches follow the SSRF rules with a 2 MiB cap and no redirects. Parsing is
+  strict: duplicate keys rejected, depth 32, token lists (roles, scopes,
+  protocols, countries) at most 64 entries, other arrays at most 10,000.
+- It follows one `authoritative_location` hop whose target cannot point
+  again, and validates against the pinned schema while preserving unknown
+  onboarding requirement kinds for readers.
+- The operator is always the evaluated origin's registrable domain, never a
+  value inside the document.
+- Records are cached no longer than the polling interval and returned
+  deep-frozen. Fetch failures fail closed and are cached for 60 s.
+  Concurrency and cool-downs are scoped per (operator, host), and only
+  transport failures, 5xx, and 429 cool a host down, so one record cannot
+  deny another domain's.
+- A 200 marks the operator as published, which disables brand.json fallback.
+  Seed and persist that set with `published` and `onPublished` so restarts and
+  replicas agree.
+
 `isPrivateSuffixOperator(origin)` flags PRIVATE-section operators, which are
 sandbox-only under `open` onboarding.
 
@@ -218,28 +289,44 @@ accounts: {
 },
 ```
 
-- The brand's record authorizes. Authority is implicit when
+- **Which record authorizes.** The brand's. Authority is implicit when
   `account.operator`, the brand, and the signer's operator share a registrable
   domain. Otherwise a chain must reach the signer's operator with
   `account.operator` on it: the brand grants the signer's operator (who is
   `account.operator`), or the brand grants `account.operator`, whose own
-  record grants the signer's operator. No third link is followed.
-- Every link must cover the scope (default `adcp:media_buying`), brand,
-  countries, agent narrowing (by canonical origin), and validity window;
-  effective expiry is the earliest `valid_until`. `exclusive_grants: true`
-  makes the record exhaustive for the scopes it names; otherwise
-  `sellerAuthorization` (your onboarding records, never brand.json) decides.
-- `legacyAuthorization` (brand.json `authorized_operators`) runs only while
-  the brand has never served trust.json and its fetch returns 404/410. A 200
-  disables it; fetch failures never reach it. A WBA signer's authority always
-  requires its operator's role entry.
-- The gate checks every natural-key `sync_accounts` declaration before any
-  upsert, and re-checks the resolved account on account-scoped calls
-  (`claimForAccount` defaults to the account's `brand` and `operator`).
-  Operations outside media buying need an explicit scope. A missing grant is
-  `PERMISSION_DENIED` with `{ scope: "agent", reason: "grant_absent" }` for an
-  established agent, and a bare `PERMISSION_DENIED` otherwise (oracle clamp).
-  No account is created and no status changes.
+  record grants the signer's operator. A brand that is its own
+  `account.operator` authorizes the platform hosting its agent with a direct
+  grant. No third link is followed.
+- **Intersection.** Every link must cover the scope (default
+  `adcp:media_buying`), brand, countries, agent narrowing (by canonical
+  origin), and validity window; effective expiry is the earliest
+  `valid_until`. `exclusive_grants: true` makes the record exhaustive for the
+  scopes it names; otherwise `sellerAuthorization` (your onboarding records,
+  never brand.json) decides.
+- **brand.json.** `legacyAuthorization` (brand.json `authorized_operators`)
+  runs only while the brand has never served trust.json and its fetch returns
+  404/410. A 200 disables it; fetch failures never reach it.
+- **The signer's operator.** For WBA, the verified origin's registrable domain,
+  listed in its operator's trust.json with `adcp:buying`. For RFC 9421, the
+  host of the brand.json record verified discovery selected
+  (`signerOperatorDomain`, which the gate reads from the verified signer);
+  without one, its trust.json role entry stands in once the brand publishes.
+  Bearer and OAuth callers take the RFC 9421 path.
+- **The gate.** It checks every natural-key `sync_accounts` declaration before
+  any upsert, checks natural-key and `account_id` settings updates against the
+  existing account (an unknown account is denied), and re-checks the resolved
+  account on account-scoped calls. `claimForAccount` defaults to the account's
+  `brand` and `operator`; an account without them fails closed unless
+  `claimForAccount` returns `undefined` for it, so a seller with
+  `account_id`-only accounts (typical of `'derived'` rosters) supplies
+  `claimForAccount`. Operations outside media
+  buying need an explicit scope unless authority is implicit; task polling is
+  not re-checked.
+- **Errors.** A missing grant is `PERMISSION_DENIED` with
+  `{ scope: "agent", reason: "grant_absent" }` for an established agent, and a
+  bare `PERMISSION_DENIED` otherwise (oracle clamp). An unreadable record is a
+  bare, transient `PERMISSION_DENIED`: a fetch failure is never absence. No
+  account is created and no status changes.
 
 ## Types
 
@@ -255,6 +342,12 @@ Draft types are exported from `@adcp/sdk/signing/server` and as the
 `RevocationDetails`, and the `profiles` additions on `request_signing` /
 `webhook_signing`. Validate values against the pinned drafts with
 `identityPreviewSchemaErrors(value, schemaPath)`.
+
+Clients reading a seller that already returns the draft `relationship` on
+`get_principal` set `validation: { experimentalAgentIdentity: true }` (on
+automatically with `request_signing.profile: 'web-bot-auth'`): the field is
+checked against the pinned preview shape instead of failing strict 3.2
+response validation, and is passed through unchanged.
 
 ## Canonical agent origins
 
@@ -348,6 +441,9 @@ custom wrapper forwarding, before attributing identity or accepting keys.
   `principal.changed` reasons: the pinned 3.2 response schema closes the
   `unconfigured` result, so strict response validation would reject them
   until the 3.3 schema bundle is adopted. Types are available now.
+- Omitting `reporting_webhook.authentication` for 3.3 sellers that sign
+  webhooks (adcp#8176, added to #3233 in a comment): the spec change is
+  unmerged, and the client cannot select a 3.3 release under the 3.2 pin.
 - WBA-signed webhooks (`signing_profile: web-bot-auth`): the verifier is
   profile-generic, but webhook emission and registration still use the
   AdCP webhook profile.

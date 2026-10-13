@@ -698,6 +698,11 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * no account is created and no status changes. Put any brand.json
    * fallback in the evaluator's `legacyAuthorization`: a 200 from the
    * brand's trust.json disables it.
+   *
+   * Without a `claimForAccount`, an account that carries no `brand` and
+   * `operator` fails closed on every account-scoped call; sellers whose
+   * accounts are `account_id`-only (typical of `'derived'` rosters) supply a
+   * `claimForAccount` that maps them, or returns `undefined` to exempt them.
    */
   trustGrants?: import('./trust-grants').TrustGrantGate;
 

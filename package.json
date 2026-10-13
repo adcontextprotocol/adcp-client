@@ -699,6 +699,8 @@
     "schemas:ensure": "tsx scripts/schemas-ensure.ts",
     "schema-diff": "tsx scripts/schema-diff.ts",
     "generate-types": "tsx scripts/generate-types.ts && tsx scripts/generate-enum-arrays.ts && tsx scripts/generate-inline-enum-arrays.ts && tsx scripts/generate-manifest-derived.ts && tsx scripts/generate-entity-hydration.ts && tsx scripts/generate-media-buy-update-fields.ts && tsx scripts/generate-media-buy-action-metadata.ts",
+    "generate-identity-preview": "tsx scripts/generate-identity-preview.ts",
+    "generate-identity-preview:check": "tsx scripts/generate-identity-preview.ts --check",
     "generate-manifest-derived": "tsx scripts/generate-manifest-derived.ts",
     "generate-entity-hydration": "tsx scripts/generate-entity-hydration.ts",
     "generate-types:v2.5": "tsx scripts/generate-v2-5-types.ts",
@@ -793,7 +795,7 @@
     "secure-json-parse": "^4.1.0",
     "semver": "^7.8.5",
     "structured-headers": "2.0.3",
-    "tldts": "^7.0.0",
+    "tldts": "7.4.11",
     "undici": "^6.28.0",
     "ws": "^8.21.3",
     "yaml": "^2.9.0"

@@ -14,9 +14,9 @@
  *   enums/agent-onboarding-mode.json — adcp#8170 @ 8d3591e70e9a
  *   enums/agent-onboarding-requirement-kind.json — adcp#8170 @ 8d3591e70e9a
  *   enums/buyer-onboarding-mode.json — adcp#8170 @ 8d3591e70e9a
- *   core/principal-relationship.json — adcp#8168 @ 45540941dfd6
- *   trust/v1/trust.json — adcp#8169 @ 3ce6a14d7afa
- *   core/identity-relying-party.json — adcp#8169 @ 3ce6a14d7afa
+ *   core/principal-relationship.json — adcp#8168 @ 06193e805256
+ *   trust/v1/trust.json — adcp#8169 @ a874bc8d6ed6
+ *   core/identity-relying-party.json — adcp#8169 @ a874bc8d6ed6
  */
 import type { BillingParty, BrandReference, ExtensionObject, RightType, RightUse } from './core.generated';
 

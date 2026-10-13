@@ -27,7 +27,7 @@ function gate(documents, options = {}) {
   return createTrustGrantGate({ evaluator: new TrustGrantEvaluator(records, { now: () => 1000 }), ...options });
 }
 
-function build(trustGrants, touched) {
+function build(trustGrants, touched, { account: accountOverride } = {}) {
   return {
     capabilities: {
       specialisms: ['sales-non-guaranteed'],
@@ -48,6 +48,7 @@ function build(trustGrants, touched) {
       trustGrants,
       resolve: async ref => {
         if (ref == null) return null;
+        if (accountOverride !== undefined) return accountOverride(ref);
         return {
           id: ref.account_id ?? 'acc_1',
           name: 'Acme',
@@ -109,8 +110,8 @@ const syncArgs = (operator = 'platform.com') => ({
   accounts: [{ brand: { domain: 'brand.com' }, operator, billing: 'agent' }],
 });
 
-const server = (trustGrants, touched) =>
-  createAdcpServerFromPlatform(build(trustGrants, touched), {
+const server = (trustGrants, touched, options) =>
+  createAdcpServerFromPlatform(build(trustGrants, touched, options), {
     name: 'grants',
     version: '0.0.1',
     validation: { requests: 'off', responses: 'off' },
@@ -174,7 +175,6 @@ describe('accounts.trustGrants (DR-0025)', () => {
   });
 
   it('requires an explicit scope for operations outside media buying', async () => {
-    const touched = [];
     const trustGrants = gate(
       {
         [trustRecordUrl(ORIGIN)]: SIGNER_RECORD,
@@ -193,6 +193,91 @@ describe('accounts.trustGrants (DR-0025)', () => {
         return true;
       }
     );
+    // Implicit (same-domain) authority still covers other domains.
+    const implicit = gate({ [trustRecordUrl(ORIGIN)]: SIGNER_RECORD });
+    await implicit.requireAccount(
+      { brand: { domain: 'platform.com' }, operator: 'platform.com' },
+      { agent, authInfo, operation: 'build_creative' }
+    );
+  });
+
+  it('covers list_products and the other media-buy tasks', async () => {
+    const trustGrants = gate({
+      [trustRecordUrl(ORIGIN)]: SIGNER_RECORD,
+      [trustRecordUrl('brand.com')]: { grants: [{ grantee: 'platform.com', scopes: ['adcp:media_buying'] }] },
+    });
+    const ctx = { agent: { agent_url: ORIGIN }, authInfo: { credential: wbaAuth().extra.credential } };
+    for (const operation of ['list_products', 'sync_catalogs', 'log_event']) {
+      await trustGrants.requireAccount(
+        { brand: { domain: 'brand.com' }, operator: 'platform.com' },
+        { ...ctx, operation }
+      );
+    }
+  });
+
+  it('fails closed for an account without a brand or operator unless claimForAccount opts it out', async () => {
+    const ctx = {
+      agent: { agent_url: ORIGIN },
+      authInfo: { credential: wbaAuth().extra.credential },
+      operation: 'create_media_buy',
+    };
+    await assert.rejects(
+      gate({}).requireAccount({ brand: { domain: 'brand.com' } }, ctx),
+      error => error.details?.reason === 'grant_absent'
+    );
+    await gate({}, { claimForAccount: () => undefined }).requireAccount({ brand: { domain: 'brand.com' } }, ctx);
+  });
+
+  it('checks a natural-key settings update against the existing account', async () => {
+    const touched = [];
+    const result = await call(
+      server(
+        gate({
+          [trustRecordUrl(ORIGIN)]: SIGNER_RECORD,
+          [trustRecordUrl('brand.com')]: { grants: [{ grantee: 'platform.com', scopes: ['adcp:media_buying'] }] },
+        }),
+        touched
+      ),
+      'sync_accounts',
+      {
+        idempotency_key: 'sync-accounts-grant-0002',
+        accounts: [{ account: { brand: { domain: 'brand.com' }, operator: 'platform.com' }, payment_terms: 'net_30' }],
+      }
+    );
+    assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.deepEqual(touched, ['upsert'], JSON.stringify(result.structuredContent));
+  });
+
+  it('denies a settings update for an account that does not resolve', async () => {
+    const touched = [];
+    const result = await call(server(gate({}), touched, { account: () => null }), 'sync_accounts', {
+      idempotency_key: 'sync-accounts-grant-0003',
+      accounts: [{ account: { account_id: 'missing' }, payment_terms: 'net_30' }],
+    });
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.adcp_error.details?.reason, 'grant_absent');
+    assert.deepEqual(touched, []);
+  });
+});
+
+describe('accounts.trustGrants settings updates and not-found resolvers', () => {
+  it('treats a resolver that throws AccountNotFoundError like null', async () => {
+    const { AccountNotFoundError } = require('../dist/lib/server/index.js');
+    const touched = [];
+    const result = await call(
+      server(gate({}), touched, {
+        account: () => {
+          throw new AccountNotFoundError();
+        },
+      }),
+      'sync_accounts',
+      {
+        idempotency_key: 'sync-accounts-grant-0004',
+        accounts: [{ account: { account_id: 'missing' }, payment_terms: 'net_30' }],
+      }
+    );
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.adcp_error.details?.reason, 'grant_absent');
     assert.deepEqual(touched, []);
   });
 });

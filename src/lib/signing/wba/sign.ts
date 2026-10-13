@@ -239,11 +239,14 @@ export function signKeyDirectory(options: SignKeyDirectoryOptions): SignedKeyDir
   const keys = privateKeys.map(key => publicDirectoryKey(key));
   if (new Set(keys.map(key => key.kid)).size !== keys.length) throw new TypeError('Directory keys must be distinct');
   const created = options.created ?? (options.now ? options.now() : Math.floor(Date.now() / 1000));
+  const maxAge = options.maxAgeSeconds ?? 300;
+  if (!Number.isInteger(created) || created < 0) throw new TypeError('created must be a non-negative integer');
+  if (!Number.isInteger(maxAge) || maxAge < 0) throw new TypeError('maxAgeSeconds must be a non-negative integer');
   const body = JSON.stringify({ keys });
   const headers: Record<string, string> = {
     'Content-Type': KEY_DIRECTORY_MEDIA_TYPE,
     'Content-Digest': sha256Digest(body),
-    'Cache-Control': `max-age=${options.maxAgeSeconds ?? 300}`,
+    'Cache-Control': `max-age=${maxAge}`,
   };
   const inputs = new Map<string, InnerList>();
   const signatures = new Map<string, Item>();

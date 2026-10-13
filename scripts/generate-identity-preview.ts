@@ -29,7 +29,8 @@ import { removeNumberedTypeDuplicates } from './generate-types';
 
 const ROOT = path.join(__dirname, '..');
 const PREVIEW = path.join(ROOT, 'schemas/identity-preview');
-const STABLE = path.join(ROOT, 'schemas/cache/3.2.4');
+// Stable dependencies resolve against the SDK's pinned wire release.
+const STABLE = path.join(ROOT, 'schemas/cache', readFileSync(path.join(ROOT, 'ADCP_VERSION'), 'utf8').trim());
 const TYPES_OUT = path.join(ROOT, 'src/lib/types/experimental-identity.generated.ts');
 const BUNDLE_OUT = path.join(ROOT, 'src/lib/signing/trust/identity-schema-bundle.generated.ts');
 const ENTRIES = [
@@ -98,6 +99,12 @@ function buildBundle(): JsonObject {
   };
 }
 
+/**
+ * Runtime view: annotations removed, and `uniqueItems` removed because Ajv
+ * checks it pairwise for items behind `$ref`/`anyOf` (quadratic on a 2 MiB
+ * record). `validateTrustRecord` checks uniqueness of roles, protocols and
+ * scopes with a Set instead.
+ */
 function stripAnnotations(value: Json, parentKey?: string): Json {
   if (Array.isArray(value)) return value.map(item => stripAnnotations(item));
   if (!value || typeof value !== 'object') return value;
@@ -105,7 +112,7 @@ function stripAnnotations(value: Json, parentKey?: string): Json {
   for (const [name, child] of Object.entries(value)) {
     // Under `properties` / `definitions`, keys are names, not keywords.
     const isNameMap = parentKey === 'properties' || parentKey === 'definitions' || parentKey === 'patternProperties';
-    if (!isNameMap && (ANNOTATIONS.has(name) || name.startsWith('x-'))) continue;
+    if (!isNameMap && (ANNOTATIONS.has(name) || name.startsWith('x-') || name === 'uniqueItems')) continue;
     out[name] = stripAnnotations(child, name);
   }
   return out;

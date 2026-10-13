@@ -115,17 +115,20 @@ export { ensureCapabilityLoaded, CAPABILITY_OP } from './capability-priming';
 export { pemToAdcpJwk, type AdcpUse, type PemToAdcpJwkOptions } from './jwks-helpers';
 export { canonicalAgentOrigin, CanonicalizeError } from './agent-resolver/canonicalize';
 
-// Experimental (AdCP 3.3) Web Bot Auth signing and publishing helpers.
+// Experimental (AdCP 3.3) Web Bot Auth signing and publishing helpers. Import
+// leaf modules (not the wba/trust barrels) to keep verifier, revocation, and
+// trust-record code out of the buyer client's eager graph. Directory
+// verification and trust.json validation live on `@adcp/sdk/signing/server`.
 export {
   WEB_BOT_AUTH_TAG,
   KEY_DIRECTORY_PATH,
   KEY_DIRECTORY_MEDIA_TYPE,
   RFC9421_REQUEST_SIGNING_PROFILE,
   type RequestSigningProfile,
-  jwkThumbprint,
-  publicDirectoryKey,
-  webBotAuthOrigin,
-  WebBotAuthOriginError,
+} from './wba/constants';
+export { jwkThumbprint, publicDirectoryKey } from './wba/keys';
+export { webBotAuthOrigin, WebBotAuthOriginError } from './wba/origin';
+export {
   prepareWebBotAuthRequestSignature,
   finalizeWebBotAuthRequestSignature,
   signWebBotAuthRequest,
@@ -133,7 +136,6 @@ export {
   signKeyDirectory,
   keyDirectoryNeedsRenewal,
   keyDirectoryExpiry,
-  verifyKeyDirectoryResponse,
   type KeyDirectoryResponse,
   type PreparedWebBotAuthSignature,
   type SignedKeyDirectory,
@@ -141,5 +143,10 @@ export {
   type SignKeyDirectoryOptions,
   type SignWebBotAuthRequestOptions,
   type WebBotAuthSignerKey,
-} from './wba';
-export { validateTrustRecord, trustRecordUrl, TrustRecordError } from './trust';
+} from './wba/sign';
+export {
+  signRevocationList,
+  type RevocationListReason,
+  type SignedRevocationList,
+  type SignRevocationListOptions,
+} from './wba/revocation-sign';

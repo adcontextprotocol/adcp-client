@@ -31,6 +31,8 @@ export class WebBotAuthError extends Error {
       acceptSignature?: boolean;
       /** Every WBA label on the request, in order, so a relay learns what it must cover. */
       labels?: readonly string[];
+      /** Whether the request carried a body (`content-type`/`content-digest` required). Default `true`. */
+      withBody?: boolean;
       cause?: unknown;
     } = {}
   ) {
@@ -45,7 +47,8 @@ export class WebBotAuthError extends Error {
         ? {
             'Accept-Signature': acceptSignatureHeader(
               options.labels && options.labels.length > 0 ? options.labels : [this.label],
-              options.freshNonce === true ? this.label : undefined
+              options.freshNonce === true ? this.label : undefined,
+              options.withBody !== false
             ),
           }
         : {};
@@ -84,14 +87,16 @@ export class WebBotAuthAuthorizationError extends WebBotAuthError {
  * (relays, WBA §5.2.2). `freshNonceLabel` gets a verifier-chosen nonce, as a
  * replayed request does (RFC 9421 §7.2.2).
  */
-export function acceptSignatureHeader(labels: string | readonly string[], freshNonceLabel?: string): string {
+export function acceptSignatureHeader(
+  labels: string | readonly string[],
+  freshNonceLabel?: string,
+  withBody = true
+): string {
   const list = (typeof labels === 'string' ? [labels] : labels).map(safeLabel);
   const dictionary = new Map<string, InnerList>();
   list.forEach((label, index) => {
-    const components: Item[] = ['@method', '@target-uri', '@authority', 'content-type', 'content-digest'].map(name => [
-      name,
-      new Map(),
-    ]);
+    const names = ['@method', '@target-uri', '@authority', ...(withBody ? ['content-type', 'content-digest'] : [])];
+    const components: Item[] = names.map(name => [name, new Map()]);
     components.push(['signature-agent', new Map([['key', label]])]);
     for (const earlier of list.slice(0, index)) {
       for (const field of ['signature-agent', 'signature-input', 'signature']) {
@@ -111,5 +116,5 @@ export function acceptSignatureHeader(labels: string | readonly string[], freshN
 }
 
 function safeLabel(label: string): string {
-  return /^[a-z*][a-z0-9_\-.*]{0,63}$/.test(label) ? label : 'sig1';
+  return /^[a-z*][a-z0-9_\-.*]*$/.test(label) ? label : 'sig1';
 }

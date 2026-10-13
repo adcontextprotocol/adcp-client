@@ -49,6 +49,7 @@
  * @public
  */
 
+import { grantAbsentError } from '../../../signing/trust/grants';
 import { isAccountProvisioningTask } from '../../account-provisioning';
 import { warnAccountReferenceDeprecation } from '../../account-reference-warnings';
 import { randomUUID } from 'node:crypto';
@@ -9023,16 +9024,44 @@ function enforceSyncAccountsCommercialPolicy<P extends DecisioningPlatform<any, 
 async function enforceSyncAccountsTrustGrants(
   accounts: DecisioningPlatform<any, any>['accounts'],
   params: Record<string, unknown>,
-  resolveCtx: ResolveContext
+  resolveCtx: ResolveContext,
+  logger: AdcpLogger,
+  implicitIdentityPolicy: ImplicitIdentityPolicy
 ): Promise<void> {
   const gate = accounts.trustGrants!;
   const entries = Array.isArray(params.accounts) ? (params.accounts as Record<string, unknown>[]) : [];
   for (const entry of entries) {
-    const reference = entry?.account as { account_id?: unknown } | undefined;
-    if (entry && typeof reference?.account_id === 'string' && entry.brand === undefined) {
-      // Settings update on an existing account: check the seller's record.
-      const account = await accounts.resolve({ account_id: reference.account_id } as AccountReference, resolveCtx);
-      if (account) await gate.requireAccount(account, { ...gateContext(resolveCtx), operation: 'sync_accounts' });
+    const reference = entry?.account;
+    if (entry && reference && typeof reference === 'object' && entry.brand === undefined) {
+      // Settings update on an existing account, by account_id or natural key:
+      // check the seller's own record of it. An unknown account is denied
+      // rather than reaching upsert unchecked.
+      // Same reference rules and not-found handling as account-scoped
+      // dispatch, so the response never depends on the resolver's style.
+      enforceAccountRefShapeForResolution(accounts.resolution, reference as AccountReference);
+      let account;
+      try {
+        account = assertResolvedAccountMatchesRef(
+          accounts.resolution,
+          reference as AccountReference,
+          await accounts.resolve(reference as AccountReference, resolveCtx),
+          logger,
+          implicitIdentityPolicy
+        );
+      } catch (error) {
+        if (!(error instanceof AccountNotFoundError)) throw error;
+        account = null;
+      }
+      if (!account) {
+        if (resolveCtx.agent === undefined) {
+          throw new AdcpError('PERMISSION_DENIED', {
+            message: 'Buyer agent is not authorized',
+            recovery: 'correctable',
+          });
+        }
+        throw grantAbsentError();
+      }
+      await gate.requireAccount(account, { ...gateContext(resolveCtx), operation: 'sync_accounts' });
       continue;
     }
     await gate.requireDeclaration(entry, gateContext(resolveCtx));
@@ -9072,7 +9101,13 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       if (accounts.trustGrants) {
         // Experimental AdCP 3.3 grants (DR-0025): every declaration is
         // authorized before any upsert, so a missing grant changes nothing.
-        await enforceSyncAccountsTrustGrants(accounts, params as Record<string, unknown>, resolveCtx);
+        await enforceSyncAccountsTrustGrants(
+          accounts,
+          params as Record<string, unknown>,
+          resolveCtx,
+          logger,
+          implicitIdentityPolicy
+        );
       }
       const policy = enforceSyncAccountsCommercialPolicy(platform, params as Record<string, unknown>, resolveCtx);
       if (normalizeAccountResolution(accounts.resolution) === 'derived') {

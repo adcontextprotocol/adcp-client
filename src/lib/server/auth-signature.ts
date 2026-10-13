@@ -278,6 +278,9 @@ export function principalForVerifiedSigner(
         ...(signer.agent_url !== undefined ? { agent_url: signer.agent_url } : {}),
         ...(webBotAuth && { profile: 'web-bot-auth' }),
         ...(signer.principal_id !== undefined && { principal_id: signer.principal_id }),
+        // RFC 9421: the operator record verified discovery selected, so grant
+        // evaluation can take the signer's operator from brand.json.
+        ...(!webBotAuth && signer.operatorRecord !== undefined && { operator_record_url: signer.operatorRecord.url }),
       },
     },
     ...(credential !== undefined && { credential }),

@@ -183,20 +183,20 @@ import {
   type WebhookRegistrationStore,
   validateWebhookRegistrationAuthorization,
 } from './webhook-registration';
+// Leaf imports (not the `signing/server` barrel) keep verifier-only surfaces,
+// including the experimental Web Bot Auth and trust-record modules, out of the
+// focused client's eager graph.
+import { InMemoryReplayStore, type ReplayStore } from '../signing/replay';
+import { InMemoryRevocationStore, type RevocationStore } from '../signing/revocation';
+import type { JwksResolver } from '../signing/jwks';
+import { WebhookSignatureError, type WebhookSignatureErrorCode } from '../signing/errors';
+import { verifyWebhookSignature as verifyRfc9421WebhookSignature } from '../signing/webhook-verifier';
 import {
-  InMemoryReplayStore,
-  type ReplayStore,
-  InMemoryRevocationStore,
-  type RevocationStore,
-  type JwksResolver,
-  type DelegatedOperatorAuthorizationContext,
-  WebhookSignatureError,
-  type WebhookSignatureErrorCode,
-  verifyWebhookSignature as verifyRfc9421WebhookSignature,
   ResolvedAgentJwksResolver,
   type ResolvedAgentJwksResolverOptions,
-  canonicalTargetUri,
-} from '../signing/server';
+} from '../signing/agent-resolver/resolved-agent-jwks';
+import type { DelegatedOperatorAuthorizationContext } from '../signing/agent-resolver';
+import { canonicalTargetUri } from '../signing/canonicalize';
 import { AgentResolverError } from '../signing/agent-resolver/errors';
 import { RequestSigningErrorCodeMetadata } from '../types/enums.generated';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';

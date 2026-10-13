@@ -1,7 +1,6 @@
 // Core task execution engine for ADCP conversation flow
 // Implements PR #78 async patterns: working/submitted/input-required/completed
 
-import { identityPreviewSchemaErrors } from '../signing/trust/schema';
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import type { AgentConfig } from '../types';
 import {
@@ -6173,7 +6172,45 @@ export class TaskExecutor {
 function withoutPreviewRelationship(response: Record<string, unknown>): Record<string, unknown> {
   const result = response.result as Record<string, unknown> | undefined;
   if (!result || typeof result !== 'object' || !('relationship' in result)) return response;
-  if (identityPreviewSchemaErrors(result.relationship, 'core/principal-relationship.json').length > 0) return response;
+  if (!isPreviewPrincipalRelationship(result.relationship)) return response;
   const { relationship: _relationship, ...rest } = result;
   return { ...response, result: rest };
+}
+
+/**
+ * Structural check of `core/principal-relationship.json` (adcp#8168 @
+ * 45540941), kept inline so the client graph does not load the preview
+ * schema bundle. `test/lib/client-experimental-identity.test.js` runs a
+ * corpus through both this check and the bundled schema and asserts they agree.
+ */
+/** @internal Exported for the schema differential test only. */
+export function isPreviewPrincipalRelationship(value: unknown): boolean {
+  const isDateTime = (v: unknown) => {
+    if (typeof v !== 'string') return false;
+    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/i.exec(v);
+    if (!m) return false;
+    const [y, mo, d, h, mi, se] = m.slice(1, 7).map(Number) as [number, number, number, number, number, number];
+    const daysInMonth = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+    const offsetOk = m[7] === undefined || (Number(m[8]) <= 23 && Number(m[9]) <= 59);
+    return mo >= 1 && mo <= 12 && d >= 1 && d <= daysInMonth && h <= 23 && mi <= 59 && se <= 60 && offsetOk;
+  };
+  const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+  if (!isObject(value)) return false;
+  if (!['pending', 'active', 'suspended', 'blocked'].includes(value.status as string)) return false;
+  if (value.expires_at !== undefined && !isDateTime(value.expires_at)) return false;
+  if (value.ext !== undefined && !isObject(value.ext)) return false;
+  if (value.setup !== undefined) {
+    const setup = value.setup;
+    if (!isObject(setup) || typeof setup.message !== 'string') return false;
+    if (setup.expires_at !== undefined && !isDateTime(setup.expires_at)) return false;
+    if (setup.url !== undefined) {
+      if (typeof setup.url !== 'string') return false;
+      try {
+        new URL(setup.url);
+      } catch {
+        return false;
+      }
+    }
+  }
+  return true;
 }

@@ -8,6 +8,8 @@ import type { ReplayStore } from '../replay';
 import type { VerifiedSigner } from '../types';
 import type { OriginBindingResolver } from '../trust/bindings';
 import { TrustRecordEvaluator } from '../trust/record';
+import { parseStrictJson } from '../agent-resolver/strict-json';
+import { MUTATING_TASKS } from '../../utils/idempotency';
 import { WebBotAuthAuthorizationError } from './errors';
 import { tryWebBotAuthOrigin } from './origin';
 import { OriginRevocationChecker } from './revocation';
@@ -50,12 +52,21 @@ export interface WebBotAuthVerifierConfig {
   /** Role the operator record must list for a bound origin. Default `adcp:buying`. */
   bindingRole?: string;
   /**
-   * Operations (or JSON-RPC methods) an identity-established caller may
-   * invoke. Match your anonymous surface; add `sync_principal` only when it
-   * implements an explicit `open` policy. Default
-   * `['get_adcp_capabilities', 'get_principal']`.
+   * Operations (or JSON-RPC methods) on which an identity-established
+   * (verified, unbound) origin is attached as an authenticated caller with
+   * no principal and no credential, e.g. `get_principal` so it can read its
+   * relationship. Add `sync_principal` only when it implements an explicit
+   * `open` policy. Default `['get_adcp_capabilities', 'get_principal']`.
    */
   unboundFor?: readonly string[];
+  /**
+   * What an unbound origin gets on other operations. `'anonymous'` (default,
+   * spec R5 rule 1: "it gets what an anonymous caller gets"): the request
+   * proceeds exactly as an unsigned one, with nothing attached, so the
+   * server's own authentication and anonymous policy apply. `'reject'`:
+   * answer `PERMISSION_DENIED` (adcp-client-python's behavior).
+   */
+  unbound?: 'anonymous' | 'reject';
   /**
    * Called for a verified, unbound origin, e.g. to queue it for one-click
    * approval. Confers nothing; failures are logged and ignored. Rate-limit
@@ -71,6 +82,9 @@ export interface ResolvedWebBotAuthConfig {
   trustRecords: TrustRecordEvaluator;
   bindingRole: string;
   unboundFor: ReadonlySet<string>;
+  unbound: 'anonymous' | 'reject';
+  /** @internal Hook dedupe state: origin → last report time, or in flight. */
+  reported: Map<string, number | 'pending'>;
   onIdentityEstablished?: (identity: EstablishedWebBotAuthIdentity) => void | Promise<void>;
 }
 
@@ -86,46 +100,59 @@ export function resolveWebBotAuthConfig(config: WebBotAuthVerifierConfig): Resol
     trustRecords: config.trustRecords ?? new TrustRecordEvaluator(),
     bindingRole: config.bindingRole ?? 'adcp:buying',
     unboundFor: new Set(config.unboundFor ?? ['get_adcp_capabilities', 'get_principal']),
+    unbound: config.unbound ?? 'anonymous',
+    reported: new Map(),
     ...(config.onIdentityEstablished !== undefined && { onIdentityEstablished: config.onIdentityEstablished }),
   };
 }
 
 /**
- * Verify a WBA request and apply the binding rules (spec R5): an unbound
- * origin may only reach `unboundFor`; a bound origin must still be listed by
- * its operator with the binding role. The originating (first) signer is the
- * AdCP caller; relays are verified but do not acquire its access.
+ * Operations whose acceptance commits spend or state: a bound origin needs
+ * current revocation status for them (spec R3: fail closed for
+ * spend-committing operations). Unbound origins proceed as anonymous callers
+ * and never depend on revocation status beyond a key the list revokes.
+ */
+function requiresCurrentRevocationStatus(operation: string | undefined): boolean {
+  return operation !== undefined && MUTATING_TASKS.has(operation);
+}
+
+/** Report each unbound origin at most once a minute, one call in flight. */
+const IDENTITY_HOOK_DEDUPE_SECONDS = 60;
+
+/**
+ * Verify a WBA request and apply the binding rules (spec R5). The originating
+ * (first) signer is the AdCP caller; relays are verified but do not acquire
+ * its access. Returns `signer: undefined` when an unbound origin proceeds as
+ * an anonymous caller.
  */
 export async function authenticateWebBotAuthRequest(
   request: WebBotAuthRequestLike,
   config: ResolvedWebBotAuthConfig,
   options: { replayStore: ReplayStore; now?: () => number; operation?: string }
-): Promise<{ signer: VerifiedSigner; signers: VerifiedWebBotAuthSigner[] }> {
+): Promise<{ signer: VerifiedSigner | undefined; signers: VerifiedWebBotAuthSigner[] }> {
   const signers = await verifyWebBotAuthRequest(request, {
     keys: config.keys,
     replayStore: options.replayStore,
     revocation: config.revocation,
+    // Decided below, once the binding is known.
+    requireRevocationStatus: false,
     ...(options.now !== undefined && { now: options.now }),
   });
   const originator = signers[0]!;
   const principal = config.bindings ? await config.bindings.principalFor(originator.origin) : undefined;
   if (principal === undefined) {
+    if (config.onIdentityEstablished) reportEstablished(config, originator, options.operation);
     if (options.operation === undefined || !config.unboundFor.has(options.operation)) {
-      throw new WebBotAuthAuthorizationError('signer identity is not bound');
-    }
-    if (config.onIdentityEstablished) {
-      try {
-        await config.onIdentityEstablished({
-          origin: originator.origin,
-          keyid: originator.keyid,
-          verified_at: originator.verified_at,
-          ...(options.operation !== undefined && { operation: options.operation }),
-        });
-      } catch (error) {
-        console.error(`[adcp/web-bot-auth] onIdentityEstablished hook failed: ${(error as Error)?.name ?? 'Error'}`);
-      }
+      if (config.unbound === 'reject') throw new WebBotAuthAuthorizationError('signer identity is not bound');
+      return { signer: undefined, signers };
     }
   } else {
+    if (
+      requiresCurrentRevocationStatus(options.operation) &&
+      signers.some(signer => signer.revocation_status !== 'current')
+    ) {
+      throw new WebBotAuthAuthorizationError('origin revocation status unavailable');
+    }
     try {
       // A binding caches the trust-record evaluation; re-check on the
       // polling-interval schedule. Delisting removes authority but never
@@ -134,6 +161,8 @@ export async function authenticateWebBotAuthRequest(
     } catch (error) {
       throw new WebBotAuthAuthorizationError('signer origin is not authorized by its operator', { cause: error });
     }
+    // A bound origin's revocation history is never evicted.
+    (config.revocation as { pin?: (origin: string) => void }).pin?.(originator.origin);
   }
   return {
     signer: {
@@ -145,6 +174,35 @@ export async function authenticateWebBotAuthRequest(
     },
     signers,
   };
+}
+
+function reportEstablished(
+  config: ResolvedWebBotAuthConfig,
+  originator: VerifiedWebBotAuthSigner,
+  operation: string | undefined
+): void {
+  const now = originator.verified_at;
+  const last = config.reported.get(originator.origin);
+  if (last !== undefined && (last === 'pending' || now - last < IDENTITY_HOOK_DEDUPE_SECONDS)) return;
+  config.reported.delete(originator.origin);
+  config.reported.set(originator.origin, 'pending');
+  while (config.reported.size > 1024) config.reported.delete(config.reported.keys().next().value as string);
+  const hook = config.onIdentityEstablished!;
+  // Fire and forget: the hook confers nothing and must not delay or fail the
+  // request. One call in flight per origin, then at most one a minute.
+  void Promise.resolve()
+    .then(() =>
+      hook({
+        origin: originator.origin,
+        keyid: originator.keyid,
+        verified_at: originator.verified_at,
+        ...(operation !== undefined && { operation }),
+      })
+    )
+    .catch(error =>
+      console.error(`[adcp/web-bot-auth] onIdentityEstablished hook failed: ${(error as Error)?.name ?? 'Error'}`)
+    )
+    .finally(() => config.reported.set(originator.origin, now));
 }
 
 /**
@@ -162,16 +220,21 @@ export async function assertNoRfc9421Downgrade(
   }
 }
 
-/** JSON-RPC `method` of a request body, for `unboundFor` checks on protocol methods. */
-export function jsonRpcMethod(body: string | undefined): string | undefined {
-  if (!body) return undefined;
+/**
+ * JSON-RPC `method` of a POST JSON-RPC 2.0 envelope, for `unboundFor` checks
+ * on protocol methods. Anything else (other HTTP methods, non-envelopes,
+ * non-strict JSON) has no method, so a URL-routed request cannot claim one.
+ */
+export function jsonRpcMethod(httpMethod: string | undefined, body: string | undefined): string | undefined {
+  if (!body || (httpMethod ?? '').toUpperCase() !== 'POST') return undefined;
   try {
-    const parsed = JSON.parse(body) as unknown;
+    const parsed = parseStrictJson(body) as Record<string, unknown> | null;
     return parsed &&
       typeof parsed === 'object' &&
       !Array.isArray(parsed) &&
-      typeof (parsed as { method?: unknown }).method === 'string'
-      ? (parsed as { method: string }).method
+      parsed.jsonrpc === '2.0' &&
+      typeof parsed.method === 'string'
+      ? parsed.method
       : undefined;
   } catch {
     return undefined;

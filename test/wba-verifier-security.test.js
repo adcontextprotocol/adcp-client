@@ -112,7 +112,7 @@ describe('Web Bot Auth key discovery', () => {
     assert.equal(fetches, 2);
   });
 
-  it('negatively caches a failed discovery for 60 seconds without evicting evidence', async () => {
+  it('negatively caches a failed discovery with no prior evidence for 60 seconds', async () => {
     let now = 1000;
     const calls = [];
     const resolver = new WebBotAuthKeyDirectoryResolver({
@@ -127,6 +127,121 @@ describe('Web Bot Auth key discovery', () => {
     now = 1061;
     await assert.rejects(resolver.resolve('k'.repeat(43), BUYER), status(403));
     assert.equal(calls.length, 2);
+  });
+
+  it('keeps serving signed evidence through a refresh failure until its signatures expire', async () => {
+    const key = ed();
+    const kid = publicDirectoryKey(key).kid;
+    let now = 1000;
+    let fail = false;
+    const resolver = new WebBotAuthKeyDirectoryResolver({
+      now: () => now,
+      fetch: async () => {
+        if (fail) throw new Error('offline');
+        return signKeyDirectory({ agentOrigin: BUYER, privateKeys: [key], created: 1000, expiresInSeconds: 3600 });
+      },
+    });
+    await resolver.resolve(kid, BUYER);
+    fail = true;
+    now = 1301; // past the five-minute positive cache
+    assert.equal((await resolver.resolve(kid, BUYER)).kid, kid, 'a failed fetch is not evidence of removal');
+    assert.ok(resolver.directoryRecord(BUYER), 'the signed response stays on record');
+    now = 4601; // past the signatures' expires
+    await assert.rejects(resolver.resolve(kid, BUYER), status(403));
+  });
+
+  it('never lets failing origins evict a good cached directory', async () => {
+    const key = ed();
+    const kid = publicDirectoryKey(key).kid;
+    const calls = [];
+    const resolver = new WebBotAuthKeyDirectoryResolver({
+      now: () => 1000,
+      maxOrigins: 2,
+      fetch: async url => {
+        calls.push(new URL(url).origin);
+        if (new URL(url).origin !== BUYER) throw new Error('offline');
+        return signKeyDirectory({ agentOrigin: BUYER, privateKeys: [key], created: 1000 });
+      },
+    });
+    await resolver.resolve(kid, BUYER);
+    for (let i = 0; i < 5; i++) await assert.rejects(resolver.resolve(kid, `https://bad${i}.attacker.com`));
+    await resolver.resolve(kid, BUYER);
+    assert.equal(calls.filter(origin => origin === BUYER).length, 1);
+  });
+
+  it('bounds concurrent discoveries per operator without blocking another operator', async () => {
+    const key = ed();
+    const kid = publicDirectoryKey(key).kid;
+    const resolver = new WebBotAuthKeyDirectoryResolver({
+      now: () => 1000,
+      maxPendingPerOperator: 1,
+      fetch: url =>
+        new URL(url).hostname.endsWith('slow.com')
+          ? new Promise(() => {})
+          : Promise.resolve(signKeyDirectory({ agentOrigin: new URL(url).origin, privateKeys: [key], created: 1000 })),
+    });
+    resolver.resolve(kid, 'https://a.slow.com').catch(() => {});
+    await assert.rejects(resolver.resolve(kid, 'https://b.slow.com'), status(429));
+    assert.equal((await resolver.resolve(kid, 'https://fast.com')).kid, kid);
+  });
+
+  it('recovers from a fetcher that throws synchronously', async () => {
+    const key = ed();
+    const kid = publicDirectoryKey(key).kid;
+    let now = 1000;
+    let fail = true;
+    const resolver = new WebBotAuthKeyDirectoryResolver({
+      now: () => now,
+      fetch: () => {
+        if (fail) throw new Error('sync boom');
+        return Promise.resolve(signKeyDirectory({ agentOrigin: BUYER, privateKeys: [key], created: now }));
+      },
+    });
+    await assert.rejects(resolver.resolve(kid, BUYER), status(403));
+    fail = false;
+    now = 1061;
+    assert.equal((await resolver.resolve(kid, BUYER)).kid, kid);
+  });
+
+  it('refuses IP-literal, single-label and localhost signer origins before fetching', async () => {
+    let fetched = false;
+    const resolver = new WebBotAuthKeyDirectoryResolver({
+      fetch: async () => {
+        fetched = true;
+        throw new Error('unreachable');
+      },
+    });
+    for (const origin of ['https://127.0.0.1', 'https://[::1]', 'https://localhost', 'https://intranet']) {
+      await assert.rejects(resolver.resolve('k'.repeat(43), origin), status(403), origin);
+    }
+    assert.equal(fetched, false);
+  });
+
+  it('requires the exact "content-digest" component in a directory signature', () => {
+    const key = ed();
+    const response = signKeyDirectory({ agentOrigin: BUYER, privateKeys: [key], created: 1000 });
+    const jwk = publicDirectoryKey(key);
+    response.headers['Content-Digest'] += ', sha-512=:' + Buffer.alloc(64).toString('base64') + ':';
+    const member = [
+      [
+        ['@authority', new Map([['req', true]])],
+        ['content-digest', new Map([['key', 'sha-512']])],
+      ],
+      new Map([
+        ['created', 1000],
+        ['expires', 2000],
+        ['keyid', jwk.kid],
+        ['tag', 'http-message-signatures-directory'],
+      ]),
+    ];
+    response.headers['Signature-Input'] = serializeDictionary(new Map([['key1', member]]));
+    const base = wbaSignatureBase(
+      { method: 'GET', url: BUYER + '/.well-known/http-message-signatures-directory', headers: response.headers },
+      member,
+      { directoryResponse: true }
+    );
+    response.headers['Signature'] = `key1=:${sign(null, Buffer.from(base), key).toString('base64')}:`;
+    assert.throws(() => verifyKeyDirectoryResponse(BUYER, response, { now: 1001 }), /bind authority and digest/);
   });
 
   it('coalesces per origin without blocking other signers', async () => {
@@ -376,6 +491,54 @@ describe('Web Bot Auth request verification', () => {
     await verify(signed(key, { created: 1050 }), { keys, now: 1000 });
   });
 
+  it('rejects a hand-built signature whose lifetime exceeds 300 s', async () => {
+    const request = signed(key);
+    const inputs = parseStrictDictionary(request.headers['Signature-Input'], 'Signature-Input');
+    const member = inputs.get('sig1');
+    member[1].set('expires', 1301);
+    request.headers['Signature-Input'] = serializeDictionary(inputs);
+    request.headers['Signature'] =
+      `sig1=:${sign(null, Buffer.from(wbaSignatureBase(request, member)), key).toString('base64')}:`;
+    await assert.rejects(verify(request, { keys }), status(403));
+  });
+
+  it('rejects a replay at exactly expires + 60 s', async () => {
+    const replayStore = new InMemoryReplayStore();
+    const request = signed(key, { created: 1000 });
+    await verify(request, { keys, replayStore, now: 1000 });
+    await assert.rejects(verify(request, { keys, replayStore, now: 1360 }), status(403));
+  });
+
+  it('does not consult revocation when the signature bytes are wrong', async () => {
+    let checked = false;
+    const request = signed(key);
+    request.headers['Signature'] = request.headers['Signature'].replace(/:(.)/, (_m, c) => `:${c === 'A' ? 'B' : 'A'}`);
+    await assert.rejects(
+      verify(request, {
+        keys,
+        revocation: async () => {
+          checked = true;
+          return false;
+        },
+      }),
+      status(403)
+    );
+    assert.equal(checked, false);
+  });
+
+  it('can treat unavailable revocation status as not revoked for reads', async () => {
+    const [signer] = await verifyWebBotAuthRequest(signed(key), {
+      keys,
+      replayStore: new InMemoryReplayStore(),
+      revocation: async () => {
+        throw new Error('no list published');
+      },
+      requireRevocationStatus: false,
+      now: () => 1001,
+    });
+    assert.equal(signer.origin, BUYER);
+  });
+
   it('rejects a non-strict JSON body after the digest verifies', async () => {
     await assert.rejects(verify(signed(key, { body: '{"a":1,"a":2}' }), { keys }), status(400));
   });
@@ -404,7 +567,11 @@ describe('Web Bot Auth request verification', () => {
           throw new Error('offline');
         },
       }),
-      status(403)
+      error => {
+        assert.ok(error instanceof WebBotAuthAuthorizationError, 're-signing cannot help');
+        assert.deepEqual(error.headers, {});
+        return true;
+      }
     );
   });
 
@@ -472,7 +639,10 @@ describe('profile selection', () => {
 describe('createExpressVerifier({ webBotAuth })', () => {
   const { createExpressVerifier, OriginBindings, TrustRecordEvaluator } = require('../dist/lib/signing/server.js');
   const key = ed();
-  const keys = new StaticWebBotAuthKeys({ [BUYER]: [publicDirectoryKey(key)] });
+  // A real registrable domain: binding re-evaluates the operator's trust record.
+  const AGENCY = 'https://buyer.agency.com';
+  const keys = new StaticWebBotAuthKeys({ [AGENCY]: [publicDirectoryKey(key)] });
+  const signedBy = body => signed(key, { body, origin: AGENCY });
 
   function run(verifier, request) {
     return new Promise(resolve => {
@@ -504,14 +674,18 @@ describe('createExpressVerifier({ webBotAuth })', () => {
       webBotAuth: { keys, revocation: notRevoked, ...webBotAuth },
     });
 
-  it('lets unboundFor name public JSON-RPC methods for identity-established callers', async () => {
-    const allowed = await run(base({ unboundFor: ['tools/list'] }), signed(key, { body: rpc('tools/list') }));
+  it('attaches identity on unboundFor JSON-RPC methods and is anonymous elsewhere', async () => {
+    const allowed = await run(base({ unboundFor: ['tools/list'] }), signedBy(rpc('tools/list')));
     assert.equal(allowed.next, true);
     assert.equal(allowed.signer.profile, 'web-bot-auth');
     assert.equal(allowed.signer.principal_id, undefined);
-    const denied = await run(base({ unboundFor: [] }), signed(key, { body: rpc('tools/list') }));
-    assert.equal(denied.status, 403);
-    assert.equal(denied.body.errors[0].code, 'PERMISSION_DENIED');
+    // Outside unboundFor an unbound origin proceeds as an anonymous caller.
+    const anonymous = await run(base({ unboundFor: [] }), signedBy(rpc('tools/list')));
+    assert.equal(anonymous.next, true);
+    assert.equal(anonymous.signer, undefined);
+    const rejected = await run(base({ unboundFor: [], unbound: 'reject' }), signedBy(rpc('tools/list')));
+    assert.equal(rejected.status, 403);
+    assert.equal(rejected.body.errors[0].code, 'PERMISSION_DENIED');
   });
 
   it('answers a body that does not resolve to one operation with 400', async () => {
@@ -523,29 +697,122 @@ describe('createExpressVerifier({ webBotAuth })', () => {
       now: () => 1001,
       webBotAuth: { keys, revocation: notRevoked },
     });
-    const result = await run(verifier, signed(key, { body: '[1]' }));
+    const result = await run(verifier, signedBy('[1]'));
     assert.equal(result.status, 400);
   });
 
   it('binds only while the operator lists the origin', async () => {
     const bindings = new OriginBindings();
-    bindings.bindSync(BUYER, 'principal-1');
+    bindings.bindSync(AGENCY, 'principal-1');
     let listed = true;
     let clock = 1001;
     const trustRecords = new TrustRecordEvaluator({
       now: () => clock,
       fetch: async () => ({
         status: 200,
-        body: JSON.stringify({ agents: listed ? [{ url: BUYER, roles: ['adcp:buying'] }] : [] }),
+        body: JSON.stringify({ agents: listed ? [{ url: AGENCY, roles: ['adcp:buying'] }] : [] }),
       }),
     });
     const verifier = base({ bindings, trustRecords });
-    const ok = await run(verifier, signed(key, { body: rpc('tools/call') }));
+    const ok = await run(verifier, signedBy(rpc('tools/call')));
     assert.equal(ok.signer.principal_id, 'principal-1');
     listed = false;
     clock += 61; // past the polling-interval cache
-    const denied = await run(verifier, signed(key, { body: rpc('tools/call') }));
+    const denied = await run(verifier, signedBy(rpc('tools/call')));
     assert.equal(denied.status, 403);
     assert.deepEqual(denied.header, ['Cache-Control', 'no-store'], 'authorization errors carry no Accept-Signature');
+  });
+
+  it('applies the unsigned-request rules to an anonymous (unbound) caller', async () => {
+    const verifier = createExpressVerifier({
+      capability: { supported: true, covers_content_digest: 'either', required_for: ['create_media_buy'] },
+      jwks: new StaticJwksResolver([]),
+      resolveOperation: () => 'create_media_buy',
+      now: () => 1001,
+      webBotAuth: { keys, revocation: notRevoked },
+    });
+    const result = await run(verifier, signedBy(rpc('tools/call')));
+    assert.equal(result.status, 403);
+    assert.equal(result.body.errors[0].code, 'PERMISSION_DENIED');
+  });
+
+  it('does not take a JSON-RPC method from a non-POST or non-envelope body', async () => {
+    const { jsonRpcMethod } = require('../dist/lib/signing/wba/authorize.js');
+    assert.equal(jsonRpcMethod('POST', rpc('get_adcp_capabilities')), 'get_adcp_capabilities');
+    assert.equal(jsonRpcMethod('PUT', rpc('get_adcp_capabilities')), undefined);
+    assert.equal(jsonRpcMethod('POST', '{"method":"get_adcp_capabilities"}'), undefined);
+  });
+
+  it('lets an unbound origin without a revocation list proceed as anonymous, but not a bound one', async () => {
+    const unavailable = async () => {
+      throw new Error('404: no list published');
+    };
+    const verifier = (bindings, operation) =>
+      createExpressVerifier({
+        capability: { supported: true, covers_content_digest: 'either', required_for: [] },
+        jwks: new StaticJwksResolver([]),
+        resolveOperation: () => operation,
+        now: () => 1001,
+        webBotAuth: {
+          keys,
+          revocation: unavailable,
+          ...(bindings && { bindings }),
+          trustRecords: new TrustRecordEvaluator({
+            now: () => 1001,
+            fetch: async () => ({
+              status: 200,
+              body: JSON.stringify({ agents: [{ url: AGENCY, roles: ['adcp:buying'] }] }),
+            }),
+          }),
+        },
+      });
+    const anonymous = await run(verifier(undefined, 'create_media_buy'), signedBy(rpc('tools/call')));
+    assert.equal(anonymous.next, true);
+    assert.equal(anonymous.signer, undefined);
+    const bindings = new OriginBindings();
+    bindings.bindSync(AGENCY, 'principal-1');
+    const read = await run(verifier(bindings, 'get_products'), signedBy(rpc('tools/call')));
+    assert.equal(read.signer.principal_id, 'principal-1', 'reads proceed without current status');
+    const spend = await run(verifier(bindings, 'create_media_buy'), signedBy(rpc('tools/call')));
+    assert.equal(spend.status, 403);
+    assert.equal(spend.body.errors[0].code, 'PERMISSION_DENIED');
+  });
+
+  it('reports an unbound origin to onIdentityEstablished once per minute, one call in flight', async () => {
+    let calls = 0;
+    let release;
+    const hook = () => {
+      calls++;
+      return new Promise(resolve => (release = resolve));
+    };
+    const verifier = base({ onIdentityEstablished: hook });
+    for (let i = 0; i < 5; i++) await run(verifier, signedBy(rpc('tools/call')));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls, 1);
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    await run(verifier, signedBy(rpc('tools/call')));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls, 1, 'deduped for a minute after completing');
+  });
+});
+
+describe('RFC 9421 deprecation notice', () => {
+  it('can be silenced for processes that run with --throw-deprecation', () => {
+    const { spawnSync } = require('node:child_process');
+    const script = `const s=require(${JSON.stringify(require.resolve('../dist/lib/signing/server.js'))});
+s.createExpressVerifier({capability:{supported:true,covers_content_digest:'either',required_for:[]},jwks:new s.StaticJwksResolver([]),resolveOperation:()=>undefined});
+setTimeout(()=>{},20);`;
+    const quiet = spawnSync(process.execPath, ['--throw-deprecation', '-e', script], {
+      env: { ...process.env, ADCP_SUPPRESS_RFC9421_DEPRECATION: '1' },
+      encoding: 'utf8',
+    });
+    assert.equal(quiet.status, 0, quiet.stderr);
+    assert.equal(quiet.stderr, '');
+    const loud = spawnSync(process.execPath, ['-e', script], {
+      env: { ...process.env, ADCP_SUPPRESS_RFC9421_DEPRECATION: '' },
+      encoding: 'utf8',
+    });
+    assert.match(loud.stderr, /ADCP_RFC9421_VERIFICATION_PROFILE/);
   });
 });

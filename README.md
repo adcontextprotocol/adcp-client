@@ -542,6 +542,8 @@ const client = new ADCPMultiAgentClient(agents, {
 
 AdCP 3.0 supports [HTTP Message Signatures (RFC 9421)](https://www.rfc-editor.org/rfc/rfc9421) for cryptographic request authentication. A buyer signs outbound requests so the seller can verify who sent them and that nothing was tampered with. A seller signs outbound webhooks so the buyer can verify authenticity. Optional in 3.0, mandatory in 3.1+ for mutating operations.
 
+AdCP 3.3 deprecates this profile (it keeps working through 3.x) and adds an experimental, opt-in Web Bot Auth profile: identity is the signer's origin, keys live in the origin's signed key directory, and trust.json carries roles and grants. See [`docs/migration-agent-identity-3.3.md`](./docs/migration-agent-identity-3.3.md).
+
 **Generate a signing key:**
 
 ```bash

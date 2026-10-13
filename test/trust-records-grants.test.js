@@ -117,12 +117,12 @@ describe('TrustRecordEvaluator', () => {
     assert.equal(record.operatorDomain, 'platform.com');
     assert.equal(record.sourceUrl, 'https://hosting.com/trust.json');
     assert.equal(calls.length, 2);
-    record.document.agents.length = 0;
+    assert.ok(Object.isFrozen(record.document.agents), 'callers cannot mutate cached authority');
     await evaluator.evaluate(ORIGIN, { role: 'adcp:buying' });
     await assert.rejects(evaluator.evaluate(ORIGIN, { role: 'adcp:governance' }), /required role/);
   });
 
-  it('never follows a second hop or an HTTP redirect', async () => {
+  it('never follows a second hop and treats a 3xx as unavailable', async () => {
     const { evaluator } = records({
       [trustRecordUrl(ORIGIN)]: { authoritative_location: 'https://hosting.com/trust.json' },
       'https://hosting.com/trust.json': { authoritative_location: 'https://third.com/trust.json' },
@@ -148,13 +148,47 @@ describe('TrustRecordEvaluator', () => {
     ['duplicate keys', '{"agents":[],"agents":[]}'],
     ['NaN', '{"agents":NaN}'],
     ['oversized', ' '.repeat(2 * 1024 * 1024 + 1)],
-    ['deep nesting', `{"ext":${'{"a":'.repeat(40)}1${'}'.repeat(40)}}`],
   ]) {
     it(`fails closed on ${name}`, async () => {
       const { evaluator } = records({ [trustRecordUrl(ORIGIN)]: { status: 200, body } });
       await assert.rejects(evaluator.evaluate(ORIGIN), TrustRecordError);
     });
   }
+
+  it('fails closed on nesting deeper than 32 even when the schema would accept it', async () => {
+    // `ext` values are open objects, so only the depth guard rejects this.
+    const body = `{"agents":[],"ext":{"v":${'{"a":'.repeat(40)}1${'}'.repeat(40)}}}`;
+    const { evaluator } = records({ [trustRecordUrl(ORIGIN)]: { status: 200, body } });
+    await assert.rejects(evaluator.evaluate(ORIGIN), error => {
+      assert.ok(error instanceof TrustRecordError);
+      assert.match(String(error.cause?.message), /nesting/);
+      return true;
+    });
+    const shallow = records({
+      [trustRecordUrl(ORIGIN)]: {
+        status: 200,
+        body: `{"agents":[],"ext":{"v":${'{"a":'.repeat(20)}1${'}'.repeat(20)}}}`,
+      },
+    }).evaluator;
+    await shallow.evaluate(ORIGIN);
+  });
+
+  it('validates a record with tens of thousands of roles in linear time', async () => {
+    const roles = Array.from({ length: 50_000 }, (_, i) => `x-${i}:role`);
+    const body = JSON.stringify({ agents: [{ url: ORIGIN, roles }] });
+    const { evaluator } = records({ [trustRecordUrl(ORIGIN)]: { status: 200, body } });
+    const started = Date.now();
+    await assert.rejects(evaluator.evaluate(ORIGIN), /exceeds 64 entries/);
+    assert.ok(Date.now() - started < 1000, `took ${Date.now() - started} ms`);
+    assert.throws(
+      () =>
+        validateTrustRecord(
+          { agents: [{ url: ORIGIN, roles: ['adcp:buying', 'adcp:buying'] }] },
+          { operatorDomain: 'platform.com' }
+        ),
+      /unique/
+    );
+  });
 
   it('caches for the polling interval, then fails closed; a later 404 is not absence', async () => {
     let now = 1000;
@@ -288,7 +322,11 @@ describe('TrustGrantEvaluator (DR-0025)', () => {
       brandDomain: 'platform.com',
       accountOperator: 'platform.com',
     });
-    assert.deepEqual([result.authorized, result.reason], [false, 'signer_trust_record_unavailable']);
+    assert.deepEqual([result.authorized, result.reason], [false, 'signer_not_listed']);
+    assert.throws(
+      () => requireGrant(result),
+      error => error.details?.reason === 'grant_absent'
+    );
   });
 
   it('intersects brands, countries, agents and validity along a two-link chain', async () => {
@@ -441,12 +479,55 @@ describe('TrustGrantEvaluator (DR-0025)', () => {
         return { status: 200, body: JSON.stringify(docs[url]) };
       },
     });
-    const result = await new TrustGrantEvaluator(evaluator).check({
-      agentOrigin: ORIGIN,
+    let consulted = false;
+    // The re-filter empties the first link, which routes to seller
+    // discretion; without it the expired grant would reach finish().
+    const result = await new TrustGrantEvaluator(evaluator, {
+      sellerAuthorization: async () => {
+        consulted = true;
+        return false;
+      },
+    }).check({ agentOrigin: ORIGIN, brandDomain: 'brand.com', accountOperator: 'agency.com' });
+    assert.equal(result.authorized, false);
+    assert.equal(consulted, true);
+  });
+
+  it('lets a self-operated brand authorize the platform hosting its agent', async () => {
+    const docs = { [trustRecordUrl('brand.com')]: { grants: [grant('platform.com')] } };
+    const result = await check(docs, { operator: 'brand.com' });
+    assert.equal(result.authorized, true);
+    assert.equal(result.basis, 'grant');
+    assert.equal(
+      (await check({ [trustRecordUrl('brand.com')]: { agents: [] } }, { operator: 'brand.com' })).authorized,
+      false
+    );
+  });
+
+  it("takes an RFC 9421 signer's operator from its verified brand.json record", async () => {
+    const docs = { [trustRecordUrl('brand.com')]: { grants: [grant('agency.com')] } };
+    const { evaluator } = records(docs);
+    const result = await new TrustGrantEvaluator(evaluator, { now: () => 1000 }).check({
+      agentOrigin: 'https://agent.saas-host.com/mcp',
       brandDomain: 'brand.com',
       accountOperator: 'agency.com',
+      signingProfile: 'adcp/request-signing/v1',
+      signerOperatorDomain: 'agency.com',
     });
-    assert.equal(result.authorized, false);
+    assert.equal(result.authorized, true, JSON.stringify(result));
+  });
+
+  it('reports an unreadable record as a transient denial, not grant_absent', async () => {
+    const result = await check({ [trustRecordUrl('brand.com')]: new Error('down') });
+    assert.equal(result.reason, 'trust_record_unavailable');
+    assert.throws(
+      () => requireGrant(result),
+      error => {
+        assert.equal(error.code, 'PERMISSION_DENIED');
+        assert.equal(error.recovery, 'transient');
+        assert.equal(error.details, undefined);
+        return true;
+      }
+    );
   });
 
   it('builds grant_absent errors with the registered details', () => {
@@ -486,5 +567,62 @@ describe('TrustRecordEvaluator shared hops', () => {
     });
     now = 1061;
     await assert.rejects(evaluator.evaluate(ORIGIN), error => !(error instanceof TrustRecordAbsentError));
+  });
+});
+
+describe('TrustRecordEvaluator isolation', () => {
+  it('a hop pointed at another domain cannot cool that domain down', async () => {
+    const VICTIM = 'https://buyer.victim.com';
+    const { evaluator } = records(url => {
+      if (url === 'https://attacker.com/.well-known/trust.json')
+        return { authoritative_location: 'https://victim.com/favicon.ico' };
+      if (url === 'https://victim.com/favicon.ico') return { status: 503, body: '' };
+      if (url === 'https://victim.com/.well-known/trust.json')
+        return { agents: [{ url: VICTIM, roles: ['adcp:buying'] }] };
+      return undefined;
+    });
+    await assert.rejects(evaluator.evaluate('attacker.com'), TrustRecordError);
+    await evaluator.evaluate(VICTIM, { role: 'adcp:buying' });
+  });
+
+  it("never caches a local capacity limit as the owner's failure", async () => {
+    let release;
+    const gate = new Promise(resolve => (release = resolve));
+    const evaluator = new TrustRecordEvaluator({
+      now: () => 1000,
+      maxRecords: 1,
+      fetch: async url => {
+        if (url.includes('slow.com')) await gate;
+        return { status: 200, body: JSON.stringify({ agents: [] }) };
+      },
+    });
+    const first = evaluator.evaluate('slow.com');
+    await assert.rejects(evaluator.evaluate('other.com'), /capacity/);
+    release();
+    await first;
+    // No negative entry was cached for other.com: it evaluates immediately.
+    await evaluator.evaluate('other.com');
+  });
+
+  it('seeds and reports published operators for persistence', async () => {
+    const seen = [];
+    const { evaluator } = records({ [trustRecordUrl(ORIGIN)]: SIGNER_RECORD }, () => 1000, {
+      published: ['brand.com'],
+      onPublished: domain => seen.push(domain),
+    });
+    assert.equal(evaluator.hasPublished('brand.com'), true);
+    await evaluator.evaluate(ORIGIN);
+    assert.deepEqual(seen, ['platform.com']);
+    // A seeded publisher's 404 is never absence: brand.json stays off.
+    await assert.rejects(evaluator.evaluate('brand.com'), error => !(error instanceof TrustRecordAbsentError));
+  });
+});
+
+describe('pinned PSL snapshot', () => {
+  it('pins tldts exactly and reports the same snapshot', () => {
+    const pkg = require('../package.json');
+    const { PSL_SNAPSHOT_VERSION } = require('../dist/lib/signing/agent-resolver/etld.js');
+    assert.match(pkg.dependencies.tldts, /^\d+\.\d+\.\d+$/, 'a range would let consumers drift');
+    assert.equal(PSL_SNAPSHOT_VERSION, `tldts@${pkg.dependencies.tldts}`);
   });
 });

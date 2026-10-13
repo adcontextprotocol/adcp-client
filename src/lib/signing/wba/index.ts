@@ -57,4 +57,10 @@ export {
   type RevocationListResponse,
   type RevocationReason,
 } from './revocation';
+export {
+  signRevocationList,
+  type RevocationListReason,
+  type SignedRevocationList,
+  type SignRevocationListOptions,
+} from './revocation-sign';
 export type { EstablishedWebBotAuthIdentity, WebBotAuthVerifierConfig } from './authorize';

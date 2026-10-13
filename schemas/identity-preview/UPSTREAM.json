@@ -31,20 +31,23 @@
     },
     "core/principal-relationship.json": {
       "pr": 8168,
-      "commit": "45540941dfd61e80ab8a463f780cb147c82a32f0"
+      "commit": "06193e805256561a1de4467f3342b24541f9592c",
+      "content_identical_to": "45540941dfd61e80ab8a463f780cb147c82a32f0"
     },
     "trust/v1/trust.json": {
       "pr": 8169,
-      "commit": "3ce6a14d7afaa71fa78ddf2223ed0421e01205ae"
+      "commit": "a874bc8d6ed684b5ef06fb99b016dce254fae5ec",
+      "content_identical_to": "3ce6a14d7afaa71fa78ddf2223ed0421e01205ae"
     },
     "core/identity-relying-party.json": {
       "pr": 8169,
-      "commit": "3ce6a14d7afaa71fa78ddf2223ed0421e01205ae"
+      "commit": "a874bc8d6ed684b5ef06fb99b016dce254fae5ec",
+      "content_identical_to": "3ce6a14d7afaa71fa78ddf2223ed0421e01205ae"
     }
   },
   "baseline_dependencies": {
-    "directory": "schemas/cache/3.2.4",
-    "note": "Offline references not present in the preview sources resolve against the SDK's pinned AdCP 3.2.4 schema cache (populated by `npm run schemas:ensure`)."
+    "directory": "schemas/cache/<ADCP_VERSION>",
+    "note": "Offline references not present in the preview sources resolve against the SDK's pinned wire-release schema cache (ADCP_VERSION, populated by `npm run schemas:ensure`)."
   },
   "composition": {
     "trust/v1/trust.json": [
@@ -53,5 +56,5 @@
     ]
   },
   "retrieved": "2026-10-13",
-  "matches": "adcontextprotocol/adcp-client-python#1502 src/adcp/signing/_identity_schemas (byte-identical sources and composition)"
+  "matches": "adcontextprotocol/adcp-client-python#1502 src/adcp/signing/_identity_schemas: byte-identical sources and the same composition. Python cites the pre-force-push commits recorded in content_identical_to."
 }
