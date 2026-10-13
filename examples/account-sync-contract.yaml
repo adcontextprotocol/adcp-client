@@ -16,6 +16,9 @@ phases:
       - id: first_sync
         title: Provision or link an agent-billed account
         task: sync_accounts
+        context_outputs:
+          - name: certified_account_id
+            path: accounts[0].account_id
         sample_request:
           accounts:
             - brand: { domain: 'acme.example' }
@@ -25,8 +28,16 @@ phases:
               sandbox: true
         validations:
           - check: field_present
-            path: accounts
-            description: Account results are returned
+            path: accounts[0].account_id
+            description: A provisioned account identifier is returned
+          - check: field_value
+            path: accounts[0].status
+            value: active
+            description: The sandbox account is active
+          - check: field_value
+            path: accounts[0].action
+            allowed_values: [created, updated, unchanged]
+            description: Initial sync succeeds
       - id: repeat_sync
         title: Re-sync the same key with a fresh request key
         task: sync_accounts
@@ -39,8 +50,20 @@ phases:
               sandbox: true
         validations:
           - check: field_present
-            path: accounts
-            description: Account results are returned
+            path: accounts[0].account_id
+            description: A provisioned account identifier is returned
+          - check: field_value
+            path: accounts[0].status
+            value: active
+            description: The sandbox account is active
+          - check: field_value
+            path: accounts[0].action
+            allowed_values: [updated, unchanged]
+            description: Re-sync preserves the existing account
+          - check: field_value
+            path: accounts[0].account_id
+            value: '$context.certified_account_id'
+            description: Re-sync returns the same identifier
       - id: list
         title: List the agent-billed sandbox account
         task: list_accounts
@@ -51,6 +74,11 @@ phases:
             sandbox: true
           sandbox: true
         validations:
-          - check: field_present
-            path: accounts
-            description: Account results are returned
+          - check: field_value
+            path: accounts[0].account_id
+            value: '$context.certified_account_id'
+            description: Listing includes the certified account
+          - check: field_value
+            path: accounts[0].status
+            value: active
+            description: The listed account remains active

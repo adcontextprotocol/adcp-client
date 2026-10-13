@@ -137,8 +137,8 @@ for (const violation of [{ account_id: 'new' }, { action: 'created' }]) {
   });
 }
 
-test('active terms mismatch or missing terms becomes PAYMENT_TERMS_NOT_SUPPORTED in strict mode', async () => {
-  for (const payment_terms of ['net_30', undefined]) {
+test('explicit active terms mismatch becomes PAYMENT_TERMS_NOT_SUPPORTED in strict mode', async () => {
+  for (const payment_terms of ['net_30']) {
     const { call, diagnostics } = setup({
       strictIdempotency: true,
       resolve: async () => null,
@@ -365,4 +365,70 @@ test('dry-run omissions are neither completed from old terms nor falsely rejecte
   assert.equal(result.dry_run, true);
   assert.equal(result.accounts[0].action, 'updated');
   assert.equal(result.accounts[0].payment_terms, undefined);
+});
+
+test('duplicate creates within one batch are diagnosed and fail only under strict enforcement', async () => {
+  for (const strictIdempotency of [false, true]) {
+    const { call, diagnostics } = setup({
+      strictIdempotency,
+      resolve: async () => null,
+      upsert: async () => [
+        { ...row, account_id: 'first', action: 'created', billing: 'agent', payment_terms: 'net_60' },
+        { ...row, account_id: 'second', action: 'created', billing: 'agent', payment_terms: 'net_60' },
+      ],
+    });
+    const result = (await call([entry, entry])).structuredContent.accounts;
+    assert.equal(result[0].action, 'created');
+    assert.equal(result[1].action, strictIdempotency ? 'failed' : 'created');
+    assert.equal(result[1].account_id, 'second');
+    assert.equal(result[1].status, 'active');
+    assert.ok(diagnostics.some(d => d.code === 'ACCOUNT_IDEMPOTENCY_VIOLATION' && d.index === 1));
+  }
+});
+
+test('strict checks align reordered rows before inspecting identity and commercial terms', async () => {
+  const second = { ...entry, brand: { domain: 'second.example' }, payment_terms: 'net_30' };
+  const stored = { ...account, id: 'second', brand: second.brand, payment_terms: 'net_30' };
+  const { call, diagnostics } = setup({
+    strictIdempotency: true,
+    resolve: async ref => (ref?.brand?.domain === second.brand.domain ? stored : ref ? account : null),
+    upsert: async () => [
+      { ...row, account_id: stored.id, brand: second.brand, billing: 'agent', payment_terms: 'net_30' },
+      { ...row, billing: 'agent', payment_terms: 'net_60' },
+    ],
+  });
+  const result = (await call([entry, second])).structuredContent.accounts;
+  assert.deepEqual(
+    result.map(row => row.account_id),
+    [account.id, stored.id]
+  );
+  assert.deepEqual(
+    result.map(row => row.action),
+    ['unchanged', 'unchanged']
+  );
+  assert.deepEqual(diagnostics, []);
+});
+
+test('a failed post-write read diagnoses uncertainty without claiming unsupported terms', async () => {
+  let committed = false;
+  const { call, diagnostics } = setup({
+    strictIdempotency: true,
+    resolve: async () => {
+      if (committed) throw new Error('read failed');
+      return account;
+    },
+    upsert: async () => {
+      committed = true;
+      return [{ ...row, action: 'updated', billing: 'agent' }];
+    },
+  });
+  const result = (await call()).structuredContent.accounts[0];
+  assert.equal(result.action, 'updated');
+  assert.equal(result.status, 'active');
+  assert.ok(diagnostics.some(d => d.code === 'ACCOUNT_LOOKUP_FAILED'));
+  assert.ok(diagnostics.some(d => d.code === 'ACCOUNT_BILLING_INCOMPLETE'));
+  assert.equal(
+    diagnostics.some(d => d.code === 'PAYMENT_TERMS_MISMATCH'),
+    false
+  );
 });

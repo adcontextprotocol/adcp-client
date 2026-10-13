@@ -335,3 +335,67 @@ test('failed PostgreSQL rollback destroys the pooled client', async () => {
   );
   assert.deepEqual(calls, [true]);
 });
+
+test('KV retries preserve the original key and commercial data after callback mutation', async () => {
+  const data = new Map();
+  let swaps = 0;
+  const backend = keyedAccountKvBackend({
+    get: async key => data.get(key) ?? null,
+    async compareAndSwap(key, expected, value) {
+      if (++swaps === 1) return false;
+      data.set(key, value);
+      return true;
+    },
+  });
+  const seen = [];
+  const store = factory(backend, {
+    createAccount(ref, id) {
+      const account = createAccount(ref, id);
+      account.brand = { ...ref.brand };
+      account.billing_entity = structuredClone(ref.billing_entity);
+      seen.push(structuredClone(ref));
+      ref.brand.domain = 'mutated.example';
+      ref.billing_entity.name = 'mutated';
+      return account;
+    },
+  });
+  const input = { ...entry, billing_entity: { name: 'original' } };
+  const result = (await store.upsert([input], ctx))[0];
+  assert.equal(result.action, 'created');
+  assert.equal(swaps, 2);
+  assert.deepEqual(
+    seen.map(ref => ref.brand.domain),
+    ['acme.example', 'acme.example']
+  );
+  assert.deepEqual(
+    seen.map(ref => ref.billing_entity.name),
+    ['original', 'original']
+  );
+  assert.equal((await store.resolve(entry, ctx)).billing_entity.name, 'original');
+});
+
+test('callback inputs allow only schema request fields and require explicit billing-entity updates', async () => {
+  let received;
+  const store = factory(keyedAccountMemoryBackend(), {
+    createAccount(ref, id) {
+      received = ref;
+      return createAccount(ref, id);
+    },
+  });
+  await store.upsert(
+    [
+      {
+        ...entry,
+        credit_limit: { amount: 999999 },
+        rate_card: 'buyer-selected',
+        ctx_metadata: { injected: true },
+        status: 'suspended',
+      },
+    ],
+    ctx
+  );
+  for (const key of ['credit_limit', 'rate_card', 'ctx_metadata', 'status']) assert.equal(key in received, false);
+  const result = (await store.upsert([{ ...entry, billing_entity: { name: 'new entity' } }], ctx))[0];
+  assert.equal(result.action, 'failed');
+  assert.equal(result.errors[0].code, 'UNSUPPORTED_FEATURE');
+});

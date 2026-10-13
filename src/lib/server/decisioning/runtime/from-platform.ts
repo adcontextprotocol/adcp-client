@@ -49,7 +49,14 @@
  * @public
  */
 
-import { checkSyncAccountRow, emitAccountDiagnostic, lookupSyncAccounts } from '../account-contract';
+import {
+  alignSyncAccountRows,
+  checkSyncAccountRow,
+  emitAccountDiagnostic,
+  lookupSyncAccounts,
+  syncNaturalKey,
+} from '../account-contract';
+import { accountReferenceKey } from '../../../core/account-key';
 import { isAccountProvisioningTask } from '../../account-provisioning';
 import { warnAccountReferenceDeprecation } from '../../account-reference-warnings';
 import { randomUUID } from 'node:crypto';
@@ -9046,13 +9053,14 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
             policy.failedRows.has(index) ? [] : [index]
           );
           const existing = await lookupSyncAccounts(accounts, requested, dispatchCtx, logger, indices);
-          const rows =
+          const returned =
             policy.acceptedEntries.length > 0
               ? await accounts.upsert!(policy.acceptedEntries as AccountReference[], {
                   ...dispatchCtx,
                   existing: structuredClone(existing),
                 })
               : [];
+          const rows = alignSyncAccountRows(returned, requested, existing);
           // Missing fields must come from fresh post-write reads, never stale acceptance evidence.
           const missing = dryRun
             ? []
@@ -9072,20 +9080,27 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
             false
           );
           const current = new Map(missing.map((index, position) => [index, stored[position] ?? null]));
-          return rows.map((row, index) =>
-            requested[index] === undefined
-              ? row
-              : checkSyncAccountRow(
-                  accounts,
-                  logger,
-                  requested[index]!,
-                  row,
-                  existing[index] ?? null,
-                  indices[index]!,
-                  current.get(index) ?? null,
-                  dryRun
-                )
-          );
+          const seen = new Map<string, string>();
+          return rows.map((row, index) => {
+            const entry = requested[index];
+            if (!entry) return row;
+            const ref = syncNaturalKey(entry);
+            const key = ref ? accountReferenceKey(ref) : undefined;
+            const checked = checkSyncAccountRow(
+              accounts,
+              logger,
+              requested[index]!,
+              row,
+              existing[index] ?? null,
+              indices[index]!,
+              current.get(index) ?? null,
+              dryRun,
+              existing[index]?.id ?? (key ? seen.get(key) : undefined)
+            );
+            if (key && !seen.has(key) && checked.action !== 'failed' && checked.account_id !== undefined)
+              seen.set(key, checked.account_id);
+            return checked;
+          });
         },
         rows => {
           if (rows.length !== policy.acceptedEntries.length) {
@@ -9155,7 +9170,11 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
         async () => {
           const page = await accounts.list!(filter, resolveCtx);
           page.items.forEach((account, index) => {
-            if (account.billing?.invoicedTo === 'agent' && account.payment_terms === undefined) {
+            if (
+              account.status === 'active' &&
+              account.billing?.invoicedTo === 'agent' &&
+              account.payment_terms === undefined
+            ) {
               emitAccountDiagnostic(accounts, logger, {
                 code: 'ACCOUNT_BILLING_INCOMPLETE',
                 toolName: 'list_accounts',

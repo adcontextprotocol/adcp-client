@@ -133,7 +133,7 @@ test('packaged certification storyboard grades repeated syncs and subsequent lis
   const { createKeyedAccountStore, keyedAccountMemoryBackend } = require('../../dist/lib/server');
   const { toWireAccount } = require('../../dist/lib/server/decisioning/account');
   const storyboard = loadStoryboardFile('examples/account-sync-contract.yaml');
-  for (const duplicate of [false, true]) {
+  for (const mode of ['valid', 'duplicate', 'rejected', 'empty']) {
     const store = createKeyedAccountStore({
       namespace: 'storyboard-test',
       backend: keyedAccountMemoryBackend(),
@@ -150,8 +150,12 @@ test('packaged certification storyboard grades repeated syncs and subsequent lis
       async executeTask(task, params) {
         const ctx = { authInfo: { credential: { kind: 'api_key', key_id: 'buyer' } }, input: params };
         if (task === 'sync_accounts') {
-          const accounts = await store.upsert(params.accounts, ctx);
-          if (duplicate && syncs++ > 0) accounts[0] = { ...accounts[0], account_id: 'duplicate', action: 'created' };
+          let accounts = await store.upsert(params.accounts, ctx);
+          if (mode === 'rejected')
+            accounts = accounts.map(row => ({ ...row, account_id: undefined, action: 'failed', status: 'rejected' }));
+          if (mode === 'empty') accounts = [];
+          if (mode === 'duplicate' && syncs++ > 0)
+            accounts[0] = { ...accounts[0], account_id: 'duplicate', action: 'created' };
           return { success: true, data: { accounts } };
         }
         return { success: true, data: { accounts: (await store.list(params, ctx)).items.map(toWireAccount) } };
@@ -163,6 +167,34 @@ test('packaged certification storyboard grades repeated syncs and subsequent lis
       _profile: { name: 'account-test', tools: [{ name: 'sync_accounts' }, { name: 'list_accounts' }] },
       _client: client,
     });
-    assert.equal(result.overall_passed, !duplicate, JSON.stringify(result));
+    assert.equal(result.overall_passed, mode === 'valid', JSON.stringify(result));
   }
+});
+
+test('controller resets and delete_missing invalidate previous identity proofs', () => {
+  const ctx = context();
+  spec.onStep(ctx, step([row]));
+  spec.onStep(ctx, { ...step([], { scenario: 'reset_state' }), task: 'comply_test_controller', passed: true });
+  assert.equal(failed(spec.onStep(ctx, step([{ ...row, account_id: 'after-reset' }]))), false);
+  spec.onStep(ctx, step([], { accounts: [], delete_missing: true }));
+  assert.equal(failed(spec.onStep(ctx, step([{ ...row, account_id: 'after-delete' }]))), false);
+});
+
+test('billing completeness does not join unrelated rows on absent IDs or stale billing models', () => {
+  const ctx = context();
+  completeness.onStep(ctx, step([{ ...row, account_id: undefined }]));
+  assert.equal(
+    failed(completeness.onStep(ctx, step([{ billing: 'operator', status: 'active' }], {}, { task: 'list_accounts' }))),
+    false
+  );
+  completeness.onStep(ctx, step([row]));
+  assert.equal(
+    failed(
+      completeness.onStep(
+        ctx,
+        step([{ ...row, billing: 'operator', payment_terms: undefined }], {}, { task: 'list_accounts' })
+      )
+    ),
+    false
+  );
 });

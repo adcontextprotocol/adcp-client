@@ -26,9 +26,9 @@ failures do not change dispatch.
 
 Set `accounts.strictIdempotency: true` to convert identity violations into
 per-row `SYNC_FAILED` errors and active payment-term mismatches into
-`PAYMENT_TERMS_NOT_SUPPORTED` errors. Compatibility mode leaves the returned
+`PAYMENT_TERMS_NOT_SUPPORTED` errors. Failed rows preserve the returned account ID and status because an adopter write may already have committed. Missing terms alone produce diagnostics, rather than a claim that the seller rejected the requested terms. Compatibility mode leaves the returned
 status and action intact. Missing billing and agent payment terms are completed
-from a fresh post-write lookup only when the returned ID identifies that same account. The pre-write snapshot is never evidence of commercial acceptance.
+from a fresh post-write lookup only when the returned ID identifies that same account. The pre-write snapshot is never evidence of commercial acceptance. Your resolver must bypass stale caches for `toolName: sync_accounts` lookups; framework checks cannot verify an independently stale resolver.
 Dry-run previews are never completed from persisted state.
 The framework also diagnoses agent-billed `list_accounts` rows missing terms.
 
@@ -89,7 +89,7 @@ replicas and rolls back on callback rejection or `commit: false`.
 
 Callbacks must construct records without external writes or other side effects.
 KV conflicts may rerun them; PostgreSQL holds the principal row lock until they
-complete. Use a dedicated pool and avoid nested queries needing another connection from that same pool. Persist only JSON-serializable, non-secret account metadata and omit
+complete. Read-only seller lookups are allowed from a separate pool or service. Use a dedicated pool and avoid nested queries needing another connection from that same pool. Persist only JSON-serializable, non-secret account metadata and omit
 `authInfo`. Supply `principalKey(ctx)` if your authenticated tenant identity needs
 a different derivation; never trust a buyer-supplied field for this scope. Use a
 required, distinct namespace for each logical seller sharing a database. To scope by registry-resolved buyer-agent identity, supply a stable `principalKey` explicitly and preserve it across migrations. Limits default to 1000 accounts and 8 MiB per principal; configure `maxAccountsPerPrincipal` and `maxBytesPerPrincipal` for your substrate. Sync batches default to at most 100 entries (`maxSyncEntries`), and records to 64 KiB (`maxAccountBytes`). The helper caches framework lookup reads per request and invalidates them after upsert; storage size is tracked incrementally per transaction.
@@ -110,7 +110,9 @@ must retain the original ID. Dry runs do not establish an identity. The invarian
 can identify missing billing on a list row when a preceding sync established
 that the account is agent-billed.
 
-Run `examples/account-sync-contract.yaml` against a sandbox seller to exercise
-these checks with two distinct requests and a subsequent list. Published protocol
+Run `examples/account-sync-contract.yaml` against a sandbox seller using payment terms it supports to exercise
+these checks with two successful active syncs and a matching subsequent list. A refusal or empty response cannot certify natural-key idempotency. Default invariants continue to allow legitimate rejections. Published protocol
 storyboards remain upstream-owned; these assertions also run when those
 storyboards exercise the same tools.
+
+The normative upsert and accept-or-reject terms rules are documented in the [sync_accounts request schema](https://adcontextprotocol.org/schemas/3.2.4/account/sync-accounts-request.json). Controller account resets and declarative deletion invalidate earlier storyboard identity proofs.

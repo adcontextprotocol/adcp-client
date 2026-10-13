@@ -1,6 +1,6 @@
 import { accountReferenceKey } from '../../core/account-key';
 import { createHash } from 'node:crypto';
-import { syncNaturalKey } from '../../server/decisioning/account-contract';
+import { matchingSyncAccountIndices, syncNaturalKey } from '../../server/decisioning/account-contract';
 import { registerAssertion, type AssertionContext } from './assertions';
 import type { StoryboardStepResult } from './types';
 
@@ -23,31 +23,26 @@ function matchingEntry(
   entries: Record<string, unknown>[],
   index: number
 ): Record<string, unknown> | undefined {
-  const id = object(row.account).account_id ?? row.account_id;
-  if (typeof id === 'string') {
-    const identified = entries.find(entry => object(entry.account).account_id === id);
-    if (identified) return identified;
-  }
-  // A response may legally echo both a seller ID and a natural key.
-  const echoed = syncNaturalKey(row.account === undefined ? { ...row, account_id: undefined } : row);
-  if (!echoed) {
-    return undefined;
-  }
-  const matches = entries.filter(entry => {
-    const ref = syncNaturalKey(entry);
-    return (
-      ref &&
-      accountReferenceKey({
-        ...ref,
-        ...echoed,
-        brand: { ...ref.brand, ...echoed.brand },
-      }) === accountReferenceKey(ref)
-    );
-  });
+  const matches = matchingSyncAccountIndices(row, entries).map(index => entries[index]!);
   if (matches.length === 1) return matches[0];
   // Distinct keys with omitted echo subdivisions cannot be paired by response order.
   const keys = new Set(matches.map(entry => accountReferenceKey(syncNaturalKey(entry)!)));
   return keys.size === 1 ? (matches.includes(entries[index]!) ? entries[index] : matches[0]) : undefined;
+}
+
+function resetAccountProofs(ctx: AssertionContext, step: StoryboardStepResult): boolean {
+  const request = object(step.request?.payload);
+  if (
+    step.task !== 'comply_test_controller' ||
+    !step.passed ||
+    step.expect_error ||
+    object(step.response).adcp_error ||
+    !['reset_state', 'seed_account'].includes(String(request.scenario))
+  )
+    return false;
+  if (ctx.state.identities instanceof Map) ctx.state.identities.clear();
+  if (ctx.state.agentBilled instanceof Set) ctx.state.agentBilled.clear();
+  return true;
 }
 
 /** Baseline checks run on any storyboard exercising sync_accounts/list_accounts. */
@@ -62,12 +57,23 @@ export function registerAccountInvariants(): void {
       ctx.state.identities = new Map<string, { id: string; idempotencyKey: unknown; stepId: string }>();
     },
     onStep(ctx: AssertionContext, step: StoryboardStepResult) {
+      if (resetAccountProofs(ctx, step)) return [];
       if (step.skipped || (step.task !== 'sync_accounts' && step.task !== 'list_accounts')) return [];
       const body = object(step.response);
       const request = object(step.request?.payload);
       if (body.adcp_error || body.dry_run === true || request.dry_run === true) return [];
       const entries = array(request.accounts);
       const identities = ctx.state.identities as Map<string, { id: string; idempotencyKey: unknown; stepId: string }>;
+      if (request.delete_missing === true) {
+        const prefix = `${callerScope(ctx, step)}:`;
+        const retained = new Set(
+          entries.flatMap(entry => {
+            const ref = syncNaturalKey(entry);
+            return ref ? [`${prefix}${accountReferenceKey(ref)}`] : [];
+          })
+        );
+        for (const key of identities.keys()) if (key.startsWith(prefix) && !retained.has(key)) identities.delete(key);
+      }
       const checks: { passed: boolean; description: string; step_id: string; error?: string }[] = [];
       const check = (passed: boolean, description: string) =>
         checks.push({ passed, description, step_id: step.step_id, ...(!passed && { error: description }) });
@@ -108,6 +114,7 @@ export function registerAccountInvariants(): void {
       ctx.state.agentBilled = new Set<string>();
     },
     onStep(ctx, step) {
+      if (resetAccountProofs(ctx, step)) return [];
       if (step.skipped || (step.task !== 'sync_accounts' && step.task !== 'list_accounts')) return [];
       const body = object(step.response);
       const request = object(step.request?.payload);
@@ -116,10 +123,14 @@ export function registerAccountInvariants(): void {
       const entries = array(request.accounts);
       return array(body.accounts).flatMap((row, index) => {
         if (row.action === 'failed') return [];
-        const id = `${callerScope(ctx, step)}:${row.account_id}`;
-        if (row.billing === 'agent' || matchingEntry(row, entries, index)?.billing === 'agent') billed.add(id);
-        if (row.status !== 'active' || !billed.has(id)) return [];
-        const passed = row.billing !== undefined && row.payment_terms !== undefined;
+        const id = typeof row.account_id === 'string' ? `${callerScope(ctx, step)}:${row.account_id}` : undefined;
+        const entry = matchingEntry(row, entries, index);
+        if (id && row.billing !== undefined && row.billing !== 'agent' && entry?.billing !== 'agent') billed.delete(id);
+        const agentBilled =
+          row.billing === 'agent' || entry?.billing === 'agent' || (id !== undefined && billed.has(id));
+        if (id && agentBilled) billed.add(id);
+        if (row.status !== 'active' || !agentBilled) return [];
+        const passed = row.billing === 'agent' && row.payment_terms !== undefined;
         const description = 'Active agent-billed account row carries billing and payment_terms';
         return [{ passed, description, step_id: step.step_id, ...(!passed && { error: description }) }];
       });

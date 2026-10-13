@@ -832,6 +832,9 @@ export {
   keyedAccountPgBackend,
   getKeyedAccountMigration,
   type KeyedAccountPgOptions,
+  type KeyedAccountPgQueryable,
+  type KeyedAccountPgConnection,
+  type KeyedAccountPgPool,
 } from '../adapters/keyed-account-pg';
 export { keyedAccountKvBackend, type KeyedAccountKvClient } from '../adapters/keyed-account-kv';
 

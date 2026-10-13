@@ -1,8 +1,10 @@
 import type { AccountReference, BillingParty } from '../../types/tools.generated';
+import { accountReferenceKey } from '../../core/account-key';
 import type { AdcpLogger } from '../create-adcp-server';
 import { AdcpError } from './async-outcome';
 import {
   AccountNotFoundError,
+  normalizeAccountResolution,
   type Account,
   type AccountStore,
   type AccountStoreDiagnostic,
@@ -15,7 +17,15 @@ export function syncNaturalKey(
   entry: Record<string, unknown>
 ): Exclude<AccountReference, { account_id: string }> | undefined {
   const ref = (entry.account ?? entry) as Record<string, unknown>;
-  if (ref.account_id !== undefined || ref.brand === undefined || typeof ref.operator !== 'string') return;
+  if (
+    ref.account_id !== undefined ||
+    typeof ref.brand !== 'object' ||
+    ref.brand === null ||
+    Array.isArray(ref.brand) ||
+    typeof (ref.brand as Record<string, unknown>).domain !== 'string' ||
+    typeof ref.operator !== 'string'
+  )
+    return;
   const { brand, operator, operator_unit, currency, timezone, sandbox } = ref;
   return {
     brand,
@@ -25,6 +35,61 @@ export function syncNaturalKey(
     ...(timezone !== undefined && { timezone }),
     ...(sandbox !== undefined && { sandbox }),
   } as Exclude<AccountReference, { account_id: string }>;
+}
+
+const record = (value: unknown): Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+
+/** Match only fields the response echoes; preserve omitted request subdivisions. */
+export function matchingSyncAccountIndices(
+  row: Record<string, unknown>,
+  entries: readonly Record<string, unknown>[]
+): number[] {
+  const id = record(row.account).account_id ?? row.account_id;
+  if (typeof id === 'string') {
+    const ids = entries.flatMap((entry, index) =>
+      (record(entry.account).account_id ?? entry.account_id) === id ? [index] : []
+    );
+    if (ids.length) return ids;
+  }
+  const echoed = syncNaturalKey(row.account === undefined ? { ...row, account_id: undefined } : row);
+  if (!echoed) return [];
+  return entries.flatMap((entry, index) => {
+    const ref = syncNaturalKey(entry);
+    return ref &&
+      accountReferenceKey({ ...ref, ...echoed, brand: { ...ref.brand, ...echoed.brand } }) === accountReferenceKey(ref)
+      ? [index]
+      : [];
+  });
+}
+
+/** Platform callbacks may reorder rows; align them before policy checks and refused-row reinsertion. */
+export function alignSyncAccountRows(
+  rows: SyncAccountsResultRow[],
+  entries: readonly Record<string, unknown>[],
+  existing: readonly (Account | null)[]
+): SyncAccountsResultRow[] {
+  if (rows.length !== entries.length) return rows;
+  const aligned: SyncAccountsResultRow[] = Array(rows.length);
+  const used = new Set<number>();
+  rows.forEach((row, position) => {
+    const candidates = matchingSyncAccountIndices(row as unknown as Record<string, unknown>, entries).filter(
+      index => !used.has(index)
+    );
+    const known = candidates.filter(index => row.account_id !== undefined && existing[index]?.id === row.account_id);
+    const index =
+      known.length === 1
+        ? known[0]!
+        : candidates.length === 1
+          ? candidates[0]!
+          : candidates.includes(position)
+            ? position
+            : (candidates[0] ??
+              (!used.has(position) ? position : entries.findIndex((_entry, index) => !used.has(index))));
+    aligned[index] = row;
+    used.add(index);
+  });
+  return aligned;
 }
 
 export async function lookupSyncAccounts(
@@ -38,7 +103,7 @@ export async function lookupSyncAccounts(
   const existing: (Account | null)[] = Array(entries.length).fill(null);
   async function resolveEntry(entry: Record<string, unknown>, index: number): Promise<void> {
     const ref = syncNaturalKey(structuredClone(entry));
-    if (!ref || store.resolution === 'derived') {
+    if (!ref || normalizeAccountResolution(store.resolution) === 'derived') {
       return;
     }
     try {
@@ -59,11 +124,17 @@ export async function lookupSyncAccounts(
   }
   // Bound upstream concurrency while retaining the request's row alignment.
   let nextIndex = 0;
+  let aborted = false;
   await Promise.all(
     Array.from({ length: Math.min(8, entries.length) }, async () => {
-      while (nextIndex < entries.length) {
+      while (!aborted && nextIndex < entries.length) {
         const index = nextIndex++;
-        await resolveEntry(entries[index]!, index);
+        try {
+          await resolveEntry(entries[index]!, index);
+        } catch (error) {
+          aborted = true;
+          throw error;
+        }
       }
     })
   );
@@ -112,13 +183,14 @@ export function checkSyncAccountRow(
   existing: Account | null,
   index: number,
   stored: Account | null = null,
-  dryRun = false
+  dryRun = false,
+  expectedId = existing?.id
 ): SyncAccountsResultRow {
   const row = { ...original };
   if (row.action === 'failed') return row;
   const diagnostic = (code: AccountStoreDiagnostic['code']) =>
     emitAccountDiagnostic(store, logger, { code, toolName: 'sync_accounts', index });
-  const identityViolation = existing !== null && (row.account_id !== existing.id || row.action === 'created');
+  const identityViolation = expectedId !== undefined && (row.account_id !== expectedId || row.action === 'created');
   if (identityViolation) diagnostic('ACCOUNT_IDEMPOTENCY_VIOLATION');
   // Stored fields belong only to a response identifying the same account.
   if (stored && row.account_id === stored.id) {
@@ -126,6 +198,8 @@ export function checkSyncAccountRow(
     if (row.billing === 'agent' || entry.payment_terms !== undefined) row.payment_terms ??= stored.payment_terms;
   }
   if (
+    row.status === 'active' &&
+    !dryRun &&
     (row.billing === 'agent' || entry.billing === 'agent' || billingOf(existing) === 'agent') &&
     (row.billing === undefined || row.payment_terms === undefined)
   )
@@ -133,6 +207,7 @@ export function checkSyncAccountRow(
   const termsViolation =
     row.status === 'active' &&
     entry.payment_terms !== undefined &&
+    row.payment_terms !== undefined &&
     row.payment_terms !== entry.payment_terms &&
     (!dryRun || row.payment_terms !== undefined);
   if (termsViolation) diagnostic('PAYMENT_TERMS_MISMATCH');
@@ -144,7 +219,8 @@ export function checkSyncAccountRow(
       brand: row.brand,
       operator: row.operator,
       action: 'failed',
-      status: 'rejected',
+      status: row.status,
+      ...(row.account_id !== undefined && { account_id: row.account_id }),
       ...(row.sandbox !== undefined && { sandbox: row.sandbox }),
       errors: [
         new AdcpError(code, {

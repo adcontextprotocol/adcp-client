@@ -1,5 +1,18 @@
-import type { Pool } from 'pg';
 import type { KeyedAccountBackend, KeyedAccountRecord } from './keyed-account-store';
+
+/** Minimal query surface supported by node-postgres pools and connection adapters. */
+export interface KeyedAccountPgQueryable {
+  query<Row extends Record<string, unknown> = Record<string, unknown>>(
+    text: string,
+    values?: unknown[]
+  ): Promise<{ rows: Row[] }>;
+}
+export interface KeyedAccountPgConnection extends KeyedAccountPgQueryable {
+  release(discard?: boolean | Error): void;
+}
+export interface KeyedAccountPgPool extends KeyedAccountPgQueryable {
+  connect(): Promise<KeyedAccountPgConnection>;
+}
 
 async function storage<T>(run: () => Promise<T>): Promise<T> {
   try {
@@ -26,7 +39,7 @@ export function getKeyedAccountMigration(options: KeyedAccountPgOptions = {}): s
 
 /** Row locks serialize every read-modify-write for a principal, including first creation across replicas. */
 export function keyedAccountPgBackend<TCtxMeta = Record<string, unknown>>(
-  pool: Pool,
+  pool: KeyedAccountPgPool,
   options: KeyedAccountPgOptions = {}
 ): KeyedAccountBackend<TCtxMeta> {
   const table = tableName(options);

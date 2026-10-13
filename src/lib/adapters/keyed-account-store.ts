@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { accountReferenceKey } from '../core/account-key';
 import type { AccountReference } from '../types';
+import type { SyncAccountsRequest } from '../types/tools.generated';
 import { AdcpError } from '../server/decisioning/async-outcome';
 import {
   toWireAccount,
@@ -20,7 +21,12 @@ export interface KeyedAccountRecord<TCtxMeta = Record<string, unknown>> {
 
 /** Normalized natural key plus supported commercial fields from the sync entry. */
 export type KeyedAccountSyncEntry = Exclude<AccountReference, { account_id: string }> &
-  Pick<SyncAccountsResultRow, 'billing' | 'payment_terms' | 'billing_entity' | 'rate_card' | 'credit_limit'>;
+  Partial<
+    Pick<
+      Extract<SyncAccountsRequest['accounts'][number], { brand: unknown }>,
+      'billing' | 'payment_terms' | 'billing_entity'
+    >
+  >;
 
 /** Durable storage without expiry. Transactions MUST serialize a scope across all replicas. */
 export interface KeyedAccountBackend<TCtxMeta = Record<string, unknown>> {
@@ -162,7 +168,14 @@ export function createKeyedAccountStore<TCtxMeta = Record<string, unknown>>(
           const index = records.findIndex(record => record.key === key);
           const existing = index >= 0 ? records[index]!.account : undefined;
           const id = existing?.id ?? `acct_${digest([scope, key])}`;
-          const normalizedEntry = { ...entry, ...ref } as KeyedAccountSyncEntry;
+          const input = entry as unknown as Record<string, unknown>;
+          // Only request-schema commercial fields reach callbacks, each on an independent retry-safe copy.
+          const normalizedEntry = structuredClone({
+            ...ref,
+            ...(input.billing !== undefined && { billing: input.billing }),
+            ...(input.payment_terms !== undefined && { payment_terms: input.payment_terms }),
+            ...(input.billing_entity !== undefined && { billing_entity: input.billing_entity }),
+          }) as KeyedAccountSyncEntry;
           const requestedBilling = normalizedEntry.billing;
           const requestedTerms = normalizedEntry.payment_terms;
           try {
@@ -173,6 +186,15 @@ export function createKeyedAccountStore<TCtxMeta = Record<string, unknown>>(
             if ('account' in entry && !existing)
               throw new AdcpError('ACCOUNT_NOT_FOUND', {
                 message: 'Settings updates require an existing account.',
+              });
+            if (
+              existing &&
+              !options.updateAccount &&
+              normalizedEntry.billing_entity !== undefined &&
+              !isDeepStrictEqual(normalizedEntry.billing_entity, existing.billing_entity)
+            )
+              throw new AdcpError('UNSUPPORTED_FEATURE', {
+                message: 'Updating billing_entity requires an updateAccount callback.',
               });
             const constructed = existing
               ? options.updateAccount
@@ -197,7 +219,7 @@ export function createKeyedAccountStore<TCtxMeta = Record<string, unknown>>(
             }
             const wire = toWireAccount(account);
             if (requestedBilling !== undefined && wire.billing !== requestedBilling)
-              throw new AdcpError('INVALID_REQUEST', {
+              throw new AdcpError('BILLING_NOT_SUPPORTED', {
                 message: 'The seller must accept the requested billing model or reject the account.',
               });
             if (
