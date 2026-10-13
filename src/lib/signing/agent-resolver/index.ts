@@ -18,6 +18,7 @@
 
 export { resolveAgent } from './resolve-agent';
 export { ResolvedAgentJwksResolver } from './resolved-agent-jwks';
+export { canonicalAgentOrigin, CanonicalizeError } from './canonicalize';
 export type {
   AgentResolution,
   AgentProtocol,

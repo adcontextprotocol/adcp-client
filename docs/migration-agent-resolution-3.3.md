@@ -40,6 +40,11 @@ disable it. Set `legacyWebhookFallback: false` on a standalone brand resolver to
 `ResolvedAgentJwksResolver` requires explicitly enabling the fallback for webhook use.
 Wrappers shared with request verification must forward `resolveWithMetadata`
 so the verifier can refuse webhook-only fallback keys.
+The [agent identity foundations note](./migration-agent-identity-3.3.md)
+describes canonical origins and the optional signer-origin lookup argument;
+wrappers must forward that argument on both resolver methods as well.
+Origin consistency comparisons now remove one trailing DNS root dot and
+reject malformed authorities instead of accepting URL-parser repairs.
 
 Capabilities discovery defaults to MCP. A2A integrations using
 `BrandJsonJwksResolver` must set `protocol: 'a2a'`; the onboarding record does

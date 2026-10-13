@@ -191,11 +191,11 @@ export class BrandJsonJwksResolver implements JwksResolver {
       });
     return this.onboarding;
   }
-  async resolve(keyid: string): Promise<AdcpJsonWebKey | null> {
-    return (await this.confirmedResolver()).resolve(keyid);
+  async resolve(keyid: string, signerOrigin?: string): Promise<AdcpJsonWebKey | null> {
+    return (await this.confirmedResolver()).resolve(keyid, signerOrigin);
   }
-  async resolveWithMetadata(keyid: string): Promise<JwksResolution> {
-    return (await this.confirmedResolver()).resolveWithMetadata(keyid);
+  async resolveWithMetadata(keyid: string, signerOrigin?: string): Promise<JwksResolution> {
+    return (await this.confirmedResolver()).resolveWithMetadata(keyid, signerOrigin);
   }
   get agentUrl(): string | undefined {
     return this.resolver?.resolvedAgentUrl;

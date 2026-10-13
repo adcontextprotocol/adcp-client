@@ -14,6 +14,7 @@ const {
   buildSignatureBase,
   canonicalAuthority,
   canonicalTargetUri,
+  canonicalAgentOrigin,
   parseSignatureInput,
 } = require('../dist/lib/signing/index.js');
 
@@ -42,6 +43,56 @@ describe('AdCP 3.2 request-target canonicalization', () => {
       assert.strictEqual(canonicalAuthority(vector.input_url, '3.2'), vector.expected_authority);
     });
   }
+});
+
+describe('AdCP 3.3 canonical agent origins', () => {
+  for (const vector of canonicalizationVectors.cases) {
+    test(vector.name, () => {
+      if (vector.reject) {
+        assert.throws(() => canonicalAgentOrigin(vector.input_url));
+        return;
+      }
+      const scheme = new URL(vector.input_url).protocol;
+      assert.strictEqual(canonicalAgentOrigin(vector.input_url), `${scheme}//${vector.expected_authority}`);
+    });
+  }
+
+  test('shares origins across paths while preserving scheme, host, and port boundaries', () => {
+    const origin = canonicalAgentOrigin('HTTPS://User@Seller.Example.COM.:443/mcp?x=1#fragment');
+    assert.strictEqual(origin, 'https://seller.example.com');
+    assert.strictEqual(canonicalAgentOrigin('https://seller.example.com/a2a'), origin);
+    for (const url of [
+      'http://seller.example.com/mcp',
+      'https://seller.example.com:8443',
+      'https://other.example.com',
+    ]) {
+      assert.notStrictEqual(canonicalAgentOrigin(url), origin);
+    }
+  });
+
+  test('normalizes IDN inputs and rejects malformed identity locators', () => {
+    assert.strictEqual(canonicalAgentOrigin('https://XN--BCHER-KVA.example.:443/mcp'), 'https://xn--bcher-kva.example');
+    for (const url of ['https://seller.example.com../mcp', 'ftp://seller.example.com', '']) {
+      assert.throws(() => canonicalAgentOrigin(url));
+    }
+  });
+
+  test('is available from the client and server signing entry points in CJS and ESM', async () => {
+    for (const entry of ['client', 'server']) {
+      assert.strictEqual(
+        require(`../dist/lib/signing/${entry}.js`).canonicalAgentOrigin('https://EXAMPLE.com/mcp'),
+        'https://example.com'
+      );
+      const esm = await import(`../dist/lib/signing/${entry}.mjs`);
+      assert.strictEqual(esm.canonicalAgentOrigin('https://EXAMPLE.com/mcp'), 'https://example.com');
+      for (const api of [require(`../dist/lib/signing/${entry}.js`), esm]) {
+        assert.throws(
+          () => api.canonicalAgentOrigin(String.raw`https://example.com\@other.example`),
+          api.CanonicalizeError
+        );
+      }
+    }
+  });
 });
 
 test('default profile preserves the published trailing-empty-query vector', () => {

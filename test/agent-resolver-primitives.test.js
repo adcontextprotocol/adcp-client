@@ -76,6 +76,53 @@ describe('origin canonicalizer', () => {
   });
   it('drops a default port', () => {
     assert.equal(canonicalizeOrigin('https://example.com:443/'), 'https://example.com');
+    assert.equal(canonicalizeOrigin('http://example.com:80/'), 'http://example.com');
+    assert.equal(canonicalizeOrigin('http://example.com:443/'), 'http://example.com:443');
+    assert.equal(canonicalizeOrigin('https://example.com:80/'), 'https://example.com:80');
+  });
+  it('strips one DNS root dot on ASCII and IDN origins', () => {
+    assert.equal(canonicalizeOrigin('HTTPS://User@Example.COM.:443/path'), 'https://example.com');
+    assert.equal(canonicalizeOrigin('https://Bücher.example.:8443/path'), 'https://xn--bcher-kva.example:8443');
+    assert.equal(canonicalizeOrigin('https://XN--BCHER-KVA.example.:8443/path'), 'https://xn--bcher-kva.example:8443');
+  });
+  it('rejects malformed authorities instead of letting URL repair them', () => {
+    for (const url of ['https:///example.com/path', 'https://example.com../path', 'https://:443/path']) {
+      assert.throws(() => canonicalizeOrigin(url), CanonicalizeError);
+      assert.equal(originsEqual(url, 'https://example.com'), false);
+    }
+  });
+  it('rejects backslashes and raw control characters before URL parsing can repair an authority', () => {
+    for (const url of [
+      String.raw`https://seller.example\@other.example`,
+      String.raw`https://bücher.example\@other.example`,
+      String.raw`https://seller.example\path`,
+      'https://sell\ter.example.com',
+      'https://sell\ner.example.com',
+      'https://sell\rer.example.com',
+      'https://seller.example.com ',
+    ]) {
+      assert.throws(() => canonicalizeOrigin(url), CanonicalizeError);
+      assert.equal(originsEqual(url, 'https://seller.example.com'), false);
+    }
+  });
+  it('does not expose userinfo, paths, or query values in origin errors', () => {
+    for (const url of [
+      'https://user:secret@missing../private-token?access_token=query-secret',
+      'https://user:secret@/private-token?access_token=query-secret',
+      'ftp://user:secret@example.com/private-token?access_token=query-secret',
+    ]) {
+      assert.throws(
+        () => canonicalizeOrigin(url),
+        error => {
+          assert.ok(error instanceof CanonicalizeError);
+          assert.deepEqual(error.meta, { input: '[redacted]' });
+          for (const secret of ['user', 'secret', 'private-token', 'query-secret']) {
+            assert.ok(!error.message.includes(secret));
+          }
+          return true;
+        }
+      );
+    }
   });
   it('originsEqual byte-compares after canonicalization', () => {
     assert.ok(originsEqual('https://Example.COM/foo', 'https://example.com/bar'));

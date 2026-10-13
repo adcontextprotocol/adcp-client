@@ -92,7 +92,7 @@ export class HttpsJwksResolver implements JwksResolver {
     this.now = options.now ?? (() => Math.floor(Date.now() / 1000));
   }
 
-  async resolve(keyid: string): Promise<AdcpJsonWebKey | null> {
+  async resolve(keyid: string, _signerOrigin?: string): Promise<AdcpJsonWebKey | null> {
     if (!this.cache) {
       if (!this.inFlight && this.now() - this.lastAttemptAt < this.minCooldown) {
         throw new Error('JWKS lookup is in its retry cooldown');

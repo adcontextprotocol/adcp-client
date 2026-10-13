@@ -172,6 +172,149 @@ describe('canonical agent selection', () => {
 });
 
 describe('capability-bound discovery and cache freshness', () => {
+  it('checks signer context before discovery and before returning a cached key', async () => {
+    const resolver = new ResolvedAgentJwksResolver(`${origin}/mcp`, 'mcp', stage());
+    const mismatch = error => error.code === 'request_signature_key_unknown';
+    await assert.rejects(resolver.resolve(publicKey.kid, 'https://other.example.com'), mismatch);
+    assert.deepEqual(hits, []);
+
+    const resolution = await resolver.resolveWithMetadata(publicKey.kid, `${origin}/a2a?x=1#fragment`);
+    assert.deepEqual(resolution.jwk, publicKey);
+    assert.equal(resolution.agentUrl, `${origin}/mcp`);
+    const hitCount = hits.length;
+    await assert.rejects(resolver.resolveWithMetadata(publicKey.kid, `${origin.replace('http:', 'https:')}`), mismatch);
+    await assert.rejects(resolver.resolve(publicKey.kid, 'https://other.example.com'), mismatch);
+    for (const invalidOrigin of [
+      'https:///missing-host',
+      'https://user:secret@missing..',
+      '',
+      'https://Bücher.example',
+      `${origin}\\@other.example`,
+      origin.replace('127', '12\t7'),
+      origin.replace('127', '12\n7'),
+    ]) {
+      await assert.rejects(
+        resolver.resolve(publicKey.kid, invalidOrigin),
+        error =>
+          mismatch(error) && error.message === 'Signer origin is malformed.' && Object.keys(error.detail).length === 0
+      );
+    }
+    assert.equal(hits.length, hitCount);
+
+    // Existing one-argument callers keep the exact capability-bound URL identity.
+    assert.deepEqual(await resolver.resolve(publicKey.kid), publicKey);
+    assert.deepEqual(await resolver.resolve(publicKey.kid, origin.replace('://', '://user:secret@')), publicKey);
+    assert.deepEqual(await resolver.resolve(publicKey.kid, origin.replace('://', '://user%3Asecret@')), publicKey);
+    assert.deepEqual(await resolver.resolveWithMetadata(publicKey.kid), resolution);
+  });
+
+  it('rejects raw non-ASCII context even when its normalized origin would match', async () => {
+    let discoveryCalls = 0;
+    const resolver = new ResolvedAgentJwksResolver('https://xn--bcher-kva.example/mcp', 'mcp', {
+      resolve: async () => {
+        discoveryCalls++;
+        throw new Error('Unexpected discovery');
+      },
+    });
+    for (const signerOrigin of [
+      'https://bücher.example',
+      String.raw`https://bücher.example\@other.example`,
+      'https://b%C3%BCcher.example',
+      'https://xn--bcher%2Dkva.example',
+    ]) {
+      await assert.rejects(
+        resolver.resolveWithMetadata(publicKey.kid, signerOrigin),
+        error => error.code === 'request_signature_key_unknown'
+      );
+    }
+    assert.equal(discoveryCalls, 0);
+  });
+
+  it('rejects percent-encoded characters that IDNA would erase from the signer host', async () => {
+    let discoveryCalls = 0;
+    const resolver = new ResolvedAgentJwksResolver('https://seller.example.com/mcp', 'mcp', {
+      resolve: async () => {
+        discoveryCalls++;
+        throw new Error('Unexpected discovery');
+      },
+    });
+    await assert.rejects(
+      resolver.resolveWithMetadata(publicKey.kid, 'https://sel%C2%ADler.example.com'),
+      error => error.code === 'request_signature_key_unknown' && error.message === 'Signer origin is malformed.'
+    );
+    assert.equal(discoveryCalls, 0);
+  });
+
+  it('rejects a malformed configured origin without echoing configuration or discovering keys', async () => {
+    let discoveryCalls = 0;
+    const resolver = new ResolvedAgentJwksResolver('https://user:secret@configured..', 'mcp', {
+      resolve: async () => {
+        discoveryCalls++;
+        throw new Error('Unexpected discovery');
+      },
+    });
+    await assert.rejects(
+      resolver.resolveWithMetadata(publicKey.kid, 'https://configured.example.com'),
+      error =>
+        error.code === 'request_signature_key_unknown' &&
+        error.message === 'Configured agent origin is malformed.' &&
+        Object.keys(error.detail).length === 0
+    );
+    assert.equal(discoveryCalls, 0);
+  });
+
+  it('forwards signer context through both brand resolver lookup methods', async () => {
+    const resolver = new BrandJsonJwksResolver(`${origin}/operator.json`, {
+      ...stage(),
+      agentType: 'sales',
+      agentUrl: `${origin}/mcp`,
+    });
+    for (const lookup of ['resolve', 'resolveWithMetadata']) {
+      await assert.rejects(
+        resolver[lookup](publicKey.kid, 'https://other.example.com'),
+        error => error.code === 'request_signature_key_unknown'
+      );
+    }
+    assert.deepEqual(hits, []);
+    assert.deepEqual(await resolver.resolve(publicKey.kid, origin), publicKey);
+    const resolution = await resolver.resolveWithMetadata(publicKey.kid, `${origin}/other-path`);
+    assert.deepEqual(resolution.jwk, publicKey);
+    assert.equal(resolution.agentUrl, `${origin}/mcp`);
+    assert.ok(resolution.operatorRecord);
+    assert.deepEqual(await resolver.resolveWithMetadata(publicKey.kid), resolution);
+  });
+
+  it('forwards signer context after legacy brand onboarding pins an agent', async () => {
+    const resolver = new BrandJsonJwksResolver(`${origin}/operator.json`, { ...stage(), agentType: 'sales' });
+    assert.deepEqual(await resolver.resolve(publicKey.kid), publicKey);
+    const hitCount = hits.length;
+    for (const lookup of ['resolve', 'resolveWithMetadata']) {
+      await assert.rejects(
+        resolver[lookup](publicKey.kid, 'https://other.example.com'),
+        error => error.code === 'request_signature_key_unknown'
+      );
+    }
+    assert.equal(hits.length, hitCount);
+  });
+
+  it('keeps legacy first-contact onboarding on the configured chain before checking context', async () => {
+    const resolver = new BrandJsonJwksResolver(`${origin}/operator.json`, { ...stage(), agentType: 'sales' });
+    await assert.rejects(
+      resolver.resolveWithMetadata(publicKey.kid, 'https://other.example.com'),
+      error => error.code === 'request_signature_key_unknown'
+    );
+    assert.equal(resolver.agentUrl, `${origin}/mcp`);
+    assert.ok(hits.includes('/operator.json'));
+    assert.ok(hits.includes('/keys.json'));
+    const hitCount = hits.length;
+    await assert.rejects(
+      resolver.resolve(publicKey.kid, 'https://other.example.com'),
+      error => error.code === 'request_signature_key_unknown'
+    );
+    assert.equal(hits.length, hitCount);
+    assert.deepEqual(await resolver.resolve(publicKey.kid, origin), publicKey);
+  });
+
   it('rejects invalid standalone configuration before onboarding or network access', () => {
     for (const agentUrl of [undefined, 'https://seller.example/mcp']) {
       for (const maxAgeSeconds of [0, NaN, Infinity, -1]) {

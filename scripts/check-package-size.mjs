@@ -222,7 +222,8 @@ const MAX_PACKED_FILE_COUNT =
   4 + // Local creative-schema reference inspection (one dual-format runtime/declaration set).
   4 + // Managed-delivery adapter router (`reporting/ledger/managed-router`, one dual-format set).
   1 + // Reporting row-storage field-alignment migration guide.
-  22; // AdCP 3.2.4 signed request-signing compliance vectors; no new runtime module sets.
+  22 + // AdCP 3.2.4 signed request-signing compliance vectors; no new runtime module sets.
+  1; // Agent identity origin/resolver migration guide; byte budgets stay fixed.
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
