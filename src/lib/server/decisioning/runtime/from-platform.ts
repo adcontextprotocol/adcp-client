@@ -1,3 +1,8 @@
+import {
+  isIdentity33SchemaScope,
+  withIdentity33SchemaScope,
+  bindIdentity33SchemaScope,
+} from '../../../validation/schema-loader';
 /**
  * Build an `AdcpServer` from a `DecisioningPlatform` impl.
  *
@@ -2618,6 +2623,11 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     RequiredCapabilitiesFor<P['capabilities']['specialisms'][number]>,
   opts: RequiredOptsFor<P>
 ): DecisioningAdcpServer {
+  if (Boolean(opts.identity33) !== isIdentity33SchemaScope())
+    return withIdentity33SchemaScope(() => {
+      const instance = createAdcpServerFromPlatform<P>(platform, opts);
+      return opts.identity33 ? bindIdentity33SchemaScope(instance) : instance;
+    }, Boolean(opts.identity33));
   // Runtime-only compatibility for pre-13 JavaScript/config objects. The
   // public type exposes these raw handler groups only under legacyHandlers;
   // retaining the hidden fallback avoids turning a type migration into an
@@ -5064,6 +5074,7 @@ interface DispatchHitlOpts {
   ownerScope?: string;
   pushNotificationUrl?: string;
   pushNotificationToken?: string;
+  pushNotificationSigningProfile?: 'adcp/webhook-signing/v1' | 'web-bot-auth';
   pushNotificationOperationId?: string;
   servedAdcpVersion?: string;
   emitWebhook?: HandlerContext<Account>['emitWebhook'];
@@ -5646,6 +5657,7 @@ async function emitTaskWebhook(
   try {
     const result = await opts.emitWebhook({
       url: opts.pushNotificationUrl,
+      ...(opts.pushNotificationSigningProfile && { signingProfile: opts.pushNotificationSigningProfile }),
       payload: wirePayload,
       delivery_id: resolveWebhookDeliveryId(opts, taskId),
     });
@@ -6304,7 +6316,7 @@ function extractPushConfig(
   params: unknown,
   _logger: AdcpLogger,
   opts: { allowPrivateWebhookUrls?: boolean } = {}
-): { url?: string; token?: string; operationId?: string } {
+): { url?: string; token?: string; operationId?: string; signingProfile?: 'adcp/webhook-signing/v1' | 'web-bot-auth' } {
   if (!params || typeof params !== 'object') return {};
   const cfg = (params as { push_notification_config?: unknown }).push_notification_config;
   // `undefined` is the one supplied value that preserves the absent-config
@@ -6318,7 +6330,15 @@ function extractPushConfig(
       field: 'push_notification_config',
     });
   }
-  const cfgObj = cfg as { url?: unknown; token?: unknown; operation_id?: unknown };
+  const cfgObj = cfg as { url?: unknown; token?: unknown; operation_id?: unknown; signing_profile?: unknown };
+  if (
+    cfgObj.signing_profile !== undefined &&
+    !['adcp/webhook-signing/v1', 'web-bot-auth'].includes(cfgObj.signing_profile as string)
+  )
+    throw new AdcpError('INVALID_REQUEST', {
+      message: 'Unsupported webhook signing profile',
+      field: 'push_notification_config.signing_profile',
+    });
   const rawUrl = cfgObj.url;
   const rawToken = cfgObj.token;
   const rawOperationId = cfgObj.operation_id;
@@ -6381,6 +6401,9 @@ function extractPushConfig(
   }
 
   return {
+    ...(cfgObj.signing_profile !== undefined && {
+      signingProfile: cfgObj.signing_profile as 'adcp/webhook-signing/v1' | 'web-bot-auth',
+    }),
     ...(url !== undefined && { url }),
     ...(token !== undefined && { token }),
     ...(operationId !== undefined && { operationId }),
@@ -6584,6 +6607,7 @@ function buildProposalNegotiationHandlers<P extends DecisioningPlatform<any, any
               accountId: reqCtx.account.id,
               ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
               pushNotificationUrl: push.url,
+              pushNotificationSigningProfile: push.signingProfile,
               pushNotificationToken: push.token,
               pushNotificationOperationId: push.operationId,
               servedAdcpVersion: ctx.servedAdcpVersion,
@@ -6675,6 +6699,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             accountId,
             ownerScope: taskOwnerScopeFor(ctx, accountId),
             pushNotificationUrl: push.url,
+            pushNotificationSigningProfile: push.signingProfile,
             pushNotificationToken: push.token,
             pushNotificationOperationId: push.operationId,
             servedAdcpVersion: ctx.servedAdcpVersion,
@@ -6825,6 +6850,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 accountId: reqCtx.account.id,
                 ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
                 pushNotificationUrl: push.url,
+                pushNotificationSigningProfile: push.signingProfile,
                 pushNotificationToken: push.token,
                 pushNotificationOperationId: push.operationId,
                 servedAdcpVersion: ctx.servedAdcpVersion,
@@ -6957,6 +6983,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 accountId,
                 ownerScope: taskOwnerScopeFor(ctx, accountId),
                 pushNotificationUrl: push.url,
+                pushNotificationSigningProfile: push.signingProfile,
                 pushNotificationToken: push.token,
                 pushNotificationOperationId: push.operationId,
                 servedAdcpVersion: ctx.servedAdcpVersion,
@@ -7090,6 +7117,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 accountId: reqCtx.account.id,
                 ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
                 pushNotificationUrl: push.url,
+                pushNotificationSigningProfile: push.signingProfile,
                 pushNotificationToken: push.token,
                 pushNotificationOperationId: push.operationId,
                 servedAdcpVersion: ctx.servedAdcpVersion,
@@ -7210,6 +7238,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 accountId: reqCtx.account.id,
                 ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
                 pushNotificationUrl: push.url,
+                pushNotificationSigningProfile: push.signingProfile,
                 pushNotificationToken: push.token,
                 pushNotificationOperationId: push.operationId,
                 servedAdcpVersion: ctx.servedAdcpVersion,
@@ -7264,6 +7293,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 accountId: reqCtx.account.id,
                 ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
                 pushNotificationUrl: push.url,
+                pushNotificationSigningProfile: push.signingProfile,
                 pushNotificationToken: push.token,
                 pushNotificationOperationId: push.operationId,
                 servedAdcpVersion: ctx.servedAdcpVersion,
@@ -7688,6 +7718,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
                 accountId: reqCtx.account.id,
                 ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
                 pushNotificationUrl: push.url,
+                pushNotificationSigningProfile: push.signingProfile,
                 pushNotificationToken: push.token,
                 pushNotificationOperationId: push.operationId,
                 servedAdcpVersion: ctx.servedAdcpVersion,
@@ -7923,6 +7954,7 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
               accountId,
               ownerScope: taskOwnerScopeFor(ctx, accountId),
               pushNotificationUrl: push.url,
+              pushNotificationSigningProfile: push.signingProfile,
               pushNotificationToken: push.token,
               pushNotificationOperationId: push.operationId,
               servedAdcpVersion: ctx.servedAdcpVersion,

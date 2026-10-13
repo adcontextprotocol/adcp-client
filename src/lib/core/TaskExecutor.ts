@@ -1,3 +1,13 @@
+import { deliveryWebhookRegistrationId } from './webhook-registration';
+import { isAdcpVersionAtLeast } from '../utils/adcp-version-config';
+function validateIdentity33Payload(
+  ...args: Parameters<typeof import('../identity-3.3/validation').validateIdentity33Payload>
+): ReturnType<typeof import('../identity-3.3/validation').validateIdentity33Payload> {
+  return (
+    require('../identity-3.3/validation') as typeof import('../identity-3.3/validation')
+  ).validateIdentity33Payload(...args);
+}
+import { buildValidationError } from '../validation/schema-errors';
 // Core task execution engine for ADCP conversation flow
 // Implements PR #78 async patterns: working/submitted/input-required/completed
 
@@ -326,7 +336,13 @@ type GovernedCredentialScanResult =
 function webhookRegistrationFromPreparedCall(
   _agent: AgentConfig,
   preparedCall: PreparedProtocolToolCall
-): { callbackUrl: string; mode: 'rfc9421' | 'hmac-sha256' } | undefined {
+):
+  | {
+      callbackUrl: string;
+      mode: 'rfc9421' | 'hmac-sha256';
+      signingProfile?: 'adcp/webhook-signing/v1' | 'web-bot-auth';
+    }
+  | undefined {
   const candidate =
     preparedCall.args.push_notification_config &&
     typeof preparedCall.args.push_notification_config === 'object' &&
@@ -340,8 +356,15 @@ function webhookRegistrationFromPreparedCall(
     throw new ConfigurationError('push_notification_config.url must be a string.', 'push_notification_config.url');
   }
 
+  const profile = (candidate as Record<string, unknown>).signing_profile;
   if (!Object.prototype.hasOwnProperty.call(candidate, 'authentication')) {
-    return { callbackUrl: candidate.url, mode: 'rfc9421' };
+    if (profile !== undefined && !['adcp/webhook-signing/v1', 'web-bot-auth'].includes(profile as string))
+      throw new ConfigurationError('Unsupported webhook signing profile', 'signing_profile');
+    return {
+      callbackUrl: candidate.url,
+      mode: 'rfc9421',
+      ...(profile !== undefined && { signingProfile: profile as 'adcp/webhook-signing/v1' | 'web-bot-auth' }),
+    };
   }
   const authentication = candidate.authentication;
   if (!authentication || typeof authentication !== 'object' || Array.isArray(authentication)) {
@@ -974,6 +997,10 @@ export class TaskExecutor {
       agentId?: string;
       /** Webhook secret for legacy HMAC authentication. */
       webhookSecret?: string;
+      experimentalIdentity33?: () => boolean;
+      signedIdentity33Webhooks?: () => boolean;
+      identity33SchemaExperiment?: boolean;
+      webhookSigningProfile?: () => 'adcp/webhook-signing/v1' | 'web-bot-auth' | undefined;
       /** Persist sanitized callback mode provenance before dispatch. */
       onWebhookRegistration?: (registration: {
         agent: AgentConfig;
@@ -981,6 +1008,8 @@ export class TaskExecutor {
         operationId: string;
         callbackUrl: string;
         mode: 'rfc9421' | 'hmac-sha256';
+        signingProfile?: 'adcp/webhook-signing/v1' | 'web-bot-auth';
+        deliveryKind?: 'reporting' | 'artifact';
         delegatedOperatorAuthorization?: TaskOptions['delegatedOperatorAuthorization'];
       }) => void | Promise<void>;
       /** Persist fail-closed routing provenance before a durable mutation claim can run. */
@@ -1166,6 +1195,15 @@ export class TaskExecutor {
    * Throws in strict, logs to `debugLogs` in warn, no-ops in off.
    */
   validateRequest(taskName: string, params: unknown, debugLogs?: any[]): void {
+    if (this.config.experimentalIdentity33?.() && this.requestValidationMode !== 'off') {
+      const outcome = validateIdentity33Payload(taskName, 'request', params, this.config.adcpVersion);
+      if (!outcome.valid) {
+        if (this.requestValidationMode === 'strict') throw buildValidationError(taskName, 'request', outcome.issues);
+        if (debugLogs)
+          this.logDebug(debugLogs, 'warning', `Request validation failed for ${taskName}`, { issues: outcome.issues });
+      }
+      return;
+    }
     validateOutgoingRequest(taskName, params, this.requestValidationMode, debugLogs, this.config.adcpVersion);
   }
 
@@ -1451,6 +1489,24 @@ export class TaskExecutor {
       });
       throwIfAborted(options.signal);
 
+      const callbackProfile =
+        this.config.signedIdentity33Webhooks?.() &&
+        (webhookUrl || params?.reporting_webhook || params?.artifact_webhook || params?.push_notification_config)
+          ? this.config.webhookSigningProfile?.()
+          : undefined;
+      const applyCallbackProfiles = (args: Record<string, any>): void => {
+        if (!callbackProfile || options.preserveGovernedPayload) return;
+        for (const field of ['push_notification_config', 'reporting_webhook', 'artifact_webhook']) {
+          const callback = args[field];
+          if (
+            callback &&
+            typeof callback === 'object' &&
+            callback.authentication === undefined &&
+            callback.signing_profile === undefined
+          )
+            callback.signing_profile = callbackProfile;
+        }
+      };
       // Run governance check if configured for this tool
       const governanceMiddleware = this.governanceMiddleware;
       if (governanceMiddleware) {
@@ -1464,7 +1520,7 @@ export class TaskExecutor {
           ? prepareProtocolToolCall(agent, params, {
               toolName: taskName,
               webhookUrl,
-              webhookSecret: this.config.webhookSecret,
+              webhookSecret: this.config.signedIdentity33Webhooks?.() ? undefined : this.config.webhookSecret,
               operationId: taskId,
               serverVersion: effectiveServerVersion,
               adcpVersion: this.config.adcpVersion,
@@ -1472,6 +1528,7 @@ export class TaskExecutor {
               versionEnvelope,
             }).args
           : params;
+        if (modernGovernance) applyCallbackProfiles(governableParams);
         if (await governanceMiddleware.shouldCheck(taskName, governableParams, targetCapabilities)) {
           const sdkInjectedPushConfig =
             modernGovernance && webhookUrl !== undefined && this.config.webhookSecret !== undefined;
@@ -1539,13 +1596,49 @@ export class TaskExecutor {
       const preparedCall = prepareProtocolToolCall(agent, dispatchParams, {
         toolName: taskName,
         webhookUrl,
-        webhookSecret: this.config.webhookSecret,
+        webhookSecret: this.config.signedIdentity33Webhooks?.() ? undefined : this.config.webhookSecret,
         operationId: taskId,
         serverVersion: effectiveServerVersion,
         adcpVersion: this.config.adcpVersion,
         wireAdcpVersion,
         versionEnvelope,
       });
+      applyCallbackProfiles(preparedCall.args);
+      const signingProfile = options.preserveGovernedPayload ? undefined : callbackProfile;
+      if (
+        signingProfile &&
+        preparedCall.args.push_notification_config &&
+        typeof preparedCall.args.push_notification_config === 'object'
+      ) {
+        const registration = preparedCall.args.push_notification_config as Record<string, unknown>;
+        if (registration.authentication === undefined && registration.signing_profile === undefined)
+          registration.signing_profile = signingProfile;
+      }
+      if (this.config.signedIdentity33Webhooks?.()) {
+        for (const [field, deliveryKind, taskType] of [
+          ['reporting_webhook', 'reporting', 'media_buy_delivery'],
+          ['artifact_webhook', 'artifact', 'artifact_delivery'],
+        ] as const) {
+          const delivery = preparedCall.args[field] as
+            | { url?: unknown; authentication?: unknown; signing_profile?: unknown }
+            | undefined;
+          if (!delivery || typeof delivery.url !== 'string' || delivery.authentication !== undefined) continue;
+          const selected =
+            delivery.signing_profile ?? (options.preserveGovernedPayload ? 'adcp/webhook-signing/v1' : callbackProfile);
+          if (selected !== 'adcp/webhook-signing/v1' && selected !== 'web-bot-auth')
+            throw new Error('Invalid delivery signing profile');
+          if (!options.preserveGovernedPayload) delivery.signing_profile = selected;
+          await this.config.onWebhookRegistration?.({
+            agent,
+            taskType,
+            operationId: deliveryWebhookRegistrationId(deliveryKind, delivery.url),
+            callbackUrl: delivery.url,
+            mode: 'rfc9421',
+            signingProfile: selected,
+            deliveryKind,
+          });
+        }
+      }
       let webhookRegistrationPersisted = false;
       if (webhookUrl && this.config.onWebhookRegistration) {
         const registration = webhookRegistrationFromPreparedCall(agent, preparedCall);
@@ -1648,7 +1741,7 @@ export class TaskExecutor {
       const callOptions = {
         debugLogs,
         webhookUrl,
-        webhookSecret: this.config.webhookSecret,
+        webhookSecret: this.config.signedIdentity33Webhooks?.() ? undefined : this.config.webhookSecret,
         operationId: taskId,
         serverVersion: effectiveServerVersion,
         session: { contextId: options.contextId, taskId: options.taskId },
@@ -6038,7 +6131,15 @@ export class TaskExecutor {
       const normalizedResponse = this.normalizeResponseForValidation(response, taskName, validationVersion === 'v2.5');
       // TaskExecutor owns the user-facing log entry below. Passing debugLogs
       // into the lower-level hook would emit a second, unversioned duplicate.
-      const outcome = validateIncomingResponse(taskName, normalizedResponse, mode, undefined, validationVersion);
+      const outcome =
+        (this.config.experimentalIdentity33?.() ||
+          (this.config.identity33SchemaExperiment &&
+            normalizedResponse &&
+            typeof normalizedResponse === 'object' &&
+            isAdcpVersionAtLeast((normalizedResponse as { adcp_version?: string }).adcp_version, '3.3'))) &&
+        mode !== 'off'
+          ? validateIdentity33Payload(taskName, 'response', normalizedResponse, validationVersion)
+          : validateIncomingResponse(taskName, normalizedResponse, mode, undefined, validationVersion);
       if (outcome.valid) return { valid: true, errors: [] };
 
       const errorStrings = outcome.issues.map(i => `${i.pointer}: ${i.message}`);

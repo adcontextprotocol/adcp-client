@@ -83,16 +83,32 @@ export const signingContextStorage = globalAsyncLocalStorage<AgentSigningContext
  * configured. Returns `undefined` when the agent has no `request_signing`
  * block — callers use this to branch into the no-op fast path.
  */
+let rfcIdentityWarningEmitted = false;
 export function buildAgentSigningContext(
   agent: AgentConfig,
   options: { cache?: CapabilityCache; adcpVersion?: string } = {}
 ): AgentSigningContext | undefined {
   const signing = agent.request_signing;
   if (!signing) return undefined;
+  if (signing.profile !== 'web-bot-auth' && !rfcIdentityWarningEmitted) {
+    rfcIdentityWarningEmitted = true;
+    process.emitWarning(
+      'RFC 9421 agent identity discovery is deprecated in AdCP 3.3; opt into Web Bot Auth after counterparties advertise support. RFC configuration remains supported through 3.x.',
+      { code: 'ADCP_RFC9421_IDENTITY_DEPRECATED', type: 'Warning' }
+    );
+  }
 
   const cache = options.cache ?? defaultCapabilityCache;
   const identity = snapshotIdentity(signing);
-  const cacheFingerprint = deriveCacheFingerprint(identity);
+  const cacheFingerprint =
+    signing.profile === 'web-bot-auth'
+      ? createHash('sha256')
+          .update(deriveCacheFingerprint(identity))
+          .update('\0web-bot-auth\0')
+          .update(signing.agent_url)
+          .digest('hex')
+          .slice(0, 32)
+      : deriveCacheFingerprint(identity);
   const adcpVersion = options.adcpVersion ?? ADCP_VERSION;
   const capabilityCacheKey = buildCapabilityCacheKey(
     agent.agent_uri,

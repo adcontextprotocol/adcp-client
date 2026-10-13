@@ -1,3 +1,4 @@
+import { canonicalTargetUri } from '../signing/canonicalize';
 import { createHash } from 'node:crypto';
 import { ConfigurationError } from '../errors';
 import type {
@@ -24,6 +25,9 @@ export interface WebhookRegistration {
   callbackUrl: string;
   method: 'POST';
   mode: WebhookAuthenticationMode;
+  signingProfile?: 'adcp/webhook-signing/v1' | 'web-bot-auth';
+  /** Out-of-band reports/artifacts bind to the destination, not a task operation. */
+  deliveryKind?: 'reporting' | 'artifact';
   /** Versioned marker distinguishing tuple-aware registrations from legacy rows. */
   authorizationContextVersion?: 1;
   /** Trusted local tuple used to re-authorize delegated seller keys after restart. */
@@ -42,7 +46,8 @@ export interface WebhookRegistrationStore {
   /** Return no record when `expiresAt` is at or before the current time. */
   get(agentId: string, operationId: string): Promise<Readonly<WebhookRegistration> | undefined>;
   /**
-   * Atomically create a registration. An identical retry is idempotent; a
+   * Atomically create a registration. An identical retry is idempotent; matching
+   * destination delivery routes also extend expiry to the later value. A
    * conflicting live registration for the same key MUST reject. A successful
    * return MUST provide immediate read-your-writes consistency through `get()`
    * so the SDK can verify trusted authorization provenance before dispatch.
@@ -107,7 +112,11 @@ export class InMemoryWebhookRegistrationStore implements WebhookRegistrationStor
     const key = registrationKey(parsed.agentId, parsed.operationId);
     const existing = this.entries.get(key);
     if (existing) {
-      if (sameWebhookRegistration(existing, parsed)) return;
+      if (sameWebhookRegistration(existing, parsed)) {
+        if (parsed.deliveryKind && parsed.expiresAt > existing.expiresAt)
+          this.entries.set(key, freezeWebhookRegistration({ ...existing, expiresAt: parsed.expiresAt }));
+        return;
+      }
       throw new ConfigurationError(
         'Webhook operation id is already registered with different trusted provenance.',
         'operationId'
@@ -224,6 +233,11 @@ export function parseWebhookRegistration(
   if (input.requiresDurableSettlement !== undefined && typeof input.requiresDurableSettlement !== 'boolean') {
     throw new TypeError('Webhook registration requiresDurableSettlement must be boolean.');
   }
+  if (
+    input.signingProfile !== undefined &&
+    (input.mode !== 'rfc9421' || !['adcp/webhook-signing/v1', 'web-bot-auth'].includes(input.signingProfile as string))
+  )
+    throw new TypeError('Invalid registered webhook signing profile');
   const createdAt = requireEpochMs('createdAt', input.createdAt);
   const expiresAt = requireEpochMs('expiresAt', input.expiresAt);
   if (expiresAt <= createdAt) {
@@ -255,6 +269,11 @@ export function parseWebhookRegistration(
     throw new TypeError('Webhook agentUrl cannot contain userinfo credentials or a fragment.');
   }
 
+  if (
+    input.deliveryKind !== undefined &&
+    (!['reporting', 'artifact'].includes(input.deliveryKind as string) || input.mode !== 'rfc9421')
+  )
+    throw new TypeError('Invalid delivery registration kind');
   const parsed: WebhookRegistration = {
     agentId,
     agentUrl,
@@ -264,6 +283,12 @@ export function parseWebhookRegistration(
     callbackUrl,
     method: 'POST',
     mode: input.mode,
+    ...(input.signingProfile !== undefined && {
+      signingProfile: input.signingProfile as WebhookRegistration['signingProfile'],
+    }),
+    ...(input.deliveryKind !== undefined && {
+      deliveryKind: input.deliveryKind as WebhookRegistration['deliveryKind'],
+    }),
     ...(input.authorizationContextVersion === 1 && { authorizationContextVersion: 1 }),
     ...(delegatedOperatorAuthorization !== undefined && {
       delegatedOperatorAuthorization: { ...delegatedOperatorAuthorization },
@@ -369,6 +394,8 @@ export function webhookRegistrationFingerprint(registration: Readonly<WebhookReg
     parsed.previewMode ?? null,
     parsed.authorizationContextVersion ?? null,
     canonicalDelegatedOperatorAuthorization(parsed.delegatedOperatorAuthorization),
+    ...(parsed.signingProfile === 'web-bot-auth' ? [parsed.signingProfile] : []),
+    ...(parsed.deliveryKind !== undefined ? ['delivery', parsed.deliveryKind] : []),
   ]);
 }
 
@@ -383,4 +410,9 @@ export function webhookRegistrationStorageDigest(agentId: string, operationId: s
   return createHash('sha256')
     .update(JSON.stringify([agentId, operationId]))
     .digest('hex');
+}
+
+/** Stable, non-secret local route key. It is never sent as an authentication credential. */
+export function deliveryWebhookRegistrationId(kind: 'reporting' | 'artifact', url: string): string {
+  return `delivery_route:${kind}:` + createHash('sha256').update(canonicalTargetUri(url, '3.2')).digest('hex');
 }

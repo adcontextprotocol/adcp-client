@@ -92,6 +92,21 @@ if raw then
   if current_expires_at > now_ms then
     if redis.call('PTTL', KEYS[1]) < 0 then return cjson.encode({status = 'corrupt'}) end
     if stored.fingerprint == ARGV[3] then
+      if ARGV[6] == 'delivery' and proposed_expires_at > current_expires_at then
+        local registration_ok, registration = pcall(cjson.decode, stored.registration)
+        if not registration_ok or type(registration) ~= 'table' or not registration.deliveryKind then
+          return cjson.encode({status = 'corrupt'})
+        end
+        if registration.expiresAt ~= current_expires_at then return cjson.encode({status = 'corrupt'}) end
+        local replacements
+        stored.registration, replacements = string.gsub(stored.registration, '("expiresAt"%s*:%s*)%d+', function(prefix)
+          return prefix .. ARGV[4]
+        end)
+        if replacements ~= 1 then return cjson.encode({status = 'corrupt'}) end
+        stored.expiresAt = ARGV[4]
+        raw = cjson.encode(stored)
+        redis.call('SET', KEYS[1], raw, 'PXAT', ARGV[4])
+      end
       return cjson.encode({status = 'existing', record = raw})
     end
     return cjson.encode({status = 'conflict'})
@@ -339,7 +354,14 @@ export function redisWebhookRegistrationStore(
         'putIfAbsent',
         PUT_IF_ABSENT_SCRIPT,
         [key],
-        [expectedKey.agentId, expectedKey.operationId, fingerprint, String(proposed.expiresAt), serialized]
+        [
+          expectedKey.agentId,
+          expectedKey.operationId,
+          fingerprint,
+          String(proposed.expiresAt),
+          serialized,
+          proposed.deliveryKind ? 'delivery' : 'operation',
+        ]
       );
       if (outcome.status === 'conflict') {
         throw new ConfigurationError(

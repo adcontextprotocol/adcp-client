@@ -217,13 +217,41 @@ export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): 
   const upstream: FetchLike = explicitUpstream ?? ((input, init) => defaultUpstream()(input, init));
 
   const shouldSign = (_url: string, init: RequestInit | undefined): boolean => {
-    if (carriesWebhookAuthentication(init?.body)) return true;
+    if (carriesWebhookAuthentication(init?.body)) {
+      if (signing.profile === 'web-bot-auth' && !getCapability()?.requestSigning?.profiles?.includes('web-bot-auth'))
+        throw new TypeError('Seller did not advertise the Web Bot Auth request signing profile');
+      return true;
+    }
     const operation = extractAdcpOperation(init?.body);
     const entry = getCapability();
-    return shouldSignOperation(operation, entry?.requestSigning, signing);
+    const sign =
+      signing.profile === 'web-bot-auth' && !!operation && entry?.requestSigning?.profiles?.includes('web-bot-auth')
+        ? true
+        : shouldSignOperation(operation, entry?.requestSigning, signing);
+    if (sign && signing.profile === 'web-bot-auth' && !entry?.requestSigning?.profiles?.includes('web-bot-auth'))
+      throw new TypeError('Seller did not advertise the Web Bot Auth request signing profile');
+    return sign;
   };
 
   const binaryEncoding = requestSigningEncodingForVersion(options.adcpVersion ?? ADCP_VERSION);
+  if (signing.profile === 'web-bot-auth') {
+    const { createWebBotAuthFetch, jwkThumbprint } = require('./web-bot-auth') as typeof import('./web-bot-auth');
+    if (isProviderSigningConfig(signing)) {
+      if (!signing.public_key) throw new TypeError('Web Bot Auth providers require public_key');
+      return createWebBotAuthFetch(
+        upstream,
+        { provider: freezeProviderIdentity(signing.provider), publicKey: signing.public_key },
+        { origin: signing.agent_url, shouldSign }
+      );
+    }
+    if (jwkThumbprint(signing.private_key) !== signing.kid)
+      throw new TypeError('Web Bot Auth kid must be the public JWK thumbprint');
+    return createWebBotAuthFetch(
+      upstream,
+      { privateKey: signing.private_key },
+      { origin: signing.agent_url, shouldSign }
+    );
+  }
   const coverContentDigest: CoverContentDigestPredicate = (_url, _init) => {
     if (binaryEncoding === 'rfc8941-base64') return true;
     const entry = getCapability();

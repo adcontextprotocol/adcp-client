@@ -144,7 +144,7 @@ type ClientReportingWebhookInput =
  * request remains a strict {@link CanonicalCreateMediaBuyRequest}.
  */
 export type CanonicalCreateMediaBuyInput = Omit<CanonicalCreateMediaBuyRequest, 'reporting_webhook'> & {
-  reporting_webhook?: ClientReportingWebhookInput;
+  reporting_webhook?: ClientReportingWebhookInput & { signing_profile?: 'adcp/webhook-signing/v1' | 'web-bot-auth' };
 };
 export type CanonicalUpdateMediaBuyRequest = Omit<
   CanonicalCreativeResponse<UpdateMediaBuyRequest>,

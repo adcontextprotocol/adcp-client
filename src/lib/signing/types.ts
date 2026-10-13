@@ -1,6 +1,8 @@
 export type ContentDigestPolicy = 'required' | 'forbidden' | 'either';
 
 export interface VerifierCapability {
+  profiles?: ('adcp/request-signing/v1' | 'web-bot-auth')[];
+  wba_draft_revision?: string;
   supported: boolean;
   covers_content_digest: ContentDigestPolicy;
   required_for: string[];
@@ -49,6 +51,7 @@ export interface RevocationSnapshot {
   next_update: string;
   revoked_kids: string[];
   revoked_jtis: string[];
+  revocation_details?: Record<string, import('../identity-3.3/types').RevocationDetail>;
 }
 
 /**

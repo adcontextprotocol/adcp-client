@@ -25,5 +25,7 @@ declare module 'structured-headers' {
   }
 
   export function parseDictionary(input: string): Dictionary;
+  export function parseItem(input: string): Item;
+  export function serializeItem(input: Item): string;
   export function serializeInnerList(input: InnerList): string;
 }
