@@ -59,8 +59,9 @@ Objects already written stay readable: reads use each chunk's recorded
 `object_ref`, not a re-rendered key. Keep the old binding definition
 configured while revisions reference it, and mark it `readOnly: true`; a
 read-only binding is exempt from the requirement, is never chosen for new
-writes, and is still used for reads and retirement. Snapshot compaction refuses
-to run while a read-only binding's template lacks `{revision_key}`. The
+writes, and is still used for reads and retirement (`readyRowStorage` still
+probes it, so keep its location reachable). Compaction ignores read-only
+bindings, because nothing can adopt through them. The
 reference-checked deletes and the per-object lock are unchanged, because
 header-only revisions still share chunks within an obligation.
 

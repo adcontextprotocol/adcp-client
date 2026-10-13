@@ -458,21 +458,134 @@ describe('object-storage revision rows', { skip: !DATABASE_URL && 'PostgreSQL UR
       (await pool.query(`SELECT row_binding_id FROM adcp_reporting_row_sets WHERE row_set_id = $1`, [id])).rows[0]
         .row_binding_id;
     assert.equal(await bindingOf('rrev_legacy_tpl_next'), 'objects', 'new row sets go to the writable binding');
-    const forced = newStore({
-      bindings: readOnlyBindings,
-      selectRowBinding: () => 'legacy',
-    });
+
+    // A write forced onto the read-only binding fails closed, before any intent or object exists, with a code
+    // that cannot be mistaken for bad rows.
+    const forced = newStore({ bindings: readOnlyBindings, selectRowBinding: () => 'legacy' });
     const again = await createRowStorageFixture({ store: forced, suffix: 'legacy_tpl_forced' });
+    const objectsBefore = listFiles(root).length;
     await assert.rejects(
       () => forced.commitRevision(again.revision('rrev_legacy_tpl_forced', 1, rows.slice(0, 3)), again.lease),
-      error => isCode('INVALID_INPUT')(error) && /read-only/.test(error.message)
+      error => isCode('UNSAFE_BINDING')(error) && /read-only/.test(error.message)
     );
-    // Retirement still works through the read-only binding: deletes are reference-checked by recorded key.
+    assert.equal(listFiles(root).length, objectsBefore, 'nothing was uploaded');
     assert.equal(
-      (await reader.sweepRowWriteIntents()).failed,
-      0,
-      'the read-only binding does not stop the sweep from running'
+      Number(
+        (
+          await pool.query(
+            `SELECT count(*) AS n FROM adcp_reporting_row_write_intents WHERE row_set_id = 'rrev_legacy_tpl_forced'`
+          )
+        ).rows[0].n
+      ),
+      0
     );
+
+    // Retirement still reaches the old object through the read-only binding, by its recorded key.
+    await pool.query(
+      `UPDATE adcp_reporting_obligations
+          SET period_start = period_start - INTERVAL '40 days', period_end = period_end - INTERVAL '40 days',
+              created_at = created_at - INTERVAL '40 days', lease_expires_at = clock_timestamp() - INTERVAL '1 second'
+        WHERE obligation_id = $1`,
+      [fixture.obligation.reporting_obligation_id]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_revisions SET recorded_at = recorded_at - INTERVAL '40 days' WHERE obligation_id = $1`,
+      [fixture.obligation.reporting_obligation_id]
+    );
+    assert.equal(require('node:fs').existsSync(path.join(root, legacyRef)), true);
+    const retired = await reader.retireExpiredPeriods({ statusRetentionDays: 30 });
+    assert.ok(retired.retired >= 1, 'the period written under the older template is retired');
+    assert.equal(require('node:fs').existsSync(path.join(root, legacyRef)), false, 'its object is deleted');
+  });
+
+  test('a read-only binding still has to be a valid template, and nothing else about it is relaxed', () => {
+    for (const keyTemplate of [
+      '{prefix}/{namespace_key}/{chunk_index}',
+      '{prefix}/{namespace_key}/{content_sha256}',
+      '{prefix}/{namespace_key}/{content_sha256}/{chunk_index}/{unknown}',
+      '{prefix}/{account_key}/{content_sha256}/{chunk_index}',
+      '{prefix}/{namespace_key}/../{content_sha256}/{chunk_index}',
+    ]) {
+      assert.throws(
+        () => newStore({ bindings: { legacy: objectBinding({ keyTemplate, readOnly: true }) } }),
+        isCode('INVALID_INPUT'),
+        keyTemplate
+      );
+    }
+  });
+
+  test('a template cannot be changed under a registered binding ID, and readOnly is not part of the identity', async () => {
+    const id = 'identity_check';
+    const original = '{prefix}/{namespace_key}/{revision_key}/{content_sha256}/{chunk_index}';
+    await newStore({ bindings: { [id]: objectBinding({ keyTemplate: original }) } }).readyRowStorage();
+    // Editing the template in place changes the identity digest, so the registered binding refuses it.
+    await assert.rejects(
+      () =>
+        newStore({
+          bindings: {
+            [id]: objectBinding({
+              keyTemplate: '{prefix}/{namespace_key}/{revision_key}/{chunk_index}/{content_sha256}',
+            }),
+          },
+        }).readyRowStorage(),
+      isCode('UNSAFE_BINDING')
+    );
+    // Marking the same definition read-only does not change its identity.
+    await newStore({
+      bindings: { [id]: objectBinding({ keyTemplate: original, readOnly: true }), other: objectBinding() },
+    }).readyRowStorage();
+  });
+
+  test('with only read-only object bindings configured, a write names the real problem', async () => {
+    const readOnlyOnly = newStore({
+      bindings: {
+        legacy: objectBinding({
+          keyTemplate: '{prefix}/{namespace_key}/{content_sha256}/{chunk_index}',
+          readOnly: true,
+        }),
+      },
+    });
+    await readOnlyOnly.readyRowStorage();
+    const fixture = await createRowStorageFixture({ store: readOnlyOnly, suffix: 'all_read_only' });
+    await assert.rejects(
+      () => readOnlyOnly.commitRevision(fixture.revision('rrev_all_read_only', 1, rows.slice(0, 3)), fixture.lease),
+      error => isCode('UNSAFE_BINDING')(error) && /every binding is readOnly/.test(error.message)
+    );
+  });
+
+  test('migrateInlineRows into a read-only binding fails instead of quarantining every row', async () => {
+    const migrating = newStore({
+      bindings: {
+        objects: objectBinding(),
+        legacy: objectBinding({
+          keyTemplate: '{prefix}/{namespace_key}/{content_sha256}/{chunk_index}',
+          readOnly: true,
+        }),
+      },
+    });
+    await migrating.readyRowStorage();
+    // An inline row set to migrate.
+    const inline = new ledger.PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true });
+    const fixture = await createRowStorageFixture({ store: inline, suffix: 'inline_to_read_only' });
+    await inline.commitRevision(fixture.revision('rrev_inline_ro', 1, rows.slice(0, 3)), fixture.lease);
+    await assert.rejects(
+      () => migrating.migrateInlineRows({ bindingId: 'legacy', account_id: fixture.request.account.account_id }),
+      error => isCode('UNSAFE_BINDING')(error)
+    );
+  });
+
+  test('a binding object a host mutates after configuring the store cannot change its template', async () => {
+    const mutable = objectBinding();
+    const store = newStore({ bindings: { objects: mutable } });
+    mutable.keyTemplate = '{prefix}/{namespace_key}/{content_sha256}/{chunk_index}';
+    mutable.readOnly = false;
+    await store.readyRowStorage();
+    const fixture = await createRowStorageFixture({ store, suffix: 'mutated_binding' });
+    await store.commitRevision(fixture.revision('rrev_mutated', 1, rows.slice(0, 3)), fixture.lease);
+    const { object_ref: ref } = (
+      await pool.query(`SELECT object_ref FROM adcp_reporting_row_chunks WHERE row_set_id = 'rrev_mutated'`)
+    ).rows[0];
+    assert.ok(ref.split('/').length > 5, `the validated default template, with its revision segment, was used: ${ref}`);
   });
 
   test('validates bindings before any write', async () => {

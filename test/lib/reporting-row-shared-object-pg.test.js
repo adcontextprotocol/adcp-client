@@ -1,9 +1,9 @@
 /**
  * PostgreSQL integration tests for external row objects shared between row sets.
- * Object keys are unique per row set (every binding's key template includes `{revision_key}`), but
- * header-only revisions share chunks within an obligation and chunk rows written under an older
- * template can name one object from several row sets. These tests re-point chunk rows at a shared
- * object to model that. Every delete path must leave an object another row set still references,
+ * Object keys are unique per row set (every writable binding's key template includes `{revision_key}`),
+ * but header-only revisions share chunks within an obligation (covered by the compaction tests below
+ * and the object-storage suite) and chunk rows written under an older template can name one object
+ * from several row sets. These tests re-point chunk rows at a shared object to model the latter. Every delete path must leave an object another row set still references,
  * and must not leak it once the last reference is gone; a commit that adopts an object another
  * writer created (a retry of the same row set) must prove it is still there under the object lock.
  *
@@ -125,6 +125,7 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     await store.commitAdjustment(adjustmentFor(second), second.fixture.lease);
     const [chunkA] = await chunksOf(first.adjustmentId);
     const [ownB] = await chunksOf(second.adjustmentId);
+    assert.notEqual(ownB.object_ref, chunkA.object_ref, 'identical rows still get a unique key per row set');
     // Point the second row set's chunk at the first's object (location columns are mutable) and drop its own.
     await pool.query(
       `UPDATE adcp_reporting_row_chunks SET object_ref = $2, native_version_ref = $3 WHERE row_set_id = $1`,
@@ -186,7 +187,7 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     if (root) rmSync(root, { recursive: true, force: true });
   });
 
-  test('chunk rows from two obligations can name one object, and both read it', async () => {
+  test('chunk rows re-pointed at one object (as older-template rows can be) both read it', async () => {
     const { first, second, chunkA, chunkB } = await sharedPair();
     assert.deepEqual(chunkB, chunkA);
     assert.ok(existsSync(fileOf(chunkA)));
@@ -220,24 +221,66 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     assert.equal(existsSync(fileOf(chunkA)), false);
   });
 
+  /** Resolves once a session is blocked waiting for an advisory lock. */
+  async function lockWaiter() {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const waiting = await count(`SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`);
+      if (waiting > 0) return;
+      await sleep(25);
+    }
+    assert.fail('no session ever waited on the object lock');
+  }
+
   test('a delete waits for the object lock a committing adopter holds', async () => {
     const { first, second, chunkA } = await sharedPair();
+    // Both periods expire, so only the lock (not a surviving reference) can protect the object.
     await expire(first);
+    await expire(second);
     const lock = `adcp-reporting-object:objects:${chunkA.object_ref}`;
     const client = await pool.connect();
+    let settled = false;
     try {
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [lock]);
-      const retiring = retire();
-      await sleep(400);
-      assert.ok(existsSync(fileOf(chunkA)));
+      const retiring = retire().then(result => {
+        settled = true;
+        return result;
+      });
+      await lockWaiter();
+      assert.equal(settled, false, 'retirement is blocked on the object lock');
+      assert.ok(existsSync(fileOf(chunkA)), 'the object survives while the lock is held');
       await client.query('COMMIT');
-      assert.equal((await retiring).retired, 1);
+      assert.equal((await retiring).retired, 2);
     } finally {
       client.release();
     }
-    assert.ok(existsSync(fileOf(chunkA)), 'the other obligation still references the object');
-    assert.deepEqual(await adjustmentRows(second), current);
+    assert.equal(existsSync(fileOf(chunkA)), false, 'once the lock is released the unreferenced object is deleted');
+  });
+
+  test('an adopting commit takes the object lock before it proves the object', async () => {
+    const { target, objectRef, file } = await preUploaded('adoptlock');
+    const lock = `adcp-reporting-object:objects:${objectRef}`;
+    const client = await pool.connect();
+    let committed = false;
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [lock]);
+      providerCalls = { get: 0, stat: 0 };
+      const committing = store.commitAdjustment(adjustmentFor(target), target.fixture.lease).then(result => {
+        committed = true;
+        return result;
+      });
+      await lockWaiter();
+      assert.equal(committed, false, 'the adopter waits for the object lock');
+      assert.equal(providerCalls.stat, 0, 'it has not proven the object yet');
+      await client.query('COMMIT');
+      assert.equal((await committing).inserted, true);
+    } finally {
+      client.release();
+    }
+    assert.equal(providerCalls.stat, 1);
+    assert.ok(existsSync(file));
+    assert.deepEqual(await adjustmentRows(target), current);
   });
 
   test('the intent sweep leaves an object a committed row set references, and retirement then frees it', async () => {
@@ -384,8 +427,12 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
 
   test('a commit whose adopted object was deleted after adoption fails cleanly and retries', async () => {
     const { target, objectRef, nativeVersionRef, file } = await preUploaded('race');
-    // After the adopter has verified the object, another writer's abandoned upload that created it is swept.
+    // After the adopter has verified the object, an abandoned upload recorded as its creator is swept.
+    // (Keys are unique per row set, so the only other writer that can have created this object is an
+    // earlier attempt at the same row set; the intent below stands in for it.)
+    let hookRan = false;
     afterAdoptedRead = async () => {
+      hookRan = true;
       await pool.query(
         `INSERT INTO adcp_reporting_row_write_intents
            (row_binding_id, account_id, row_set_id, content_sha256, state, owner_token, created_objects, expires_at)
@@ -400,6 +447,7 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
       assert.equal((await store.sweepRowWriteIntents()).objectsDeleted, 1);
     };
     await assert.rejects(() => store.commitAdjustment(adjustmentFor(target), target.fixture.lease), isStateUnavailable);
+    assert.equal(hookRan, true, 'the object was swept between adoption and commit');
     assert.equal(existsSync(file), false);
     assert.equal(
       await count(`SELECT count(*) AS n FROM adcp_reporting_row_chunks WHERE row_set_id = $1`, [target.adjustmentId]),

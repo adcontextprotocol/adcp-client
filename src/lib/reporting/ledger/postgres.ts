@@ -657,9 +657,11 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
   }
 
   /**
-   * Throws `INVALID_INPUT` when any configured object row binding's key template omits
-   * `{revision_key}`, which makes snapshot compaction unsafe (see `compactSupersededSnapshots`).
-   * Called by `compactSupersededSnapshots` and by service construction when compaction is enabled.
+   * Defense in depth for snapshot compaction (see `compactSupersededSnapshots`): throws `INVALID_INPUT`
+   * if a writable object row binding's key template omits `{revision_key}`. Every such binding is
+   * already refused when the store is configured, so this only guards a configuration changed after
+   * construction; `readOnly` bindings are skipped. Called by `compactSupersededSnapshots` and by
+   * service construction when compaction is enabled.
    */
   assertCompactionSafeRowBindings(): void {
     this.rowStorage.assertCompactionSafeKeyTemplates();
@@ -1966,10 +1968,10 @@ ${managedDueArm}       )
       },
       { preBeginAdvisoryLock: accountLock(accountId) }
     );
-    // Phase 2: external bytes, at their recorded versions. A key template
-    // without {revision_key} lets row sets in other obligations or accounts
-    // adopt the same object, so each delete is skipped while a live row set
-    // outside this period still references it (see deleteUnreferencedObjects).
+    // Phase 2: external bytes, at their recorded versions. Row sets written under an older
+    // template without {revision_key} can name an object another obligation or account also
+    // references, so each delete is skipped while a live row set outside this period still
+    // references it (see deleteUnreferencedObjects).
     if (rowStorage) {
       const objects = await this.query<{ row_binding_id: string; object_ref: string; native_version_ref: string }>(
         `SELECT DISTINCT row_set.row_binding_id, chunk.object_ref, chunk.native_version_ref
@@ -2428,9 +2430,9 @@ ${managedDueArm}       )
   /**
    * Delete external row objects, skipping any object another row set still references.
    *
-   * A custom `keyTemplate` need only include `{content_sha256}` and `{chunk_index}`, so row sets
-   * from different obligations or accounts with identical chunk content can share one object (a
-   * create-only write adopts an existing object). An object is therefore deleted only when no
+   * Object keys are unique per row set (every writable template includes `{revision_key}`), but header-only
+   * revisions share chunks within an obligation and rows written under an older template can name one
+   * object from several row sets. An object is therefore deleted only when no
    * chunk of a live (or unavailable) row set outside this operation references the same binding,
    * key and native version, and no other open write intent created it. Row sets already `pruning`
    * or `pruned` do not count: their own operation deletes the object, and counting them would let

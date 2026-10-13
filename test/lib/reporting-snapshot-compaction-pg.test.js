@@ -481,26 +481,19 @@ describe('reporting snapshot compaction', { skip: !DATABASE_URL && 'PostgreSQL U
         providers: { filesystem: ledger.createFilesystemReportingRowObjectProviderV1({ roots: { rows: root } }) },
       },
     });
-  const refusal = error =>
-    error instanceof ledger.ReportingRowStoreError &&
-    error.code === 'INVALID_INPUT' &&
-    /keyTemplate to include \{revision_key\}/.test(error.message);
   const writeRefusal = error =>
     error instanceof ledger.ReportingRowStoreError &&
     error.code === 'INVALID_INPUT' &&
-    /include \{revision_key\}/.test(error.message);
+    /row binding objects: key templates must include \{revision_key\}/.test(error.message);
 
   describe('object key template guard', () => {
     test('a writable binding without {revision_key} is refused when the store is configured', () => {
       assert.throws(() => withTemplate(unsafeTemplate), writeRefusal);
     });
 
-    test('compactSupersededSnapshots refuses before deleting anything when a read-only binding is unsafe', async () => {
-      const { ids } = await buildChain(store, pool, [null, '3 hours', null]);
-      const unsafe = withTemplate(unsafeTemplate, true);
-      await assert.rejects(() => compact({}, unsafe), refusal);
-      assert.deepEqual(await states(ids), ['live', 'live', 'live']);
-      assert.throws(() => unsafe.assertCompactionSafeRowBindings(), refusal);
+    test('a read-only binding for older rows is exempt: nothing can adopt through it', () => {
+      const readOnly = withTemplate(unsafeTemplate, true);
+      readOnly.assertCompactionSafeRowBindings();
     });
 
     test('the default and explicit {revision_key} templates are accepted', async () => {
@@ -623,10 +616,10 @@ describe('reporting snapshot compaction', { skip: !DATABASE_URL && 'PostgreSQL U
       assert.throws(() => createService({ compaction: true }), TypeError);
     });
 
-    test('compaction refuses an unsafe key template at construction, and only when enabled', () => {
-      const unsafe = withTemplate(unsafeTemplate, true);
-      assert.throws(() => createService({ compaction: { enabled: true } }, unsafe), refusal);
-      assert.doesNotThrow(() => createService({ retention: { enabled: true } }, unsafe));
+    test('compaction can be enabled alongside a read-only binding for older rows', () => {
+      const readOnly = withTemplate(unsafeTemplate, true);
+      assert.doesNotThrow(() => createService({ compaction: { enabled: true } }, readOnly));
+      assert.doesNotThrow(() => createService({ retention: { enabled: true } }, readOnly));
       assert.doesNotThrow(() => createService({ compaction: { enabled: true } }));
     });
 

@@ -145,9 +145,10 @@ export function assertReportingRowKeyTemplateV1(
       throw new ReportingRowStoreError(
         'INVALID_INPUT',
         required === '{revision_key}'
-          ? 'key templates must include {revision_key} so every row set has unique object keys; add it to the ' +
-              'template (rows already written stay readable at their recorded object_ref), or mark a binding that only ' +
-              'reads older rows `readOnly`'
+          ? 'key templates must include {revision_key} so every row set has unique object keys. A binding identity ' +
+              'includes its template, so add it under a NEW binding ID and keep the old definition configured with ' +
+              '`readOnly: true` while rows reference it (rows already written stay readable at their recorded ' +
+              'object_ref)'
           : `key templates must include ${required}`
       );
     }

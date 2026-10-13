@@ -395,7 +395,7 @@ await store.readyRowStorage();
   in `REPORTING_ROW_KEY_PLACEHOLDERS`; templates must include
   `{content_sha256}`, `{chunk_index}` and `{revision_key}`. `{revision_key}` is
   required on every writable binding, so each row set writes its own object
-  keys and two row sets never name the same object. The store refuses a
+  keys (it hashes the row-set ID, so two uploads never name the same key). The store refuses a
   template without it when it is configured and again in `readyRowStorage`,
   with `INVALID_INPUT`.
   `{period_date}` renders AdCP's `YYYY-MM-DD`: the calendar date of the period
@@ -413,15 +413,18 @@ await store.readyRowStorage();
   configured while revisions reference it. Mark that old definition
   `readOnly: true` to keep it configured without `{revision_key}`: it is
   exempt from the requirement, never selected for new writes, and still used
-  for reads and retirement. Compaction refuses to run while a read-only
-  binding's template lacks `{revision_key}`.
+  for reads and retirement. A read-only binding is still registered and
+  probed by `readyRowStorage`, so keep its location reachable (and keep
+  enforcing `readOnly` in every process that shares the database: it is not
+  stored).
 - Header-only revisions share their predecessor's chunks within an obligation,
   and chunk rows written under an older template can name one object from
   several row sets. Every delete path (period retirement, compaction and the
   intent sweep) therefore skips an object while a live row set outside the
   operation still references the same binding, key and native version, or an
   open write intent created it. (With unique keys, a create-only write only
-  finds an existing object when a writer retries the same row set.) The reference check and the delete run in one
+  finds an existing object when a writer retries the same row set.) The check
+  and delete run under the per-object lock described below. The reference check and the delete run in one
   transaction under a per-object advisory lock, and a commit that adopts an
   existing object takes the same lock, proves the object is still there and
   holds the lock until its chunk rows commit. A delete that wins the lock makes the adopting
@@ -732,15 +735,15 @@ Compaction records no change-feed row: the revision's metadata did not change,
 and a sink still catching up holds the revision back (above).
 
 Every writable object row binding's `keyTemplate` must include
-`{revision_key}` (the default template does), so compaction only refuses a
-`readOnly` binding for older rows whose template omits it. Deletes now skip objects another
-row set still references (see [Object storage](#object-storage-bindings)),
-so this is defense in depth rather than the only guard: with `{revision_key}`
-no two revisions ever name the same object, so compaction never depends on the
-reference check. The SDK fails closed: `createReliableReportingService` and
-`createPostgresReliableReportingProductionService` throw at construction when
-compaction is enabled and a binding's template omits `{revision_key}`, and
-`compactSupersededSnapshots` throws the same error before deleting anything.
+`{revision_key}` (the default template does), so two uploads never name the
+same object. Deletes skip objects another row set still references (see
+[Object storage](#object-storage-bindings)), which still matters for header-only
+revisions that share chunks within an obligation and for rows written under an
+older template, so compaction does not depend on key uniqueness alone. A
+`readOnly` binding for older rows is exempt: it never takes commits, so nothing
+can adopt through it. The SDK fails closed when the store is configured, and
+`createReliableReportingService`, `createPostgresReliableReportingProductionService`
+and `compactSupersededSnapshots` re-check before compacting.
 
 ### Core-only setup with row storage, change feed and retention
 

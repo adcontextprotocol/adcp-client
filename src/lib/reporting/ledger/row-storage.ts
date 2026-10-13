@@ -266,7 +266,10 @@ export class ReportingRowStorageV1 {
         throw new ReportingRowStoreError('INVALID_INPUT', `row binding ${id} has an invalid credentialRef`);
       }
     }
-    this.bindings = Object.freeze({ ...bindings });
+    // Copy each binding so a host mutating its own objects later cannot change a validated template.
+    this.bindings = Object.freeze(
+      Object.fromEntries(Object.entries(bindings).map(([id, binding]) => [id, Object.freeze({ ...binding })]))
+    ) as Readonly<Record<string, ReportingRowBindingDefinitionV1>>;
     this.assertBindingKeyTemplates();
     this.deploymentNamespace = options.deploymentNamespace ?? 'default';
     if (!this.deploymentNamespace || this.deploymentNamespace.length > 256) {
@@ -307,7 +310,9 @@ export class ReportingRowStorageV1 {
    * with identical chunk content to one object key, and a create-only write adopts an existing
    * object with identical bytes. Compaction deleting that object at the same moment would leave
    * the newer revision without its rows. Every writable binding is already required to include
-   * `{revision_key}`, so only a `readOnly` binding for older rows can still be unsafe here.
+   * `{revision_key}`, so this cannot fail for a validated configuration. A `readOnly` binding is
+   * skipped: it never takes commits, so nothing can adopt through it, and every delete is
+   * reference-checked.
    *
    * Since the reference-checked, per-object-locked delete this is no longer the only guard: every
    * delete path now skips an object another row set still references. It is kept as defense in
@@ -318,6 +323,7 @@ export class ReportingRowStorageV1 {
       .filter(
         ([, binding]) =>
           binding.kind === 'object' &&
+          binding.readOnly !== true &&
           !(binding.keyTemplate ?? REPORTING_ROW_DEFAULT_KEY_TEMPLATE).includes('{revision_key}')
       )
       .map(([id]) => id);
@@ -379,6 +385,12 @@ export class ReportingRowStorageV1 {
       const candidate = this.bindings[id]!;
       return candidate.kind !== 'object' || candidate.readOnly !== true;
     });
+    if (writable.length === 0 && !input.bindingId && !this.options.selectRowBinding) {
+      throw new ReportingRowStoreError(
+        'UNSAFE_BINDING',
+        'no writable row binding is configured: every binding is readOnly'
+      );
+    }
     const bindingId = input.bindingId
       ? input.bindingId
       : this.options.selectRowBinding
@@ -396,8 +408,9 @@ export class ReportingRowStorageV1 {
     const binding = this.bindings[bindingId];
     if (!binding) throw new ReportingRowStoreError('STATE_UNAVAILABLE', `row binding ${bindingId} is not configured`);
     if (binding.kind === 'object' && binding.readOnly === true) {
+      // Not INVALID_INPUT: that code means the rows are bad, and callers quarantine rows on it.
       throw new ReportingRowStoreError(
-        'INVALID_INPUT',
+        'UNSAFE_BINDING',
         `row binding ${bindingId} is read-only and cannot take new row sets`
       );
     }
