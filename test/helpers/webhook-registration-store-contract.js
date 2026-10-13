@@ -58,11 +58,14 @@ function runWebhookRegistrationStoreContract(name, factory, options = {}) {
     const { store } = await createHarness(factory);
     const input = registration('identity33-profile', {
       signingProfile: 'web-bot-auth',
+      deliveryKind: 'reporting',
       delegatedOperatorAuthorization: undefined,
     });
     await store.putIfAbsent(input);
     assert.equal((await store.get(input.agentId, input.operationId)).signingProfile, 'web-bot-auth');
+    assert.equal((await store.get(input.agentId, input.operationId)).deliveryKind, 'reporting');
     await assert.rejects(store.putIfAbsent({ ...input, signingProfile: 'adcp/webhook-signing/v1' }));
+    await assert.rejects(store.putIfAbsent({ ...input, deliveryKind: 'artifact' }));
   });
 
   test(`${name}: full round-trip is immutable and store-owned`, async () => {
@@ -85,6 +88,41 @@ function runWebhookRegistrationStoreContract(name, factory, options = {}) {
 
     const second = await store.get(expected.agentId, expected.operationId);
     assert.deepEqual(second, expected, 'reads must not reflect caller-owned input mutations');
+  });
+
+  test(`${name}: matching delivery routes extend expiry while retaining original provenance and creation time`, async () => {
+    const { store } = await createHarness(factory);
+    const first = registration('delivery-renewal', {
+      deliveryKind: 'reporting',
+      signingProfile: 'web-bot-auth',
+      delegatedOperatorAuthorization: undefined,
+    });
+    delete first.delegatedOperatorAuthorization;
+    await store.putIfAbsent(first);
+    const later = { ...first, createdAt: first.createdAt + 1000, expiresAt: first.expiresAt + 60000 };
+    await store.putIfAbsent(later);
+    assert.deepEqual(await store.get(first.agentId, first.operationId), { ...first, expiresAt: later.expiresAt });
+    await store.putIfAbsent(first);
+    assert.equal((await store.get(first.agentId, first.operationId)).expiresAt, later.expiresAt);
+    await assert.rejects(
+      store.putIfAbsent({ ...later, signingProfile: 'adcp/webhook-signing/v1', expiresAt: later.expiresAt + 60000 })
+    );
+    assert.equal((await store.get(first.agentId, first.operationId)).expiresAt, later.expiresAt);
+  });
+
+  test(`${name}: delivery renewal preserves safe epoch precision`, async () => {
+    const { store } = await createHarness(factory);
+    const first = registration('delivery-upper-epoch', {
+      deliveryKind: 'artifact',
+      signingProfile: 'web-bot-auth',
+      delegatedOperatorAuthorization: undefined,
+      createdAt: 253402300797999,
+      expiresAt: 253402300798999,
+    });
+    delete first.delegatedOperatorAuthorization;
+    await store.putIfAbsent(first);
+    await store.putIfAbsent({ ...first, expiresAt: 253402300799999 });
+    assert.deepEqual(await store.get(first.agentId, first.operationId), { ...first, expiresAt: 253402300799999 });
   });
 
   test(`${name}: agent and operation identifiers form an exact composite identity`, async () => {

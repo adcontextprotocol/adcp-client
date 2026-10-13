@@ -97,8 +97,12 @@ export interface AgentGrantDeniedDetails {
   reason: 'grant_absent';
 }
 export interface Identity33Capabilities {
-  request_signing?: { profiles?: ('adcp/request-signing/v1' | 'web-bot-auth')[] };
-  webhook_signing?: { supported: boolean; profiles?: ('adcp/webhook-signing/v1' | 'web-bot-auth')[] };
+  request_signing?: { profiles?: ('adcp/request-signing/v1' | 'web-bot-auth')[]; wba_draft_revision?: string };
+  webhook_signing?: {
+    supported: boolean;
+    profiles?: ('adcp/webhook-signing/v1' | 'web-bot-auth')[];
+    wba_draft_revision?: string;
+  };
   account?: { agent_onboarding?: AgentOnboarding };
 }
 

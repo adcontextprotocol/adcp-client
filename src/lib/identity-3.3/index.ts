@@ -3,6 +3,7 @@ export * from './trust';
 export * from './lifecycle';
 export * from './revocation';
 export {
+  WEB_BOT_AUTH_DRAFT_REVISION,
   verifyWebBotAuth,
   signWebBotAuth,
   createWebBotAuthFetch,

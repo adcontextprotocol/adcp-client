@@ -24,11 +24,33 @@ interface OriginRevocations extends Record<string, unknown> {
   revoked: Record<string, RevocationDetail>;
 }
 /** CAS-backed stores work with the SDK's PostgresStateStore and custom shared backends. */
-export function createIdentity33StateStores(options: { store: AdcpStateStore; tenantId: string; collection?: string }) {
+export function createIdentity33StateStores(options: {
+  store: AdcpStateStore;
+  tenantId: string;
+  collection?: string;
+  /** Separate capacity for bound and unbound origins. Raising limits preserves every existing fact. */
+  revocationLimits?: {
+    keys?: number;
+    origins?: number;
+    operatorKeys?: number;
+    operatorOrigins?: number;
+    originKeys?: number;
+  };
+}) {
   const { store, tenantId } = options,
     collection = options.collection ?? 'identity33';
   if (!tenantId || tenantId.length > 255 || !store.getWithVersion || !store.putIfMatch)
     throw new TypeError('Identity stores require trusted tenantId and atomic getWithVersion/putIfMatch');
+  const revocationLimits = {
+    keys: 100000,
+    origins: 10000,
+    operatorKeys: 16384,
+    operatorOrigins: 256,
+    originKeys: 16384,
+    ...options.revocationLimits,
+  };
+  if (Object.values(revocationLimits).some(value => !Number.isSafeInteger(value) || value < 1))
+    throw new TypeError('Revocation limits must be positive safe integers');
   const id = (kind: string, key: string) =>
     createHash('sha256')
       .update(JSON.stringify([tenantId, kind, key]))
@@ -36,13 +58,13 @@ export function createIdentity33StateStores(options: { store: AdcpStateStore; te
   async function update<T extends Record<string, unknown>>(
     kind: string,
     key: string,
-    change: (prior: T | null) => T
+    change: (prior: T | null) => T | Promise<T>
   ): Promise<T> {
     const keyId = id(kind, key);
     for (let attempt = 0; attempt < 10; attempt++) {
       const prior = await store.getWithVersion!<T>(collection, keyId);
       if (prior && prior.data.tenantId !== tenantId) throw new IdentityAuthorizationError();
-      const next = change(prior?.data ?? null);
+      const next = await change(prior?.data ?? null);
       if ((await store.putIfMatch!(collection, keyId, next, prior?.version ?? null)).ok) return next;
     }
     throw new IdentityAuthorizationError();
@@ -153,6 +175,51 @@ export function createIdentity33StateStores(options: { store: AdcpStateStore; te
       }));
     },
   };
+  interface RevocationBudget extends Record<string, unknown> {
+    schemaVersion: 1;
+    tenantId: string;
+    origins: Record<string, { operator: string; keys: number; bound?: boolean }>;
+    keys: number;
+    boundKeys?: number;
+  }
+  async function reserveRevocationBudget(origin: string, keys: number): Promise<void> {
+    const operator = eTldPlusOne(origin);
+    const hasBinding = !!(await identity.getBinding(origin));
+    await update<RevocationBudget>('revocation-budget', 'tenant', prior => {
+      const budget = prior ?? { schemaVersion: 1, tenantId, origins: {}, keys: 0 };
+      if (
+        budget.schemaVersion !== 1 ||
+        !budget.origins ||
+        !Number.isSafeInteger(budget.keys) ||
+        (budget.boundKeys !== undefined && !Number.isSafeInteger(budget.boundKeys))
+      )
+        throw new IdentityAuthorizationError();
+      const previous = budget.origins[origin],
+        desired = Math.max(previous?.keys ?? 0, keys),
+        delta = desired - (previous?.keys ?? 0),
+        bound = previous?.bound === true || hasBinding,
+        boundKeys = (budget.boundKeys ?? 0) + (bound ? desired - (previous?.bound ? previous.keys : 0) : 0),
+        totalKeys = budget.keys + delta;
+      const entries = Object.values(budget.origins),
+        pool = entries.filter(entry => (entry.bound === true) === bound),
+        owned = pool.filter(entry => entry.operator === operator),
+        newPoolMember = !previous || (previous.bound === true) !== bound;
+      if (
+        (newPoolMember &&
+          (pool.length >= revocationLimits.origins || owned.length >= revocationLimits.operatorOrigins)) ||
+        (bound ? boundKeys : totalKeys - boundKeys) > revocationLimits.keys ||
+        owned.reduce((sum, entry) => sum + entry.keys, 0) + (newPoolMember ? desired : delta) >
+          revocationLimits.operatorKeys
+      )
+        throw new IdentityAuthorizationError();
+      return {
+        ...budget,
+        keys: totalKeys,
+        boundKeys,
+        origins: { ...budget.origins, [origin]: { operator, keys: desired, bound } },
+      };
+    });
+  }
   const revocations: MonotonicOriginRevocationStore = {
     async get(origin, keyid) {
       origin = canonicalAgentOrigin(origin);
@@ -164,12 +231,14 @@ export function createIdentity33StateStores(options: { store: AdcpStateStore; te
     },
     async merge(origin, snapshot: OriginRevocationSnapshot) {
       origin = canonicalAgentOrigin(origin);
-      await update<OriginRevocations>('revocations', origin, prior => {
+      if (!snapshot.revoked_kids.length) return; // Empty first-contact lists allocate no permanent row.
+      await update<OriginRevocations>('revocations', origin, async prior => {
         if (prior && (prior.schemaVersion !== 1 || prior.origin !== origin || !prior.revoked))
           throw new IdentityAuthorizationError();
         const revoked = { ...(prior?.revoked ?? {}) };
         const additions = new Set(snapshot.revoked_kids.filter(kid => !Object.hasOwn(revoked, kid)));
-        if (Object.keys(revoked).length + additions.size > 16384) throw new IdentityAuthorizationError();
+        if (Object.keys(revoked).length + additions.size > revocationLimits.originKeys)
+          throw new IdentityAuthorizationError();
         for (const kid of snapshot.revoked_kids) {
           const previous = Object.hasOwn(revoked, kid) ? revoked[kid] : undefined;
           Object.defineProperty(revoked, kid, {
@@ -179,6 +248,7 @@ export function createIdentity33StateStores(options: { store: AdcpStateStore; te
             writable: true,
           });
         }
+        await reserveRevocationBudget(origin, Object.keys(revoked).length);
         return { schemaVersion: 1, tenantId, origin, revoked };
       });
     },

@@ -68,6 +68,12 @@ export function validateIdentity33Payload(
           minItems: 1,
           uniqueItems: true,
         };
+      if (
+        tool === 'get_adcp_capabilities' &&
+        ['request_signing', 'webhook_signing'].includes(name) &&
+        object.properties
+      )
+        object.properties.wba_draft_revision = { type: 'string', minLength: 1 };
       for (const [k, value] of Object.entries(object)) if (k !== '$id') walk(value, k);
     }
     walk(schema);

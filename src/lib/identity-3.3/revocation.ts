@@ -66,6 +66,7 @@ export class OriginRevocationResolver {
   private readonly graceUntil = new Map<string, number>();
   private readonly pending = new Map<string, Promise<void>>();
   private readonly failures = new Map<string, number>();
+  private readonly persistenceFailures = new Set<string>();
   constructor(
     private readonly options: {
       directory: import('../signing/web-bot-auth').SignatureDirectoryResolver;
@@ -88,9 +89,10 @@ export class OriginRevocationResolver {
   async isRevoked(originUrl: string, keyid: string): Promise<boolean> {
     const origin = canonicalAgentOrigin(originUrl),
       now = this.now();
-    if (await this.options.store.get(origin, keyid)) return true;
+    if (await this.readStored(origin, keyid)) return true;
     if ((this.freshness.get(origin) ?? 0) <= now) {
       if ((this.failures.get(origin) ?? 0) > now) {
+        if (this.persistenceFailures.has(origin)) throw new WebBotAuthError(403, 'revocation_persistence_failed');
         if ((this.graceUntil.get(origin) ?? 0) > now) return false;
         throw new WebBotAuthError(403, 'revocation_unavailable');
       }
@@ -101,13 +103,19 @@ export class OriginRevocationResolver {
           [...this.pending.keys()].filter(pendingOrigin => eTldPlusOne(pendingOrigin) === eTldPlusOne(origin)).length >=
             2
         ) {
-          if ((this.graceUntil.get(origin) ?? 0) > now) return false;
           throw new WebBotAuthError(403, 'revocation_unavailable');
         }
         promise = this.refresh(origin).catch(error => {
-          if (this.failures.size >= (this.options.maxOrigins ?? 1000))
-            this.failures.delete(this.failures.keys().next().value!);
+          if (this.failures.size >= (this.options.maxOrigins ?? 1000)) {
+            const oldest = this.failures.keys().next().value!;
+            this.failures.delete(oldest);
+            this.persistenceFailures.delete(oldest);
+          }
           this.failures.set(origin, now + 60);
+          if (error instanceof WebBotAuthError && error.reason === 'revocation_persistence_failed') {
+            this.persistenceFailures.add(origin);
+            this.graceUntil.delete(origin);
+          }
           throw error;
         });
         this.pending.set(origin, promise);
@@ -115,12 +123,22 @@ export class OriginRevocationResolver {
       try {
         await promise;
       } catch (error) {
+        if (error instanceof WebBotAuthError && error.reason === 'revocation_persistence_failed') throw error;
         if ((this.graceUntil.get(origin) ?? 0) <= now) throw error;
       } finally {
         if (this.pending.get(origin) === promise) this.pending.delete(origin);
       }
     }
-    return !!(await this.options.store.get(origin, keyid));
+    return !!(await this.readStored(origin, keyid));
+  }
+  private async readStored(origin: string, keyid: string): Promise<RevocationDetail | undefined> {
+    try {
+      return await this.options.store.get(origin, keyid);
+    } catch (cause) {
+      const error = new WebBotAuthError(403, 'revocation_persistence_failed');
+      Object.defineProperty(error, 'cause', { value: cause });
+      throw error;
+    }
   }
   private async refresh(origin: string): Promise<void> {
     try {
@@ -180,7 +198,7 @@ export class OriginRevocationResolver {
           await this.options.directory.resolve(header.kid, origin);
           const proof = this.options.directory.getAuditProof(origin);
           if (!proof || new URL(proof.request.url).origin !== origin) continue;
-          const checked = verifySignatureDirectory(proof, this.now());
+          const checked = verifySignatureDirectory(proof, this.now(), this.options.directory.allowsTestKeys);
           const jwk = checked.keys.find(key => key.kid === header.kid);
           if (!jwk) continue;
           const result = await compactVerify(token, await importJWK(jwk as JWK, header.alg), {
@@ -222,7 +240,13 @@ export class OriginRevocationResolver {
           (detail.invalidity_date && !Number.isFinite(Date.parse(detail.invalidity_date)))
         )
           throw new Error('Invalid revocation detail');
-      await this.options.store.merge(origin, snapshot);
+      try {
+        await this.options.store.merge(origin, snapshot);
+      } catch (cause) {
+        const error = new WebBotAuthError(403, 'revocation_persistence_failed');
+        Object.defineProperty(error, 'cause', { value: cause });
+        throw error;
+      }
       if (!this.freshness.has(origin) && this.freshness.size >= (this.options.maxOrigins ?? 1000)) {
         const oldest = this.freshness.keys().next().value!;
         this.freshness.delete(oldest);
@@ -233,12 +257,18 @@ export class OriginRevocationResolver {
       this.updated.set(origin, updated);
       this.freshness.set(origin, Math.min(next, now + (this.options.pollingIntervalSeconds ?? 300)));
       this.failures.delete(origin);
-    } catch {
-      throw new WebBotAuthError(403, 'revocation_unavailable');
+      this.persistenceFailures.delete(origin);
+    } catch (cause) {
+      if (cause instanceof WebBotAuthError && cause.reason === 'revocation_persistence_failed') throw cause;
+      const error = new WebBotAuthError(403, 'revocation_unavailable');
+      Object.defineProperty(error, 'cause', { value: cause });
+      throw error;
     }
   }
   private now(): number {
-    return (this.options.now ?? (() => Date.now() / 1000))();
+    const now = (this.options.now ?? (() => Date.now() / 1000))();
+    if (!Number.isFinite(now)) throw new WebBotAuthError(403, 'revocation_unavailable');
+    return now;
   }
 }
 
@@ -252,6 +282,7 @@ export async function createSignedOriginRevocationList(
   if (
     issuer !== snapshot.issuer ||
     !Number.isFinite(Date.parse(snapshot.updated)) ||
+    !Number.isFinite(Date.parse(snapshot.next_update)) ||
     Date.parse(snapshot.updated) / 1000 > now ||
     Date.parse(snapshot.next_update) / 1000 <= now ||
     Date.parse(snapshot.next_update) / 1000 > now + 1800 ||

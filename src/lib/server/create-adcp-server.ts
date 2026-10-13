@@ -7,6 +7,7 @@ import {
 import { validateAgentOnboarding } from '../identity-3.3/lifecycle';
 import { isIdentity33UnboundContext } from '../identity-3.3/server';
 import {
+  WEB_BOT_AUTH_DRAFT_REVISION,
   getWebBotAuthAuthorizationFailure,
   webBotAuthToolFailure,
   selectSignatureProfile,
@@ -4490,7 +4491,8 @@ function buildSignedRequestsPreTransport(
           { method: req.method ?? 'POST', url: requestTarget, headers: req.headers, body: req.rawBody ?? '' },
           {
             directory: signedRequests.webBotAuth.directory,
-            deferAuthorizationErrors: true,
+            deferAuthorizationErrors:
+              typeof resolveRequestOperation({ rawBody: req.rawBody, method: req.method, url: req.url }) === 'string',
             replayStore: signedRequests.replayStore,
             isRevoked: signedRequests.webBotAuth.isRevoked,
             requireFreshRevocation: ![
@@ -4505,15 +4507,16 @@ function buildSignedRequestsPreTransport(
         const principal = await signedRequests.webBotAuth.resolvePrincipal(signers, operation);
         const signer = signers[signers.length - 1]!;
         const failed = signers.find(s => s.authorizationFailure);
-        const guardedPrincipal = failed
-          ? {
-              ...principal,
-              extra: {
-                ...principal.extra,
-                webBotAuthAuthorization: { signer: failed, authorizationFailure: failed.authorizationFailure },
-              },
-            }
-          : principal;
+        const guardedPrincipal = {
+          ...principal,
+          extra: {
+            ...principal.extra,
+            webBotAuthAuthorization: {
+              signer: failed ?? signer,
+              ...(failed && { authorizationFailure: failed.authorizationFailure }),
+            },
+          },
+        };
         attachVerifiedSignerAuth(req, guardedPrincipal, {
           keyid: signer.keyid,
           agent_url: signer.origin,
@@ -9339,6 +9342,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       return adcpError('PERMISSION_DENIED', { message: 'Agent authorization failed' });
     }
     return undefined;
+  }
+
+  for (const field of ['request_signing', 'webhook_signing'] as const) {
+    const signing = (
+      capabilitiesData as unknown as Record<string, { profiles?: string[]; wba_draft_revision?: string }>
+    )[field];
+    if (signing?.profiles?.includes('web-bot-auth')) signing.wba_draft_revision = WEB_BOT_AUTH_DRAFT_REVISION;
   }
 
   // Passthrough inputSchema — framework validation is authoritative on

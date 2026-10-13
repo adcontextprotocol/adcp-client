@@ -206,7 +206,8 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
           throw new WebBotAuthError(403, 'raw_body_missing');
         const signers = await verifyWebBotAuth(requestLike, {
           directory: options.webBotAuth.directory,
-          deferAuthorizationErrors: true,
+          deferAuthorizationErrors:
+            typeof options.resolveOperation(req as IncomingMessage & { rawBody?: string }) === 'string',
           replayStore,
           isRevoked: options.webBotAuth.isRevoked,
           now: options.now,
@@ -228,15 +229,16 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
           verified_at: signer.verified_at,
         };
         const failed = signers.find(s => s.authorizationFailure);
-        return failed
-          ? {
-              ...principal,
-              extra: {
-                ...principal.extra,
-                webBotAuthAuthorization: { signer: failed, authorizationFailure: failed.authorizationFailure },
-              },
-            }
-          : principal;
+        return {
+          ...principal,
+          extra: {
+            ...principal.extra,
+            webBotAuthAuthorization: {
+              signer: failed ?? signer,
+              ...(failed && { authorizationFailure: failed.authorizationFailure }),
+            },
+          },
+        };
       }
       result = await verifyRequestSignature(requestLike, {
         capability: options.capability,

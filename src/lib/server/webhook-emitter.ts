@@ -607,7 +607,7 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
       )
         throw new TypeError('Unsupported or unconfigured webhook signing profile');
       const payloadSnapshot = structuredClone(params.payload);
-      if (params.signingProfile === 'web-bot-auth' && params.authentication != null)
+      if (signingProfile === 'web-bot-auth' && params.authentication != null)
         throw new TypeError('Web Bot Auth cannot be combined with legacy webhook authentication');
       const authentication = params.authentication == null ? null : structuredClone(params.authentication);
       const attemptAuthorizationContext =
@@ -749,6 +749,8 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
                 authorization.authentication == null ? null : structuredClone(authorization.authentication);
             }
           }
+          if (attemptSigningProfile === 'web-bot-auth' && attemptAuthentication !== null)
+            throw new TypeError('Web Bot Auth cannot be combined with legacy webhook authentication');
           attempts = attempt;
           await observeAttempt(options, 'attempt', attemptInfo);
           // Observers are awaited and may outlive a recovery lease. Fence the

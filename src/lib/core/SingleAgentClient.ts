@@ -193,6 +193,7 @@ import {
   canonicalDelegatedOperatorAuthorization,
   InMemoryWebhookRegistrationStore,
   parseWebhookRegistration,
+  deliveryWebhookRegistrationId,
   sameWebhookRegistration,
   WebhookRegistrationIntegrityError,
   type WebhookRegistration,
@@ -2422,6 +2423,7 @@ export class SingleAgentClient {
     callbackUrl: string;
     mode: WebhookRegistration['mode'];
     signingProfile?: WebhookRegistration['signingProfile'];
+    deliveryKind?: WebhookRegistration['deliveryKind'];
     delegatedOperatorAuthorization?: DelegatedOperatorAuthorizationContext;
   }): Promise<void> {
     const nowMs = this.config.webhookVerification?.now
@@ -2451,19 +2453,20 @@ export class SingleAgentClient {
     persistedAgentUrl.username = '';
     persistedAgentUrl.password = '';
     persistedAgentUrl.hash = '';
-    const delegatedOperatorAuthorization = this.effectiveDelegatedOperatorAuthorization(
-      args.delegatedOperatorAuthorization
-    );
+    const delegatedOperatorAuthorization = args.deliveryKind
+      ? undefined
+      : this.effectiveDelegatedOperatorAuthorization(args.delegatedOperatorAuthorization);
     const registration: WebhookRegistration = {
       agentId: args.agent.id,
       agentUrl: persistedAgentUrl.toString(),
       protocol: args.agent.protocol,
       operationId: args.operationId,
       taskType: args.taskType,
-      callbackUrl: args.callbackUrl,
+      callbackUrl: args.deliveryKind ? canonicalTargetUri(args.callbackUrl, '3.2') : args.callbackUrl,
       method: 'POST',
       mode: args.mode,
       ...(args.signingProfile && { signingProfile: args.signingProfile }),
+      ...(args.deliveryKind && { deliveryKind: args.deliveryKind }),
       authorizationContextVersion: 1,
       ...(delegatedOperatorAuthorization !== undefined && { delegatedOperatorAuthorization }),
       ...(previewMode && { previewMode }),
@@ -4043,8 +4046,7 @@ export class SingleAgentClient {
   async verifyAndParseWebhook(options: VerifyAndParseWebhookOptions): Promise<WebhookParseResult> {
     const rawBody = options.rawBody ?? rawBodyFromUnknown(options.body);
     const authHeaders = inspectWebhookAuthenticationHeaders(options.headers, options.signature, options.timestamp);
-    const trustedOperationId =
-      options.operationId && options.operationId !== 'unknown' ? options.operationId : undefined;
+    let trustedOperationId = options.operationId && options.operationId !== 'unknown' ? options.operationId : undefined;
     let registration: Readonly<WebhookRegistration> | undefined;
     if (trustedOperationId) {
       let stored: Readonly<WebhookRegistration> | undefined;
@@ -4089,6 +4091,28 @@ export class SingleAgentClient {
             cause,
           };
         }
+      }
+    }
+    if (
+      !registration &&
+      options.requestUrl &&
+      ['media_buy_delivery', 'artifact_delivery'].includes(options.taskType ?? '')
+    ) {
+      const kind = options.taskType === 'artifact_delivery' ? 'artifact' : 'reporting';
+      const routeId = deliveryWebhookRegistrationId(kind, options.requestUrl);
+      try {
+        const stored = await this.webhookRegistrationStore.get(this.agent.id, routeId);
+        if (stored) {
+          registration = parseWebhookRegistration(stored, { agentId: this.agent.id, operationId: routeId });
+          trustedOperationId = routeId;
+        }
+      } catch (cause) {
+        return {
+          ok: false,
+          code: 'webhook_registration_store_unavailable',
+          message: 'Delivery registration state is unavailable',
+          cause,
+        };
       }
     }
     if (registration) {
@@ -4358,6 +4382,61 @@ export class SingleAgentClient {
       return parsedPayload;
     }
 
+    if (registration?.deliveryKind) {
+      const loader = require('../validation/schema-loader') as typeof import('../validation/schema-loader');
+      const body = parsedPayload.payload as Record<string, unknown>;
+      const isReport = registration.deliveryKind === 'reporting';
+      const payload = isReport ? body.result : body;
+      const schemaRef = isReport
+        ? 'media-buy/media-buy-delivery-webhook-result.json'
+        : 'content-standards/artifact-webhook-payload.json';
+      const validator = loader.getSchemaValidatorByRef(schemaRef, this.resolvedAdcpVersion);
+      const envelopeValidator = isReport
+        ? loader.getSchemaValidatorByRef('core/mcp-webhook-payload.json', this.resolvedAdcpVersion)
+        : undefined;
+      if (
+        !validator ||
+        !validator(payload) ||
+        (isReport && (!envelopeValidator || !envelopeValidator(body) || body.task_type !== 'media_buy_delivery'))
+      )
+        return {
+          ok: false,
+          code: 'webhook_envelope_invalid',
+          message: 'Authenticated delivery does not match its registered payload kind',
+        };
+      const taskId =
+        isReport && typeof body.task_id === 'string'
+          ? body.task_id
+          : typeof body.media_buy_id === 'string'
+            ? body.media_buy_id
+            : registration.operationId;
+      const operationId =
+        isReport && typeof body.operation_id === 'string' ? body.operation_id : registration.operationId;
+      const status = isReport && isAdcpStatus(body.status) ? body.status : 'completed';
+      return {
+        ok: true,
+        protocol: registration.protocol,
+        envelope: isReport
+          ? (body as unknown as MCPWebhookPayload)
+          : ({
+              ...body,
+              task_type: registration.taskType,
+              operation_id: operationId,
+              task_id: taskId,
+              status,
+              result: payload,
+            } as MCPWebhookPayload),
+        result: payload,
+        metadata: {
+          taskId,
+          taskType: registration.taskType,
+          operationId,
+          status,
+          ...(typeof body.timestamp === 'string' && { timestamp: body.timestamp }),
+          ...(typeof body.idempotency_key === 'string' && { idempotencyKey: body.idempotency_key }),
+        },
+      };
+    }
     const topLevelTaskType =
       isObjectRecord(parsedPayload.payload) && typeof parsedPayload.payload.task_type === 'string'
         ? parsedPayload.payload.task_type
@@ -7368,7 +7447,7 @@ export class SingleAgentClient {
             // it. Only the library's OWN auto-injection is skipped silently.
             if (consumerReportingWebhook) {
               throw new Error(
-                'reporting_webhook requires an `authentication` block for all of AdCP 3.x, and no credential ' +
+                'reporting_webhook requires `authentication` without positively negotiated 3.3 signed webhooks, and no credential ' +
                   'is available: set `webhookSecret` on the client, or pass `reporting_webhook.authentication` ' +
                   'explicitly. Remove `reporting_webhook` from the request if you do not need automated ' +
                   'delivery reports — the media buy itself does not require it.'

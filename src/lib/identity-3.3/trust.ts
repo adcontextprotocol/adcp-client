@@ -21,8 +21,10 @@ export class IdentityAuthorizationError extends Error {
     this.details = reason === 'grant_absent' ? { scope: 'agent', reason } : undefined;
   }
 }
-function failure(): never {
-  throw new IdentityAuthorizationError();
+function failure(cause?: unknown): never {
+  const error = new IdentityAuthorizationError();
+  if (cause !== undefined) Object.defineProperty(error, 'cause', { value: cause });
+  throw error;
 }
 /** Schema plus semantic checks; publication never includes identity keys. */
 export function validateTrustRecord(value: unknown): asserts value is TrustRecord {
@@ -195,11 +197,11 @@ export class TrustEvaluator {
       this.cache.set(operator, result);
       this.negative.delete(operator);
       return result;
-    } catch {
+    } catch (cause) {
       if (this.negative.size >= (this.options.maxEntries ?? 1000))
         this.negative.delete(this.negative.keys().next().value!);
       this.negative.set(operator, now + 60);
-      return failure();
+      return failure(cause);
     }
   }
 }

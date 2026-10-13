@@ -1,3 +1,4 @@
+import { deliveryWebhookRegistrationId } from './webhook-registration';
 import { isAdcpVersionAtLeast } from '../utils/adcp-version-config';
 function validateIdentity33Payload(
   ...args: Parameters<typeof import('../identity-3.3/validation').validateIdentity33Payload>
@@ -1008,6 +1009,7 @@ export class TaskExecutor {
         callbackUrl: string;
         mode: 'rfc9421' | 'hmac-sha256';
         signingProfile?: 'adcp/webhook-signing/v1' | 'web-bot-auth';
+        deliveryKind?: 'reporting' | 'artifact';
         delegatedOperatorAuthorization?: TaskOptions['delegatedOperatorAuthorization'];
       }) => void | Promise<void>;
       /** Persist fail-closed routing provenance before a durable mutation claim can run. */
@@ -1487,6 +1489,24 @@ export class TaskExecutor {
       });
       throwIfAborted(options.signal);
 
+      const callbackProfile =
+        this.config.signedIdentity33Webhooks?.() &&
+        (webhookUrl || params?.reporting_webhook || params?.artifact_webhook || params?.push_notification_config)
+          ? this.config.webhookSigningProfile?.()
+          : undefined;
+      const applyCallbackProfiles = (args: Record<string, any>): void => {
+        if (!callbackProfile || options.preserveGovernedPayload) return;
+        for (const field of ['push_notification_config', 'reporting_webhook', 'artifact_webhook']) {
+          const callback = args[field];
+          if (
+            callback &&
+            typeof callback === 'object' &&
+            callback.authentication === undefined &&
+            callback.signing_profile === undefined
+          )
+            callback.signing_profile = callbackProfile;
+        }
+      };
       // Run governance check if configured for this tool
       const governanceMiddleware = this.governanceMiddleware;
       if (governanceMiddleware) {
@@ -1508,6 +1528,7 @@ export class TaskExecutor {
               versionEnvelope,
             }).args
           : params;
+        if (modernGovernance) applyCallbackProfiles(governableParams);
         if (await governanceMiddleware.shouldCheck(taskName, governableParams, targetCapabilities)) {
           const sdkInjectedPushConfig =
             modernGovernance && webhookUrl !== undefined && this.config.webhookSecret !== undefined;
@@ -1582,16 +1603,41 @@ export class TaskExecutor {
         wireAdcpVersion,
         versionEnvelope,
       });
-      const signingProfile = preparedCall.args.push_notification_config
-        ? this.config.webhookSigningProfile?.()
-        : undefined;
+      applyCallbackProfiles(preparedCall.args);
+      const signingProfile = options.preserveGovernedPayload ? undefined : callbackProfile;
       if (
         signingProfile &&
         preparedCall.args.push_notification_config &&
         typeof preparedCall.args.push_notification_config === 'object'
       ) {
         const registration = preparedCall.args.push_notification_config as Record<string, unknown>;
-        if (registration.authentication === undefined) registration.signing_profile = signingProfile;
+        if (registration.authentication === undefined && registration.signing_profile === undefined)
+          registration.signing_profile = signingProfile;
+      }
+      if (this.config.signedIdentity33Webhooks?.()) {
+        for (const [field, deliveryKind, taskType] of [
+          ['reporting_webhook', 'reporting', 'media_buy_delivery'],
+          ['artifact_webhook', 'artifact', 'artifact_delivery'],
+        ] as const) {
+          const delivery = preparedCall.args[field] as
+            | { url?: unknown; authentication?: unknown; signing_profile?: unknown }
+            | undefined;
+          if (!delivery || typeof delivery.url !== 'string' || delivery.authentication !== undefined) continue;
+          const selected =
+            delivery.signing_profile ?? (options.preserveGovernedPayload ? 'adcp/webhook-signing/v1' : callbackProfile);
+          if (selected !== 'adcp/webhook-signing/v1' && selected !== 'web-bot-auth')
+            throw new Error('Invalid delivery signing profile');
+          if (!options.preserveGovernedPayload) delivery.signing_profile = selected;
+          await this.config.onWebhookRegistration?.({
+            agent,
+            taskType,
+            operationId: deliveryWebhookRegistrationId(deliveryKind, delivery.url),
+            callbackUrl: delivery.url,
+            mode: 'rfc9421',
+            signingProfile: selected,
+            deliveryKind,
+          });
+        }
       }
       let webhookRegistrationPersisted = false;
       if (webhookUrl && this.config.onWebhookRegistration) {

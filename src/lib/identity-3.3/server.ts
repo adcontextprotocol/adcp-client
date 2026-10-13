@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { registerWebBotAuthLegacyOriginGate } from '../signing/web-bot-auth';
 import { RequestSignatureError } from '../signing/errors';
 import { TaskTypeValues } from '../types/enums.generated';
@@ -71,7 +72,9 @@ export function createIdentity33PrincipalResolver(options: {
         ? createWebBotAuthAuthorizationFailure('identity_not_bound')
         : undefined);
     return {
-      principal: binding?.principalId ?? options.anonymousPrincipal ?? 'anonymous',
+      principal:
+        binding?.principalId ??
+        `${options.anonymousPrincipal ?? 'anonymous'}:${createHash('sha256').update(signer.origin).digest('hex')}`,
       extra: {
         identity33: {
           state: binding ? 'bound' : 'identity-established',
@@ -106,8 +109,9 @@ export function createIdentity33Authorization<TAccount>(options: {
   lifecycle: OriginIdentityLifecycle;
   /** Explicitly declared custom read tools still re-check identity membership. */
   readOnlyTools?: readonly string[];
-  grants: Omit<DemandGrantOptions, 'evaluator'> & Pick<DemandGrantOptions, 'evaluator'>;
-  /** sync_accounts: all proposed rows. Spend: seller-resolved existing account, never request reassignment. */
+  anonymousTools?: readonly string[];
+  grants: DemandGrantOptions;
+  /** Runs before account resolution: look up existing seller accounts read-only. sync_accounts includes all proposed rows. Never trust request reassignment or provision here. */
   resolveClaims: (
     ctx: HandlerContext<TAccount>,
     tool: string,
@@ -123,7 +127,14 @@ export function createIdentity33Authorization<TAccount>(options: {
     const identity = claimFromContext(ctx);
     const failure = getWebBotAuthAuthorizationFailure(ctx.authInfo?.extra);
     if (failure) throw new AdcpError(failure.code, failure);
-    if (!identity) return; // Legacy gates continue to own RFC/bearer callers.
+    if (!identity) {
+      const verified = ctx.authInfo?.extra?.webBotAuthAuthorization as { signer?: unknown } | undefined;
+      if (isVerifiedWebBotSigner(verified?.signer))
+        throw new AdcpError('PERMISSION_DENIED', {
+          message: 'Web Bot Auth resolver did not supply an audited identity claim',
+        });
+      return; // Legacy gates continue to own RFC/bearer callers.
+    }
     if (identity.state === 'identity-established') {
       if (tool === 'sync_principal') {
         const dryRun = !!params && typeof params === 'object' && (params as { dry_run?: unknown }).dry_run === true;
@@ -144,9 +155,14 @@ export function createIdentity33Authorization<TAccount>(options: {
         };
         return;
       }
-      if (tool === 'get_principal' || tool === 'get_adcp_capabilities' || !needsSpendAuthorization(tool, params))
+      if (
+        (
+          options.anonymousTools ?? ['get_principal', 'get_adcp_capabilities', 'list_creative_formats', 'get_products']
+        ).includes(tool) &&
+        !needsSpendAuthorization(tool, params)
+      )
         return;
-      throw new IdentityAuthorizationError();
+      throw new AdcpError('PERMISSION_DENIED', { message: 'Agent identity is not onboarded for this operation' });
     }
     const origin = identity.signer.origin;
     if (IDENTITY_ADMIN_TOOLS.has(tool)) {

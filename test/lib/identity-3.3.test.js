@@ -731,7 +731,7 @@ test('proposal finalization requires grants for a verified unbound identity', as
       buying_mode: 'refine',
       refine: [{ action: 'finalize', scope: 'proposal', proposal_id: 'p1' }],
     }),
-    identity.IdentityAuthorizationError
+    e => e.code === 'PERMISSION_DENIED'
   );
 });
 
@@ -1097,7 +1097,12 @@ test('official MCP client receives deferred identity denials as tool errors; A2A
         },
       });
       const principal = await resolve(signers, reason === 'identity_not_bound' ? 'create_media_buy' : 'get_products');
-      authInfo = { token: '', clientId: principal.principal, scopes: [], extra: principal.extra };
+      authInfo = {
+        token: '',
+        clientId: principal.principal,
+        scopes: [],
+        extra: { ...principal.extra, webBotAuthAuthorization: { signer: signers[signers.length - 1] } },
+      };
       const response = await client.callTool({
         name: 'get_products',
         arguments: { adcp_version: '3.3', buying_mode: 'brief', brief: 'Fixture request' },
@@ -1145,4 +1150,147 @@ test('standard resolver supplies migration fence and preserves explicitly approv
   });
   assert.equal((await lifecycle.getPrincipal(origin)).result.principal_kind, 'operator');
   await assert.rejects(gate(origin), e => e.code === 'request_signature_key_unknown');
+});
+
+test('missing bindings fail closed and empty first-contact lists allocate no revocation rows', async () => {
+  const { trust } = evaluator(baseRecords()),
+    lifecycle = new identity.OriginIdentityLifecycle({ store: new identity.InMemoryOriginIdentityStore(), trust });
+  await assert.rejects(
+    lifecycle.authorizeBound(claim.signerOrigin, { readOnly: true }),
+    identity.IdentityAuthorizationError
+  );
+  const { InMemoryStateStore } = require('../../dist/lib/server/state-store');
+  const backend = new InMemoryStateStore();
+  let writes = 0;
+  const put = backend.putIfMatch.bind(backend);
+  backend.putIfMatch = async (...args) => {
+    writes++;
+    return put(...args);
+  };
+  const stores = identity.createIdentity33StateStores({ store: backend, tenantId: 'quota-test' });
+  await stores.revocations.merge(claim.signerOrigin, {
+    issuer: claim.signerOrigin,
+    updated: '',
+    next_update: '',
+    revoked_kids: [],
+  });
+  assert.equal(writes, 0);
+  await stores.revocations.merge(claim.signerOrigin, {
+    issuer: claim.signerOrigin,
+    updated: '',
+    next_update: '',
+    revoked_kids: ['old'],
+  });
+  assert.equal(writes, 2);
+  await stores.revocations.merge(claim.signerOrigin, {
+    issuer: claim.signerOrigin,
+    updated: '',
+    next_update: '',
+    revoked_kids: [],
+  });
+  assert.equal(writes, 2);
+  assert(await stores.revocations.get(claim.signerOrigin, 'old'));
+});
+
+test('a custom WBA resolver cannot bypass authorization by omitting the identity claim', async () => {
+  const v = vector('positive/001-single-signer-request'),
+    signers = await wba.verifyWebBotAuth(v.request, options(v));
+  const authorize = identity.createIdentity33Authorization({
+    lifecycle: {},
+    grants: {},
+    resolveClaims: async () => {
+      throw new Error('must not resolve claims');
+    },
+  });
+  await assert.rejects(
+    authorize({ authInfo: { extra: { webBotAuthAuthorization: { signer: signers[0] } } } }, 'create_media_buy', {}),
+    e => e.code === 'PERMISSION_DENIED'
+  );
+  await authorize({ authInfo: { extra: {} } }, 'get_products', {});
+});
+
+test('anonymous revocation capacity cannot consume the audited bound pool and facts survive promotion', async () => {
+  const { InMemoryStateStore } = require('../../dist/lib/server/state-store');
+  const stores = identity.createIdentity33StateStores({
+    store: new InMemoryStateStore(),
+    tenantId: 'partitioned-budget',
+    revocationLimits: { keys: 2 },
+  });
+  const anonymous = 'https://anonymous.buyer-7k3q.com',
+    bound = 'https://bound.buyer-7k3q.com';
+  const snapshot = (issuer, kids) => ({ issuer, updated: '', next_update: '', revoked_kids: kids });
+  await stores.revocations.merge(anonymous, snapshot(anonymous, ['a', 'b']));
+  await assert.rejects(
+    stores.revocations.merge('https://other.buyer-7k3q.com', snapshot('https://other.buyer-7k3q.com', ['x']))
+  );
+  const binding = origin => ({
+    origin,
+    operator: 'buyer-7k3q.com',
+    principalId: origin,
+    audit: { approvedBy: 'seller', approvedAt: new Date().toISOString(), reason: 'Audited test binding' },
+  });
+  await stores.identity.bind(binding(bound));
+  await stores.revocations.merge(bound, snapshot(bound, ['c', 'd']));
+  assert(await stores.revocations.get(bound, 'd'));
+  assert(await stores.revocations.get(anonymous, 'a'));
+  await stores.identity.bind(binding(anonymous));
+  await assert.rejects(stores.revocations.merge(anonymous, snapshot(anonymous, ['a', 'b'])));
+  assert(await stores.revocations.get(anonymous, 'a'));
+});
+
+test('revocation persistence failure never inherits outage grace or the read exception', async () => {
+  const pair = generateKeyPairSync('ed25519'),
+    priv = pair.privateKey.export({ format: 'jwk' });
+  priv.kid = wba.jwkThumbprint(priv);
+  const origin = 'https://agent.example.com',
+    started = Date.now() / 1000;
+  let clock = started,
+    rejectWrites = false;
+  const proof = await wba.createSignedSignatureDirectory(origin, [{ privateKey: priv }], { now: () => started });
+  const store = new identity.InMemoryOriginRevocationStore(),
+    merge = store.merge.bind(store);
+  store.merge = async (...args) => {
+    if (rejectWrites) throw new Error('storage full');
+    await merge(...args);
+  };
+  const resolver = new identity.OriginRevocationResolver({
+    now: () => clock,
+    pollingIntervalSeconds: 60,
+    directory: resolverFromProof(proof, started),
+    store,
+    fetchOptions: {
+      trustedFetchFn: async () =>
+        new Response(
+          await identity.createSignedOriginRevocationList(
+            {
+              issuer: origin,
+              updated: new Date(started * 1000).toISOString(),
+              next_update: new Date((clock + 60) * 1000).toISOString(),
+              revoked_kids: ['old'],
+            },
+            priv
+          )
+        ),
+    },
+  });
+  assert.equal(await resolver.isRevoked(origin, 'new'), false);
+  clock += 61;
+  rejectWrites = true;
+  for (let n = 0; n < 2; n++)
+    await assert.rejects(
+      resolver.isRevoked(origin, 'new'),
+      e => e.reason === 'revocation_persistence_failed' && !e.headers['Accept-Signature']
+    );
+  assert.equal(await resolver.isRevoked(origin, 'old'), true);
+  const v = vector('positive/001-single-signer-request');
+  await assert.rejects(
+    wba.verifyWebBotAuth(v.request, {
+      ...options(v),
+      requireFreshRevocation: false,
+      isRevoked: async () => {
+        throw new wba.WebBotAuthError(403, 'revocation_persistence_failed');
+      },
+    }),
+    e => e.reason === 'revocation_persistence_failed'
+  );
 });

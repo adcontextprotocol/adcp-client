@@ -226,7 +226,7 @@ export class OriginIdentityLifecycle {
   ): Promise<OriginBinding | undefined> {
     const origin = canonicalAgentOrigin(originUrl);
     const binding = await this.options.store.getBinding(origin);
-    if (!binding) return undefined;
+    if (!binding) throw new IdentityAuthorizationError();
     const trust = await this.options.trust.match(origin, 'adcp:buying');
     if (binding.operator !== trust.operator) throw new IdentityAuthorizationError();
     const relationship = (await this.options.store.getApplication(origin))?.relationship;

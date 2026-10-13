@@ -28,6 +28,7 @@ import type { AdcpJsonWebKey, AdcpSignAlg } from './types';
 import type { SigningProvider } from './provider';
 
 export const WEB_BOT_AUTH_PROFILE = 'web-bot-auth' as const;
+export const WEB_BOT_AUTH_DRAFT_REVISION = 'draft-ietf-webbotauth-httpsig-protocol-00' as const;
 export const SIGNATURE_DIRECTORY_PATH = '/.well-known/http-message-signatures-directory';
 export const SIGNATURE_DIRECTORY_MEDIA_TYPE = 'application/http-message-signatures-directory+json';
 const DIRECTORY_TAG = 'http-message-signatures-directory';
@@ -42,12 +43,16 @@ const TEST_KIDS = new Set([
 export class WebBotAuthError extends Error {
   readonly headers: Record<string, string>;
   get body(): Record<string, unknown> {
-    if (['key_revoked', 'identity_not_bound', 'revocation_unavailable'].includes(this.reason))
+    if (
+      ['key_revoked', 'identity_not_bound', 'revocation_unavailable', 'revocation_persistence_failed'].includes(
+        this.reason
+      )
+    )
       return {
         adcp_error: {
-          code: this.reason === 'revocation_unavailable' ? 'SERVICE_UNAVAILABLE' : 'PERMISSION_DENIED',
+          code: this.reason.startsWith('revocation_') ? 'SERVICE_UNAVAILABLE' : 'PERMISSION_DENIED',
           message: this.message,
-          recovery: this.reason === 'revocation_unavailable' ? 'transient' : 'correctable',
+          recovery: this.reason.startsWith('revocation_') ? 'transient' : 'correctable',
         },
       };
     return { error: this.message };
@@ -66,7 +71,13 @@ export class WebBotAuthError extends Error {
     this.name = 'WebBotAuthError';
     this.headers =
       status === 403 &&
-      !['key_revoked', 'identity_not_bound', 'revocation_unavailable', 'profile_disabled'].includes(reason)
+      ![
+        'key_revoked',
+        'identity_not_bound',
+        'revocation_unavailable',
+        'revocation_persistence_failed',
+        'profile_disabled',
+      ].includes(reason)
         ? {
             'Accept-Signature':
               'sig1=("@method" "@target-uri" "@authority" "content-type" "content-digest" "signature-agent";key="sig1");created;expires;nonce;keyid;tag="web-bot-auth"',
@@ -256,15 +267,17 @@ export function createWebBotAuthAuthorizationFailure(
 export function getWebBotAuthAuthorizationFailure(
   extra: Record<string, unknown> | undefined
 ): WebBotAuthAuthorizationFailure | undefined {
-  const claim = (extra?.webBotAuthAuthorization ?? extra?.identity33) as
-    | { signer?: unknown; authorizationFailure?: WebBotAuthAuthorizationFailure }
-    | undefined;
-  return claim &&
-    isVerifiedWebBotSigner(claim.signer) &&
-    claim.authorizationFailure &&
-    authorizationFailures.has(claim.authorizationFailure)
-    ? claim.authorizationFailure
-    : undefined;
+  for (const value of [extra?.webBotAuthAuthorization, extra?.identity33]) {
+    const claim = value as { signer?: unknown; authorizationFailure?: WebBotAuthAuthorizationFailure } | undefined;
+    if (
+      claim &&
+      isVerifiedWebBotSigner(claim.signer) &&
+      claim.authorizationFailure &&
+      authorizationFailures.has(claim.authorizationFailure)
+    )
+      return claim.authorizationFailure;
+  }
+  return undefined;
 }
 export function webBotAuthToolFailure(
   failure: WebBotAuthAuthorizationFailure,
@@ -318,6 +331,7 @@ export async function verifyWebBotAuth(
   try {
     if (!(options.directory instanceof SignatureDirectoryResolver)) denied('directory_unverified');
     const now = Math.floor((options.now ?? (() => Date.now() / 1000))());
+    if (!Number.isFinite(now)) denied('verification_unavailable');
     const all = inputs(request.headers);
     const candidates = all.filter(input => input.params.tag === WEB_BOT_AUTH_PROFILE);
     const selected: ParsedSignatureInput[] = [];
@@ -387,7 +401,11 @@ export async function verifyWebBotAuth(
       await options.directory.resolve(keyid, origin);
       const proof = options.directory.getAuditProof(origin);
       if (!proof || new URL(proof.request.url).origin !== origin) denied('directory_origin');
-      const checkedDirectory = verifySignatureDirectory(proof, now, options.allowTestKeys);
+      const checkedDirectory = verifySignatureDirectory(
+        proof,
+        now,
+        options.allowTestKeys ?? options.directory.allowsTestKeys
+      );
       const key = checkedDirectory.keys.find(key => key.kid === keyid);
       if (!key || jwkThumbprint(key) !== keyid) denied('key');
       verifyBytes(input, request, key);
@@ -404,10 +422,12 @@ export async function verifyWebBotAuth(
         } else if (
           options.deferAuthorizationErrors &&
           error instanceof WebBotAuthError &&
-          ['key_revoked', 'revocation_unavailable'].includes(error.reason)
+          ['key_revoked', 'revocation_unavailable', 'revocation_persistence_failed'].includes(error.reason)
         )
           authorizationFailure = createWebBotAuthAuthorizationFailure(
-            error.reason as 'key_revoked' | 'revocation_unavailable'
+            error.reason === 'revocation_persistence_failed'
+              ? 'revocation_unavailable'
+              : (error.reason as 'key_revoked' | 'revocation_unavailable')
           );
         else throw error;
       }
@@ -465,6 +485,7 @@ export function verifySignatureDirectory(
   allowTestKeys = false
 ): VerifiedSignatureDirectory {
   try {
+    if (!Number.isFinite(now)) denied('directory_invalid');
     const origin = canonicalAgentOrigin(response.request.url);
     if (
       response.request.url !== origin + SIGNATURE_DIRECTORY_PATH ||
@@ -609,6 +630,9 @@ export class SignatureDirectoryResolver implements JwksResolver {
       throw error instanceof WebBotAuthError ? error : new WebBotAuthError(403, 'directory_unavailable');
     }
   }
+  get allowsTestKeys(): boolean {
+    return this.options.allowTestKeys === true && ['test', 'development'].includes(process.env.NODE_ENV ?? '');
+  }
   getAuditProof(origin: string): ResponseLike | undefined {
     return this.cache.get(receivedAgentOrigin(origin))?.directory.proof;
   }
@@ -704,6 +728,8 @@ export async function createSignedSignatureDirectory(
   const origin = canonicalAgentOrigin(originUrl);
   const now = Math.floor((options.now ?? (() => Date.now() / 1000))());
   const lifetime = options.lifetimeSeconds ?? 86_400;
+  if (!Number.isFinite(now) || !Number.isSafeInteger(lifetime) || lifetime < 1 || !Number.isSafeInteger(now + lifetime))
+    throw new TypeError('Invalid directory proof clock or lifetime');
   if (!signingKeys.length || signingKeys.length > 64 || !Number.isInteger(lifetime) || lifetime < 1)
     throw new TypeError('Invalid directory keys or lifetime');
   const keys = signingKeys.map(key => {

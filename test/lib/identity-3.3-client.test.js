@@ -291,3 +291,198 @@ test('server rejects a WBA-wide webhook default and unenabled WBA emission; RFC 
     webhookRegistrationFingerprint({ ...registration, signingProfile: 'adcp/webhook-signing/v1' })
   );
 });
+
+test('update and artifact callbacks persist destination profile before dispatch and authenticate without task routing', async t => {
+  const previousEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'test';
+  t.after(() => {
+    if (previousEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousEnv;
+  });
+  const { generateKeyPairSync } = require('crypto'),
+    pair = generateKeyPairSync('ed25519');
+  const priv = pair.privateKey.export({ format: 'jwk' });
+  const identity = require('../../dist/lib/identity-3.3');
+  priv.kid = identity.jwkThumbprint(priv);
+  const proof = await identity.createSignedSignatureDirectory('https://seller.example.com', [{ privateKey: priv }]);
+  const {
+    InMemoryWebhookRegistrationStore,
+    deliveryWebhookRegistrationId,
+  } = require('../../dist/lib/core/webhook-registration');
+  const store = new InMemoryWebhookRegistrationStore(),
+    original = ProtocolClient.callTool,
+    seen = [];
+  const reportUrl = 'https://buyer.example.com/reports',
+    artifactUrl = 'https://buyer.example.com/artifacts';
+  const caps = {
+    version: 'v3',
+    majorVersions: [3],
+    servedVersion: '3.3',
+    supportedVersions: ['3.3'],
+    protocols: ['media_buy'],
+    features: {},
+    extensions: [],
+    _synthetic: false,
+    _raw: { webhook_signing: { supported: true, profiles: ['adcp/webhook-signing/v1', 'web-bot-auth'] } },
+  };
+  const config = {
+    experimentalIdentity33: true,
+    webhookSigningProfile: 'web-bot-auth',
+    webhookRegistrationStore: store,
+    validateFeatures: false,
+    validation: { requests: 'off', responses: 'off' },
+    webhookVerification: {
+      webBotAuth: {
+        directory: new identity.SignatureDirectoryResolver({
+          fetchOptions: {
+            trustedFetchFn: async () => new Response(proof.body, { status: 200, headers: proof.headers }),
+          },
+        }),
+        isRevoked: async () => false,
+      },
+    },
+  };
+  const client = new SingleAgentClient(agent, config);
+  client.cachedCapabilities = caps;
+  client.getCapabilities = async () => caps;
+  client.ensureEndpointDiscovered = async () => agent;
+  client.detectServerVersion = async () => 'v3';
+  ProtocolClient.callTool = async (_agent, task, args) => {
+    for (const [kind, url] of [
+      ['reporting', reportUrl],
+      ['artifact', artifactUrl],
+    ]) {
+      const registration = await store.get(agent.id, deliveryWebhookRegistrationId(kind, url));
+      assert.equal(registration.signingProfile, 'web-bot-auth');
+      assert.equal(registration.deliveryKind, kind);
+    }
+    seen.push({ task, args });
+    return { status: 'completed', media_buy_id: 'buy', packages: [] };
+  };
+  try {
+    await client.updateMediaBuy({
+      media_buy_id: 'buy',
+      account: { account_id: 'acc' },
+      reporting_webhook: { url: reportUrl },
+      artifact_webhook: { url: artifactUrl },
+    });
+    assert.equal(seen[0].task, 'update_media_buy');
+    const receiver = new SingleAgentClient(agent, config),
+      payload = {
+        idempotency_key: 'artifact-delivery-unique-key',
+        media_buy_id: 'buy',
+        batch_id: 'batch',
+        timestamp: new Date().toISOString(),
+        artifacts: [],
+      },
+      body = JSON.stringify(payload);
+    const headers = await identity.signWebBotAuth(
+      { method: 'POST', url: artifactUrl, headers: { 'content-type': 'application/json' }, body },
+      { privateKey: priv },
+      { origin: 'https://seller.example.com' }
+    );
+    const parsed = await receiver.verifyAndParseWebhook({
+      rawBody: body,
+      headers,
+      taskType: 'artifact_delivery',
+      requestMethod: 'POST',
+      requestUrl: artifactUrl,
+    });
+    assert.equal(parsed.ok, true, JSON.stringify(parsed));
+    assert.deepEqual(parsed.result, payload);
+    const report = {
+      notification_type: 'scheduled',
+      reporting_period: { start: '2026-10-01T00:00:00Z', end: '2026-10-02T00:00:00Z' },
+      media_buy_deliveries: [],
+    };
+    const reportEnvelope = {
+      idempotency_key: 'reporting-delivery-unique-key',
+      operation_id: 'report-op',
+      task_id: 'report-task',
+      task_type: 'media_buy_delivery',
+      status: 'completed',
+      timestamp: new Date().toISOString(),
+      result: report,
+    };
+    const reportBody = JSON.stringify(reportEnvelope),
+      reportHeaders = await identity.signWebBotAuth(
+        { method: 'POST', url: reportUrl, headers: { 'content-type': 'application/json' }, body: reportBody },
+        { privateKey: priv },
+        { origin: 'https://seller.example.com' }
+      );
+    const parsedReport = await receiver.verifyAndParseWebhook({
+      rawBody: reportBody,
+      headers: reportHeaders,
+      taskType: 'media_buy_delivery',
+      requestMethod: 'POST',
+      requestUrl: reportUrl,
+    });
+    assert.equal(parsedReport.ok, true, JSON.stringify(parsedReport));
+    assert.deepEqual(parsedReport.result, report);
+    assert.deepEqual(parsedReport.envelope, reportEnvelope);
+    const preservedUrl = 'https://buyer.example.com/approved-report';
+    ProtocolClient.callTool = async (_agent, _task, args) => {
+      assert.deepEqual(args.reporting_webhook, { url: preservedUrl });
+      const registration = await store.get(agent.id, deliveryWebhookRegistrationId('reporting', preservedUrl));
+      assert.equal(registration.signingProfile, 'adcp/webhook-signing/v1');
+      return { status: 'completed', media_buy_id: 'buy', packages: [] };
+    };
+    await client.updateMediaBuyLegacy(
+      { media_buy_id: 'buy', account: { account_id: 'acc' }, reporting_webhook: { url: preservedUrl } },
+      undefined,
+      { preserveGovernedPayload: true }
+    );
+  } finally {
+    ProtocolClient.callTool = original;
+  }
+});
+
+test('resolved webhook profiles cannot mix WBA with legacy credentials at either transport boundary', async t => {
+  const previousEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'test';
+  t.after(() => {
+    if (previousEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousEnv;
+  });
+  const { createWebhookEmitter } = require('../../dist/lib/server/webhook-emitter');
+  let effects = 0;
+  const base = {
+    signerProvider: {
+      getKey: async () => {
+        throw new Error('must not select signing key');
+      },
+    },
+    webBotAuth: {},
+    fetch: async () => {
+      effects++;
+      return { status: 204 };
+    },
+  };
+  const payload = {
+    task_id: 'task',
+    task_type: 'create_media_buy',
+    operation_id: 'operation',
+    status: 'completed',
+    result: {},
+  };
+  const emit = {
+    url: 'https://buyer.example.com/webhook',
+    payload,
+    delivery_id: 'profile-conflict',
+    authentication: { type: 'bearer', token: 'legacy-test-token' },
+  };
+  await assert.rejects(
+    createWebhookEmitter({ ...base, signingProfile: 'web-bot-auth' }).emit(emit),
+    /cannot be combined/
+  );
+  const emitter = createWebhookEmitter({
+    ...base,
+    authorizeAttempt: async () => ({
+      decision: 'allow',
+      signingProfile: 'web-bot-auth',
+      authentication: { type: 'bearer', token: 'override-test-token' },
+    }),
+  });
+  await assert.rejects(emitter.emit({ ...emit, authentication: null }), /cannot be combined/);
+  assert.equal(effects, 0);
+});
