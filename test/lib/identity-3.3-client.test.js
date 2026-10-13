@@ -2,7 +2,6 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { SingleAgentClient } = require('../../dist/lib/core/SingleAgentClient');
 const { ProtocolClient } = require('../../dist/lib/protocols');
-const { normalizeV3Capabilities } = require('../../dist/lib/utils/capabilities');
 const { validateIdentity33Payload } = require('../../dist/lib/identity-3.3');
 const agent = { id: 'identity33-seller', name: 'Seller', agent_uri: 'https://seller.example.com/mcp', protocol: 'mcp' };
 function params(reporting_webhook) {

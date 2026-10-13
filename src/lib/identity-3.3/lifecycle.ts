@@ -1,5 +1,4 @@
 import type { PrincipalKind } from '../server/principal/types';
-import { AdcpError } from '../server/decisioning/async-outcome';
 import { randomUUID } from 'crypto';
 import { parse as parseTld } from 'tldts';
 import { canonicalAgentOrigin } from '../signing/agent-resolver/canonicalize';

@@ -6,13 +6,6 @@ import {
 function loadWebBotAuth(): typeof import('../signing/web-bot-auth') {
   return require('../signing/web-bot-auth') as typeof import('../signing/web-bot-auth');
 }
-function validateIdentity33Payload(
-  ...args: Parameters<typeof import('../identity-3.3/validation').validateIdentity33Payload>
-): ReturnType<typeof import('../identity-3.3/validation').validateIdentity33Payload> {
-  return (
-    require('../identity-3.3/validation') as typeof import('../identity-3.3/validation')
-  ).validateIdentity33Payload(...args);
-}
 import { canonicalAgentOrigin } from '../signing/agent-resolver/canonicalize';
 import {
   annotateProductsSupplyPaths,
@@ -7466,7 +7459,7 @@ export class SingleAgentClient {
             // it. Only the library's OWN auto-injection is skipped silently.
             if (consumerReportingWebhook) {
               throw new Error(
-                'reporting_webhook requires `authentication` without positively negotiated 3.3 signed webhooks, and no credential ' +
+                'reporting_webhook requires an `authentication` block without positively negotiated 3.3 signed webhooks, and no credential ' +
                   'is available: set `webhookSecret` on the client, or pass `reporting_webhook.authentication` ' +
                   'explicitly. Remove `reporting_webhook` from the request if you do not need automated ' +
                   'delivery reports — the media buy itself does not require it.'
