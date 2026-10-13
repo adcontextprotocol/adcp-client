@@ -1896,6 +1896,7 @@ export {
   type CanonicalFormatLegacyResolver,
   type CanonicalFormatLegacyResolutionContext,
   type CanonicalFormatLegacyRoute,
+  type LegacyRoutesForProductOptions,
   type AdditiveCanonicalProduct,
   type CanonicalOnlyProduct,
   type CanonicalCreativeAsset,

@@ -325,6 +325,8 @@ import {
 import type { LegacyFormatConverter } from '../v2/projection/v1-to-v2';
 import {
   formatOptionOriginFromRoutes,
+  sameFormatOptionRef,
+  sellerDeclaredFormatOptionRefs,
   undeclaredFormatOptionSelector,
   type FormatOptionOrigin,
 } from '../v2/projection/legacy-routes';
@@ -2717,12 +2719,7 @@ export class SingleAgentClient {
   }
 
   private sameCanonicalOptionRef(left: CanonicalLegacyOptionRef, right: CanonicalLegacyOptionRef): boolean {
-    return (
-      left.scope === right.scope &&
-      left.format_option_id === right.format_option_id &&
-      (left.scope !== 'publisher' ||
-        (right.scope === 'publisher' && left.publisher_domain.toLowerCase() === right.publisher_domain.toLowerCase()))
-    );
+    return sameFormatOptionRef(left, right);
   }
 
   private rememberCanonicalLegacyRoute(key: string, route: CanonicalLegacyRoute): void {
@@ -2812,22 +2809,7 @@ export class SingleAgentClient {
       if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
       const product = value as Record<string, unknown>;
       if (typeof product.product_id !== 'string') continue;
-      const refs: CanonicalLegacyOptionRef[] = [];
-      for (const optionValue of Array.isArray(product.format_options) ? product.format_options : []) {
-        if (!optionValue || typeof optionValue !== 'object' || Array.isArray(optionValue)) continue;
-        const option = optionValue as Record<string, unknown>;
-        if (typeof option.format_option_id !== 'string') continue;
-        refs.push(
-          typeof option.publisher_domain === 'string'
-            ? {
-                scope: 'publisher',
-                publisher_domain: option.publisher_domain,
-                format_option_id: option.format_option_id,
-              }
-            : { scope: 'product', format_option_id: option.format_option_id }
-        );
-      }
-      declared.set(product.product_id, refs);
+      declared.set(product.product_id, sellerDeclaredFormatOptionRefs(product));
     }
     return declared;
   }
