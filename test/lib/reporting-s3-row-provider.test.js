@@ -660,11 +660,11 @@ describe('S3-compatible emulator', { skip: !ENDPOINT && 'REPORTING_S3_TEST_ENDPO
         continue;
       }
       const passed = await runReportingRowObjectProviderConformanceV1(provider, { location, prefix: 'adcp-rows' });
-      assert.equal(passed.length, 7);
+      assert.equal(passed.length, 8);
       const created = await provider.putIfAbsent(
         {
           location,
-          key: 'adcp-rows/ns/emulator.jsonl',
+          objectRef: 'adcp-rows/ns/emulator.jsonl',
           bytes: Buffer.from('{"a":1}\n'),
           contentType: 'application/x-ndjson',
           metadata: { 'adcp-installation': 'emulator' },
@@ -673,12 +673,12 @@ describe('S3-compatible emulator', { skip: !ENDPOINT && 'REPORTING_S3_TEST_ENDPO
       );
       assert.doesNotMatch(created.nativeVersionRef, /^"/);
       const foreign = created.nativeVersionRef.replace(/.$/, c => (c === 'a' ? 'b' : 'a'));
-      const pinned = { location, key: 'adcp-rows/ns/emulator.jsonl' };
+      const pinned = { location, objectRef: 'adcp-rows/ns/emulator.jsonl' };
       assert.equal(await provider.get({ ...pinned, nativeVersionRef: foreign, maxBytes: 100 }, signal()), null);
       assert.equal(await provider.delete({ ...pinned, nativeVersionRef: foreign }, signal()), 'absent');
       assert.equal(
         await provider.delete(
-          { location, key: 'adcp-rows/ns/emulator.jsonl', nativeVersionRef: created.nativeVersionRef },
+          { location, objectRef: 'adcp-rows/ns/emulator.jsonl', nativeVersionRef: created.nativeVersionRef },
           signal()
         ),
         'deleted'
