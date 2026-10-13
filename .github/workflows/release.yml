@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     branches:
-      - main
+      - release/15.9.0
 
 permissions:
   contents: read
@@ -18,6 +18,7 @@ jobs:
   release:
     name: Release
     needs: reference-seller-interop
+    if: github.ref == 'refs/heads/release/15.9.0'
     concurrency:
       # npm publishing and dist-tag updates mutate package-global state.
       # Serialize those mutations across main and maintenance releases.
@@ -49,12 +50,24 @@ jobs:
         uses: actions/checkout@v5
         with:
           token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
           node-version: 24
           registry-url: 'https://registry.npmjs.org'
+
+      - name: Verify isolated release snapshot
+        run: |
+          node -e "if (require('./package.json').version !== '15.9.0') throw new Error('This branch may only publish SDK 15.9.0')"
+          # The version commit is immutable; only the five qualification workflows may differ.
+          git diff --exit-code 9343eb2dbdd28b7d8d32822f2b2b2a50a9ef465a HEAD -- . \
+            ':(exclude).github/workflows/release.yml' \
+            ':(exclude).github/workflows/ci.yml' \
+            ':(exclude).github/workflows/codeql.yml' \
+            ':(exclude).github/workflows/interop-python.yml' \
+            ':(exclude).github/workflows/changeset-check.yml'
 
       - name: Install Dependencies
         run: npm ci
@@ -64,6 +77,27 @@ jobs:
 
       - name: Build
         run: npm run build:lib
+
+      - name: Verify npm publication scope and latest
+        run: |
+          node <<'NODE'
+          const { execFileSync } = require('node:child_process');
+          const { readdirSync } = require('node:fs');
+          const semver = require('semver');
+          const view = (spec) => JSON.parse(execFileSync('npm', ['view', spec, 'version', '--json'], { encoding: 'utf8' }));
+          const latest = view('@adcp/sdk@latest');
+          if (!semver.valid(latest) || semver.gt(latest, '15.9.0')) {
+            throw new Error(`Refusing to replace SDK latest ${latest} with 15.9.0`);
+          }
+          for (const dir of readdirSync('./packages', { withFileTypes: true })) {
+            if (!dir.isDirectory()) continue;
+            const pkg = require(`./packages/${dir.name}/package.json`);
+            if (pkg.private || pkg.name === '@adcp/client') continue;
+            if (view(`${pkg.name}@${pkg.version}`) !== pkg.version) {
+              throw new Error(`Only SDK 15.9.0 may be newly published: ${pkg.name}@${pkg.version} is missing`);
+            }
+          }
+          NODE
 
       - name: Create Release Pull Request or Publish to npm
         id: changesets
