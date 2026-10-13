@@ -631,6 +631,7 @@
     "examples/reliable-reporting-service/README.md",
     "examples/reliable-reporting-buyer/**/*",
     "examples/seller-3.2-starter.ts",
+    "examples/account-sync-contract.yaml",
     "examples/supply-path-verification.ts",
     "examples/wholesale-feed-sync.ts",
     "examples/comply-controller-seller.ts",

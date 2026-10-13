@@ -820,6 +820,20 @@ export {
   defaultImplicitKeyFn,
   type ImplicitAccountStoreOptions,
 } from '../adapters/implicit-account-store';
+export {
+  createKeyedAccountStore,
+  keyedAccountMemoryBackend,
+  type KeyedAccountBackend,
+  type KeyedAccountRecord,
+  type KeyedAccountStoreOptions,
+  type KeyedAccountSyncEntry,
+} from '../adapters/keyed-account-store';
+export {
+  keyedAccountPgBackend,
+  getKeyedAccountMigration,
+  type KeyedAccountPgOptions,
+} from '../adapters/keyed-account-pg';
+export { keyedAccountKvBackend, type KeyedAccountKvClient } from '../adapters/keyed-account-kv';
 
 export {
   createOAuthPassthroughResolver,

@@ -453,6 +453,24 @@ export interface AccountToolContext<TCtxMeta = Record<string, unknown>> extends 
   account: Account<TCtxMeta>;
 }
 
+/** Context for a batch upsert; existing[i] corresponds to refs[i]. */
+export interface AccountUpsertContext<TCtxMeta = Record<string, unknown>> extends ResolveContext {
+  /** Principal-scoped lookup snapshots, or null for a new/non-natural-key entry. */
+  readonly existing?: readonly (Readonly<Account<TCtxMeta>> | null)[];
+}
+
+/** Secret-free, server-side account contract diagnostic. */
+export interface AccountStoreDiagnostic {
+  code:
+    | 'ACCOUNT_IDEMPOTENCY_VIOLATION'
+    | 'PAYMENT_TERMS_MISMATCH'
+    | 'ACCOUNT_BILLING_INCOMPLETE'
+    | 'ACCOUNT_LOOKUP_FAILED';
+  toolName: 'sync_accounts' | 'list_accounts';
+  /** Index in the original request (or list response). */
+  index: number;
+}
+
 /**
  * Request context for tools that can omit an `account` field —
  * `preview_creative`, `list_creative_formats` (optional since rc.7), and
@@ -567,6 +585,10 @@ export function isAccountResolutionMode(value: unknown): value is AccountResolut
 }
 
 export interface AccountStore<TCtxMeta = Record<string, unknown>> {
+  /** Convert sync identity/active payment-term violations into per-row failures. Default false. */
+  readonly strictIdempotency?: boolean;
+  /** Called in every environment; hook failures never change the response. */
+  readonly onDiagnostic?: (diagnostic: AccountStoreDiagnostic) => void | Promise<void>;
   /**
    * How buyers reference accounts on this platform. Three onboarding models,
    * aligned with the account-reference taxonomy clarified upstream in
@@ -740,7 +762,7 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * verified `agent_url` from `credential.kind === 'http_sig'` when
    * `agentRegistry` is not configured).
    */
-  upsert?(refs: AccountReference[], ctx?: ResolveContext): Promise<SyncAccountsHandlerResult>;
+  upsert?(refs: AccountReference[], ctx?: AccountUpsertContext<TCtxMeta>): Promise<SyncAccountsHandlerResult>;
 
   /**
    * sync_governance API surface. Buyers register governance agent endpoints

@@ -131,6 +131,9 @@ construction, not a silent fallback.
 
 ---
 
+For durable natural-key sync with framework diagnostics and strict payment-term
+checks, see [Durable account sync](KEYED-ACCOUNT-STORE.md).
+
 ## `'implicit'` deep dive
 
 ### 1 · How it works

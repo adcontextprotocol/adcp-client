@@ -27,6 +27,7 @@ const BUILTIN_ASSERTION_IDS = [
   'governance.denial_blocks_mutation',
   'status.monotonic',
   'impairment.coherence',
+  'accounts.sync_contract',
 ];
 
 describe('default-invariants: auto-registration', () => {
