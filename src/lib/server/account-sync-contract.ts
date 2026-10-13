@@ -208,6 +208,9 @@ export async function checkSyncAccountRows(
     if (termsViolation)
       diagnose(accounts, logger, { code: 'ACCOUNT_SYNC_PAYMENT_TERMS_MISMATCH', toolName: 'sync_accounts', index });
 
+    // These are committed store results even if strict response validation
+    // rejects them. Later entries must still detect duplicate identities.
+    if (key && row.account_id) seen.set(key, priorId ?? row.account_id);
     if (accounts.strictIdempotency && (idViolation || termsViolation || billingViolation)) {
       const error = new AdcpError(
         termsViolation
@@ -234,7 +237,6 @@ export async function checkSyncAccountRows(
         errors: [error],
       };
     }
-    if (key && row.account_id && row.action !== 'failed') seen.set(key, priorId ?? row.account_id);
     checked.push(row);
   }
   return checked;

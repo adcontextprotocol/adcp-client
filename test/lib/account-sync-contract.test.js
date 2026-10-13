@@ -341,3 +341,21 @@ test('ref-ignoring singleton resolvers do not create false existing-account snap
   );
   assert.deepEqual(diagnostics, []);
 });
+
+test('strict rejection still records committed IDs for later same-key entries', async () => {
+  const { checkSyncAccountRows } = require('../../dist/lib/server/account-sync-contract.js');
+  const diagnostics = [];
+  const accounts = { strictIdempotency: true, resolve: async () => null, onDiagnostic: d => diagnostics.push(d) };
+  const second = { ...entry };
+  delete second.payment_terms;
+  const rows = [
+    { ...row, account_id: 'first', action: 'created', payment_terms: 'net_30' },
+    { ...row, account_id: 'second', action: 'created', payment_terms: 'net_30' },
+  ];
+  const checked = await checkSyncAccountRows(accounts, [entry, second], [null, null], rows, [0, 1], {}, { warn() {} });
+  assert.deepEqual(
+    checked.map(r => r.action),
+    ['failed', 'failed']
+  );
+  assert.ok(diagnostics.some(d => d.code === 'ACCOUNT_SYNC_IDEMPOTENCY_VIOLATION' && d.index === 1));
+});
