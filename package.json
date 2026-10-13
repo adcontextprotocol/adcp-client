@@ -604,6 +604,9 @@
       ],
       "reporting/bigquery": [
         "dist/lib/reporting/bigquery/index.d.ts"
+      ],
+      "identity-3.3": [
+        "dist/lib/identity-3.3/index.d.ts"
       ]
     }
   },
