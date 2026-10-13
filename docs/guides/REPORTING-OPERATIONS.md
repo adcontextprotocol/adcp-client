@@ -339,7 +339,14 @@ What it checks:
   `jobTimeoutMs` inside `configuration.load`, where BigQuery silently drops
   them, and that a job cancel addressed with the destination project and
   location (what the sink sends when a load passes its client-side deadline) is
-  accepted by BigQuery.
+  accepted by BigQuery. A deadline scenario then runs a sink with the minimum
+  1-second load deadline and holds the first load's result past it: the run must
+  reject and cancel that job in the destination project and location, the job
+  must end `DONE` (stopped by the cancel, or finished first; the report says
+  which), and later runs under the same sink name at the normal deadline must
+  converge with no duplicate rows. A
+  `period_date` scenario checks that non-UTC periods land on their
+  source-timezone date.
 - **Overlapping runs** (`INFO`, never a failure). Two concurrent `runOnce()`
   calls over one pending batch, and a deterministic reproduction of #3196: one
   run reads its sink state, another completes the batch and a new revision
@@ -356,7 +363,10 @@ What it checks:
   prevention, lifecycle rules) and `runReportingRowObjectProviderConformanceV1`,
   then commits a revision through an object binding on the bucket and reads it
   back verified (full read, ranged page, a second store instance, and a replayed
-  commit that uploads nothing).
+  commit that uploads nothing). It also commits revisions for non-UTC periods and
+  checks that each object key has one `{period_date}` segment holding the
+  source-timezone date, and that each chunk's `native_version_ref` and
+  `size_bytes` match the stored object's generation and size.
 
 Everything it creates carries a per-run id: a dataset named
 `<GCP_DATASET_PREFIX><run id>`, objects under `<GCS_PREFIX>/<run id>/`, and

@@ -356,12 +356,24 @@ async function sinkState(ledger, name) {
 // ---------------------------------------------------------------------------
 // BigQuery section
 
-function faultInjectingClient(real, sentLoads = []) {
+/**
+ * Wraps the real client so the script can see and steer what the sink sends: every load call is
+ * recorded in `sentLoads` and every job cancel in `cancels`; `failNext(tableId, error)` makes the
+ * next load into that table throw; `holdNext(milliseconds)` submits the next load for real but
+ * keeps its result from the sink for at least that long, so a short sink deadline fires while
+ * BigQuery is running the job.
+ */
+function faultInjectingClient(real, sentLoads = [], cancels = []) {
   const failures = new Map();
+  let hold = 0;
   return {
     sentLoads,
+    cancels,
     failNext(tableId, error) {
       failures.set(tableId, error);
+    },
+    holdNext(milliseconds) {
+      hold = milliseconds;
     },
     dataset(datasetId, options) {
       const dataset = real.dataset(datasetId, options);
@@ -376,13 +388,27 @@ function faultInjectingClient(real, sentLoads = []) {
                 failures.delete(tableId);
                 throw failure;
               }
-              return table.load(file, metadata);
+              const loading = table.load(file, metadata);
+              if (!hold) return loading;
+              const held = hold;
+              hold = 0;
+              const [result] = await Promise.all([loading, sleepReal(held)]);
+              return result;
             },
           };
         },
       };
     },
-    job: (...args) => real.job(...args),
+    job(jobId, options) {
+      const job = real.job(jobId, options);
+      return {
+        getMetadata: () => job.getMetadata(),
+        cancel: () => {
+          cancels.push({ jobId, projectId: options?.projectId, location: options?.location });
+          return job.cancel();
+        },
+      };
+    },
     query: (...args) => real.query(...args),
   };
 }
@@ -472,6 +498,7 @@ async function bigquerySection(ctx) {
   await concurrentScenario();
   await staleReadScenario();
   await periodDateScenario();
+  await deadlineScenario();
 
   // -- 1. Load, counts, jobs, labels and the current_rows view ----------------
   async function mainScenario() {
@@ -589,7 +616,7 @@ async function bigquerySection(ctx) {
           return {
             detail:
               `not found (${errText(error, ctx.secrets)}). Expected: the jobs live in the destination project, so a ` +
-              `replay status check must pass projectId or it fails across projects (main omits it; PR #3197 passes it)`,
+              `replay status check must pass projectId or it fails across projects (the sink passes it since #3197)`,
           };
         }
       });
@@ -746,6 +773,106 @@ async function bigquerySection(ctx) {
     });
   }
 
+  // -- 1c. A load that outlives its deadline is cancelled, then the sink converges
+  async function deadlineScenario() {
+    const tables = { rows: 'deadline_rows', revisions: 'deadline_revisions' };
+    const name = `${config.sinkPrefix}-deadline`;
+    const rowCount = 200;
+    // The smallest deadline the sink accepts, for the run that gets cancelled only: it is about
+    // one BigQuery round trip, so later runs use the sink's normal deadline. The first load's
+    // result is held past it, so the deadline always fires; whether BigQuery is still running the
+    // job at that moment is up to BigQuery, and the report says which case happened.
+    const loadTimeout = 1_000;
+    let ledger;
+    let sink;
+    let client;
+    let jobId;
+    const ready = await check(ctx, BQ, 'deadline cancel: set up ledger, tables and a pending batch', async () => {
+      ledger = await openLedger(ctx, 'deadline', { sink: true });
+      const fixture = await newObligation(ctx, ledger, 'deadline');
+      await commit(ledger, fixture, `rrev_${config.runId}_d1`, 1, sequenceRows(rowCount));
+      client = faultInjectingClient(bigquery);
+      sink = sinkFor(ledger, 'deadline', tables, { bigquery: client, loadTimeoutMilliseconds: loadTimeout });
+      await createTables(sink, false);
+      return `one obligation, ${rowCount} rows pending, load deadline ${loadTimeout} ms`;
+    });
+    if (!ready) return;
+
+    const cancelled = await check(
+      ctx,
+      BQ,
+      'deadline cancel: a load past its deadline is rejected and its job cancelled in the destination project and location',
+      async () => {
+        client.holdNext(loadTimeout + 500);
+        let rejected;
+        try {
+          await sink.runOnce();
+        } catch (error) {
+          rejected = error;
+        }
+        expect(rejected, 'runOnce resolved although its load was held past the deadline');
+        expect(
+          /exceeded its deadline/.test(String(rejected.message)),
+          `unexpected error: ${errText(rejected, ctx.secrets)}`
+        );
+        jobId = client.sentLoads[0]?.options?.jobId;
+        expect(jobId, 'no load was sent');
+        const cancel = client.cancels.find(entry => entry.jobId === jobId);
+        expect(cancel, `the sink did not cancel ${jobId}`);
+        expectEqual(cancel.projectId, dest, 'cancel projectId');
+        expectEqual(String(cancel.location ?? '').toLowerCase(), config.location.toLowerCase(), 'cancel location');
+        const state = await sinkState(ledger, name);
+        expect(!state.committed_cursor && state.planned_to_cursor, 'expected a retained plan and no committed cursor');
+        return `${jobId} cancelled after ${loadTimeout} ms; the plan is retained`;
+      }
+    );
+    if (!cancelled) return;
+
+    await check(
+      ctx,
+      BQ,
+      'deadline cancel: the cancelled job ends DONE, either stopped by the cancel or finished',
+      async () => {
+        let metadata;
+        for (let poll = 0; poll < 60; poll++) {
+          try {
+            [metadata] = await bigquery.job(jobId, { projectId: dest, location: config.location }).getMetadata();
+          } catch (error) {
+            // A 404 means the upload was still in flight when the sink cancelled; the job appears once it lands.
+            if (error?.code !== 404) throw error;
+            metadata = undefined;
+          }
+          if (metadata?.status?.state === 'DONE') break;
+          await ctx.sleep(1_000);
+        }
+        expect(metadata, `job ${jobId} never appeared in the destination project`);
+        expectEqual(metadata.status?.state, 'DONE', `job ${jobId} state`);
+        const error = metadata.status?.errorResult;
+        expect(!error || error.reason === 'stopped', `job ${jobId} failed with ${JSON.stringify(error)}`);
+        return error
+          ? `BigQuery stopped the running job (${error.reason}: ${error.message}); no rows from it can land`
+          : 'the job finished before the cancel took effect; the next run must accept it, not load again';
+      }
+    );
+
+    await check(ctx, BQ, 'deadline cancel: later runs converge with no duplicate rows or revisions', async () => {
+      // Same sink name, so the same retained plan, at the normal deadline.
+      const drained = await drain(ctx, sinkFor(ledger, 'deadline', tables, { bigquery: client }));
+      expect(drained.idle, `the sink did not reach idle: ${drained.outcomes.join('; ')}`);
+      const rowTotals = await rowCounts(tables.rows);
+      const revisionTotals = await revisionCounts(tables.revisions);
+      expectEqual(rowTotals.n, rowCount, 'rows table count');
+      expectEqual(rowTotals.distinct, rowCount, 'rows table distinct count');
+      expectEqual(revisionTotals.n, 1, 'revisions table count');
+      const state = await sinkState(ledger, name);
+      expect(state.committed_cursor && !state.planned_to_cursor, 'the cursor did not commit');
+      const rowJobs = [
+        ...new Set(client.sentLoads.filter(load => load.tableId === tables.rows).map(load => load.options.jobId)),
+      ];
+      return `rows=${rowCount} revisions=1, cursor committed; rows job IDs used: ${rowJobs.join(', ')}; runs: ${drained.outcomes.join('; ')}`;
+    });
+  }
+
   // -- 2. Crash after the rows load, before the cursor commits ----------------
   async function crashScenario() {
     const tables = { rows: 'crash_rows', revisions: 'crash_revisions' };
@@ -804,7 +931,7 @@ async function bigquerySection(ctx) {
           BQ,
           'crash replay hint',
           'A replay that fails here across projects usually means the 409 "job already exists" status check ' +
-            'looked in the client default project instead of the destination project (fixed by PR #3197).'
+            'looked in the client default project instead of the destination project (the bug #3197 fixed).'
         );
       }
       return;
@@ -853,7 +980,7 @@ async function bigquerySection(ctx) {
       const duplicates = rowTotals.n - rowTotals.distinct + (revisionTotals.n - revisionTotals.distinct);
       const verdict = duplicates
         ? `DUPLICATES OBSERVED (${rowTotals.n - rowTotals.distinct} extra rows, ${revisionTotals.n - revisionTotals.distinct} extra revisions); ` +
-          `expected on main before PR #3197`
+          `a regression of the fence added for #3196`
         : 'no duplicates observed';
       return {
         detail:
@@ -928,8 +1055,8 @@ async function bigquerySection(ctx) {
       const state = await sinkState(ledger, name);
       const verdict =
         extraRows || extraRevisions
-          ? `DUPLICATES OBSERVED (${extraRows} extra rows, ${extraRevisions} extra revisions): the overlap reproduces #3196; expected on main, fixed by PR #3197`
-          : 'no duplicates: the stale run did not load an overlapping batch (the behavior PR #3197 adds)';
+          ? `DUPLICATES OBSERVED (${extraRows} extra rows, ${extraRevisions} extra revisions): the overlap reproduces #3196, a regression of its fence`
+          : 'no duplicates: the stale run did not load an overlapping batch';
       return {
         detail:
           `${label} ${verdict}. rows=${rowTotals.n} (distinct ${rowTotals.distinct}, expected 21), ` +
@@ -1090,6 +1217,59 @@ async function gcsSection(ctx) {
     expectEqual((await listRunObjects(ctx, bucket, `${rowsPrefix}/`)).length, before, 'objects after replay');
     return `${before} object(s) before and after`;
   });
+
+  await check(
+    ctx,
+    GCS,
+    'object keys carry {period_date} as one YYYY-MM-DD segment in the source timezone, and chunk rows match the objects',
+    async () => {
+      ctx.gcsTouched = true;
+      // Each period starts at an instant whose UTC date differs from its source-timezone date.
+      const periods = [
+        { suffix: 'gkla', zone: 'America/Los_Angeles', start: '2026-10-02T06:00:00.000Z', date: '2026-10-01' },
+        { suffix: 'gktk', zone: 'Asia/Tokyo', start: '2026-10-01T15:00:00.000Z', date: '2026-10-02' },
+      ];
+      const details = [];
+      for (const { suffix, zone, start, date } of periods) {
+        const zoned = await newObligation(ctx, ledger, suffix, {
+          sourceTimezone: zone,
+          periodStart: start,
+          periodEnd: new Date(Date.parse(start) + 86_400_000).toISOString(),
+        });
+        const id = `rrev_${config.runId}_${suffix}`;
+        const result = await commit(ledger, zoned, id, 1, rows.slice(0, 20));
+        expect(result.inserted, `revision for ${zone} was not inserted`);
+        const chunks = (
+          await ledger.pool.query(
+            `SELECT object_ref, native_version_ref, size_bytes FROM adcp_reporting_row_chunks WHERE row_set_id = $1`,
+            [id]
+          )
+        ).rows;
+        expect(chunks.length >= 1, `no object chunk was recorded for the ${zone} revision`);
+        const listed = new Map(
+          (await listRunObjects(ctx, bucket, `${rowsPrefix}/`)).map(file => [file.name, file.metadata])
+        );
+        for (const chunk of chunks) {
+          const segments = chunk.object_ref.slice(rowsPrefix.length + 1).split('/');
+          const dates = segments.filter(segment => /^\d{4}-\d{2}-\d{2}$/.test(segment));
+          expect(
+            dates.length === 1 && dates[0] === date,
+            `${zone} period starting ${start}: expected one key segment ${date} (the UTC date is ${start.slice(0, 10)}), got ${JSON.stringify(dates)}`
+          );
+          const object = listed.get(chunk.object_ref);
+          expect(object, `${chunk.object_ref} is not in the bucket listing`);
+          expectEqual(
+            chunk.native_version_ref,
+            String(object.generation),
+            'native_version_ref vs the object generation'
+          );
+          expectEqual(Number(chunk.size_bytes), Number(object.size), 'size_bytes vs the object size');
+        }
+        details.push(`${zone} ${start} -> ${date}`);
+      }
+      return `${details.join('; ')}; native_version_ref and size_bytes match the stored objects`;
+    }
+  );
 }
 
 // ---------------------------------------------------------------------------
