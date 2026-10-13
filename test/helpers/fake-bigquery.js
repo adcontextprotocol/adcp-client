@@ -19,6 +19,11 @@
  * `job().cancel()` is recorded in `state.cancels` (project and location as
  * addressed) and, like BigQuery, answers 404 for a job it does not know.
  *
+ * With `loadDurationMs` (milliseconds, or `tableId => milliseconds`), a load job stays RUNNING for that long before its rows
+ * land and `load()` resolves. A cancel that reaches a running job stops it the
+ * way BigQuery does: DONE with an `errorResult` whose reason is `stopped`, no
+ * rows appended, and the pending `load()` rejected.
+ *
  * `query()` understands only the DDL and SELECT shapes the validation script
  * issues; anything else throws, so drift is loud.
  */
@@ -33,6 +38,7 @@ function createFakeBigQuery({
   clientProject = 'client-project',
   jobProject = 'destination',
   transformLoadedLine,
+  loadDurationMs = 0,
 } = {}) {
   const state = {
     datasets: new Map(), // `${project}.${dataset}` -> { labels, location }
@@ -99,9 +105,31 @@ function createFakeBigQuery({
               _lines: lines,
               _tableKey: tableKey,
             };
+            const duration = typeof loadDurationMs === 'function' ? loadDurationMs(tableId) : loadDurationMs;
+            if (duration) resource.status = { state: 'RUNNING' };
             state.jobs.set(jobKey, resource);
-            state.tables.get(tableKey).push(...lines);
-            return [publicJob(resource)];
+            if (!duration) {
+              state.tables.get(tableKey).push(...lines);
+              return [publicJob(resource)];
+            }
+            return new Promise((resolve, reject) => {
+              const timer = setTimeout(() => {
+                resource._stop = undefined;
+                resource.status = { state: 'DONE' };
+                state.tables.get(tableKey).push(...lines);
+                resolve([publicJob(resource)]);
+              }, duration);
+              resource._stop = () => {
+                clearTimeout(timer);
+                resource._stop = undefined;
+                const errorResult = {
+                  reason: 'stopped',
+                  message: 'Job execution was cancelled: User requested cancellation',
+                };
+                resource.status = { state: 'DONE', errorResult, errors: [errorResult] };
+                reject(Object.assign(new Error(errorResult.message), { errors: [errorResult] }));
+              };
+            });
           },
         };
       },
@@ -109,7 +137,7 @@ function createFakeBigQuery({
   }
 
   // Resources hold their pending rows privately; callers see the REST shape only.
-  const publicJob = ({ _lines, _tableKey, ...resource }) => resource;
+  const publicJob = ({ _lines, _tableKey, _stop, ...resource }) => structuredClone(resource);
 
   function job(jobId, options = {}) {
     const project = options.projectId ?? clientProject;
@@ -123,6 +151,7 @@ function createFakeBigQuery({
         state.cancels.push({ jobId, projectId: options.projectId, location: options.location });
         const resource = state.jobs.get(`${project}/${jobId}`);
         if (!resource) throw apiError(404, `Not found: Job ${project}:${jobId}`);
+        resource._stop?.();
         return [{ kind: 'bigquery#jobCancelResponse', job: publicJob(resource) }];
       },
     };

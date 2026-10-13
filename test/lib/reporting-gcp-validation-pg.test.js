@@ -165,8 +165,12 @@ describe(
         'period_date: set up non-UTC obligations and load them',
         'period_date in BigQuery is the period start in its source timezone',
         'crash replay: no duplicate rows or revisions in BigQuery',
+        'deadline cancel: a load past its deadline is rejected and its job cancelled in the destination project and location',
+        'deadline cancel: the cancelled job ends DONE, either stopped by the cancel or finished',
+        'deadline cancel: later runs converge with no duplicate rows or revisions',
         'runReportingRowObjectProviderConformanceV1',
         'read the revision back from GCS, verified against the recorded digests',
+        'object keys carry {period_date} as one YYYY-MM-DD segment in the source timezone, and chunk rows match the objects',
       ]) {
         assert.equal(statusOf(report, name), 'PASS', name);
       }
@@ -206,17 +210,16 @@ describe(
       assert.equal(statusOf(report, 'delete the temporary BigQuery dataset'), 'PASS');
     });
 
-    test('a cross-project run completes and cleans up; any failure is the known replay-lookup gap', async () => {
+    test('a cross-project run passes and cleans up', async () => {
       const bigquery = createFakeBigQuery({ clientProject: 'client-project-1' });
       const { config, report } = await execute({ GCP_CLIENT_PROJECT: 'client-project-1' }, ['--skip-gcs'], {
         clientProject: 'client-project-1',
         bigquery,
         storage: createFakeStorage(),
       });
-      // Before PR #3197 the replay status check ignores the destination project, which the
-      // crash-replay check is there to catch. Everything else must pass either way.
+      // The crash replay's status check and the deadline cancel must address the destination project.
       assert.deepEqual(
-        report.failures.filter(entry => !/^crash replay/.test(entry.name)).map(entry => entry.name),
+        report.failures.map(entry => `${entry.name}: ${entry.detail}`),
         []
       );
       assert.equal(
@@ -267,6 +270,39 @@ describe(
       assert.match(
         second.report.entries.find(entry => entry.name === name).detail,
         /distinct \(obligation, period_date\) pairs in period_rows/
+      );
+    });
+
+    test('a load still running at its deadline is stopped by the cancel and reloaded under a new attempt', async () => {
+      const bigquery = createFakeBigQuery({
+        clientProject: 'client-project-1',
+        loadDurationMs: tableId => (tableId === 'deadline_rows' ? 1_200 : 0),
+      });
+      const { report } = await execute({ GCP_CLIENT_PROJECT: 'client-project-1' }, ['--skip-gcs'], {
+        clientProject: 'client-project-1',
+        bigquery,
+        storage: createFakeStorage(),
+      });
+      for (const name of [
+        'deadline cancel: a load past its deadline is rejected and its job cancelled in the destination project and location',
+        'deadline cancel: the cancelled job ends DONE, either stopped by the cancel or finished',
+        'deadline cancel: later runs converge with no duplicate rows or revisions',
+      ]) {
+        assert.equal(statusOf(report, name), 'PASS', name);
+      }
+      const ended = report.entries.find(
+        entry => entry.name === 'deadline cancel: the cancelled job ends DONE, either stopped by the cancel or finished'
+      );
+      assert.match(ended.detail, /BigQuery stopped the running job \(stopped:/);
+      const converged = report.entries.find(
+        entry => entry.name === 'deadline cancel: later runs converge with no duplicate rows or revisions'
+      );
+      assert.match(converged.detail, /_rows, adcp_rr_[0-9a-f]+_rows_a1/, 'the reload used the next attempt job ID');
+      assert.ok(
+        bigquery.state.cancels.some(
+          entry => /_rows$/.test(entry.jobId) && entry.projectId === 'dest-project-1' && entry.location === 'US'
+        ),
+        'the sink cancelled the running job in the destination project and location'
       );
     });
 
