@@ -119,6 +119,8 @@ export type {
   GetAccountFinancialsHandlerResult,
   AdcpAccountStatus,
   ResolveContext,
+  AccountUpsertContext,
+  AccountSyncDiagnostic,
   AccountToolContext,
   ResolvedAuthInfo,
 } from './account';

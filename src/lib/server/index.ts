@@ -827,6 +827,18 @@ export {
 } from '../adapters/oauth-passthrough-resolver';
 
 export { createRosterAccountStore, type RosterAccountStoreOptions } from '../adapters/roster-account-store';
+export { createKeyedAccountStore, type KeyedAccountStoreOptions } from '../adapters/keyed-account-store';
+export {
+  memoryKeyedAccountBackend,
+  pgKeyedAccountBackend,
+  redisKeyedAccountBackend,
+  getKeyedAccountMigration,
+  type KeyedAccountBackend,
+  type KeyedAccountRecord,
+  type KeyedAccountSnapshot,
+  type PgKeyedAccountBackendOptions,
+  type KeyedAccountRedisClient,
+} from '../adapters/keyed-account-backend';
 
 export {
   createDerivedAccountStore,
