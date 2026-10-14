@@ -76,8 +76,8 @@ jobs:
           // This branch is the SDK 15.9 line and publishes to the default `latest` tag
           // (SDK 16 is beta-only). Never replace a newer or prerelease `latest`.
           const sdk = require('./package.json');
-          if (semver.major(sdk.version) !== 15 || semver.prerelease(sdk.version)) {
-            throw new Error(`The 15.9.x branch may only publish stable SDK 15.x releases, found ${sdk.version}`);
+          if (semver.major(sdk.version) !== 15 || semver.minor(sdk.version) !== 9 || semver.prerelease(sdk.version)) {
+            throw new Error(`The 15.9.x branch may only publish stable SDK 15.9.x patch releases, found ${sdk.version}`);
           }
           const latest = view('@adcp/sdk@latest');
           if (!semver.valid(latest) || semver.prerelease(latest) || semver.gt(latest, sdk.version)) {

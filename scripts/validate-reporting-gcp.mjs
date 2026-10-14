@@ -1305,7 +1305,6 @@ async function gcsSection(ctx) {
     expectEqual((await listRunObjects(ctx, bucket, `${rowsPrefix}/`)).length, before, 'objects after replay');
     return `${before} object(s) before and after`;
   });
-
 }
 
 // ---------------------------------------------------------------------------
