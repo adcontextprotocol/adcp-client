@@ -689,3 +689,32 @@ test('mixed ID and natural-key entries reserve a uniquely echoed settings row', 
   );
   assert.deepEqual(diagnostics, []);
 });
+
+test('single-entry seller-canonical brand echoes retain identity and commercial checks', async () => {
+  for (const invalid of [false, true]) {
+    const { call, diagnostics } = setup({
+      strictIdempotency: true,
+      resolve: async () => account,
+      upsert: async () => [
+        {
+          ...row,
+          brand: { domain: 'canonical.example' },
+          account_id: invalid ? 'duplicate' : account.id,
+          action: invalid ? 'created' : 'unchanged',
+          billing: 'agent',
+          payment_terms: 'net_60',
+        },
+      ],
+    });
+    const response = (await call()).structuredContent.accounts[0];
+    assert.equal(response.action, invalid ? 'failed' : 'unchanged');
+    assert.equal(
+      diagnostics.some(d => d.code === 'ACCOUNT_IDEMPOTENCY_VIOLATION'),
+      invalid
+    );
+    assert.equal(
+      diagnostics.some(d => d.code === 'ACCOUNT_SYNC_ROW_UNMATCHED'),
+      false
+    );
+  }
+});

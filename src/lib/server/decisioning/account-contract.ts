@@ -77,6 +77,8 @@ export function alignSyncAccountRows(
   entries: readonly Record<string, unknown>[]
 ): { rows: SyncAccountsResultRow[]; certain: boolean[] } {
   if (rows.length !== entries.length) return { rows, certain: rows.map(() => false) };
+  // A single result is anchored to its request even when the seller canonicalizes brand identity.
+  if (rows.length === 1) return { rows, certain: [true] };
   const aligned: SyncAccountsResultRow[] = Array(rows.length);
   const certain: boolean[] = Array(rows.length).fill(false);
   const used = new Set<number>();
