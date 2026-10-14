@@ -1410,6 +1410,8 @@ export interface SingleAgentClientConfig extends ConversationConfig {
    * See `docs/guides/DISCOVERY-CACHE-AND-SESSION-REUSE.md`.
    */
   discoveryCache?: AgentDiscoveryCacheConfig;
+  /** @internal Allow local discovery reuse while the compliance runner owns this exact transport. */
+  _reuseConfiguredDiscovery?: () => boolean;
   /** Durable storage for restart-safe A2A human continuations. */
   deferredStorage?: DeferredTaskStorage;
   /** Resolve current trusted agent configuration for a persisted continuation. */
@@ -2231,6 +2233,7 @@ export class SingleAgentClient {
   private discoveredMcpEraAt = 0;
   private canonicalBaseUrl?: string; // Cache canonical base URL (from agent card or stripped /mcp)
   private cachedCapabilities?: AdcpCapabilities; // Cache detected server capabilities
+  private runAgentInfo?: Awaited<ReturnType<SingleAgentClient['getAgentInfo']>>;
   private cachedToolSchemas?: Map<string, Record<string, unknown>>; // inputSchema.properties per tool name
   private primedCapabilitiesExpiresAt?: number; // Freshness bound for application-owned evidence only
   private capabilityEvidenceScopeKey = randomUUID();
@@ -3410,9 +3413,10 @@ export class SingleAgentClient {
    */
   private async ensureEndpointDiscovered(options?: ReadRequestOptions): Promise<AgentConfig> {
     throwIfAborted(options?.signal);
+    if (this.config._reuseConfiguredDiscovery?.()) this.synchronizeCapabilityEvidenceAuthorizationScope();
     const needsDiscovery = this.normalizedAgent._needsDiscovery;
     const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
-    const usesScopedFetch = transport?.trustedFetchFn !== undefined;
+    const usesScopedFetch = this.usesScopedDiscoveryTransport(options);
 
     if (!needsDiscovery) {
       return this.normalizedAgent;
@@ -3554,7 +3558,7 @@ export class SingleAgentClient {
     throwIfAborted(options?.signal);
     const needsCanonicalUrl = this.normalizedAgent._needsCanonicalUrl;
     const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
-    const usesScopedFetch = transport?.trustedFetchFn !== undefined;
+    const usesScopedFetch = this.usesScopedDiscoveryTransport(options);
 
     if (!needsCanonicalUrl) {
       return this.normalizedAgent;
@@ -3579,8 +3583,11 @@ export class SingleAgentClient {
     }
 
     // Fetch agent card to get canonical URL
+    const canonicalEpoch = this.discoveryEpochSnapshot(options);
     const canonicalUrl = await this.fetchA2ACanonicalUrl(this.normalizedAgent.agent_uri, options);
-    if (!usesScopedFetch) this.canonicalBaseUrl = canonicalUrl;
+    if (!usesScopedFetch && (!canonicalEpoch || this.discoveryEpochIs(canonicalEpoch))) {
+      this.canonicalBaseUrl = canonicalUrl;
+    }
 
     return {
       ...this.normalizedAgent,
@@ -3744,7 +3751,9 @@ export class SingleAgentClient {
     const { connectMCPWithFallback } = await import('../protocols/mcp');
     const { probeModernMCPConnection } = await import('../protocols/mcp-modern');
     const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
-    const usesScopedFetch = transport?.trustedFetchFn !== undefined;
+    const usesScopedFetch = this.usesScopedDiscoveryTransport(options);
+    const endpointEpoch = this.discoveryEpochSnapshot(options);
+    const mayRetain = () => !usesScopedFetch && (!endpointEpoch || this.discoveryEpochIs(endpointEpoch));
 
     const authToken = this.normalizedAgent.oauth_client_credentials
       ? this.normalizedAgent.oauth_tokens?.access_token
@@ -3779,7 +3788,7 @@ export class SingleAgentClient {
           allowPrivateIp: transport?.allowPrivateIp,
         });
         if (modern.connected) {
-          if (!usesScopedFetch) {
+          if (mayRetain()) {
             this.discoveredMcpEra = modern.era;
             this.discoveredMcpEraAt = Date.now();
           }
@@ -3801,7 +3810,7 @@ export class SingleAgentClient {
           }
         );
         await client.close();
-        if (!usesScopedFetch) {
+        if (mayRetain()) {
           this.discoveredMcpEra = 'legacy';
           this.discoveredMcpEraAt = Date.now();
         }
@@ -7806,8 +7815,7 @@ export class SingleAgentClient {
       ...options,
       [CAPABILITY_DISCOVERY_CONTEXT]: discoveryContext,
     } as InternalReadRequestOptions);
-    const usesScopedFetch =
-      normalizeTransportOptions(options?.transport ?? this.config.transport)?.trustedFetchFn !== undefined;
+    const usesScopedFetch = this.usesScopedDiscoveryTransport(options);
     const toolSchemas = discoveryContext.toolSchemas ?? (usesScopedFetch ? undefined : this.cachedToolSchemas);
     // Capabilities `adcp.build_version` is advisory deployment metadata. The
     // protocol schema explicitly forbids using it for negotiation, so wire
@@ -8225,15 +8233,32 @@ export class SingleAgentClient {
     inputHandler: InputHandler | undefined,
     options: TaskOptions
   ): Promise<TaskResult<GetAdCPCapabilitiesResponse>> {
+    const scopeKey = this.config._reuseConfiguredDiscovery?.() ? this.getCapabilityEvidenceScope().scopeKey : undefined;
     const agent = await this.ensureEndpointDiscovered(options);
     this.executor.validateRequest('get_adcp_capabilities', params);
-    return this.executor.executeTask<GetAdCPCapabilitiesResponse>(
+    const result = await this.executor.executeTask<GetAdCPCapabilitiesResponse>(
       agent,
       'get_adcp_capabilities',
       params,
       inputHandler,
       options
     );
+    if (
+      this.config._reuseConfiguredDiscovery?.() &&
+      !this.usesScopedDiscoveryTransport(options) &&
+      scopeKey === this.getCapabilityEvidenceScope().scopeKey &&
+      Object.keys(params).length === 0 &&
+      this.runAgentInfo !== undefined &&
+      result.success &&
+      result.data &&
+      looksLikeV3Capabilities(result.data)
+    ) {
+      const capabilities = parseCapabilitiesResponse(structuredClone(result.data));
+      if (!capabilities._synthetic) {
+        this.cachedCapabilities = augmentCapabilitiesFromTools(capabilities, this.runAgentInfo.tools);
+      }
+    }
+    return result;
   }
 
   // ====== CREATIVE BUILD TASKS ======
@@ -9675,6 +9700,37 @@ export class SingleAgentClient {
       parameters?: string[];
     }>;
   }> {
+    throwIfAborted(options?.signal);
+    const reuse = this.config._reuseConfiguredDiscovery?.() && !this.usesScopedDiscoveryTransport(options);
+    if (!reuse) return this.getAgentInfoLive(options);
+    const scopeKey = this.getCapabilityEvidenceScope().scopeKey;
+    if (this.runAgentInfo) return structuredClone(this.runAgentInfo);
+    const info = await this.getAgentInfoLive(options);
+    if (reuse && scopeKey === this.getCapabilityEvidenceScope().scopeKey) {
+      this.runAgentInfo = structuredClone(info);
+      const documents = new Map(
+        this.runAgentInfo.tools.filter(tool => tool.inputSchema).map(tool => [tool.name, tool.inputSchema!])
+      );
+      this.cachedToolSchemas = new Map(
+        [...documents].map(([name, schema]) => [name, (schema.properties ?? {}) as Record<string, unknown>])
+      );
+      toolInputSchemasByProperties.set(this.cachedToolSchemas, documents);
+    }
+    return info;
+  }
+
+  private async getAgentInfoLive(options?: ReadRequestOptions): Promise<{
+    name: string;
+    description?: string;
+    protocol: 'mcp' | 'a2a';
+    url: string;
+    tools: Array<{
+      name: string;
+      description?: string;
+      inputSchema?: Record<string, unknown>;
+      parameters?: string[];
+    }>;
+  }> {
     // adcp-client#1799 — wrap every wire call in the response-size cap so
     // `transport.maxResponseBytes` extends to discovery / tools-list bodies.
     // `withResponseSizeLimit` is a no-op when no cap is configured.
@@ -9958,7 +10014,7 @@ export class SingleAgentClient {
     this.synchronizeCapabilityEvidenceAuthorizationScope();
     const discoveryContext = (options as InternalReadRequestOptions | undefined)?.[CAPABILITY_DISCOVERY_CONTEXT];
     const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
-    const usesScopedFetch = transport?.trustedFetchFn !== undefined;
+    const usesScopedFetch = this.usesScopedDiscoveryTransport(options);
     // Application-owned evidence keeps its declared freshness bound after it
     // has been installed. Once expired, discard both capability and schema
     // evidence and perform ordinary discovery below.
@@ -10389,10 +10445,32 @@ export class SingleAgentClient {
     }
     if (current === this.capabilityEvidenceAuthMaterial) return;
     this.capabilityEvidenceAuthMaterial = current;
+    this.discoveryEpoch++;
+    this.runAgentInfo = undefined;
     this.cachedCapabilities = undefined;
     this.cachedToolSchemas = undefined;
     this.primedCapabilitiesExpiresAt = undefined;
     this.capabilityEvidenceScopeKey = randomUUID();
+    if (this.config._reuseConfiguredDiscovery?.()) {
+      this.discoveredEndpoint = undefined;
+      this.discoveredAgent = undefined;
+      this.canonicalBaseUrl = undefined;
+      this.discoveredMcpEra = undefined;
+    }
+  }
+
+  /** A comply() run owns its configured fetch; per-call transport changes still discover separately. */
+  private usesScopedDiscoveryTransport(options?: ReadRequestOptions): boolean {
+    const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
+    if (!this.config._reuseConfiguredDiscovery?.()) return transport?.trustedFetchFn !== undefined;
+    const configured = normalizeTransportOptions(this.config.transport);
+    return (
+      transport?.trustedFetchFn !== configured?.trustedFetchFn ||
+      transport?.allowPrivateIp !== configured?.allowPrivateIp ||
+      transport?.maxResponseBytes !== configured?.maxResponseBytes ||
+      transport?.requestTimeoutMs !== configured?.requestTimeoutMs ||
+      transport?.legacyCompat?.enabled !== configured?.legacyCompat?.enabled
+    );
   }
 
   /**
@@ -10430,7 +10508,7 @@ export class SingleAgentClient {
         Object.values(snapshot.toolSchemas).every(
           properties => typeof properties === 'object' && properties !== null && !Array.isArray(properties)
         ));
-    const configuredScopedFetch = normalizeTransportOptions(this.config.transport)?.trustedFetchFn !== undefined;
+    const configuredScopedFetch = this.usesScopedDiscoveryTransport();
     const hasToolEvidence = snapshot?.toolSchemas !== undefined || Array.isArray(capabilities?.discoveredTools);
     if (
       !matchesScope ||
@@ -10489,12 +10567,16 @@ export class SingleAgentClient {
     options?: ReadRequestOptions
   ): { local: number; shared: number; key: string } | undefined {
     const key = this.sharedDiscoveryKey(options);
-    if (!key || !this.config.discoveryCache) return undefined;
+    if (!key || !this.config.discoveryCache) {
+      return this.config._reuseConfiguredDiscovery?.() ? { local: this.discoveryEpoch, shared: 0, key: '' } : undefined;
+    }
     return { local: this.discoveryEpoch, shared: this.sharedInvalidationEpoch(key), key };
   }
 
   private discoveryEpochIs(epoch: { local: number; shared: number; key: string }): boolean {
-    return epoch.local === this.discoveryEpoch && epoch.shared === this.sharedInvalidationEpoch(epoch.key);
+    return (
+      epoch.local === this.discoveryEpoch && (!epoch.key || epoch.shared === this.sharedInvalidationEpoch(epoch.key))
+    );
   }
 
   /** The latest invalidation that applies to `key`: its own, combined with the cache's floor of forgotten ones. */
@@ -10879,6 +10961,8 @@ export class SingleAgentClient {
    * seller answers with a version or capability error.
    */
   async invalidateDiscoveryCache(options?: Pick<TaskOptions, 'transport'>): Promise<void> {
+    this.runAgentInfo = undefined;
+    if (this.config._reuseConfiguredDiscovery?.()) this.canonicalBaseUrl = undefined;
     this.cachedCapabilities = undefined;
     this.cachedToolSchemas = undefined;
     this.primedCapabilitiesExpiresAt = undefined;

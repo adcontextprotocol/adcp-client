@@ -14,6 +14,7 @@ import {
   createTestClient,
   getOrCreateClientResolution,
   getOrDiscoverProfile,
+  hasTestClientScope,
   runStep,
   type TestClient,
 } from '../client';
@@ -1457,6 +1458,7 @@ export async function runStoryboard(
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardResult> {
   options = applyReusableProfileOptions(options);
+  if (hasTestClientScope() && !options._discoveryPass) options = { ...options, _discoveryPass: {} };
   return withMCPConnectionScope(
     async () => {
       options = applyStoryboardVersionOptions(storyboard, options);
@@ -1470,6 +1472,18 @@ export async function runStoryboard(
       // credential the storyboard was authored against.
       options = resolveDeclaredTestKit(storyboard, options);
       options = applyNativeA2AComplianceTransportOptions(options);
+      if (hasTestClientScope() && options._client && !options.agents) {
+        const resolution = getOrCreateClientResolution(
+          typeof agentUrlOrUrls === 'string' ? agentUrlOrUrls : agentUrlOrUrls[0]!,
+          options
+        );
+        const discovered = await getOrDiscoverProfile(resolution.client, options);
+        options = {
+          ...options,
+          _profile: discovered.step.passed ? discovered.profile : undefined,
+          agentTools: discovered.step.passed ? discovered.profile.tools : undefined,
+        };
+      }
       const schemaRoot = getRunSchemaRoot(options);
       if (schemaRoot) {
         return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, () =>
@@ -1478,7 +1492,7 @@ export async function runStoryboard(
       }
       return await runStoryboardBody(agentUrlOrUrls, storyboard, options);
     },
-    { isolate: true }
+    { isolate: !hasTestClientScope() }
   );
 }
 
@@ -2835,7 +2849,7 @@ async function executeStoryboardPass(
   let clients: TestClient[];
   let routingContext: AgentRoutingContext | undefined;
   let profile: AgentProfile | undefined;
-  let callerOwnsClients = false;
+  let callerOwnsClients = hasTestClientScope();
 
   if (useRouting) {
     try {
@@ -2851,7 +2865,7 @@ async function executeStoryboardPass(
         duration_ms: 0,
         error: detail,
       };
-      await closeScopedConnections(options.protocol);
+      if (!callerOwnsClients) await closeScopedConnections(options.protocol);
       return buildDiscoveryFailedResult(agentUrls, storyboard, failedStep);
     }
     clients = [...routingContext.clients.values()];
@@ -2877,7 +2891,7 @@ async function executeStoryboardPass(
     // honored so the shared MCP transport is reused across storyboards.
     const clientResolutions = agentUrls.map(url => getOrCreateClientResolution(url, options));
     clients = clientResolutions.map(r => r.client);
-    callerOwnsClients = clientResolutions.some(r => r.reusedShared);
+    callerOwnsClients ||= clientResolutions.some(r => r.reusedShared);
 
     // Drop any retained A2A session ids before this storyboard's first call.
     // `comply()` shares one client across N storyboards for transport reuse;
@@ -2894,7 +2908,7 @@ async function executeStoryboardPass(
     // expected to run the same code behind a shared state store, so one probe
     // is sufficient. For multi-instance runs, skipping N-1 redundant
     // get_agent_info calls also keeps CI output clean.
-    if (!callerOwnsClients) {
+    if (hasTestClientScope() || !callerOwnsClients) {
       const discovered = await getOrDiscoverProfile(clients[0]!, options);
       // Discovery failure must surface as a HARD STORYBOARD FAILURE, not a
       // silent empty `agentTools: []` that lets every step skip with
@@ -2903,7 +2917,7 @@ async function executeStoryboardPass(
       // (auth misconfig, MCP transport-fallback bugs, network policy, etc.).
       // See: https://github.com/adcontextprotocol/adcp-client/issues/...
       if (discovered.step.passed === false) {
-        await closeScopedConnections(options.protocol);
+        if (!callerOwnsClients) await closeScopedConnections(options.protocol);
         return buildDiscoveryFailedResult(agentUrls, storyboard, discovered.step);
       }
       profile = discovered.profile;
@@ -2911,7 +2925,9 @@ async function executeStoryboardPass(
       // _profile is threaded into executeStep so capability-based skip gates
       // (e.g. account-mode branching) can read raw_capabilities at step time.
       const profileTools = normalizeAgentToolNames(profile?.tools);
-      if (!options.agentTools && profileTools) {
+      if (hasTestClientScope() && profileTools) {
+        options = { ...options, agentTools: profileTools, _profile: profile };
+      } else if (!options.agentTools && profileTools) {
         options = { ...options, agentTools: profileTools, _profile: profile };
       } else if (profile && !options._profile) {
         options = { ...options, _profile: profile };
@@ -5475,7 +5491,7 @@ export async function runStoryboardStep(
       }
       return await runStoryboardStepBody(agentUrl, storyboard, stepId, options);
     },
-    { isolate: true }
+    { isolate: !hasTestClientScope() }
   );
 }
 
