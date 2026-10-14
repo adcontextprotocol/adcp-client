@@ -178,6 +178,7 @@ export function createKeyedAccountStore<TCtxMeta = Record<string, unknown>>(
           )
             throw new AdcpError('INVALID_REQUEST', {
               message: 'Account keys require lowercase domains and unique uppercase ISO country codes.',
+              field: `accounts[${entryIndex}]`,
             });
           const key = accountReferenceKey(ref);
           const index = records.findIndex(record => record.key === key);

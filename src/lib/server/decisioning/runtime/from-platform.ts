@@ -9095,7 +9095,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
                   existing: structuredClone(existing),
                 })
               : [];
-          const { rows, certain } = alignSyncAccountRows(returned, requested, existing);
+          const { rows, certain } = alignSyncAccountRows(returned, requested);
           // Missing fields must come from fresh post-write reads, never stale acceptance evidence.
           const missing = dryRun
             ? []

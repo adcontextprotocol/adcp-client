@@ -246,3 +246,18 @@ test('explicit billing and pending-term remaps fail the default sync assertion',
     true
   );
 });
+
+test('single-entry canonical seller echoes retain proofs for the buyer’s original natural key', () => {
+  const ctx = context();
+  const canonical = { ...row, brand: { domain: 'canonical.example' } };
+  assert.equal(failed(spec.onStep(ctx, step([canonical]))), false);
+  assert.equal(
+    failed(
+      spec.onStep(
+        ctx,
+        step([{ ...canonical, account_id: 'duplicate' }], { accounts: [entry], idempotency_key: 'new-request' })
+      )
+    ),
+    true
+  );
+});

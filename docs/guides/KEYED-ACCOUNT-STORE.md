@@ -2,8 +2,8 @@
 
 `sync_accounts` upserts by account identity, independently of the request's
 `idempotency_key`. Re-syncing the same account days later must preserve its
-`account_id` and report `updated` or `unchanged`. An active account must accept
-the requested `payment_terms` exactly or reject the entry.
+`account_id` and report `updated` or `unchanged`. An account must accept
+explicitly requested billing and `payment_terms` exactly or reject the entry; pending accounts may omit commercial fields while approval is incomplete.
 
 ## Guarding your existing store
 

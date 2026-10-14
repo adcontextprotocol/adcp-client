@@ -46,15 +46,15 @@ export function matchingSyncAccountIndices(
   entries: readonly Record<string, unknown>[]
 ): number[] {
   const id = record(row.account).account_id ?? row.account_id;
-  if (typeof id === 'string') {
-    const ids = entries.flatMap((entry, index) =>
-      (record(entry.account).account_id ?? entry.account_id) === id ? [index] : []
-    );
-    if (ids.length) return ids;
-  }
+  const ids =
+    typeof id === 'string'
+      ? entries.flatMap((entry, index) =>
+          (record(entry.account).account_id ?? entry.account_id) === id ? [index] : []
+        )
+      : [];
   const echoed = syncNaturalKey(row.account === undefined ? { ...row, account_id: undefined } : row);
-  if (!echoed) return [];
-  return entries.flatMap((entry, index) => {
+  if (!echoed) return ids;
+  const echoes = entries.flatMap((entry, index) => {
     const ref = syncNaturalKey(entry);
     return ref &&
       accountReferenceKey({
@@ -68,24 +68,20 @@ export function matchingSyncAccountIndices(
       ? [index]
       : [];
   });
+  return [...new Set([...ids, ...echoes])];
 }
 
 /** Reserve unambiguous matches first; partial echoes cannot establish a distinct request's identity. */
 export function alignSyncAccountRows(
   rows: SyncAccountsResultRow[],
-  entries: readonly Record<string, unknown>[],
-  existing: readonly (AccountSyncSnapshot | null)[]
+  entries: readonly Record<string, unknown>[]
 ): { rows: SyncAccountsResultRow[]; certain: boolean[] } {
   if (rows.length !== entries.length) return { rows, certain: rows.map(() => false) };
   const aligned: SyncAccountsResultRow[] = Array(rows.length);
   const certain: boolean[] = Array(rows.length).fill(false);
   const used = new Set<number>();
   const assigned = new Set<number>();
-  const candidates = rows.map(row => {
-    const matches = matchingSyncAccountIndices(row as unknown as Record<string, unknown>, entries);
-    const known = matches.filter(index => row.account_id !== undefined && existing[index]?.id === row.account_id);
-    return known.length ? known : matches;
-  });
+  const candidates = rows.map(row => matchingSyncAccountIndices(row as unknown as Record<string, unknown>, entries));
   const assign = (position: number, index: number, verified: boolean) => {
     aligned[index] = rows[position]!;
     certain[index] = verified;
@@ -194,7 +190,7 @@ const MESSAGES: Record<AccountStoreDiagnostic['code'], string> = {
     'Account upsert must preserve the existing account_id and report updated or unchanged.',
   ACCOUNT_SYNC_ROW_UNMATCHED: 'Account sync response lacks enough identity fields to verify its request entry.',
   BILLING_MISMATCH: 'An account must accept the requested billing model or reject the sync entry.',
-  PAYMENT_TERMS_MISMATCH: 'An active account must accept the requested payment_terms or reject the sync entry.',
+  PAYMENT_TERMS_MISMATCH: 'An account must accept explicitly requested payment_terms or reject the sync entry.',
   ACCOUNT_BILLING_INCOMPLETE: 'An agent-billed account response must include billing and payment_terms.',
   ACCOUNT_LOOKUP_FAILED:
     'Account lookup could not provide an existing snapshot; use a lookup-only natural-key resolver.',

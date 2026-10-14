@@ -603,5 +603,81 @@ test('the existing implicit SDK store performs lookup-only sync guards without p
   await call();
   assert.equal(builds, 1);
   await call();
-  assert.equal(builds, 2);
+  assert.equal(builds, 1);
+});
+
+test('a known account ID alone cannot resolve ambiguous response key echoes', async () => {
+  const entries = [
+    { ...entry, currency: 'USD' },
+    { ...entry, currency: 'EUR' },
+  ];
+  const { call, diagnostics } = setup({
+    strictIdempotency: true,
+    resolve: async ref => (ref?.currency === 'USD' ? account : null),
+    upsert: async () => [
+      { ...row, account_id: 'new', action: 'created', billing: 'agent', payment_terms: 'net_60' },
+      { ...row, billing: 'agent', payment_terms: 'net_60' },
+    ],
+  });
+  assert.deepEqual(
+    (await call(entries)).structuredContent.accounts.map(row => row.account_id),
+    ['new', account.id]
+  );
+  assert.equal(diagnostics.filter(d => d.code === 'ACCOUNT_SYNC_ROW_UNMATCHED').length, 2);
+});
+
+test('commercially filtered dry-run entries never create accounts in the keyed store', async () => {
+  const { createKeyedAccountStore, keyedAccountMemoryBackend } = require('../dist/lib/server');
+  const store = createKeyedAccountStore({
+    namespace: 'filtered-preview',
+    principalKey: ctx => ctx.authInfo?.credential?.key_id,
+    backend: keyedAccountMemoryBackend(),
+    createAccount: (ref, id) => ({ ...account, id, brand: ref.brand, operator: ref.operator }),
+  });
+  const diagnostics = [];
+  const server = createAdcpServerFromPlatform(
+    {
+      capabilities: { specialisms: ['signal-marketplace'], pricingModels: ['cpm'], supportedBillings: ['agent'] },
+      signals: { getSignals: async () => ({ signals: [] }), activateSignal: async () => ({}) },
+      accounts: store,
+    },
+    { name: 'filtered-preview', version: '1', validation: { requests: 'off', responses: 'off' } }
+  );
+  const result = await server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'sync_accounts',
+        arguments: {
+          accounts: [{ ...entry, billing: 'operator' }, entry],
+          idempotency_key: randomUUID(),
+          dry_run: true,
+        },
+      },
+    },
+    { authInfo: { credential: { kind: 'api_key', key_id: 'buyer' } } }
+  );
+  assert.equal(result.structuredContent.dry_run, true);
+  assert.deepEqual(
+    result.structuredContent.accounts.map(row => row.action),
+    ['failed', 'created']
+  );
+  assert.equal(await store.resolve(entry, { authInfo: { credential: { kind: 'api_key', key_id: 'buyer' } } }), null);
+});
+
+test('mixed ID and natural-key entries reserve a uniquely echoed settings row', async () => {
+  const entries = [entry, { account: { account_id: account.id }, payment_terms: 'net_30' }];
+  const { call, diagnostics } = setup({
+    strictIdempotency: true,
+    resolve: async () => null,
+    upsert: async () => [
+      { ...row, billing: 'agent', payment_terms: 'net_60' },
+      { ...row, account: { account_id: account.id }, billing: 'agent', payment_terms: 'net_30' },
+    ],
+  });
+  assert.deepEqual(
+    (await call(entries)).structuredContent.accounts.map(row => row.payment_terms),
+    ['net_60', 'net_30']
+  );
+  assert.deepEqual(diagnostics, []);
 });

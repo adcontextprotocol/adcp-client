@@ -25,6 +25,8 @@ function matchingEntry(
 ): Record<string, unknown> | undefined {
   const matches = matchingSyncAccountIndices(row, entries).map(index => entries[index]!);
   if (matches.length === 1) return matches[0];
+  // A single response has no reordering ambiguity, even with a canonicalized seller echo.
+  if (matches.length === 0 && entries.length === 1) return entries[0];
   // Distinct keys with omitted echo subdivisions cannot be paired by response order.
   const keys = new Set(
     matches.map(entry => {
@@ -57,7 +59,8 @@ export function registerAccountInvariants(): void {
   registerAssertion({
     id: 'accounts.sync_contract',
     default: true,
-    description: 'Account sync preserves natural-key identity and does not explicitly remap active payment terms.',
+    description:
+      'Account sync preserves natural-key identity and does not explicitly remap billing models or payment terms.',
     onStart(ctx) {
       ctx.state.identities = new Map<
         string,
