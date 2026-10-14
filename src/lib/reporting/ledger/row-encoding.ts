@@ -33,24 +33,47 @@ import { canonicalize } from '../../utils/jcs';
  * `adcp_jcs_rows_v1` names the per-row RFC 8785 canonicalization. The stored
  * chunk layout is one canonical row per line (`jsonl`); the protocol content
  * digest is still computed by the streaming hashers below.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export const REPORTING_ROW_FORMAT_V1 = 'jsonl' as const;
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export const REPORTING_ROW_ALGORITHM_V1 = 'adcp_jcs_rows_v1' as const;
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export const REPORTING_ROW_SEGMENT_MAX_ROWS = 500;
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export const REPORTING_ROW_CHUNK_MAX_SEGMENTS = 20;
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export const REPORTING_ROW_CHUNK_MAX_ROWS = REPORTING_ROW_SEGMENT_MAX_ROWS * REPORTING_ROW_CHUNK_MAX_SEGMENTS;
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export const REPORTING_ROW_CHUNK_MAX_BYTES = 8 * 1024 * 1024;
 
 const NEWLINE = 0x0a;
 const COMMA = Buffer.from(',', 'utf8');
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export type ReportingRowEncodingErrorCode =
   | 'INVALID_ROW'
   | 'MANIFEST_MISMATCH'
   | 'CHUNK_INTEGRITY_FAILED'
   | 'ENVELOPE_INTEGRITY_FAILED';
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export class ReportingRowEncodingError extends Error {
   constructor(
     readonly code: ReportingRowEncodingErrorCode,
@@ -62,6 +85,9 @@ export class ReportingRowEncodingError extends Error {
   }
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function isReportingRowEncodingError(error: unknown): error is ReportingRowEncodingError {
   return (
     !!error &&
@@ -70,6 +96,9 @@ export function isReportingRowEncodingError(error: unknown): error is ReportingR
   );
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingRowSegmentManifestV1 {
   first_ordinal: number;
   row_count: number;
@@ -79,6 +108,9 @@ export interface ReportingRowSegmentManifestV1 {
   sha256: string;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingRowChunkManifestV1 {
   chunk_index: number;
   first_ordinal: number;
@@ -88,12 +120,18 @@ export interface ReportingRowChunkManifestV1 {
   segments: ReportingRowSegmentManifestV1[];
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingRowChunkV1 {
   manifest: ReportingRowChunkManifestV1;
   /** Uncompressed canonical JSONL bytes. */
   bytes: Buffer;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingEncodedRowsV1 {
   format: typeof REPORTING_ROW_FORMAT_V1;
   algorithm: typeof REPORTING_ROW_ALGORITHM_V1;
@@ -106,12 +144,18 @@ export interface ReportingEncodedRowsV1 {
   rowManifestSha256: string;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingRevisionEnvelopeInputV1 {
   reporting_revision_id: string;
   row_count: number;
   control_totals: readonly unknown[];
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingRevisionEnvelopeDigestV1 {
   sha256: string;
   /** Byte length of the canonical envelope; equals `binding.byteCount`. */
@@ -122,6 +166,8 @@ export interface ReportingRevisionEnvelopeDigestV1 {
  * Canonicalize one row for storage. Refuses values whose canonical bytes are
  * not portable across conforming JCS implementations: non-plain objects,
  * non-finite numbers, integers outside ±(2^53 − 1), and lone surrogates.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function canonicalReportingRowV1(row: unknown, ordinal = 0): string {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
@@ -143,7 +189,11 @@ export function canonicalReportingRowV1(row: unknown, ordinal = 0): string {
   return canonical;
 }
 
-/** Encode rows into contract-fixed canonical JSONL chunks and manifests. */
+/**
+ * Encode rows into contract-fixed canonical JSONL chunks and manifests.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function encodeReportingRowsV1(rows: readonly unknown[]): ReportingEncodedRowsV1 {
   const chunks: ReportingRowChunkV1[] = [];
   let chunkLines: Buffer[] = [];
@@ -183,7 +233,11 @@ export function encodeReportingRowsV1(rows: readonly unknown[]): ReportingEncode
   };
 }
 
-/** `sha256(JCS(manifests))` over the ordered chunk manifests, locators excluded. */
+/**
+ * `sha256(JCS(manifests))` over the ordered chunk manifests, locators excluded.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function reportingRowManifestSha256V1(manifests: readonly ReportingRowChunkManifestV1[]): string {
   return sha256Hex(
     canonicalize(
@@ -210,6 +264,8 @@ export function reportingRowManifestSha256V1(manifests: readonly ReportingRowChu
  * header's committed `row_manifest_sha256` and `row_count`. Ordinals must be
  * contiguous from zero, chunk and segment boundaries must follow the contract
  * limits, and segment byte ranges must tile their chunk exactly.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function verifyReportingRowManifestsV1(
   manifests: readonly ReportingRowChunkManifestV1[],
@@ -264,6 +320,8 @@ export function verifyReportingRowManifestsV1(
 /**
  * Verify a whole chunk's canonical bytes against its manifest: total digest,
  * byte count, and every segment's digest and line count.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function verifyReportingRowChunkV1(manifest: ReportingRowChunkManifestV1, bytes: Uint8Array): void {
   const buffer = toBuffer(bytes);
@@ -280,6 +338,8 @@ export function verifyReportingRowChunkV1(manifest: ReportingRowChunkManifestV1,
  * (inclusive). `bytes` must hold exactly those segments' canonical bytes,
  * starting at the first segment's `byte_offset` — the shape returned by a
  * ranged object read. Rows are released only after every segment verifies.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function decodeVerifiedReportingRowSegmentsV1(
   manifest: ReportingRowChunkManifestV1,
@@ -311,6 +371,8 @@ export function decodeVerifiedReportingRowSegmentsV1(
  * Streaming hasher for the protocol revision binding
  * `sha256(JCS({reporting_revision_id, row_count, control_totals, reporting_rows}))`.
  * Feed verified chunk bytes in order; rows are never parsed.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function createReportingRevisionEnvelopeHasherV1(envelope: ReportingRevisionEnvelopeInputV1): {
   update(chunkBytes: Uint8Array): void;
@@ -326,7 +388,11 @@ export function createReportingRevisionEnvelopeHasherV1(envelope: ReportingRevis
   return createJoinedRowsHasher(prefix, suffix, envelope.row_count);
 }
 
-/** Envelope digest over already-encoded chunk bytes. */
+/**
+ * Envelope digest over already-encoded chunk bytes.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function reportingRevisionEnvelopeDigestV1(
   envelope: ReportingRevisionEnvelopeInputV1,
   chunks: Iterable<Uint8Array>
@@ -336,7 +402,11 @@ export function reportingRevisionEnvelopeDigestV1(
   return hasher.digest();
 }
 
-/** Streaming hasher for digest profile `rows_v1`: `sha256(JCS(rows))`. */
+/**
+ * Streaming hasher for digest profile `rows_v1`: `sha256(JCS(rows))`.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function createReportingRowsOnlyHasherV1(rowCount: number): {
   update(chunkBytes: Uint8Array): void;
   digest(): ReportingRevisionEnvelopeDigestV1;
@@ -348,6 +418,8 @@ export function createReportingRowsOnlyHasherV1(rowCount: number): {
  * Throw unless the canonical chunks reproduce the header's committed revision
  * binding. Used at write time (proof that chunks and envelope agree) and for
  * full-revision reads.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function assertReportingRevisionEnvelopeV1(
   envelope: ReportingRevisionEnvelopeInputV1,

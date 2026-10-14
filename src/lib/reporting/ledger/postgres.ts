@@ -93,11 +93,17 @@ interface ReportingPgClient {
   query<Row extends QueryResultRow = QueryResultRow>(text: string, values?: unknown[]): Promise<ReportingPgResult<Row>>;
   release(error?: Error): void;
 }
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingPgPool {
   query<Row extends QueryResultRow = QueryResultRow>(text: string, values?: unknown[]): Promise<ReportingPgResult<Row>>;
   connect(): Promise<ReportingPgClient>;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export const REPORTING_LEDGER_MIGRATION = `
 CREATE TABLE IF NOT EXISTS adcp_reporting_configurations (
   configuration_id TEXT PRIMARY KEY,
@@ -388,7 +394,11 @@ END
 $tombstone_retry$;
 `.trim();
 
-/** Constraint installed by {@link REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION}. */
+/**
+ * Constraint installed by {@link REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION}.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export const REPORTING_LEDGER_FINALITY_FENCE_CONSTRAINT = 'adcp_reporting_transitions_finality_recorded';
 
 /**
@@ -411,6 +421,8 @@ export const REPORTING_LEDGER_FINALITY_FENCE_CONSTRAINT = 'adcp_reporting_transi
  * multiply finality-only events, which is the intended trade: loud rejection
  * beats a quietly broken invariant. Idempotent and re-runnable; it takes no lock
  * once installed.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export const REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION = `
 DO $$
@@ -460,6 +472,9 @@ type StoredConsumerStatusBatchResult = {
   errorKeyword?: string;
 };
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface PostgresReportingLedgerStoreOptions {
   /** Assert that the supplied PostgreSQL database/schema is isolated to this deployment. */
   acknowledgeIsolatedDatabase?: boolean;
@@ -519,6 +534,9 @@ export interface PostgresReportingLedgerStoreOptions {
   changeFeed?: boolean;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export class ReportingLedgerLeaseLostError extends Error {
   constructor(message = 'Reporting ledger lease was lost before commit') {
     super(message);
@@ -526,7 +544,11 @@ export class ReportingLedgerLeaseLostError extends Error {
   }
 }
 
-/** A planner or writer named a period whose ledger records were retired by retention. */
+/**
+ * A planner or writer named a period whose ledger records were retired by retention.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export class ReportingLedgerPeriodRetiredError extends Error {
   constructor(message = 'Reporting obligation period was retired by retention') {
     super(message);
@@ -534,6 +556,9 @@ export class ReportingLedgerPeriodRetiredError extends Error {
   }
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export class ReportingLedgerContinuityError extends Error {
   constructor(message = 'Reporting ledger revision continuity invariant failed') {
     super(message);
@@ -552,7 +577,11 @@ function backoffIntervalSql(attemptsExpr: string): string {
   return `(LEAST(21600, 60 * power(2, LEAST(${attemptsExpr} - 1, 12))) * INTERVAL '1 second')`;
 }
 
-/** Bounded global cleanup for expired cursor snapshots and changes checkpoints. */
+/**
+ * Bounded global cleanup for expired cursor snapshots and changes checkpoints.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export async function sweepExpiredReportingLedgerState(
   pool: Pick<ReportingPgPool, 'query'>,
   limit = 1_000
@@ -588,6 +617,9 @@ export async function sweepExpiredReportingLedgerState(
   }
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export class PostgresReportingLedgerStore implements ReportingLedgerStore {
   /**
    * Exposed so `createReportingStatusHandler` can inherit it and refuse a

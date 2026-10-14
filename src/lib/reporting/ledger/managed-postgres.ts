@@ -63,6 +63,8 @@ interface PgClient {
  * Additive migration owned by #2944. It intentionally does not alter the Core
  * tables so the #2943 notification/activity bridge can evolve that schema
  * independently. Apply after REPORTING_LEDGER_MIGRATION in the same schema.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export const REPORTING_MANAGED_DELIVERY_MIGRATION = `
 CREATE TABLE IF NOT EXISTS adcp_reporting_destination_authorizations (
@@ -380,6 +382,9 @@ type ManagedPolicyColumn =
   | 'advertised_authorization_revocation_seconds';
 type ManagedPolicyRow = Record<ManagedPolicyColumn, number | null>;
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface PostgresReportingManagedDeliveryStoreOptions {
   /** Transactional reporting outbox used for successful delivery-ready events. */
   notificationActivityPort?: ReportingLedgerNotificationActivityPortV1<ReportingLedgerTransactionV1>;
@@ -425,6 +430,9 @@ export interface PostgresReportingManagedDeliveryStoreOptions {
   evidenceRetentionDays?: number;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export class PostgresReportingManagedDeliveryStore
   implements ReportingManagedDeliveryStore, ReportingObjectWriteStoreV1, ReportingObjectWriteAuthorityStoreV1
 {

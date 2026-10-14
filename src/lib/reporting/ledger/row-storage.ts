@@ -39,7 +39,11 @@ import {
 export { ReportingRowStoreError, isReportingRowStoreError } from './row-storage-errors';
 export type { ReportingRowStoreErrorCode } from './row-storage-errors';
 
-/** Rows stored as chunk bodies in the ledger's own PostgreSQL schema. */
+/**
+ * Rows stored as chunk bodies in the ledger's own PostgreSQL schema.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingPostgresRowBindingV1 {
   kind: 'postgres';
 }
@@ -49,6 +53,8 @@ export interface ReportingPostgresRowBindingV1 {
  * definition lives in host code, which makes it the allowlist: a row set
  * whose recorded binding identity differs from the configured definition is
  * never read from or written to.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export interface ReportingObjectRowBindingV1 {
   kind: 'object';
@@ -76,8 +82,14 @@ export interface ReportingObjectRowBindingV1 {
   credentialRef?: string;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export type ReportingRowBindingDefinitionV1 = ReportingPostgresRowBindingV1 | ReportingObjectRowBindingV1;
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingRowBindingSelectionInputV1 {
   account_id: string;
   reporting_obligation_id: string;
@@ -87,6 +99,9 @@ export interface ReportingRowBindingSelectionInputV1 {
   content_size_bytes: number;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingRowStorageOptionsV1 {
   /**
    * Logical binding ID → immutable definition. Defaults to a single
@@ -109,6 +124,9 @@ export interface ReportingRowStorageOptionsV1 {
   readDeadlineMilliseconds?: number;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingRowSetPrepareInputV1 {
   rowSetId: string;
   rowSetKind: 'revision' | 'adjustment';
@@ -135,6 +153,9 @@ interface PreparedObjectV1 {
   readonly compression: 'none' | 'gzip';
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingPreparedRowSetV1 {
   readonly input: ReportingRowSetPrepareInputV1;
   readonly encoded: ReportingEncodedRowsV1;
@@ -145,7 +166,11 @@ export interface ReportingPreparedRowSetV1 {
   readonly objects?: readonly PreparedObjectV1[];
 }
 
-/** Where one chunk was stored; recorded in the chunk manifest. */
+/**
+ * Where one chunk was stored; recorded in the chunk manifest.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingRowChunkLocatorV1 {
   /** AdCP `object_ref`: decoded, destination-relative, 1 to 1024 characters. */
   objectRef: string;
@@ -199,7 +224,11 @@ interface ChunkRecordV1 {
   size_bytes: string | number | null;
 }
 
-/** A row set whose chunk manifest has been verified against its committed digest. */
+/**
+ * A row set whose chunk manifest has been verified against its committed digest.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingRowSetHandleV1 {
   readonly rowSetId: string;
   readonly rowSetKind: 'revision' | 'adjustment';
@@ -233,6 +262,8 @@ const MAX_ADOPTED_OBJECT_BYTES = 2 * REPORTING_ROW_CHUNK_MAX_BYTES + 1024 * 1024
  * available once the row-storage migration is applied; object-kind reads need
  * the binding and its provider configured. Writes require an explicit opt-in
  * on the owning store.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export class ReportingRowStorageV1 {
   private readonly bindings: Readonly<Record<string, ReportingRowBindingDefinitionV1>>;
@@ -1124,7 +1155,11 @@ function sha256Hex(value: string | Uint8Array): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-/** Fresh opaque intent identifier for one upload attempt. */
+/**
+ * Fresh opaque intent identifier for one upload attempt.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function reportingRowWriteIntentIdV1(): string {
   return randomUUID();
 }

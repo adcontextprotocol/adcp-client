@@ -1,3 +1,12 @@
+/**
+ * Azure Blob Storage row-object provider for Reliable Reporting.
+ *
+ * Every export of this subpath is `@experimental` and may change in minor releases.
+ *
+ * Stability policy: https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ *
+ * @packageDocumentation
+ */
 import { randomUUID } from 'node:crypto';
 import type { BlobClient, BlobServiceClient, ContainerClient } from '@azure/storage-blob';
 import { ReportingRowStoreError } from '../ledger/row-storage-errors';
@@ -11,6 +20,9 @@ import {
   selectReportingRowClient,
 } from '../ledger/row-storage-provider-io';
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface CreateAzureBlobReportingRowObjectProviderOptionsV1 {
   /** Official client used by bindings without a `credentialRef`. */
   client?: BlobServiceClient;
@@ -86,6 +98,8 @@ function metadataOf(metadata: Readonly<Record<string, string>>): Record<string, 
  * identical bytes at the same key (ETags are content-derived and cannot fence that).
  * The probe refuses accounts without versioning and proves create-only behaviour
  * empirically.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function createAzureBlobReportingRowObjectProviderV1(
   options: CreateAzureBlobReportingRowObjectProviderOptionsV1

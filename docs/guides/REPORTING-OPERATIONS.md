@@ -5,6 +5,8 @@ consumer runtime. Reliable Reporting controls evidence used for billing and
 large media-spend decisions. Treat its PostgreSQL state, destination objects,
 signing keys, and authentication registry as financial infrastructure.
 
+> **Stability:** the storage subpaths this runbook operates are experimental. Pin `@adcp/sdk` with `~` and read each minor's changeset before upgrading. See the [Reliable Reporting stability policy](REPORTING-STABILITY.md).
+
 ## Production topology
 
 Use one PostgreSQL primary with synchronous durability appropriate to the

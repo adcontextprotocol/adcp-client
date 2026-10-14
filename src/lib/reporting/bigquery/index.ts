@@ -1,3 +1,12 @@
+/**
+ * BigQuery warehouse sink for Reliable Reporting.
+ *
+ * Every export of this subpath is `@experimental` and may change in minor releases.
+ *
+ * Stability policy: https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ *
+ * @packageDocumentation
+ */
 import { createHash } from 'crypto';
 import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
@@ -33,7 +42,11 @@ import { reportingPeriodDate } from '../ledger/schedule';
  * that plan share job IDs; stale runs cannot change its attempts or cursor.
  */
 
-/** Apply after `REPORTING_LEDGER_CHANGES_MIGRATION`. Holds one row per sink. */
+/**
+ * Apply after `REPORTING_LEDGER_CHANGES_MIGRATION`. Holds one row per sink.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export const REPORTING_WAREHOUSE_SINK_MIGRATION = `
 CREATE TABLE IF NOT EXISTS adcp_reporting_warehouse_sinks (
   sink_name TEXT PRIMARY KEY CHECK (sink_name ~ '^[A-Za-z0-9_.:-]{1,128}$'),
@@ -57,7 +70,11 @@ ALTER TABLE adcp_reporting_warehouse_sinks
   ADD COLUMN IF NOT EXISTS planned_revisions_timeouts INTEGER NOT NULL DEFAULT 0 CHECK (planned_revisions_timeouts >= 0);
 `.trim();
 
-/** Structural subset of the official `@google-cloud/bigquery` client the sink uses. */
+/**
+ * Structural subset of the official `@google-cloud/bigquery` client the sink uses.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingBigQueryClientV1 {
   dataset(
     datasetId: string,
@@ -78,11 +95,17 @@ export interface ReportingBigQueryClientV1 {
   query(options: { query: string; location?: string }): Promise<unknown>;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingWarehouseRowContextV1 {
   revision: ReportingLedgerRevisionMetadataV1;
   ordinal: number;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface CreateBigQueryReportingWarehouseSinkOptionsV1 {
   /** Ledger store with `changeFeed: true`. */
   store: Pick<PostgresReportingLedgerStore, 'changesAfter' | 'getRevisionMetadata' | 'readRevisionRows'> & {
@@ -161,6 +184,9 @@ export interface CreateBigQueryReportingWarehouseSinkOptionsV1 {
   loadTimeoutMilliseconds?: number;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface BigQueryReportingWarehouseSinkV1 {
   /**
    * Load at most one batch. Resolves with what was loaded; `idle` when no
@@ -218,6 +244,9 @@ const PROJECT = /^[a-z][a-z0-9-]{4,61}[a-z0-9]$/;
 const DATASET_OR_TABLE = /^[A-Za-z_][A-Za-z0-9_]{0,1023}$/;
 const NAME = /^[A-Za-z0-9_.:-]{1,128}$/;
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function createBigQueryReportingWarehouseSinkV1(
   options: CreateBigQueryReportingWarehouseSinkOptionsV1
 ): BigQueryReportingWarehouseSinkV1 {
@@ -743,12 +772,18 @@ function missingMigration(error: unknown): never {
 /**
  * How long one run may upload a file or wait for a running job: the configured
  * base doubled once per earlier timeout of that table's load, capped at 6 hours.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function reportingWarehouseLoadDeadlineV1(baseMilliseconds: number, timeouts: number): number {
   return Math.min(baseMilliseconds * 2 ** Math.min(Math.max(timeouts, 0), MAX_TIMEOUT_DOUBLINGS), MAX_LOAD_TIMEOUT);
 }
 
-/** Deterministic load job ID for one planned change-feed range. */
+/**
+ * Deterministic load job ID for one planned change-feed range.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function reportingWarehouseJobIdV1(name: string, from: string | null, to: string, generation = 0): string {
   // Generation 0 hashes exactly as before, so job IDs of in-flight plans survive an upgrade.
   return `adcp_rr_${createHash('sha256')
@@ -768,7 +803,11 @@ function qualified(tables: WarehouseTablesV1, table: string): string {
   return `\`${tables.projectId ? `${tables.projectId}.` : ''}${tables.datasetId}.${table}\``;
 }
 
-/** DDL for the default warehouse tables: partitioned by period date, clustered by account and revision. */
+/**
+ * DDL for the default warehouse tables: partitioned by period date, clustered by account and revision.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function reportingWarehouseDefaultTablesSqlV1(tables: WarehouseTablesV1): string {
   return `
 CREATE TABLE IF NOT EXISTS ${qualified(tables, tables.rowsTableId)} (
@@ -809,6 +848,8 @@ CLUSTER BY account_id, reporting_obligation_id;`.trim();
  * DDL for the reference `current_rows` view: only each obligation's current
  * revision (its official revision, otherwise its latest snapshot). Summing
  * cumulative snapshots across revisions double-counts; query this view.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function reportingWarehouseCurrentRowsViewSqlV1(tables: WarehouseTablesV1 & { viewId?: string }): string {
   const view = tables.viewId ?? 'current_rows';
