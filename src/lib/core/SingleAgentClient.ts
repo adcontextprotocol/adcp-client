@@ -4237,7 +4237,11 @@ export class SingleAgentClient {
               method: requestMethod,
               url: requestUrl,
               headers: normalizedHeaders.headers,
-              body: typeof rawBody === 'string' ? rawBody : new TextDecoder('utf-8', { fatal: true }).decode(rawBody),
+              body:
+                typeof rawBody === 'string'
+                  ? rawBody
+                  : // ignoreBOM: Content-Digest covers the exact received bytes.
+                    new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(rawBody),
             },
             {
               directory: config.directory,

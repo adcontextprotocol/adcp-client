@@ -217,6 +217,7 @@ function verifyBytes(
   const alg = algorithm(jwk);
   if (input.params.alg !== undefined && input.params.alg !== alg) denied('algorithm');
   const signature = getHeaderValue(response?.headers ?? request.headers, 'signature');
+  if (signature === undefined || signature === '') denied('headers_missing');
   let bytes: Uint8Array;
   try {
     bytes = parseSignature(signature ?? '', input.label, 'rfc8941-base64').bytes;
@@ -380,7 +381,9 @@ export async function verifyWebBotAuth(
       const memberKey = component[1].get('key');
       if (typeof memberKey !== 'string' || memberKey !== input.label) bad('agent_member');
       const member = agents.get(memberKey);
-      if (!member || typeof member[0] !== 'string') bad('signature_agent');
+      // An absent member is unattributed (403); a member of the wrong type is malformed (400).
+      if (!member) denied('agent_not_covered');
+      if (typeof member[0] !== 'string') bad('signature_agent');
       const type = member[1].get('type');
       if (type !== undefined && type !== 'directory') denied('agent_type');
       const origin = receivedAgentOrigin(member[0]);
@@ -468,7 +471,12 @@ export async function verifyWebBotAuth(
   } catch (error) {
     if (error instanceof WebBotAuthError) {
       if (error.headers['Accept-Signature']) {
-        const label = inputs(request.headers)[0]?.label ?? 'sig1';
+        let label = 'sig1';
+        try {
+          label = inputs(request.headers)[0]?.label ?? 'sig1';
+        } catch {
+          // Missing or malformed Signature-Input: challenge with the default label.
+        }
         const bodyComponents = request.body ? '"content-type" "content-digest" ' : '';
         error.headers['Accept-Signature'] =
           `${label}=("@method" "@target-uri" "@authority" ${bodyComponents}"signature-agent";key="${label}");created;expires;nonce;keyid;tag="web-bot-auth"`;
@@ -708,6 +716,11 @@ export async function signWebBotAuth(
     headers['content-digest'] = computeContentDigest(request.body, 'rfc8941-base64');
     components.push('"content-type"', '"content-digest"');
   }
+  if (
+    options.relay &&
+    ['signature', 'signature-input', 'signature-agent'].some(name => !getHeaderValue(request.headers, name))
+  )
+    throw new TypeError('Relay requires the existing signature fields');
   const earlier = options.relay ? inputs(request.headers) : [];
   if (earlier.some(input => input.label === label || input.params.tag !== WEB_BOT_AUTH_PROFILE))
     throw new TypeError('Relay requires existing Web Bot Auth signatures and a fresh label');

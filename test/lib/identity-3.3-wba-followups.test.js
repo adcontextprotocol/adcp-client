@@ -243,3 +243,98 @@ test('D2: directory proofs must cover the exact "content-digest" component', asy
     e => e.reason === 'directory_proof'
   );
 });
+
+test('D3: an RFC 9421 webhook nonce cannot be replayed at expires + skew', async () => {
+  const { verifyWebhookSignature } = require('../../dist/lib/signing/webhook-verifier.js');
+  const { signWebhook } = require('../../dist/lib/signing/signer.js');
+  const fixtures = path.join(__dirname, '../fixtures/webhook-signing-vectors/keys.json');
+  const entry = JSON.parse(readFileSync(fixtures, 'utf8')).keys.find(k => k.kid === 'test-ed25519-webhook-2026');
+  const { _private_d_for_test_only, ...publicJwk } = entry;
+  const key = {
+    keyid: entry.kid,
+    alg: 'ed25519',
+    privateKey: { ...publicJwk, d: _private_d_for_test_only },
+  };
+  const created = 1_776_520_800;
+  const webhook = {
+    method: 'POST',
+    url: 'https://buyer.example.com/adcp/webhook/create_media_buy/agent_123/op_abc',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{"idempotency_key":"whk_01HW9D3H8FZP2N6R8T0V4X6Z9B","status":"completed"}',
+  };
+  const signed = signWebhook(webhook, key, { now: () => created, windowSeconds: 300 });
+  const replayStore = new InMemoryReplayStore();
+  const verify = at =>
+    verifyWebhookSignature(
+      { ...webhook, headers: { ...webhook.headers, ...signed.headers } },
+      {
+        jwks: new StaticJwksResolver([publicJwk]),
+        replayStore,
+        revocationStore: new InMemoryRevocationStore(),
+        now: () => at,
+      }
+    );
+  assert.equal((await verify(created)).status, 'verified');
+  await assert.rejects(verify(created + 300 + 60), e => /replayed/.test(e.code));
+});
+
+test('D4: the RFC 9421 signing fetch digests the exact bytes it sends', async () => {
+  const { createSigningFetch } = require('../../dist/lib/signing/fetch.js');
+  const { createHash } = require('crypto');
+  const keys = JSON.parse(
+    readFileSync(path.join(__dirname, '../../compliance/cache/latest/test-vectors/request-signing/keys.json'), 'utf8')
+  ).keys;
+  const ed = keys.find(k => k.kid === 'test-ed25519-2026');
+  const privateKey = { ...ed, d: ed._private_d_for_test_only };
+  for (const field of ['_private_d_for_test_only', 'key_ops', 'use']) delete privateKey[field];
+  let sent;
+  const signingFetch = createSigningFetch(
+    async (_url, init) => {
+      sent = init;
+      return new Response('');
+    },
+    { keyid: ed.kid, alg: 'ed25519', privateKey },
+    { coverContentDigest: true }
+  );
+  const bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...Buffer.from('{"a":1}')]);
+  await signingFetch('https://seller.example.com/mcp', {
+    method: 'POST',
+    body: bytes,
+    headers: { 'content-type': 'application/json' },
+  });
+  const wire = typeof sent.body === 'string' ? Buffer.from(sent.body, 'utf8') : Buffer.from(sent.body);
+  assert.deepEqual(wire, Buffer.from(bytes));
+  const digest = Object.entries(sent.headers).find(([name]) => name.toLowerCase() === 'content-digest')[1];
+  assert.ok(digest.includes(createHash('sha256').update(wire).digest('base64')));
+});
+
+test('D6: missing Signature or Signature-Input is a 403 with a body-aware challenge', async () => {
+  const key = newKey();
+  const proof = await wba.createSignedSignatureDirectory(origin, [{ privateKey: key }], { now: () => T });
+  const options = {
+    directory: directoryFor(proof, () => T),
+    replayStore: new InMemoryReplayStore(),
+    isRevoked: async () => false,
+    now: () => T,
+  };
+  const headers = await wba.signWebBotAuth(request, { privateKey: key }, { origin, now: () => T });
+  const { signature: _omit, ...unsigned } = headers;
+  await assert.rejects(wba.verifyWebBotAuth({ ...request, headers: unsigned }, options), e => e.status === 403);
+  // A bodyless request carrying only Signature-Agent is challenged without body components.
+  await assert.rejects(
+    wba.verifyWebBotAuth(
+      { method: 'GET', url: request.url, headers: { 'signature-agent': `sig1="${origin}"` } },
+      options
+    ),
+    e =>
+      e.status === 403 &&
+      e.headers['Accept-Signature'].startsWith('sig1=("@method" "@target-uri" "@authority" "signature-agent"')
+  );
+});
+
+test('D7: relay signing without existing fields is a caller error', async () => {
+  await assert.rejects(
+    wba.signWebBotAuth(request, { privateKey: newKey() }, { origin, relay: true, label: 'sig2', now: () => T }),
+    e => e instanceof TypeError && /Relay requires/.test(e.message)
+  );
+});
