@@ -10468,6 +10468,7 @@ export class SingleAgentClient {
       transport?.trustedFetchFn !== configured?.trustedFetchFn ||
       transport?.allowPrivateIp !== configured?.allowPrivateIp ||
       transport?.maxResponseBytes !== configured?.maxResponseBytes ||
+      transport?.requestTimeoutMs !== configured?.requestTimeoutMs ||
       transport?.legacyCompat?.enabled !== configured?.legacyCompat?.enabled
     );
   }

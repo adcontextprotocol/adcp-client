@@ -1458,6 +1458,7 @@ export async function runStoryboard(
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardResult> {
   options = applyReusableProfileOptions(options);
+  if (hasTestClientScope() && !options._discoveryPass) options = { ...options, _discoveryPass: {} };
   return withMCPConnectionScope(
     async () => {
       options = applyStoryboardVersionOptions(storyboard, options);

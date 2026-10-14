@@ -4,15 +4,18 @@ const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
+const { generateKeyPairSync } = require('node:crypto');
 const { comply } = require('../../dist/lib/testing/compliance');
 const { ADCP_VERSION, toReleasePrecisionVersion } = require('../../dist/lib/version');
 const {
   createTestClient,
   getOrCreateClientResolution,
   getOrDiscoverProfile,
+  seedAuthRejectedTestClientProfile,
   withTestClientScope,
 } = require('../../dist/lib/testing/client');
 const { withMCPConnectionScope } = require('../../dist/lib/protocols');
+const { loadStoryboardFile, runStoryboard } = require('../../dist/lib/testing/storyboard');
 
 function writeCache() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-discovery-reuse-'));
@@ -67,13 +70,26 @@ ${['one', 'two', 'three']
 
 async function startAgent(name) {
   const requests = [];
-  const state = { rejected: false, failToolsOnce: false, idempotency: false, toolsGate: undefined, onTools: undefined };
+  const state = {
+    rejected: false,
+    failToolsOnce: false,
+    failCapabilitiesOnce: false,
+    failCapabilities: false,
+    idempotency: false,
+    toolsGate: undefined,
+    onTools: undefined,
+  };
   const server = http.createServer(async (req, res) => {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const body = Buffer.concat(chunks).toString();
     const rpc = body ? JSON.parse(body) : {};
-    requests.push({ method: rpc.method, tool: rpc.params?.name, authorization: req.headers.authorization });
+    requests.push({
+      method: rpc.method,
+      tool: rpc.params?.name,
+      authorization: req.headers.authorization,
+      tenant: req.headers['x-tenant'],
+    });
     if (state.rejected || (rpc.method === 'tools/list' && state.failToolsOnce)) {
       const status = state.rejected ? 401 : 500;
       state.failToolsOnce = false;
@@ -118,6 +134,11 @@ async function startAgent(name) {
       );
       return;
     }
+    if (rpc.params?.name === 'get_adcp_capabilities' && (state.failCapabilitiesOnce || state.failCapabilities)) {
+      state.failCapabilitiesOnce = false;
+      res.writeHead(500, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'temporary failure' }));
+      return;
+    }
     const data =
       rpc.params?.name === 'get_adcp_capabilities'
         ? {
@@ -152,6 +173,8 @@ async function startAgent(name) {
       requests.splice(0);
       state.rejected = false;
       state.failToolsOnce = false;
+      state.failCapabilitiesOnce = false;
+      state.failCapabilities = false;
       state.idempotency = false;
       state.toolsGate = undefined;
       state.onTools = undefined;
@@ -522,5 +545,257 @@ describe('comply() discovery reuse', () => {
         assert.equal(agent.count('get_adcp_capabilities'), 2);
       })
     );
+  });
+
+  test('a failed selected capabilities profile is retried before applicability', async () => {
+    const dir = writeCache();
+    try {
+      for (const id of ['first', 'second', 'third']) {
+        const file = path.join(dir, 'universal', `${id}.yaml`);
+        fs.writeFileSync(
+          file,
+          fs
+            .readFileSync(file, 'utf8')
+            .replace(
+              'invariants:',
+              'requires_capability:\n  path: adcp.idempotency.supported\n  equals: true\ninvariants:'
+            )
+        );
+      }
+      agent.reset();
+      agent.state.failCapabilitiesOnce = true;
+      agent.state.idempotency = true;
+      assertPassed(await comply(agent.url, { allow_http: true, complianceDir: dir, versionEnvelope: 'auto' }));
+      assert.equal(agent.count('tools/list'), 1);
+      assert.equal(agent.count('get_adcp_capabilities'), 2);
+      assert.equal(agent.count('__test_probe'), 9);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a changed per-call timeout gets separate discovery', async () => {
+    agent.reset();
+    await withTestClientScope(() =>
+      withMCPConnectionScope(async () => {
+        const client = createTestClient(agent.url, 'mcp', { transport: { requestTimeoutMs: 20000 } });
+        await client.getAgentInfo();
+        await client.getAgentInfo({ transport: { requestTimeoutMs: 25000 } });
+        assert.equal(agent.count('tools/list'), 2);
+      })
+    );
+  });
+
+  test('legacy fetch aliases keep distinct network contexts', async () => {
+    agent.reset();
+    await withTestClientScope(() =>
+      withMCPConnectionScope(async () => {
+        const fetchA = (...args) => fetch(...args);
+        const fetchB = (...args) => fetch(...args);
+        const first = getOrCreateClientResolution(agent.url, { transport: { fetchFn: fetchA } }).client;
+        const second = getOrCreateClientResolution(agent.url, { transport: { fetchFn: fetchB } }).client;
+        const ordinary = getOrCreateClientResolution(agent.url, {}).client;
+        assert.notEqual(first, second);
+        assert.notEqual(first, ordinary);
+        assert.equal(getOrCreateClientResolution(agent.url, { transport: { trustedFetchFn: fetchA } }).client, first);
+        for (const client of [first, second, ordinary]) await getOrDiscoverProfile(client, {});
+        assertDiscovery(agent, 3);
+      })
+    );
+  });
+
+  test('case-variant tenant headers use their complete wire values', async () => {
+    agent.reset();
+    await withTestClientScope(() =>
+      withMCPConnectionScope(async () => {
+        const firstOptions = { headers: { 'X-Tenant': 'A', 'x-tenant': 'B' } };
+        const secondOptions = { headers: { 'x-tenant': 'B' } };
+        const first = getOrCreateClientResolution(agent.url, firstOptions).client;
+        const second = getOrCreateClientResolution(agent.url, secondOptions).client;
+        assert.notEqual(first, second);
+        await getOrDiscoverProfile(first, firstOptions);
+        await getOrDiscoverProfile(second, secondOptions);
+        const tenants = agent.requests.filter(r => r.tool === 'get_adcp_capabilities').map(r => r.tenant);
+        assert.deepEqual(tenants, ['A, B', 'B']);
+        assertDiscovery(agent, 2);
+      })
+    );
+  });
+
+  test('auth-degraded security storyboards survive declared kit credentials', async () => {
+    agent.reset();
+    agent.state.rejected = true;
+    try {
+      await withTestClientScope(() =>
+        withMCPConnectionScope(async () => {
+          const client = createTestClient(agent.url);
+          const discovered = await getOrDiscoverProfile(client, {});
+          assert.equal(discovered.step.passed, false);
+          seedAuthRejectedTestClientProfile(client, discovered.profile, ADCP_VERSION);
+          const complianceRoot = path.resolve('compliance/cache/latest');
+          const storyboard = loadStoryboardFile(path.join(complianceRoot, 'universal/security.yaml'));
+          const result = await runStoryboard(agent.url, storyboard, {
+            allow_http: true,
+            complianceDir: complianceRoot,
+            protocol: 'mcp',
+            adcpVersion: ADCP_VERSION,
+            _client: client,
+            _profile: discovered.profile,
+            agentTools: [],
+          });
+          assert.ok(
+            result.phases.some(phase => phase.phase_id === 'unauth_rejection'),
+            JSON.stringify(result)
+          );
+          assert.ok(result.phases.flatMap(phase => phase.steps).every(step => step.step_id !== 'discovery_failed'));
+          const kitClient = getOrCreateClientResolution(agent.url, {
+            protocol: 'mcp',
+            adcpVersion: ADCP_VERSION,
+            versionEnvelope: 'auto',
+            auth: { type: 'bearer', token: 'demo-acme-outdoor-v1' },
+          });
+          assert.equal(kitClient.reusedShared, true, 'declared kit must select its own client');
+          assert.notEqual(kitClient.client, client);
+        })
+      );
+    } finally {
+      agent.reset();
+    }
+  });
+
+  test('signing profiles and provider public keys keep separate contexts', async () => {
+    await withTestClientScope(async () => {
+      const key = generateKeyPairSync('ed25519');
+      const inline = {
+        alg: 'ed25519',
+        kid: 'test',
+        agent_url: 'https://buyer.example',
+        private_key: key.privateKey.export({ format: 'jwk' }),
+        profile: 'rfc9421',
+      };
+      const first = getOrCreateClientResolution(agent.url, { functional_request_signing: inline }).client;
+      const second = getOrCreateClientResolution(agent.url, {
+        functional_request_signing: { ...inline, profile: 'web-bot-auth' },
+      }).client;
+      assert.notEqual(first, second);
+      assert.equal(second.getAgent().request_signing.profile, 'web-bot-auth');
+      const provider = {
+        algorithm: 'ed25519',
+        keyid: 'test',
+        fingerprint: 'test-provider',
+        sign: async () => {
+          throw new Error('metadata checks must not sign');
+        },
+      };
+      const publicKey = key.publicKey.export({ format: 'jwk' });
+      const otherKey = generateKeyPairSync('ed25519').publicKey.export({ format: 'jwk' });
+      const providerConfig = { kind: 'provider', provider, agent_url: 'https://buyer.example', public_key: publicKey };
+      const third = getOrCreateClientResolution(agent.url, { functional_request_signing: providerConfig }).client;
+      const fourth = getOrCreateClientResolution(agent.url, {
+        functional_request_signing: { ...providerConfig, public_key: otherKey },
+      }).client;
+      assert.notEqual(third, fourth);
+      assert.deepEqual(fourth.getAgent().request_signing.public_key, otherKey);
+    });
+  });
+  test('failed discovery retries once per storyboard pass', async () => {
+    agent.reset();
+    agent.state.failCapabilities = true;
+    await withTestClientScope(() =>
+      withMCPConnectionScope(async () => {
+        const client = createTestClient(agent.url);
+        const options = { _discoveryPass: {} };
+        const first = await getOrDiscoverProfile(client, options);
+        const repeated = await getOrDiscoverProfile(client, options);
+        assert.ok(first.profile.capabilities_probe_error);
+        assert.equal(repeated.profile, first.profile);
+        assert.equal(agent.count('get_adcp_capabilities'), 1);
+        await getOrDiscoverProfile(client, { _discoveryPass: {} });
+        assert.equal(agent.count('get_adcp_capabilities'), 2);
+      })
+    );
+    agent.reset();
+  });
+  test('A2A bearer and User-Agent headers retain their override precedence', async () => {
+    let origin;
+    const calls = [];
+    const server = http.createServer(async (req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      if (req.method === 'GET') {
+        res.end(
+          JSON.stringify({
+            name: 'Header fixture',
+            description: 'Header precedence',
+            url: `${origin}/a2a`,
+            version: '1.0.0',
+            protocolVersion: '0.3.0',
+            defaultInputModes: ['application/json'],
+            defaultOutputModes: ['application/json'],
+            capabilities: { streaming: false, pushNotifications: false },
+            skills: [
+              {
+                id: 'get_adcp_capabilities',
+                name: 'get_adcp_capabilities',
+                description: 'Capabilities',
+                tags: ['test'],
+              },
+            ],
+          })
+        );
+        return;
+      }
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const rpc = JSON.parse(Buffer.concat(chunks).toString());
+      calls.push({ authorization: req.headers.authorization, userAgent: req.headers['user-agent'] });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          result: {
+            kind: 'task',
+            id: 'header-task',
+            contextId: 'header-context',
+            status: { state: 'completed' },
+            artifacts: [
+              {
+                artifactId: 'capabilities',
+                parts: [
+                  {
+                    kind: 'data',
+                    data: {
+                      adcp: {
+                        major_versions: [3],
+                        supported_versions: [toReleasePrecisionVersion(ADCP_VERSION)],
+                        idempotency: { supported: false },
+                      },
+                      supported_protocols: ['media_buy'],
+                      specialisms: [],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        })
+      );
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    origin = `http://127.0.0.1:${server.address().port}`;
+    try {
+      await withTestClientScope(async () => {
+        const client = createTestClient(`${origin}/a2a`, 'a2a', {
+          auth: { type: 'bearer', token: 'good' },
+          userAgent: 'base-agent',
+          headers: { authorization: 'Bearer stale', 'USER-AGENT': 'caller-agent' },
+        });
+        await client.getAdcpCapabilities({});
+        assert.ok(calls.length > 0);
+        assert.ok(calls.every(call => call.authorization === 'Bearer good'));
+        assert.ok(calls.every(call => call.userAgent === 'caller-agent'));
+      });
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+    }
   });
 });

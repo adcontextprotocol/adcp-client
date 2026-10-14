@@ -23,6 +23,7 @@ import { classifyProbeUrl } from '../utils/probe-policy';
 import { SsrfRefusedError } from '../net/ssrf-fetch';
 import { ADCP_VERSION, toReleasePrecisionVersion } from '../version';
 import type { VersionEnvelopeMode } from '../protocols';
+import { normalizeTransportOptions } from '../protocols';
 import type { AgentRequestSigningConfig } from '../types/adcp';
 import { createHmac, hkdfSync, randomBytes } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -45,10 +46,13 @@ interface TestClientScope {
       {
         promise: ReturnType<typeof discoverAgentProfile>;
         signal?: AbortSignal;
+        failed?: boolean;
+        pass?: object;
       }
     >
   >;
   profileScopes: WeakMap<TestClient, WeakMap<AgentProfile, { scopeKey: string; schemaAdcpVersion?: string }>>;
+  authRejectedProfiles: WeakSet<AgentProfile>;
   active: boolean;
 }
 
@@ -56,7 +60,13 @@ const testClientScope = new AsyncLocalStorage<TestClientScope>();
 
 /** @internal Own client and discovery reuse for exactly one comply() invocation. */
 export async function withTestClientScope<T>(fn: () => Promise<T>): Promise<T> {
-  const scope: TestClientScope = { clients: [], profiles: new WeakMap(), profileScopes: new WeakMap(), active: true };
+  const scope: TestClientScope = {
+    clients: [],
+    profiles: new WeakMap(),
+    profileScopes: new WeakMap(),
+    authRejectedProfiles: new WeakSet(),
+    active: true,
+  };
   return testClientScope.run(scope, async () => {
     try {
       return await fn();
@@ -168,6 +178,7 @@ export function getLogger(): Logger {
  */
 export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mcp', options: TestOptions = {}) {
   options = withTestKitAuthDefaults(options);
+  const transport = normalizeTransportOptions(options.transport);
 
   // adcp-client#1618: SSRF policy gate at client construction. Once the
   // TestClient exists, every transport call inherits its agent URI; guarding
@@ -219,7 +230,17 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
   // request. Merged before auth so auth still wins on Authorization conflicts
   // (the basic-auth branch below intentionally overwrites this).
   if (options.headers && Object.keys(options.headers).length > 0) {
-    agentConfig.headers = { ...options.headers };
+    agentConfig.headers = normalizeTestClientHeaders(options.headers);
+    // Preserve the SDK's object-merge precedence for standard headers while
+    // combining case variants of tenant and routing headers before transport.
+    for (const name of ['Authorization', 'User-Agent', 'Content-Type']) {
+      const lower = name.toLowerCase();
+      const value = agentConfig.headers[lower];
+      if (value !== undefined) {
+        delete agentConfig.headers[lower];
+        agentConfig.headers[name] = value;
+      }
+    }
   }
 
   // Add auth to agent config - the library will use it automatically
@@ -227,6 +248,7 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
     if (options.auth.type === 'basic') {
       // basic: encode credentials here; library sends the Authorization header as-is
       const encoded = Buffer.from(`${options.auth.username}:${options.auth.password}`).toString('base64');
+      if (agentConfig.headers) delete agentConfig.headers.authorization;
       agentConfig.headers = { ...agentConfig.headers, Authorization: `Basic ${encoded}` };
     } else if (options.auth.type === 'oauth') {
       // oauth: attach tokens + client registration; ProtocolClient detects
@@ -261,7 +283,7 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
     ...(options.wireAdcpVersion !== undefined && { wireAdcpVersion: options.wireAdcpVersion }),
     ...(options.versionEnvelope !== undefined && { versionEnvelope: options.versionEnvelope }),
     ...(options.userAgent && { userAgent: options.userAgent }),
-    ...(options.transport && { transport: options.transport }),
+    ...(transport && { transport }),
     ...(scope?.active && {
       _reuseConfiguredDiscovery: () => scope.active && testClientScope.getStore() === scope,
     }),
@@ -283,16 +305,16 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
       ...(requestScopeMode !== undefined && { requestScopeMode }),
       ...(requestSigningMode !== undefined && { requestSigningMode }),
       ...(options.auth?.type === 'oauth' && options.auth.storage && { oauthStorage: options.auth.storage }),
-      ...(options.transport?.trustedFetchFn && { fetchFn: options.transport.trustedFetchFn }),
-      ...(options.transport?.allowPrivateIp !== undefined && { allowPrivateIp: options.transport.allowPrivateIp }),
-      ...(options.transport?.maxResponseBytes !== undefined && {
-        maxResponseBytes: options.transport.maxResponseBytes,
+      ...(transport?.trustedFetchFn && { fetchFn: transport.trustedFetchFn }),
+      ...(transport?.allowPrivateIp !== undefined && { allowPrivateIp: transport.allowPrivateIp }),
+      ...(transport?.maxResponseBytes !== undefined && {
+        maxResponseBytes: transport.maxResponseBytes,
       }),
-      ...(options.transport?.requestTimeoutMs !== undefined && {
-        requestTimeoutMs: options.transport.requestTimeoutMs,
+      ...(transport?.requestTimeoutMs !== undefined && {
+        requestTimeoutMs: transport.requestTimeoutMs,
       }),
-      ...(options.transport?.legacyCompat?.enabled !== undefined && {
-        legacyCompatEnabled: options.transport.legacyCompat.enabled,
+      ...(transport?.legacyCompat?.enabled !== undefined && {
+        legacyCompatEnabled: transport.legacyCompat.enabled,
       }),
     } satisfies TestClientVersionOptions,
     enumerable: false,
@@ -337,6 +359,7 @@ function isExecutableTestClient(client: unknown): client is TestClient {
 
 function testClientMatchesVersionOptions(client: TestClient, agentUrl: string, options: TestOptions): boolean {
   const effectiveOptions = withTestKitAuthDefaults(options);
+  const expectedTransport = normalizeTransportOptions(effectiveOptions.transport);
   const meta = (client as unknown as { [TEST_CLIENT_VERSION_OPTIONS]?: TestClientVersionOptions })[
     TEST_CLIENT_VERSION_OPTIONS
   ];
@@ -367,11 +390,11 @@ function testClientMatchesVersionOptions(client: TestClient, agentUrl: string, o
     meta.requestScopeMode === expectedRequestScopeMode &&
     meta.requestSigningMode === expectedRequestSigningMode &&
     meta.oauthStorage === expectedOAuthStorage &&
-    meta.fetchFn === effectiveOptions.transport?.trustedFetchFn &&
-    meta.allowPrivateIp === effectiveOptions.transport?.allowPrivateIp &&
-    meta.maxResponseBytes === effectiveOptions.transport?.maxResponseBytes &&
-    meta.requestTimeoutMs === effectiveOptions.transport?.requestTimeoutMs &&
-    meta.legacyCompatEnabled === effectiveOptions.transport?.legacyCompat?.enabled
+    meta.fetchFn === expectedTransport?.trustedFetchFn &&
+    meta.allowPrivateIp === expectedTransport?.allowPrivateIp &&
+    meta.maxResponseBytes === expectedTransport?.maxResponseBytes &&
+    meta.requestTimeoutMs === expectedTransport?.requestTimeoutMs &&
+    meta.legacyCompatEnabled === expectedTransport?.legacyCompat?.enabled
   );
 }
 
@@ -412,12 +435,18 @@ function authReuseMode(options: TestOptions): string | undefined {
   return options.auth?.type;
 }
 
+function normalizeTestClientHeaders(headers: Record<string, string>): Record<string, string> {
+  const normalized: Record<string, string> = {};
+  new Headers(headers).forEach((value, name) => {
+    normalized[name] = value;
+  });
+  return normalized;
+}
+
 function requestScopeReuseMode(options: TestOptions): string | undefined {
   const headers = options.headers
     ? Object.fromEntries(
-        Object.entries(options.headers)
-          .map(([name, value]) => [name.toLowerCase(), value] as const)
-          .sort(([a], [b]) => a.localeCompare(b))
+        Object.entries(normalizeTestClientHeaders(options.headers)).sort(([a], [b]) => a.localeCompare(b))
       )
     : undefined;
   if (!options.auth && !headers && !options.test_session_id && !options.userAgent) return undefined;
@@ -448,12 +477,14 @@ function requestSigningReuseMode(config: AgentRequestSigningConfig | undefined):
           keyid: config.provider.keyid,
           adcpUse: config.provider.adcpUse,
           fingerprint: config.provider.fingerprint,
+          publicKey: config.public_key,
         }
       : { algorithm: config.alg, keyid: config.kid, privateKey: config.private_key };
   const fingerprint = createHmac('sha256', '')
     .update(
       JSON.stringify({
         identity,
+        profile: config.profile ?? 'rfc9421',
         agentUrl: config.agent_url,
         jwksUri: config.jwks_uri,
         signSupported: config.sign_supported === true,
@@ -478,7 +509,14 @@ export async function getOrDiscoverProfile(
   schemaAdcpVersion ??= profileBinding?.schemaAdcpVersion ?? options.adcpVersion;
   options.signal?.throwIfAborted();
   const scopeKey = scope?.active ? client.getCapabilityEvidenceScope().scopeKey : undefined;
-  if (options._profile && (!scope?.active || (options._client === client && profileBinding?.scopeKey === scopeKey))) {
+  if (
+    options._profile &&
+    (!scope?.active ||
+      scope.authRejectedProfiles.has(options._profile) ||
+      (!options._profile.capabilities_probe_error &&
+        options._client === client &&
+        profileBinding?.scopeKey === scopeKey))
+  ) {
     seedTestClientSigningCapability(client, options._profile, schemaAdcpVersion);
     return {
       profile: options._profile,
@@ -493,13 +531,22 @@ export async function getOrDiscoverProfile(
     scope.profiles.set(client, profiles);
   }
   let discovery = profiles.get(key);
+  if (discovery?.failed && discovery.pass !== options._discoveryPass) {
+    profiles.delete(key);
+    discovery = undefined;
+  }
   if (!discovery) {
     const evict = () => {
       if (profiles!.get(key) === discovery) profiles!.delete(key);
     };
     const promise = discoverAgentProfile(client, options.signal, schemaAdcpVersion).then(
       result => {
-        if (!result.step.passed || result.profile.capabilities_probe_error || options.signal?.aborted) evict();
+        if (options.signal?.aborted) {
+          evict();
+        } else if (!result.step.passed || result.profile.capabilities_probe_error) {
+          if (options._discoveryPass && discovery) discovery.failed = true;
+          else evict();
+        }
         return result;
       },
       error => {
@@ -507,7 +554,7 @@ export async function getOrDiscoverProfile(
         throw error;
       }
     );
-    discovery = { promise, signal: options.signal };
+    discovery = { promise, signal: options.signal, pass: options._discoveryPass };
     profiles.set(key, discovery);
   }
   try {
@@ -520,6 +567,19 @@ export async function getOrDiscoverProfile(
   // physical request. Its own signal still governs both waiting and dispatch.
   if (profiles.get(key) === discovery) profiles.delete(key);
   return getOrDiscoverProfile(client, options, schemaAdcpVersion);
+}
+
+/** @internal Preserve the empty auth-diagnostic profile when a storyboard loads test-kit credentials. */
+export function seedAuthRejectedTestClientProfile(
+  client: TestClient,
+  profile: AgentProfile,
+  adcpVersion: string
+): void {
+  const scope = testClientScope.getStore();
+  if (scope?.active && profile.tools.length === 0 && profile.raw_capabilities === undefined) {
+    scope.authRejectedProfiles.add(profile);
+  }
+  seedTestClientSigningCapability(client, profile, adcpVersion);
 }
 
 /**

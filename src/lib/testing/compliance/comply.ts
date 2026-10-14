@@ -13,6 +13,7 @@ import {
   getOrCreateClientResolution,
   getOrDiscoverProfile,
   seedTestClientSigningCapability,
+  seedAuthRejectedTestClientProfile,
   withTestClientScope,
 } from '../client';
 import type { TestOptions, TestResult, AgentProfile, TestStepResult } from '../types';
@@ -1645,6 +1646,7 @@ async function runComplyStoryboard(
   profile: AgentProfile,
   routeStoryboard: ComplyOptions['routeStoryboard']
 ): Promise<StoryboardResult> {
+  runOptions = { ...runOptions, _discoveryPass: {} };
   // Refresh before applicability or routing can consult a profile invalidated
   // by an earlier storyboard. Successful observations are run-local cache hits.
   const resolution = getOrCreateClientResolution(agentUrl, runOptions);
@@ -2456,7 +2458,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
         if (runnable.length > 0) {
           allObservations.push(...authCheck.observations);
           effectiveOptions._profile = degraded;
-          seedTestClientSigningCapability(client, degraded, complianceIndex.adcp_version);
+          seedAuthRejectedTestClientProfile(client, degraded, complianceIndex.adcp_version);
           // Skip the rest of the "reachable" setup — no test controller, no
           // capability-warning observations — and jump straight to storyboard
           // execution below with the filtered, runnable subset.
