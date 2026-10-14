@@ -124,7 +124,7 @@ function diagnose(accounts: AccountStore, logger: AdcpLogger, diagnostic: Accoun
   if (process.env.NODE_ENV !== 'production') safeWarn(logger, 'Account store contract violation', { ...diagnostic });
   // Observability must not change the result of a committed write.
   try {
-    const pending = accounts.onDiagnostic?.(diagnostic);
+    const pending: unknown = accounts.onDiagnostic?.(diagnostic);
     if (pending) void Promise.resolve(pending).catch(() => safeWarn(logger, 'Account diagnostic callback failed'));
   } catch {
     safeWarn(logger, 'Account diagnostic callback failed');

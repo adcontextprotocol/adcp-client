@@ -596,7 +596,7 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    */
   readonly strictIdempotency?: boolean;
   /** Server-side diagnostics; never includes credentials or account metadata. Async hooks are fire-and-forget, with failures isolated from dispatch. */
-  readonly onDiagnostic?: (diagnostic: AccountSyncDiagnostic) => void | Promise<void>;
+  readonly onDiagnostic?: (diagnostic: AccountSyncDiagnostic) => void;
   /**
    * How buyers reference accounts on this platform. Three onboarding models,
    * aligned with the account-reference taxonomy clarified upstream in
