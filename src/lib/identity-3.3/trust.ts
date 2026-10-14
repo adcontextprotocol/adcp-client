@@ -274,6 +274,14 @@ export class TrustEvaluator {
     }
   }
 }
+async function getUnlessRemoved(evaluator: TrustEvaluator, domain: string): Promise<TrustFetchResult | 'removed'> {
+  try {
+    return await evaluator.get(domain);
+  } catch (error) {
+    if (error instanceof TrustRecordUnavailableError && error.removed) return 'removed';
+    throw error;
+  }
+}
 function listedAgent(result: TrustFetchResult, origin: string, role: string): TrustAgent | undefined {
   if (result.status !== 'present') return undefined;
   const entries = (result.record.agents ?? []).filter(agent => canonicalAgentOrigin(agent.url) === origin);
@@ -357,7 +365,9 @@ export async function authorizeDemandGrant(
   const house = await options.resolveBrandHouse?.(claim.brand);
   const authoritativeBrand = house ? eTldPlusOne(house.domain) : brand;
   const grantClaim = house ? { ...claim, brand: { ...claim.brand, brand_id: house.brand_id } } : claim;
-  const record = await options.evaluator.get(authoritativeBrand);
+  // A removed record (404/410 after a 200) is permanent: no grants, never legacy.
+  const record = await getUnlessRemoved(options.evaluator, authoritativeBrand);
+  if (record === 'removed') throw new IdentityAuthorizationError('grant_absent');
   if (record.status === 'absent') {
     if (await options.legacyAuthorization?.(claim)) return result('legacy', [brand, account, operator]);
     throw new IdentityAuthorizationError('grant_absent');
@@ -372,8 +382,8 @@ export async function authorizeDemandGrant(
     if (direct) return result('trust', [brand, operator], [direct]);
   }
   if (account !== operator && account !== brand && first.length) {
-    const intermediary = await options.evaluator.get(account);
-    if (intermediary.status === 'present') {
+    const intermediary = await getUnlessRemoved(options.evaluator, account);
+    if (intermediary !== 'removed' && intermediary.status === 'present') {
       const second = (intermediary.record.grants ?? []).find(g => grantMatches(g, operator, grantClaim, now));
       if (second) return result('trust', [brand, account, operator], [first[0]!, second]);
     }

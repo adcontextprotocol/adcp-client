@@ -643,3 +643,31 @@ test('S3: the createAdcpServer pre-transport defers resolver failures on tool ca
     await server.close();
   }
 });
+
+test('S3: a removed brand or intermediary record is a permanent grant_absent, not a retryable outage', async () => {
+  const records = {
+    'agency.com': agent('https://buyer.agency.com'),
+    'brand.com': { grants: [{ grantee: 'operator.com', scopes: ['adcp:media_buying'] }], exclusive_grants: true },
+    'operator.com': { grants: [{ grantee: 'agency.com', scopes: ['adcp:media_buying'] }] },
+  };
+  const claim = {
+    signerOrigin: 'https://buyer.agency.com',
+    brand: { domain: 'brand.com' },
+    accountOperator: 'operator.com',
+    scope: 'adcp:media_buying',
+  };
+  const { trust } = evaluator(records);
+  assert.equal((await identity.authorizeDemandGrant(claim, { evaluator: trust, now: () => now })).source, 'trust');
+  delete records['operator.com'];
+  trust.invalidate('operator.com');
+  await assert.rejects(
+    identity.authorizeDemandGrant(claim, { evaluator: trust, now: () => now }),
+    e => e.code === 'PERMISSION_DENIED' && e.details?.reason === 'grant_absent'
+  );
+  delete records['brand.com'];
+  trust.invalidate('brand.com');
+  await assert.rejects(
+    identity.authorizeDemandGrant(claim, { evaluator: trust, now: () => now, legacyAuthorization: async () => true }),
+    e => e.code === 'PERMISSION_DENIED' && e.details?.reason === 'grant_absent'
+  );
+});
