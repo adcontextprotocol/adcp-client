@@ -9,6 +9,8 @@ Two independent mechanisms remove that cost:
 
 ## Shared discovery cache
 
+`comply()` automatically owns discovery and connections for one run. Storyboards reuse clients, tool schemas and capability observations for the same URL, credentials, headers, AdCP version and transport settings, including a configured `trustedFetchFn`. Routed agents and changed credentials or versions get separate discovery. Explicit invalidation refreshes discovery, and failed discovery remains retryable by later storyboards. Every new `comply()` invocation starts with fresh discovery; ordinary SDK calls with a scoped fetch still follow the isolation rules below.
+
 ```ts
 import { AgentClient, createInMemoryAgentDiscoveryCache } from '@adcp/sdk';
 

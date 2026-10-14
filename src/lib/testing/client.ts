@@ -25,6 +25,7 @@ import { ADCP_VERSION, toReleasePrecisionVersion } from '../version';
 import type { VersionEnvelopeMode } from '../protocols';
 import type { AgentRequestSigningConfig } from '../types/adcp';
 import { createHmac, hkdfSync, randomBytes } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { validateIncomingResponse } from '../validation/client-hooks';
 import { extractVersionUnsupportedDetails } from '../utils/error-extraction';
 import { buildAgentSigningContext } from '../signing/client';
@@ -34,6 +35,42 @@ import type { OAuthConfigStorage } from '../auth/oauth/types';
 
 const TEST_CLIENT_VERSION_OPTIONS = Symbol('adcp.testClientVersionOptions');
 const TEST_CLIENT_SCOPE_SALT = randomBytes(32);
+
+interface TestClientScope {
+  clients: TestClient[];
+  profiles: WeakMap<
+    TestClient,
+    Map<
+      string,
+      {
+        promise: ReturnType<typeof discoverAgentProfile>;
+        signal?: AbortSignal;
+      }
+    >
+  >;
+  profileScopes: WeakMap<TestClient, WeakMap<AgentProfile, { scopeKey: string; schemaAdcpVersion?: string }>>;
+  active: boolean;
+}
+
+const testClientScope = new AsyncLocalStorage<TestClientScope>();
+
+/** @internal Own client and discovery reuse for exactly one comply() invocation. */
+export async function withTestClientScope<T>(fn: () => Promise<T>): Promise<T> {
+  const scope: TestClientScope = { clients: [], profiles: new WeakMap(), profileScopes: new WeakMap(), active: true };
+  return testClientScope.run(scope, async () => {
+    try {
+      return await fn();
+    } finally {
+      scope.active = false;
+      scope.clients.length = 0;
+    }
+  });
+}
+
+/** @internal Storyboards join the enclosing comply() connection lifetime. */
+export function hasTestClientScope(): boolean {
+  return testClientScope.getStore()?.active === true;
+}
 
 interface TestClientVersionOptions {
   agentUrl: string;
@@ -213,6 +250,7 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
     agentConfig.request_signing = options.functional_request_signing;
   }
 
+  const scope = testClientScope.getStore();
   const multiClient = new ADCPMultiAgentClient([agentConfig], {
     headers,
     validation: {
@@ -224,6 +262,9 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
     ...(options.versionEnvelope !== undefined && { versionEnvelope: options.versionEnvelope }),
     ...(options.userAgent && { userAgent: options.userAgent }),
     ...(options.transport && { transport: options.transport }),
+    ...(scope?.active && {
+      _reuseConfiguredDiscovery: () => scope.active && testClientScope.getStore() === scope,
+    }),
   });
 
   const client = multiClient.agent('test');
@@ -256,6 +297,7 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
     } satisfies TestClientVersionOptions,
     enumerable: false,
   });
+  if (hasTestClientScope()) testClientScope.getStore()!.clients.push(client);
   return client;
 }
 
@@ -279,6 +321,10 @@ export function getOrCreateClientResolution(agentUrl: string, options: TestOptio
   if (shared && isExecutableTestClient(shared) && testClientMatchesVersionOptions(shared, agentUrl, options)) {
     return { client: shared, reusedShared: true };
   }
+  const pooled = testClientScope
+    .getStore()
+    ?.clients.find(client => testClientMatchesVersionOptions(client, agentUrl, options));
+  if (pooled) return { client: pooled, reusedShared: true };
   return { client: createTestClient(agentUrl, options.protocol || 'mcp', options), reusedShared: false };
 }
 
@@ -424,16 +470,56 @@ function requestSigningReuseMode(config: AgentRequestSigningConfig | undefined):
  */
 export async function getOrDiscoverProfile(
   client: TestClient,
-  options: TestOptions
-): Promise<{ profile: AgentProfile; step: TestStepResult }> {
-  if (options._profile) {
-    seedTestClientSigningCapability(client, options._profile, options.adcpVersion);
+  options: TestOptions,
+  schemaAdcpVersion?: string
+): ReturnType<typeof discoverAgentProfile> {
+  const scope = testClientScope.getStore();
+  const profileBinding = options._profile ? scope?.profileScopes.get(client)?.get(options._profile) : undefined;
+  schemaAdcpVersion ??= profileBinding?.schemaAdcpVersion ?? options.adcpVersion;
+  options.signal?.throwIfAborted();
+  const scopeKey = scope?.active ? client.getCapabilityEvidenceScope().scopeKey : undefined;
+  if (options._profile && (!scope?.active || (options._client === client && profileBinding?.scopeKey === scopeKey))) {
+    seedTestClientSigningCapability(client, options._profile, schemaAdcpVersion);
     return {
       profile: options._profile,
       step: { step: 'Discover agent capabilities', passed: true, duration_ms: 0 },
     };
   }
-  return discoverAgentProfile(client, options.signal, options.adcpVersion);
+  if (!scope?.active) return discoverAgentProfile(client, options.signal, schemaAdcpVersion);
+  const key = `${scopeKey}:${schemaAdcpVersion ?? client.getAdcpVersion()}`;
+  let profiles = scope.profiles.get(client);
+  if (!profiles) {
+    profiles = new Map();
+    scope.profiles.set(client, profiles);
+  }
+  let discovery = profiles.get(key);
+  if (!discovery) {
+    const evict = () => {
+      if (profiles!.get(key) === discovery) profiles!.delete(key);
+    };
+    const promise = discoverAgentProfile(client, options.signal, schemaAdcpVersion).then(
+      result => {
+        if (!result.step.passed || result.profile.capabilities_probe_error || options.signal?.aborted) evict();
+        return result;
+      },
+      error => {
+        evict();
+        throw error;
+      }
+    );
+    discovery = { promise, signal: options.signal };
+    profiles.set(key, discovery);
+  }
+  try {
+    const result = await raceWithSignal(discovery.promise, options.signal);
+    if (!discovery.signal?.aborted || options.signal?.aborted) return result;
+  } catch (error) {
+    if (!discovery.signal?.aborted || options.signal?.aborted) throw error;
+  }
+  // A surviving waiter owns a new probe after the first caller cancelled its
+  // physical request. Its own signal still governs both waiting and dispatch.
+  if (profiles.get(key) === discovery) profiles.delete(key);
+  return getOrDiscoverProfile(client, options, schemaAdcpVersion);
 }
 
 /**
@@ -442,6 +528,15 @@ export async function getOrDiscoverProfile(
  * a functional compliance dispatch to unsigned.
  */
 export function seedTestClientSigningCapability(client: TestClient, profile: AgentProfile, adcpVersion?: string): void {
+  const scope = testClientScope.getStore();
+  if (scope?.active) {
+    let profiles = scope.profileScopes.get(client);
+    if (!profiles) {
+      profiles = new WeakMap();
+      scope.profileScopes.set(client, profiles);
+    }
+    profiles.set(profile, { scopeKey: client.getCapabilityEvidenceScope().scopeKey, schemaAdcpVersion: adcpVersion });
+  }
   const raw = profile.raw_capabilities;
   if (!raw || typeof raw !== 'object') return;
   const clientAccess = client as unknown as {
@@ -649,6 +744,7 @@ export async function discoverAgentProfile(
   /** Compliance/schema line selected by the caller. Defaults to the client pin. */
   schemaAdcpVersion?: string
 ): Promise<{ profile: AgentProfile; step: TestStepResult; caughtError?: unknown }> {
+  const scopeKey = hasTestClientScope() ? client.getCapabilityEvidenceScope().scopeKey : undefined;
   const {
     result: agentInfo,
     step,
@@ -731,7 +827,9 @@ export async function discoverAgentProfile(
     }
   }
 
-  seedTestClientSigningCapability(client, profile, schemaAdcpVersion);
+  if (scopeKey === undefined || scopeKey === client.getCapabilityEvidenceScope().scopeKey) {
+    seedTestClientSigningCapability(client, profile, schemaAdcpVersion);
+  }
   return { profile, step, ...(caughtError !== undefined && { caughtError }) };
 }
 
