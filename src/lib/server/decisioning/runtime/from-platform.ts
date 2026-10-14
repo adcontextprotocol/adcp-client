@@ -3,6 +3,7 @@ import {
   withIdentity33SchemaScope,
   bindIdentity33SchemaScope,
 } from '../../../validation/schema-loader';
+import { existingSyncAccounts, checkSyncAccountRows, projectAccountList } from '../../account-sync-contract';
 /**
  * Build an `AdcpServer` from a `DecisioningPlatform` impl.
  *
@@ -9068,11 +9069,18 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       const dispatchCtx =
         policy.failedRows.size === 0 ? resolveCtx : toResolveCtx(ctx, 'sync_accounts', policy.acceptedParams);
       return projectSync(
-        () =>
-          policy.acceptedEntries.length > 0
-            ? accounts.upsert!(policy.acceptedEntries as AccountReference[], dispatchCtx)
-            : Promise.resolve([]),
-        rows => {
+        async () => {
+          const entries = policy.acceptedEntries;
+          const existing = await existingSyncAccounts(accounts, entries, dispatchCtx, logger);
+          const rows =
+            entries.length > 0
+              ? await accounts.upsert!(entries as AccountReference[], {
+                  ...dispatchCtx,
+                  existing: existing.map(account =>
+                    account ? { ...account, billing: account.billing && { ...account.billing } } : null
+                  ),
+                })
+              : [];
           if (rows.length !== policy.acceptedEntries.length) {
             throw new Error(
               `sync_accounts accounts.upsert returned ${rows.length} ${
@@ -9082,6 +9090,12 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
               }`
             );
           }
+          const indices = ((params.accounts as unknown[]) ?? [])
+            .map((_, index) => index)
+            .filter(index => !policy.failedRows.has(index));
+          return checkSyncAccountRows(accounts, entries, existing, rows, indices, dispatchCtx, logger);
+        },
+        rows => {
           if (policy.failedRows.size === 0) {
             return {
               ...(params.dry_run === true && { dry_run: true }),
@@ -9142,7 +9156,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
           const page = await accounts.list!(filter, resolveCtx);
           const response = {
             status: 'completed' as const,
-            accounts: page.items.map(toWireAccount),
+            accounts: await projectAccountList(accounts, page.items, resolveCtx, logger),
             pagination: {
               has_more: page.nextCursor != null,
               ...(page.nextCursor != null && { cursor: page.nextCursor }),

@@ -453,6 +453,25 @@ export interface AccountToolContext<TCtxMeta = Record<string, unknown>> extends 
   account: Account<TCtxMeta>;
 }
 
+/** Pre-write snapshots aligned with the accepted entries passed to `upsert`. */
+export interface AccountUpsertContext<TCtxMeta = Record<string, unknown>> extends ResolveContext {
+  /** Null for an unresolved or ID-keyed entry. Lookup uses `provisioning: false`. */
+  readonly existing?: readonly (Account<TCtxMeta> | null)[];
+}
+
+/** A sync/list contract violation, delivered only to the seller. */
+export interface AccountSyncDiagnostic {
+  readonly code:
+    | 'ACCOUNT_SYNC_IDEMPOTENCY_VIOLATION'
+    | 'ACCOUNT_SYNC_PAYMENT_TERMS_MISMATCH'
+    | 'ACCOUNT_SYNC_BILLING_MISMATCH'
+    | 'ACCOUNT_SYNC_LOOKUP_UNSUPPORTED'
+    | 'ACCOUNT_BILLING_FIELDS_MISSING';
+  readonly toolName: 'sync_accounts' | 'list_accounts';
+  /** Original request index for sync; page index for list. */
+  readonly index: number;
+}
+
 /**
  * Request context for tools that can omit an `account` field —
  * `preview_creative`, `list_creative_formats` (optional since rc.7), and
@@ -567,6 +586,15 @@ export function isAccountResolutionMode(value: unknown): value is AccountResolut
 }
 
 export interface AccountStore<TCtxMeta = Record<string, unknown>> {
+  /**
+   * Convert sync contract violations to per-row failures. Default: diagnostics only.
+   * This is post-write response validation, not a transaction or rollback.
+   * For accept-or-reject guarantees, upsert must check these contracts before
+   * committing too (createKeyedAccountStore does so for its own backend).
+   */
+  readonly strictIdempotency?: boolean;
+  /** Server-side diagnostics; never includes credentials or account metadata. */
+  readonly onDiagnostic?: (diagnostic: AccountSyncDiagnostic) => void;
   /**
    * How buyers reference accounts on this platform. Three onboarding models,
    * aligned with the account-reference taxonomy clarified upstream in
@@ -740,7 +768,7 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * verified `agent_url` from `credential.kind === 'http_sig'` when
    * `agentRegistry` is not configured).
    */
-  upsert?(refs: AccountReference[], ctx?: ResolveContext): Promise<SyncAccountsHandlerResult>;
+  upsert?(refs: AccountReference[], ctx?: AccountUpsertContext<TCtxMeta>): Promise<SyncAccountsHandlerResult>;
 
   /**
    * sync_governance API surface. Buyers register governance agent endpoints
