@@ -4,6 +4,7 @@ import { ssrfSafeFetch, type SsrfFetchOptions } from '../net';
 import { canonicalAgentOrigin } from '../signing/agent-resolver/canonicalize';
 import { eTldPlusOne } from '../signing/agent-resolver/etld';
 import { parseStrictJson } from '../signing/agent-resolver/strict-json';
+import { parse as parseDomain } from 'tldts';
 import schemas from './schemas.draft';
 import type { TrustRecord, TrustAgent, TrustGrant, AgentGrantDeniedDetails } from './types';
 const ajv = new Ajv({ strict: false, allErrors: false });
@@ -101,6 +102,12 @@ export interface TrustEvaluatorOptions {
   now?: () => number;
   fetchOptions?: Pick<SsrfFetchOptions, 'lookup' | 'trustedFetchFn'>;
   maxEntries?: number;
+  /**
+   * Process-local authority history only: operators remembered per PSL
+   * PRIVATE-section suffix (for example every `*.vercel.app` operator shares
+   * one budget). ICANN registrable domains each count once. Default 32.
+   */
+  maxAuthoritativeOperatorsPerPrivateSuffix?: number;
   maxConcurrentFetches?: number;
   /** Share authoritative-history across restarts/replicas when legacy fallback is enabled. */
   authorityHistory?: { has(operator: string): Promise<boolean>; mark(operator: string): Promise<void> };
@@ -114,7 +121,8 @@ export class TrustEvaluator {
   /** Keyed by (operator, host): one operator's authoritative_location hops never spend another's budget. */
   private readonly hostRates = new Map<string, { started: number; count: number }>();
   private readonly authoritativeOperators = new Set<string>();
-  private authorityHistoryOverflowed = false;
+  /** Remembered authoritative operators per budget group (see authorityGroup). */
+  private readonly authorityGroups = new Map<string, number>();
   readonly pollingIntervalSeconds: number;
   readonly maxOutageContinuationSeconds: number;
   constructor(private readonly options: TrustEvaluatorOptions = {}) {
@@ -180,6 +188,32 @@ export class TrustEvaluator {
   invalidate(domain: string): void {
     this.cache.delete(eTldPlusOne(domain));
   }
+  /**
+   * Record that `operator` served a trust record. With durable history the
+   * in-memory set is only a cache and may evict; without it, nothing is
+   * evicted and an operator over its group budget or the total is refused.
+   */
+  private rememberAuthority(operator: string, durable: boolean): boolean {
+    if (this.authoritativeOperators.has(operator)) return true;
+    const group = authorityGroup(operator);
+    const max = this.options.maxEntries ?? 1000;
+    if (durable) {
+      if (this.authoritativeOperators.size >= max) {
+        const oldest = this.authoritativeOperators.values().next().value!;
+        this.authoritativeOperators.delete(oldest);
+        const oldestGroup = authorityGroup(oldest);
+        this.authorityGroups.set(oldestGroup, (this.authorityGroups.get(oldestGroup) ?? 1) - 1);
+      }
+    } else if (
+      this.authoritativeOperators.size >= max ||
+      (group !== operator &&
+        (this.authorityGroups.get(group) ?? 0) >= (this.options.maxAuthoritativeOperatorsPerPrivateSuffix ?? 32))
+    )
+      return false;
+    this.authoritativeOperators.add(operator);
+    this.authorityGroups.set(group, (this.authorityGroups.get(group) ?? 0) + 1);
+    return true;
+  }
   hasAuthoritativeRecord(domain: string): boolean {
     return this.authoritativeOperators.has(eTldPlusOne(domain));
   }
@@ -230,28 +264,24 @@ export class TrustEvaluator {
       let result: TrustFetchResult;
       if (response.status === 404 || response.status === 410) {
         // Once authoritative, an outage/removal cannot resurrect legacy authority.
-        if (
-          this.authorityHistoryOverflowed ||
-          this.authoritativeOperators.has(operator) ||
-          (await this.options.authorityHistory?.has(operator))
-        )
+        if (this.authoritativeOperators.has(operator) || (await this.options.authorityHistory?.has(operator)))
           // A 404/410 after a 200 is a discovery failure, not a removal: the last
           // record read stays authoritative and legacy authority never returns.
           failure();
         result = { status: 'absent', operator, checkedAt: now, freshUntil: now + 60 };
       } else {
         if (response.status !== 200) failure();
-        if (
-          !this.authoritativeOperators.has(operator) &&
-          this.authoritativeOperators.size >= (this.options.maxEntries ?? 1000)
-        ) {
-          if (!this.options.authorityHistory) this.authorityHistoryOverflowed = true;
-          this.authoritativeOperators.delete(this.authoritativeOperators.values().next().value!);
-        }
         // Persist history before trusting this response; cache eviction must not
         // allow a previously authoritative operator to downgrade to legacy.
-        await this.options.authorityHistory?.mark(operator);
-        this.authoritativeOperators.add(operator);
+        if (this.options.authorityHistory) {
+          await this.options.authorityHistory.mark(operator);
+          this.rememberAuthority(operator, true);
+        } else if (!this.rememberAuthority(operator, false)) {
+          // Process-local history is full for this operator's budget: a record
+          // that cannot be remembered is not trusted. Never evict another
+          // operator's history (that would re-open its legacy fallback).
+          failure();
+        }
         let record: unknown = parseStrictJson(new TextDecoder('utf-8', { fatal: true }).decode(response.body), 32);
         validateTrustRecord(record);
         if (record.authoritative_location) {
@@ -288,6 +318,11 @@ function listedAgent(result: TrustFetchResult, origin: string, role: string): Tr
   if (result.status !== 'present') return undefined;
   const entries = (result.record.agents ?? []).filter(agent => canonicalAgentOrigin(agent.url) === origin);
   return entries.length === 1 && entries[0]!.roles.includes(role) ? entries[0] : undefined;
+}
+/** Budget group: the PSL PRIVATE suffix for hosted names, else the registrable domain itself. */
+function authorityGroup(operator: string): string {
+  const parsed = parseDomain(operator, { allowPrivateDomains: true });
+  return parsed.isPrivate && parsed.publicSuffix ? `private:${parsed.publicSuffix}` : operator;
 }
 export interface DemandGrantClaim {
   /** Only pass identity from an actual verifier. */
