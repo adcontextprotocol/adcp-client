@@ -49,6 +49,11 @@ interface A2ALegacyCompatOptions {
 }
 
 interface TransportOptions {
+  // Defaults to 4 MiB (DEFAULT_MAX_RESPONSE_BYTES); only 0 opts out
+  // (Infinity / negatives fall back to the default).
+  // SSE is bounded per event plus `maxResponseBytes * 2` cumulative per call.
+  // Over-cap responses throw ResponseTooLargeError; nothing is truncated.
+  // A per-call `transport` replaces this object; it does not merge.
   maxResponseBytes?: number;
   trustedFetchFn?: typeof fetch;
   allowPrivateIp?: boolean;
