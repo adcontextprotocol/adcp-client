@@ -6,7 +6,6 @@ import { InMemoryRevocationStore } from './revocation';
 import { verifyRequestSignature, type VerifyRequestOptions } from './verifier';
 import type { ResolvedOperation } from './operation-resolution';
 import type { VerifiedSigner } from './types';
-import { selectSignatureProfile, WebBotAuthError } from './web-bot-auth';
 
 declare module 'http' {
   interface IncomingMessage {
@@ -113,6 +112,9 @@ export function createExpressVerifier(options: ExpressMiddlewareOptions) {
     // RFC 9421. This middleware does not implement Web Bot Auth, so it refuses
     // the request the way the server integrations do when the profile is not
     // configured: 403 without an Accept-Signature challenge.
+    // Loaded lazily so the RFC 9421 middleware keeps Web Bot Auth out of the
+    // focused client's eager module graph.
+    const { selectSignatureProfile, WebBotAuthError } = require('./web-bot-auth') as typeof import('./web-bot-auth');
     if (selectSignatureProfile({ headers: req.headers }) === 'web-bot-auth') {
       const refused = new WebBotAuthError(403, 'profile_disabled');
       res
