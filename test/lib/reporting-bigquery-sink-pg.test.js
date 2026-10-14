@@ -541,7 +541,8 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     const bigquery = createFakeBigQuery({ clientProject: 'client-project', ...fake });
     // Everything the sink sends, in order, so a test can see that a lookup came before an upload.
     const events = [];
-    const settings = { hangLookups: false };
+    // hangUploads: the next N uploads never settle (a hung client call).
+    const settings = { hangLookups: false, hangUploads: 0 };
     const instrumented = {
       dataset(datasetId, options) {
         const dataset = bigquery.dataset(datasetId, options);
@@ -549,6 +550,10 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
           table: tableId => ({
             load(file, metadata) {
               events.push(`upload ${tableId} ${metadata.jobId}`);
+              if (settings.hangUploads > 0) {
+                settings.hangUploads -= 1;
+                return new Promise(() => {});
+              }
               return dataset.table(tableId).load(file, metadata);
             },
           }),
@@ -689,7 +694,10 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     const baseJobId = await h.retainPlan();
     const running = h.seedJob(`${baseJobId}_rows`, { state: 'PENDING' });
     const before = await h.state();
-    await assert.rejects(h.sink.runOnce(), /Waiting for the running load job exceeded this run's 1000 ms deadline/);
+    await assert.rejects(
+      h.sink.runOnce(),
+      /Waiting for the running load job exceeded this run's 1000 ms deadline for the rows table "revision_rows" \(timeout count 0\)/
+    );
     const after = await h.state();
     for (const column of [
       'committed_cursor',
@@ -768,6 +776,90 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     assert.equal(h.uploads('revision_rows'), 1, 'one upload of the file served both runs');
     assert.equal(h.rowsLoaded(), 3);
     assert.equal((await h.state()).planned_to_cursor, null);
+  });
+
+  const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+
+  test('a gap between runs longer than the deadline still reuses the pending upload instead of starting a second', async t => {
+    const h = await convergenceHarness(t, 'gap_reuse', {
+      fake: { uploadMs: tableId => (tableId === 'revision_rows' ? 4_000 : 0) },
+    });
+    await assert.rejects(h.sink.runOnce(), /Uploading the load exceeded this run's 1000 ms deadline/);
+    // The second run's deadline is 2 s; by the time it starts the upload is 3.5 s old, older than that
+    // deadline, but it is still pending, so it is waited for rather than replaced.
+    await pause(2_500);
+    assert.deepEqual(await h.sink.runOnce(), { idle: false, revisions: 1, rows: 3, missing: [] });
+    const rowUploads = h.events.filter(event => event.startsWith('upload revision_rows '));
+    assert.equal(rowUploads.length, 1, `one upload started, saw: ${rowUploads.join('; ')}`);
+    assert.equal(h.uploads('revision_rows'), 1, 'exactly one upload recorded by BigQuery');
+    assert.equal(h.rowsLoaded(), 3);
+    assert.equal((await h.state()).planned_to_cursor, null);
+  });
+
+  test('a run whose deadline expires while waiting on a reused upload counts as a timeout and the deadline grows', async t => {
+    const h = await convergenceHarness(t, 'reuse_timeout_growth', {
+      fake: { uploadMs: tableId => (tableId === 'revision_rows' ? 5_000 : 0) },
+    });
+    await assert.rejects(h.sink.runOnce(), /exceeded this run's 1000 ms deadline for the rows table "revision_rows"/);
+    assert.equal((await h.state()).planned_rows_timeouts, 1);
+    // The second run reuses the pending upload and runs out of its 2 s deadline waiting on it.
+    await assert.rejects(
+      h.sink.runOnce(),
+      /Uploading the load exceeded this run's 2000 ms deadline for the rows table "revision_rows" \(timeout count 1\)/
+    );
+    const state = await h.state();
+    assert.equal(state.planned_rows_timeouts, 2, 'a timeout waiting on a reused upload counts like a fresh one');
+    assert.equal(state.planned_rows_attempt, 0);
+    // The third run's 4 s deadline is enough for what remains of the one upload.
+    assert.deepEqual(await h.sink.runOnce(), { idle: false, revisions: 1, rows: 3, missing: [] });
+    assert.equal(h.events.filter(event => event.startsWith('upload revision_rows ')).length, 1);
+    assert.equal(h.rowsLoaded(), 3);
+  });
+
+  test('an upload that never settles is reused until the largest deadline has passed, then replaced', async t => {
+    const h = await convergenceHarness(t, 'hung_upload');
+    const MAX_LOAD_TIMEOUT = 6 * 3_600_000;
+    const rowUploads = () => h.events.filter(event => event.startsWith('upload revision_rows ')).length;
+    t.mock.timers.enable({ apis: ['Date'], now: 1_700_000_000_000 });
+    h.settings.hangUploads = 1;
+    await assert.rejects(h.sink.runOnce(), /exceeded this run's 1000 ms deadline for the rows table/);
+    assert.equal(rowUploads(), 1);
+    // Just under the ceiling the hung upload is still reused, not replaced.
+    t.mock.timers.tick(MAX_LOAD_TIMEOUT - 5_000);
+    await assert.rejects(h.sink.runOnce(), /exceeded this run's 2000 ms deadline for the rows table/);
+    assert.equal(rowUploads(), 1, 'the hung upload was waited on, not replaced');
+    // Past the ceiling it is abandoned and the replacement loads the batch.
+    t.mock.timers.tick(10_000);
+    assert.deepEqual(await h.sink.runOnce(), { idle: false, revisions: 1, rows: 3, missing: [] });
+    assert.equal(rowUploads(), 2, 'one replacement upload after the ceiling');
+    assert.equal(h.rowsLoaded(), 3, 'rows landed exactly once');
+    assert.equal((await h.state()).planned_to_cursor, null);
+  });
+
+  test('timeout errors name the table, its ID, the deadline and that table own timeout count, and never a path', async t => {
+    const h = await convergenceHarness(t, 'names_table', {
+      fake: { uploadMs: tableId => (tableId === 'revisions' ? 1_600 : 0) },
+    });
+    // The rows table is fine; the revisions table times out. Its own counter starts at zero.
+    const first = await h.sink.runOnce().then(
+      () => assert.fail('expected a timeout'),
+      error => error
+    );
+    assert.match(
+      first.message,
+      /exceeded this run's 1000 ms deadline for the revisions table "revisions" \(timeout count 0\)/
+    );
+    assert.equal((await h.state()).planned_revisions_timeouts, 1);
+    assert.equal((await h.state()).planned_rows_timeouts, 0);
+    assert.doesNotMatch(first.message, /adcp-warehouse-|ndjson|\/tmp|credential/i);
+    // A lookup that exceeds its bound is named too.
+    h.settings.hangLookups = true;
+    const lookup = await h.sink.runOnce().then(
+      () => assert.fail('expected a lookup timeout'),
+      error => error
+    );
+    assert.match(lookup.message, /BigQuery call exceeded its deadline of 1000 ms for the rows table "revision_rows"/);
+    assert.doesNotMatch(lookup.message, /adcp-warehouse-|ndjson|\/tmp|credential/i);
   });
 
   test('an upload refused with 409 because another process created the job moves on to that job', async t => {
