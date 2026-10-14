@@ -1,3 +1,6 @@
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export type ReportingRowStoreErrorCode =
   | 'INVALID_INPUT'
   | 'CONTENT_CONFLICT'
@@ -10,7 +13,11 @@ export type ReportingRowStoreErrorCode =
   | 'UNSAFE_BINDING'
   | 'STATE_UNAVAILABLE';
 
-/** Stable, secret-free row-storage failure. Switch on `code`. */
+/**
+ * Stable, secret-free row-storage failure. Switch on `code`.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export class ReportingRowStoreError extends Error {
   constructor(
     readonly code: ReportingRowStoreErrorCode,
@@ -22,6 +29,9 @@ export class ReportingRowStoreError extends Error {
   }
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function isReportingRowStoreError(error: unknown): error is ReportingRowStoreError {
   return (
     !!error &&

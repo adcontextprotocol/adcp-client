@@ -218,6 +218,9 @@ export type ReportingLedgerRevisionSnapshotV1 = Omit<ReportingLedgerRevisionV1, 
 export type ReportingLedgerRevisionMetadataV1 = Omit<ReportingLedgerRevisionV1, 'rows'>;
 export type ReportingLedgerAdjustmentMetadataV1 = Omit<ReportingLedgerAdjustmentV1, 'rows'>;
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingRevisionRowsReadV1 {
   reporting_revision_id: string;
   account_id: string;
@@ -228,6 +231,9 @@ export interface ReportingRevisionRowsReadV1 {
   signal?: AbortSignal;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingRevisionRowsPageV1 {
   rows: Record<string, unknown>[];
   /** Total rows in the revision. */
@@ -495,7 +501,11 @@ export interface ReportingLedgerStatusTransitionV1 {
   notifiedAt?: string;
 }
 
-/** Minimum transaction surface used by the bundled PostgreSQL ledger. */
+/**
+ * Minimum transaction surface used by the bundled PostgreSQL ledger.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingLedgerTransactionV1 {
   query<Row extends Record<string, unknown> = Record<string, unknown>>(
     text: string,
@@ -627,6 +637,8 @@ export interface ReportingLedgerPageV1 {
  * Immutable opt-in binding between one Core configuration generation and one
  * caller-owned destination authorization generation. Core configurations do
  * not carry this shape and remain API-delivered.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export interface ReportingManagedDeliveryBindingV1 {
   configurationId: string;
@@ -767,6 +779,9 @@ export interface ReportingManagedLifecycleProjectionV1 {
   obligatedConsumerRosterVersion?: string;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingLedgerLeaseV1 {
   obligation: ReportingLedgerObligationV1;
   owner: string;
@@ -792,6 +807,9 @@ export class ReportingConsumerStatusConflictError extends Error {
   }
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingLedgerStore {
   /** Optional substrate identity for an add-on store that must prove shared authority. */
   readonly [REPORTING_LEDGER_AUTHORITY]?: ReportingLedgerAuthorityV1;
@@ -1031,6 +1049,8 @@ export interface ReportingLedgerStore {
  * in duplicate-ID or duplicate-logical-chain groups, then atomically compare
  * the current leaf, append, and retain the original ordered batch result for
  * idempotent replay.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export interface ReportingConsumerStatusLedgerStore {
   listConfigurations(account_id: string): Promise<ReportingLedgerConfigurationV1[]>;
@@ -1132,6 +1152,8 @@ export type ReportingDeliveryHandlerV1 = (
  * belongs to it, so the reader MUST scope the lookup by that account and return
  * `null` for a revision that belongs to another one. Never return a response
  * for a revision the resolved account cannot read.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export type ReportingLegacyRevisionReaderV1 = (
   request: AdcpToolMap['get_media_buy_delivery']['params'],

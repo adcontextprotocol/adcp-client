@@ -2,6 +2,8 @@
 
 `@adcp/sdk/reporting/ledger` turns a conforming reporting source into durable seller-side Reliable Reporting Core. It is separate from the buyer-side `reconcileReporting` API.
 
+> **Stability:** the storage, row, change-feed, managed-delivery and warehouse-sink exports (`@adcp/sdk/reporting/gcs`, `s3`, `azure`, `bigquery`, and the `@experimental` exports of `ledger`) are experimental and may change in minor releases. Pin with `~`. See the [Reliable Reporting stability policy](REPORTING-STABILITY.md).
+
 ## Recommended: install the lifecycle service
 
 `createReliableReportingService` is the adapter-first Core path. A

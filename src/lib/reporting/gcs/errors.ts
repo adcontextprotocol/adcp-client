@@ -1,3 +1,6 @@
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export class ReportingGcsFenceError extends Error {
   constructor(
     readonly code:
@@ -18,6 +21,9 @@ export class ReportingGcsFenceError extends Error {
   }
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function isReportingGcsFenceError(error: unknown): error is ReportingGcsFenceError {
   return (
     !!error &&

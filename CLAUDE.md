@@ -138,6 +138,8 @@ Pick the specialisms you want to claim in `get_adcp_capabilities`. Each maps to 
 - ✅ Schema changes (`src/schemas/`)
 - ✅ TypeScript types changes
 
+**Experimental reporting subpaths:** breaking changes to the `@experimental` Reliable Reporting storage exports (`@adcp/sdk/reporting/ledger`, `gcs`, `s3`, `azure`, `bigquery`; policy in [`docs/guides/REPORTING-STABILITY.md`](./docs/guides/REPORTING-STABILITY.md)) use a `minor` changeset plus a migration note, not `major`.
+
 **NO changeset needed for:**
 
 - ❌ Documentation only (`*.md` files, except CHANGELOG.md)

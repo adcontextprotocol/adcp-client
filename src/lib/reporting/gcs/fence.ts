@@ -19,6 +19,9 @@ const hash = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).
 const TOMBSTONE = 'adcp_reporting_tombstone';
 
 export { ReportingGcsFenceError } from './errors';
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface GcsReportingObjectFenceV1 {
   probe(context?: { signal?: AbortSignal }): Promise<void>;
   register(
@@ -45,6 +48,8 @@ export interface GcsReportingObjectFenceV1 {
  * Bucket configuration must remain managed exclusively by the trusted host.
  * Tombstones and inventory MUST NOT be deleted while stale requests can execute.
  * Inject the official Storage client with host-owned, keyless credentials.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function createGcsReportingObjectFenceV1(options: {
   storage: Storage;

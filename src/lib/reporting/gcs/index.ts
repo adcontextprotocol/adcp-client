@@ -1,3 +1,12 @@
+/**
+ * Google Cloud Storage fence, reader, managed-delivery adapter and row-object provider for Reliable Reporting.
+ *
+ * Every export of this subpath is `@experimental` and may change in minor releases.
+ *
+ * Stability policy: https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ *
+ * @packageDocumentation
+ */
 export { createGcsReportingObjectFenceV1 } from './fence';
 export type { GcsReportingObjectFenceV1 } from './fence';
 export { ReportingGcsFenceError, isReportingGcsFenceError } from './errors';
