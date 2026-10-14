@@ -918,10 +918,16 @@ setInterval(() => {
   load and the cursor commit therefore replays the same batch under the same
   job ID without a second upload. An upload an earlier run abandoned at its
   deadline is still running in the same process (the official client cannot
-  abort it), so the next run waits for it rather than starting another, until it
-  has been running longer than that run's deadline; BigQuery refuses a duplicate
-  job ID, so a replacement can never load the batch twice. A job that finished
-  with an error is retried under a new attempt for that table only.
+  abort it), so the next run waits for it, within its own deadline, rather than
+  starting another, however long ago it started (that age includes the gap
+  between runs). If that wait outlasts the run's deadline it counts as a timeout
+  and the deadline grows. Only an upload still pending after 6 hours, the
+  largest deadline, is abandoned and replaced; BigQuery refuses a duplicate job
+  ID, so a replacement can never load the batch twice. A job that finished with
+  an error is retried under a new attempt for that table only. Deadline and
+  timeout errors name the table (`rows` or `revisions`, and its ID), the
+  deadline in force and that table's timeout count, never a file path or
+  credential.
 - `projectId` scopes both load submission and replay status checks. When it is
   omitted, both use the BigQuery client's default project. Each replica must
   be able to read the BigQuery jobs submitted by the other replicas. Set
