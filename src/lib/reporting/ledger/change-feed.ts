@@ -12,6 +12,8 @@ import { ReportingRowStoreError } from './row-storage-errors';
  * the reading snapshot's `xmin`, so a slow commit is never skipped. Account
  * readers order by `seq` and end the page before the first change at or above
  * that `xmin`. Use exactly one writer SDK per ledger database.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export const REPORTING_LEDGER_CHANGES_MIGRATION = `
 CREATE TABLE IF NOT EXISTS adcp_reporting_changes (
@@ -58,8 +60,14 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_feed_consumers (
 );
 `.trim();
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export type ReportingChangeKindV1 = 'obligation' | 'revision' | 'adjustment' | 'retirement';
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingChangeRecordV1 {
   kind: ReportingChangeKindV1;
   record_id: string;
@@ -68,6 +76,9 @@ export interface ReportingChangeRecordV1 {
   recorded_at: string;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingChangesPageV1 {
   records: ReportingChangeRecordV1[];
   /** Pass back to resume. Always present; equal to the input when nothing new committed. */
@@ -83,10 +94,16 @@ interface ChangeCursorV1 {
   xid?: string;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function encodeReportingChangeCursorV1(cursor: ChangeCursorV1): string {
   return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function decodeReportingChangeCursorV1(value: string, account: string | null): ChangeCursorV1 {
   let parsed: unknown;
   try {
@@ -107,7 +124,11 @@ export function decodeReportingChangeCursorV1(value: string, account: string | n
   return cursor as ChangeCursorV1;
 }
 
-/** Thrown when a change cursor is older than the retained change history. */
+/**
+ * Thrown when a change cursor is older than the retained change history.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export class ReportingChangeCursorExpiredError extends Error {
   readonly code = 'CURSOR_EXPIRED' as const;
   /**

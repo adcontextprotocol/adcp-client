@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-10-11
+> Generated at: 2026-10-13
 > Library: @adcp/sdk v15.8.1
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -2143,6 +2143,7 @@ These docs are available locally in the repo and hosted at https://adcontextprot
 | Reporting ledger cutover from custom tables | docs/guides/REPORTING-LEDGER-CUTOVER.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/REPORTING-LEDGER-CUTOVER.md) |
 | Buyer reporting reconciliation | docs/guides/REPORTING-RECONCILIATION.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/REPORTING-RECONCILIATION.md) |
 | Reliable Reporting production operations | docs/guides/REPORTING-OPERATIONS.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/REPORTING-OPERATIONS.md) |
+| Reliable Reporting stability policy (experimental storage subpaths) | docs/guides/REPORTING-STABILITY.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/REPORTING-STABILITY.md) |
 | Validate your agent (5-command checklist) | docs/guides/VALIDATE-YOUR-AGENT.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/VALIDATE-YOUR-AGENT.md) |
 | Async patterns (polling, webhooks, deferred) | docs/guides/ASYNC-DEVELOPER-GUIDE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/ASYNC-DEVELOPER-GUIDE.md) |
 | Async API reference | docs/guides/ASYNC-API-REFERENCE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/ASYNC-API-REFERENCE.md) |

@@ -16,10 +16,16 @@ import { reportingPeriodDate } from './schedule';
  * committed in PostgreSQL before rows are released.
  */
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingRowObjectContextV1 {
   signal: AbortSignal;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingRowObjectLocationV1 {
   /** Non-secret provider coordinates (bucket, container, filesystem root name, endpoint host). */
   readonly location: Readonly<Record<string, string>>;
@@ -31,10 +37,18 @@ export interface ReportingRowObjectLocationV1 {
  * Bounds AdCP puts on `object_ref` and `native_version_ref`
  * (`reporting-file-object-ref.json`, `reporting-native-version-ref.json`):
  * 1 to 1024 characters. The row-storage `CHECK` constraints enforce the same.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export const REPORTING_ROW_OBJECT_REF_MAX_LENGTH = 1024;
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export const REPORTING_ROW_NATIVE_VERSION_REF_MAX_LENGTH = 1024;
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingRowObjectPutInputV1 extends ReportingRowObjectLocationV1 {
   /** AdCP `object_ref`: decoded, destination-relative object key. */
   objectRef: string;
@@ -44,6 +58,9 @@ export interface ReportingRowObjectPutInputV1 extends ReportingRowObjectLocation
   metadata: Readonly<Record<string, string>>;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingRowObjectGetInputV1 extends ReportingRowObjectLocationV1 {
   objectRef: string;
   /** AdCP `native_version_ref`: the exact native version recorded at write time. */
@@ -54,16 +71,25 @@ export interface ReportingRowObjectGetInputV1 extends ReportingRowObjectLocation
   maxBytes: number;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingRowObjectDeleteInputV1 extends ReportingRowObjectLocationV1 {
   objectRef: string;
   nativeVersionRef: string;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingRowObjectStatInputV1 extends ReportingRowObjectLocationV1 {
   objectRef: string;
   nativeVersionRef: string;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingRowObjectProviderV1 {
   /** Registry name, e.g. `filesystem`, `gcs`, `s3`, `azure_blob`. */
   readonly name: string;
@@ -107,6 +133,8 @@ export interface ReportingRowObjectProviderV1 {
  * date of the period start in the period's `source_timezone` (never UTC, unless that is the source
  * timezone). It is one path segment, so the default layout is
  * `.../{account_key}/2026-10-02/{finality}/...`.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export const REPORTING_ROW_KEY_PLACEHOLDERS = Object.freeze([
   'prefix',
@@ -119,6 +147,9 @@ export const REPORTING_ROW_KEY_PLACEHOLDERS = Object.freeze([
   'chunk_index',
 ] as const);
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export const REPORTING_ROW_DEFAULT_KEY_TEMPLATE =
   '{prefix}/{namespace_key}/{account_key}/{period_date}/{finality}/{revision_key}/{content_sha256}/{chunk_index}';
 
@@ -130,6 +161,8 @@ const PLACEHOLDER = /\{([a-z0-9_]+)\}/g;
  * Validate an object key template; throws `INVALID_INPUT`. Every template that writes must include
  * `{revision_key}`, so no two row sets can ever name the same object key; `requireRevisionKey: false`
  * is for a read-only binding that only reads rows written under an older template.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function assertReportingRowKeyTemplateV1(
   template: string,
@@ -165,6 +198,9 @@ export function assertReportingRowKeyTemplateV1(
   }
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function assertReportingRowPrefixV1(prefix: string): void {
   if (
     !PREFIX.test(prefix) ||
@@ -175,16 +211,27 @@ export function assertReportingRowPrefixV1(prefix: string): void {
   }
 }
 
-/** Pseudonymous account segment; never a raw account ID. */
+/**
+ * Pseudonymous account segment; never a raw account ID.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function reportingRowAccountKeyV1(namespaceKey: string, accountId: string): string {
   return sha256Hex(canonicalize(['adcp.account_key.v1', namespaceKey, accountId]));
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function reportingRowRevisionKeyV1(rowSetId: string): string {
   return sha256Hex(canonicalize(['adcp.revision_key.v1', rowSetId]));
 }
 
-/** Render one chunk's object key and confine it to the binding's owned prefix. */
+/**
+ * Render one chunk's object key and confine it to the binding's owned prefix.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function renderReportingRowObjectKeyV1(input: {
   template: string;
   prefix: string;
@@ -250,6 +297,9 @@ function renderedPeriodDate(periodStart: string | undefined, sourceTimezone: str
   }
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface FilesystemReportingRowObjectProviderOptionsV1 {
   /**
    * Root name → absolute directory. Bindings name a root (`location.root`);
@@ -262,6 +312,8 @@ export interface FilesystemReportingRowObjectProviderOptionsV1 {
  * Local filesystem provider for tests and single-host deployments. Create-only
  * writes use a temporary file, `fsync`, and `link()` to the final name, which
  * fails rather than replacing an existing object.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function createFilesystemReportingRowObjectProviderV1(
   options: FilesystemReportingRowObjectProviderOptionsV1
@@ -391,6 +443,8 @@ export function createFilesystemReportingRowObjectProviderV1(
  * Behavioural conformance for a custom object provider. Writes and deletes
  * only under `prefix`; run it against a dedicated test bucket or prefix.
  * Resolves with the checks that passed; rejects on the first violation.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export async function runReportingRowObjectProviderConformanceV1(
   provider: ReportingRowObjectProviderV1,

@@ -32,6 +32,8 @@
  *   predecessor's rows share bodies.
  * - `adcp_reporting_row_write_intents` fences external uploads so a sweep
  *   never deletes bytes a committing writer still needs.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export const REPORTING_ROW_STORAGE_MIGRATION = `
 -- Serialize concurrent appliers (several instances may run migrations at startup) so the guarded
@@ -319,7 +321,11 @@ UPDATE adcp_reporting_row_write_intents
  WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(created_objects) AS element(created) WHERE jsonb_typeof(created) = 'object' AND created ? 'objectKey');
 `.trim();
 
-/** Tables {@link REPORTING_ROW_STORAGE_MIGRATION} creates, in dependency order. */
+/**
+ * Tables {@link REPORTING_ROW_STORAGE_MIGRATION} creates, in dependency order.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export const REPORTING_ROW_STORAGE_TABLES = Object.freeze([
   'adcp_persistence_installation',
   'adcp_reporting_row_bindings',
@@ -350,6 +356,8 @@ interface QueryablePoolV1 {
 /**
  * Fail closed unless every row-storage table exists in the current schema.
  * Returns the installation identity.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export async function probeReportingRowStorageSchemaV1(pool: QueryablePoolV1): Promise<{ installationId: string }> {
   const present = await pool.query<{ name: string }>(

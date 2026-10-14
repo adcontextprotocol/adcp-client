@@ -227,7 +227,8 @@ const MAX_PACKED_FILE_COUNT =
   1 + // Reporting row-storage field-alignment migration guide.
   22 + // AdCP 3.2.4 signed request-signing compliance vectors; no new runtime module sets.
   1 + // Agent identity origin/resolver migration guide.
-  41; // Experimental identity 3.3: ten dual-format module sets and one CLI file.
+  41 + // Experimental identity 3.3: ten dual-format module sets and one CLI file.
+  1; // Reliable Reporting stability policy guide.
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

@@ -38,6 +38,8 @@ const DEFAULT_RESOURCE_MAX_BYTES = 64 * 1024 * 1024;
  * Upper bound on an adapter's startup probe, so a hung provider cannot hang startup.
  * A router's per-route probe budget must stay under it, or this deadline fires
  * first and the failing route's id never reaches the startup error.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export const REPORTING_ADAPTER_PROBE_DEADLINE_MILLISECONDS_V1 = 30_000;
 const ADAPTER_PROBE_DEADLINE_MILLISECONDS = REPORTING_ADAPTER_PROBE_DEADLINE_MILLISECONDS_V1;
@@ -51,19 +53,34 @@ const MAX_RECEIPT_RESULTS = 100;
 /** Maximum serialized size of one receipt evidence item. */
 const MAX_RECEIPT_EVIDENCE_BYTES = 64 * 1024;
 
-/** The delivery pattern a destination authorization generation serves. */
+/**
+ * The delivery pattern a destination authorization generation serves.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export type ReportingDestinationPatternV1 = ReportingManagedDeliveryBindingV1['method'];
 
-/** Delivery patterns, in the order the protocol lists them. */
+/**
+ * Delivery patterns, in the order the protocol lists them.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export const REPORTING_DESTINATION_PATTERNS_V1: readonly ReportingDestinationPatternV1[] = Object.freeze([
   'file_transfer',
   'dataset_share',
   'warehouse_materialization',
 ]);
 
-/** Same constraint the protocol puts on `method.transport`. */
+/**
+ * Same constraint the protocol puts on `method.transport`.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export const REPORTING_DESTINATION_TRANSPORT_PATTERN_V1 = /^[a-z][a-z0-9_.-]{0,63}$/;
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingDestinationAuthorizationV1 {
   account_id: string;
   destination_ref: string;
@@ -88,6 +105,9 @@ export interface ReportingDestinationAuthorizationV1 {
   cleanup_completed_at?: string;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingManagedDeliveryLeaseV1 {
   materialization: ReportingMaterialization;
   binding: ReportingManagedDeliveryBindingV1;
@@ -98,6 +118,9 @@ export interface ReportingManagedDeliveryLeaseV1 {
   expires_at: string;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingDestinationRevocationLeaseV1 {
   authorization: ReportingDestinationAuthorizationV1;
   owner: string;
@@ -117,10 +140,16 @@ export interface ReportingDestinationRevocationLeaseV1 {
   remaining_milliseconds?: number;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export type ReportingReceiptBatchEntryV1 =
   | { kind: 'revision'; receipt: ReportingReceipt }
   | { kind: 'adjustment'; receipt: ReportingAdjustmentReceipt };
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingReceiptBatchInputV1 {
   account_id: string;
   consumer_id: string;
@@ -130,7 +159,11 @@ export interface ReportingReceiptBatchInputV1 {
   received_at: string;
 }
 
-/** Agent-wide Managed Delivery promises durably shared by every replica. */
+/**
+ * Agent-wide Managed Delivery promises durably shared by every replica.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingManagedDeliveryAdvertisedPoliciesV1 {
   automatedRecoveryWindowSeconds: number;
   statusRetentionDays: number;
@@ -138,6 +171,9 @@ export interface ReportingManagedDeliveryAdvertisedPoliciesV1 {
   authorizationRevocationSeconds: number;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingManagedDeliveryStore {
   /**
    * Prove that this store shares the supplied Core authority and has its
@@ -276,6 +312,9 @@ export interface ReportingManagedDeliveryStore {
   syncReceiptBatch(input: ReportingReceiptBatchInputV1): Promise<SyncReportingReceiptsResponse['results']>;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingManagedDeliveryAdapterV1 {
   /** Profiles this installed adapter can actually verify through its consumer/destination path. */
   readonly verificationProfiles: readonly ReportingVerification['verification_profile'][];
@@ -341,6 +380,8 @@ export interface ReportingManagedDeliveryAdapterV1 {
  * when the installed adapter is a router, so a single-adapter runtime's result
  * shape is unchanged. Work that no route could take is counted under
  * `UNROUTED_REPORTING_ROUTE_KEY_V1`, which no route id can equal.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export interface ReportingManagedDeliveryRouteCountsV1 {
   /** Materializations settled as delivered, by the route that delivered them. */
@@ -355,9 +396,16 @@ export interface ReportingManagedDeliveryRouteCountsV1 {
   overdueByRoute: Record<string, number>;
 }
 
-/** Key for work no delivery route could take. Not a valid route id. */
+/**
+ * Key for work no delivery route could take. Not a valid route id.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export const UNROUTED_REPORTING_ROUTE_KEY_V1 = '~unrouted';
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingManagedDeliveryWorkerResultV1 extends Partial<ReportingManagedDeliveryRouteCountsV1> {
   planned: number;
   claimed: number;
@@ -369,6 +417,9 @@ export interface ReportingManagedDeliveryWorkerResultV1 extends Partial<Reportin
   exhausted: number;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingManagedDeliveryWorkerOptionsV1 {
   signal?: AbortSignal;
   now?: () => Date;
@@ -405,6 +456,9 @@ export interface ReportingManagedDeliveryWorkerOptionsV1 {
   ) => Promise<ReportingManagedDeliveryLeaseV1['revision']>;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface CreateReportingManagedDeliveryRuntimeOptionsV1<
   TContext extends { account?: unknown } = { account?: unknown },
 > {
@@ -422,6 +476,9 @@ export interface CreateReportingManagedDeliveryRuntimeOptionsV1<
   consumerMismatchEscalation?: ReportingStatusConsumerScopeOptionsV1<TContext>['consumerMismatchEscalation'];
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingManagedDeliveryRuntimeV1<TContext extends { account?: unknown } = { account?: unknown }> {
   reportingDeliveryCapabilities: ReportingDeliveryCapabilities;
   getReportingStatus: ReturnType<typeof createReportingStatusHandler<TContext>>;
@@ -444,6 +501,8 @@ export interface ReportingManagedDeliveryRuntimeV1<TContext extends { account?: 
  * Wires all operational components before returning any Managed Delivery
  * capability claim. A missing receipt principal resolver limits the runtime to
  * Managed Delivery even if a consumer-receipt offering was supplied.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export async function createReportingManagedDeliveryRuntime<
   TContext extends { account?: unknown } = { account?: unknown },
@@ -843,6 +902,9 @@ function receiptFailure(
   };
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export async function runManagedDeliveryWorker(
   store: ReportingManagedDeliveryStore,
   adapter: ReportingManagedDeliveryAdapterV1,
@@ -1114,6 +1176,9 @@ function remainingRevocationMilliseconds(
   return revoked + revocationWindow - now.getTime();
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export async function readManagedReportingResource(
   store: ReportingManagedDeliveryStore,
   adapter: ReportingManagedDeliveryAdapterV1,
@@ -1166,6 +1231,9 @@ export async function readManagedReportingResource(
   return bytes;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function assertMaterializationOutcome(
   lease: ReportingManagedDeliveryLeaseV1,
   outcome: { status: 'available' | 'delivered'; resource: ReportingResource; verification: ReportingVerification },
@@ -1249,6 +1317,9 @@ export function assertMaterializationOutcome(
   assertCredentialFreeReportingResourceLocationV1(outcome.resource.location);
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function receiptEvidenceMatches(receipt: ReportingReceipt, materialization: ReportingMaterialization): boolean {
   const verification = materialization.verification;
   const resource = materialization.resource;
@@ -1265,6 +1336,9 @@ export function receiptEvidenceMatches(receipt: ReportingReceipt, materializatio
   );
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function adjustmentReceiptEvidenceMatches(
   receipt: ReportingAdjustmentReceipt,
   adjustment: ReportingLedgerAdjustmentV1
@@ -1358,6 +1432,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * storage: a caller driving `settleMaterialization` directly must be held to
  * the same rule, or a presigned location is persisted and then published in
  * `get_reporting_status`.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function assertCredentialFreeReportingResourceLocationV1(location: string): void {
   const refuse = () => {
@@ -1511,7 +1587,11 @@ function scheduleDeadline(milliseconds: number, onElapsed: () => void): () => vo
   };
 }
 
-/** Stable helper for immutable binding creation. */
+/**
+ * Stable helper for immutable binding creation.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function reportingManagedDeliveryBindingV1(
   input: Omit<ReportingManagedDeliveryBindingV1, 'created_at' | 'semantic_fingerprint'> & { created_at?: string }
 ): ReportingManagedDeliveryBindingV1 {

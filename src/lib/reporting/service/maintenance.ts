@@ -6,6 +6,8 @@ import type { PostgresReportingLedgerStore } from '../ledger';
  * period end and its latest publication. `statusRetentionDays` always comes
  * from the service, so retention can never disagree with the commitment the
  * service advertises to buyers.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export interface ReportingRetentionOptionsV1 {
   enabled: true;
@@ -21,6 +23,8 @@ export interface ReportingRetentionOptionsV1 {
  *
  * Compaction takes effect in the AdCP release after November 20, 2026; do not
  * enable it in production before then. See `docs/guides/REPORTING-OPERATIONS.md`.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export interface ReportingCompactionOptionsV1 {
   enabled: true;
@@ -28,12 +32,20 @@ export interface ReportingCompactionOptionsV1 {
   limit?: number;
 }
 
-/** Change-feed pruning window and the consumer hold shared with retention. */
+/**
+ * Change-feed pruning window and the consumer hold shared with retention.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export type ReportingChangeFeedMaintenanceOptionsV1 =
   | boolean
   | { changeRetentionDays?: number; maxFeedHoldDays?: number };
 
-/** The ledger-store surface a maintenance pass drives. */
+/**
+ * The ledger-store surface a maintenance pass drives.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export type ReportingLedgerMaintenanceStoreV1 = Pick<
   PostgresReportingLedgerStore,
   'sweepRowWriteIntents' | 'pruneChanges' | 'retireExpiredPeriods'
@@ -48,12 +60,17 @@ interface ReportingLedgerMaintenanceTaskOutcomesV1 {
   'snapshot compaction': Awaited<ReturnType<PostgresReportingLedgerStore['compactSupersededSnapshots']>>;
 }
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export type ReportingLedgerMaintenanceTaskNameV1 = keyof ReportingLedgerMaintenanceTaskOutcomesV1;
 
 /**
  * A scheduled maintenance pass completed but could not process some items
  * (for example, a retention period whose objects could not be deleted). The
  * pass resumes them next time; repeated reports need operator attention.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export class ReportingMaintenancePartialFailureError extends Error {
   constructor(
@@ -82,6 +99,8 @@ export class ReportingMaintenancePartialFailureError extends Error {
  * some items (a retention period whose objects would not delete, an upload that
  * would not sweep) is `completed` with `partialFailure` set; the pass resumes
  * those items next time.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export type ReportingLedgerMaintenanceTaskResultV1 = {
   [Task in ReportingLedgerMaintenanceTaskNameV1]:
@@ -94,6 +113,9 @@ export type ReportingLedgerMaintenanceTaskResultV1 = {
     | { readonly task: Task; readonly status: 'failed'; readonly error: unknown };
 }[ReportingLedgerMaintenanceTaskNameV1];
 
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface RunReportingLedgerMaintenanceInputV1 {
   store: ReportingLedgerMaintenanceStoreV1;
   /**
@@ -124,6 +146,8 @@ type StartedTask = [ReportingLedgerMaintenanceTaskNameV1, Promise<unknown>];
  * retention honours, per-task limits and abort handling cannot drift between
  * them. Tasks start together, in a fixed order, and are isolated: one task's
  * failure never prevents another from running.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export async function runReportingLedgerMaintenance(
   input: RunReportingLedgerMaintenanceInputV1
@@ -276,6 +300,8 @@ export async function runReportingLedgerMaintenance(
 /**
  * Fail fast on maintenance options the store would otherwise reject on every
  * pass. Mirrors the checks `retireExpiredPeriods` and `pruneChanges` apply.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function assertReportingLedgerMaintenanceOptions(
   input: {

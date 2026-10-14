@@ -1,3 +1,13 @@
+/**
+ * Reliable Reporting service wiring, conformance runner and ledger maintenance.
+ *
+ * Only the retention, compaction and change-feed maintenance exports (`./maintenance`) are `@experimental`.
+ * The service factories and conformance runner follow normal semver.
+ *
+ * Stability policy: https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ *
+ * @packageDocumentation
+ */
 import type { Account, ResolveContext } from '../../server/decisioning/account';
 import type { RequestContext } from '../../server/decisioning/context';
 import type { DecisioningPlatform } from '../../server/decisioning/platform';
