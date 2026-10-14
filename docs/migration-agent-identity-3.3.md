@@ -157,8 +157,8 @@ intervals. Publishers MUST NOT declare `next_update` more than 30 minutes ahead
 from other implementations: each successful fetch of such a list stays valid
 for at most 30 minutes plus grace, so an outage cannot extend acceptance past
 that. A list whose `updated` is more than 60 seconds ahead of the verifier
-clock, or whose `next_update` has passed, is refused. First-contact identity reads may proceed when no list is available;
-mutating operations fail closed without a current or grace-valid signed list.
+clock, or whose `next_update` has passed, is refused. Without a current or grace-valid signed list, every signed request
+fails with a retryable `SERVICE_UNAVAILABLE`, reads included.
 
 For positively negotiated 3.3 sellers advertising signed webhooks, experimental
 clients omit injected reporting/task webhook HMAC authentication even when a
