@@ -347,14 +347,16 @@ export function createBigQueryReportingWarehouseSinkV1(
   async function jobStatus(
     jobId: string,
     signal?: AbortSignal,
-    boundMilliseconds = loadTimeout
+    boundMilliseconds = loadTimeout,
+    context?: string
   ): Promise<'missing' | 'done' | 'running'> {
     let metadata: unknown;
     try {
       metadata = await withinDeadline(
         () => options.bigquery.job(jobId, jobOptions).getMetadata(),
         boundMilliseconds,
-        signal
+        signal,
+        context
       );
     } catch (error) {
       if ((error as { code?: unknown } | null)?.code === 404) return 'missing';
@@ -378,8 +380,11 @@ export function createBigQueryReportingWarehouseSinkV1(
    * run's deadline) is accepted or waited for and never uploaded twice. The
    * deadline starts after that lookup and bounds this run only: a load that
    * outlasts it rejects with `adcpLoadTimedOut` and nothing is cancelled.
+   * Errors name the table (role and ID) and its timeout count, which is the
+   * table's own: the rows and revisions tables grow their deadlines separately.
    */
   async function loadOnce(
+    role: 'rows' | 'revisions',
     tableId: string,
     jobId: string,
     lines: string[],
@@ -387,13 +392,14 @@ export function createBigQueryReportingWarehouseSinkV1(
     signal?: AbortSignal
   ): Promise<void> {
     signal?.throwIfAborted();
-    let status = await jobStatus(jobId, signal);
+    const table = `the ${role} table "${tableId}" (timeout count ${timeouts})`;
+    let status = await jobStatus(jobId, signal, loadTimeout, table);
     if (status === 'done') return;
     const loadDeadline = reportingWarehouseLoadDeadlineV1(loadTimeout, timeouts);
     const deadlineAt = Date.now() + loadDeadline;
     const timedOut = (what: string) => {
       const error = new Error(
-        `${what} exceeded this run's ${loadDeadline} ms deadline; the next run checks the job again`
+        `${what} exceeded this run's ${loadDeadline} ms deadline for ${table}; the next run checks the job again`
       );
       Object.defineProperty(error, 'adcpDeadlineExceeded', { value: true });
       Object.defineProperty(error, 'adcpLoadTimedOut', { value: true });
@@ -402,19 +408,23 @@ export function createBigQueryReportingWarehouseSinkV1(
     if (status === 'missing') {
       try {
         // An upload an earlier run abandoned at its deadline is still running in this process (the client
-        // takes no abort signal), so wait for it instead of starting another upload of the same file. One
-        // that has been running longer than this run's deadline is replaced; BigQuery refuses a duplicate
-        // job ID, so a replacement can never load the batch twice.
+        // takes no abort signal), so wait for it, within this run's deadline, instead of starting another
+        // upload of the same file. How long ago it started does not matter: that age includes the gap
+        // between runs. A map entry exists only while its upload is pending, so only a hung upload older
+        // than the largest deadline any run can have is abandoned and replaced. BigQuery refuses a
+        // duplicate job ID, so a replacement can never load the batch twice.
         const running = uploads.get(jobId);
         const upload =
-          running && Date.now() - running.startedAt < loadDeadline ? running.done : startUpload(tableId, jobId, lines);
+          running && Date.now() - running.startedAt < MAX_LOAD_TIMEOUT
+            ? running.done
+            : startUpload(tableId, jobId, lines);
         await withinDeadline(() => upload, Math.max(deadlineAt - Date.now(), 1), signal);
         return;
       } catch (error) {
         if (isDeadlineExceeded(error)) throw timedOut('Uploading the load');
         if (!isAlreadyExists(error)) throw error;
         // The job exists (a crash or timeout after submission, or a concurrent run). Check how it ended.
-        status = await jobStatus(jobId, signal);
+        status = await jobStatus(jobId, signal, loadTimeout, table);
         if (status === 'missing') {
           throw new Error(
             'BigQuery refused the load job ID as already existing, but the job cannot be found. Check that projectId ' +
@@ -432,7 +442,7 @@ export function createBigQueryReportingWarehouseSinkV1(
       await sleep(Math.min(pollMilliseconds, remaining), signal);
       const bound = Math.max(Math.min(loadTimeout, deadlineAt - Date.now()), 1);
       try {
-        status = await jobStatus(jobId, signal, bound);
+        status = await jobStatus(jobId, signal, bound, table);
       } catch (error) {
         // A status call cut short by this run's remaining time is the run's deadline, not a failed check.
         if (isDeadlineExceeded(error) && bound < loadTimeout) throw timedOut('Waiting for the running load job');
@@ -689,6 +699,7 @@ export function createBigQueryReportingWarehouseSinkV1(
       const steps = [
         {
           table: options.rowsTableId,
+          role: 'rows',
           kind: 'rows',
           lines: rowLines,
           attempt: plan.rowsAttempt,
@@ -698,6 +709,7 @@ export function createBigQueryReportingWarehouseSinkV1(
         },
         {
           table: options.revisionsTableId,
+          role: 'revisions',
           kind: 'revs',
           lines: revisionLines,
           attempt: plan.revisionsAttempt,
@@ -710,6 +722,7 @@ export function createBigQueryReportingWarehouseSinkV1(
         if (!step.lines.length) continue;
         try {
           await loadOnce(
+            step.role,
             step.table,
             `${baseJobId}_${step.kind}${suffix(step.attempt)}`,
             [...step.lines],
@@ -896,7 +909,12 @@ function periodDateOf(revision: ReportingLedgerRevisionMetadataV1): string {
  * client takes no abort signal, so an abandoned call may still complete in
  * the background; deterministic job IDs make that harmless.
  */
-async function withinDeadline<T>(operation: () => Promise<T>, milliseconds: number, signal?: AbortSignal): Promise<T> {
+async function withinDeadline<T>(
+  operation: () => Promise<T>,
+  milliseconds: number,
+  signal?: AbortSignal,
+  context?: string
+): Promise<T> {
   signal?.throwIfAborted();
   let timer: NodeJS.Timeout | undefined;
   let onAbort: (() => void) | undefined;
@@ -905,7 +923,9 @@ async function withinDeadline<T>(operation: () => Promise<T>, milliseconds: numb
       operation(),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
-          const error = new Error('BigQuery call exceeded its deadline; the batch will be retried');
+          const error = new Error(
+            `BigQuery call exceeded its deadline${context ? ` of ${milliseconds} ms for ${context}` : ''}; the batch will be retried`
+          );
           Object.defineProperty(error, 'adcpDeadlineExceeded', { value: true });
           reject(error);
         }, milliseconds);
