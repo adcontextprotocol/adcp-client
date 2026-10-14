@@ -338,3 +338,48 @@ test('D7: relay signing without existing fields is a caller error', async () => 
     e => e instanceof TypeError && /Relay requires/.test(e.message)
   );
 });
+
+test('S3: infrastructure failures after verification never challenge a correctly signed request', async () => {
+  const key = newKey();
+  const proof = await wba.createSignedSignatureDirectory(origin, [{ privateKey: key }], { now: () => T });
+  const headers = await wba.signWebBotAuth(request, { privateKey: key }, { origin, now: () => T });
+  const base = {
+    directory: directoryFor(proof, () => T),
+    replayStore: new InMemoryReplayStore(),
+    isRevoked: async () => false,
+    now: () => T,
+  };
+  await assert.rejects(
+    wba.verifyWebBotAuth(
+      { ...request, headers },
+      {
+        ...base,
+        isRevoked: async () => {
+          throw new Error('checker offline');
+        },
+      }
+    ),
+    e =>
+      e.reason === 'revocation_unavailable' &&
+      !e.headers['Accept-Signature'] &&
+      e.body.adcp_error.code === 'SERVICE_UNAVAILABLE'
+  );
+  await assert.rejects(
+    wba.verifyWebBotAuth(
+      { ...request, headers },
+      {
+        ...base,
+        replayStore: {
+          insert: async () => {
+            throw new Error('redis offline');
+          },
+        },
+      }
+    ),
+    e =>
+      e.reason === 'replay_unavailable' &&
+      !e.headers['Accept-Signature'] &&
+      e.body.adcp_error.code === 'SERVICE_UNAVAILABLE' &&
+      e.body.adcp_error.recovery === 'transient'
+  );
+});

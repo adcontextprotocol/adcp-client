@@ -46,17 +46,23 @@ export class WebBotAuthError extends Error {
   readonly headers: Record<string, string>;
   get body(): Record<string, unknown> {
     if (
-      ['key_revoked', 'identity_not_bound', 'revocation_unavailable', 'revocation_persistence_failed'].includes(
-        this.reason
-      )
-    )
+      [
+        'key_revoked',
+        'identity_not_bound',
+        'revocation_unavailable',
+        'revocation_persistence_failed',
+        'replay_unavailable',
+      ].includes(this.reason)
+    ) {
+      const transient = this.reason.endsWith('_unavailable') || this.reason === 'revocation_persistence_failed';
       return {
         adcp_error: {
-          code: this.reason.startsWith('revocation_') ? 'SERVICE_UNAVAILABLE' : 'PERMISSION_DENIED',
+          code: transient ? 'SERVICE_UNAVAILABLE' : 'PERMISSION_DENIED',
           message: this.message,
-          recovery: this.reason.startsWith('revocation_') ? 'transient' : 'correctable',
+          recovery: transient ? 'transient' : 'correctable',
         },
       };
+    }
     return { error: this.message };
   }
   constructor(
@@ -78,6 +84,7 @@ export class WebBotAuthError extends Error {
         'identity_not_bound',
         'revocation_unavailable',
         'revocation_persistence_failed',
+        'replay_unavailable',
         'profile_disabled',
       ].includes(reason)
         ? {
@@ -420,7 +427,10 @@ export async function verifyWebBotAuth(
       let authorizationFailure: WebBotAuthAuthorizationFailure | undefined;
       try {
         if (await options.isRevoked(origin, keyid)) denied('key_revoked');
-      } catch (error) {
+      } catch (thrown) {
+        // The signature verified: an unexpected checker failure is unknown
+        // revocation state, never a signature challenge.
+        const error = thrown instanceof WebBotAuthError ? thrown : new WebBotAuthError(403, 'revocation_unavailable');
         if (
           options.requireFreshRevocation === false &&
           error instanceof WebBotAuthError &&
@@ -455,14 +465,20 @@ export async function verifyWebBotAuth(
     // No nonce state is consumed until all cryptographic signatures pass.
     for (const signer of verified) {
       const input = selected.find(i => i.label === signer.label)!;
-      const result = await options.replayStore.insert(
-        signer.origin,
-        WEB_BOT_AUTH_PROFILE,
-        input.params.nonce,
-        // Acceptance is inclusive of expires + 60, so the nonce must outlive it.
-        input.params.expires + 60 - now + 1,
-        now
-      );
+      let result: Awaited<ReturnType<ReplayStore['insert']>>;
+      try {
+        result = await options.replayStore.insert(
+          signer.origin,
+          WEB_BOT_AUTH_PROFILE,
+          input.params.nonce,
+          // Acceptance is inclusive of expires + 60, so the nonce must outlive it.
+          input.params.expires + 60 - now + 1,
+          now
+        );
+      } catch {
+        // Replay state is unavailable for a correctly signed request: transient, no challenge.
+        throw new WebBotAuthError(403, 'replay_unavailable');
+      }
       if (result !== 'ok')
         throw new WebBotAuthError(result === 'replayed' ? (options.replayStatus ?? 429) : 429, result);
     }
