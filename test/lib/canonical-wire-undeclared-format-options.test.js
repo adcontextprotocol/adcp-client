@@ -15,6 +15,8 @@ const z = require('zod');
 const {
   AgentClient,
   canonicalFormatLegacyResolverFromRoutes,
+  carryFormatOptionOrigins,
+  canonicalFormatLegacyResolverFromCatalogSnapshots,
   createProductCache,
   legacyRoutesForProduct,
   packageRefsForFormatOptions,
@@ -859,5 +861,75 @@ describe('canonical wire: routes built from a stored seller response', () => {
     } finally {
       await execution.close();
     }
+  });
+});
+
+describe('canonical wire: composed resolvers keep the origin of their stored routes', () => {
+  const stored = legacyOnlyProduct('legacy-shaped', [{ agent_url: AAO, id: 'display_300x250_image' }]);
+  const product = JSON.parse(JSON.stringify(toAdditiveCanonicalProduct(structuredClone(stored)).product));
+  const [option] = product.format_options;
+  const routesResolver = canonicalFormatLegacyResolverFromRoutes(
+    legacyRoutesForProduct(
+      stored.product_id,
+      toAdditiveCanonicalProduct(structuredClone(stored)).product.format_options,
+      {
+        sellerProduct: stored,
+      }
+    )
+  );
+
+  async function createWith(canonicalFormatLegacyResolver) {
+    const execution = await canonicalSeller([stored]);
+    try {
+      await execution.agent.createMediaBuy(
+        mediaBuy({
+          product_id: product.product_id,
+          ...packageRefsForFormatOptions(product, [option.format_option_id]),
+        }),
+        undefined,
+        { canonicalFormatLegacyResolver }
+      );
+      return execution.captured.create.packages[0];
+    } finally {
+      await execution.close();
+    }
+  }
+
+  test('a wrapping resolver that carries its routes origins rewrites undeclared options', async () => {
+    const wrapper = carryFormatOptionOrigins(context => routesResolver(context), routesResolver);
+
+    const pkg = await createWith(wrapper);
+
+    assert.strictEqual(pkg.format_option_refs, undefined);
+    assert.strictEqual(pkg.format_kind, option.format_kind);
+    assert.deepStrictEqual(pkg.params, option.params);
+  });
+
+  test('a wrapping resolver without carried origins leaves format_option_refs unchanged', async () => {
+    const pkg = await createWith(context => routesResolver(context));
+
+    assert.deepStrictEqual(pkg.format_option_refs, [{ scope: 'product', format_option_id: option.format_option_id }]);
+  });
+
+  test("a catalog snapshot resolver carries its fallback's origins", async () => {
+    const unrelatedCatalog = {
+      source: 'configured',
+      publisher_domain: 'other.example',
+      formats: [
+        {
+          format_kind: 'display_tag',
+          format_option_id: 'other_mrec_html',
+          params: { width: 300, height: 250 },
+          v1_format_ref: [
+            { agent_url: 'https://formats.other.example/mcp', id: 'other_mrec_html', width: 300, height: 250 },
+          ],
+        },
+      ],
+    };
+
+    const pkg = await createWith(canonicalFormatLegacyResolverFromCatalogSnapshots([unrelatedCatalog], routesResolver));
+
+    assert.strictEqual(pkg.format_option_refs, undefined);
+    assert.strictEqual(pkg.format_kind, option.format_kind);
   });
 });
