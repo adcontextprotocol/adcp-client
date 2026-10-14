@@ -820,23 +820,6 @@ export {
   defaultImplicitKeyFn,
   type ImplicitAccountStoreOptions,
 } from '../adapters/implicit-account-store';
-export {
-  createKeyedAccountStore,
-  keyedAccountMemoryBackend,
-  type KeyedAccountBackend,
-  type KeyedAccountRecord,
-  type KeyedAccountStoreOptions,
-  type KeyedAccountSyncEntry,
-} from '../adapters/keyed-account-store';
-export {
-  keyedAccountPgBackend,
-  getKeyedAccountMigration,
-  type KeyedAccountPgOptions,
-  type KeyedAccountPgQueryable,
-  type KeyedAccountPgConnection,
-  type KeyedAccountPgPool,
-} from '../adapters/keyed-account-pg';
-export { keyedAccountKvBackend, type KeyedAccountKvClient } from '../adapters/keyed-account-kv';
 
 export {
   createOAuthPassthroughResolver,
@@ -844,6 +827,18 @@ export {
 } from '../adapters/oauth-passthrough-resolver';
 
 export { createRosterAccountStore, type RosterAccountStoreOptions } from '../adapters/roster-account-store';
+export { createKeyedAccountStore, type KeyedAccountStoreOptions } from '../adapters/keyed-account-store';
+export {
+  memoryKeyedAccountBackend,
+  pgKeyedAccountBackend,
+  redisKeyedAccountBackend,
+  getKeyedAccountMigration,
+  type KeyedAccountBackend,
+  type KeyedAccountRecord,
+  type KeyedAccountSnapshot,
+  type PgKeyedAccountBackendOptions,
+  type KeyedAccountRedisClient,
+} from '../adapters/keyed-account-backend';
 
 export {
   createDerivedAccountStore,

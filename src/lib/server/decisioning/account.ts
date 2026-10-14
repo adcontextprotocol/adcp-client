@@ -453,30 +453,23 @@ export interface AccountToolContext<TCtxMeta = Record<string, unknown>> extends 
   account: Account<TCtxMeta>;
 }
 
-/** Credential-free identity and commercial snapshot used during account sync. */
-export type AccountSyncSnapshot<TCtxMeta = Record<string, unknown>> = Omit<
-  Account<TCtxMeta>,
-  'ctx_metadata' | 'authInfo'
->;
-
-/** Context for a batch upsert; existing[i] corresponds to refs[i]. */
+/** Pre-write snapshots aligned with the accepted entries passed to `upsert`. */
 export interface AccountUpsertContext<TCtxMeta = Record<string, unknown>> extends ResolveContext {
-  /** Principal-scoped lookup snapshots, or null for a new/non-natural-key entry. */
-  readonly existing?: readonly (Readonly<AccountSyncSnapshot<TCtxMeta>> | null)[];
+  /** Null for an unresolved or ID-keyed entry. Lookup uses `provisioning: false`. */
+  readonly existing?: readonly (Account<TCtxMeta> | null)[];
 }
 
-/** Secret-free, server-side account contract diagnostic. */
-export interface AccountStoreDiagnostic {
-  code:
-    | 'ACCOUNT_IDEMPOTENCY_VIOLATION'
-    | 'PAYMENT_TERMS_MISMATCH'
-    | 'BILLING_MISMATCH'
-    | 'ACCOUNT_SYNC_ROW_UNMATCHED'
-    | 'ACCOUNT_BILLING_INCOMPLETE'
-    | 'ACCOUNT_LOOKUP_FAILED';
-  toolName: 'sync_accounts' | 'list_accounts';
-  /** Index in the original request (or list response). */
-  index: number;
+/** A sync/list contract violation, delivered only to the seller. */
+export interface AccountSyncDiagnostic {
+  readonly code:
+    | 'ACCOUNT_SYNC_IDEMPOTENCY_VIOLATION'
+    | 'ACCOUNT_SYNC_PAYMENT_TERMS_MISMATCH'
+    | 'ACCOUNT_SYNC_BILLING_MISMATCH'
+    | 'ACCOUNT_SYNC_LOOKUP_UNSUPPORTED'
+    | 'ACCOUNT_BILLING_FIELDS_MISSING';
+  readonly toolName: 'sync_accounts' | 'list_accounts';
+  /** Original request index for sync; page index for list. */
+  readonly index: number;
 }
 
 /**
@@ -593,10 +586,15 @@ export function isAccountResolutionMode(value: unknown): value is AccountResolut
 }
 
 export interface AccountStore<TCtxMeta = Record<string, unknown>> {
-  /** Convert sync identity/active payment-term violations into per-row failures. Default false. */
+  /**
+   * Convert sync contract violations to per-row failures. Default: diagnostics only.
+   * This is post-write response validation, not a transaction or rollback.
+   * For accept-or-reject guarantees, upsert must check these contracts before
+   * committing too (createKeyedAccountStore does so for its own backend).
+   */
   readonly strictIdempotency?: boolean;
-  /** Called in every environment; hook failures never change the response. */
-  readonly onDiagnostic?: (diagnostic: AccountStoreDiagnostic) => void | Promise<void>;
+  /** Server-side diagnostics; never includes credentials or account metadata. */
+  readonly onDiagnostic?: (diagnostic: AccountSyncDiagnostic) => void;
   /**
    * How buyers reference accounts on this platform. Three onboarding models,
    * aligned with the account-reference taxonomy clarified upstream in

@@ -29,6 +29,101 @@ For buyer setup and opt-in lifecycle management, see
 For upgrading an existing integration, use the
 [14.0-to-14.1 checklist](../migration-14.0-to-14.1.md).
 
+### Account sync contracts
+
+For platform `accounts.upsert`, the framework looks up accepted natural-key
+entries with `provisioning: false` before calling the batch method. The optional
+`ctx.existing` array is aligned with the entries passed to `upsert`; each element
+is the pre-write account snapshot or `null`. All natural-key dimensions are
+preserved, including brand countries, operator unit, currency, timezone and sandbox.
+Natural-key snapshots require the resolved account's own brand and operator;
+identity-free singleton resolvers supply no snapshot rather than matching every key.
+Use these snapshots to update the existing ID instead of creating another account.
+Snapshots are advisory: enforce uniqueness atomically in your own storage too.
+
+The framework emits typed, server-side `accounts.onDiagnostic` events for
+`ACCOUNT_SYNC_IDEMPOTENCY_VIOLATION`, `ACCOUNT_SYNC_PAYMENT_TERMS_MISMATCH`, and
+`ACCOUNT_BILLING_FIELDS_MISSING`, plus `ACCOUNT_SYNC_BILLING_MISMATCH` when an
+active result silently replaces requested agent billing with another party
+(strict mode rejects it with `BILLING_NOT_SUPPORTED`). ID-only resolvers that reject natural-key
+lookups remain usable and emit `ACCOUNT_SYNC_LOOKUP_UNSUPPORTED`; their
+identity checks require store-level enforcement. Events contain only the code, tool and original
+row index. Development logs also receive warnings. Callback exceptions do not
+change the result of a committed write. The default behavior preserves existing
+responses. Set `accounts.strictIdempotency: true` to return per-row failures for
+changed IDs, `created` on an existing key, or an active account that omits or
+changes requested terms (`PAYMENT_TERMS_NOT_SUPPORTED`). Identity violations
+return `SERVICE_UNAVAILABLE`. These post-write checks cannot roll back adopter writes.
+
+Missing sync billing/terms are filled only from a stored account whose ID matches
+the result, never from the buyer's requested terms. Agent-billed list rows without
+terms also emit a diagnostic. Low-level handler-bag overrides do not use this
+platform-store guard.
+
+### Persistent keyed accounts
+
+`createKeyedAccountStore` from `@adcp/sdk/server` supplies deterministic IDs and
+additive, non-expiring account syncs. Choose `memoryKeyedAccountBackend()` for one
+process, `pgKeyedAccountBackend(pool)` for PostgreSQL, or
+`redisKeyedAccountBackend(client)` for a persistent Redis deployment with eviction
+disabled. Custom KV backends can implement `KeyedAccountBackend` using native
+atomic compare-and-swap; ordinary read followed by write is insufficient.
+
+```ts
+import {
+  createKeyedAccountStore,
+  getKeyedAccountMigration,
+  pgKeyedAccountBackend,
+} from '@adcp/sdk/server';
+
+await pool.query(getKeyedAccountMigration());
+const accounts = createKeyedAccountStore({
+  namespace: 'seller-production', // trusted deployment namespace
+  backend: pgKeyedAccountBackend(pool),
+  resolution: 'implicit',
+  buildAccount: async (entry, { accountId, existing, dryRun, ctx }) => {
+    // Your onboarding code accepts the requested terms or throws AdcpError.
+    // It must use accountId for idempotent upstream writes too.
+    return onboardAdvertiser(entry, { accountId, existing, dryRun, authInfo: ctx?.authInfo });
+  },
+});
+```
+
+`buildAccount` is required and returns the actual account, using the supplied
+`accountId`. The store validates active payment terms before committing; a
+rejected update leaves the stored account intact. It strips `authInfo` before
+persistence; credentials must also stay out of `ctx_metadata`. By default the
+store partitions accounts by stable OAuth client, API key ID or verified agent
+URL. Override `principalKey` only with a trusted authorization partition, never
+buyer-supplied request fields. Use distinct namespaces for different sellers.
+
+Concurrent writes retry atomic CAS up to ten times, re-running `buildAccount`
+against fresh state. Its external side effects must therefore be idempotent on
+the supplied account ID. A crash between an upstream write and the local CAS
+still requires that upstream idempotency. The backend stores one roster per
+principal with a default `maxAccounts` limit of 1000 and suits modest rosters; large sellers should use indexed account
+tables with unique natural-key constraints. Share the memory backend across
+server factories; use persistent storage across restarts.
+
+Dry runs do not persist; `buildAccount` receives `dryRun: true` and must preview
+without upstream writes or other side effects. Only the seller-returned account
+determines sandbox authority; the buyer's sandbox flag participates in identity
+and never grants test-tool access. Settings updates cannot provision a missing natural-key
+account. `delete_missing` and operator identity reconciliation are explicitly
+unsupported; close accounts through your lifecycle code. List cursors are bound
+to the principal, filters and roster revision and become stale after a write.
+An unknown ID-keyed entry rejects the batch before any `buildAccount` callback:
+this interface requires brand/operator on failed rows, and unauthorized account
+identities must not be invented or exposed. Failed known-account updates retain
+the account's actual status and leave persisted state intact.
+
+Run [the account sync storyboard](../../examples/storyboards/account-sync-contract.yaml)
+with one authenticated sandbox caller. Its `account.sync_contract` invariant
+checks repeat syncs with fresh request keys, exact accepted terms and billing
+fields on list rows. The fixture is SDK-authored; canonical protocol storyboards
+remain unchanged. A seller rejecting the fixture's terms needs an accepted-terms
+fixture to exercise successful repeat provisioning.
+
 Account resolvers receive `ctx.provisioning`. It is false on discovery and
 negotiation (`get_products`, `list_products`, `get_signals`, and proposal
 request/refine/decline); these tasks MUST use lookup only. It is true on spend
@@ -130,9 +225,6 @@ construction, not a silent fallback.
 > and the [13 → 14 migration guide](../migration-13-to-14.md#derived-account-resolution-is-now-an-upstream-managed-account-id-namespace).
 
 ---
-
-For durable natural-key sync with framework diagnostics and strict payment-term
-checks, see [Durable account sync](KEYED-ACCOUNT-STORE.md).
 
 ## `'implicit'` deep dive
 

@@ -120,8 +120,7 @@ export type {
   AdcpAccountStatus,
   ResolveContext,
   AccountUpsertContext,
-  AccountSyncSnapshot,
-  AccountStoreDiagnostic,
+  AccountSyncDiagnostic,
   AccountToolContext,
   ResolvedAuthInfo,
 } from './account';

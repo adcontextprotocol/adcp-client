@@ -3,6 +3,7 @@ import {
   withIdentity33SchemaScope,
   bindIdentity33SchemaScope,
 } from '../../../validation/schema-loader';
+import { existingSyncAccounts, checkSyncAccountRows, projectAccountList } from '../../account-sync-contract';
 /**
  * Build an `AdcpServer` from a `DecisioningPlatform` impl.
  *
@@ -54,14 +55,6 @@ import {
  * @public
  */
 
-import {
-  alignSyncAccountRows,
-  checkSyncAccountRow,
-  emitAccountDiagnostic,
-  lookupSyncAccounts,
-  syncNaturalKey,
-} from '../account-contract';
-import { accountReferenceKey } from '../../../core/account-key';
 import { isAccountProvisioningTask } from '../../account-provisioning';
 import { warnAccountReferenceDeprecation } from '../../account-reference-warnings';
 import { randomUUID } from 'node:crypto';
@@ -9068,8 +9061,6 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
 
   if (accounts.upsert) {
     handlers.syncAccounts = async (params, ctx) => {
-      const dryRun = params.dry_run === true;
-      const originalCount = ((params.accounts as unknown[]) ?? []).length;
       const resolveCtx = toResolveCtx(ctx, 'sync_accounts', params);
       const policy = enforceSyncAccountsCommercialPolicy(platform, params as Record<string, unknown>, resolveCtx);
       if (normalizeAccountResolution(accounts.resolution) === 'derived') {
@@ -9079,78 +9070,17 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
         policy.failedRows.size === 0 ? resolveCtx : toResolveCtx(ctx, 'sync_accounts', policy.acceptedParams);
       return projectSync(
         async () => {
-          // Retain independent wire-request snapshots before adopter code can normalize/mutate refs.
-          const requested = structuredClone(policy.acceptedEntries);
-          const indices = ((params.accounts as unknown[]) ?? []).flatMap((_entry, index) =>
-            policy.failedRows.has(index) ? [] : [index]
-          );
-          // Preview callbacks own their lookup; do not add resolver side effects to dry runs.
-          const existing = dryRun
-            ? requested.map(() => null)
-            : await lookupSyncAccounts(accounts, requested, dispatchCtx, logger, indices);
-          const returned =
-            policy.acceptedEntries.length > 0
-              ? await accounts.upsert!(policy.acceptedEntries as AccountReference[], {
+          const entries = policy.acceptedEntries;
+          const existing = await existingSyncAccounts(accounts, entries, dispatchCtx, logger);
+          const rows =
+            entries.length > 0
+              ? await accounts.upsert!(entries as AccountReference[], {
                   ...dispatchCtx,
-                  existing: structuredClone(existing),
+                  existing: existing.map(account =>
+                    account ? { ...account, billing: account.billing && { ...account.billing } } : null
+                  ),
                 })
               : [];
-          const { rows, certain } = alignSyncAccountRows(returned, requested);
-          // Missing fields must come from fresh post-write reads, never stale acceptance evidence.
-          const missing = dryRun
-            ? []
-            : rows.flatMap((row, index) =>
-                requested[index] &&
-                row.action !== 'failed' &&
-                certain[index] &&
-                (row.billing === undefined ||
-                  ((row.billing === 'agent' || requested[index]!.payment_terms !== undefined) &&
-                    row.payment_terms === undefined))
-                  ? [index]
-                  : []
-              );
-          const stored = await lookupSyncAccounts(
-            accounts,
-            missing.map(index => requested[index]!),
-            dispatchCtx,
-            logger,
-            missing.map(index => indices[index]!),
-            false
-          );
-          const current = new Map(missing.map((index, position) => [index, stored[position] ?? null]));
-          const seen = new Map<string, string>();
-          return rows.map((row, index) => {
-            const entry = requested[index];
-            if (!entry) return row;
-            if (!certain[index]) {
-              if (row.action !== 'failed')
-                emitAccountDiagnostic(accounts, logger, {
-                  code: 'ACCOUNT_SYNC_ROW_UNMATCHED',
-                  toolName: 'sync_accounts',
-                  index: indices[index]!,
-                });
-              return row;
-            }
-            const ref = syncNaturalKey(entry);
-            const key = ref ? accountReferenceKey(ref) : undefined;
-            const checked = checkSyncAccountRow(
-              accounts,
-              logger,
-              requested[index]!,
-              row,
-              existing[index] ?? null,
-              indices[index]!,
-              current.get(index) ?? null,
-              dryRun,
-              existing[index]?.id ?? (key ? seen.get(key) : undefined),
-              existing[index] === null && key !== undefined && seen.has(key)
-            );
-            if (key && !seen.has(key) && checked.action !== 'failed' && checked.account_id !== undefined)
-              seen.set(key, checked.account_id);
-            return checked;
-          });
-        },
-        rows => {
           if (rows.length !== policy.acceptedEntries.length) {
             throw new Error(
               `sync_accounts accounts.upsert returned ${rows.length} ${
@@ -9160,14 +9090,21 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
               }`
             );
           }
+          const indices = ((params.accounts as unknown[]) ?? [])
+            .map((_, index) => index)
+            .filter(index => !policy.failedRows.has(index));
+          return checkSyncAccountRows(accounts, entries, existing, rows, indices, dispatchCtx, logger);
+        },
+        rows => {
           if (policy.failedRows.size === 0) {
             return {
-              ...(dryRun && { dry_run: true }),
+              ...(params.dry_run === true && { dry_run: true }),
               accounts: rows.map(toWireSyncAccountRow),
             };
           }
           const combined: SyncAccountsResultRow[] = [];
           let acceptedIndex = 0;
+          const originalCount = ((params.accounts as unknown[]) ?? []).length;
           for (let index = 0; index < originalCount; index += 1) {
             const failed = policy.failedRows.get(index);
             if (failed !== undefined) {
@@ -9178,7 +9115,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
             }
           }
           return {
-            ...(dryRun && { dry_run: true }),
+            ...(params.dry_run === true && { dry_run: true }),
             accounts: combined.map(toWireSyncAccountRow),
           };
         }
@@ -9217,22 +9154,9 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       return projectSync(
         async () => {
           const page = await accounts.list!(filter, resolveCtx);
-          page.items.forEach((account, index) => {
-            if (
-              account.status === 'active' &&
-              account.billing?.invoicedTo === 'agent' &&
-              account.payment_terms === undefined
-            ) {
-              emitAccountDiagnostic(accounts, logger, {
-                code: 'ACCOUNT_BILLING_INCOMPLETE',
-                toolName: 'list_accounts',
-                index,
-              });
-            }
-          });
           const response = {
             status: 'completed' as const,
-            accounts: page.items.map(toWireAccount),
+            accounts: await projectAccountList(accounts, page.items, resolveCtx, logger),
             pagination: {
               has_more: page.nextCursor != null,
               ...(page.nextCursor != null && { cursor: page.nextCursor }),

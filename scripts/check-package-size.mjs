@@ -78,10 +78,11 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // Experimental identity 3.3 adds ten runtime/declaration module sets and a
 // CLI command. The measured tarball is 20,579,706 bytes; allow 40 KB for
 // documentation and compressor variance. Other byte budgets stay fixed.
-// Durable account sync adds five dual-format module/declaration sets, a guide,
-// and a certification storyboard. The first CI artifact measured 20,626,550
-// bytes; allow 25 KB for this additive surface and compressor variance.
-const MAX_PACKED_TARBALL_BYTES = 20_645_000;
+// Account sync contracts and keyed persistence add four dual-format runtime/
+// declaration module sets and a packaged storyboard. CI measured 20,623,608
+// bytes before packaging the storyboard; preserve about 25 KB of compressor
+// margin for this additive surface. All other byte budgets stay fixed.
+const MAX_PACKED_TARBALL_BYTES = 20_650_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -231,7 +232,7 @@ const MAX_PACKED_FILE_COUNT =
   22 + // AdCP 3.2.4 signed request-signing compliance vectors; no new runtime module sets.
   1 + // Agent identity origin/resolver migration guide.
   41 + // Experimental identity 3.3: ten dual-format module sets and one CLI file.
-  22 + // Keyed account stores, contract checks, invariants, guide and storyboard.
+  17 + // Account sync/keyed-store modules (four dual-format sets) and example storyboard.
   1; // Reliable Reporting stability policy guide.
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;

@@ -1,0 +1,57 @@
+id: account_sync_contract
+version: "1.0.0"
+title: "Account identity and payment terms"
+category: schema_validation
+summary: "Repeat provisioning with fresh request keys preserves the account; requested terms are accepted or rejected."
+narrative: |
+  Run with one authenticated sandbox principal permitted to use agent billing.
+  The seller must accept net_60 or reject it. If the seller rejects the first
+  request, provision and repeat checks require an accepted-terms fixture instead.
+agent:
+  interaction_model: any
+  capabilities: []
+caller:
+  role: buyer_agent
+required_tools: [sync_accounts, list_accounts]
+invariants: [account.sync_contract]
+phases:
+  - id: sync
+    title: "Sync twice with different request keys, then read the roster"
+    steps:
+      - id: first_sync
+        task: sync_accounts
+        sample_request:
+          idempotency_key: "$generate:uuid_v4#account_first_sync"
+          accounts:
+            - brand: { domain: "acmeoutdoor.example" }
+              operator: "pinnacle-agency.example"
+              sandbox: true
+              billing: agent
+              payment_terms: net_60
+        validations:
+          - check: field_present
+            path: accounts
+      - id: repeat_sync
+        task: sync_accounts
+        sample_request:
+          idempotency_key: "$generate:uuid_v4#account_repeat_sync"
+          accounts:
+            - brand: { domain: "acmeoutdoor.example" }
+              operator: "pinnacle-agency.example"
+              sandbox: true
+              billing: agent
+              payment_terms: net_60
+        validations:
+          - check: field_present
+            path: accounts
+      - id: read_accounts
+        task: list_accounts
+        sample_request:
+          account:
+            brand: { domain: "acmeoutdoor.example" }
+            operator: "pinnacle-agency.example"
+            sandbox: true
+          sandbox: true
+        validations:
+          - check: field_present
+            path: accounts
