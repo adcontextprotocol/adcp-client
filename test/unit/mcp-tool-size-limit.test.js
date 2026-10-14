@@ -32,6 +32,9 @@ let baseUrl;
 // Octets the `/sse-flood` route has pushed at the client, across reconnects,
 // and a hook the test arms to observe the client closing the stream on it.
 let sseFloodBytes = 0;
+// MCP `initialize` handshakes the stub has served. One per cached connection,
+// so it reads as "how many distinct sessions did the client open?".
+let initializeCount = 0;
 let sseFloodTorndown = () => {};
 
 before(async () => {
@@ -53,6 +56,7 @@ before(async () => {
       }
 
       if (msg.method === 'initialize') {
+        initializeCount += 1;
         // Echo the client's protocolVersion so the SDK accepts the response.
         const protocolVersion = msg.params?.protocolVersion ?? '2025-03-26';
         const reply = JSON.stringify({
@@ -234,6 +238,42 @@ describe('MCP tools/call — maxResponseBytes', () => {
         return true;
       }
     );
+  });
+
+  it('gives calls with different caps different cached connections', async () => {
+    // `wrapFetchWithSizeLimit` decides once per request whether to enforce,
+    // and a long-lived GET listener issues exactly one request — at connect
+    // time. If the connection cache ignored the cap, one
+    // `maxResponseBytes: 0` call would hand an unwrapped session listener to
+    // every later caller that reused the connection, turning a per-call
+    // opt-out into a per-session one.
+    await closeMCPConnections();
+    const agent = { id: 'vendor-cache', name: 'Stub MCP Cache', protocol: 'mcp', agent_uri: `${baseUrl}/small` };
+
+    // Era negotiation can handshake more than once per connection, so count
+    // the delta rather than an absolute: non-zero means a new session.
+    async function handshakesFor(transport) {
+      const before = initializeCount;
+      await ProtocolClient.callTool(agent, 'get_adcp_capabilities', {}, transport ? { transport } : undefined);
+      return initializeCount - before;
+    }
+
+    assert.ok((await handshakesFor(undefined)) > 0, 'first call opens a session');
+    assert.strictEqual(await handshakesFor(undefined), 0, 'same policy reuses the session');
+    assert.strictEqual(
+      await handshakesFor({ maxResponseBytes: DEFAULT_MAX_RESPONSE_BYTES }),
+      0,
+      'an explicit cap equal to the default is the same policy'
+    );
+
+    assert.ok(
+      (await handshakesFor({ maxResponseBytes: 32 * 1024 * 1024 })) > 0,
+      'a different cap must not inherit the first session'
+    );
+    assert.strictEqual(await handshakesFor({ maxResponseBytes: 32 * 1024 * 1024 }), 0, 'and then reuses its own');
+
+    assert.ok((await handshakesFor({ maxResponseBytes: 0 })) > 0, 'an opt-out must not inherit a capped session');
+    assert.strictEqual(await handshakesFor(undefined), 0, 'and the default-cap session is still there to come back to');
   });
 
   it('refuses an endless text/event-stream reply instead of letting it opt out of the cap', async () => {

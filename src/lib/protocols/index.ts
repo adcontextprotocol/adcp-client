@@ -274,6 +274,14 @@ export interface TransportOptions {
    * per-call object that omits `maxResponseBytes` gets the default back, not
    * the constructor's value. Repeat the field when you override the object.
    *
+   * Cached MCP connections are keyed on the cap, so varying it per call opens
+   * a separate connection (and MCP session) per distinct value against the
+   * same agent. That is deliberate — a connection established under one
+   * policy must not serve a call that configured another — but it means
+   * raising the cap for one tool is not free. Prefer a single client-level
+   * value where you can, or pin the session explicitly with
+   * `withMCPConnectionScope` when continuity matters.
+   *
    * @remarks
    * **SSE is covered too.** `text/event-stream` responses used to be exempt,
    * which let any peer opt itself out of the cap by changing one response

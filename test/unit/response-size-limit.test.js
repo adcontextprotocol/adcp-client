@@ -510,50 +510,57 @@ describe('responseSizeLimit — SSE enforcement', () => {
     assert.strictEqual(read, expected);
   });
 
-  it('does not charge a CRLF separator to the event that follows it', async () => {
-    // The separator's trailing LF belongs to the separator. Charging it to the
-    // next event docks one byte from its allowance, so two identical
-    // CRLF-framed events of exactly `maxBytes` would see the first pass and
-    // the second rejected. Each `body` below is exactly `cap` octets
-    // including its own separator.
+  // Exactly `cap` octets of event, separator included, for a given line
+  // ending. `over` adds one payload byte to push it past the cap.
+  function frameOfExactly(cap, eol, over = 0) {
+    const padding = cap - 'data: '.length - eol.length * 2 + over;
+    return `data: ${'a'.repeat(padding)}${eol}${eol}`;
+  }
+
+  it('does not charge a separator to the event that follows it', async () => {
+    // A separator's trailing LF belongs to the separator. Charging it to the
+    // next event docks one byte from its allowance, so two identical frames of
+    // exactly `maxBytes` would see the first pass and the second rejected.
     const cap = 256;
-    const eol = '\r\n';
-    const body = `data: ${'a'.repeat(cap - 'data: '.length - eol.length * 2)}${eol}${eol}`;
-    assert.strictEqual(new TextEncoder().encode(body).byteLength, cap);
+    for (const eol of ['\n', '\r\n', '\r']) {
+      const body = frameOfExactly(cap, eol);
+      assert.strictEqual(new TextEncoder().encode(body).byteLength, cap);
 
-    // Whole-frame chunks, and splits placed on each byte of the separator so
-    // the boundary state has to survive a chunk edge.
-    const splits = [null, cap - 4, cap - 3, cap - 2, cap - 1];
-    for (const splitAt of splits) {
-      const chunks = [];
-      // Two frames is all the cumulative allowance (cap * 2) permits — this
-      // test is about the per-event boundary, not the stream bound.
-      for (let i = 0; i < 2; i += 1) {
-        if (splitAt === null) chunks.push(body);
-        else chunks.push(body.slice(0, splitAt), body.slice(splitAt));
+      // Whole-frame chunks, and splits placed on each byte of the separator so
+      // the boundary state has to survive a chunk edge.
+      const splits = [null, ...Array.from({ length: eol.length * 2 }, (_, i) => cap - eol.length * 2 + i)];
+      for (const splitAt of splits) {
+        const chunks = [];
+        // Two frames is all the cumulative allowance (cap * 2) permits — this
+        // test is about the per-event boundary, not the stream bound.
+        for (let i = 0; i < 2; i += 1) {
+          if (splitAt === null) chunks.push(body);
+          else chunks.push(body.slice(0, splitAt), body.slice(splitAt));
+        }
+        const wrapped = wrapFetchWithSizeLimit(sseFetch(chunks));
+
+        const read = await withResponseSizeLimit(cap, async () =>
+          drain(await wrapped('https://example.invalid/mcp', POST))
+        );
+        assert.strictEqual(read, cap * 2, `eol=${JSON.stringify(eol)} splitAt=${splitAt} must not dock the next event`);
       }
-      const expected = new TextEncoder().encode(body).byteLength * 2;
-      const wrapped = wrapFetchWithSizeLimit(sseFetch(chunks));
-
-      const read = await withResponseSizeLimit(cap, async () =>
-        drain(await wrapped('https://example.invalid/mcp', POST))
-      );
-      assert.strictEqual(read, expected, `splitAt=${splitAt} must not dock the next event`);
     }
   });
 
-  it('still rejects a CRLF-framed event one byte over the cap', async () => {
-    // The companion to the test above: the separator fix must not hand out a
-    // free byte in the other direction.
+  it('still rejects an event one byte over the cap, for every line ending', async () => {
+    // The companion to the test above: the separator accounting must not hand
+    // out a free byte in the other direction. Run for all three spellings, so
+    // a regression in LF or bare-CR accounting can't hide behind the CRLF case.
     const cap = 256;
-    const eol = '\r\n';
-    const body = `data: ${'a'.repeat(cap - 'data: '.length - eol.length * 2 + 1)}${eol}${eol}`;
-    const wrapped = wrapFetchWithSizeLimit(sseFetch([body]));
+    for (const eol of ['\n', '\r\n', '\r']) {
+      const wrapped = wrapFetchWithSizeLimit(sseFetch([frameOfExactly(cap, eol, 1)]));
 
-    await assert.rejects(
-      withResponseSizeLimit(cap, async () => drain(await wrapped('https://hostile.invalid/mcp', POST))),
-      err => err instanceof ResponseTooLargeError && err.limit === cap
-    );
+      await assert.rejects(
+        withResponseSizeLimit(cap, async () => drain(await wrapped('https://hostile.invalid/mcp', POST))),
+        err => err instanceof ResponseTooLargeError && err.limit === cap,
+        `eol=${JSON.stringify(eol)} must still reject at cap + 1`
+      );
+    }
   });
 
   it('frames identically however the stream is chopped into chunks', async () => {
