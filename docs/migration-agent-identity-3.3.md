@@ -149,12 +149,15 @@ to sign a list of revoked key thumbprints and optional reasons/dates.
 `createSignedOriginRevocationList` provides the same authoring API. The SDK
 supports Ed25519 and P-256 identity keys. Observed key revocations are permanent;
 refresh failures use the last verified list only within the published grace
-window. Staleness follows the list's signed `next_update`: a list may declare a
-longer cadence (for example daily), the verifier still re-polls at least every
-polling interval (at most 30 minutes), and a list fails closed only after
-`next_update` plus four polling intervals. A list whose `updated` is more than
-60 seconds ahead of the verifier clock, or whose `next_update` has passed, is
-refused. First-contact identity reads may proceed when no list is available;
+window. Staleness follows the list's signed `next_update`, never the polling
+interval: the verifier re-polls at least every polling interval (at most 30
+minutes) and fails closed only after `next_update` plus four polling
+intervals. Publishers MUST NOT declare `next_update` more than 30 minutes ahead
+(the authoring helper refuses it), but a verifier tolerates a longer cadence
+from other implementations: each successful fetch of such a list stays valid
+for at most 30 minutes plus grace, so an outage cannot extend acceptance past
+that. A list whose `updated` is more than 60 seconds ahead of the verifier
+clock, or whose `next_update` has passed, is refused. First-contact identity reads may proceed when no list is available;
 mutating operations fail closed without a current or grace-valid signed list.
 
 For positively negotiated 3.3 sellers advertising signed webhooks, experimental
@@ -356,6 +359,6 @@ The standard principal resolver automatically fences RFC signatures for already-
 
 Signing capabilities include the experimental `wba_draft_revision` field next to `profiles`, identifying `draft-ietf-webbotauth-httpsig-protocol-00` as required by ratified R2. Reporting and artifact callback choices are persisted by destination before dispatch, including update calls; their receivers pass the trusted request URL and `taskType` (`media_buy_delivery` or `artifact_delivery`) to `verifyAndParseWebhook`. These deliveries preserve the original payload in `result` after authentication and schema validation; `envelope` adds SDK routing/status metadata. PostgreSQL migrations also add optional `delivery_kind`.
 
-Revocation stores allocate no permanent row for an empty list. Each audited/unbound pool reserves a tenant-wide CAS budget (10,000 origins and 100,000 keys; each operator is limited to 256 origins and 16,384 keys per pool). Audited bindings promote existing facts without deleting them; self-service `openAccess` bindings stay in the unbound pool. Failed writes may conservatively reserve capacity; facts are never evicted to regain it. Store/quota failures return `SERVICE_UNAVAILABLE` for every operation. In-memory revocation storage is for development/tests and is bounded per origin, per operator (registrable domain, default 16,384 keys) and in total, so wildcard subdomains of one operator cannot exhaust it; production sellers use shared persistent stores.
+Revocation stores allocate no permanent row for an empty list. Each audited/unbound pool reserves a tenant-wide CAS budget (10,000 origins and 100,000 keys; each operator is limited to 256 origins and 16,384 keys per pool). Audited bindings promote existing facts without deleting them; self-service `openAccess` bindings stay in the unbound pool. Failed writes may conservatively reserve capacity; facts are never evicted to regain it. Store/quota failures return `SERVICE_UNAVAILABLE` for every operation. In-memory revocation storage is for development/tests and is bounded per origin, per operator (registrable domain, default 16,384 keys) and in total, so wildcard subdomains of one operator cannot fill it alone (several operators still can, and a refused merge fails closed); production sellers use shared persistent stores.
 
 Unbound callers use an internal per-origin anonymous scope to isolate task/proposal state; this is not a durable principal and is never returned by `get_principal`. Only the explicit anonymous tool policy is allowed.

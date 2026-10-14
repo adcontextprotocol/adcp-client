@@ -17,6 +17,7 @@ async function originFixture(origin) {
   const kid = wba.jwkThumbprint(priv);
   const proof = await wba.createSignedSignatureDirectory(origin, [{ privateKey: { ...priv, kid } }], {
     now: () => T - 60,
+    lifetimeSeconds: 3 * 86400,
   });
   const sign = snapshot =>
     new CompactSign(Buffer.from(JSON.stringify({ issuer: origin, revoked_kids: [], ...snapshot })))
@@ -48,25 +49,44 @@ test('R1: staleness follows the signed next_update, not the polling ceiling', as
   const body = await fixture.sign({ updated: iso(T), next_update: iso(T + 86400), revoked_kids: [] });
   let clock = T,
     fetches = 0;
-  const resolver = resolverFor(
-    fixture,
-    () => clock,
-    async () => {
-      fetches++;
-      return new Response(body);
-    }
-  );
+  const serve = async () => {
+    fetches++;
+    return new Response(body);
+  };
+  const resolver = resolverFor(fixture, () => clock, serve);
   for (const hours of [0, 6, 23]) {
     clock = T + hours * 3600;
     assert.equal(await resolver.isRevoked(origin, fixture.kid), false, `valid at T+${hours}h`);
   }
   // The ceiling still drives polling: each check past the interval refetched.
   assert.equal(fetches, 3);
+  clock = T + 86400 - 60;
+  assert.equal(await resolver.isRevoked(origin, fixture.kid), false);
   // Inside grace after next_update: the unchanged list no longer refreshes, but grace holds.
   clock = T + 86400 + 60;
   assert.equal(await resolver.isRevoked(origin, fixture.kid), false);
   // Past next_update + 4 × polling interval: stale, fail closed.
   clock = T + 86400 + 4 * 300 + 1;
+  await assert.rejects(resolver.isRevoked(origin, fixture.kid), e => e.reason === 'revocation_unavailable');
+});
+
+test('R1: an outage cannot stretch a long-cadence list past the polling ceiling plus grace', async () => {
+  const origin = 'https://agent.example.com';
+  const fixture = await originFixture(origin);
+  const body = await fixture.sign({ updated: iso(T), next_update: iso(T + 86400) });
+  let clock = T,
+    down = false;
+  const serve = async () => {
+    if (down) throw new Error('offline');
+    return new Response(body);
+  };
+  const resolver = resolverFor(fixture, () => clock, serve);
+  clock = T + 3600;
+  assert.equal(await resolver.isRevoked(origin, fixture.kid), false);
+  down = true;
+  clock = T + 3600 + 1800 + 4 * 300 - 1;
+  assert.equal(await resolver.isRevoked(origin, fixture.kid), false);
+  clock = T + 3600 + 1800 + 4 * 300 + 1;
   await assert.rejects(resolver.isRevoked(origin, fixture.kid), e => e.reason === 'revocation_unavailable');
 });
 
@@ -92,14 +112,36 @@ test('R1: a list whose updated is slightly ahead of the verifier clock is accept
 test('R2: an already-stale first list is refused without admitting the origin', async () => {
   const origin = 'https://agent.example.com';
   const fixture = await originFixture(origin);
-  const body = await fixture.sign({ updated: iso(T - 7200), next_update: iso(T - 3600) });
+  const stale = await fixture.sign({ updated: iso(T - 7200), next_update: iso(T - 3600) });
+  const fresh = await fixture.sign({ updated: iso(T + 60), next_update: iso(T + 360) });
+  let clock = T,
+    body = stale;
   const resolver = resolverFor(
     fixture,
-    () => T,
+    () => clock,
     async () => new Response(body)
   );
   await assert.rejects(resolver.isRevoked(origin, fixture.kid), e => e.reason === 'revocation_unavailable');
+  // The refusal left no grace behind: inside the negative cache the origin still fails closed.
+  body = fresh;
+  clock = T + 30;
+  await assert.rejects(resolver.isRevoked(origin, fixture.kid), e => e.reason === 'revocation_unavailable');
+  clock = T + 61;
+  assert.equal(await resolver.isRevoked(origin, fixture.kid), false);
 });
+
+function tarpitFetch(victim, body, tarpits) {
+  return async url =>
+    new URL(url).origin === victim
+      ? new Response(body)
+      : new Promise((_, reject) => tarpits.push(() => reject(new Error('released'))));
+}
+async function fillRefreshQueue(resolver, kid) {
+  // Sixteen attacker-selected origins (two per registrable domain) tarpit their refreshes.
+  for (let i = 0; i < 16; i++)
+    resolver.isRevoked(`https://s${i % 2}.slow${Math.floor(i / 2)}.com`, kid).catch(() => {});
+  await new Promise(resolve => setImmediate(resolve));
+}
 
 test('R3: a full refresh queue does not fail an origin still inside its outage grace', async () => {
   const victim = 'https://agent.example.com';
@@ -107,25 +149,50 @@ test('R3: a full refresh queue does not fail an origin still inside its outage g
   const body = await fixture.sign({ updated: iso(T), next_update: iso(T + 60), revoked_kids: [] });
   let clock = T;
   const tarpits = [];
-  const resolver = resolverFor(
-    fixture,
-    () => clock,
-    async url =>
-      new URL(url).origin === victim
-        ? new Response(body)
-        : new Promise((_, reject) => tarpits.push(() => reject(new Error('released')))),
-    { pollingIntervalSeconds: 60 }
-  );
+  const resolver = resolverFor(fixture, () => clock, tarpitFetch(victim, body, tarpits), {
+    pollingIntervalSeconds: 60,
+  });
   assert.equal(await resolver.isRevoked(victim, fixture.kid), false);
-  // Sixteen attacker-selected origins (two per registrable domain) tarpit their refreshes.
-  for (let i = 0; i < 16; i++)
-    resolver.isRevoked(`https://s${i % 2}.slow${Math.floor(i / 2)}.com`, fixture.kid).catch(() => {});
-  await new Promise(resolve => setImmediate(resolve));
-  clock = T + 90; // past next_update, inside next_update + 4 × 60
+  try {
+    await fillRefreshQueue(resolver, fixture.kid);
+    clock = T + 90; // past next_update, inside next_update + 4 × 60
+    assert.equal(await resolver.isRevoked(victim, fixture.kid), false);
+    clock = T + 60 + 240 + 1; // grace elapsed: the queue limit fails closed
+    await assert.rejects(resolver.isRevoked(victim, fixture.kid), e => e.reason === 'revocation_unavailable');
+  } finally {
+    for (const release of tarpits) release();
+  }
+});
+
+test('R3: a full refresh queue never grants grace after a persistence failure', async () => {
+  const victim = 'https://agent.example.com';
+  const fixture = await originFixture(victim);
+  const body = await fixture.sign({ updated: iso(T), next_update: iso(T + 120), revoked_kids: [] });
+  let clock = T,
+    failing = false;
+  const tarpits = [];
+  const store = new identity.InMemoryOriginRevocationStore();
+  const resolver = resolverFor(fixture, () => clock, tarpitFetch(victim, body, tarpits), {
+    pollingIntervalSeconds: 60,
+    store: {
+      merge: async (...args) => {
+        if (failing) throw new Error('disk full');
+        return store.merge(...args);
+      },
+      get: (...args) => store.get(...args),
+    },
+  });
   assert.equal(await resolver.isRevoked(victim, fixture.kid), false);
-  clock = T + 60 + 240 + 1; // grace elapsed: the queue limit fails closed
-  await assert.rejects(resolver.isRevoked(victim, fixture.kid), e => e.reason === 'revocation_unavailable');
-  for (const release of tarpits) release();
+  try {
+    failing = true;
+    clock = T + 61;
+    await assert.rejects(resolver.isRevoked(victim, fixture.kid), e => e.reason === 'revocation_persistence_failed');
+    await fillRefreshQueue(resolver, fixture.kid);
+    clock = T + 122; // persistence cool-down over, still inside the old list's grace
+    await assert.rejects(resolver.isRevoked(victim, fixture.kid), e => e.reason === 'revocation_unavailable');
+  } finally {
+    for (const release of tarpits) release();
+  }
 });
 
 test('R3: concurrent callers join one in-flight refresh', async () => {
@@ -148,7 +215,7 @@ test('R3: concurrent callers join one in-flight refresh', async () => {
 });
 
 test('R4/R5: one operator with wildcard subdomains cannot exhaust in-memory history for other operators', async () => {
-  const store = new identity.InMemoryOriginRevocationStore({ perOrigin: 4, perOperator: 8, total: 16 });
+  const store = new identity.InMemoryOriginRevocationStore({ perOrigin: 4, perOperator: 8, total: 15 });
   const snapshot = kids => ({ issuer: '', updated: '', next_update: '', revoked_kids: kids });
   await store.merge('https://a0.attacker.com', snapshot(['a', 'b', 'c', 'd']));
   await store.merge('https://a1.attacker.com', snapshot(['e', 'f', 'g', 'h']));
@@ -162,6 +229,21 @@ test('R4/R5: one operator with wildcard subdomains cannot exhaust in-memory hist
   assert.ok(await store.get('https://a0.attacker.com', 'a'));
   // Re-merging known kids consumes no further budget.
   await store.merge('https://a1.attacker.com', snapshot(['e', 'f', 'g', 'h']));
+  // The total still bounds the store across operators.
+  await store.merge('https://agent.other.com', snapshot(['o1', 'o2', 'o3']));
+  await assert.rejects(
+    store.merge('https://agent.third.com', snapshot(['t1', 't2', 't3', 't4'])),
+    e => e.reason === 'revocation_storage_limit'
+  );
+  // Explicit undefined keeps the default; non-positive limits are refused.
+  assert.throws(() => new identity.InMemoryOriginRevocationStore({ perOperator: 0 }), TypeError);
+  const defaults = new identity.InMemoryOriginRevocationStore({
+    perOrigin: 1,
+    perOperator: undefined,
+    total: undefined,
+  });
+  await defaults.merge('https://x.example.com', snapshot(['one']));
+  await assert.rejects(defaults.merge('https://x.example.com', snapshot(['two'])));
 });
 
 test('R7: an undated keyCompromise is never narrowed by a dated entry', () => {

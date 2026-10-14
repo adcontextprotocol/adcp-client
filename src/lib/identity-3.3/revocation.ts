@@ -44,9 +44,10 @@ export interface MonotonicOriginRevocationStore {
  * restart never forgets a revocation.
  *
  * Capacity is bounded per origin, per operator (registrable domain) and in
- * total. The operator budget keeps one registrable domain with wildcard
- * subdomains from consuming the whole store and locking out every other
- * operator's history. Facts are never evicted to regain capacity.
+ * total. The operator budget stops one registrable domain's wildcard
+ * subdomains from filling the store alone; it does not reserve capacity for
+ * anyone else, so several operators together can still exhaust the total.
+ * Facts are never evicted to regain capacity; a refused merge fails closed.
  */
 export class InMemoryOriginRevocationStore implements MonotonicOriginRevocationStore {
   readonly durability = 'process-local' as const;
@@ -55,7 +56,13 @@ export class InMemoryOriginRevocationStore implements MonotonicOriginRevocationS
   private readonly operatorKeys = new Map<string, number>();
   private readonly limits: { perOrigin: number; perOperator: number; total: number };
   constructor(limits: { perOrigin?: number; perOperator?: number; total?: number } = {}) {
-    this.limits = { perOrigin: 16384, perOperator: 16384, total: 100000, ...limits };
+    this.limits = {
+      perOrigin: limits.perOrigin ?? 16384,
+      perOperator: limits.perOperator ?? 16384,
+      total: limits.total ?? 100000,
+    };
+    if (Object.values(this.limits).some(value => !Number.isSafeInteger(value) || value < 1))
+      throw new TypeError('Revocation limits must be positive safe integers');
   }
   async merge(origin: string, snapshot: OriginRevocationSnapshot): Promise<void> {
     origin = canonicalAgentOrigin(origin);
@@ -93,6 +100,8 @@ function operatorOf(origin: string): string {
     return new URL(origin).hostname;
   }
 }
+/** Polling ceiling (security.mdx): also bounds how long one fetch stays valid during an outage. */
+const MAX_POLLING_SECONDS = 1800;
 export class OriginRevocationResolver {
   private readonly freshness = new Map<string, number>();
   private readonly updated = new Map<string, number>();
@@ -289,9 +298,15 @@ export class OriginRevocationResolver {
         this.updated.delete(oldest);
         this.graceUntil.delete(oldest);
       }
-      // Staleness follows the signed next_update (plus grace). The polling
-      // interval only schedules the next fetch; it never shortens validity.
-      this.graceUntil.set(origin, next + 4 * (this.options.pollingIntervalSeconds ?? 300));
+      // Staleness follows the signed next_update (plus grace) and is never
+      // shortened by the polling interval. A publisher cannot stretch outage
+      // tolerance past the 30-minute ceiling: validity counted from this
+      // successful fetch is capped there, and each re-poll of an unchanged
+      // long-cadence list renews it.
+      this.graceUntil.set(
+        origin,
+        Math.min(next, now + MAX_POLLING_SECONDS) + 4 * (this.options.pollingIntervalSeconds ?? 300)
+      );
       this.updated.set(origin, updated);
       this.freshness.set(origin, Math.min(next, now + (this.options.pollingIntervalSeconds ?? 300)));
       this.failures.delete(origin);
