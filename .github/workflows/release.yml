@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     branches:
-      - release/15.9.0
+      - 15.9.x
 
 permissions:
   contents: read
@@ -18,7 +18,7 @@ jobs:
   release:
     name: Release
     needs: reference-seller-interop
-    if: github.ref == 'refs/heads/release/15.9.0'
+    if: github.ref == 'refs/heads/15.9.x'
     concurrency:
       # npm publishing and dist-tag updates mutate package-global state.
       # Serialize those mutations across main and maintenance releases.
@@ -50,24 +50,12 @@ jobs:
         uses: actions/checkout@v5
         with:
           token: ${{ steps.app-token.outputs.token }}
-          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
           node-version: 24
           registry-url: 'https://registry.npmjs.org'
-
-      - name: Verify isolated release snapshot
-        run: |
-          node -e "if (require('./package.json').version !== '15.9.0') throw new Error('This branch may only publish SDK 15.9.0')"
-          # The version commit is immutable; only the five qualification workflows may differ.
-          git diff --exit-code 9343eb2dbdd28b7d8d32822f2b2b2a50a9ef465a HEAD -- . \
-            ':(exclude).github/workflows/release.yml' \
-            ':(exclude).github/workflows/ci.yml' \
-            ':(exclude).github/workflows/codeql.yml' \
-            ':(exclude).github/workflows/interop-python.yml' \
-            ':(exclude).github/workflows/changeset-check.yml'
 
       - name: Install Dependencies
         run: npm ci
@@ -85,16 +73,22 @@ jobs:
           const { readdirSync } = require('node:fs');
           const semver = require('semver');
           const view = (spec) => JSON.parse(execFileSync('npm', ['view', spec, 'version', '--json'], { encoding: 'utf8' }));
+          // This branch is the SDK 15.9 line and publishes to the default `latest` tag
+          // (SDK 16 is beta-only). Never replace a newer or prerelease `latest`.
+          const sdk = require('./package.json');
+          if (semver.major(sdk.version) !== 15 || semver.prerelease(sdk.version)) {
+            throw new Error(`The 15.9.x branch may only publish stable SDK 15.x releases, found ${sdk.version}`);
+          }
           const latest = view('@adcp/sdk@latest');
-          if (!semver.valid(latest) || semver.gt(latest, '15.9.0')) {
-            throw new Error(`Refusing to replace SDK latest ${latest} with 15.9.0`);
+          if (!semver.valid(latest) || semver.prerelease(latest) || semver.gt(latest, sdk.version)) {
+            throw new Error(`Refusing to replace SDK latest ${latest} with ${sdk.version}`);
           }
           for (const dir of readdirSync('./packages', { withFileTypes: true })) {
             if (!dir.isDirectory()) continue;
             const pkg = require(`./packages/${dir.name}/package.json`);
             if (pkg.private || pkg.name === '@adcp/client') continue;
             if (view(`${pkg.name}@${pkg.version}`) !== pkg.version) {
-              throw new Error(`Only SDK 15.9.0 may be newly published: ${pkg.name}@${pkg.version} is missing`);
+              throw new Error(`Only @adcp/sdk may be newly published from 15.9.x: ${pkg.name}@${pkg.version} is missing`);
             }
           }
           NODE
