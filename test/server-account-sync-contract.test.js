@@ -619,11 +619,19 @@ test('a known account ID alone cannot resolve ambiguous response key echoes', as
       { ...row, billing: 'agent', payment_terms: 'net_60' },
     ],
   });
+  const responses = (await call(entries)).structuredContent.accounts;
   assert.deepEqual(
-    (await call(entries)).structuredContent.accounts.map(row => row.account_id),
+    responses.map(row => row.account_id),
     ['new', account.id]
   );
-  assert.equal(diagnostics.filter(d => d.code === 'ACCOUNT_SYNC_ROW_UNMATCHED').length, 2);
+  assert.equal(
+    responses.some(row => row.action === 'failed'),
+    false
+  );
+  assert.deepEqual(
+    diagnostics.map(d => d.code),
+    ['ACCOUNT_SYNC_ROW_UNMATCHED', 'ACCOUNT_SYNC_ROW_UNMATCHED']
+  );
 });
 
 test('commercially filtered dry-run entries never create accounts in the keyed store', async () => {
