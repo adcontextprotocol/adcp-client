@@ -220,10 +220,12 @@ export class OriginIdentityLifecycle {
   }
   /**
    * Cryptographic verification does not call this. Authorization revalidates
-   * delisting: a definitive delisting throws {@link TrustMembershipError}. An
+   * delisting: a definitive delisting (including a 404/410 record, or an
+   * outage after a known delisting) throws {@link TrustMembershipError}. An
    * unreadable trust record throws {@link TrustRecordUnavailableError} for
    * spend; read-only and identity-configuration calls continue under the
-   * existing binding.
+   * existing binding only while the last record read listed the origin and
+   * is within four polling intervals of its freshness.
    */
   async authorizeBound(
     originUrl: string,
@@ -242,7 +244,13 @@ export class OriginIdentityLifecycle {
       const trust = await this.options.trust.match(origin, 'adcp:buying');
       if (binding.operator !== trust.operator) throw new TrustMembershipError();
     } catch (error) {
-      if (!(error instanceof TrustRecordUnavailableError) || !(access?.readOnly || access?.identityConfiguration))
+      // Outage continuation is bounded: only while the last record read still
+      // listed the origin and is inside outage grace, and never for spend.
+      if (
+        !(error instanceof TrustRecordUnavailableError) ||
+        !error.lastKnownListed ||
+        !(access?.readOnly || access?.identityConfiguration)
+      )
         throw error;
     }
     const relationship = (await this.options.store.getApplication(origin))?.relationship;

@@ -47,7 +47,7 @@ const TEST_KIDS = new Set([
  * re-sign: a revoked key (the signer must stop using it) and refusals made
  * after verification.
  */
-const NO_CHALLENGE_REASONS = new Set(['key_revoked', 'identity_not_bound', 'profile_disabled']);
+const NO_CHALLENGE_REASONS = new Set(['key_revoked', 'identity_not_bound', 'profile_disabled', 'authorization_failed']);
 /**
  * Signature-path outcome (WBA §4, DR-0023): 400 for a field that does not
  * parse, 403 for a signature that does not verify (with `Accept-Signature`
@@ -59,6 +59,11 @@ const NO_CHALLENGE_REASONS = new Set(['key_revoked', 'identity_not_bound', 'prof
 export class WebBotAuthError extends Error {
   readonly headers: Record<string, string>;
   get body(): Record<string, unknown> {
+    // Refusals made after identity was established are authorization outcomes (S3).
+    if (this.reason === 'authorization_failed' || this.reason === 'identity_not_bound')
+      return {
+        adcp_error: { code: 'PERMISSION_DENIED', message: 'Agent authorization failed', recovery: 'correctable' },
+      };
     return { adcp_error: { code: 'AUTH_INVALID', message: this.message, recovery: 'terminal' } };
   }
   /**
@@ -352,6 +357,24 @@ export function createWebBotAuthAuthorizationFailure(
   authorizationFailures.add(failure);
   return failure;
 }
+/** Transient markers win; any other coded error is a denial; uncoded errors are outages. */
+function principalFailureIsTransient(error: unknown): boolean {
+  const value = error as { transient?: unknown; recovery?: unknown; code?: unknown } | undefined;
+  if (value?.transient === true || value?.recovery === 'transient' || value?.code === 'SERVICE_UNAVAILABLE')
+    return true;
+  return typeof value?.code !== 'string';
+}
+/**
+ * @internal A principal-resolution failure on a request that carries no AdCP
+ * operation (task polling, protocol methods): refuse it outright, as an
+ * authorization outcome without an Accept-Signature challenge.
+ */
+export function webBotAuthPrincipalFailureError(error: unknown): WebBotAuthError | WebBotAuthUnavailableError {
+  // An outage is answered by the application layer (503); a denial is a 403 without a challenge.
+  return principalFailureIsTransient(error)
+    ? new WebBotAuthUnavailableError('authorization_unavailable', error)
+    : new WebBotAuthError(403, 'authorization_failed');
+}
 /**
  * @internal After every signature verified, a principal-resolution failure is
  * an authorization outcome, never a signature failure: carry it to tool calls
@@ -363,9 +386,7 @@ export function deferWebBotAuthPrincipalFailure(
 ): { principal: string; authorizationFailure: WebBotAuthAuthorizationFailure } {
   const signer = signers[signers.length - 1]!;
   const authorizationFailure = createWebBotAuthAuthorizationFailure(
-    (error as { code?: unknown } | undefined)?.code === 'PERMISSION_DENIED'
-      ? 'authorization_failed'
-      : 'authorization_unavailable'
+    principalFailureIsTransient(error) ? 'authorization_unavailable' : 'authorization_failed'
   );
   return {
     principal: `anonymous:${createHash('sha256').update(signer.origin).digest('hex')}`,

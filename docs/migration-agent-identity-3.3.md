@@ -282,29 +282,39 @@ redirects, 2 MiB, depth 32, and no duplicate JSON keys. Exactly one canonical
 origin must carry the required role. Cache lifetime is the configured revocation
 poll interval (60–1800 seconds), negatives at most 60 seconds. Failures are not
 absence. Share authoritative-history state when retaining legacy fallback.
-Per-host fetch rate is counted per (operator, host), so an operator's
-`authoritative_location` pointing at another operator's host never spends that
-operator's budget, and a host-rate refusal is a retryable outage that is not
-cached as the operator's failure.
+Fetches to an operator's own hosts are rate-limited per (operator, host);
+`authoritative_location` hops to hosts outside the operator's registrable domain
+share one separate per-host budget. A hop therefore never spends the target
+operator's own budget, and many operators cannot multiply fetches to one host.
+A host-rate refusal is a retryable outage that is not cached as the operator's
+failure.
 
 A record that cannot be read (transport error, outage, rate, invalid content)
 raises `TrustRecordUnavailableError`; a current record that does not list the
 origin with the required role raises `TrustMembershipError`. Both extend
 `IdentityAuthorizationError`. For a bound origin:
 
-- **Delisted:** the origin falls back to identity-established for that request
-  (the anonymous tool policy plus `get_principal`, which reports
-  `unconfigured`), under the per-origin anonymous scope rather than its
-  principal. The binding is kept: `open` onboarding cannot re-bind it and RFC
-  9421 stays refused for the origin. Spend gets `PERMISSION_DENIED`.
-- **Unreachable:** spend-committing calls get a retryable `SERVICE_UNAVAILABLE`;
-  reads and identity configuration continue under the existing binding.
+- **Delisted:** the origin falls back to identity-established for that tool
+  call (the anonymous tool policy plus `get_principal`, which reports
+  `unconfigured`), under the per-origin anonymous scope with no credential and
+  no registry-resolved `ctx.agent`. The binding is kept: `open` onboarding
+  cannot re-bind it and RFC 9421 stays refused for the origin. Spend gets
+  `PERMISSION_DENIED`. A 404/410 from a bound origin's operator is a delisting
+  on every replica, with or without authority history, and a known delisting
+  stays a delisting through a later outage. Demotion applies to tool calls;
+  polling or cancelling tasks the origin created while listed still runs under
+  its principal.
+- **Unreachable:** spend-committing calls get a retryable `SERVICE_UNAVAILABLE`.
+  Reads and identity configuration continue under the existing binding only
+  while the last record read listed the origin and is within four polling
+  intervals of its freshness; after that they also get `SERVICE_UNAVAILABLE`.
 
 After every signature verifies, authorization outcomes always use the standard
 AdCP error envelope, never a 403 with `Accept-Signature`. That includes a
-principal resolver that throws: a `PERMISSION_DENIED`-coded error becomes
-`PERMISSION_DENIED`, anything else `SERVICE_UNAVAILABLE`, delivered on the tool
-call.
+principal resolver that throws: an error marked transient (or uncoded) becomes
+`SERVICE_UNAVAILABLE`, any other coded error `PERMISSION_DENIED`. It is
+delivered on the tool call; a request without an AdCP operation (task polling,
+protocol methods) is refused with that envelope and no challenge.
 
 Demand grants come from the verified brand or house record. Implicit authority
 requires brand, account operator, and signer operator to share a registrable

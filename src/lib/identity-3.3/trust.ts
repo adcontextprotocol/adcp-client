@@ -29,6 +29,14 @@ export class IdentityAuthorizationError extends Error {
  */
 export class TrustRecordUnavailableError extends IdentityAuthorizationError {
   readonly transient = true as const;
+  /** @internal The operator answered 404/410 after publishing a record. */
+  removed = false;
+  /**
+   * Set by `match()`: the last record read for this operator listed the origin
+   * with the role and is still within outage grace (four polling intervals
+   * past its freshness). Only then may non-spend calls continue under a binding.
+   */
+  lastKnownListed = false;
   constructor() {
     super();
     this.name = 'TrustRecordUnavailableError';
@@ -42,13 +50,20 @@ export class TrustMembershipError extends IdentityAuthorizationError {
     this.name = 'TrustMembershipError';
   }
 }
-function unavailable(cause?: unknown): never {
+function unavailable(cause?: unknown, removed = false): never {
   const error = new TrustRecordUnavailableError();
+  error.removed = removed;
   if (cause !== undefined) Object.defineProperty(error, 'cause', { value: cause });
   throw error;
 }
 /** Per-host rate exceeded: shared capacity, never cached as an operator failure. */
 class TrustHostCapacityError extends Error {}
+/** 404/410 from an operator that has published a record before. */
+class TrustRecordRemovedError extends Error {}
+/** Hops to hosts outside the operator's registrable domain share one per-host budget. */
+const FOREIGN_HOST_BUDGET = '\u0000foreign';
+const OWN_HOST_REQUESTS_PER_MINUTE = 10;
+const FOREIGN_HOST_REQUESTS_PER_MINUTE = 30;
 function failure(cause?: unknown): never {
   const error = new IdentityAuthorizationError();
   if (cause !== undefined) Object.defineProperty(error, 'cause', { value: cause });
@@ -86,7 +101,7 @@ export interface TrustEvaluatorOptions {
 /** Used by binding/grants/onboarding, never by cryptographic verification. */
 export class TrustEvaluator {
   private readonly cache = new Map<string, TrustFetchResult>();
-  private readonly negative = new Map<string, number>();
+  private readonly negative = new Map<string, { until: number; removed: boolean }>();
   private readonly pending = new Map<string, Promise<TrustFetchResult>>();
   private readonly urlRequests = new Map<string, Promise<Awaited<ReturnType<typeof ssrfSafeFetch>>>>();
   /** Keyed by (operator, host): one operator's authoritative_location hops never spend another's budget. */
@@ -113,7 +128,8 @@ export class TrustEvaluator {
     const now = this.now();
     const cached = this.cache.get(operator);
     if (!force && cached && cached.freshUntil > now) return cached;
-    if ((this.negative.get(operator) ?? 0) > now) unavailable();
+    const negative = this.negative.get(operator);
+    if (negative && negative.until > now) unavailable(undefined, negative.removed);
     let pending = this.pending.get(operator);
     if (!pending) {
       if (this.pending.size >= (this.options.maxConcurrentFetches ?? 16)) unavailable();
@@ -132,11 +148,22 @@ export class TrustEvaluator {
     countries?: readonly string[]
   ): Promise<{ operator: string; agent: TrustAgent; record: TrustRecord; freshUntil: number }> {
     const canonical = canonicalAgentOrigin(origin);
-    const result = await this.get(canonical);
-    if (result.status !== 'present') throw new TrustMembershipError();
-    const entries = (result.record.agents ?? []).filter(agent => canonicalAgentOrigin(agent.url) === canonical);
-    if (entries.length !== 1 || !entries[0]!.roles.includes(role)) throw new TrustMembershipError();
-    const agent = entries[0]!;
+    let result: TrustFetchResult;
+    try {
+      result = await this.get(canonical);
+    } catch (error) {
+      if (!(error instanceof TrustRecordUnavailableError)) throw error;
+      // A removed record (404/410 after a 200) is a delisting on every replica,
+      // whether or not this process remembers the earlier 200.
+      if (error.removed) throw new TrustMembershipError();
+      // A known delisting survives an outage: keep the last record read.
+      const last = this.cache.get(eTldPlusOne(canonical));
+      if (last && !listedAgent(last, canonical, role)) throw new TrustMembershipError();
+      error.lastKnownListed = !!last && this.now() <= last.freshUntil + 4 * this.pollingIntervalSeconds;
+      throw error;
+    }
+    const agent = listedAgent(result, canonical, role);
+    if (!agent || result.status !== 'present') throw new TrustMembershipError();
     if (agent.countries && countries?.length && countries.some(country => !agent.countries!.includes(country)))
       failure();
     return { operator: result.operator, agent, record: result.record, freshUntil: result.freshUntil };
@@ -153,12 +180,22 @@ export class TrustEvaluator {
   private async request(url: string, operator: string) {
     const parsed = new URL(url);
     if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.hash) failure();
-    const host = JSON.stringify([operator, parsed.hostname]);
+    let own = false;
+    try {
+      own = eTldPlusOne(parsed.hostname) === operator;
+    } catch {
+      /* No registrable domain: always foreign. */
+    }
+    // An operator's own hosts get a per-(operator, host) budget; hops elsewhere
+    // share one per-host budget, so foreign hops can neither drain a victim
+    // operator's own budget nor multiply fetches to any host.
+    const host = JSON.stringify([own ? operator : FOREIGN_HOST_BUDGET, parsed.hostname]);
+    const limit = own ? OWN_HOST_REQUESTS_PER_MINUTE : FOREIGN_HOST_REQUESTS_PER_MINUTE;
     const pending = this.urlRequests.get(url);
     if (pending) return pending;
     const now = this.now(),
       rate = this.hostRates.get(host);
-    if (rate && now - rate.started < 60 && rate.count >= 10) throw new TrustHostCapacityError();
+    if (rate && now - rate.started < 60 && rate.count >= limit) throw new TrustHostCapacityError();
     if (!rate && this.hostRates.size >= (this.options.maxEntries ?? 1000))
       this.hostRates.delete(this.hostRates.keys().next().value!);
     this.hostRates.set(
@@ -189,7 +226,7 @@ export class TrustEvaluator {
           this.authoritativeOperators.has(operator) ||
           (await this.options.authorityHistory?.has(operator))
         )
-          failure();
+          throw new TrustRecordRemovedError();
         result = { status: 'absent', operator, checkedAt: now, freshUntil: now + 60 };
       } else {
         if (response.status !== 200) failure();
@@ -229,12 +266,18 @@ export class TrustEvaluator {
     } catch (cause) {
       // Shared capacity is not this operator's failure: retry soon, uncached.
       if (cause instanceof TrustHostCapacityError) return unavailable(cause);
+      const removed = cause instanceof TrustRecordRemovedError;
       if (this.negative.size >= (this.options.maxEntries ?? 1000))
         this.negative.delete(this.negative.keys().next().value!);
-      this.negative.set(operator, now + 60);
-      return unavailable(cause);
+      this.negative.set(operator, { until: now + 60, removed });
+      return unavailable(cause, removed);
     }
   }
+}
+function listedAgent(result: TrustFetchResult, origin: string, role: string): TrustAgent | undefined {
+  if (result.status !== 'present') return undefined;
+  const entries = (result.record.agents ?? []).filter(agent => canonicalAgentOrigin(agent.url) === origin);
+  return entries.length === 1 && entries[0]!.roles.includes(role) ? entries[0] : undefined;
 }
 export interface DemandGrantClaim {
   /** Only pass identity from an actual verifier. */

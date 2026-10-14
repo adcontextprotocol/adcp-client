@@ -16,6 +16,7 @@ import {
   webBotAuthUnavailableResponse,
   WebBotAuthUnavailableError,
   deferWebBotAuthPrincipalFailure,
+  webBotAuthPrincipalFailureError,
   type WebBotAuthAuthorizationFailure,
   WebBotAuthError,
 } from '../signing/web-bot-auth';
@@ -4517,7 +4518,9 @@ function buildSignedRequestsPreTransport(
           principal = await signedRequests.webBotAuth.resolvePrincipal(signers, operation);
         } catch (error) {
           // Signatures verified: this is an authorization outcome, not a signature failure.
-          if (error instanceof WebBotAuthError) throw error;
+          if (error instanceof WebBotAuthError || error instanceof WebBotAuthUnavailableError) throw error;
+          // Only tool calls can carry a deferred failure; refuse everything else.
+          if (typeof operation !== 'string') throw webBotAuthPrincipalFailureError(error);
           const deferred = deferWebBotAuthPrincipalFailure(signers, error);
           principal = { principal: deferred.principal };
           deferredFailure = deferred.authorizationFailure;

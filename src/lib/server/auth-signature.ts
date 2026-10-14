@@ -48,6 +48,7 @@ import {
   webBotAuthUnavailableResponse,
   WebBotAuthUnavailableError,
   deferWebBotAuthPrincipalFailure,
+  webBotAuthPrincipalFailureError,
   type WebBotAuthAuthorizationFailure,
   WebBotAuthError,
   type VerifiedWebBotSigner,
@@ -230,16 +231,16 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
           now: options.now,
           ...(options.webBotAuth.isRevoked && { isRevoked: options.webBotAuth.isRevoked }),
         });
+        const operation = options.resolveOperation(req as IncomingMessage & { rawBody?: string });
         let principal: AuthPrincipal;
         let deferredFailure: WebBotAuthAuthorizationFailure | undefined;
         try {
-          principal = await options.webBotAuth.resolvePrincipal(
-            signers,
-            options.resolveOperation(req as IncomingMessage & { rawBody?: string })
-          );
+          principal = await options.webBotAuth.resolvePrincipal(signers, operation);
         } catch (error) {
           // Signatures verified: this is an authorization outcome, not a signature failure.
-          if (error instanceof WebBotAuthError) throw error;
+          if (error instanceof WebBotAuthError || error instanceof WebBotAuthUnavailableError) throw error;
+          // Only tool calls can carry a deferred failure; refuse everything else.
+          if (typeof operation !== 'string') throw webBotAuthPrincipalFailureError(error);
           const deferred = deferWebBotAuthPrincipalFailure(signers, error);
           principal = { principal: deferred.principal };
           deferredFailure = deferred.authorizationFailure;

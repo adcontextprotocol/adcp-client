@@ -40,6 +40,8 @@ interface IdentityClaim {
   signer: VerifiedWebBotSigner;
   /** `absent`: the origin serves no revocation list, so it cannot be bound for spend. */
   revocation?: 'current' | 'absent';
+  /** Per-origin anonymous scope, derived by the principal resolver for unbound or delisted callers. */
+  anonymousPrincipal?: string;
   authorizationFailure?: import('../signing/web-bot-auth').WebBotAuthAuthorizationFailure;
 }
 function claimFromContext(ctx: HandlerContext<unknown>): IdentityClaim | undefined {
@@ -117,6 +119,7 @@ export function createIdentity33PrincipalResolver(options: {
           state: binding ? 'bound' : 'identity-established',
           signer: revoked ?? signer,
           ...(revocation && { revocation }),
+          anonymousPrincipal: anonymousPrincipalFor(signer.origin, options.anonymousPrincipal),
           ...(authorizationFailure && { authorizationFailure }),
         },
       },
@@ -149,8 +152,6 @@ export function createIdentity33Authorization<TAccount>(options: {
   /** Explicitly declared custom read tools still re-check identity membership. */
   readOnlyTools?: readonly string[];
   anonymousTools?: readonly string[];
-  /** Match createIdentity33PrincipalResolver's anonymousPrincipal; used when a delisted origin falls back. */
-  anonymousPrincipal?: string;
   grants: DemandGrantOptions;
   /** Runs before account resolution: look up existing seller accounts read-only. sync_accounts includes all proposed rows. Never trust request reassignment or provision here. */
   resolveClaims: (
@@ -249,10 +250,13 @@ export function createIdentity33Authorization<TAccount>(options: {
         const demoted: IdentityClaim = { ...identity, state: 'identity-established' };
         if (ctx.authInfo) {
           const { credential: _credential, ...extra } = ctx.authInfo.extra ?? {};
-          ctx.authInfo.clientId = anonymousPrincipalFor(origin, options.anonymousPrincipal);
+          ctx.authInfo.clientId = identity.anonymousPrincipal ?? anonymousPrincipalFor(origin);
           delete ctx.authInfo.credential;
           ctx.authInfo.extra = { ...extra, identity33: demoted };
         }
+        // The buyer-agent registry already ran on the bound credential; an
+        // identity-established caller never carries a resolved agent.
+        delete (ctx as { agent?: unknown }).agent;
         return authorizeUnbound(ctx, demoted, tool, params);
       }
       throw error;
