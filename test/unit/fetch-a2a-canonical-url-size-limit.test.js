@@ -38,6 +38,14 @@ describe('SingleAgentClient.fetchA2ACanonicalUrl() — maxResponseBytes (A2A dis
           name: 'oversized-discovery-canonical',
           url: `${baseUrl}/a2a`,
           description: padding,
+          version: '1.0.0',
+          supportedInterfaces: [
+            { url: `${baseUrl}/a2a`, protocolBinding: 'JSONRPC', protocolVersion: '1.0', tenant: '' },
+          ],
+          capabilities: { streaming: false, pushNotifications: false },
+          defaultInputModes: ['application/json'],
+          defaultOutputModes: ['application/json'],
+          skills: [],
         });
         res.writeHead(200, {
           'content-type': 'application/json',

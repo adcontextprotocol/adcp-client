@@ -5353,8 +5353,12 @@ describe('mcp_session_probe: hard streaming body cap (#2940 review P1)', () => {
         res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result: { tools: [] } }));
         return;
       }
-      // Unbounded SSE flood: `wrapFetchWithSizeLimit` exempts this content
-      // type entirely, which is why the probe needs its own cap.
+      // Unbounded SSE flood. `wrapFetchWithSizeLimit` does bound SSE now
+      // (adcp-client#3253), but with a per-event cap plus a cumulative
+      // allowance several times the per-response cap — deliberately loose,
+      // because a normal tool call emits many status frames. This probe
+      // reads one lifecycle and wants a single flat ceiling, which is why
+      // it still carries its own cap.
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
       const filler = 'x'.repeat(bytesPerFrame);
       const pump = setInterval(() => {

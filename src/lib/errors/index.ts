@@ -713,10 +713,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Error thrown when a response body exceeds the configured `maxResponseBytes`
- * cap on the transport. Surfaced when crawling untrusted agents (registries,
- * federated discovery layers) to prevent a hostile vendor from buffering a
- * large reply before schema validation runs.
+ * Error thrown when a response body exceeds the `maxResponseBytes` cap on the
+ * transport — 4 MiB by default on every MCP and A2A call path. It prevents a
+ * hostile or merely careless agent from buffering a large reply before schema
+ * validation runs.
+ *
+ * Raised on three paths: a declared `Content-Length` over the cap, a one-shot
+ * body that crosses the cap mid-stream, and a `text/event-stream` response
+ * whose single event exceeds the cap or whose cumulative octets exceed the
+ * call's stream budget. Nothing is truncated — the read fails.
  *
  * Recovery: `terminal` from the SDK's view — repeating the call against the
  * same agent will hit the same cap. The buyer's options are to widen the

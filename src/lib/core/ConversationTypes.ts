@@ -279,10 +279,15 @@ export interface TaskOptions {
    */
   preserveGovernedPayload?: boolean;
   /**
-   * Transport-level safeguards for this call. Overrides the matching field
-   * on the client constructor's `transport` option. Use to lift or tighten
+   * Transport-level safeguards for this call. Use to lift or tighten
    * `maxResponseBytes` per call when an agent legitimately publishes large
-   * catalogs (e.g., `list_creative_formats` on a generative seller).
+   * catalogs (e.g., `list_creative_formats` on a generative seller) — the
+   * default is 4 MiB.
+   *
+   * This object **replaces** the client constructor's `transport` rather than
+   * merging into it. A per-call object that sets only `requestTimeoutMs`
+   * drops the constructor's `maxResponseBytes` back to the default; repeat
+   * every field you still want.
    */
   transport?: import('../protocols').TransportOptions;
 }

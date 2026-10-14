@@ -1463,6 +1463,11 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`}`);
   ln();
   ln(`interface TransportOptions {`);
+  ln(`  // Defaults to 4 MiB (DEFAULT_MAX_RESPONSE_BYTES); only 0 opts out`);
+  ln(`  // (Infinity / negatives fall back to the default).`);
+  ln(`  // SSE is bounded per event plus \`maxResponseBytes * 2\` cumulative per call.`);
+  ln(`  // Over-cap responses throw ResponseTooLargeError; nothing is truncated.`);
+  ln(`  // A per-call \`transport\` replaces this object; it does not merge.`);
   ln(`  maxResponseBytes?: number;`);
   ln(`  trustedFetchFn?: typeof fetch;`);
   ln(`  allowPrivateIp?: boolean;`);
