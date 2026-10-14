@@ -69,10 +69,13 @@ function fixture(t, extra = {}) {
     }
   );
   t.after(() => server.close());
-  const call = (name = 'sync_accounts', accounts = [entry]) =>
+  const call = (name = 'sync_accounts', accounts = [entry], extraParams = {}) =>
     server.dispatchTestRequest({
       method: 'tools/call',
-      params: { name, arguments: name === 'sync_accounts' ? { accounts, idempotency_key: 'contract-key-0001' } : {} },
+      params: {
+        name,
+        arguments: name === 'sync_accounts' ? { accounts, idempotency_key: 'contract-key-0001', ...extraParams } : {},
+      },
     });
   return { call, diagnostics, calls, warnings };
 }
@@ -358,4 +361,115 @@ test('strict rejection still records committed IDs for later same-key entries', 
     ['failed', 'failed']
   );
   assert.ok(diagnostics.some(d => d.code === 'ACCOUNT_SYNC_IDEMPOTENCY_VIOLATION' && d.index === 1));
+});
+
+test('upsert normalization cannot rewrite the financial request used by strict checks', async t => {
+  const request = structuredClone(entry);
+  const { call, diagnostics } = fixture(t, {
+    strictIdempotency: true,
+    upsert: async refs => {
+      refs[0].payment_terms = 'net_30';
+      return [{ ...row, payment_terms: 'net_30' }];
+    },
+  });
+  const result = await call('sync_accounts', [request]);
+  assert.equal(result.structuredContent.accounts[0].action, 'failed');
+  assert.ok(diagnostics.some(d => d.code === 'ACCOUNT_SYNC_PAYMENT_TERMS_MISMATCH'));
+});
+
+test('lookup normalization cannot alter requested terms before the upsert check', async t => {
+  const { call, diagnostics } = fixture(t, {
+    strictIdempotency: true,
+    resolve: async ref => {
+      if (ref) ref.payment_terms = 'net_30';
+      return stored;
+    },
+    upsert: async () => [{ ...row, payment_terms: 'net_30' }],
+  });
+  assert.equal((await call('sync_accounts', [structuredClone(entry)])).structuredContent.accounts[0].action, 'failed');
+  assert.ok(diagnostics.some(d => d.code === 'ACCOUNT_SYNC_PAYMENT_TERMS_MISMATCH'));
+});
+
+test('async diagnostic rejections never escape into the process or change dispatch', async t => {
+  let invoked = 0;
+  const { call, warnings } = fixture(t, {
+    upsert: async () => [{ ...row, action: 'created' }],
+    onDiagnostic: async () => {
+      invoked++;
+      throw new Error('telemetry failed');
+    },
+  });
+  assert.equal((await call()).structuredContent.accounts[0].action, 'created');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(invoked, 1);
+  assert.ok(warnings.some(([message]) => message === 'Account diagnostic callback failed'));
+});
+
+test('post-write enrichment cannot normalize away requested payment terms', async t => {
+  const { call, diagnostics } = fixture(t, {
+    strictIdempotency: true,
+    resolve: async ref => {
+      if (ref) ref.payment_terms = 'net_30';
+      return { ...stored, payment_terms: 'net_30' };
+    },
+    upsert: async () => [{ ...row, billing: undefined, payment_terms: undefined }],
+  });
+  const result = await call('sync_accounts', [structuredClone(entry)]);
+  assert.equal(result.structuredContent.accounts[0].action, 'failed');
+  assert.ok(diagnostics.some(d => d.code === 'ACCOUNT_SYNC_PAYMENT_TERMS_MISMATCH'));
+});
+
+test('guard lookups cannot rewrite dry-run intent or financial input before upsert', async t => {
+  const { call, diagnostics } = fixture(t, {
+    strictIdempotency: true,
+    resolve: async (_, ctx) => {
+      if (ctx.input?.accounts) {
+        ctx.input.dry_run = false;
+        ctx.input.accounts[0].payment_terms = 'net_30';
+      }
+      return stored;
+    },
+    upsert: async (refs, ctx) => {
+      assert.equal(ctx.input.dry_run, true);
+      assert.equal(refs[0].payment_terms, 'net_60');
+      return [{ ...row, payment_terms: 'net_30' }];
+    },
+  });
+  const result = await call('sync_accounts', [structuredClone(entry)], { dry_run: true });
+  assert.equal(result.structuredContent.dry_run, true, JSON.stringify(result.structuredContent));
+  assert.ok(result.structuredContent.accounts, JSON.stringify(result.structuredContent));
+  assert.equal(result.structuredContent.accounts[0].action, 'failed');
+  assert.ok(diagnostics.some(d => d.code === 'ACCOUNT_SYNC_PAYMENT_TERMS_MISMATCH'));
+});
+
+test('derived reachability callbacks cannot rewrite the validated sync request', async t => {
+  const { call, diagnostics } = fixture(t, {
+    resolution: 'derived',
+    strictIdempotency: true,
+    resolve: async (ref, ctx) => {
+      if (ctx.input?.accounts) ctx.input.accounts[0].payment_terms = 'net_30';
+      return { ...stored, id: ref?.account_id ?? stored.id };
+    },
+    upsert: async refs => {
+      assert.equal(refs[0].payment_terms, 'net_60');
+      return [{ ...row, payment_terms: 'net_30' }];
+    },
+  });
+  const result = await call('sync_accounts', [
+    { account: { account_id: stored.id }, billing: 'agent', payment_terms: 'net_60' },
+  ]);
+  assert.equal(result.structuredContent.accounts[0].action, 'failed');
+  assert.ok(diagnostics.some(d => d.code === 'ACCOUNT_SYNC_PAYMENT_TERMS_MISMATCH'));
+});
+
+test('dry-run response retains the original intent when upsert mutates its context input', async t => {
+  const { call } = fixture(t, {
+    upsert: async (_, ctx) => {
+      ctx.input.dry_run = false;
+      return [row];
+    },
+  });
+  const result = await call('sync_accounts', [entry], { dry_run: true });
+  assert.equal(result.structuredContent.dry_run, true);
+  assert.equal(result.structuredContent.accounts[0].action, 'unchanged');
 });

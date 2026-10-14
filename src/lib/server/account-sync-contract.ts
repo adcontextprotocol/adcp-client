@@ -13,6 +13,34 @@ import { AdcpError } from './decisioning/async-outcome';
 
 type Entry = Record<string, unknown>;
 
+/** Copy request input only when a callback reads it; keep auth capabilities live. */
+export function isolateAccountCallbackInput(ctx: ResolveContext): ResolveContext {
+  const descriptors = Object.getOwnPropertyDescriptors(ctx);
+  delete descriptors.input;
+  const copy = Object.defineProperties({}, descriptors) as ResolveContext;
+  if ('input' in ctx) {
+    let captured = false;
+    let input: ResolveContext['input'];
+    Object.defineProperty(copy, 'input', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        if (!captured) {
+          const source = ctx.input;
+          input = source === undefined ? undefined : structuredClone(source);
+          captured = true;
+        }
+        return input;
+      },
+      set(value: ResolveContext['input']) {
+        input = value;
+        captured = true;
+      },
+    });
+  }
+  return copy;
+}
+
 /** Preserve the full natural key, including currency, timezone and operator unit. */
 function naturalRef(entry: Entry): AccountReference | undefined {
   const ref = (entry.account ?? entry) as AccountReference;
@@ -29,7 +57,10 @@ async function lookup(
 ): Promise<Account | null> {
   try {
     // A guard lookup must never provision an account itself.
-    const account = await accounts.resolve(ref, { ...ctx, provisioning: false });
+    const account = await accounts.resolve(
+      structuredClone(ref),
+      isolateAccountCallbackInput({ ...ctx, provisioning: false })
+    );
     if (account && 'account_id' in ref && account.id !== ref.account_id) return null;
     if (account && 'brand' in ref) {
       const identity = account as unknown as Partial<Extract<AccountReference, { brand: unknown }>>;
@@ -93,7 +124,8 @@ function diagnose(accounts: AccountStore, logger: AdcpLogger, diagnostic: Accoun
   if (process.env.NODE_ENV !== 'production') safeWarn(logger, 'Account store contract violation', { ...diagnostic });
   // Observability must not change the result of a committed write.
   try {
-    accounts.onDiagnostic?.(diagnostic);
+    const pending = accounts.onDiagnostic?.(diagnostic);
+    if (pending) void Promise.resolve(pending).catch(() => safeWarn(logger, 'Account diagnostic callback failed'));
   } catch {
     safeWarn(logger, 'Account diagnostic callback failed');
   }

@@ -3330,7 +3330,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         const account = assertResolvedAccountMatchesRef(
           platform.accounts.resolution,
           ref,
-          await platform.accounts.resolve(ref, toResolveCtx(ctx, ctx.toolName, ctx.input)),
+          await platform.accounts.resolve(
+            ref,
+            toResolveCtx(ctx, ctx.toolName, ctx.toolName === 'sync_accounts' ? structuredClone(ctx.input) : ctx.input)
+          ),
           fwLogger,
           implicitIdentityPolicy
         );
@@ -3382,7 +3385,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       const compactAccountRequired =
         COMPACT_MEDIA_BUY_MUTATION_TOOLS.has(ctx.toolName) && authenticatedPrincipalFor(ctx) !== undefined;
       try {
-        const account = await platform.accounts.resolve(undefined, toResolveCtx(ctx, ctx.toolName, ctx.input));
+        const account = await platform.accounts.resolve(
+          undefined,
+          toResolveCtx(ctx, ctx.toolName, ctx.toolName === 'sync_accounts' ? structuredClone(ctx.input) : ctx.input)
+        );
         resolved = account != null;
         resolvedAccountId = account?.id;
         if (account == null && compactAccountRequired) {
@@ -9061,50 +9067,56 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
 
   if (accounts.upsert) {
     handlers.syncAccounts = async (params, ctx) => {
+      const dryRun = params.dry_run === true;
+      const originalCount = ((params.accounts as unknown[]) ?? []).length;
       const resolveCtx = toResolveCtx(ctx, 'sync_accounts', params);
       const policy = enforceSyncAccountsCommercialPolicy(platform, params as Record<string, unknown>, resolveCtx);
+      const requested = structuredClone(policy.acceptedEntries);
+      const indices = ((params.accounts as unknown[]) ?? [])
+        .map((_, index) => index)
+        .filter(index => !policy.failedRows.has(index));
       if (normalizeAccountResolution(accounts.resolution) === 'derived') {
-        await assertDerivedSyncAccountEntriesReachable(accounts, policy.acceptedEntries, resolveCtx, logger);
+        await assertDerivedSyncAccountEntriesReachable(
+          accounts,
+          requested,
+          toResolveCtx(ctx, 'sync_accounts', structuredClone(policy.acceptedParams)),
+          logger
+        );
       }
       const dispatchCtx =
         policy.failedRows.size === 0 ? resolveCtx : toResolveCtx(ctx, 'sync_accounts', policy.acceptedParams);
       return projectSync(
         async () => {
-          const entries = policy.acceptedEntries;
-          const existing = await existingSyncAccounts(accounts, entries, dispatchCtx, logger);
+          const existing = await existingSyncAccounts(accounts, requested, dispatchCtx, logger);
+          const writeParams = structuredClone(policy.acceptedParams);
+          const entries = writeParams.accounts as SyncAccountsEntry[];
           const rows =
             entries.length > 0
               ? await accounts.upsert!(entries as AccountReference[], {
-                  ...dispatchCtx,
+                  ...toResolveCtx(ctx, 'sync_accounts', writeParams),
                   existing: existing.map(account =>
                     account ? { ...account, billing: account.billing && { ...account.billing } } : null
                   ),
                 })
               : [];
-          if (rows.length !== policy.acceptedEntries.length) {
+          if (rows.length !== requested.length) {
             throw new Error(
               `sync_accounts accounts.upsert returned ${rows.length} ${
                 rows.length === 1 ? 'row' : 'rows'
-              } for ${policy.acceptedEntries.length} accepted account ${
-                policy.acceptedEntries.length === 1 ? 'entry' : 'entries'
-              }`
+              } for ${requested.length} accepted account ${requested.length === 1 ? 'entry' : 'entries'}`
             );
           }
-          const indices = ((params.accounts as unknown[]) ?? [])
-            .map((_, index) => index)
-            .filter(index => !policy.failedRows.has(index));
-          return checkSyncAccountRows(accounts, entries, existing, rows, indices, dispatchCtx, logger);
+          return checkSyncAccountRows(accounts, requested, existing, rows, indices, dispatchCtx, logger);
         },
         rows => {
           if (policy.failedRows.size === 0) {
             return {
-              ...(params.dry_run === true && { dry_run: true }),
+              ...(dryRun && { dry_run: true }),
               accounts: rows.map(toWireSyncAccountRow),
             };
           }
           const combined: SyncAccountsResultRow[] = [];
           let acceptedIndex = 0;
-          const originalCount = ((params.accounts as unknown[]) ?? []).length;
           for (let index = 0; index < originalCount; index += 1) {
             const failed = policy.failedRows.get(index);
             if (failed !== undefined) {
@@ -9115,7 +9127,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
             }
           }
           return {
-            ...(params.dry_run === true && { dry_run: true }),
+            ...(dryRun && { dry_run: true }),
             accounts: combined.map(toWireSyncAccountRow),
           };
         }

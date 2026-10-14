@@ -417,6 +417,8 @@ export interface ResolveContext {
    *   before the platform method runs; treat fields the buyer sent as
    *   authoritative, but expect framework-injected entities (e.g.
    *   hydrated product / media-buy refs) to be visible here too.
+   *   Account-sync guard lookups and upsert receive independent input
+   *   copies so callback normalization cannot rewrite framework checks.
    * - **Buyer-controlled untrusted data.** Free-text fields (`brief`,
    *   `message`, creative snippets, etc.) are attacker-controlled.
    *   Don't log `ctx.input` wholesale — secret fields like
@@ -593,8 +595,8 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * committing too (createKeyedAccountStore does so for its own backend).
    */
   readonly strictIdempotency?: boolean;
-  /** Server-side diagnostics; never includes credentials or account metadata. */
-  readonly onDiagnostic?: (diagnostic: AccountSyncDiagnostic) => void;
+  /** Server-side diagnostics; never includes credentials or account metadata. Async hooks are fire-and-forget, with failures isolated from dispatch. */
+  readonly onDiagnostic?: (diagnostic: AccountSyncDiagnostic) => void | Promise<void>;
   /**
    * How buyers reference accounts on this platform. Three onboarding models,
    * aligned with the account-reference taxonomy clarified upstream in
