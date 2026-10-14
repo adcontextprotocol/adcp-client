@@ -55,7 +55,7 @@ export interface KeyedAccountStoreOptions<TCtxMeta = Record<string, unknown>> {
   /** Maximum serialized bytes per record. Default 64 KiB. */
   maxAccountBytes?: number;
   /** Stable, authenticated tenant identity. Never derive from buyer request fields or raw tokens. */
-  principalKey: (ctx: ResolveContext) => string | undefined;
+  principalKey: (ctx: ResolveContext) => string | undefined | Promise<string | undefined>;
   /** Receive the framework's secret-free contract diagnostics. */
   onDiagnostic?: AccountStore<TCtxMeta>['onDiagnostic'];
   /** Construct a real account with the supplied deterministic id. No external writes; runs inside a transaction. */
@@ -98,10 +98,10 @@ export function createKeyedAccountStore<TCtxMeta = Record<string, unknown>>(
   ) {
     throw new Error('Keyed account storage limits must be positive safe integers.');
   }
-  const scopeFor = (ctx?: ResolveContext): string | undefined => {
+  const scopeFor = async (ctx?: ResolveContext): Promise<string | undefined> => {
     if (!ctx) return;
-    const principal = options.principalKey(ctx);
-    if (!principal) return;
+    const principal = await options.principalKey(ctx);
+    if (typeof principal !== 'string' || !principal.trim()) return;
     return digest([options.namespace, principal]);
   };
   let readEpoch = 0;
@@ -132,7 +132,7 @@ export function createKeyedAccountStore<TCtxMeta = Record<string, unknown>>(
     strictIdempotency: true,
     onDiagnostic: options.onDiagnostic,
     async resolve(ref, ctx) {
-      const scope = scopeFor(ctx);
+      const scope = await scopeFor(ctx);
       if (!scope) return null;
       const records = await readForLookup(scope, ctx);
       if (!ref) return records.length === 1 ? structuredClone(records[0]!.account) : null;
@@ -143,7 +143,7 @@ export function createKeyedAccountStore<TCtxMeta = Record<string, unknown>>(
     async upsert(entries, ctx = {}) {
       const dryRun = ctx.input?.dry_run === true;
       entries = structuredClone(entries);
-      const scope = scopeFor(ctx);
+      const scope = await scopeFor(ctx);
       if (entries.length > maxSyncEntries)
         throw new AdcpError('INVALID_REQUEST', {
           message: `Split sync_accounts into batches of at most ${maxSyncEntries} entries.`,
@@ -306,7 +306,7 @@ export function createKeyedAccountStore<TCtxMeta = Record<string, unknown>>(
       return result as SyncAccountsResultRow[];
     },
     async list(filter, ctx) {
-      const scope = scopeFor(ctx);
+      const scope = await scopeFor(ctx);
       if (!scope)
         throw new AdcpError('AUTH_REQUIRED', { message: 'Account listing requires an authenticated principal.' });
       let items = (await options.backend.read(scope)).map(record => record.account);

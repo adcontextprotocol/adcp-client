@@ -523,3 +523,41 @@ if (process.env.DATABASE_URL) {
     }
   });
 }
+
+test('asynchronous principal lookup keeps tenants isolated and refuses missing authentication', async () => {
+  const backend = keyedAccountMemoryBackend();
+  const store = factory(backend, { principalKey: async request => request.authInfo?.credential?.key_id });
+  const other = { authInfo: { credential: { kind: 'api_key', key_id: 'other-buyer' } } };
+  const first = (await store.upsert([entry], ctx))[0];
+  assert.equal(await store.resolve(entry, other), null);
+  const second = (await store.upsert([entry], other))[0];
+  assert.notEqual(first.account_id, second.account_id);
+  assert.equal((await store.list({}, ctx)).items[0].id, first.account_id);
+  assert.equal((await store.list({}, other)).items[0].id, second.account_id);
+  assert.equal(await store.resolve(entry, {}), null);
+  await assert.rejects(store.upsert([entry], {}), error => error.code === 'AUTH_REQUIRED');
+  await assert.rejects(store.list({}, {}), error => error.code === 'AUTH_REQUIRED');
+});
+
+test('non-string principal values fail closed before reading or writing any scope', async () => {
+  for (const value of [{}, 123, true, '  ']) {
+    let accesses = 0;
+    const store = factory(
+      {
+        read() {
+          accesses++;
+          throw new Error('must not read');
+        },
+        transaction() {
+          accesses++;
+          throw new Error('must not write');
+        },
+      },
+      { principalKey: async () => value }
+    );
+    assert.equal(await store.resolve(entry, ctx), null);
+    await assert.rejects(store.upsert([entry], ctx), error => error.code === 'AUTH_REQUIRED');
+    await assert.rejects(store.list({}, ctx), error => error.code === 'AUTH_REQUIRED');
+    assert.equal(accesses, 0);
+  }
+});
