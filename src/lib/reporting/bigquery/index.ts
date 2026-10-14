@@ -18,11 +18,16 @@ import { decodeReportingChangeCursorV1 } from '../ledger/change-feed';
  * are the adopter's.
  *
  * Exactly-once loading: a batch (change-feed range, revision list, job IDs) is
- * planned durably in PostgreSQL before any load. A crash between the load and
- * the cursor commit replays the same batch under the same job IDs, which
- * BigQuery refuses to run twice. A failed load job is retried under a new
- * attempt suffix only after BigQuery reports that job finished with an error,
- * and each table keeps its own attempt count, so no batch lands twice.
+ * planned durably in PostgreSQL before any load. Before every submission the
+ * sink looks the deterministic job ID up in the destination project and
+ * location: a job that finished cleanly counts as loaded, a job still running
+ * is waited for (never uploaded again), and only a missing job is uploaded.
+ * A crash or timeout between the load and the cursor commit therefore replays
+ * the same batch under the same job IDs without a second upload. A failed load
+ * job is retried under a new attempt suffix only after BigQuery reports that
+ * job finished with an error, and each table keeps its own attempt count, so
+ * no batch lands twice. A load that outlasts the deadline never changes the job
+ * ID: the sink grows that table's deadline instead (persisted with the plan).
  * Concurrent runs claim one durable plan with compare-and-swap. Replays of
  * that plan share job IDs; stale runs cannot change its attempts or cursor.
  */
@@ -37,12 +42,18 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_warehouse_sinks (
   planned_revisions JSONB,
   planned_rows_attempt INTEGER NOT NULL DEFAULT 0 CHECK (planned_rows_attempt >= 0),
   planned_revisions_attempt INTEGER NOT NULL DEFAULT 0 CHECK (planned_revisions_attempt >= 0),
+  planned_rows_timeouts INTEGER NOT NULL DEFAULT 0 CHECK (planned_rows_timeouts >= 0),
+  planned_revisions_timeouts INTEGER NOT NULL DEFAULT 0 CHECK (planned_revisions_timeouts >= 0),
   reset_generation INTEGER NOT NULL DEFAULT 0 CHECK (reset_generation >= 0),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   CHECK ((planned_to_cursor IS NULL) = (planned_revisions IS NULL))
 );
 ALTER TABLE adcp_reporting_warehouse_sinks
   ADD COLUMN IF NOT EXISTS reset_generation INTEGER NOT NULL DEFAULT 0 CHECK (reset_generation >= 0);
+ALTER TABLE adcp_reporting_warehouse_sinks
+  ADD COLUMN IF NOT EXISTS planned_rows_timeouts INTEGER NOT NULL DEFAULT 0 CHECK (planned_rows_timeouts >= 0);
+ALTER TABLE adcp_reporting_warehouse_sinks
+  ADD COLUMN IF NOT EXISTS planned_revisions_timeouts INTEGER NOT NULL DEFAULT 0 CHECK (planned_revisions_timeouts >= 0);
 `.trim();
 
 /** Structural subset of the official `@google-cloud/bigquery` client the sink uses. */
@@ -60,7 +71,7 @@ export interface ReportingBigQueryClientV1 {
     options?: { projectId?: string; location?: string }
   ): {
     getMetadata(): Promise<unknown>;
-    /** Request cancellation. Optional so wrappers written before the sink used it still type-check. */
+    /** @deprecated Unused: BigQuery does not stop a running load, so the sink never cancels. Kept so wrappers that declare it still type-check. */
     cancel?(): Promise<unknown>;
   };
   query(options: { query: string; location?: string }): Promise<unknown>;
@@ -97,7 +108,11 @@ export interface CreateBigQueryReportingWarehouseSinkOptionsV1 {
   datasetId: string;
   rowsTableId: string;
   revisionsTableId: string;
-  /** Dataset location, so jobs run in the dataset's region. */
+  /**
+   * Dataset location, so jobs run in the dataset's region. Set it for any dataset outside the US and EU
+   * multi-regions: BigQuery answers a job lookup without the right location with 404, and the sink then
+   * cannot find the jobs it created.
+   */
   location?: string;
   /** Restrict the sink to one account; omit for the deployment-wide feed. */
   account_id?: string;
@@ -121,18 +136,24 @@ export interface CreateBigQueryReportingWarehouseSinkOptionsV1 {
    */
   labels?: Readonly<Record<string, string>>;
   /**
-   * Deadline for one load (and for each status check). Default 10 minutes.
-   * When a load exceeds it, the sink asks BigQuery to cancel that job by its
-   * deterministic ID (in `projectId` and `location`) and rejects, leaving the
-   * plan in place. The next run finds the cancelled job finished with an
-   * error, advances that table's attempt and rejects; the run after that
-   * loads under the new attempt. If the cancel has not taken effect yet the
-   * next run waits for the job. Each attempt doubles the load deadline (up to
-   * 6 hours), so a load that is slow but healthy converges; set this above
-   * your slowest expected load to avoid the cancelled attempts. A status
-   * check that times out is not cancelled. This is a client-side deadline:
-   * BigQuery's server-side `jobTimeoutMs` cannot be set on a local-file load
-   * through the official client, and cancellation is best effort.
+   * Base deadline for one run's work on one load. Default 10 minutes. It bounds
+   * how long a run uploads a file or waits for a running job; it does not bound
+   * the job. BigQuery does not stop a load when the client gives up (a cancel
+   * is accepted and the job finishes anyway), so the sink never cancels.
+   * Before every submission it looks the deterministic job ID up in `projectId`
+   * and `location`: a job that finished cleanly is accepted, a job that is
+   * pending or running is waited for (polled within the deadline) instead of
+   * being uploaded again, and only a missing job is uploaded. When the
+   * deadline passes, the run rejects with the plan retained and nothing
+   * advanced, and the next run checks the job again. Each such timeout doubles
+   * that table's deadline for later runs (up to 6 hours, persisted with the
+   * plan, and never changing the job ID), so an upload slower than the
+   * deadline eventually gets enough time. Set it above your slowest expected
+   * load to avoid the extra runs. Only a job that finished with an error
+   * advances the attempt. A status check that times out is bounded by this base
+   * deadline and does not grow it. This is a client-side deadline: BigQuery's
+   * server-side `jobTimeoutMs` cannot be set on a local-file load through the
+   * official client.
    */
   loadTimeoutMilliseconds?: number;
 }
@@ -172,7 +193,8 @@ export interface BigQueryReportingWarehouseSinkV1 {
    * the destination tables first, or use a new sink name against new tables.
    * Each reset starts a new job ID generation, so reloaded batches submit
    * fresh BigQuery jobs instead of matching the finished jobs of the earlier
-   * history. Nothing holds change retention between `reset()` and the first
+   * history. The sink never cancels a load, so stop every worker and let its
+   * in-flight uploads and jobs finish before emptying the destination tables. Nothing holds change retention between `reset()` and the first
    * committed batch. If `reset()` rejects after clearing the sink's state
    * (the consumer could not be unregistered), call it again before restarting
    * workers; it is idempotent. Needs a store with `removeFeedConsumer`.
@@ -186,6 +208,8 @@ export interface BigQueryReportingWarehouseSinkV1 {
 }
 
 const MAX_LOAD_TIMEOUT = 6 * 3_600_000;
+/** Doublings stop at 2^16: even the 1 second minimum is then past the 6 hour cap. */
+const MAX_TIMEOUT_DOUBLINGS = 16;
 let warnedLabelsIgnored = false;
 const PROJECT = /^[a-z][a-z0-9-]{4,61}[a-z0-9]$/;
 const DATASET_OR_TABLE = /^[A-Za-z_][A-Za-z0-9_]{0,1023}$/;
@@ -246,70 +270,153 @@ export function createBigQueryReportingWarehouseSinkV1(
         }
       : undefined;
 
+  /** Uploads submitted by this process and not yet settled, by job ID, so a rerun can wait on one. */
+  const uploads = new Map<string, UploadEntry>();
+
   /**
-   * Best effort: ask BigQuery to stop a load the client gave up on. Failures
-   * never replace the deadline error, because the plan and deterministic job
-   * ID make a job that keeps running harmless. A failure other than "not
-   * found" (the job was never submitted) is surfaced as a process warning so
-   * an operator can see a job that may still be running and billing.
+   * Write the lines to a temporary file and submit the load. The temporary directory goes away when the
+   * upload settles, or when a later run replaces an upload that never settled (the client opened the file
+   * when it started, so deleting it does not disturb a running upload).
    */
-  async function cancelLoad(jobId: string, signal?: AbortSignal): Promise<void> {
-    try {
-      const job = options.bigquery.job(jobId, jobOptions);
-      if (typeof job.cancel !== 'function') return;
-      const cancel = job.cancel.bind(job);
-      await withinDeadline(cancel, Math.min(loadTimeout, 30_000), signal);
-    } catch (error) {
-      const code = (error as { code?: unknown } | null)?.code;
-      if (code === 404 || signal?.aborted) return;
-      process.emitWarning(
-        `Cancelling BigQuery load job ${jobId} failed (${typeof code === 'number' || typeof code === 'string' ? code : 'no status code'}); the job may still be running`,
-        { code: 'ADCP_BIGQUERY_SINK_CANCEL_FAILED' }
-      );
-    }
+  function startUpload(tableId: string, jobId: string, lines: string[]): Promise<unknown> {
+    const entry: UploadEntry = {
+      startedAt: Date.now(),
+      done: Promise.resolve(),
+    };
+    const cleanup = async () => {
+      if (uploads.get(jobId) === entry) uploads.delete(jobId);
+      if (entry.directory) await fs.rm(entry.directory, { recursive: true, force: true }).catch(() => {});
+    };
+    entry.done = (async () => {
+      const directory = await fs.mkdtemp(path.join(tmpdir(), 'adcp-warehouse-'));
+      entry.directory = directory;
+      const file = path.join(directory, `${jobId}.ndjson`);
+      await fs.writeFile(file, lines.length ? lines.join('\n') + '\n' : '', { mode: 0o600 });
+      return dataset.table(tableId).load(file, {
+        jobId,
+        sourceFormat: 'NEWLINE_DELIMITED_JSON',
+        writeDisposition: 'WRITE_APPEND',
+        ...(options.location ? { location: options.location } : {}),
+      });
+    })();
+    const replaced = uploads.get(jobId);
+    uploads.set(jobId, entry);
+    // Settling is handled here, so an abandoned upload that later fails is never an unhandled rejection.
+    void entry.done.then(cleanup, cleanup);
+    if (replaced?.directory) void fs.rm(replaced.directory, { recursive: true, force: true }).catch(() => {});
+    return entry.done;
   }
 
+  /**
+   * Look the job up in the destination project and location. `missing` is a 404;
+   * a job that finished with an error throws the retryable failure; anything not
+   * DONE (PENDING, RUNNING, or a response without a state) is `running`.
+   */
+  async function jobStatus(
+    jobId: string,
+    signal?: AbortSignal,
+    boundMilliseconds = loadTimeout,
+    context?: string
+  ): Promise<'missing' | 'done' | 'running'> {
+    let metadata: unknown;
+    try {
+      metadata = await withinDeadline(
+        () => options.bigquery.job(jobId, jobOptions).getMetadata(),
+        boundMilliseconds,
+        signal,
+        context
+      );
+    } catch (error) {
+      if ((error as { code?: unknown } | null)?.code === 404) return 'missing';
+      throw error;
+    }
+    const record = (Array.isArray(metadata) ? metadata[0] : metadata) as
+      | { status?: { state?: string; errorResult?: unknown } }
+      | undefined;
+    if (record?.status?.state !== 'DONE') return 'running';
+    if (record.status.errorResult) {
+      const failure = new Error('A BigQuery load job for this batch failed; it will be retried as a new attempt');
+      Object.defineProperty(failure, 'adcpJobFailed', { value: true });
+      throw failure;
+    }
+    return 'done';
+  }
+
+  /**
+   * Load one table's lines under a deterministic job ID. The job is looked up
+   * first, so a job a previous run created (even one whose upload outlasted that
+   * run's deadline) is accepted or waited for and never uploaded twice. The
+   * deadline starts after that lookup and bounds this run only: a load that
+   * outlasts it rejects with `adcpLoadTimedOut` and nothing is cancelled.
+   * Errors name the table (role and ID) and its timeout count, which is the
+   * table's own: the rows and revisions tables grow their deadlines separately.
+   */
   async function loadOnce(
+    role: 'rows' | 'revisions',
     tableId: string,
     jobId: string,
     lines: string[],
-    attempt: number,
+    timeouts: number,
     signal?: AbortSignal
   ): Promise<void> {
-    // Each attempt doubles the load deadline, so a load that is healthy but slower than the
-    // deadline is cancelled at most a few times and then fits.
-    const loadDeadline = Math.min(loadTimeout * 2 ** Math.min(attempt, 16), MAX_LOAD_TIMEOUT);
     signal?.throwIfAborted();
-    const directory = await fs.mkdtemp(path.join(tmpdir(), 'adcp-warehouse-'));
-    const file = path.join(directory, `${jobId}.ndjson`);
-    try {
-      await fs.writeFile(file, lines.length ? lines.join('\n') + '\n' : '', { mode: 0o600 });
+    const table = `the ${role} table "${tableId}" (timeout count ${timeouts})`;
+    let status = await jobStatus(jobId, signal, loadTimeout, table);
+    if (status === 'done') return;
+    const loadDeadline = reportingWarehouseLoadDeadlineV1(loadTimeout, timeouts);
+    const deadlineAt = Date.now() + loadDeadline;
+    const timedOut = (what: string) => {
+      const error = new Error(
+        `${what} exceeded this run's ${loadDeadline} ms deadline for ${table}; the next run checks the job again`
+      );
+      Object.defineProperty(error, 'adcpDeadlineExceeded', { value: true });
+      Object.defineProperty(error, 'adcpLoadTimedOut', { value: true });
+      return error;
+    };
+    if (status === 'missing') {
       try {
-        await withinDeadline(
-          () =>
-            dataset.table(tableId).load(file, {
-              jobId,
-              sourceFormat: 'NEWLINE_DELIMITED_JSON',
-              writeDisposition: 'WRITE_APPEND',
-              ...(options.location ? { location: options.location } : {}),
-            }),
-          loadDeadline,
-          signal
-        );
+        // An upload an earlier run abandoned at its deadline is still running in this process (the client
+        // takes no abort signal), so wait for it, within this run's deadline, instead of starting another
+        // upload of the same file. How long ago it started does not matter: that age includes the gap
+        // between runs. A map entry exists only while its upload is pending, so only a hung upload older
+        // than the largest deadline any run can have is abandoned and replaced. BigQuery refuses a
+        // duplicate job ID, so a replacement can never load the batch twice.
+        const running = uploads.get(jobId);
+        const upload =
+          running && Date.now() - running.startedAt < MAX_LOAD_TIMEOUT
+            ? running.done
+            : startUpload(tableId, jobId, lines);
+        await withinDeadline(() => upload, Math.max(deadlineAt - Date.now(), 1), signal);
+        return;
       } catch (error) {
-        if (isDeadlineExceeded(error)) await cancelLoad(jobId, signal);
+        if (isDeadlineExceeded(error)) throw timedOut('Uploading the load');
         if (!isAlreadyExists(error)) throw error;
-        // The job ran before (a crash or timeout after submission, before the
-        // cursor commit). Accept it only if it finished cleanly.
-        const metadata = await withinDeadline(
-          () => options.bigquery.job(jobId, jobOptions).getMetadata(),
-          loadTimeout,
-          signal
-        );
-        assertJobSucceeded(metadata);
+        // The job exists (a crash or timeout after submission, or a concurrent run). Check how it ended.
+        status = await jobStatus(jobId, signal, loadTimeout, table);
+        if (status === 'missing') {
+          throw new Error(
+            'BigQuery refused the load job ID as already existing, but the job cannot be found. Check that projectId ' +
+              'and location match the dataset (location is required for datasets outside the US and EU multi-regions)',
+            { cause: error }
+          );
+        }
       }
-    } finally {
-      await fs.rm(directory, { recursive: true, force: true });
+    }
+    // The job is pending or running: wait for it, never upload again.
+    const pollMilliseconds = Math.min(5_000, Math.max(250, Math.floor(loadDeadline / 10)));
+    while (status !== 'done') {
+      const remaining = deadlineAt - Date.now();
+      if (remaining <= 0) throw timedOut('Waiting for the running load job');
+      await sleep(Math.min(pollMilliseconds, remaining), signal);
+      const bound = Math.max(Math.min(loadTimeout, deadlineAt - Date.now()), 1);
+      try {
+        status = await jobStatus(jobId, signal, bound, table);
+      } catch (error) {
+        // A status call cut short by this run's remaining time is the run's deadline, not a failed check.
+        if (isDeadlineExceeded(error) && bound < loadTimeout) throw timedOut('Waiting for the running load job');
+        throw error;
+      }
+      if (status === 'missing') throw new Error('A BigQuery load job for this batch disappeared while it was awaited');
     }
   }
 
@@ -326,6 +433,7 @@ export function createBigQueryReportingWarehouseSinkV1(
           `UPDATE adcp_reporting_warehouse_sinks
             SET committed_cursor = NULL, planned_from_cursor = NULL, planned_to_cursor = NULL,
                 planned_revisions = NULL, planned_rows_attempt = 0, planned_revisions_attempt = 0,
+                planned_rows_timeouts = 0, planned_revisions_timeouts = 0,
                 reset_generation = reset_generation + 1, updated_at = clock_timestamp()
           WHERE sink_name = $1 AND ($2::boolean OR planned_to_cursor IS NULL)
           RETURNING sink_name`,
@@ -368,10 +476,13 @@ export function createBigQueryReportingWarehouseSinkV1(
             planned_revisions: { id: string; account_id: string }[] | null;
             planned_rows_attempt: number;
             planned_revisions_attempt: number;
+            planned_rows_timeouts: number;
+            planned_revisions_timeouts: number;
             reset_generation: number;
           }>(
             `SELECT committed_cursor, planned_from_cursor, planned_to_cursor, planned_revisions,
-                  planned_rows_attempt, planned_revisions_attempt, reset_generation
+                  planned_rows_attempt, planned_revisions_attempt,
+                  planned_rows_timeouts, planned_revisions_timeouts, reset_generation
              FROM adcp_reporting_warehouse_sinks WHERE sink_name = $1`,
             [options.name]
           )
@@ -395,6 +506,8 @@ export function createBigQueryReportingWarehouseSinkV1(
               revisions: state.planned_revisions,
               rowsAttempt: state.planned_rows_attempt,
               revisionsAttempt: state.planned_revisions_attempt,
+              rowsTimeouts: state.planned_rows_timeouts,
+              revisionsTimeouts: state.planned_revisions_timeouts,
             }
           : undefined;
       if (!plan) {
@@ -457,11 +570,14 @@ export function createBigQueryReportingWarehouseSinkV1(
             .map(record => ({ id: record.record_id, account_id: record.account_id })),
           rowsAttempt: 0,
           revisionsAttempt: 0,
+          rowsTimeouts: 0,
+          revisionsTimeouts: 0,
         };
         const claimed = await options.db.query(
           `UPDATE adcp_reporting_warehouse_sinks
               SET planned_from_cursor = $2, planned_to_cursor = $3, planned_revisions = $4::jsonb,
-                  planned_rows_attempt = 0, planned_revisions_attempt = 0, updated_at = clock_timestamp()
+                  planned_rows_attempt = 0, planned_revisions_attempt = 0,
+                  planned_rows_timeouts = 0, planned_revisions_timeouts = 0, updated_at = clock_timestamp()
             WHERE sink_name = $1 AND committed_cursor IS NOT DISTINCT FROM $2
               AND planned_to_cursor IS NULL AND planned_revisions IS NULL AND reset_generation = $5
             RETURNING sink_name`,
@@ -541,26 +657,54 @@ export function createBigQueryReportingWarehouseSinkV1(
       // and `current_rows` joins through the revisions table. A rows job that
       // already succeeded is recognised by its job ID and never re-run.
       const steps = [
-        { table: options.rowsTableId, kind: 'rows', lines: rowLines, attempt: plan.rowsAttempt },
-        { table: options.revisionsTableId, kind: 'revs', lines: revisionLines, attempt: plan.revisionsAttempt },
+        {
+          table: options.rowsTableId,
+          role: 'rows',
+          kind: 'rows',
+          lines: rowLines,
+          attempt: plan.rowsAttempt,
+          timeouts: plan.rowsTimeouts,
+          timeoutColumn: 'planned_rows_timeouts',
+          attemptColumn: 'planned_rows_attempt',
+        },
+        {
+          table: options.revisionsTableId,
+          role: 'revisions',
+          kind: 'revs',
+          lines: revisionLines,
+          attempt: plan.revisionsAttempt,
+          timeouts: plan.revisionsTimeouts,
+          timeoutColumn: 'planned_revisions_timeouts',
+          attemptColumn: 'planned_revisions_attempt',
+        },
       ] as const;
       for (const step of steps) {
         if (!step.lines.length) continue;
         try {
           await loadOnce(
+            step.role,
             step.table,
             `${baseJobId}_${step.kind}${suffix(step.attempt)}`,
             [...step.lines],
-            step.attempt,
+            step.timeouts,
             signal
           );
         } catch (error) {
           if (isFinishedWithError(error)) {
-            const column = step.kind === 'rows' ? 'planned_rows_attempt' : 'planned_revisions_attempt';
+            // Only a job BigQuery reports as finished with an error changes the job ID.
             await options.db.query(
-              `UPDATE adcp_reporting_warehouse_sinks SET ${column} = ${column} + 1,
+              `UPDATE adcp_reporting_warehouse_sinks SET ${step.attemptColumn} = ${step.attemptColumn} + 1,
                       updated_at = clock_timestamp() ${matchesPlan}`,
               planValues
+            );
+          } else if (isLoadTimedOut(error)) {
+            // The job may exist in the background, so the job ID stays; the table's next run gets a longer
+            // deadline. Conditioning on the value this run read lets overlapping runs grow it once.
+            await options.db.query(
+              `UPDATE adcp_reporting_warehouse_sinks
+                  SET ${step.timeoutColumn} = $8::integer + 1, updated_at = clock_timestamp()
+                ${matchesPlan} AND ${step.timeoutColumn} = $8::integer`,
+              [...planValues, step.timeouts]
             );
           }
           throw error;
@@ -570,7 +714,7 @@ export function createBigQueryReportingWarehouseSinkV1(
         `UPDATE adcp_reporting_warehouse_sinks
             SET committed_cursor = $3, planned_from_cursor = NULL, planned_to_cursor = NULL,
                 planned_revisions = NULL, planned_rows_attempt = 0, planned_revisions_attempt = 0,
-                updated_at = clock_timestamp()
+                planned_rows_timeouts = 0, planned_revisions_timeouts = 0, updated_at = clock_timestamp()
           ${matchesPlan} RETURNING sink_name`,
         planValues
       );
@@ -581,7 +725,13 @@ export function createBigQueryReportingWarehouseSinkV1(
   };
 }
 
-/** 42703 undefined_column: a sink table created before `reset_generation` existed. */
+interface UploadEntry {
+  startedAt: number;
+  done: Promise<unknown>;
+  directory?: string;
+}
+
+/** 42703 undefined_column: a sink table created before `reset_generation` or the deadline columns existed. */
 function missingMigration(error: unknown): never {
   if ((error as { code?: unknown } | null)?.code === '42703') {
     throw new Error(
@@ -590,6 +740,14 @@ function missingMigration(error: unknown): never {
     );
   }
   throw error;
+}
+
+/**
+ * How long one run may upload a file or wait for a running job: the configured
+ * base doubled once per earlier timeout of that table's load, capped at 6 hours.
+ */
+export function reportingWarehouseLoadDeadlineV1(baseMilliseconds: number, timeouts: number): number {
+  return Math.min(baseMilliseconds * 2 ** Math.min(Math.max(timeouts, 0), MAX_TIMEOUT_DOUBLINGS), MAX_LOAD_TIMEOUT);
 }
 
 /** Deterministic load job ID for one planned change-feed range. */
@@ -692,7 +850,12 @@ function sourceLocalDate(start: string | undefined, timeZone: string | undefined
  * client takes no abort signal, so an abandoned call may still complete in
  * the background; deterministic job IDs make that harmless.
  */
-async function withinDeadline<T>(operation: () => Promise<T>, milliseconds: number, signal?: AbortSignal): Promise<T> {
+async function withinDeadline<T>(
+  operation: () => Promise<T>,
+  milliseconds: number,
+  signal?: AbortSignal,
+  context?: string
+): Promise<T> {
   signal?.throwIfAborted();
   let timer: NodeJS.Timeout | undefined;
   let onAbort: (() => void) | undefined;
@@ -701,7 +864,9 @@ async function withinDeadline<T>(operation: () => Promise<T>, milliseconds: numb
       operation(),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
-          const error = new Error('BigQuery call exceeded its deadline; the batch will be retried');
+          const error = new Error(
+            `BigQuery call exceeded its deadline${context ? ` of ${milliseconds} ms for ${context}` : ''}; the batch will be retried`
+          );
           Object.defineProperty(error, 'adcpDeadlineExceeded', { value: true });
           reject(error);
         }, milliseconds);
@@ -726,20 +891,26 @@ function isAlreadyExists(error: unknown): boolean {
   return record?.code === 409 || !!record?.errors?.some(entry => entry.reason === 'duplicate');
 }
 
-function isFinishedWithError(error: unknown): boolean {
-  return (error as { adcpJobFailed?: unknown } | undefined)?.adcpJobFailed === true;
+function isLoadTimedOut(error: unknown): boolean {
+  return (error as { adcpLoadTimedOut?: unknown } | undefined)?.adcpLoadTimedOut === true;
 }
 
-function assertJobSucceeded(metadata: unknown): void {
-  const record = (Array.isArray(metadata) ? metadata[0] : metadata) as
-    | { status?: { state?: string; errorResult?: unknown } }
-    | undefined;
-  if (record?.status?.state !== 'DONE') {
-    throw new Error('A BigQuery load job for this batch is still running; retry later');
-  }
-  if (record.status.errorResult) {
-    const failure = new Error('A BigQuery load job for this batch failed; it will be retried as a new attempt');
-    Object.defineProperty(failure, 'adcpJobFailed', { value: true });
-    throw failure;
-  }
+/** Sleep, ending early (rejecting) when the caller aborts. */
+function sleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason ?? new Error('aborted'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, milliseconds);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function isFinishedWithError(error: unknown): boolean {
+  return (error as { adcpJobFailed?: unknown } | undefined)?.adcpJobFailed === true;
 }

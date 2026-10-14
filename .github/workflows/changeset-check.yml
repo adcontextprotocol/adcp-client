@@ -2,7 +2,7 @@ name: changeset-check
 
 on:
   pull_request:
-    branches: [main, release/15.9.0]
+    branches: [main, 15.9.x]
 
 permissions:
   contents: read
@@ -14,17 +14,17 @@ jobs:
 
     steps:
       - name: Skip for release PRs
-        if: github.head_ref == 'changeset-release/main' || (github.base_ref == 'release/15.9.0' && github.head_ref == 'changeset-release/15.9.0')
+        if: github.head_ref == 'changeset-release/main' || (github.base_ref == '15.9.x' && github.head_ref == 'changeset-release/15.9.x')
         run: echo "Release PR — changeset not required"
 
       - name: Checkout code
-        if: github.head_ref != 'changeset-release/main' && (github.base_ref != 'release/15.9.0' || github.head_ref != 'changeset-release/15.9.0')
+        if: github.head_ref != 'changeset-release/main' && (github.base_ref != '15.9.x' || github.head_ref != 'changeset-release/15.9.x')
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Detect release metadata-only change
-        if: github.head_ref != 'changeset-release/main' && (github.base_ref != 'release/15.9.0' || github.head_ref != 'changeset-release/15.9.0')
+        if: github.head_ref != 'changeset-release/main' && (github.base_ref != '15.9.x' || github.head_ref != 'changeset-release/15.9.x')
         id: release-metadata
         env:
           CHANGESET_BASE: ${{ github.base_ref }}
@@ -62,18 +62,18 @@ jobs:
           fi
 
       - name: Setup Node.js
-        if: github.head_ref != 'changeset-release/main' && (github.base_ref != 'release/15.9.0' || github.head_ref != 'changeset-release/15.9.0') && steps.release-metadata.outputs.skip != 'true'
+        if: github.head_ref != 'changeset-release/main' && (github.base_ref != '15.9.x' || github.head_ref != 'changeset-release/15.9.x') && steps.release-metadata.outputs.skip != 'true'
         uses: actions/setup-node@v5
         with:
           node-version: '24.x'
           cache: 'npm'
 
       - name: Install dependencies
-        if: github.head_ref != 'changeset-release/main' && (github.base_ref != 'release/15.9.0' || github.head_ref != 'changeset-release/15.9.0') && steps.release-metadata.outputs.skip != 'true'
+        if: github.head_ref != 'changeset-release/main' && (github.base_ref != '15.9.x' || github.head_ref != 'changeset-release/15.9.x') && steps.release-metadata.outputs.skip != 'true'
         run: npm ci
 
       - name: Check for changeset
-        if: github.head_ref != 'changeset-release/main' && (github.base_ref != 'release/15.9.0' || github.head_ref != 'changeset-release/15.9.0') && steps.release-metadata.outputs.skip != 'true'
+        if: github.head_ref != 'changeset-release/main' && (github.base_ref != '15.9.x' || github.head_ref != 'changeset-release/15.9.x') && steps.release-metadata.outputs.skip != 'true'
         env:
           CHANGESET_BASE: ${{ github.base_ref }}
         run: npx changeset status --since="origin/$CHANGESET_BASE"

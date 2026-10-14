@@ -22,6 +22,9 @@ const baseEnv = () => ({
   GCS_BUCKET: 'rows-bucket',
 });
 
+const slowUploadCheck =
+  '[#3234] an upload slower than the load deadline converges, loads the rows once, and is not uploaded again once its job exists';
+
 describe('validate-reporting-gcp configuration', () => {
   let script;
   before(async () => {
@@ -163,6 +166,10 @@ describe(
         'load jobs exist in the destination project and location with deterministic job IDs',
         'current_rows returns exactly one revision per obligation',
         'crash replay: no duplicate rows or revisions in BigQuery',
+        'deadline: a run past its deadline rejects, keeps the plan and the job ID, and grows that table deadline',
+        'deadline: the job BigQuery created ends DONE without an error (nothing cancelled it)',
+        'deadline: later runs converge with the rows loaded once, the same job ID and no second upload',
+        slowUploadCheck,
         'runReportingRowObjectProviderConformanceV1',
         'read the revision back from GCS, verified against the recorded digests',
       ]) {
@@ -175,17 +182,11 @@ describe(
         ),
         'PASS'
       );
-      assert.equal(
-        statusOf(
-          report,
-          'BigQuery accepts a cancel addressed with the destination project and location, and refuses wrong addresses'
-        ),
-        'PASS'
-      );
       assert.deepEqual(bigquery.state.droppedLoadFields, [], 'the service dropped nothing the sink sent');
-      assert.ok(
-        bigquery.state.cancels.some(entry => entry.projectId === 'dest-project-1' && entry.location === 'US'),
-        'the addressing check cancelled a job in the destination project and location'
+      assert.deepEqual(
+        bigquery.state.cancels.map(entry => entry.jobId).filter(id => !id.startsWith('adcp_cancel_probe_')),
+        [],
+        'the sink never cancels a load; only the service probe does'
       );
       const probes = report.entries.filter(entry => /#3196/.test(entry.name));
       assert.equal(probes.length, 2);
@@ -204,17 +205,16 @@ describe(
       assert.equal(statusOf(report, 'delete the temporary BigQuery dataset'), 'PASS');
     });
 
-    test('a cross-project run completes and cleans up; any failure is the known replay-lookup gap', async () => {
+    test('a cross-project run passes and cleans up', async () => {
       const bigquery = createFakeBigQuery({ clientProject: 'client-project-1' });
       const { config, report } = await execute({ GCP_CLIENT_PROJECT: 'client-project-1' }, ['--skip-gcs'], {
         clientProject: 'client-project-1',
         bigquery,
         storage: createFakeStorage(),
       });
-      // Before PR #3197 the replay status check ignores the destination project, which the
-      // crash-replay check is there to catch. Everything else must pass either way.
+      // The crash replay's status check and the deadline lookups must address the destination project.
       assert.deepEqual(
-        report.failures.filter(entry => !/^crash replay/.test(entry.name)).map(entry => entry.name),
+        report.failures.map(entry => `${entry.name}: ${entry.detail}`),
         []
       );
       assert.equal(
@@ -240,6 +240,107 @@ describe(
         'FAIL'
       );
       assert.deepEqual(bigquery.state.deletedDatasets, [`dest-project-1.${config.datasetId}`]);
+    });
+
+    test('a load still running at its deadline is found by its job ID on the next run, never cancelled or uploaded again', async () => {
+      const bigquery = createFakeBigQuery({
+        clientProject: 'client-project-1',
+        loadDurationMs: tableId => (tableId === 'deadline_rows' ? 1_200 : 0),
+      });
+      const { report } = await execute({ GCP_CLIENT_PROJECT: 'client-project-1' }, ['--skip-gcs'], {
+        clientProject: 'client-project-1',
+        bigquery,
+        storage: createFakeStorage(),
+      });
+      for (const name of [
+        'deadline: a run past its deadline rejects, keeps the plan and the job ID, and grows that table deadline',
+        'deadline: the job BigQuery created ends DONE without an error (nothing cancelled it)',
+        'deadline: later runs converge with the rows loaded once, the same job ID and no second upload',
+      ]) {
+        assert.equal(statusOf(report, name), 'PASS', name);
+      }
+      const converged = report.entries.find(
+        entry =>
+          entry.name === 'deadline: later runs converge with the rows loaded once, the same job ID and no second upload'
+      );
+      assert.match(converged.detail, /rows job adcp_rr_[0-9a-f]+_rows uploaded once/);
+      assert.ok(
+        !bigquery.state.cancels.some(entry => /_rows(_a\d+)?$/.test(entry.jobId)),
+        'the sink did not cancel the running load'
+      );
+    });
+
+    const detailOf = (report, name) => report.entries.find(entry => entry.name === name)?.detail;
+    const cancelProbe = 'BigQuery and a cancel sent while a load job is running';
+    const slowUpload = slowUploadCheck;
+
+    test('the cancel probe reports whether the service stopped a running load', async () => {
+      const honoring = createFakeBigQuery({
+        clientProject: 'dest-project-1',
+        loadDurationMs: tableId => (tableId === 'cancel_probe' ? 5_000 : 0),
+      });
+      const stopped = await execute({}, ['--skip-gcs'], { clientProject: 'dest-project-1', bigquery: honoring });
+      assert.match(
+        detailOf(stopped.report, cancelProbe),
+        /cancel response showed RUNNING, the job ended DONE stopped \(stopped\), 0 rows landed\. BigQuery honored the cancel\./
+      );
+
+      const finishing = createFakeBigQuery({ clientProject: 'dest-project-1' });
+      const finished = await execute({}, ['--skip-gcs'], { clientProject: 'dest-project-1', bigquery: finishing });
+      assert.match(
+        detailOf(finished.report, cancelProbe),
+        /the job ended DONE successfully, 5000 rows landed\. BigQuery accepted the cancel but let the load finish/
+      );
+    });
+
+    test('the #3234 check passes when every upload outlasts the deadline: the sink converges, loads once, and finds the job', async () => {
+      const bigquery = createFakeBigQuery({
+        clientProject: 'dest-project-1',
+        uploadMs: tableId => (tableId === 'upload_rows' ? 1_300 : 0),
+      });
+      const { report } = await execute({}, ['--skip-gcs'], { clientProject: 'dest-project-1', bigquery });
+      assert.deepEqual(report.failures, []);
+      assert.equal(statusOf(report, slowUpload), 'PASS');
+      const detail = detailOf(report, slowUpload);
+      assert.match(detail, /converged after \d+ run\(s\); rows 50000 \(distinct 50000\)/);
+      assert.doesNotMatch(detail, /too fast to exercise/);
+    });
+
+    test('the #3234 check fails when the sink never converges', async () => {
+      const real = createFakeBigQuery({ clientProject: 'dest-project-1' });
+      // The service refuses every upload into the rows table, so no run can finish.
+      const refusing = {
+        state: real.state,
+        job: real.job,
+        query: real.query,
+        dataset: (datasetId, options) => {
+          const dataset = real.dataset(datasetId, options);
+          return {
+            ...dataset,
+            table: tableId =>
+              tableId === 'upload_rows'
+                ? {
+                    ...dataset.table(tableId),
+                    createLoadJob: async () => {
+                      throw Object.assign(new Error('quota exceeded'), { code: 403 });
+                    },
+                  }
+                : dataset.table(tableId),
+          };
+        },
+      };
+      const { report } = await execute({}, ['--skip-gcs'], { clientProject: 'dest-project-1', bigquery: refusing });
+      assert.equal(statusOf(report, slowUpload), 'FAIL');
+      assert.match(detailOf(report, slowUpload), /did not reach idle in 8 runs.*quota exceeded/);
+    });
+
+    test('the #3234 check notes a link too fast to exercise the timeout path, and still passes', async () => {
+      const bigquery = createFakeBigQuery({ clientProject: 'dest-project-1' });
+      const { report } = await execute({}, ['--skip-gcs'], { clientProject: 'dest-project-1', bigquery });
+      assert.equal(statusOf(report, slowUpload), 'PASS');
+      const detail = detailOf(report, slowUpload);
+      assert.match(detail, /converged after 2 run\(s\)/);
+      assert.match(detail, /The first upload beat the deadline/);
     });
 
     test('--skip-gcs and --skip-bigquery leave the other service untouched', async () => {

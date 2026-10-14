@@ -911,29 +911,53 @@ setInterval(() => {
   `revision_number`, `finality`, `period_date` (the period's date in its source
   timezone) and `ordinal` to your mapped columns.
 - Batches are planned durably before loading, and job IDs derive from the
-  change-feed range. A crash between a load and the cursor commit replays the
-  same batch under the same job ID, which BigQuery refuses to run twice. A job
-  that finished with an error is retried under a new attempt for that table
-  only.
+  change-feed range. Before every submission the sink looks that job ID up in
+  the destination project and location: a job that finished cleanly counts as
+  loaded, a job that is pending or running is waited for (never uploaded
+  again), and only a missing job (404) is uploaded. A crash or timeout between a
+  load and the cursor commit therefore replays the same batch under the same
+  job ID without a second upload. An upload an earlier run abandoned at its
+  deadline is still running in the same process (the official client cannot
+  abort it), so the next run waits for it, within its own deadline, rather than
+  starting another, however long ago it started (that age includes the gap
+  between runs). If that wait outlasts the run's deadline it counts as a timeout
+  and the deadline grows. Only an upload still pending after 6 hours, the
+  largest deadline, is abandoned and replaced; BigQuery refuses a duplicate job
+  ID, so a replacement can never load the batch twice. A job that finished with
+  an error is retried under a new attempt for that table only. Deadline and
+  timeout errors name the table (`rows` or `revisions`, and its ID), the
+  deadline in force and that table's timeout count, never a file path or
+  credential.
 - `projectId` scopes both load submission and replay status checks. When it is
   omitted, both use the BigQuery client's default project. Each replica must
-  be able to read the BigQuery jobs submitted by the other replicas.
-- `loadTimeoutMilliseconds` (default 10 minutes) is a client-side deadline for
-  one load. When a load passes it, the sink asks BigQuery to cancel that job by
-  its deterministic ID, in `projectId` and `location`, and rejects with the
-  plan retained. The next run finds the cancelled job finished with an error,
-  advances that table's attempt and rejects; the run after that loads under the
-  new attempt. If the cancel has not taken effect yet it waits for the job.
-  Each attempt doubles the load deadline (up to 6 hours), so a slow but healthy
-  load converges; set the deadline above your slowest expected load to avoid
-  the cancelled attempts. Cancellation is best effort (BigQuery may finish the
-  job anyway, which the next run then accepts), a failed cancel other than "not
-  found" raises a `ADCP_BIGQUERY_SINK_CANCEL_FAILED` process warning, and a
-  status check that times out is not cancelled. BigQuery's server-side
-  `jobTimeoutMs` is not used: for a local-file load the official client builds
-  `configuration.load` from the load options and cannot set job-level fields,
-  and BigQuery silently drops `labels` and `jobTimeoutMs` found inside
-  `configuration.load`. (Staging the file in GCS and submitting the load with
+  be able to read the BigQuery jobs submitted by the other replicas. Set
+  `location` for any dataset outside the US and EU multi-regions: BigQuery
+  answers a job lookup without the right location with 404, and the sink then
+  cannot find the jobs it created.
+- `loadTimeoutMilliseconds` (default 10 minutes) is the base deadline for one
+  run's work on one load: uploading the file, or waiting for a job that is still
+  running. It bounds a run, not the job. BigQuery does not stop a load when the
+  client gives up (a cancel is accepted and the job finishes anyway), and it
+  refuses a resubmitted job ID only after the whole file is uploaded again, so
+  the sink never cancels and never relies on that refusal. When the deadline
+  passes, the run rejects with the plan retained and nothing advanced: the job
+  ID, the attempt and the cursor stay as they were, and the next run looks the
+  job up by its ID again. A job whose upload outlasted a deadline is created in
+  the background and is picked up by the next run with no second upload. Each
+  such timeout doubles that table's deadline for later runs (up to 6 hours).
+  The growth is kept with the plan in `planned_rows_timeouts` and
+  `planned_revisions_timeouts` (so it survives restarts and applies to every
+  replica, and clears when the batch commits), so an upload slower than the
+  deadline eventually gets enough time. Set the deadline above your slowest
+  expected load to avoid the extra runs. Only a job BigQuery reports as
+  finished with an error advances the attempt. A status check that times out
+  is bounded by the base deadline and does not grow it. Re-run
+  `REPORTING_WAREHOUSE_SINK_MIGRATION` after upgrading: it adds the two timeout
+  columns (a sink table without them rejects with a message saying so).
+  BigQuery's server-side `jobTimeoutMs` is not used: for a local-file load the
+  official client builds `configuration.load` from the load options and cannot
+  set job-level fields, and BigQuery silently drops `labels` and `jobTimeoutMs`
+  found inside `configuration.load`. (Staging the file in GCS and submitting the load with
   `bigquery.createJob` can set both; the sink does not stage files.) For the
   same reason the `labels` option has no effect (it warns once per process and
   is deprecated). To attribute load cost, query
@@ -974,7 +998,9 @@ setInterval(() => {
   jobs may have succeeded; reconcile the plan against BigQuery, then call
   `reset({ discardRetainedPlan: true })`. It does not touch the warehouse: a sink
   that already loaded history reloads the retained revisions, so empty the
-  destination tables first or use a new sink name against new tables. Every
+  destination tables first (after stopping every worker and letting in-flight
+  uploads and jobs finish, since the sink never cancels a load) or use a new
+  sink name against new tables. Every
   reset starts a new job ID generation, so reloaded batches submit fresh BigQuery
   jobs instead of matching the finished jobs of the earlier history. Nothing holds
   change retention between `reset()` and the first committed batch. If `reset()`

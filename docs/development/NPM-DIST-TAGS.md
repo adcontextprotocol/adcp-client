@@ -9,7 +9,7 @@ dist-tag:
 
 | Tag | SDK line | AdCP line | Published from |
 |---|---|---|---|
-| `latest` | 14.x | 3.2 | `main` |
+| `latest` | 15.9.x | 3.2 | `15.9.x` branch while SDK 16 is beta-only (see below) |
 | `adcp-3.2` | 14.x | 3.2 (current line) | `main`; moved manually after each release (see below) |
 | `adcp-3.1` | 13.x | 3.1 (maintenance line) | `13.x` branch, with `ADCP_NPM_TAG=adcp-3.1` |
 | `adcp-3.0` | 7.11.x | 3.0 | 7.x maintenance releases, with `ADCP_NPM_TAG=adcp-3.0` |
@@ -26,6 +26,14 @@ Do not use bare `3.0`, `3.1`, or `3.2` as npm dist-tags. npm rejects those tag
 names because it parses them as semver ranges.
 
 ## Release Automation
+
+SDK 16 ships only as `beta` prereleases from `main` (Changesets pre-mode), so
+`latest` is maintained from the `15.9.x` branch. Its release workflow publishes
+without `ADCP_NPM_TAG`, which resolves to `latest`, and a pre-publish guard
+refuses to run if the registry `latest` is a prerelease or newer than the
+version being published. Limit `15.9.x` changesets to `@adcp/sdk` and keep them
+`patch`. Once SDK 16 is stable, move `latest` back to `main` and set
+`ADCP_NPM_TAG=sdk-15.9` on the `15.9.x` workflow.
 
 The release workflow publishes with `npm publish --tag latest` via
 `npm run release`. `latest` intentionally tracks the default stable SDK release,
