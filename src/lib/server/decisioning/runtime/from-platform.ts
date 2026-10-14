@@ -9084,7 +9084,10 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
           const indices = ((params.accounts as unknown[]) ?? []).flatMap((_entry, index) =>
             policy.failedRows.has(index) ? [] : [index]
           );
-          const existing = await lookupSyncAccounts(accounts, requested, dispatchCtx, logger, indices);
+          // Preview callbacks own their lookup; do not add resolver side effects to dry runs.
+          const existing = dryRun
+            ? requested.map(() => null)
+            : await lookupSyncAccounts(accounts, requested, dispatchCtx, logger, indices);
           const returned =
             policy.acceptedEntries.length > 0
               ? await accounts.upsert!(policy.acceptedEntries as AccountReference[], {
@@ -9092,14 +9095,17 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
                   existing: structuredClone(existing),
                 })
               : [];
-          const rows = alignSyncAccountRows(returned, requested, existing);
+          const { rows, certain } = alignSyncAccountRows(returned, requested, existing);
           // Missing fields must come from fresh post-write reads, never stale acceptance evidence.
           const missing = dryRun
             ? []
             : rows.flatMap((row, index) =>
                 requested[index] &&
                 row.action !== 'failed' &&
-                (row.billing === undefined || row.payment_terms === undefined)
+                certain[index] &&
+                (row.billing === undefined ||
+                  ((row.billing === 'agent' || requested[index]!.payment_terms !== undefined) &&
+                    row.payment_terms === undefined))
                   ? [index]
                   : []
               );
@@ -9116,6 +9122,15 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
           return rows.map((row, index) => {
             const entry = requested[index];
             if (!entry) return row;
+            if (!certain[index]) {
+              if (row.action !== 'failed')
+                emitAccountDiagnostic(accounts, logger, {
+                  code: 'ACCOUNT_SYNC_ROW_UNMATCHED',
+                  toolName: 'sync_accounts',
+                  index: indices[index]!,
+                });
+              return row;
+            }
             const ref = syncNaturalKey(entry);
             const key = ref ? accountReferenceKey(ref) : undefined;
             const checked = checkSyncAccountRow(
@@ -9127,7 +9142,8 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
               indices[index]!,
               current.get(index) ?? null,
               dryRun,
-              existing[index]?.id ?? (key ? seen.get(key) : undefined)
+              existing[index]?.id ?? (key ? seen.get(key) : undefined),
+              existing[index] === null && key !== undefined && seen.has(key)
             );
             if (key && !seen.has(key) && checked.action !== 'failed' && checked.account_id !== undefined)
               seen.set(key, checked.account_id);

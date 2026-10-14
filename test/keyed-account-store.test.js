@@ -1,5 +1,5 @@
 'use strict';
-const { test, describe } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   createKeyedAccountStore,
@@ -28,7 +28,13 @@ function createAccount(ref, id) {
   };
 }
 function factory(backend, extra = {}) {
-  return createKeyedAccountStore({ backend, namespace: 'test-seller', createAccount, ...extra });
+  return createKeyedAccountStore({
+    backend,
+    namespace: 'test-seller',
+    principalKey: ctx => ctx.authInfo?.credential?.key_id,
+    createAccount,
+    ...extra,
+  });
 }
 
 function backendContract(name, makeBackend) {
@@ -80,6 +86,9 @@ function backendContract(name, makeBackend) {
     const first = (await store.upsert([entry], ctx))[0];
     const rejected = (await store.upsert([{ ...entry, payment_terms: 'net_30' }], ctx))[0];
     assert.equal(rejected.action, 'failed');
+    assert.equal(rejected.account_id, first.account_id);
+    assert.equal(rejected.status, 'active');
+    assert.equal(rejected.payment_terms, 'net_60');
     assert.equal(rejected.errors[0].code, 'PAYMENT_TERMS_NOT_SUPPORTED');
     assert.equal((await store.resolve(entry, ctx)).payment_terms, 'net_60');
     const updated = factory(backend, {
@@ -146,7 +155,7 @@ test('Postgres table identifiers are validated before interpolation', () => {
 
 if (process.env.DATABASE_URL) {
   const { Pool } = require('pg');
-  const { before, after } = require('node:test');
+  const { after } = require('node:test');
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   let counter = 0;
   const tables = [];
@@ -399,3 +408,118 @@ test('callback inputs allow only schema request fields and require explicit bill
   assert.equal(result.action, 'failed');
   assert.equal(result.errors[0].code, 'UNSUPPORTED_FEATURE');
 });
+
+test('canonical domain/country validation cannot create alternate accounts for invalid variants', async () => {
+  const store = factory(keyedAccountMemoryBackend());
+  await store.upsert([entry], ctx);
+  for (const variant of [
+    { ...entry, brand: { domain: 'Acme.example' } },
+    { ...entry, operator: 'Agency.example' },
+    { ...entry, brand: { domain: 'acme.example', countries: ['us'] } },
+    { ...entry, brand: { domain: 'acme.example', countries: ['US', 'US'] } },
+  ]) {
+    await assert.rejects(store.upsert([variant], ctx), error => error.code === 'INVALID_REQUEST');
+  }
+  assert.equal((await store.list({}, ctx)).items.length, 1);
+});
+
+test('stable caller scopes preserve accounts across credential rotations', async () => {
+  const store = factory(keyedAccountMemoryBackend(), { principalKey: ctx => ctx.authInfo?.extra?.tenantId });
+  const before = { ...ctx, authInfo: { ...ctx.authInfo, extra: { tenantId: 'buyer-company' } } };
+  const after = {
+    ...ctx,
+    authInfo: { credential: { kind: 'api_key', key_id: 'rotated-key' }, extra: { tenantId: 'buyer-company' } },
+  };
+  const first = (await store.upsert([entry], before))[0];
+  const second = (await store.upsert([entry], after))[0];
+  assert.equal(second.account_id, first.account_id);
+  assert.equal(second.action, 'unchanged');
+});
+
+test('unsupported notification and reporting declarations are refused without a write', async () => {
+  const store = factory(keyedAccountMemoryBackend());
+  for (const field of ['notification_configs', 'reporting_delivery_configs', 'preferred_reporting_protocol']) {
+    const response = (await store.upsert([{ ...entry, [field]: [] }], ctx))[0];
+    assert.equal(response.action, 'failed');
+    assert.equal(response.errors[0].code, 'UNSUPPORTED_FEATURE');
+    assert.equal(await store.resolve(entry, ctx), null);
+  }
+});
+
+test('dry previews use only backend reads, without opening a write transaction', async () => {
+  const backend = keyedAccountMemoryBackend();
+  const store = factory({
+    read: scope => backend.read(scope),
+    transaction() {
+      throw new Error('preview must not acquire a write lock');
+    },
+  });
+  assert.equal((await store.upsert([entry], { ...ctx, input: { dry_run: true } }))[0].action, 'created');
+});
+
+test('same-principal PostgreSQL writers queue before acquiring connections across backend instances', async () => {
+  let connections = 0;
+  const pool = {
+    async connect() {
+      connections++;
+      return {
+        async query() {
+          return { rows: [{ records: [] }] };
+        },
+        release() {},
+      };
+    },
+  };
+  let unblock;
+  const gate = new Promise(resolve => {
+    unblock = resolve;
+  });
+  let started;
+  const ready = new Promise(resolve => {
+    started = resolve;
+  });
+  const first = keyedAccountPgBackend(pool).transaction('busy', async records => {
+    started();
+    await gate;
+    return { records, value: 'first' };
+  });
+  await ready;
+  const second = keyedAccountPgBackend(pool).transaction('busy', async records => ({ records, value: 'second' }));
+  assert.equal(
+    await keyedAccountPgBackend(pool).transaction('other', async records => ({ records, value: 'other' })),
+    'other'
+  );
+  assert.equal(connections, 2);
+  unblock();
+  assert.deepEqual(await Promise.all([first, second]), ['first', 'second']);
+  assert.equal(connections, 3);
+});
+
+if (process.env.DATABASE_URL) {
+  test('PostgreSQL lock waits are bounded while unrelated principals remain available', async () => {
+    const { Pool } = require('pg');
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 3 });
+    const tableName = `keyed_accounts_lock_${process.pid}`;
+    let lock;
+    try {
+      await pool.query(getKeyedAccountMigration({ tableName }));
+      await pool.query(`INSERT INTO "${tableName}" (scope) VALUES ('busy')`);
+      lock = await pool.connect();
+      await lock.query('BEGIN');
+      await lock.query(`SELECT records FROM "${tableName}" WHERE scope = 'busy' FOR UPDATE`);
+      const backend = keyedAccountPgBackend(pool, { tableName, lockTimeoutMs: 150 });
+      const blocked = backend.transaction('busy', async records => ({ records, value: 'blocked' }));
+      const refused = assert.rejects(blocked, error => error.cause?.code === '55P03');
+      assert.deepEqual(await backend.read('other'), []);
+      assert.equal(await backend.transaction('other', async records => ({ records, value: 'available' })), 'available');
+      await refused;
+    } finally {
+      if (lock) {
+        await lock.query('ROLLBACK');
+        lock.release();
+      }
+      await pool.query(`DROP TABLE IF EXISTS "${tableName}"`);
+      await pool.end();
+    }
+  });
+}

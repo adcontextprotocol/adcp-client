@@ -12,7 +12,6 @@ import {
   type SyncAccountsResultRow,
 } from '../server/decisioning/account';
 import { syncNaturalKey } from '../server/decisioning/account-contract';
-import { defaultImplicitKeyFn } from './implicit-account-store';
 
 export interface KeyedAccountRecord<TCtxMeta = Record<string, unknown>> {
   key: string;
@@ -56,7 +55,9 @@ export interface KeyedAccountStoreOptions<TCtxMeta = Record<string, unknown>> {
   /** Maximum serialized bytes per record. Default 64 KiB. */
   maxAccountBytes?: number;
   /** Stable, authenticated tenant identity. Never derive from buyer request fields or raw tokens. */
-  principalKey?: (ctx: ResolveContext) => string | undefined;
+  principalKey: (ctx: ResolveContext) => string | undefined;
+  /** Receive the framework's secret-free contract diagnostics. */
+  onDiagnostic?: AccountStore<TCtxMeta>['onDiagnostic'];
   /** Construct a real account with the supplied deterministic id. No external writes; runs inside a transaction. */
   createAccount: (
     ref: KeyedAccountSyncEntry,
@@ -79,6 +80,8 @@ export function createKeyedAccountStore<TCtxMeta = Record<string, unknown>>(
 ): AccountStore<TCtxMeta> {
   if (typeof options.namespace !== 'string' || !options.namespace.trim() || options.namespace.length > 256)
     throw new Error('A seller namespace of 1–256 characters is required.');
+  if (typeof options.principalKey !== 'function')
+    throw new Error('A stable authenticated principalKey callback is required.');
   const maxAccounts = options.maxAccountsPerPrincipal ?? 1000;
   const maxBytes = options.maxBytesPerPrincipal ?? 8 * 1024 * 1024;
   const maxSyncEntries = options.maxSyncEntries ?? 100;
@@ -97,11 +100,7 @@ export function createKeyedAccountStore<TCtxMeta = Record<string, unknown>>(
   }
   const scopeFor = (ctx?: ResolveContext): string | undefined => {
     if (!ctx) return;
-    const principal = options.principalKey
-      ? options.principalKey(ctx)
-      : ctx.authInfo
-        ? defaultImplicitKeyFn(ctx.authInfo)
-        : undefined;
+    const principal = options.principalKey(ctx);
     if (!principal) return;
     return digest([options.namespace, principal]);
   };
@@ -131,6 +130,7 @@ export function createKeyedAccountStore<TCtxMeta = Record<string, unknown>>(
   return {
     resolution: 'implicit',
     strictIdempotency: true,
+    onDiagnostic: options.onDiagnostic,
     async resolve(ref, ctx) {
       const scope = scopeFor(ctx);
       if (!scope) return null;
@@ -154,15 +154,30 @@ export function createKeyedAccountStore<TCtxMeta = Record<string, unknown>>(
         throw new AdcpError('UNSUPPORTED_FEATURE', {
           message: 'The keyed account store does not support delete_missing.',
         });
-      const result = await options.backend.transaction(scope, async records => {
+      const update: Parameters<KeyedAccountBackend<TCtxMeta>['transaction']>[1] = async records => {
         const sizes = records.map(record => Buffer.byteLength(JSON.stringify(record)));
         let byteCount = 2 + Math.max(0, records.length - 1) + sizes.reduce((sum, size) => sum + size, 0);
         const rows: SyncAccountsResultRow[] = [];
-        for (const entry of entries) {
+        for (const [entryIndex, entry] of entries.entries()) {
           const ref = syncNaturalKey(entry as unknown as Record<string, unknown>);
           if (!ref || 'account_id' in ref)
             throw new AdcpError('UNSUPPORTED_PROVISIONING', {
               message: 'The keyed account store accepts brand + operator natural keys only.',
+              field: `accounts[${entryIndex}].account`,
+            });
+          const domain = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
+          const countries = ref.brand.countries;
+          if (
+            !domain.test(ref.brand.domain) ||
+            !domain.test(ref.operator) ||
+            (countries !== undefined &&
+              (!Array.isArray(countries) ||
+                countries.length === 0 ||
+                countries.some(country => typeof country !== 'string' || !/^[A-Z]{2}$/.test(country)) ||
+                new Set(countries).size !== countries.length))
+          )
+            throw new AdcpError('INVALID_REQUEST', {
+              message: 'Account keys require lowercase domains and unique uppercase ISO country codes.',
             });
           const key = accountReferenceKey(ref);
           const index = records.findIndex(record => record.key === key);
@@ -179,6 +194,17 @@ export function createKeyedAccountStore<TCtxMeta = Record<string, unknown>>(
           const requestedBilling = normalizedEntry.billing;
           const requestedTerms = normalizedEntry.payment_terms;
           try {
+            if (
+              [
+                'preferred_reporting_protocol',
+                'reporting_delivery_configs',
+                'notification_configs',
+                'destination_billing_entity',
+              ].some(field => field in entry)
+            )
+              throw new AdcpError('UNSUPPORTED_FEATURE', {
+                message: 'The keyed account store does not support notification or reporting delivery settings.',
+              });
             if ('operator_identity' in entry || 'revision' in entry)
               throw new AdcpError('UNSUPPORTED_FEATURE', {
                 message: 'The keyed account store does not support identity reconciliation or revision guards.',
@@ -262,15 +288,21 @@ export function createKeyedAccountStore<TCtxMeta = Record<string, unknown>>(
               brand: ref.brand,
               operator: ref.operator,
               action: 'failed',
-              status: 'rejected',
+              status: existing?.status ?? 'rejected',
+              ...(existing && { account_id: existing.id }),
+              ...(ref.sandbox !== undefined && { sandbox: ref.sandbox }),
+              ...(existing && { billing: toWireAccount(existing).billing, payment_terms: existing.payment_terms }),
               errors: [err.toStructuredError()],
             });
           }
         }
         return { records, value: rows, commit: !dryRun };
-      });
+      };
+      const result = dryRun
+        ? (await update(await options.backend.read(scope))).value
+        : await options.backend.transaction(scope, update);
       readEpoch++;
-      return result;
+      return result as SyncAccountsResultRow[];
     },
     async list(filter, ctx) {
       const scope = scopeFor(ctx);

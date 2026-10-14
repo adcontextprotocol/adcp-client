@@ -453,10 +453,16 @@ export interface AccountToolContext<TCtxMeta = Record<string, unknown>> extends 
   account: Account<TCtxMeta>;
 }
 
+/** Credential-free identity and commercial snapshot used during account sync. */
+export type AccountSyncSnapshot<TCtxMeta = Record<string, unknown>> = Omit<
+  Account<TCtxMeta>,
+  'ctx_metadata' | 'authInfo'
+>;
+
 /** Context for a batch upsert; existing[i] corresponds to refs[i]. */
 export interface AccountUpsertContext<TCtxMeta = Record<string, unknown>> extends ResolveContext {
   /** Principal-scoped lookup snapshots, or null for a new/non-natural-key entry. */
-  readonly existing?: readonly (Readonly<Account<TCtxMeta>> | null)[];
+  readonly existing?: readonly (Readonly<AccountSyncSnapshot<TCtxMeta>> | null)[];
 }
 
 /** Secret-free, server-side account contract diagnostic. */
@@ -464,6 +470,8 @@ export interface AccountStoreDiagnostic {
   code:
     | 'ACCOUNT_IDEMPOTENCY_VIOLATION'
     | 'PAYMENT_TERMS_MISMATCH'
+    | 'BILLING_MISMATCH'
+    | 'ACCOUNT_SYNC_ROW_UNMATCHED'
     | 'ACCOUNT_BILLING_INCOMPLETE'
     | 'ACCOUNT_LOOKUP_FAILED';
   toolName: 'sync_accounts' | 'list_accounts';

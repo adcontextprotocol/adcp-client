@@ -91,7 +91,8 @@ test('lookup is principal scoped, includes full natural key, and passes aligned 
     },
     upsert: async (refs, ctx) => {
       assert.equal(refs.length, 2);
-      assert.deepEqual(ctx.existing, [account, null]);
+      const { ctx_metadata, ...snapshot } = account;
+      assert.deepEqual(ctx.existing, [snapshot, null]);
       assert.equal(ctx.authInfo.credential.key_id, 'buyer');
       assert.notEqual(ctx.existing[0], account);
       return [
@@ -151,16 +152,20 @@ test('explicit active terms mismatch becomes PAYMENT_TERMS_NOT_SUPPORTED in stri
   }
 });
 
-test('pending approval/rejected/failed rows do not trigger active payment-term failures', async () => {
+test('pending rows may omit terms but cannot explicitly remap them; rejected rows are not graded', async () => {
   for (const status of ['pending_approval', 'rejected']) {
     const { call, diagnostics } = setup({
       strictIdempotency: true,
       resolve: async () => null,
       upsert: async () => [{ ...row, status, action: 'created', billing: 'agent', payment_terms: 'net_30' }],
     });
-    const result = await call();
-    assert.equal(result.structuredContent.accounts[0].status, status);
-    assert.deepEqual(diagnostics, []);
+    const response = (await call()).structuredContent.accounts[0];
+    assert.equal(response.status, status);
+    assert.equal(response.action, status === 'pending_approval' ? 'failed' : 'created');
+    assert.equal(
+      diagnostics.some(d => d.code === 'PAYMENT_TERMS_MISMATCH'),
+      status === 'pending_approval'
+    );
   }
 });
 
@@ -281,7 +286,7 @@ test('adopter mutations cannot rewrite the requested commercial contract or nest
     resolve: async () => account,
     upsert: async (refs, ctx) => {
       ctx.existing[0].billing.invoicedTo = 'operator';
-      ctx.existing[0].ctx_metadata.changed = true;
+      assert.equal(ctx.existing[0].ctx_metadata, undefined);
       refs[0].payment_terms = 'net_30';
       return [{ ...row, action: 'updated', billing: 'agent', payment_terms: 'net_30' }];
     },
@@ -431,4 +436,172 @@ test('a failed post-write read diagnoses uncertainty without claiming unsupporte
     diagnostics.some(d => d.code === 'PAYMENT_TERMS_MISMATCH'),
     false
   );
+});
+
+test('dry runs do not add natural-key resolver calls and provide null snapshots', async () => {
+  let naturalLookups = 0;
+  const { call } = setup({
+    strictIdempotency: true,
+    resolve: async ref => {
+      if (ref) {
+        naturalLookups++;
+        throw new Error('must not run in preview');
+      }
+      return null;
+    },
+    upsert: async (_refs, ctx) => {
+      assert.deepEqual(ctx.existing, [null]);
+      return [{ ...row, action: 'updated', billing: 'agent', payment_terms: 'net_60' }];
+    },
+  });
+  const result = await call([entry], { dry_run: true });
+  assert.notEqual(result.isError, true);
+  assert.equal(naturalLookups, 0);
+});
+
+test('optional account ID omission does not imply a changed identity', async () => {
+  const { call } = setup({
+    strictIdempotency: true,
+    resolve: async () => account,
+    upsert: async () => [
+      { ...row, account_id: undefined, action: 'unchanged', billing: 'agent', payment_terms: 'net_60' },
+    ],
+  });
+  assert.equal((await call()).structuredContent.accounts[0].action, 'unchanged');
+});
+
+test('a batch may report one created resource for identical entries without a false identity violation', async () => {
+  const source = {
+    ...row,
+    account_id: 'one-created-account',
+    action: 'created',
+    billing: 'agent',
+    payment_terms: 'net_60',
+  };
+  const { call, diagnostics } = setup({
+    strictIdempotency: true,
+    resolve: async () => null,
+    upsert: async () => [source, source],
+  });
+  assert.deepEqual(
+    (await call([entry, entry])).structuredContent.accounts.map(row => row.action),
+    ['created', 'created']
+  );
+  assert.deepEqual(diagnostics, []);
+});
+
+test('credential and private metadata objects never enter existing-account snapshots', async () => {
+  const privateAccount = {
+    ...account,
+    ctx_metadata: { client: () => 'private' },
+    authInfo: { refresh: () => 'secret' },
+    notification_configs: [{ authentication: { credentials: 'secret' } }],
+    billing_entity: { legal_name: 'Acme', bank: { iban: 'private' } },
+  };
+  const { call, diagnostics } = setup({
+    strictIdempotency: true,
+    resolve: async () => privateAccount,
+    upsert: async (_refs, ctx) => {
+      assert.equal(ctx.existing[0].authInfo, undefined);
+      assert.equal(ctx.existing[0].notification_configs, undefined);
+      assert.equal(ctx.existing[0].billing_entity.bank, undefined);
+      assert.equal(ctx.existing[0].ctx_metadata, undefined);
+      return [{ ...row, billing: 'agent', payment_terms: 'net_60' }];
+    },
+  });
+  assert.equal((await call()).structuredContent.accounts[0].action, 'unchanged');
+  assert.deepEqual(diagnostics, []);
+});
+
+test('ambiguous new-key echoes cannot impose another entry’s commercial contract', async () => {
+  const entries = [
+    { ...entry, currency: 'USD' },
+    { ...entry, currency: 'EUR', payment_terms: 'net_30' },
+  ];
+  const { call, diagnostics } = setup({
+    strictIdempotency: true,
+    resolve: async () => null,
+    upsert: async () => [
+      { ...row, account_id: 'euro', action: 'created', billing: 'agent', payment_terms: 'net_30' },
+      { ...row, account_id: 'dollar', action: 'created', billing: 'agent', payment_terms: 'net_60' },
+    ],
+  });
+  assert.deepEqual(
+    (await call(entries)).structuredContent.accounts.map(row => row.action),
+    ['created', 'created']
+  );
+  assert.equal(diagnostics.filter(d => d.code === 'ACCOUNT_SYNC_ROW_UNMATCHED').length, 2);
+});
+
+test('partial echoes do not consume a following row’s unique subdivision match', async () => {
+  const entries = [
+    { ...entry, brand: { ...entry.brand, brand_id: 'a' } },
+    { ...entry, brand: { ...entry.brand, brand_id: 'b' }, payment_terms: 'net_30' },
+  ];
+  const { call, diagnostics } = setup({
+    strictIdempotency: true,
+    resolve: async () => null,
+    upsert: async () => [
+      { ...row, account_id: 'b', action: 'created', billing: 'agent', payment_terms: 'net_30' },
+      {
+        ...row,
+        brand: entries[0].brand,
+        account_id: 'a',
+        action: 'created',
+        billing: 'agent',
+        payment_terms: 'net_60',
+      },
+    ],
+  });
+  assert.deepEqual(
+    (await call(entries)).structuredContent.accounts.map(row => row.account_id),
+    ['a', 'b']
+  );
+  assert.deepEqual(diagnostics, []);
+});
+
+test('strict billing remaps preserve the persisted commercial evidence', async () => {
+  const { call, diagnostics } = setup({
+    strictIdempotency: true,
+    resolve: async () => null,
+    upsert: async () => [{ ...row, action: 'created', billing: 'operator', payment_terms: 'net_30' }],
+  });
+  const response = (await call()).structuredContent.accounts[0];
+  assert.equal(response.errors[0].code, 'BILLING_NOT_SUPPORTED');
+  assert.equal(response.account_id, account.id);
+  assert.equal(response.status, 'active');
+  assert.equal(response.billing, 'operator');
+  assert.equal(response.payment_terms, 'net_30');
+  assert.ok(diagnostics.some(d => d.code === 'BILLING_MISMATCH'));
+});
+
+test('an operator-billed update does not inherit stale agent-billing incompleteness or require a terms lookup', async () => {
+  let lookups = 0;
+  const { call, diagnostics } = setup({
+    resolve: async ref => {
+      if (ref) lookups++;
+      return account;
+    },
+    upsert: async () => [{ ...row, action: 'updated', billing: 'operator' }],
+  });
+  const { payment_terms, ...operatorEntry } = entry;
+  await call([{ ...operatorEntry, billing: 'operator' }]);
+  assert.equal(lookups, 1);
+  assert.deepEqual(diagnostics, []);
+});
+
+test('the existing implicit SDK store performs lookup-only sync guards without provisioning side effects', async () => {
+  const { InMemoryImplicitAccountStore } = require('../dist/lib/server');
+  let builds = 0;
+  const store = new InMemoryImplicitAccountStore({
+    buildAccount: async () => {
+      builds++;
+      return structuredClone(account);
+    },
+  });
+  const { call } = setup({ resolve: store.resolve.bind(store), upsert: store.upsert.bind(store) });
+  await call();
+  assert.equal(builds, 1);
+  await call();
+  assert.equal(builds, 2);
 });

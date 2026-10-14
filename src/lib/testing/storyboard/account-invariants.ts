@@ -26,7 +26,12 @@ function matchingEntry(
   const matches = matchingSyncAccountIndices(row, entries).map(index => entries[index]!);
   if (matches.length === 1) return matches[0];
   // Distinct keys with omitted echo subdivisions cannot be paired by response order.
-  const keys = new Set(matches.map(entry => accountReferenceKey(syncNaturalKey(entry)!)));
+  const keys = new Set(
+    matches.map(entry => {
+      const ref = syncNaturalKey(entry);
+      return ref ? accountReferenceKey(ref) : JSON.stringify(object(entry.account));
+    })
+  );
   return keys.size === 1 ? (matches.includes(entries[index]!) ? entries[index] : matches[0]) : undefined;
 }
 
@@ -54,7 +59,10 @@ export function registerAccountInvariants(): void {
     default: true,
     description: 'Account sync preserves natural-key identity and does not explicitly remap active payment terms.',
     onStart(ctx) {
-      ctx.state.identities = new Map<string, { id: string; idempotencyKey: unknown; stepId: string }>();
+      ctx.state.identities = new Map<
+        string,
+        { id: string; idempotencyKey: unknown; stepId: string; requestHash: string }
+      >();
     },
     onStep(ctx: AssertionContext, step: StoryboardStepResult) {
       if (resetAccountProofs(ctx, step)) return [];
@@ -63,7 +71,10 @@ export function registerAccountInvariants(): void {
       const request = object(step.request?.payload);
       if (body.adcp_error || body.dry_run === true || request.dry_run === true) return [];
       const entries = array(request.accounts);
-      const identities = ctx.state.identities as Map<string, { id: string; idempotencyKey: unknown; stepId: string }>;
+      const identities = ctx.state.identities as Map<
+        string,
+        { id: string; idempotencyKey: unknown; stepId: string; requestHash: string }
+      >;
       if (request.delete_missing === true) {
         const prefix = `${callerScope(ctx, step)}:`;
         const retained = new Set(
@@ -90,15 +101,28 @@ export function registerAccountInvariants(): void {
               // Replaying the same request may correctly return the original created row.
               const replay =
                 previous.stepId !== step.step_id &&
-                (body.replayed === true ||
-                  (request.idempotency_key !== undefined && request.idempotency_key === previous.idempotencyKey));
+                request.idempotency_key !== undefined &&
+                request.idempotency_key === previous.idempotencyKey &&
+                createHash('sha256').update(JSON.stringify(request)).digest('hex') === previous.requestHash;
               check(
-                id === previous.id && (replay || row.action === 'updated' || row.action === 'unchanged'),
+                id === previous.id &&
+                  (previous.stepId === step.step_id ||
+                    replay ||
+                    row.action === 'updated' ||
+                    row.action === 'unchanged'),
                 'Repeated natural-key sync preserves account_id and reports updated/unchanged'
               );
-            } else identities.set(key, { id, idempotencyKey: request.idempotency_key, stepId: step.step_id });
+            } else
+              identities.set(key, {
+                id,
+                idempotencyKey: request.idempotency_key,
+                stepId: step.step_id,
+                requestHash: createHash('sha256').update(JSON.stringify(request)).digest('hex'),
+              });
           }
-          if (row.status === 'active' && entry.payment_terms !== undefined && row.payment_terms !== undefined) {
+          if (row.status !== 'rejected' && entry.billing !== undefined && row.billing !== undefined)
+            check(row.billing === entry.billing, 'Account accepts the requested billing model');
+          if (row.status !== 'rejected' && entry.payment_terms !== undefined && row.payment_terms !== undefined) {
             check(row.payment_terms === entry.payment_terms, 'Active account accepts the requested payment_terms');
           }
         }

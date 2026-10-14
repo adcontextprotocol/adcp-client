@@ -82,9 +82,12 @@ test('default invariant accepts optional response omissions; certification compl
   assert.equal(failed(completeness.onStep(ctx, omission)), true);
 });
 
-test('duplicate entries within one request cannot report a second creation', () => {
+test('duplicate entries within one request cannot identify different accounts', () => {
   const ctx = context();
-  const result = spec.onStep(ctx, step([row, row], { accounts: [entry, entry], idempotency_key: 'same-batch' }));
+  const result = spec.onStep(
+    ctx,
+    step([row, { ...row, account_id: 'duplicate' }], { accounts: [entry, entry], idempotency_key: 'same-batch' })
+  );
   assert.equal(failed(result), true);
 });
 
@@ -136,6 +139,7 @@ test('packaged certification storyboard grades repeated syncs and subsequent lis
   for (const mode of ['valid', 'duplicate', 'rejected', 'empty']) {
     const store = createKeyedAccountStore({
       namespace: 'storyboard-test',
+      principalKey: ctx => ctx.authInfo?.credential?.key_id,
       backend: keyedAccountMemoryBackend(),
       createAccount(ref, id) {
         return { ...ref, id, name: 'Account', status: 'active', billing: { invoicedTo: 'agent' }, ctx_metadata: {} };
@@ -196,5 +200,49 @@ test('billing completeness does not join unrelated rows on absent IDs or stale b
       )
     ),
     false
+  );
+});
+
+test('same-batch duplicate rows may share one created account', () => {
+  assert.equal(failed(spec.onStep(context(), step([row, row], { accounts: [entry, entry] }))), false);
+});
+
+test('duplicate account-ID settings entries do not crash either assertion', () => {
+  const request = {
+    accounts: [
+      { account: { account_id: 'acct_1' }, payment_terms: 'net_60' },
+      { account: { account_id: 'acct_1' }, payment_terms: 'net_60' },
+    ],
+  };
+  const response = step(
+    [
+      { ...row, action: 'updated' },
+      { ...row, action: 'unchanged' },
+    ],
+    request
+  );
+  assert.equal(failed(spec.onStep(context(), response)), false);
+  assert.equal(failed(completeness.onStep(context(), response)), false);
+});
+
+test('seller replay claims and changed payloads cannot bypass a fresh-request identity check', () => {
+  for (const request of [
+    { accounts: [entry], idempotency_key: 'new-key' },
+    { accounts: [{ ...entry, payment_terms: 'net_30' }], idempotency_key: 'key-1' },
+  ]) {
+    const ctx = context();
+    spec.onStep(ctx, step([row]));
+    assert.equal(
+      failed(spec.onStep(ctx, step([row], request, { response: { accounts: [row], replayed: true } }))),
+      true
+    );
+  }
+});
+
+test('explicit billing and pending-term remaps fail the default sync assertion', () => {
+  assert.equal(failed(spec.onStep(context(), step([{ ...row, billing: 'operator' }]))), true);
+  assert.equal(
+    failed(spec.onStep(context(), step([{ ...row, status: 'pending_approval', payment_terms: 'net_30' }]))),
+    true
   );
 });
