@@ -4286,6 +4286,8 @@ export class SingleAgentClient {
             code: [
               'directory_unavailable',
               'revocation_unavailable',
+              'revocation_persistence_failed',
+              'replay_unavailable',
               'verification_unavailable',
               'directory_fetch_limit',
             ].includes(cause.reason)
