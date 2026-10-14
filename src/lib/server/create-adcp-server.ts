@@ -4495,12 +4495,8 @@ function buildSignedRequestsPreTransport(
               typeof resolveRequestOperation({ rawBody: req.rawBody, method: req.method, url: req.url }) === 'string',
             replayStore: signedRequests.replayStore,
             isRevoked: signedRequests.webBotAuth.isRevoked,
-            requireFreshRevocation: ![
-              'get_adcp_capabilities',
-              'get_principal',
-              'list_creative_formats',
-              'list_accounts',
-            ].includes(String(resolveRequestOperation({ rawBody: req.rawBody, method: req.method, url: req.url }))),
+            // Revocation status is required for every signed request: an outage
+            // serves nothing under the signature (SERVICE_UNAVAILABLE).
           }
         );
         const operation = resolveRequestOperation({ rawBody: req.rawBody, method: req.method, url: req.url });

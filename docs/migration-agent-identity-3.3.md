@@ -339,6 +339,16 @@ released schemas:
 
 Ratified R2 defaults replay to 429. Older vector negative/002 expects 403;
 `replayStatus: 403` is an explicit compatibility test option, not the default.
+
+Verifier statuses split by cause. A malformed field is 400, a signature that
+does not verify (including a 404/410 key directory or a directory without the
+key) is 403 with `Accept-Signature`, and a replayed nonce is 429. When the
+signer's identity cannot be confirmed because a dependency is out (key
+directory unreachable or 5xx, revocation status unknown or unpersisted, replay
+state unavailable), every signed request gets 503 `SERVICE_UNAVAILABLE` with
+`Retry-After` and no challenge, and nothing is served under that signature: no
+anonymous fallback and no read exemption. Tool calls receive the revocation
+outage as a `SERVICE_UNAVAILABLE` tool error.
 Older #7894 governance vectors propose a superseded migration and are retained
 with their non-applicability recorded in `test/fixtures/wba-profile/PINNED.json`.
 The buyer default onboarding field is `profiles.adcp.onboarding`, matching the

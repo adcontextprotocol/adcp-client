@@ -211,12 +211,8 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
           replayStore,
           isRevoked: options.webBotAuth.isRevoked,
           now: options.now,
-          requireFreshRevocation: ![
-            'get_adcp_capabilities',
-            'get_principal',
-            'list_creative_formats',
-            'list_accounts',
-          ].includes(String(options.resolveOperation(req as IncomingMessage & { rawBody?: string }))),
+          // Revocation status is required for every signed request: an outage
+          // serves nothing under the signature (SERVICE_UNAVAILABLE).
         });
         const principal = await options.webBotAuth.resolvePrincipal(
           signers,

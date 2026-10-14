@@ -41,57 +41,57 @@ const TEST_KIDS = new Set([
   '1XlJ3EIte7bPOEqKQtKrKNTNy5hywTyrwFXWrMbXKqE',
 ]);
 
+/**
+ * The signer's identity cannot be confirmed because a dependency is out:
+ * key directory unfetchable, revocation status unknown or unpersisted,
+ * replay state unavailable. Always 503 SERVICE_UNAVAILABLE, retryable, with
+ * no Accept-Signature challenge; nothing is served under the signature.
+ */
+const OUTAGE_REASONS = new Set([
+  'directory_unavailable',
+  'directory_fetch_limit',
+  'revocation_unavailable',
+  'revocation_persistence_failed',
+  'replay_unavailable',
+  'verification_unavailable',
+]);
+/** Authorization outcomes after verification: never challenged. */
+const NO_CHALLENGE_REASONS = new Set(['key_revoked', 'identity_not_bound', 'profile_disabled']);
 /** HTTP outcome, deliberately separate from the legacy request_signature_* taxonomy. */
 export class WebBotAuthError extends Error {
   readonly headers: Record<string, string>;
+  readonly status: 400 | 403 | 429 | 503;
   get body(): Record<string, unknown> {
-    if (
-      [
-        'key_revoked',
-        'identity_not_bound',
-        'revocation_unavailable',
-        'revocation_persistence_failed',
-        'replay_unavailable',
-      ].includes(this.reason)
-    ) {
-      const transient = this.reason.endsWith('_unavailable') || this.reason === 'revocation_persistence_failed';
-      return {
-        adcp_error: {
-          code: transient ? 'SERVICE_UNAVAILABLE' : 'PERMISSION_DENIED',
-          message: this.message,
-          recovery: transient ? 'transient' : 'correctable',
-        },
-      };
-    }
+    if (this.status === 503)
+      return { adcp_error: { code: 'SERVICE_UNAVAILABLE', message: this.message, recovery: 'transient' } };
+    if (this.reason === 'key_revoked' || this.reason === 'identity_not_bound')
+      return { adcp_error: { code: 'PERMISSION_DENIED', message: this.message, recovery: 'correctable' } };
     return { error: this.message };
   }
   constructor(
-    readonly status: 400 | 403 | 429,
+    status: 400 | 403 | 429 | 503,
     readonly reason: string
   ) {
+    // Outage reasons are 503 whichever status a call site passes.
+    const effective = OUTAGE_REASONS.has(reason) ? 503 : status;
     super(
-      status === 400
+      effective === 400
         ? 'Malformed Web Bot Auth message'
-        : status === 429
+        : effective === 429
           ? 'Web Bot Auth rate limit'
-          : 'Web Bot Auth verification failed'
+          : effective === 503
+            ? 'Web Bot Auth verification is temporarily unavailable'
+            : 'Web Bot Auth verification failed'
     );
     this.name = 'WebBotAuthError';
+    this.status = effective;
     this.headers =
-      status === 403 &&
-      ![
-        'key_revoked',
-        'identity_not_bound',
-        'revocation_unavailable',
-        'revocation_persistence_failed',
-        'replay_unavailable',
-        'profile_disabled',
-      ].includes(reason)
+      effective === 403 && !NO_CHALLENGE_REASONS.has(reason)
         ? {
             'Accept-Signature':
               'sig1=("@method" "@target-uri" "@authority" "content-type" "content-digest" "signature-agent";key="sig1");created;expires;nonce;keyid;tag="web-bot-auth"',
           }
-        : status === 429
+        : effective === 429 || effective === 503
           ? { 'Retry-After': '60' }
           : {};
   }
@@ -326,7 +326,10 @@ export interface VerifyWebBotAuthOptions {
   directory: SignatureDirectoryResolver;
   /** Published fixture keys are allowed only outside production. */
   allowTestKeys?: boolean;
-  /** Unknown revocation state is acceptable only for trusted read operations. */
+  /**
+   * Set `false` only for a deployment-specific, non-identity read path. The SDK's
+   * server integrations never relax it: unknown revocation state is an outage.
+   */
   requireFreshRevocation?: boolean;
   /** SDK server adapters carry verified authorization denials into normal tool errors. */
   deferAuthorizationErrors?: boolean;
@@ -579,7 +582,7 @@ export interface SignatureDirectoryResolverOptions {
 /** Multi-origin discovery. Cache keys never collapse origins sharing a kid. */
 export class SignatureDirectoryResolver implements JwksResolver {
   private readonly cache = new Map<string, { directory: VerifiedSignatureDirectory; freshUntil: number }>();
-  private readonly failures = new Map<string, number>();
+  private readonly failures = new Map<string, { until: number; status: WebBotAuthError['status']; reason: string }>();
   private readonly keyMissCooldown = new Map<string, number>();
   private readonly pending = new Map<string, Promise<VerifiedSignatureDirectory>>();
   constructor(private readonly options: SignatureDirectoryResolverOptions = {}) {}
@@ -593,9 +596,11 @@ export class SignatureDirectoryResolver implements JwksResolver {
       if (key || (this.keyMissCooldown.get(origin) ?? 0) > now) return key ?? null;
       this.keyMissCooldown.set(origin, now + 60);
     }
-    if ((this.failures.get(origin) ?? 0) > now) {
+    const failure = this.failures.get(origin);
+    if (failure && failure.until > now) {
       if (cached && cached.directory.expires > now) return cached.directory.keys.find(k => k.kid === keyid) ?? null;
-      return denied('directory_unavailable');
+      // Replay the cached failure's class: an outage stays 503, absence stays a signature failure.
+      throw new WebBotAuthError(failure.status, failure.reason);
     }
     let pending = this.pending.get(origin);
     if (!pending) {
@@ -630,6 +635,10 @@ export class SignatureDirectoryResolver implements JwksResolver {
         timeoutMs: 10_000,
         maxBodyBytes: 256 * 1024,
       });
+      // A directory that does not exist is a signature failure; any other
+      // non-200 is an outage of the signer's dependency.
+      if (result.status === 404 || result.status === 410) denied('directory_absent');
+      if (result.status !== 200) throw new WebBotAuthError(503, 'directory_unavailable');
       // ignoreBOM: the digest covers the exact bytes, including any BOM.
       const body = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(result.body);
       const directory = verifySignatureDirectory(
@@ -655,10 +664,12 @@ export class SignatureDirectoryResolver implements JwksResolver {
       this.failures.delete(origin);
       return directory;
     } catch (error) {
+      // Transport errors are outages; signed-content and absence failures stay signature failures.
+      const failure = error instanceof WebBotAuthError ? error : new WebBotAuthError(503, 'directory_unavailable');
       if (this.failures.size >= (this.options.maxOrigins ?? 1000))
         this.failures.delete(this.failures.keys().next().value!);
-      this.failures.set(origin, now + 60);
-      throw error instanceof WebBotAuthError ? error : new WebBotAuthError(403, 'directory_unavailable');
+      this.failures.set(origin, { until: now + 60, status: failure.status, reason: failure.reason });
+      throw failure;
     }
   }
   get allowsTestKeys(): boolean {

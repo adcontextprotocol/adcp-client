@@ -383,3 +383,114 @@ test('S3: infrastructure failures after verification never challenge a correctly
       e.body.adcp_error.recovery === 'transient'
   );
 });
+
+test('S4: a key-directory outage is a retryable 503 without a challenge; absence and missing keys stay 403', async () => {
+  const key = newKey();
+  const proof = await wba.createSignedSignatureDirectory(origin, [{ privateKey: key }], { now: () => T });
+  const headers = await wba.signWebBotAuth(request, { privateKey: key }, { origin, now: () => T });
+  const verifyWith = (trustedFetchFn, clock = () => T) =>
+    wba.verifyWebBotAuth(
+      { ...request, headers },
+      {
+        directory: new wba.SignatureDirectoryResolver({ now: clock, fetchOptions: { trustedFetchFn } }),
+        replayStore: new InMemoryReplayStore(),
+        isRevoked: async () => false,
+        now: clock,
+      }
+    );
+  const outage = e =>
+    e.status === 503 &&
+    !e.headers['Accept-Signature'] &&
+    e.headers['Retry-After'] === '60' &&
+    e.body.adcp_error.code === 'SERVICE_UNAVAILABLE' &&
+    e.body.adcp_error.recovery === 'transient';
+  const challenge = e => e.status === 403 && !!e.headers['Accept-Signature'];
+  await assert.rejects(
+    verifyWith(async () => {
+      throw new Error('connect ETIMEDOUT');
+    }),
+    outage
+  );
+  await assert.rejects(
+    verifyWith(async () => new Response('', { status: 502 })),
+    outage
+  );
+  await assert.rejects(
+    verifyWith(async () => new Response('', { status: 404 })),
+    challenge
+  );
+  await assert.rejects(
+    verifyWith(async () => new Response('', { status: 410 })),
+    challenge
+  );
+  const other = await wba.createSignedSignatureDirectory(origin, [{ privateKey: newKey() }], { now: () => T });
+  await assert.rejects(verifyWith(serving(other)), challenge);
+  // The 60 s negative cache replays the failure's class.
+  const resolver = new wba.SignatureDirectoryResolver({
+    now: () => T,
+    fetchOptions: {
+      trustedFetchFn: async () => {
+        throw new Error('down');
+      },
+    },
+  });
+  await assert.rejects(resolver.resolve(key.kid, origin), outage);
+  await assert.rejects(resolver.resolve(key.kid, origin), outage);
+  const absent = new wba.SignatureDirectoryResolver({
+    now: () => T,
+    fetchOptions: { trustedFetchFn: async () => new Response('', { status: 404 }) },
+  });
+  await assert.rejects(absent.resolve(key.kid, origin), challenge);
+  await assert.rejects(absent.resolve(key.kid, origin), challenge);
+  assert.ok(proof);
+});
+
+test('S4: unknown revocation status serves nothing, reads included', async () => {
+  const { verifySignatureAsAuthenticator } = require('../../dist/lib/server/auth-signature');
+  const key = newKey();
+  const proof = await wba.createSignedSignatureDirectory(origin, [{ privateKey: key }], { now: () => T });
+  const body = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/call',
+    params: { name: 'get_adcp_capabilities', arguments: {} },
+  });
+  const signedRequest = {
+    method: 'POST',
+    url: 'https://seller.example.com/mcp',
+    headers: { 'content-type': 'application/json' },
+    body,
+  };
+  for (const operation of ['get_adcp_capabilities', undefined]) {
+    let resolved = 0;
+    const authenticate = verifySignatureAsAuthenticator({
+      capability: { supported: true, covers_content_digest: 'required', required_for: [], profiles: ['web-bot-auth'] },
+      jwks: { resolve: async () => null },
+      getUrl: () => signedRequest.url,
+      now: () => T,
+      replayStore: new InMemoryReplayStore(),
+      assertLegacyOriginAllowed: async () => {},
+      resolveOperation: () => operation,
+      webBotAuth: {
+        directory: directoryFor(proof, () => T),
+        isRevoked: async () => {
+          throw new wba.WebBotAuthError(403, 'revocation_unavailable');
+        },
+        resolvePrincipal: async () => {
+          resolved++;
+          return { principal: 'p' };
+        },
+      },
+    });
+    const headers = await wba.signWebBotAuth(signedRequest, { privateKey: key }, { origin, now: () => T });
+    const attempt = authenticate({ method: 'POST', url: '/mcp', headers, rawBody: body });
+    if (operation === undefined)
+      await assert.rejects(attempt, e => e.status === 503 && !e.headers?.['Accept-Signature']);
+    else {
+      // Tool calls carry the outage to the tool as SERVICE_UNAVAILABLE; nothing runs.
+      const principal = await attempt;
+      assert.equal(wba.getWebBotAuthAuthorizationFailure(principal.extra).code, 'SERVICE_UNAVAILABLE');
+    }
+    assert.ok(resolved <= 1);
+  }
+});
