@@ -1,5 +1,12 @@
 # Changelog
 
+## 16.0.0-beta.1
+
+### Patch Changes
+
+- e8e2b32: Await and validate keyed-account principal callbacks so asynchronous tenant identities cannot collapse into a shared scope. Protect account-sync request and dry-run intent from callback mutation across CAS retries, and isolate asynchronous diagnostic-hook failures from dispatch.
+- d24f791: Reuse MCP endpoint, tool-list, and capability discovery across storyboards within each compliance run, including hosted fetch transports and routed agents. Keep discovery isolated by credentials, headers, versions, and transport settings, refresh after explicit invalidation, and retry failed discovery.
+
 ## 16.0.0-beta.0
 
 ### Major Changes
