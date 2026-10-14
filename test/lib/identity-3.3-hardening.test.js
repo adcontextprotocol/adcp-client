@@ -38,7 +38,11 @@ const listing = host => ({ agents: [{ url: `https://agent.${host}`, roles: ['adc
 test('authority history: free hosting subdomains cannot disable legacy fallback for other operators', async () => {
   const records = { 'auth.com': listing('auth.com') };
   for (let i = 0; i < 10; i++) records[`a${i}.vercel.app`] = listing(`a${i}.vercel.app`);
-  const trust = evaluator(records, { maxEntries: 5, maxAuthoritativeOperatorsPerPrivateSuffix: 3 });
+  const trust = evaluator(records, {
+    maxEntries: 5,
+    maxPrivateAuthoritativeOperators: 3,
+    maxAuthoritativeOperatorsPerPrivateSuffix: 3,
+  });
   assert.equal((await trust.get('auth.com')).status, 'present');
   let refused = 0;
   for (let i = 0; i < 10; i++) await trust.get(`a${i}.vercel.app`).catch(() => refused++);
@@ -50,6 +54,43 @@ test('authority history: free hosting subdomains cannot disable legacy fallback 
   delete records['auth.com'];
   trust.invalidate('auth.com');
   await assert.rejects(trust.get('auth.com'));
+});
+
+test('authority history: hosting providers with wildcard or many PSL rules share one budget', async () => {
+  const { eTldPlusOne } = require('../../dist/lib/signing/agent-resolver/etld');
+  const hosts = [
+    'bucket1.s3.us-east-1.amazonaws.com',
+    'bucket2.s3.eu-west-1.amazonaws.com',
+    'x.proj1.platformsh.site',
+    'y.proj2.platformsh.site',
+  ];
+  // Each is its own operator (registrable domain under the PRIVATE section).
+  assert.deepEqual(
+    hosts.map(host => eTldPlusOne(host)),
+    hosts
+  );
+  const records = Object.fromEntries(hosts.map(host => [host, listing(host)]));
+  const trust = evaluator(records, { maxAuthoritativeOperatorsPerPrivateSuffix: 1 });
+  const admitted = [];
+  for (const host of hosts)
+    admitted.push(
+      await trust.get(host).then(
+        result => result.status === 'present',
+        () => false
+      )
+    );
+  assert.deepEqual(admitted, [true, false, true, false]);
+});
+
+test('authority history: hosted operators cannot take the slots ICANN registrants need', async () => {
+  const records = { 'brand.com': listing('brand.com') };
+  const providers = ['vercel.app', 'netlify.app', 'github.io', 'pages.dev', 'workers.dev'];
+  for (const provider of providers)
+    for (let i = 0; i < 4; i++) records[`h${i}.${provider}`] = listing(`h${i}.${provider}`);
+  const trust = evaluator(records, { maxEntries: 10 });
+  for (const host of Object.keys(records).filter(host => host !== 'brand.com')) await trust.get(host).catch(() => {});
+  // At most half of maxEntries went to hosted names; an ICANN brand still fits.
+  assert.equal((await trust.get('brand.com')).status, 'present');
 });
 
 test('authority history: the total cap refuses newcomers instead of evicting history', async () => {
@@ -81,6 +122,7 @@ test('authority history: durable history keeps working past the in-memory bound'
 });
 
 const duplicateCases = [
+  'sig1=("@method");x=%"\\";created=1;created=2;keyid="k"',
   'sig1=("@method");created=1;created=2;keyid="k"',
   'sig1=("@method" "x";key="a";key="b");created=1',
   'sig1=("@method");created=1, sig1=("@authority");created=1',
@@ -89,6 +131,7 @@ const duplicateCases = [
   'sig1=:AQ==:;x=1;x=2',
 ];
 const acceptedCases = [
+  'a=%"x\\";q, b=";q;q=1"',
   'sig1=("@method" "x";key="a" "y";key="a");created=1;keyid="k"',
   'sig1=("@method");created=1, sig2=("@method");created=1',
   'sig1="https://a.example";type="directory", sig2="https://b.example";type="directory"',
@@ -198,7 +241,7 @@ test('createExpressVerifier refuses Web Bot Auth requests instead of verifying t
           response.status = code;
           return {
             set(name, value) {
-              response.headers = { [name]: value };
+              response.headers = { ...response.headers, [name]: value };
               return { json: body => (response.body = body) };
             },
           };
@@ -215,7 +258,7 @@ test('createExpressVerifier refuses Web Bot Auth requests instead of verifying t
     const { response, nextCalled } = await run(headers);
     assert.equal(nextCalled, false);
     assert.equal(response.status, 403);
-    assert.equal(response.headers['Accept-Signature'], undefined);
+    assert.deepEqual(Object.keys(response.headers), ['Cache-Control']);
     assert.match(response.body.message, /Web Bot Auth is not configured/);
   }
   // Unsigned requests are unaffected.

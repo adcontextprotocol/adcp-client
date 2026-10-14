@@ -457,13 +457,20 @@ Unbound callers use an internal per-origin anonymous scope to isolate task/propo
 
 - **Durable authority history is required for public deployments.** Without
   `authorityHistory`, the trust evaluator remembers which operators have served
-  a trust record only in process memory, bounded by `maxEntries` (default
-  1,000) in total and by `maxAuthoritativeOperatorsPerPrivateSuffix` (default
-  32) per PSL PRIVATE-section suffix, so free hosting subdomains such as
-  `*.vercel.app` share one budget. Nothing is evicted: an operator over its
-  budget has its trust record refused (fail closed for that operator), and no
-  other operator's legacy `authorized_operators[]` fallback changes. With a
-  durable `authorityHistory`, the in-memory set is only a cache.
+  a trust record only in process memory. Nothing is evicted, so no operator's
+  legacy `authorized_operators[]` fallback changes because of others, but the
+  memory is bounded: `maxEntries` (default 1,000) in total, at most half of
+  that (`maxPrivateAuthoritativeOperators`) for PSL PRIVATE-section names, and
+  `maxAuthoritativeOperatorsPerPrivateSuffix` (default 32) per hosting provider
+  (the provider's ICANN registrable domain, so every `*.vercel.app`,
+  `*.s3.<region>.amazonaws.com` or `*.<project>.platformsh.site` operator
+  shares one budget). An operator over budget has its trust record refused
+  until restart: 32 subdomains under one provider block later operators on that
+  provider, and a full `maxEntries` refuses every new trust record publisher.
+  A slot is taken by any 200, before the body is validated, so a removed or
+  invalid record still prevents a legacy downgrade. With a durable
+  `authorityHistory`, the in-memory set is only a cache and none of these
+  limits refuse records.
 - **The unbound revocation pool can fill.** With the default CAS limits
   (100,000 keys per pool, 16,384 per operator), about seven registrable domains,
   including free PSL PRIVATE-section names, can exhaust the unbound pool. New

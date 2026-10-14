@@ -162,8 +162,14 @@ function findDuplicateStructuredKey(input: string): { kind: 'member' | 'paramete
     return input.slice(start, i).toLowerCase();
   };
   const bareItem = () => {
-    const c = input[i];
-    if (c === '%' && input[i + 1] === '"') i++;
+    if (input[i] === '%' && input[i + 1] === '"') {
+      // RFC 9651 display string: percent-encoded, so a backslash is an
+      // ordinary character and the next '"' always ends it.
+      i += 2;
+      while (i < n && input[i] !== '"') i++;
+      i++;
+      return;
+    }
     if (input[i] === '"') {
       i++;
       while (i < n) {
