@@ -21,6 +21,34 @@ export class IdentityAuthorizationError extends Error {
     this.details = reason === 'grant_absent' ? { scope: 'agent', reason } : undefined;
   }
 }
+/**
+ * The trust record could not be read (transport error, outage, capacity,
+ * invalid content). A fetch failure is never absence or delisting: spend
+ * fails closed with a retryable SERVICE_UNAVAILABLE, other calls continue
+ * under an existing binding.
+ */
+export class TrustRecordUnavailableError extends IdentityAuthorizationError {
+  readonly transient = true as const;
+  constructor() {
+    super();
+    this.name = 'TrustRecordUnavailableError';
+    this.message = 'Agent trust record is temporarily unavailable';
+  }
+}
+/** The operator's current record definitively does not list the origin with the required role. */
+export class TrustMembershipError extends IdentityAuthorizationError {
+  constructor() {
+    super();
+    this.name = 'TrustMembershipError';
+  }
+}
+function unavailable(cause?: unknown): never {
+  const error = new TrustRecordUnavailableError();
+  if (cause !== undefined) Object.defineProperty(error, 'cause', { value: cause });
+  throw error;
+}
+/** Per-host rate exceeded: shared capacity, never cached as an operator failure. */
+class TrustHostCapacityError extends Error {}
 function failure(cause?: unknown): never {
   const error = new IdentityAuthorizationError();
   if (cause !== undefined) Object.defineProperty(error, 'cause', { value: cause });
@@ -61,6 +89,7 @@ export class TrustEvaluator {
   private readonly negative = new Map<string, number>();
   private readonly pending = new Map<string, Promise<TrustFetchResult>>();
   private readonly urlRequests = new Map<string, Promise<Awaited<ReturnType<typeof ssrfSafeFetch>>>>();
+  /** Keyed by (operator, host): one operator's authoritative_location hops never spend another's budget. */
   private readonly hostRates = new Map<string, { started: number; count: number }>();
   private readonly authoritativeOperators = new Set<string>();
   private authorityHistoryOverflowed = false;
@@ -84,10 +113,10 @@ export class TrustEvaluator {
     const now = this.now();
     const cached = this.cache.get(operator);
     if (!force && cached && cached.freshUntil > now) return cached;
-    if ((this.negative.get(operator) ?? 0) > now) failure();
+    if ((this.negative.get(operator) ?? 0) > now) unavailable();
     let pending = this.pending.get(operator);
     if (!pending) {
-      if (this.pending.size >= (this.options.maxConcurrentFetches ?? 16)) failure();
+      if (this.pending.size >= (this.options.maxConcurrentFetches ?? 16)) unavailable();
       pending = this.fetch(operator, now);
       this.pending.set(operator, pending);
     }
@@ -104,9 +133,9 @@ export class TrustEvaluator {
   ): Promise<{ operator: string; agent: TrustAgent; record: TrustRecord; freshUntil: number }> {
     const canonical = canonicalAgentOrigin(origin);
     const result = await this.get(canonical);
-    if (result.status !== 'present') failure();
+    if (result.status !== 'present') throw new TrustMembershipError();
     const entries = (result.record.agents ?? []).filter(agent => canonicalAgentOrigin(agent.url) === canonical);
-    if (entries.length !== 1 || !entries[0]!.roles.includes(role)) failure();
+    if (entries.length !== 1 || !entries[0]!.roles.includes(role)) throw new TrustMembershipError();
     const agent = entries[0]!;
     if (agent.countries && countries?.length && countries.some(country => !agent.countries!.includes(country)))
       failure();
@@ -121,15 +150,15 @@ export class TrustEvaluator {
   private now(): number {
     return (this.options.now ?? (() => Date.now() / 1000))();
   }
-  private async request(url: string) {
+  private async request(url: string, operator: string) {
     const parsed = new URL(url);
     if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.hash) failure();
-    const host = parsed.hostname;
+    const host = JSON.stringify([operator, parsed.hostname]);
     const pending = this.urlRequests.get(url);
     if (pending) return pending;
     const now = this.now(),
       rate = this.hostRates.get(host);
-    if (rate && now - rate.started < 60 && rate.count >= 10) failure();
+    if (rate && now - rate.started < 60 && rate.count >= 10) throw new TrustHostCapacityError();
     if (!rate && this.hostRates.size >= (this.options.maxEntries ?? 1000))
       this.hostRates.delete(this.hostRates.keys().next().value!);
     this.hostRates.set(
@@ -151,7 +180,7 @@ export class TrustEvaluator {
   }
   private async fetch(operator: string, now: number): Promise<TrustFetchResult> {
     try {
-      let response = await this.request(`https://${operator}/.well-known/trust.json`);
+      let response = await this.request(`https://${operator}/.well-known/trust.json`, operator);
       let result: TrustFetchResult;
       if (response.status === 404 || response.status === 410) {
         // Once authoritative, an outage/removal cannot resurrect legacy authority.
@@ -178,7 +207,7 @@ export class TrustEvaluator {
         let record: unknown = parseStrictJson(new TextDecoder('utf-8', { fatal: true }).decode(response.body), 32);
         validateTrustRecord(record);
         if (record.authoritative_location) {
-          response = await this.request(record.authoritative_location);
+          response = await this.request(record.authoritative_location, operator);
           if (response.status !== 200) failure();
           record = parseStrictJson(new TextDecoder('utf-8', { fatal: true }).decode(response.body), 32);
           validateTrustRecord(record);
@@ -198,10 +227,12 @@ export class TrustEvaluator {
       this.negative.delete(operator);
       return result;
     } catch (cause) {
+      // Shared capacity is not this operator's failure: retry soon, uncached.
+      if (cause instanceof TrustHostCapacityError) return unavailable(cause);
       if (this.negative.size >= (this.options.maxEntries ?? 1000))
         this.negative.delete(this.negative.keys().next().value!);
       this.negative.set(operator, now + 60);
-      return failure(cause);
+      return unavailable(cause);
     }
   }
 }
@@ -290,6 +321,13 @@ export async function authorizeDemandGrant(
   }
   const first = (record.record.grants ?? []).filter(g => grantMatches(g, account, grantClaim, now));
   if (account === operator && first.length) return result('trust', [brand, operator], [first[0]!]);
+  // A self-operated brand (brand is its own account.operator) may grant the
+  // signer's operator directly: account.operator is on the chain as the brand.
+  const selfOperated = account === brand || account === authoritativeBrand;
+  if (selfOperated && account !== operator) {
+    const direct = (record.record.grants ?? []).find(g => grantMatches(g, operator, grantClaim, now));
+    if (direct) return result('trust', [brand, operator], [direct]);
+  }
   if (account !== operator && account !== brand && first.length) {
     const intermediary = await options.evaluator.get(account);
     if (intermediary.status === 'present') {
@@ -299,7 +337,7 @@ export async function authorizeDemandGrant(
   }
   const covered = (record.record.grants ?? []).some(
     g =>
-      eTldPlusOne(g.grantee) === account &&
+      (eTldPlusOne(g.grantee) === account || (selfOperated && eTldPlusOne(g.grantee) === operator)) &&
       g.scopes.some(
         scope => scope === '*' || scope === claim.scope || (scope === 'adcp:all' && claim.scope.startsWith('adcp:'))
       )

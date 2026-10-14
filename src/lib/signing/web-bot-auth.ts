@@ -333,21 +333,44 @@ export interface WebBotAuthAuthorizationFailure {
   recovery: 'correctable' | 'transient';
 }
 const authorizationFailures = new WeakSet<object>();
+const AUTHORIZATION_FAILURE_MESSAGES = {
+  key_revoked: 'Agent identity key is revoked',
+  identity_not_bound: 'Agent identity is not onboarded for this operation',
+  revocation_unavailable: 'Identity revocation information is unavailable',
+  authorization_failed: 'Agent authorization failed',
+  authorization_unavailable: 'Agent authorization is temporarily unavailable',
+} as const;
 export function createWebBotAuthAuthorizationFailure(
-  reason: 'key_revoked' | 'identity_not_bound' | 'revocation_unavailable'
+  reason: keyof typeof AUTHORIZATION_FAILURE_MESSAGES
 ): WebBotAuthAuthorizationFailure {
+  const transient = reason === 'revocation_unavailable' || reason === 'authorization_unavailable';
   const failure: WebBotAuthAuthorizationFailure = Object.freeze({
-    code: reason === 'revocation_unavailable' ? 'SERVICE_UNAVAILABLE' : 'PERMISSION_DENIED',
-    message:
-      reason === 'revocation_unavailable'
-        ? 'Identity revocation information is unavailable'
-        : reason === 'key_revoked'
-          ? 'Agent identity key is revoked'
-          : 'Agent identity is not onboarded for this operation',
-    recovery: reason === 'revocation_unavailable' ? 'transient' : 'correctable',
+    code: transient ? 'SERVICE_UNAVAILABLE' : 'PERMISSION_DENIED',
+    message: AUTHORIZATION_FAILURE_MESSAGES[reason],
+    recovery: transient ? 'transient' : 'correctable',
   });
   authorizationFailures.add(failure);
   return failure;
+}
+/**
+ * @internal After every signature verified, a principal-resolution failure is
+ * an authorization outcome, never a signature failure: carry it to tool calls
+ * as a standard AdCP error instead of a 403 with Accept-Signature.
+ */
+export function deferWebBotAuthPrincipalFailure(
+  signers: readonly VerifiedWebBotSigner[],
+  error: unknown
+): { principal: string; authorizationFailure: WebBotAuthAuthorizationFailure } {
+  const signer = signers[signers.length - 1]!;
+  const authorizationFailure = createWebBotAuthAuthorizationFailure(
+    (error as { code?: unknown } | undefined)?.code === 'PERMISSION_DENIED'
+      ? 'authorization_failed'
+      : 'authorization_unavailable'
+  );
+  return {
+    principal: `anonymous:${createHash('sha256').update(signer.origin).digest('hex')}`,
+    authorizationFailure,
+  };
 }
 export function getWebBotAuthAuthorizationFailure(
   extra: Record<string, unknown> | undefined

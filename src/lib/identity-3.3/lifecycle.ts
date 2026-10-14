@@ -3,7 +3,13 @@ import { randomUUID } from 'crypto';
 import { parse as parseTld } from 'tldts';
 import { canonicalAgentOrigin } from '../signing/agent-resolver/canonicalize';
 import { eTldPlusOne } from '../signing/agent-resolver/etld';
-import { IdentityAuthorizationError, TrustEvaluator, validateIdentity33Schema } from './trust';
+import {
+  IdentityAuthorizationError,
+  TrustEvaluator,
+  TrustMembershipError,
+  TrustRecordUnavailableError,
+  validateIdentity33Schema,
+} from './trust';
 import type {
   AgentOnboarding,
   AgentOnboardingRequirement,
@@ -212,7 +218,13 @@ export class OriginIdentityLifecycle {
     await this.options.store.bind(binding);
     return binding;
   }
-  /** Cryptographic verification does not call this. Authorization revalidates delisting. */
+  /**
+   * Cryptographic verification does not call this. Authorization revalidates
+   * delisting: a definitive delisting throws {@link TrustMembershipError}. An
+   * unreadable trust record throws {@link TrustRecordUnavailableError} for
+   * spend; read-only and identity-configuration calls continue under the
+   * existing binding.
+   */
   async authorizeBound(
     originUrl: string,
     access?: {
@@ -226,8 +238,13 @@ export class OriginIdentityLifecycle {
     const origin = canonicalAgentOrigin(originUrl);
     const binding = await this.options.store.getBinding(origin);
     if (!binding) throw new IdentityAuthorizationError();
-    const trust = await this.options.trust.match(origin, 'adcp:buying');
-    if (binding.operator !== trust.operator) throw new IdentityAuthorizationError();
+    try {
+      const trust = await this.options.trust.match(origin, 'adcp:buying');
+      if (binding.operator !== trust.operator) throw new TrustMembershipError();
+    } catch (error) {
+      if (!(error instanceof TrustRecordUnavailableError) || !(access?.readOnly || access?.identityConfiguration))
+        throw error;
+    }
     const relationship = (await this.options.store.getApplication(origin))?.relationship;
     if (
       !access?.readOnly &&

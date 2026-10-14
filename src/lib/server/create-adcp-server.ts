@@ -15,10 +15,12 @@ import {
   isWebBotAuthRevocationChecked,
   webBotAuthUnavailableResponse,
   WebBotAuthUnavailableError,
+  deferWebBotAuthPrincipalFailure,
+  type WebBotAuthAuthorizationFailure,
   WebBotAuthError,
 } from '../signing/web-bot-auth';
 import { validateIdentity33Payload } from '../identity-3.3/validation';
-import { IdentityAuthorizationError } from '../identity-3.3/trust';
+import { IdentityAuthorizationError, TrustRecordUnavailableError } from '../identity-3.3/trust';
 /**
  * Declarative AdCP server builder.
  *
@@ -4509,7 +4511,17 @@ function buildSignedRequestsPreTransport(
           }
         );
         const operation = resolveRequestOperation({ rawBody: req.rawBody, method: req.method, url: req.url });
-        const principal = await signedRequests.webBotAuth.resolvePrincipal(signers, operation);
+        let principal: AuthPrincipal;
+        let deferredFailure: WebBotAuthAuthorizationFailure | undefined;
+        try {
+          principal = await signedRequests.webBotAuth.resolvePrincipal(signers, operation);
+        } catch (error) {
+          // Signatures verified: this is an authorization outcome, not a signature failure.
+          if (error instanceof WebBotAuthError) throw error;
+          const deferred = deferWebBotAuthPrincipalFailure(signers, error);
+          principal = { principal: deferred.principal };
+          deferredFailure = deferred.authorizationFailure;
+        }
         const signer = signers[signers.length - 1]!;
         const failed = signers.find(s => s.authorizationFailure);
         const guardedPrincipal = {
@@ -4518,7 +4530,9 @@ function buildSignedRequestsPreTransport(
             ...principal.extra,
             webBotAuthAuthorization: {
               signer: failed ?? signer,
-              ...(failed && { authorizationFailure: failed.authorizationFailure }),
+              ...((failed?.authorizationFailure ?? deferredFailure) && {
+                authorizationFailure: failed?.authorizationFailure ?? deferredFailure,
+              }),
             },
           },
         };
@@ -6992,6 +7006,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           try {
             await config.identity33.authorize(ctx, toolName, params);
           } catch (error) {
+            // A trust-record outage is retryable, never a denial.
+            if (error instanceof TrustRecordUnavailableError)
+              return finalize(adcpError('SERVICE_UNAVAILABLE', { message: error.message, recovery: 'transient' }));
             if (error instanceof IdentityAuthorizationError)
               return finalize(
                 adcpError('PERMISSION_DENIED', {
@@ -9345,6 +9362,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         params
       );
     } catch (error) {
+      if (error instanceof TrustRecordUnavailableError)
+        return adcpError('SERVICE_UNAVAILABLE', { message: error.message, recovery: 'transient' });
       if (error instanceof IdentityAuthorizationError)
         return adcpError('PERMISSION_DENIED', {
           message: error.message,

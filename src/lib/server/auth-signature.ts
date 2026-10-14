@@ -47,6 +47,8 @@ import {
   isWebBotAuthRevocationChecked,
   webBotAuthUnavailableResponse,
   WebBotAuthUnavailableError,
+  deferWebBotAuthPrincipalFailure,
+  type WebBotAuthAuthorizationFailure,
   WebBotAuthError,
   type VerifiedWebBotSigner,
 } from '../signing/web-bot-auth';
@@ -228,10 +230,20 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
           now: options.now,
           ...(options.webBotAuth.isRevoked && { isRevoked: options.webBotAuth.isRevoked }),
         });
-        const principal = await options.webBotAuth.resolvePrincipal(
-          signers,
-          options.resolveOperation(req as IncomingMessage & { rawBody?: string })
-        );
+        let principal: AuthPrincipal;
+        let deferredFailure: WebBotAuthAuthorizationFailure | undefined;
+        try {
+          principal = await options.webBotAuth.resolvePrincipal(
+            signers,
+            options.resolveOperation(req as IncomingMessage & { rawBody?: string })
+          );
+        } catch (error) {
+          // Signatures verified: this is an authorization outcome, not a signature failure.
+          if (error instanceof WebBotAuthError) throw error;
+          const deferred = deferWebBotAuthPrincipalFailure(signers, error);
+          principal = { principal: deferred.principal };
+          deferredFailure = deferred.authorizationFailure;
+        }
         const signer = signers[signers.length - 1]!;
         (req as IncomingMessage & { verifiedSigner?: VerifiedSigner }).verifiedSigner = {
           keyid: signer.keyid,
@@ -245,7 +257,9 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
             ...principal.extra,
             webBotAuthAuthorization: {
               signer: failed ?? signer,
-              ...(failed && { authorizationFailure: failed.authorizationFailure }),
+              ...((failed?.authorizationFailure ?? deferredFailure) && {
+                authorizationFailure: failed?.authorizationFailure ?? deferredFailure,
+              }),
             },
           },
         };

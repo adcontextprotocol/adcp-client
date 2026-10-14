@@ -282,11 +282,36 @@ redirects, 2 MiB, depth 32, and no duplicate JSON keys. Exactly one canonical
 origin must carry the required role. Cache lifetime is the configured revocation
 poll interval (60–1800 seconds), negatives at most 60 seconds. Failures are not
 absence. Share authoritative-history state when retaining legacy fallback.
+Per-host fetch rate is counted per (operator, host), so an operator's
+`authoritative_location` pointing at another operator's host never spends that
+operator's budget, and a host-rate refusal is a retryable outage that is not
+cached as the operator's failure.
+
+A record that cannot be read (transport error, outage, rate, invalid content)
+raises `TrustRecordUnavailableError`; a current record that does not list the
+origin with the required role raises `TrustMembershipError`. Both extend
+`IdentityAuthorizationError`. For a bound origin:
+
+- **Delisted:** the origin falls back to identity-established for that request
+  (the anonymous tool policy plus `get_principal`, which reports
+  `unconfigured`), under the per-origin anonymous scope rather than its
+  principal. The binding is kept: `open` onboarding cannot re-bind it and RFC
+  9421 stays refused for the origin. Spend gets `PERMISSION_DENIED`.
+- **Unreachable:** spend-committing calls get a retryable `SERVICE_UNAVAILABLE`;
+  reads and identity configuration continue under the existing binding.
+
+After every signature verifies, authorization outcomes always use the standard
+AdCP error envelope, never a 403 with `Accept-Signature`. That includes a
+principal resolver that throws: a `PERMISSION_DENIED`-coded error becomes
+`PERMISSION_DENIED`, anything else `SERVICE_UNAVAILABLE`, delivered on the tool
+call.
 
 Demand grants come from the verified brand or house record. Implicit authority
 requires brand, account operator, and signer operator to share a registrable
 domain. Otherwise only a direct grant with the account operator equal to the
-signer, or a two-link chain through the account operator, is accepted. The
+signer, a direct grant from a self-operated brand (the brand is its own account
+operator) to the signer's operator, or a two-link chain through the account
+operator, is accepted. The
 intersection must cover the actual brand IDs, countries, scope, signer-origin
 narrowing and temporal window. A restrictive published grant cannot be
 superseded by seller fallback. A trust 200 disables brand.json authority;
