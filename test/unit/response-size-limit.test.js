@@ -250,6 +250,23 @@ describe('responseSizeLimit — wrapFetchWithSizeLimit', () => {
     assert.strictEqual(negativeSlot.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES, 'cap=-1 must fail closed');
   });
 
+  it('narrows, never widens, when a nested scope passes a larger cap', async () => {
+    // Nesting is how the SDK threads a cap down through its own layers. An
+    // inner layer must not be able to hand a caller more allowance than the
+    // scope they are inside asked for.
+    const wrapped = wrapFetchWithSizeLimit(makeFetch(new Uint8Array(5000)));
+
+    await assert.rejects(
+      withResponseSizeLimit(1000, () =>
+        withResponseSizeLimit(10_000_000, async () => {
+          const response = await wrapped('https://example.invalid/');
+          return response.arrayBuffer();
+        })
+      ),
+      err => err instanceof ResponseTooLargeError && err.limit === 1000
+    );
+  });
+
   it('inherits an enclosing cap when a nested scope passes an unset cap', async () => {
     // Nested SDK layers re-enter the helper on the way down (`callTool` →
     // `callMCPToolWithTasks`). An inner layer that wasn't handed the
@@ -267,25 +284,26 @@ describe('responseSizeLimit — wrapFetchWithSizeLimit', () => {
     );
   });
 
-  it('per-call override beats a surrounding constructor-level cap', async () => {
-    // The SDK threads a constructor cap by entering the ALS slot once at
-    // the top of the call. A per-call override reruns `.run({...}, fn)` so
-    // the inner store wins for the duration of the call — same pattern the
-    // `signingContextStorage` uses. Verify the ALS semantics directly.
+  it('nested scopes tighten the cap, in either direction', async () => {
+    // The SDK resolves per-call vs constructor with `??` *before* entering the
+    // slot, so nesting is only ever SDK layers threading the same value down.
+    // Treating a nested scope as "narrow only" means an inner layer can never
+    // hand back more allowance than the scope it is inside asked for.
     const payload = new Uint8Array(2000);
-    const upstream = makeFetch(payload);
-    const wrapped = wrapFetchWithSizeLimit(upstream);
+    const wrapped = wrapFetchWithSizeLimit(makeFetch(payload));
 
-    // Outer cap (1000) would reject; inner cap (5000) lets it through.
-    const out = await withResponseSizeLimit(1000, () =>
-      withResponseSizeLimit(5000, async () => {
-        const response = await wrapped('https://example.invalid/');
-        return new Uint8Array(await response.arrayBuffer());
-      })
+    // Outer cap (1000) binds even though the inner scope asks for more.
+    await assert.rejects(
+      withResponseSizeLimit(1000, () =>
+        withResponseSizeLimit(5000, async () => {
+          const response = await wrapped('https://example.invalid/');
+          return response.arrayBuffer();
+        })
+      ),
+      err => err instanceof ResponseTooLargeError && err.limit === 1000
     );
-    assert.strictEqual(out.byteLength, 2000);
 
-    // Inverse: outer cap (5000) would allow; inner cap (1000) rejects.
+    // Inner cap (1000) binds when it is the tighter of the two.
     await assert.rejects(
       withResponseSizeLimit(5000, () =>
         withResponseSizeLimit(1000, async () => {
@@ -293,8 +311,15 @@ describe('responseSizeLimit — wrapFetchWithSizeLimit', () => {
           return response.arrayBuffer();
         })
       ),
-      err => err instanceof ResponseTooLargeError
+      err => err instanceof ResponseTooLargeError && err.limit === 1000
     );
+
+    // And a single scope wide enough for the body still lets it through.
+    const out = await withResponseSizeLimit(5000, async () => {
+      const response = await wrapped('https://example.invalid/');
+      return new Uint8Array(await response.arrayBuffer());
+    });
+    assert.strictEqual(out.byteLength, 2000);
   });
 
   it('preserves status, status text, and headers on the size-limited response', async () => {
@@ -483,6 +508,87 @@ describe('responseSizeLimit — SSE enforcement', () => {
       drain(await wrapped('https://example.invalid/mcp', POST))
     );
     assert.strictEqual(read, expected);
+  });
+
+  it('does not charge a CRLF separator to the event that follows it', async () => {
+    // The separator's trailing LF belongs to the separator. Charging it to the
+    // next event docks one byte from its allowance, so two identical
+    // CRLF-framed events of exactly `maxBytes` would see the first pass and
+    // the second rejected. Each `body` below is exactly `cap` octets
+    // including its own separator.
+    const cap = 256;
+    const eol = '\r\n';
+    const body = `data: ${'a'.repeat(cap - 'data: '.length - eol.length * 2)}${eol}${eol}`;
+    assert.strictEqual(new TextEncoder().encode(body).byteLength, cap);
+
+    // Whole-frame chunks, and splits placed on each byte of the separator so
+    // the boundary state has to survive a chunk edge.
+    const splits = [null, cap - 4, cap - 3, cap - 2, cap - 1];
+    for (const splitAt of splits) {
+      const chunks = [];
+      // Two frames is all the cumulative allowance (cap * 2) permits — this
+      // test is about the per-event boundary, not the stream bound.
+      for (let i = 0; i < 2; i += 1) {
+        if (splitAt === null) chunks.push(body);
+        else chunks.push(body.slice(0, splitAt), body.slice(splitAt));
+      }
+      const expected = new TextEncoder().encode(body).byteLength * 2;
+      const wrapped = wrapFetchWithSizeLimit(sseFetch(chunks));
+
+      const read = await withResponseSizeLimit(cap, async () =>
+        drain(await wrapped('https://example.invalid/mcp', POST))
+      );
+      assert.strictEqual(read, expected, `splitAt=${splitAt} must not dock the next event`);
+    }
+  });
+
+  it('still rejects a CRLF-framed event one byte over the cap', async () => {
+    // The companion to the test above: the separator fix must not hand out a
+    // free byte in the other direction.
+    const cap = 256;
+    const eol = '\r\n';
+    const body = `data: ${'a'.repeat(cap - 'data: '.length - eol.length * 2 + 1)}${eol}${eol}`;
+    const wrapped = wrapFetchWithSizeLimit(sseFetch([body]));
+
+    await assert.rejects(
+      withResponseSizeLimit(cap, async () => drain(await wrapped('https://hostile.invalid/mcp', POST))),
+      err => err instanceof ResponseTooLargeError && err.limit === cap
+    );
+  });
+
+  it('frames identically however the stream is chopped into chunks', async () => {
+    // The scanner carries CR / LF / CRLF state across chunk edges, and the
+    // deferred-reset bookkeeping for a separator's trailing LF is the easiest
+    // part to get wrong. Differential test: for each framing style, the bytes
+    // read must not depend on where the chunk boundaries fall.
+    const bodies = [
+      'data: one\n\ndata: two\n\n',
+      'data: one\r\n\r\ndata: two\r\n\r\n',
+      'data: one\r\rdata: two\r\r',
+      'event: a\r\ndata: 1\r\n\r\nevent: b\ndata: 2\n\n',
+      ': keepalive\n\n: keepalive\r\n\r\n',
+      'data: trailing-cr\r\n\r',
+      'data: mixed\n\r\ndata: more\r\n\n',
+    ];
+    const splitters = [
+      body => [body],
+      body => [...body],
+      body => body.match(/.{1,3}/gs) ?? [],
+      body => body.match(/.{1,7}/gs) ?? [],
+      // Zero-length chunks between every byte: the guard for carried-over state.
+      body => [...body].flatMap(ch => [new Uint8Array(0), ch]),
+    ];
+
+    for (const body of bodies) {
+      const expected = new TextEncoder().encode(body).byteLength;
+      for (const [index, split] of splitters.entries()) {
+        const wrapped = wrapFetchWithSizeLimit(sseFetch(split(body)));
+        const read = await withResponseSizeLimit(1000, async () =>
+          drain(await wrapped('https://example.invalid/mcp', POST))
+        );
+        assert.strictEqual(read, expected, `splitter=${index} body=${JSON.stringify(body)}`);
+      }
+    }
   });
 
   it('applies SSE enforcement for every content-type spelling', async () => {
@@ -733,6 +839,28 @@ describe('responseSizeLimit — bodiless responses', () => {
     assert.strictEqual(response.status, 200);
   });
 
+  it('still counts a body a peer sends on a HEAD request', async () => {
+    // Skipping the pre-check for HEAD is right — the declared length describes
+    // a body that was never sent. Skipping the counter is not: a peer that
+    // answers a HEAD with a body would otherwise get an unbounded read.
+    const upstream = async () =>
+      new Response(new Uint8Array(5000), {
+        status: 200,
+        headers: { 'content-length': String(5 * 1024 * 1024) },
+      });
+    const wrapped = wrapFetchWithSizeLimit(upstream);
+
+    await assert.rejects(
+      withResponseSizeLimit(1000, async () => {
+        const response = await wrapped('https://hostile.invalid/mcp', { method: 'HEAD' });
+        return response.arrayBuffer();
+      }),
+      // The pre-check was skipped, so this is the streaming counter talking:
+      // no `contentLengthHeader`, and bytes actually read.
+      err => err instanceof ResponseTooLargeError && err.contentLengthHeader === undefined && err.bytesRead > 1000
+    );
+  });
+
   it('returns 204/304 untouched instead of rebuilding a Response the constructor rejects', async () => {
     // `new Response(stream, { status: 204 })` throws. undici never hands us a
     // body on a null-body status, but an adopter `trustedFetchFn` or a test
@@ -788,9 +916,12 @@ describe('responseSizeLimit — re-surfacing a swallowed violation', () => {
     );
   });
 
-  it('does not fail a scope that tripped the cap and then recovered', async () => {
-    // A retry that lands an in-cap response must still succeed: the rewrite
-    // only ever replaces a rejection, it never manufactures one.
+  it('does not fail a scope that tripped the cap on a best-effort sub-fetch', async () => {
+    // Several SDK paths deliberately treat a failed sub-fetch as "no result,
+    // carry on" — `discoverOAuthMetadata` returns null after exhausting its
+    // candidate URLs. Making the violation terminal for the whole scope would
+    // fail their caller with RESPONSE_TOO_LARGE and point an operator at the
+    // wrong knob. The rewrite only ever replaces a rejection.
     const big = wrapFetchWithSizeLimit(makeFetch(new Uint8Array(5000)));
     const small = wrapFetchWithSizeLimit(makeFetch(new Uint8Array(10)));
 
@@ -799,6 +930,29 @@ describe('responseSizeLimit — re-surfacing a swallowed violation', () => {
       await first.arrayBuffer().catch(() => {});
       const second = await small('https://example.invalid/mcp');
       return new Uint8Array(await second.arrayBuffer()).byteLength;
+    });
+    assert.strictEqual(out, 10);
+  });
+
+  it('does not record a violation from a connection-scoped listener against the call', async () => {
+    // A long-lived GET listener runs in whichever call's async context opened
+    // the connection. A breach on it must not fail some unrelated later call
+    // that happens to share that scope.
+    const listener = wrapFetchWithSizeLimit(
+      async () =>
+        new Response(new Uint8Array(32 * 1024), {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        })
+    );
+    const call = wrapFetchWithSizeLimit(makeFetch(new Uint8Array(10)));
+
+    const out = await withResponseSizeLimit(1000, async () => {
+      // The listener's stream blows its own allowance...
+      await listener('https://example.invalid/mcp').then(r => r.arrayBuffer().catch(() => {}));
+      // ...and the call it is nested inside still completes.
+      const response = await call('https://example.invalid/mcp');
+      return new Uint8Array(await response.arrayBuffer()).byteLength;
     });
     assert.strictEqual(out, 10);
   });

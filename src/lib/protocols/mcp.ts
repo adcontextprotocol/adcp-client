@@ -18,7 +18,7 @@ import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext
 import { redactArgsForLog } from '../utils/redact-args';
 import { wrapFetchWithCapture } from './rawResponseCapture';
 import { getSignedRequestRejection, wrapFetchWithSignedRequestRejection } from './signedRequestRejection';
-import { wrapFetchWithSizeLimit } from './responseSizeLimit';
+import { responseSizeCapCacheKey, wrapFetchWithSizeLimit } from './responseSizeLimit';
 import { sanitizeTransportUrl, wrapFetchWithTransportDiagnostics } from './transportDiagnostics';
 import {
   isAbortOrTimeoutError,
@@ -158,6 +158,13 @@ function connectionCacheKey(
   if (signingCacheKey) parts.push(signingCacheKey);
   if (transportFetch) parts.push(`fetch:${getTransportFetchFnDisambiguator(transportFetch)}`);
   if (allowPrivateIp !== undefined) parts.push(`allow-private-ip:${allowPrivateIp}`);
+  // The response-size cap belongs here even though it is a per-call option:
+  // `wrapFetchWithSizeLimit` decides once per request whether to wrap, and a
+  // long-lived GET/SSE listener issues exactly one request — at connect time.
+  // Reusing a connection across differing caps would let a single
+  // `maxResponseBytes: 0` call leave the session's listener unwrapped for
+  // every later caller (adcp-client#3253).
+  parts.push(responseSizeCapCacheKey());
   const scopeKey = currentMCPConnectionScopeKey();
   if (scopeKey) parts.push(scopeKey);
   return parts.join('::');

@@ -287,8 +287,12 @@ export interface TransportOptions {
    *
    * A long-lived `GET` event-stream — MCP's standalone notification listener,
    * the legacy SSE transport — outlives the call that opened it, so it meters
-   * its cumulative allowance per connection instead of per call. Its cap
-   * value is whatever the call that established the connection configured.
+   * its cumulative allowance per *connection* instead of per call. That makes
+   * the cumulative number a memory bound there, not a liveness bound: a peer
+   * that keeps tripping it gets a reconnect cycle at a bounded cost per
+   * cycle. Cached connections are keyed on the cap in effect, so a listener
+   * is only ever reused by calls that configured the same policy as the call
+   * that opened it.
    *
    * @remarks
    * **Compression and streaming failures.** The byte counter runs downstream
@@ -300,9 +304,11 @@ export interface TransportOptions {
    *
    * On a streaming transport the cap errors the response body. Some
    * transports classify that as a stream disconnect and retry rather than
-   * propagating it, so the SDK records the violation for the call and
-   * re-raises `ResponseTooLargeError` (with the transport's own error as
-   * `cause`) in place of the timeout the caller would otherwise see.
+   * propagating it, so the call would otherwise run out its deadline: the SDK
+   * records the violation and, if the call then fails, raises
+   * `ResponseTooLargeError` with the transport's own error as `cause` instead
+   * of the timeout. A buyer never gets a timeout for what is really an
+   * over-cap response.
    *
    * @remarks
    * Future hardening knobs (DNS-rebind defense, scheme allow-list, request

@@ -25,6 +25,8 @@ The byte counter runs downstream of the runtime's content-decoder, so it measure
 
 On a streaming transport the cap errors the response body, and some transports classify that as a stream disconnect and retry rather than propagating it. The SDK records the violation for the call and re-raises `ResponseTooLargeError` (with the transport's own error as `cause`) in place of the timeout the caller would otherwise see.
 
+Cached MCP connections are now keyed on the cap in effect. `wrapFetchWithSizeLimit` decides once per request whether to enforce, and a long-lived `GET` listener issues exactly one request — at connect time — so without this a single `maxResponseBytes: 0` call would turn a per-call opt-out into a per-session one for every later caller that reused the connection. Calls that configure different caps against the same agent now get different cached connections.
+
 `DEFAULT_MAX_RESPONSE_BYTES` and `SSE_CUMULATIVE_BUDGET_MULTIPLIER` are exported from `@adcp/sdk`.
 
 Closes #3253. Cross-SDK default and spec wording: adcontextprotocol/adcp#8190.

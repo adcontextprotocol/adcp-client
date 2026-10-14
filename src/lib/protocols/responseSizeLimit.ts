@@ -125,7 +125,10 @@ function newSlot(maxResponseBytes: number | undefined): SizeLimitSlot {
   const enclosing = responseSizeLimitStorage.getStore();
   const limit = sseBudgetFor(resolved);
   return {
-    maxResponseBytes: resolved,
+    // Nesting narrows both numbers. `?? resolved` deliberately also covers an
+    // enclosing opt-out (`null`): an inner scope that asks for a cap is the
+    // more specific instruction, so it still gets one.
+    maxResponseBytes: Math.min(resolved, enclosing?.maxResponseBytes ?? resolved),
     streamLimit: Math.min(limit, enclosing?.streamLimit ?? limit),
     streamMeter: enclosing?.streamMeter ?? { consumed: 0 },
   };
@@ -141,16 +144,43 @@ function sseBudgetFor(maxResponseBytes: number): number {
 }
 
 /**
+ * Cache-key fragment for the response cap in effect right now.
+ *
+ * Connection caches must not hand a connection established under one cap to a
+ * call that configured another. `wrapFetchWithSizeLimit` decides once, per
+ * request, whether to wrap — and a long-lived `GET` listener issues exactly
+ * one request, at connect time, then carries that decision for the life of
+ * the connection. Without this fragment a single `maxResponseBytes: 0` call
+ * would turn a per-call opt-out into a per-session one for every later caller
+ * that reuses the connection, and a call with a tight cap would pin the
+ * session's listener to a number chosen for one tool response.
+ *
+ * @internal
+ */
+export function responseSizeCapCacheKey(): string {
+  const slot = responseSizeLimitStorage.getStore();
+  const cap = slot ? slot.maxResponseBytes : DEFAULT_MAX_RESPONSE_BYTES;
+  return `max-response-bytes:${cap === null ? 'off' : cap}`;
+}
+
+/**
  * Run `fn` with a response body byte cap active. Every fetch made through
  * a wrapped transport inside `fn` aborts with `ResponseTooLargeError` when
  * the response body exceeds the cap.
  *
  * Passing `undefined` installs `DEFAULT_MAX_RESPONSE_BYTES` — unless an
  * enclosing scope already set one, in which case the enclosing cap and its
- * cumulative SSE budget are inherited. Nested SDK layers re-enter this
- * helper on the way down (`callTool` → `callMCPToolWithTasks`), and without
- * the inheritance an inner layer that wasn't handed the caller's `transport`
- * would silently widen a tight outer cap back to the default.
+ * cumulative SSE allowance are inherited. More generally, **nesting only ever
+ * tightens**: both numbers take the minimum of the enclosing scope's and the
+ * new one's, and the cumulative SSE meter is shared rather than refilled.
+ *
+ * Nested SDK layers re-enter this helper on the way down (`callTool` →
+ * `callMCPToolWithTasks`), normally with the same value. Narrow-only means an
+ * inner layer that wasn't handed the caller's `transport` can't widen a tight
+ * outer cap back to the default, and re-entering with the same number can't
+ * multiply the cumulative allowance by the nesting depth. Per-call vs
+ * constructor `transport` is resolved with `??` before any scope is entered,
+ * so a per-call override still beats the constructor exactly as documented.
  *
  * Passing exactly `0` is the explicit opt-out: the slot is entered with
  * enforcement disabled so an enclosing scope's cap (and the default the fetch
@@ -176,9 +206,17 @@ export function withResponseSizeLimit<T>(maxResponseBytes: number | undefined, f
  * documented `ResponseTooLargeError` recovery (raise the cap or flag the
  * agent) never reaches them.
  *
- * Only rewrites a rejection — a scope that recovered and completed stays
- * successful, so a retried call that eventually got an in-cap response is
- * not failed retroactively.
+ * Only a rejection is rewritten. Overriding a *resolution* too would make the
+ * cap terminal for anything that merely ran inside the scope, and several
+ * SDK paths deliberately treat a failed sub-fetch as "no result, carry on" —
+ * `discoverOAuthMetadata` returns `null` after exhausting its candidate URLs,
+ * for instance. Failing their caller with `RESPONSE_TOO_LARGE` would point an
+ * operator at the wrong knob. The cap bounds memory and reports honestly; it
+ * does not retroactively invalidate a result some other request produced.
+ *
+ * Violations are only recorded for call-scoped responses — a connection-scoped
+ * listener that outlives the call does not get to fail an unrelated later
+ * call. See `wrapFetchWithSizeLimit`.
  */
 async function rethrowRecordedViolation<T>(slot: SizeLimitSlot, fn: () => Promise<T>): Promise<T> {
   try {
@@ -235,72 +273,80 @@ export function wrapFetchWithSizeLimit(upstream: typeof fetch): typeof fetch {
     if (maxBytes === null) return upstream(input, init);
 
     const response = await upstream(input, init);
+    // A null-body status carries nothing to bound, and rebuilding it would
+    // make the `Response` constructor throw an untyped `TypeError`.
+    if (NULL_BODY_STATUSES.has(response.status)) return response;
     // A HEAD reply's `Content-Length` describes the body the server *would*
-    // have sent, not bytes on the wire, and 204/304 carry none either. The
-    // pre-check would reject those as oversized despite nothing to buffer.
-    if (carriesNoBody(input, init, response)) return response;
+    // have sent, not bytes on the wire, so the pre-check would reject it as
+    // oversized despite nothing arriving. The streaming counter still runs:
+    // a peer that answers a HEAD with a body does not get a free pass.
+    const skipDeclaredLength = methodOf(input, init) === 'HEAD';
     // `sanitizeTransportUrl` clears userinfo, query and fragment, and
     // returns `'invalid_url'` for anything unparseable. `ResponseTooLargeError`
     // now fires on ordinary calls rather than only for adopters who opted in,
     // so its `url` lands in logs and error envelopes routinely.
     const url = sanitizeTransportUrl(urlOfInput(input));
     if (isEventStream(response)) {
-      const { limit, meter } = streamBudgetFor(input, init, slot, maxBytes);
-      return enforceEventStreamLimit(response, maxBytes, limit, meter, url, slot);
+      // A connection-scoped listener outlives the call that opened it, so it
+      // neither shares that call's allowance nor gets to fail it: `slot` is
+      // withheld so no violation is recorded against an unrelated later call.
+      const connectionScoped = methodOf(input, init) === 'GET';
+      const { limit, meter } = streamBudgetFor(connectionScoped, slot, maxBytes);
+      return enforceEventStreamLimit(
+        response,
+        maxBytes,
+        limit,
+        meter,
+        url,
+        connectionScoped ? undefined : slot,
+        skipDeclaredLength
+      );
     }
-    return enforceSizeLimit(response, maxBytes, url, slot);
+    return enforceSizeLimit(response, maxBytes, url, slot, skipDeclaredLength);
   };
   return wrapped;
 }
 
 /**
- * Pick the cumulative budget an event-stream response charges against.
+ * Pick the bounds an event-stream response is held to.
  *
- * Call-scoped streams share the call's budget — that is what "cumulative per
- * call" means, and it stops a peer from resetting its allowance by splitting
- * a flood across several replies.
+ * Call-scoped streams share the call's allowance — that is what "cumulative
+ * per call" means, and it stops a peer from resetting its allowance by
+ * splitting a flood across several replies.
  *
  * `GET` event-streams are the exception. MCP's standalone listener and the
  * legacy SSE transport open one `GET` stream that carries server→client
  * traffic for the whole *session*, and the connection cache keeps it alive
  * long after the call that established it returned. Its fetch still runs in
- * that first call's async context, so sharing the call's budget would charge
- * an open-ended session against a one-call allowance: the listener would die
- * mid-session once the allowance ran out, through no fault of any single
- * response. Give it a fresh budget per connection instead — still bounded,
- * just bounded per stream rather than per call.
+ * that first call's async context, which makes the call's numbers the wrong
+ * ones: a shared allowance would kill the listener mid-session once some
+ * unrelated call's allowance ran out. So it meters per connection instead.
  *
- * The cap *value* for such a listener is whatever the establishing call
- * configured; that is a property of the connection cache, not of this
- * wrapper. Re-establish the connection (`closeConnections()`) to pick up a
- * different transport policy.
+ * Which cap value it carries is settled by the connection cache rather than
+ * here — `responseSizeCapCacheKey` keys cached connections on the cap in
+ * effect, so a listener is only ever reused by calls that configured the same
+ * policy as the call that opened it.
+ *
+ * Note this is a memory bound per *stream*, not per call: each reconnect
+ * starts a fresh allowance. A peer that keeps tripping it gets an endless
+ * reconnect cycle at a bounded cost per cycle — bandwidth, not memory.
  */
 function streamBudgetFor(
-  input: RequestInfo | URL,
-  init: RequestInit | undefined,
+  connectionScoped: boolean,
   slot: SizeLimitSlot | undefined,
   maxBytes: number
 ): { limit: number; meter: StreamMeter } {
-  const connectionScoped = methodOf(input, init) === 'GET';
-  if (!connectionScoped && slot?.streamMeter) {
-    return { limit: slot.streamLimit ?? sseBudgetFor(maxBytes), meter: slot.streamMeter };
-  }
-  return { limit: sseBudgetFor(maxBytes), meter: { consumed: 0 } };
+  if (connectionScoped) return { limit: sseBudgetFor(maxBytes), meter: { consumed: 0 } };
+  return {
+    limit: slot?.streamLimit ?? sseBudgetFor(maxBytes),
+    meter: slot?.streamMeter ?? { consumed: 0 },
+  };
 }
 
 /** Effective request method, honoring a `Request` input's own method. */
 function methodOf(input: RequestInfo | URL, init: RequestInit | undefined): string {
   const method = init?.method ?? (typeof Request !== 'undefined' && input instanceof Request ? input.method : 'GET');
   return method.toUpperCase();
-}
-
-/**
- * Responses that definitionally carry no body, so there is nothing for the
- * cap to bound and a declared `Content-Length` would be a false positive.
- */
-function carriesNoBody(input: RequestInfo | URL, init: RequestInit | undefined, response: Response): boolean {
-  if (NULL_BODY_STATUSES.has(response.status)) return true;
-  return methodOf(input, init) === 'HEAD';
 }
 
 /**
@@ -319,12 +365,18 @@ function isEventStream(response: Response): boolean {
   return response.headers.get('content-type')?.toLowerCase().startsWith('text/event-stream') === true;
 }
 
-function enforceSizeLimit(response: Response, maxBytes: number, url: string, slot?: SizeLimitSlot): Response {
+function enforceSizeLimit(
+  response: Response,
+  maxBytes: number,
+  url: string,
+  slot?: SizeLimitSlot,
+  skipDeclaredLength = false
+): Response {
   // Cheap pre-check: if the server declares a Content-Length over the cap,
   // tear the connection down before reading any of the body. Servers can
   // omit or lie about Content-Length, which is why the streaming counter
   // below is the authoritative enforcement.
-  const declared = parseContentLength(response.headers.get('content-length'));
+  const declared = skipDeclaredLength ? undefined : parseContentLength(response.headers.get('content-length'));
   if (declared !== undefined && declared > maxBytes) {
     cancelBody(response);
     throw recordViolation(slot, new ResponseTooLargeError(maxBytes, 0, url, declared));
@@ -377,10 +429,11 @@ function enforceEventStreamLimit(
   streamLimit: number,
   meter: StreamMeter,
   url: string,
-  slot?: SizeLimitSlot
+  slot?: SizeLimitSlot,
+  skipDeclaredLength = false
 ): Response {
   const remaining = streamLimit - meter.consumed;
-  const declared = parseContentLength(response.headers.get('content-length'));
+  const declared = skipDeclaredLength ? undefined : parseContentLength(response.headers.get('content-length'));
   if (declared !== undefined && declared > remaining) {
     cancelBody(response);
     throw recordViolation(slot, new ResponseTooLargeError(streamLimit, meter.consumed, url, declared));
@@ -394,6 +447,18 @@ function enforceEventStreamLimit(
   let bytesInEvent = 0;
   let lineEndings = 0;
   let pendingCR = false;
+  // An event's separator can end on a CR whose LF hasn't arrived yet, so the
+  // counter can't reset the moment the blank line completes. `pendingReset`
+  // defers the reset by one byte; `separatorTail` says that byte is the LF
+  // that finishes a CRLF and therefore belongs to the event that just ended.
+  //
+  // Resetting eagerly instead gets the boundary wrong in both directions: the
+  // trailing LF lands on the next event, docking a byte from its allowance
+  // (two consecutive CRLF events of exactly `maxBytes` would see the first
+  // pass and the second rejected) while the event that owns it is undercounted
+  // by one, letting a `maxBytes + 1` frame through.
+  let separatorTail = false;
+  let pendingReset = false;
 
   const counter = new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
@@ -416,6 +481,17 @@ function enforceEventStreamLimit(
       // full skip of the per-byte loop on the case that matters — a single
       // enormous frame arriving in newline-free chunks.
       if (chunk.indexOf(LF) === -1 && chunk.indexOf(CR) === -1) {
+        // No line ending in this chunk, so a deferred reset can be settled
+        // here: its separator is over and nothing in this chunk belonged to it.
+        if (pendingReset) {
+          pendingReset = false;
+          separatorTail = false;
+          bytesInEvent = 0;
+        }
+        // `bytesInEvent` can overshoot the cap by up to one chunk here before
+        // the check fires, so `bytesRead` on the error is approximate. The
+        // bound is still `maxBytes + chunkLength`, and chunk size is the
+        // runtime's read buffer, not something the peer picks.
         bytesInEvent += chunk.length;
         lineEndings = 0;
         pendingCR = false;
@@ -429,6 +505,26 @@ function enforceEventStreamLimit(
 
       for (let i = 0; i < chunk.length; i += 1) {
         const byte = chunk[i];
+
+        if (pendingReset) {
+          pendingReset = false;
+          if (separatorTail && byte === LF) {
+            // The LF that finishes the separator's closing CRLF. It belongs to
+            // the event that just ended, so charge it there, then reset.
+            separatorTail = false;
+            pendingCR = false;
+            bytesInEvent += 1;
+            if (bytesInEvent > maxBytes) {
+              controller.error(recordViolation(slot, new ResponseTooLargeError(maxBytes, bytesInEvent, url)));
+              return;
+            }
+            bytesInEvent = 0;
+            continue;
+          }
+          separatorTail = false;
+          bytesInEvent = 0;
+        }
+
         bytesInEvent += 1;
         if (byte === CR) {
           lineEndings += 1;
@@ -450,11 +546,13 @@ function enforceEventStreamLimit(
           return;
         }
         if (lineEndings >= 2) {
-          // End of event. `pendingCR` survives the reset so a trailing LF of
-          // a CRLF separator isn't miscounted as the next event's first line
-          // ending.
+          // End of event — but defer the reset: if the separator ended on a
+          // CR, the next byte may be the LF that completes it and that octet
+          // is still this event's.
           lineEndings = 0;
-          bytesInEvent = 0;
+          pendingReset = true;
+          separatorTail = pendingCR;
+          pendingCR = false;
         }
       }
 
