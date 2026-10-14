@@ -305,6 +305,8 @@ export interface TestOptions {
   };
   /** @internal Pre-created client from comply() — avoids per-scenario MCP reconnection */
   _client?: unknown;
+  /** @internal Bound failed discovery retries to one attempt per storyboard. */
+  _discoveryPass?: object;
   /**
    * @internal Pre-discovered profile from comply() — skips per-scenario discovery.
    * @deprecated Use `StoryboardRunOptions.profile` for storyboard profile reuse.

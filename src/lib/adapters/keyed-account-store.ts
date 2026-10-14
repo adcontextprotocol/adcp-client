@@ -5,6 +5,7 @@ import { defaultImplicitKeyFn } from './implicit-account-store';
 import { AdcpError } from '../server/decisioning/async-outcome';
 import { toWireAccount } from '../server/decisioning/account';
 import { isSandboxOrMockAccount } from '../server/account-mode';
+import { isolateAccountCallbackInput } from '../server/account-sync-contract';
 import type { Account, AccountStore, ResolveContext, SyncAccountsResultRow } from '../server/decisioning/account';
 import type { AccountReference, ListAccountsRequest, SyncAccountsRequest } from '../types';
 import type { KeyedAccountBackend, KeyedAccountRecord } from './keyed-account-backend';
@@ -16,8 +17,8 @@ export interface KeyedAccountStoreOptions<TCtxMeta = Record<string, unknown>> {
   resolution?: 'explicit' | 'implicit';
   /** Maximum records per authenticated principal. Default 1000. */
   maxAccounts?: number;
-  /** Stable, non-secret authorization partition. Defaults to the authenticated credential identity. */
-  principalKey?: (ctx?: ResolveContext) => string | undefined;
+  /** Stable, non-secret authorization partition. Must be deterministic; may run several times per request. Defaults to the authenticated credential identity. */
+  principalKey?: (ctx?: ResolveContext) => string | undefined | Promise<string | undefined>;
   /**
    * Accept/reject commercial terms and return the real account record.
    * MUST use accountId as its ID. May run again after a concurrent CAS;
@@ -59,9 +60,9 @@ export function createKeyedAccountStore<TCtxMeta = Record<string, unknown>>(
     throw new TypeError('maxAccounts must be a positive integer');
   const principalKey =
     options.principalKey ?? (ctx => (ctx?.authInfo ? defaultImplicitKeyFn(ctx.authInfo) : undefined));
-  const scopeFor = (ctx?: ResolveContext): string => {
-    const principal = principalKey(ctx);
-    if (!principal)
+  const scopeFor = async (ctx?: ResolveContext): Promise<string> => {
+    const principal = await principalKey(options.principalKey && ctx ? isolateAccountCallbackInput(ctx) : ctx);
+    if (typeof principal !== 'string' || !principal.trim())
       throw new AdcpError('AUTH_MISSING', {
         message: 'An authenticated account principal is required.',
         recovery: 'terminal',
@@ -72,12 +73,16 @@ export function createKeyedAccountStore<TCtxMeta = Record<string, unknown>>(
     resolution: options.resolution ?? 'explicit',
     strictIdempotency: true,
     async resolve(ref, ctx) {
-      const records = (await options.backend.load(scopeFor(ctx)))?.records ?? [];
+      const records = (await options.backend.load(await scopeFor(ctx)))?.records ?? [];
       return ref ? (recordFor(records, ref)?.account ?? null) : records.length === 1 ? records[0]!.account : null;
     },
     async upsert(entries, ctx) {
-      const scope = scopeFor(ctx);
-      if (ctx?.input?.delete_missing === true)
+      const dryRun = ctx?.input?.dry_run === true;
+      const deleteMissing = ctx?.input?.delete_missing === true;
+      const input = ctx?.input === undefined ? undefined : structuredClone(ctx.input);
+      entries = structuredClone(entries);
+      const scope = await scopeFor(ctx);
+      if (deleteMissing)
         throw new AdcpError('UNSUPPORTED_FEATURE', {
           message: 'The keyed account store uses additive syncs; close accounts explicitly.',
           recovery: 'terminal',
@@ -130,12 +135,15 @@ export function createKeyedAccountStore<TCtxMeta = Record<string, unknown>>(
                 message: 'The keyed account store does not implement identity reconciliation.',
                 recovery: 'terminal',
               });
-            const built = await options.buildAccount(entry as unknown as SyncAccountsRequest['accounts'][number], {
-              accountId,
-              existing: hit ? structuredClone(hit.account) : null,
-              dryRun: ctx?.input?.dry_run === true,
-              ctx,
-            });
+            const built = await options.buildAccount(
+              structuredClone(entry) as unknown as SyncAccountsRequest['accounts'][number],
+              {
+                accountId,
+                existing: hit ? structuredClone(hit.account) : null,
+                dryRun,
+                ctx: ctx && isolateAccountCallbackInput({ ...ctx, ...(input !== undefined && { input }) }),
+              }
+            );
             if (built.id !== accountId) throw new Error('buildAccount must preserve the supplied accountId');
             const { authInfo: _authInfo, ...persisted } = built;
             const account: Account<TCtxMeta> = JSON.parse(
@@ -190,7 +198,7 @@ export function createKeyedAccountStore<TCtxMeta = Record<string, unknown>>(
             });
           }
         }
-        if (ctx?.input?.dry_run === true || isDeepStrictEqual(snapshot?.records ?? [], records)) return rows;
+        if (dryRun || isDeepStrictEqual(snapshot?.records ?? [], records)) return rows;
         if (await options.backend.compareAndSwap(scope, snapshot?.version ?? null, records)) return rows;
       }
       throw new AdcpError('CONFLICT', {
@@ -199,7 +207,8 @@ export function createKeyedAccountStore<TCtxMeta = Record<string, unknown>>(
       });
     },
     async list(request: ListAccountsRequest, ctx) {
-      const snapshot = await options.backend.load(scopeFor(ctx));
+      const scope = await scopeFor(ctx);
+      const snapshot = await options.backend.load(scope);
       let records = snapshot?.records ?? [];
       if (request.account) records = records.filter(record => recordFor([record], request.account!) !== undefined);
       if (request.status) records = records.filter(record => record.account.status === request.status);
@@ -211,9 +220,7 @@ export function createKeyedAccountStore<TCtxMeta = Record<string, unknown>>(
         try {
           const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString());
           const binding = createHash('sha256')
-            .update(
-              JSON.stringify([scopeFor(ctx), snapshot?.version, request.account, request.status, request.sandbox])
-            )
+            .update(JSON.stringify([scope, snapshot?.version, request.account, request.status, request.sandbox]))
             .digest('hex');
           if (parsed.binding !== binding || !Number.isSafeInteger(parsed.offset) || parsed.offset < 0)
             throw new Error();
@@ -234,7 +241,7 @@ export function createKeyedAccountStore<TCtxMeta = Record<string, unknown>>(
       const items = records.slice(offset, offset + limit).map(record => record.account);
       const next = offset + items.length;
       const binding = createHash('sha256')
-        .update(JSON.stringify([scopeFor(ctx), snapshot?.version, request.account, request.status, request.sandbox]))
+        .update(JSON.stringify([scope, snapshot?.version, request.account, request.status, request.sandbox]))
         .digest('hex');
       return {
         items,

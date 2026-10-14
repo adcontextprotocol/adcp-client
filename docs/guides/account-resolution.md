@@ -718,3 +718,9 @@ const accounts = {
 **Hand-rolled stores.** For stores that don't use `createRosterAccountStore`,
 handle `resolve(undefined, ctx)` in your own `resolve` implementation by
 checking `ref === undefined` before the id-arm branch.
+
+### Callback boundaries
+
+A custom `principalKey` may be synchronous or asynchronous, and must return a nonempty primitive string derived from trusted authentication state. Missing, object, numeric, boolean, or blank values fail closed before backend access. Use a stable tenant identity, keep it deterministic across repeated calls in one request, and bound callback I/O durations.
+
+`createKeyedAccountStore` captures dry-run intent before callbacks and gives each CAS retry fresh copies of sync entries and request input. Mutating callback request arguments cannot change the original request or turn a preview into a committed write. Framework commercial checks also retain an independent request snapshot. Async diagnostic hooks are fire-and-forget; their failures are isolated from dispatch.

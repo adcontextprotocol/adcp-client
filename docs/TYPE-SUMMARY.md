@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
 > Generated at: 2026-10-14
-> @adcp/sdk v15.8.1
+> @adcp/sdk v16.0.0-beta.0
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -49,11 +49,6 @@ interface A2ALegacyCompatOptions {
 }
 
 interface TransportOptions {
-  // Defaults to 4 MiB (DEFAULT_MAX_RESPONSE_BYTES); only 0 opts out
-  // (Infinity / negatives fall back to the default).
-  // SSE is bounded per event plus `maxResponseBytes * 2` cumulative per call.
-  // Over-cap responses throw ResponseTooLargeError; nothing is truncated.
-  // A per-call `transport` replaces this object; it does not merge.
   maxResponseBytes?: number;
   trustedFetchFn?: typeof fetch;
   allowPrivateIp?: boolean;

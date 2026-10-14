@@ -9,6 +9,10 @@ Two independent mechanisms remove that cost:
 
 ## Shared discovery cache
 
+`comply()` automatically owns discovery and connections for one run. Storyboards reuse clients, tool schemas and capability observations for the same URL, credentials, headers, AdCP version and transport settings, including a configured `trustedFetchFn`. Routed agents and changed credentials or versions get separate discovery. Explicit invalidation refreshes discovery, and failed discovery remains retryable by later storyboards. Every new `comply()` invocation starts with fresh discovery; ordinary SDK calls with a scoped fetch still follow the isolation rules below.
+
+Failed discovery is attempted once per storyboard, so the runner's applicability and execution checks do not repeat a failing probe. Auth-diagnostic storyboards retain an empty profile after an authentication rejection, including when they load test-kit credentials; this placeholder contains no tool or capability evidence. MCP sessions remain open across storyboards until the run completes.
+
 ```ts
 import { AgentClient, createInMemoryAgentDiscoveryCache } from '@adcp/sdk';
 

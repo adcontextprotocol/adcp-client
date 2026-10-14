@@ -202,3 +202,109 @@ test('list sandbox filters use seller authority', async () => {
   assert.equal((await s.list({ sandbox: true }, ctx)).items.length, 1);
   assert.equal((await s.list({ sandbox: false }, ctx)).items.length, 0);
 });
+
+test('async principal keys remain tenant-scoped and match equivalent string callbacks', async () => {
+  const backend = memoryKeyedAccountBackend();
+  const principalKey = request => request?.authInfo?.credential?.key_id;
+  const sync = store(backend, { principalKey });
+  const asynchronous = store(backend, { principalKey: async request => principalKey(request) });
+  const first = (await sync.upsert([entry], ctx))[0];
+  assert.equal((await asynchronous.resolve(entry, ctx)).id, first.account_id);
+  const other = { authInfo: { credential: { kind: 'api_key', key_id: 'another' } } };
+  assert.equal(await asynchronous.resolve(entry, other), null);
+  assert.notEqual((await asynchronous.upsert([entry], other))[0].account_id, first.account_id);
+  await assert.rejects(asynchronous.list({}, {}), error => error.code === 'AUTH_MISSING');
+});
+
+test('invalid principal values deny all backend access', async () => {
+  for (const value of [{}, 123, true, null, undefined, '', '  ']) {
+    let accesses = 0;
+    const backend = {
+      load() {
+        accesses++;
+        throw new Error('unexpected read');
+      },
+      compareAndSwap() {
+        accesses++;
+        throw new Error('unexpected write');
+      },
+    };
+    const invalid = store(backend, { principalKey: async () => value });
+    for (const operation of [
+      () => invalid.resolve(entry, ctx),
+      () => invalid.upsert([entry], ctx),
+      () => invalid.list({}, ctx),
+    ])
+      await assert.rejects(operation(), error => error.code === 'AUTH_MISSING');
+    assert.equal(accesses, 0);
+  }
+});
+
+test('callback mutations cannot commit dry previews or rewrite other requested entries', async () => {
+  const backend = memoryKeyedAccountBackend();
+  const inputs = [structuredClone(entry), { ...entry, brand: { domain: 'second.example' } }];
+  const request = { ...ctx, input: { dry_run: true, accounts: inputs } };
+  const preview = store(backend, {
+    buildAccount(ref, context) {
+      assert.equal(context.ctx.input.accounts[1].payment_terms, 'net_60');
+      context.ctx.input.dry_run = false;
+      context.ctx.input.accounts[1].payment_terms = 'net_30';
+      return buildAccount(ref, context);
+    },
+  });
+  const result = await preview.upsert(inputs, request);
+  assert.equal(result[1].payment_terms, 'net_60');
+  assert.equal(request.input.dry_run, true);
+  assert.equal(inputs[1].payment_terms, 'net_60');
+  assert.equal(await preview.resolve(entry, ctx), null);
+});
+
+test('principal callbacks that only read auth do not clone unrelated hydrated input', async () => {
+  const request = { ...ctx, input: { hydrated: () => 'live capability' } };
+  const key = context => context.authInfo.credential.key_id;
+  for (const extra of [{}, { principalKey: key }]) {
+    const accounts = store(undefined, extra);
+    await accounts.upsert([entry], ctx);
+    assert.ok(await accounts.resolve(entry, request));
+    assert.equal((await accounts.list({}, request)).items.length, 1);
+  }
+});
+
+test('principal callbacks cannot clear unsupported sync intent or mutate caller input', async () => {
+  const request = { ...ctx, input: { delete_missing: true, dry_run: true } };
+  const guarded = store(undefined, {
+    principalKey(context) {
+      context.input.delete_missing = false;
+      context.input.dry_run = false;
+      return 'caller';
+    },
+  });
+  await assert.rejects(guarded.upsert([entry], request), error => error.code === 'UNSUPPORTED_FEATURE');
+  assert.deepEqual(request.input, { delete_missing: true, dry_run: true });
+});
+
+test('CAS retries reconstruct callback inputs rather than replaying mutated entries', async () => {
+  const memory = memoryKeyedAccountBackend();
+  let swaps = 0;
+  const backend = {
+    load: scope => memory.load(scope),
+    compareAndSwap(...args) {
+      return ++swaps === 1 ? Promise.resolve(false) : memory.compareAndSwap(...args);
+    },
+  };
+  let calls = 0;
+  const retrying = store(backend, {
+    buildAccount(ref, context) {
+      assert.equal(ref.payment_terms, 'net_60');
+      calls++;
+      const account = buildAccount(ref, context);
+      ref.payment_terms = 'net_30';
+      ref.brand.domain = 'mutated.example';
+      return account;
+    },
+  });
+  const result = await retrying.upsert([entry], ctx);
+  assert.equal(calls, 2);
+  assert.equal(result[0].payment_terms, 'net_60');
+  assert.equal((await retrying.resolve(entry, ctx)).brand.domain, entry.brand.domain);
+});
