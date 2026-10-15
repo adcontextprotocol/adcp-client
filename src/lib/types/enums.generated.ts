@@ -5,8 +5,9 @@
 //
 // Every `export type Name = 'a' | 'b' | 'c'` in the generated TypeScript
 // has a corresponding `export const NameValues = ['a', 'b', 'c'] as const`
-// here. Use these when you need to enumerate, filter, or validate against
-// the spec's literal sets — e.g.:
+// here. Arrays for unions with open string branches contain only the declared
+// literals; use the corresponding schema to validate additional strings.
+// Use these arrays to enumerate the spec's literal sets — e.g.:
 //
 //   import { MediaChannelValues } from '@adcp/sdk/types';
 //   const channels = new Set<string>(MediaChannelValues);
@@ -114,6 +115,8 @@ export const FrequencyCapDurationUnitValues = ["seconds", "minutes", "hours", "d
 export const FrequencyCapMutableFieldValues = ["max_impressions", "per", "window", "suppress"] as const;
 export const FrequencyCapScopeValues = ["package"] as const;
 export const GenreTaxonomyValues = ["iab_content_3.0", "iab_content_2.2", "gracenote", "eidr", "apple_genres", "google_genres", "roku", "amazon_genres", "custom"] as const;
+export const GeographicPlaceIdentifierSystemValues = ["geonames", "google_ads", "microsoft_ads"] as const;
+export const GeographicPlaceTypeValues = ["airport", "borough", "city", "city_region", "commune", "county", "district", "municipality", "neighborhood", "post_town", "prefecture", "province", "quarter", "state", "territory", "ward"] as const;
 export const GeographicTargetingLevelValues = ["country", "region", "metro", "postal_area"] as const;
 export const GOPTypeValues = ["closed", "open"] as const;
 export const GovernanceDecisionValues = ["approved", "denied", "conditions"] as const;
@@ -216,6 +219,7 @@ export const SortMetricValues = ["impressions", "spend", "clicks", "ctr", "views
 export const SpecialCategoryValues = ["awards", "championship", "concert", "conference", "election", "festival", "gala", "holiday", "premiere", "product_launch", "reunion", "tribute"] as const;
 export const SponsoredPlacementTypeValues = ["sponsored_search", "sponsored_display", "sponsored_native"] as const;
 export const StandardScopeValues = ["attestation_verifier"] as const;
+export const StartTimingValues = ["asap"] as const;
 export const StoryboardStatusValues = ["passing", "failing", "partial", "untested", "skipped", "not_selected", "unknown"] as const;
 export const TalentRoleValues = ["host", "guest", "creator", "cast", "narrator", "producer", "correspondent", "commentator", "analyst"] as const;
 export const TaskStatusValues = ["submitted", "working", "input-required", "completed", "canceled", "failed", "rejected", "auth-required", "unknown"] as const;

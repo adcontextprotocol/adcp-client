@@ -2,6 +2,7 @@
 
 import { writeFileSync, readFileSync, existsSync } from 'fs';
 import path from 'path';
+import ts from 'typescript';
 
 /**
  * Generate const-array enum exports from the named string-literal unions
@@ -11,6 +12,8 @@ import path from 'path';
  * emit `export const NameValues = ['a', 'b', 'c'] as const;` so adapters can
  * import authoritative enum values without re-deriving them from Zod schemas
  * or duplicating the literal list in their own validation code.
+ * String-open unions retain an array of their finite literal members; such an
+ * array is not an exhaustive validator for the union's additional strings.
  *
  * Inline anonymous unions inside interfaces (e.g., image asset
  * `formats?: ('jpg' | ...)[]`) are not exported here — they don't have a
@@ -40,44 +43,73 @@ interface ExtractedEnum {
   source: 'core' | 'tools';
 }
 
-/**
- * Match every `export type Name = <body>;` declaration in the given source.
- * The body is captured non-greedily up to the first `;` at end of line.
- *
- * The non-greedy match can land inside an object/interface literal (e.g.,
- * `export type Foo = { bar: string; ... };` would match at `bar: string;`),
- * but `parseStringLiteralUnion` rejects bodies that aren't pure literal
- * unions, so the false match is silently skipped. The regex's `m` flag
- * means subsequent `^export type` matches still anchor on real declaration
- * starts at line beginnings.
- */
-const DECL_REGEX = /^export type ([A-Z][A-Za-z0-9_]*) =\s*([\s\S]*?);$/gm;
-
-function parseStringLiteralUnion(body: string): string[] | null {
-  const cleaned = body.trim().replace(/^\|\s*/, '');
-  const tokens = cleaned
-    .split('|')
-    .map(s => s.trim())
-    .filter(s => s.length > 0);
-  if (tokens.length === 0) return null;
-  const literals: string[] = [];
-  for (const tok of tokens) {
-    const m = /^'([^']*)'$/.exec(tok);
-    if (!m) return null;
-    literals.push(m[1]);
-  }
-  return literals;
+function unwrapParentheses(node: ts.TypeNode): ts.TypeNode {
+  while (ts.isParenthesizedTypeNode(node)) node = node.type;
+  return node;
 }
 
-function extractFromSource(source: string, label: 'core' | 'tools'): ExtractedEnum[] {
+/** The unconstrained object marker jsts emits for a pattern-only schema. */
+function isOpenObjectMarker(node: ts.TypeLiteralNode): boolean {
+  if (node.members.length === 0) return true;
+  if (node.members.length !== 1) return false;
+  const member = node.members[0];
+  if (!member || !ts.isIndexSignatureDeclaration(member) || member.parameters.length !== 1 || !member.type)
+    return false;
+  if (member.parameters[0]?.type?.kind !== ts.SyntaxKind.StringKeyword) return false;
+  const value = unwrapParentheses(member.type);
+  const branches = ts.isUnionTypeNode(value) ? value.types : [value];
+  return (
+    branches.some(branch => branch.kind === ts.SyntaxKind.UnknownKeyword) &&
+    branches.every(
+      branch => branch.kind === ts.SyntaxKind.UnknownKeyword || branch.kind === ts.SyntaxKind.UndefinedKeyword
+    )
+  );
+}
+
+/**
+ * Keep explicit string literals while permitting open string branches. Using
+ * the TypeScript AST handles jsts's nested parentheses, leading union bars,
+ * and escaped literals without mistaking object properties for enum members.
+ * Other mixed unions remain excluded.
+ */
+function stringLiteralMembers(node: ts.TypeNode, constrainedToString = false): string[] | null {
+  node = unwrapParentheses(node);
+  if (ts.isLiteralTypeNode(node) && ts.isStringLiteralLike(node.literal)) return [node.literal.text];
+  if (node.kind === ts.SyntaxKind.StringKeyword || ts.isTemplateLiteralTypeNode(node)) return [];
+  if (ts.isUnionTypeNode(node)) {
+    const values: string[] = [];
+    for (const branch of node.types) {
+      const literals = stringLiteralMembers(branch, constrainedToString);
+      if (literals === null) return null;
+      values.push(...literals);
+    }
+    return values;
+  }
+  if (ts.isIntersectionTypeNode(node)) {
+    // A string schema with enum + pattern can compile to
+    // (("fixed" | ...) | { [k: string]: unknown }) & string. The normal
+    // generator cleanup may reduce the open marker to {}. Only accept that
+    // marker when the intersection explicitly constrains the result to string.
+    const branches = node.types.map(unwrapParentheses);
+    const remaining = branches.filter(branch => branch.kind !== ts.SyntaxKind.StringKeyword);
+    if (remaining.length === 1 && remaining.length < branches.length) {
+      return stringLiteralMembers(remaining[0]!, true);
+    }
+  }
+  if (constrainedToString && ts.isTypeLiteralNode(node) && isOpenObjectMarker(node)) return [];
+  return null;
+}
+
+export function extractFromSource(source: string, label: 'core' | 'tools'): ExtractedEnum[] {
   const result: ExtractedEnum[] = [];
-  let m: RegExpExecArray | null;
-  DECL_REGEX.lastIndex = 0;
-  while ((m = DECL_REGEX.exec(source)) !== null) {
-    const name = m[1];
-    const body = m[2];
-    const values = parseStringLiteralUnion(body);
-    if (values) result.push({ name, values, source: label });
+  const file = ts.createSourceFile(`${label}.ts`, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+  for (const statement of file.statements) {
+    if (!ts.isTypeAliasDeclaration(statement) || statement.typeParameters?.length) continue;
+    if (!statement.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword)) continue;
+    const name = statement.name.text;
+    if (!/^[A-Z][A-Za-z0-9_]*$/.test(name)) continue;
+    const values = stringLiteralMembers(statement.type);
+    if (values?.length) result.push({ name, values, source: label });
   }
   return result;
 }
@@ -127,8 +159,9 @@ function renderOutput(
 //
 // Every \`export type Name = 'a' | 'b' | 'c'\` in the generated TypeScript
 // has a corresponding \`export const NameValues = ['a', 'b', 'c'] as const\`
-// here. Use these when you need to enumerate, filter, or validate against
-// the spec's literal sets — e.g.:
+// here. Arrays for unions with open string branches contain only the declared
+// literals; use the corresponding schema to validate additional strings.
+// Use these arrays to enumerate the spec's literal sets — e.g.:
 //
 //   import { MediaChannelValues } from '@adcp/sdk/types';
 //   const channels = new Set<string>(MediaChannelValues);
@@ -227,7 +260,7 @@ function main(): void {
   if (enums.length < 100) {
     throw new Error(
       `generate-enum-arrays: extracted only ${enums.length} enums — expected at least 100. ` +
-        'The DECL_REGEX or generated TypeScript layout may have changed.'
+        'The enum extraction or generated TypeScript layout may have changed.'
     );
   }
 
