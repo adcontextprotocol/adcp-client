@@ -753,3 +753,30 @@ test('review: revocation status transitions between absent, unknown and current'
   clock += 61;
   assert.equal(await resolver.status(origin, key.kid), 'current');
 });
+
+test('review: a saturated directory fetch limiter sheds load with 429, not a re-sign challenge', async () => {
+  const key = newKey();
+  const releases = [];
+  const directory = new wba.SignatureDirectoryResolver({
+    now: () => T,
+    maxConcurrentFetches: 1,
+    fetchOptions: {
+      trustedFetchFn: () => new Promise((_, reject) => releases.push(() => reject(new Error('released')))),
+    },
+  });
+  const first = directory.resolve(key.kid, 'https://a.slow.com').catch(() => {});
+  await new Promise(resolve => setImmediate(resolve));
+  try {
+    await assert.rejects(
+      directory.resolve(key.kid, origin),
+      e =>
+        e.status === 429 &&
+        e.reason === 'directory_fetch_limit' &&
+        e.headers['Retry-After'] === '60' &&
+        !e.headers['Accept-Signature']
+    );
+  } finally {
+    for (const release of releases) release();
+    await first;
+  }
+});

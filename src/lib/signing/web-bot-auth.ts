@@ -754,7 +754,10 @@ export class SignatureDirectoryResolver implements JwksResolver {
         this.pending.size >= (this.options.maxConcurrentFetches ?? 16)
       ) {
         const key = usable()?.keys.find(k => k.kid === keyid);
-        return key ?? denied('directory_fetch_limit');
+        if (key) return key;
+        // Local load shedding, not a statement about the signer: 429 with
+        // Retry-After, never a re-sign challenge.
+        throw new WebBotAuthError(429, 'directory_fetch_limit');
       }
       pending = this.fetch(origin, now);
       this.pending.set(origin, pending);
