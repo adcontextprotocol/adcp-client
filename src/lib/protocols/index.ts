@@ -452,7 +452,7 @@ export interface PreparedProtocolToolCall {
   args: Record<string, unknown>;
   /** Native A2A TaskPushNotificationConfig retained independently of AdCP registration. */
   pushNotificationConfig?: PushNotificationConfig;
-  /** Stable operation ID generated for a beta.5 application webhook registration. */
+  /** Stable operation ID generated for an AdCP 3.1+ application webhook registration. */
   operationId?: string;
 }
 
@@ -488,8 +488,7 @@ export function prepareProtocolToolCall(
   applyPublishedSchemaCompatibility(options.toolName, argsWithVersion, args);
   const effectiveBundle =
     typeof argsWithVersion.adcp_version === 'string' ? resolveBundleKey(argsWithVersion.adcp_version) : undefined;
-  const usesApplicationRegistration =
-    options.serverVersion !== 'v2' && isAdcpVersionAtLeast(effectiveBundle, '3.2.0-beta.5');
+  const usesApplicationRegistration = options.serverVersion !== 'v2' && isAdcpVersionAtLeast(effectiveBundle, '3.1.0');
 
   let pushNotificationConfig: PushNotificationConfig | undefined;
   let applicationPushNotificationConfig: PushNotificationConfig | undefined;
@@ -520,14 +519,14 @@ export function prepareProtocolToolCall(
         operation_id: operationId,
       };
     } else if (agent.protocol === 'mcp' && !agent._inProcessMcpClient) {
-      // Preserve the pre-beta.5 MCP wire shape for explicitly negotiated
+      // Preserve the pre-3.1 MCP wire shape for explicitly negotiated
       // older bundles. A2A used only its native configuration on those lines.
       applicationPushNotificationConfig = pushNotificationConfig;
     }
   }
 
   return {
-    // AdCP 3.2 task-webhook registration is application-layer data on every
+    // AdCP 3.1+ task-webhook registration is application-layer data on every
     // transport. A2A's native TaskPushNotificationConfig is a distinct
     // transport feature and must not replace this argument.
     args: applicationPushNotificationConfig
