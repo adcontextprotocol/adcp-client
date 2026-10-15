@@ -16,7 +16,7 @@
  * @internal — not part of the public API surface; may change without a major bump.
  */
 
-import { hasSchemaBundle, toReleasePrecisionWire } from './schema-loader';
+import { hasSchemaBundle, isExternalSchemaRootActive, toReleasePrecisionWire } from './schema-loader';
 
 /** `core/version-envelope.json`'s `adcp_version` wire pattern (release precision). */
 const RELEASE_PRECISION = /^(\d+)\.\d+(?:-[a-zA-Z0-9.-]+)?$/;
@@ -35,11 +35,24 @@ const NUMERIC_PIN_MAJOR = /^(\d+)\.\d+/;
  * a patch-precise pin (and any external schema root bound to it) still
  * applies. `supported_versions` is deliberately not consulted: with no echo
  * the spec says to validate against the pin.
+ *
+ * Two deliberate consequences:
+ * - An external schema root the caller bound to the pin (`schemaRoot`,
+ *   `withExternalSchemaRoot`) wins over the echo, matching the storyboard
+ *   runner's `response_schema` precedence: the caller chose that protocol
+ *   source explicitly.
+ * - An echo older than the pin (pin 3.2, served 3.0) is validated against the
+ *   older release. That is the spec's downshift rule, not a loosening bug.
  */
 export function resolveServedValidationVersion(response: unknown, pinnedVersion: string): string {
   const pinMajor = NUMERIC_PIN_MAJOR.exec(pinnedVersion)?.[1];
   // Legacy aliases ('v2.5', 'v3') have their own adapter paths; leave them alone.
   if (pinMajor === undefined) return pinnedVersion;
+  try {
+    if (isExternalSchemaRootActive(pinnedVersion)) return pinnedVersion;
+  } catch {
+    return pinnedVersion;
+  }
 
   const echoed =
     response !== null && typeof response === 'object'
