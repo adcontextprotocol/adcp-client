@@ -130,6 +130,11 @@ describe('Reliable Reporting buyer runtime', () => {
     assert.equal(calls.length, 2);
     assert.equal(calls[0].changes_after, 'checkpoint-1');
     assert.equal(calls[1].changes_after, 'checkpoint-1');
+    // The largest page AdCP allows, so the walk is not halved by a seller's default of 50.
+    assert.deepEqual(
+      calls.map(call => call.pagination),
+      [{ max_results: 100 }, { max_results: 100, cursor: 'next-page' }]
+    );
   });
 
   test('enforces the change-walk deadline when a client ignores cancellation', async () => {

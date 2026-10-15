@@ -250,6 +250,26 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     assert.equal(fourth.consumerStatuses[0].suppressed, 'unchanged');
   });
 
+  test('the buyer walkers ask for the largest page AdCP allows, on the ledger walk and the row walk', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    const sent = { status: [], delivery: [] };
+    const status = seller.client.getReportingStatus;
+    const delivery = seller.client.getMediaBuyDelivery;
+    seller.client.getReportingStatus = params => (
+      params.view === 'periods' && sent.status.push(params.pagination),
+      status(params)
+    );
+    seller.client.getMediaBuyDelivery = params => (sent.delivery.push(params.pagination), delivery(params));
+    await seller.reconcile(at, expected);
+    assert.ok(sent.status.length > 0 && sent.delivery.length > 0, 'both walks ran');
+    for (const pagination of [...sent.status, ...sent.delivery]) assert.equal(pagination.max_results, 100);
+  });
+
   test('a revision whose rows do not hash to its digest is unreadable, not received', async () => {
     const seller = await harness();
     const expected = [expectedPeriod(seller.request, seller.anchor)];

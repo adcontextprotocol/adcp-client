@@ -226,7 +226,7 @@ describe('PostgresReportingLedgerStore row storage', { skip: !DATABASE_URL && 'P
         {
           account: request.account,
           reporting_revision_id: first.reporting_revision_id,
-          pagination: { max_results: 500, ...(cursor ? { cursor } : {}) },
+          pagination: { max_results: 100, ...(cursor ? { cursor } : {}) },
         },
         { account: { account_id: request.account.account_id } }
       );
@@ -235,6 +235,25 @@ describe('PostgresReportingLedgerStore row storage', { skip: !DATABASE_URL && 'P
       cursor = page.pagination.cursor;
     } while (cursor);
     assert.deepEqual(paged, rows);
+
+    // Without max_results a page is the schema's default of 50 rows, and the pages still rebuild the revision.
+    const defaultPages = [];
+    cursor = undefined;
+    do {
+      const page = await deliver(
+        {
+          account: request.account,
+          reporting_revision_id: first.reporting_revision_id,
+          ...(cursor ? { pagination: { cursor } } : {}),
+        },
+        { account: { account_id: request.account.account_id } }
+      );
+      defaultPages.push(page.reporting_rows);
+      cursor = page.pagination.cursor;
+    } while (cursor);
+    assert.ok(defaultPages.every(page => page.length <= 50));
+    assert.equal(defaultPages.length, Math.ceil(rows.length / 50));
+    assert.deepEqual(defaultPages.flat(), rows);
   });
 
   test('repeated rows within an obligation share one body', async () => {
