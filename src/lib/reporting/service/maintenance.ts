@@ -81,6 +81,8 @@ export interface ReportingOrphanCollectionOptionsV1 {
  */
 export interface ReportingOrphanCollectionStateV1 {
   cursors: Record<string, string>;
+  /** Bindings whose listing finished in the current cycle; not listed again until every binding has. */
+  completed?: string[];
   /** Epoch milliseconds before which no new full listing starts. */
   nextCycleAt?: number;
 }
@@ -306,6 +308,7 @@ export async function runReportingLedgerMaintenance(
                 skippedReadOnly: [],
                 candidates: [],
                 cursors: {},
+                completed: [],
                 bindings: [],
               };
             }
@@ -321,15 +324,22 @@ export async function runReportingLedgerMaintenance(
               ...(orphanCollection.includeReadOnly !== undefined
                 ? { includeReadOnly: orphanCollection.includeReadOnly }
                 : {}),
-              ...(state ? { cursors: { ...state.cursors } } : {}),
+              ...(state ? { cursors: { ...state.cursors }, skipBindings: [...(state.completed ?? [])] } : {}),
               ...(signal ? { signal } : {}),
             });
             if (state) {
               state.cursors = outcome.cursors;
-              // A finished, clean listing rests for the interval; anything else carries on next pass.
-              if (Object.keys(outcome.cursors).length === 0 && outcome.failed === 0) {
+              // A finished, clean cycle rests for the interval; anything else carries on next pass, without
+              // listing again the bindings that already finished.
+              // (A delete that keeps failing does not stop the rest: it is tried again on the next listing.)
+              if (
+                Object.keys(outcome.cursors).length === 0 &&
+                !outcome.bindings.some(item => item.status === 'failed')
+              ) {
+                state.completed = [];
                 state.nextCycleAt = Date.now() + (orphanCollection.intervalSeconds ?? 86_400) * 1000;
               } else {
+                state.completed = [...new Set([...(state.completed ?? []), ...outcome.completed])];
                 delete state.nextCycleAt;
               }
             }

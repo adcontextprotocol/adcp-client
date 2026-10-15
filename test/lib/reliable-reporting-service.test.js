@@ -4356,6 +4356,7 @@ describe('ReliableReportingService ledger maintenance option', () => {
         skippedReadOnly: [],
         candidates: [],
         cursors: { objects: 'next-page' },
+        completed: [],
         bindings: [],
       };
     };
@@ -4370,6 +4371,7 @@ describe('ReliableReportingService ledger maintenance option', () => {
       limit: 50,
       includeReadOnly: true,
       cursors: {},
+      skipBindings: [],
     });
     // The next pass resumes from the position the service kept.
     await service.runMaintenance();

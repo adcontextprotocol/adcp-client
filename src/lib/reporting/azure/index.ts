@@ -332,6 +332,7 @@ export function createAzureBlobReportingRowObjectProviderV1(
             }
           | undefined;
         const objects: ReportingRowObjectListEntryV1[] = [];
+        let skipped = 0;
         for (const item of page?.segment?.blobItems ?? []) {
           const size = item.properties?.contentLength;
           // The later of creation and last modification: an overwrite can move the second without the first.
@@ -352,6 +353,7 @@ export function createAzureBlobReportingRowObjectProviderV1(
             size < 0 ||
             !Number.isFinite(created)
           ) {
+            skipped += 1;
             continue;
           }
           objects.push({
@@ -363,7 +365,11 @@ export function createAzureBlobReportingRowObjectProviderV1(
         }
         await pages.return?.(undefined);
         const token = page?.continuationToken;
-        return { objects, ...(typeof token === 'string' && token ? { nextPageToken: token } : {}) };
+        return {
+          objects,
+          ...(skipped > 0 ? { skipped } : {}),
+          ...(typeof token === 'string' && token ? { nextPageToken: token } : {}),
+        };
       });
     },
     delete(input, context) {

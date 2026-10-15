@@ -265,6 +265,7 @@ export function createGcsReportingRowObjectProviderV1(
           ...(input.pageToken ? { pageToken: input.pageToken } : {}),
         });
         const objects: ReportingRowObjectListEntryV1[] = [];
+        let skipped = 0;
         for (const file of files) {
           const metadata = file.metadata as FileMetadata;
           const size = Number(metadata.size);
@@ -281,6 +282,7 @@ export function createGcsReportingRowObjectProviderV1(
             !Number.isFinite(created) ||
             !GENERATION.test(String(metadata.generation))
           ) {
+            skipped += 1;
             continue;
           }
           objects.push({
@@ -291,7 +293,11 @@ export function createGcsReportingRowObjectProviderV1(
           });
         }
         const token = (next as { pageToken?: unknown } | null | undefined)?.pageToken;
-        return { objects, ...(typeof token === 'string' && token ? { nextPageToken: token } : {}) };
+        return {
+          objects,
+          ...(skipped > 0 ? { skipped } : {}),
+          ...(typeof token === 'string' && token ? { nextPageToken: token } : {}),
+        };
       });
     },
     delete(input, context) {

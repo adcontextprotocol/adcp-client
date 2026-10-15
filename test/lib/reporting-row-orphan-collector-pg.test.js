@@ -271,6 +271,25 @@ describe('orphaned row object collector', { skip: !DATABASE_URL && 'PostgreSQL U
     );
   });
 
+  test('reports the bindings whose listing finished, and does not list the ones it is told to skip', async () => {
+    await putObject(key('acct/skip.jsonl'));
+    await putObject(key('acct/skip2.jsonl'));
+    const first = await collect({ dryRun: true, includeReadOnly: true, bindings: ['objects', 'twin'] });
+    assert.deepEqual([...first.completed].sort(), ['objects', 'twin']);
+    const partial = await collect({ dryRun: true, bindings: ['objects'], limit: 1, pageSize: 1 });
+    assert.deepEqual(partial.completed, [], 'a listing that stopped at its budget is not finished');
+    const skipped = await collect({
+      dryRun: true,
+      includeReadOnly: true,
+      bindings: ['objects', 'twin'],
+      skipBindings: ['objects'],
+    });
+    assert.deepEqual(
+      skipped.bindings.map(item => item.bindingId),
+      ['twin']
+    );
+  });
+
   test('a delete that fails is counted and does not stop the rest; a listing failure keeps its cursor', async () => {
     const stuck = key('acct/a-stuck.jsonl');
     const fine = key('acct/b-fine.jsonl');
@@ -399,6 +418,33 @@ describe('orphaned row object collector', { skip: !DATABASE_URL && 'PostgreSQL U
     }
   });
 
+  test('serializes with an adoption through another binding that shares the prefix', async () => {
+    const orphan = key('acct/shared-lock.jsonl.gz');
+    const version = await putObject(orphan);
+    const holder = await pool.connect();
+    try {
+      await holder.query('BEGIN');
+      // A writer on `twin` adopts the object: it holds the lock of its own binding.
+      await holder.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+        `adcp-reporting-object:twin:${orphan}`,
+      ]);
+      const { pending } = await untilBlocked(holder, () => collect({ bindings: ['objects'] }));
+      await holder.query(
+        `INSERT INTO adcp_reporting_row_write_intents
+           (row_binding_id, account_id, row_set_id, content_sha256, state, owner_token, created_objects, expires_at)
+         VALUES ('twin', 'acct_orphans', 'rrev_twin_adopting', $1, 'open', 'owner', $2::jsonb, clock_timestamp() + INTERVAL '1 hour')`,
+        ['d'.repeat(64), JSON.stringify([{ object_ref: orphan, native_version_ref: version }])]
+      );
+      await holder.query('COMMIT');
+      const result = await pending;
+      assert.equal(binding(result, 'objects').deleted, 0);
+      assert.ok(onDisk(orphan));
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      holder.release();
+    }
+  });
+
   test('a record under another binding that shares the bucket and prefix keeps the object', async () => {
     const fixture = await createRowStorageFixture({ store, suffix: 'orphans_twin' });
     await store.commitRevision(fixture.revision('rrev_orphans_twin', 1, rows), fixture.lease);
@@ -492,6 +538,7 @@ describe('orphaned row object collector', { skip: !DATABASE_URL && 'PostgreSQL U
         'a string',
         entry(good, { nativeVersionRef: goodVersion }),
       ],
+      skipped: 2,
     });
     const result = await collect({ bindings: ['objects'] });
     assert.deepEqual(
@@ -499,7 +546,7 @@ describe('orphaned row object collector', { skip: !DATABASE_URL && 'PostgreSQL U
       [`${good}@${goodVersion}`],
       'only the one legitimate entry is deleted, at its version'
     );
-    assert.equal(binding(result, 'objects').foreign, 11);
+    assert.equal(binding(result, 'objects').foreign, 13, 'eleven dropped here and two the provider left out');
     for (const name of outside) assert.ok(onDisk(name));
   });
 

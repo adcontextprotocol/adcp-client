@@ -443,6 +443,7 @@ export function createS3ReportingRowObjectProviderV1(
           { abortSignal: context.signal }
         );
         const objects: ReportingRowObjectListEntryV1[] = [];
+        let skipped = 0;
         for (const version of output.Versions ?? []) {
           const key = version.Key;
           const id = version.VersionId;
@@ -462,6 +463,7 @@ export function createS3ReportingRowObjectProviderV1(
             size < 0 ||
             !Number.isFinite(modified)
           ) {
+            skipped += 1;
             continue;
           }
           objects.push({
@@ -479,6 +481,7 @@ export function createS3ReportingRowObjectProviderV1(
         }
         return {
           objects,
+          ...(skipped > 0 ? { skipped } : {}),
           ...(output.IsTruncated && typeof nextKey === 'string' && typeof nextVersion === 'string'
             ? {
                 nextPageToken: Buffer.from(JSON.stringify({ k: nextKey, v: nextVersion }), 'utf8').toString(

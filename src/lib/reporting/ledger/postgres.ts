@@ -2545,6 +2545,11 @@ ${managedDueArm}       )
       /** Resume listings by binding ID, from a previous result's `cursors`. */
       cursors?: Readonly<Record<string, string>>;
       /**
+       * Bindings whose listing already finished in the current cycle (earlier results' `completed`). They
+       * are not listed again, so a cycle that spans several passes does not rescan them every pass.
+       */
+      skipBindings?: readonly string[];
+      /**
        * Required to delete anything (not for `dryRun`): the caller's statement that this ledger database
        * is the only one that owns this namespace, and not a clone or restore pointed at the same bucket.
        */
@@ -2596,6 +2601,7 @@ ${managedDueArm}       )
       skippedReadOnly: [],
       candidates: [],
       cursors: {},
+      completed: [],
       bindings: [],
     };
     const tables = await this.optionalTables();
@@ -2603,6 +2609,7 @@ ${managedDueArm}       )
     const cutoff = clock.getTime() - minAgeSeconds * 1000;
     for (const summary of summaries) {
       if (input.bindings && !input.bindings.includes(summary.id)) continue;
+      if (input.skipBindings?.includes(summary.id)) continue;
       input.signal?.throwIfAborted();
       const outcome: ReportingOrphanBindingResultV1 = {
         bindingId: summary.id,
@@ -2703,7 +2710,10 @@ ${managedDueArm}       )
             throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'provider returned the same page token twice');
           }
           token = page.nextPageToken;
-          if (token === undefined) break;
+          if (token === undefined) {
+            result.completed.push(summary.id);
+            break;
+          }
           if (examined >= limit || pages >= maxPages) {
             outcome.status = 'partial';
             result.cursors[summary.id] = token;
@@ -2784,9 +2794,27 @@ ${managedDueArm}       )
     for (const object of objects) {
       signal?.throwIfAborted();
       const removed = await this.transaction(async client => {
-        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
-          objectLock(bindingId, object.objectRef),
-        ]);
+        // A writer adopting an object takes the lock of its own binding only. When bindings can share a
+        // bucket and prefix, take every binding's lock for this object, in a fixed order, so the delete is
+        // serialized with an adoption through any of them. Writers hold one such lock, so no cycle forms.
+        const lockBindings = scope.anyBinding
+          ? [
+              ...new Set([
+                bindingId,
+                ...this.rowStorage.objectBindingIds(),
+                ...(
+                  await client.query<{ row_binding_id: string }>(
+                    `SELECT row_binding_id FROM adcp_reporting_row_bindings`
+                  )
+                ).rows.map(row => row.row_binding_id),
+              ]),
+            ].sort()
+          : [bindingId];
+        for (const lockBinding of lockBindings) {
+          await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+            objectLock(lockBinding, object.objectRef),
+          ]);
+        }
         const referenced = await client.query(
           `(SELECT 1 FROM adcp_reporting_row_chunks chunk
               JOIN adcp_reporting_row_sets row_set ON row_set.row_set_id = chunk.row_set_id
@@ -6058,6 +6086,8 @@ export interface ReportingOrphanCollectionResultV1 {
   }[];
   /** Resume tokens for bindings whose listing is not finished. Pass back as `cursors`. */
   cursors: Record<string, string>;
+  /** Bindings whose listing reached its end this pass. Pass them back as `skipBindings` until every binding has. */
+  completed: string[];
   bindings: ReportingOrphanBindingResultV1[];
 }
 

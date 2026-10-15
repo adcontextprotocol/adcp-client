@@ -291,6 +291,7 @@ test('list leaves out an entry it cannot age, and refuses a truncated listing th
     page.objects.map(entry => entry.nativeVersionRef),
     [good.nativeVersionRef]
   );
+  assert.equal(page.skipped, 1, 'what it left out is counted');
   const send = client.send.bind(client);
   client.send = async (command, options) =>
     command.constructor.name === 'ListObjectVersionsCommand'

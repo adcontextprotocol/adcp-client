@@ -404,6 +404,7 @@ export class ReportingRowStorageV1 {
   ): Promise<{
     ownedPrefix: string;
     objects: ReportingRowObjectListEntryV1[];
+    /** Entries dropped: outside the owned prefix, malformed, or left out by the provider as unaddressable. */
     foreign: number;
     nextPageToken?: string;
   }> {
@@ -439,7 +440,7 @@ export class ReportingRowStorageV1 {
       throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'provider returned more objects than the page size');
     }
     const objects: ReportingRowObjectListEntryV1[] = [];
-    let foreign = 0;
+    let foreign = Number.isSafeInteger(page.skipped) && page.skipped! > 0 ? page.skipped! : 0;
     for (const entry of page.objects) {
       if (
         !entry ||

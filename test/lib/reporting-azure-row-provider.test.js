@@ -296,6 +296,7 @@ test('list ages a blob by the later of creation and last modification, and leave
   ]);
   const page = await provider.list({ ...base, prefix: 'adcp-rows/ns/', pageSize: 10 }, signal());
   assert.equal(page.objects.length, 1);
+  assert.equal(page.skipped, 1, 'what it left out is counted');
   assert.equal(page.objects[0].createdAt, version.lastModified.toISOString());
 });
 

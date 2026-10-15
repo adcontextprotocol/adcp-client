@@ -187,7 +187,9 @@ service runs for you. See
    the original wrote after the copy was taken, because the copy has never heard
    of them. The age threshold does not protect against that, which is why a real
    (not dry) pass needs `acknowledgeExclusiveNamespace: true`: it is your statement
-   that this database is the only owner. Disable the option on clones, and after
+   that this database is the only owner. A clone made by copying the deployment
+   copies the flag too, so the flag does not protect it: remove it, or the whole
+   option, from every copy. Disable the option on clones, and after
    restoring a database in place expect the collector to delete the objects of the
    row sets the restore lost, which is its purpose.
    The cost grows with bucket size: one listing request per page, plus one

@@ -161,12 +161,13 @@ export interface ReportingRowObjectProviderV1 {
    * nativeVersionRef)` exactly as `putIfAbsent` recorded it (on a versioned store, noncurrent versions
    * too, never delete markers), the stored size, and the time the version was written. Return only keys
    * under `prefix`. A page may be short; `nextPageToken` is absent on the last page. A token is only
-   * valid for the same `prefix` and location.
+   * valid for the same `prefix` and location. Leave out an entry that cannot be addressed or aged (no
+   * usable version, size or write time) and count it in `skipped` rather than failing the page.
    */
   list?(
     input: ReportingRowObjectListInputV1,
     context: ReportingRowObjectContextV1
-  ): Promise<{ objects: ReportingRowObjectListEntryV1[]; nextPageToken?: string }>;
+  ): Promise<{ objects: ReportingRowObjectListEntryV1[]; nextPageToken?: string; skipped?: number }>;
 }
 
 /**
@@ -357,7 +358,8 @@ function compareSegments(a: readonly string[], b: readonly string[]): number {
 }
 
 /**
- * Local filesystem provider for tests and single-host deployments. Create-only
+ * Local filesystem provider for tests and single-host deployments. `list` reads and sorts each directory it
+ * walks in full, so keep directories small (it is not meant for millions of objects per prefix). Create-only
  * writes use a temporary file, `fsync`, and `link()` to the final name, which
  * fails rather than replacing an existing object.
  *

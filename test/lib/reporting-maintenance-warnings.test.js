@@ -55,6 +55,7 @@ describe('orphan object collection task', () => {
     skippedReadOnly: [],
     candidates: [],
     cursors: {},
+    completed: [],
     bindings: [],
     ...overrides,
   });
@@ -99,6 +100,7 @@ describe('orphan object collection task', () => {
       minAgeSeconds: 86400,
       includeReadOnly: true,
       cursors: { stale: 'old' },
+      skipBindings: [],
     });
     assert.deepEqual(orphanState.cursors, { objects: 'p2' }, 'replaced, not merged');
     assert.equal(orphanState.nextCycleAt, undefined, 'an unfinished listing carries on');
@@ -109,6 +111,33 @@ describe('orphan object collection task', () => {
     assert.ok(orphanState.nextCycleAt > Date.now(), 'a finished listing rests for the interval');
     await runWith(collect, { orphanCollection, orphanState });
     assert.equal(seen.length, 2, 'no store call while resting');
+  });
+
+  test('a binding that finished is not listed again while another needs more passes, and the cycle then rests', async () => {
+    const seen = [];
+    const answers = [
+      orphanResult({ cursors: { slow: 't1' }, completed: ['fast'] }),
+      orphanResult({ cursors: { slow: 't2' }, completed: [] }),
+      orphanResult({ cursors: {}, completed: ['slow'] }),
+    ];
+    const collect = async options => {
+      seen.push(options);
+      return answers.shift();
+    };
+    const orphanState = { cursors: {} };
+    const orphanCollection = { enabled: true, acknowledgeExclusiveNamespace: true, intervalSeconds: 600 };
+    for (let pass = 0; pass < 3; pass += 1) await runWith(collect, { orphanCollection, orphanState });
+    assert.deepEqual(
+      seen.map(options => [options.skipBindings, options.cursors]),
+      [
+        [[], {}],
+        [['fast'], { slow: 't1' }],
+        [['fast'], { slow: 't2' }],
+      ],
+      'the finished binding is skipped for the rest of the cycle'
+    );
+    assert.deepEqual(orphanState.completed, [], 'a finished cycle starts the next one from scratch');
+    assert.ok(orphanState.nextCycleAt > Date.now());
   });
 
   test('a failed binding keeps the task retrying every pass and names its cause; a rejected collector is a failed task', async () => {

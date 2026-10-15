@@ -109,6 +109,7 @@ test('list leaves out an entry it cannot address or age instead of failing the w
     page.objects.map(entry => [entry.objectRef, entry.nativeVersionRef]),
     [['adcp-rows/ns/good.jsonl', good.nativeVersionRef]]
   );
+  assert.equal(page.skipped, 2, 'what it left out is counted');
 });
 
 test('list reports the later of creation and last update, so an object is never aged past its write', async () => {
