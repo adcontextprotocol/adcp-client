@@ -419,6 +419,47 @@ describe(
       });
     }
 
+    test('an account consumer holds a period by (xid, seq), and a pre-xid consumer row holds it by seq', async () => {
+      const fixture = await createRowStorageFixture({ store, suffix: 'account_order' });
+      const accountId = fixture.request.account.account_id;
+      const obligationId = fixture.obligation.reporting_obligation_id;
+      await pool.query('DELETE FROM adcp_reporting_feed_consumers');
+      await store.commitRevision(fixture.revision('rrev_account_order_1', 1, rows), fixture.lease);
+      await expire(obligationId);
+      const change = (
+        await pool.query(
+          `SELECT xid::text AS xid, seq::text AS seq FROM adcp_reporting_changes
+            WHERE obligation_id = $1 ORDER BY xid DESC, seq DESC LIMIT 1`,
+          [obligationId]
+        )
+      ).rows[0];
+      const setConsumer = (xid, seq) =>
+        pool.query(
+          `INSERT INTO adcp_reporting_feed_consumers (consumer_name, account_id, cursor_xid, cursor_seq)
+           VALUES ('order-sink', $1, $2::text::xid8, $3::bigint)
+           ON CONFLICT (consumer_name) DO UPDATE SET cursor_xid = EXCLUDED.cursor_xid, cursor_seq = EXCLUDED.cursor_seq,
+             updated_at = clock_timestamp()`,
+          [accountId, xid, seq]
+        );
+      const retired = async () => (await store.retireExpiredPeriods({ statusRetentionDays: 30 })).retired;
+
+      // A higher seq but a lower xid has not passed the change: held. Seq alone would release it.
+      await setConsumer((BigInt(change.xid) - 1n).toString(), (BigInt(change.seq) + 1000n).toString());
+      assert.equal(await retired(), 0);
+      assert.ok(await periodExists(obligationId));
+
+      // A row saved before the account feed carried an xid holds by seq: this one has not passed it.
+      await setConsumer(null, (BigInt(change.seq) - 1n).toString());
+      assert.equal(await retired(), 0);
+      assert.ok(await periodExists(obligationId));
+
+      // Passing it in (xid, seq) order releases the period.
+      await setConsumer(change.xid, change.seq);
+      assert.equal(await retired(), 1);
+      assert.equal(await periodExists(obligationId), false);
+      await pool.query('DELETE FROM adcp_reporting_feed_consumers');
+    });
+
     test('an account consumer does not hold another account, and a non-positive hold is refused', async () => {
       const fixture = await createRowStorageFixture({ store, suffix: 'other_account' });
       const obligationId = fixture.obligation.reporting_obligation_id;

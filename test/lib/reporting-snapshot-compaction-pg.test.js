@@ -438,10 +438,30 @@ describe('reporting snapshot compaction', { skip: !DATABASE_URL && 'PostgreSQL U
       [accountId]
     );
     assert.equal((await compact()).compacted, 0, 'an unread consumer holds the revision');
+    const revisionChange = (
+      await pool.query(
+        `SELECT xid::text AS xid, seq::text AS seq FROM adcp_reporting_changes
+          WHERE account_id = $1 AND record_kind = 'revision' AND record_id = $2`,
+        [accountId, r1]
+      )
+    ).rows[0];
+    // A higher seq but a lower xid has not passed the revision's change in (xid, seq) order.
+    await pool.query(`UPDATE adcp_reporting_feed_consumers SET cursor_xid = $1::text::xid8, cursor_seq = $2::bigint`, [
+      (BigInt(revisionChange.xid) - 1n).toString(),
+      (BigInt(revisionChange.seq) + 1000n).toString(),
+    ]);
+    assert.equal((await compact()).compacted, 0, 'a consumer behind in (xid, seq) order still holds the revision');
     const passed = (
-      await pool.query(`SELECT max(seq) AS seq FROM adcp_reporting_changes WHERE account_id = $1`, [accountId])
-    ).rows[0].seq;
-    await pool.query(`UPDATE adcp_reporting_feed_consumers SET cursor_seq = $1`, [passed]);
+      await pool.query(
+        `SELECT xid::text AS xid, seq::text AS seq FROM adcp_reporting_changes WHERE account_id = $1
+          ORDER BY xid DESC, seq DESC LIMIT 1`,
+        [accountId]
+      )
+    ).rows[0];
+    await pool.query(`UPDATE adcp_reporting_feed_consumers SET cursor_xid = $1::text::xid8, cursor_seq = $2::bigint`, [
+      passed.xid,
+      passed.seq,
+    ]);
     assert.equal((await compact()).compacted, 1);
     assert.equal(await rowSetState(r1), 'pruned');
     await pool.query('DELETE FROM adcp_reporting_feed_consumers');
