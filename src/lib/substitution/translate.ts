@@ -193,7 +193,13 @@ function assertSingleScopedConsent(spans: readonly RenderedSpan[], mapping: Macr
   let offset = 0;
   for (const span of spans) {
     const range = { start: offset, end: offset + span.text.length };
-    if (span.concrete && range.start < range.end) concrete.push(range);
+    if (span.concrete && range.start < range.end) {
+      // Adjacent value mappings remain data even when their combined bytes
+      // happen to spell a known native alias.
+      const previous = concrete[concrete.length - 1];
+      if (previous?.end === range.start) previous.end = range.end;
+      else concrete.push(range);
+    }
     if (span.scopedSource && span.text.length > 0) sources.push({ ...range, macro: span.scopedSource });
     offset = range.end;
   }
@@ -223,11 +229,9 @@ function assertSingleScopedConsent(spans: readonly RenderedSpan[], mapping: Macr
       const shell = overlappingRange(shells, range);
       const completeShell = shell?.start === range.start && shell.end === range.end;
       const insideShell = shell && shell.start <= range.start && range.end <= shell.end && !completeShell;
-      if (
-        !insideShell &&
-        (completeShell || !overlappingRange(concrete, range)) &&
-        !overlappingRange(occurrences, range)
-      ) {
+      const data = overlappingRange(concrete, range);
+      const entirelyConcrete = data && data.start <= range.start && range.end <= data.end;
+      if (!insideShell && (completeShell || !entirelyConcrete) && !overlappingRange(occurrences, range)) {
         aliases.push({ ...range, macro });
       }
       start = url.indexOf(entry.native, range.end);

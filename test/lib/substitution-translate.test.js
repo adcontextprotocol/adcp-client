@@ -290,6 +290,27 @@ describe('translateUniversalMacros — scoped consent safety', () => {
     );
   });
 
+  it('counts known unreserved aliases assembled across native and concrete replacement spans', () => {
+    rejectsSecondConsent(
+      'https://pixel.example/i?a={PREFIX}{ID}&c=${GDPR_CONSENT_42}',
+      {
+        '{GDPR_CONSENT_755}': { native: 'CONSENT_755' },
+        '{PREFIX}': { native: 'CONSENT_' },
+        '{ID}': { value: '755' },
+      },
+      '{GDPR_CONSENT_42}'
+    );
+  });
+
+  it('keeps known unreserved aliases assembled entirely from adjacent concrete values as data', () => {
+    const result = translateUniversalMacros('https://pixel.example/i?a={PREFIX}{ID}&c=${GDPR_CONSENT_42}', {
+      '{GDPR_CONSENT_755}': { native: 'CONSENT_755' },
+      '{PREFIX}': { value: 'CONSENT_' },
+      '{ID}': { value: '755' },
+    });
+    assert.equal(result.url, 'https://pixel.example/i?a=CONSENT_755&c=${GDPR_CONSENT_42}');
+  });
+
   it('keeps later valid scoped tokens visible after malformed native openers', () => {
     for (const url of [
       'https://pixel.example/{{BROKEN${GDPR_CONSENT_755}/${GDPR_CONSENT_42}',
