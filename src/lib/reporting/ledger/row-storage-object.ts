@@ -4,6 +4,7 @@ import * as path from 'path';
 
 import { canonicalize } from '../../utils/jcs';
 import { ReportingRowStoreError } from './row-storage-errors';
+import { isReportingRowInstant } from './row-storage-provider-io';
 import { reportingPeriodDate } from './schedule';
 
 /**
@@ -752,9 +753,12 @@ async function checkListing(
           throw new Error('list returned no objects array or more objects than pageSize');
         }
         found.push(...result.objects);
+        const previous = pageToken;
         pageToken = result.nextPageToken;
         if (pageToken === undefined) return found;
-        if (typeof pageToken !== 'string' || pageToken.length === 0) throw new Error('list returned an invalid token');
+        if (typeof pageToken !== 'string' || pageToken.length === 0 || pageToken === previous) {
+          throw new Error('list returned an invalid or repeated token');
+        }
       }
       throw new Error('list did not finish within 100 pages');
     };
@@ -774,7 +778,11 @@ async function checkListing(
         }
         const written = Date.parse(entry.createdAt);
         // Object-store clocks differ from this host's; a wide margin still catches a missing or zero time.
-        if (!Number.isFinite(written) || Math.abs(written - startedAt) > 10 * 60_000) {
+        if (
+          !isReportingRowInstant(entry.createdAt) ||
+          !Number.isFinite(written) ||
+          Math.abs(written - startedAt) > 10 * 60_000
+        ) {
           throw new Error('list did not report when the version was written');
         }
       }

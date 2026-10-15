@@ -2514,10 +2514,11 @@ ${managedDueArm}       )
    * - it was written more than `minAgeSeconds` ago (default 7 days, at least 1 day), so no writer
    *   that still holds a lease can be mid-upload;
    * - no row set that is not already `pruned` has a chunk at its key, and no write intent lists it,
-   *   at any version (a version-blind pre-check that errs towards leaking);
-   * - under the per-object advisory lock, no `live` or `unavailable` row set references that exact
-   *   version and no open intent created it (the check every other delete makes), and the provider
-   *   deletes that exact version.
+   *   at any version and under any binding (a pre-check that errs towards leaking, because two
+   *   bindings can share a bucket and prefix);
+   * - under the per-object advisory lock, no `live` or `unavailable` row set under any binding
+   *   references that exact version and no open intent created it (the check every other delete makes,
+   *   widened to every binding), and the provider deletes that exact version.
    *
    * `readOnly` bindings are skipped unless `includeReadOnly`. A binding whose provider has no `list`
    * is reported in `unsupported`. `dryRun` deletes nothing and reports what would go in `candidates`.
@@ -2525,9 +2526,12 @@ ${managedDueArm}       )
    * to resume where the last pass stopped (a binding absent from `cursors` starts from the beginning,
    * which is also where a binding that finished its listing starts next time).
    *
-   * Enable it only on the ledger database that owns the namespace. A clone or restore of that
-   * database that still points at the same bucket shares its `namespace_key`, and would delete the
-   * objects of every row set the original wrote after the clone was taken.
+   * Deleting needs `acknowledgeExclusiveNamespace: true`: enable it only on the ledger database that
+   * owns the namespace. A clone or restore of that database that still points at the same bucket
+   * shares its `namespace_key`, and would delete the objects of every row set the original wrote after
+   * the clone was taken. Everything the listing finds under the owned prefix with a row-object key is
+   * treated as written by this SDK, so do not store other `.jsonl` files there. `deleted` counts delete
+   * requests that found nothing referenced; an object another host removed first still counts.
    */
   async collectOrphanedRowObjects(
     input: {
@@ -2540,7 +2544,12 @@ ${managedDueArm}       )
       bindings?: readonly string[];
       /** Resume listings by binding ID, from a previous result's `cursors`. */
       cursors?: Readonly<Record<string, string>>;
-      /** Override the clock the age threshold uses. For tests. */
+      /**
+       * Required to delete anything (not for `dryRun`): the caller's statement that this ledger database
+       * is the only one that owns this namespace, and not a clone or restore pointed at the same bucket.
+       */
+      acknowledgeExclusiveNamespace?: boolean;
+      /** Override the clock the age threshold uses. For tests only; never set it in production. */
       now?: Date;
       signal?: AbortSignal;
     } = {}
@@ -2557,6 +2566,17 @@ ${managedDueArm}       )
     const pageSize = input.pageSize ?? Math.min(limit, 500);
     positiveInteger(pageSize, 'pageSize');
     const dryRun = input.dryRun === true;
+    if (!dryRun && input.acknowledgeExclusiveNamespace !== true) {
+      throw new TypeError(
+        'collectOrphanedRowObjects deletes objects: pass acknowledgeExclusiveNamespace: true to confirm this ' +
+          'ledger database is the only one that owns the namespace (not a clone or restore pointed at the same ' +
+          'bucket), or pass dryRun: true'
+      );
+    }
+    const clock = input.now ?? new Date();
+    if (!(clock instanceof Date) || !Number.isFinite(clock.getTime())) {
+      throw new RangeError('now must be a valid Date');
+    }
     const summaries = this.rowStorage.objectBindingSummaries();
     for (const id of input.bindings ?? []) {
       if (!summaries.some(summary => summary.id === id)) {
@@ -2580,7 +2600,7 @@ ${managedDueArm}       )
     };
     const tables = await this.optionalTables();
     if (!tables.has('adcp_reporting_row_sets') || !tables.has('adcp_reporting_row_write_intents')) return result;
-    const cutoff = (input.now ?? new Date()).getTime() - minAgeSeconds * 1000;
+    const cutoff = clock.getTime() - minAgeSeconds * 1000;
     for (const summary of summaries) {
       if (input.bindings && !input.bindings.includes(summary.id)) continue;
       input.signal?.throwIfAborted();
@@ -2607,7 +2627,15 @@ ${managedDueArm}       )
         continue;
       }
       let token = input.cursors?.[summary.id];
+      // A failure on the first page of a resumed listing drops the cursor: a stale or invalid token must
+      // not wedge the binding, and restarting from the beginning is always safe.
+      let resumed = token !== undefined;
+      let dropCursor = false;
       let examined = 0;
+      let pages = 0;
+      // Pages that carry no objects (S3 delete markers, unversioned entries) do not move `examined`, so
+      // the pass also stops after a bounded number of requests.
+      const maxPages = Math.ceil(limit / pageSize) * 4;
       try {
         for (;;) {
           input.signal?.throwIfAborted();
@@ -2616,6 +2644,8 @@ ${managedDueArm}       )
             ...(token !== undefined ? { pageToken: token } : {}),
             ...(input.signal ? { signal: input.signal } : {}),
           });
+          resumed = false;
+          pages += 1;
           examined += page.objects.length + page.foreign;
           outcome.listed += page.objects.length + page.foreign;
           outcome.foreign += page.foreign;
@@ -2633,10 +2663,7 @@ ${managedDueArm}       )
             }
             old.push(entry);
           }
-          const named = await this.rowObjectKeysNamedByRecords(
-            summary.id,
-            old.map(entry => entry.objectRef)
-          );
+          const named = await this.rowObjectKeysNamedByRecords(old.map(entry => entry.objectRef));
           for (const entry of old) {
             input.signal?.throwIfAborted();
             if (named.has(entry.objectRef)) {
@@ -2661,7 +2688,7 @@ ${managedDueArm}       )
               const removed = await this.deleteUnreferencedObjects(
                 summary.id,
                 [{ objectRef: entry.objectRef, nativeVersionRef: entry.nativeVersionRef }],
-                {},
+                { anyBinding: true },
                 input.signal
               );
               if (removed > 0) outcome.deleted += 1;
@@ -2671,9 +2698,13 @@ ${managedDueArm}       )
               outcome.failed += 1;
             }
           }
+          if (page.nextPageToken !== undefined && page.nextPageToken === token) {
+            dropCursor = true;
+            throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'provider returned the same page token twice');
+          }
           token = page.nextPageToken;
           if (token === undefined) break;
-          if (examined >= limit) {
+          if (examined >= limit || pages >= maxPages) {
             outcome.status = 'partial';
             result.cursors[summary.id] = token;
             break;
@@ -2682,10 +2713,11 @@ ${managedDueArm}       )
       } catch (error) {
         input.signal?.throwIfAborted();
         outcome.status = 'failed';
-        outcome.error = isReportingRowStoreError(error) ? error.code : 'PROVIDER_UNAVAILABLE';
+        outcome.error = isReportingRowStoreError(error) ? error.code : 'INTERNAL_ERROR';
         outcome.failed += 1;
-        // Retry the same page next pass.
-        if (token !== undefined) result.cursors[summary.id] = token;
+        // A listing failure retries the same page next pass. (A delete that fails is counted and the pass
+        // moves on, so one stuck object cannot hold up the rest; it is retried on the next full listing.)
+        if (token !== undefined && !resumed && !dropCursor) result.cursors[summary.id] = token;
       }
     }
     for (const outcome of result.bindings) {
@@ -2701,22 +2733,22 @@ ${managedDueArm}       )
   }
 
   /**
-   * Of these object keys, the ones a ledger record names at any version: a chunk of a row set that is not
-   * yet `pruned`, or an object any write intent lists. Version-blind on purpose: the orphan collector
-   * would rather leak than delete near a record.
+   * Of these object keys, the ones a ledger record names at any version, under any binding: a chunk of a row
+   * set that is not yet `pruned`, or an object any write intent lists. Version- and binding-blind on purpose:
+   * two bindings can share a bucket and prefix (a retired binding kept `readOnly` next to its successor), and
+   * the orphan collector would rather leak than delete near a record.
    */
-  private async rowObjectKeysNamedByRecords(bindingId: string, keys: readonly string[]): Promise<Set<string>> {
+  private async rowObjectKeysNamedByRecords(keys: readonly string[]): Promise<Set<string>> {
     if (keys.length === 0) return new Set();
     const rows = await this.query<{ object_ref: string }>(
       `SELECT chunk.object_ref FROM adcp_reporting_row_chunks chunk
          JOIN adcp_reporting_row_sets row_set ON row_set.row_set_id = chunk.row_set_id
-        WHERE row_set.row_binding_id = $1 AND chunk.object_ref = ANY($2::text[]) AND row_set.rows_state <> 'pruned'
+        WHERE chunk.object_ref = ANY($1::text[]) AND row_set.rows_state <> 'pruned'
        UNION
        SELECT COALESCE(object->>'object_ref', object->>'objectKey') AS object_ref
          FROM adcp_reporting_row_write_intents intent, jsonb_array_elements(intent.created_objects) object
-        WHERE intent.row_binding_id = $1
-          AND COALESCE(object->>'object_ref', object->>'objectKey') = ANY($2::text[])`,
-      [bindingId, keys]
+        WHERE COALESCE(object->>'object_ref', object->>'objectKey') = ANY($1::text[])`,
+      [keys]
     );
     return new Set(rows.rows.map(row => row.object_ref));
   }
@@ -2745,7 +2777,7 @@ ${managedDueArm}       )
   private async deleteUnreferencedObjects(
     bindingId: string,
     objects: readonly { objectRef: string; nativeVersionRef: string }[],
-    scope: { obligationId?: string; rowSetId?: string },
+    scope: { obligationId?: string; rowSetId?: string; anyBinding?: boolean },
     signal?: AbortSignal
   ): Promise<number> {
     let deleted = 0;
@@ -2758,14 +2790,15 @@ ${managedDueArm}       )
         const referenced = await client.query(
           `(SELECT 1 FROM adcp_reporting_row_chunks chunk
               JOIN adcp_reporting_row_sets row_set ON row_set.row_set_id = chunk.row_set_id
-             WHERE row_set.row_binding_id = $1 AND chunk.object_ref = $2 AND chunk.native_version_ref = $3
+             WHERE ($8::boolean OR row_set.row_binding_id = $1) AND chunk.object_ref = $2
+               AND chunk.native_version_ref = $3
                AND row_set.rows_state IN ('live', 'unavailable')
                AND ($4::text IS NULL OR chunk.obligation_id <> $4)
                AND ($5::text IS NULL OR chunk.row_set_id <> $5)
              LIMIT 1)
            UNION ALL
            (SELECT 1 FROM adcp_reporting_row_write_intents intent
-             WHERE intent.row_binding_id = $1 AND intent.state = 'open'
+             WHERE ($8::boolean OR intent.row_binding_id = $1) AND intent.state = 'open'
                AND (intent.created_objects @> $6::jsonb OR intent.created_objects @> $7::jsonb)
              LIMIT 1)`,
           [
@@ -2777,6 +2810,7 @@ ${managedDueArm}       )
             JSON.stringify([{ object_ref: object.objectRef, native_version_ref: object.nativeVersionRef }]),
             // An older writer still running during a rolling upgrade records the pre-alignment keys.
             JSON.stringify([{ objectKey: object.objectRef, nativeVersion: object.nativeVersionRef }]),
+            scope.anyBinding === true,
           ]
         );
         if (referenced.rows.length > 0) return false;

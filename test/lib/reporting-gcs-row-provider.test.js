@@ -93,6 +93,44 @@ test('list pages through every generation, noncurrent ones included, under the p
   );
 });
 
+test('list leaves out an entry it cannot address or age instead of failing the whole page', async () => {
+  const storage = createFakeStorage();
+  const provider = createGcsReportingRowObjectProviderV1({ storage });
+  const good = await put(provider, 'adcp-rows/ns/good.jsonl');
+  const bytes = Buffer.from('x');
+  storage.objects.set('rows-bucket/adcp-rows/ns/bad-generation.jsonl', [
+    { generation: 'not-a-number', bytes, live: true, timeCreated: new Date().toISOString() },
+  ]);
+  storage.objects.set('rows-bucket/adcp-rows/ns/bad-time.jsonl', [
+    { generation: 1_700_000_000_999_999, bytes, live: true, timeCreated: 'garbage' },
+  ]);
+  const page = await provider.list({ ...base, prefix: 'adcp-rows/ns/', pageSize: 10 }, signal());
+  assert.deepEqual(
+    page.objects.map(entry => [entry.objectRef, entry.nativeVersionRef]),
+    [['adcp-rows/ns/good.jsonl', good.nativeVersionRef]]
+  );
+});
+
+test('list reports the later of creation and last update, so an object is never aged past its write', async () => {
+  const storage = createFakeStorage();
+  const provider = createGcsReportingRowObjectProviderV1({ storage });
+  await put(provider, 'adcp-rows/ns/a.jsonl');
+  const [version] = storage.objects.get('rows-bucket/adcp-rows/ns/a.jsonl');
+  version.timeCreated = '2020-01-01T00:00:00.000Z';
+  const original = storage.bucket('rows-bucket').getFiles;
+  const stamped = new Date().toISOString();
+  const bucket = storage.bucket;
+  storage.bucket = name => ({
+    ...bucket(name),
+    getFiles: async options => {
+      const [files, next] = await original.call(bucket(name), options);
+      return [files.map(file => ({ ...file, metadata: { ...file.metadata, updated: stamped } })), next];
+    },
+  });
+  const page = await provider.list({ ...base, prefix: 'adcp-rows/ns/', pageSize: 10 }, signal());
+  assert.equal(page.objects[0].createdAt, stamped);
+});
+
 test('list maps provider failures to a stable code without leaking the provider message', async () => {
   const storage = createFakeStorage();
   const provider = createGcsReportingRowObjectProviderV1({ storage });

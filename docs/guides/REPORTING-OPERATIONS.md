@@ -154,9 +154,16 @@ service runs for you. See
    1. Run it with `dryRun: true` and read `candidates` in the
       `orphan object collection` task result. Confirm they are objects you
       expect to lose.
-   2. Enable it for real with a modest `limit` (objects examined per binding per
-      pass, default 1000; listing resumes where the last pass stopped, in this
-      process) on one host.
+   2. Enable it for real, with `acknowledgeExclusiveNamespace: true` (see
+      below), a modest `limit` (objects examined per binding per pass, default
+      1000) and one host.
+
+   It is built for a long period: a listing that does not finish within `limit`
+   continues on the next pass, and a finished one rests for `intervalSeconds`
+   (default one day) before the next starts. That position lives in the process,
+   so a restart begins a new listing; the cost is bounded by `limit` per pass
+   either way. Reduce `limit`, or lengthen `intervalSeconds`, to spend fewer list
+   requests.
 
    An object is deleted only when all of these hold: its key is a `.jsonl` or
    `.jsonl.gz` object under the binding's owned prefix; it was written more than
@@ -165,18 +172,24 @@ service runs for you. See
    `pruned` has a chunk at that key and no write intent lists it, at any version;
    and, under the per-object advisory lock every other delete takes, no `live` or
    `unavailable` row set references that exact version and no open intent
-   created it. `readOnly` bindings are skipped unless `includeReadOnly: true`. A
-   binding whose provider has no `list` is reported as `unsupported` (and as a
-   maintenance warning), never silently skipped.
+   created it, checked under every binding because two bindings can share a
+   bucket and prefix (a retired binding kept `readOnly` next to its successor).
+   `readOnly` bindings are skipped unless `includeReadOnly: true`. A binding
+   whose provider has no `list` is reported as `unsupported` (and as a
+   maintenance warning), never silently skipped. Everything under the owned prefix
+   with a row-object key counts as written by this SDK, so do not store other
+   `.jsonl` files there.
 
    **Run it only against the ledger database that owns the namespace.** The
    namespace key comes from the database's installation identity. A clone or
    point-in-time copy of that database that still points at the same bucket
    shares the key, and its collector would delete the objects of every row set
    the original wrote after the copy was taken, because the copy has never heard
-   of them. The age threshold does not protect against that. Disable the option
-   on clones, and after restoring a database in place expect the collector to
-   delete the objects of the row sets the restore lost, which is its purpose.
+   of them. The age threshold does not protect against that, which is why a real
+   (not dry) pass needs `acknowledgeExclusiveNamespace: true`: it is your statement
+   that this database is the only owner. Disable the option on clones, and after
+   restoring a database in place expect the collector to delete the objects of the
+   row sets the restore lost, which is its purpose.
    The cost grows with bucket size: one listing request per page, plus one
    database query per page and one transaction per deleted object.
 
@@ -191,9 +204,12 @@ Alert on these row-storage signals:
   host does not configure, and `overdue` (expired more than 24 hours ago, still
   unswept) means no host is handling them and their objects are leaking. The
   maintenance helper reports both through `onError`.
-- The `orphan object collection` task reporting `failed` (a listing or delete
-  failed; the same page is retried next pass) or `unsupported` bindings (their
-  provider cannot list, so nothing there is collected). `referenced` and
+- The `orphan object collection` task reporting `failed` or `unsupported`
+  bindings (their provider cannot list, so nothing there is collected). A listing
+  that fails is retried from the page that failed (or from the start, if it was
+  the first page of a resumed listing). A delete that fails is counted and the
+  pass moves on, so one stuck object cannot hold up the rest; it is tried again on
+  the next full listing. `referenced` and
   `tooYoung` are normal; a `foreign` count means the prefix holds objects this
   SDK did not write as row objects, which it leaves alone.
 - The `snapshot compaction` task reporting `failed` revisions. Provider deletes

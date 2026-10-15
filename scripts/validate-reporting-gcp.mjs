@@ -1296,6 +1296,7 @@ async function gcsSection(ctx) {
       'version-pinned-stat',
       'exact-version-delete',
       'write-unique-version',
+      'list',
     ];
     expect(JSON.stringify(passed) === JSON.stringify(expected), `unexpected check list: ${passed.join(',')}`);
     return passed.join(', ');

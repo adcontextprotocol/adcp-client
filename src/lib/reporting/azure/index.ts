@@ -326,7 +326,7 @@ export function createAzureBlobReportingRowObjectProviderV1(
                 blobItems?: {
                   name?: string;
                   versionId?: string;
-                  properties?: { contentLength?: number; createdOn?: Date };
+                  properties?: { contentLength?: number; createdOn?: Date; lastModified?: Date };
                 }[];
               };
             }
@@ -334,14 +334,25 @@ export function createAzureBlobReportingRowObjectProviderV1(
         const objects: ReportingRowObjectListEntryV1[] = [];
         for (const item of page?.segment?.blobItems ?? []) {
           const size = item.properties?.contentLength;
-          const created = item.properties?.createdOn?.getTime();
-          if (typeof item.name !== 'string' || !item.name.startsWith(input.prefix)) {
-            throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'object listing is malformed');
-          }
-          // A blob written before versioning was enabled has no version ID: never addressable by a recorded one.
-          if (typeof item.versionId !== 'string' || !VERSION_ID.test(item.versionId)) continue;
-          if (typeof size !== 'number' || !Number.isSafeInteger(size) || size < 0 || !Number.isFinite(created)) {
-            throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'object listing is malformed');
+          // The later of creation and last modification: an overwrite can move the second without the first.
+          const created = Math.max(
+            item.properties?.createdOn?.getTime() ?? NaN,
+            item.properties?.lastModified?.getTime() ?? 0
+          );
+          // An entry that cannot be addressed or aged is left out: it is never collected, and one bad entry
+          // must not stop the listing of the rest. A blob written before versioning was enabled has no
+          // version ID and is never addressable by a recorded one.
+          if (
+            typeof item.name !== 'string' ||
+            !item.name.startsWith(input.prefix) ||
+            typeof item.versionId !== 'string' ||
+            !VERSION_ID.test(item.versionId) ||
+            typeof size !== 'number' ||
+            !Number.isSafeInteger(size) ||
+            size < 0 ||
+            !Number.isFinite(created)
+          ) {
+            continue;
           }
           objects.push({
             objectRef: item.name,

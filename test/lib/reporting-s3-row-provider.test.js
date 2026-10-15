@@ -279,6 +279,29 @@ test('list pages through every version, noncurrent ones included, and skips dele
   assert.ok(call.abortSignal instanceof AbortSignal);
 });
 
+test('list leaves out an entry it cannot age, and refuses a truncated listing that has no marker', async () => {
+  const client = createFakeS3();
+  const provider = createS3ReportingRowObjectProviderV1({ client });
+  const good = await put(provider, 'adcp-rows/ns/good.jsonl');
+  client.store.set('adcp-rows/ns/bad-time.jsonl', [
+    { versionId: 'bad-time-version', bytes: Buffer.from('x'), lastModified: 'not a date' },
+  ]);
+  const page = await provider.list({ ...base, prefix: 'adcp-rows/ns/', pageSize: 10 }, signal());
+  assert.deepEqual(
+    page.objects.map(entry => entry.nativeVersionRef),
+    [good.nativeVersionRef]
+  );
+  const send = client.send.bind(client);
+  client.send = async (command, options) =>
+    command.constructor.name === 'ListObjectVersionsCommand'
+      ? { Versions: [], IsTruncated: true }
+      : send(command, options);
+  await assert.rejects(
+    () => provider.list({ ...base, prefix: 'adcp-rows/ns/', pageSize: 10 }, signal()),
+    isCode('PROVIDER_UNAVAILABLE')
+  );
+});
+
 test('list rejects a forged page token and a bad page size, and skips unversioned objects', async () => {
   const unversioned = createFakeS3({ versioned: false });
   const provider = createS3ReportingRowObjectProviderV1({ client: unversioned });

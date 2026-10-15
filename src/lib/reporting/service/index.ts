@@ -72,6 +72,7 @@ import {
   type ReportingLedgerMaintenanceTaskResultV1,
   type ReportingCompactionOptionsV1,
   type ReportingOrphanCollectionOptionsV1,
+  type ReportingOrphanCollectionStateV1,
   type ReportingRetentionOptionsV1,
 } from './maintenance';
 import type { InlineReportingReplayRetentionV1 } from '../source';
@@ -495,8 +496,8 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     }
     assertReportingLedgerMaintenanceOptions(maintenance, retentionDays);
   }
-  // Listing positions of the orphan collector, kept across passes of this process.
-  const orphanCursors: Record<string, string> = {};
+  // Where the orphan collector is up to, kept across passes of this process.
+  const orphanState: ReportingOrphanCollectionStateV1 = { cursors: {} };
   // Snapshot/checkpoint sweeping needs the pool, which only the store holds.
   // A store without `sweepExpiredState` simply skips that task.
   const runLedgerMaintenance = (
@@ -514,7 +515,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       compaction: maintenance!.compaction,
       changeFeed: maintenance!.changeFeed,
       orphanCollection: maintenance!.orphanCollection,
-      orphanCursors,
+      orphanState,
       signal,
       ...(report ? { report } : {}),
     });
@@ -1092,8 +1093,8 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
   let auxiliaryAbort: AbortController | undefined;
   let auxiliaryPromise: Promise<void> | undefined;
   let auxiliaryRotation = 0;
-  // Listing positions of the orphan collector, kept across scheduler passes of this process.
-  const orphanCursors: Record<string, string> = {};
+  // Where the orphan collector is up to, kept across scheduler passes of this process.
+  const orphanState: ReportingOrphanCollectionStateV1 = { cursors: {} };
   const reportAuxiliaryError = async (
     scheduler: ReliableReportingSchedulerOptionsV1,
     error: unknown
@@ -1154,7 +1155,7 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
       compaction: options.compaction,
       changeFeed: options.changeFeed,
       orphanCollection: options.orphanCollection,
-      orphanCursors,
+      orphanState,
       signal,
       report: error => reportAuxiliaryError(scheduler, error),
     });
@@ -2215,6 +2216,7 @@ export {
   type ReportingChangeFeedMaintenanceOptionsV1,
   type ReportingCompactionOptionsV1,
   type ReportingOrphanCollectionOptionsV1,
+  type ReportingOrphanCollectionStateV1,
   type ReportingLedgerMaintenanceStoreV1,
   type ReportingLedgerMaintenanceTaskNameV1,
   type ReportingLedgerMaintenanceTaskResultV1,

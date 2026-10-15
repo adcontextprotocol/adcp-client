@@ -41,6 +41,104 @@ async function run({ sweep = sweepResult(), retention } = {}) {
   return { results, reported };
 }
 
+describe('orphan object collection task', () => {
+  const orphanResult = (overrides = {}) => ({
+    dryRun: false,
+    listed: 0,
+    referenced: 0,
+    tooYoung: 0,
+    foreign: 0,
+    deleted: 0,
+    wouldDelete: 0,
+    failed: 0,
+    unsupported: [],
+    skippedReadOnly: [],
+    candidates: [],
+    cursors: {},
+    bindings: [],
+    ...overrides,
+  });
+  const runWith = async (collect, input = {}) => {
+    const reported = [];
+    const results = await runReportingLedgerMaintenance({
+      store: {
+        sweepRowWriteIntents: async () => sweepResult(),
+        pruneChanges: async () => ({ deleted: 0 }),
+        retireExpiredPeriods: async () => retentionResult(),
+        ...(collect ? { collectOrphanedRowObjects: collect } : {}),
+      },
+      statusRetentionDays: 30,
+      report: async error => {
+        reported.push(error);
+      },
+      ...input,
+    });
+    return { results, reported, task: results.find(result => result.task === 'orphan object collection') };
+  };
+
+  test('forwards its options exactly, replaces the saved state, and rests after a clean finished listing', async () => {
+    const seen = [];
+    const orphanState = { cursors: { stale: 'old' } };
+    const collect = async options => {
+      seen.push(options);
+      return orphanResult({ cursors: seen.length === 1 ? { objects: 'p2' } : {} });
+    };
+    const orphanCollection = {
+      enabled: true,
+      acknowledgeExclusiveNamespace: true,
+      limit: 7,
+      minAgeSeconds: 86400,
+      includeReadOnly: true,
+      intervalSeconds: 600,
+    };
+    const first = await runWith(collect, { orphanCollection, orphanState });
+    assert.equal(first.task.status, 'completed');
+    assert.deepEqual(seen[0], {
+      acknowledgeExclusiveNamespace: true,
+      limit: 7,
+      minAgeSeconds: 86400,
+      includeReadOnly: true,
+      cursors: { stale: 'old' },
+    });
+    assert.deepEqual(orphanState.cursors, { objects: 'p2' }, 'replaced, not merged');
+    assert.equal(orphanState.nextCycleAt, undefined, 'an unfinished listing carries on');
+
+    await runWith(collect, { orphanCollection, orphanState });
+    assert.deepEqual(seen[1].cursors, { objects: 'p2' });
+    assert.deepEqual(orphanState.cursors, {});
+    assert.ok(orphanState.nextCycleAt > Date.now(), 'a finished listing rests for the interval');
+    await runWith(collect, { orphanCollection, orphanState });
+    assert.equal(seen.length, 2, 'no store call while resting');
+  });
+
+  test('a failed binding keeps the task retrying every pass and names its cause; a rejected collector is a failed task', async () => {
+    const orphanState = { cursors: {} };
+    const failing = async () =>
+      orphanResult({
+        failed: 1,
+        bindings: [{ bindingId: 'objects', status: 'failed', error: 'PROVIDER_UNAVAILABLE', failed: 1 }],
+      });
+    const orphanCollection = { enabled: true, dryRun: true };
+    const { task, reported } = await runWith(failing, { orphanCollection, orphanState });
+    assert.equal(orphanState.nextCycleAt, undefined, 'a listing with a failure is not finished');
+    assert.match(task.partialFailure.message, /row binding objects \(PROVIDER_UNAVAILABLE\)/);
+    assert.equal(reported.length, 1);
+
+    const rejected = await runWith(
+      async () => {
+        throw new Error('database down');
+      },
+      { orphanCollection }
+    );
+    assert.equal(rejected.task.status, 'failed');
+    assert.equal(rejected.reported.length, 1);
+
+    const missing = await runWith(undefined, { orphanCollection });
+    assert.equal(missing.task.status, 'failed');
+    assert.match(String(missing.task.error), /collectOrphanedRowObjects/);
+  });
+});
+
 describe('reporting maintenance warnings', () => {
   test('a quiet pass reports nothing', async () => {
     const { results, reported } = await run({ retention: retentionResult() });

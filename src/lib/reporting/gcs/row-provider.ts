@@ -268,15 +268,20 @@ export function createGcsReportingRowObjectProviderV1(
         for (const file of files) {
           const metadata = file.metadata as FileMetadata;
           const size = Number(metadata.size);
-          const created = Date.parse(String(metadata.timeCreated));
+          // The later of the generation's creation and last metadata update: an object is never reported
+          // older than it is.
+          const created = Math.max(Date.parse(String(metadata.timeCreated)), Date.parse(String(metadata.updated)) || 0);
+          // An entry that cannot be addressed or aged is left out: it is never collected, and one bad entry
+          // must not stop the listing of the rest.
           if (
             typeof file.name !== 'string' ||
             !file.name.startsWith(input.prefix) ||
             !Number.isSafeInteger(size) ||
             size < 0 ||
-            !Number.isFinite(created)
+            !Number.isFinite(created) ||
+            !GENERATION.test(String(metadata.generation))
           ) {
-            throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'object listing is malformed');
+            continue;
           }
           objects.push({
             objectRef: file.name,

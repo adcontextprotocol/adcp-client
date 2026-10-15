@@ -176,7 +176,11 @@ function createFakeAzure({
                       name,
                       versionId: version.versionId,
                       isCurrentVersion: version.current,
-                      properties: { contentLength: version.bytes.length, createdOn: version.createdOn },
+                      properties: {
+                        contentLength: version.bytes.length,
+                        createdOn: version.createdOn,
+                        lastModified: version.lastModified,
+                      },
                     });
                   }
                 }
@@ -278,6 +282,21 @@ test('list pages through every version, the current one and noncurrent ones, and
     () => provider.list({ ...base, prefix: 'adcp-rows/ns/', pageSize: 0 }, signal()),
     isCode('INVALID_INPUT')
   );
+});
+
+test('list ages a blob by the later of creation and last modification, and leaves out entries it cannot address', async () => {
+  const client = createFakeAzure({ versioned: true });
+  const provider = createAzureBlobReportingRowObjectProviderV1({ client });
+  await put(provider, 'adcp-rows/ns/a.jsonl');
+  const [version] = client.blobs.get('adcp-rows/ns/a.jsonl');
+  version.createdOn = new Date('2020-01-01T00:00:00Z');
+  version.lastModified = new Date();
+  client.blobs.set('adcp-rows/ns/bad-size.jsonl', [
+    { versionId: '2026-01-01T00:00:09.1234567Z', bytes: { length: -1 }, current: true, createdOn: new Date() },
+  ]);
+  const page = await provider.list({ ...base, prefix: 'adcp-rows/ns/', pageSize: 10 }, signal());
+  assert.equal(page.objects.length, 1);
+  assert.equal(page.objects[0].createdAt, version.lastModified.toISOString());
 });
 
 test('create-only upload: If-None-Match, content headers, identifier-safe metadata', async () => {

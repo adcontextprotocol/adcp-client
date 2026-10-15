@@ -372,6 +372,90 @@ describe('object-storage revision rows', { skip: !DATABASE_URL && 'PostgreSQL UR
     assert.ok(!passed.includes('version-pinned-stat'), 'a provider without stat skips the optional check');
   });
 
+  test('the conformance runner rejects a list that breaks the contract the orphan collector relies on', async () => {
+    const location = { location: { root: 'reports' }, prefix: 'adcp-rows' };
+    const real = (input, context) => provider.list(input, context);
+    const cases = [
+      [
+        'a list that ignores the prefix',
+        (input, context) => real({ ...input, prefix: 'adcp-rows/' }, context),
+        /exactly the objects/,
+      ],
+      [
+        'a list that repeats an object across pages',
+        async (input, context) => {
+          const page = await real(input, context);
+          return { ...page, objects: page.objects.length > 1 ? [page.objects[0], page.objects[0]] : page.objects };
+        },
+        /twice/,
+      ],
+      [
+        'a list that reports another version',
+        async (input, context) => {
+          const page = await real(input, context);
+          return { ...page, objects: page.objects.map(item => ({ ...item, nativeVersionRef: 'other' })) };
+        },
+        /native version/,
+      ],
+      [
+        'a list that reports a wrong size',
+        async (input, context) => {
+          const page = await real(input, context);
+          return { ...page, objects: page.objects.map(item => ({ ...item, sizeBytes: item.sizeBytes + 1 })) };
+        },
+        /wrong size/,
+      ],
+      [
+        'a list that reports no write time',
+        async (input, context) => {
+          const page = await real(input, context);
+          return { ...page, objects: page.objects.map(item => ({ ...item, createdAt: '1970-01-01T00:00:00.000Z' })) };
+        },
+        /written/,
+      ],
+      [
+        'a list with a sloppy write time',
+        async (input, context) => {
+          const page = await real(input, context);
+          return { ...page, objects: page.objects.map(item => ({ ...item, createdAt: String(Date.now()) })) };
+        },
+        /written/,
+      ],
+      [
+        'a list that returns more than the page size',
+        async (input, context) => {
+          const page = await real({ ...input, pageSize: 100 }, context);
+          return { objects: page.objects };
+        },
+        /more objects than pageSize/,
+      ],
+      [
+        'a list that never ends',
+        async (input, context) => ({ ...(await real(input, context)), nextPageToken: 'same' }),
+        /repeated token|did not finish/,
+      ],
+      [
+        'a list that drops the last object',
+        async (input, context) => {
+          const page = await real(input, context);
+          return { ...page, objects: page.objects.slice(0, -1) };
+        },
+        /exactly the objects|lost a live one/,
+      ],
+    ];
+    for (const [label, list, expected] of cases) {
+      await assert.rejects(
+        () => ledger.runReportingRowObjectProviderConformanceV1({ ...provider, list }, location),
+        expected,
+        label
+      );
+    }
+    const withoutList = { ...provider };
+    delete withoutList.list;
+    const passed = await ledger.runReportingRowObjectProviderConformanceV1(withoutList, location);
+    assert.ok(!passed.includes('list'), 'a provider without list skips the optional check');
+  });
+
   test('every writable binding must include {revision_key}, so no two row sets share an object key', () => {
     for (const keyTemplate of [
       '{prefix}/{namespace_key}/{content_sha256}/{chunk_index}',

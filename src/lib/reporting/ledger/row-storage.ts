@@ -18,6 +18,7 @@ import {
   type ReportingRowSegmentManifestV1,
 } from './row-encoding';
 import { probeReportingRowStorageSchemaV1 } from './row-storage-migration';
+import { isReportingRowInstant, isReportingRowObjectKeyShape } from './row-storage-provider-io';
 import { ReportingRowStoreError, isReportingRowStoreError } from './row-storage-errors';
 import {
   REPORTING_ROW_DEFAULT_KEY_TEMPLATE,
@@ -434,20 +435,23 @@ export class ReportingRowStorageV1 {
     if (page.nextPageToken !== undefined && (typeof page.nextPageToken !== 'string' || page.nextPageToken === '')) {
       throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'provider returned an invalid page token');
     }
+    if (page.objects.length > input.pageSize) {
+      throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'provider returned more objects than the page size');
+    }
     const objects: ReportingRowObjectListEntryV1[] = [];
     let foreign = 0;
     for (const entry of page.objects) {
       if (
         !entry ||
         typeof entry.objectRef !== 'string' ||
-        entry.objectRef.length > REPORTING_ROW_OBJECT_REF_MAX_LENGTH ||
+        !isReportingRowObjectKeyShape(entry.objectRef, REPORTING_ROW_OBJECT_REF_MAX_LENGTH) ||
         !entry.objectRef.startsWith(ownedPrefix) ||
         typeof entry.nativeVersionRef !== 'string' ||
         entry.nativeVersionRef.length < 1 ||
         entry.nativeVersionRef.length > REPORTING_ROW_NATIVE_VERSION_REF_MAX_LENGTH ||
         !Number.isSafeInteger(entry.sizeBytes) ||
         entry.sizeBytes < 0 ||
-        typeof entry.createdAt !== 'string'
+        !isReportingRowInstant(entry.createdAt)
       ) {
         foreign += 1;
         continue;

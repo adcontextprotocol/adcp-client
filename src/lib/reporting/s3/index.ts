@@ -446,15 +446,23 @@ export function createS3ReportingRowObjectProviderV1(
         for (const version of output.Versions ?? []) {
           const key = version.Key;
           const id = version.VersionId;
-          // A version written before versioning was enabled is `null`: never addressable by a recorded version.
-          if (typeof key !== 'string' || !key.startsWith(input.prefix)) {
-            throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'object listing is malformed');
-          }
-          if (typeof id !== 'string' || id === 'null' || !VERSION_ID.test(id)) continue;
           const size = version.Size;
           const modified = version.LastModified instanceof Date ? version.LastModified.getTime() : NaN;
-          if (typeof size !== 'number' || !Number.isSafeInteger(size) || size < 0 || !Number.isFinite(modified)) {
-            throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'object listing is malformed');
+          // An entry that cannot be addressed or aged is left out: it is never collected, and one bad entry
+          // must not stop the listing of the rest. A version written before versioning was enabled is `null`
+          // and is never addressable by a recorded version.
+          if (
+            typeof key !== 'string' ||
+            !key.startsWith(input.prefix) ||
+            typeof id !== 'string' ||
+            id === 'null' ||
+            !VERSION_ID.test(id) ||
+            typeof size !== 'number' ||
+            !Number.isSafeInteger(size) ||
+            size < 0 ||
+            !Number.isFinite(modified)
+          ) {
+            continue;
           }
           objects.push({
             objectRef: key,
@@ -465,6 +473,10 @@ export function createS3ReportingRowObjectProviderV1(
         }
         const nextKey = output.NextKeyMarker;
         const nextVersion = output.NextVersionIdMarker;
+        if (output.IsTruncated && (typeof nextKey !== 'string' || typeof nextVersion !== 'string')) {
+          // Ending here would report a partial listing as complete.
+          throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'object listing is truncated without a marker');
+        }
         return {
           objects,
           ...(output.IsTruncated && typeof nextKey === 'string' && typeof nextVersion === 'string'
