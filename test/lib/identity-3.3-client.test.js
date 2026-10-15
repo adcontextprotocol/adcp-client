@@ -38,20 +38,24 @@ for (const scenario of [
       _synthetic: false,
       _raw: { webhook_signing: { supported: scenario.supported, profiles: ['adcp/webhook-signing/v1'] } },
     };
-    const client = new SingleAgentClient(agent, {
-      experimentalIdentity33: true,
-      webhookUrlTemplate: {
-        template: 'https://buyer.example.com/webhooks/{task_type}/{operation_id}',
-        tools: ['media_buy_delivery', 'create_media_buy'],
-      },
-      webhookSecret: 'configured-secret-of-at-least-32-characters',
-      validateFeatures: false,
-      validation: { requests: 'off', responses: 'off' },
-    });
-    client.cachedCapabilities = caps;
-    client.getCapabilities = async () => caps;
-    client.ensureEndpointDiscovered = async () => agent;
-    client.detectServerVersion = async () => 'v3';
+    const makeClient = () => {
+      const c = new SingleAgentClient(agent, {
+        experimentalIdentity33: true,
+        webhookUrlTemplate: {
+          template: 'https://buyer.example.com/webhooks/{task_type}/{operation_id}',
+          tools: ['media_buy_delivery', 'create_media_buy'],
+        },
+        webhookSecret: 'configured-secret-of-at-least-32-characters',
+        validateFeatures: false,
+        validation: { requests: 'off', responses: 'off' },
+      });
+      c.cachedCapabilities = caps;
+      c.getCapabilities = async () => caps;
+      c.ensureEndpointDiscovered = async () => agent;
+      c.detectServerVersion = async () => 'v3';
+      return c;
+    };
+    const client = makeClient();
     try {
       await client.createMediaBuy(params());
       const webhook = calls.find(c => c.task === 'create_media_buy').parameters.reporting_webhook;
@@ -66,6 +70,25 @@ for (const scenario of [
         calls.filter(c => c.task === 'create_media_buy')[1].parameters.reporting_webhook.authentication.credentials,
         'caller-supplied-bearer'
       );
+      // A caller URL without credentials is valid only once 3.3 signed webhooks
+      // are negotiated; below that the client refuses rather than pair its own
+      // secret with the caller's host. A fresh client keeps this month's
+      // delivery operation id free of the registration made above.
+      const callerClient = makeClient();
+      const callerReporting = params({ url: 'https://buyer.example.com/own-reports', reporting_frequency: 'daily' });
+      if (scenario.omit) {
+        await callerClient.createMediaBuy(callerReporting);
+        const sent = calls.filter(c => c.task === 'create_media_buy')[2].parameters.reporting_webhook;
+        assert.equal(sent.url, 'https://buyer.example.com/own-reports');
+        assert.equal(Object.hasOwn(sent, 'authentication'), false);
+        assert.equal(sent.signing_profile, 'adcp/webhook-signing/v1');
+      } else {
+        await assert.rejects(
+          () => callerClient.createMediaBuy(callerReporting),
+          /reporting_webhook requires an `authentication` block/
+        );
+        assert.equal(calls.filter(c => c.task === 'create_media_buy').length, 2);
+      }
     } finally {
       ProtocolClient.callTool = original;
     }

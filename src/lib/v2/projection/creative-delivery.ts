@@ -126,18 +126,36 @@ export type CanonicalCreateMediaBuyRequest = Omit<CanonicalCreativeResponse<Crea
   packages?: CanonicalPackageRequest[];
 };
 type CanonicalReportingWebhook = NonNullable<CanonicalCreateMediaBuyRequest['reporting_webhook']>;
-type ReportingWebhookPreferences = Omit<CanonicalReportingWebhook, 'url' | 'authentication' | 'reporting_frequency'> & {
-  reporting_frequency?: CanonicalReportingWebhook['reporting_frequency'];
+/**
+ * Client-facing form of a wire reporting webhook `W`. Every field is optional:
+ * the SDK can supply the callback `url`, `reporting_frequency` and the
+ * `authentication` block from client configuration.
+ *
+ * `authentication` is optional even with a caller-supplied `url`. AdCP 3.3
+ * makes it optional on the wire when the seller signs webhooks under its
+ * profile (`webhook_signing.supported`), and the experimental 3.3 client sends
+ * the registration without it once it has negotiated that. Below 3.3 the wire
+ * still requires it: with `webhookUrlTemplate` configured the client throws
+ * rather than send a caller URL without credentials (it never pairs its own
+ * `webhookSecret` with a caller-controlled host), and request validation
+ * reports the missing field otherwise.
+ *
+ * Derived from `W` rather than restating its fields, so it accepts every
+ * reporting webhook the pinned schemas generate, whether they declare
+ * `authentication` required (3.2) or optional (3.3).
+ *
+ * Exported for the type tests only; not re-exported from the package root.
+ */
+export type ClientReportingWebhookInputFor<W extends { url: string; reporting_frequency: unknown }> = Omit<
+  W,
+  'url' | 'authentication' | 'reporting_frequency'
+> & {
+  url?: W['url'];
+  reporting_frequency?: W['reporting_frequency'];
+  /** Atomic: `schemes` and `credentials` always come from the same source. */
+  authentication?: W extends { authentication?: infer A } ? (unknown extends A ? never : A) : never;
 };
-type ClientReportingWebhookInput =
-  | (ReportingWebhookPreferences & {
-      url?: never;
-      authentication?: CanonicalReportingWebhook['authentication'];
-    })
-  | (ReportingWebhookPreferences & {
-      url: CanonicalReportingWebhook['url'];
-      authentication: CanonicalReportingWebhook['authentication'];
-    });
+type ClientReportingWebhookInput = ClientReportingWebhookInputFor<CanonicalReportingWebhook>;
 /**
  * Client-facing create request. The SDK may supply the reporting callback URL
  * and its complete authentication block from client configuration; the wire

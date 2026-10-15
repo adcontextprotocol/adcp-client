@@ -1,7 +1,16 @@
 /** Experimental drafts; the released SDK wire/schema pin remains 3.2.4. */
-export type AgentOnboardingMode = 'open' | 'application' | 'invite_only';
+import type { GeneratedAccountCapabilities, ResolveAgentOnboarding } from './generated-compat';
+
 export type BillingParty = 'operator' | 'agent' | 'advertiser';
-export type AgentOnboardingRequirementKind =
+
+/*
+ * Seller onboarding posture (adcp#8170). The hand-written drafts below apply
+ * only while the pinned schemas lack `account.agent_onboarding`. When the
+ * generated `get_adcp_capabilities` types define it, every exported onboarding
+ * type is derived from the generated shape instead, so the preview types track
+ * the spec (renamed modes, dropped requirement kinds, ...) without edits here.
+ */
+type DraftAgentOnboardingRequirementKind =
   | 'agent_identity'
   | 'grant'
   | 'billing_entity'
@@ -11,8 +20,8 @@ export type AgentOnboardingRequirementKind =
   | 'storyboard'
   | 'sandbox'
   | 'experimental_feature';
-export interface AgentOnboardingRequirement {
-  kind: AgentOnboardingRequirementKind | (string & {});
+interface DraftAgentOnboardingRequirement {
+  kind: DraftAgentOnboardingRequirementKind;
   role?: string;
   verification_modes?: string[];
   specialisms?: string[];
@@ -20,23 +29,46 @@ export interface AgentOnboardingRequirement {
   id?: string;
   ext?: Record<string, unknown>;
 }
-export interface AgentOnboardingTier {
-  mode: AgentOnboardingMode;
+interface DraftAgentOnboardingTier {
+  mode: 'open' | 'application' | 'invite_only';
   url?: string;
-  requirements?: AgentOnboardingRequirement[];
+  requirements?: DraftAgentOnboardingRequirement[];
   ext?: Record<string, unknown>;
 }
-export interface AgentOnboarding {
-  sandbox?: AgentOnboardingTier;
-  billing?: Partial<Record<BillingParty, AgentOnboardingTier>>;
+interface DraftAgentOnboarding {
+  sandbox?: DraftAgentOnboardingTier;
+  billing?: Partial<Record<BillingParty, DraftAgentOnboardingTier>>;
   url?: string;
   documentation_url?: string;
   message?: string;
   ext?: Record<string, unknown>;
 }
+/** `get_adcp_capabilities.account.agent_onboarding`: how a seller onboards buyer agents. */
+export type AgentOnboarding = ResolveAgentOnboarding<GeneratedAccountCapabilities, DraftAgentOnboarding>;
+/** The onboarding mode for sandbox access or for one billing party. */
+export type AgentOnboardingTier = NonNullable<AgentOnboarding['sandbox']>;
+export type AgentOnboardingMode = AgentOnboardingTier['mode'];
+/** One requirement an onboarding mode imposes, discriminated by `kind`. */
+export type AgentOnboardingRequirement = NonNullable<AgentOnboardingTier['requirements']>[number];
+export type AgentOnboardingRequirementKind = AgentOnboardingRequirement['kind'];
+/**
+ * A requirement as read off the wire. Readers MUST treat a kind they do not
+ * know as unsatisfiable, so this accepts any `kind` string. Structural on
+ * purpose: every {@link AgentOnboardingRequirement} is assignable to it,
+ * whichever shape the pinned schemas give that type.
+ */
+export interface ObservedAgentOnboardingRequirement {
+  kind: AgentOnboardingRequirementKind | (string & {});
+  role?: string;
+  verification_modes?: readonly string[];
+  specialisms?: readonly string[];
+  adcp_version?: string;
+  id?: string;
+  ext?: Record<string, unknown>;
+}
 export interface BuyerOnboardingPosture {
   mode: 'considers_unsolicited' | 'application' | 'invite_only';
-  requirements?: AgentOnboardingRequirement[];
+  requirements?: ObservedAgentOnboardingRequirement[];
   url?: string;
   documentation_url?: string;
   message?: string;
