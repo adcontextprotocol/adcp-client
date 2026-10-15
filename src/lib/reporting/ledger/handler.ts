@@ -87,6 +87,8 @@ export function createReportingStatusHandler<TContext = unknown>(
     )
   );
   const activeReadsByAccount = new Map<string, number>();
+  // Fail at wiring time, not on the first read, if the pinned release defines no usable page-size bounds.
+  reportingPageBounds();
   return async (
     request: Parameters<ReportingStatusHandlerV1>[0],
     context: Pick<Parameters<ReportingStatusHandlerV1>[1], 'account' | 'signal'>
@@ -128,8 +130,7 @@ export function createReportingStatusHandler<TContext = unknown>(
         ...(typeof raw.changes_after === 'string' ? { changes_after: raw.changes_after } : {}),
         ...(isRecord(raw.period) ? { period: raw.period as { start?: string; end?: string } } : {}),
       } as ReportingLedgerSnapshotQueryV1;
-      const pagination = isRecord(raw.pagination) ? raw.pagination : {};
-      const limit = reportingPageSize(pagination);
+      const { pageSize: limit, pagination } = reportingPagination(raw.pagination);
       const cursor = typeof pagination.cursor === 'string' ? pagination.cursor : undefined;
       let snapshotId: string | undefined;
       if (cursor) {
@@ -552,13 +553,6 @@ export function createReportingStatusHandler<TContext = unknown>(
  */
 export const REPORTING_STATUS_REVISION_VIEW_MAX_ROWS = 10_000;
 
-/**
- * Nondisclosing not-found for exact revision reads. Unknown, unauthorized,
- * expired and compacted revisions, and an unusable pagination cursor, all
- * return this identical error so a response never reveals whether a revision
- * exists for another account. It is correctable/terminal, never transient: the
- * reference will not start resolving by retrying.
- */
 interface ReportingPageBounds {
   readonly minimum: number;
   readonly maximum: number;
@@ -596,24 +590,42 @@ function reportingPageBounds(): ReportingPageBounds {
 }
 
 /**
- * `pagination.max_results` as AdCP defines it: an integer within the schema's bounds, defaulting to the
- * schema's default when absent. Anything else is a `VALIDATION_ERROR`, as for any other schema-invalid
- * field, so the same request behaves the same on every seller. (`pagination.limit` is not an AdCP field.)
+ * `pagination` as AdCP defines it: an object whose `max_results` is an integer within the schema's bounds
+ * (the schema's default when absent) and whose `cursor` is a string. Anything else is a `VALIDATION_ERROR`, as
+ * for any other schema-invalid field, so the same request behaves the same on every seller. (`pagination.limit`
+ * is not an AdCP field.)
  */
-function reportingPageSize(pagination: Record<string, unknown>): number {
+function reportingPagination(value: unknown): { pageSize: number; pagination: Record<string, unknown> } {
   const bounds = reportingPageBounds();
-  const value = pagination.max_results;
-  if (value === undefined) return bounds.default;
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < bounds.minimum || value > bounds.maximum) {
+  if (value !== undefined && !isRecord(value)) {
+    throw new AdcpError('VALIDATION_ERROR', { message: 'pagination must be an object', field: 'pagination' });
+  }
+  const pagination = value ?? {};
+  if (pagination.cursor !== undefined && typeof pagination.cursor !== 'string') {
+    throw new AdcpError('VALIDATION_ERROR', {
+      message: 'pagination.cursor must be a string',
+      field: 'pagination.cursor',
+    });
+  }
+  const size = pagination.max_results;
+  if (size === undefined) return { pageSize: bounds.default, pagination };
+  if (typeof size !== 'number' || !Number.isInteger(size) || size < bounds.minimum || size > bounds.maximum) {
     throw new AdcpError('VALIDATION_ERROR', {
       message: `pagination.max_results must be an integer from ${bounds.minimum} to ${bounds.maximum}`,
       field: 'pagination.max_results',
       suggestion: `Send an integer from ${bounds.minimum} to ${bounds.maximum}, or omit it for the default of ${bounds.default}.`,
     });
   }
-  return value;
+  return { pageSize: size, pagination };
 }
 
+/**
+ * Nondisclosing not-found for exact revision reads. Unknown, unauthorized,
+ * expired and compacted revisions, and an unusable pagination cursor, all
+ * return this identical error so a response never reveals whether a revision
+ * exists for another account. It is correctable/terminal, never transient: the
+ * reference will not start resolving by retrying.
+ */
 function reportingRevisionNotFound(): AdcpError {
   return new AdcpError('REFERENCE_NOT_FOUND', {
     message: 'Reporting revision is unavailable',
@@ -640,6 +652,8 @@ export function createReportingDeliveryHandler(
   if (legacyRevisionReader !== undefined && typeof legacyRevisionReader !== 'function') {
     throw new TypeError('legacyRevisionReader must be a function');
   }
+  // Fail at wiring time, not on the first read, if the pinned release defines no usable page-size bounds.
+  reportingPageBounds();
   const activeReadsByAccount = new Map<string, number>();
   const readFromSdkLedger = async (
     request: Parameters<ReportingDeliveryHandlerV1>[0],
@@ -665,14 +679,12 @@ export function createReportingDeliveryHandler(
           field: 'reporting_revision_id',
         });
       }
-      const pagination = isRecord(raw.pagination) ? raw.pagination : {};
-      // Refuse a schema-invalid page size before reading anything, whichever ledger would have answered.
-      reportingPageSize(pagination);
+      // Refuse schema-invalid pagination before reading anything, whichever ledger would have answered.
+      const { pageSize: maxResults, pagination } = reportingPagination(raw.pagination);
       const revision = await getRevisionMetadataFromStore(store, raw.reporting_revision_id, accountId);
       if (!revision) return SDK_REVISION_NOT_OWNED;
       const obligation = await store.getObligation(revision.reporting_obligation_id);
       if (!obligation || obligation.account.account_id !== accountId) return SDK_REVISION_NOT_OWNED;
-      const maxResults = reportingPageSize(pagination);
       const totalCount = revision.binding.rowCount;
       let offset = 0;
       if (typeof pagination.cursor === 'string') {

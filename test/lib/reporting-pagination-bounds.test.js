@@ -57,7 +57,32 @@ const isValidation = field => error => {
   assert.match(error.message, new RegExp(`${minimum} to ${maximum}`));
   return true;
 };
-const invalid = [0, -1, maximum + 1, 500, 1.5, Number.NaN, Number.POSITIVE_INFINITY, '5', null, true, {}, []];
+const invalid = [
+  0,
+  -0.5,
+  -1,
+  maximum + 1,
+  500,
+  1.5,
+  Number.NaN,
+  Number.POSITIVE_INFINITY,
+  Number.NEGATIVE_INFINITY,
+  Number.MAX_SAFE_INTEGER + 2,
+  '5',
+  '',
+  null,
+  true,
+  false,
+  {},
+  [],
+  5n,
+];
+const isPaginationShape = field => error => {
+  assert.ok(error instanceof AdcpError, String(error));
+  assert.equal(error.code, 'VALIDATION_ERROR');
+  assert.equal(error.field, field);
+  return true;
+};
 
 describe('the schema defines the bounds', () => {
   test('1 to 100, defaulting to 50', () => {
@@ -116,18 +141,81 @@ describe('get_media_buy_delivery exact revision reads', () => {
   });
 });
 
+describe('the rest of pagination', () => {
+  test('a pagination that is not an object, or a cursor that is not a string, is refused by both handlers', async () => {
+    const delivery = createReportingDeliveryHandler(deliveryStore());
+    const status = createReportingStatusHandler(new MemoryLedgerStore());
+    for (const pagination of [null, 'x', 5, [], true]) {
+      await assert.rejects(
+        () =>
+          delivery({ account: { account_id: 'account-a' }, reporting_revision_id: REVISION_ID, pagination }, context),
+        isPaginationShape('pagination'),
+        String(pagination)
+      );
+      await assert.rejects(
+        () => status({ account: { account_id: 'account-a' }, view: 'periods', pagination }, context),
+        isPaginationShape('pagination'),
+        String(pagination)
+      );
+    }
+    for (const cursor of [5, {}, [], true, null]) {
+      await assert.rejects(
+        () =>
+          delivery(
+            { account: { account_id: 'account-a' }, reporting_revision_id: REVISION_ID, pagination: { cursor } },
+            context
+          ),
+        isPaginationShape('pagination.cursor'),
+        String(cursor)
+      );
+    }
+  });
+
+  test('a request through createAdcpServer is refused with the same code and field, with or without framework validation', async () => {
+    const { createAdcpServer } = require('../../dist/lib/server/create-adcp-server.js');
+    const { InMemoryStateStore } = require('../../dist/lib/server/legacy/v5/index.js');
+    for (const requests of ['strict', 'off']) {
+      const server = createAdcpServer({
+        name: 'reporting-bounds',
+        version: '1.0.0',
+        mediaBuy: {
+          getMediaBuyDelivery: createReportingDeliveryHandler(deliveryStore()),
+          getReportingStatus: createReportingStatusHandler(new MemoryLedgerStore()),
+        },
+        stateStore: new InMemoryStateStore(),
+        resolveAccount: async () => ({ id: 'account-a' }),
+        validation: { requests, responses: 'off' },
+      });
+      for (const [name, args] of [
+        ['get_media_buy_delivery', { reporting_revision_id: REVISION_ID }],
+        ['get_reporting_status', { view: 'periods' }],
+      ]) {
+        const wire = await server.dispatchTestRequest({
+          method: 'tools/call',
+          params: {
+            name,
+            arguments: { account: { account_id: 'account-a' }, ...args, pagination: { max_results: 500 } },
+          },
+        });
+        assert.equal(wire.isError, true, `${name} (${requests})`);
+        assert.equal(wire.structuredContent.adcp_error.code, 'VALIDATION_ERROR', `${name} (${requests})`);
+        assert.equal(wire.structuredContent.adcp_error.field, 'pagination.max_results', `${name} (${requests})`);
+      }
+    }
+  });
+});
+
 describe('get_reporting_status paged views', () => {
   /** A store that records the page size the handler asks for, then stops. */
   function statusStore() {
     const store = new MemoryLedgerStore();
     const limits = [];
     store.limits = limits;
-    store.createSnapshot = async () => ({
-      snapshotId: 'snapshot_bounds',
-      obligations: [],
-      revisions: [],
-      adjustments: [],
-    });
+    store.snapshots = 0;
+    store.createSnapshot = async () => {
+      store.snapshots += 1;
+      return { snapshotId: 'snapshot_bounds', obligations: [], revisions: [], adjustments: [] };
+    };
     store.readSnapshotPage = async (_id, _account, _cursor, limit) => {
       limits.push(limit);
       throw new Error('stop after the page size is known');
@@ -160,5 +248,19 @@ describe('get_reporting_status paged views', () => {
       );
     }
     assert.deepEqual(store.limits, []);
+    assert.equal(store.snapshots, 0, 'no snapshot was created for a refused request');
+  });
+
+  test('refuse an invalid page size on every view, not only the paged ones', async () => {
+    const store = statusStore();
+    const handler = createReportingStatusHandler(store);
+    for (const view of ['summary', 'periods', 'revision']) {
+      await assert.rejects(
+        () => handler({ account: { account_id: 'account-a' }, view, pagination: { max_results: 500 } }, context),
+        isValidation('pagination.max_results'),
+        view
+      );
+    }
+    assert.equal(store.snapshots, 0);
   });
 });

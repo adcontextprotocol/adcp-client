@@ -11,6 +11,7 @@ import type {
   ReportingConsumerWorkLeaseV1,
 } from './consumer-postgres';
 import { canonicalJsonSha256 } from '../utils/jcs';
+import { reportingMaxPageSize } from './pagination';
 import {
   ReportingReconciliationError,
   reconcileReporting,
@@ -182,7 +183,7 @@ async function drainReportingChanges(
             ...options.request,
             view: 'periods',
             changes_after: options.changesAfter,
-            ...(cursor ? { pagination: { cursor } } : {}),
+            pagination: { max_results: reportingMaxPageSize(), ...(cursor ? { cursor } : {}) },
           },
           { signal }
         ),

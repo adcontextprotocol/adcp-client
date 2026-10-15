@@ -350,7 +350,11 @@ async function evaluateBothWithoutEffects(raw, expected) {
       client: {
         async getReportingStatus(params, options) {
           statusReads += 1;
-          assert.deepEqual(params, { account: { account_id: 'account-1' }, view: 'periods' });
+          assert.deepEqual(params, {
+            account: { account_id: 'account-1' },
+            view: 'periods',
+            pagination: { max_results: 100 },
+          });
           assert.ok(options.signal instanceof AbortSignal);
           return raw;
         },
@@ -792,7 +796,7 @@ test('official selection drains every page and rejects looping or rewritten hist
             assert.deepEqual(params, {
               account: { account_id: 'account-1' },
               view: 'periods',
-              ...(reads ? { pagination: { cursor: 'official-page' } } : {}),
+              pagination: { max_results: 100, ...(reads ? { cursor: 'official-page' } : {}) },
             });
             assert.ok(reads < 2);
             return reads++ === 0 ? first : second;
@@ -851,7 +855,11 @@ test('an unreceipted official uses the exact public inspection and receipt callb
     client: {
       async getReportingStatus(params, options) {
         effects.push('status');
-        assert.deepEqual(params, { account: { account_id: 'account-1' }, view: 'periods' });
+        assert.deepEqual(params, {
+          account: { account_id: 'account-1' },
+          view: 'periods',
+          pagination: { max_results: 100 },
+        });
         assert.ok(options.signal instanceof AbortSignal);
         const page = structuredClone(raw);
         if (storedReceipt) {

@@ -16,6 +16,7 @@ import type {
 } from '../types/tools.generated';
 import { generateIdempotencyKey } from '../utils/idempotency';
 import { canonicalize } from '../utils/jcs';
+import { reportingMaxPageSize } from './pagination';
 import {
   detectReportingContentMismatch,
   type ReportingContractFactsV1,
@@ -165,7 +166,7 @@ export interface ReportingReconciliationClient {
     params: {
       account?: GetReportingStatusRequest['account'];
       reporting_revision_id: string;
-      pagination?: { cursor?: string };
+      pagination?: { max_results?: number; cursor?: string };
     },
     options?: { signal?: AbortSignal }
   ): Promise<{
@@ -1134,7 +1135,7 @@ export async function loadReportingLedger(
               {
                 ...request,
                 view: 'periods',
-                ...(cursor ? { pagination: { cursor } } : {}),
+                pagination: { max_results: reportingMaxPageSize(), ...(cursor ? { cursor } : {}) },
               },
               { signal }
             ),
@@ -4034,7 +4035,7 @@ async function consumeReportingRevision(
             {
               ...(options.request.account ? { account: options.request.account } : {}),
               reporting_revision_id: reportingRevisionId,
-              ...(cursor ? { pagination: { cursor } } : {}),
+              pagination: { max_results: reportingMaxPageSize(), ...(cursor ? { cursor } : {}) },
             },
             { signal }
           ),
