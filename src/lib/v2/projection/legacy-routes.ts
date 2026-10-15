@@ -321,6 +321,24 @@ export function formatOptionOriginFromRoutes(
   return matching[0]!.origin;
 }
 
+/**
+ * Make `resolver` report the format-option origins recorded by `sources`.
+ *
+ * A resolver built by {@link canonicalFormatLegacyResolverFromRoutes} carries
+ * each route's `seller_declared` origin, which `AgentClient` reads to rewrite
+ * options the seller never declared on the canonical wire. A resolver that
+ * wraps or composes it is a new function and would otherwise carry none.
+ * Returns `resolver` itself, so the call can wrap a composition inline.
+ */
+export function carryFormatOptionOrigins(
+  resolver: CanonicalFormatLegacyResolver,
+  ...sources: ReadonlyArray<CanonicalFormatLegacyResolver | undefined>
+): CanonicalFormatLegacyResolver {
+  const carried = [resolver, ...sources].flatMap(source => (source ? (originsByResolver.get(source) ?? []) : []));
+  if (carried.length > 0) originsByResolver.set(resolver, Object.freeze(carried));
+  return resolver;
+}
+
 export function canonicalFormatLegacyResolverFromRoutes(
   routes: readonly CanonicalFormatLegacyRoute[]
 ): CanonicalFormatLegacyResolver {

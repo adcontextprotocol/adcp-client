@@ -3,6 +3,7 @@ import type { V1FormatId, V2ProductFormatDeclaration } from './types';
 import type { CanonicalFormatLegacyResolutionContext, CanonicalFormatLegacyResolver } from './v2-to-v1';
 import { canonicalizeAgentUrl } from '../../discovery/resolve-agent-properties';
 import { isCanonicalV1Translatable } from './canonical-properties';
+import { carryFormatOptionOrigins } from './legacy-routes';
 
 /** Provenance tier for a pre-resolved immutable format catalog snapshot. */
 export type ProjectionCatalogSource = 'publisher' | 'aao_mirror' | 'agent_derived' | 'configured';
@@ -301,7 +302,7 @@ export function canonicalFormatLegacyResolverFromCatalogSnapshots(
 ): CanonicalFormatLegacyResolver | undefined {
   if (!snapshots || snapshots.length === 0) return fallback;
   const compiled = compileProjectionCatalogSnapshots(snapshots);
-  return context => {
+  const resolver: CanonicalFormatLegacyResolver = context => {
     const refs = resolutionContextFormatOptionRefs(context);
     if (refs.length === 0) return fallback?.(context);
 
@@ -326,6 +327,7 @@ export function canonicalFormatLegacyResolverFromCatalogSnapshots(
 
     return [...new Map(resolved.map(ref => [legacyRefKey(ref), ref])).values()];
   };
+  return carryFormatOptionOrigins(resolver, fallback);
 }
 
 /** Client configuration generated from one bidirectional, owner-scoped catalog. */
