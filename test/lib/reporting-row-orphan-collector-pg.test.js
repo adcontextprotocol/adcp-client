@@ -4,7 +4,7 @@
  * REPORTING_LEDGER_PG_URL=postgres://localhost/test node --test test/lib/reporting-row-orphan-collector-pg.test.js
  */
 const assert = require('node:assert/strict');
-const { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } = require('node:fs');
+const { existsSync, mkdtempSync, rmSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { after, before, beforeEach, describe, test } = require('node:test');
