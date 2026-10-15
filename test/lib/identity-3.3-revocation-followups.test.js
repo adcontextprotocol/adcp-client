@@ -276,3 +276,51 @@ test('R7: the origin resolver stores an undated compromise through a later dated
   });
   assert.deepEqual(await store.get(origin, 'k'), { reason: 'keyCompromise' });
 });
+
+test('status(): revoked, current, absent (404/410), unknown, and persistence outages are distinct', async () => {
+  const origin = 'https://agent.example.com';
+  const fixture = await originFixture(origin);
+  const revokedKid = 'r'.repeat(43);
+  const body = await fixture.sign({ updated: iso(T), next_update: iso(T + 300), revoked_kids: [revokedKid] });
+  let clock = T,
+    serve = async () => new Response(body);
+  const resolver = resolverFor(
+    fixture,
+    () => clock,
+    async (...args) => serve(...args)
+  );
+  assert.equal(await resolver.status(origin, fixture.kid), 'current');
+  assert.equal(await resolver.status(origin, revokedKid), 'revoked');
+  // The origin stops serving a list: established, but no spend binding.
+  serve = async () => new Response('', { status: 404 });
+  clock = T + 301;
+  assert.equal(await resolver.status(origin, fixture.kid), 'absent');
+  assert.equal(await resolver.status(origin, revokedKid), 'revoked');
+  await assert.rejects(resolver.isRevoked(origin, fixture.kid), e => e.reason === 'revocation_unavailable');
+  // A list that cannot be verified past grace: identity not established.
+  const other = 'https://other.example.com';
+  const otherFixture = await originFixture(other);
+  const down = resolverFor(
+    otherFixture,
+    () => T,
+    async () => {
+      throw new Error('offline');
+    }
+  );
+  assert.equal(await down.status(other, otherFixture.kid), 'unknown');
+  // History-store failure is an infrastructure outage, not a revocation outcome.
+  const broken = resolverFor(
+    otherFixture,
+    () => T,
+    async () => new Response(body),
+    {
+      store: {
+        merge: async () => {},
+        get: async () => {
+          throw new Error('disk offline');
+        },
+      },
+    }
+  );
+  await assert.rejects(broken.status(other, otherFixture.kid), e => e.reason === 'revocation_persistence_failed');
+});

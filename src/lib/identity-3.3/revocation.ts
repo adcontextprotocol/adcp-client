@@ -102,6 +102,10 @@ function operatorOf(origin: string): string {
 }
 /** Polling ceiling (security.mdx): also bounds how long one fetch stays valid during an outage. */
 const MAX_POLLING_SECONDS = 1800;
+/** See {@link OriginRevocationResolver.status}. */
+export type OriginRevocationStatus = 'revoked' | 'current' | 'absent' | 'unknown';
+/** The origin answered 404/410 for its revocation list. */
+class RevocationListAbsentError extends Error {}
 export class OriginRevocationResolver {
   private readonly freshness = new Map<string, number>();
   private readonly updated = new Map<string, number>();
@@ -109,6 +113,7 @@ export class OriginRevocationResolver {
   private readonly pending = new Map<string, Promise<void>>();
   private readonly failures = new Map<string, number>();
   private readonly persistenceFailures = new Set<string>();
+  private readonly absentUntil = new Map<string, number>();
   constructor(
     private readonly options: {
       directory: import('../signing/web-bot-auth').SignatureDirectoryResolver;
@@ -128,15 +133,43 @@ export class OriginRevocationResolver {
     )
       throw new TypeError('Invalid revocation polling interval');
   }
+  /**
+   * Compatibility wrapper over {@link status}: `true` when revoked, `false`
+   * when the list is current, and `revocation_unavailable` when the identity
+   * publishes no list (`absent`) or its status is not known (`unknown`).
+   */
   async isRevoked(originUrl: string, keyid: string): Promise<boolean> {
+    const state = await this.status(originUrl, keyid);
+    if (state === 'revoked') return true;
+    if (state === 'current') return false;
+    throw new WebBotAuthError(403, 'revocation_unavailable');
+  }
+  /**
+   * Revocation status of `keyid` at `origin`:
+   * - `revoked`: a stored (permanent) revocation covers the key.
+   * - `current`: a signed list is current, or within `next_update` + grace.
+   * - `absent`: the origin serves no list (404/410). The identity is still
+   *   established but cannot be bound for spend.
+   * - `unknown`: no list could be verified and grace has passed (or there was
+   *   never a list). The identity is not established.
+   * Throws `revocation_persistence_failed` when the history store fails: an
+   * infrastructure outage, never a revocation outcome.
+   */
+  async status(originUrl: string, keyid: string): Promise<OriginRevocationStatus> {
     const origin = canonicalAgentOrigin(originUrl),
       now = this.now();
-    if (await this.readStored(origin, keyid)) return true;
+    if (await this.readStored(origin, keyid)) return 'revoked';
+    const settled = async (): Promise<OriginRevocationStatus> => {
+      if (await this.readStored(origin, keyid)) return 'revoked';
+      if ((this.absentUntil.get(origin) ?? 0) > now) return 'absent';
+      return (this.freshness.get(origin) ?? 0) > now || (this.graceUntil.get(origin) ?? 0) > now
+        ? 'current'
+        : 'unknown';
+    };
     if ((this.freshness.get(origin) ?? 0) <= now) {
       if ((this.failures.get(origin) ?? 0) > now) {
         if (this.persistenceFailures.has(origin)) throw new WebBotAuthError(403, 'revocation_persistence_failed');
-        if ((this.graceUntil.get(origin) ?? 0) > now) return false;
-        throw new WebBotAuthError(403, 'revocation_unavailable');
+        return settled();
       }
       let promise = this.pending.get(origin);
       if (!promise) {
@@ -147,18 +180,23 @@ export class OriginRevocationResolver {
           // Refresh capacity is shared across attacker-selectable origins; a
           // full queue must not fail an origin whose signed list is still
           // within its outage grace.
-          if ((this.graceUntil.get(origin) ?? 0) > now) return !!(await this.readStored(origin, keyid));
-          throw new WebBotAuthError(403, 'revocation_unavailable');
+          return settled();
         }
         promise = this.refresh(origin).catch(error => {
           if (this.failures.size >= (this.options.maxOrigins ?? 1000)) {
             const oldest = this.failures.keys().next().value!;
             this.failures.delete(oldest);
             this.persistenceFailures.delete(oldest);
+            this.absentUntil.delete(oldest);
           }
           this.failures.set(origin, now + 60);
           if (error instanceof WebBotAuthError && error.reason === 'revocation_persistence_failed') {
             this.persistenceFailures.add(origin);
+            this.graceUntil.delete(origin);
+          }
+          if ((error as { cause?: unknown }).cause instanceof RevocationListAbsentError) {
+            // No list is served: the identity stays established without spend.
+            this.absentUntil.set(origin, now + 60);
             this.graceUntil.delete(origin);
           }
           throw error;
@@ -169,12 +207,11 @@ export class OriginRevocationResolver {
         await promise;
       } catch (error) {
         if (error instanceof WebBotAuthError && error.reason === 'revocation_persistence_failed') throw error;
-        if ((this.graceUntil.get(origin) ?? 0) <= now) throw error;
       } finally {
         if (this.pending.get(origin) === promise) this.pending.delete(origin);
       }
     }
-    return !!(await this.readStored(origin, keyid));
+    return settled();
   }
   private async readStored(origin: string, keyid: string): Promise<RevocationDetail | undefined> {
     try {
@@ -192,6 +229,7 @@ export class OriginRevocationResolver {
         maxBodyBytes: 256 * 1024,
         timeoutMs: 10_000,
       });
+      if (response.status === 404 || response.status === 410) throw new RevocationListAbsentError();
       if (response.status !== 200) throw new Error('Unavailable revocation list');
       const body = new TextDecoder('utf-8', { fatal: true }).decode(response.body);
       let tokens: string[];
@@ -311,6 +349,7 @@ export class OriginRevocationResolver {
       this.freshness.set(origin, Math.min(next, now + (this.options.pollingIntervalSeconds ?? 300)));
       this.failures.delete(origin);
       this.persistenceFailures.delete(origin);
+      this.absentUntil.delete(origin);
     } catch (cause) {
       if (cause instanceof WebBotAuthError && cause.reason === 'revocation_persistence_failed') throw cause;
       const error = new WebBotAuthError(403, 'revocation_unavailable');

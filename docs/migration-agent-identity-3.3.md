@@ -157,8 +157,14 @@ intervals. Publishers MUST NOT declare `next_update` more than 30 minutes ahead
 from other implementations: each successful fetch of such a list stays valid
 for at most 30 minutes plus grace, so an outage cannot extend acceptance past
 that. A list whose `updated` is more than 60 seconds ahead of the verifier
-clock, or whose `next_update` has passed, is refused. Without a current or grace-valid signed list, every signed request
-fails with a retryable `SERVICE_UNAVAILABLE`, reads included.
+clock, or whose `next_update` has passed, is refused. `OriginRevocationResolver.status()` reports `revoked`, `current`
+(including within grace), `absent` (the origin answers 404/410: the identity is
+established but cannot be bound for spend) or `unknown` (no verifiable list and
+grace has passed: the identity is not established, so the request is handled as
+unverified). History-store failures throw `revocation_persistence_failed`, an
+infrastructure outage handled by the application layer. `isRevoked()` remains as
+a compatibility wrapper that throws `revocation_unavailable` for `absent` and
+`unknown`.
 
 For positively negotiated 3.3 sellers advertising signed webhooks, experimental
 clients omit injected reporting/task webhook HMAC authentication even when a
