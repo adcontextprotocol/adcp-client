@@ -10,7 +10,7 @@ const {
   MultipleVendorConsentMacrosError,
 } = require('../../dist/lib/index.js');
 
-// Vendored byte-for-byte from adcontextprotocol/adcp@d5f56dbea17ed190fe9b499764be1b697dd33418 (AdCP 3.3).
+// Vendored from adcontextprotocol/adcp@d5f56dbea17ed190fe9b499764be1b697dd33418 (AdCP 3.3).
 const FIXTURE_PATH = path.resolve(__dirname, '../../src/lib/substitution/fixtures/universal-macro-translation.json');
 const FIXTURE_SCHEMA_PATH = path.resolve(
   __dirname,

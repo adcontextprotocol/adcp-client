@@ -283,9 +283,7 @@
         "dropped_params": [],
         "unmapped_macros": [],
         "dropped_consent_macros": [],
-        "frozen_consent_macros": [
-          "{GDPR_CONSENT}"
-        ],
+        "frozen_consent_macros": ["{GDPR_CONSENT}"],
         "suspect_native_values": []
       }
     },
@@ -302,9 +300,7 @@
         "dropped_params": [],
         "unmapped_macros": [],
         "dropped_consent_macros": [],
-        "frozen_consent_macros": [
-          "{GDPR_CONSENT_755}"
-        ],
+        "frozen_consent_macros": ["{GDPR_CONSENT_755}"],
         "suspect_native_values": []
       }
     },
@@ -318,15 +314,9 @@
       },
       "expected": {
         "url": "https://pixel.example/i?gdpr=${GDPR}",
-        "dropped_params": [
-          "c"
-        ],
-        "unmapped_macros": [
-          "{GDPR_CONSENT_755}"
-        ],
-        "dropped_consent_macros": [
-          "{GDPR_CONSENT_755}"
-        ],
+        "dropped_params": ["c"],
+        "unmapped_macros": ["{GDPR_CONSENT_755}"],
+        "dropped_consent_macros": ["{GDPR_CONSENT_755}"],
         "frozen_consent_macros": [],
         "suspect_native_values": []
       }
@@ -341,15 +331,9 @@
       },
       "expected": {
         "url": "https://pixel.example/i",
-        "dropped_params": [
-          "c"
-        ],
-        "unmapped_macros": [
-          "{GDPR_CONSENT_755}"
-        ],
-        "dropped_consent_macros": [
-          "{GDPR_CONSENT_755}"
-        ],
+        "dropped_params": ["c"],
+        "unmapped_macros": ["{GDPR_CONSENT_755}"],
+        "dropped_consent_macros": ["{GDPR_CONSENT_755}"],
         "frozen_consent_macros": [],
         "suspect_native_values": []
       }
@@ -367,12 +351,8 @@
       },
       "expected": {
         "url": "https://pixel.example/i?c=${GDPR_CONSENT_755}",
-        "dropped_params": [
-          "discard"
-        ],
-        "unmapped_macros": [
-          "{UNKNOWN}"
-        ],
+        "dropped_params": ["discard"],
+        "unmapped_macros": ["{UNKNOWN}"],
         "dropped_consent_macros": [],
         "frozen_consent_macros": [],
         "suspect_native_values": []

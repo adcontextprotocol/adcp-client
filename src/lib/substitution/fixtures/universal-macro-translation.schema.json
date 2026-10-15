@@ -4,16 +4,7 @@
   "title": "Universal macro translation fixture",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "$schema",
-    "$schema_version",
-    "version",
-    "name",
-    "spec_reference",
-    "description",
-    "ordering",
-    "vectors"
-  ],
+  "required": ["$schema", "$schema_version", "version", "name", "spec_reference", "description", "ordering", "vectors"],
   "properties": {
     "$schema": { "type": "string" },
     "$schema_version": { "const": "1.0" },
@@ -112,10 +103,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "input_pixel_url", "mapping"],
-      "oneOf": [
-        { "required": ["expected"] },
-        { "required": ["expected_error"] }
-      ],
+      "oneOf": [{ "required": ["expected"] }, { "required": ["expected_error"] }],
       "properties": {
         "name": {
           "type": "string",
