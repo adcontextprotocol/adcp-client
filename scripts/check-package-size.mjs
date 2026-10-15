@@ -82,7 +82,11 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // declaration module sets and a packaged storyboard. CI measured 20,623,608
 // bytes before packaging the storyboard; preserve about 25 KB of compressor
 // margin for this additive surface. All other byte budgets stay fixed.
-const MAX_PACKED_TARBALL_BYTES = 20_650_000;
+// The identity 3.3 follow-ups (#3249, #3250, #3252, #3258: layered Web Bot
+// Auth verification, interop support, trust and grant semantics) measure
+// 20,660,761 bytes for the full stack; allow about 40 KB for compressor
+// variance. Other byte budgets stay fixed.
+const MAX_PACKED_TARBALL_BYTES = 20_700_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
