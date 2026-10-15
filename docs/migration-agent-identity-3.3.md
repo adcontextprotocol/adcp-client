@@ -476,9 +476,9 @@ Unbound callers use an internal per-origin anonymous scope to isolate task/propo
   including free PSL PRIVATE-section names, can exhaust the unbound pool. New
   unbound origins with revoked keys then fail closed with `SERVICE_UNAVAILABLE`
   until capacity is raised; the bound pool is unaffected.
-- **Delisted origins and their own tasks.** A bound origin whose operator
-  delists it is identity-established for new tool calls, but it may still poll
-  and cancel tasks it created while it was listed (adcp#8168).
+- **Delisted origins have no exception.** A bound origin whose operator
+  delists it is identity-established for every request, including polling and
+  cancelling tasks it created while it was listed.
 - **Duplicate structured-field keys are rejected.** Signature-Input,
   Signature and Signature-Agent with a duplicated dictionary member or a
   duplicated parameter (for example `created=1;created=2`) are malformed: 400
