@@ -462,6 +462,14 @@ await store.readyRowStorage();
   version at the recorded size is the same bytes) instead of downloading it
   while holding the account and object locks. A provider without `stat` falls
   back to reading the whole object there. All bundled providers implement it.
+  Also implement the optional `list({ prefix, pageToken, pageSize })`, which
+  returns `{ objects: [{ objectRef, nativeVersionRef, sizeBytes, createdAt }],
+  nextPageToken? }`: every stored version under the prefix once, in a stable
+  order (on a versioned store, noncurrent versions too, never delete markers),
+  with the version exactly as `putIfAbsent` recorded it and the time it was
+  written. The orphan collector needs it; a binding whose provider has no `list`
+  is reported as unsupported there. The conformance suite checks it (`list`) when
+  present. All bundled providers implement it.
 
 #### Cloud providers
 

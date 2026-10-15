@@ -91,6 +91,7 @@ describe('object-storage revision rows', { skip: !DATABASE_URL && 'PostgreSQL UR
       'version-pinned-stat',
       'exact-version-delete',
       'write-unique-version',
+      'list',
     ]);
   });
 

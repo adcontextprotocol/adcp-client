@@ -16,6 +16,7 @@ import {
   GetObjectCommand,
   HeadBucketCommand,
   HeadObjectCommand,
+  ListObjectVersionsCommand,
   PutObjectCommand,
   type LifecycleRule,
   type PutObjectCommandInput,
@@ -23,7 +24,7 @@ import {
   type S3Client,
 } from '@aws-sdk/client-s3';
 import { ReportingRowStoreError } from '../ledger/row-storage-errors';
-import type { ReportingRowObjectProviderV1 } from '../ledger/row-storage-object';
+import type { ReportingRowObjectListEntryV1, ReportingRowObjectProviderV1 } from '../ledger/row-storage-object';
 import {
   assertReportingRowLocationKeys,
   assertReportingRowReadBounds,
@@ -406,6 +407,74 @@ export function createS3ReportingRowObjectProviderV1(
           if (statusOf(error) === 400 || statusOf(error) === 405) return null;
           throw error;
         }
+      });
+    },
+    list(input, context) {
+      return runReportingRowProviderOperation(context.signal, async () => {
+        const { client, Bucket } = target(input);
+        if (typeof input.prefix !== 'string' || Buffer.byteLength(input.prefix) > 1024) {
+          throw new ReportingRowStoreError('INVALID_INPUT', 'list prefix is invalid');
+        }
+        if (!Number.isSafeInteger(input.pageSize) || input.pageSize < 1) {
+          throw new ReportingRowStoreError('INVALID_INPUT', 'pageSize must be a positive integer');
+        }
+        // Row buckets are versioned, and the native version is the VersionId, so list versions: each
+        // (Key, VersionId) is what a delete would name. Delete markers are not objects.
+        let markers: { k: string; v: string } | undefined;
+        if (input.pageToken !== undefined) {
+          try {
+            const decoded = JSON.parse(Buffer.from(input.pageToken, 'base64url').toString('utf8')) as {
+              k?: unknown;
+              v?: unknown;
+            };
+            if (typeof decoded.k !== 'string' || typeof decoded.v !== 'string') throw new Error('invalid');
+            markers = { k: decoded.k, v: decoded.v };
+          } catch {
+            throw new ReportingRowStoreError('INVALID_INPUT', 'list page token is invalid');
+          }
+        }
+        const output = await client.send(
+          new ListObjectVersionsCommand({
+            Bucket,
+            Prefix: input.prefix,
+            MaxKeys: Math.min(input.pageSize, 1000),
+            ...(markers ? { KeyMarker: markers.k, VersionIdMarker: markers.v } : {}),
+          }),
+          { abortSignal: context.signal }
+        );
+        const objects: ReportingRowObjectListEntryV1[] = [];
+        for (const version of output.Versions ?? []) {
+          const key = version.Key;
+          const id = version.VersionId;
+          // A version written before versioning was enabled is `null`: never addressable by a recorded version.
+          if (typeof key !== 'string' || !key.startsWith(input.prefix)) {
+            throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'object listing is malformed');
+          }
+          if (typeof id !== 'string' || id === 'null' || !VERSION_ID.test(id)) continue;
+          const size = version.Size;
+          const modified = version.LastModified instanceof Date ? version.LastModified.getTime() : NaN;
+          if (typeof size !== 'number' || !Number.isSafeInteger(size) || size < 0 || !Number.isFinite(modified)) {
+            throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'object listing is malformed');
+          }
+          objects.push({
+            objectRef: key,
+            nativeVersionRef: id,
+            sizeBytes: size,
+            createdAt: new Date(modified).toISOString(),
+          });
+        }
+        const nextKey = output.NextKeyMarker;
+        const nextVersion = output.NextVersionIdMarker;
+        return {
+          objects,
+          ...(output.IsTruncated && typeof nextKey === 'string' && typeof nextVersion === 'string'
+            ? {
+                nextPageToken: Buffer.from(JSON.stringify({ k: nextKey, v: nextVersion }), 'utf8').toString(
+                  'base64url'
+                ),
+              }
+            : {}),
+        };
       });
     },
     delete(input, context) {

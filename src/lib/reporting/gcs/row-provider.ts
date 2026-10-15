@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { BucketMetadata, File, FileMetadata, Storage } from '@google-cloud/storage';
 import { ReportingRowStoreError } from '../ledger/row-storage-errors';
-import type { ReportingRowObjectProviderV1 } from '../ledger/row-storage-object';
+import type { ReportingRowObjectListEntryV1, ReportingRowObjectProviderV1 } from '../ledger/row-storage-object';
 import {
   assertReportingRowLocationKeys,
   assertReportingRowReadBounds,
@@ -244,6 +244,49 @@ export function createGcsReportingRowObjectProviderV1(
           if (status(error) === 404) return null;
           throw error;
         }
+      });
+    },
+    list(input, context) {
+      return runReportingRowProviderOperation(context.signal, async () => {
+        const bucket = bucketFor(input);
+        if (typeof input.prefix !== 'string' || Buffer.byteLength(input.prefix) > 1024) {
+          throw new ReportingRowStoreError('INVALID_INPUT', 'list prefix is invalid');
+        }
+        if (!Number.isSafeInteger(input.pageSize) || input.pageSize < 1) {
+          throw new ReportingRowStoreError('INVALID_INPUT', 'pageSize must be a positive integer');
+        }
+        // `versions: true` lists every generation, noncurrent ones included, so each (key, generation) a
+        // delete could name is visible. On a bucket without versioning it lists the live objects.
+        const [files, next] = await bucket.getFiles({
+          prefix: input.prefix,
+          versions: true,
+          autoPaginate: false,
+          maxResults: Math.min(input.pageSize, 1000),
+          ...(input.pageToken ? { pageToken: input.pageToken } : {}),
+        });
+        const objects: ReportingRowObjectListEntryV1[] = [];
+        for (const file of files) {
+          const metadata = file.metadata as FileMetadata;
+          const size = Number(metadata.size);
+          const created = Date.parse(String(metadata.timeCreated));
+          if (
+            typeof file.name !== 'string' ||
+            !file.name.startsWith(input.prefix) ||
+            !Number.isSafeInteger(size) ||
+            size < 0 ||
+            !Number.isFinite(created)
+          ) {
+            throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'object listing is malformed');
+          }
+          objects.push({
+            objectRef: file.name,
+            nativeVersionRef: generationOf(metadata),
+            sizeBytes: size,
+            createdAt: new Date(created).toISOString(),
+          });
+        }
+        const token = (next as { pageToken?: unknown } | null | undefined)?.pageToken;
+        return { objects, ...(typeof token === 'string' && token ? { nextPageToken: token } : {}) };
       });
     },
     delete(input, context) {

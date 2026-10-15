@@ -68,11 +68,24 @@ function createFakeStorage({ bucketMetadata = safeBucket(), buckets = ['rows-buc
               found.push({
                 name,
                 generation: String(version.generation),
-                metadata: { name, generation: String(version.generation), size: String(version.bytes.length) },
+                metadata: {
+                  name,
+                  generation: String(version.generation),
+                  size: String(version.bytes.length),
+                  timeCreated: version.timeCreated,
+                },
               });
             }
           }
-          return [found];
+          found.sort((a, b) =>
+            a.name < b.name ? -1 : a.name > b.name ? 1 : Number(a.generation) - Number(b.generation)
+          );
+          if (listOptions.maxResults === undefined) return [found];
+          // Paged like the real API: the token is the offset of the next object.
+          const start = listOptions.pageToken ? Number(listOptions.pageToken) : 0;
+          const page = found.slice(start, start + listOptions.maxResults);
+          const end = start + page.length;
+          return [page, end < found.length ? { ...listOptions, pageToken: String(end) } : null];
         },
         file(name, options = {}) {
           const path = `${bucketName}/${name}`;
@@ -93,6 +106,7 @@ function createFakeStorage({ bucketMetadata = safeBucket(), buckets = ['rows-buc
                 bytes: Buffer.from(bytes),
                 metadata: saveOptions?.metadata,
                 live: true,
+                timeCreated: new Date().toISOString(),
               };
               objects.set(path, [...(objects.get(path) ?? []), version]);
               file.metadata = { generation: String(version.generation), size: String(version.bytes.length) };

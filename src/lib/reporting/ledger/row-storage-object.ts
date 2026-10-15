@@ -90,6 +90,33 @@ export interface ReportingRowObjectStatInputV1 extends ReportingRowObjectLocatio
 /**
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
+export interface ReportingRowObjectListInputV1 extends ReportingRowObjectLocationV1 {
+  /** Key prefix to list under. The SDK passes the binding's owned prefix, `{prefix}/{namespace_key}/`. */
+  prefix: string;
+  /** Opaque continuation from the previous page; omit for the first page. */
+  pageToken?: string;
+  /** Upper bound on objects in the page. A provider may return fewer and still return a token. */
+  pageSize: number;
+}
+
+/**
+ * One stored object version found by a listing.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export interface ReportingRowObjectListEntryV1 {
+  /** AdCP `object_ref`: the key, as it would be passed to `get` and `delete`. */
+  objectRef: string;
+  /** AdCP `native_version_ref`: the exact version, as `putIfAbsent` would have recorded it. */
+  nativeVersionRef: string;
+  sizeBytes: number;
+  /** When this version was written, as an ISO 8601 instant. Never earlier than the write. */
+  createdAt: string;
+}
+
+/**
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingRowObjectProviderV1 {
   /** Registry name, e.g. `filesystem`, `gcs`, `s3`, `azure_blob`. */
   readonly name: string;
@@ -126,6 +153,19 @@ export interface ReportingRowObjectProviderV1 {
   ): Promise<{ nativeVersionRef: string; sizeBytes: number } | null>;
   /** Delete the exact native version. Idempotent: `absent` is success. */
   delete(input: ReportingRowObjectDeleteInputV1, context: ReportingRowObjectContextV1): Promise<'deleted' | 'absent'>;
+  /**
+   * List every stored version whose key starts with `prefix`, in a stable order, one page at a time.
+   * Optional. The orphan collector (`collectOrphanedRowObjects`) uses it; a binding whose provider has
+   * no `list` is reported as unsupported there. Return each version once as `(objectRef,
+   * nativeVersionRef)` exactly as `putIfAbsent` recorded it (on a versioned store, noncurrent versions
+   * too, never delete markers), the stored size, and the time the version was written. Return only keys
+   * under `prefix`. A page may be short; `nextPageToken` is absent on the last page. A token is only
+   * valid for the same `prefix` and location.
+   */
+  list?(
+    input: ReportingRowObjectListInputV1,
+    context: ReportingRowObjectContextV1
+  ): Promise<{ objects: ReportingRowObjectListEntryV1[]; nextPageToken?: string }>;
 }
 
 /**
@@ -308,6 +348,13 @@ export interface FilesystemReportingRowObjectProviderOptionsV1 {
   roots: Readonly<Record<string, string>>;
 }
 
+function compareSegments(a: readonly string[], b: readonly string[]): number {
+  for (let index = 0; index < Math.min(a.length, b.length); index += 1) {
+    if (a[index]! !== b[index]!) return a[index]! < b[index]! ? -1 : 1;
+  }
+  return 0;
+}
+
 /**
  * Local filesystem provider for tests and single-host deployments. Create-only
  * writes use a temporary file, `fsync`, and `link()` to the final name, which
@@ -423,6 +470,80 @@ export function createFilesystemReportingRowObjectProviderV1(
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
         throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'filesystem stat failed');
       }
+    },
+    async list(input, context) {
+      context.signal.throwIfAborted();
+      if (!Number.isSafeInteger(input.pageSize) || input.pageSize < 1) {
+        throw new ReportingRowStoreError('INVALID_INPUT', 'pageSize must be a positive integer');
+      }
+      const root = roots.get(input.location.root ?? '');
+      if (!root) throw new ReportingRowStoreError('UNSAFE_BINDING', 'filesystem root is not configured');
+      if (typeof input.prefix !== 'string' || input.prefix.split('/').some(segment => segment === '..')) {
+        throw new ReportingRowStoreError('INVALID_INPUT', 'list prefix is invalid');
+      }
+      const after = input.pageToken === undefined ? undefined : input.pageToken.split('/');
+      const objects: ReportingRowObjectListEntryV1[] = [];
+      let more = false;
+      // Walk order: each directory's entries by name, descending in place. A token is the last key
+      // returned; a subtree that sorts wholly before it is not entered.
+      const walk = async (directory: string[]): Promise<boolean> => {
+        let entries;
+        try {
+          entries = await fs.readdir(path.join(root, ...directory), { withFileTypes: true });
+        } catch (error) {
+          if (
+            (error as NodeJS.ErrnoException).code === 'ENOENT' ||
+            (error as NodeJS.ErrnoException).code === 'ENOTDIR'
+          ) {
+            return true;
+          }
+          throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'filesystem list failed');
+        }
+        entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+        for (const entry of entries) {
+          context.signal.throwIfAborted();
+          const segments = [...directory, entry.name];
+          if (after) {
+            const compared = compareSegments(segments, after.slice(0, segments.length));
+            if (compared < 0) continue;
+            if (compared === 0 && entry.isFile() && segments.length === after.length) continue;
+          }
+          if (entry.isDirectory()) {
+            // Keep only subtrees that can hold a key under the prefix.
+            const rendered = segments.join('/') + '/';
+            if (!rendered.startsWith(input.prefix) && !input.prefix.startsWith(rendered)) continue;
+            if (!(await walk(segments))) return false;
+            continue;
+          }
+          if (!entry.isFile() || entry.name.endsWith('.tmp')) continue;
+          const key = segments.join('/');
+          if (!key.startsWith(input.prefix)) continue;
+          if (objects.length >= input.pageSize) {
+            more = true;
+            return false;
+          }
+          let stat;
+          try {
+            stat = await fs.stat(path.join(root, ...segments), { bigint: true });
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+            throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'filesystem list failed');
+          }
+          const written = stat.birthtimeNs > stat.mtimeNs ? stat.birthtimeNs : stat.mtimeNs;
+          objects.push({
+            objectRef: key,
+            nativeVersionRef: versionOf(stat),
+            sizeBytes: Number(stat.size),
+            createdAt: new Date(Number(written / 1_000_000n)).toISOString(),
+          });
+        }
+        return true;
+      };
+      await walk([]);
+      return {
+        objects,
+        ...(more && objects.length > 0 ? { nextPageToken: objects[objects.length - 1]!.objectRef } : {}),
+      };
     },
     async delete(input, context) {
       context.signal.throwIfAborted();
@@ -579,7 +700,103 @@ export async function runReportingRowObjectProviderConformanceV1(
     throw new Error('delete did not remove the re-created version');
   }
   passed.push('write-unique-version');
+  if (provider.list) {
+    await checkListing(provider, input, base, metadata, context);
+    passed.push('list');
+  }
   return passed;
+}
+
+/**
+ * The listing contract the orphan collector depends on: every object under the prefix exactly once across
+ * pages, each with the version, size and write time `putIfAbsent` and `stat` report, nothing outside the
+ * prefix, and deleted objects gone.
+ */
+async function checkListing(
+  provider: ReportingRowObjectProviderV1,
+  input: ReportingRowObjectLocationV1 & { prefix: string },
+  base: { location: Readonly<Record<string, string>>; credentialRef?: string },
+  metadata: Readonly<Record<string, string>>,
+  context: ReportingRowObjectContextV1
+): Promise<void> {
+  const list = provider.list!.bind(provider);
+  const folder = `${input.prefix}/conformance/${randomUUID()}/`;
+  const bodies = new Map<string, Buffer>([
+    [`${folder}a.jsonl`, Buffer.from('{"a":1}\n')],
+    [`${folder}b.jsonl.gz`, Buffer.from('{"b":2}\n{"b":3}\n')],
+    [`${folder}nested/c.jsonl`, Buffer.from('{"c":4}\n')],
+  ]);
+  const created = new Map<string, string>();
+  const startedAt = Date.now();
+  try {
+    for (const [key, bytes] of bodies) {
+      const put = await provider.putIfAbsent(
+        {
+          ...base,
+          objectRef: key,
+          bytes,
+          contentType: key.endsWith('.gz') ? 'application/gzip' : 'application/x-ndjson',
+          metadata,
+        },
+        context
+      );
+      if (!put.created) throw new Error('list: putIfAbsent did not create a fresh object');
+      created.set(key, put.nativeVersionRef);
+    }
+    const listAll = async (prefix: string, pageSize: number) => {
+      const found: ReportingRowObjectListEntryV1[] = [];
+      let pageToken: string | undefined;
+      for (let page = 0; page < 100; page += 1) {
+        const result = await list({ ...base, prefix, pageSize, ...(pageToken ? { pageToken } : {}) }, context);
+        if (!Array.isArray(result?.objects) || result.objects.length > pageSize) {
+          throw new Error('list returned no objects array or more objects than pageSize');
+        }
+        found.push(...result.objects);
+        pageToken = result.nextPageToken;
+        if (pageToken === undefined) return found;
+        if (typeof pageToken !== 'string' || pageToken.length === 0) throw new Error('list returned an invalid token');
+      }
+      throw new Error('list did not finish within 100 pages');
+    };
+    for (const pageSize of [1, 2, 100]) {
+      const found = await listAll(folder, pageSize);
+      const keys = found.map(entry => entry.objectRef);
+      if (new Set(keys).size !== keys.length) throw new Error(`list returned an object twice (pageSize ${pageSize})`);
+      if (keys.length !== bodies.size || keys.some(key => !bodies.has(key))) {
+        throw new Error(`list did not return exactly the objects under the prefix (pageSize ${pageSize})`);
+      }
+      for (const entry of found) {
+        if (entry.nativeVersionRef !== created.get(entry.objectRef)) {
+          throw new Error('list reported a native version that putIfAbsent did not');
+        }
+        if (entry.sizeBytes !== bodies.get(entry.objectRef)!.byteLength) {
+          throw new Error('list reported a wrong size');
+        }
+        const written = Date.parse(entry.createdAt);
+        // Object-store clocks differ from this host's; a wide margin still catches a missing or zero time.
+        if (!Number.isFinite(written) || Math.abs(written - startedAt) > 10 * 60_000) {
+          throw new Error('list did not report when the version was written');
+        }
+      }
+    }
+    if ((await listAll(`${folder}nested/`, 10)).length !== 1) throw new Error('list ignored the prefix');
+    if ((await listAll(`${folder}zz`, 10)).length !== 0) throw new Error('list returned objects for an unused prefix');
+    const [first] = [...created.keys()];
+    const deleted = await provider.delete(
+      { ...base, objectRef: first!, nativeVersionRef: created.get(first!)! },
+      context
+    );
+    if (deleted !== 'deleted') throw new Error('list: delete did not remove the object');
+    created.delete(first!);
+    const remaining = (await listAll(folder, 2)).map(entry => entry.objectRef).sort();
+    if (JSON.stringify(remaining) !== JSON.stringify([...created.keys()].sort())) {
+      throw new Error('list returned a deleted object, or lost a live one');
+    }
+  } finally {
+    for (const [key, nativeVersionRef] of created) {
+      await provider.delete({ ...base, objectRef: key, nativeVersionRef }, context).catch(() => undefined);
+    }
+  }
 }
 
 function sha256Hex(value: string): string {

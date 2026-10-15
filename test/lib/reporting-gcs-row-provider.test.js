@@ -49,7 +49,55 @@ test('passes the shared provider conformance suite', async () => {
     'version-pinned-stat',
     'exact-version-delete',
     'write-unique-version',
+    'list',
   ]);
+});
+
+test('list pages through every generation, noncurrent ones included, under the prefix', async () => {
+  const storage = createFakeStorage();
+  const provider = createGcsReportingRowObjectProviderV1({ storage });
+  const first = await put(provider, 'adcp-rows/ns/a.jsonl', 'one\n');
+  // Replace the live object so the first generation becomes noncurrent.
+  storage.objects.get('rows-bucket/adcp-rows/ns/a.jsonl')[0].live = false;
+  const second = await put(provider, 'adcp-rows/ns/a.jsonl', 'two!\n');
+  const third = await put(provider, 'adcp-rows/ns/b.jsonl', 'b\n');
+  await put(provider, 'adcp-rows/other/c.jsonl');
+  const seen = [];
+  let pageToken;
+  let pages = 0;
+  do {
+    const page = await provider.list(
+      { ...base, prefix: 'adcp-rows/ns/', pageSize: 1, ...(pageToken ? { pageToken } : {}) },
+      signal()
+    );
+    assert.ok(page.objects.length <= 1);
+    seen.push(...page.objects);
+    pageToken = page.nextPageToken;
+    pages += 1;
+  } while (pageToken);
+  assert.equal(pages, 3);
+  assert.deepEqual(
+    seen.map(entry => [entry.objectRef, entry.nativeVersionRef, entry.sizeBytes]),
+    [
+      ['adcp-rows/ns/a.jsonl', first.nativeVersionRef, 4],
+      ['adcp-rows/ns/a.jsonl', second.nativeVersionRef, 5],
+      ['adcp-rows/ns/b.jsonl', third.nativeVersionRef, 2],
+    ]
+  );
+  assert.ok(seen.every(entry => Number.isFinite(Date.parse(entry.createdAt))));
+  const listing = storage.calls.filter(call => call.op === 'bucket.getFiles');
+  assert.equal(listing[0].prefix, 'adcp-rows/ns/');
+  await assert.rejects(
+    () => provider.list({ ...base, prefix: 'adcp-rows/ns/', pageSize: 0 }, signal()),
+    isCode('INVALID_INPUT')
+  );
+});
+
+test('list maps provider failures to a stable code without leaking the provider message', async () => {
+  const storage = createFakeStorage();
+  const provider = createGcsReportingRowObjectProviderV1({ storage });
+  storage.failures['bucket.getFiles'] = apiError(503);
+  await assert.rejects(() => provider.list({ ...base, prefix: 'adcp-rows/ns/', pageSize: 10 }, signal()), secretFree);
 });
 
 test('create-only upload: ifGenerationMatch 0, single request, no Content-Encoding', async () => {
@@ -382,9 +430,30 @@ test('official client wire contract against a local JSON API stub', async () => 
         if (url.searchParams.get('ifGenerationMatch') === '0' && objects.has(name)) {
           return json(412, { error: { code: 412, message: 'conditionNotMet' } });
         }
-        const object = { generation: String(generation++), bytes: Buffer.from(media, 'latin1') };
+        const object = {
+          generation: String(generation++),
+          bytes: Buffer.from(media, 'latin1'),
+          timeCreated: new Date().toISOString(),
+        };
         objects.set(name, object);
         return json(200, { name, generation: object.generation, size: String(object.bytes.length) });
+      }
+      if (req.method === 'GET' && /^\/storage\/v1\/b\/[^/]+\/o$/.test(url.pathname)) {
+        // Listing: names in order, paged by an offset token like the real API's opaque one.
+        const prefix = url.searchParams.get('prefix') ?? '';
+        const names = [...objects.keys()].filter(name => name.startsWith(prefix)).sort();
+        const start = Number(url.searchParams.get('pageToken') ?? 0);
+        const size = Number(url.searchParams.get('maxResults') ?? 1000);
+        const page = names.slice(start, start + size);
+        return json(200, {
+          items: page.map(name => ({
+            name,
+            generation: objects.get(name).generation,
+            size: String(objects.get(name).bytes.length),
+            timeCreated: objects.get(name).timeCreated,
+          })),
+          ...(start + size < names.length ? { nextPageToken: String(start + size) } : {}),
+        });
       }
       const match = url.pathname.match(/^\/storage\/v1\/b\/[^/]+\/o\/(.+)$/);
       const object = match && objects.get(decodeURIComponent(match[1]));
@@ -409,7 +478,12 @@ test('official client wire contract against a local JSON API stub', async () => 
     const provider = createGcsReportingRowObjectProviderV1({ storage });
     await runReportingRowObjectProviderConformanceV1(provider, { ...base, prefix: 'adcp-rows' });
     const uploads = requests.filter(request => request.url.pathname.startsWith('/upload/'));
-    assert.equal(uploads.length, 3);
+    assert.equal(uploads.length, 6, 'three for the core checks and three for the listing checks');
+    const listings = requests.filter(
+      request => request.method === 'GET' && /\/o$/.test(request.url.pathname) && request.url.searchParams.has('prefix')
+    );
+    assert.ok(listings.length >= 4);
+    assert.ok(listings.every(request => request.url.searchParams.get('versions') === 'true'));
     for (const upload of uploads) {
       assert.equal(upload.url.searchParams.get('uploadType'), 'multipart');
       assert.equal(upload.url.searchParams.get('ifGenerationMatch'), '0');

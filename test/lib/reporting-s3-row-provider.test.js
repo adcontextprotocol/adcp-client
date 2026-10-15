@@ -87,6 +87,7 @@ function createFakeS3({
         bytes,
         metadata: input.Metadata,
         contentType: input.ContentType,
+        lastModified: new Date(),
       };
       store.set(input.Key, versioned ? [...(store.get(input.Key) ?? []), version] : [version]);
       return { ETag: version.etag, ...(versioned ? { VersionId: version.versionId } : {}) };
@@ -117,6 +118,35 @@ function createFakeS3({
         ContentLength: bytes.length,
         ETag: version.etag,
         VersionId: version.versionId,
+      };
+    },
+    ListObjectVersionsCommand(input) {
+      const entries = [];
+      for (const [key, versions] of [...store.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+        if (!key.startsWith(input.Prefix ?? '')) continue;
+        versions.forEach((version, index) =>
+          entries.push({
+            Key: key,
+            VersionId: version.versionId ?? 'null',
+            IsLatest: index === versions.length - 1,
+            LastModified: version.lastModified,
+            Size: version.bytes.length,
+          })
+        );
+      }
+      const start =
+        input.KeyMarker === undefined
+          ? 0
+          : entries.findIndex(item => item.Key === input.KeyMarker && item.VersionId === input.VersionIdMarker) + 1;
+      const page = entries.slice(start, start + (input.MaxKeys ?? 1000));
+      const truncated = start + page.length < entries.length;
+      const last = page.at(-1);
+      return {
+        Versions: page,
+        // Delete markers are listed separately and are never objects.
+        DeleteMarkers: [{ Key: `${input.Prefix ?? ''}marker`, VersionId: 'dm', IsLatest: true }],
+        IsTruncated: truncated,
+        ...(truncated ? { NextKeyMarker: last.Key, NextVersionIdMarker: last.VersionId } : {}),
       };
     },
     DeleteObjectCommand(input) {
@@ -202,9 +232,66 @@ test('passes the shared provider conformance suite', async () => {
     'version-pinned-stat',
     'exact-version-delete',
     'write-unique-version',
+    'list',
   ]);
   assert.equal(client.store.size === 0 || [...client.store.values()].every(v => v.length === 0), true);
   assert.ok(client.calls.every(call => call.abortSignal instanceof AbortSignal));
+});
+
+test('list pages through every version, noncurrent ones included, and skips delete markers', async () => {
+  const client = createFakeS3();
+  const provider = createS3ReportingRowObjectProviderV1({ client });
+  const a = await put(provider, 'adcp-rows/ns/a.jsonl', 'aa\n');
+  const b = await put(provider, 'adcp-rows/ns/b.jsonl', 'bbb\n');
+  await put(provider, 'adcp-rows/other/c.jsonl');
+  // A noncurrent version at the same key.
+  client.store.get('adcp-rows/ns/b.jsonl').push({
+    versionId: 'second-version',
+    bytes: Buffer.from('b2\n'),
+    lastModified: new Date(),
+  });
+  const seen = [];
+  let pageToken;
+  let pages = 0;
+  do {
+    const page = await provider.list(
+      { ...base, prefix: 'adcp-rows/ns/', pageSize: 2, ...(pageToken ? { pageToken } : {}) },
+      signal()
+    );
+    assert.ok(page.objects.length <= 2);
+    seen.push(...page.objects);
+    pageToken = page.nextPageToken;
+    pages += 1;
+  } while (pageToken);
+  assert.equal(pages, 2);
+  assert.deepEqual(
+    seen.map(entry => [entry.objectRef, entry.nativeVersionRef, entry.sizeBytes]),
+    [
+      ['adcp-rows/ns/a.jsonl', a.nativeVersionRef, 3],
+      ['adcp-rows/ns/b.jsonl', b.nativeVersionRef, 4],
+      ['adcp-rows/ns/b.jsonl', 'second-version', 3],
+    ]
+  );
+  assert.ok(seen.every(entry => Number.isFinite(Date.parse(entry.createdAt))));
+  const call = client.calls.filter(item => item.op === 'ListObjectVersionsCommand')[0];
+  assert.equal(call.input.Prefix, 'adcp-rows/ns/');
+  assert.equal(call.input.MaxKeys, 2);
+  assert.ok(call.abortSignal instanceof AbortSignal);
+});
+
+test('list rejects a forged page token and a bad page size, and skips unversioned objects', async () => {
+  const unversioned = createFakeS3({ versioned: false });
+  const provider = createS3ReportingRowObjectProviderV1({ client: unversioned });
+  unversioned.store.set('adcp-rows/ns/old.jsonl', [{ bytes: Buffer.from('x'), lastModified: new Date() }]);
+  assert.deepEqual((await provider.list({ ...base, prefix: 'adcp-rows/ns/', pageSize: 10 }, signal())).objects, []);
+  await assert.rejects(
+    () => provider.list({ ...base, prefix: 'adcp-rows/ns/', pageSize: 10, pageToken: 'not-a-token' }, signal()),
+    isCode('INVALID_INPUT')
+  );
+  await assert.rejects(
+    () => provider.list({ ...base, prefix: 'adcp-rows/ns/', pageSize: 0 }, signal()),
+    isCode('INVALID_INPUT')
+  );
 });
 
 test('create-only put sends If-None-Match and records the VersionId', async () => {
