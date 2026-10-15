@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { ADCP_MAJOR_VERSION, ADCP_VERSION, toReleasePrecisionVersion } from '../../version';
 import { AdcpError } from '../../server/decisioning/async-outcome';
+import { getSchemaDocumentByRef } from '../../validation/schema-loader';
 import type { GetReportingStatusResponse } from '../../types';
 import type { ReportingAdjustmentReceipt, ReportingMaterialization, ReportingReceipt } from '../../types';
 import { canonicalJsonV1 } from '../source';
@@ -128,11 +129,7 @@ export function createReportingStatusHandler<TContext = unknown>(
         ...(isRecord(raw.period) ? { period: raw.period as { start?: string; end?: string } } : {}),
       } as ReportingLedgerSnapshotQueryV1;
       const pagination = isRecord(raw.pagination) ? raw.pagination : {};
-      const limitValue = pagination.max_results ?? pagination.limit ?? 100;
-      const limit =
-        typeof limitValue === 'number' && Number.isFinite(limitValue)
-          ? Math.max(1, Math.min(500, Math.trunc(limitValue)))
-          : 100;
+      const limit = reportingPageSize(pagination);
       const cursor = typeof pagination.cursor === 'string' ? pagination.cursor : undefined;
       let snapshotId: string | undefined;
       if (cursor) {
@@ -562,6 +559,61 @@ export const REPORTING_STATUS_REVISION_VIEW_MAX_ROWS = 10_000;
  * exists for another account. It is correctable/terminal, never transient: the
  * reference will not start resolving by retrying.
  */
+interface ReportingPageBounds {
+  readonly minimum: number;
+  readonly maximum: number;
+  readonly default: number;
+}
+
+let pageBounds: ReportingPageBounds | undefined;
+
+/**
+ * The page-size bounds AdCP defines for `pagination.max_results`, read from the pinned release's
+ * `core/pagination-request.json` rather than written here, so a schema change carries through.
+ */
+function reportingPageBounds(): ReportingPageBounds {
+  if (pageBounds) return pageBounds;
+  const document = getSchemaDocumentByRef('core/pagination-request.json');
+  const field = (document?.schema.properties as Record<string, Record<string, unknown>> | undefined)?.max_results;
+  const { minimum, maximum, default: initial } = field ?? {};
+  if (
+    !Number.isSafeInteger(minimum) ||
+    !Number.isSafeInteger(maximum) ||
+    !Number.isSafeInteger(initial) ||
+    (minimum as number) < 1 ||
+    (maximum as number) < (minimum as number) ||
+    (initial as number) < (minimum as number) ||
+    (initial as number) > (maximum as number)
+  ) {
+    throw new Error('The AdCP pagination-request schema does not define bounds for max_results');
+  }
+  pageBounds = Object.freeze({
+    minimum: minimum as number,
+    maximum: maximum as number,
+    default: initial as number,
+  });
+  return pageBounds;
+}
+
+/**
+ * `pagination.max_results` as AdCP defines it: an integer within the schema's bounds, defaulting to the
+ * schema's default when absent. Anything else is a `VALIDATION_ERROR`, as for any other schema-invalid
+ * field, so the same request behaves the same on every seller. (`pagination.limit` is not an AdCP field.)
+ */
+function reportingPageSize(pagination: Record<string, unknown>): number {
+  const bounds = reportingPageBounds();
+  const value = pagination.max_results;
+  if (value === undefined) return bounds.default;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < bounds.minimum || value > bounds.maximum) {
+    throw new AdcpError('VALIDATION_ERROR', {
+      message: `pagination.max_results must be an integer from ${bounds.minimum} to ${bounds.maximum}`,
+      field: 'pagination.max_results',
+      suggestion: `Send an integer from ${bounds.minimum} to ${bounds.maximum}, or omit it for the default of ${bounds.default}.`,
+    });
+  }
+  return value;
+}
+
 function reportingRevisionNotFound(): AdcpError {
   return new AdcpError('REFERENCE_NOT_FOUND', {
     message: 'Reporting revision is unavailable',
@@ -613,15 +665,14 @@ export function createReportingDeliveryHandler(
           field: 'reporting_revision_id',
         });
       }
+      const pagination = isRecord(raw.pagination) ? raw.pagination : {};
+      // Refuse a schema-invalid page size before reading anything, whichever ledger would have answered.
+      reportingPageSize(pagination);
       const revision = await getRevisionMetadataFromStore(store, raw.reporting_revision_id, accountId);
       if (!revision) return SDK_REVISION_NOT_OWNED;
       const obligation = await store.getObligation(revision.reporting_obligation_id);
       if (!obligation || obligation.account.account_id !== accountId) return SDK_REVISION_NOT_OWNED;
-      const pagination = isRecord(raw.pagination) ? raw.pagination : {};
-      const maxResults =
-        typeof pagination.max_results === 'number' && Number.isFinite(pagination.max_results)
-          ? Math.max(1, Math.min(500, Math.trunc(pagination.max_results)))
-          : 100;
+      const maxResults = reportingPageSize(pagination);
       const totalCount = revision.binding.rowCount;
       let offset = 0;
       if (typeof pagination.cursor === 'string') {

@@ -226,7 +226,7 @@ describe('PostgresReportingLedgerStore row storage', { skip: !DATABASE_URL && 'P
         {
           account: request.account,
           reporting_revision_id: first.reporting_revision_id,
-          pagination: { max_results: 500, ...(cursor ? { cursor } : {}) },
+          pagination: { max_results: 100, ...(cursor ? { cursor } : {}) },
         },
         { account: { account_id: request.account.account_id } }
       );
