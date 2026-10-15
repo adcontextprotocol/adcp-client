@@ -7464,10 +7464,11 @@ export class SingleAgentClient {
           const resolvedAuth =
             consumerAuth !== undefined ? consumerAuth : consumerUrl === undefined ? defaultAuth : undefined;
 
-          // `reporting-webhook.json` requires `authentication` throughout AdCP 3.x
-          // (the requirement lifts in 4.0 when RFC 9421 becomes the only path), so
-          // unlike `push_notification_config` the block cannot simply be omitted.
-          // With no configured secret and no caller-supplied credential there is
+          // `reporting-webhook.json` requires `authentication` before AdCP 3.3; from
+          // 3.3 a seller that signs webhooks under its profile accepts the
+          // registration without it. Without positively negotiated 3.3 signed
+          // webhooks the block therefore cannot simply be omitted, unlike
+          // `push_notification_config`. With no configured secret and no caller-supplied credential there is
           // nothing real to put there — registering a placeholder would tell the
           // seller its delivery reports are authenticated by a constant that ships
           // in this file. Skip the auto-injection instead and say why.
@@ -7477,6 +7478,15 @@ export class SingleAgentClient {
             // without a credential, and quietly dropping a field the caller wrote
             // would make the SDK a translator of intent rather than a witness to
             // it. Only the library's OWN auto-injection is skipped silently.
+            if (consumerReportingWebhook && consumerUrl !== undefined && consumerAuth === undefined) {
+              throw new Error(
+                'reporting_webhook requires an `authentication` block without positively negotiated 3.3 signed webhooks: ' +
+                  'a caller-supplied `reporting_webhook.url` must bring its own `reporting_webhook.authentication` ' +
+                  '(the client never pairs `webhookSecret` with a caller-controlled URL). Omit `url` to use the ' +
+                  "client's webhookUrlTemplate callback, or remove `reporting_webhook` if you do not need automated " +
+                  'delivery reports.'
+              );
+            }
             if (consumerReportingWebhook) {
               throw new Error(
                 'reporting_webhook requires an `authentication` block without positively negotiated 3.3 signed webhooks, and no credential ' +
@@ -7513,12 +7523,16 @@ export class SingleAgentClient {
                   this.selectedWebhookSigningProfile() && { signing_profile: this.selectedWebhookSigningProfile() }),
               },
             } as CanonicalCreateMediaBuyInput;
-            if (signed33Webhooks && resolvedAuth === undefined) {
+            // Only the client's own callback is bound to the monthly delivery
+            // operation id. A caller-supplied URL is registered at dispatch under
+            // its URL-scoped id (deliveryWebhookRegistrationId), so buys with
+            // different caller URLs in the same month cannot collide.
+            if (signed33Webhooks && resolvedAuth === undefined && consumerUrl === undefined) {
               await this.persistWebhookRegistration({
                 agent: this.normalizedAgent,
                 taskType: 'media_buy_delivery',
                 operationId,
-                callbackUrl: consumerUrl ?? deliveryWebhookUrl,
+                callbackUrl: deliveryWebhookUrl,
                 mode: 'rfc9421',
                 signingProfile: this.selectedWebhookSigningProfile(),
               });

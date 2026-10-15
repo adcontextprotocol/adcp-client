@@ -14,6 +14,7 @@ import type {
   AgentOnboarding,
   AgentOnboardingRequirement,
   AgentOnboardingTier,
+  ObservedAgentOnboardingRequirement,
   BillingParty,
   PrincipalRelationship,
   IdentityPrincipalChangedReason,
@@ -101,24 +102,35 @@ export class InMemoryOriginIdentityStore implements OriginIdentityStore {
     return true;
   }
 }
-const BUYER_GATES = new Set(['aao_verified', 'storyboard', 'sandbox', 'experimental_feature']);
-const SELLER_GATES = new Set(['agent_identity', 'grant', 'billing_entity', 'contract', 'credit_application']);
-/** Wrong-direction gates are ignored; unknown gates remain unsatisfied. */
-export async function evaluateOnboardingRequirements(
-  requirements: readonly AgentOnboardingRequirement[],
+const BUYER_GATES: ReadonlySet<string> = new Set(['aao_verified', 'storyboard', 'sandbox', 'experimental_feature']);
+const SELLER_GATES: ReadonlySet<string> = new Set([
+  'agent_identity',
+  'grant',
+  'billing_entity',
+  'contract',
+  'credit_application',
+]);
+/**
+ * Wrong-direction gates are ignored; unknown gates remain unsatisfied. Accepts
+ * requirements read off the wire, whose `kind` may be one this SDK does not know.
+ */
+export async function evaluateOnboardingRequirements<
+  R extends ObservedAgentOnboardingRequirement = AgentOnboardingRequirement,
+>(
+  requirements: readonly R[],
   direction: 'seller' | 'buyer',
-  check: (requirement: AgentOnboardingRequirement) => Promise<boolean>
-): Promise<{ satisfied: boolean; unsatisfied: AgentOnboardingRequirement[] }> {
+  check: (requirement: R) => Promise<boolean>
+): Promise<{ satisfied: boolean; unsatisfied: R[] }> {
   const relevant = direction === 'seller' ? SELLER_GATES : BUYER_GATES;
   const wrong = direction === 'seller' ? BUYER_GATES : SELLER_GATES;
-  const unsatisfied: AgentOnboardingRequirement[] = [];
+  const unsatisfied: R[] = [];
   for (const requirement of requirements) {
     if (wrong.has(requirement.kind)) continue;
     const wellFormed =
       requirement.kind !== 'aao_verified' ||
       (!!requirement.role &&
         !!requirement.verification_modes?.length &&
-        !!requirement.specialisms?.length &&
+        !!(requirement.verified_specialisms ?? requirement.specialisms)?.length &&
         !!requirement.adcp_version);
     const hasId = !['storyboard', 'experimental_feature'].includes(requirement.kind) || !!requirement.id;
     if (!relevant.has(requirement.kind) || !wellFormed || !hasId || !(await check(requirement)))

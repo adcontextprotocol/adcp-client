@@ -274,12 +274,15 @@ const reportingPreferencesWithPartialAuthentication: NonNullable<CanonicalCreate
 };
 void reportingPreferencesWithPartialAuthentication;
 
-// @ts-expect-error A caller-provided URL must bring its own complete authentication block.
-const reportingPreferencesWithUntrustedUrl: NonNullable<CanonicalCreateMediaBuyInput['reporting_webhook']> = {
+// AdCP 3.3 lets a reporting webhook omit `authentication` when the seller signs
+// under its webhook profile, so a caller URL without credentials type-checks.
+// Below 3.3 the client refuses it at runtime instead of pairing its own
+// webhookSecret with the caller's host (test/lib/webhook-template-scope.test.js).
+const reportingCallerUrlWithoutAuthentication: NonNullable<CanonicalCreateMediaBuyInput['reporting_webhook']> = {
   reporting_frequency: 'daily',
-  url: 'https://untrusted.example/reporting',
+  url: 'https://buyer.example/reporting',
 };
-void reportingPreferencesWithUntrustedUrl;
+void reportingCallerUrlWithoutAuthentication;
 agent.executeCustomTask<{ ok: true }>('vendor_extension', {});
 single.executeCustomTask<{ ok: true }>('vendor_extension', {});
 // @ts-expect-error Extension task names must use executeCustomTask().

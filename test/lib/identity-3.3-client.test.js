@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { SingleAgentClient } = require('../../dist/lib/core/SingleAgentClient');
 const { ProtocolClient } = require('../../dist/lib/protocols');
 const { validateIdentity33Payload } = require('../../dist/lib/identity-3.3');
+const { deliveryWebhookRegistrationId } = require('../../dist/lib/core/webhook-registration');
 const agent = { id: 'identity33-seller', name: 'Seller', agent_uri: 'https://seller.example.com/mcp', protocol: 'mcp' };
 function params(reporting_webhook) {
   return {
@@ -66,6 +67,31 @@ for (const scenario of [
         calls.filter(c => c.task === 'create_media_buy')[1].parameters.reporting_webhook.authentication.credentials,
         'caller-supplied-bearer'
       );
+      // A caller URL without credentials is valid only once 3.3 signed webhooks
+      // are negotiated; below that the client refuses rather than pair its own
+      // secret with the caller's host. The same client already registered its
+      // own callback this month, so the caller URL must not reuse that
+      // operation id: it is registered under its URL-scoped id instead.
+      const callerUrl = 'https://buyer.example.com/own-reports';
+      const callerReporting = params({ url: callerUrl, reporting_frequency: 'daily' });
+      if (scenario.omit) {
+        await client.createMediaBuy(callerReporting);
+        const sent = calls.filter(c => c.task === 'create_media_buy')[2].parameters.reporting_webhook;
+        assert.equal(sent.url, callerUrl);
+        assert.equal(Object.hasOwn(sent, 'authentication'), false);
+        assert.equal(sent.signing_profile, 'adcp/webhook-signing/v1');
+        const registration = await client.webhookRegistrationStore.get(
+          agent.id,
+          deliveryWebhookRegistrationId('reporting', callerUrl)
+        );
+        assert.equal(registration?.callbackUrl, callerUrl);
+      } else {
+        await assert.rejects(
+          () => client.createMediaBuy(callerReporting),
+          /reporting_webhook requires an `authentication` block.*caller-supplied `reporting_webhook.url`/
+        );
+        assert.equal(calls.filter(c => c.task === 'create_media_buy').length, 2);
+      }
     } finally {
       ProtocolClient.callTool = original;
     }
