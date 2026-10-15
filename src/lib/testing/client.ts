@@ -28,7 +28,7 @@ import type { AgentRequestSigningConfig } from '../types/adcp';
 import { createHmac, hkdfSync, randomBytes } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { validateIncomingResponse } from '../validation/client-hooks';
-import { resolveServedValidationVersion } from '../validation/served-version';
+import { resolveServedValidationVersion } from '../validation/schema-loader';
 import { extractVersionUnsupportedDetails } from '../utils/error-extraction';
 import { buildAgentSigningContext } from '../signing/client';
 import type { VerifierCapability } from '../signing/types';

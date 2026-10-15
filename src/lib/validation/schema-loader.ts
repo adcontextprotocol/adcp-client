@@ -1280,6 +1280,72 @@ export function hasSchemaBundle(version: string): boolean {
   }
 }
 
+/** Major of an echoed release-precision `adcp_version` (`core/version-envelope.json` wire pattern). */
+const SERVED_RELEASE_MAJOR = /^(\d+)\.\d+(?:-[a-zA-Z0-9.-]+)?$/;
+/** Major of a numeric pin: `'3.0'`, `'3.0.25'`, `'3.1-beta'`, `'3.1.0-beta.1'`. */
+const NUMERIC_PIN_MAJOR = /^(\d+)\.\d+/;
+
+/**
+ * Select the AdCP release a seller response is validated against.
+ *
+ * The versioning spec (`docs/reference/versioning.mdx`, "Server echoes") says
+ * the seller echoes the release it actually served in `adcp_version`, and
+ * buyers SHOULD validate against that release's schema, not their pin; with
+ * no echo, against the pin. This matters most for `get_adcp_capabilities`
+ * under a 3.0 pin: the 3.0 bundle has no `adcp_version` request field, so the
+ * SDK sends only `adcp_major_version: 3` and the seller serves (and echoes)
+ * its highest 3.x release.
+ *
+ * Returns the version to validate `response` against: the echoed
+ * `adcp_version` when it is a usable release, otherwise `pinnedVersion`.
+ *
+ * The echo is used only when it is a release-precision string in the same
+ * major as the pin and the SDK has a schema bundle for it. Validation stays
+ * strict either way: an echo from another major, a malformed echo, or one the
+ * SDK cannot validate falls back to the pin rather than skipping validation.
+ * When the echo names the pinned release itself, the exact pin is returned so
+ * a patch-precise pin (and any external schema root bound to it) still
+ * applies. `supported_versions` is deliberately not consulted: with no echo
+ * the spec says to validate against the pin.
+ *
+ * Two deliberate consequences:
+ * - An external schema root the caller bound to the pin (`schemaRoot`,
+ *   `withExternalSchemaRoot`) wins over the echo, matching the storyboard
+ *   runner's `response_schema` precedence: the caller chose that protocol
+ *   source explicitly.
+ * - An echo older than the pin (pin 3.2, served 3.0) is validated against the
+ *   older release. That is the spec's downshift rule, not a loosening bug.
+ *
+ * @internal — not part of the public API surface; may change without a major bump.
+ */
+export function resolveServedValidationVersion(response: unknown, pinnedVersion: string): string {
+  const pinMajor = NUMERIC_PIN_MAJOR.exec(pinnedVersion)?.[1];
+  // Legacy aliases ('v2.5', 'v3') have their own adapter paths; leave them alone.
+  if (pinMajor === undefined) return pinnedVersion;
+  try {
+    if (isExternalSchemaRootActive(pinnedVersion)) return pinnedVersion;
+  } catch {
+    return pinnedVersion;
+  }
+
+  const echoed =
+    response !== null && typeof response === 'object'
+      ? (response as { adcp_version?: unknown }).adcp_version
+      : undefined;
+  if (typeof echoed !== 'string') return pinnedVersion;
+  const echoMajor = SERVED_RELEASE_MAJOR.exec(echoed)?.[1];
+  if (echoMajor === undefined || echoMajor !== pinMajor) return pinnedVersion;
+
+  let pinnedRelease: string;
+  try {
+    pinnedRelease = toReleasePrecisionWire(pinnedVersion);
+  } catch {
+    return pinnedVersion;
+  }
+  if (echoed === pinnedRelease) return pinnedVersion;
+  return hasSchemaBundle(echoed) ? echoed : pinnedVersion;
+}
+
 const mcpToolSchemaCache = new Map<string, Readonly<Record<string, unknown>> | null>();
 const mcpToolSummaryCache = new Map<string, string | null>();
 

@@ -34,7 +34,7 @@ import {
   type ValidationMode,
 } from '../validation/client-hooks';
 import { formatIssues } from '../validation/schema-validator';
-import { resolveServedValidationVersion } from '../validation/served-version';
+import { resolveServedValidationVersion } from '../validation/schema-loader';
 import { ADCP_VERSION } from '../version';
 import { unwrapProtocolResponse, isAdcpOperationSuccess } from '../utils/response-unwrapper';
 import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extraction';
