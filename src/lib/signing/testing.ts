@@ -1,4 +1,5 @@
-import { createHash, createPrivateKey, randomUUID, sign as nodeSign, type JsonWebKey } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { signWithPrivateJwkAsync } from './crypto';
 import type { SigningProvider } from './provider';
 import type { SignerKey } from './signer';
 import { assertAdcpUse, type AdcpUse } from './jwks-helpers';
@@ -85,12 +86,8 @@ export class InMemorySigningProvider implements SigningProvider {
   }
 
   async sign(payload: Uint8Array): Promise<Uint8Array> {
-    const privateKey = createPrivateKey({ key: this.privateKey as JsonWebKey, format: 'jwk' });
-    const data = Buffer.from(payload);
-    if (this.algorithm === 'ed25519') {
-      return new Uint8Array(nodeSign(null, data, privateKey));
-    }
-    return new Uint8Array(nodeSign('sha256', data, { key: privateKey, dsaEncoding: 'ieee-p1363' }));
+    // WebCrypto for ES256 when available (edge runtimes, #3243); node:crypto otherwise.
+    return signWithPrivateJwkAsync(this.algorithm, this.privateKey as AdcpJsonWebKey, payload);
   }
 }
 

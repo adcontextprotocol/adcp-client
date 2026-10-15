@@ -875,6 +875,7 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.68.0",
     "web-bot-auth": "0.2.0",
+    "workerd": "1.20260730.1",
     "zod": "^4.4.3",
     "zod-openapi": "^5.4.3"
   },

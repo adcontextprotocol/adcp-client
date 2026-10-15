@@ -18,7 +18,7 @@ import { RequestSignatureError } from './errors';
 import { AgentResolverError } from './agent-resolver/errors';
 import { parseStrictJson, StrictJsonError } from './agent-resolver/strict-json';
 import { parseSignature, parseSignatureInput, type ParsedSignatureInput } from './parser';
-import { jwkToPublicKey, verifySignature } from './crypto';
+import { jwkToPublicKey, verifySignatureAsync } from './crypto';
 import { isUnresolvableOperation, type UnresolvableOperation } from './operation-resolution';
 import type { JwksResolver } from './jwks';
 import type { ReplayStore } from './replay';
@@ -286,8 +286,9 @@ export async function verifyRequestSignature(
     parsedInput.signatureParamsValue,
     canonicalizationProfile
   );
-  const publicKey = jwkToPublicKey(jwk);
-  const valid = verifySignature(parsedInput.params.alg, publicKey, Buffer.from(base, 'utf8'), parsedSig.bytes);
+  // Validates the JWK (request_signature_key_unknown on malformed keys).
+  jwkToPublicKey(jwk);
+  const valid = await verifySignatureAsync(parsedInput.params.alg, jwk, Buffer.from(base, 'utf8'), parsedSig.bytes);
   if (!valid) {
     throw new RequestSignatureError(
       'request_signature_invalid',

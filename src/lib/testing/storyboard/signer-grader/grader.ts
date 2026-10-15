@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { createPrivateKey, sign as nodeSign, type JsonWebKey } from 'node:crypto';
+import { signWithPrivateJwkAsync } from '../../../signing/crypto';
 import {
   HttpsJwksResolver,
   InMemoryReplayStore,
@@ -267,12 +267,7 @@ async function keyFileProvider(filePath: string, kid: string, algorithm: AdcpSig
     algorithm,
     fingerprint: `key-file:${kid}`,
     async sign(payload: Uint8Array): Promise<Uint8Array> {
-      const privateKey = createPrivateKey({ key: jwk as JsonWebKey, format: 'jwk' });
-      const data = Buffer.from(payload);
-      if (algorithm === 'ed25519') {
-        return new Uint8Array(nodeSign(null, data, privateKey));
-      }
-      return new Uint8Array(nodeSign('sha256', data, { key: privateKey, dsaEncoding: 'ieee-p1363' }));
+      return signWithPrivateJwkAsync(algorithm, jwk as AdcpJsonWebKey, payload);
     },
   };
 }

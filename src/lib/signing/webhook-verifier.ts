@@ -29,7 +29,7 @@ import { RequestSignatureError, WebhookSignatureError } from './errors';
 import { AgentResolverError } from './agent-resolver/errors';
 import { BrandJsonResolverError } from './brand-jwks';
 import { parseSignature, parseSignatureInput, type ParsedSignatureInput } from './parser';
-import { jwkToPublicKey, verifySignature } from './crypto';
+import { jwkToPublicKey, verifySignatureAsync } from './crypto';
 import type { JwksResolution, JwksResolver } from './jwks';
 import { assertPublisherPins, type PublisherSigningKeyPin } from './publisher-pins';
 import { InMemoryReplayStore, type ReplayStore } from './replay';
@@ -311,8 +311,9 @@ export async function verifyWebhookSignature(
     parsedInput.signatureParamsValue,
     '3.2'
   );
-  const publicKey = jwkToPublicKey(jwk);
-  const valid = verifySignature(parsedInput.params.alg, publicKey, Buffer.from(base, 'utf8'), parsedSig.bytes);
+  // Validates the JWK (malformed keys are rejected before verification).
+  jwkToPublicKey(jwk);
+  const valid = await verifySignatureAsync(parsedInput.params.alg, jwk, Buffer.from(base, 'utf8'), parsedSig.bytes);
   if (!valid) {
     throw new WebhookSignatureError(
       'webhook_signature_invalid',

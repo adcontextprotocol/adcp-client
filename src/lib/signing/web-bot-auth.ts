@@ -16,7 +16,7 @@ import { canonicalAgentUrl } from './agent-resolver/select-agent';
 import { parseStrictJson } from './agent-resolver/strict-json';
 import { getHeaderValue, type RequestLike, type ResponseLike } from './canonicalize';
 import { computeContentDigest, contentDigestMatches, contentDigestUsesEncoding } from './content-digest';
-import { jwkToPublicKey, verifySignature } from './crypto';
+import { jwkToPublicKey, signWithPrivateJwkAsync, verifySignature, verifySignatureAsync } from './crypto';
 import {
   parseSignature,
   parseSignatureInput,
@@ -265,22 +265,41 @@ function assertDigest(headers: RequestLike['headers'], body: string): void {
   if (!digest || !contentDigestUsesEncoding(digest, 'rfc8941-base64') || !contentDigestMatches(digest, body))
     denied('content_digest');
 }
+function signatureBytes(
+  input: ParsedSignatureInput,
+  request: RequestLike,
+  jwk: AdcpJsonWebKey,
+  response?: ResponseLike
+): { alg: WebBotAuthAlg; bytes: Uint8Array } {
+  const alg = algorithm(jwk);
+  if (input.params.alg !== undefined && input.params.alg !== alg) denied('algorithm');
+  const signature = getHeaderValue(response?.headers ?? request.headers, 'signature');
+  if (signature === undefined || signature === '') denied('headers_missing');
+  try {
+    return { alg, bytes: parseSignature(signature ?? '', input.label, 'rfc8941-base64').bytes };
+  } catch {
+    return bad('signature');
+  }
+}
+/** Request signatures: WebCrypto for ES256 when available (edge runtimes, #3243). */
+async function verifyBytesAsync(input: ParsedSignatureInput, request: RequestLike, jwk: AdcpJsonWebKey): Promise<void> {
+  const { alg, bytes } = signatureBytes(input, request, jwk);
+  let valid = false;
+  try {
+    valid = await verifySignatureAsync(alg, jwk, Buffer.from(buildWebBotAuthSignatureBase(input, request)), bytes);
+  } catch (error) {
+    if (error instanceof WebBotAuthError) throw error;
+  }
+  if (!valid) denied('signature_invalid');
+}
+/** Synchronous (directory proofs); node:crypto. */
 function verifyBytes(
   input: ParsedSignatureInput,
   request: RequestLike,
   jwk: AdcpJsonWebKey,
   response?: ResponseLike
 ): void {
-  const alg = algorithm(jwk);
-  if (input.params.alg !== undefined && input.params.alg !== alg) denied('algorithm');
-  const signature = getHeaderValue(response?.headers ?? request.headers, 'signature');
-  if (signature === undefined || signature === '') denied('headers_missing');
-  let bytes: Uint8Array;
-  try {
-    bytes = parseSignature(signature ?? '', input.label, 'rfc8941-base64').bytes;
-  } catch {
-    return bad('signature');
-  }
+  const { alg, bytes } = signatureBytes(input, request, jwk, response);
   let valid = false;
   try {
     valid = verifySignature(
@@ -551,7 +570,7 @@ export async function verifyWebBotAuth(
         denied('directory_key');
       const key = checkedDirectory.keys.find(key => key.kid === keyid);
       if (!key || jwkThumbprint(key) !== keyid) denied('key');
-      verifyBytes(input, request, key);
+      await verifyBytesAsync(input, request, key);
       if (options.isRevoked) await legacyRevocationCheck(options, origin, keyid);
       const nonceTuple = JSON.stringify([origin, nonce]);
       if (nonces.has(nonceTuple)) throw new WebBotAuthError(options.replayStatus ?? 429, 'nonce_replayed');
@@ -897,16 +916,16 @@ async function signBase(base: string, key: WebBotSigningKey): Promise<Uint8Array
       throw new TypeError('Web Bot Auth provider identity does not match its public key');
     return key.provider.sign(Buffer.from(base));
   }
-  const privateKey = createPrivateKey({ key: jwk as JsonWebKey, format: 'jwk' });
-  if (alg === 'rsa-pss-sha512')
+  if (alg === 'rsa-pss-sha512') {
+    const privateKey = createPrivateKey({ key: jwk as JsonWebKey, format: 'jwk' });
     return nodeSign('sha512', Buffer.from(base), {
       key: privateKey,
       padding: cryptoConstants.RSA_PKCS1_PSS_PADDING,
       saltLength: 64,
     });
-  return alg === 'ed25519'
-    ? nodeSign(null, Buffer.from(base), privateKey)
-    : nodeSign('sha256', Buffer.from(base), { key: privateKey, dsaEncoding: 'ieee-p1363' });
+  }
+  // WebCrypto for ES256 when available (edge runtimes, #3243); node:crypto otherwise.
+  return signWithPrivateJwkAsync(alg, jwk as AdcpJsonWebKey, Buffer.from(base));
 }
 export async function signWebBotAuth(
   request: RequestLike,
