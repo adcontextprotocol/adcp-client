@@ -38,15 +38,43 @@ export interface MonotonicOriginRevocationStore {
   merge(origin: string, snapshot: OriginRevocationSnapshot): Promise<void>;
   get(origin: string, keyid: string): Promise<RevocationDetail | undefined>;
 }
+/**
+ * Process-local revocation history for development and tests. Public
+ * deployments need durable history (`createIdentity33StateStores`) so a
+ * restart never forgets a revocation.
+ *
+ * Capacity is bounded per origin, per operator (registrable domain) and in
+ * total. The operator budget stops one registrable domain's wildcard
+ * subdomains from filling the store alone; it does not reserve capacity for
+ * anyone else, so several operators together can still exhaust the total.
+ * Facts are never evicted to regain capacity; a refused merge fails closed.
+ */
 export class InMemoryOriginRevocationStore implements MonotonicOriginRevocationStore {
   readonly durability = 'process-local' as const;
   private readonly revoked = new Map<string, RevocationDetail>();
-  constructor(private readonly limits = { perOrigin: 16384, total: 100000 }) {}
+  private readonly originKeys = new Map<string, number>();
+  private readonly operatorKeys = new Map<string, number>();
+  private readonly limits: { perOrigin: number; perOperator: number; total: number };
+  constructor(limits: { perOrigin?: number; perOperator?: number; total?: number } = {}) {
+    this.limits = {
+      perOrigin: limits.perOrigin ?? 16384,
+      perOperator: limits.perOperator ?? 16384,
+      total: limits.total ?? 100000,
+    };
+    if (Object.values(this.limits).some(value => !Number.isSafeInteger(value) || value < 1))
+      throw new TypeError('Revocation limits must be positive safe integers');
+  }
   async merge(origin: string, snapshot: OriginRevocationSnapshot): Promise<void> {
     origin = canonicalAgentOrigin(origin);
+    const operator = operatorOf(origin);
     const additions = new Set(snapshot.revoked_kids.filter(kid => !this.revoked.has(JSON.stringify([origin, kid]))));
-    const count = [...this.revoked.keys()].filter(key => (JSON.parse(key) as string[])[0] === origin).length;
-    if (count + additions.size > this.limits.perOrigin || this.revoked.size + additions.size > this.limits.total)
+    const originCount = this.originKeys.get(origin) ?? 0,
+      operatorCount = this.operatorKeys.get(operator) ?? 0;
+    if (
+      originCount + additions.size > this.limits.perOrigin ||
+      operatorCount + additions.size > this.limits.perOperator ||
+      this.revoked.size + additions.size > this.limits.total
+    )
       throw new WebBotAuthError(403, 'revocation_storage_limit');
     for (const kid of snapshot.revoked_kids) {
       const key = JSON.stringify([origin, kid]),
@@ -54,12 +82,30 @@ export class InMemoryOriginRevocationStore implements MonotonicOriginRevocationS
         detail = snapshot.revocation_details?.[kid] ?? {};
       this.revoked.set(key, mergeRevocationDetail(prior, detail));
     }
+    if (additions.size) {
+      this.originKeys.set(origin, originCount + additions.size);
+      this.operatorKeys.set(operator, operatorCount + additions.size);
+    }
   }
   async get(origin: string, keyid: string): Promise<RevocationDetail | undefined> {
     const entry = this.revoked.get(JSON.stringify([canonicalAgentOrigin(origin), keyid]));
     return entry && { ...entry };
   }
 }
+function operatorOf(origin: string): string {
+  try {
+    return eTldPlusOne(origin);
+  } catch {
+    // No registrable domain (IP literal, unlisted suffix): the host is its own bucket.
+    return new URL(origin).hostname;
+  }
+}
+/** Polling ceiling (security.mdx): also bounds how long one fetch stays valid during an outage. */
+const MAX_POLLING_SECONDS = 1800;
+/** See {@link OriginRevocationResolver.status}. */
+export type OriginRevocationStatus = 'revoked' | 'current' | 'absent' | 'unknown';
+/** The origin answered 404/410 for its revocation list. */
+class RevocationListAbsentError extends Error {}
 export class OriginRevocationResolver {
   private readonly freshness = new Map<string, number>();
   private readonly updated = new Map<string, number>();
@@ -67,6 +113,7 @@ export class OriginRevocationResolver {
   private readonly pending = new Map<string, Promise<void>>();
   private readonly failures = new Map<string, number>();
   private readonly persistenceFailures = new Set<string>();
+  private readonly absentUntil = new Map<string, number>();
   constructor(
     private readonly options: {
       directory: import('../signing/web-bot-auth').SignatureDirectoryResolver;
@@ -86,34 +133,70 @@ export class OriginRevocationResolver {
     )
       throw new TypeError('Invalid revocation polling interval');
   }
+  /**
+   * Compatibility wrapper over {@link status}: `true` when revoked, `false`
+   * when the list is current, and `revocation_unavailable` when the identity
+   * publishes no list (`absent`) or its status is not known (`unknown`).
+   */
   async isRevoked(originUrl: string, keyid: string): Promise<boolean> {
+    const state = await this.status(originUrl, keyid);
+    if (state === 'revoked') return true;
+    if (state === 'current') return false;
+    throw new WebBotAuthError(403, 'revocation_unavailable');
+  }
+  /**
+   * Revocation status of `keyid` at `origin`:
+   * - `revoked`: a stored (permanent) revocation covers the key.
+   * - `current`: a signed list is current, or within `next_update` + grace.
+   * - `absent`: the origin serves no list (404/410). The identity is still
+   *   established but cannot be bound for spend.
+   * - `unknown`: no list could be verified and grace has passed (or there was
+   *   never a list). The identity is not established.
+   * Throws `revocation_persistence_failed` when the history store fails: an
+   * infrastructure outage, never a revocation outcome.
+   */
+  async status(originUrl: string, keyid: string): Promise<OriginRevocationStatus> {
     const origin = canonicalAgentOrigin(originUrl),
       now = this.now();
-    if (await this.readStored(origin, keyid)) return true;
+    if (await this.readStored(origin, keyid)) return 'revoked';
+    const settled = async (): Promise<OriginRevocationStatus> => {
+      if (await this.readStored(origin, keyid)) return 'revoked';
+      if ((this.absentUntil.get(origin) ?? 0) > now) return 'absent';
+      return (this.freshness.get(origin) ?? 0) > now || (this.graceUntil.get(origin) ?? 0) > now
+        ? 'current'
+        : 'unknown';
+    };
     if ((this.freshness.get(origin) ?? 0) <= now) {
       if ((this.failures.get(origin) ?? 0) > now) {
         if (this.persistenceFailures.has(origin)) throw new WebBotAuthError(403, 'revocation_persistence_failed');
-        if ((this.graceUntil.get(origin) ?? 0) > now) return false;
-        throw new WebBotAuthError(403, 'revocation_unavailable');
+        return settled();
       }
       let promise = this.pending.get(origin);
       if (!promise) {
         if (
           this.pending.size >= 16 ||
-          [...this.pending.keys()].filter(pendingOrigin => eTldPlusOne(pendingOrigin) === eTldPlusOne(origin)).length >=
-            2
+          [...this.pending.keys()].filter(pendingOrigin => operatorOf(pendingOrigin) === operatorOf(origin)).length >= 2
         ) {
-          throw new WebBotAuthError(403, 'revocation_unavailable');
+          // Refresh capacity is shared across attacker-selectable origins; a
+          // full queue must not fail an origin whose signed list is still
+          // within its outage grace.
+          return settled();
         }
         promise = this.refresh(origin).catch(error => {
           if (this.failures.size >= (this.options.maxOrigins ?? 1000)) {
             const oldest = this.failures.keys().next().value!;
             this.failures.delete(oldest);
             this.persistenceFailures.delete(oldest);
+            this.absentUntil.delete(oldest);
           }
           this.failures.set(origin, now + 60);
           if (error instanceof WebBotAuthError && error.reason === 'revocation_persistence_failed') {
             this.persistenceFailures.add(origin);
+            this.graceUntil.delete(origin);
+          }
+          if ((error as { cause?: unknown }).cause instanceof RevocationListAbsentError) {
+            // No list is served: the identity stays established without spend.
+            this.absentUntil.set(origin, now + 60);
             this.graceUntil.delete(origin);
           }
           throw error;
@@ -124,12 +207,11 @@ export class OriginRevocationResolver {
         await promise;
       } catch (error) {
         if (error instanceof WebBotAuthError && error.reason === 'revocation_persistence_failed') throw error;
-        if ((this.graceUntil.get(origin) ?? 0) <= now) throw error;
       } finally {
         if (this.pending.get(origin) === promise) this.pending.delete(origin);
       }
     }
-    return !!(await this.readStored(origin, keyid));
+    return settled();
   }
   private async readStored(origin: string, keyid: string): Promise<RevocationDetail | undefined> {
     try {
@@ -147,6 +229,7 @@ export class OriginRevocationResolver {
         maxBodyBytes: 256 * 1024,
         timeoutMs: 10_000,
       });
+      if (response.status === 404 || response.status === 410) throw new RevocationListAbsentError();
       if (response.status !== 200) throw new Error('Unavailable revocation list');
       const body = new TextDecoder('utf-8', { fatal: true }).decode(response.body);
       let tokens: string[];
@@ -222,10 +305,10 @@ export class OriginRevocationResolver {
         snapshot.issuer !== origin ||
         !Number.isFinite(updated) ||
         !Number.isFinite(next) ||
-        updated > now ||
+        // Tolerate a publisher clock slightly ahead, as for request `created`.
+        updated > now + 60 ||
         next <= now ||
         next <= updated ||
-        next > now + 1800 ||
         !Array.isArray(snapshot.revoked_kids) ||
         snapshot.revoked_kids.length > 4096 ||
         snapshot.revoked_kids.some(k => typeof k !== 'string' || k.length > 256) ||
@@ -253,11 +336,20 @@ export class OriginRevocationResolver {
         this.updated.delete(oldest);
         this.graceUntil.delete(oldest);
       }
-      this.graceUntil.set(origin, next + 4 * (this.options.pollingIntervalSeconds ?? 300));
+      // Staleness follows the signed next_update (plus grace) and is never
+      // shortened by the polling interval. A publisher cannot stretch outage
+      // tolerance past the 30-minute ceiling: validity counted from this
+      // successful fetch is capped there, and each re-poll of an unchanged
+      // long-cadence list renews it.
+      this.graceUntil.set(
+        origin,
+        Math.min(next, now + MAX_POLLING_SECONDS) + 4 * (this.options.pollingIntervalSeconds ?? 300)
+      );
       this.updated.set(origin, updated);
       this.freshness.set(origin, Math.min(next, now + (this.options.pollingIntervalSeconds ?? 300)));
       this.failures.delete(origin);
       this.persistenceFailures.delete(origin);
+      this.absentUntil.delete(origin);
     } catch (cause) {
       if (cause instanceof WebBotAuthError && cause.reason === 'revocation_persistence_failed') throw cause;
       const error = new WebBotAuthError(403, 'revocation_unavailable');
