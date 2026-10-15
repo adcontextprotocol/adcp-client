@@ -103,8 +103,21 @@ export function createIdentity33PrincipalResolver(options: {
     }
     const revoked = signers.find(s => s.authorizationFailure);
     // No revocation list: identity-established only, whatever the binding says.
-    const { binding } =
+    let { binding } =
       revoked || revocation === 'absent' ? { binding: undefined } : await options.lifecycle.getPrincipal(signer.origin);
+    if (binding) {
+      // Delisted means identity-established for every request, task polling
+      // included. An unreadable record continues under the binding within the
+      // seller's outage bound; past it, nothing is served.
+      try {
+        await options.lifecycle.authorizeBound(signer.origin, { readOnly: true });
+      } catch (error) {
+        if (error instanceof TrustMembershipError) binding = undefined;
+        else if (error instanceof TrustRecordUnavailableError)
+          throw new WebBotAuthUnavailableError('trust_record_unavailable', error);
+        else throw error;
+      }
+    }
     if (!binding && operation !== undefined && typeof operation !== 'string')
       throw new WebBotAuthError(400, 'operation');
     const authorizationFailure =

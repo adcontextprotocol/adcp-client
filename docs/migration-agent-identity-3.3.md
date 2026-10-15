@@ -294,27 +294,30 @@ raises `TrustRecordUnavailableError`; a current record that does not list the
 origin with the required role raises `TrustMembershipError`. Both extend
 `IdentityAuthorizationError`. For a bound origin:
 
-- **Delisted:** the origin falls back to identity-established for that tool
-  call (the anonymous tool policy plus `get_principal`, which reports
-  `unconfigured`), under the per-origin anonymous scope with no credential and
-  no registry-resolved `ctx.agent`. The binding is kept: `open` onboarding
-  cannot re-bind it and RFC 9421 stays refused for the origin. Spend gets
-  `PERMISSION_DENIED`. A 404/410 from a bound origin's operator is a delisting
-  on every replica, with or without authority history, and a known delisting
-  stays a delisting through a later outage. Demotion applies to tool calls;
-  polling or cancelling tasks the origin created while listed still runs under
-  its principal.
-- **Unreachable:** spend-committing calls get a retryable `SERVICE_UNAVAILABLE`.
-  Reads and identity configuration continue under the existing binding only
-  while the last record read listed the origin and is within four polling
-  intervals of its freshness; after that they also get `SERVICE_UNAVAILABLE`.
+- **Delisted:** the last record read does not list the origin with the role
+  (operators retire agents by publishing an empty `agents[]`). The origin is
+  identity-established for every request, task polling and cancellation
+  included: the principal resolver demotes it to the per-origin anonymous
+  scope with no credential and no registry-resolved `ctx.agent`, and it gets
+  the anonymous tool policy plus `get_principal` (which reports
+  `unconfigured`). The binding is kept: `open` onboarding cannot re-bind it and
+  RFC 9421 stays refused for the origin. Spend gets `PERMISSION_DENIED` with no
+  details. A known delisting stays a delisting through a later failed refresh.
+- **Unreachable:** a record that cannot be read, including a 404/410 after a
+  record was read (or for any bound origin, on every replica), is a discovery
+  failure, never a removal; the last record read stays authoritative.
+  Spend-committing calls get a retryable `SERVICE_UNAVAILABLE`. As seller
+  policy, reads and identity configuration continue under the binding while
+  the last record read listed the origin and is within
+  `TrustEvaluator({ maxOutageContinuationSeconds })` (default four polling
+  intervals) of its freshness; after that nothing is served (`503`).
 
-After every signature verifies, authorization outcomes always use the standard
-AdCP error envelope, never a 403 with `Accept-Signature`. That includes a
-principal resolver that throws: an error marked transient (or uncoded) becomes
-`SERVICE_UNAVAILABLE`, any other coded error `PERMISSION_DENIED`. It is
-delivered on the tool call; a request without an AdCP operation (task polling,
-protocol methods) is refused with that envelope and no challenge.
+After every signature verifies, authorization outcomes use the standard AdCP
+error envelope, never a 403 with `Accept-Signature`. That includes a principal
+resolver that throws: a transient (or uncoded) error is an outage answered
+`503 SERVICE_UNAVAILABLE` by the server, and any other coded error is
+`PERMISSION_DENIED`, delivered on the tool call (other requests are refused with
+that envelope and no challenge).
 
 Demand grants come from the verified brand or house record. Implicit authority
 requires brand, account operator, and signer operator to share a registrable
@@ -328,6 +331,9 @@ superseded by seller fallback. A trust 200 disables brand.json authority;
 authoritative absence alone permits explicit legacy policy. An established
 identity lacking a grant gets `PERMISSION_DENIED` with
 `{ scope: 'agent', reason: 'grant_absent' }`. No account or live buy is changed.
+A grantor that once served trust.json and is now unreachable (404/410
+included) never falls back to brand.json `authorized_operators[]`, and it is
+not a grant removal: spend gets a retryable `SERVICE_UNAVAILABLE`.
 
 Origin key revocations use `/.well-known/governance-revocations.json`, signed
 with `typ: adcp-gov-revocation+jws`, as ratified R3 specifies. This origin key

@@ -14,10 +14,11 @@ const keys = require('../fixtures/wba-profile/keys.json').keys;
 const vector = name => JSON.parse(fs.readFileSync(path.join(fixtures, name + '.json')));
 
 /** Serves records by full URL; a record may be an Error (transport failure) or a status number. */
-function evaluator(records, clock = () => now) {
+function evaluator(records, clock = () => now, options = {}) {
   const calls = [];
   const trust = new identity.TrustEvaluator({
     now: clock,
+    ...options,
     fetchOptions: {
       trustedFetchFn: async url => {
         calls.push(url);
@@ -132,14 +133,14 @@ function vectorOptions(v) {
   };
 }
 
-async function boundFixture(authorizationOptions = {}) {
+async function boundFixture(authorizationOptions = {}, evaluatorOptions = {}) {
   const v = vector('positive/001-single-signer-request');
   const signers = await wba.verifyWebBotAuth(v.request, vectorOptions(v));
   const origin = signers[0].origin;
   const operator = new URL(origin).hostname;
   const records = { [operator]: agent(origin), 'brand.com': { grants: [], exclusive_grants: true } };
   let clock = now;
-  const { trust } = evaluator(records, () => clock);
+  const { trust } = evaluator(records, () => clock, evaluatorOptions);
   const lifecycle = new identity.OriginIdentityLifecycle({
     store: new identity.InMemoryOriginIdentityStore(),
     trust,
@@ -390,28 +391,59 @@ test('S1: outage continuation for reads and identity configuration ends after gr
   f.tick(301);
   assert.equal((await f.lifecycle.authorizeBound(f.origin, { readOnly: true })).principalId, 'principal-1');
   await f.authorize(await f.context('sync_agent_notification_configs'), 'sync_agent_notification_configs', {});
-  f.tick(4 * 300); // past freshness + 4 polling intervals
+  const read = await f.context('get_products');
+  const config = await f.context('sync_agent_notification_configs');
+  f.tick(4 * 300); // past freshness + the default outage bound (4 polling intervals)
   await assert.rejects(
-    f.authorize(await f.context('get_products'), 'get_products', { buying_mode: 'brief', brief: 'x' }),
+    f.authorize(read, 'get_products', { buying_mode: 'brief', brief: 'x' }),
     e => e.code === 'SERVICE_UNAVAILABLE'
   );
   await assert.rejects(
-    f.authorize(await f.context('sync_agent_notification_configs'), 'sync_agent_notification_configs', {}),
+    f.authorize(config, 'sync_agent_notification_configs', {}),
     e => e.code === 'SERVICE_UNAVAILABLE'
+  );
+  // Principal resolution refuses too: nothing is served past the bound (the server answers 503).
+  await assert.rejects(f.context('get_products'), e => e instanceof wba.WebBotAuthUnavailableError);
+});
+
+test('S1: the outage bound is seller policy', async () => {
+  const f = await boundFixture({}, { maxOutageContinuationSeconds: 0 });
+  await f.lifecycle.authorizeBound(f.origin, { readOnly: true });
+  f.records[f.operator] = 503;
+  f.tick(301);
+  await assert.rejects(
+    f.lifecycle.authorizeBound(f.origin, { readOnly: true }),
+    e => e instanceof identity.TrustRecordUnavailableError
   );
 });
 
-test('S1: a removed record (404 after a 200) is a delisting', async () => {
+test('S1: a 404 after a read is a discovery failure, not a removal, on every replica', async () => {
   const f = await boundFixture();
   delete f.records[f.operator];
-  f.trust.invalidate(f.operator);
+  f.tick(301);
+  // The last record read stays authoritative within the outage bound.
+  assert.equal((await f.lifecycle.authorizeBound(f.origin, { readOnly: true })).principalId, 'principal-1');
+  await assert.rejects(
+    f.authorize(await f.context('create_media_buy'), 'create_media_buy', {}),
+    e => e.code === 'SERVICE_UNAVAILABLE'
+  );
+  // A replica that never read the record sees an outage too, never a delisting.
+  const fresh = new identity.OriginIdentityLifecycle({
+    store: f.lifecycle.options.store,
+    trust: evaluator(f.records).trust,
+    now: () => now,
+  });
+  await assert.rejects(
+    fresh.authorizeBound(f.origin, { readOnly: true }),
+    e => e instanceof identity.TrustRecordUnavailableError
+  );
+  // Operators retire agents by publishing an empty agents[].
+  f.records[f.operator] = { agents: [] };
+  f.tick(61); // past the 60 s negative cache of the failed fetch
   await assert.rejects(
     f.lifecycle.authorizeBound(f.origin, { readOnly: true }),
-    e => e instanceof identity.TrustMembershipError
+    e => e instanceof identity.TrustMembershipError && e.details === undefined
   );
-  // A fresh process without history sees plain absence: also a delisting.
-  const { trust } = evaluator({});
-  await assert.rejects(trust.match(f.origin, 'adcp:buying'), e => e instanceof identity.TrustMembershipError);
 });
 
 test('S1: a delisted origin cannot finalize proposals or use custom read tools', async () => {
@@ -535,7 +567,7 @@ test('S3: a resolver failure refuses non-tool requests without a challenge and c
   });
   await assert.rejects(
     authenticator(undefined, new Error('store offline'))(req()),
-    e => e.status === 403 && !e.headers?.['Accept-Signature'] && e.body?.adcp_error?.code === 'SERVICE_UNAVAILABLE'
+    e => e.status === 503 && !e.headers?.['Accept-Signature'] && e.body?.adcp_error?.code === 'SERVICE_UNAVAILABLE'
   );
   for (const [thrown, code] of [
     [new identity.TrustRecordUnavailableError(), 'SERVICE_UNAVAILABLE'],
@@ -636,7 +668,7 @@ test('S3: the createAdcpServer pre-transport defers resolver failures on tool ca
     assert.equal(wba.getWebBotAuthAuthorizationFailure(tool.req.auth.extra).code, 'SERVICE_UNAVAILABLE');
     const poll = await send({ jsonrpc: '2.0', id: 2, method: 'tasks/get', params: { taskId: 't1' } });
     assert.equal(poll.handled, true);
-    assert.equal(poll.res.status, 403);
+    assert.equal(poll.res.status, 503);
     assert.equal(poll.res.headers['Accept-Signature'], undefined);
     assert.equal(JSON.parse(poll.res.body).adcp_error.code, 'SERVICE_UNAVAILABLE');
   } finally {
@@ -644,7 +676,7 @@ test('S3: the createAdcpServer pre-transport defers resolver failures on tool ca
   }
 });
 
-test('S3: a removed brand or intermediary record is a permanent grant_absent, not a retryable outage', async () => {
+test('S5: a grantor or intermediary 404 after a read is an outage, never grant removal or legacy fallback', async () => {
   const records = {
     'agency.com': agent('https://buyer.agency.com'),
     'brand.com': { grants: [{ grantee: 'operator.com', scopes: ['adcp:media_buying'] }], exclusive_grants: true },
@@ -662,12 +694,21 @@ test('S3: a removed brand or intermediary record is a permanent grant_absent, no
   trust.invalidate('operator.com');
   await assert.rejects(
     identity.authorizeDemandGrant(claim, { evaluator: trust, now: () => now }),
-    e => e.code === 'PERMISSION_DENIED' && e.details?.reason === 'grant_absent'
+    e => e instanceof identity.TrustRecordUnavailableError
   );
   delete records['brand.com'];
   trust.invalidate('brand.com');
+  let legacy = 0;
   await assert.rejects(
-    identity.authorizeDemandGrant(claim, { evaluator: trust, now: () => now, legacyAuthorization: async () => true }),
-    e => e.code === 'PERMISSION_DENIED' && e.details?.reason === 'grant_absent'
+    identity.authorizeDemandGrant(claim, {
+      evaluator: trust,
+      now: () => now,
+      legacyAuthorization: async () => {
+        legacy++;
+        return true;
+      },
+    }),
+    e => e instanceof identity.TrustRecordUnavailableError
   );
+  assert.equal(legacy, 0, 'a grantor that once served trust.json never falls back to brand.json');
 });

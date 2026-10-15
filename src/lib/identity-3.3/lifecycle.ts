@@ -220,12 +220,13 @@ export class OriginIdentityLifecycle {
   }
   /**
    * Cryptographic verification does not call this. Authorization revalidates
-   * delisting: a definitive delisting (including a 404/410 record, or an
-   * outage after a known delisting) throws {@link TrustMembershipError}. An
-   * unreadable trust record throws {@link TrustRecordUnavailableError} for
-   * spend; read-only and identity-configuration calls continue under the
-   * existing binding only while the last record read listed the origin and
-   * is within four polling intervals of its freshness.
+   * delisting: the last record read does not list the origin (an empty
+   * `agents[]` retires it; a known delisting stays delisted through a failed
+   * refresh) and throws {@link TrustMembershipError}. An unreadable record
+   * (404/410 included) throws {@link TrustRecordUnavailableError} for spend;
+   * read-only and identity-configuration calls continue under the binding only
+   * while the last record read listed the origin and is within the evaluator's
+   * `maxOutageContinuationSeconds`.
    */
   async authorizeBound(
     originUrl: string,
@@ -241,7 +242,16 @@ export class OriginIdentityLifecycle {
     const binding = await this.options.store.getBinding(origin);
     if (!binding) throw new IdentityAuthorizationError();
     try {
-      const trust = await this.options.trust.match(origin, 'adcp:buying');
+      let trust;
+      try {
+        trust = await this.options.trust.match(origin, 'adcp:buying');
+      } catch (error) {
+        // A binding proves the operator once published a record: its absence
+        // now is a discovery failure on every replica, not a delisting.
+        if (error instanceof TrustMembershipError && error.membership === 'absent')
+          throw Object.assign(new TrustRecordUnavailableError(), { cause: error });
+        throw error;
+      }
       if (binding.operator !== trust.operator) throw new TrustMembershipError();
     } catch (error) {
       // Outage continuation is bounded: only while the last record read still
