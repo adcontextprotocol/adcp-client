@@ -23,8 +23,10 @@ process.env.ADCP_ALLOW_INTERNAL_PROBES = '1';
 const { ADCPMultiAgentClient } = require('../../dist/lib/index.js');
 const { testCapabilityDiscovery } = require('../../dist/lib/testing/scenarios/capabilities.js');
 const { closeMCPConnections } = require('../../dist/lib/protocols/mcp.js');
-const { resolveServedValidationVersion } = require('../../dist/lib/validation/served-version.js');
-const { withExternalSchemaRoot } = require('../../dist/lib/validation/schema-loader.js');
+const {
+  resolveServedValidationVersion,
+  withExternalSchemaRoot,
+} = require('../../dist/lib/validation/schema-loader.js');
 
 /** A conformant AdCP 3.2 capabilities response, invalid against 3.0 and 3.1. */
 function capabilities32(overrides = {}) {
