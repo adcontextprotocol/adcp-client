@@ -33,7 +33,7 @@ export {
   type RequestContextFromExpressOptions,
   type RequestContextFromLambdaOptions,
 } from './request-context';
-export { jwkToPublicKey, verifySignature } from './crypto';
+export { jwkToPublicKey, verifySignature, verifySignatureAsync } from './crypto';
 export {
   RequestSignatureError,
   RequestSigningErrorCodeMetadata,

@@ -1,4 +1,5 @@
-import { createPrivateKey, randomBytes, sign as nodeSign, type JsonWebKey } from 'crypto';
+import { randomBytes } from 'crypto';
+import { signWithPrivateJwk } from './crypto';
 import {
   buildResponseSignatureBase,
   buildSignatureBase,
@@ -475,14 +476,9 @@ export function signResponse(
 }
 
 function produceSignature(key: SignerKey, data: Buffer): Uint8Array {
-  const privateKey = createPrivateKey({
-    key: key.privateKey as JsonWebKey,
-    format: 'jwk',
-  });
-  if (key.alg === 'ed25519') {
-    return new Uint8Array(nodeSign(null, data, privateKey));
-  }
-  return new Uint8Array(nodeSign('sha256', data, { key: privateKey, dsaEncoding: 'ieee-p1363' }));
+  // Synchronous API: node:crypto with the key passed as a JWK, a shape both
+  // Node and workerd accept (#3243). The async signers prefer WebCrypto.
+  return signWithPrivateJwk(key.alg, key.privateKey as AdcpJsonWebKey, data);
 }
 
 function flattenHeaders(headers: Record<string, string | string[] | undefined>): Record<string, string> {

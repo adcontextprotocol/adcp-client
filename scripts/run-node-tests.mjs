@@ -15,6 +15,8 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 export const LOCAL_TEST_BATCH_SIZE = 25;
 
 export const SLOW_NODE_TESTS = new Set([
+  // Bundles the signing modules with esbuild and runs them in a workerd subprocess.
+  'test/lib/signing-webcrypto.test.js',
   'test/lib/account-change-feed-packed.test.js',
   'test/canonical-creatives-a2a-e2e.test.js',
   'test/generate-zod-object-intersections.test.js',

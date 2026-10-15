@@ -1,4 +1,5 @@
-import { createHash, createPrivateKey, randomBytes, randomUUID, sign as nodeSign, type JsonWebKey } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'crypto';
+import { signWithPrivateJwk } from '../../../signing/crypto';
 import {
   buildSignatureBase,
   computeContentDigest,
@@ -895,11 +896,7 @@ function formatParamsWithOmissions(
 }
 
 function produceSignature(key: SignerKey, data: Buffer): Uint8Array {
-  const privateKey = createPrivateKey({ key: key.privateKey as JsonWebKey, format: 'jwk' });
-  if (key.alg === 'ed25519') {
-    return new Uint8Array(nodeSign(null, data, privateKey));
-  }
-  return new Uint8Array(nodeSign('sha256', data, { key: privateKey, dsaEncoding: 'ieee-p1363' }));
+  return signWithPrivateJwk(key.alg, key.privateKey as AdcpJsonWebKey, data);
 }
 
 // ── Helpers ───────────────────────────────────────────────────
