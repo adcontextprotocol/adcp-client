@@ -526,6 +526,47 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     }
   });
 
+  test('an unset location warns once per process that replay lookups need it outside US/EU', async () => {
+    const modulePath = require.resolve('../../dist/lib/reporting/bigquery/index.js');
+    const cached = require.cache[modulePath];
+    delete require.cache[modulePath];
+    const fresh = require(modulePath);
+    const warnings = [];
+    const onWarning = warning => warnings.push(warning);
+    const create = extra =>
+      fresh.createBigQueryReportingWarehouseSinkV1({
+        store,
+        db: pool,
+        bigquery: fakeBigQuery(),
+        name: 'location_warning',
+        projectId: 'adcp-reporting',
+        datasetId: 'reporting',
+        rowsTableId: 'revision_rows',
+        revisionsTableId: 'revisions',
+        mapRow: row => ({ impressions: row.impressions }),
+        ...extra,
+      });
+    process.on('warning', onWarning);
+    try {
+      create({ location: 'asia-northeast1' });
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(
+        warnings.filter(warning => warning.code === 'ADCP_BIGQUERY_SINK_LOCATION_UNSET'),
+        [],
+        'a configured location does not warn'
+      );
+      create({});
+      create({});
+      await new Promise(resolve => setImmediate(resolve));
+    } finally {
+      process.off('warning', onWarning);
+      if (cached) require.cache[modulePath] = cached;
+    }
+    const emitted = warnings.filter(warning => warning.code === 'ADCP_BIGQUERY_SINK_LOCATION_UNSET');
+    assert.equal(emitted.length, 1, 'warns once per process');
+    assert.match(emitted[0].message, /location.*not set.*outside the US and EU/s);
+  });
+
   // Convergence of a load that outlasts its deadline (#3234). BigQuery does not stop a load the client gives up
   // on, and it refuses a resubmitted job ID only after the whole file is uploaded again, so the sink looks the
   // deterministic job up before every submission instead.
