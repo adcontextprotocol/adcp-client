@@ -888,9 +888,10 @@ await store.saveFeedConsumerCursor('pacing', page.cursor); // holds back pruning
   among the account's changes after that `seq` and the reading snapshot's `xmin`.
   Every change after the old `seq` has an `xid` at or above both (a change that
   has not committed yet belongs to a transaction at or above `xmin`), so nothing
-  is skipped. The cost is that a few changes the consumer already read, those
-  with a lower `seq` and a higher `xid`, can be returned again: treat redelivery
-  as normal, as for any at-least-once consumer. The returned cursor is in the new
+  is skipped. The cost is that changes the consumer already read can be returned
+  again: those with a lower `seq` and a higher `xid`, and, when a long
+  transaction was open at that moment, every change committed since it began.
+  Treat redelivery as normal, as for any at-least-once consumer. The returned cursor is in the new
   format, even on an empty page. A legacy cursor fails with `CURSOR_EXPIRED` if
   any change with a higher `seq` was pruned (`adcp_reporting_change_account_horizon.pruned_through_seq`
   still records the highest pruned `seq` for this check). A consumer row saved
@@ -898,9 +899,21 @@ await store.saveFeedConsumerCursor('pacing', page.cursor); // holds back pruning
   the consumer saves its next cursor; `saveFeedConsumerCursor` given a legacy
   cursor maps it the same way. Re-apply `REPORTING_LEDGER_CHANGES_MIGRATION`
   before starting the new binary: it adds the account horizon's `xid` columns,
-  replaces the consumer table's check constraint, and creates the new index. The
-  older `adcp_reporting_changes_account (account_id, seq)` index is left in
-  place; drop it once no older host runs.
+  replaces the consumer table's check constraint, and creates the new index. On
+  a large changes table, create the index first with `CREATE INDEX CONCURRENTLY
+  IF NOT EXISTS adcp_reporting_changes_account_xid ON adcp_reporting_changes
+  (account_id, xid, seq)`, because a plain `CREATE INDEX` blocks appends while it
+  builds; the migration then skips it. The older
+  `adcp_reporting_changes_account (account_id, seq)` index is left in place and
+  serves the legacy-cursor mapping; drop it once no legacy cursor remains.
+- **Do not run the old and new SDK's change-feed maintenance together.** An older
+  host's `pruneChanges`, `retireExpiredPeriods` and compaction hold an account
+  consumer's changes by `seq` alone and record only `pruned_through_seq`, so
+  against a consumer that holds new-format cursors they can prune a change the
+  consumer has not read and never advance the horizon the new reader checks.
+  Stop the older hosts' maintenance (or the hosts) before the new binary reads
+  the feed. Rolling back is not supported once a consumer has saved a new-format
+  account cursor: the older SDK rejects it, so reset those consumers.
 - `pruneChanges` deletes changes older than `changeRetentionDays` (default 30)
   that every consumer updated within `maxFeedHoldDays` (default 7) has passed.
   An older cursor throws `ReportingChangeCursorExpiredError`; resynchronize from

@@ -18,7 +18,8 @@ import { ReportingRowStoreError } from './row-storage-errors';
  */
 export const REPORTING_LEDGER_CHANGES_MIGRATION = `
 -- Serialize concurrent appliers (several instances may run migrations at startup) so the guarded
--- constraint swap below cannot race. Released at the end of this implicit transaction.
+-- constraint swap below cannot race. Released at the end of this implicit transaction; a runner that
+-- splits the statements releases it early, which is harmless but serializes nothing.
 SELECT pg_advisory_xact_lock(hashtextextended('adcp-reporting-changes-migration', 0));
 
 CREATE TABLE IF NOT EXISTS adcp_reporting_changes (
@@ -138,6 +139,15 @@ interface ChangeCursorV1 {
   xid?: string;
 }
 
+const INT64_MAX = 9223372036854775807n;
+const UINT64_MAX = 18446744073709551615n;
+
+// A value PostgreSQL's `bigint` / `xid8` casts would reject must fail as INVALID_INPUT here, not as a
+// raw database error mid-query.
+function fitsUnsigned(value: unknown, max: bigint): boolean {
+  return typeof value === 'string' && /^\d{1,20}$/.test(value) && BigInt(value) <= max;
+}
+
 /**
  * True for an account cursor issued before account feeds ordered by `(xid, seq)`: it carries a
  * `seq` and no `xid`. `changesAfter` maps one to a position that cannot skip a change.
@@ -170,8 +180,8 @@ export function decodeReportingChangeCursorV1(value: string, account: string | n
     cursor.v !== 1 ||
     (cursor.account ?? null) !== account ||
     typeof cursor.seq !== 'string' ||
-    !/^\d{1,19}$/.test(cursor.seq) ||
-    (cursor.xid === undefined ? account === null : typeof cursor.xid !== 'string' || !/^\d{1,20}$/.test(cursor.xid))
+    !fitsUnsigned(cursor.seq, INT64_MAX) ||
+    (cursor.xid === undefined ? account === null : !fitsUnsigned(cursor.xid, UINT64_MAX))
   ) {
     throw new ReportingRowStoreError('INVALID_INPUT', 'change cursor does not belong to this feed');
   }

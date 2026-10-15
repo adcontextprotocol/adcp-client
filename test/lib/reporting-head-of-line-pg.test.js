@@ -611,11 +611,16 @@ describe('account change feed ordering', { skip }, () => {
     test('maps to a position that skips nothing, redelivers at most what a lower seq already delivered, and upgrades the cursor', async () => {
       const scoped = 'acct_hol_legacy_map';
       // r2 took a higher seq but a lower xid than r1: the late commit the old order could skip.
+      await insertAt(scoped, 'r0', 5); // read long ago, in a transaction older than any unread change
       await insertAt(scoped, 'r1', 20);
       await insertAt(scoped, 'r2', 10);
       await insertAt(scoped, 'r3', 30);
       const page = await store.changesAfter({ account_id: scoped, cursor: legacyCursor(scoped, await seqOf('r1')) });
-      assert.deepEqual(ids(page), ['r2', 'r1', 'r3'], 'r2 is delivered; r1 is redelivered because its xid is above r2');
+      assert.deepEqual(
+        ids(page),
+        ['r2', 'r1', 'r3'],
+        'r2 is delivered; r1 is redelivered because its xid is above r2; r0 is not, so the position is not simply xid 0'
+      );
       const upgraded = ledger.decodeReportingChangeCursorV1(page.cursor, scoped);
       assert.equal(upgraded.xid, '30');
       assert.deepEqual(ids(await store.changesAfter({ account_id: scoped, cursor: page.cursor })), []);
@@ -623,10 +628,9 @@ describe('account change feed ordering', { skip }, () => {
       // A legacy cursor at the end of the feed has nothing unread, so it maps to the snapshot's xmin.
       const end = await store.changesAfter({ account_id: scoped, cursor: legacyCursor(scoped, await seqOf('r3')) });
       assert.deepEqual(ids(end), []);
-      assert.ok(
-        ledger.decodeReportingChangeCursorV1(end.cursor, scoped).xid,
-        'an empty page still upgrades the cursor'
-      );
+      const mappedEnd = ledger.decodeReportingChangeCursorV1(end.cursor, scoped);
+      assert.equal(mappedEnd.seq, await seqOf('r3'));
+      assert.ok(BigInt(mappedEnd.xid) > 30n, 'an empty page still upgrades the cursor, to the snapshot xmin');
     });
 
     test('a caught-up legacy cursor does not skip a change from a transaction that was in flight', async () => {
@@ -718,7 +722,7 @@ describe('account change feed ordering', { skip }, () => {
         // Saving a legacy cursor registers a mapped position, below every unread change.
         assert.equal(await store.saveFeedConsumerCursor('legacy-sink', legacyCursor(scoped, s1)), true);
         const mapped = (await consumers()).rows[0];
-        assert.ok(mapped.xid !== null && BigInt(mapped.xid) <= 20n);
+        assert.equal(mapped.xid, '20', 'the oldest unread change is c2, at xid 20');
         // A cursor in the new format replaces it, forward only.
         const page = await store.changesAfter({ account_id: scoped, cursor: legacyCursor(scoped, s1) });
         assert.deepEqual(ids(page), ['c2', 'c3']);
@@ -729,7 +733,7 @@ describe('account change feed ordering', { skip }, () => {
       }
     });
 
-    test('a NULL-xid consumer row is replaced by any new-format cursor, even a lower one', async () => {
+    test('a NULL-xid consumer row is replaced by a new-format cursor unless its seq is behind', async () => {
       const scoped = 'acct_hol_legacy_replace';
       await pool.query(
         `INSERT INTO adcp_reporting_feed_consumers (consumer_name, account_id, cursor_xid, cursor_seq)
@@ -737,18 +741,72 @@ describe('account change feed ordering', { skip }, () => {
         [scoped]
       );
       try {
-        const cursor = ledger.encodeReportingChangeCursorV1({ v: 1, account: scoped, seq: '5', xid: '7' });
-        assert.equal(await store.saveFeedConsumerCursor('legacy-replace', cursor), true);
-        const row = (
-          await pool.query(
-            `SELECT cursor_xid::text AS xid, cursor_seq::text AS seq FROM adcp_reporting_feed_consumers WHERE consumer_name = 'legacy-replace'`
-          )
-        ).rows[0];
-        assert.deepEqual(row, { xid: '7', seq: '5' });
+        const read = async () =>
+          (
+            await pool.query(
+              `SELECT cursor_xid::text AS xid, cursor_seq::text AS seq FROM adcp_reporting_feed_consumers WHERE consumer_name = 'legacy-replace'`
+            )
+          ).rows[0];
+        const at = (seq, xid) => ledger.encodeReportingChangeCursorV1({ v: 1, account: scoped, seq, xid });
+        assert.equal(await store.saveFeedConsumerCursor('legacy-replace', at('5', '7')), false, 'behind the seq hold');
+        assert.deepEqual(await read(), { xid: null, seq: '9000' });
+        assert.equal(await store.saveFeedConsumerCursor('legacy-replace', at('9000', '7')), true);
+        assert.deepEqual(await read(), { xid: '7', seq: '9000' });
+        // Rewinding is explicit.
+        assert.equal(await store.saveFeedConsumerCursor('legacy-replace', at('5', '7')), false);
+        assert.equal(await store.saveFeedConsumerCursor('legacy-replace', at('5', '7'), { rewind: true }), true);
       } finally {
         await store.removeFeedConsumer('legacy-replace');
       }
     });
+  });
+
+  describe('legacy cursors and registrations through saveFeedConsumerCursor', () => {
+    const seqOf = async recordId =>
+      (await pool.query('SELECT seq::text AS seq FROM adcp_reporting_changes WHERE record_id = $1', [recordId])).rows[0]
+        .seq;
+
+    test('a mapped legacy cursor is forward-only against a new-format registration', async () => {
+      const scoped = 'acct_hol_legacy_save';
+      await insertAt(scoped, 's1', 20);
+      await insertAt(scoped, 's2', 30);
+      const [s1, s2] = [await seqOf('s1'), await seqOf('s2')];
+      const ahead = ledger.encodeReportingChangeCursorV1({ v: 1, account: scoped, seq: s2, xid: '30' });
+      const legacy = ledger.encodeReportingChangeCursorV1({ v: 1, account: scoped, seq: s1 });
+      try {
+        await store.saveFeedConsumerCursor('legacy-save', ahead);
+        assert.equal(await store.saveFeedConsumerCursor('legacy-save', legacy), false, 'maps behind the saved cursor');
+        await store.removeFeedConsumer('legacy-save');
+        assert.equal(await store.saveFeedConsumerCursor('legacy-save', legacy), true, 'first save registers it');
+      } finally {
+        await store.removeFeedConsumer('legacy-save');
+      }
+    });
+  });
+
+  test('cursor values the database would reject fail as INVALID_INPUT, not as a raw database error', async () => {
+    const encode = body => Buffer.from(JSON.stringify(body), 'utf8').toString('base64url');
+    const bad = [
+      { v: 1, account: 'a', seq: '9223372036854775808' },
+      { v: 1, account: 'a', seq: '1', xid: '18446744073709551616' },
+      { v: 1, account: null, seq: '1', xid: '99999999999999999999' },
+      { v: 1, account: null, seq: '1' },
+      { v: 1, account: 'a', seq: '' },
+      { v: 1, account: 'a', seq: '1', xid: 'x' },
+    ];
+    for (const body of bad) {
+      await assert.rejects(
+        () => store.changesAfter({ ...(body.account ? { account_id: body.account } : {}), cursor: encode(body) }),
+        error => error.code === 'INVALID_INPUT',
+        JSON.stringify(body)
+      );
+    }
+    assert.doesNotThrow(() =>
+      ledger.decodeReportingChangeCursorV1(
+        encode({ v: 1, account: 'a', seq: '9223372036854775807', xid: '18446744073709551615' }),
+        'a'
+      )
+    );
   });
 
   describe('pruning in (xid, seq) order', () => {
@@ -822,6 +880,42 @@ describe('account change feed ordering', { skip }, () => {
         await store.removeFeedConsumer('prune-elsewhere');
       }
     });
+  });
+
+  test('a pruning batch cut by its limit leaves nothing retained below the account horizon', async () => {
+    const scoped = 'acct_hol_prune_batch';
+    await insertAt(scoped, 'a', 20, { ageDays: 40 });
+    await insertAt(scoped, 'b', 30, { ageDays: 40 });
+    await insertAt(scoped, 'c', 10, { ageDays: 40 }); // the highest seq, the lowest xid
+    await store.pruneChanges({ changeRetentionDays: 30, limit: 2 });
+    const remaining = (
+      await pool.query(`SELECT record_id FROM adcp_reporting_changes WHERE account_id = $1 ORDER BY seq`, [scoped])
+    ).rows.map(row => row.record_id);
+    assert.deepEqual(remaining, ['b'], 'victims are taken in (xid, seq) order: c then a');
+    assert.deepEqual(ids(await store.changesAfter({ account_id: scoped })), remaining, 'a cold start loses nothing');
+  });
+
+  test('concurrent appliers of the changes migration all succeed', async () => {
+    const { Pool } = require('pg');
+    const concurrentSchema = `${schema}_concurrent`;
+    await bootstrapPool.query(`CREATE SCHEMA "${concurrentSchema}"`);
+    const concurrentPool = new Pool({
+      connectionString: DATABASE_URL,
+      options: `-c search_path="${concurrentSchema}"`,
+      max: 8,
+    });
+    try {
+      const results = await Promise.allSettled(
+        Array.from({ length: 8 }, () => concurrentPool.query(ledger.REPORTING_LEDGER_CHANGES_MIGRATION))
+      );
+      assert.deepEqual(
+        results.filter(result => result.status === 'rejected').map(result => result.reason.message),
+        []
+      );
+    } finally {
+      await concurrentPool.end();
+      await bootstrapPool.query(`DROP SCHEMA IF EXISTS "${concurrentSchema}" CASCADE`);
+    }
   });
 
   test('re-applying the changes migration upgrades an older install in place and is idempotent', async () => {

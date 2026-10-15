@@ -263,8 +263,14 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
             await realStore.getRevisionMetadata(revisionId, account),
             'the missed revision is still recoverable'
           );
+          // Other suites share the cluster; an unrelated open transaction can briefly hold the page back.
+          let survivors = [];
+          for (let attempt = 0; attempt < 100 && survivors.length === 0; attempt += 1) {
+            survivors = (await realStore.changesAfter({ account_id: account })).records.map(record => record.record_id);
+            if (survivors.length === 0) await new Promise(resolve => setTimeout(resolve, 100));
+          }
           assert.deepEqual(
-            (await realStore.changesAfter({ account_id: account })).records.map(record => record.record_id),
+            survivors,
             [fresh.obligation.reporting_obligation_id],
             'a fresh read starts after the new horizon and sees the surviving change'
           );

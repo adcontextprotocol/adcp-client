@@ -1395,7 +1395,7 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     );
   }
 
-  test('a sink saved with an account cursor from before the (xid, seq) order resumes without loading a revision twice', async () => {
+  test('a sink saved with an account cursor from before the (xid, seq) order resumes and saves a new-format cursor', async () => {
     const account = 'acct_legacy_cursor_sink';
     const legacyRows = rows.slice(0, 7);
     const bigquery = fakeBigQuery();

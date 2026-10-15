@@ -1655,7 +1655,7 @@ ${managedDueArm}       )
    * Maps an account cursor issued before account feeds carried an `xid` to a transaction id that
    * cannot skip a change. Every change after the cursor's `seq` has an `xid` at or above both the
    * oldest such change that is visible now and the reading snapshot's `xmin` (a change that is not
-   * visible yet belongs to a transaction that was still in flight, whose id is at or above `xmin`),
+   * visible yet belongs to a transaction that was in flight or started after the snapshot, whose id is at or above `xmin`),
    * so a position `(xid, seq)` below the smaller of the two hands them all out.
    */
   private async legacyAccountCursorXid(account: string, seq: string): Promise<string> {
@@ -1712,7 +1712,8 @@ ${managedDueArm}       )
     // A legacy account cursor has no xid: hold from the position `changesAfter` would map it to.
     const xid = decoded.xid ?? (await this.legacyAccountCursorXid(account!, decoded.seq));
     // Forward-only in (xid, seq) order for every scope. A row saved before account feeds carried
-    // an xid (NULL cursor_xid) is replaced by any cursor in the new format.
+    // an xid (NULL cursor_xid) has only a seq to compare: a cursor in the new format replaces it
+    // unless its seq is behind.
     const result = await this.query(
       `INSERT INTO adcp_reporting_feed_consumers (consumer_name, account_id, cursor_xid, cursor_seq)
        VALUES ($1, $2, $3::text::xid8, $4::bigint)
@@ -1721,7 +1722,8 @@ ${managedDueArm}       )
               cursor_seq = EXCLUDED.cursor_seq, updated_at = clock_timestamp()
         WHERE $6::boolean
            OR adcp_reporting_feed_consumers.account_id IS DISTINCT FROM EXCLUDED.account_id
-           OR adcp_reporting_feed_consumers.cursor_xid IS NULL
+           OR (adcp_reporting_feed_consumers.cursor_xid IS NULL
+               AND adcp_reporting_feed_consumers.cursor_seq <= EXCLUDED.cursor_seq)
            OR (adcp_reporting_feed_consumers.cursor_xid, adcp_reporting_feed_consumers.cursor_seq)
                 < (EXCLUDED.cursor_xid, EXCLUDED.cursor_seq)
            OR ($5::boolean AND (adcp_reporting_feed_consumers.cursor_xid, adcp_reporting_feed_consumers.cursor_seq)
@@ -1774,7 +1776,7 @@ ${managedDueArm}       )
                  WHERE consumer.updated_at > clock_timestamp() - ($2::integer * INTERVAL '1 day')
                    AND ${feedConsumerBehindChange('consumer', 'change')}
               )
-            ORDER BY change.seq LIMIT $3
+            ORDER BY change.xid, change.seq LIMIT $3
          )
          DELETE FROM adcp_reporting_changes change USING victims
           WHERE change.seq = victims.seq
