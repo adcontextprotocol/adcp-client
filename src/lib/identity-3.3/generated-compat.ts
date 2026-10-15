@@ -16,8 +16,10 @@ import type { GetAdCPCapabilitiesResponse } from '../types/tools.generated';
  * The value type of an optional property `K` on `T`, or `unknown` when `T`
  * does not declare it. An object type without `K` is assignable to
  * `{ K?: V }`, so the absent case infers `unknown` rather than failing.
+ * Non-distributive, so a union `T` resolves to the property's union rather
+ * than silently falling back when one member lacks it.
  */
-export type OptionalPropertyOf<T, K extends PropertyKey> = T extends { [P in K]?: infer V } ? V : unknown;
+export type OptionalPropertyOf<T, K extends PropertyKey> = [T] extends [{ [P in K]?: infer V }] ? V : unknown;
 
 /** `Generated` when the pinned schemas define it, otherwise `Draft`. */
 export type PreferGenerated<Generated, Draft> = unknown extends Generated

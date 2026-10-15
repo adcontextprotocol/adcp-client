@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { SingleAgentClient } = require('../../dist/lib/core/SingleAgentClient');
 const { ProtocolClient } = require('../../dist/lib/protocols');
 const { validateIdentity33Payload } = require('../../dist/lib/identity-3.3');
+const { deliveryWebhookRegistrationId } = require('../../dist/lib/core/webhook-registration');
 const agent = { id: 'identity33-seller', name: 'Seller', agent_uri: 'https://seller.example.com/mcp', protocol: 'mcp' };
 function params(reporting_webhook) {
   return {
@@ -38,24 +39,20 @@ for (const scenario of [
       _synthetic: false,
       _raw: { webhook_signing: { supported: scenario.supported, profiles: ['adcp/webhook-signing/v1'] } },
     };
-    const makeClient = () => {
-      const c = new SingleAgentClient(agent, {
-        experimentalIdentity33: true,
-        webhookUrlTemplate: {
-          template: 'https://buyer.example.com/webhooks/{task_type}/{operation_id}',
-          tools: ['media_buy_delivery', 'create_media_buy'],
-        },
-        webhookSecret: 'configured-secret-of-at-least-32-characters',
-        validateFeatures: false,
-        validation: { requests: 'off', responses: 'off' },
-      });
-      c.cachedCapabilities = caps;
-      c.getCapabilities = async () => caps;
-      c.ensureEndpointDiscovered = async () => agent;
-      c.detectServerVersion = async () => 'v3';
-      return c;
-    };
-    const client = makeClient();
+    const client = new SingleAgentClient(agent, {
+      experimentalIdentity33: true,
+      webhookUrlTemplate: {
+        template: 'https://buyer.example.com/webhooks/{task_type}/{operation_id}',
+        tools: ['media_buy_delivery', 'create_media_buy'],
+      },
+      webhookSecret: 'configured-secret-of-at-least-32-characters',
+      validateFeatures: false,
+      validation: { requests: 'off', responses: 'off' },
+    });
+    client.cachedCapabilities = caps;
+    client.getCapabilities = async () => caps;
+    client.ensureEndpointDiscovered = async () => agent;
+    client.detectServerVersion = async () => 'v3';
     try {
       await client.createMediaBuy(params());
       const webhook = calls.find(c => c.task === 'create_media_buy').parameters.reporting_webhook;
@@ -72,20 +69,26 @@ for (const scenario of [
       );
       // A caller URL without credentials is valid only once 3.3 signed webhooks
       // are negotiated; below that the client refuses rather than pair its own
-      // secret with the caller's host. A fresh client keeps this month's
-      // delivery operation id free of the registration made above.
-      const callerClient = makeClient();
-      const callerReporting = params({ url: 'https://buyer.example.com/own-reports', reporting_frequency: 'daily' });
+      // secret with the caller's host. The same client already registered its
+      // own callback this month, so the caller URL must not reuse that
+      // operation id: it is registered under its URL-scoped id instead.
+      const callerUrl = 'https://buyer.example.com/own-reports';
+      const callerReporting = params({ url: callerUrl, reporting_frequency: 'daily' });
       if (scenario.omit) {
-        await callerClient.createMediaBuy(callerReporting);
+        await client.createMediaBuy(callerReporting);
         const sent = calls.filter(c => c.task === 'create_media_buy')[2].parameters.reporting_webhook;
-        assert.equal(sent.url, 'https://buyer.example.com/own-reports');
+        assert.equal(sent.url, callerUrl);
         assert.equal(Object.hasOwn(sent, 'authentication'), false);
         assert.equal(sent.signing_profile, 'adcp/webhook-signing/v1');
+        const registration = await client.webhookRegistrationStore.get(
+          agent.id,
+          deliveryWebhookRegistrationId('reporting', callerUrl)
+        );
+        assert.equal(registration?.callbackUrl, callerUrl);
       } else {
         await assert.rejects(
-          () => callerClient.createMediaBuy(callerReporting),
-          /reporting_webhook requires an `authentication` block/
+          () => client.createMediaBuy(callerReporting),
+          /reporting_webhook requires an `authentication` block.*caller-supplied `reporting_webhook.url`/
         );
         assert.equal(calls.filter(c => c.task === 'create_media_buy').length, 2);
       }

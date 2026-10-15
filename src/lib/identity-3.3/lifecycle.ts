@@ -124,7 +124,7 @@ export async function evaluateOnboardingRequirements<
       requirement.kind !== 'aao_verified' ||
       (!!requirement.role &&
         !!requirement.verification_modes?.length &&
-        !!requirement.specialisms?.length &&
+        !!(requirement.verified_specialisms ?? requirement.specialisms)?.length &&
         !!requirement.adcp_version);
     const hasId = !['storyboard', 'experimental_feature'].includes(requirement.kind) || !!requirement.id;
     if (!relevant.has(requirement.kind) || !wellFormed || !hasId || !(await check(requirement)))

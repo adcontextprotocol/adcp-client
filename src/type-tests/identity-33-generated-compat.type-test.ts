@@ -92,8 +92,12 @@ export type PinnedOnboardingMatchesGenerated = Assert<
     : MutuallyAssignable<AgentOnboarding, NonNullable<PinnedGeneratedOnboarding>>
 >;
 
-/** Fixture of a later #8170 revision: merged mode enum, no agent_identity kind, open billing keys. */
-type FixtureOnboardingMode = 'open' | 'application' | 'considers_unsolicited' | 'invite_only';
+/**
+ * Fixture modelled on the shape adcp#8170 generates at 7e1b79a13: one mode enum,
+ * no agent_identity kind, `verified_specialisms`, no `documentation_url`, and
+ * billing tiers keyed by an index signature.
+ */
+type FixtureOnboardingMode = 'open' | 'application' | 'invite_only';
 type FixtureRequirementKind =
   | 'grant'
   | 'billing_entity'
@@ -107,7 +111,7 @@ interface FixtureRequirement {
   kind: FixtureRequirementKind;
   role?: string;
   verification_modes?: [string, ...string[]];
-  specialisms?: [string, ...string[]];
+  verified_specialisms?: [string, ...string[]];
   adcp_version?: string;
   id?: string;
   ext?: { [k: string]: unknown };
@@ -122,7 +126,6 @@ interface FixturePosture {
   sandbox?: FixtureTier;
   billing?: { [k: string]: FixtureTier | undefined };
   url?: string;
-  documentation_url?: string;
   message?: string;
   ext?: { [k: string]: unknown };
 }
@@ -159,3 +162,8 @@ void evaluateOnboardingRequirements(
 );
 declare const fixtureRequirements: FixtureRequirement[];
 void evaluateOnboardingRequirements(fixtureRequirements, 'seller', async requirement => requirement.kind === 'grant');
+
+// Billing tiers and the sandbox tier share one derived tier type.
+declare const onboarding: AgentOnboarding;
+const operatorTier: AgentOnboardingTier | undefined = onboarding.billing?.operator;
+void operatorTier;

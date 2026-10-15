@@ -45,23 +45,29 @@ interface DraftAgentOnboarding {
 }
 /** `get_adcp_capabilities.account.agent_onboarding`: how a seller onboards buyer agents. */
 export type AgentOnboarding = ResolveAgentOnboarding<GeneratedAccountCapabilities, DraftAgentOnboarding>;
+type AgentOnboardingBilling = NonNullable<AgentOnboarding['billing']>;
 /** The onboarding mode for sandbox access or for one billing party. */
-export type AgentOnboardingTier = NonNullable<AgentOnboarding['sandbox']>;
+export type AgentOnboardingTier =
+  | NonNullable<AgentOnboarding['sandbox']>
+  | NonNullable<AgentOnboardingBilling[keyof AgentOnboardingBilling]>;
 export type AgentOnboardingMode = AgentOnboardingTier['mode'];
 /** One requirement an onboarding mode imposes, discriminated by `kind`. */
 export type AgentOnboardingRequirement = NonNullable<AgentOnboardingTier['requirements']>[number];
 export type AgentOnboardingRequirementKind = AgentOnboardingRequirement['kind'];
 /**
- * A requirement as read off the wire. Readers MUST treat a kind they do not
- * know as unsatisfiable, so this accepts any `kind` string. Structural on
- * purpose: every {@link AgentOnboardingRequirement} is assignable to it,
- * whichever shape the pinned schemas give that type.
+ * A requirement as an evaluator sees it. `kind` accepts any string because a
+ * counterparty on a newer revision may publish kinds this SDK does not know,
+ * and readers MUST treat those as unsatisfiable rather than reject the
+ * posture. Structural on purpose: every {@link AgentOnboardingRequirement} is
+ * assignable to it, whichever shape the pinned schemas give that type.
+ * `verified_specialisms` is the revised #8170 name for `specialisms`.
  */
 export interface ObservedAgentOnboardingRequirement {
   kind: AgentOnboardingRequirementKind | (string & {});
   role?: string;
   verification_modes?: readonly string[];
   specialisms?: readonly string[];
+  verified_specialisms?: readonly string[];
   adcp_version?: string;
   id?: string;
   ext?: Record<string, unknown>;
