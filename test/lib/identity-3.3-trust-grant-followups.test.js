@@ -676,6 +676,104 @@ test('S3: the createAdcpServer pre-transport defers resolver failures on tool ca
   }
 });
 
+test('DR-0023: a replay-store outage in the createAdcpServer pre-transport is a 503, never a signature outcome', async t => {
+  const previousEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'test';
+  t.after(() => {
+    if (previousEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousEnv;
+  });
+  const { generateKeyPairSync } = require('crypto');
+  const { createAdcpServer } = require('../../dist/lib/server/create-adcp-server');
+  const { ADCP_PRE_TRANSPORT, ADCP_SERVE_REQUEST_CONTEXT } = require('../../dist/lib/server');
+  const { InMemoryRevocationStore } = require('../../dist/lib/signing/revocation');
+  const key = generateKeyPairSync('ed25519').privateKey.export({ format: 'jwk' });
+  key.kid = wba.jwkThumbprint(key);
+  const signer = 'https://buyer.example.com';
+  const directory = new wba.SignatureDirectoryResolver({
+    fetchOptions: {
+      trustedFetchFn: async () => {
+        const proof = await wba.createSignedSignatureDirectory(signer, [{ privateKey: key }]);
+        return new Response(proof.body, { status: 200, headers: proof.headers });
+      },
+    },
+  });
+  const server = createAdcpServer({
+    name: 'Pre-transport replay outage',
+    version: '1.0.0',
+    identity33: { authorize: async () => {} },
+    capabilities: {
+      request_signing: {
+        supported: true,
+        covers_content_digest: 'required',
+        required_for: [],
+        profiles: ['adcp/request-signing/v1', 'web-bot-auth'],
+      },
+    },
+    signedRequests: {
+      jwks: { resolve: async () => null },
+      replayStore: {
+        insert: async () => {
+          throw new Error('redis offline');
+        },
+      },
+      revocationStore: new InMemoryRevocationStore(),
+      assertLegacyOriginAllowed: async () => {},
+      webBotAuth: {
+        directory,
+        isRevoked: async () => false,
+        resolvePrincipal: async () => ({ principal: 'p' }),
+      },
+    },
+    mediaBuy: { getProducts: async () => ({ products: [], cache_scope: 'public' }) },
+  });
+  const preTransport = server[ADCP_PRE_TRANSPORT];
+  assert.equal(typeof preTransport, 'function');
+  const send = async rpc => {
+    const body = JSON.stringify(rpc);
+    const request = {
+      method: 'POST',
+      url: 'https://seller.example.com/mcp',
+      headers: { 'content-type': 'application/json' },
+      body,
+    };
+    const headers = await wba.signWebBotAuth(request, { privateKey: key }, { origin: signer });
+    const req = {
+      method: 'POST',
+      url: '/mcp',
+      headers,
+      rawBody: body,
+      [ADCP_SERVE_REQUEST_CONTEXT]: { publicUrl: 'https://seller.example.com/mcp' },
+    };
+    const res = {
+      writeHead(status, writtenHeaders) {
+        this.status = status;
+        this.headers = writtenHeaders;
+      },
+      end(text) {
+        this.body = text;
+      },
+    };
+    const handled = await preTransport(req, res);
+    return { handled, req, res };
+  };
+  try {
+    const tool = await send({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'get_products', arguments: { buying_mode: 'brief', brief: 'x' } },
+    });
+    assert.equal(tool.handled, true);
+    assert.equal(tool.res.status, 503);
+    assert.equal(tool.res.headers['Retry-After'], '60');
+    assert.equal(tool.res.headers['Accept-Signature'], undefined);
+    assert.equal(JSON.parse(tool.res.body).adcp_error.code, 'SERVICE_UNAVAILABLE');
+  } finally {
+    await server.close();
+  }
+});
+
 test('S5: a grantor or intermediary 404 after a read is an outage, never grant removal or legacy fallback', async () => {
   const records = {
     'agency.com': agent('https://buyer.agency.com'),
