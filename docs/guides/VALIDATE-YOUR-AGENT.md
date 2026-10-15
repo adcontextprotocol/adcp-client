@@ -668,6 +668,18 @@ try {
 
 These policies follow the language-neutral fixture ratified in [AdCP #6674](https://github.com/adcontextprotocol/adcp/issues/6674).
 
+The AdCP 3.3 fixture also covers vendor-scoped `{GDPR_CONSENT_<gvl_id>}` and
+`{ADDTL_CONSENT}`. Preserve the receiving vendor ID and treat Additional Consent
+as opaque CMP data. Both participate in dropped/frozen consent diagnostics.
+After unsupported parameters are dropped, a URL with multiple scoped TCF
+occurrences throws `MultipleVendorConsentMacrosError` (exported from both
+`@adcp/sdk` and `@adcp/sdk/substitution`), with code
+`multiple_vendor_consent_macros` and the canonical second token in `macro`.
+Existing native tokens and verified native aliases count; encoded concrete
+values and Additional Consent do not. See the
+[compilation guide](UNIVERSAL-MACRO-COMPILATION.md) for mapping and schema-version
+boundaries.
+
 ---
 
 ## The fork-matrix: canonical adapter → compliance

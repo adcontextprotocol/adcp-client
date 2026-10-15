@@ -4,7 +4,8 @@
  * position pass through untouched — only query-parameter values are translated.
  *
  * Universal macros match `\{[A-Z][A-Z0-9_]*\}` (upper-snake, single braces).
- * Native ad-server tokens (`%%X%%`, `{{x}}`) are not matched and pass through.
+ * Native ad-server tokens (`%%X%%`, `{{x}}`, `${x}`, `[X]`) pass through
+ * without translating their interiors.
  *
  * Per query parameter:
  *   - No universal macro → left untouched (literal param passes through).
@@ -40,33 +41,65 @@
  */
 
 import { encodeUnreserved } from './rfc3986';
+import { isConsentMacro, isVendorScopedConsentMacro } from './consent-macros';
 
-/** Universal macro token pattern: `{UPPER_SNAKE}`. */
-const UNIVERSAL_MACRO = /\{[A-Z][A-Z0-9_]*\}/g;
-
-/**
- * Shapes of common ad-server native tokens (`%%X%%`, `{{x}}`, `${x}`, `[X]`).
- * A legitimate `value` entry — a literal data value — never takes this shape,
- * so a `value` that matches it almost certainly belongs in a `native` entry.
- * The bracket form is constrained to upper-snake token names (VAST-style, e.g.
- * `[CACHEBUSTING]`) so ordinary bracketed values like `[1,2,3]` or `[redacted]`
- * are not flagged.
- */
-const NATIVE_TOKEN_SHAPE = /^(?:%%.+%%|\{\{.+\}\}|\$\{.+\}|\[[A-Z][A-Z0-9_]*\])$/;
+interface MacroToken {
+  text: string;
+  start: number;
+  end: number;
+  native: boolean;
+}
 
 /**
- * Consent/privacy-signalling universal macros. Dropping one because its
- * mapping was forgotten is a compliance hazard, so these are reported
- * separately from benign drops.
+ * Consume native shells before single-brace AdCP tokens. Cache missing closers
+ * so repeated malformed openers cannot cause quadratic scans of the URL tail.
  */
-const CONSENT_MACROS = new Set<string>([
-  '{GDPR}',
-  '{GDPR_CONSENT}',
-  '{US_PRIVACY}',
-  '{GPP_STRING}',
-  '{GPP_SID}',
-  '{LIMIT_AD_TRACKING}',
-]);
+function* macroTokens(text: string): Generator<MacroToken> {
+  const missingClosers = new Set<string>();
+  let cursor = 0;
+  while (cursor < text.length) {
+    let end = -1;
+    let native = true;
+    const close = text.startsWith('%%', cursor)
+      ? '%%'
+      : text.startsWith('{{', cursor)
+        ? '}}'
+        : text.startsWith('${', cursor)
+          ? '}'
+          : null;
+    if (close && !missingClosers.has(close)) {
+      const closer = text.indexOf(close, cursor + 2);
+      if (closer === -1) missingClosers.add(close);
+      else end = closer + close.length;
+    }
+    if (end === -1 && (text[cursor] === '{' || text[cursor] === '[')) {
+      let nameEnd = cursor + 1;
+      if (/[A-Z]/.test(text[nameEnd] ?? '')) {
+        nameEnd += 1;
+        while (/[A-Z0-9_]/.test(text[nameEnd] ?? '')) nameEnd += 1;
+        if (text[nameEnd] === (text[cursor] === '{' ? '}' : ']')) {
+          end = nameEnd + 1;
+          native = text[cursor] === '[';
+        }
+      }
+    }
+    if (end === -1) {
+      cursor += 1;
+      continue;
+    }
+    yield { text: text.slice(cursor, end), start: cursor, end, native };
+    cursor = end;
+  }
+}
+
+/** Native syntax embedded in a value is advisory; ordinary brackets are data. */
+function hasNativeTokenSyntax(value: string): boolean {
+  for (const token of macroTokens(value)) {
+    const minimumLength = token.text.startsWith('${') ? 3 : token.text.startsWith('[') ? 2 : 4;
+    if (token.native && token.text.length > minimumLength) return true;
+  }
+  return false;
+}
 
 /** ASCII control characters forbidden in native mapping entries. */
 const UNSAFE_NATIVE_CHARACTER = /[\u0000-\u001F\u007F]/;
@@ -103,6 +136,123 @@ export class UnsafeNativeMappingError extends Error {
   }
 }
 
+/**
+ * Thrown before emitting a URL containing a second vendor-scoped TCF macro.
+ * Only the canonical second token is retained, never the URL or consent data.
+ */
+export class MultipleVendorConsentMacrosError extends Error {
+  readonly code = 'multiple_vendor_consent_macros' as const;
+  readonly macro: string;
+
+  constructor(macro: string) {
+    super(`Multiple vendor-scoped consent macros; second token is ${JSON.stringify(macro)}`);
+    this.name = 'MultipleVendorConsentMacrosError';
+    this.macro = macro;
+  }
+}
+
+interface RenderedSpan {
+  text: string;
+  /** Concrete values are data, even if their bytes resemble a known alias. */
+  concrete?: boolean;
+  scopedSource?: string;
+}
+
+interface ScopedOccurrence {
+  start: number;
+  end: number;
+  macro: string;
+}
+
+interface TextRange {
+  start: number;
+  end: number;
+}
+
+/** Find an overlap in sorted, non-overlapping ranges without rescanning them. */
+function overlappingRange<T extends TextRange>(ranges: readonly T[], candidate: TextRange): T | undefined {
+  let low = 0;
+  let high = ranges.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (ranges[middle]!.end <= candidate.start) low = middle + 1;
+    else high = middle;
+  }
+  const range = ranges[low];
+  return range && range.start < candidate.end ? range : undefined;
+}
+
+/**
+ * Inspect the final emitted bytes, retaining native-source evidence for
+ * spellings such as %%CONSENT_755%%. Literal values never supply macro evidence.
+ */
+function assertSingleScopedConsent(spans: readonly RenderedSpan[], mapping: MacroMapping): string {
+  const url = spans.map(span => span.text).join('');
+  const concrete: TextRange[] = [];
+  const sources: ScopedOccurrence[] = [];
+  let offset = 0;
+  for (const span of spans) {
+    const range = { start: offset, end: offset + span.text.length };
+    if (span.concrete && range.start < range.end) concrete.push(range);
+    if (span.scopedSource && span.text.length > 0) sources.push({ ...range, macro: span.scopedSource });
+    offset = range.end;
+  }
+
+  const occurrences: ScopedOccurrence[] = [];
+  const shells: TextRange[] = [];
+  for (const token of macroTokens(url)) {
+    const range = { start: token.start, end: token.end };
+    shells.push(range);
+    const canonical = token.text.startsWith('${') ? token.text.slice(1) : token.text;
+    // Encoded data cannot contain complete braced syntax. A token assembled
+    // across native/data spans is real expandable output and must still count.
+    if (isVendorScopedConsentMacro(canonical)) {
+      occurrences.push({ ...range, macro: canonical });
+    }
+  }
+
+  // A verified mapping also identifies pre-existing and indirectly inserted
+  // native aliases. Prefer complete spellings when aliases overlap. Canonical
+  // occurrences already identify their semantics and must not be counted twice.
+  const aliases: ScopedOccurrence[] = [];
+  for (const [macro, entry] of Object.entries(mapping)) {
+    if (!isVendorScopedConsentMacro(macro) || !('native' in entry) || entry.native.length === 0) continue;
+    let start = url.indexOf(entry.native);
+    while (start !== -1) {
+      const range = { start, end: start + entry.native.length };
+      const shell = overlappingRange(shells, range);
+      const completeShell = shell?.start === range.start && shell.end === range.end;
+      const insideShell = shell && shell.start <= range.start && range.end <= shell.end && !completeShell;
+      if (
+        !insideShell &&
+        (completeShell || !overlappingRange(concrete, range)) &&
+        !overlappingRange(occurrences, range)
+      ) {
+        aliases.push({ ...range, macro });
+      }
+      start = url.indexOf(entry.native, range.end);
+    }
+  }
+  aliases.sort((a, b) => a.start - b.start || b.end - a.end);
+  const selectedAliases: ScopedOccurrence[] = [];
+  for (const alias of aliases) {
+    const previous = selectedAliases[selectedAliases.length - 1];
+    if (!previous || previous.end <= alias.start) selectedAliases.push(alias);
+  }
+  for (const alias of selectedAliases) occurrences.push(alias);
+  occurrences.sort((a, b) => a.start - b.start);
+
+  // Native mappings can use arbitrary syntax. Preserve the scoped source's
+  // semantics if no recognizable target survived, without adding a second
+  // occurrence for an ordinary source -> native translation.
+  const unmatchedSources = sources.filter(source => !overlappingRange(occurrences, source));
+  for (const source of unmatchedSources) occurrences.push(source);
+  occurrences.sort((a, b) => a.start - b.start);
+  const second = occurrences[1];
+  if (second) throw new MultipleVendorConsentMacrosError(second.macro);
+  return url;
+}
+
 /** Result of {@link translateUniversalMacros}. */
 export interface TranslateResult {
   /** The translated URL. Base, path, and fragment are unchanged. */
@@ -121,7 +271,8 @@ export interface TranslateResult {
   unmapped_macros: string[];
   /**
    * Subset of `unmapped_macros` that are consent/privacy signals (`{GDPR}`,
-   * `{GDPR_CONSENT}`, `{US_PRIVACY}`, `{GPP_STRING}`, `{GPP_SID}`,
+   * `{GDPR_CONSENT}`, `{GDPR_CONSENT_<gvl_id>}`, `{ADDTL_CONSENT}`,
+   * `{US_PRIVACY}`, `{GPP_STRING}`, `{GPP_SID}`,
    * `{LIMIT_AD_TRACKING}`). Surfaced separately so a forgotten-mapping drop of
    * a compliance-relevant macro isn't lost among benign drops. Deduplicated.
    */
@@ -155,6 +306,8 @@ export interface TranslateResult {
  * @throws {UnsafeNativeMappingError} If any native mapping entry contains
  * U+0000-U+001F or U+007F. The whole mapping is checked before translation,
  * including entries not referenced by `input_pixel_url`.
+ * @throws {MultipleVendorConsentMacrosError} If the final URL contains more
+ * than one scoped TCF consent macro, after unsupported parameters are dropped.
  */
 export function translateUniversalMacros(input_pixel_url: string, mapping: MacroMapping): TranslateResult {
   const suspect_native_values: string[] = [];
@@ -169,11 +322,11 @@ export function translateUniversalMacros(input_pixel_url: string, mapping: Macro
       continue;
     }
 
-    if (CONSENT_MACROS.has(macro) && !frozenConsentSeen.has(macro)) {
+    if (isConsentMacro(macro) && !frozenConsentSeen.has(macro)) {
       frozenConsentSeen.add(macro);
       frozen_consent_macros.push(macro);
     }
-    if (NATIVE_TOKEN_SHAPE.test(entry.value) && !suspectSeen.has(macro)) {
+    if (hasNativeTokenSyntax(entry.value) && !suspectSeen.has(macro)) {
       suspectSeen.add(macro);
       suspect_native_values.push(macro);
     }
@@ -188,7 +341,7 @@ export function translateUniversalMacros(input_pixel_url: string, mapping: Macro
   const queryIdx = withoutFragment.indexOf('?');
   if (queryIdx === -1) {
     return {
-      url: input_pixel_url,
+      url: assertSingleScopedConsent([{ text: input_pixel_url }], mapping),
       dropped_params: [],
       unmapped_macros: [],
       dropped_consent_macros: [],
@@ -206,24 +359,23 @@ export function translateUniversalMacros(input_pixel_url: string, mapping: Macro
   const dropped_consent_macros: string[] = [];
   const consentSeen = new Set<string>();
 
-  const outputParts: string[] = [];
+  const outputParts: RenderedSpan[][] = [];
 
   for (const rawParam of rawQuery.split('&')) {
     const eqIdx = rawParam.indexOf('=');
     const key = eqIdx === -1 ? rawParam : rawParam.slice(0, eqIdx);
     const value = eqIdx === -1 ? '' : rawParam.slice(eqIdx + 1);
 
-    // Find every universal macro token in the raw value.
-    const tokens = value.match(UNIVERSAL_MACRO);
+    const tokens = [...macroTokens(value)].filter(token => !token.native);
 
-    if (!tokens) {
+    if (tokens.length === 0) {
       // No universal macros — pass through verbatim.
-      outputParts.push(rawParam);
+      outputParts.push([{ text: rawParam }]);
       continue;
     }
 
     // Check for any unmapped macro in this parameter.
-    const missing = tokens.filter(t => !(t in mapping));
+    const missing = tokens.map(token => token.text).filter(token => !(token in mapping));
     if (missing.length > 0) {
       dropped_params.push(key);
       for (const m of missing) {
@@ -231,7 +383,7 @@ export function translateUniversalMacros(input_pixel_url: string, mapping: Macro
           unmappedSeen.add(m);
           unmapped_macros.push(m);
         }
-        if (CONSENT_MACROS.has(m) && !consentSeen.has(m)) {
+        if (isConsentMacro(m) && !consentSeen.has(m)) {
           consentSeen.add(m);
           dropped_consent_macros.push(m);
         }
@@ -239,23 +391,33 @@ export function translateUniversalMacros(input_pixel_url: string, mapping: Macro
       continue;
     }
 
-    // All macros are mapped — replace in a single pass.
-    // String.replace with a global regex does not re-scan substituted output,
-    // so macro tokens inside a translated value are never expanded.
-    const translated = value.replace(UNIVERSAL_MACRO, token => {
-      const entry = mapping[token];
-      if (!entry) {
-        // Unreachable: all tokens were verified above, but TypeScript narrows.
-        return token;
+    // Render once, retaining the distinction between native syntax and data.
+    const translated: RenderedSpan[] = [{ text: `${key}=` }];
+    let cursor = 0;
+    for (const match of tokens) {
+      const token = match.text;
+      translated.push({ text: value.slice(cursor, match.start) });
+      const entry = mapping[token]!;
+      if ('native' in entry) {
+        translated.push({
+          text: entry.native,
+          ...(isVendorScopedConsentMacro(token) ? { scopedSource: token } : {}),
+        });
+      } else {
+        translated.push({ text: encodeUnreserved(entry.value), concrete: true });
       }
-      return 'native' in entry ? entry.native : encodeUnreserved(entry.value);
-    });
-
-    outputParts.push(`${key}=${translated}`);
+      cursor = match.end;
+    }
+    translated.push({ text: value.slice(cursor) });
+    outputParts.push(translated);
   }
 
-  const newQuery = outputParts.join('&');
-  const url = newQuery ? `${base}?${newQuery}${fragment}` : `${base}${fragment}`;
+  const querySpans = outputParts.flatMap((part, index) => (index === 0 ? part : [{ text: '&' }, ...part]));
+  const hasQuery = querySpans.some(span => span.text.length > 0);
+  const url = assertSingleScopedConsent(
+    [{ text: base }, ...(hasQuery ? [{ text: '?' }, ...querySpans] : []), { text: fragment }],
+    mapping
+  );
 
   return {
     url,

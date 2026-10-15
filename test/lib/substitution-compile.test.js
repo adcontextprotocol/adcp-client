@@ -612,6 +612,148 @@ describe('compileUniversalMacroTemplate', () => {
     assert.equal(delivered.url, 'https://pixel.example/i?device=%%DEVICE%%');
   });
 
+  it('round-trips scoped TCF and Additional Consent without changing vendor identity', () => {
+    for (const vendorId of ['1', '42', '755', '9007199254740993']) {
+      const scoped = `{GDPR_CONSENT_${vendorId}}`;
+      const source = `https://pixel.example/i?gdpr=\${GDPR}&c=$${scoped}&a=\${ADDTL_CONSENT}`;
+      const tokens = ['{GDPR}', scoped, '{ADDTL_CONSENT}'];
+      const compiled = compileUniversalMacroTemplate({
+        template: source,
+        source_dialect: 'example-consent-server',
+        source_syntaxes: ['dollar_brace'],
+        mappings: tokens.map(universal_macro => ({
+          source_token: `$${universal_macro}`,
+          universal_macro,
+          source_dialect: 'example-consent-server',
+          documentation: DOCUMENTATION,
+        })),
+      });
+
+      assert.equal(compiled.publishable, true, vendorId);
+      assert.deepEqual(compiled.diagnostics, []);
+      assert.equal(compiled.canonical_template, `https://pixel.example/i?gdpr={GDPR}&c=${scoped}&a={ADDTL_CONSENT}`);
+      assert.deepEqual(
+        compiled.occurrences.map(occurrence => occurrence.universal_macro),
+        tokens
+      );
+      const delivered = translateUniversalMacros(
+        compiled.canonical_template,
+        Object.fromEntries(tokens.map(token => [token, { native: `$${token}` }]))
+      );
+      assert.equal(delivered.url, source, vendorId);
+      assert.deepEqual(delivered.dropped_consent_macros, []);
+      assert.deepEqual(delivered.frozen_consent_macros, []);
+    }
+  });
+
+  it("does not use another receiving vendor's source mapping", () => {
+    const source = 'https://pixel.example/i?c=${GDPR_CONSENT_42}';
+    const compiled = compileUniversalMacroTemplate({
+      template: source,
+      source_dialect: 'example-consent-server',
+      source_syntaxes: ['dollar_brace'],
+      mappings: [
+        {
+          source_token: '${GDPR_CONSENT_755}',
+          universal_macro: '{GDPR_CONSENT_755}',
+          source_dialect: 'example-consent-server',
+          documentation: DOCUMENTATION,
+        },
+      ],
+    });
+
+    assert.equal(compiled.publishable, false);
+    assert.equal(compiled.canonical_template, source);
+    assert.equal(compiled.diagnostics.at(-1).code, 'unknown_macro');
+    assert.equal(compiled.occurrences[0].source_token, '${GDPR_CONSENT_42}');
+  });
+
+  it('rejects malformed consent targets without broadening the universal vocabulary', () => {
+    const invalid = [
+      '{GDPR_CONSENT_}',
+      '{GDPR_CONSENT_XXX}',
+      '{GDPR_CONSENT_0}',
+      '{GDPR_CONSENT_0755}',
+      '{GDPR_CONSENT_-1}',
+      '{GDPR_CONSENT_+755}',
+      '{GDPR_CONSENT_7.55}',
+      '{GDPR_CONSENT_755_extra}',
+      '{GDPR_CONSENT_755}\n',
+      '{gdpr_consent_755}',
+      '{ADDTL_CONSENT_755}',
+      '{PRIVATE_CONSENT}',
+    ];
+    for (const universal_macro of invalid) {
+      const compiled = compileUniversalMacroTemplate({
+        template: '{{CONSENT}}',
+        source_dialect: 'example-consent-server',
+        source_syntaxes: ['double_brace'],
+        mappings: [
+          {
+            source_token: '{{CONSENT}}',
+            universal_macro,
+            source_dialect: 'example-consent-server',
+            documentation: DOCUMENTATION,
+          },
+        ],
+      });
+      assert.equal(compiled.publishable, false, universal_macro);
+      assert.equal(compiled.canonical_template, '{{CONSENT}}', universal_macro);
+      assert.ok(
+        compiled.diagnostics.some(diagnostic => diagnostic.code === 'invalid_universal_macro'),
+        universal_macro
+      );
+    }
+  });
+
+  it('still requires explicit, documented source mappings for the new consent vocabulary', () => {
+    for (const universal_macro of ['{GDPR_CONSENT_755}', '{ADDTL_CONSENT}']) {
+      const source_token = `$${universal_macro}`;
+      const input = {
+        template: source_token,
+        source_dialect: 'example-consent-server',
+        source_syntaxes: ['dollar_brace'],
+        allow_canonical_macros: true,
+        mappings: [],
+      };
+      const unmapped = compileUniversalMacroTemplate(input);
+      assert.equal(unmapped.publishable, false);
+      assert.equal(unmapped.canonical_template, source_token);
+      assert.equal(unmapped.diagnostics.at(-1).code, 'unknown_macro');
+
+      const undocumented = compileUniversalMacroTemplate({
+        ...input,
+        mappings: [{ source_token, universal_macro, source_dialect: input.source_dialect }],
+      });
+      assert.equal(undocumented.publishable, false);
+      assert.equal(undocumented.canonical_template, source_token);
+      assert.ok(undocumented.diagnostics.some(diagnostic => diagnostic.code === 'mapping_provenance_required'));
+    }
+  });
+
+  it('requires the canonical opt-in for scoped TCF and Additional Consent', () => {
+    const source = 'https://pixel.example/i?c={GDPR_CONSENT_755}&a={ADDTL_CONSENT}';
+    const input = {
+      template: source,
+      source_dialect: 'example-consent-server',
+      source_syntaxes: ['adcp'],
+      mappings: [],
+    };
+    const untrusted = compileUniversalMacroTemplate(input);
+    assert.equal(untrusted.publishable, false);
+    assert.equal(untrusted.canonical_template, source);
+    assert.equal(untrusted.diagnostics.filter(diagnostic => diagnostic.code === 'unknown_macro').length, 2);
+
+    const trusted = compileUniversalMacroTemplate({ ...input, allow_canonical_macros: true });
+    assert.equal(trusted.publishable, true);
+    assert.equal(trusted.canonical_template, source);
+    assert.deepEqual(trusted.diagnostics, []);
+    assert.deepEqual(
+      trusted.occurrences.map(occurrence => occurrence.status),
+      ['canonical', 'canonical']
+    );
+  });
+
   it('supports percent mappings without documentation only when explicitly disabled', () => {
     const result = compileUniversalMacroTemplate({
       template: '%%CACHE%%',

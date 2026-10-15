@@ -96,3 +96,41 @@ Do not create a global mapping based only on a token's spelling. A token such as
 cookie for another, and an account identifier for a third. Scope every mapping
 to its source dialect and keep the supporting vendor documentation with the
 registry entry.
+
+Vendor-scoped TCF mappings retain the complete receiving vendor ID: map
+`${GDPR_CONSENT_755}` to `{GDPR_CONSENT_755}`, never to unscoped
+`{GDPR_CONSENT}` or another vendor's token. The suffix must be a positive
+decimal integer without leading zeros. `{ADDTL_CONSENT}` is also supported,
+with the same source-dialect and documentation requirements. Its CMP-provided
+value is opaque; the helper does not generate consent or modify provider lists.
+
+For the return translation, supply exact native mappings:
+
+```typescript
+import { translateUniversalMacros } from '@adcp/sdk/substitution';
+
+const translated = translateUniversalMacros(
+  'https://pixel.vendor.example/i?gdpr={GDPR}&c={GDPR_CONSENT_755}&a={ADDTL_CONSENT}',
+  {
+    '{GDPR}': { native: '${GDPR}' },
+    '{GDPR_CONSENT_755}': { native: '${GDPR_CONSENT_755}' },
+    '{ADDTL_CONSENT}': { native: '${ADDTL_CONSENT}' },
+  }
+);
+```
+
+Existing native tokens pass through unchanged. The emitted URL may contain at
+most one scoped TCF token, including pre-existing tokens and native aliases
+identified by the supplied mappings. After dropping unsupported parameters,
+multiple occurrences throw `MultipleVendorConsentMacrosError` with code
+`multiple_vendor_consent_macros` and the second token in canonical AdCP form.
+Additional Consent does not count toward that limit. Concrete `value` mappings
+are encoded and reported in `frozen_consent_macros`; missing consent mappings
+appear in `dropped_consent_macros`. When an unscoped target requires an unknown
+vendor ID, use `'{GDPR_CONSENT}': { value: '' }` and translate `{GDPR}`
+independently rather than guessing an ID.
+
+These helpers implement the AdCP 3.3 translation contract. Generated protocol
+types and declaration/capability validation still follow the SDK's pinned schema
+release. Helper support alone does not establish a resolver's declared support
+for a scoped token or Additional Consent.
