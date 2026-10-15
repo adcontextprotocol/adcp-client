@@ -55,8 +55,9 @@ type _ProposalSharedFieldsMatchGenerated = Assert<
 type _PurchaseSharedFieldsMatchGenerated = Assert<
   Equal<Omit<ProposalPurchase, 'pricing'>, Omit<GeneratedProductPurchase, 'pricing'>>
 >;
-// An index signature on either side would collapse `Omit` to `string` keys and
-// make the completeness checks above pass vacuously.
+// An index signature would collapse `Omit` to `string` keys and make the
+// completeness checks above pass vacuously. One on the generated type reaches
+// the SDK type through `extends`, so checking the SDK side covers both.
 type _ProposalHasNoIndexSignature = Assert<Equal<string extends keyof CanonicalProposal ? true : false, false>>;
 type _PurchaseHasNoIndexSignature = Assert<Equal<string extends keyof ProposalPurchase ? true : false, false>>;
 // The re-declared fields keep their SDK-specific shapes.
