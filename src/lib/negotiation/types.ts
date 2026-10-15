@@ -2,7 +2,6 @@
 
 import type {
   AcceptanceContext,
-  CanonicalDeliveryForecast,
   CanonicalProposal as GeneratedCanonicalProposal,
   MediaBuyFrequencyCap,
   OutcomeTarget,
@@ -169,31 +168,18 @@ export interface ProposalResolvedPricing {
   commission_rate?: number;
 }
 
-export interface ProposalPurchase {
-  product_id: string;
-  pricing_option_id: string;
+/**
+ * A purchase inside proposal commercial terms. Every field comes from the
+ * generated `ProductPurchase` wire type, so fields the pinned schemas add reach
+ * this type without edits here. Only `pricing` is widened.
+ */
+export interface ProposalPurchase extends Omit<GeneratedProductPurchase, ProposalPurchaseOverriddenKey> {
   /** Resolved pricing is required in accepted snapshots but optional on direct-purchase inputs. */
   pricing?: ProposalResolvedPricing | GeneratedProductPurchase['pricing'];
-  format_option_refs?: GeneratedProductPurchase['format_option_refs'];
-  catalog_ids?: GeneratedProductPurchase['catalog_ids'];
-  budget?: GeneratedProductPurchase['budget'];
-  daily_budget_cap?: GeneratedProductPurchase['daily_budget_cap'];
-  min_spend_target?: GeneratedProductPurchase['min_spend_target'];
-  impressions?: number;
-  start_time?: string;
-  end_time?: string;
-  pacing?: GeneratedProductPurchase['pacing'];
-  bidding?: GeneratedProductPurchase['bidding'];
-  targeting_overlay?: GeneratedProductPurchase['targeting_overlay'];
-  optimization_goals?: GeneratedProductPurchase['optimization_goals'];
-  audience_evidence_requirements?: GeneratedProductPurchase['audience_evidence_requirements'];
-  audience_evidence_pins?: GeneratedProductPurchase['audience_evidence_pins'];
-  agency_estimate_number?: GeneratedProductPurchase['agency_estimate_number'];
-  context?: GeneratedProductPurchase['context'];
-  ext?: GeneratedProductPurchase['ext'];
-  measurement_terms?: GeneratedProductPurchase['measurement_terms'];
-  performance_standards?: GeneratedProductPurchase['performance_standards'];
 }
+
+/** Generated `ProductPurchase` fields whose SDK type is intentionally wider. */
+type ProposalPurchaseOverriddenKey = 'pricing';
 
 export interface ProposalCommercialTerms<TPurchase extends ProposalPurchase = ProposalPurchase> {
   /** Keep the legacy open object while accepting the generated compact BrandKey. */
@@ -204,25 +190,24 @@ export interface ProposalCommercialTerms<TPurchase extends ProposalPurchase = Pr
   total_budget?: { amount: number; currency: string };
 }
 
-export interface CanonicalProposal<TTerms extends ProposalCommercialTerms = ProposalCommercialTerms> {
-  proposal_id: string;
-  proposal_kind: 'new_media_buy' | 'media_buy_update' | 'media_buy_cancellation';
-  parent_proposal_id?: string;
-  media_buy_id?: string;
-  base_media_buy_revision?: number;
-  opportunity_id?: string;
-  proposal_status: 'draft' | 'committed' | 'accepted';
-  accepted_at?: string;
-  expires_at?: string;
-  name: string;
-  description?: string;
-  brief_alignment?: string;
+/**
+ * A canonical proposal snapshot. Every field comes from the generated
+ * `CanonicalProposal` wire type (including fields such as `hold_policy` and
+ * `hold_placed_at` once the pinned schemas define them), so the SDK type tracks
+ * spec revisions without edits here. Only two fields are re-declared:
+ * `commercial_terms` is generic over the caller's terms type and `insertion_order` keeps the
+ * legacy open object.
+ */
+export interface CanonicalProposal<TTerms extends ProposalCommercialTerms = ProposalCommercialTerms> extends Omit<
+  GeneratedCanonicalProposal,
+  CanonicalProposalOverriddenKey
+> {
   commercial_terms: TTerms;
-  terms_digest: string;
   insertion_order?: Record<string, unknown> | GeneratedCanonicalProposal['insertion_order'];
-  total_budget_guidance?: GeneratedCanonicalProposal['total_budget_guidance'];
-  forecast?: CanonicalDeliveryForecast;
 }
+
+/** Generated `CanonicalProposal` fields whose SDK type is intentionally re-declared. */
+type CanonicalProposalOverriddenKey = 'commercial_terms' | 'insertion_order';
 
 export type ProposalRefinementReason =
   | 'commercially_declined'

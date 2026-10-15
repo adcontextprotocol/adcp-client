@@ -7,6 +7,7 @@ import type {
   CanonicalProposal,
   MediaBuyFrequencyCap as RootMediaBuyFrequencyCap,
   OutcomeTarget as RootOutcomeTarget,
+  ProposalCommercialTerms,
   ProposalDiscoveryCriteria,
   ProposalPurchase,
   ProductMediaBuySupportRequirements as RootProductMediaBuySupportRequirements,
@@ -42,6 +43,29 @@ type _ProposalKeysStayComplete = Assert<
   Equal<Exclude<keyof GeneratedCanonicalProposal, keyof CanonicalProposal>, never>
 >;
 type _PurchaseKeysStayComplete = Assert<Equal<Exclude<keyof GeneratedProductPurchase, keyof ProposalPurchase>, never>>;
+
+// Both types derive from the generated wire types, so every field they do not
+// deliberately re-declare must carry the generated type and optionality
+// exactly. A spec field such as AdCP 3.3's `hold_policy` / `hold_placed_at`
+// therefore reaches the SDK type as soon as the pinned schemas define it.
+type ProposalOverriddenKey = 'commercial_terms' | 'insertion_order';
+type _ProposalSharedFieldsMatchGenerated = Assert<
+  Equal<Omit<CanonicalProposal, ProposalOverriddenKey>, Omit<GeneratedCanonicalProposal, ProposalOverriddenKey>>
+>;
+type _PurchaseSharedFieldsMatchGenerated = Assert<
+  Equal<Omit<ProposalPurchase, 'pricing'>, Omit<GeneratedProductPurchase, 'pricing'>>
+>;
+// An index signature on either side would collapse `Omit` to `string` keys and
+// make the completeness checks above pass vacuously.
+type _ProposalHasNoIndexSignature = Assert<Equal<string extends keyof CanonicalProposal ? true : false, false>>;
+type _PurchaseHasNoIndexSignature = Assert<Equal<string extends keyof ProposalPurchase ? true : false, false>>;
+// The re-declared fields keep their SDK-specific shapes.
+interface CustomTerms extends ProposalCommercialTerms {
+  seller_note: string;
+}
+type _ProposalTermsStayGeneric = Assert<Equal<CanonicalProposal<CustomTerms>['commercial_terms'], CustomTerms>>;
+const legacyInsertionOrder: CanonicalProposal['insertion_order'] = { legacy_field: true };
+void legacyInsertionOrder;
 
 // Handwritten negotiation inputs retain their backwards-compatible optional
 // fields while using the exact generated schema types for new 3.2 criteria.
