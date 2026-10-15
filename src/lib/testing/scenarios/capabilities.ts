@@ -311,15 +311,18 @@ function crossValidateProtocolsAndTools(capabilities: AdcpCapabilities, tools: s
   const issues: string[] = [];
   const warnings: string[] = [];
 
-  const protocolToolMap: Record<string, readonly string[]> = {
+  // Keys must be `AdcpProtocol` values as reported by `parseCapabilitiesResponse`
+  // (`satisfies` rejects any other key at compile time). `compliance_testing`
+  // is promoted from the top-level capability block, not `supported_protocols`.
+  const protocolToolMap: Readonly<Record<string, readonly string[]>> = {
     media_buy: MEDIA_BUY_TOOLS,
     signals: SIGNALS_TOOLS,
     governance: GOVERNANCE_TOOLS,
     creative: CREATIVE_TOOLS,
     sponsored_intelligence: SPONSORED_INTELLIGENCE_TOOLS,
     trusted_match: TRUSTED_MATCH_TOOLS,
-    compliance: COMPLIANCE_TOOLS,
-  };
+    compliance_testing: COMPLIANCE_TOOLS,
+  } satisfies Partial<Record<AdcpProtocol, readonly string[]>>;
 
   // Check each reported protocol has at least one corresponding tool
   const perProtocolDiffs: Record<string, { expected: string[]; found: string[]; missing: string[] }> = {};
