@@ -107,6 +107,26 @@ export function createExpressVerifier(options: ExpressMiddlewareOptions) {
     res: { status: (code: number) => { set: (k: string, v: string) => { json: (body: unknown) => void } } },
     next: NextFn
   ): Promise<void> {
+    // Profile selection (AdCP 3.3 R2): a message carrying Signature-Agent or
+    // the web-bot-auth tag is verified under Web Bot Auth only, never under
+    // RFC 9421. This middleware does not implement Web Bot Auth, so it refuses
+    // the request the way the server integrations do when the profile is not
+    // configured: 403 without an Accept-Signature challenge.
+    // Loaded lazily so the RFC 9421 middleware keeps Web Bot Auth out of the
+    // focused client's eager module graph.
+    const { selectSignatureProfile, WebBotAuthError } = require('./web-bot-auth') as typeof import('./web-bot-auth');
+    if (selectSignatureProfile({ headers: req.headers }) === 'web-bot-auth') {
+      const refused = new WebBotAuthError(403, 'profile_disabled');
+      res
+        .status(refused.status)
+        .set('Cache-Control', 'no-store')
+        .json({
+          ...refused.body,
+          message:
+            'Web Bot Auth is not configured on this endpoint; use createAdcpServer signedRequests.webBotAuth or verifySignatureAsAuthenticator({ webBotAuth })',
+        });
+      return;
+    }
     try {
       const url = options.getUrl ? options.getUrl(req) : defaultUrl(req);
       const body = resolveRawBody(req);

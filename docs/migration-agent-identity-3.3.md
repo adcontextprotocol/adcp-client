@@ -452,3 +452,39 @@ Signing capabilities include the experimental `wba_draft_revision` field next to
 Revocation stores allocate no permanent row for an empty list. Each audited/unbound pool reserves a tenant-wide CAS budget (10,000 origins and 100,000 keys; each operator is limited to 256 origins and 16,384 keys per pool). Audited bindings promote existing facts without deleting them; self-service `openAccess` bindings stay in the unbound pool. Failed writes may conservatively reserve capacity; facts are never evicted to regain it. Store/quota failures return `SERVICE_UNAVAILABLE` for every operation. In-memory revocation storage is for development/tests and is bounded per origin, per operator (registrable domain, default 16,384 keys) and in total, so wildcard subdomains of one operator cannot fill it alone (several operators still can, and a refused merge fails closed); production sellers use shared persistent stores.
 
 Unbound callers use an internal per-origin anonymous scope to isolate task/proposal state; this is not a durable principal and is never returned by `get_principal`. Only the explicit anonymous tool policy is allowed.
+
+### Public deployment limits
+
+- **Durable authority history is required for public deployments.** Without
+  `authorityHistory`, the trust evaluator remembers which operators have served
+  a trust record only in process memory. Nothing is evicted, so no operator's
+  legacy `authorized_operators[]` fallback changes because of others, but the
+  memory is bounded: `maxEntries` (default 1,000) in total, at most half of
+  that (`maxPrivateAuthoritativeOperators`) for PSL PRIVATE-section names, and
+  `maxAuthoritativeOperatorsPerPrivateSuffix` (default 32) per hosting provider
+  (the provider's ICANN registrable domain, so every `*.vercel.app`,
+  `*.s3.<region>.amazonaws.com` or `*.<project>.platformsh.site` operator
+  shares one budget). An operator over budget has its trust record refused
+  until restart: 32 subdomains under one provider block later operators on that
+  provider, and a full `maxEntries` refuses every new trust record publisher.
+  A slot is taken by any 200, before the body is validated, so a removed or
+  invalid record still prevents a legacy downgrade. With a durable
+  `authorityHistory`, the in-memory set is only a cache and none of these
+  limits refuse records.
+- **The unbound revocation pool can fill.** With the default CAS limits
+  (100,000 keys per pool, 16,384 per operator), about seven registrable domains,
+  including free PSL PRIVATE-section names, can exhaust the unbound pool. New
+  unbound origins with revoked keys then fail closed with `SERVICE_UNAVAILABLE`
+  until capacity is raised; the bound pool is unaffected.
+- **Delisted origins have no exception.** A bound origin whose operator
+  delists it is identity-established for every request, including polling and
+  cancelling tasks it created while it was listed.
+- **Duplicate structured-field keys are rejected.** Signature-Input,
+  Signature and Signature-Agent with a duplicated dictionary member or a
+  duplicated parameter (for example `created=1;created=2`) are malformed: 400
+  under Web Bot Auth, `request_signature_header_malformed` under RFC 9421. RFC
+  8941 parsers keep the last value, which other implementations may not.
+- **`createExpressVerifier` does not implement Web Bot Auth.** It answers a
+  request carrying `Signature-Agent` or the `web-bot-auth` tag with 403 (no
+  challenge) instead of verifying it under RFC 9421. Use `createAdcpServer`
+  `signedRequests.webBotAuth` or `verifySignatureAsAuthenticator({ webBotAuth })`.

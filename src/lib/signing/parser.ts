@@ -131,93 +131,118 @@ function isInnerList(entry: unknown): entry is InnerList {
 }
 
 /**
- * RFC 8941 §3.2 parsers deduplicate by keeping the last value. The AdCP
- * profile (step 1) overrides that: duplicate keys are a downgrade vector —
- * a proxy could smuggle a weaker component set past a verifier that reads
- * the first. Detect duplicates at the raw-header level before the library
- * silently drops them.
+ * RFC 8941 / RFC 9651 parsers deduplicate dictionary keys and parameter keys
+ * by keeping the last value. The AdCP profile (step 1) overrides that:
+ * duplicates are a cross-implementation differential and a downgrade vector
+ * (a proxy could smuggle a weaker component set or a different `created`,
+ * `keyid` or `tag` past a verifier that reads the first). Detect them at the
+ * raw-header level before the library silently drops them: top-level
+ * dictionary keys, parameters on members and inner lists, and parameters on
+ * each inner-list item.
  */
 export function rejectDuplicateDictionaryKeys(headerValue: string, headerName: string): void {
-  const keys = extractTopLevelDictKeys(headerValue);
-  const seen = new Set<string>();
-  for (const key of keys) {
-    if (seen.has(key)) {
-      malformed(`${headerName} header declares key "${key}" more than once`);
-    }
-    seen.add(key);
-  }
+  const duplicate = findDuplicateStructuredKey(headerValue);
+  if (duplicate?.kind === 'member') malformed(`${headerName} header declares key "${duplicate.key}" more than once`);
+  if (duplicate) malformed(`${headerName} header declares parameter "${duplicate.key}" more than once`);
 }
 
-function extractTopLevelDictKeys(input: string): string[] {
-  const keys: string[] = [];
+/**
+ * Tolerant RFC 8941 dictionary walk that only reports duplicate keys. Syntax
+ * it does not recognise ends the walk; the strict parser rejects it later.
+ */
+function findDuplicateStructuredKey(input: string): { kind: 'member' | 'parameter'; key: string } | undefined {
   let i = 0;
-  const len = input.length;
-  let atEntryStart = true;
-  while (i < len) {
-    if (atEntryStart) {
-      while (i < len && (input[i] === ' ' || input[i] === '\t')) i++;
-      const keyStart = i;
-      while (i < len && /[A-Za-z0-9_*-]/.test(input[i]!)) i++;
-      if (i > keyStart) keys.push(input.slice(keyStart, i).toLowerCase());
-      atEntryStart = false;
-      continue;
-    }
-    const ch = input[i]!;
-    if (ch === '"') {
+  const n = input.length;
+  const ows = () => {
+    while (i < n && (input[i] === ' ' || input[i] === '\t')) i++;
+  };
+  const key = () => {
+    const start = i;
+    while (i < n && /[A-Za-z0-9_.*-]/.test(input[i]!)) i++;
+    return input.slice(start, i).toLowerCase();
+  };
+  const bareItem = () => {
+    if (input[i] === '%' && input[i + 1] === '"') {
+      // RFC 9651 display string: percent-encoded, so a backslash is an
+      // ordinary character and the next '"' always ends it.
+      i += 2;
+      while (i < n && input[i] !== '"') i++;
       i++;
-      while (i < len) {
-        if (input[i] === '\\' && i + 1 < len) {
+      return;
+    }
+    if (input[i] === '"') {
+      i++;
+      while (i < n) {
+        if (input[i] === '\\') {
           i += 2;
           continue;
         }
-        if (input[i] === '"') {
-          i++;
-          break;
-        }
-        i++;
+        if (input[i++] === '"') return;
       }
-      continue;
+      return;
     }
-    if (ch === ':') {
+    if (input[i] === ':') {
       i++;
-      while (i < len && input[i] !== ':') i++;
-      if (i < len) i++;
-      continue;
+      while (i < n && input[i] !== ':') i++;
+      i++;
+      return;
     }
-    if (ch === '(') {
+    while (i < n && !/[;,()\s"]/.test(input[i]!)) i++;
+  };
+  const parameters = (): string | undefined => {
+    const seen = new Set<string>();
+    while (i < n && input[i] === ';') {
       i++;
-      let depth = 1;
-      while (i < len && depth > 0) {
-        const c = input[i]!;
-        if (c === '"') {
-          i++;
-          while (i < len) {
-            if (input[i] === '\\' && i + 1 < len) {
-              i += 2;
-              continue;
-            }
-            if (input[i] === '"') {
-              i++;
-              break;
-            }
+      ows();
+      const k = key();
+      if (!k) return undefined;
+      if (seen.has(k)) return k;
+      seen.add(k);
+      if (input[i] === '=') {
+        i++;
+        bareItem();
+      }
+    }
+    return undefined;
+  };
+  const members = new Set<string>();
+  while (i < n) {
+    ows();
+    const k = key();
+    if (!k) return undefined;
+    if (members.has(k)) return { kind: 'member', key: k };
+    members.add(k);
+    let duplicate: string | undefined;
+    if (input[i] === '=') {
+      i++;
+      if (input[i] === '(') {
+        i++;
+        for (;;) {
+          while (i < n && input[i] === ' ') i++;
+          if (i >= n) return undefined;
+          if (input[i] === ')') {
             i++;
+            break;
           }
-          continue;
+          const before = i;
+          bareItem();
+          duplicate = parameters();
+          if (duplicate) return { kind: 'parameter', key: `${k}: ${duplicate}` };
+          if (i === before) return undefined;
         }
-        if (c === '(') depth++;
-        else if (c === ')') depth--;
-        i++;
+        duplicate = parameters();
+      } else {
+        bareItem();
+        duplicate = parameters();
       }
-      continue;
-    }
-    if (ch === ',') {
-      atEntryStart = true;
-      i++;
-      continue;
-    }
+    } else duplicate = parameters();
+    if (duplicate) return { kind: 'parameter', key: `${k}: ${duplicate}` };
+    ows();
+    if (i >= n) return undefined;
+    if (input[i] !== ',') return undefined;
     i++;
   }
-  return keys;
+  return undefined;
 }
 
 /**
