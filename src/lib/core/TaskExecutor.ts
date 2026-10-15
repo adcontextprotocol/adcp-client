@@ -24,6 +24,7 @@ import {
   type ValidationMode,
 } from '../validation/client-hooks';
 import { formatIssues } from '../validation/schema-validator';
+import { resolveServedValidationVersion } from '../validation/schema-loader';
 import { ADCP_VERSION } from '../version';
 import { unwrapProtocolResponse, isAdcpOperationSuccess } from '../utils/response-unwrapper';
 import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extraction';
@@ -6031,10 +6032,19 @@ export class TaskExecutor {
       // Normal dispatch uses lastKnownServerVersion; restart recovery passes
       // the persisted continuation version explicitly so concurrent or fresh
       // executors cannot validate the seller's response against another wire.
-      const validationVersion =
+      let validationVersion =
         (serverVersion ?? this.lastKnownServerVersion) === 'v2'
           ? 'v2.5'
           : (this.responseAdcpVersionForValidation() ?? this.config.adcpVersion ?? ADCP_VERSION);
+      // Capabilities are negotiated before any pin applies: a 3.0 pin (or a
+      // major-only envelope) is served the seller's highest release in the
+      // major, echoed in `adcp_version`. Validate against that release, as the
+      // versioning spec requires ("Server echoes"), falling back to the pin
+      // when there is no usable echo. Only the validator's version changes;
+      // the unwrapper keeps `effectiveResponseAdcpVersion()`.
+      if (taskName === 'get_adcp_capabilities' && validationVersion !== 'v2.5') {
+        validationVersion = resolveServedValidationVersion(response, validationVersion);
+      }
       const normalizedResponse = this.normalizeResponseForValidation(response, taskName, validationVersion === 'v2.5');
       // TaskExecutor owns the user-facing log entry below. Passing debugLogs
       // into the lower-level hook would emit a second, unversioned duplicate.
