@@ -16,6 +16,7 @@
 const { describe, test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const path = require('node:path');
 
 process.env.ADCP_ALLOW_INTERNAL_PROBES = '1';
 
@@ -23,6 +24,7 @@ const { ADCPMultiAgentClient } = require('../../dist/lib/index.js');
 const { testCapabilityDiscovery } = require('../../dist/lib/testing/scenarios/capabilities.js');
 const { closeMCPConnections } = require('../../dist/lib/protocols/mcp.js');
 const { resolveServedValidationVersion } = require('../../dist/lib/validation/served-version.js');
+const { withExternalSchemaRoot } = require('../../dist/lib/validation/schema-loader.js');
 
 /** A conformant AdCP 3.2 capabilities response, invalid against 3.0 and 3.1. */
 function capabilities32(overrides = {}) {
@@ -131,6 +133,27 @@ describe('resolveServedValidationVersion', () => {
     // Spec: with no echo, validate against the pin.
     assert.equal(resolveServedValidationVersion({ adcp: { supported_versions: ['3.0', '3.2'] } }, '3.0'), '3.0');
   });
+
+  test('handles prerelease and legacy pins', () => {
+    assert.equal(resolveServedValidationVersion({ adcp_version: '3.2' }, '3.1-beta'), '3.2', 'stable echo, beta pin');
+    assert.equal(resolveServedValidationVersion({ adcp_version: '3.1-beta.1' }, '3.1.0-beta.1'), '3.1.0-beta.1');
+    assert.equal(
+      resolveServedValidationVersion({ adcp_version: '3.4-rc.1' }, '3.0'),
+      '3.0',
+      'unbundled prerelease echo'
+    );
+    assert.equal(resolveServedValidationVersion({ adcp_version: '3.2' }, 'v3'), 'v3', 'legacy alias pin');
+  });
+
+  test('an external schema root bound to the pin wins over the echo', () => {
+    // Same precedence as the storyboard runner's response_schema check.
+    const root = path.join(__dirname, '../../dist/lib/schemas-data/3.0');
+    const selected = withExternalSchemaRoot('3.0', root, () =>
+      resolveServedValidationVersion({ adcp_version: '3.2' }, '3.0')
+    );
+    assert.equal(selected, '3.0');
+    assert.equal(resolveServedValidationVersion({ adcp_version: '3.2' }, '3.0'), '3.2', 'scope ended');
+  });
 });
 
 describe('capability discovery with a 3.0 pin against a seller serving 3.2', () => {
@@ -213,6 +236,20 @@ describe('capability discovery with a 3.0 pin against a seller serving 3.2', () 
     const result = await client.agent('seller').getAdcpCapabilities({});
 
     assert.equal(result.success, true, result.error);
+  });
+
+  test('TaskExecutor uses the echo under an explicit major-only envelope', async t => {
+    // responseAdcpVersionForValidation() pins major-only validation to 3.0.
+    const seller = await withSeller(t, { payload: capabilities32() });
+    const client = new ADCPMultiAgentClient(
+      [{ id: 'seller', name: 'Seller', agent_uri: seller.url, protocol: 'mcp' }],
+      { adcpVersion: '3.2', versionEnvelope: 'major-only', validation: { responses: 'strict' } }
+    );
+
+    const result = await client.agent('seller').getAdcpCapabilities({});
+
+    assert.equal(result.success, true, result.error);
+    assert.equal(seller.capabilityRequests.at(-1)?.adcp_version, undefined);
   });
 
   test('TaskExecutor keeps strict validation against the served release', async t => {
