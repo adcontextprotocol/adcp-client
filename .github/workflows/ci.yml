@@ -826,6 +826,7 @@ jobs:
           test/lib/reporting-bigquery-sink-pg.test.js
           test/lib/reporting-head-of-line-pg.test.js
           test/lib/reporting-row-retention-pg.test.js
+          test/lib/reporting-row-orphan-collector-pg.test.js
           test/lib/reliable-reporting-core-maintenance-pg.test.js
 
       - name: Run PostgreSQL reporting contracts with chunked row storage

@@ -462,6 +462,14 @@ await store.readyRowStorage();
   version at the recorded size is the same bytes) instead of downloading it
   while holding the account and object locks. A provider without `stat` falls
   back to reading the whole object there. All bundled providers implement it.
+  Also implement the optional `list({ prefix, pageToken, pageSize })`, which
+  returns `{ objects: [{ objectRef, nativeVersionRef, sizeBytes, createdAt }],
+  nextPageToken? }`: every stored version under the prefix once, in a stable
+  order (on a versioned store, noncurrent versions too, never delete markers),
+  with the version exactly as `putIfAbsent` recorded it and the time it was
+  written. The orphan collector needs it; a binding whose provider has no `list`
+  is reported as unsupported there. The conformance suite checks it (`list`) when
+  present. All bundled providers implement it.
 
 #### Cloud providers
 
@@ -813,12 +821,14 @@ Tasks, in order:
 | `change-feed pruning` | when `maintenance.changeFeed` is set              | `pruneChanges` with `changeRetentionDays` and `maxFeedHoldDays`.     |
 | `retention`           | when `maintenance.retention.enabled` is `true`    | `retireExpiredPeriods` with the service's `statusRetentionDays` and the feed's `maxFeedHoldDays`. |
 | `snapshot compaction` | when `maintenance.compaction.enabled` is `true`   | `compactSupersededSnapshots` with the service's `statusRetentionDays` and `automatedRecoveryWindowSeconds` (see [Compacting superseded snapshots](#compacting-superseded-snapshots-opt-in)). |
+| `orphan object collection` | when `maintenance.orphanCollection.enabled` is `true` | `collectOrphanedRowObjects`: lists each object binding under `{prefix}/{namespace_key}/` and deletes old objects nothing names. Opt-in, rate-limited and resumable; see [Orphaned object collection](REPORTING-OPERATIONS.md#adopting-row-storage-retention-and-the-change-feed). |
 
 Notes:
 
 - `maintenance` requires a `PostgresReportingLedgerStore` (or a store with the
   same `retireExpiredPeriods`, `pruneChanges` and `sweepRowWriteIntents`
-  methods) and fails at construction otherwise. `maintenance.changeFeed` also
+  methods, plus `collectOrphanedRowObjects` when `orphanCollection` is set) and
+  fails at construction otherwise. `maintenance.changeFeed` also
   requires `changeFeed: true` on the store, since pruning is otherwise a silent
   no-op.
 - Retention takes `statusRetentionDays` from the service, so it can never retire

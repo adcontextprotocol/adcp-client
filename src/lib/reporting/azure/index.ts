@@ -10,7 +10,7 @@
 import { randomUUID } from 'node:crypto';
 import type { BlobClient, BlobServiceClient, ContainerClient } from '@azure/storage-blob';
 import { ReportingRowStoreError } from '../ledger/row-storage-errors';
-import type { ReportingRowObjectProviderV1 } from '../ledger/row-storage-object';
+import type { ReportingRowObjectListEntryV1, ReportingRowObjectProviderV1 } from '../ledger/row-storage-object';
 import {
   assertReportingRowLocationKeys,
   assertReportingRowReadBounds,
@@ -301,6 +301,75 @@ export function createAzureBlobReportingRowObjectProviderV1(
           if (isMissing(error) || statusOf(error) === 400) return null;
           throw error;
         }
+      });
+    },
+    list(input, context) {
+      return runReportingRowProviderOperation(context.signal, async () => {
+        const container = containerFor(input);
+        if (typeof input.prefix !== 'string' || input.prefix.length > 1024) {
+          throw new ReportingRowStoreError('INVALID_INPUT', 'list prefix is invalid');
+        }
+        if (!Number.isSafeInteger(input.pageSize) || input.pageSize < 1) {
+          throw new ReportingRowStoreError('INVALID_INPUT', 'pageSize must be a positive integer');
+        }
+        // Versioned listing: every (name, versionId) a delete could name, the current version included.
+        const pages = container
+          .listBlobsFlat({ prefix: input.prefix, includeVersions: true, abortSignal: context.signal })
+          .byPage({
+            maxPageSize: Math.min(input.pageSize, 5000),
+            ...(input.pageToken ? { continuationToken: input.pageToken } : {}),
+          });
+        const page = (await pages.next()).value as
+          | {
+              continuationToken?: string;
+              segment?: {
+                blobItems?: {
+                  name?: string;
+                  versionId?: string;
+                  properties?: { contentLength?: number; createdOn?: Date; lastModified?: Date };
+                }[];
+              };
+            }
+          | undefined;
+        const objects: ReportingRowObjectListEntryV1[] = [];
+        let skipped = 0;
+        for (const item of page?.segment?.blobItems ?? []) {
+          const size = item.properties?.contentLength;
+          // The later of creation and last modification: an overwrite can move the second without the first.
+          const created = Math.max(
+            item.properties?.createdOn?.getTime() ?? NaN,
+            item.properties?.lastModified?.getTime() ?? 0
+          );
+          // An entry that cannot be addressed or aged is left out: it is never collected, and one bad entry
+          // must not stop the listing of the rest. A blob written before versioning was enabled has no
+          // version ID and is never addressable by a recorded one.
+          if (
+            typeof item.name !== 'string' ||
+            !item.name.startsWith(input.prefix) ||
+            typeof item.versionId !== 'string' ||
+            !VERSION_ID.test(item.versionId) ||
+            typeof size !== 'number' ||
+            !Number.isSafeInteger(size) ||
+            size < 0 ||
+            !Number.isFinite(created)
+          ) {
+            skipped += 1;
+            continue;
+          }
+          objects.push({
+            objectRef: item.name,
+            nativeVersionRef: item.versionId,
+            sizeBytes: size,
+            createdAt: new Date(created!).toISOString(),
+          });
+        }
+        await pages.return?.(undefined);
+        const token = page?.continuationToken;
+        return {
+          objects,
+          ...(skipped > 0 ? { skipped } : {}),
+          ...(typeof token === 'string' && token ? { nextPageToken: token } : {}),
+        };
       });
     },
     delete(input, context) {

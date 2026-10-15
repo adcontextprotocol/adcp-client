@@ -144,6 +144,27 @@ export function assertReportingRowLocationKeys(
   }
 }
 
+const OBJECT_KEY = /^[A-Za-z0-9_.=-]+(?:\/[A-Za-z0-9_.=-]+)*$/;
+const RFC3339_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
+
+/**
+ * Whether a key has the shape `renderReportingRowObjectKeyV1` gives every row object: the same character
+ * set, no empty, `.` or `..` segment, and within AdCP's `object_ref` bound.
+ */
+export function isReportingRowObjectKeyShape(key: string, maxLength: number): boolean {
+  return (
+    typeof key === 'string' &&
+    key.length <= maxLength &&
+    OBJECT_KEY.test(key) &&
+    !key.split('/').some(segment => segment === '.' || segment === '..')
+  );
+}
+
+/** A strict RFC 3339 UTC instant, as `Date#toISOString` renders it. `Date.parse` alone accepts far too much. */
+export function isReportingRowInstant(value: unknown): value is string {
+  return typeof value === 'string' && RFC3339_UTC.test(value) && Number.isFinite(Date.parse(value));
+}
+
 /**
  * Whether an object-store prefix filter can match keys under the binding's
  * owned prefix. An absent or empty filter matches everything.

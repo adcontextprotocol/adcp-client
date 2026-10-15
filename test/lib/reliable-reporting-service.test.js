@@ -4335,6 +4335,52 @@ describe('ReliableReportingService ledger maintenance option', () => {
     assert.throws(() => build({ changeFeed: { changeRetentionDays: 1.5 } }), /changeRetentionDays/);
   });
 
+  test('orphanCollection needs a store that can collect, the acknowledgement to delete, and runs through runMaintenance', async () => {
+    const store = maintenanceCapable(new MemoryLedgerStore());
+    const build = maintenance => serviceFixture({ store, maintenance });
+    const ack = { enabled: true, acknowledgeExclusiveNamespace: true };
+    assert.throws(() => build({ orphanCollection: ack }), /collectOrphanedRowObjects/);
+    const calls = [];
+    store.collectOrphanedRowObjects = async options => {
+      calls.push(options);
+      return {
+        dryRun: options.dryRun === true,
+        listed: 0,
+        referenced: 0,
+        tooYoung: 0,
+        foreign: 0,
+        deleted: 0,
+        wouldDelete: 0,
+        failed: 0,
+        unsupported: [],
+        skippedReadOnly: [],
+        candidates: [],
+        cursors: { objects: 'next-page' },
+        completed: [],
+        bindings: [],
+      };
+    };
+    assert.throws(() => build({ orphanCollection: { enabled: true } }), /acknowledgeExclusiveNamespace/);
+    assert.throws(() => build({ orphanCollection: { ...ack, minAgeSeconds: 60 } }), /at least 1 day/);
+    assert.throws(() => build({ orphanCollection: { ...ack, limit: 0 } }), /limit/);
+    const { service } = build({ orphanCollection: { ...ack, limit: 50, includeReadOnly: true } });
+    const first = await service.runMaintenance();
+    assert.ok(first.some(result => result.task === 'orphan object collection' && result.status === 'completed'));
+    assert.deepEqual(calls[0], {
+      acknowledgeExclusiveNamespace: true,
+      limit: 50,
+      includeReadOnly: true,
+      cursors: {},
+      skipBindings: [],
+    });
+    // The next pass resumes from the position the service kept.
+    await service.runMaintenance();
+    assert.deepEqual(calls[1].cursors, { objects: 'next-page' });
+    const dry = build({ orphanCollection: { enabled: true, dryRun: true } });
+    await dry.service.runMaintenance();
+    assert.equal(calls[2].dryRun, true);
+  });
+
   test('runMaintenance requires the option, and omits the snapshot sweep when the store cannot reach the pool', async () => {
     await assert.rejects(() => serviceFixture().service.runMaintenance(), /requires the maintenance option/);
     const { service } = serviceFixture({ store: maintenanceCapable(new MemoryLedgerStore()), maintenance: {} });

@@ -71,6 +71,8 @@ import {
   type ReportingLedgerMaintenanceStoreV1,
   type ReportingLedgerMaintenanceTaskResultV1,
   type ReportingCompactionOptionsV1,
+  type ReportingOrphanCollectionOptionsV1,
+  type ReportingOrphanCollectionStateV1,
   type ReportingRetentionOptionsV1,
 } from './maintenance';
 import type { InlineReportingReplayRetentionV1 } from '../source';
@@ -303,6 +305,8 @@ export interface ReliableReportingMaintenanceOptionsV1 {
   compaction?: ReportingCompactionOptionsV1;
   /** Change-feed pruning and consumer hold; see the production service's `changeFeed`. */
   changeFeed?: ReportingChangeFeedMaintenanceOptionsV1;
+  /** Opt-in listing collector for orphaned row objects; see the production service's `orphanCollection`. */
+  orphanCollection?: ReportingOrphanCollectionOptionsV1;
 }
 
 const DEFAULT_MAINTENANCE_INTERVAL_MILLISECONDS = 300_000;
@@ -467,6 +471,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       'pruneChanges',
       'sweepRowWriteIntents',
       ...(maintenance.compaction ? (['compactSupersededSnapshots'] as const) : []),
+      ...(maintenance.orphanCollection ? (['collectOrphanedRowObjects'] as const) : []),
     ] as const) {
       if (typeof candidate[method] !== 'function') {
         throw new TypeError(
@@ -491,6 +496,8 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     }
     assertReportingLedgerMaintenanceOptions(maintenance, retentionDays);
   }
+  // Where the orphan collector is up to, kept across passes of this process.
+  const orphanState: ReportingOrphanCollectionStateV1 = { cursors: {} };
   // Snapshot/checkpoint sweeping needs the pool, which only the store holds.
   // A store without `sweepExpiredState` simply skips that task.
   const runLedgerMaintenance = (
@@ -507,6 +514,8 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       retention: maintenance!.retention,
       compaction: maintenance!.compaction,
       changeFeed: maintenance!.changeFeed,
+      orphanCollection: maintenance!.orphanCollection,
+      orphanState,
       signal,
       ...(report ? { report } : {}),
     });
@@ -803,6 +812,17 @@ export type CreatePostgresReliableReportingProductionServiceOptionsV1<TCtxMeta =
    */
   compaction?: ReportingCompactionOptionsV1;
   /**
+   * Opt in to the listing collector for row objects the write-intent sweep cannot see (an upload that
+   * succeeded before its intent recorded it, intents for a binding no running host configures, intents
+   * lost to a database restore). Off by default. Each scheduler pass lists every configured object
+   * binding under `{prefix}/{namespace_key}/`, examines at most `limit` objects per binding, and
+   * deletes an object only when it is older than `minAgeSeconds` (default 7 days) and no ledger record
+   * or open upload names it. Needs `rowStorage` bindings whose provider can `list`; others are reported
+   * as unsupported. Enable it only on the ledger database that owns the namespace, never on a clone or
+   * restore that still points at the same bucket. Start with `dryRun: true`.
+   */
+  orphanCollection?: ReportingOrphanCollectionOptionsV1;
+  /**
    * Maintain the host change feed (`changesAfter`, `getCurrentRevision`,
    * `listCurrentRevisions` on `stores.core`). Adds
    * `REPORTING_LEDGER_CHANGES_MIGRATION` (PostgreSQL 13+); the scheduler prunes
@@ -893,7 +913,10 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
   if (typeof options.activity?.tenantScopeForAccount !== 'function') {
     throw new TypeError('Reliable Reporting production service requires activity.tenantScopeForAccount');
   }
-  assertReportingLedgerMaintenanceOptions({ compaction: options.compaction }, options.statusRetentionDays);
+  assertReportingLedgerMaintenanceOptions(
+    { compaction: options.compaction, orphanCollection: options.orphanCollection },
+    options.statusRetentionDays
+  );
   if (
     Object.values(options.adapters).some(
       adapter => adapter.deliveryOffering.reconciliation_mode === 'consumer_receipt'
@@ -1070,6 +1093,8 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
   let auxiliaryAbort: AbortController | undefined;
   let auxiliaryPromise: Promise<void> | undefined;
   let auxiliaryRotation = 0;
+  // Where the orphan collector is up to, kept across scheduler passes of this process.
+  const orphanState: ReportingOrphanCollectionStateV1 = { cursors: {} };
   const reportAuxiliaryError = async (
     scheduler: ReliableReportingSchedulerOptionsV1,
     error: unknown
@@ -1129,6 +1154,8 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
       retention: options.retention,
       compaction: options.compaction,
       changeFeed: options.changeFeed,
+      orphanCollection: options.orphanCollection,
+      orphanState,
       signal,
       report: error => reportAuxiliaryError(scheduler, error),
     });
@@ -2188,6 +2215,8 @@ export {
   ReportingMaintenancePartialFailureError,
   type ReportingChangeFeedMaintenanceOptionsV1,
   type ReportingCompactionOptionsV1,
+  type ReportingOrphanCollectionOptionsV1,
+  type ReportingOrphanCollectionStateV1,
   type ReportingLedgerMaintenanceStoreV1,
   type ReportingLedgerMaintenanceTaskNameV1,
   type ReportingLedgerMaintenanceTaskResultV1,

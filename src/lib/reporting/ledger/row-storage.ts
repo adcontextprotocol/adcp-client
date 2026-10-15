@@ -18,13 +18,16 @@ import {
   type ReportingRowSegmentManifestV1,
 } from './row-encoding';
 import { probeReportingRowStorageSchemaV1 } from './row-storage-migration';
+import { isReportingRowInstant, isReportingRowObjectKeyShape } from './row-storage-provider-io';
 import { ReportingRowStoreError, isReportingRowStoreError } from './row-storage-errors';
 import {
   REPORTING_ROW_DEFAULT_KEY_TEMPLATE,
   REPORTING_ROW_NATIVE_VERSION_REF_MAX_LENGTH,
+  REPORTING_ROW_OBJECT_REF_MAX_LENGTH,
   assertReportingRowKeyTemplateV1,
   assertReportingRowPrefixV1,
   renderReportingRowObjectKeyV1,
+  type ReportingRowObjectListEntryV1,
   type ReportingRowObjectProviderV1,
 } from './row-storage-object';
 
@@ -373,6 +376,90 @@ export class ReportingRowStorageV1 {
     return Object.entries(this.bindings)
       .filter(([, binding]) => binding.kind === 'object')
       .map(([id]) => id);
+  }
+
+  /**
+   * The object bindings this host configures: whether each is `readOnly` and whether its provider can
+   * list objects. Used by the orphan collector to skip or report a binding.
+   */
+  objectBindingSummaries(): { id: string; readOnly: boolean; listable: boolean }[] {
+    return Object.entries(this.bindings)
+      .filter((entry): entry is [string, ReportingObjectRowBindingV1] => entry[1].kind === 'object')
+      .map(([id, binding]) => ({
+        id,
+        readOnly: binding.readOnly === true,
+        listable: typeof this.providers[binding.provider]?.list === 'function',
+      }));
+  }
+
+  /**
+   * One page of the objects under a binding's owned prefix, `{prefix}/{namespace_key}/`, and nothing
+   * else: an entry the provider returns outside it, or one that is not a well-formed object reference,
+   * is dropped and counted in `foreign` instead of being returned. Throws `INVALID_INPUT` when the
+   * binding's provider has no `list`.
+   */
+  async listObjects(
+    bindingId: string,
+    input: { pageToken?: string; pageSize: number; signal?: AbortSignal }
+  ): Promise<{
+    ownedPrefix: string;
+    objects: ReportingRowObjectListEntryV1[];
+    /** Entries dropped: outside the owned prefix, malformed, or left out by the provider as unaddressable. */
+    foreign: number;
+    nextPageToken?: string;
+  }> {
+    await this.ready();
+    const binding = this.bindings[bindingId];
+    if (!binding || binding.kind !== 'object') {
+      throw new ReportingRowStoreError('STATE_UNAVAILABLE', `row binding ${bindingId} is not configured for objects`);
+    }
+    const provider = this.providers[binding.provider]!;
+    if (typeof provider.list !== 'function') {
+      throw new ReportingRowStoreError('INVALID_INPUT', `row binding ${bindingId}'s provider cannot list objects`);
+    }
+    const ownedPrefix = `${binding.prefix}/${this.installation!.namespaceKey}/`;
+    const context = { signal: deadlineSignal(this.readDeadline, input.signal) };
+    const page = await this.provider(() =>
+      provider.list!(
+        {
+          ...providerLocation(binding),
+          prefix: ownedPrefix,
+          pageSize: input.pageSize,
+          ...(input.pageToken !== undefined ? { pageToken: input.pageToken } : {}),
+        },
+        context
+      )
+    );
+    if (!page || !Array.isArray(page.objects)) {
+      throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'provider returned an invalid listing');
+    }
+    if (page.nextPageToken !== undefined && (typeof page.nextPageToken !== 'string' || page.nextPageToken === '')) {
+      throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'provider returned an invalid page token');
+    }
+    if (page.objects.length > input.pageSize) {
+      throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'provider returned more objects than the page size');
+    }
+    const objects: ReportingRowObjectListEntryV1[] = [];
+    let foreign = Number.isSafeInteger(page.skipped) && page.skipped! > 0 ? page.skipped! : 0;
+    for (const entry of page.objects) {
+      if (
+        !entry ||
+        typeof entry.objectRef !== 'string' ||
+        !isReportingRowObjectKeyShape(entry.objectRef, REPORTING_ROW_OBJECT_REF_MAX_LENGTH) ||
+        !entry.objectRef.startsWith(ownedPrefix) ||
+        typeof entry.nativeVersionRef !== 'string' ||
+        entry.nativeVersionRef.length < 1 ||
+        entry.nativeVersionRef.length > REPORTING_ROW_NATIVE_VERSION_REF_MAX_LENGTH ||
+        !Number.isSafeInteger(entry.sizeBytes) ||
+        entry.sizeBytes < 0 ||
+        !isReportingRowInstant(entry.createdAt)
+      ) {
+        foreign += 1;
+        continue;
+      }
+      objects.push(entry);
+    }
+    return { ownedPrefix, objects, foreign, ...(page.nextPageToken ? { nextPageToken: page.nextPageToken } : {}) };
   }
 
   /** Probe the schema and every provider, and register (or verify) every configured binding. Idempotent. */

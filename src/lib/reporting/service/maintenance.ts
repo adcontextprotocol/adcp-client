@@ -33,6 +33,61 @@ export interface ReportingCompactionOptionsV1 {
 }
 
 /**
+ * Opt-in listing collector for row objects the write-intent sweep cannot see: an upload that
+ * succeeded before its intent recorded it, an intent for a binding no running host configures, and
+ * an intent lost to a database restore. Off unless `enabled: true`. It lists each configured object
+ * binding under its owned prefix, `{prefix}/{namespace_key}/`, and deletes an object only when it is
+ * old enough and no ledger record or open upload names it. Cost grows with bucket size, so each pass
+ * examines at most `limit` objects per binding and resumes from where it stopped.
+ *
+ * Enable it only on the ledger database that owns the namespace. A clone or restore of that
+ * database that still points at the same bucket shares its namespace and would delete the objects
+ * of every row set the original wrote after the clone was taken. Start with `dryRun: true` and read
+ * `candidates` in the task result. See `docs/guides/REPORTING-OPERATIONS.md`.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export interface ReportingOrphanCollectionOptionsV1 {
+  enabled: true;
+  /** Report what would be deleted and delete nothing. Defaults to false. */
+  dryRun?: boolean;
+  /**
+   * Required unless `dryRun`: your statement that this ledger database is the only one that owns the
+   * namespace, and not a clone or restore pointed at the same bucket.
+   */
+  acknowledgeExclusiveNamespace?: boolean;
+  /**
+   * Minimum time between full listings, counted from when the previous one finished. Defaults to 86400 (a
+   * day). Passes in between do nothing; a listing that has not finished (it stops at `limit`) continues on
+   * every pass.
+   */
+  intervalSeconds?: number;
+  /**
+   * Objects younger than this are never deleted. Defaults to 7 days; at least 1 day. Keep it well above
+   * the longest write deadline plus intent expiry.
+   */
+  minAgeSeconds?: number;
+  /** Objects examined per binding per pass. Defaults to 1000. */
+  limit?: number;
+  /** Also collect from `readOnly` bindings, which are skipped by default. */
+  includeReadOnly?: boolean;
+}
+
+/**
+ * Progress of the orphan collector between passes. Create one per process (`{ cursors: {} }`) and pass it to
+ * every pass; it is not persisted, so a restart begins a new listing.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export interface ReportingOrphanCollectionStateV1 {
+  cursors: Record<string, string>;
+  /** Bindings whose listing finished in the current cycle; not listed again until every binding has. */
+  completed?: string[];
+  /** Epoch milliseconds before which no new full listing starts. */
+  nextCycleAt?: number;
+}
+
+/**
  * Change-feed pruning window and the consumer hold shared with retention.
  *
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
@@ -50,7 +105,7 @@ export type ReportingLedgerMaintenanceStoreV1 = Pick<
   PostgresReportingLedgerStore,
   'sweepRowWriteIntents' | 'pruneChanges' | 'retireExpiredPeriods'
 > &
-  Partial<Pick<PostgresReportingLedgerStore, 'compactSupersededSnapshots'>>;
+  Partial<Pick<PostgresReportingLedgerStore, 'compactSupersededSnapshots' | 'collectOrphanedRowObjects'>>;
 
 interface ReportingLedgerMaintenanceTaskOutcomesV1 {
   'snapshot sweep': Awaited<ReturnType<PostgresReportingLedgerStore['sweepExpiredState']>>;
@@ -58,6 +113,7 @@ interface ReportingLedgerMaintenanceTaskOutcomesV1 {
   'change-feed pruning': Awaited<ReturnType<PostgresReportingLedgerStore['pruneChanges']>>;
   retention: Awaited<ReturnType<PostgresReportingLedgerStore['retireExpiredPeriods']>>;
   'snapshot compaction': Awaited<ReturnType<PostgresReportingLedgerStore['compactSupersededSnapshots']>>;
+  'orphan object collection': Awaited<ReturnType<PostgresReportingLedgerStore['collectOrphanedRowObjects']>>;
 }
 
 /**
@@ -129,6 +185,14 @@ export interface RunReportingLedgerMaintenanceInputV1 {
   retention?: ReportingRetentionOptionsV1 | undefined;
   compaction?: ReportingCompactionOptionsV1 | undefined;
   changeFeed?: ReportingChangeFeedMaintenanceOptionsV1 | undefined;
+  orphanCollection?: ReportingOrphanCollectionOptionsV1 | undefined;
+  /**
+   * Where `orphanCollection` is up to: listing positions by binding ID, and when the next full listing may
+   * start. The caller owns it and passes the same object on every pass; the pass reads and updates it, so a
+   * large listing resumes where the last pass stopped and `intervalSeconds` is honoured. Omit it and every
+   * pass starts from the beginning.
+   */
+  orphanState?: ReportingOrphanCollectionStateV1 | undefined;
   signal?: AbortSignal | undefined;
   /**
    * Called, in task order and awaited, for every task that rejected or
@@ -152,7 +216,7 @@ type StartedTask = [ReportingLedgerMaintenanceTaskNameV1, Promise<unknown>];
 export async function runReportingLedgerMaintenance(
   input: RunReportingLedgerMaintenanceInputV1
 ): Promise<ReportingLedgerMaintenanceTaskResultV1[]> {
-  const { store, signal, changeFeed, retention, compaction } = input;
+  const { store, signal, changeFeed, retention, compaction, orphanCollection } = input;
   // Each task starts inside `start`, so a synchronous throw becomes that
   // task's rejection instead of aborting the list: the tasks after it still
   // run and the ones already started are never orphaned.
@@ -222,6 +286,67 @@ export async function runReportingLedgerMaintenance(
           }),
         ]
       : []),
+    ...(orphanCollection?.enabled
+      ? [
+          start('orphan object collection', async () => {
+            if (typeof store.collectOrphanedRowObjects !== 'function') {
+              throw new TypeError('orphan collection requires a store with collectOrphanedRowObjects');
+            }
+            const state = input.orphanState;
+            if (state?.nextCycleAt !== undefined && Date.now() < state.nextCycleAt) {
+              // Between full listings: nothing to do this pass.
+              return {
+                dryRun: orphanCollection.dryRun === true,
+                listed: 0,
+                referenced: 0,
+                tooYoung: 0,
+                foreign: 0,
+                deleted: 0,
+                wouldDelete: 0,
+                failed: 0,
+                unsupported: [],
+                skippedReadOnly: [],
+                candidates: [],
+                cursors: {},
+                completed: [],
+                bindings: [],
+              };
+            }
+            const outcome = await store.collectOrphanedRowObjects({
+              ...(orphanCollection.dryRun !== undefined ? { dryRun: orphanCollection.dryRun } : {}),
+              ...(orphanCollection.acknowledgeExclusiveNamespace !== undefined
+                ? { acknowledgeExclusiveNamespace: orphanCollection.acknowledgeExclusiveNamespace }
+                : {}),
+              ...(orphanCollection.minAgeSeconds !== undefined
+                ? { minAgeSeconds: orphanCollection.minAgeSeconds }
+                : {}),
+              ...(orphanCollection.limit !== undefined ? { limit: orphanCollection.limit } : {}),
+              ...(orphanCollection.includeReadOnly !== undefined
+                ? { includeReadOnly: orphanCollection.includeReadOnly }
+                : {}),
+              ...(state ? { cursors: { ...state.cursors }, skipBindings: [...(state.completed ?? [])] } : {}),
+              ...(signal ? { signal } : {}),
+            });
+            if (state) {
+              state.cursors = outcome.cursors;
+              // A finished, clean cycle rests for the interval; anything else carries on next pass, without
+              // listing again the bindings that already finished.
+              // (A delete that keeps failing does not stop the rest: it is tried again on the next listing.)
+              if (
+                Object.keys(outcome.cursors).length === 0 &&
+                !outcome.bindings.some(item => item.status === 'failed')
+              ) {
+                state.completed = [];
+                state.nextCycleAt = Date.now() + (orphanCollection.intervalSeconds ?? 86_400) * 1000;
+              } else {
+                state.completed = [...new Set([...(state.completed ?? []), ...outcome.completed])];
+                delete state.nextCycleAt;
+              }
+            }
+            return outcome;
+          }),
+        ]
+      : []),
   ];
   const settled = await Promise.allSettled(tasks.map(([, task]) => task));
   const results: ReportingLedgerMaintenanceTaskResultV1[] = [];
@@ -244,6 +369,9 @@ export async function runReportingLedgerMaintenance(
           // Row upload sweep: backlog the pass is not reaching.
           skippedUnconfigured?: number;
           overdue?: number;
+          // Orphan object collection: bindings it could not cover.
+          unsupported?: readonly string[];
+          bindings?: readonly { bindingId: string; status: string; error?: string }[];
         }
       | undefined;
     const failed = Array.isArray(value?.failed)
@@ -272,6 +400,16 @@ export async function runReportingLedgerMaintenance(
       warnings.push(
         `${value.overdue} upload(s) expired long ago and still unswept; their objects are leaking (check that a host configures their binding and that provider deletes succeed)`
       );
+    }
+    if (value?.unsupported?.length) {
+      warnings.push(
+        `orphan collection cannot cover row binding(s) ${value.unsupported.join(', ')}: their provider has no list(), so orphaned objects there are never collected`
+      );
+    }
+    for (const binding of value?.bindings ?? []) {
+      if (binding.status === 'failed') {
+        warnings.push(`orphan collection failed for row binding ${binding.bindingId} (${binding.error ?? 'unknown'})`);
+      }
     }
     let partialFailure: ReportingMaintenancePartialFailureError | undefined;
     if (failed > 0 || warnings.length > 0) {
@@ -308,6 +446,7 @@ export function assertReportingLedgerMaintenanceOptions(
     retention?: ReportingRetentionOptionsV1 | undefined;
     compaction?: ReportingCompactionOptionsV1 | undefined;
     changeFeed?: ReportingChangeFeedMaintenanceOptionsV1 | undefined;
+    orphanCollection?: ReportingOrphanCollectionOptionsV1 | undefined;
   },
   statusRetentionDays: number
 ): void {
@@ -316,7 +455,35 @@ export function assertReportingLedgerMaintenanceOptions(
       throw new TypeError(`${field} must be a positive safe integer`);
     }
   };
-  const { retention, changeFeed, compaction } = input;
+  const { retention, changeFeed, compaction, orphanCollection } = input;
+  if (orphanCollection !== undefined) {
+    if (orphanCollection === null || typeof orphanCollection !== 'object' || orphanCollection.enabled !== true) {
+      throw new TypeError('maintenance.orphanCollection must be { enabled: true, ... }');
+    }
+    if (orphanCollection.limit !== undefined) positive(orphanCollection.limit, 'maintenance.orphanCollection.limit');
+    if (orphanCollection.intervalSeconds !== undefined) {
+      positive(orphanCollection.intervalSeconds, 'maintenance.orphanCollection.intervalSeconds');
+    }
+    if (orphanCollection.dryRun !== true && orphanCollection.acknowledgeExclusiveNamespace !== true) {
+      throw new TypeError(
+        'maintenance.orphanCollection deletes objects: set acknowledgeExclusiveNamespace: true to confirm this ledger ' +
+          'database is the only one that owns the namespace (not a clone or restore pointed at the same bucket), or set dryRun: true'
+      );
+    }
+    if (orphanCollection.minAgeSeconds !== undefined) {
+      positive(orphanCollection.minAgeSeconds, 'maintenance.orphanCollection.minAgeSeconds');
+      if (orphanCollection.minAgeSeconds < 24 * 3600) {
+        throw new RangeError(
+          'maintenance.orphanCollection.minAgeSeconds must be at least 1 day (86400): a younger object may belong to an upload still in flight'
+        );
+      }
+    }
+    for (const flag of ['dryRun', 'includeReadOnly', 'acknowledgeExclusiveNamespace'] as const) {
+      if (orphanCollection[flag] !== undefined && typeof orphanCollection[flag] !== 'boolean') {
+        throw new TypeError(`maintenance.orphanCollection.${flag} must be a boolean`);
+      }
+    }
+  }
   if (compaction !== undefined) {
     if (compaction === null || typeof compaction !== 'object' || compaction.enabled !== true) {
       throw new TypeError('maintenance.compaction must be { enabled: true, ... }');

@@ -92,6 +92,7 @@ function createFakeAzure({
           metadata: options.metadata,
           headers: options.blobHTTPHeaders,
           current: true,
+          createdOn: new Date(),
         };
         if (current) current.current = false;
         blobs.set(key, versioned ? [...versions(), version] : [version]);
@@ -161,6 +162,36 @@ function createFakeAzure({
         getBlockBlobClient(key) {
           return blobClient(containerName, key, undefined);
         },
+        listBlobsFlat(listOptions = {}) {
+          calls.push({ op: 'listBlobsFlat', options: listOptions });
+          return {
+            byPage(pageOptions = {}) {
+              return (async function* () {
+                if (!containers.includes(containerName)) throw restError(404, 'ContainerNotFound');
+                const items = [];
+                for (const [name, versions] of [...blobs.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+                  if (!name.startsWith(listOptions.prefix ?? '')) continue;
+                  for (const version of versions) {
+                    items.push({
+                      name,
+                      versionId: version.versionId,
+                      isCurrentVersion: version.current,
+                      properties: {
+                        contentLength: version.bytes.length,
+                        createdOn: version.createdOn,
+                        lastModified: version.lastModified,
+                      },
+                    });
+                  }
+                }
+                const start = pageOptions.continuationToken ? Number(pageOptions.continuationToken) : 0;
+                const page = items.slice(start, start + pageOptions.maxPageSize);
+                const end = start + page.length;
+                yield { continuationToken: end < items.length ? String(end) : '', segment: { blobItems: page } };
+              })();
+            },
+          };
+        },
       };
     },
   };
@@ -201,9 +232,72 @@ test('passes the shared provider conformance suite', async () => {
     'version-pinned-stat',
     'exact-version-delete',
     'write-unique-version',
+    'list',
   ]);
   assert.equal(liveBlobs(client).length, 0, 'probe and conformance blobs and versions are removed');
   assert.ok(client.calls.every(call => call.options?.abortSignal instanceof AbortSignal));
+});
+
+test('list pages through every version, the current one and noncurrent ones, and passes the prefix', async () => {
+  const client = createFakeAzure({ versioned: true });
+  const provider = createAzureBlobReportingRowObjectProviderV1({ client });
+  const a = await put(provider, 'adcp-rows/ns/a.jsonl', 'aa\n');
+  await put(provider, 'adcp-rows/other/z.jsonl');
+  // A noncurrent version at the same key, and a blob written before versioning (no version ID).
+  client.blobs.get('adcp-rows/ns/a.jsonl').push({
+    versionId: '2026-01-01T00:00:09.1234567Z',
+    bytes: Buffer.from('a2\n'),
+    current: false,
+    createdOn: new Date(),
+  });
+  client.blobs.set('adcp-rows/ns/unversioned.jsonl', [
+    { bytes: Buffer.from('u'), current: true, createdOn: new Date() },
+  ]);
+  const seen = [];
+  let pageToken;
+  let pages = 0;
+  do {
+    const page = await provider.list(
+      { ...base, prefix: 'adcp-rows/ns/', pageSize: 1, ...(pageToken ? { pageToken } : {}) },
+      signal()
+    );
+    assert.ok(page.objects.length <= 1);
+    seen.push(...page.objects);
+    pageToken = page.nextPageToken;
+    pages += 1;
+  } while (pageToken);
+  assert.equal(pages, 3, 'one page per listed item; the unversioned blob is skipped');
+  assert.deepEqual(
+    seen.map(entry => [entry.objectRef, entry.nativeVersionRef, entry.sizeBytes]),
+    [
+      ['adcp-rows/ns/a.jsonl', a.nativeVersionRef, 3],
+      ['adcp-rows/ns/a.jsonl', '2026-01-01T00:00:09.1234567Z', 3],
+    ]
+  );
+  const call = client.calls.find(item => item.op === 'listBlobsFlat').options;
+  assert.equal(call.prefix, 'adcp-rows/ns/');
+  assert.equal(call.includeVersions, true);
+  assert.ok(call.abortSignal instanceof AbortSignal);
+  await assert.rejects(
+    () => provider.list({ ...base, prefix: 'adcp-rows/ns/', pageSize: 0 }, signal()),
+    isCode('INVALID_INPUT')
+  );
+});
+
+test('list ages a blob by the later of creation and last modification, and leaves out entries it cannot address', async () => {
+  const client = createFakeAzure({ versioned: true });
+  const provider = createAzureBlobReportingRowObjectProviderV1({ client });
+  await put(provider, 'adcp-rows/ns/a.jsonl');
+  const [version] = client.blobs.get('adcp-rows/ns/a.jsonl');
+  version.createdOn = new Date('2020-01-01T00:00:00Z');
+  version.lastModified = new Date();
+  client.blobs.set('adcp-rows/ns/bad-size.jsonl', [
+    { versionId: '2026-01-01T00:00:09.1234567Z', bytes: { length: -1 }, current: true, createdOn: new Date() },
+  ]);
+  const page = await provider.list({ ...base, prefix: 'adcp-rows/ns/', pageSize: 10 }, signal());
+  assert.equal(page.objects.length, 1);
+  assert.equal(page.skipped, 1, 'what it left out is counted');
+  assert.equal(page.objects[0].createdAt, version.lastModified.toISOString());
 });
 
 test('create-only upload: If-None-Match, content headers, identifier-safe metadata', async () => {
