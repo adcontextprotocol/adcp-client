@@ -86,7 +86,11 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // Auth verification, interop support, trust and grant semantics) measure
 // 20,660,761 bytes for the full stack; allow about 40 KB for compressor
 // variance. Other byte budgets stay fixed.
-const MAX_PACKED_TARBALL_BYTES = 20_700_000;
+// The orphaned row-object collector and provider `list` (four providers, the
+// conformance check, maintenance wiring and the operations runbook) measure
+// 20,702,804 bytes packed; allow about 37 KB for compressor variance. Other byte
+// budgets stay fixed.
+const MAX_PACKED_TARBALL_BYTES = 20_740_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
