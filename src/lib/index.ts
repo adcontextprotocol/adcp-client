@@ -1888,6 +1888,7 @@ export {
   legacyFormatConverterFromCatalogSnapshots,
   canonicalFormatLegacyResolverFromCatalogSnapshots,
   canonicalFormatLegacyResolverFromRoutes,
+  carryFormatOptionOrigins,
   legacyRoutesForProduct,
   projectionAdaptersFromCatalogSnapshots,
   type ProjectionCatalogAdapters,

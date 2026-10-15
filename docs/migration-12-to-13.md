@@ -407,6 +407,14 @@ projected.format_options, { sellerProduct: storedProduct })`. An option is then
 seller-declared exactly when the stored product's own `format_options[]` names
 it, which is the rule the SDK applies after its own discovery.
 
+The client reads that origin from the resolver function that
+`canonicalFormatLegacyResolverFromRoutes()` returns. A resolver you build around
+it, for example one that tries the stored routes and then another source, is a
+different function and carries no origin unless you pass it through
+`carryFormatOptionOrigins(composedResolver, routesResolver)`.
+`canonicalFormatLegacyResolverFromCatalogSnapshots(snapshots, fallback)` already
+carries its fallback's origin.
+
 Compatibility consumers that must retain top-level `format_ids[]` while
 publishing URL-free canonical declarations can use the additive projection:
 
