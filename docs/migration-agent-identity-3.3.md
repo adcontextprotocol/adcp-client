@@ -428,7 +428,7 @@ with their non-applicability recorded in `test/fixtures/wba-profile/PINNED.json`
 The buyer default onboarding field is `profiles.adcp.onboarding`, matching the
 schema; the design's `record_profiles` wording names the schema definition.
 
-The process-local trust evaluator bounds authority history and conservatively disables legacy fallback after history eviction. Production sellers should supply `authorityHistory` from the shared state stores so history survives restarts and cache eviction.
+Process-local authority history is bounded and never evicts remembered operators. Public deployments must supply `authorityHistory` from the shared state stores so history survives restarts and cache eviction. See [Public deployment limits](#public-deployment-limits) for admission and legacy-fallback behavior.
 
 Open `sync_principal` commits the newly approved origin binding before the caller notification-configuration handler runs. A later configuration failure does not undo that binding; retry applies configuration to the same principal. This allocation never grants spend authority: every mutating request still passes tier, relationship and grant checks before provisioning or idempotency.
 
@@ -464,13 +464,17 @@ Unbound callers use an internal per-origin anonymous scope to isolate task/propo
   `maxAuthoritativeOperatorsPerPrivateSuffix` (default 32) per hosting provider
   (the provider's ICANN registrable domain, so every `*.vercel.app`,
   `*.s3.<region>.amazonaws.com` or `*.<project>.platformsh.site` operator
-  shares one budget). An operator over budget has its trust record refused
-  until restart: 32 subdomains under one provider block later operators on that
+  shares one budget). An operator over budget cannot have its trust record
+  accepted in that process: 32 subdomains under one provider block later operators on that
   provider, and a full `maxEntries` refuses every new trust record publisher.
-  A slot is taken by any 200, before the body is validated, so a removed or
-  invalid record still prevents a legacy downgrade. With a durable
-  `authorityHistory`, the in-memory set is only a cache and none of these
-  limits refuse records.
+  When an operator fits its budget, a history slot is reserved on any 200,
+  before the body is validated, so a removed or invalid record still prevents
+  a legacy downgrade for that remembered operator. An operator refused for
+  lack of budget is not remembered: its trust record remains unavailable,
+  but a later 404/410 is treated as absence and may invoke explicit legacy
+  authorization, as after a process restart. With durable `authorityHistory`,
+  every 200 is recorded, the in-memory set is only a cache, and none of these
+  admission limits refuse records.
 - **The unbound revocation pool can fill.** With the default CAS limits
   (100,000 keys per pool, 16,384 per operator), about seven registrable domains,
   including free PSL PRIVATE-section names, can exhaust the unbound pool. New
