@@ -860,30 +860,47 @@ await store.saveFeedConsumerCursor('pacing', page.cursor); // holds back pruning
   highest-numbered snapshot. An official revision is terminal, so this is always
   one index lookup.
 - `changesAfter` lists committed obligation, revision, adjustment and retirement
-  changes. Account feeds order by sequence. The deployment-wide feed (omit
-  `account_id`) orders by `(xid, seq)` and returns only changes whose
-  transaction precedes every transaction still in flight, so a slow commit is
-  never skipped. The account feed applies the same guard: a page ends before the
-  first change whose transaction has not finished (`xid` at or above the reading
-  snapshot's `xmin`), so the cursor never passes a change that commits late. The
-  page is cut there rather than filtered, because seq order and xid order can
-  differ and a filter would hand out a later change while skipping an earlier
-  one it excluded. The cost is that any older open transaction on the cluster,
-  including an idle one in another database, holds both kinds of feed back until
-  it ends; keep transactions short. An empty page therefore means either caught
-  up or held back, so poll again rather than treating it as the end of the feed.
+  changes. Every feed, account-scoped or deployment-wide (omit `account_id`),
+  orders by `(xid, seq)` and returns only changes whose transaction precedes
+  every transaction still in flight (`xid` below the reading snapshot's
+  `xmin`), so a slow commit is never skipped. The order does not depend on the
+  account lock, on the order a writer drew `seq` in, or on which lock key a
+  writer took: a change with a lower `seq` and a higher `xid` that commits late
+  is simply returned on a later page, after the cursor. The cost is that any
+  older open transaction on the cluster, including an idle one in another
+  database, holds every feed back until it ends; keep transactions short. An
+  empty page therefore means either caught up or held back, so poll again rather
+  than treating it as the end of the feed. The account scan is served by the
+  `(account_id, xid, seq)` index that `REPORTING_LEDGER_CHANGES_MIGRATION`
+  creates.
 - **A ledger database has exactly one writer SDK.** The store writes each change
-  row under the account advisory lock, taking the sequence value only after it,
-  so per-account `seq` order equals commit order. The in-flight guard above is
-  defense in depth, not a substitute: a second SDK (for example a Python
-  deployment, or a hand-written writer) that takes a different lock key, or
-  writes change rows outside the account lock, can allocate a lower `seq` that
-  commits after a higher one. The guard narrows that window but cannot close it
-  for every interleaving, so run one writer SDK per ledger database and give
-  another SDK its own database. `pruneChanges` only deletes changes older than
-  `changeRetentionDays`, far longer than any transaction should stay open, and
-  consumer holds compare against cursors the feed itself returned, so neither
-  adds a new ordering assumption.
+  row under the account advisory lock. The feed no longer needs that lock for
+  its order, but a second SDK is still unsupported: it can write rows the first
+  SDK's lifecycle, retention and idempotency logic does not know about. Give
+  another SDK (for example a Python deployment) its own database. `pruneChanges`
+  only deletes changes older than `changeRetentionDays`, far longer than any
+  transaction should stay open, and consumer holds compare against cursors the
+  feed itself returned, so neither adds an ordering assumption.
+- **Upgrading from account cursors that carry only `seq`.** Account feeds used
+  to order by `seq` and cut each page before the first in-flight change. An old
+  account cursor is `{ seq }` with no `xid`. `changesAfter` accepts it and maps
+  it to the position `(xid, seq)` where `xid` is the smaller of the oldest `xid`
+  among the account's changes after that `seq` and the reading snapshot's `xmin`.
+  Every change after the old `seq` has an `xid` at or above both (a change that
+  has not committed yet belongs to a transaction at or above `xmin`), so nothing
+  is skipped. The cost is that a few changes the consumer already read, those
+  with a lower `seq` and a higher `xid`, can be returned again: treat redelivery
+  as normal, as for any at-least-once consumer. The returned cursor is in the new
+  format, even on an empty page. A legacy cursor fails with `CURSOR_EXPIRED` if
+  any change with a higher `seq` was pruned (`adcp_reporting_change_account_horizon.pruned_through_seq`
+  still records the highest pruned `seq` for this check). A consumer row saved
+  before the upgrade has a NULL `cursor_xid` and holds retention by `seq` until
+  the consumer saves its next cursor; `saveFeedConsumerCursor` given a legacy
+  cursor maps it the same way. Re-apply `REPORTING_LEDGER_CHANGES_MIGRATION`
+  before starting the new binary: it adds the account horizon's `xid` columns,
+  replaces the consumer table's check constraint, and creates the new index. The
+  older `adcp_reporting_changes_account (account_id, seq)` index is left in
+  place; drop it once no older host runs.
 - `pruneChanges` deletes changes older than `changeRetentionDays` (default 30)
   that every consumer updated within `maxFeedHoldDays` (default 7) has passed.
   An older cursor throws `ReportingChangeCursorExpiredError`; resynchronize from

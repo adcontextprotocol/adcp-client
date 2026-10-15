@@ -64,6 +64,7 @@ import {
   ReportingChangeCursorExpiredError,
   decodeReportingChangeCursorV1,
   encodeReportingChangeCursorV1,
+  isLegacyAccountChangeCursor,
   type ReportingChangeKindV1,
   type ReportingChangesPageV1,
 } from './change-feed';
@@ -1504,16 +1505,25 @@ ${managedDueArm}       )
 
   /**
    * Host change feed. Omit `cursor` to start from the oldest retained change.
-   * Account-scoped feeds order by sequence; the deployment-wide feed orders by
-   * `(xid, seq)` and returns only changes whose transaction precedes every
-   * transaction still in flight, so no commit is ever skipped. An account page
-   * also ends before the first change whose transaction has not finished, as
-   * defense in depth against a change that commits late. An empty page can
-   * therefore mean either caught up or held back by an older open transaction.
-   * A ledger database must have exactly one writer SDK; see
+   * Every feed, account-scoped or deployment-wide, orders by `(xid, seq)` and
+   * returns only changes whose transaction precedes every transaction still in
+   * flight (`xid < pg_snapshot_xmin(pg_current_snapshot())`), so no commit is
+   * ever skipped and the order does not depend on the account lock. An empty
+   * page can therefore mean either caught up or held back by an older open
+   * transaction. A ledger database must have exactly one writer SDK; see
    * `docs/guides/REPORTING-LEDGER.md`. A cursor older
    * than the retained history throws `ReportingChangeCursorExpiredError`;
    * resynchronize from `listCurrentRevisions`.
+   *
+   * An account cursor issued before the account feed ordered by `(xid, seq)`
+   * carries a `seq` and no `xid`. It is accepted and mapped to a position that
+   * cannot skip a change: the lowest transaction id any change after its `seq`
+   * could have (the smaller of the oldest such change's `xid` and the reading
+   * snapshot's `xmin`). That position can hand out a few changes the consumer
+   * already read, those with a lower `seq` and a higher `xid`, so consumers must
+   * treat redelivery as normal. The page returns a cursor in the new format.
+   * A legacy cursor fails closed with `CURSOR_EXPIRED` when a change with a
+   * higher `seq` has been pruned.
    *
    * A read without a `cursor` can throw `ReportingChangeCursorExpiredError`
    * (`code === 'CURSOR_EXPIRED'`) too. The horizon is re-read after the page,
@@ -1536,52 +1546,50 @@ ${managedDueArm}       )
     if (limit > 10_000) throw new RangeError('changesAfter limit must not exceed 10000');
     const account = input.account_id ?? null;
     const cursor = input.cursor === undefined ? undefined : decodeReportingChangeCursorV1(input.cursor, account);
+    const legacy = cursor !== undefined && isLegacyAccountChangeCursor(cursor);
+    type Horizon = { xid: string; seq: string; maxSeq: string };
     // The pruned horizon in this feed's own order. A supplied cursor below it
     // may have missed a pruned change and fails closed; a consumer starting
     // without a cursor begins at it, which is the oldest retained change.
-    const readHorizon = async (): Promise<{ seq: string; xid?: string }> =>
-      account !== null
-        ? {
-            seq:
-              (
-                await this.query<{ seq: string }>(
-                  `SELECT pruned_through_seq::text AS seq FROM adcp_reporting_change_account_horizon
-                    WHERE account_id = $1`,
-                  [account]
-                )
-              ).rows[0]?.seq ?? '0',
-          }
-        : ((
-            await this.query<{ xid: string; seq: string }>(
-              `SELECT pruned_through_xid::text AS xid, pruned_through_seq::text AS seq
-                 FROM adcp_reporting_change_horizon WHERE singleton`
-            )
-          ).rows[0] ?? { xid: '0', seq: '0' });
-    const assertRetained = (position: { seq: string; xid?: string }, horizon: { seq: string; xid?: string }) => {
+    // `maxSeq` is the highest `seq` pruned for the account, whatever its `xid`:
+    // the exact check for a legacy cursor, which has no `xid` to compare.
+    const readHorizon = async (): Promise<Horizon> => {
+      const row = (
+        await this.query<{ xid: string; seq: string; max_seq: string }>(
+          account !== null
+            ? `SELECT pruned_through_xid::text AS xid, pruned_through_xid_seq::text AS seq,
+                      pruned_through_seq::text AS max_seq
+                 FROM adcp_reporting_change_account_horizon WHERE account_id = $1`
+            : `SELECT pruned_through_xid::text AS xid, pruned_through_seq::text AS seq,
+                      pruned_through_seq::text AS max_seq
+                 FROM adcp_reporting_change_horizon WHERE singleton`,
+          account !== null ? [account] : []
+        )
+      ).rows[0];
+      return { xid: row?.xid ?? '0', seq: row?.seq ?? '0', maxSeq: row?.max_seq ?? '0' };
+    };
+    const assertRetained = (position: { seq: string; xid?: string }, horizon: Horizon) => {
       const behind =
-        account !== null
-          ? BigInt(horizon.seq) > BigInt(position.seq)
-          : BigInt(horizon.xid!) > BigInt(position.xid!) ||
-            (BigInt(horizon.xid!) === BigInt(position.xid!) && BigInt(horizon.seq) > BigInt(position.seq));
+        position.xid === undefined
+          ? BigInt(horizon.maxSeq) > BigInt(position.seq)
+          : BigInt(horizon.xid) > BigInt(position.xid) ||
+            (BigInt(horizon.xid) === BigInt(position.xid) && BigInt(horizon.seq) > BigInt(position.seq));
       if (behind) {
         throw new ReportingChangeCursorExpiredError(
           encodeReportingChangeCursorV1({
             v: 1,
             account,
             seq: position.seq,
-            ...(account === null ? { xid: position.xid! } : {}),
+            ...(position.xid !== undefined ? { xid: position.xid } : {}),
           })
         );
       }
     };
     const horizon = await readHorizon();
     if (cursor) assertRetained(cursor, horizon);
-    const position = cursor ?? {
-      v: 1 as const,
-      account,
-      seq: horizon.seq,
-      ...(account === null ? { xid: horizon.xid! } : {}),
-    };
+    const position: { seq: string; xid: string } = cursor
+      ? { seq: cursor.seq, xid: legacy ? await this.legacyAccountCursorXid(account!, cursor.seq) : cursor.xid! }
+      : { seq: horizon.seq, xid: horizon.xid };
     const kinds = input.kinds?.length ? [...input.kinds] : null;
     type ChangeRow = {
       seq: string;
@@ -1596,23 +1604,21 @@ ${managedDueArm}       )
     // the `seq::text AS seq` output column and sorts as text ('100' < '95').
     const columns = `seq::text AS seq, xid::text AS xid, account_id, record_kind, record_id, obligation_id,
       to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS recorded_at`;
-    // The account feed orders by seq, which equals commit order only when every writer takes the
-    // account lock before nextval. Defense in depth for a writer that does not: stop the page at
-    // the first change whose transaction is not below every in-flight transaction
-    // (`xid >= xmin`). A plain `xid < xmin` filter would not do, because seq order and xid order
-    // can differ, and it would hand out a later change while skipping an earlier one it
-    // excluded. Truncating keeps the page a prefix of seq order. This narrows the window for a
-    // second writer but does not close it for every interleaving: one writer SDK per database
-    // remains the contract.
-    // The row scan is still served by the (account_id, seq) index.
+    // Both feeds order by (xid, seq) and stop below the reading snapshot's xmin. Every change
+    // with a higher xid than a returned one either committed before it or is not returned yet,
+    // so the cursor never passes a change that commits late, with no assumption about the lock
+    // a writer took or the order it drew `seq` in. The account scan is served by the
+    // (account_id, xid, seq) index.
     const result =
       account !== null
-        ? await this.query<ChangeRow & { in_flight: boolean }>(
-            `SELECT ${columns}, xid >= pg_snapshot_xmin(pg_current_snapshot()) AS in_flight
+        ? await this.query<ChangeRow>(
+            `SELECT ${columns}
                FROM adcp_reporting_changes
-              WHERE account_id = $1 AND seq > $2::bigint AND ($3::text[] IS NULL OR record_kind = ANY($3))
-              ORDER BY adcp_reporting_changes.seq LIMIT $4`,
-            [account, position.seq, kinds, limit]
+              WHERE account_id = $1 AND (xid, seq) > ($2::text::xid8, $3::bigint)
+                AND xid < pg_snapshot_xmin(pg_current_snapshot())
+                AND ($4::text[] IS NULL OR record_kind = ANY($4))
+              ORDER BY adcp_reporting_changes.xid, adcp_reporting_changes.seq LIMIT $5`,
+            [account, position.xid, position.seq, kinds, limit]
           )
         : await this.query<ChangeRow>(
             `SELECT ${columns} FROM adcp_reporting_changes
@@ -1620,19 +1626,19 @@ ${managedDueArm}       )
                 AND xid < pg_snapshot_xmin(pg_current_snapshot())
                 AND ($3::text[] IS NULL OR record_kind = ANY($3))
               ORDER BY adcp_reporting_changes.xid, adcp_reporting_changes.seq LIMIT $4`,
-            [position.xid ?? '0', position.seq, kinds, limit]
+            [position.xid, position.seq, kinds, limit]
           );
-    if (account !== null) {
-      const blocked = (result.rows as (ChangeRow & { in_flight: boolean })[]).findIndex(row => row.in_flight);
-      if (blocked !== -1) result.rows.length = blocked;
-    }
     // Pruning can commit between the horizon and page queries. Check the
     // original position again so a missing change cannot become a new cursor.
-    assertRetained(position, await readHorizon());
+    assertRetained(cursor ?? position, await readHorizon());
     const last = result.rows.at(-1);
+    // A legacy cursor is replaced by its mapped position even on an empty page, so the consumer
+    // saves a cursor in the new format.
     const next = last
-      ? encodeReportingChangeCursorV1({ v: 1, account, seq: last.seq, ...(account === null ? { xid: last.xid } : {}) })
-      : (input.cursor ?? encodeReportingChangeCursorV1(position));
+      ? encodeReportingChangeCursorV1({ v: 1, account, seq: last.seq, xid: last.xid })
+      : cursor && !legacy
+        ? input.cursor!
+        : encodeReportingChangeCursorV1({ v: 1, account, seq: position.seq, xid: position.xid });
     return {
       records: result.rows.map(row => ({
         kind: row.record_kind,
@@ -1643,6 +1649,28 @@ ${managedDueArm}       )
       })),
       cursor: next,
     };
+  }
+
+  /**
+   * Maps an account cursor issued before account feeds carried an `xid` to a transaction id that
+   * cannot skip a change. Every change after the cursor's `seq` has an `xid` at or above both the
+   * oldest such change that is visible now and the reading snapshot's `xmin` (a change that is not
+   * visible yet belongs to a transaction that was still in flight, whose id is at or above `xmin`),
+   * so a position `(xid, seq)` below the smaller of the two hands them all out.
+   */
+  private async legacyAccountCursorXid(account: string, seq: string): Promise<string> {
+    const result = await this.query<{ xid: string }>(
+      `SELECT LEAST(
+                pg_snapshot_xmin(pg_current_snapshot()),
+                COALESCE(
+                  (SELECT change.xid FROM adcp_reporting_changes change
+                    WHERE change.account_id = $1 AND change.seq > $2::bigint
+                    ORDER BY change.xid LIMIT 1),
+                  pg_snapshot_xmin(pg_current_snapshot()))
+              )::text AS xid`,
+      [account, seq]
+    );
+    return result.rows[0]!.xid;
   }
 
   /**
@@ -1681,6 +1709,10 @@ ${managedDueArm}       )
       throw new RangeError('feed consumer cursor is invalid');
     }
     const decoded = decodeReportingChangeCursorV1(cursor, account);
+    // A legacy account cursor has no xid: hold from the position `changesAfter` would map it to.
+    const xid = decoded.xid ?? (await this.legacyAccountCursorXid(account!, decoded.seq));
+    // Forward-only in (xid, seq) order for every scope. A row saved before account feeds carried
+    // an xid (NULL cursor_xid) is replaced by any cursor in the new format.
     const result = await this.query(
       `INSERT INTO adcp_reporting_feed_consumers (consumer_name, account_id, cursor_xid, cursor_seq)
        VALUES ($1, $2, $3::text::xid8, $4::bigint)
@@ -1689,22 +1721,13 @@ ${managedDueArm}       )
               cursor_seq = EXCLUDED.cursor_seq, updated_at = clock_timestamp()
         WHERE $6::boolean
            OR adcp_reporting_feed_consumers.account_id IS DISTINCT FROM EXCLUDED.account_id
-           OR CASE WHEN EXCLUDED.account_id IS NULL
-              THEN (adcp_reporting_feed_consumers.cursor_xid, adcp_reporting_feed_consumers.cursor_seq)
-                   < (EXCLUDED.cursor_xid, EXCLUDED.cursor_seq)
-                OR ($5::boolean AND (adcp_reporting_feed_consumers.cursor_xid, adcp_reporting_feed_consumers.cursor_seq)
-                   = (EXCLUDED.cursor_xid, EXCLUDED.cursor_seq))
-              ELSE adcp_reporting_feed_consumers.cursor_seq < EXCLUDED.cursor_seq
-                OR ($5::boolean AND adcp_reporting_feed_consumers.cursor_seq = EXCLUDED.cursor_seq) END
+           OR adcp_reporting_feed_consumers.cursor_xid IS NULL
+           OR (adcp_reporting_feed_consumers.cursor_xid, adcp_reporting_feed_consumers.cursor_seq)
+                < (EXCLUDED.cursor_xid, EXCLUDED.cursor_seq)
+           OR ($5::boolean AND (adcp_reporting_feed_consumers.cursor_xid, adcp_reporting_feed_consumers.cursor_seq)
+                = (EXCLUDED.cursor_xid, EXCLUDED.cursor_seq))
        RETURNING consumer_name`,
-      [
-        name,
-        account,
-        account === null ? decoded.xid! : null,
-        decoded.seq,
-        options.refreshUnchanged !== false,
-        options.rewind === true,
-      ]
+      [name, account, xid, decoded.seq, options.refreshUnchanged !== false, options.rewind === true]
     );
     return result.rows.length > 0;
   }
@@ -1749,9 +1772,7 @@ ${managedDueArm}       )
               AND NOT EXISTS (
                 SELECT 1 FROM adcp_reporting_feed_consumers consumer
                  WHERE consumer.updated_at > clock_timestamp() - ($2::integer * INTERVAL '1 day')
-                   AND ((consumer.account_id IS NULL
-                         AND (change.xid, change.seq) > (consumer.cursor_xid, consumer.cursor_seq))
-                     OR (consumer.account_id = change.account_id AND change.seq > consumer.cursor_seq))
+                   AND ${feedConsumerBehindChange('consumer', 'change')}
               )
             ORDER BY change.seq LIMIT $3
          )
@@ -1770,18 +1791,40 @@ ${managedDueArm}       )
           WHERE singleton AND ($1::text::xid8, $2::bigint) > (pruned_through_xid, pruned_through_seq)`,
         [highest.xid, highest.seq]
       );
-      const perAccount = new Map<string, bigint>();
+      // Per account: the highest (xid, seq) pruned, which a cursor is compared with, and the highest
+      // seq pruned whatever its xid, which is the exact check for an account cursor that predates
+      // the (xid, seq) order.
+      const perAccount = new Map<string, { xid: bigint; xidSeq: bigint; maxSeq: bigint }>();
       for (const row of victims.rows) {
+        const xid = BigInt(row.xid);
         const seq = BigInt(row.seq);
-        if (seq > (perAccount.get(row.account_id) ?? 0n)) perAccount.set(row.account_id, seq);
+        const current = perAccount.get(row.account_id);
+        if (!current) {
+          perAccount.set(row.account_id, { xid, xidSeq: seq, maxSeq: seq });
+          continue;
+        }
+        if (xid > current.xid || (xid === current.xid && seq > current.xidSeq)) {
+          current.xid = xid;
+          current.xidSeq = seq;
+        }
+        if (seq > current.maxSeq) current.maxSeq = seq;
       }
-      for (const [accountId, seq] of perAccount) {
+      for (const [accountId, pruned] of perAccount) {
         await client.query(
-          `INSERT INTO adcp_reporting_change_account_horizon (account_id, pruned_through_seq) VALUES ($1, $2::bigint)
+          `INSERT INTO adcp_reporting_change_account_horizon AS horizon
+             (account_id, pruned_through_seq, pruned_through_xid, pruned_through_xid_seq)
+           VALUES ($1, $2::bigint, $3::text::xid8, $4::bigint)
            ON CONFLICT (account_id) DO UPDATE
-              SET pruned_through_seq = GREATEST(adcp_reporting_change_account_horizon.pruned_through_seq,
-                                                EXCLUDED.pruned_through_seq)`,
-          [accountId, seq.toString()]
+              SET pruned_through_seq = GREATEST(horizon.pruned_through_seq, EXCLUDED.pruned_through_seq),
+                  pruned_through_xid = CASE
+                    WHEN (EXCLUDED.pruned_through_xid, EXCLUDED.pruned_through_xid_seq)
+                         > (horizon.pruned_through_xid, horizon.pruned_through_xid_seq)
+                    THEN EXCLUDED.pruned_through_xid ELSE horizon.pruned_through_xid END,
+                  pruned_through_xid_seq = CASE
+                    WHEN (EXCLUDED.pruned_through_xid, EXCLUDED.pruned_through_xid_seq)
+                         > (horizon.pruned_through_xid, horizon.pruned_through_xid_seq)
+                    THEN EXCLUDED.pruned_through_xid_seq ELSE horizon.pruned_through_xid_seq END`,
+          [accountId, pruned.maxSeq.toString(), pruned.xid.toString(), pruned.xidSeq.toString()]
         );
       }
       return victims.rows.length;
@@ -1859,9 +1902,7 @@ ${managedDueArm}       )
                     JOIN adcp_reporting_feed_consumers consumer
                       ON consumer.updated_at > clock_timestamp() - ($4::integer * INTERVAL '1 day')
                    WHERE change.obligation_id = obligation.obligation_id
-                     AND ((consumer.account_id IS NULL
-                           AND (change.xid, change.seq) > (consumer.cursor_xid, consumer.cursor_seq))
-                       OR (consumer.account_id = change.account_id AND change.seq > consumer.cursor_seq)))`
+                     AND ${feedConsumerBehindChange('consumer', 'change')})`
         : '';
     // Resumes (tombstoned, interrupted or failed periods) are guaranteed at most half
     // the pass, rounded up, ahead of fresh periods; a resume beyond that only fills
@@ -2184,9 +2225,7 @@ ${managedDueArm}       )
                    JOIN adcp_reporting_feed_consumers consumer
                      ON consumer.updated_at > clock_timestamp() - ($3::integer * INTERVAL '1 day')
                   WHERE change.record_kind = 'revision' AND change.record_id = revision.revision_id
-                    AND ((consumer.account_id IS NULL
-                          AND (change.xid, change.seq) > (consumer.cursor_xid, consumer.cursor_seq))
-                      OR (consumer.account_id = change.account_id AND change.seq > consumer.cursor_seq)))`
+                    AND ${feedConsumerBehindChange('consumer', 'change')})`
             : ''
         }`;
     const baseValues = [input.statusRetentionDays, graceSeconds, holdDays, input.account_id ?? null];
@@ -5689,6 +5728,19 @@ function checkpointScopeFingerprint(query: ReportingLedgerSnapshotQueryV1): stri
 
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+/**
+ * SQL condition: the registered consumer row has not yet passed the change row, in the consumer's
+ * own feed order. Every consumer reads `(xid, seq)` order, an account consumer only within its
+ * account. A row saved before account feeds carried an `xid` has a NULL `cursor_xid` and holds by
+ * `seq` until the consumer saves its next cursor.
+ */
+function feedConsumerBehindChange(consumer: string, change: string): string {
+  return `((${consumer}.account_id IS NULL OR ${consumer}.account_id = ${change}.account_id)
+    AND CASE WHEN ${consumer}.cursor_xid IS NULL
+             THEN ${change}.seq > ${consumer}.cursor_seq
+             ELSE (${change}.xid, ${change}.seq) > (${consumer}.cursor_xid, ${consumer}.cursor_seq) END)`;
 }
 
 function positiveInteger(value: number, name: string): void {

@@ -1395,6 +1395,53 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     );
   }
 
+  test('a sink saved with an account cursor from before the (xid, seq) order resumes without loading a revision twice', async () => {
+    const account = 'acct_legacy_cursor_sink';
+    const legacyRows = rows.slice(0, 7);
+    const bigquery = fakeBigQuery();
+    const sink = newSink(bigquery, { name: 'legacy_cursor', account_id: account });
+    const legacy = await createRowStorageFixture({ store, suffix: 'legacy_cursor', accountId: account });
+    await store.commitRevision(legacy.revision('rrev_legacy_cursor_1', 1, legacyRows), legacy.lease);
+    assert.equal((await sink.runOnce()).revisions, 1);
+
+    // Rewrite the saved state as an older SDK left it: a seq-only cursor and an xid-less hold.
+    const saved = (
+      await pool.query(`SELECT committed_cursor FROM adcp_reporting_warehouse_sinks WHERE sink_name = 'legacy_cursor'`)
+    ).rows[0].committed_cursor;
+    const { seq } = ledger.decodeReportingChangeCursorV1(saved, account);
+    const old = ledger.encodeReportingChangeCursorV1({ v: 1, account, seq });
+    await pool.query(
+      `UPDATE adcp_reporting_warehouse_sinks SET committed_cursor = $1 WHERE sink_name = 'legacy_cursor'`,
+      [old]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_feed_consumers SET cursor_xid = NULL WHERE consumer_name = 'legacy_cursor'`
+    );
+
+    await store.commitRevision(
+      legacy.revision('rrev_legacy_cursor_2', 2, legacyRows.slice(0, 3), {
+        supersedes_reporting_revision_id: 'rrev_legacy_cursor_1',
+      }),
+      legacy.lease
+    );
+    assert.deepEqual(await sink.runOnce(), { idle: false, revisions: 1, rows: 3, missing: [] });
+    assert.deepEqual(
+      bigquery.tables.get('reporting.revisions').map(value => value.reporting_revision_id),
+      ['rrev_legacy_cursor_1', 'rrev_legacy_cursor_2']
+    );
+    const upgraded = (
+      await pool.query(`SELECT committed_cursor FROM adcp_reporting_warehouse_sinks WHERE sink_name = 'legacy_cursor'`)
+    ).rows[0].committed_cursor;
+    assert.ok(ledger.decodeReportingChangeCursorV1(upgraded, account).xid, 'the committed cursor is in the new format');
+    assert.notEqual(
+      (await pool.query(`SELECT cursor_xid FROM adcp_reporting_feed_consumers WHERE consumer_name = 'legacy_cursor'`))
+        .rows[0].cursor_xid,
+      null,
+      'the retention hold is saved in the new format'
+    );
+    assert.deepEqual(await sink.runOnce(), { idle: true, revisions: 0, rows: 0, missing: [] });
+  });
+
   test('idle ticks drain non-revision changes without blocking retention', async () => {
     const account = 'acct_idle_retention';
     const bigquery = fakeBigQuery();

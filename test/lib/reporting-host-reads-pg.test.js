@@ -51,13 +51,7 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
 
   test('consumer checkpoints advance in their own feed order and equal positions refresh liveness', async () => {
     const name = 'ordered-checkpoint';
-    const checkpoint = (account, seq, xid) =>
-      ledger.encodeReportingChangeCursorV1({
-        v: 1,
-        account,
-        seq,
-        ...(xid === undefined ? {} : { xid }),
-      });
+    const checkpoint = (account, seq, xid = '100') => ledger.encodeReportingChangeCursorV1({ v: 1, account, seq, xid });
     const read = async () =>
       (await pool.query('SELECT * FROM adcp_reporting_feed_consumers WHERE consumer_name = $1', [name])).rows[0];
     await store.saveFeedConsumerCursor(name, checkpoint('acct_checkpoint', '20'), { refreshUnchanged: false });
@@ -98,7 +92,7 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
     const name = 'rewind-checkpoint';
     const read = async () =>
       (await pool.query('SELECT * FROM adcp_reporting_feed_consumers WHERE consumer_name = $1', [name])).rows[0];
-    const account = seq => ledger.encodeReportingChangeCursorV1({ v: 1, account: 'acct_rewind', seq });
+    const account = seq => ledger.encodeReportingChangeCursorV1({ v: 1, account: 'acct_rewind', seq, xid: '100' });
     const deployment = (xid, seq) => ledger.encodeReportingChangeCursorV1({ v: 1, account: null, seq, xid });
 
     assert.equal(await store.saveFeedConsumerCursor(name, account('20')), true, 'first save registers the consumer');
@@ -124,7 +118,7 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
     assert.ok((await read()).updated_at > stale, 'a rewind renews the retention hold');
 
     // Moving to another account replaces the position even at a lower sequence.
-    const otherAccount = ledger.encodeReportingChangeCursorV1({ v: 1, account: 'acct_rewind_b', seq: '1' });
+    const otherAccount = ledger.encodeReportingChangeCursorV1({ v: 1, account: 'acct_rewind_b', seq: '1', xid: '100' });
     assert.equal(await store.saveFeedConsumerCursor(name, otherAccount), true);
     assert.equal((await read()).account_id, 'acct_rewind_b');
     assert.equal((await read()).cursor_seq, '1');
@@ -147,6 +141,7 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
 
   for (const { scope, axis } of [
     { scope: 'account', axis: 'sequence' },
+    { scope: 'account', axis: 'transaction' },
     { scope: 'deployment', axis: 'sequence' },
     { scope: 'deployment', axis: 'transaction' },
   ]) {
@@ -178,14 +173,13 @@ describe('reporting host reads', { skip: !DATABASE_URL && 'PostgreSQL URL not se
         suffix: `second_${suffix}`,
         accountId: account,
       });
-      if (scope === 'deployment') {
-        // Historical XIDs keep these changes visible despite concurrent
-        // suites' older transactions. The sequence case shares one XID.
-        await isolatedPool.query(
-          `UPDATE adcp_reporting_changes SET xid = CASE WHEN record_id = $1 THEN '9'::xid8 ELSE $2::text::xid8 END`,
-          [first.obligation.reporting_obligation_id, axis === 'sequence' ? '9' : '10']
-        );
-      }
+      // Historical XIDs keep these changes visible despite concurrent suites' older
+      // transactions. Both feeds order by (xid, seq): the sequence case shares one XID so
+      // `seq` decides, and the transaction case crosses a decimal digit boundary in `xid`.
+      await isolatedPool.query(
+        `UPDATE adcp_reporting_changes SET xid = CASE WHEN record_id = $1 THEN '9'::xid8 ELSE $2::text::xid8 END`,
+        [first.obligation.reporting_obligation_id, axis === 'sequence' ? '9' : '10']
+      );
       const position = scope === 'account' ? { account_id: account } : {};
       const firstPage = await isolatedStore.changesAfter({ ...position, limit: 1 });
       assert.deepEqual(
