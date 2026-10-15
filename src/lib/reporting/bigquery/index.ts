@@ -240,6 +240,7 @@ const MAX_LOAD_TIMEOUT = 6 * 3_600_000;
 /** Doublings stop at 2^16: even the 1 second minimum is then past the 6 hour cap. */
 const MAX_TIMEOUT_DOUBLINGS = 16;
 let warnedLabelsIgnored = false;
+let warnedLocationUnset = false;
 const PROJECT = /^[a-z][a-z0-9-]{4,61}[a-z0-9]$/;
 const DATASET_OR_TABLE = /^[A-Za-z_][A-Za-z0-9_]{0,1023}$/;
 const NAME = /^[A-Za-z0-9_.:-]{1,128}$/;
@@ -274,6 +275,13 @@ export function createBigQueryReportingWarehouseSinkV1(
     process.emitWarning(
       "BigQuery warehouse sink option `labels` has no effect: BigQuery ignores labels inside a load job's configuration.load and the official client cannot set configuration.labels for local-file loads. Attribute cost through INFORMATION_SCHEMA.JOBS by destination table or the adcp_rr_ job ID prefix.",
       { code: 'ADCP_BIGQUERY_SINK_LABELS_IGNORED', type: 'DeprecationWarning' }
+    );
+  }
+  if (!options.location && !warnedLocationUnset) {
+    warnedLocationUnset = true;
+    process.emitWarning(
+      'BigQuery warehouse sink option `location` is not set. Replay lookups of load jobs need it for datasets outside the US and EU multi-regions: without it BigQuery answers 404, the sink uploads again, gets a 409, and then fails with a "check projectId and location" error.',
+      { code: 'ADCP_BIGQUERY_SINK_LOCATION_UNSET' }
     );
   }
   const tables = {

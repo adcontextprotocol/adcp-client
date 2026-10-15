@@ -121,7 +121,14 @@ service runs for you. See
    cannot hold the table indefinitely.
 5. **Warehouse sink.** Apply `REPORTING_WAREHOUSE_SINK_MIGRATION`, create the
    tables, and the `current_rows` view, then schedule `runOnce`. Point analysts
-   at `current_rows`.
+   at `current_rows`. Set the sink's `location` to the dataset's location: replay
+   lookups of load jobs need it outside the US and EU multi-regions, and the sink
+   warns once per process when it is unset. When upgrading from 15.9.0, stop
+   every 15.9.0 sink worker before starting newer ones, then re-apply
+   `REPORTING_WAREHOUSE_SINK_MIGRATION`. A 15.9.0 worker cancels a load at its
+   deadline, so one running beside a newer worker on the same sink can cancel a
+   job the newer worker is waiting on; the job ends `DONE` with an error and the
+   attempt advances. Rows do not duplicate, but convergence slows.
 6. **Retention.** Enable `retention` last, after confirming the advertised
    `status_retention_days` is the window you intend to keep. Retirement deletes
    rows and ledger records for whole periods and cannot be undone. Keep backups
@@ -344,7 +351,7 @@ What it checks:
   and job ID unchanged and that table's persisted deadline grown, the job must
   end `DONE` without an error (the sink never cancels it), and later runs under
   the same sink name must converge with no duplicate rows, the same job ID and
-  no second upload. A #3234 scenario runs a sink whose upload of a 50,000-row
+  no second upload. A slow-upload scenario runs a sink whose upload of a 50,000-row
   batch outlasts its 1-second deadline and asserts that it converges within 8
   runs, loads every row exactly once, never changes the job ID, and never
   starts an upload after the job exists (a link fast enough to beat the
@@ -356,11 +363,10 @@ What it checks:
   it; in practice it accepts the cancel and lets the load finish, which is why
   the sink never cancels a load and finds it by job ID instead.
 - **Overlapping runs** (`INFO`, never a failure). Two concurrent `runOnce()`
-  calls over one pending batch, and a deterministic reproduction of #3196: one
+  calls over one pending batch, and a deterministic reproduction of the stale-plan race: one
   run reads its sink state, another completes the batch and a new revision
   commits, then the first resumes. Without the fence the first run reloads
-  revisions the second already loaded (duplicate rows); with the fence from
-  PR #3197 it rejects as stale and nothing duplicates. Read the verdict in the
+  revisions the second already loaded (duplicate rows); with the plan fence it rejects as stale and nothing duplicates. Read the verdict in the
   report; the exit status does not depend on it.
 - **Cross-project.** Set `GCP_CLIENT_PROJECT` to a project other than
   `GCP_BQ_PROJECT`. Load jobs are then created in the destination project, and
@@ -446,15 +452,15 @@ export GCS_BUCKET=my-test-bucket GCS_PREFIX=adcp-reporting-validation
 npm run validate:reporting-gcp -- --yes
 ```
 
-Against a pull request branch (for example #3197), keep running the script from
+Against a pull request branch (replace `<n>` with its number), keep running the script from
 `main` and point it at a second built checkout, so a branch cut before this
 script existed still works:
 
 ```bash
-git fetch origin pull/3197/head:pr-3197
-git worktree add ../adcp-client-pr-3197 pr-3197
-(cd ../adcp-client-pr-3197 && npm ci && npm run build)
-ADCP_SDK_ROOT=../adcp-client-pr-3197 npm run validate:reporting-gcp -- --yes
+git fetch origin pull/<n>/head:pr-<n>
+git worktree add ../adcp-client-pr-<n> pr-<n>
+(cd ../adcp-client-pr-<n> && npm ci && npm run build)
+ADCP_SDK_ROOT=../adcp-client-pr-<n> npm run validate:reporting-gcp -- --yes
 ```
 
 The same environment applies. The run ends with a `PASS`, `FAIL` and `INFO`
@@ -462,7 +468,7 @@ report and a markdown block (project and bucket names masked) to paste into
 the PR. The exit status is 0 with no `FAIL`, 1 with any `FAIL`, and 2 for a
 configuration problem or a missing `--yes`. Results of the overlap probes are
 `INFO` on purpose: on `main` expect the stale-run probe to report duplicates,
-and on PR #3197 expect it to report none.
+and on a branch with the plan fence expect it to report none.
 
 `test/lib/reporting-gcp-validation-pg.test.js` drives the script's core against
 in-memory BigQuery and Storage doubles and a real PostgreSQL, so the logic,
