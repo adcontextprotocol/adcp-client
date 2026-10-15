@@ -1225,7 +1225,16 @@ export type WebhookParseErrorCode =
 export interface WebhookVerificationConfig {
   webBotAuth?: {
     directory: import('../signing/web-bot-auth').SignatureDirectoryResolver;
-    isRevoked: (origin: string, keyid: string) => Promise<boolean>;
+    /**
+     * Seller origin revocation, checked after verification. A revoked key is
+     * refused; unknown status is retryable; a seller that serves no list is
+     * accepted (webhooks do not spend). Usually an `OriginRevocationResolver`.
+     */
+    revocation?: {
+      status(origin: string, keyid: string): Promise<import('../identity-3.3/revocation').OriginRevocationStatus>;
+    };
+    /** @deprecated Use `revocation`. Conservative: a seller that serves no list is refused. */
+    isRevoked?: (origin: string, keyid: string) => Promise<boolean>;
   };
   /** Applicable pins from persisted media-buy records. Reuse refresh callbacks bound to the seller/publisher/tenant across deliveries to share their cooldown. Never use webhook payload fields. */
   publisherPins?: (
@@ -4209,7 +4218,8 @@ export class SingleAgentClient {
       }
     }
     if (registration?.mode === 'rfc9421') {
-      const { verifyWebBotAuth, selectSignatureProfile, WebBotAuthError } = loadWebBotAuth();
+      const { verifyWebBotAuth, selectSignatureProfile, WebBotAuthError, WebBotAuthUnavailableError } =
+        loadWebBotAuth();
       const requestMethod = options.requestMethod;
       const requestUrl = options.requestUrl;
       if (rawBody === undefined || !options.headers || !trustedOperationId || !requestMethod || !requestUrl) {
@@ -4237,17 +4247,31 @@ export class SingleAgentClient {
               method: requestMethod,
               url: requestUrl,
               headers: normalizedHeaders.headers,
-              body: typeof rawBody === 'string' ? rawBody : new TextDecoder('utf-8', { fatal: true }).decode(rawBody),
+              body:
+                typeof rawBody === 'string'
+                  ? rawBody
+                  : // ignoreBOM: Content-Digest covers the exact received bytes.
+                    new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(rawBody),
             },
             {
               directory: config.directory,
               replayStore: this.webhookReplayStore,
-              isRevoked: config.isRevoked,
+              ...(config.isRevoked && !config.revocation && { isRevoked: config.isRevoked }),
               now: this.config.webhookVerification?.now,
             }
           );
           if (signers.length !== 1 || signers[0]!.origin !== canonicalAgentOrigin(registration.agentUrl))
             throw new WebBotAuthError(403, 'webhook_signer_mismatch');
+          if (config.revocation) {
+            let status;
+            try {
+              status = await config.revocation.status(signers[0]!.origin, signers[0]!.keyid);
+            } catch (error) {
+              throw new WebBotAuthUnavailableError('revocation_persistence_failed', error);
+            }
+            if (status === 'revoked') throw new WebBotAuthError(403, 'key_revoked');
+            if (status === 'unknown') throw new WebBotAuthError(403, 'identity_unverified');
+          } else if (!config.isRevoked) throw new WebBotAuthError(403, 'webhook_revocation_not_configured');
         } else {
           if (actualProfile === 'web-bot-auth') throw new WebBotAuthError(403, 'webhook_profile_mismatch');
           const delegatedOperatorAuthorization = this.delegatedOperatorAuthorizationForRegistration(registration);
@@ -4276,14 +4300,19 @@ export class SingleAgentClient {
           );
         }
       } catch (cause) {
+        // Discovery failures, unknown revocation status and verifier
+        // infrastructure outages are retryable; signature failures are not.
+        if (cause instanceof WebBotAuthUnavailableError)
+          return { ok: false, code: 'webhook_verification_unavailable', message: cause.message, cause };
         if (cause instanceof WebBotAuthError)
           return {
             ok: false,
             code: [
               'directory_unavailable',
-              'revocation_unavailable',
-              'verification_unavailable',
               'directory_fetch_limit',
+              'directory_expired',
+              'identity_unverified',
+              'verification_unavailable',
             ].includes(cause.reason)
               ? 'webhook_verification_unavailable'
               : 'webhook_signature_invalid',

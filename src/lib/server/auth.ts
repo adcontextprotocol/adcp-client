@@ -178,14 +178,14 @@ export type Authenticator = (req: IncomingMessage) => AuthResult | Promise<AuthR
  */
 export class AuthError extends Error {
   readonly publicMessage: string;
-  readonly status?: 400 | 403 | 429;
+  readonly status?: 400 | 403 | 429 | 503;
   readonly body?: Record<string, unknown>;
   readonly headers?: Record<string, string>;
   constructor(
     publicMessage: string,
     options?: {
       cause?: unknown;
-      status?: 400 | 403 | 429;
+      status?: 400 | 403 | 429 | 503;
       headers?: Record<string, string>;
       body?: Record<string, unknown>;
     }

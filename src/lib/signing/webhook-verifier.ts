@@ -362,7 +362,8 @@ export async function verifyWebhookSignature(
   // Step 13: commit nonce. Insert AFTER every prior check passes — this is
   // the load-bearing invariant that keeps external traffic from growing the
   // cap (any signature failing at step 10 never consumes an entry).
-  const remaining = parsedInput.params.expires - now + CLOCK_SKEW_TOLERANCE_SECONDS;
+  // Acceptance is inclusive of `expires + skew`; the nonce must outlive it.
+  const remaining = parsedInput.params.expires - now + CLOCK_SKEW_TOLERANCE_SECONDS + 1;
   const ttl = Math.max(remaining, MAX_SIGNATURE_WINDOW_SECONDS + CLOCK_SKEW_TOLERANCE_SECONDS);
   const insertResult = await options.replayStore.insert(jwk.kid, replayScope, parsedInput.params.nonce, ttl, now);
   if (insertResult === 'replayed') {

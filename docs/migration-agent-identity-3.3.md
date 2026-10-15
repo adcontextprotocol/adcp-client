@@ -113,7 +113,7 @@ const client = new SingleAgentClient({
   experimentalIdentity33: true,
   webhookSigningProfile: 'web-bot-auth',
   webhookVerification: {
-    webBotAuth: { directory, isRevoked: (origin, kid) => revocations.isRevoked(origin, kid) },
+    webBotAuth: { directory, revocation: revocations },
   },
 });
 ```
@@ -234,8 +234,8 @@ const server = createAdcpServerFromPlatform(platform, {
     assertLegacyOriginAllowed: url => lifecycle.assertLegacyAllowed(url),
     webBotAuth: {
       directory,
-      isRevoked: (origin, kid) => revocations.isRevoked(origin, kid),
-      resolvePrincipal: createIdentity33PrincipalResolver({ lifecycle }),
+      // Revocation and binding run after verification, in the identity layer.
+      resolvePrincipal: createIdentity33PrincipalResolver({ lifecycle, revocation: revocations }),
     },
   },
 });
@@ -339,6 +339,49 @@ released schemas:
 
 Ratified R2 defaults replay to 429. Older vector negative/002 expects 403;
 `replayStatus: 403` is an explicit compatibility test option, not the default.
+
+Verifier outcomes follow DR-0023 and WBA §5.5/§6.10. `verifyWebBotAuth` needs
+only key discovery and a replay store and returns the verified origins;
+revocation, bindings and the origin-binding fence run afterwards in the
+identity layer (`createIdentity33PrincipalResolver({ lifecycle, revocation })`),
+so verification can run in a CDN or middleware in front of the AdCP server.
+
+- Signature-path errors are WBA statuses and headers only: 400 for a field that
+  does not parse, 403 with `Accept-Signature` for a signature that does not
+  verify, 429 for a replayed nonce. Any AdCP body is the generic authentication
+  error (`AUTH_INVALID`); the specific reason is logged, never sent.
+- A key-directory fetch failure (transport error or any non-200, 404/410/5xx
+  included) is a discovery failure. It never evicts a cached, unexpired
+  directory, which keeps verifying. Without one the request is unverified and
+  answered 403 with `Accept-Signature` (the SDK's default unverified-request
+  policy). A fetched directory without the key is a signature failure.
+- Plain JWKS directories without Appendix B signatures are accepted, with every
+  key checked against its RFC 7638 thumbprint; pass
+  `requireSignedDirectories: true` to the resolver to refuse them. An unsigned
+  directory keeps verifying through failed refreshes for at most
+  `maxUnsignedDirectoryAgeSeconds` (default one day).
+- A revoked key is 403 with the generic authentication error and no
+  `Accept-Signature`: the signer must stop using that key. Revocation status
+  `unknown` (stale past grace) leaves the identity unverified (403 with
+  `Accept-Signature`). An origin that serves no revocation list (`absent`) is
+  identity-established and cannot be bound for spend.
+- Replay-store and revocation-history-store failures are infrastructure
+  outages, raised as `WebBotAuthUnavailableError`. The server integrations
+  answer them at the application layer with 503 `SERVICE_UNAVAILABLE` and
+  `Retry-After`, never as a signature outcome.
+- `webBotAuth.isRevoked`, `requireFreshRevocation` and `deferAuthorizationErrors`
+  are deprecated. A server needs either a revocation-aware principal resolver or
+  the deprecated `isRevoked`, and the webhook receiver either `revocation` or
+  `isRevoked`. The deprecated path cannot express "established but not
+  bindable", so it refuses an origin that serves no list (unverified).
+- Clients act on the HTTP status and `Accept-Signature`, not the generic body:
+  re-sign on 403 with `Accept-Signature`, stop using the key on 403 without it,
+  back off on 429 or 503.
+- `@target-uri` and `@authority` are taken from the target URI as received
+  (RFC 9421 §2.2.2), never canonicalized; canonical origins identify the signer
+  only. Default nonces are 64 bytes (draft §4.2). Ed25519, ECDSA P-256 and
+  RSA-PSS-SHA512 keys are supported. `test/fixtures/wba-interop/` holds fixtures
+  verified in both directions against Cloudflare's `web-bot-auth`.
 Older #7894 governance vectors propose a superseded migration and are retained
 with their non-applicability recorded in `test/fixtures/wba-profile/PINNED.json`.
 The buyer default onboarding field is `profiles.adcp.onboarding`, matching the

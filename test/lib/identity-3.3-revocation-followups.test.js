@@ -296,7 +296,7 @@ test('status(): revoked, current, absent (404/410), unknown, and persistence out
   clock = T + 301;
   assert.equal(await resolver.status(origin, fixture.kid), 'absent');
   assert.equal(await resolver.status(origin, revokedKid), 'revoked');
-  await assert.rejects(resolver.isRevoked(origin, fixture.kid), e => e.reason === 'revocation_unavailable');
+  await assert.rejects(resolver.isRevoked(origin, fixture.kid), e => e.reason === 'revocation_absent');
   // A list that cannot be verified past grace: identity not established.
   const other = 'https://other.example.com';
   const otherFixture = await originFixture(other);

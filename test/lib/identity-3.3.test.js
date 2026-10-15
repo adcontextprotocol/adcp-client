@@ -85,7 +85,9 @@ test('signed directory vector, exact audit bytes, tampering, wrong origin, futur
       true
     )
   );
-  assert.throws(() => wba.verifySignatureDirectory(response, 1790840999, true));
+  // Directory proofs tolerate a verifier clock up to 60 s behind `created`, no more.
+  assert.equal(wba.verifySignatureDirectory(response, 1790840999, true).proof.body, v.response.body);
+  assert.throws(() => wba.verifySignatureDirectory(response, 1790841000 - 61, true));
 });
 for (const curve of ['ed25519', 'ec'])
   test(`signing and directory authoring roundtrip: ${curve}`, async () => {
@@ -774,9 +776,10 @@ test('WBA challenges include required fields; revocations cannot suggest re-sign
   const unavailable = async () => {
     throw new wba.WebBotAuthError(403, 'revocation_unavailable');
   };
+  // Unknown revocation status leaves the identity unverified (DR-0023), never a 503.
   await assert.rejects(
     wba.verifyWebBotAuth(v.request, { ...options(v), isRevoked: unavailable }),
-    e => e.reason === 'revocation_unavailable'
+    e => e.reason === 'identity_unverified' && e.status === 403 && !!e.headers['Accept-Signature']
   );
   assert.equal(
     (await wba.verifyWebBotAuth(v.request, { ...options(v), isRevoked: unavailable, requireFreshRevocation: false }))
@@ -1087,15 +1090,14 @@ test('official MCP client receives deferred identity denials as tool errors; A2A
   try {
     await client.connect(clientTransport);
     await client.listTools();
-    for (const reason of ['key_revoked', 'identity_not_bound', 'revocation_unavailable']) {
-      const signers = await wba.verifyWebBotAuth(v.request, {
-        ...options(v),
-        deferAuthorizationErrors: true,
-        isRevoked: async () => {
-          if (reason === 'revocation_unavailable') throw new wba.WebBotAuthError(403, reason);
-          return reason === 'key_revoked';
-        },
-      });
+    // Revocation is no longer deferred into tool errors: a revoked key is a 403
+    // without a challenge and unknown status leaves the identity unverified.
+    await assert.rejects(
+      wba.verifyWebBotAuth(v.request, { ...options(v), isRevoked: async () => true }),
+      e => e.reason === 'key_revoked' && !e.headers['Accept-Signature']
+    );
+    for (const reason of ['identity_not_bound']) {
+      const signers = await wba.verifyWebBotAuth(v.request, options(v));
       const principal = await resolve(signers, reason === 'identity_not_bound' ? 'create_media_buy' : 'get_products');
       authInfo = {
         token: '',
@@ -1282,7 +1284,7 @@ test('revocation persistence failure never inherits outage grace or the read exc
   for (let n = 0; n < 2; n++)
     await assert.rejects(
       resolver.isRevoked(origin, 'new'),
-      e => e.reason === 'revocation_persistence_failed' && !e.headers['Accept-Signature']
+      e => e.reason === 'revocation_persistence_failed' && e instanceof wba.WebBotAuthUnavailableError
     );
   assert.equal(await resolver.isRevoked(origin, 'old'), true);
   const v = vector('positive/001-single-signer-request');

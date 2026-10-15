@@ -44,6 +44,9 @@ import { RequestSignatureError } from '../signing/errors';
 import {
   selectSignatureProfile,
   verifyWebBotAuth,
+  isWebBotAuthRevocationChecked,
+  webBotAuthUnavailableResponse,
+  WebBotAuthUnavailableError,
   WebBotAuthError,
   type VerifiedWebBotSigner,
 } from '../signing/web-bot-auth';
@@ -81,7 +84,12 @@ export interface VerifySignatureAsAuthenticatorOptions {
   /** Explicit experimental profile. Verification never creates a principal or fetches trust.json. */
   webBotAuth?: {
     directory: import('../signing/web-bot-auth').SignatureDirectoryResolver;
-    isRevoked: (origin: string, keyid: string) => Promise<boolean>;
+    /**
+     * @deprecated Revocation belongs to the identity layer: use
+     * `createIdentity33PrincipalResolver({ revocation })`. Required only when
+     * `resolvePrincipal` does not check revocation itself.
+     */
+    isRevoked?: (origin: string, keyid: string) => Promise<boolean>;
     /** Resolve only an existing audited binding; handle identity-established callers with anonymous scope. */
     resolvePrincipal: (
       signers: readonly VerifiedWebBotSigner[],
@@ -179,6 +187,14 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
     throw new TypeError(
       'Web Bot Auth requires an origin-binding migration fence; use createIdentity33PrincipalResolver or supply assertLegacyOriginAllowed'
     );
+  if (
+    options.webBotAuth &&
+    !options.webBotAuth.isRevoked &&
+    !isWebBotAuthRevocationChecked(options.webBotAuth.resolvePrincipal)
+  )
+    throw new TypeError(
+      'Web Bot Auth requires origin revocation: use createIdentity33PrincipalResolver({ revocation }) or supply isRevoked'
+    );
   const revocationStore = options.revocationStore ?? new InMemoryRevocationStore();
 
   const authenticator: Authenticator = async req => {
@@ -204,19 +220,13 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
           throw new WebBotAuthError(403, 'profile_disabled');
         if (req.method !== 'GET' && (req as IncomingMessage & { rawBody?: string }).rawBody === undefined)
           throw new WebBotAuthError(403, 'raw_body_missing');
+        // Identity verification needs only key discovery and replay state;
+        // revocation and binding belong to the principal resolver.
         const signers = await verifyWebBotAuth(requestLike, {
           directory: options.webBotAuth.directory,
-          deferAuthorizationErrors:
-            typeof options.resolveOperation(req as IncomingMessage & { rawBody?: string }) === 'string',
           replayStore,
-          isRevoked: options.webBotAuth.isRevoked,
           now: options.now,
-          requireFreshRevocation: ![
-            'get_adcp_capabilities',
-            'get_principal',
-            'list_creative_formats',
-            'list_accounts',
-          ].includes(String(options.resolveOperation(req as IncomingMessage & { rawBody?: string }))),
+          ...(options.webBotAuth.isRevoked && { isRevoked: options.webBotAuth.isRevoked }),
         });
         const principal = await options.webBotAuth.resolvePrincipal(
           signers,
@@ -262,6 +272,10 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
     } catch (err) {
       if (err instanceof WebBotAuthError)
         throw new AuthError(err.message, { cause: err, status: err.status, headers: err.headers, body: err.body });
+      if (err instanceof WebBotAuthUnavailableError) {
+        const outage = webBotAuthUnavailableResponse();
+        throw new AuthError(err.message, { cause: err, ...outage });
+      }
       if (err instanceof RequestSignatureError) {
         throw new AuthError(`Signature rejected (${err.code}).`, { cause: err });
       }

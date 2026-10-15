@@ -337,10 +337,12 @@ test('update and artifact callbacks persist destination profile before dispatch 
             trustedFetchFn: async () => new Response(proof.body, { status: 200, headers: proof.headers }),
           },
         }),
-        isRevoked: async () => false,
+        // A seller that serves no revocation list is accepted for webhooks.
+        revocation: { status: async () => revocationStatus },
       },
     },
   };
+  let revocationStatus = 'absent';
   const client = new SingleAgentClient(agent, config);
   client.cachedCapabilities = caps;
   client.getCapabilities = async () => caps;
@@ -419,6 +421,47 @@ test('update and artifact callbacks persist destination profile before dispatch 
     assert.equal(parsedReport.ok, true, JSON.stringify(parsedReport));
     assert.deepEqual(parsedReport.result, report);
     assert.deepEqual(parsedReport.envelope, reportEnvelope);
+    // A revoked seller key is a permanent signature failure; unknown status is retryable.
+    for (const [status, code] of [
+      ['revoked', 'webhook_signature_invalid'],
+      ['unknown', 'webhook_verification_unavailable'],
+    ]) {
+      revocationStatus = status;
+      const statusBody = JSON.stringify({ ...payload, idempotency_key: `artifact-delivery-${status}-key` });
+      const outcome = await receiver.verifyAndParseWebhook({
+        rawBody: statusBody,
+        headers: await identity.signWebBotAuth(
+          { method: 'POST', url: artifactUrl, headers: { 'content-type': 'application/json' }, body: statusBody },
+          { privateKey: priv },
+          { origin: 'https://seller.example.com' }
+        ),
+        taskType: 'artifact_delivery',
+        requestMethod: 'POST',
+        requestUrl: artifactUrl,
+      });
+      assert.equal(outcome.code, code);
+    }
+    revocationStatus = 'current';
+    // A replay-store outage on a correctly signed webhook is transient, not an invalid signature.
+    receiver.webhookReplayStore = {
+      insert: async () => {
+        throw new Error('replay store offline');
+      },
+    };
+    const outageBody = JSON.stringify({ ...payload, idempotency_key: 'artifact-delivery-outage-key' });
+    const outage = await receiver.verifyAndParseWebhook({
+      rawBody: outageBody,
+      headers: await identity.signWebBotAuth(
+        { method: 'POST', url: artifactUrl, headers: { 'content-type': 'application/json' }, body: outageBody },
+        { privateKey: priv },
+        { origin: 'https://seller.example.com' }
+      ),
+      taskType: 'artifact_delivery',
+      requestMethod: 'POST',
+      requestUrl: artifactUrl,
+    });
+    assert.equal(outage.ok, false);
+    assert.equal(outage.code, 'webhook_verification_unavailable');
     const preservedUrl = 'https://buyer.example.com/approved-report';
     ProtocolClient.callTool = async (_agent, _task, args) => {
       assert.deepEqual(args.reporting_webhook, { url: preservedUrl });

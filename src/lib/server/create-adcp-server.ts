@@ -12,6 +12,9 @@ import {
   webBotAuthToolFailure,
   selectSignatureProfile,
   verifyWebBotAuth,
+  isWebBotAuthRevocationChecked,
+  webBotAuthUnavailableResponse,
+  WebBotAuthUnavailableError,
   WebBotAuthError,
 } from '../signing/web-bot-auth';
 import { validateIdentity33Payload } from '../identity-3.3/validation';
@@ -4458,6 +4461,14 @@ function buildSignedRequestsPreTransport(
     throw new Error(
       'Web Bot Auth requires an origin-binding migration fence; use createIdentity33PrincipalResolver or supply assertLegacyOriginAllowed'
     );
+  if (
+    signedRequests.webBotAuth &&
+    !signedRequests.webBotAuth.isRevoked &&
+    !isWebBotAuthRevocationChecked(signedRequests.webBotAuth.resolvePrincipal)
+  )
+    throw new Error(
+      'Web Bot Auth requires origin revocation: use createIdentity33PrincipalResolver({ revocation }) or supply isRevoked'
+    );
   const requiredFor = effectiveRequestSigning.required_for ?? [];
   const verifier = createExpressVerifier({
     capability: {
@@ -4490,17 +4501,11 @@ function buildSignedRequestsPreTransport(
         const signers = await verifyWebBotAuth(
           { method: req.method ?? 'POST', url: requestTarget, headers: req.headers, body: req.rawBody ?? '' },
           {
+            // Identity verification needs only key discovery and replay state;
+            // revocation and binding belong to the principal resolver.
             directory: signedRequests.webBotAuth.directory,
-            deferAuthorizationErrors:
-              typeof resolveRequestOperation({ rawBody: req.rawBody, method: req.method, url: req.url }) === 'string',
             replayStore: signedRequests.replayStore,
-            isRevoked: signedRequests.webBotAuth.isRevoked,
-            requireFreshRevocation: ![
-              'get_adcp_capabilities',
-              'get_principal',
-              'list_creative_formats',
-              'list_accounts',
-            ].includes(String(resolveRequestOperation({ rawBody: req.rawBody, method: req.method, url: req.url }))),
+            ...(signedRequests.webBotAuth.isRevoked && { isRevoked: signedRequests.webBotAuth.isRevoked }),
           }
         );
         const operation = resolveRequestOperation({ rawBody: req.rawBody, method: req.method, url: req.url });
@@ -4524,6 +4529,13 @@ function buildSignedRequestsPreTransport(
         });
         return false;
       } catch (error) {
+        if (error instanceof WebBotAuthUnavailableError) {
+          // Infrastructure outage: an application-layer answer, not a signature outcome.
+          const outage = webBotAuthUnavailableResponse();
+          res.writeHead(outage.status, { ...outage.headers, 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(outage.body));
+          return true;
+        }
         const rejected = error instanceof WebBotAuthError ? error : new WebBotAuthError(403, 'identity_rejected');
         res.writeHead(rejected.status, { ...rejected.headers, 'Content-Type': 'application/json' });
         res.end(JSON.stringify(rejected.body));
