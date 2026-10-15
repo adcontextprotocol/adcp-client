@@ -201,8 +201,17 @@ jobs:
         include:
           - language: python
             repository: adcontextprotocol/adcp-client-python
-            # adcp-client-python#1270 adopts AdCP 3.2.1 GA and speaks wire version 3.2.
-            ref: ${{ inputs.python_ref || '0c1cc94405f3aa32aa4deb063c245c01ccc7b87a' }}
+            # adcp-client-python#1507 makes discovery servable: output schemas are
+            # advertised compactly instead of inlining every shared $ref, taking
+            # tools/list from 22.2 MiB to 1.34 MiB. The previous pin's reply was
+            # refused by this SDK's 4 MiB default response cap (adcp-client#3253),
+            # which left the lane with zero executed tracks.
+            #
+            # Pinned to the fix itself rather than main's head: the next commit
+            # (#1504, d5195a95) is a buyer-side response cap this seller lane never
+            # exercises. Verified on this ref — negotiates AdCP 3.2.4, advertises 14
+            # tools, and executes 2/2 passing tracks under the 4 MiB default.
+            ref: ${{ inputs.python_ref || 'd908aaa98caa88e5b0cd992037eb5010dc009da1' }}
             harness: scripts/ci/run_storyboard_reference_seller.sh
             port: 3001
             advisory: true
