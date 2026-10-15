@@ -47,14 +47,7 @@ const TEST_KIDS = new Set([
  * re-sign: a revoked key (the signer must stop using it) and refusals made
  * after verification.
  */
-const NO_CHALLENGE_REASONS = new Set([
-  'key_revoked',
-  'identity_not_bound',
-  'profile_disabled',
-  // Revocation-store outcomes raised by OriginRevocationResolver.isRevoked().
-  'revocation_unavailable',
-  'revocation_persistence_failed',
-]);
+const NO_CHALLENGE_REASONS = new Set(['key_revoked', 'identity_not_bound', 'profile_disabled']);
 /**
  * Signature-path outcome (WBA §4, DR-0023): 400 for a field that does not
  * parse, 403 for a signature that does not verify (with `Accept-Signature`
@@ -162,9 +155,11 @@ type WebBotAuthAlg = AdcpSignAlg | 'rsa-pss-sha512';
 function algorithm(jwk: AdcpJsonWebKey): WebBotAuthAlg {
   if (jwk.kty === 'OKP' && jwk.crv === 'Ed25519') return 'ed25519';
   if (jwk.kty === 'EC' && jwk.crv === 'P-256') return 'ecdsa-p256-sha256';
-  // RSA keys below 2048 bits are refused.
-  if (jwk.kty === 'RSA' && typeof jwk.n === 'string' && Buffer.from(jwk.n, 'base64url').length >= 256)
-    return 'rsa-pss-sha512';
+  // RSA: 2048–4096-bit moduli and e = 65537 only (bounds verification cost).
+  if (jwk.kty === 'RSA' && typeof jwk.n === 'string' && jwk.e === 'AQAB') {
+    const bytes = Buffer.from(jwk.n, 'base64url').length;
+    if (bytes >= 256 && bytes <= 512) return 'rsa-pss-sha512';
+  }
   return denied('unsupported_key');
 }
 function inputs(headers: RequestLike['headers']): ParsedSignatureInput[] {
@@ -572,10 +567,19 @@ async function legacyRevocationCheck(options: VerifyWebBotAuthOptions, origin: s
   try {
     revoked = await options.isRevoked!(origin, keyid);
   } catch (error) {
+    if (error instanceof WebBotAuthUnavailableError) throw error;
     if (error instanceof WebBotAuthError && error.reason === 'revocation_persistence_failed')
       throw new WebBotAuthUnavailableError('revocation_persistence_failed', error);
-    if (options.requireFreshRevocation === false) return;
-    // Unknown revocation status: the identity is not established.
+    if (error instanceof WebBotAuthError && error.reason === 'key_revoked') return denied('key_revoked');
+    // Unknown (or absent) status. The deprecated tolerance applies to that only.
+    if (
+      options.requireFreshRevocation === false &&
+      error instanceof WebBotAuthError &&
+      (error.reason === 'revocation_unavailable' || error.reason === 'revocation_absent')
+    )
+      return;
+    // The deprecated path cannot express "established but not bindable", so it
+    // stays conservative: the identity is not established.
     return denied('identity_unverified');
   }
   if (revoked) denied('key_revoked');
@@ -586,7 +590,7 @@ function testKeysAllowed(allowTestKeys: boolean | undefined): boolean {
 }
 export interface VerifiedSignatureDirectory {
   keys: AdcpJsonWebKey[];
-  /** Signed: the earliest proof expiry. Unsigned: set by the resolver from HTTP freshness. */
+  /** Signed: the earliest proof expiry. Unsigned: verification time plus the unsigned-age bound. */
   expires: number;
   /** Whether every key carried an Appendix B signature. */
   signed: boolean;
@@ -609,7 +613,7 @@ const UNSIGNED_DIRECTORY_MEDIA_TYPES = new Set([
 export function verifyKeyDirectory(
   response: ResponseLike,
   now = Date.now() / 1000,
-  options: { allowTestKeys?: boolean; requireSigned?: boolean } = {}
+  options: { allowTestKeys?: boolean; requireSigned?: boolean; maxUnsignedAgeSeconds?: number } = {}
 ): VerifiedSignatureDirectory {
   try {
     if (!Number.isFinite(now)) denied('directory_invalid');
@@ -664,6 +668,8 @@ export function verifyKeyDirectory(
       verifyBytes(proof, { ...response.request, headers: response.request.headers ?? {} }, key, response);
       expires = Math.min(expires, proof.params.expires);
     }
+    // Unsigned keys carry no proof expiry: they verify for a bounded time from `now`.
+    if (!signed) expires = now + unsignedAge(options.maxUnsignedAgeSeconds);
     return { keys, expires, signed, proof: response };
   } catch (error) {
     if (error instanceof WebBotAuthError) {
@@ -672,6 +678,12 @@ export function verifyKeyDirectory(
     }
     return denied('directory_invalid');
   }
+}
+function unsignedAge(seconds: number | undefined): number {
+  const value = seconds ?? 86_400;
+  if (!Number.isFinite(value) || value < 60)
+    throw new TypeError('Unsigned directory age must be a finite number of seconds, at least 60');
+  return value;
 }
 /** Signed directories only (Appendix B). Prefer {@link verifyKeyDirectory}. */
 export function verifySignatureDirectory(
@@ -712,7 +724,9 @@ export class SignatureDirectoryResolver implements JwksResolver {
   private readonly failures = new Map<string, number>();
   private readonly keyMissCooldown = new Map<string, number>();
   private readonly pending = new Map<string, Promise<VerifiedSignatureDirectory>>();
-  constructor(private readonly options: SignatureDirectoryResolverOptions = {}) {}
+  constructor(private readonly options: SignatureDirectoryResolverOptions = {}) {
+    unsignedAge(options.maxUnsignedDirectoryAgeSeconds);
+  }
   async resolve(keyid: string, signerOrigin?: string): Promise<AdcpJsonWebKey | null> {
     if (!signerOrigin) return denied('origin_required');
     const origin = receivedAgentOrigin(signerOrigin);
@@ -724,11 +738,14 @@ export class SignatureDirectoryResolver implements JwksResolver {
       if (key || (this.keyMissCooldown.get(origin) ?? 0) > now) return key ?? null;
       this.keyMissCooldown.set(origin, now + 60);
     }
-    if ((this.failures.get(origin) ?? 0) > now) {
-      const fallback = usable();
-      if (fallback) return fallback.keys.find(k => k.kid === keyid) ?? null;
-      return denied('directory_unavailable');
-    }
+    // During a discovery failure, cached keys keep verifying; a kid they lack
+    // (for example a key rotated in during the outage) is still a discovery
+    // failure, because no current directory was read.
+    const fromFallback = (): AdcpJsonWebKey => {
+      const key = usable()?.keys.find(k => k.kid === keyid);
+      return key ?? denied('directory_unavailable');
+    };
+    if ((this.failures.get(origin) ?? 0) > now) return fromFallback();
     let pending = this.pending.get(origin);
     if (!pending) {
       if (
@@ -736,9 +753,8 @@ export class SignatureDirectoryResolver implements JwksResolver {
           2 ||
         this.pending.size >= (this.options.maxConcurrentFetches ?? 16)
       ) {
-        const fallback = usable();
-        if (fallback) return fallback.keys.find(k => k.kid === keyid) ?? null;
-        return denied('directory_fetch_limit');
+        const key = usable()?.keys.find(k => k.kid === keyid);
+        return key ?? denied('directory_fetch_limit');
       }
       pending = this.fetch(origin, now);
       this.pending.set(origin, pending);
@@ -748,8 +764,7 @@ export class SignatureDirectoryResolver implements JwksResolver {
     } catch (error) {
       // A failed fetch never proves removal: keep verifying under unexpired
       // cached keys. A successful refresh replaces the whole key set.
-      const fallback = usable();
-      if (fallback) return fallback.keys.find(k => k.kid === keyid) ?? null;
+      if (usable()) return fromFallback();
       throw error;
     } finally {
       if (this.pending.get(origin) === pending) this.pending.delete(origin);
@@ -769,10 +784,14 @@ export class SignatureDirectoryResolver implements JwksResolver {
       if (result.status !== 200) denied('directory_unavailable');
       // ignoreBOM: the digest covers the exact bytes, including any BOM.
       const body = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(result.body);
-      const verified = verifyKeyDirectory(
+      const directory = verifyKeyDirectory(
         { status: result.status, headers: result.headers, body, request: { method: 'GET', url } },
         now,
-        { allowTestKeys: this.options.allowTestKeys, requireSigned: this.options.requireSignedDirectories }
+        {
+          allowTestKeys: this.options.allowTestKeys,
+          requireSigned: this.options.requireSignedDirectories,
+          maxUnsignedAgeSeconds: this.options.maxUnsignedDirectoryAgeSeconds,
+        }
       );
       const cacheControl = result.headers['cache-control'] ?? '';
       const maxAge = /(?:^|,)\s*(?:no-cache|no-store)(?:,|$)/i.test(cacheControl)
@@ -780,11 +799,6 @@ export class SignatureDirectoryResolver implements JwksResolver {
         : Number(cacheControl.match(/(?:^|,)\s*max-age=(\d+)/i)?.[1] ?? 300);
       const age = Number(result.headers.age ?? 0);
       if (!Number.isFinite(age) || age < 0) denied('directory_invalid');
-      // Unsigned directories carry no proof expiry: bound how long their keys
-      // keep verifying through later discovery failures.
-      const directory = verified.signed
-        ? verified
-        : { ...verified, expires: now + Math.max(60, this.options.maxUnsignedDirectoryAgeSeconds ?? 86_400) };
       if (this.cache.size >= (this.options.maxOrigins ?? 1000) && !this.cache.has(origin)) {
         const oldest = this.cache.keys().next().value!;
         this.cache.delete(oldest);

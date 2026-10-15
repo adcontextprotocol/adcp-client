@@ -113,7 +113,7 @@ const client = new SingleAgentClient({
   experimentalIdentity33: true,
   webhookSigningProfile: 'web-bot-auth',
   webhookVerification: {
-    webBotAuth: { directory, isRevoked: (origin, kid) => revocations.isRevoked(origin, kid) },
+    webBotAuth: { directory, revocation: revocations },
   },
 });
 ```
@@ -234,8 +234,8 @@ const server = createAdcpServerFromPlatform(platform, {
     assertLegacyOriginAllowed: url => lifecycle.assertLegacyAllowed(url),
     webBotAuth: {
       directory,
-      isRevoked: (origin, kid) => revocations.isRevoked(origin, kid),
-      resolvePrincipal: createIdentity33PrincipalResolver({ lifecycle }),
+      // Revocation and binding run after verification, in the identity layer.
+      resolvePrincipal: createIdentity33PrincipalResolver({ lifecycle, revocation: revocations }),
     },
   },
 });
@@ -371,7 +371,12 @@ so verification can run in a CDN or middleware in front of the AdCP server.
   `Retry-After`, never as a signature outcome.
 - `webBotAuth.isRevoked`, `requireFreshRevocation` and `deferAuthorizationErrors`
   are deprecated. A server needs either a revocation-aware principal resolver or
-  the deprecated `isRevoked`.
+  the deprecated `isRevoked`, and the webhook receiver either `revocation` or
+  `isRevoked`. The deprecated path cannot express "established but not
+  bindable", so it refuses an origin that serves no list (unverified).
+- Clients act on the HTTP status and `Accept-Signature`, not the generic body:
+  re-sign on 403 with `Accept-Signature`, stop using the key on 403 without it,
+  back off on 429 or 503.
 - `@target-uri` and `@authority` are taken from the target URI as received
   (RFC 9421 §2.2.2), never canonicalized; canonical origins identify the signer
   only. Default nonces are 64 bytes (draft §4.2). Ed25519, ECDSA P-256 and

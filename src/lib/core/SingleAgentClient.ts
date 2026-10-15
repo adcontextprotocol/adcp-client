@@ -1225,7 +1225,16 @@ export type WebhookParseErrorCode =
 export interface WebhookVerificationConfig {
   webBotAuth?: {
     directory: import('../signing/web-bot-auth').SignatureDirectoryResolver;
-    isRevoked: (origin: string, keyid: string) => Promise<boolean>;
+    /**
+     * Seller origin revocation, checked after verification. A revoked key is
+     * refused; unknown status is retryable; a seller that serves no list is
+     * accepted (webhooks do not spend). Usually an `OriginRevocationResolver`.
+     */
+    revocation?: {
+      status(origin: string, keyid: string): Promise<import('../identity-3.3/revocation').OriginRevocationStatus>;
+    };
+    /** @deprecated Use `revocation`. Conservative: a seller that serves no list is refused. */
+    isRevoked?: (origin: string, keyid: string) => Promise<boolean>;
   };
   /** Applicable pins from persisted media-buy records. Reuse refresh callbacks bound to the seller/publisher/tenant across deliveries to share their cooldown. Never use webhook payload fields. */
   publisherPins?: (
@@ -4247,12 +4256,22 @@ export class SingleAgentClient {
             {
               directory: config.directory,
               replayStore: this.webhookReplayStore,
-              isRevoked: config.isRevoked,
+              ...(config.isRevoked && !config.revocation && { isRevoked: config.isRevoked }),
               now: this.config.webhookVerification?.now,
             }
           );
           if (signers.length !== 1 || signers[0]!.origin !== canonicalAgentOrigin(registration.agentUrl))
             throw new WebBotAuthError(403, 'webhook_signer_mismatch');
+          if (config.revocation) {
+            let status;
+            try {
+              status = await config.revocation.status(signers[0]!.origin, signers[0]!.keyid);
+            } catch (error) {
+              throw new WebBotAuthUnavailableError('revocation_persistence_failed', error);
+            }
+            if (status === 'revoked') throw new WebBotAuthError(403, 'key_revoked');
+            if (status === 'unknown') throw new WebBotAuthError(403, 'identity_unverified');
+          } else if (!config.isRevoked) throw new WebBotAuthError(403, 'webhook_revocation_not_configured');
         } else {
           if (actualProfile === 'web-bot-auth') throw new WebBotAuthError(403, 'webhook_profile_mismatch');
           const delegatedOperatorAuthorization = this.delegatedOperatorAuthorizationForRegistration(registration);
@@ -4288,13 +4307,15 @@ export class SingleAgentClient {
         if (cause instanceof WebBotAuthError)
           return {
             ok: false,
-            code:
-              cause.unverified ||
-              ['revocation_unavailable', 'revocation_persistence_failed', 'verification_unavailable'].includes(
-                cause.reason
-              )
-                ? 'webhook_verification_unavailable'
-                : 'webhook_signature_invalid',
+            code: [
+              'directory_unavailable',
+              'directory_fetch_limit',
+              'directory_expired',
+              'identity_unverified',
+              'verification_unavailable',
+            ].includes(cause.reason)
+              ? 'webhook_verification_unavailable'
+              : 'webhook_signature_invalid',
             message: cause.message,
             cause,
           };

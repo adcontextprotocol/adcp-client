@@ -10,15 +10,19 @@ export {
   createSignedSignatureDirectory,
   SignatureDirectoryResolver,
   verifySignatureDirectory,
+  verifyKeyDirectory,
   selectSignatureProfile,
   jwkThumbprint,
   WebBotAuthError,
+  WebBotAuthUnavailableError,
 } from '../signing/web-bot-auth';
 export type {
   WebBotSigningKey,
   WebBotSigningOptions,
   VerifiedWebBotSigner,
   VerifyWebBotAuthOptions,
+  VerifiedSignatureDirectory,
+  SignatureDirectoryResolverOptions,
 } from '../signing/web-bot-auth';
 export { validateIdentity33Payload } from './validation';
 export {

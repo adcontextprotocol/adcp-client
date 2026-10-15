@@ -602,3 +602,154 @@ test('server integrations require revocation in the identity layer and answer ve
       e.body.adcp_error.code === 'SERVICE_UNAVAILABLE'
   );
 });
+
+test('review: deprecated isRevoked tolerance covers unknown status only, never a revocation', async () => {
+  const key = newKey();
+  const proof = await wba.createSignedSignatureDirectory(origin, [{ privateKey: key }], { now: () => T });
+  const verify = async (isRevoked, requireFreshRevocation) => {
+    const headers = await wba.signWebBotAuth(request, { privateKey: key }, { origin, now: () => T });
+    return wba.verifyWebBotAuth(
+      { ...request, headers },
+      {
+        directory: directoryFor(proof, () => T),
+        replayStore: new InMemoryReplayStore(),
+        now: () => T,
+        isRevoked,
+        ...(requireFreshRevocation !== undefined && { requireFreshRevocation }),
+      }
+    );
+  };
+  const throwing = reason => async () => {
+    throw new wba.WebBotAuthError(403, reason);
+  };
+  await assert.rejects(verify(throwing('key_revoked'), false), e => e.reason === 'key_revoked');
+  // Absent (no list): the deprecated path is conservative and leaves the identity unverified.
+  await assert.rejects(verify(throwing('revocation_absent')), e => e.reason === 'identity_unverified');
+  assert.equal((await verify(throwing('revocation_absent'), false)).length, 1);
+  assert.equal((await verify(throwing('revocation_unavailable'), false)).length, 1);
+  await assert.rejects(
+    verify(throwing('revocation_persistence_failed'), false),
+    e => e instanceof wba.WebBotAuthUnavailableError
+  );
+});
+
+test('review: a key rotated in during a directory outage is a discovery failure', async () => {
+  const oldKey = newKey(),
+    newKeyPair = newKey();
+  const proof = await wba.createSignedSignatureDirectory(origin, [{ privateKey: oldKey }], { now: () => T });
+  let clock = T,
+    serve = serving(proof);
+  const directory = new wba.SignatureDirectoryResolver({
+    now: () => clock,
+    fetchOptions: { trustedFetchFn: (...args) => serve(...args) },
+  });
+  assert.equal((await directory.resolve(oldKey.kid, origin)).kid, oldKey.kid);
+  serve = async () => new Response('', { status: 503 });
+  clock += 400;
+  await assert.rejects(
+    directory.resolve(newKeyPair.kid, origin),
+    e => e.reason === 'directory_unavailable' && e.unverified
+  );
+  // The cached key still verifies through the outage.
+  assert.equal((await directory.resolve(oldKey.kid, origin)).kid, oldKey.kid);
+});
+
+test('review: unsigned directories keep verifying through failed refreshes until their age bound', async () => {
+  const key = newKey();
+  const { d: _d, ...publicJwk } = key;
+  assert.throws(() => new wba.SignatureDirectoryResolver({ maxUnsignedDirectoryAgeSeconds: Number.NaN }), TypeError);
+  assert.throws(() => new wba.SignatureDirectoryResolver({ maxUnsignedDirectoryAgeSeconds: 10 }), TypeError);
+  let clock = T,
+    up = true;
+  const directory = new wba.SignatureDirectoryResolver({
+    now: () => clock,
+    maxUnsignedDirectoryAgeSeconds: 3600,
+    fetchOptions: {
+      trustedFetchFn: async () =>
+        up
+          ? new Response(JSON.stringify({ keys: [publicJwk] }), {
+              status: 200,
+              headers: { 'content-type': 'application/jwk-set+json' },
+            })
+          : new Response('', { status: 500 }),
+    },
+  });
+  assert.equal((await directory.resolve(key.kid, origin)).kid, key.kid);
+  up = false;
+  clock += 1800;
+  assert.equal((await directory.resolve(key.kid, origin)).kid, key.kid);
+  clock = T + 3601;
+  await assert.rejects(directory.resolve(key.kid, origin), e => e.unverified);
+  // Direct callers get a finite expiry for unsigned directories too.
+  const checked = wba.verifyKeyDirectory(
+    {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ keys: [publicJwk] }),
+      request: { method: 'GET', url: origin + wba.SIGNATURE_DIRECTORY_PATH },
+    },
+    T
+  );
+  assert.equal(checked.signed, false);
+  assert.equal(checked.expires, T + 86_400);
+});
+
+test('review: RSA keys are bounded to 2048-4096 bits with e = 65537', async () => {
+  const { generateKeyPairSync: generate } = require('crypto');
+  const small = generate('rsa', { modulusLength: 1024 }).publicKey.export({ format: 'jwk' });
+  const oddExponent = generate('rsa', { modulusLength: 2048, publicExponent: 3 }).publicKey.export({ format: 'jwk' });
+  for (const jwk of [small, oddExponent])
+    assert.throws(
+      () =>
+        wba.verifyKeyDirectory(
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ keys: [jwk] }),
+            request: { method: 'GET', url: origin + wba.SIGNATURE_DIRECTORY_PATH },
+          },
+          T
+        ),
+      e => e.status === 403
+    );
+});
+
+test('review: revocation status transitions between absent, unknown and current', async () => {
+  const identity = require('../../dist/lib/identity-3.3');
+  const { CompactSign } = await import('jose');
+  const key = newKey();
+  const proof = await wba.createSignedSignatureDirectory(origin, [{ privateKey: key }], { now: () => T - 60 });
+  const { createPrivateKey } = require('crypto');
+  const listAt = at =>
+    new CompactSign(
+      Buffer.from(
+        JSON.stringify({
+          issuer: origin,
+          updated: new Date(at * 1000).toISOString(),
+          next_update: new Date((at + 300) * 1000).toISOString(),
+          revoked_kids: [],
+        })
+      )
+    )
+      .setProtectedHeader({ alg: 'EdDSA', kid: key.kid, typ: 'adcp-gov-revocation+jws' })
+      .sign(createPrivateKey({ key, format: 'jwk' }));
+  let clock = T,
+    serve;
+  const resolver = new identity.OriginRevocationResolver({
+    store: new identity.InMemoryOriginRevocationStore(),
+    directory: directoryFor(proof, () => clock),
+    now: () => clock,
+    fetchOptions: { trustedFetchFn: async () => serve() },
+  });
+  serve = async () => new Response(await listAt(clock));
+  assert.equal(await resolver.status(origin, key.kid), 'current');
+  serve = async () => new Response('', { status: 404 });
+  clock += 301;
+  assert.equal(await resolver.status(origin, key.kid), 'absent');
+  serve = async () => new Response('', { status: 503 });
+  clock += 61;
+  assert.equal(await resolver.status(origin, key.kid), 'unknown');
+  serve = async () => new Response(await listAt(clock));
+  clock += 61;
+  assert.equal(await resolver.status(origin, key.kid), 'current');
+});

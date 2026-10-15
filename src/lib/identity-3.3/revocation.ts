@@ -3,7 +3,12 @@ import { CompactSign, compactVerify, decodeProtectedHeader, importJWK, type JWK 
 import { ssrfSafeFetch, type SsrfFetchOptions } from '../net';
 import { canonicalAgentOrigin } from '../signing/agent-resolver/canonicalize';
 import { parseStrictJson } from '../signing/agent-resolver/strict-json';
-import { SignatureDirectoryResolver, WebBotAuthError, jwkThumbprint } from '../signing/web-bot-auth';
+import {
+  SignatureDirectoryResolver,
+  WebBotAuthError,
+  WebBotAuthUnavailableError,
+  jwkThumbprint,
+} from '../signing/web-bot-auth';
 import type { RevocationDetail, RevocationReason } from './types';
 export interface OriginRevocationSnapshot {
   issuer: string;
@@ -137,7 +142,7 @@ export class OriginRevocationResolver {
     const state = await this.status(originUrl, keyid);
     if (state === 'revoked') return true;
     if (state === 'current') return false;
-    throw new WebBotAuthError(403, 'revocation_unavailable');
+    throw new WebBotAuthError(403, state === 'absent' ? 'revocation_absent' : 'revocation_unavailable');
   }
   /**
    * Revocation status of `keyid` at `origin`:
@@ -147,10 +152,20 @@ export class OriginRevocationResolver {
    *   established but cannot be bound for spend.
    * - `unknown`: no list could be verified and grace has passed (or there was
    *   never a list). The identity is not established.
-   * Throws `revocation_persistence_failed` when the history store fails: an
-   * infrastructure outage, never a revocation outcome.
+   * Throws {@link WebBotAuthUnavailableError} (`revocation_persistence_failed`)
+   * when the history store fails: an infrastructure outage, never a
+   * revocation outcome.
    */
   async status(originUrl: string, keyid: string): Promise<OriginRevocationStatus> {
+    try {
+      return await this.currentStatus(originUrl, keyid);
+    } catch (error) {
+      if (error instanceof WebBotAuthError && error.reason === 'revocation_persistence_failed')
+        throw new WebBotAuthUnavailableError('revocation_persistence_failed', error);
+      throw error;
+    }
+  }
+  private async currentStatus(originUrl: string, keyid: string): Promise<OriginRevocationStatus> {
     const origin = canonicalAgentOrigin(originUrl),
       now = this.now();
     if (await this.readStored(origin, keyid)) return 'revoked';

@@ -1284,7 +1284,7 @@ test('revocation persistence failure never inherits outage grace or the read exc
   for (let n = 0; n < 2; n++)
     await assert.rejects(
       resolver.isRevoked(origin, 'new'),
-      e => e.reason === 'revocation_persistence_failed' && !e.headers['Accept-Signature']
+      e => e.reason === 'revocation_persistence_failed' && e instanceof wba.WebBotAuthUnavailableError
     );
   assert.equal(await resolver.isRevoked(origin, 'old'), true);
   const v = vector('positive/001-single-signer-request');
