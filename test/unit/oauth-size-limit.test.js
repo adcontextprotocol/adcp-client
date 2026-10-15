@@ -61,8 +61,9 @@ describe('OAuth perimeter response-size cap (#1175)', () => {
           headers: { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(ok)) },
         });
 
-      // No `withResponseSizeLimit` wrapper — the wrapper must be a no-op so
-      // direct callers without the option pay nothing.
+      // No `withResponseSizeLimit` wrapper. The 4 MiB default still applies
+      // (adcp-client#3253), which an in-cap token response passes without
+      // the caller configuring anything.
       const tokens = await exchangeClientCredentials(credentials, { fetch: benignFetch, allowPrivateIp: true });
       assert.strictEqual(tokens.access_token, 'tok');
     });

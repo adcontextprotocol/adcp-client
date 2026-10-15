@@ -833,13 +833,14 @@ function transportErrorEvidence(agentUrl: string, detail: string): HttpProbeResu
 /**
  * Hard byte cap and deadline for the probe's own fetch boundary.
  *
- * `wrapFetchWithSizeLimit` cannot do this job here for two reasons: it is inert
- * unless a `responseSizeLimitStorage` slot is active, and it deliberately
- * passes `text/event-stream` through uncapped because a normal tool call emits
- * an unbounded number of status frames. Streamable HTTP replies *are* SSE, so
- * for this probe that exemption is the whole attack surface — and
- * `withRawResponseCapture` buffers the body via `response.clone().text()`
- * before truncating, so an oversized reply is already in memory by then.
+ * `wrapFetchWithSizeLimit` now covers `text/event-stream` too (adcp-client#3253),
+ * but its SSE bounds are deliberately per-event plus a cumulative allowance
+ * several times the per-response cap, because a normal tool call legitimately
+ * emits many status frames. Streamable HTTP replies *are* SSE, and this probe
+ * reads exactly one lifecycle, so it wants a single flat ceiling on the whole
+ * body instead — `withRawResponseCapture` buffers the body via
+ * `response.clone().text()` before truncating, so an oversized reply is
+ * already in memory by then.
  *
  * One lifecycle reads exactly one `InitializeResult` and one `CallToolResult`,
  * so the body is bounded by what a single AdCP read page can legitimately be.

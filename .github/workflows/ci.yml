@@ -1120,6 +1120,10 @@ jobs:
           test/lib/webhook-emitter.test.js
           test/unit/oauth-size-limit.test.js
           test/unit/response-size-limit.test.js
+          test/unit/a2a-card-size-limit.test.js
+          test/unit/fetch-a2a-canonical-url-size-limit.test.js
+          test/unit/get-agent-info-size-limit.test.js
+          test/unit/mcp-tool-size-limit.test.js
 
   test:
     name: Test & Build

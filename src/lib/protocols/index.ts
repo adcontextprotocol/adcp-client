@@ -38,6 +38,7 @@ export { withMCPConnectionScope };
 export type { MCPCallOptions, MCPConnectionResult } from './mcp';
 export { callA2ATool, createA2AClientFromCardUrl } from './a2a';
 export { DEFAULT_REQUEST_TIMEOUT_MS } from './abort';
+export { DEFAULT_MAX_RESPONSE_BYTES, SSE_CUMULATIVE_BUDGET_MULTIPLIER } from './responseSizeLimit';
 export {
   callMCPToolWithTasks,
   getMCPTaskStatus,
@@ -251,36 +252,71 @@ export function applyVersionEnvelope(
 export interface TransportOptions {
   /**
    * Maximum response body size (in octets) the SDK will read before aborting
-   * with `ResponseTooLargeError`. When unset, the SDK does not impose a cap —
-   * matches the underlying MCP / A2A transport defaults.
+   * with `ResponseTooLargeError`.
    *
-   * Set this when crawling **untrusted** agents (registries, federated
-   * discovery layers, monitoring tools) to prevent a hostile vendor from
-   * buffering a large reply before any application-layer schema validation
-   * runs. Counted across response chunks; pre-cancels when `Content-Length`
-   * exceeds the cap. Applies to A2A agent-card discovery
-   * (`/.well-known/agent.json`) on the same call as well.
+   * **Defaults to 4 MiB** (`DEFAULT_MAX_RESPONSE_BYTES`). Agent responses are
+   * untrusted input, so the cap is on by default on every MCP and A2A call
+   * path — tool calls, endpoint discovery, `tools/list`, and A2A agent-card
+   * lookup (`/.well-known/agent.json`). Counted across response chunks as
+   * they arrive; pre-cancels when `Content-Length` already exceeds the cap.
    *
-   * Per-call override (`TaskOptions.transport.maxResponseBytes`) beats the
-   * value set on the client constructor (`SingleAgentClientConfig.transport`).
+   * Raise it for an agent that legitimately publishes a large catalog; lower
+   * it when crawling **untrusted** agents (registries, federated discovery
+   * layers, monitoring tools). Set it to exactly `0` to opt out of
+   * enforcement entirely — an explicit opt-out, never the default. `Infinity`
+   * and negative values are *not* opt-outs: they fall back to the 4 MiB
+   * default, because they almost always arrive from a misparsed env var or a
+   * budget subtraction rather than an intention. Use `0`.
+   *
+   * Per-call `transport` **replaces** the client constructor's `transport`
+   * object rather than merging field by field
+   * (`TaskOptions.transport` ?? `SingleAgentClientConfig.transport`), so a
+   * per-call object that omits `maxResponseBytes` gets the default back, not
+   * the constructor's value. Repeat the field when you override the object.
+   *
+   * Cached MCP connections are keyed on the cap, so varying it per call opens
+   * a separate connection (and MCP session) per distinct value against the
+   * same agent. That is deliberate — a connection established under one
+   * policy must not serve a call that configured another — but it means
+   * raising the cap for one tool is not free. Prefer a single client-level
+   * value where you can, or pin the session explicitly with
+   * `withMCPConnectionScope` when continuity matters.
    *
    * @remarks
-   * **Safe to set on all calls.** SSE responses (`text/event-stream`) are
-   * passed through unchanged — a single tool call legitimately emits N status
-   * frames + a final result, bounded by protocol-level framing rather than
-   * cumulative byte counts. The cap applies to one-shot JSON responses
-   * (`get_adcp_capabilities`, agent-card lookup, tool result payloads on
-   * non-streaming transports) where the body is bounded by definition.
+   * **SSE is covered too.** `text/event-stream` responses used to be exempt,
+   * which let any peer opt itself out of the cap by changing one response
+   * header. They now carry two bounds: no single event frame may exceed
+   * `maxResponseBytes` (the memory bound — an SSE consumer buffers one frame
+   * at a time), and the cumulative event-stream octets read during one call
+   * may not exceed `maxResponseBytes * 2`
+   * (`SSE_CUMULATIVE_BUDGET_MULTIPLIER`, the liveness bound that stops an
+   * endless drip of individually legal frames). Both failures raise the same
+   * `ResponseTooLargeError`; nothing is silently truncated.
+   *
+   * A long-lived `GET` event-stream — MCP's standalone notification listener,
+   * the legacy SSE transport — outlives the call that opened it, so it meters
+   * its cumulative allowance per *connection* instead of per call. That makes
+   * the cumulative number a memory bound there, not a liveness bound: a peer
+   * that keeps tripping it gets a reconnect cycle at a bounded cost per
+   * cycle. Cached connections are keyed on the cap in effect, so a listener
+   * is only ever reused by calls that configured the same policy as the call
+   * that opened it.
    *
    * @remarks
-   * **Hostile-peer note:** A peer can opt itself out of this cap by responding
-   * with `Content-Type: text/event-stream`. SSE is bypassed because cumulative
-   * event-frame bytes are unbounded by spec — MCP and A2A both stream tool
-   * responses this way. The MCP/A2A SDKs consume SSE incrementally and frame
-   * termination bounds memory in practice, so this is not a memory-bomb risk
-   * for well-formed transports. Adopters relying on `maxResponseBytes` as a
-   * hostile-server defense should treat it as best-effort for non-SSE
-   * responses only.
+   * **Compression and streaming failures.** The byte counter runs downstream
+   * of the runtime's content-decoder, so it measures decompressed octets: a
+   * small gzip blob that inflates to gigabytes still trips the cap after
+   * `maxResponseBytes` of output. The `Content-Length` pre-check, by
+   * contrast, sees the compressed length and is therefore only a fast path,
+   * not the guarantee.
+   *
+   * On a streaming transport the cap errors the response body. Some
+   * transports classify that as a stream disconnect and retry rather than
+   * propagating it, so the call would otherwise run out its deadline: the SDK
+   * records the violation and, if the call then fails, raises
+   * `ResponseTooLargeError` with the transport's own error as `cause` instead
+   * of the timeout. A buyer never gets a timeout for what is really an
+   * over-cap response.
    *
    * @remarks
    * Future hardening knobs (DNS-rebind defense, scheme allow-list, request

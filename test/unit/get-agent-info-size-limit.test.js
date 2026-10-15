@@ -18,6 +18,7 @@ const http = require('node:http');
 
 const { AgentClient } = require('../../dist/lib/core/AgentClient');
 const { ResponseTooLargeError } = require('../../dist/lib/errors');
+const { DEFAULT_MAX_RESPONSE_BYTES } = require('../../dist/lib/protocols/responseSizeLimit');
 
 describe('SingleAgentClient.getAgentInfo() — maxResponseBytes (A2A discovery)', () => {
   let server;
@@ -31,6 +32,14 @@ describe('SingleAgentClient.getAgentInfo() — maxResponseBytes (A2A discovery)'
           name: 'oversized-discovery',
           url: `${baseUrl}/a2a`,
           description: padding,
+          version: '1.0.0',
+          supportedInterfaces: [
+            { url: `${baseUrl}/a2a`, protocolBinding: 'JSONRPC', protocolVersion: '1.0', tenant: '' },
+          ],
+          capabilities: { streaming: false, pushNotifications: false },
+          defaultInputModes: ['application/json'],
+          defaultOutputModes: ['application/json'],
+          skills: [],
         });
         res.writeHead(200, {
           'content-type': 'application/json',
@@ -66,6 +75,25 @@ describe('SingleAgentClient.getAgentInfo() — maxResponseBytes (A2A discovery)'
         );
         assert.strictEqual(err.code, 'RESPONSE_TOO_LARGE');
         assert.strictEqual(err.limit, 64 * 1024);
+        return true;
+      }
+    );
+  });
+
+  it('caps the agent-card fetch at 4 MiB when no transport option is supplied', async () => {
+    // No `transport` argument: A2A card discovery must be bounded by default,
+    // not only when an adopter remembered to opt in (adcp-client#3253).
+    const client = new AgentClient({ id: 'default-a2a', agent_uri: baseUrl, protocol: 'a2a', name: 'test' });
+
+    await assert.rejects(
+      () => client.getAgentInfo(),
+      err => {
+        assert.ok(
+          err instanceof ResponseTooLargeError,
+          `expected ResponseTooLargeError, got ${err?.constructor?.name}: ${err?.message}`
+        );
+        assert.strictEqual(err.limit, DEFAULT_MAX_RESPONSE_BYTES);
+        assert.strictEqual(err.limit, 4 * 1024 * 1024);
         return true;
       }
     );

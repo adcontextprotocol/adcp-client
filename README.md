@@ -602,6 +602,60 @@ app.post(
 
 Full guide covering key generation, JWKS publication, brand.json setup, webhook signing, capability declaration, key rotation, and conformance testing: **[docs/guides/SIGNING-GUIDE.md](./docs/guides/SIGNING-GUIDE.md)**.
 
+### Response Size Cap
+
+Agent responses are untrusted input, so the SDK caps every response body it
+reads. **The default is 4 MiB** (`DEFAULT_MAX_RESPONSE_BYTES`), applied on
+every MCP and A2A call path: tool calls, endpoint discovery, `tools/list`,
+A2A agent-card lookup, and OAuth token exchange. (OAuth metadata discovery
+has its own, tighter 64 KiB cap and does not use this mechanism.)
+
+Bytes are counted as they stream in, a declared `Content-Length` over the cap
+is refused before the body is read, and an oversized response fails with a
+typed `ResponseTooLargeError`. Nothing is silently truncated.
+
+```typescript
+import { ResponseTooLargeError } from '@adcp/sdk';
+
+// Raise the cap for an agent that legitimately publishes a large catalog.
+const client = new ADCPMultiAgentClient(agents, {
+  transport: { maxResponseBytes: 32 * 1024 * 1024 },
+});
+
+// …or per call.
+await client.agent('agent_x').getProducts(params, {
+  transport: { maxResponseBytes: 32 * 1024 * 1024 },
+});
+
+// Opt out entirely — explicit, never the default. Only `0` opts out;
+// `Infinity` and negative values fall back to the 4 MiB default.
+await client.agent('agent_x').getProducts(params, { transport: { maxResponseBytes: 0 } });
+
+try {
+  await client.agent('agent_x').getProducts(params);
+} catch (err) {
+  if (err instanceof ResponseTooLargeError) {
+    console.warn(`agent returned > ${err.limit} bytes from ${err.url}`);
+  }
+}
+```
+
+`text/event-stream` responses are covered too, with two bounds: no single
+event frame may exceed `maxResponseBytes`, and the cumulative event-stream
+octets read during one call may not exceed `maxResponseBytes * 2` (8 MiB by
+default). A peer cannot escape the cap by replying with
+`Content-Type: text/event-stream`.
+
+The counter runs downstream of the runtime's content-decoder, so it measures
+**decompressed** octets: a small gzip blob that inflates to gigabytes still
+trips the cap after `maxResponseBytes` of output. The `Content-Length`
+pre-check sees the compressed length, so it is a fast path rather than the
+guarantee.
+
+A per-call `transport` object **replaces** the client's `transport` rather
+than merging into it — repeat `maxResponseBytes` when you override the object
+for some other reason.
+
 ### Authentication
 
 ```typescript

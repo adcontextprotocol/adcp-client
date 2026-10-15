@@ -1679,6 +1679,8 @@ export {
   OBSERVER_FLUSH_TIMEOUT_MS,
   sanitizeTransportHeaders,
   sanitizeTransportUrl,
+  DEFAULT_MAX_RESPONSE_BYTES,
+  SSE_CUMULATIVE_BUDGET_MULTIPLIER,
 } from './protocols';
 export { toReleasePrecisionWire, validateAdcpVersionWire } from './validation/schema-loader';
 export type {

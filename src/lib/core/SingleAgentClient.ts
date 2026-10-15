@@ -1674,9 +1674,11 @@ export interface SingleAgentClientConfig extends ConversationConfig {
    * Transport-level safeguards. Applies to every call this client dispatches
    * unless overridden at call time.
    *
-   * Set `maxResponseBytes` when crawling untrusted agents (registries,
-   * federated discovery layers) to prevent a hostile vendor from buffering
-   * a large reply before any application-layer schema validation runs. Set
+   * `maxResponseBytes` defaults to 4 MiB on every call; raise it for an agent
+   * that legitimately publishes a large catalog, lower it when crawling
+   * untrusted agents (registries, federated discovery layers), or set it to
+   * exactly `0` to opt out of the cap entirely. A per-call `transport`
+   * replaces this object wholesale rather than merging into it. Set
    * `requestTimeoutMs` to override the default 60s cap on A2A agent-card
    * discovery; use `0` to disable the SDK-imposed discovery timeout.
    */
@@ -9776,7 +9778,8 @@ export class SingleAgentClient {
   }> {
     // adcp-client#1799 — wrap every wire call in the response-size cap so
     // `transport.maxResponseBytes` extends to discovery / tools-list bodies.
-    // `withResponseSizeLimit` is a no-op when no cap is configured.
+    // `withResponseSizeLimit` installs the 4 MiB default when no cap is
+    // configured (adcp-client#3253).
     const { withResponseSizeLimit } = await import('../protocols/responseSizeLimit');
     throwIfAborted(options?.signal);
     const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);

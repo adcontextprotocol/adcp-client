@@ -25,9 +25,17 @@ const http = require('node:http');
 
 const { ProtocolClient, closeMCPConnections } = require('../../dist/lib/protocols');
 const { ResponseTooLargeError } = require('../../dist/lib/errors');
+const { DEFAULT_MAX_RESPONSE_BYTES } = require('../../dist/lib/protocols/responseSizeLimit');
 
 let server;
 let baseUrl;
+// Octets the `/sse-flood` route has pushed at the client, across reconnects,
+// and a hook the test arms to observe the client closing the stream on it.
+let sseFloodBytes = 0;
+// MCP `initialize` handshakes the stub has served. One per cached connection,
+// so it reads as "how many distinct sessions did the client open?".
+let initializeCount = 0;
+let sseFloodTorndown = () => {};
 
 before(async () => {
   server = http.createServer((req, res) => {
@@ -48,6 +56,7 @@ before(async () => {
       }
 
       if (msg.method === 'initialize') {
+        initializeCount += 1;
         // Echo the client's protocolVersion so the SDK accepts the response.
         const protocolVersion = msg.params?.protocolVersion ?? '2025-03-26';
         const reply = JSON.stringify({
@@ -74,6 +83,27 @@ before(async () => {
       }
 
       if (msg.method === 'tools/call') {
+        if (req.url === '/sse-flood') {
+          // A peer that answers a tool call with an endless `text/event-stream`
+          // body. Before adcp-client#3253 this content type was exempt from the
+          // cap, so changing one response header was a free opt-out.
+          res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
+          const frame = `: ${'x'.repeat(64 * 1024)}\n\n`;
+          const pump = setInterval(() => {
+            if (res.writableEnded || res.destroyed) return clearInterval(pump);
+            // Keep writing through backpressure: a mock that stops on a false
+            // return never exceeds the cap and would not test it.
+            for (let i = 0; i < 8; i += 1) {
+              sseFloodBytes += Buffer.byteLength(frame);
+              res.write(frame);
+            }
+          }, 1);
+          res.on('close', () => {
+            if (!res.writableEnded) sseFloodTorndown();
+            clearInterval(pump);
+          });
+          return;
+        }
         if (oversized) {
           // 5 MB — well above the 64 KB test cap. Setting Content-Length lets
           // the pre-check fire before any body bytes are read, making the test
@@ -114,7 +144,7 @@ before(async () => {
 });
 
 after(async () => {
-  closeMCPConnections();
+  await closeMCPConnections();
   await new Promise(resolve => server.close(resolve));
 });
 
@@ -162,8 +192,11 @@ describe('MCP tools/call — maxResponseBytes', () => {
     // Flush the cached connection from the first test so the small agent gets
     // a fresh StreamableHTTP session. The two URL paths are different (/big vs
     // /small) so they use separate connection-cache slots anyway, but clearing
-    // is defensive against future cache-key changes.
-    closeMCPConnections();
+    // is defensive against future cache-key changes. `closeMCPConnections` is
+    // async and bumps the connection generation: without the await the next
+    // connect races the teardown and fails with "MCP connection completed
+    // after connection teardown".
+    await closeMCPConnections();
 
     // No ResponseTooLargeError — the stub returns a small 'ok' body at /small.
     const result = await ProtocolClient.callTool(
@@ -178,5 +211,117 @@ describe('MCP tools/call — maxResponseBytes', () => {
     // ResponseTooLargeError was thrown" (the rejects check above would have
     // caught it).
     assert.ok(result !== undefined, 'callTool should resolve when the cap is generous');
+  });
+
+  it('caps a tools/call response at 4 MiB when no transport option is supplied', async () => {
+    // The regression this change exists for: the hosted grader never opted
+    // into a cap, so a ~17.8 MB `get_products` reply went straight into
+    // memory. Note the absence of a `transport` argument below — if the
+    // default is removed, this test buffers 5 MB and passes silently, so the
+    // `limit` assertion is what keeps it honest.
+    await closeMCPConnections();
+
+    await assert.rejects(
+      () =>
+        ProtocolClient.callTool(
+          { id: 'vendor-default', name: 'Stub MCP Default', protocol: 'mcp', agent_uri: `${baseUrl}/big` },
+          'get_adcp_capabilities',
+          {}
+        ),
+      err => {
+        assert.ok(
+          err instanceof ResponseTooLargeError,
+          `expected ResponseTooLargeError, got ${err?.constructor?.name}: ${err?.message}`
+        );
+        assert.strictEqual(err.limit, DEFAULT_MAX_RESPONSE_BYTES);
+        assert.strictEqual(err.limit, 4 * 1024 * 1024);
+        return true;
+      }
+    );
+  });
+
+  it('gives calls with different caps different cached connections', async () => {
+    // `wrapFetchWithSizeLimit` decides once per request whether to enforce,
+    // and a long-lived GET listener issues exactly one request — at connect
+    // time. If the connection cache ignored the cap, one
+    // `maxResponseBytes: 0` call would hand an unwrapped session listener to
+    // every later caller that reused the connection, turning a per-call
+    // opt-out into a per-session one.
+    await closeMCPConnections();
+    const agent = { id: 'vendor-cache', name: 'Stub MCP Cache', protocol: 'mcp', agent_uri: `${baseUrl}/small` };
+
+    // Era negotiation can handshake more than once per connection, so count
+    // the delta rather than an absolute: non-zero means a new session.
+    async function handshakesFor(transport) {
+      const before = initializeCount;
+      await ProtocolClient.callTool(agent, 'get_adcp_capabilities', {}, transport ? { transport } : undefined);
+      return initializeCount - before;
+    }
+
+    assert.ok((await handshakesFor(undefined)) > 0, 'first call opens a session');
+    assert.strictEqual(await handshakesFor(undefined), 0, 'same policy reuses the session');
+    assert.strictEqual(
+      await handshakesFor({ maxResponseBytes: DEFAULT_MAX_RESPONSE_BYTES }),
+      0,
+      'an explicit cap equal to the default is the same policy'
+    );
+
+    assert.ok(
+      (await handshakesFor({ maxResponseBytes: 32 * 1024 * 1024 })) > 0,
+      'a different cap must not inherit the first session'
+    );
+    assert.strictEqual(await handshakesFor({ maxResponseBytes: 32 * 1024 * 1024 }), 0, 'and then reuses its own');
+
+    assert.ok((await handshakesFor({ maxResponseBytes: 0 })) > 0, 'an opt-out must not inherit a capped session');
+    assert.strictEqual(await handshakesFor(undefined), 0, 'and the default-cap session is still there to come back to');
+  });
+
+  it('refuses an endless text/event-stream reply instead of letting it opt out of the cap', async () => {
+    // Before adcp-client#3253 a peer could escape the cap entirely by
+    // answering with `Content-Type: text/event-stream`. Two things must hold
+    // now: the stream is torn down at the cumulative allowance rather than
+    // drained for the whole request deadline, and the caller gets the typed
+    // `ResponseTooLargeError` rather than the timeout the MCP SDK would
+    // otherwise surface (it classifies a failed SSE read as a disconnect and
+    // reconnects).
+    await closeMCPConnections();
+    sseFloodBytes = 0;
+    let tornDownAt = 0;
+    sseFloodTorndown = () => {
+      tornDownAt = tornDownAt || Date.now();
+    };
+
+    const cap = 128 * 1024;
+    const started = Date.now();
+    await assert.rejects(
+      () =>
+        ProtocolClient.callTool(
+          { id: 'vendor-sse', name: 'Stub MCP SSE', protocol: 'mcp', agent_uri: `${baseUrl}/sse-flood` },
+          'get_adcp_capabilities',
+          {},
+          { transport: { maxResponseBytes: cap, requestTimeoutMs: 8_000 } }
+        ),
+      err => {
+        assert.ok(
+          err instanceof ResponseTooLargeError,
+          `expected ResponseTooLargeError, got ${err?.constructor?.name}: ${err?.message}`
+        );
+        assert.strictEqual(err.code, 'RESPONSE_TOO_LARGE');
+        return true;
+      }
+    );
+
+    // Teardown is what bounds memory, and it has to happen while the request
+    // is still in flight — a cap that only fired at the deadline would never
+    // fire at all on a stream that never ends.
+    assert.ok(tornDownAt > 0, 'the server must have seen its peer close the stream');
+    assert.ok(
+      tornDownAt - started < 5_000,
+      `teardown must happen well inside the 8 s deadline (${tornDownAt - started}ms)`
+    );
+    assert.ok(
+      sseFloodBytes < 64 * 1024 * 1024,
+      `the cap must tear the stream down, not drain it (server pushed ${sseFloodBytes} bytes)`
+    );
   });
 });
