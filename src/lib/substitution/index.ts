@@ -60,7 +60,7 @@ export type {
   TrackerUrlRecord,
 } from './types';
 
-export { translateUniversalMacros, UnsafeNativeMappingError } from './translate';
+export { translateUniversalMacros, UnsafeNativeMappingError, MultipleVendorConsentMacrosError } from './translate';
 export type { MacroMapping, TranslateResult } from './translate';
 
 export { compileUniversalMacroTemplate } from './compile';

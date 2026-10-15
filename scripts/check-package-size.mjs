@@ -238,7 +238,8 @@ const MAX_PACKED_FILE_COUNT =
   41 + // Experimental identity 3.3: ten dual-format module sets and one CLI file.
   17 + // Account sync/keyed-store modules (four dual-format sets) and example storyboard.
   1 + // Reliable Reporting stability policy guide.
-  4; // Identity 3.3 generated-type bridge (`identity-3.3/generated-compat`, one dual-format set).
+  4 + // Identity 3.3 generated-type bridge (`identity-3.3/generated-compat`, one dual-format set).
+  4; // Shared consent-macro recognition (one dual-format runtime/declaration set).
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

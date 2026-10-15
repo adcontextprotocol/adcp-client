@@ -10,6 +10,7 @@
  */
 
 import { UniversalMacroValues } from '../types/enums.generated';
+import { isConsentMacro } from './consent-macros';
 
 /**
  * Built-in syntaxes with complete unknown-token scanners. Custom dialects use
@@ -202,7 +203,9 @@ function universalMacroName(token: string): string | null {
 
 function isUniversalMacro(token: string): boolean {
   const name = universalMacroName(token);
-  return name !== null && UNIVERSAL_MACRO_NAMES.has(name);
+  // Helpers implement the 3.3 consent vocabulary without changing the SDK's
+  // separately pinned protocol schemas for declarations and capabilities.
+  return name !== null && (UNIVERSAL_MACRO_NAMES.has(name) || isConsentMacro(token));
 }
 
 function syntaxForExactToken(

@@ -2326,6 +2326,7 @@ export {
   divergenceOffset,
   translateUniversalMacros,
   UnsafeNativeMappingError,
+  MultipleVendorConsentMacrosError,
   compileUniversalMacroTemplate,
 } from './substitution';
 export type {
