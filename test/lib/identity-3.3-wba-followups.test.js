@@ -17,7 +17,7 @@ const {
 } = require('../../dist/lib/signing/index.js');
 
 const T = 1790841610;
-const origin = 'https://buyer.example.com';
+const origin = 'https://buyer.agency.com';
 
 function newKey() {
   const jwk = generateKeyPairSync('ed25519').privateKey.export({ format: 'jwk' });
@@ -100,7 +100,7 @@ test('D4: directory digests cover the exact bytes, including a UTF-8 BOM', async
         new Response(Buffer.concat([bom, Buffer.from(proof.body)]), { status: 200, headers: proof.headers }),
     },
   });
-  await assert.rejects(mismatched.resolve(key.kid, origin), e => e.reason === 'content_digest');
+  await assert.rejects(mismatched.resolve(key.kid, origin), e => e.reason === 'directory_digest' && e.unverified);
 });
 
 test('D4: the WBA signing fetch signs and sends the caller bytes unchanged', async () => {
@@ -339,31 +339,12 @@ test('D7: relay signing without existing fields is a caller error', async () => 
   );
 });
 
-test('S3: infrastructure failures after verification never challenge a correctly signed request', async () => {
+test('DR-0023: verifier infrastructure failures are not signature outcomes', async () => {
   const key = newKey();
   const proof = await wba.createSignedSignatureDirectory(origin, [{ privateKey: key }], { now: () => T });
   const headers = await wba.signWebBotAuth(request, { privateKey: key }, { origin, now: () => T });
-  const base = {
-    directory: directoryFor(proof, () => T),
-    replayStore: new InMemoryReplayStore(),
-    isRevoked: async () => false,
-    now: () => T,
-  };
-  await assert.rejects(
-    wba.verifyWebBotAuth(
-      { ...request, headers },
-      {
-        ...base,
-        isRevoked: async () => {
-          throw new Error('checker offline');
-        },
-      }
-    ),
-    e =>
-      e.reason === 'revocation_unavailable' &&
-      !e.headers['Accept-Signature'] &&
-      e.body.adcp_error.code === 'SERVICE_UNAVAILABLE'
-  );
+  const base = { directory: directoryFor(proof, () => T), replayStore: new InMemoryReplayStore(), now: () => T };
+  // Replay state unknown: an infrastructure outage for the application layer, never a challenge.
   await assert.rejects(
     wba.verifyWebBotAuth(
       { ...request, headers },
@@ -376,121 +357,248 @@ test('S3: infrastructure failures after verification never challenge a correctly
         },
       }
     ),
-    e =>
-      e.reason === 'replay_unavailable' &&
-      !e.headers['Accept-Signature'] &&
-      e.body.adcp_error.code === 'SERVICE_UNAVAILABLE' &&
-      e.body.adcp_error.recovery === 'transient'
+    e => e instanceof wba.WebBotAuthUnavailableError && e.reason === 'replay_unavailable'
+  );
+  // Verification needs nothing but key discovery and replay state.
+  assert.equal((await wba.verifyWebBotAuth({ ...request, headers }, base))[0].origin, origin);
+});
+
+test('DR-0023: signature-path errors carry the generic authentication error and no detail', () => {
+  for (const [status, reason] of [
+    [400, 'structured_field'],
+    [403, 'signature_invalid'],
+    [429, 'nonce_replayed'],
+    [403, 'key_revoked'],
+  ]) {
+    const error = new wba.WebBotAuthError(status, reason);
+    assert.deepEqual(error.body, {
+      adcp_error: { code: 'AUTH_INVALID', message: error.message, recovery: 'terminal' },
+    });
+    assert.ok(!JSON.stringify(error.body).includes(reason));
+  }
+  assert.equal(new wba.WebBotAuthError(403, 'key_revoked').headers['Accept-Signature'], undefined);
+  assert.ok(new wba.WebBotAuthError(403, 'signature_invalid').headers['Accept-Signature']);
+});
+
+test('§6.10: discovery failures leave the request unverified and never evict cached keys', async () => {
+  const key = newKey();
+  const proof = await wba.createSignedSignatureDirectory(origin, [{ privateKey: key }], { now: () => T });
+  let clock = T;
+  let serve = serving(proof);
+  const directory = new wba.SignatureDirectoryResolver({
+    now: () => clock,
+    fetchOptions: { trustedFetchFn: (...args) => serve(...args) },
+  });
+  const verify = async () => {
+    const headers = await wba.signWebBotAuth(request, { privateKey: key }, { origin, now: () => clock });
+    return wba.verifyWebBotAuth(
+      { ...request, headers },
+      { directory, replayStore: new InMemoryReplayStore(), now: () => clock }
+    );
+  };
+  assert.equal((await verify()).length, 1);
+  for (const failure of [
+    async () => new Response('', { status: 404 }),
+    async () => new Response('', { status: 410 }),
+    async () => new Response('', { status: 503 }),
+    async () => {
+      throw new Error('connect ETIMEDOUT');
+    },
+  ]) {
+    serve = failure;
+    clock += 400; // past HTTP freshness, inside the signed proof's lifetime
+    assert.equal((await verify()).length, 1, 'cached keys keep verifying');
+  }
+  // With nothing cached, a discovery failure is unverified: 403 with a challenge, never a 503.
+  for (const failure of [
+    async () => new Response('', { status: 404 }),
+    async () => new Response('', { status: 503 }),
+    async () => {
+      throw new Error('down');
+    },
+  ]) {
+    const cold = new wba.SignatureDirectoryResolver({ now: () => T, fetchOptions: { trustedFetchFn: failure } });
+    const headers = await wba.signWebBotAuth(request, { privateKey: key }, { origin, now: () => T });
+    await assert.rejects(
+      wba.verifyWebBotAuth(
+        { ...request, headers },
+        { directory: cold, replayStore: new InMemoryReplayStore(), now: () => T }
+      ),
+      e => e.status === 403 && e.unverified && !!e.headers['Accept-Signature']
+    );
+  }
+  // A fetched directory without the key is a signature failure, not a discovery failure.
+  const other = await wba.createSignedSignatureDirectory(origin, [{ privateKey: newKey() }], { now: () => T });
+  const headers = await wba.signWebBotAuth(request, { privateKey: key }, { origin, now: () => T });
+  await assert.rejects(
+    wba.verifyWebBotAuth(
+      { ...request, headers },
+      { directory: directoryFor(other, () => T), replayStore: new InMemoryReplayStore(), now: () => T }
+    ),
+    e => e.status === 403 && e.reason === 'key' && !e.unverified
   );
 });
 
-test('S4: a key-directory outage is a retryable 503 without a challenge; absence and missing keys stay 403', async () => {
+test('unsigned key directories: plain JWKS is accepted by thumbprint unless signatures are required', async () => {
   const key = newKey();
-  const proof = await wba.createSignedSignatureDirectory(origin, [{ privateKey: key }], { now: () => T });
+  const { d: _d, kid: _kid, ...publicJwk } = key;
   const headers = await wba.signWebBotAuth(request, { privateKey: key }, { origin, now: () => T });
-  const verifyWith = (trustedFetchFn, clock = () => T) =>
+  const plain = (body, contentType = 'application/jwk-set+json') =>
+    new wba.SignatureDirectoryResolver({
+      now: () => T,
+      fetchOptions: {
+        trustedFetchFn: async () =>
+          new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': contentType } }),
+      },
+    });
+  for (const body of [{ keys: [publicJwk] }, { keys: [{ ...publicJwk, kid: key.kid }] }])
+    assert.equal(
+      (
+        await wba.verifyWebBotAuth(
+          { ...request, headers },
+          { directory: plain(body), replayStore: new InMemoryReplayStore(), now: () => T }
+        )
+      ).length,
+      1
+    );
+  // A kid that is not the thumbprint is refused.
+  await assert.rejects(
     wba.verifyWebBotAuth(
       { ...request, headers },
       {
-        directory: new wba.SignatureDirectoryResolver({ now: clock, fetchOptions: { trustedFetchFn } }),
+        directory: plain({ keys: [{ ...publicJwk, kid: 'x'.repeat(43) }] }),
         replayStore: new InMemoryReplayStore(),
-        isRevoked: async () => false,
-        now: clock,
+        now: () => T,
       }
-    );
-  const outage = e =>
-    e.status === 503 &&
-    !e.headers['Accept-Signature'] &&
-    e.headers['Retry-After'] === '60' &&
-    e.body.adcp_error.code === 'SERVICE_UNAVAILABLE' &&
-    e.body.adcp_error.recovery === 'transient';
-  const challenge = e => e.status === 403 && !!e.headers['Accept-Signature'];
-  await assert.rejects(
-    verifyWith(async () => {
-      throw new Error('connect ETIMEDOUT');
-    }),
-    outage
+    ),
+    e => e.status === 403 && e.unverified
   );
-  await assert.rejects(
-    verifyWith(async () => new Response('', { status: 502 })),
-    outage
-  );
-  await assert.rejects(
-    verifyWith(async () => new Response('', { status: 404 })),
-    challenge
-  );
-  await assert.rejects(
-    verifyWith(async () => new Response('', { status: 410 })),
-    challenge
-  );
-  const other = await wba.createSignedSignatureDirectory(origin, [{ privateKey: newKey() }], { now: () => T });
-  await assert.rejects(verifyWith(serving(other)), challenge);
-  // The 60 s negative cache replays the failure's class.
-  const resolver = new wba.SignatureDirectoryResolver({
+  // Operators can still require Appendix B signatures.
+  const strict = new wba.SignatureDirectoryResolver({
     now: () => T,
+    requireSignedDirectories: true,
     fetchOptions: {
-      trustedFetchFn: async () => {
-        throw new Error('down');
-      },
+      trustedFetchFn: async () =>
+        new Response(JSON.stringify({ keys: [publicJwk] }), {
+          status: 200,
+          headers: { 'content-type': 'application/jwk-set+json' },
+        }),
     },
   });
-  await assert.rejects(resolver.resolve(key.kid, origin), outage);
-  await assert.rejects(resolver.resolve(key.kid, origin), outage);
-  const absent = new wba.SignatureDirectoryResolver({
-    now: () => T,
-    fetchOptions: { trustedFetchFn: async () => new Response('', { status: 404 }) },
-  });
-  await assert.rejects(absent.resolve(key.kid, origin), challenge);
-  await assert.rejects(absent.resolve(key.kid, origin), challenge);
-  assert.ok(proof);
+  await assert.rejects(strict.resolve(key.kid, origin), e => e.reason === 'directory_unsigned' && e.status === 403);
 });
 
-test('S4: unknown revocation status serves nothing, reads included', async () => {
+test('identity layer: revoked, unknown, absent and store failures are decided after verification', async () => {
+  const identity = require('../../dist/lib/identity-3.3');
+  const key = newKey();
+  const proof = await wba.createSignedSignatureDirectory(origin, [{ privateKey: key }], { now: () => T });
+  const headers = await wba.signWebBotAuth(request, { privateKey: key }, { origin, now: () => T });
+  const signers = await wba.verifyWebBotAuth(
+    { ...request, headers },
+    { directory: directoryFor(proof, () => T), replayStore: new InMemoryReplayStore(), now: () => T }
+  );
+  const trust = new identity.TrustEvaluator({
+    now: () => T,
+    fetchOptions: {
+      trustedFetchFn: async () =>
+        new Response(JSON.stringify({ agents: [{ url: origin, roles: ['adcp:buying'] }] }), { status: 200 }),
+    },
+  });
+  const lifecycle = new identity.OriginIdentityLifecycle({
+    store: new identity.InMemoryOriginIdentityStore(),
+    trust,
+    now: () => T,
+  });
+  await lifecycle.bindPrincipal({ origin, principalId: 'principal-1', approvedBy: 'admin', reason: 'approved' });
+  const resolverWith = status => identity.createIdentity33PrincipalResolver({ lifecycle, revocation: { status } });
+  // Revoked: the generic authentication error, without a challenge (stop using the key).
+  await assert.rejects(
+    resolverWith(async () => 'revoked')(signers, 'get_products'),
+    e =>
+      e.status === 403 &&
+      e.reason === 'key_revoked' &&
+      !e.headers['Accept-Signature'] &&
+      e.body.adcp_error.code === 'AUTH_INVALID'
+  );
+  // Unknown (stale past grace, or never verifiable): identity not established.
+  await assert.rejects(
+    resolverWith(async () => 'unknown')(signers, 'get_products'),
+    e => e.status === 403 && e.reason === 'identity_unverified' && e.unverified && !!e.headers['Accept-Signature']
+  );
+  // History-store failure: an infrastructure outage, not an identity outcome.
+  await assert.rejects(
+    resolverWith(async () => {
+      throw new Error('disk offline');
+    })(signers, 'get_products'),
+    e => e instanceof wba.WebBotAuthUnavailableError
+  );
+  // Current: the binding applies.
+  assert.equal((await resolverWith(async () => 'current')(signers, 'get_products')).principal, 'principal-1');
+  // Absent (no list served): identity-established even though bound, and cannot be bound for spend.
+  const absent = await resolverWith(async () => 'absent')(signers, 'get_products');
+  assert.notEqual(absent.principal, 'principal-1');
+  assert.equal(absent.extra.identity33.state, 'identity-established');
+  assert.equal(absent.credential, undefined);
+  const authorize = identity.createIdentity33Authorization({
+    lifecycle,
+    grants: { evaluator: trust },
+    resolveClaims: async () => [],
+  });
+  const ctx = { authInfo: { token: '', clientId: absent.principal, scopes: [], extra: absent.extra } };
+  await assert.rejects(authorize(ctx, 'sync_principal', {}), e => e.code === 'PERMISSION_DENIED');
+  await authorize(ctx, 'get_products', { buying_mode: 'brief', brief: 'x' });
+});
+
+test('server integrations require revocation in the identity layer and answer verifier outages as 503', async () => {
+  const identity = require('../../dist/lib/identity-3.3');
   const { verifySignatureAsAuthenticator } = require('../../dist/lib/server/auth-signature');
   const key = newKey();
   const proof = await wba.createSignedSignatureDirectory(origin, [{ privateKey: key }], { now: () => T });
-  const body = JSON.stringify({
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'tools/call',
-    params: { name: 'get_adcp_capabilities', arguments: {} },
+  const lifecycle = new identity.OriginIdentityLifecycle({
+    store: new identity.InMemoryOriginIdentityStore(),
+    trust: new identity.TrustEvaluator({ now: () => T }),
+    now: () => T,
   });
-  const signedRequest = {
-    method: 'POST',
-    url: 'https://seller.example.com/mcp',
-    headers: { 'content-type': 'application/json' },
-    body,
+  const base = {
+    capability: { supported: true, covers_content_digest: 'required', required_for: [], profiles: ['web-bot-auth'] },
+    jwks: { resolve: async () => null },
+    getUrl: () => request.url,
+    now: () => T,
+    resolveOperation: () => 'get_products',
   };
-  for (const operation of ['get_adcp_capabilities', undefined]) {
-    let resolved = 0;
-    const authenticate = verifySignatureAsAuthenticator({
-      capability: { supported: true, covers_content_digest: 'required', required_for: [], profiles: ['web-bot-auth'] },
-      jwks: { resolve: async () => null },
-      getUrl: () => signedRequest.url,
-      now: () => T,
-      replayStore: new InMemoryReplayStore(),
-      assertLegacyOriginAllowed: async () => {},
-      resolveOperation: () => operation,
-      webBotAuth: {
-        directory: directoryFor(proof, () => T),
-        isRevoked: async () => {
-          throw new wba.WebBotAuthError(403, 'revocation_unavailable');
+  assert.throws(
+    () =>
+      verifySignatureAsAuthenticator({
+        ...base,
+        webBotAuth: {
+          directory: directoryFor(proof, () => T),
+          resolvePrincipal: identity.createIdentity33PrincipalResolver({ lifecycle }),
         },
-        resolvePrincipal: async () => {
-          resolved++;
-          return { principal: 'p' };
-        },
+      }),
+    /requires origin revocation/
+  );
+  const authenticate = verifySignatureAsAuthenticator({
+    ...base,
+    replayStore: {
+      insert: async () => {
+        throw new Error('redis offline');
       },
-    });
-    const headers = await wba.signWebBotAuth(signedRequest, { privateKey: key }, { origin, now: () => T });
-    const attempt = authenticate({ method: 'POST', url: '/mcp', headers, rawBody: body });
-    if (operation === undefined)
-      await assert.rejects(attempt, e => e.status === 503 && !e.headers?.['Accept-Signature']);
-    else {
-      // Tool calls carry the outage to the tool as SERVICE_UNAVAILABLE; nothing runs.
-      const principal = await attempt;
-      assert.equal(wba.getWebBotAuthAuthorizationFailure(principal.extra).code, 'SERVICE_UNAVAILABLE');
-    }
-    assert.ok(resolved <= 1);
-  }
+    },
+    webBotAuth: {
+      directory: directoryFor(proof, () => T),
+      resolvePrincipal: identity.createIdentity33PrincipalResolver({
+        lifecycle,
+        revocation: { status: async () => 'current' },
+      }),
+    },
+  });
+  const headers = await wba.signWebBotAuth(request, { privateKey: key }, { origin, now: () => T });
+  await assert.rejects(
+    authenticate({ method: 'POST', url: '/mcp', headers, rawBody: request.body }),
+    e =>
+      e.status === 503 &&
+      e.headers['Retry-After'] === '60' &&
+      !e.headers['Accept-Signature'] &&
+      e.body.adcp_error.code === 'SERVICE_UNAVAILABLE'
+  );
 });

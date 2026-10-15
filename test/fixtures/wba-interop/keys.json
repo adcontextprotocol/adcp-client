@@ -1,0 +1,30 @@
+{
+  "description": "Test-only keys for Web Bot Auth interoperability fixtures. Never use in production.",
+  "keys": [
+    {
+      "crv": "Ed25519",
+      "x": "Ucrv9QJwrEpSnGIJFVNix5nM0Xa3xXTRUmsfsiVlZ_8",
+      "kty": "OKP",
+      "kid": "REA4imWeSrPHmj21jGEDpapbqhZo94UGbgAf5ZIQPJE",
+      "alg": "EdDSA",
+      "_private_jwk_for_test_only": {
+        "d": "YcmMz0RUw4NqyuORiprefF2ewmdQ1yhu-_NtAiupeOI"
+      }
+    },
+    {
+      "kty": "RSA",
+      "n": "mAHmlVb3PNB62rKcpGGDBmisOF_C63mjv-6ogIyMgQjYi8gvvqgEq0pq_wcaFf2VpecVdVOs0tln4KVeqEgl_UaByKs1hZNCDQ0kUaGdSPaWhjjM7VKddMfLbUXOYcoSCpqYQ4lOSQuH8FTXAJ_GNTqL8d3nBlA-VKPuJ0w2ty6Fwg0eYKDUbq1Ytit_X5I2J_74V47_4lDr2Ic566SN8kd5v2Py2PFSEX8N0QbDKxorOCFoiXlyhWn-ijVkqFhAMEYm7cpy0_sK_CbANgCJCMzM3oS0gu3XYWAQe_n2o7tMauI6WxnXXvg2EaSrH8zpObqdpj_QItptBEIPnvQosw",
+      "e": "AQAB",
+      "kid": "3IV1cli3xGtmeIX5U2_XWS7e5Hn9UcvvqaK_uiTcpO8",
+      "alg": "PS512",
+      "_private_jwk_for_test_only": {
+        "d": "Or3RS7jVxkySjV0kp2l_ZsSgeRCYlMLnAs7JkxO9YEf41tu_h6AKXd9eRbuK2yCp6fjJFBQH31tghzGgyMtI0v2iPdfb0Qi9J6oCdQFNdNrGBIyCtNuOOYjUFiA5xxR9sFdZrA-tjxDDsZ43j-gugndjiU5Fbu0niTHoYItVQahCVVinzyuurgqB9N9XtFnzjRvX4z5g9HlIy8EmvF2CBrTBdxDUc_ky3_obJA4--nIhx-5DFS-DJ3U_I6e4SPyvBHKJUsh-nT5yKlAhFhJXi0j8Lt_6jmDOsTC7FSPw7pr_KV2lLjJHhUZISrp80ehxF6rx3SCE5iTZoReYnJdU8Q",
+        "p": "xbIqfqYBY4YFpc-qsxA_BXiKgOODLpRy4jkIb5lIwiWQCHqg7LoQ1SRr87uSjzL0x3kTJuw37oIH_xP_4Jt9GGWm1ktONpGjDmVLNAhGEuEyDUP6LzNZPNmwXncWZ_4uQvnJTr_j1Tr7gImXigYY4s_V7kMRE5lPDH1hmMX4Wn0",
+        "q": "xNZMi8wipZhx16j4tz9bhTMHfYHZ6-unXBM8DRTBvksAGTAJe5wueWWDjebcglItt2vYOleLOJ3U9mAfw3to30i8kgV3bhMwOh7KIItqtjljuY91_JV5lW9-Pk1F_XJ3AN3K64brT8vTVJ_HBgGnN80YPdn9h5BMm4TSlB53xu8",
+        "dp": "M_dYWkAyv0F8fJBw827C0iJUbfrgAb99z19ki0lEqdwL1168rF1gjVZslf3pUYD4fPKjiSiwrx45EeDk8tqMcHxP9aaH4ao4rVENCpleKhpN-NS0j_G0dF1YkgxFtIJJEMvuEag5MFS3xZrlXZ-qrPwq5N12QKuc7tCKdgkb9lU",
+        "dq": "pcyo73yElp3hDroqvhglG_6OyZ4uFLYL49fj1lTsmUCNlanL4w38a48hj86tYSydi4nQudvxzj_MGbeAKeXywVmAVTM7lUGeduZmdaFZwqJ2qN_5j0fNAR3H5eyrDsBzEwy_l0KvRSi4Guj2-M09sBgW2kqbbqwSi1EHG3LKi4s",
+        "qi": "uXITs4IC18a9lzBnGTKB75N5kWB1EVp-JhdwKnJkn44QOTWQWjAVnbgTkCuhGaPBu331FWUSxyNe6_0S3zcTWF95mlbCBT-33-ev_fHJDUNR55JeXQbJy-1Pf91W4dsA42YWEoIWzKnFrP_cwsp5Oq0AGbaO2_XwUCYTYGQpqnE"
+      }
+    }
+  ]
+}

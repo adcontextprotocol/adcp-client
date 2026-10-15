@@ -1,19 +1,20 @@
 import { toReleasePrecisionVersion } from '../version';
 /** Experimental AdCP 3.3 profile, pinned to adcp#7894 and IETF webbotauth-00. */
-import { createHash, createPrivateKey, randomBytes, sign as nodeSign, type JsonWebKey } from 'crypto';
+import {
+  constants as cryptoConstants,
+  createHash,
+  createPrivateKey,
+  randomBytes,
+  sign as nodeSign,
+  type JsonWebKey,
+} from 'crypto';
 import { parseDictionary, parseItem, serializeItem } from 'structured-headers';
 import { ssrfSafeFetch, type SsrfFetchOptions } from '../net';
 import { eTldPlusOne } from './agent-resolver/etld';
 import { canonicalAgentOrigin } from './agent-resolver/canonicalize';
 import { canonicalAgentUrl } from './agent-resolver/select-agent';
 import { parseStrictJson } from './agent-resolver/strict-json';
-import {
-  canonicalAuthority,
-  canonicalTargetUri,
-  getHeaderValue,
-  type RequestLike,
-  type ResponseLike,
-} from './canonicalize';
+import { getHeaderValue, type RequestLike, type ResponseLike } from './canonicalize';
 import { computeContentDigest, contentDigestMatches, contentDigestUsesEncoding } from './content-digest';
 import { jwkToPublicKey, verifySignature } from './crypto';
 import {
@@ -42,58 +43,76 @@ const TEST_KIDS = new Set([
 ]);
 
 /**
- * The signer's identity cannot be confirmed because a dependency is out:
- * key directory unfetchable, revocation status unknown or unpersisted,
- * replay state unavailable. Always 503 SERVICE_UNAVAILABLE, retryable, with
- * no Accept-Signature challenge; nothing is served under the signature.
+ * Outcomes that are not signature failures and must not ask the signer to
+ * re-sign: a revoked key (the signer must stop using it) and refusals made
+ * after verification.
  */
-const OUTAGE_REASONS = new Set([
-  'directory_unavailable',
-  'directory_fetch_limit',
+const NO_CHALLENGE_REASONS = new Set([
+  'key_revoked',
+  'identity_not_bound',
+  'profile_disabled',
+  // Revocation-store outcomes raised by OriginRevocationResolver.isRevoked().
   'revocation_unavailable',
   'revocation_persistence_failed',
-  'replay_unavailable',
-  'verification_unavailable',
 ]);
-/** Authorization outcomes after verification: never challenged. */
-const NO_CHALLENGE_REASONS = new Set(['key_revoked', 'identity_not_bound', 'profile_disabled']);
-/** HTTP outcome, deliberately separate from the legacy request_signature_* taxonomy. */
+/**
+ * Signature-path outcome (WBA §4, DR-0023): 400 for a field that does not
+ * parse, 403 for a signature that does not verify (with `Accept-Signature`
+ * unless the key is revoked), 429 for a replay. Any AdCP body is the generic
+ * authentication error; signature-specific detail stays in `reason` (logs).
+ * Infrastructure the verifier depends on is reported separately by
+ * {@link WebBotAuthUnavailableError}.
+ */
 export class WebBotAuthError extends Error {
   readonly headers: Record<string, string>;
-  readonly status: 400 | 403 | 429 | 503;
   get body(): Record<string, unknown> {
-    if (this.status === 503)
-      return { adcp_error: { code: 'SERVICE_UNAVAILABLE', message: this.message, recovery: 'transient' } };
-    if (this.reason === 'key_revoked' || this.reason === 'identity_not_bound')
-      return { adcp_error: { code: 'PERMISSION_DENIED', message: this.message, recovery: 'correctable' } };
-    return { error: this.message };
+    return { adcp_error: { code: 'AUTH_INVALID', message: this.message, recovery: 'terminal' } };
+  }
+  /**
+   * The signer's identity could not be established because key discovery
+   * failed (WBA §6.10) or its revocation status is unknown. The request is
+   * unverified; servers apply their unverified-request policy.
+   */
+  get unverified(): boolean {
+    return this.reason.startsWith('directory_') || this.reason === 'identity_unverified';
   }
   constructor(
-    status: 400 | 403 | 429 | 503,
+    readonly status: 400 | 403 | 429,
     readonly reason: string
   ) {
-    // Outage reasons are 503 whichever status a call site passes.
-    const effective = OUTAGE_REASONS.has(reason) ? 503 : status;
     super(
-      effective === 400
+      status === 400
         ? 'Malformed Web Bot Auth message'
-        : effective === 429
+        : status === 429
           ? 'Web Bot Auth rate limit'
-          : effective === 503
-            ? 'Web Bot Auth verification is temporarily unavailable'
-            : 'Web Bot Auth verification failed'
+          : 'Web Bot Auth verification failed'
     );
     this.name = 'WebBotAuthError';
-    this.status = effective;
     this.headers =
-      effective === 403 && !NO_CHALLENGE_REASONS.has(reason)
+      status === 403 && !NO_CHALLENGE_REASONS.has(reason)
         ? {
             'Accept-Signature':
               'sig1=("@method" "@target-uri" "@authority" "content-type" "content-digest" "signature-agent";key="sig1");created;expires;nonce;keyid;tag="web-bot-auth"',
           }
-        : effective === 429 || effective === 503
+        : status === 429
           ? { 'Retry-After': '60' }
           : {};
+  }
+}
+/**
+ * Infrastructure the verifier depends on failed (replay store, revocation
+ * history store). Not a signature outcome and never answered as one: the
+ * application layer decides how to report the outage (the SDK's server
+ * integrations answer 503 SERVICE_UNAVAILABLE).
+ */
+export class WebBotAuthUnavailableError extends Error {
+  constructor(
+    readonly reason: string,
+    cause?: unknown
+  ) {
+    super('Web Bot Auth verification dependency is unavailable');
+    this.name = 'WebBotAuthUnavailableError';
+    if (cause !== undefined) Object.defineProperty(this, 'cause', { value: cause });
   }
 }
 function bad(reason: string): never {
@@ -121,18 +140,31 @@ export function selectSignatureProfile(request: Pick<RequestLike, 'headers'>): '
   if (input && /;\s*tag\s*=\s*"web-bot-auth"/.test(input)) return WEB_BOT_AUTH_PROFILE;
   return 'rfc9421';
 }
-export function jwkThumbprint(jwk: Partial<Pick<AdcpJsonWebKey, 'kty' | 'crv' | 'x' | 'y'>>): string {
+/**
+ * RFC 7638 JWK SHA-256 thumbprint, synchronous. Byte-identical to jose's
+ * `calculateJwkThumbprint` for OKP, EC and RSA keys (tested).
+ */
+export function jwkThumbprint(
+  jwk: Partial<Pick<AdcpJsonWebKey, 'kty' | 'crv' | 'x' | 'y'>> & { n?: unknown; e?: unknown }
+): string {
   let fields: Record<string, unknown>;
   if (jwk.kty === 'OKP' && typeof jwk.crv === 'string' && typeof jwk.x === 'string')
     fields = { crv: jwk.crv, kty: jwk.kty, x: jwk.x };
   else if (jwk.kty === 'EC' && typeof jwk.crv === 'string' && typeof jwk.x === 'string' && typeof jwk.y === 'string')
     fields = { crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y };
+  else if (jwk.kty === 'RSA' && typeof jwk.e === 'string' && typeof jwk.n === 'string')
+    fields = { e: jwk.e, kty: jwk.kty, n: jwk.n };
   else return denied('unsupported_key');
   return createHash('sha256').update(JSON.stringify(fields)).digest('base64url');
 }
-function algorithm(jwk: AdcpJsonWebKey): AdcpSignAlg {
+/** Web Bot Auth key algorithms: the AdCP set plus RSA-PSS (draft Appendix E vectors). */
+type WebBotAuthAlg = AdcpSignAlg | 'rsa-pss-sha512';
+function algorithm(jwk: AdcpJsonWebKey): WebBotAuthAlg {
   if (jwk.kty === 'OKP' && jwk.crv === 'Ed25519') return 'ed25519';
   if (jwk.kty === 'EC' && jwk.crv === 'P-256') return 'ecdsa-p256-sha256';
+  // RSA keys below 2048 bits are refused.
+  if (jwk.kty === 'RSA' && typeof jwk.n === 'string' && Buffer.from(jwk.n, 'base64url').length >= 256)
+    return 'rsa-pss-sha512';
   return denied('unsupported_key');
 }
 function inputs(headers: RequestLike['headers']): ParsedSignatureInput[] {
@@ -187,8 +219,11 @@ export function buildWebBotAuthSignatureBase(
       if (params.has('key')) return bad('derived_dictionary');
       if (response && bare !== '@status' && !params.has('req')) return bad('response_component');
       if (bare === '@method') value = request.method.toUpperCase();
-      else if (bare === '@target-uri') value = canonicalTargetUri(request.url, '3.2');
-      else if (bare === '@authority') value = canonicalAuthority(request.url, '3.2');
+      // RFC 9421 §2.2.2/§2.2.3: the target URI as received; the authority
+      // only lowercased with any default port removed. Canonical origins are
+      // for identity (Signature-Agent), never for the signature base.
+      else if (bare === '@target-uri') value = receivedTargetUri(request.url);
+      else if (bare === '@authority') value = receivedAuthority(request.url);
       else if (bare === '@status' && response && !params.has('req')) value = String(response.status);
       else return bad('derived_component');
     } else {
@@ -209,6 +244,21 @@ export function buildWebBotAuthSignatureBase(
     return `${serializeItem(identifier)}: ${value}`;
   });
   return [...lines, `"@signature-params": ${input.signatureParamsValue}`].join('\n');
+}
+function receivedTargetUri(url: string): string {
+  try {
+    new URL(url);
+  } catch {
+    return bad('target_uri');
+  }
+  return url;
+}
+function receivedAuthority(url: string): string {
+  try {
+    return new URL(url).host.toLowerCase();
+  } catch {
+    return bad('target_uri');
+  }
 }
 function assertDigest(headers: RequestLike['headers'], body: string): void {
   const digest = getHeaderValue(headers, 'content-digest');
@@ -254,6 +304,33 @@ export function getWebBotAuthLegacyOriginGate(
   resolver: Function | undefined
 ): ((origin: string) => Promise<void>) | undefined {
   return resolver && legacyOriginGates.get(resolver);
+}
+const revocationCheckingResolvers = new WeakSet<Function>();
+/** @internal The standard principal resolver declares that it checks origin revocation. */
+export function registerWebBotAuthRevocationCheck(resolver: Function): void {
+  revocationCheckingResolvers.add(resolver);
+}
+/** @internal Whether a principal resolver checks origin revocation itself. */
+export function isWebBotAuthRevocationChecked(resolver: Function | undefined): boolean {
+  return !!resolver && revocationCheckingResolvers.has(resolver);
+}
+/** @internal Application-layer answer for a verifier infrastructure outage. */
+export function webBotAuthUnavailableResponse(): {
+  status: 503;
+  headers: Record<string, string>;
+  body: Record<string, unknown>;
+} {
+  return {
+    status: 503,
+    headers: { 'Retry-After': '60' },
+    body: {
+      adcp_error: {
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'Agent identity verification is temporarily unavailable',
+        recovery: 'transient',
+      },
+    },
+  };
 }
 export interface WebBotAuthAuthorizationFailure {
   code: 'PERMISSION_DENIED' | 'SERVICE_UNAVAILABLE';
@@ -323,22 +400,28 @@ export interface VerifiedWebBotSigner {
   authorizationFailure?: WebBotAuthAuthorizationFailure;
 }
 export interface VerifyWebBotAuthOptions {
+  /** Key discovery (WBA §5.5). The only network dependency of verification. */
   directory: SignatureDirectoryResolver;
   /** Published fixture keys are allowed only outside production. */
   allowTestKeys?: boolean;
-  /**
-   * Set `false` only for a deployment-specific, non-identity read path. The SDK's
-   * server integrations never relax it: unknown revocation state is an outage.
-   */
-  requireFreshRevocation?: boolean;
-  /** SDK server adapters carry verified authorization denials into normal tool errors. */
-  deferAuthorizationErrors?: boolean;
   /** Atomic, shared across endpoints and replicas. Nonce scope is the identity origin, not the rotating kid. */
   replayStore: ReplayStore;
   now?: () => number;
-  isRevoked: (origin: string, keyid: string) => Promise<boolean>;
   /** Older #7894 vector draft expects 403; ratified R2 defaults to 429. */
   replayStatus?: 403 | 429;
+  /**
+   * @deprecated Revocation is an identity and authorization check, not part of
+   * signature verification: call `OriginRevocationResolver.status()` after
+   * verification (`createIdentity33PrincipalResolver({ revocation })` does).
+   * When supplied it is still consulted: a revoked key is a 403 without
+   * `Accept-Signature`, unknown status leaves the identity unverified, and a
+   * history-store failure is a {@link WebBotAuthUnavailableError}.
+   */
+  isRevoked?: (origin: string, keyid: string) => Promise<boolean>;
+  /** @deprecated Only affects the deprecated `isRevoked` path: `false` tolerates unknown status. */
+  requireFreshRevocation?: boolean;
+  /** @deprecated No effect; revocation outcomes are no longer deferred into tool errors. */
+  deferAuthorizationErrors?: boolean;
 }
 export async function verifyWebBotAuth(
   request: RequestLike,
@@ -417,41 +500,20 @@ export async function verifyWebBotAuth(
         assertDigest(request.headers, request.body);
       }
       await options.directory.resolve(keyid, origin);
-      const proof = options.directory.getAuditProof(origin);
-      if (!proof || new URL(proof.request.url).origin !== origin) denied('directory_origin');
-      const checkedDirectory = verifySignatureDirectory(
-        proof,
-        now,
-        options.allowTestKeys ?? options.directory.allowsTestKeys
-      );
+      const checkedDirectory = options.directory.getVerifiedDirectory(origin);
+      if (!checkedDirectory || new URL(checkedDirectory.proof.request.url).origin !== origin)
+        denied('directory_origin');
+      // Signed proofs and unsigned freshness both bound how long keys verify.
+      if (checkedDirectory.expires <= now) denied('directory_expired');
+      if (
+        !testKeysAllowed(options.allowTestKeys ?? options.directory.allowsTestKeys) &&
+        checkedDirectory.keys.some(key => TEST_KIDS.has(key.kid as string))
+      )
+        denied('directory_key');
       const key = checkedDirectory.keys.find(key => key.kid === keyid);
       if (!key || jwkThumbprint(key) !== keyid) denied('key');
       verifyBytes(input, request, key);
-      let authorizationFailure: WebBotAuthAuthorizationFailure | undefined;
-      try {
-        if (await options.isRevoked(origin, keyid)) denied('key_revoked');
-      } catch (thrown) {
-        // The signature verified: an unexpected checker failure is unknown
-        // revocation state, never a signature challenge.
-        const error = thrown instanceof WebBotAuthError ? thrown : new WebBotAuthError(403, 'revocation_unavailable');
-        if (
-          options.requireFreshRevocation === false &&
-          error instanceof WebBotAuthError &&
-          error.reason === 'revocation_unavailable'
-        ) {
-          /* Reads tolerate unknown state. */
-        } else if (
-          options.deferAuthorizationErrors &&
-          error instanceof WebBotAuthError &&
-          ['key_revoked', 'revocation_unavailable', 'revocation_persistence_failed'].includes(error.reason)
-        )
-          authorizationFailure = createWebBotAuthAuthorizationFailure(
-            error.reason === 'revocation_persistence_failed'
-              ? 'revocation_unavailable'
-              : (error.reason as 'key_revoked' | 'revocation_unavailable')
-          );
-        else throw error;
-      }
+      if (options.isRevoked) await legacyRevocationCheck(options, origin, keyid);
       const nonceTuple = JSON.stringify([origin, nonce]);
       if (nonces.has(nonceTuple)) throw new WebBotAuthError(options.replayStatus ?? 429, 'nonce_replayed');
       nonces.add(nonceTuple);
@@ -461,7 +523,6 @@ export async function verifyWebBotAuth(
         keyid,
         label: input.label,
         verified_at: now,
-        ...(authorizationFailure && { authorizationFailure }),
       });
       verified.push(signer);
     }
@@ -478,9 +539,9 @@ export async function verifyWebBotAuth(
           input.params.expires + 60 - now + 1,
           now
         );
-      } catch {
-        // Replay state is unavailable for a correctly signed request: transient, no challenge.
-        throw new WebBotAuthError(403, 'replay_unavailable');
+      } catch (cause) {
+        // Replay state is unknown: an infrastructure outage, not a signature outcome.
+        throw new WebBotAuthUnavailableError('replay_unavailable', cause);
       }
       if (result !== 'ok')
         throw new WebBotAuthError(result === 'replayed' ? (options.replayStatus ?? 429) : 429, result);
@@ -502,53 +563,92 @@ export async function verifyWebBotAuth(
       }
       throw error;
     }
+    if (error instanceof WebBotAuthUnavailableError) throw error;
     return denied('verification_unavailable');
   }
 }
+async function legacyRevocationCheck(options: VerifyWebBotAuthOptions, origin: string, keyid: string): Promise<void> {
+  let revoked: boolean;
+  try {
+    revoked = await options.isRevoked!(origin, keyid);
+  } catch (error) {
+    if (error instanceof WebBotAuthError && error.reason === 'revocation_persistence_failed')
+      throw new WebBotAuthUnavailableError('revocation_persistence_failed', error);
+    if (options.requireFreshRevocation === false) return;
+    // Unknown revocation status: the identity is not established.
+    return denied('identity_unverified');
+  }
+  if (revoked) denied('key_revoked');
+}
 
+function testKeysAllowed(allowTestKeys: boolean | undefined): boolean {
+  return allowTestKeys === true && ['test', 'development'].includes(process.env.NODE_ENV ?? '');
+}
 export interface VerifiedSignatureDirectory {
   keys: AdcpJsonWebKey[];
+  /** Signed: the earliest proof expiry. Unsigned: set by the resolver from HTTP freshness. */
   expires: number;
-  /** Preserve exact signed bytes and response headers for auditing. */
+  /** Whether every key carried an Appendix B signature. */
+  signed: boolean;
+  /** Preserve exact bytes and response headers for auditing. */
   proof: ResponseLike;
 }
-export function verifySignatureDirectory(
+/** Media types a plain (unsigned) JWKS directory may use. */
+const UNSIGNED_DIRECTORY_MEDIA_TYPES = new Set([
+  SIGNATURE_DIRECTORY_MEDIA_TYPE,
+  'application/jwk-set+json',
+  'application/json',
+]);
+/**
+ * Verify a key directory response (draft-meunier-http-message-signatures-directory).
+ * Appendix B signatures are a SHOULD there: a directory without
+ * `Signature-Input` is accepted as a plain JWKS unless `requireSigned`, with
+ * every key checked against its RFC 7638 thumbprint. When signatures are
+ * present, every key must carry a valid one.
+ */
+export function verifyKeyDirectory(
   response: ResponseLike,
   now = Date.now() / 1000,
-  allowTestKeys = false
+  options: { allowTestKeys?: boolean; requireSigned?: boolean } = {}
 ): VerifiedSignatureDirectory {
   try {
     if (!Number.isFinite(now)) denied('directory_invalid');
     const origin = canonicalAgentOrigin(response.request.url);
-    if (
-      response.request.url !== origin + SIGNATURE_DIRECTORY_PATH ||
-      response.status !== 200 ||
-      getHeaderValue(response.headers, 'content-type')?.split(';')[0]?.trim().toLowerCase() !==
-        SIGNATURE_DIRECTORY_MEDIA_TYPE
-    )
+    if (response.request.url !== origin + SIGNATURE_DIRECTORY_PATH || response.status !== 200)
+      denied('directory_response');
+    const signed = getHeaderValue(response.headers, 'signature-input') !== undefined;
+    if (!signed && options.requireSigned) denied('directory_unsigned');
+    const mediaType = getHeaderValue(response.headers, 'content-type')?.split(';')[0]?.trim().toLowerCase();
+    if (signed ? mediaType !== SIGNATURE_DIRECTORY_MEDIA_TYPE : !UNSIGNED_DIRECTORY_MEDIA_TYPES.has(mediaType ?? ''))
       denied('directory_response');
     const body = response.body ?? '';
     if (Buffer.byteLength(body) > 256 * 1024) denied('directory_size');
-    assertDigest(response.headers, body);
+    if (signed || getHeaderValue(response.headers, 'content-digest') !== undefined)
+      assertDirectoryDigest(response.headers, body);
     const document = parseStrictJson(body, 32) as { keys?: AdcpJsonWebKey[] };
     if (!Array.isArray(document.keys) || !document.keys.length || document.keys.length > 64) denied('directory_keys');
-    const signatures = inputs(response.headers);
-    const keys = new Set<string>();
+    const signatures = signed ? inputs(response.headers) : [];
+    const kids = new Set<string>();
+    const keys: AdcpJsonWebKey[] = [];
     let expires = Infinity;
-    for (const key of document.keys) {
+    for (const raw of document.keys) {
+      if (!raw || typeof raw !== 'object') denied('directory_key');
+      const thumbprint = jwkThumbprint(raw);
+      // A plain JWKS may omit kid; when present it must be the thumbprint.
+      const key = { ...raw, kid: raw.kid ?? thumbprint } as AdcpJsonWebKey;
       if (
-        !key ||
-        typeof key !== 'object' ||
-        typeof key.kid !== 'string' ||
-        key.kid !== jwkThumbprint(key) ||
-        keys.has(key.kid) ||
+        key.kid !== thumbprint ||
+        kids.has(key.kid) ||
         key.d !== undefined ||
         Object.keys(key).some(k => k.startsWith('_private')) ||
         key.adcp_use !== undefined ||
-        ((!allowTestKeys || !['test', 'development'].includes(process.env.NODE_ENV ?? '')) && TEST_KIDS.has(key.kid))
+        (!testKeysAllowed(options.allowTestKeys) && TEST_KIDS.has(key.kid))
       )
         denied('directory_key');
-      keys.add(key.kid);
+      algorithm(key);
+      kids.add(key.kid);
+      keys.push(key);
+      if (!signed) continue;
       const proof = signatures.find(input => input.params.keyid === key.kid && input.params.tag === DIRECTORY_TAG);
       if (
         !proof ||
@@ -564,10 +664,28 @@ export function verifySignatureDirectory(
       verifyBytes(proof, { ...response.request, headers: response.request.headers ?? {} }, key, response);
       expires = Math.min(expires, proof.params.expires);
     }
-    return { keys: document.keys, expires, proof: response };
+    return { keys, expires, signed, proof: response };
   } catch (error) {
-    if (error instanceof WebBotAuthError) throw error;
+    if (error instanceof WebBotAuthError) {
+      // Any defect in what the origin serves is a discovery failure (§6.10), not a request-header error.
+      throw error.reason.startsWith('directory_') ? error : new WebBotAuthError(403, `directory_${error.reason}`);
+    }
     return denied('directory_invalid');
+  }
+}
+/** Signed directories only (Appendix B). Prefer {@link verifyKeyDirectory}. */
+export function verifySignatureDirectory(
+  response: ResponseLike,
+  now = Date.now() / 1000,
+  allowTestKeys = false
+): VerifiedSignatureDirectory {
+  return verifyKeyDirectory(response, now, { allowTestKeys, requireSigned: true });
+}
+function assertDirectoryDigest(headers: RequestLike['headers'], body: string): void {
+  try {
+    assertDigest(headers, body);
+  } catch {
+    denied('directory_digest');
   }
 }
 
@@ -578,11 +696,20 @@ export interface SignatureDirectoryResolverOptions {
   maxOrigins?: number;
   /** Globally bound concurrency across attacker-selected origins. */
   maxConcurrentFetches?: number;
+  /** Refuse plain JWKS directories without Appendix B signatures. Default false. */
+  requireSignedDirectories?: boolean;
+  /** How long an unsigned directory may keep verifying after a failed refresh (seconds). Default 86400. */
+  maxUnsignedDirectoryAgeSeconds?: number;
 }
-/** Multi-origin discovery. Cache keys never collapse origins sharing a kid. */
+/**
+ * Multi-origin key discovery. Cache keys never collapse origins sharing a
+ * kid. A failed refresh (any transport error or non-200, 404/410 included) is
+ * a discovery failure: it never evicts a cached, unexpired directory, which
+ * keeps verifying (WBA §6.10). Without one, the request is unverified.
+ */
 export class SignatureDirectoryResolver implements JwksResolver {
   private readonly cache = new Map<string, { directory: VerifiedSignatureDirectory; freshUntil: number }>();
-  private readonly failures = new Map<string, { until: number; status: WebBotAuthError['status']; reason: string }>();
+  private readonly failures = new Map<string, number>();
   private readonly keyMissCooldown = new Map<string, number>();
   private readonly pending = new Map<string, Promise<VerifiedSignatureDirectory>>();
   constructor(private readonly options: SignatureDirectoryResolverOptions = {}) {}
@@ -591,16 +718,16 @@ export class SignatureDirectoryResolver implements JwksResolver {
     const origin = receivedAgentOrigin(signerOrigin);
     const now = (this.options.now ?? (() => Date.now() / 1000))();
     const cached = this.cache.get(origin);
+    const usable = () => (cached && cached.directory.expires > now ? cached.directory : undefined);
     if (cached && cached.freshUntil > now && cached.directory.expires > now) {
       const key = cached.directory.keys.find(k => k.kid === keyid);
       if (key || (this.keyMissCooldown.get(origin) ?? 0) > now) return key ?? null;
       this.keyMissCooldown.set(origin, now + 60);
     }
-    const failure = this.failures.get(origin);
-    if (failure && failure.until > now) {
-      if (cached && cached.directory.expires > now) return cached.directory.keys.find(k => k.kid === keyid) ?? null;
-      // Replay the cached failure's class: an outage stays 503, absence stays a signature failure.
-      throw new WebBotAuthError(failure.status, failure.reason);
+    if ((this.failures.get(origin) ?? 0) > now) {
+      const fallback = usable();
+      if (fallback) return fallback.keys.find(k => k.kid === keyid) ?? null;
+      return denied('directory_unavailable');
     }
     let pending = this.pending.get(origin);
     if (!pending) {
@@ -609,8 +736,9 @@ export class SignatureDirectoryResolver implements JwksResolver {
           2 ||
         this.pending.size >= (this.options.maxConcurrentFetches ?? 16)
       ) {
-        if (cached && cached.directory.expires > now) return cached.directory.keys.find(k => k.kid === keyid) ?? null;
-        throw new WebBotAuthError(429, 'directory_fetch_limit');
+        const fallback = usable();
+        if (fallback) return fallback.keys.find(k => k.kid === keyid) ?? null;
+        return denied('directory_fetch_limit');
       }
       pending = this.fetch(origin, now);
       this.pending.set(origin, pending);
@@ -618,9 +746,10 @@ export class SignatureDirectoryResolver implements JwksResolver {
     try {
       return (await pending).keys.find(k => k.kid === keyid) ?? null;
     } catch (error) {
-      // A failed fetch never proves removal, but cached possession proof must
-      // still be valid. Successful refresh replaces the whole key set.
-      if (cached && cached.directory.expires > now) return cached.directory.keys.find(k => k.kid === keyid) ?? null;
+      // A failed fetch never proves removal: keep verifying under unexpired
+      // cached keys. A successful refresh replaces the whole key set.
+      const fallback = usable();
+      if (fallback) return fallback.keys.find(k => k.kid === keyid) ?? null;
       throw error;
     } finally {
       if (this.pending.get(origin) === pending) this.pending.delete(origin);
@@ -631,20 +760,19 @@ export class SignatureDirectoryResolver implements JwksResolver {
       const url = origin + SIGNATURE_DIRECTORY_PATH;
       const result = await ssrfSafeFetch(url, {
         ...this.options.fetchOptions,
-        headers: { accept: SIGNATURE_DIRECTORY_MEDIA_TYPE },
+        headers: {
+          accept: `${SIGNATURE_DIRECTORY_MEDIA_TYPE}, application/jwk-set+json;q=0.9, application/json;q=0.8`,
+        },
         timeoutMs: 10_000,
         maxBodyBytes: 256 * 1024,
       });
-      // A directory that does not exist is a signature failure; any other
-      // non-200 is an outage of the signer's dependency.
-      if (result.status === 404 || result.status === 410) denied('directory_absent');
-      if (result.status !== 200) throw new WebBotAuthError(503, 'directory_unavailable');
+      if (result.status !== 200) denied('directory_unavailable');
       // ignoreBOM: the digest covers the exact bytes, including any BOM.
       const body = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(result.body);
-      const directory = verifySignatureDirectory(
+      const verified = verifyKeyDirectory(
         { status: result.status, headers: result.headers, body, request: { method: 'GET', url } },
         now,
-        this.options.allowTestKeys
+        { allowTestKeys: this.options.allowTestKeys, requireSigned: this.options.requireSignedDirectories }
       );
       const cacheControl = result.headers['cache-control'] ?? '';
       const maxAge = /(?:^|,)\s*(?:no-cache|no-store)(?:,|$)/i.test(cacheControl)
@@ -652,6 +780,11 @@ export class SignatureDirectoryResolver implements JwksResolver {
         : Number(cacheControl.match(/(?:^|,)\s*max-age=(\d+)/i)?.[1] ?? 300);
       const age = Number(result.headers.age ?? 0);
       if (!Number.isFinite(age) || age < 0) denied('directory_invalid');
+      // Unsigned directories carry no proof expiry: bound how long their keys
+      // keep verifying through later discovery failures.
+      const directory = verified.signed
+        ? verified
+        : { ...verified, expires: now + Math.max(60, this.options.maxUnsignedDirectoryAgeSeconds ?? 86_400) };
       if (this.cache.size >= (this.options.maxOrigins ?? 1000) && !this.cache.has(origin)) {
         const oldest = this.cache.keys().next().value!;
         this.cache.delete(oldest);
@@ -664,19 +797,21 @@ export class SignatureDirectoryResolver implements JwksResolver {
       this.failures.delete(origin);
       return directory;
     } catch (error) {
-      // Transport errors are outages; signed-content and absence failures stay signature failures.
-      const failure = error instanceof WebBotAuthError ? error : new WebBotAuthError(503, 'directory_unavailable');
       if (this.failures.size >= (this.options.maxOrigins ?? 1000))
         this.failures.delete(this.failures.keys().next().value!);
-      this.failures.set(origin, { until: now + 60, status: failure.status, reason: failure.reason });
-      throw failure;
+      this.failures.set(origin, now + 60);
+      throw error instanceof WebBotAuthError ? error : new WebBotAuthError(403, 'directory_unavailable');
     }
   }
   get allowsTestKeys(): boolean {
-    return this.options.allowTestKeys === true && ['test', 'development'].includes(process.env.NODE_ENV ?? '');
+    return testKeysAllowed(this.options.allowTestKeys);
+  }
+  /** The directory currently used to verify `origin`, including one kept through a failed refresh. */
+  getVerifiedDirectory(origin: string): VerifiedSignatureDirectory | undefined {
+    return this.cache.get(receivedAgentOrigin(origin))?.directory;
   }
   getAuditProof(origin: string): ResponseLike | undefined {
-    return this.cache.get(receivedAgentOrigin(origin))?.directory.proof;
+    return this.getVerifiedDirectory(origin)?.proof;
   }
 }
 
@@ -702,6 +837,12 @@ async function signBase(base: string, key: WebBotSigningKey): Promise<Uint8Array
     return key.provider.sign(Buffer.from(base));
   }
   const privateKey = createPrivateKey({ key: jwk as JsonWebKey, format: 'jwk' });
+  if (alg === 'rsa-pss-sha512')
+    return nodeSign('sha512', Buffer.from(base), {
+      key: privateKey,
+      padding: cryptoConstants.RSA_PKCS1_PSS_PADDING,
+      saltLength: 64,
+    });
   return alg === 'ed25519'
     ? nodeSign(null, Buffer.from(base), privateKey)
     : nodeSign('sha256', Buffer.from(base), { key: privateKey, dsaEncoding: 'ieee-p1363' });
@@ -717,7 +858,7 @@ export async function signWebBotAuth(
   const jwk = 'privateKey' in key ? key.privateKey : key.publicKey;
   const now = Math.floor((options.now ?? (() => Date.now() / 1000))());
   const window = options.windowSeconds ?? 300;
-  const nonce = options.nonce ?? randomBytes(32).toString('base64url');
+  const nonce = options.nonce ?? randomBytes(64).toString('base64url');
   if (!Number.isInteger(window) || window < 1 || window > 300 || !/^[A-Za-z0-9_+\/-]{22,256}={0,2}$/.test(nonce))
     throw new TypeError('Invalid Web Bot Auth lifetime or nonce');
   if (
@@ -771,7 +912,11 @@ export async function signWebBotAuth(
     `${priorInput ? priorInput + ', ' : ''}${label}=(${components.join(' ')});created=${now};expires=${now + window};nonce="${nonce}";keyid="${jwkThumbprint(jwk)}";alg="${algorithm(jwk)}";tag="web-bot-auth"`;
   const input = parseSignatureInput(headers['signature-input'], label);
   if (priorSignature) headers.signature = priorSignature;
-  const bytes = await signBase(buildWebBotAuthSignatureBase(input, { ...request, headers }), key);
+  // Sign the target URI exactly as the HTTP client will send it.
+  const bytes = await signBase(
+    buildWebBotAuthSignatureBase(input, { ...request, url: new URL(request.url).href, headers }),
+    key
+  );
   headers.signature = `${priorSignature ? priorSignature + ', ' : ''}${label}=:${Buffer.from(bytes).toString('base64')}:`;
   return headers;
 }
@@ -792,8 +937,7 @@ export async function createSignedSignatureDirectory(
     const jwk = 'privateKey' in key ? key.privateKey : key.publicKey;
     return {
       kty: jwk.kty,
-      crv: jwk.crv,
-      x: jwk.x,
+      ...(jwk.kty === 'RSA' ? { n: jwk.n, e: jwk.e } : { crv: jwk.crv, x: jwk.x }),
       ...(jwk.y ? { y: jwk.y } : {}),
       kid: jwkThumbprint(jwk),
       use: 'sig',

@@ -1,5 +1,10 @@
 import { createHash } from 'crypto';
-import { registerWebBotAuthLegacyOriginGate } from '../signing/web-bot-auth';
+import {
+  registerWebBotAuthLegacyOriginGate,
+  registerWebBotAuthRevocationCheck,
+  WebBotAuthUnavailableError,
+} from '../signing/web-bot-auth';
+import type { OriginRevocationStatus } from './revocation';
 import { RequestSignatureError } from '../signing/errors';
 import { TaskTypeValues } from '../types/enums.generated';
 import { AdcpError } from '../server/decisioning/async-outcome';
@@ -31,6 +36,8 @@ function needsSpendAuthorization(tool: string, params: unknown): boolean {
 interface IdentityClaim {
   state: 'identity-established' | 'bound';
   signer: VerifiedWebBotSigner;
+  /** `absent`: the origin serves no revocation list, so it cannot be bound for spend. */
+  revocation?: 'current' | 'absent';
   authorizationFailure?: import('../signing/web-bot-auth').WebBotAuthAuthorizationFailure;
 }
 function claimFromContext(ctx: HandlerContext<unknown>): IdentityClaim | undefined {
@@ -45,6 +52,15 @@ export function createIdentity33PrincipalResolver(options: {
   lifecycle: OriginIdentityLifecycle;
   anonymousPrincipal?: string;
   anonymousTools?: readonly string[];
+  /**
+   * Origin revocation, checked here (the identity layer), not during signature
+   * verification. A revoked key is refused without a challenge; unknown
+   * status leaves the identity unverified; an origin serving no list stays
+   * identity-established and cannot be bound or spend. Usually an
+   * `OriginRevocationResolver`. Without it, the server must supply the
+   * deprecated `webBotAuth.isRevoked`.
+   */
+  revocation?: { status(origin: string, keyid: string): Promise<OriginRevocationStatus> };
 }): (signers: readonly VerifiedWebBotSigner[], operation: ResolvedOperation) => Promise<AuthPrincipal> {
   const anonymousTools = new Set(
     options.anonymousTools ?? [
@@ -62,8 +78,26 @@ export function createIdentity33PrincipalResolver(options: {
     if (!signers.length || signers.some(s => !isVerifiedWebBotSigner(s)))
       throw new WebBotAuthError(403, 'unverified_identity');
     const signer = signers[signers.length - 1]!;
+    let revocation: 'current' | 'absent' | undefined;
+    if (options.revocation) {
+      revocation = 'current';
+      for (const each of signers) {
+        let status: OriginRevocationStatus;
+        try {
+          status = await options.revocation.status(each.origin, each.keyid);
+        } catch (error) {
+          // History-store failure: an infrastructure outage, not an identity outcome.
+          throw new WebBotAuthUnavailableError('revocation_persistence_failed', error);
+        }
+        if (status === 'revoked') throw new WebBotAuthError(403, 'key_revoked');
+        if (status === 'unknown') throw new WebBotAuthError(403, 'identity_unverified');
+        if (status === 'absent') revocation = 'absent';
+      }
+    }
     const revoked = signers.find(s => s.authorizationFailure);
-    const { binding } = revoked ? { binding: undefined } : await options.lifecycle.getPrincipal(signer.origin);
+    // No revocation list: identity-established only, whatever the binding says.
+    const { binding } =
+      revoked || revocation === 'absent' ? { binding: undefined } : await options.lifecycle.getPrincipal(signer.origin);
     if (!binding && operation !== undefined && typeof operation !== 'string')
       throw new WebBotAuthError(400, 'operation');
     const authorizationFailure =
@@ -79,6 +113,7 @@ export function createIdentity33PrincipalResolver(options: {
         identity33: {
           state: binding ? 'bound' : 'identity-established',
           signer: revoked ?? signer,
+          ...(revocation && { revocation }),
           ...(authorizationFailure && { authorizationFailure }),
         },
       },
@@ -94,6 +129,7 @@ export function createIdentity33PrincipalResolver(options: {
         : {}),
     };
   };
+  if (options.revocation) registerWebBotAuthRevocationCheck(resolver);
   registerWebBotAuthLegacyOriginGate(resolver, async origin => {
     if ((await options.lifecycle.getPrincipal(origin)).binding)
       throw new RequestSignatureError(
@@ -137,6 +173,9 @@ export function createIdentity33Authorization<TAccount>(options: {
     }
     if (identity.state === 'identity-established') {
       if (tool === 'sync_principal') {
+        // An identity that serves no revocation list cannot be bound.
+        if (identity.revocation === 'absent')
+          throw new AdcpError('PERMISSION_DENIED', { message: 'Agent identity cannot be onboarded' });
         const dryRun = !!params && typeof params === 'object' && (params as { dry_run?: unknown }).dry_run === true;
         const binding = await options.lifecycle.syncOpen(identity.signer.origin, { dryRun });
         if (dryRun) return;

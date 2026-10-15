@@ -1,0 +1,34 @@
+{
+  "signer": "adcp-client",
+  "request": {
+    "method": "POST",
+    "url": "https://seller.example.com/mcp",
+    "headers": {
+      "content-type": "application/json",
+      "content-digest": "sha-256=:LnHsFLYI6OsiiVB4APC5/RclcwyijwDcB/pUHmff3Rs=:",
+      "signature-agent": "sig1=\"https://buyer.agency.com\"",
+      "signature-input": "sig1=(\"@method\" \"@target-uri\" \"@authority\" \"content-type\" \"content-digest\" \"signature-agent\";key=\"sig1\");created=1790841610;expires=1790841910;nonce=\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBw\";keyid=\"REA4imWeSrPHmj21jGEDpapbqhZo94UGbgAf5ZIQPJE\";alg=\"ed25519\";tag=\"web-bot-auth\"",
+      "signature": "sig1=:CvJAfYFW7nVZyaNmqGhAxlU9zni8komBpINNcirsQfFStl6OiedwhyBD+Yim+6x5blq8H0xbppepTtKruwz0Bw==:"
+    },
+    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"get_products\",\"arguments\":{}}}"
+  },
+  "directory": {
+    "url": "https://buyer.agency.com/.well-known/http-message-signatures-directory",
+    "status": 200,
+    "headers": {
+      "content-type": "application/http-message-signatures-directory+json",
+      "content-digest": "sha-256=:hY9mzpPJHdRN7bw4BNaKRTEOC9OfeMtCiuerhgPwPJg=:",
+      "cache-control": "max-age=300",
+      "signature-input": "key1=(\"@authority\";req \"content-digest\");created=1790841550;expires=1790928010;keyid=\"REA4imWeSrPHmj21jGEDpapbqhZo94UGbgAf5ZIQPJE\";alg=\"ed25519\";tag=\"http-message-signatures-directory\"",
+      "signature": "key1=:P5KcRAfjjJC4u8oekfRI+pqkLcQGWLxhlDENdt5/iBn5E54XxOZW7N0ztVWznhtPMlbaYdxGhDKnv/2W08XNAw==:"
+    },
+    "body": "{\"keys\":[{\"kty\":\"OKP\",\"crv\":\"Ed25519\",\"x\":\"Ucrv9QJwrEpSnGIJFVNix5nM0Xa3xXTRUmsfsiVlZ_8\",\"kid\":\"REA4imWeSrPHmj21jGEDpapbqhZo94UGbgAf5ZIQPJE\",\"use\":\"sig\"}]}"
+  },
+  "reference_now": 1790841610,
+  "expected": {
+    "verifies": true,
+    "identity": "https://buyer.agency.com",
+    "keyid": "REA4imWeSrPHmj21jGEDpapbqhZo94UGbgAf5ZIQPJE",
+    "signature_base": "\"@method\": POST\n\"@target-uri\": https://seller.example.com/mcp\n\"@authority\": seller.example.com\n\"content-type\": application/json\n\"content-digest\": sha-256=:LnHsFLYI6OsiiVB4APC5/RclcwyijwDcB/pUHmff3Rs=:\n\"signature-agent\";key=\"sig1\": \"https://buyer.agency.com\"\n\"@signature-params\": (\"@method\" \"@target-uri\" \"@authority\" \"content-type\" \"content-digest\" \"signature-agent\";key=\"sig1\");created=1790841610;expires=1790841910;nonce=\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBw\";keyid=\"REA4imWeSrPHmj21jGEDpapbqhZo94UGbgAf5ZIQPJE\";alg=\"ed25519\";tag=\"web-bot-auth\""
+  }
+}

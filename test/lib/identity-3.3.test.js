@@ -776,9 +776,10 @@ test('WBA challenges include required fields; revocations cannot suggest re-sign
   const unavailable = async () => {
     throw new wba.WebBotAuthError(403, 'revocation_unavailable');
   };
+  // Unknown revocation status leaves the identity unverified (DR-0023), never a 503.
   await assert.rejects(
     wba.verifyWebBotAuth(v.request, { ...options(v), isRevoked: unavailable }),
-    e => e.reason === 'revocation_unavailable'
+    e => e.reason === 'identity_unverified' && e.status === 403 && !!e.headers['Accept-Signature']
   );
   assert.equal(
     (await wba.verifyWebBotAuth(v.request, { ...options(v), isRevoked: unavailable, requireFreshRevocation: false }))
@@ -1089,15 +1090,14 @@ test('official MCP client receives deferred identity denials as tool errors; A2A
   try {
     await client.connect(clientTransport);
     await client.listTools();
-    for (const reason of ['key_revoked', 'identity_not_bound', 'revocation_unavailable']) {
-      const signers = await wba.verifyWebBotAuth(v.request, {
-        ...options(v),
-        deferAuthorizationErrors: true,
-        isRevoked: async () => {
-          if (reason === 'revocation_unavailable') throw new wba.WebBotAuthError(403, reason);
-          return reason === 'key_revoked';
-        },
-      });
+    // Revocation is no longer deferred into tool errors: a revoked key is a 403
+    // without a challenge and unknown status leaves the identity unverified.
+    await assert.rejects(
+      wba.verifyWebBotAuth(v.request, { ...options(v), isRevoked: async () => true }),
+      e => e.reason === 'key_revoked' && !e.headers['Accept-Signature']
+    );
+    for (const reason of ['identity_not_bound']) {
+      const signers = await wba.verifyWebBotAuth(v.request, options(v));
       const principal = await resolve(signers, reason === 'identity_not_bound' ? 'create_media_buy' : 'get_products');
       authInfo = {
         token: '',

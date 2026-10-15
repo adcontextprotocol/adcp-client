@@ -1,4 +1,4 @@
-import { createPublicKey, verify as nodeVerify, type JsonWebKey, type KeyObject } from 'crypto';
+import { constants, createPublicKey, verify as nodeVerify, type JsonWebKey, type KeyObject } from 'crypto';
 import { RequestSignatureError } from './errors';
 import type { AdcpJsonWebKey } from './types';
 
@@ -25,6 +25,15 @@ export function verifySignature(alg: string, publicKey: KeyObject, data: Uint8Ar
     }
     if (alg === 'ecdsa-p256-sha256') {
       return nodeVerify('sha256', data, { key: publicKey, dsaEncoding: 'ieee-p1363' }, signature);
+    }
+    if (alg === 'rsa-pss-sha512') {
+      // RFC 9421 §3.3.1; used by the Web Bot Auth profile only.
+      return nodeVerify(
+        'sha512',
+        data,
+        { key: publicKey, padding: constants.RSA_PKCS1_PSS_PADDING, saltLength: 64 },
+        signature
+      );
     }
     return false;
   } catch {

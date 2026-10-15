@@ -859,6 +859,7 @@
     "esbuild": "^0.28.2",
     "esbuild-fix-imports-plugin": "^1.0.23",
     "eslint": "^10.9.1",
+    "http-message-sig": "0.3.0",
     "json-schema-to-typescript": "^15.0.4",
     "json-schema-to-zod": "^2.8.1",
     "openapi-typescript": "^7.13.0",
@@ -873,6 +874,7 @@
     "typedoc-plugin-markdown": "^4.13.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.68.0",
+    "web-bot-auth": "0.2.0",
     "zod": "^4.4.3",
     "zod-openapi": "^5.4.3"
   },

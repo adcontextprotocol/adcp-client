@@ -3,12 +3,7 @@ import { CompactSign, compactVerify, decodeProtectedHeader, importJWK, type JWK 
 import { ssrfSafeFetch, type SsrfFetchOptions } from '../net';
 import { canonicalAgentOrigin } from '../signing/agent-resolver/canonicalize';
 import { parseStrictJson } from '../signing/agent-resolver/strict-json';
-import {
-  SignatureDirectoryResolver,
-  WebBotAuthError,
-  verifySignatureDirectory,
-  jwkThumbprint,
-} from '../signing/web-bot-auth';
+import { SignatureDirectoryResolver, WebBotAuthError, jwkThumbprint } from '../signing/web-bot-auth';
 import type { RevocationDetail, RevocationReason } from './types';
 export interface OriginRevocationSnapshot {
   issuer: string;
@@ -279,9 +274,9 @@ export class OriginRevocationResolver {
           )
             continue;
           await this.options.directory.resolve(header.kid, origin);
-          const proof = this.options.directory.getAuditProof(origin);
-          if (!proof || new URL(proof.request.url).origin !== origin) continue;
-          const checked = verifySignatureDirectory(proof, this.now(), this.options.directory.allowsTestKeys);
+          const checked = this.options.directory.getVerifiedDirectory(origin);
+          if (!checked || new URL(checked.proof.request.url).origin !== origin || checked.expires <= this.now())
+            continue;
           const jwk = checked.keys.find(key => key.kid === header.kid);
           if (!jwk) continue;
           const result = await compactVerify(token, await importJWK(jwk as JWK, header.alg), {

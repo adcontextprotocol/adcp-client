@@ -4209,7 +4209,8 @@ export class SingleAgentClient {
       }
     }
     if (registration?.mode === 'rfc9421') {
-      const { verifyWebBotAuth, selectSignatureProfile, WebBotAuthError } = loadWebBotAuth();
+      const { verifyWebBotAuth, selectSignatureProfile, WebBotAuthError, WebBotAuthUnavailableError } =
+        loadWebBotAuth();
       const requestMethod = options.requestMethod;
       const requestUrl = options.requestUrl;
       if (rawBody === undefined || !options.headers || !trustedOperationId || !requestMethod || !requestUrl) {
@@ -4280,19 +4281,20 @@ export class SingleAgentClient {
           );
         }
       } catch (cause) {
+        // Discovery failures, unknown revocation status and verifier
+        // infrastructure outages are retryable; signature failures are not.
+        if (cause instanceof WebBotAuthUnavailableError)
+          return { ok: false, code: 'webhook_verification_unavailable', message: cause.message, cause };
         if (cause instanceof WebBotAuthError)
           return {
             ok: false,
-            code: [
-              'directory_unavailable',
-              'revocation_unavailable',
-              'revocation_persistence_failed',
-              'replay_unavailable',
-              'verification_unavailable',
-              'directory_fetch_limit',
-            ].includes(cause.reason)
-              ? 'webhook_verification_unavailable'
-              : 'webhook_signature_invalid',
+            code:
+              cause.unverified ||
+              ['revocation_unavailable', 'revocation_persistence_failed', 'verification_unavailable'].includes(
+                cause.reason
+              )
+                ? 'webhook_verification_unavailable'
+                : 'webhook_signature_invalid',
             message: cause.message,
             cause,
           };
