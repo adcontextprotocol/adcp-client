@@ -120,6 +120,18 @@ async function runAccountStoryboard(t, response, hasId) {
   const { parseStoryboard } = require('../../dist/lib/testing/storyboard/loader.js');
   const seen = [];
   const server = new McpServer({ name: 'account-probe', version: '1' });
+  server.registerTool('get_adcp_capabilities', { inputSchema: z.object({}).passthrough() }, async () => {
+    const data = {
+      adcp_version: '3.2',
+      adcp: {
+        major_versions: [3],
+        supported_versions: ['3.2'],
+        idempotency: { supported: true, replay_ttl_seconds: 3600 },
+      },
+      supported_protocols: ['media_buy'],
+    };
+    return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data };
+  });
   for (const [task, data] of [
     ['sync_accounts', response],
     ['get_media_buys', { media_buys: [] }],
@@ -164,7 +176,7 @@ phases:
           accounts:
             - brand: { domain: advertiser.example }
               operator: synced-buyer.example
-              operator_unit: buying-desk
+              operator_unit: { id: buying-desk }
               sandbox: true
         ${hasId ? 'context_outputs: [{ name: acct, path: "accounts[0].account_id" }]' : ''}
         validations: []
@@ -196,7 +208,7 @@ phases:
 test('sync_accounts → get_media_buys sends the authored stable ID over official MCP (#3195)', async t => {
   const { result, seen } = await runAccountStoryboard(t, SYNC_RESPONSE, true);
   assert.equal(result.overall_passed, true, JSON.stringify(result));
-  assert.equal(seen[0].params.accounts[0].operator_unit, 'buying-desk');
+  assert.deepEqual(seen[0].params.accounts[0].operator_unit, { id: 'buying-desk' });
   assert.equal(SYNC_RESPONSE.accounts[0].operator_unit, undefined);
   assert.deepEqual(
     seen.map(call => call.task),
