@@ -37,6 +37,7 @@ import {
   legacyFormatRefsForDeclaration,
   selectedFormatOptions,
   transferLegacyCreativeMetadata,
+  withDualEmissionLegacyRefs,
 } from './legacy-metadata';
 import type { CanonicalFormatDeclaration } from './legacy-metadata';
 import type { UndeclaredFormatOptionSelector } from './legacy-routes';
@@ -808,18 +809,11 @@ function candidatesFromContainer(
     );
   }
   const candidates: LegacyCandidate[] = [];
-  const containerKind = typeof container.format_kind === 'string' ? container.format_kind : undefined;
-  for (const key of ['format_ids', 'formats'] as const) {
-    for (const ref of refsFromValue(container[key])) {
-      candidates.push({
-        ref,
-        formatKind: resolveCanonicalFormatKind(ref.id) ?? containerKind,
-        selectorParams: container.params,
-      });
-    }
-  }
   const formatOptions = [
-    ...(Array.isArray(container.format_options) ? container.format_options : []),
+    ...withDualEmissionLegacyRefs(
+      Array.isArray(container.format_options) ? container.format_options : [],
+      container.format_ids
+    ),
     ...selectedFormatOptions(container),
   ];
   for (const optionValue of formatOptions) {
@@ -848,6 +842,19 @@ function candidatesFromContainer(
     }
     for (const ref of refs) {
       candidates.push({ ref, formatKind, formatOptionRef, selectorParams: option.params ?? container.params });
+    }
+  }
+  const containerKind = typeof container.format_kind === 'string' ? container.format_kind : undefined;
+  for (const key of ['format_ids', 'formats'] as const) {
+    for (const ref of refsFromValue(container[key])) {
+      // A linked option already represents this reference with richer selector
+      // evidence. Adding a bare copy would make an unpinned creative ambiguous.
+      if (candidates.some(candidate => candidateKey({ ref: candidate.ref }) === candidateKey({ ref }))) continue;
+      candidates.push({
+        ref,
+        formatKind: resolveCanonicalFormatKind(ref.id) ?? containerKind,
+        selectorParams: container.params,
+      });
     }
   }
   return uniqueCandidates(candidates);
