@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from 'crypto';
-import { parseDictionary } from 'structured-headers';
+import { parseDictionary, serializeDictionary } from 'structured-headers';
 
 const SHA256_MEMBER_RE = /(?:^|[,\s])sha-256=:([A-Za-z0-9+/_-]+={0,2}):/;
 
@@ -12,11 +12,27 @@ export function requestSigningEncodingForVersion(adcpVersion: string): SfBinaryE
 }
 
 export function computeContentDigest(body: string | Uint8Array, encoding: SfBinaryEncoding = 'rfc8941-base64'): string {
-  const buf = toBuffer(body);
-  const hash = createHash('sha256')
-    .update(buf)
-    .digest(encoding === 'legacy-base64url' ? 'base64url' : 'base64');
-  return `sha-256=:${hash}:`;
+  return serializeByteSequenceMember('sha-256', createHash('sha256').update(toBuffer(body)).digest(), encoding);
+}
+
+/**
+ * Serialize a one-member Dictionary whose value is a byte sequence, e.g.
+ * `sig1=:...:` in `Signature` or `sha-256=:...:` in `Content-Digest`. The
+ * RFC 8941 form comes from the structured-field serializer. The AdCP 3.0/3.1
+ * profile wrote byte sequences in unpadded Base64URL, which is not an RFC 8941
+ * `sf-binary` and no serializer emits, so that legacy form stays hand-written.
+ */
+export function serializeByteSequenceMember(
+  key: string,
+  bytes: Uint8Array | ArrayBuffer,
+  encoding: SfBinaryEncoding
+): string {
+  // Buffer.from accepts the ArrayBuffer a WebCrypto-backed provider may return
+  // as well as views at any offset; the serializer needs an exact ArrayBuffer.
+  const buf = Buffer.from(bytes as Uint8Array);
+  if (encoding === 'legacy-base64url') return `${key}=:${buf.toString('base64url')}:`;
+  const exact = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+  return serializeDictionary(new Map([[key, [exact, new Map()]]]));
 }
 
 /**
