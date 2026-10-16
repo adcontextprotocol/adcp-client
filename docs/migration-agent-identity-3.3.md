@@ -123,13 +123,21 @@ seller must advertise `request_signing.profiles` containing `web-bot-auth`.
 Provider configurations additionally supply `public_key`; the provider's
 thumbprint kid and algorithm must match that public key. The wrapper signs the
 final UTF-8 body, covers the selected `Signature-Agent` member and digest,
-uses a fresh nonce, and refuses automatic HTTP redirects. `signWebBotAuth`
-also supports `relay: true` with a new label; the verifier validates every
-layer regardless of dictionary ordering.
+uses a fresh 64-byte nonce, and refuses automatic HTTP redirects. A request
+carries exactly one `web-bot-auth` signature and one `Signature-Agent` member:
+relays were removed from the profile, `signWebBotAuth` throws on `relay: true`
+and on a request that already carries signature fields, and the verifier
+answers a second signature (of any profile) or a second `Signature-Agent`
+member with 403. Signing keys are Ed25519 or RSA-PSS-SHA512 (2048 to 4096
+bits, e = 65537); ES256 stays on the AdCP RFC 9421 profile, and
+`createWebBotAuthFetch`, `createWebhookEmitter` and `createAdcpServer` refuse
+a P-256 Web Bot Auth key at wire-up.
 
 `SignatureDirectoryResolver` derives the directory from the covered canonical
-origin. It validates a possession signature for every key and the exact body
-digest before caching keys. Its audit proof retains the signed body and
+origin. Directories must be signed (WBA Appendix B.1): it validates a
+possession signature for every key, covering `"@authority";req` and
+`content-digest`, and the exact body digest before caching keys. An unsigned
+directory is a discovery failure. Its audit proof retains the signed body and
 headers. Verification requires this resolver so context-free JWKS adapters cannot
 attribute a key to an arbitrary origin. Discovery uses HTTPS, DNS pinning, no redirects, a 256 KiB cap, a
 5-second connect bound and 10-second total bound, at most 64 keys, and bounded
@@ -147,7 +155,8 @@ Serve the exact JWS at `/.well-known/governance-revocations.json` and refresh it
 before `next_update` (the command defaults to five minutes). Pass `--snapshot`
 to sign a list of revoked key thumbprints and optional reasons/dates.
 `createSignedOriginRevocationList` provides the same authoring API. The SDK
-supports Ed25519 and P-256 identity keys. Observed key revocations are permanent;
+signs and verifies revocation lists with Ed25519 directory keys only (a P-256
+key cannot be published in a key directory). Observed key revocations are permanent;
 refresh failures use the last verified list only within the published grace
 window. Staleness follows the list's signed `next_update`, never the polling
 interval: the verifier re-polls at least every polling interval (at most 30
@@ -370,7 +379,7 @@ released schemas:
 
 | PR | Pinned head | Surface |
 | --- | --- | --- |
-| [7894](https://github.com/adcontextprotocol/adcp/pull/7894) | `656bd080f01cc2fca4a1e623af44e96cfd827ba5` | WBA wire profile, profile selectors, directory and request/relay vectors |
+| [7894](https://github.com/adcontextprotocol/adcp/pull/7894) | `e24eeb090c4365707641099cbbb45f9945c6d6e0` | WBA wire profile (`wba-profile.mdx`), profile selectors, directory and request vectors |
 | [8121](https://github.com/adcontextprotocol/adcp/pull/8121) | `f5973ac0267b1b94d714c55fc4e3ad8fc2511350` | Origin identity and key-free trust v1 |
 | [8162](https://github.com/adcontextprotocol/adcp/pull/8162) | `5c9914c5c382cc32f3d2ad7842942e548c414705` | Ratified identity, coexistence, revocation |
 | [8168](https://github.com/adcontextprotocol/adcp/pull/8168) | `45540941dfd61e80ab8a463f780cb147c82a32f0` | Relationship and principal response arms |
@@ -378,8 +387,14 @@ released schemas:
 | [8170](https://github.com/adcontextprotocol/adcp/pull/8170) | `8d3591e70e9a717c7fdfb513360a796fba24ca9a` | Onboarding additions only; its old trust key fields are excluded |
 | [8177](https://github.com/adcontextprotocol/adcp/pull/8177) | `b663f8e4235fe4276c73fb9bac6db491b2252bbf` | Reporting authentication omission |
 
-Ratified R2 defaults replay to 429. Older vector negative/002 expects 403;
-`replayStatus: 403` is an explicit compatibility test option, not the default.
+The vectors in `test/fixtures/wba-profile/` are byte-identical to #7894 at that
+head and are all graded except the governance-token vectors (see `PINNED.json`).
+
+Verification runs in Cloudflare's `http-message-sig` (signature base, coverage,
+window, algorithm and cryptographic checks); the SDK adds the profile rules in
+front of it (one signature, one covered `Signature-Agent` member, the nonce and
+lifetime rules, key lookup by origin and thumbprint) and replay state behind it.
+`verifyKeyDirectory` and `verifySignatureDirectory` now return promises.
 
 Verifier outcomes follow DR-0023 and WBA §5.5/§6.10. `verifyWebBotAuth` needs
 only key discovery and a replay store and returns the verified origins;
@@ -387,20 +402,39 @@ revocation, bindings and the origin-binding fence run afterwards in the
 identity layer (`createIdentity33PrincipalResolver({ lifecycle, revocation })`),
 so verification can run in a CDN or middleware in front of the AdCP server.
 
-- Signature-path errors are WBA statuses and headers only: 400 for a field that
-  does not parse, 403 with `Accept-Signature` for a signature that does not
-  verify, 429 for a replayed nonce. Any AdCP body is the generic authentication
-  error (`AUTH_INVALID`); the specific reason is logged, never sent.
+- Signature-path errors are WBA statuses and headers only: 400 when
+  `Signature`, `Signature-Input` or `Signature-Agent` does not parse as a
+  Structured Field; 403 with `Accept-Signature` for every other signature or
+  profile failure (a wrongly typed parameter, a short nonce, an uncovered or
+  extra `Signature-Agent` member); 429 with `Accept-Signature` carrying a fresh
+  `nonce` for a reused signature or nonce. `Accept-Signature` names the label,
+  the required components and `created;expires;nonce;keyid;alg;tag`. Any AdCP
+  body is the generic authentication error (`AUTH_INVALID`); the specific
+  reason is logged, never sent. A 429 for local load shedding (directory fetch
+  limiter, replay-store `rate_abuse`) carries `Retry-After` instead.
+- Every signed request carries `created`, `expires` (at most 300 seconds
+  later), `keyid`, `alg` (`ed25519` or `rsa-pss-sha512`) and a `nonce` of 64
+  bytes, unpadded Base64URL or canonical padded Base64 (Cloudflare's default).
+  The former 16-byte floor is gone: a shorter nonce is a 403. Replay state is
+  keyed on the nonce bytes, so the two encodings of one nonce collide.
+- `replayStatus` is deprecated and has no effect: a replay is always 429.
+- An unsigned request to an operation in `required_for`, from a caller with no
+  other accepted credential, is answered by what the verifier advertises in
+  `request_signing.profiles`: `['web-bot-auth']` alone gets 403 with
+  `Accept-Signature`; alongside `adcp/request-signing/v1` the AdCP RFC 9421 401
+  `request_signature_required` also carries `Accept-Signature`. Both
+  `createAdcpServer({ signedRequests: { webBotAuth } })` and
+  `requireSignatureWhenPresent(verifySignatureAsAuthenticator({ webBotAuth }), ...)`
+  apply this; a valid fallback credential still satisfies `required_for`.
 - A key-directory fetch failure (transport error or any non-200, 404/410/5xx
   included) is a discovery failure. It never evicts a cached, unexpired
   directory, which keeps verifying. Without one the request is unverified and
   answered 403 with `Accept-Signature` (the SDK's default unverified-request
   policy). A fetched directory without the key is a signature failure.
-- Plain JWKS directories without Appendix B signatures are accepted, with every
-  key checked against its RFC 7638 thumbprint; pass
-  `requireSignedDirectories: true` to the resolver to refuse them. An unsigned
-  directory keeps verifying through failed refreshes for at most
-  `maxUnsignedDirectoryAgeSeconds` (default one day).
+- Key directories must be signed and served as
+  `application/http-message-signatures-directory+json`; a plain JWKS is a
+  discovery failure. `requireSignedDirectories` and
+  `maxUnsignedDirectoryAgeSeconds` are deprecated and have no effect.
 - A revoked key is 403 with the generic authentication error and no
   `Accept-Signature`: the signer must stop using that key. Revocation status
   `unknown` (stale past grace) leaves the identity unverified (403 with
@@ -420,11 +454,14 @@ so verification can run in a CDN or middleware in front of the AdCP server.
   back off on 429 or 503.
 - `@target-uri` and `@authority` are taken from the target URI as received
   (RFC 9421 §2.2.2), never canonicalized; canonical origins identify the signer
-  only. Default nonces are 64 bytes (draft §4.2). Ed25519, ECDSA P-256 and
-  RSA-PSS-SHA512 keys are supported. `test/fixtures/wba-interop/` holds fixtures
-  verified in both directions against Cloudflare's `web-bot-auth`.
-Older #7894 governance vectors propose a superseded migration and are retained
-with their non-applicability recorded in `test/fixtures/wba-profile/PINNED.json`.
+  only. Ed25519 and RSA-PSS-SHA512 keys are supported; RSA-PSS uses WebCrypto
+  where the runtime has it, so it also works on Cloudflare workerd.
+  `test/fixtures/wba-interop/` holds fixtures verified in both directions against
+  Cloudflare's `web-bot-auth`; they already used signed directories and are
+  unchanged.
+The #7894 governance-token vectors are vendored but not graded: ratified R4
+keeps the RFC 9421 discovery chain for governance through 3.3, and the profile
+page leaves document signing to a separate decision. `PINNED.json` records this.
 The buyer default onboarding field is `profiles.adcp.onboarding`, matching the
 schema; the design's `record_profiles` wording names the schema definition.
 

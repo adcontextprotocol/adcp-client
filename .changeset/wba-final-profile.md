@@ -1,0 +1,15 @@
+---
+'@adcp/sdk': minor
+---
+
+Experimental AdCP 3.3 identity: align Web Bot Auth with the final profile in adcontextprotocol/adcp#7894 (`wba-profile.mdx` at `e24eeb09`). These are breaking changes to the experimental `@adcp/sdk/identity-3.3` surface only; the RFC 9421 profile is unchanged.
+
+- **One signature per request.** Relays are removed. The verifier answers a second signature of any profile, or a second `Signature-Agent` member, with 403. `signWebBotAuth` no longer accepts `relay: true` and refuses a request that already carries signature fields.
+- **Signed key directories only.** A directory without WBA Appendix B.1 signatures is a discovery failure. `requireSignedDirectories` and `maxUnsignedDirectoryAgeSeconds` are deprecated and have no effect. `verifyKeyDirectory` and `verifySignatureDirectory` now return promises, and `VerifiedSignatureDirectory.signed` is always `true`.
+- **Algorithms.** Web Bot Auth keys are Ed25519 or RSA-PSS-SHA512 only. P-256 keys are refused for signing, in directories, and for origin revocation lists, which are now Ed25519 only. ES256 stays on the AdCP RFC 9421 profile, including the WebCrypto/workerd path. RSA-PSS now uses WebCrypto where the runtime has it, so it signs and verifies on Cloudflare workerd.
+- **Parameters.** `alg` is required. The `nonce` must be 64 bytes, as unpadded Base64URL or canonical Base64. A shorter nonce, which the old 16-byte floor accepted, is now a 403. A parameter that parses but has the wrong type is a 403, not a 400.
+- **Errors.** A replay is always 429 with `Accept-Signature` carrying a fresh nonce, and no `Retry-After`. `replayStatus` is deprecated and has no effect. `Accept-Signature` now lists `alg`. Load shedding still answers 429 with `Retry-After`.
+- **Unsigned requests to `required_for` operations.** A verifier that advertises only `web-bot-auth` answers 403 with `Accept-Signature`. One that also advertises the RFC 9421 profile keeps the 401 `request_signature_required` and adds `Accept-Signature`. Both `createAdcpServer` and `requireSignatureWhenPresent` apply this rule. `respondUnauthorized` accepts extra `headers`.
+- **Library-first verification.** `verifyWebBotAuth` and directory proofs verify with Cloudflare's `http-message-sig`; the SDK applies the profile checks before it and replay state after it. `verifyWebBotAuth` still resolves to an array, which now always holds exactly one signer.
+
+The vendored #7894 vectors are byte-identical to upstream, and every request and directory vector passes. The Cloudflare interop fixtures in `test/fixtures/wba-interop/` are unchanged.
