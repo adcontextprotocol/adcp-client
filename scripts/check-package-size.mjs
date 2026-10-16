@@ -96,7 +96,7 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // validation, scheduler support) and gains a migration guide. The measured tarball is 20,318,824 bytes; allow
 // about 40 KB for compressor variance.
 // Replacing both compliance corpora with signed AdCP 3.2.5 / 3.1.29 on the
-// current main base measures 20,365,090 bytes packed and 111,594,732 unpacked
+// current main base measures 20,365,246 bytes packed and 111,595,107 unpacked
 // across 6,556 files. Preserve about 40 KB of compressor margin. The previous
 // corpora are replaced; no duplicate compliance roots or archives are packaged.
 const MAX_PACKED_TARBALL_BYTES = 20_410_000;

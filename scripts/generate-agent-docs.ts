@@ -586,6 +586,10 @@ function generateLlmsTxt(
 ): string {
   const groups = groupByDomain(tools);
   const version = getLibraryVersion();
+  // Match this reference's release train without steering beta APIs to stable.
+  const installVersion = version.includes('-')
+    ? version.split('-')[1].split('.')[0]
+    : version.split('.').slice(0, 2).join('.');
   const now = new Date().toISOString().split('T')[0];
 
   const lines: string[] = [];
@@ -613,14 +617,14 @@ function generateLlmsTxt(
   ln();
 
   // --- Client vs. server routing ---
-  ln(`## Start here: SDK 14 and AdCP 3.2`);
+  ln(`## Start here: AdCP 3.2`);
   ln();
   ln(
-    `SDK 14 requires Node.js \`^20.19.0 || >=22.12.0\`; install it with \`npm install @adcp/sdk\`, or pin the AdCP 3.2 line with \`@adcp/sdk@adcp-3.2\`.`
+    `The SDK requires Node.js \`^20.19.0 || >=22.12.0\`. Install this reference's release train with \`npm install @adcp/sdk@${installVersion}\`; use the documentation from the exact published SDK version you install. For reproducible CLI runs, pin that exact SDK version. After installation, \`node -p "require('@adcp/sdk').ADCP_VERSION"\` reports its protocol pin; \`ls node_modules/@adcp/sdk/compliance/cache\` lists its packaged compliance versions. The legacy \`adcp-3.2\` npm tag selects SDK 14 and does not receive the refreshed compliance caches.`
   );
   ln();
   ln(
-    `SDK 14 is compact-lifecycle first: \`list_products → buy_products → control_media_buy\`, with \`request_proposals → refine_proposals → accept_proposal\` when terms need negotiation.`
+    `The SDK is compact-lifecycle first: \`list_products → buy_products → control_media_buy\`, with \`request_proposals → refine_proposals → accept_proposal\` when terms need negotiation.`
   );
   ln();
   ln(

@@ -11,11 +11,11 @@
 
 AdCP is an open protocol for AI agents to buy, manage, and optimize advertising programmatically. It defines MCP tools that agents call on publisher ad servers — discover inventory, create media buys, sync creatives, manage brand safety, and track delivery. Every tool follows request/response JSON schemas; the TypeScript client wraps them with async task handling, conversation context, and governance middleware.
 
-## Start here: SDK 14 and AdCP 3.2
+## Start here: AdCP 3.2
 
-SDK 14 requires Node.js `^20.19.0 || >=22.12.0`; install it with `npm install @adcp/sdk`, or pin the AdCP 3.2 line with `@adcp/sdk@adcp-3.2`.
+The SDK requires Node.js `^20.19.0 || >=22.12.0`. Install this reference's release train with `npm install @adcp/sdk@beta`; use the documentation from the exact published SDK version you install. For reproducible CLI runs, pin that exact SDK version. After installation, `node -p "require('@adcp/sdk').ADCP_VERSION"` reports its protocol pin; `ls node_modules/@adcp/sdk/compliance/cache` lists its packaged compliance versions. The legacy `adcp-3.2` npm tag selects SDK 14 and does not receive the refreshed compliance caches.
 
-SDK 14 is compact-lifecycle first: `list_products → buy_products → control_media_buy`, with `request_proposals → refine_proposals → accept_proposal` when terms need negotiation.
+The SDK is compact-lifecycle first: `list_products → buy_products → control_media_buy`, with `request_proposals → refine_proposals → accept_proposal` when terms need negotiation.
 
 - **MediaBuy change rights:** use `assessMediaBuyAction` from `@adcp/sdk/media-buy/actions` for possible / promised / available-now assessment, and `mediaBuyActionResolver` from `@adcp/sdk/server` for explicit seller acceptance and current projection. See `docs/guides/MEDIA-BUY-ACTION-ASSESSMENT.md`.
 - **Buyer** (calling a seller): read `docs/guides/BUYER-QUICKSTART-3.2.md` first.
