@@ -117,6 +117,78 @@ describe('sync_accounts provisioning identity version guards', () => {
     assert.equal(calls.length, 0);
   });
 
+  for (const target of ['configured client', 'discovered seller']) {
+    test(`typed syncAccounts refuses an incompatible ${target} before dispatch`, async t => {
+      const { client } = makeClient(
+        target === 'configured client' ? { adcpVersion: LEGACY_VERSION } : {},
+        capabilities(LEGACY_VERSION)
+      );
+      const calls = captureDispatch(t);
+      await assert.rejects(
+        client.syncAccounts(request({ ...LEGACY_ACCOUNT, currency: 'USD' })),
+        unsupported('accounts[0].currency')
+      );
+      assert.equal(calls.length, 0);
+    });
+
+    test(`a 3.0 ${target} also refuses extended account identity`, async t => {
+      const version = '3.0.25';
+      const { client } = makeClient(
+        target === 'configured client' ? { adcpVersion: version } : {},
+        capabilities(version)
+      );
+      const calls = captureDispatch(t);
+      await assert.rejects(
+        client.executeTask('sync_accounts', request({ ...LEGACY_ACCOUNT, currency: 'USD' })),
+        unsupported('accounts[0].currency', version)
+      );
+      assert.equal(calls.length, 0);
+    });
+  }
+
+  test('accounts.ensure refusal leaves no registry or pending entry and permits a fresh retry', async t => {
+    const stored = new Map();
+    const { client, discovered } = makeClient(
+      {
+        accountStorage: {
+          get: async key => stored.get(key),
+          set: async (key, value) => stored.set(key, value),
+        },
+      },
+      capabilities(LEGACY_VERSION)
+    );
+    const calls = captureDispatch(t);
+    const account = { brand: LEGACY_ACCOUNT.brand, operator: LEGACY_ACCOUNT.operator, currency: 'USD' };
+    const registry = client.accounts;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const discoveriesBefore = discovered.length;
+      await assert.rejects(
+        registry.ensure(account, { billing: 'operator' }, { timeout: 1000 }),
+        unsupported('accounts[0].currency')
+      );
+      assert.equal(await registry.get(account), undefined);
+      assert.equal(registry.pending.size, 0);
+      assert.equal(stored.size, 0);
+      assert.ok(discovered.length > discoveriesBefore, 'each attempt must retry the guarded provisioning path');
+    }
+    assert.equal(calls.length, 0);
+  });
+
+  test('resolveAccount refuses brand countries through the shared sync_accounts guard', async t => {
+    const { client } = makeClient(
+      {},
+      capabilities(LEGACY_VERSION, {
+        account: { requireOperatorAuth: false, supportedBilling: ['operator'] },
+      })
+    );
+    const calls = captureDispatch(t);
+    await assert.rejects(
+      client.resolveAccount({ brand: { domain: 'brand.example', countries: ['US'] }, operator: 'agency.example' }),
+      unsupported('accounts[0].brand.countries')
+    );
+    assert.equal(calls.length, 0);
+  });
+
   for (const requests of ['off', 'warn', 'strict']) {
     for (const target of ['configured client', 'discovered seller']) {
       test(`${target} refusal applies with request validation ${requests}`, async t => {
@@ -262,6 +334,16 @@ describe('sync_accounts provisioning identity version guards', () => {
     assert.equal(calls[0].taskName, 'sync_accounts');
     assert.deepEqual(calls[0].params.accounts, [account]);
     assert.deepEqual(params, snapshot, 'dispatch must not mutate the caller request');
+  });
+
+  test('advertised 3.2 prereleases support extended account identity', async t => {
+    const { client } = makeClient({}, capabilities('3.2.0-beta.6'));
+    const calls = captureDispatch(t);
+    const account = { ...LEGACY_ACCOUNT, currency: 'USD' };
+    const result = await client.executeTask('sync_accounts', request(account));
+    assert.equal(result.success, true);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].params.accounts, [account]);
   });
 
   for (const target of ['configured client', 'discovered seller']) {
