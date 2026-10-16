@@ -28,6 +28,7 @@ import {
   migratedFormatOptionId,
   projectV1ProductToV2,
   resolveCanonicalFormatKind,
+  withDualEmissionLegacyRefs,
 } from './v1-to-v2';
 import type { LegacyFormatConverter } from './v1-to-v2';
 import { CanonicalFormatLegacyResolutionError, resolveCanonicalFormatLegacyRefs } from './v2-to-v1';
@@ -38,7 +39,6 @@ import {
   selectedFormatOptions,
   transferLegacyCreativeMetadata,
 } from './legacy-metadata';
-import { withDualEmissionLegacyRefs } from './dual-emission';
 import type { CanonicalFormatDeclaration } from './legacy-metadata';
 import type { UndeclaredFormatOptionSelector } from './legacy-routes';
 import { canonicalize as canonicalizeJson } from '../../utils/jcs';
