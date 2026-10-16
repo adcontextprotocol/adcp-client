@@ -44,7 +44,7 @@ persists strict accepted state, produces strict readback, and refuses clears the
 provider cannot honor.
 
 Adding Reliable Reporting Core to an existing seller? Start with the
-[adapter-first installation example](./reliable-reporting-service/README.md).
+[adapter-first installation example](https://github.com/adcontextprotocol/adcp-client/blob/main/packages/reporting-storage/examples/reliable-reporting-service/README.md).
 It uses the durable ledger as the sole authority and shows trusted account,
 source-scope, timezone, and currency resolution without sample reporting data.
 

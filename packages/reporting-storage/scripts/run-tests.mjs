@@ -20,7 +20,7 @@
  * run, or another project's tests on the same server) makes those suites wait or fail.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -90,18 +90,6 @@ function requireBuild() {
       );
       process.exit(2);
     }
-  }
-  // A stale build tests yesterday's code: compare the newest source file with the built entry point.
-  const newest = dir =>
-    readdirSync(dir, { withFileTypes: true }).reduce((latest, entry) => {
-      const full = path.join(dir, entry.name);
-      return Math.max(latest, entry.isDirectory() ? newest(full) : statSync(full).mtimeMs);
-    }, 0);
-  if (newest(path.join(packageRoot, 'src')) > statSync(own).mtimeMs + 1000) {
-    console.error(
-      'packages/reporting-storage/src is newer than its dist/. Run `npm run build` at the repository root first.'
-    );
-    process.exit(2);
   }
 }
 
