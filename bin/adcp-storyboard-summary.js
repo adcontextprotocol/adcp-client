@@ -222,6 +222,19 @@ function escapeTerminalControlChars(text) {
 }
 
 /**
+ * Format a JWT `exp` claim for `adcp diagnose-auth`. The token comes from an
+ * authorization server, so a value that isn't a finite NumericDate in the
+ * `Date` range is shown as invalid instead of throwing.
+ */
+function formatJwtExpClaim(exp) {
+  if (exp === undefined || exp === null) return '(missing)';
+  const date = typeof exp === 'number' && Number.isFinite(exp) ? new Date(exp * 1000) : null;
+  if (date && !Number.isNaN(date.getTime())) return date.toISOString();
+  const shown = typeof exp === 'number' ? String(exp) : (JSON.stringify(exp) ?? String(exp));
+  return `(invalid: ${escapeTerminalControlChars(shown.slice(0, 64))})`;
+}
+
+/**
  * Canonical `RunnerSkipReason` values meaning "the runner could not grade
  * this", as opposed to "this does not apply to your agent". Keep in sync with
  * `DETAILED_SKIP_TO_CANONICAL` in `src/lib/testing/storyboard/types.ts`.
@@ -458,6 +471,7 @@ function parseRequestSigningFlags(readFlag, hasFlag, deps = {}) {
 module.exports = {
   escapeMarkdownCell,
   escapeTerminalControlChars,
+  formatJwtExpClaim,
   formatStepSkipLines,
   formatStepVerdictLines,
   isCoverageGapRow,

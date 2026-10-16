@@ -155,7 +155,7 @@ export async function runAuthDiagnosis(
   const currentDecoded = currentToken ? decodeAccessTokenClaims(currentToken) : null;
   steps.push({
     name: 'decode_current_token',
-    decodedToken: currentDecoded,
+    decodedToken: includeTokens ? currentDecoded : redactDecodedTokenSignature(currentDecoded),
     notes: currentToken
       ? currentDecoded
         ? [`Decoded JWT with claims: ${Object.keys(currentDecoded.claims).join(', ')}`]
@@ -225,7 +225,7 @@ export async function runAuthDiagnosis(
       if (refreshedAccessToken) {
         steps.push({
           name: 'decode_refreshed_token',
-          decodedToken: refreshedDecoded,
+          decodedToken: includeTokens ? refreshedDecoded : redactDecodedTokenSignature(refreshedDecoded),
           notes: refreshedDecoded
             ? [`Decoded refreshed JWT with claims: ${Object.keys(refreshedDecoded.claims).join(', ')}`]
             : ['Refreshed access_token is opaque (not a JWT)'],
@@ -848,6 +848,17 @@ const TOKEN_MATERIAL_FIELDS = new Set(['access_token', 'refresh_token', 'id_toke
  * the original length (useful for "wrong length" diagnostics) without leaking
  * the secret. Set `includeTokens: true` on {@link DiagnoseOptions} to skip.
  */
+/**
+ * Replace the raw signature segment of a decoded token with a length marker.
+ * The report also carries the decoded header and claims, and for issuers that
+ * serialize those as compact JSON the three parts reassemble into the working
+ * token. Set `includeTokens: true` on {@link DiagnoseOptions} to keep it.
+ */
+function redactDecodedTokenSignature(decoded: DecodedAccessToken | null): DecodedAccessToken | null {
+  if (!decoded) return decoded;
+  return { ...decoded, signature: `<redacted length=${decoded.signature.length}>` };
+}
+
 function redactTokenMaterial(capture: HttpCapture): HttpCapture {
   if (!capture.body || typeof capture.body !== 'object' || Array.isArray(capture.body)) return capture;
   const body = capture.body as Record<string, unknown>;

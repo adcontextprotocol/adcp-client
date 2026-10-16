@@ -528,6 +528,13 @@ describe('runAuthDiagnosis: token redaction', () => {
     // Non-token fields preserved
     assert.strictEqual(body.token_type, 'Bearer');
     assert.strictEqual(body.expires_in, 3600);
+    // The decoded tokens keep header and claims but not the raw signature:
+    // for compact-JSON issuers the three parts would reassemble the token.
+    for (const name of ['decode_current_token', 'decode_refreshed_token']) {
+      const decoded = report.steps.find(s => s.name === name).decodedToken;
+      assert.ok(decoded.claims.aud, `${name} keeps claims`);
+      assert.match(decoded.signature, /^<redacted length=\d+>$/, `${name} redacts the signature`);
+    }
   });
 
   test('includeTokens: true keeps raw token material in the capture', async () => {
@@ -563,6 +570,8 @@ describe('runAuthDiagnosis: token redaction', () => {
     const refreshStep = report.steps.find(s => s.name === 'token_refresh_attempt');
     assert.strictEqual(refreshStep.http.body.access_token, realAccessToken);
     assert.strictEqual(refreshStep.http.body.refresh_token, 'super-secret-refresh');
+    const refreshed = report.steps.find(s => s.name === 'decode_refreshed_token').decodedToken;
+    assert.strictEqual(refreshed.signature, realAccessToken.split('.')[2]);
   });
 });
 
