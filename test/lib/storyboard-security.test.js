@@ -5435,6 +5435,10 @@ describe('mcp_session_probe: hard streaming body cap (#2940 review P1)', () => {
     const selfStopBytes = 64 * 1024 * 1024;
     let streamed = 0;
     let closedByPeer = false;
+    let resolveStreamClosed;
+    const streamClosed = new Promise(resolve => {
+      resolveStreamClosed = resolve;
+    });
     const server = http.createServer(async (req, res) => {
       if (req.method === 'GET') {
         res.writeHead(405);
@@ -5474,21 +5478,30 @@ describe('mcp_session_probe: hard streaming body cap (#2940 review P1)', () => {
       // Unbounded SSE flood: `wrapFetchWithSizeLimit` exempts this content
       // type entirely, which is why the probe needs its own cap.
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
-      const filler = 'x'.repeat(bytesPerFrame);
-      const pump = setInterval(() => {
-        if (res.writableEnded || res.destroyed) return clearInterval(pump);
-        // Keep writing through backpressure: a mock that stops on a false
-        // return never exceeds the cap and would not test it.
-        for (let i = 0; i < 8; i += 1) {
-          streamed += bytesPerFrame;
-          res.write(`: ${filler}\n\n`);
+      const frame = `: ${'x'.repeat(bytesPerFrame)}\n\n`;
+      const frameBytes = Buffer.byteLength(frame);
+      let pendingPump;
+      function pump() {
+        pendingPump = undefined;
+        if (res.writableEnded || res.destroyed) return;
+        for (let i = 0; i < 8 && streamed < selfStopBytes; i += 1) {
+          streamed += frameBytes;
+          // False means queued, not rejected. Resume on drain so a busy
+          // consumer cannot turn this fixture into an unbounded server buffer.
+          if (!res.write(frame)) {
+            res.once('drain', pump);
+            return;
+          }
         }
-        if (streamed > selfStopBytes) clearInterval(pump);
-      }, 1);
-      res.on('close', () => {
+        if (streamed < selfStopBytes) pendingPump = setImmediate(pump);
+      }
+      res.once('close', () => {
         closedByPeer = !res.writableEnded;
-        clearInterval(pump);
+        clearImmediate(pendingPump);
+        res.off('drain', pump);
+        resolveStreamClosed();
       });
+      pump();
       return;
     });
     await new Promise(resolve => server.listen(0, resolve));
@@ -5498,7 +5511,24 @@ describe('mcp_session_probe: hard streaming body cap (#2940 review P1)', () => {
       streamedBytes: () => streamed,
       closedByPeer: () => closedByPeer,
       selfStopBytes,
-      close: () => server.close(),
+      waitForStreamClose: async () => {
+        let timeout;
+        try {
+          await Promise.race([
+            streamClosed,
+            new Promise((_, reject) => {
+              timeout = setTimeout(() => reject(new Error('The probe did not close the SSE stream')), 1000);
+            }),
+          ]);
+        } finally {
+          clearTimeout(timeout);
+        }
+      },
+      close: () =>
+        new Promise((resolve, reject) => {
+          server.close(error => (error ? reject(error) : resolve()));
+          server.closeAllConnections();
+        }),
     };
   }
 
@@ -5514,10 +5544,11 @@ describe('mcp_session_probe: hard streaming body cap (#2940 review P1)', () => {
         allowPrivateIp: true,
         timeoutMs: 8000,
       });
-      const elapsed = Date.now() - started;
-      // Not certified, and bounded well under the flood's 8 MiB. The cap
+      // Not certified, and bounded well under the flood's 64 MiB. The cap
       // aborts the in-flight request, so this must not cost the deadline.
       assert.ok(httpResult.error, 'an oversized reply must not be certified');
+      await agent.waitForStreamClose();
+      const elapsed = Date.now() - started;
       assert.ok(elapsed < 4000, `the cap fails fast rather than burning the deadline (${elapsed}ms)`);
       // The probe aborted the in-flight request rather than buffering to the
       // end: the server saw its peer close a response it never finished.
@@ -5527,7 +5558,7 @@ describe('mcp_session_probe: hard streaming body cap (#2940 review P1)', () => {
         `teardown happened long before the flood gave up (streamed ${agent.streamedBytes()} bytes)`
       );
     } finally {
-      agent.close();
+      await agent.close();
     }
   });
 
@@ -5544,7 +5575,7 @@ describe('mcp_session_probe: hard streaming body cap (#2940 review P1)', () => {
       });
       assert.ok(httpResult.error, 'a Content-Length over the cap must not be certified');
     } finally {
-      agent.close();
+      await agent.close();
     }
   });
 });
