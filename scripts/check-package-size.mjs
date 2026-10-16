@@ -227,9 +227,14 @@ const MAX_PACKED_FILE_COUNT =
   4 + // Managed-delivery adapter router (`reporting/ledger/managed-router`, one dual-format set).
   22 + // AdCP 3.2.4 signed request-signing compliance vectors; no new runtime module sets.
   // Signed 3.2.5 primary + 3.1.29 maintained bundle REPLACEMENT (not an addition:
-  // 3.2.4 and 3.1.24 are removed in the same change). The net +2 is the new
-  // `core/macro-bearing-url.json` schema landing in both maintained corpora;
-  // it adds no public 3.1 types and no runtime module sets. Measured on the
+  // 3.2.4 and 3.1.24 are removed in the same change). Verified against the
+  // published 15.9.3 artifact with only the compliance version directory names
+  // normalised, the net +2 is exactly two files and no file is removed:
+  //   compliance/cache/3.1.29/test-kits/hosted-grader.yaml        2,488 bytes
+  //   dist/lib/schemas-data/3.1/core/macro-bearing-url.json       1,110 bytes
+  // The 3.2 copy of macro-bearing-url.json already shipped in 15.9.3 — the
+  // signed 3.2.4 -> 3.2.5 comparison adds no schema files — so the macro schema
+  // is new only on the 3.1 side. No new runtime module sets. Measured on the
   // final both-corpus replacement: 6,567 files.
   2;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;

@@ -72,6 +72,14 @@ test('requires the exact maintained stable compliance inventory', async () => {
   const staleMaintained = fixture();
   staleMaintained.packageInfo.files.push({ path: 'compliance/cache/3.1.24/index.json' });
   assert.throws(() => assertPublishProtocolArtifacts(staleMaintained), /unsupported compliance bundle 3\.1\.24/);
+
+  // The replaced PRIMARY root must be rejected too. Without this, a stale
+  // primary could be packed next to the current one and only the maintained and
+  // ancient roots would fail — the primary is the one adopters resolve by
+  // default, so it is the worst root to leave unguarded.
+  const stalePrimary = fixture();
+  stalePrimary.packageInfo.files.push({ path: 'compliance/cache/3.2.4/index.json' });
+  assert.throws(() => assertPublishProtocolArtifacts(stalePrimary), /unsupported compliance bundle 3\.2\.4/);
 });
 
 test('requires every maintained stable schema root including v2.5', async () => {
