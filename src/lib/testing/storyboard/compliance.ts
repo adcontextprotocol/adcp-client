@@ -247,11 +247,39 @@ function readAdcpVersion(): string {
 }
 
 function complianceMissingMessage(what: string, path: string): string {
+  // Naming the versions that ARE packaged is the whole value here. A caller
+  // pinning an exact `--compliance-version` that a release removed has usually
+  // just upgraded, so telling them to upgrade points at the action that caused
+  // the failure, and `sync-schemas` with no argument populates ADCP_VERSION
+  // rather than the version they asked for. Both old remedies are kept for the
+  // genuinely-missing-cache case, but they come after the real answer.
+  const packaged = packagedComplianceVersions();
+  const available = packaged.length
+    ? `Packaged compliance versions: ${packaged.join(', ')}. Exact patch versions are required — there is no '3.1'/'3.2' minor alias, so a removed version errors here rather than resolving to different bytes. `
+    : '';
   return (
     `${what} not found at ${path}. ` +
-    `The compliance cache ships with @adcp/sdk — run \`npm i @adcp/sdk@latest\` (or \`npx @adcp/sdk@latest …\`) to pick up the current cache. ` +
+    available +
+    `The compliance cache ships with @adcp/sdk — if this version should be present, run \`npm i @adcp/sdk@latest\` (or \`npx @adcp/sdk@latest …\`). ` +
+    `To grade against a version this install does not package, run \`npm run sync-schemas -- <version>\` in a repo checkout and pass \`--compliance-dir\`. ` +
     `If developing locally, run \`npm run sync-schemas\` to populate the cache.`
   );
+}
+
+/** Exact compliance versions this install actually packages, newest first. */
+function packagedComplianceVersions(): string[] {
+  try {
+    const root = join(getRepoRoot(), 'compliance', 'cache');
+    return readdirSync(root, { withFileTypes: true })
+      .filter(entry => (entry.isDirectory() || entry.isSymbolicLink()) && /^v?\d/.test(entry.name))
+      .map(entry => entry.name)
+      .sort()
+      .reverse();
+  } catch {
+    // Never let a diagnostic become the failure. An unreadable cache root just
+    // means we fall back to the generic remedies above.
+    return [];
+  }
 }
 
 /** Load and parse `index.json` from the compliance cache. */
