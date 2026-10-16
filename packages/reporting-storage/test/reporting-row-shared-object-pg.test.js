@@ -7,7 +7,7 @@
  * and must not leak it once the last reference is gone; a commit that adopts an object another
  * writer created (a retry of the same row set) must prove it is still there under the object lock.
  *
- * REPORTING_LEDGER_PG_URL=postgres://localhost/test node --test test/lib/reporting-row-shared-object-pg.test.js
+ * REPORTING_LEDGER_PG_URL=postgres://localhost/test npm test --workspace=@adcp/reporting-storage -- test/reporting-row-shared-object-pg.test.js
  */
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
@@ -221,10 +221,18 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     assert.equal(existsSync(fileOf(chunkA)), false);
   });
 
-  /** Resolves once a session is blocked waiting for an advisory lock. */
-  async function lockWaiter() {
+  /**
+   * Resolves once a session is blocked on a lock `holder` holds. Bound to the holder's backend, not to any waiter
+   * in the cluster: a parallel file's advisory-lock waiter must not satisfy this.
+   */
+  async function lockWaiter(holder) {
+    const {
+      rows: [{ pid }],
+    } = await holder.query('SELECT pg_backend_pid() AS pid');
     for (let attempt = 0; attempt < 200; attempt += 1) {
-      const waiting = await count(`SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`);
+      const waiting = await count('SELECT count(*) AS n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))', [
+        pid,
+      ]);
       if (waiting > 0) return;
       await sleep(25);
     }
@@ -246,7 +254,7 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
         settled = true;
         return result;
       });
-      await lockWaiter();
+      await lockWaiter(client);
       assert.equal(settled, false, 'retirement is blocked on the object lock');
       assert.ok(existsSync(fileOf(chunkA)), 'the object survives while the lock is held');
       await client.query('COMMIT');
@@ -270,7 +278,7 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
         committed = true;
         return result;
       });
-      await lockWaiter();
+      await lockWaiter(client);
       assert.equal(committed, false, 'the adopter waits for the object lock');
       assert.equal(providerCalls.stat, 0, 'it has not proven the object yet');
       await client.query('COMMIT');

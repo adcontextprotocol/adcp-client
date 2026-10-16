@@ -7,7 +7,7 @@
  * becomes the latest row and produces another redundant event.
  *
  * NODE_ENV=test REPORTING_LEDGER_PG_URL=postgres://localhost/test \
- *   node --test test/lib/reporting-ledger-writer-fence-pg.test.js
+ *   npm test --workspace=@adcp/reporting-storage -- test/reporting-ledger-writer-fence-pg.test.js
  */
 const assert = require('node:assert/strict');
 const {

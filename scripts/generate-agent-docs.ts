@@ -2217,6 +2217,20 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   );
   ln();
   ln('```typescript');
+  ln(`import { Pool } from 'pg';`);
+  ln(`import { createPostgresPersistentNotificationRuntime } from '@adcp/sdk/server';`);
+  ln(`import {`);
+  ln(`  createReportingDeliveryHandler,`);
+  ln(`  createReportingProducer,`);
+  ln(`  createReportingStatusHandler,`);
+  ln(`  createSyncReportingStatusHandler,`);
+  ln(`} from '@adcp/sdk/reporting/ledger';`);
+  ln(`import { PostgresReportingLedgerStore, REPORTING_LEDGER_MIGRATION } from '@adcp/reporting-storage';`);
+  ln(`import {`);
+  ln(`  createPostgresReportingNotificationActivityRuntime,`);
+  ln(`  createPostgresReportingNotificationAttemptCheckpoint,`);
+  ln(`} from '@adcp/reporting-storage/notifications';`);
+  ln();
   ln(`// Build the notification path first: the store must be constructed with the`);
   ln(`// activity port, or lifecycle transitions record no activity and notify nobody.`);
   ln(`const attemptCheckpoint = createPostgresReportingNotificationAttemptCheckpoint({`);
@@ -2287,6 +2301,9 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   );
   ln();
   ln('```typescript');
+  ln(`import { createReliableReportingService } from '@adcp/sdk/reporting/service';`);
+  ln(`import { PostgresReportingLedgerStore, reportingLedgerMaintenance } from '@adcp/reporting-storage';`);
+  ln();
   ln(`interface ReliableReportingAdapterV1 {`);
   ln(`  readonly sourceOffering: ReportingSourceOfferingV1;`);
   ln(`  readonly deliveryOffering: ReportingDeliveryOffering;`);
@@ -2309,9 +2326,12 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`  resolveCurrency: account => currency,`);
   ln(`  resolveCoverage: account => ({ constituents }), // authorized media-buy/package denominator`);
   ln(`  resolveConsumerId, // optional; controls consumer-status handler/capability`);
+  ln(
+    `  maintenance: reportingLedgerMaintenance({ retention: { enabled: true } }), // optional factory from @adcp/reporting-storage`
+  );
   ln(`});`);
   ln();
-  ln(`await pool.query(reporting.setup.migrations[0]);`);
+  ln(`for (const sql of reporting.setup.migrations) await pool.query(sql);`);
   ln(`const installedPlatform = reporting.install(platform);`);
   ln(`await reporting.installConfiguration(configuration, { account: ctx.account });`);
   ln(`await reporting.runCycle({ accountId }); // tenant-partitioned`);

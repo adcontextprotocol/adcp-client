@@ -21,13 +21,12 @@ import {
   projectReportingConsumerStatusMismatchV1,
   projectReportingObligationHealthV1,
   projectReportingUnreadableRevisionHealthV1,
-  ReportingLedgerIssueIntegrityError,
 } from './health';
 import { compareReportingInstants } from './instant';
 import { getRevisionMetadataFromStore, readRevisionRowsFromStore } from './revision-metadata';
 import { isReportingRowStoreError } from './row-storage-errors';
 import { reportingPeriodSchedule } from './schedule';
-import { ReportingLedgerSnapshotUnavailableError } from './types';
+import { isReportingLedgerErrorNamed } from './types';
 import type {
   ReportingConsumerMismatchEscalationV1,
   ReportingHealthV1,
@@ -146,7 +145,10 @@ export function createReportingStatusHandler<TContext = unknown>(
         try {
           snapshot = await store.createSnapshot(query);
         } catch (error) {
-          if (error instanceof ReportingLedgerSnapshotUnavailableError || error instanceof ReportingReadCapacityError) {
+          if (
+            isReportingLedgerErrorNamed(error, 'ReportingLedgerSnapshotUnavailableError') ||
+            error instanceof ReportingReadCapacityError
+          ) {
             return lookupUnavailable(view);
           }
           if (isContinuityError(error)) return operationalUnavailable(view);
@@ -158,7 +160,10 @@ export function createReportingStatusHandler<TContext = unknown>(
         try {
           page = await store.readSnapshotPage(snapshotId ?? snapshot!.snapshotId, accountId, cursor, limit);
         } catch (error) {
-          if (error instanceof ReportingLedgerSnapshotUnavailableError || error instanceof ReportingReadCapacityError) {
+          if (
+            isReportingLedgerErrorNamed(error, 'ReportingLedgerSnapshotUnavailableError') ||
+            error instanceof ReportingReadCapacityError
+          ) {
             return lookupUnavailable(view);
           }
           if (isContinuityError(error)) return operationalUnavailable(view);
@@ -538,7 +543,7 @@ export function createReportingStatusHandler<TContext = unknown>(
         issues: issues.map(wireIssue),
       } as never;
     } catch (error) {
-      if (error instanceof ReportingLedgerIssueIntegrityError) return operationalUnavailable(view);
+      if (isReportingLedgerErrorNamed(error, 'ReportingLedgerIssueIntegrityError')) return operationalUnavailable(view);
       throw error;
     } finally {
       releaseReadSlot();

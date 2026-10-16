@@ -3,7 +3,7 @@
  * admission, delivery and revocation dispatch, legacy authorizations, fencing
  * on both routes, and retry accounting that stays per materialization.
  *
- * REPORTING_LEDGER_PG_URL=postgres://localhost/test node --test test/lib/reporting-managed-router-pg.test.js
+ * REPORTING_LEDGER_PG_URL=postgres://localhost/test npm test --workspace=@adcp/reporting-storage -- test/reporting-managed-router-pg.test.js
  */
 const assert = require('node:assert/strict');
 const {

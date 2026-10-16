@@ -34,8 +34,24 @@ function specifiers(source) {
   const found = [];
   const pattern = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)(['"])([^'"\n]+)\1/g;
   let match;
-  while ((match = pattern.exec(source))) found.push(match[2]);
+  // Only strings shaped like a module specifier count: SQL and prose in a source file can follow a `from '`.
+  while ((match = pattern.exec(source))) if (/^[@.\w][\w@./:~-]*$/.test(match[2])) found.push(match[2]);
   return found;
+}
+
+/** Specifiers that appear only in `import type ... from` / `export type ... from`, which emit no runtime import. */
+function typeOnlySpecifiers(source) {
+  const found = new Set();
+  const pattern = /\b(?:import|export)\s+type\b[^;]*?\bfrom\s*(['"])([^'"\n]+)\1/g;
+  let match;
+  while ((match = pattern.exec(source))) found.add(match[2]);
+  return found;
+}
+
+/** The package a bare specifier names: `@scope/name` or `name`. */
+function packageNameOf(specifier) {
+  const parts = specifier.split('/');
+  return specifier.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
 }
 
 describe('SDK to storage dependency direction', () => {
@@ -84,25 +100,45 @@ describe('SDK to storage dependency direction', () => {
         .filter(key => key !== './package.json' && !key.includes('*'))
         .map(key => (key === '.' ? '@adcp/sdk' : `@adcp/sdk/${key.slice(2)}`))
     );
-    // `./types/*` is a documented types-only wildcard (per-tool declaration slices).
+    // `./types/*` is a documented types-only wildcard (per-tool declaration slices): it has no runtime target, so
+    // it may be imported only with `import type`, and the slice must exist.
     const wildcards = Object.keys(sdkManifest.exports)
       .filter(key => key.includes('*'))
       .map(key => `@adcp/sdk/${key.slice(2).replace('*', '')}`);
+    const declared = new Set([
+      ...Object.keys(storageManifest.peerDependencies ?? {}),
+      ...Object.keys(storageManifest.dependencies ?? {}),
+    ]);
+    const builtins = new Set(require('node:module').builtinModules);
     const sourceRoot = path.join(root, 'packages', 'reporting-storage', 'src');
     const files = walk(sourceRoot, ['.ts']);
     assert.ok(files.length >= 20, 'the scan should see the storage package source');
     const offenders = [];
     for (const file of files) {
       const relative = path.relative(root, file);
-      for (const specifier of specifiers(readFileSync(file, 'utf8'))) {
+      const source = readFileSync(file, 'utf8');
+      const typeOnly = typeOnlySpecifiers(source);
+      for (const specifier of specifiers(source)) {
         if (specifier.startsWith('@adcp/sdk')) {
-          const isPublic = publicSubpaths.has(specifier) || wildcards.some(prefix => specifier.startsWith(prefix));
-          if (!isPublic) offenders.push(`${relative} imports ${specifier}, which is not a public @adcp/sdk export`);
+          const wildcard = wildcards.find(prefix => specifier.startsWith(prefix));
+          if (publicSubpaths.has(specifier)) continue;
+          if (!wildcard) {
+            offenders.push(`${relative} imports ${specifier}, which is not a public @adcp/sdk export`);
+          } else if (!typeOnly.has(specifier)) {
+            offenders.push(
+              `${relative} imports ${specifier} at runtime, but that export is types-only (use import type)`
+            );
+          } else if (!existsSync(path.join(root, 'src', 'lib', 'types', `${specifier.slice(wildcard.length)}.ts`))) {
+            offenders.push(`${relative} imports ${specifier}, which names no declaration slice`);
+          }
         } else if (specifier.startsWith('.')) {
           const target = path.resolve(path.dirname(file), specifier);
           if (!target.startsWith(sourceRoot + path.sep) && target !== sourceRoot) {
             offenders.push(`${relative} imports ${specifier}, which leaves the package`);
           }
+        } else if (!specifier.startsWith('node:') && !builtins.has(specifier)) {
+          const name = packageNameOf(specifier);
+          if (!declared.has(name)) offenders.push(`${relative} imports ${name}, which the package does not declare`);
         }
       }
     }

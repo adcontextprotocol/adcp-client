@@ -50,7 +50,7 @@ const reporting = createReliableReportingService({
   },
 });
 
-await pool.query(reporting.setup.migrations[0]);
+for (const sql of reporting.setup.migrations) await pool.query(sql);
 const installedPlatform = reporting.install(platform);
 const server = createAdcpServerFromPlatform(installedPlatform, serverOptions);
 

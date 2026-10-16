@@ -112,7 +112,10 @@ package is merged if you can; if it has merged already, the same steps work and 
    ```
 
 3. Publish once, from your machine, under a throwaway tag. Provenance is off because it needs the GitHub OIDC
-   identity. The package's `prepublishOnly` cleans, rebuilds and re-checks it.
+   identity. The package's `prepublishOnly` cleans, rebuilds and re-checks it. Try `npm publish ... --dry-run` first: if
+   npm complains that provenance needs a CI identity (the package's `publishConfig.provenance: true` can outrank the
+   environment variable), remove that one line from `packages/reporting-storage/package.json` in your working tree for
+   the manual publish and do not commit the change.
 
    ```bash
    NPM_CONFIG_PROVENANCE=false npm publish \
@@ -145,6 +148,15 @@ package is merged if you can; if it has merged already, the same steps work and 
    npm view @adcp/reporting-storage@0.1.0-beta.0 dist.attestations
    ```
 
+   If the release PR had already merged before you ran step 3, the manual publish put `0.1.0-beta.0` itself on the
+   registry under the `bootstrap` tag, so there is nothing left for the workflow to publish and the version has no
+   provenance attestation. In that case also run `npm dist-tag add @adcp/reporting-storage@0.1.0-beta.0 beta`, and skip
+   the attestation check; the next release is published through OIDC as usual.
+
 6. Remove the temporary tag: `npm dist-tag rm @adcp/reporting-storage bootstrap`.
+
+The SDK beta that removes the storage subpaths can publish before the package is bootstrapped (that is the point of the
+hold-back), and adopters have no `@adcp/reporting-storage` to move to until it is. So do steps 1 to 4 **before** merging the
+release PR, and treat them as a checklist item on it.
 
 The same steps bootstrap any future workspace package: swap the name, and use the OIDC settings above.

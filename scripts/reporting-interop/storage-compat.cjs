@@ -31,7 +31,11 @@ function mergedLedger(req) {
   };
 }
 
-if (require.main !== module && process.env.ADCP_INTEROP_INSTALLATION && process.execArgv.some(arg => arg.includes('storage-compat'))) {
+// Active only when this file was preloaded (`node --require` or NODE_OPTIONS), never when a script merely requires it.
+const preloaded = [...process.execArgv, ...(process.env.NODE_OPTIONS ?? '').split(/\s+/)].some(arg =>
+  arg.includes('storage-compat')
+);
+if (require.main !== module && process.env.ADCP_INTEROP_INSTALLATION && preloaded) {
   const installation = path.resolve(process.env.ADCP_INTEROP_INSTALLATION);
   const installed = Module.createRequire(path.join(installation, 'package.json'));
   const original = Module.prototype.require;

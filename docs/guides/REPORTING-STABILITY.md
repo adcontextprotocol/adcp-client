@@ -10,7 +10,7 @@ This follows how the AdCP protocol treats experimental surfaces (`x-status: expe
 
 | Subpath                                 | Holds                                                                                                              |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `@adcp/reporting-storage`               | the PostgreSQL ledger store (`PostgresReportingLedgerStore`), its migrations and errors, `sweepExpiredReportingLedgerState`, row storage (`ReportingRowStorageV1`, row bindings, the provider contract and conformance suite, the filesystem provider, the row-storage migration and probe), object writes, the host change feed (`REPORTING_LEDGER_CHANGES_MIGRATION`, change records and cursors), and ledger maintenance (retention, compaction, orphan collection, change-feed pruning, `reportingLedgerMaintenance`) |
+| `@adcp/reporting-storage`               | the PostgreSQL ledger store (`PostgresReportingLedgerStore`), its migrations, `sweepExpiredReportingLedgerState`, row storage (`ReportingRowStorageV1`, row bindings, the provider contract and conformance suite, the filesystem provider, the row-storage migration and probe), object writes, the host change feed (`REPORTING_LEDGER_CHANGES_MIGRATION`, change records and cursors), and ledger maintenance (retention, compaction, orphan collection, change-feed pruning, `reportingLedgerMaintenance`) |
 | `@adcp/reporting-storage/managed`       | the managed-delivery runtime, `PostgresReportingManagedDeliveryStore`, the adapter contract and the adapter router |
 | `@adcp/reporting-storage/notifications` | notification activity stores, checkpoints and runtime                                                              |
 | `@adcp/reporting-storage/service`       | `createPostgresReliableReportingProductionService`                                                                 |
@@ -19,7 +19,9 @@ This follows how the AdCP protocol treats experimental surfaces (`x-status: expe
 | `@adcp/reporting-storage/azure`         | the Azure Blob row-object provider                                                                                 |
 | `@adcp/reporting-storage/bigquery`      | the BigQuery warehouse sink                                                                                        |
 
-**The storage interfaces in `@adcp/sdk`.** The contract the package implements stays in the SDK, and it changes together with the package, so it is experimental too: the store, transaction, lease, row-read and revision-metadata interfaces in `@adcp/sdk/reporting/ledger` (`ReportingLedgerStore` and the types it uses), `ReportingReceiptSyncStoreV1`, and the row-storage error types. Their TSDoc carries the `@experimental` tag.
+**The storage interfaces in `@adcp/sdk`.** The contract the package implements stays in the SDK, and it changes together with the package, so it is experimental too: the store, transaction, lease, row-read and revision-metadata interfaces in `@adcp/sdk/reporting/ledger` (`ReportingLedgerStore` and the types it uses), `ReportingReceiptSyncStoreV1`, the store-contract error classes (`ReportingLedgerLeaseLostError`, `ReportingLedgerPeriodRetiredError`, `ReportingLedgerContinuityError`) and the row-storage error types. Their TSDoc carries the `@experimental` tag. A breaking change to one ships as a minor of `@adcp/sdk` together with a matching minor of `@adcp/reporting-storage`, and the changesets say which pair to install.
+
+**Storage-facing building blocks in `@adcp/sdk`.** A few exports exist so a store can be written against public API only, and they are covered by the same policy even where their TSDoc is silent: the schedule, instant and evidence helpers on `@adcp/sdk/reporting/ledger` (`compareReportingInstants`, `reportingPeriodDate`, `reportingPeriodSchedule`, `isFrozenCalendarRulesMismatch`, the receipt and verification evidence guards, `isWellFormedUnicodeString`, `getReportingDeliveryOfferingValidatorV1`), and the scheduler primitives and `REPORTING_MANAGED_DELIVERY_COMPOSITION_V1` on `@adcp/sdk/reporting/service`. Application code should not depend on them.
 
 ### Not experimental
 
@@ -51,14 +53,16 @@ Pin the storage package with a tilde range. A caret range on a `0.x` version alr
 ```json
 {
   "dependencies": {
-    "@adcp/sdk": "^16.0.0",
-    "@adcp/reporting-storage": "~0.1.0"
+    "@adcp/sdk": "^16.0.0-beta.0",
+    "@adcp/reporting-storage": "~0.1.0-beta.0"
   }
 }
 ```
 
-- `~0.1.0` takes patches only (recommended).
-- An exact version (`"0.1.0"`) is stricter still.
+Those are the beta pins. A prerelease range such as `~0.1.0` does not match `0.1.0-beta.0`, so use the `-beta.0` form until stable releases exist, then move to `^16.0.0` and `~0.1.0`.
+
+- `~0.1.0` (after the first stable release) takes patches only (recommended).
+- An exact version (`"0.1.0-beta.0"`) is stricter still.
 - Read the changelog before widening to a new minor, and apply any migration it names.
 
 `@adcp/sdk` itself can use a caret range as usual, because the SDK's own surface follows semver. While SDK 16 is in beta, install both packages with the `beta` dist-tag (`npm install @adcp/sdk@beta @adcp/reporting-storage@beta`) until stable releases exist.

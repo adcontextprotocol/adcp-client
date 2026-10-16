@@ -80,7 +80,8 @@ Each of these features is opt-in and additive. Enable them one at a time on a
 running deployment. See the [ledger guide](REPORTING-LEDGER.md#row-storage)
 for configuration details.
 
-Running Core only, without the production service? Pass `maintenance` to
+Running Core only, without the production service? Pass `maintenance:
+reportingLedgerMaintenance({ ... })` (from `@adcp/reporting-storage`) to
 `createReliableReportingService` so its scheduler (or `runMaintenance()`) does
 the retention, change-feed pruning and abandoned-upload sweeps the production
 service runs for you. See

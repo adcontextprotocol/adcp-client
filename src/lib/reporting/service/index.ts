@@ -5,6 +5,10 @@
  * composition (`createPostgresReliableReportingProductionService`) and ledger maintenance
  * (`reportingLedgerMaintenance`) live in `@adcp/reporting-storage`.
  *
+ * The scheduler primitives (`reportingSchedulerDelay`, `rotateReportingRoster`, ...) and
+ * `REPORTING_MANAGED_DELIVERY_COMPOSITION_V1` are storage-facing building blocks for compositions such as
+ * `@adcp/reporting-storage/service`, covered by the experimental policy below; applications should not use them.
+ *
  * Stability policy: https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  *
  * @packageDocumentation
@@ -306,11 +310,18 @@ export type ReliableReportingMaintenanceFactoryV1 = (
 ) => ReliableReportingMaintenanceV1;
 
 /**
- * Composition token. A service composed with a managed-delivery runtime (such as
- * `createPostgresReliableReportingProductionService` in `@adcp/reporting-storage/service`) passes it as
- * a property key set to `true` so the Core service accepts the managed-delivery and reconciled-billing
- * offerings that only that composition can serve. A plain Core service refuses them. It is a
- * `Symbol.for` key so it holds across duplicate copies of the SDK.
+ * Composition token, for packages that compose this service with a managed-delivery runtime (such as
+ * `createPostgresReliableReportingProductionService` in `@adcp/reporting-storage/service`). Such a
+ * composition passes `{ [REPORTING_MANAGED_DELIVERY_COMPOSITION_V1]: store }`, naming the very `store` it passes
+ * as `store`, so the Core service accepts the managed-delivery and reconciled-billing offerings that only that
+ * composition can serve. A plain Core service refuses them.
+ *
+ * It is an assertion by the composer, not an authentication boundary: it keeps a Core-only service from
+ * advertising capabilities it has no runtime for by accident (the value must be the store itself, so a copied
+ * `true` does nothing). It is a `Symbol.for` key so it holds across duplicate copies of the SDK. Applications
+ * should not use it.
+ *
+ * @experimental Storage-facing building block: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export const REPORTING_MANAGED_DELIVERY_COMPOSITION_V1: unique symbol = Symbol.for(
   '@adcp/sdk/reporting/managed-delivery-composition'
@@ -371,9 +382,9 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
   const allowManagedDelivery =
     (
       options as CreateReliableReportingServiceOptionsV1<TCtxMeta> & {
-        [REPORTING_MANAGED_DELIVERY_COMPOSITION_V1]?: boolean;
+        [REPORTING_MANAGED_DELIVERY_COMPOSITION_V1]?: ReportingLedgerStore;
       }
-    )[REPORTING_MANAGED_DELIVERY_COMPOSITION_V1] === true;
+    )[REPORTING_MANAGED_DELIVERY_COMPOSITION_V1] === options.store;
   const adapterEntries = Object.entries(options.adapters);
   if (adapterEntries.length === 0) throw new TypeError('Reliable reporting requires at least one adapter');
   positiveInteger(options.automatedRecoveryWindowSeconds, 'automatedRecoveryWindowSeconds');
@@ -460,7 +471,12 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
   let maintenance: ReliableReportingMaintenanceV1 | undefined;
   if (options.maintenance !== undefined) {
     if (typeof options.maintenance !== 'function') {
-      throw new TypeError('maintenance must be a factory, for example reportingLedgerMaintenance({ ... })');
+      throw new TypeError(
+        'createReliableReportingService: `maintenance` must be a factory, not an options object. For a PostgreSQL ledger wrap ' +
+          'your options with `reportingLedgerMaintenance({ ... })` from the `@adcp/reporting-storage` package, ' +
+          'for example `maintenance: reportingLedgerMaintenance({ retention: { enabled: true } })`. ' +
+          'See docs/migration-reporting-storage-package.md.'
+      );
     }
     maintenance = options.maintenance({
       store: options.store,

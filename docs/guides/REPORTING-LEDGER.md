@@ -2,7 +2,7 @@
 
 Reliable Reporting Core turns a conforming reporting source into durable seller-side reporting. It is separate from the buyer-side `reconcileReporting` API.
 
-Two packages make it up. `@adcp/sdk` holds the protocol layer: the `ReportingLedgerStore` interface, the protocol handlers, the producer, `createReliableReportingService` and row encoding (`@adcp/sdk/reporting/ledger`, `@adcp/sdk/reporting/service`). [`@adcp/reporting-storage`](https://github.com/adcontextprotocol/adcp-client/blob/main/packages/reporting-storage/README.md) holds the storage behind it: the PostgreSQL ledger store and migrations, row storage and its GCS, S3 and Azure providers, managed delivery, notification activity, the BigQuery sink and the production composition. Install both (`npm install @adcp/sdk @adcp/reporting-storage pg`). Moving from the pre-split `@adcp/sdk/reporting/*` imports? See [Reliable Reporting storage moved to `@adcp/reporting-storage`](../migration-reporting-storage-package.md).
+Two packages make it up. `@adcp/sdk` holds the protocol layer: the `ReportingLedgerStore` interface, the protocol handlers, the producer, `createReliableReportingService` and row encoding (`@adcp/sdk/reporting/ledger`, `@adcp/sdk/reporting/service`). [`@adcp/reporting-storage`](https://github.com/adcontextprotocol/adcp-client/blob/main/packages/reporting-storage/README.md) holds the storage behind it: the PostgreSQL ledger store and migrations, row storage and its GCS, S3 and Azure providers, managed delivery, notification activity, the BigQuery sink and the production composition. Install both (`npm install @adcp/sdk@beta @adcp/reporting-storage@beta pg` while SDK 16 is in beta). Moving from the pre-split `@adcp/sdk/reporting/*` imports? See [Reliable Reporting storage moved to `@adcp/reporting-storage`](../migration-reporting-storage-package.md).
 
 > **Stability:** `@adcp/reporting-storage` is pre-1.0 and every export of it is experimental: breaking changes ship in its minor releases. Pin it with `~`. The store, transaction, lease and row-read interfaces in `@adcp/sdk/reporting/ledger` that it implements are `@experimental` too. See the [Reliable Reporting stability policy](REPORTING-STABILITY.md).
 
@@ -55,7 +55,7 @@ const reporting = createReliableReportingService({
   },
 });
 
-await pool.query(reporting.setup.migrations[0]);
+for (const sql of reporting.setup.migrations) await pool.query(sql);
 const installedPlatform = reporting.install(platform);
 const server = createAdcpServerFromPlatform(installedPlatform, serverOptions);
 

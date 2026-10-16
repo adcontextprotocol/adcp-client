@@ -2,7 +2,7 @@
  * PostgreSQL integration tests: retention, upload sweeps and the account change
  * feed must not let one stuck item hold back the rest.
  *
- * REPORTING_LEDGER_PG_URL=postgres://localhost/test node --test test/lib/reporting-head-of-line-pg.test.js
+ * REPORTING_LEDGER_PG_URL=postgres://localhost/test npm test --workspace=@adcp/reporting-storage -- test/reporting-head-of-line-pg.test.js
  */
 const assert = require('node:assert/strict');
 const { mkdtempSync, rmSync } = require('node:fs');

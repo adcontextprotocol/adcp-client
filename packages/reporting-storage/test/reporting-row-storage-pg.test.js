@@ -1,7 +1,7 @@
 /**
  * PostgreSQL integration tests for chunked revision row storage.
  *
- * REPORTING_LEDGER_PG_URL=postgres://localhost/test node --test test/lib/reporting-row-storage-pg.test.js
+ * REPORTING_LEDGER_PG_URL=postgres://localhost/test npm test --workspace=@adcp/reporting-storage -- test/reporting-row-storage-pg.test.js
  */
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');

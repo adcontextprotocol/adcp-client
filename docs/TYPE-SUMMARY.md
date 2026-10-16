@@ -2903,6 +2903,20 @@ interface InlineReportingAvailabilityEvidenceV1 {
 The ledger interface, handlers and producer import from `@adcp/sdk/reporting/ledger`. The PostgreSQL store, its migrations, row storage and maintenance import from `@adcp/reporting-storage`, managed delivery from `@adcp/reporting-storage/managed` and notification activity from `@adcp/reporting-storage/notifications` (install `@adcp/reporting-storage` next to `@adcp/sdk`; it is pre-1.0 and every export is experimental). `createPostgresPersistentNotificationRuntime` is a server symbol and imports from `@adcp/sdk/server`.
 
 ```typescript
+import { Pool } from 'pg';
+import { createPostgresPersistentNotificationRuntime } from '@adcp/sdk/server';
+import {
+  createReportingDeliveryHandler,
+  createReportingProducer,
+  createReportingStatusHandler,
+  createSyncReportingStatusHandler,
+} from '@adcp/sdk/reporting/ledger';
+import { PostgresReportingLedgerStore, REPORTING_LEDGER_MIGRATION } from '@adcp/reporting-storage';
+import {
+  createPostgresReportingNotificationActivityRuntime,
+  createPostgresReportingNotificationAttemptCheckpoint,
+} from '@adcp/reporting-storage/notifications';
+
 // Build the notification path first: the store must be constructed with the
 // activity port, or lifecycle transitions record no activity and notify nobody.
 const attemptCheckpoint = createPostgresReportingNotificationAttemptCheckpoint({
@@ -2965,6 +2979,9 @@ The store freezes configuration lineage and period-end denominators, retains imm
 Import from `@adcp/sdk/reporting/service`. This is the adapter-first lifecycle owner over the source and ledger primitives; it does not introduce another store or transport.
 
 ```typescript
+import { createReliableReportingService } from '@adcp/sdk/reporting/service';
+import { PostgresReportingLedgerStore, reportingLedgerMaintenance } from '@adcp/reporting-storage';
+
 interface ReliableReportingAdapterV1 {
   readonly sourceOffering: ReportingSourceOfferingV1;
   readonly deliveryOffering: ReportingDeliveryOffering;
@@ -2987,9 +3004,10 @@ const reporting = createReliableReportingService({
   resolveCurrency: account => currency,
   resolveCoverage: account => ({ constituents }), // authorized media-buy/package denominator
   resolveConsumerId, // optional; controls consumer-status handler/capability
+  maintenance: reportingLedgerMaintenance({ retention: { enabled: true } }), // optional factory from @adcp/reporting-storage
 });
 
-await pool.query(reporting.setup.migrations[0]);
+for (const sql of reporting.setup.migrations) await pool.query(sql);
 const installedPlatform = reporting.install(platform);
 await reporting.installConfiguration(configuration, { account: ctx.account });
 await reporting.runCycle({ accountId }); // tenant-partitioned

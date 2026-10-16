@@ -1,7 +1,7 @@
 /**
  * PostgreSQL crash/race coverage for seller Managed Delivery and Reconciled Billing.
  *
- * REPORTING_LEDGER_PG_URL=postgres://localhost/test node --test test/lib/reporting-managed-delivery-pg.test.js
+ * REPORTING_LEDGER_PG_URL=postgres://localhost/test npm test --workspace=@adcp/reporting-storage -- test/reporting-managed-delivery-pg.test.js
  */
 const assert = require('node:assert/strict');
 const {

@@ -2,7 +2,7 @@
  * PostgreSQL integration tests for period-aligned retention and abandoned
  * row-upload sweeps.
  *
- * REPORTING_LEDGER_PG_URL=postgres://localhost/test node --test test/lib/reporting-row-retention-pg.test.js
+ * REPORTING_LEDGER_PG_URL=postgres://localhost/test npm test --workspace=@adcp/reporting-storage -- test/reporting-row-retention-pg.test.js
  */
 const assert = require('node:assert/strict');
 const { existsSync, mkdtempSync, rmSync } = require('node:fs');

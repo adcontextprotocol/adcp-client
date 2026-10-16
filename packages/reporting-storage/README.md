@@ -6,17 +6,19 @@ and Azure Blob providers, managed delivery, notification activity, the BigQuery 
 composition that wires them together.
 
 This package is **pre-1.0 and every export is `@experimental`**: breaking changes ship in minor releases, announced in
-the changelog with a migration note. Pin it with `~` (for example `~0.1.0`). See the
+the changelog with a migration note. Pin it with `~` (`~0.1.0-beta.0` while in beta, `~0.1.0` after a stable release). See the
 [stability policy](https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md).
 
 ## Install
 
 ```bash
-npm install @adcp/sdk @adcp/reporting-storage pg
+# While SDK 16 is in beta, both packages come from the `beta` dist-tag. Drop `@beta` once stable releases exist.
+npm install @adcp/sdk@beta @adcp/reporting-storage@beta pg
 ```
 
-`@adcp/sdk` is a **peer dependency** (`^16.0.0-beta.0`). The store, its errors and the protocol handlers share types and
-symbol-keyed guards, so the host must have exactly one copy of it. The cloud SDKs are optional peers: install only the
+`@adcp/sdk` is a **peer dependency** (the SDK 16 line). The store, its errors and the protocol handlers share types and
+symbol-keyed guards, so the host must have exactly one copy of it. Install the pair that was published together: each
+release raises the peer floor to the SDK it was built against. The cloud SDKs are optional peers: install only the
 ones you use.
 
 | You use                    | Also install                    |
@@ -41,6 +43,34 @@ ones you use.
 
 The protocol layer stays in `@adcp/sdk`: the `ReportingLedgerStore` interface, the protocol handlers, the producer,
 `createReliableReportingService`, row encoding and digests, `@adcp/sdk/reporting/consumer` and `@adcp/sdk/reporting/source`.
+
+## Apply migrations in this order
+
+Migrations are idempotent SQL strings. Apply them to the ledger database with your migration tool, in this order, and
+only the ones whose feature you turn on.
+
+| Order | Constant                                                | Import                                  | Needed for                              |
+| ----- | ------------------------------------------------------- | --------------------------------------- | --------------------------------------- |
+| 1     | `REPORTING_LEDGER_MIGRATION`                            | `@adcp/reporting-storage`               | always                                  |
+| 2     | `REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION`      | `@adcp/reporting-storage`               | the finality writer fence               |
+| 3     | `REPORTING_ROW_STORAGE_MIGRATION`                       | `@adcp/reporting-storage`               | `rowStorage` (PostgreSQL 13+)           |
+| 4     | `REPORTING_LEDGER_CHANGES_MIGRATION`                    | `@adcp/reporting-storage`               | `changeFeed: true` (PostgreSQL 13+)     |
+| 5     | `REPORTING_MANAGED_DELIVERY_MIGRATION`                  | `@adcp/reporting-storage/managed`       | managed delivery                        |
+| 6     | `REPORTING_OBJECT_WRITE_MIGRATION`, `REPORTING_OBJECT_WRITE_AUTHORITY_MIGRATION` | `@adcp/reporting-storage` | the GCS write fence                     |
+| 7     | `REPORTING_NOTIFICATION_ACTIVITY_MIGRATION`             | `@adcp/reporting-storage/notifications` | notification activity                   |
+| 8     | `REPORTING_WAREHOUSE_SINK_MIGRATION`                    | `@adcp/reporting-storage/bigquery`      | the BigQuery sink (after the change feed) |
+
+`createPostgresReliableReportingProductionService` returns the ordered list it needs as `service.setup.migrations`, and
+`applyMigrations` bridges it into your runner.
+
+## Which import?
+
+| You want                                                        | Import from                                |
+| --------------------------------------------------------------- | ------------------------------------------ |
+| The Core service (`createReliableReportingService`)             | `@adcp/sdk/reporting/service`              |
+| The whole seller chain on PostgreSQL (`createPostgresReliableReportingProductionService`) | `@adcp/reporting-storage/service` |
+| The protocol handlers, producer and the `ReportingLedgerStore` interface | `@adcp/sdk/reporting/ledger` |
+| The PostgreSQL ledger store and the `maintenance` factory       | `@adcp/reporting-storage`                  |
 
 ## Use
 

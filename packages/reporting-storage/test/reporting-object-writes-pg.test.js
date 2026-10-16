@@ -213,11 +213,15 @@ describe('durable provider write inventory', { skip: !url && 'PostgreSQL URL not
       await held.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['adcp-reporting-account:cancelled']);
       const controller = new AbortController();
       const pending = store.registerObjectWritePlan(plan('cancelled'), { signal: controller.signal });
-      // Observe the actual PostgreSQL waiter, rather than guessing with a sleep.
+      // Observe the actual PostgreSQL waiter, rather than guessing with a sleep. Bound to the session that holds
+      // the lock, so another file's advisory-lock waiter in the same cluster cannot satisfy it.
+      const {
+        rows: [{ pid: heldPid }],
+      } = await held.query('SELECT pg_backend_pid() AS pid');
       for (let i = 0; i < 100; i++) {
-        const waiting = await pool.query(
-          "SELECT 1 FROM pg_stat_activity WHERE wait_event='advisory' AND query LIKE 'SELECT pg_advisory_xact_lock%' AND pid <> pg_backend_pid()"
-        );
+        const waiting = await pool.query('SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))', [
+          heldPid,
+        ]);
         if (waiting.rowCount) break;
         if (i === 99) assert.fail('registration did not wait for the authority lock');
         await new Promise(resolve => setTimeout(resolve, 10));

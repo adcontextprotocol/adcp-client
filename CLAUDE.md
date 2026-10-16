@@ -28,6 +28,8 @@ your context: `src/lib/types/*.generated.ts`, `src/lib/agents/index.generated.ts
 
 **Building a signals agent?** Read and follow `skills/build-signals-agent/SKILL.md` — covers marketplace vs owned data, segments, pricing, activation destinations.
 
+**Building seller-side Reliable Reporting (a durable reporting ledger)?** Read `docs/guides/REPORTING-LEDGER.md`. The protocol layer (`createReliableReportingService`, the handlers, the `ReportingLedgerStore` interface) is `@adcp/sdk/reporting/service` and `/ledger`; the PostgreSQL store, migrations, row storage, managed delivery and the production service are the separate pre-1.0 `@adcp/reporting-storage` package (`npm install @adcp/sdk @adcp/reporting-storage`). Coming from `@adcp/sdk/reporting/gcs|s3|azure|bigquery` or the store on the ledger subpath? See `docs/migration-reporting-storage-package.md`.
+
 **Building a retail media network?** Read and follow `skills/build-retail-media-agent/SKILL.md` — covers catalog sync, conversion tracking, performance feedback, dynamic ads.
 
 **Building a creative agent?** Read and follow `skills/build-creative-agent/SKILL.md` — covers ad servers, creative management platforms, format discovery, preview, and build.

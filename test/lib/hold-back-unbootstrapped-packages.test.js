@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
+const { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { describe, test } = require('node:test');
@@ -105,32 +105,27 @@ describe('holding back a workspace package that was never published', () => {
     assert.match(message, /docs\/development\/NPM-DIST-TAGS\.md#first-publish-of-a-new-workspace-package/);
   });
 
-  test(
-    'classifies npm view results: present, missing on 404 only, otherwise unknown',
-    { skip: process.platform === 'win32' },
-    async () => {
-      const { npmRegistryLookup } = await import(moduleUrl);
-      const bin = mkdtempSync(path.join(tmpdir(), 'adcp-fake-npm-'));
-      const fake = path.join(bin, 'npm');
-      const originalPath = process.env.PATH;
-      try {
-        process.env.PATH = `${bin}${path.delimiter}${originalPath}`;
-        const script = body => {
-          writeFileSync(fake, `#!/bin/sh\n${body}\n`);
-          chmodSync(fake, 0o755);
-        };
-        script('echo \'"1.0.0"\'; exit 0');
-        assert.equal(npmRegistryLookup('@scope/x'), 'present');
-        script('echo \'{"error":{"code":"E404","summary":"Not Found"}}\'; exit 1');
-        assert.equal(npmRegistryLookup('@scope/x'), 'missing');
-        script('echo "npm error code ECONNRESET" 1>&2; exit 1');
-        assert.equal(npmRegistryLookup('@scope/x'), 'unknown');
-        script('echo "npm error code E503" 1>&2; exit 1');
-        assert.equal(npmRegistryLookup('@scope/x'), 'unknown');
-      } finally {
-        process.env.PATH = originalPath;
-        rmSync(bin, { recursive: true, force: true });
-      }
-    }
-  );
+  test('classifies npm view results: present, missing on 404 only, otherwise unknown', async () => {
+    const { npmRegistryLookup } = await import(moduleUrl);
+    const asked = [];
+    const spawn = result => (command, args) => {
+      asked.push([command, ...args]);
+      return result;
+    };
+    const lookup = result => npmRegistryLookup('@scope/x', { spawn: spawn(result) });
+    assert.equal(lookup({ status: 0, stdout: '{"beta":"1.0.0-beta.0"}', stderr: '' }), 'present');
+    assert.equal(
+      lookup({ status: 1, stdout: '{"error":{"code":"E404","summary":"Not Found"}}', stderr: '' }),
+      'missing'
+    );
+    assert.equal(
+      lookup({ status: 1, stdout: '', stderr: 'npm error 404 Not Found - GET https://registry.npmjs.org/@scope%2fx' }),
+      'missing'
+    );
+    assert.equal(lookup({ status: 1, stdout: '', stderr: 'npm error code ECONNRESET' }), 'unknown');
+    assert.equal(lookup({ status: 1, stdout: '', stderr: 'npm error code E503' }), 'unknown');
+    assert.equal(lookup({ status: null, stdout: null, stderr: null }), 'unknown');
+    // A prerelease-only package has dist-tags but no `latest`, so the question is asked of dist-tags.
+    assert.deepEqual(asked[0], ['npm', 'view', '@scope/x', 'dist-tags', '--json']);
+  });
 });

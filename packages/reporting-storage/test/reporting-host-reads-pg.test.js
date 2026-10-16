@@ -2,7 +2,7 @@
  * PostgreSQL integration tests for host reads: current revisions and the
  * gap-free change feed.
  *
- * REPORTING_LEDGER_PG_URL=postgres://localhost/test node --test test/lib/reporting-host-reads-pg.test.js
+ * REPORTING_LEDGER_PG_URL=postgres://localhost/test npm test --workspace=@adcp/reporting-storage -- test/reporting-host-reads-pg.test.js
  */
 const assert = require('node:assert/strict');
 const { after, before, describe, test } = require('node:test');

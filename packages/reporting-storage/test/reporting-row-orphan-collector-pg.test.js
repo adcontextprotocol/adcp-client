@@ -1,7 +1,7 @@
 /**
  * PostgreSQL integration tests for the orphaned row-object collector, using the filesystem provider.
  *
- * REPORTING_LEDGER_PG_URL=postgres://localhost/test node --test test/lib/reporting-row-orphan-collector-pg.test.js
+ * REPORTING_LEDGER_PG_URL=postgres://localhost/test npm test --workspace=@adcp/reporting-storage -- test/reporting-row-orphan-collector-pg.test.js
  */
 const assert = require('node:assert/strict');
 const { existsSync, mkdtempSync, rmSync } = require('node:fs');

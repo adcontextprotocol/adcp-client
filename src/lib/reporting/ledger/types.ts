@@ -849,6 +849,26 @@ export class ReportingConsumerStatusConflictError extends Error {
 }
 
 /**
+ * Recognizes a store-contract error by its `name`, not its class. A host that loads the SDK once through
+ * `require` and once through `import` holds two copies of every class, and a store from another package can
+ * be built against either, so `instanceof` would miss an error the store legitimately threw.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export function isReportingLedgerErrorNamed(
+  error: unknown,
+  name:
+    | 'ReportingLedgerSnapshotUnavailableError'
+    | 'ReportingConsumerStatusConflictError'
+    | 'ReportingLedgerIssueIntegrityError'
+    | 'ReportingLedgerLeaseLostError'
+    | 'ReportingLedgerPeriodRetiredError'
+    | 'ReportingLedgerContinuityError'
+): boolean {
+  return error instanceof Error && error.name === name;
+}
+
+/**
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export interface ReportingLedgerStore {

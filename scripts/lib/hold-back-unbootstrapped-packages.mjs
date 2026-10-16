@@ -50,9 +50,14 @@ export function listWorkspacePackages(root) {
     });
 }
 
-/** `present`, `missing` (the registry answered 404) or `unknown` (anything else). */
-export function npmRegistryLookup(name) {
-  const result = spawnSync('npm', ['view', name, 'version', '--json'], {
+/**
+ * `present`, `missing` (the registry answered 404) or `unknown` (anything else).
+ *
+ * Asks for `dist-tags`, which a published package always has, even when every release is a prerelease and
+ * `latest` points nowhere. `npm view <name> version` would answer 404 for such a package.
+ */
+export function npmRegistryLookup(name, { spawn = spawnSync } = {}) {
+  const result = spawn('npm', ['view', name, 'dist-tags', '--json'], {
     encoding: 'utf8',
     timeout: 60_000,
     env: process.env,

@@ -82,6 +82,60 @@ try {
     assert.deepEqual(store.migrations, [storage.REPORTING_LEDGER_MIGRATION]);
     assert.equal(typeof store.sweepRowWriteIntents, 'function');
     assert.equal(typeof managed.PostgresReportingManagedDeliveryStore, 'function');
+
+    // The error classes the package throws are the SDK's own, in this module format.
+    let thrown;
+    try {
+      storage.renderReportingRowObjectKeyV1({ template: '{prefix}', prefix: 'p', periodStart: 'not-a-date', sourceTimezone: 'UTC' });
+    } catch (error) {
+      thrown = error;
+    }
+    assert.ok(thrown instanceof sdkLedger.ReportingRowStoreError, 'one ReportingRowStoreError class');
+    assert.equal(sdkLedger.isReportingRowStoreError(thrown), true);
+
+    // The SDK's service accepts the package's store and its maintenance factory, and surfaces the store's migrations.
+    const offering = source.redactedReportingSourceOfferingV1;
+    const sourceOffering = structuredClone(offering);
+    sourceOffering.cadence = { ...sourceOffering.cadence, expectedAvailabilityLag: 'PT0S', worstCaseAvailabilityLag: 'PT0S' };
+    const [template] = source.redactedReportingSourceRequestV1().coverage.constituents;
+    const reporting = service.createReliableReportingService({
+      store,
+      adapters: {
+        fixture: {
+          sourceOffering,
+          deliveryOffering: {
+            offering_id: offering.offeringId,
+            feed_purpose: 'analytics',
+            report_definition_id: offering.contract.report_definition_id,
+            report_definition_uri: offering.contract.reportDefinitionUri,
+            report_definition_sha256: offering.contract.reportDefinitionSha256,
+            reporting_profile: {
+              id: offering.contract.reportingProfile,
+              version: offering.contract.schemaVersion,
+              schema_uri: offering.contract.schemaUri,
+              schema_sha256: offering.contract.schemaSha256,
+              schema_dialect: offering.contract.schemaDialect,
+              schema_ref_policy: offering.contract.schemaRefPolicy,
+              grain: offering.grain,
+              primary_keys: ['media_buy_id'],
+            },
+            schedule: { period_duration: 'P1D', alignment: 'source_timezone', period_timezone_policy: 'fixed', period_timezone: 'UTC', delivery_sla: 'PT0S' },
+            supported_finality: ['snapshot'],
+            reconciliation_mode: 'delivery_only',
+          },
+          fetchSlice: request => ({ reporting_period: { start: request.start_date, end: request.end_date }, currency: 'USD', reporting_rows: [] }),
+        },
+      },
+      contact: { name: 'Reporting operations', email: 'reporting@example.com' },
+      automatedRecoveryWindowSeconds: 86_400,
+      statusRetentionDays: offering.retentionDays,
+      resolveSource: account => ({ adapterId: 'fixture', sourceScope: { network_id: 'network-' + account.id }, sourceTimezone: 'UTC' }),
+      resolveCurrency: () => 'USD',
+      resolveCoverage: account => ({ constituents: [{ ...structuredClone(template), constituentId: 'c-' + account.id }] }),
+      maintenance: storage.reportingLedgerMaintenance({ retention: { enabled: true } }),
+    });
+    assert.deepEqual(reporting.setup.migrations, [storage.REPORTING_LEDGER_MIGRATION]);
+    assert.equal(typeof reporting.runMaintenance, 'function');
   `;
   const expected = JSON.stringify(SUBPATHS);
 
@@ -104,6 +158,7 @@ try {
     const storage = require('@adcp/reporting-storage');
     const managed = require('@adcp/reporting-storage/managed');
     const service = require('@adcp/sdk/reporting/service');
+    const source = require('@adcp/sdk/reporting/source');
     ${check}
     `
   );
@@ -121,6 +176,7 @@ try {
     import * as bigquery from '@adcp/reporting-storage/bigquery';
     import * as sdkLedger from '@adcp/sdk/reporting/ledger';
     import * as sdkService from '@adcp/sdk/reporting/service';
+    import * as sdkSource from '@adcp/sdk/reporting/source';
     const LOADED = {
       '@adcp/reporting-storage': storage,
       '@adcp/reporting-storage/managed': managed,
@@ -133,6 +189,7 @@ try {
     };
     const EXPECTED = ${expected};
     const service = sdkService;
+    const source = sdkSource;
     ${check}
     `
   );

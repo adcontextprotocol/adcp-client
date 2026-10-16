@@ -4,7 +4,7 @@
  * classes from `@aws-sdk/client-s3`.
  *
  * Opt-in emulator run (not in CI), e.g. with `moto_server -p 54500`:
- * REPORTING_S3_TEST_ENDPOINT=http://127.0.0.1:54500 node --test test/lib/reporting-s3-row-provider.test.js
+ * REPORTING_S3_TEST_ENDPOINT=http://127.0.0.1:54500 npm test --workspace=@adcp/reporting-storage -- test/reporting-s3-row-provider.test.js
  */
 const assert = require('node:assert/strict');
 const { createHash, randomUUID } = require('node:crypto');

@@ -5,9 +5,14 @@
  * may validate wire payloads against the SDK's bundled schemas through its built `dist/lib` in this
  * workspace, which the test run always builds first.
  */
+const { existsSync } = require('node:fs');
 const path = require('node:path');
 
-const sdkDist = path.resolve(__dirname, '..', '..', '..', '..', 'dist', 'lib');
+// The SDK this package resolves (the workspace root here), not a guessed relative path.
+const sdkDist = path.join(path.dirname(require.resolve('@adcp/sdk/package.json')), 'dist', 'lib');
+if (!existsSync(path.join(sdkDist, 'validation', 'schema-validator.js'))) {
+  throw new Error(`${sdkDist} is not built. Run \`npm run build\` at the repository root first.`);
+}
 
 module.exports = {
   validateResponse: require(path.join(sdkDist, 'validation', 'schema-validator.js')).validateResponse,

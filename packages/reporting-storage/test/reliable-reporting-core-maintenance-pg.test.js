@@ -3,7 +3,7 @@
  * Reliable Reporting service: retention, change-feed pruning, abandoned-upload
  * and snapshot sweeps, driven by `runMaintenance()` and by `start()`.
  *
- * REPORTING_LEDGER_PG_URL=postgres://localhost/test node --test test/lib/reliable-reporting-core-maintenance-pg.test.js
+ * REPORTING_LEDGER_PG_URL=postgres://localhost/test npm test --workspace=@adcp/reporting-storage -- test/reliable-reporting-core-maintenance-pg.test.js
  */
 const assert = require('node:assert/strict');
 const { existsSync, mkdtempSync, rmSync } = require('node:fs');

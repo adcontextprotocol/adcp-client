@@ -4,6 +4,7 @@ const { describe, test } = require('node:test');
 process.env.NODE_ENV = 'test';
 
 const {
+  REPORTING_MANAGED_DELIVERY_COMPOSITION_V1,
   createReliableReportingService,
   runReliableReportingServiceConformanceV1,
 } = require('../../dist/lib/reporting/service/index.js');
@@ -760,6 +761,18 @@ describe('ReliableReportingService', () => {
         /createPostgresReliableReportingProductionService from @adcp\/reporting-storage\/service/
       );
     }
+
+    // The composition token is the composer's assertion that a managed-delivery runtime serves the offering. It
+    // must name the service's own store: a copied `true`, or some other store, does not lift the refusal.
+    const managed = adapter();
+    managed.deliveryOffering.method = {};
+    const withToken = value =>
+      serviceFixture({
+        adapters: { fixture: managed },
+        [REPORTING_MANAGED_DELIVERY_COMPOSITION_V1]: value,
+      });
+    assert.throws(() => withToken(true), /createPostgresReliableReportingProductionService/);
+    assert.throws(() => withToken(new MemoryLedgerStore()), /createPostgresReliableReportingProductionService/);
 
     const malformed = adapter();
     malformed.deliveryOffering.schedule.alignment = 'invented';
@@ -4316,7 +4329,7 @@ describe('ReliableReportingService maintenance hook', () => {
     assert.equal(contexts[0].store, store);
     assert.equal(contexts[0].statusRetentionDays, redactedReportingSourceOfferingV1.retentionDays);
     assert.equal(contexts[0].automatedRecoveryWindowSeconds, 86_400);
-    assert.equal(typeof service.runMaintenance, 'function');
+    assert.equal(service.setup.component, 'reliable-reporting-core');
   });
 
   test('fails construction, not the first pass, on a factory that throws or a malformed one', () => {
@@ -4361,7 +4374,7 @@ describe('ReliableReportingService maintenance hook', () => {
     );
     assert.equal(inputs[0].signal, controller.signal);
     controller.abort();
-    await assert.rejects(() => service.runMaintenance({ signal: controller.signal }));
+    await assert.rejects(() => service.runMaintenance({ signal: controller.signal }), { name: 'AbortError' });
   });
 
   test('the scheduler runs it on the first pass and reports a failed pass to onError without stopping', async () => {
@@ -4377,13 +4390,24 @@ describe('ReliableReportingService maintenance hook', () => {
         },
       }),
     });
-    service.start({ accountIds: [], intervalMilliseconds: 5, onError: error => void errors.push(error) });
-    const deadline = Date.now() + 2_000;
-    while (errors.length === 0 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
-    assert.equal(service.running, true, 'a failed maintenance pass does not stop the producer loop');
-    // The interval is an hour, so later cycles do not run it again.
-    await new Promise(resolve => setTimeout(resolve, 40));
+    // Every scheduler pass resolves its roster, so the roster calls count the passes without any sleep.
+    let rosterCalls = 0;
+    service.start({
+      accountIds: () => {
+        rosterCalls += 1;
+        return [];
+      },
+      intervalMilliseconds: 1,
+      onError: error => void errors.push(error),
+    });
+    const deadline = Date.now() + 5_000;
+    while ((errors.length === 0 || rosterCalls < 4) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 2));
+    }
+    assert.ok(rosterCalls >= 4, 'the producer loop kept running after the failed maintenance pass');
+    assert.equal(service.running, true);
     await service.stop();
+    // The interval is an hour, so the later passes did not run maintenance again.
     assert.equal(calls.length, 1);
     assert.match(String(errors[0]), /maintenance pass failed/);
   });

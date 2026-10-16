@@ -4,7 +4,7 @@
  * holds the provider grant.
  *
  * REPORTING_LEDGER_PG_URL=postgres://localhost/test \
- *   node --test test/lib/reporting-managed-authorization-contract-pg.test.js
+ *   npm test --workspace=@adcp/reporting-storage -- test/reporting-managed-authorization-contract-pg.test.js
  */
 const assert = require('node:assert/strict');
 const {

@@ -2,7 +2,7 @@
  * PostgreSQL integration tests for object-storage revision rows, using the
  * filesystem provider.
  *
- * REPORTING_LEDGER_PG_URL=postgres://localhost/test node --test test/lib/reporting-row-storage-object-pg.test.js
+ * REPORTING_LEDGER_PG_URL=postgres://localhost/test npm test --workspace=@adcp/reporting-storage -- test/reporting-row-storage-object-pg.test.js
  */
 const assert = require('node:assert/strict');
 const { mkdtempSync, rmSync, readdirSync, statSync, writeFileSync } = require('node:fs');

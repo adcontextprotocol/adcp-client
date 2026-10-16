@@ -2,7 +2,7 @@
  * PostgreSQL integration tests for the BigQuery warehouse sink, using an
  * in-memory BigQuery double that enforces job-ID uniqueness the way BigQuery does.
  *
- * REPORTING_LEDGER_PG_URL=postgres://localhost/test node --test test/lib/reporting-bigquery-sink-pg.test.js
+ * REPORTING_LEDGER_PG_URL=postgres://localhost/test npm test --workspace=@adcp/reporting-storage -- test/reporting-bigquery-sink-pg.test.js
  */
 const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');

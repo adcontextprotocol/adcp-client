@@ -77,6 +77,11 @@ type ProductionNotificationOptions = Omit<
   'db' | 'publisherScope' | 'checkpointDeliveryAttempt' | 'supportedAccountEventTypes'
 >;
 
+/**
+ * Options for `createPostgresReliableReportingProductionService`: the Core service options plus the PostgreSQL pool, namespace, notifications, managed delivery and maintenance configuration.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export type CreatePostgresReliableReportingProductionServiceOptionsV1<TCtxMeta = Record<string, unknown>> = Omit<
   CreateReliableReportingServiceOptionsV1<TCtxMeta>,
   'store' | 'subscribers' | 'maintenance'
@@ -162,6 +167,11 @@ export type CreatePostgresReliableReportingProductionServiceOptionsV1<TCtxMeta =
   applyMigrations?: (migrations: readonly string[]) => Promise<void>;
 };
 
+/**
+ * The assembled production service: Core, managed delivery, notifications, activity and one scheduler.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface PostgresReliableReportingProductionServiceV1<TCtxMeta = Record<string, unknown>> {
   readonly setup: {
     readonly component: 'reliable-reporting-production';
@@ -199,6 +209,8 @@ export interface PostgresReliableReportingProductionServiceV1<TCtxMeta = Record<
  * Assemble and probe the complete seller-side Reliable Reporting production
  * chain. Capability publication happens only after every durable component is
  * present and the managed policy has been adopted.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export async function createPostgresReliableReportingProductionService<TCtxMeta = Record<string, unknown>>(
   options: CreatePostgresReliableReportingProductionServiceOptionsV1<TCtxMeta>
@@ -310,8 +322,11 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
   const coreOptions = {
     ...options,
     store: coreStore,
-    [REPORTING_MANAGED_DELIVERY_COMPOSITION_V1]: true,
-  } as CreateReliableReportingServiceOptionsV1<TCtxMeta> & { [REPORTING_MANAGED_DELIVERY_COMPOSITION_V1]: true };
+    // The composer's assertion that this service is served by a managed-delivery runtime: it names the store itself.
+    [REPORTING_MANAGED_DELIVERY_COMPOSITION_V1]: coreStore,
+  } as CreateReliableReportingServiceOptionsV1<TCtxMeta> & {
+    [REPORTING_MANAGED_DELIVERY_COMPOSITION_V1]: PostgresReportingLedgerStore;
+  };
   const core = createReliableReportingService(coreOptions);
   const migrations = Object.freeze([
     REPORTING_LEDGER_MIGRATION,

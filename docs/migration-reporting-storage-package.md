@@ -14,9 +14,9 @@ Why: storage keeps its own release cadence, as Auth.js, LangGraph and OpenTeleme
    npm install @adcp/sdk@beta @adcp/reporting-storage@beta
    ```
 
-   Pin the storage package with `~` (`"@adcp/reporting-storage": "~0.1.0"`): it is pre-1.0 and every export is experimental. The cloud SDKs are optional peers of the new package, not of `@adcp/sdk` any more, so keep `@aws-sdk/client-s3`, `@azure/storage-blob` and `@google-cloud/storage` in your own dependencies for the providers you use.
+   Pin the storage package with `~` (`"@adcp/reporting-storage": "~0.1.0-beta.0"` while SDK 16 is in beta, `"~0.1.0"` after a stable release; a prerelease version is not matched by `~0.1.0`): it is pre-1.0 and every export is experimental. The cloud SDKs are optional peers of the new package, not of `@adcp/sdk` any more, so keep `@aws-sdk/client-s3`, `@azure/storage-blob` and `@google-cloud/storage` in your own dependencies for the providers you use.
 
-2. Change the imports using the table below. Run `tsc --noEmit`: every missed name is a `has no exported member` error that names the symbol.
+2. Change the imports using the table below, then run `tsc --noEmit`. A moved name on `@adcp/sdk/reporting/ledger` or `/service` is `TS2305: Module '"@adcp/sdk/reporting/ledger"' has no exported member 'PostgresReportingLedgerStore'`; a deleted subpath is `TS2307: Cannot find module '@adcp/sdk/reporting/gcs'`. At runtime the deleted subpaths fail with `ERR_PACKAGE_PATH_NOT_EXPORTED`, and a stale CommonJS `require` of a moved name on a kept subpath destructures to `undefined` and fails later as `X is not a constructor`, so grep JavaScript too (see [Self-grade](#self-grade)).
 
 3. If you pass `maintenance` to `createReliableReportingService`, wrap it (see [`maintenance` is now a factory](#maintenance-is-now-a-factory)).
 
@@ -31,7 +31,7 @@ Why: storage keeps its own release cadence, as Auth.js, LangGraph and OpenTeleme
 | `@adcp/sdk/reporting/ledger`: notification activity (`createPostgresReportingNotificationActivityRuntime`, `createPostgresReportingNotificationAttemptCheckpoint`, `REPORTING_NOTIFICATION_ACTIVITY_MIGRATION`) | `@adcp/reporting-storage/notifications` |
 | `@adcp/sdk/reporting/ledger`: everything else (the `ReportingLedgerStore` interface and its types, `createReportingDeliveryHandler`, `createReportingStatusHandler`, `createSyncReportingStatusHandler`, `createReportingProducer`, health, coverage, lifecycle, row encoding and digests, `ReportingRowStoreError`) | unchanged: `@adcp/sdk/reporting/ledger` |
 | `@adcp/sdk/reporting/service`: `createPostgresReliableReportingProductionService` and its types | `@adcp/reporting-storage/service` |
-| `@adcp/sdk/reporting/service`: retention, compaction, orphan-collection and change-feed maintenance (`runReportingLedgerMaintenance`, `ReportingRetentionOptionsV1`, `ReportingCompactionOptionsV1`, `ReportingMaintenancePartialFailureError`, and the related types) | `@adcp/reporting-storage` |
+| `@adcp/sdk/reporting/service`: retention, compaction, orphan-collection and change-feed maintenance (`runReportingLedgerMaintenance`, `ReportingRetentionOptionsV1`, `ReportingCompactionOptionsV1`, `ReportingMaintenancePartialFailureError`, and the related types); `ReliableReportingMaintenanceOptionsV1` is now `ReportingLedgerMaintenanceOptionsV1` | `@adcp/reporting-storage` |
 | `@adcp/sdk/reporting/service`: `createReliableReportingService`, the conformance runner | unchanged: `@adcp/sdk/reporting/service` |
 | `@adcp/sdk/reporting/gcs` | `@adcp/reporting-storage/gcs` |
 | `@adcp/sdk/reporting/s3` | `@adcp/reporting-storage/s3` |
@@ -136,11 +136,17 @@ createReliableReportingService({
 });
 ```
 
-The options are unchanged. The service still hands the factory the retention and recovery-window commitments it advertises, so retention still cannot disagree with what buyers were told, and a configuration the store cannot serve still fails when the service is constructed, not on the first scheduled pass. `service.runMaintenance()` returns the same per-task results, typed as `ReliableReportingMaintenanceTaskResultV1` (`{ task, status, result | error, partialFailure? }`). A store from another package can supply its own factory. `createPostgresReliableReportingProductionService` is unchanged: it takes `retention`, `compaction`, `changeFeed` and `orphanCollection` directly.
+Passing the old options object now fails at construction with `maintenance must be a factory, not an options object` (and in TypeScript as `Type '{ retention: ... }' provides no match for the signature '(context: ReliableReportingMaintenanceContextV1): ReliableReportingMaintenanceV1'`). The options are unchanged. The service still hands the factory the retention and recovery-window commitments it advertises, so retention still cannot disagree with what buyers were told, and a configuration the store cannot serve still fails when the service is constructed, not on the first scheduled pass. `service.runMaintenance()` returns the same per-task results, typed as `ReliableReportingMaintenanceTaskResultV1` (`{ task, status, result | error, partialFailure? }`). A store from another package can supply its own factory. `createPostgresReliableReportingProductionService` is unchanged: it takes `retention`, `compaction`, `changeFeed` and `orphanCollection` directly.
 
 ### `service.setup.migrations` comes from the store
 
-`createReliableReportingService` no longer names the PostgreSQL migration. `service.setup.migrations` is the store's own `migrations` list (`ReportingLedgerStore.migrations`, optional). `PostgresReportingLedgerStore` lists `[REPORTING_LEDGER_MIGRATION]`, so `await pool.query(reporting.setup.migrations[0])` keeps working. A store with nothing to install (an in-memory test double) gives an empty list.
+`createReliableReportingService` no longer names the PostgreSQL migration. `service.setup.migrations` is the store's own `migrations` list (`ReportingLedgerStore.migrations`, optional). `PostgresReportingLedgerStore` lists `[REPORTING_LEDGER_MIGRATION]`. A store with nothing to install (an in-memory test double), or a decorator over the PostgreSQL store that does not forward `migrations`, gives an empty list.
+
+The type changed too: it was the tuple `readonly [typeof REPORTING_LEDGER_MIGRATION]` and is now `readonly string[]`, so `reporting.setup.migrations[0]` is `string | undefined` under `noUncheckedIndexedAccess`, and `pool.query(undefined)` fails at runtime for a store that lists nothing. Apply the list instead:
+
+```ts
+for (const sql of reporting.setup.migrations) await pool.query(sql);
+```
 
 ### Error classes now live with the interface
 
@@ -148,7 +154,7 @@ The options are unchanged. The service still hands the factory the retention and
 
 ### The Core service refuses managed-delivery offerings
 
-A `createReliableReportingService` without a managed-delivery composition still refuses offerings that need Managed Delivery or Reconciled Billing, now naming `@adcp/reporting-storage/service` in the error. A composition built elsewhere opts in with the exported `REPORTING_MANAGED_DELIVERY_COMPOSITION_V1` key.
+A `createReliableReportingService` without a managed-delivery composition still refuses offerings that need Managed Delivery or Reconciled Billing, now naming `@adcp/reporting-storage/service` in the error. A composition built elsewhere opts in with the exported `REPORTING_MANAGED_DELIVERY_COMPOSITION_V1` key, set to the very `store` it passes as `store`. That is an assertion by the composer, not an authentication boundary (the key is a `Symbol.for`, so any code can write it); it exists so a Core-only service cannot advertise offerings it has no runtime for by accident. Applications should not use it.
 
 ### New exports on `@adcp/sdk`
 
@@ -168,9 +174,13 @@ The consumer-side Postgres persistence (`createPostgresReportingConsumerRuntimeV
 ## Self-grade
 
 ```bash
-# nothing should still import a moved subpath
-grep -rn "@adcp/sdk/reporting/\(gcs\|s3\|azure\|bigquery\)" src
-# nothing should read storage exports from the SDK subpaths
-grep -rn "PostgresReporting\|REPORTING_[A-Z_]*MIGRATION\|createPostgresReliableReportingProductionService" src | grep "@adcp/sdk"
+# 1. no deleted subpath
+grep -rnE "@adcp/sdk/reporting/(gcs|s3|azure|bigquery)" src
+# 2. in every file that still imports the ledger or service subpath, no moved name (this also catches multi-line
+#    imports, `require` destructuring and JavaScript, which `tsc` does not check)
+grep -rlE "@adcp/sdk/reporting/(ledger|service)" src | xargs grep -nE "PostgresReporting|createPostgresReliable|REPORTING_[A-Z_]+_MIGRATION|createFilesystemReporting|ReportingRowStorageV1|createReportingManagedDeliveryRuntime|createPostgresReportingNotification|runReportingLedgerMaintenance|\bmaintenance:[[:space:]]*\{"
+# 3. TypeScript
 npx tsc --noEmit
 ```
+
+Every line check 2 prints is either a moved name still imported from the SDK or a `maintenance:` options object to wrap.

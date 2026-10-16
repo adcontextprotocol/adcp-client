@@ -5,7 +5,7 @@
  * delete, withVersion).
  *
  * Opt-in run (not in CI), e.g. with `npx azurite-blob --inMemoryPersistence`:
- * REPORTING_AZURE_TEST_CONNECTION_STRING=UseDevelopmentStorage=true node --test test/lib/reporting-azure-row-provider.test.js
+ * REPORTING_AZURE_TEST_CONNECTION_STRING=UseDevelopmentStorage=true npm test --workspace=@adcp/reporting-storage -- test/reporting-azure-row-provider.test.js
  * Azurite does not implement blob versioning, so against it the test asserts the probe refuses the
  * account. Set REPORTING_AZURE_TEST_VERSIONED=1 with a connection string for a storage account that
  * has blob versioning enabled to run the full conformance suite.

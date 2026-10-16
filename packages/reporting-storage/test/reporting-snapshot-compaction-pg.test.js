@@ -2,7 +2,7 @@
  * PostgreSQL integration tests for opt-in compaction of superseded snapshot
  * revisions (adcontextprotocol/adcp#8100, `content_retention`).
  *
- * REPORTING_LEDGER_PG_URL=postgres://localhost/test node --test test/lib/reporting-snapshot-compaction-pg.test.js
+ * REPORTING_LEDGER_PG_URL=postgres://localhost/test npm test --workspace=@adcp/reporting-storage -- test/reporting-snapshot-compaction-pg.test.js
  */
 const assert = require('node:assert/strict');
 const { existsSync, mkdtempSync, rmSync, unlinkSync } = require('node:fs');

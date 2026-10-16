@@ -1,7 +1,7 @@
 /**
  * PostgreSQL integration tests for seller reporting ledger fencing and snapshot isolation.
  *
- * REPORTING_LEDGER_PG_URL=postgres://localhost/test node --test test/lib/reporting-ledger-pg.test.js
+ * REPORTING_LEDGER_PG_URL=postgres://localhost/test npm test --workspace=@adcp/reporting-storage -- test/reporting-ledger-pg.test.js
  */
 const assert = require('node:assert/strict');
 const {

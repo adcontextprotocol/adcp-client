@@ -20,6 +20,7 @@ const consumers = [
   'unit-tests-fast',
   'unit-tests-slow',
   'webhook-delivery-backends',
+  'reporting-storage-tests',
   'eslint-plugin-tests',
   'node-undici-network-matrix',
 ];

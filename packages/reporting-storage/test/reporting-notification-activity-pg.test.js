@@ -2,7 +2,7 @@
  * PostgreSQL crash-boundary tests for transactional reporting notifications.
  *
  * NODE_ENV=test REPORTING_LEDGER_PG_URL=postgres://localhost/test \
- *   node --test test/lib/reporting-notification-activity-pg.test.js
+ *   npm test --workspace=@adcp/reporting-storage -- test/reporting-notification-activity-pg.test.js
  */
 const assert = require('node:assert/strict');
 const {
