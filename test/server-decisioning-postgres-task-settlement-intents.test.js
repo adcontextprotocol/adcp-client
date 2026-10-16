@@ -28,6 +28,23 @@ function ref(taskId = 'task_1', overrides = {}) {
   };
 }
 
+async function waitForSettlementStart(started, recovery) {
+  let timeout;
+  try {
+    await Promise.race([
+      started,
+      recovery.then(() => {
+        throw new Error('Recovery finished before the settlement callback started');
+      }),
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('Settlement callback did not start within 10 seconds')), 10_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function singleClaimDb(intent) {
   const { canonicalJsonSha256 } = require('../dist/lib/utils/jcs');
   const scopeFingerprint = canonicalJsonSha256({
@@ -472,6 +489,18 @@ describe('Postgres task settlement intent queue', { skip: !DATABASE_URL && 'DATA
   after(async () => {
     if (pool) await pool.end();
   });
+
+  async function expireLease(taskId, workerId) {
+    const taskRef = ref(taskId);
+    const expired = await pool.query(
+      `UPDATE ${TABLE}
+          SET lease_expires_at = clock_timestamp() - INTERVAL '1 second'
+        WHERE queue_namespace = $1 AND registry_id = $2 AND account_id = $3
+          AND owner_scope = $4 AND task_id = $5 AND lease_owner = $6 AND state = 'pending'`,
+      [NAMESPACE, taskRef.registryId, taskRef.accountId, taskRef.ownerScope, taskRef.taskId, workerId]
+    );
+    assert.strictEqual(expired.rowCount, 1, 'the intended worker must own exactly one pending lease');
+  }
 
   test('migration upgrades and reruns over the queue schema emitted by the prior beta', async () => {
     const { getTaskSettlementIntentMigration } = require('../dist/lib/server/decisioning');
@@ -986,31 +1015,38 @@ describe('Postgres task settlement intent queue', { skip: !DATABASE_URL && 'DATA
     const started = new Promise(resolve => {
       firstStarted = resolve;
     });
+    const firstCanFinish = new Promise(resolve => {
+      releaseFirst = resolve;
+    });
     const firstErrors = [];
     const firstRecovery = queue.recover({
-      workerId: 'worker-with-short-lease',
-      leaseMs: 5,
+      workerId: 'original-worker',
       settle: async () => {
         firstStarted();
-        await new Promise(resolve => {
-          releaseFirst = resolve;
-        });
+        await firstCanFinish;
         return 'settled';
       },
       onError: (_error, context) => firstErrors.push(context),
     });
 
-    await started;
-    await new Promise(resolve => setTimeout(resolve, 20));
-    assert.deepStrictEqual(await queue.recover({ workerId: 'replacement-worker', settle: async () => 'settled' }), {
-      claimed: 1,
-      settled: 1,
-      retried: 0,
-      deadLettered: 0,
-      leaseLost: 0,
-    });
-    releaseFirst();
-    assert.deepStrictEqual(await firstRecovery, {
+    let firstMetrics;
+    try {
+      await waitForSettlementStart(started, firstRecovery);
+      // Expire only after payload loading and callback entry. A tiny lease can
+      // expire before settle runs, leaving the callback-start promise unresolved.
+      await expireLease('task_lease_lost', 'original-worker');
+      assert.deepStrictEqual(await queue.recover({ workerId: 'replacement-worker', settle: async () => 'settled' }), {
+        claimed: 1,
+        settled: 1,
+        retried: 0,
+        deadLettered: 0,
+        leaseLost: 0,
+      });
+    } finally {
+      releaseFirst();
+      firstMetrics = await firstRecovery;
+    }
+    assert.deepStrictEqual(firstMetrics, {
       claimed: 1,
       settled: 0,
       retried: 0,
@@ -1022,18 +1058,21 @@ describe('Postgres task settlement intent queue', { skip: !DATABASE_URL && 'DATA
 
   test('an expired max-attempt worker is dead-lettered before settlement can run again', async () => {
     await queue.enqueue({ taskRef: ref('task_expired_retry'), action: 'complete', result: { ok: true } });
+    let firstCalls = 0;
     assert.deepStrictEqual(
       await queue.recover({
-        leaseMs: 5,
+        workerId: 'max-attempt-worker',
         retryAfterMs: 0,
         maxAttempts: 1,
         settle: async () => {
-          await new Promise(resolve => setTimeout(resolve, 20));
+          firstCalls += 1;
+          await expireLease('task_expired_retry', 'max-attempt-worker');
           throw new Error('late failure');
         },
       }),
       { claimed: 1, settled: 0, retried: 0, deadLettered: 0, leaseLost: 1 }
     );
+    assert.strictEqual(firstCalls, 1, 'the first worker must reach settlement before its lease expires');
     let called = false;
     assert.deepStrictEqual(
       await queue.recover({
