@@ -281,3 +281,66 @@ test('a named test-kit API-key path is refused rather than resolved to the prima
   assert.match(step.error ?? '', /Named test-kit API-key paths are not supported/);
   assert.equal((step.error ?? '').includes('kit-step-key'), false, 'the refusal must not echo a credential');
 });
+
+test('legitimate routing keys are not learned as credentials or removed by name heuristics', async t => {
+  const { url, requests } = await startAgent(t);
+  const routing = {
+    'x-routing-key': 'route-acme',
+    'x-partition-key': 'partition-acme',
+    'x-idempotency-key': 'request-acme',
+    'x-author-id': 'author-acme',
+    'x-monkey-route': 'region-acme',
+  };
+  const result = await runStoryboard(url, storyboard(), {
+    ...OPTIONS,
+    headers: { ...OPTIONS.headers, ...routing },
+    transport: { trustedFetchFn: (...args) => fetch(...args) },
+  });
+  assert.equal(result.overall_passed, true, JSON.stringify(result.phases));
+  assert.ok(requests.length >= 3);
+  for (const request of requests) {
+    for (const [name, value] of Object.entries(routing)) assert.equal(request.headers[name], value, name);
+  }
+});
+
+for (const source of ['structured', 'kit-pair', 'header']) {
+  test(`Basic password and encoded forms are isolated for ${source} credentials`, async t => {
+    const { url, requests } = await startAgent(t);
+    const username = 'suite-account';
+    const password = 'unique-password:with-colon';
+    const pair = `${username}:${password}`;
+    const encoded = Buffer.from(pair).toString('base64');
+    const options = {
+      ...OPTIONS,
+      auth: source === 'structured' ? { type: 'basic', username, password } : undefined,
+      headers: {
+        'x-adcp-tenant': 'acme',
+        'x-account': username,
+        ...(source === 'header' ? { Authorization: `Basic ${encoded}` } : {}),
+        'X-Gateway-Route': password,
+        'X-Legacy-Envelope': encoded,
+        'X-Upstream-Identity': pair,
+      },
+      test_kit: {
+        auth: {
+          ...OPTIONS.test_kit.auth,
+          ...(source === 'kit-pair' ? { basic: { credentials: pair } } : {}),
+        },
+      },
+      transport: { trustedFetchFn: (...args) => fetch(...args) },
+    };
+    const before = structuredClone({ auth: options.auth, headers: options.headers, test_kit: options.test_kit });
+    const result = await runStoryboard(url, storyboard(), options);
+    assert.equal(result.overall_passed, true, JSON.stringify(result.phases));
+    assert.ok(requests.length >= 3);
+    for (const request of requests) {
+      assert.equal(request.headers.authorization, 'Bearer kit-step-key');
+      assert.equal(request.headers['x-account'], username, 'a Basic username alone is routing data');
+      assert.equal(request.headers['x-adcp-tenant'], 'acme');
+      for (const name of ['x-gateway-route', 'x-legacy-envelope', 'x-upstream-identity']) {
+        assert.equal(request.headers[name], undefined, `${source}: ${name}`);
+      }
+    }
+    assert.deepEqual({ auth: options.auth, headers: options.headers, test_kit: options.test_kit }, before);
+  });
+}

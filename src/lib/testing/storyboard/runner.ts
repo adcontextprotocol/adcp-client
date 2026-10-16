@@ -9352,6 +9352,8 @@ function runCredentialValues(options: StoryboardRunOptions): string[] {
   // once an opaque header carries it as `Basic dXNlcjpwYXNz`.
   const pushUserPass = (userpass: string) => {
     values.push(userpass, Buffer.from(userpass).toString('base64'));
+    const separator = userpass.indexOf(':');
+    if (separator >= 0) values.push(userpass.slice(separator + 1));
   };
   const auth = options.auth;
   if (auth?.type === 'bearer' && typeof auth.token === 'string') values.push(auth.token);
@@ -9398,7 +9400,7 @@ function runCredentialValues(options: StoryboardRunOptions): string[] {
       if (/^Basic$/i.test(scheme[1])) {
         try {
           const decoded = Buffer.from(payload, 'base64').toString('utf8');
-          if (decoded.includes(':') && /^[\x20-\x7e]+$/.test(decoded)) values.push(decoded);
+          if (decoded.includes(':')) pushUserPass(decoded);
         } catch {
           // Not valid Base64 — the raw payload is already recorded above.
         }
@@ -10131,7 +10133,7 @@ const AUTH_OVERRIDE_CREDENTIAL_HEADER_RE =
   /(^|[-_])(auth(?:entication|orization)?|credentials?|secrets?|tokens?|keys?|api[-_]?keys?|access[-_]?keys?|private[-_]?keys?|password|passwd|signatures?|cert(?:ificate)?s?)([-_]|$)/i;
 
 /**
- * Same credential words, matched after separators are stripped.
+ * Credential suffixes matched after separators are stripped.
  *
  * Every alternative in `AUTH_OVERRIDE_CREDENTIAL_HEADER_RE` is anchored to a
  * `-`/`_` boundary, so it recognises `X-Api-Key` but not the separator-less
@@ -10140,16 +10142,20 @@ const AUTH_OVERRIDE_CREDENTIAL_HEADER_RE =
  * parked under one used to ride along into an isolated step. Compacting the
  * name first closes that class without needing to know the value.
  *
- * `key` subsumes `apikey`/`accesskey`/`privatekey`. Deliberately absent:
- * `session` and `id`, which would strip the runner's own
- * `x-test-session-id` routing header and reroute the probe to another tenant.
- * Routing names that carry no credential word (`X-AdCP-Tenant`, `x-tenant`,
- * `x-correlation-id`) are unaffected.
+ * Match complete credential suffixes rather than arbitrary substrings:
+ * `x-author-id` and `x-monkey-route` are not authentication or key headers.
+ * Bare `key`, `session` and `id` are deliberately absent; recognized routing
+ * names are excluded before either name heuristic runs.
  */
-const AUTH_OVERRIDE_COMPACT_CREDENTIAL_RE = /(auth|credential|secret|token|password|passwd|signature|cert|bearer|key)/i;
+const AUTH_OVERRIDE_COMPACT_CREDENTIAL_RE =
+  /(auth(?:entication|orization)?|credentials?|secrets?|tokens?|passwords?|passwd|signatures?|certificates?|bearer|(?:api|access|private|session)keys?|(?:client|tls|ssl)certs?)$/i;
 
 function isCredentialHeaderName(name: string): boolean {
   const normalized = name.toLowerCase();
+  // A routing key must not teach runCredentialValues that its own routing
+  // value is a secret. Actual known-secret collisions are still checked by
+  // value in createAuthOverrideClient and fail closed.
+  if (SESSION_PROBE_ROUTING_HEADERS.has(normalized)) return false;
   return (
     AUTH_OVERRIDE_HEADER_NAMES.has(normalized) ||
     AUTH_OVERRIDE_CREDENTIAL_HEADER_RE.test(normalized) ||
@@ -10168,17 +10174,11 @@ function isCredentialHeaderName(name: string): boolean {
  * trustedFetchFn for private CAs / hosted egress) still flows through the
  * protocol layer's guarded fetch boundary.
  *
- * Exclusion is by name **and by value**. The name test alone is a denylist,
- * and a denylist cannot recognise a credential parked under a name it has
- * never seen: `isCredentialHeaderName`'s alternatives each require a `-`/`_`
- * boundary, so `XApiKey`, `X-AuthToken` and `X-SessionToken` all slip past it
- * while `X-Api-Key` is caught. Any header carrying a credential this run
- * actually holds is therefore dropped on value as well, the same way
- * `sessionProbeRoutingHeaders` does it — otherwise the suite principal rides
- * along beside the step's own credential and an agent that authenticates on
- * the stowaway header grades the step against the wrong principal. Dropping
- * the step's own credential here is harmless: `authHeaders` re-adds it below
- * under the name the step declared.
+ * Exclusion uses credential-shaped names and known credential values, so a
+ * known secret cannot ride along under an opaque name. A routing-value
+ * collision fails closed instead of silently rerouting the step. Unknown
+ * opaque credentials cannot be inferred from arbitrary routing headers.
+ * The step's own credential is re-added below after the exclusions.
  */
 function createAuthOverrideClient(
   agentUrl: string,
