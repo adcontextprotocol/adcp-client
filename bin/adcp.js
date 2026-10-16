@@ -49,6 +49,7 @@ const {
   printSoftFailBlock,
   defaultComplianceTimeoutSeconds,
   escapeTerminalControlChars,
+  formatJwtExpClaim,
   formatStepSkipLines,
   formatStepVerdictLines,
   isCoverageUnavailableStep,
@@ -5759,9 +5760,12 @@ const STEP_LABELS = {
 };
 
 function renderDiagnosisReport(report) {
-  console.log(`\n🔍 OAuth Diagnosis — ${report.agentUrl}`);
+  // Everything below except the step labels and verdict badges can come from
+  // the agent or its authorization server, so escape it before printing.
+  const esc = escapeTerminalControlChars;
+  console.log(`\n🔍 OAuth Diagnosis — ${esc(report.agentUrl)}`);
   if (report.aliasId && report.aliasId !== report.agentUrl) {
-    console.log(`   Alias: ${report.aliasId}`);
+    console.log(`   Alias: ${esc(report.aliasId)}`);
   }
   console.log(`   Generated: ${report.generatedAt}\n`);
 
@@ -5775,22 +5779,23 @@ function renderDiagnosisReport(report) {
     }
     if (step.http) {
       const statusBadge = step.http.status === 0 ? 'ERR' : `HTTP ${step.http.status}`;
-      console.log(`${prefix}  ↳ ${step.http.method} ${step.http.url}  ${statusBadge}`);
-      if (step.http.error) console.log(`      error: ${step.http.error}`);
+      console.log(`${prefix}  ↳ ${step.http.method} ${esc(step.http.url)}  ${statusBadge}`);
+      if (step.http.error) console.log(`      error: ${esc(step.http.error)}`);
       const wwwAuth = step.http.headers['www-authenticate'];
-      if (wwwAuth) console.log(`      WWW-Authenticate: ${wwwAuth}`);
+      if (wwwAuth) console.log(`      WWW-Authenticate: ${esc(wwwAuth)}`);
     } else if (step.decodedToken) {
       const audClaim = step.decodedToken.claims.aud;
-      const aud = audClaim === undefined ? '(missing)' : JSON.stringify(audClaim);
-      const iss = step.decodedToken.claims.iss ?? '(missing)';
-      const exp = step.decodedToken.claims.exp;
-      const expStr = exp ? new Date(exp * 1000).toISOString() : '(missing)';
+      const aud = audClaim === undefined ? '(missing)' : esc(JSON.stringify(audClaim));
+      const issClaim = step.decodedToken.claims.iss;
+      const iss =
+        issClaim === undefined ? '(missing)' : esc(typeof issClaim === 'string' ? issClaim : JSON.stringify(issClaim));
+      const expStr = formatJwtExpClaim(step.decodedToken.claims.exp);
       console.log(`${prefix}  ↳ JWT: iss=${iss}  aud=${aud}  exp=${expStr}`);
     } else {
       console.log(`${prefix}  ↳ (no token / opaque token)`);
     }
     if (step.notes) {
-      for (const note of step.notes) console.log(`      note: ${note}`);
+      for (const note of step.notes) console.log(`      note: ${esc(note)}`);
     }
   }
 
@@ -5798,9 +5803,9 @@ function renderDiagnosisReport(report) {
   for (const h of report.hypotheses) {
     const badge = formatVerdict(h.verdict);
     const id = h.id.padEnd(3);
-    console.log(`\n  ${id} ${badge}  ${h.title}`);
-    console.log(`       ${h.summary}`);
-    for (const ev of h.evidence) console.log(`       · ${ev}`);
+    console.log(`\n  ${id} ${badge}  ${esc(h.title)}`);
+    console.log(`       ${esc(h.summary)}`);
+    for (const ev of h.evidence) console.log(`       · ${esc(ev)}`);
   }
 
   const likely = report.hypotheses.filter(h => h.verdict === 'likely');
@@ -5812,9 +5817,9 @@ function renderDiagnosisReport(report) {
     for (const h of likely) {
       const fix = h.evidence.find(e => e.startsWith('Fix:'));
       if (fix) {
-        console.log(`  ${h.id}: ${fix.replace(/^Fix:\s*/, '')}`);
+        console.log(`  ${h.id}: ${esc(fix.replace(/^Fix:\s*/, ''))}`);
       } else {
-        console.log(`  ${h.id}: ${h.summary}`);
+        console.log(`  ${h.id}: ${esc(h.summary)}`);
       }
     }
     console.log();
