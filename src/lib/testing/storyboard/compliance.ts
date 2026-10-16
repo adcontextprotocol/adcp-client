@@ -270,11 +270,14 @@ function complianceMissingMessage(what: string, path: string): string {
 function packagedComplianceVersions(): string[] {
   try {
     const root = join(getRepoRoot(), 'compliance', 'cache');
-    return readdirSync(root, { withFileTypes: true })
-      .filter(entry => (entry.isDirectory() || entry.isSymbolicLink()) && /^v?\d/.test(entry.name))
-      .map(entry => entry.name)
-      .sort()
-      .reverse();
+    return (
+      readdirSync(root, { withFileTypes: true })
+        .filter(entry => (entry.isDirectory() || entry.isSymbolicLink()) && /^v?\d/.test(entry.name))
+        .map(entry => entry.name)
+        // Numeric-segment compare: a plain lexicographic sort would put 3.1.9
+        // ahead of 3.1.29 the moment two patches of one minor are packaged.
+        .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))
+    );
   } catch {
     // Never let a diagnostic become the failure. An unreadable cache root just
     // means we fall back to the generic remedies above.

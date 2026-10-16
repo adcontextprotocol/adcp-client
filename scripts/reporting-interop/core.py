@@ -26,6 +26,27 @@ class GateError(ValueError):
     """A static harness stage label, safe to retain in aggregate diagnostics."""
 
 
+
+def typescript_protocol(package, script_path):
+    """Exact AdCP protocol the TypeScript seller actor must run.
+
+    The TypeScript seller is built from this checkout and graded against the
+    package installed from it, so its protocol is the SDK's own adcp_version —
+    NOT pins.json. pins.adcp_schema_version records the protocol the
+    independently verified Python wheel/harness was validated against, and that
+    artifact is immutable, so the two actors legitimately diverge whenever this
+    SDK adopts a newer bundle. Conflating them made the seller claim a protocol
+    it does not serve.
+
+    Requiring checkout == installed keeps the identity check the old assertion
+    provided: a stale or substituted install still fails closed.
+    """
+    checkout = json.loads((Path(script_path).parents[2] / "package.json").read_bytes())["adcp_version"]
+    installed = package["adcp_version"]
+    require(installed == checkout,
+            f"installed SDK adcp_version {installed} must equal checkout {checkout}")
+    return installed
+
 def require(condition, label):
     if not condition:
         raise GateError(label)
@@ -74,6 +95,7 @@ def run(upstream, installation, node, output):
     package = json.loads((installation / "node_modules/@adcp/sdk/package.json").read_bytes())
     lock = json.loads(lock_path.read_bytes())["packages"]["node_modules/@adcp/sdk"]
     pins = json.loads(Path(__file__).with_name("pins.json").read_bytes())
+    ts_protocol = typescript_protocol(package, __file__)
     require(lock["version"] == package["version"], "installed version")
     database = f"adcp_reverse_{secrets.token_hex(8)}"
     admin = os.environ["REPORTING_INTEROP_PG_URL"]
@@ -102,7 +124,7 @@ def run(upstream, installation, node, output):
             process = subprocess.Popen([
                 str(node), str(harness / "ts_core_server.cjs"), "--package-lock", str(lock_path),
                 "--expected-version", package["version"], "--expected-integrity", lock["integrity"],
-                "--adcp-version", pins["adcp_schema_version"], "--seller-role", "candidate",
+                "--adcp-version", ts_protocol, "--seller-role", "candidate",
                 "--port", str(port), "--ready-file", str(ready_file),
             ], cwd=output, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
                 env=narrow_env(DATABASE_URL=url, ADCP_INTEROP_TS_CORE_AUTH_TOKEN_A=token_a,
@@ -124,7 +146,7 @@ def run(upstream, installation, node, output):
             require(ready["pid"] == process.pid and ready["port"] == port, "owned seller process")
             require(ready["startup_proof_sha256"] == hashlib.sha256(proof.encode()).hexdigest(), "startup proof")
             require(ready["seller_package"]["integrity"] == lock["integrity"], "seller artifact")
-            require(ready["seller_package"]["protocol"] == pins["adcp_schema_version"], "seller schema version")
+            require(ready["seller_package"]["protocol"] == ts_protocol, "seller schema version")
             results = []
             for suffix, token in (("a", token_a), ("b", token_b)):
                 account = f"interop-account-{suffix}"

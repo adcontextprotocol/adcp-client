@@ -28,6 +28,27 @@ class GateError(ValueError):
     """A static harness stage label, safe to retain in aggregate diagnostics."""
 
 
+
+def typescript_protocol(package, script_path):
+    """Exact AdCP protocol the TypeScript seller actor must run.
+
+    The TypeScript seller is built from this checkout and graded against the
+    package installed from it, so its protocol is the SDK's own adcp_version —
+    NOT pins.json. pins.adcp_schema_version records the protocol the
+    independently verified Python wheel/harness was validated against, and that
+    artifact is immutable, so the two actors legitimately diverge whenever this
+    SDK adopts a newer bundle. Conflating them made the seller claim a protocol
+    it does not serve.
+
+    Requiring checkout == installed keeps the identity check the old assertion
+    provided: a stale or substituted install still fails closed.
+    """
+    checkout = json.loads((Path(script_path).parents[2] / "package.json").read_bytes())["adcp_version"]
+    installed = package["adcp_version"]
+    require(installed == checkout,
+            f"installed SDK adcp_version {installed} must equal checkout {checkout}")
+    return installed
+
 def require(condition, label):
     if not condition:
         raise GateError(label)
@@ -148,6 +169,7 @@ def run(upstream, installation, node, output, mode, gcs_input, wheel, grant_hook
     package = json.loads((installation / "node_modules/@adcp/sdk/package.json").read_bytes())
     lock = json.loads(lock_path.read_bytes())["packages"]["node_modules/@adcp/sdk"]
     pins = json.loads((here / "pins.json").read_bytes())
+    ts_protocol = typescript_protocol(package, __file__)
     require(lock["version"] == package["version"], "installed artifact")
     require(gcs_input.stat().st_mode & 0o777 == 0o600, "private GCS input mode")
     gcs = json.loads(gcs_input.read_bytes())
@@ -213,7 +235,7 @@ def run(upstream, installation, node, output, mode, gcs_input, wheel, grant_hook
         process = subprocess.Popen([
             str(node), str(supplement / "gcs-managed-seller.cjs"), "--upstream", str(upstream), "--mode", mode,
             "--package-lock", str(lock_path), "--expected-version", package["version"],
-            "--expected-integrity", lock["integrity"], "--adcp-version", pins["adcp_schema_version"],
+            "--expected-integrity", lock["integrity"], "--adcp-version", ts_protocol,
             "--port", str(port), "--ready-file", str(ready_file),
         ], cwd=output, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
             env=environment(DATABASE_URL=url, REPORTING_INTEROP_DESTINATION=str(destination),
@@ -237,7 +259,7 @@ def run(upstream, installation, node, output, mode, gcs_input, wheel, grant_hook
         require(ready["startup_proof_sha256"] == hashlib.sha256(proof.encode()).hexdigest(), "startup proof")
         require(ready["auth_binding_sha256"] == hashlib.sha256(token.encode()).hexdigest(), "authentication binding")
         require(ready["seller_package"]["integrity"] == lock["integrity"] and
-                ready["seller_package"]["adcp_version"] == pins["adcp_schema_version"], "artifact identity")
+                ready["seller_package"]["adcp_version"] == ts_protocol, "artifact identity")
         preflight = execute([sys.executable, '-I', str(supplement / 'gcs-managed-preflight.py')], env=environment(GCS_PREFLIGHT_URL=f'http://127.0.0.1:{port}/mcp', GCS_PREFLIGHT_MODE=mode, GCS_PREFLIGHT_VERSION=pins['adcp_schema_version'], ADCP_INTEROP_BUYER_TOKEN=token), text=True,timeout=180)
         require(preflight.returncode == 0, 'official MCP preflight')
         grant = execute([sys.executable, '-I', str(grant_hook), str(destination / 'gcs-grant.json')], env=environment(), text=True,timeout=180)
