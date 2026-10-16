@@ -9,6 +9,8 @@
  * compares the `aud` claim — it does not verify the token is authentic.
  */
 
+import { decodeJwt, decodeProtectedHeader } from 'jose';
+
 /**
  * Parsed WWW-Authenticate challenge (RFC 9110 §11.6.1, RFC 6750, RFC 9728).
  *
@@ -174,14 +176,14 @@ export interface DecodedAccessToken {
 export function decodeAccessTokenClaims(token: string | null | undefined): DecodedAccessToken | null {
   if (!token || typeof token !== 'string') return null;
 
+  // Compact JWS only: opaque tokens and five-part JWEs carry no readable claims.
   const parts = token.split('.');
   if (parts.length !== 3) return null;
 
   try {
-    const header = JSON.parse(base64UrlDecode(parts[0]!)) as DecodedJWTHeader;
-    const claims = JSON.parse(base64UrlDecode(parts[1]!)) as DecodedJWTClaims;
-    if (typeof header !== 'object' || header === null) return null;
-    if (typeof claims !== 'object' || claims === null) return null;
+    // jose decodes and checks the segments; neither call verifies the signature.
+    const header = decodeProtectedHeader(token) as DecodedJWTHeader;
+    const claims = decodeJwt(token) as DecodedJWTClaims;
     return { header, claims, signature: parts[2]! };
   } catch {
     return null;
@@ -221,7 +223,19 @@ export function validateTokenAudience(token: string | null | undefined, expected
   if (!decoded) {
     return { ok: false, reason: 'Token is opaque or not a valid JWT; audience cannot be inspected' };
   }
+  return validateDecodedTokenAudience(decoded, expectedResource);
+}
 
+/**
+ * {@link validateTokenAudience} for a token already decoded with
+ * {@link decodeAccessTokenClaims}.
+ *
+ * @internal
+ */
+export function validateDecodedTokenAudience(
+  decoded: DecodedAccessToken,
+  expectedResource: string
+): TokenAudienceResult {
   const aud = decoded.claims.aud;
   if (aud === undefined) {
     return { ok: false, reason: 'Token has no `aud` claim (RFC 8707 violation for resource-indicator flows)' };
@@ -261,11 +275,4 @@ function isDefaultPort(scheme: string, port: string): boolean {
   if (scheme === 'https:' && port === '443') return true;
   if (scheme === 'http:' && port === '80') return true;
   return false;
-}
-
-function base64UrlDecode(input: string): string {
-  const padded = input.replace(/-/g, '+').replace(/_/g, '/');
-  const padLen = padded.length % 4;
-  const full = padLen ? padded + '='.repeat(4 - padLen) : padded;
-  return Buffer.from(full, 'base64').toString('utf8');
 }
