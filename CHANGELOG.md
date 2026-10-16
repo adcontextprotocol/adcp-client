@@ -1,5 +1,22 @@
 # Changelog
 
+## 16.0.0-beta.6
+
+### Patch Changes
+
+- ed6eefd: `adcp diagnose-auth` no longer leaks or trusts token material (#3299).
+  - **Signature redacted:** the report's decoded tokens now redact the raw signature segment unless `includeTokens` / `--include-tokens` is set. For compact-JSON issuers, the decoded header, claims and signature reassembled into a working token.
+  - **Output escaped:** the CLI report escapes terminal control characters in every value that comes from the agent or its authorization server: URLs, errors, `WWW-Authenticate`, `iss`, `aud`, notes and hypothesis text.
+  - **No crash on bad `exp`:** an `exp` that isn't a finite NumericDate in the `Date` range is printed as `(invalid: …)` instead of crashing the command.
+
+- 6129906: Refresh the default AdCP 3.2.5 and maintained AdCP 3.1.29 compliance bundles with the corrected inline creative and provenance scenarios. Inline creative tests use the seller's advertised canonical or legacy representation, preserve product and publisher selector identities, and require a complete create, update, and readback path. Provenance scenarios seed schema-valid products and declared formats so their probes reach the intended provenance checks. The maintained bundle also includes corrected legacy request-signing vectors.
+
+  The previous exact compliance caches, 3.2.4 and 3.1.24, are replaced by 3.2.5 and 3.1.29. Runs using `--compliance-version` with either previous packaged patch must select its replacement patch. Supported historical wire and schema version aliases remain available.
+
+  The advertised `AdcpVersion` compatibility set adds 3.1.25 through 3.1.29 and 3.2.5. These wire and schema aliases select the packaged minor-version schemas; they do not add exact compliance caches for the intermediate patches.
+
+- 6326b54: Reject `sync_accounts` provisioning entries and natural-key settings references with AdCP 3.2 account identity fields when the client or negotiated seller release is below 3.2, or seller support cannot be established. The pre-dispatch error identifies the unsupported field and requires callers to explicitly choose any legacy account-key projection, preventing silent account identity collisions even when schema validation is disabled. Upgrade both sides to AdCP 3.2, or explicitly remove `operator_unit`, `currency`, `timezone`, and `brand.countries` to accept legacy account identity.
+
 ## 16.0.0-beta.5
 
 ### Patch Changes
