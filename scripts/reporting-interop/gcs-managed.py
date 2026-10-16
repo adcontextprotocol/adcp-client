@@ -43,8 +43,12 @@ def typescript_protocol(package, script_path):
     Requiring checkout == installed keeps the identity check the old assertion
     provided: a stale or substituted install still fails closed.
     """
-    checkout = json.loads((Path(script_path).parents[2] / "package.json").read_bytes())["adcp_version"]
-    installed = package["adcp_version"]
+    checkout = json.loads((Path(script_path).parents[2] / "package.json").read_bytes()).get("adcp_version")
+    installed = package.get("adcp_version")
+    # Assert presence before equality: two missing values compare equal and
+    # would let the gate pass vacuously against no protocol at all.
+    require(bool(checkout), "checkout package.json is missing adcp_version")
+    require(bool(installed), "installed @adcp/sdk is missing adcp_version")
     require(installed == checkout,
             f"installed SDK adcp_version {installed} must equal checkout {checkout}")
     return installed

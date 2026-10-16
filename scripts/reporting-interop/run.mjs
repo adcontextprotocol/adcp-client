@@ -33,6 +33,10 @@ async function main() {
   const installedProtocol = JSON.parse(
     await readFile(path.join(packageRoot, 'node_modules/@adcp/sdk/package.json'))
   ).adcp_version;
+  // Assert presence explicitly: a missing adcp_version would otherwise make
+  // both sides `undefined` and the equality below would pass vacuously.
+  assert.ok(checkoutProtocol, 'checkout package.json is missing adcp_version');
+  assert.ok(installedProtocol, 'installed @adcp/sdk is missing adcp_version');
   assert.equal(
     installedProtocol,
     checkoutProtocol,
@@ -44,11 +48,15 @@ async function main() {
   const report = {
     contract: 'reporting_evidence_interop_v1',
     fixture_version: 1,
-    // Retained as the PYTHON fact it has always been: the protocol the verified
-    // Python wheel/harness was validated against. The two explicit fields below
-    // remove the ambiguity that made this value get applied to the TS seller.
+    // Retained verbatim as the PYTHON-PIN fact it has always been: the protocol
+    // the verified Python wheel/harness was validated against. The explicit
+    // fields below remove the ambiguity that let this value be applied to the
+    // TypeScript seller. Note the Python actors are NOT uniform — the core
+    // buyer runs the pin while the managed and GCS buyers run the fixture
+    // protocol — so there is deliberately no single "python" field here.
     adcp_schema_version: pins.adcp_schema_version,
-    python_adcp_schema_version: pins.adcp_schema_version,
+    core_buyer_adcp_schema_version: pins.adcp_schema_version,
+    seller_adcp_version: installedProtocol,
     typescript_adcp_schema_version: installedProtocol,
     fixture_adcp_schema_version: JSON.parse(
       await readFile(path.join(root, 'test/fixtures/reporting-interop/evidence-v1.json'))
