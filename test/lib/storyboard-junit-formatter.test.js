@@ -18,6 +18,7 @@ const {
   formatStoryboardResultsAsJUnit,
   routedStoryboardResultGroup,
 } = require('../../dist/lib/testing/storyboard/junit.js');
+const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
 
 function buildResult({ stepOverrides = {}, storyboardOverrides = {} } = {}) {
   return {
@@ -66,6 +67,137 @@ const hint = {
   rejected_value: 'po_a',
   accepted_values: ['po_b'],
 };
+
+describe('formatStoryboardResultsAsJUnit: optional failure grading', () => {
+  async function runFormatDiscovery(optional) {
+    const storyboard = {
+      id: 'format_discovery',
+      version: '1.0.0',
+      title: 'Format discovery',
+      category: 'test',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      phases: [
+        {
+          id: 'canonical',
+          title: 'Discover canonical formats',
+          optional,
+          steps: [
+            {
+              id: 'canonical_format',
+              title: 'Capture canonical format',
+              task: 'get_products',
+              sample_request: { buying_mode: 'brief', brief: 'Find inventory' },
+              context_outputs: [{ key: 'format_kind', path: 'products[0].format_options[0].format_kind' }],
+              validations: [],
+            },
+          ],
+        },
+        {
+          id: 'legacy',
+          title: 'Discover legacy formats',
+          steps: [
+            {
+              id: 'legacy_product',
+              title: 'Discover legacy product',
+              task: 'get_products',
+              sample_request: { buying_mode: 'brief', brief: 'Find inventory' },
+              validations: [],
+            },
+          ],
+        },
+      ],
+    };
+    return runStoryboard('https://seller.example/mcp', storyboard, {
+      protocol: 'mcp',
+      agentTools: ['get_products'],
+      _profile: { name: 'Legacy-only seller', tools: ['get_products'] },
+      _client: {
+        executeTask: async () => ({
+          success: true,
+          status: 'completed',
+          data: {
+            products: [
+              {
+                product_id: 'legacy-product',
+                format_ids: [{ agent_url: 'https://formats.example/', id: 'legacy' }],
+              },
+            ],
+          },
+        }),
+      },
+    });
+  }
+
+  test('preserves a missing optional capture as a diagnostic without failing CI', async () => {
+    const result = await runFormatDiscovery(true);
+    const probe = result.phases[0].steps[0];
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.failed_count, 0);
+    assert.equal(result.phases[0].passed, false);
+    assert.equal(probe.passed, false);
+    assert.notEqual(probe.skipped, true);
+    assert.equal(probe.counts_toward_failure, false);
+    assert.ok(probe.validations.some(validation => !validation.passed && /format_kind/.test(validation.description)));
+
+    // The verdict survives the JSON result export/import boundary, too.
+    const xml = formatStoryboardResultsAsJUnit([JSON.parse(JSON.stringify(result))]);
+    assert.match(xml, /<testsuites [^>]*tests="2" failures="0" skipped="0"/);
+    assert.match(xml, /<testsuite [^>]*tests="2" failures="0" skipped="0"/);
+    assert.doesNotMatch(xml, /<failure\b|<skipped\b/);
+    assert.match(xml, /<system-out>Optional phase failure; excluded from storyboard verdict\./);
+    assert.match(xml, /format_kind/);
+  });
+
+  test('the same missing capture in a required phase still fails CI', async () => {
+    const result = await runFormatDiscovery(false);
+    assert.equal(result.overall_passed, false);
+    assert.equal(result.failed_count, 1);
+    assert.equal(result.phases[0].steps[0].counts_toward_failure, undefined);
+    const xml = formatStoryboardResultsAsJUnit([result]);
+    assert.match(xml, /<testsuites [^>]*failures="1"/);
+    assert.match(xml, /<testsuite [^>]*failures="1"/);
+    assert.equal((xml.match(/<failure\b/g) || []).length, 1);
+  });
+
+  test('counts emitted cases across mixed failures, skips and multiple passes', () => {
+    const optionalFailure = buildResult({
+      stepOverrides: { counts_toward_failure: false, error: 'Optional discovery failed <diagnostic>' },
+    }).phases[0];
+    const requiredFailure = buildResult({ stepOverrides: { error: 'Required readback failed' } }).phases[0];
+    const skipped = buildResult({
+      stepOverrides: { passed: true, skipped: true, skip_reason: 'prerequisite_failed' },
+    }).phases[0];
+    const result = buildResult({
+      storyboardOverrides: {
+        // Deliberately differ from case counts: reports must count the cases
+        // they actually emit, including pass-scoped observations.
+        failed_count: 9,
+        skipped_count: 4,
+        passes: [
+          { pass_index: 1, phases: [optionalFailure] },
+          { pass_index: 2, phases: [requiredFailure, skipped] },
+        ],
+      },
+    });
+    const xml = formatStoryboardResultsAsJUnit([result]);
+    assert.match(xml, /<testsuites [^>]*tests="3" failures="1" skipped="1"/);
+    assert.match(xml, /<testsuite [^>]*tests="3" failures="1" skipped="1"/);
+    assert.equal((xml.match(/<failure\b/g) || []).length, 1);
+    assert.match(xml, /Optional discovery failed &lt;diagnostic&gt;/);
+    assert.match(xml, /Required readback failed/);
+  });
+
+  test('older serialized results without a grading marker keep their failure', () => {
+    const result = buildResult({ storyboardOverrides: { overall_passed: true, failed_count: 0 } });
+    const xml = formatStoryboardResultsAsJUnit([result]);
+    assert.match(xml, /<testsuites [^>]*failures="1"/);
+    assert.match(xml, /<testsuite [^>]*failures="1"/);
+    assert.match(xml, /<failure\b/);
+  });
+});
 
 describe('formatStoryboardResultsAsJUnit: basic shape', () => {
   test('emits testsuites/testsuite/testcase hierarchy', () => {

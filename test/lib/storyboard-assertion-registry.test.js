@@ -19,6 +19,7 @@ const {
   resolveAssertions,
 } = require('../../dist/lib/testing/storyboard/assertions.js');
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
+const { formatStoryboardResultsAsJUnit } = require('../../dist/lib/testing/storyboard/junit.js');
 
 describe('assertion registry', () => {
   beforeEach(() => clearAssertionRegistry());
@@ -394,6 +395,37 @@ describe('runStoryboard: assertion hooks', () => {
     assert.match(asValidation.description, /fail\.on\.second: step 2 broke the rule/);
   });
 
+  it('onStep invariant failures in optional phases still fail JUnit', async () => {
+    registerAssertion({
+      id: 'optional.invariant',
+      description: 'gates optional steps too',
+      onStep(_ctx, stepResult) {
+        return stepResult.step_id === 's1'
+          ? [{ passed: false, description: 'optional step broke a required invariant', error: 'invariant failed' }]
+          : [];
+      },
+    });
+    const storyboard = buildStoryboard({ invariants: ['optional.invariant'] });
+    const [optionalStep, requiredStep] = storyboard.phases[0].steps;
+    storyboard.phases = [
+      { id: 'optional', title: 'Optional probe', optional: true, steps: [optionalStep] },
+      { id: 'required', title: 'Required path', depends_on: [], steps: [requiredStep] },
+    ];
+    const result = await runStoryboard('https://seller.example/mcp', storyboard, {
+      ...runnerOptions,
+      _client: {
+        executeTask: async () => ({ success: true, status: 'completed', data: { creatives: [] } }),
+      },
+    });
+    assert.strictEqual(result.overall_passed, false);
+    assert.strictEqual(result.phases[1].passed, true, 'the required path passed');
+    assert.strictEqual(result.phases[0].steps[0].counts_toward_failure, undefined);
+    const xml = formatStoryboardResultsAsJUnit([result]);
+    assert.match(xml, /<testsuites [^>]*failures="1"/);
+    assert.match(xml, /<testsuite [^>]*failures="1"/);
+    assert.match(xml, /<failure\b[^>]*>[^<]*optional step broke a required invariant/);
+  });
+
   it('onEnd failures surface storyboard-scoped and flip overall_passed even with all validations green', async () => {
     registerAssertion({
       id: 'end.only',
@@ -405,7 +437,13 @@ describe('runStoryboard: assertion hooks', () => {
     const { server, url } = await startStubAgent();
     let result;
     try {
-      result = await runStoryboard(url, buildStoryboard({ invariants: ['end.only'] }), runnerOptions);
+      result = await runStoryboard(url, buildStoryboard({ invariants: ['end.only'] }), {
+        ...runnerOptions,
+        _client: {
+          ...runnerOptions._client,
+          executeTask: async () => ({ success: true, data: { creatives: [] } }),
+        },
+      });
     } finally {
       server.close();
     }
@@ -414,6 +452,17 @@ describe('runStoryboard: assertion hooks', () => {
     assert.strictEqual(globals.length, 1);
     assert.strictEqual(globals[0].step_id, undefined);
     assert.strictEqual(globals[0].assertion_id, 'end.only');
+    const steps = result.phases.flatMap(phase => phase.steps);
+    assert.strictEqual(steps.length, 2);
+    assert.ok(
+      steps.every(step => step.passed),
+      'only the onEnd hook fails'
+    );
+    const xml = formatStoryboardResultsAsJUnit([result]);
+    assert.match(xml, /<testcase[^>]*name="Assertion › end.only"/);
+    assert.match(xml, /<failure[^>]*type="StoryboardAssertionFailure"/);
+    assert.strictEqual((xml.match(/<failure\b/g) ?? []).length, 1);
+    assert.strictEqual((xml.match(/failures="1"/g) ?? []).length, 2, 'suite and aggregate count the invariant');
   });
 
   it('state carries across onStart → onStep → onEnd on the same assertion', async () => {
