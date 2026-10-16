@@ -155,3 +155,129 @@ for (const allowPrivateIp of [undefined, false]) {
     );
   });
 }
+
+// The name denylist anchors every credential word to a `-`/`_` boundary, so
+// the separator-less spellings below evade it. Value matching cannot rescue
+// them either: `runCredentialValues` only learns a custom header's value
+// *through* that same name test, so a distinct secret under `XApiKey` is
+// never learned. Compact-name matching is what actually closes this.
+test('camel-case credential headers with values the run cannot learn are still excluded', async t => {
+  const { url, requests } = await startAgent(t);
+  const OLD_NAME_RE =
+    /(^|[-_])(auth(?:entication|orization)?|credentials?|secrets?|tokens?|keys?|api[-_]?keys?|access[-_]?keys?|private[-_]?keys?|password|passwd|signatures?|cert(?:ificate)?s?)([-_]|$)/i;
+  // Each value is distinct from the bearer and from the kit key, so nothing
+  // here is reachable by value comparison.
+  const stowaways = {
+    XApiKey: 'distinct-camel-apikey',
+    'X-AuthToken': 'distinct-camel-authtoken',
+    'X-AccessToken': 'distinct-camel-accesstoken',
+    'X-SessionToken': 'distinct-camel-sessiontoken',
+    XSecret: 'distinct-camel-secret',
+  };
+  for (const name of Object.keys(stowaways)) {
+    assert.equal(
+      OLD_NAME_RE.test(name.toLowerCase()),
+      false,
+      `${name} must evade the boundary-anchored denylist, or this test proves nothing`
+    );
+  }
+
+  const result = await runStoryboard(url, storyboard(), {
+    ...OPTIONS,
+    headers: { ...OPTIONS.headers, ...stowaways },
+    transport: { trustedFetchFn: (...args) => fetch(...args) },
+  });
+
+  assert.equal(result.overall_passed, true, JSON.stringify(result.phases));
+  assert.ok(requests.length >= 3);
+  for (const request of requests) {
+    assert.equal(request.headers.authorization, 'Bearer kit-step-key');
+    assert.equal(request.headers['x-adcp-tenant'], 'acme', 'routing headers still survive');
+    for (const [name, value] of Object.entries(request.headers)) {
+      assert.equal(String(value).startsWith('distinct-camel-'), false, `suite credential leaked through ${name}`);
+    }
+  }
+});
+
+// A credential the run holds is excluded wherever it is parked, including
+// under a name carrying no credential word at all.
+test('known credential values are excluded from opaque header names', async t => {
+  const { url, requests } = await startAgent(t);
+  const result = await runStoryboard(url, storyboard(), {
+    ...OPTIONS,
+    auth: undefined,
+    headers: {
+      'x-adcp-tenant': 'acme',
+      // Learned because the name is a known credential header; the scheme
+      // payload is recorded as well as the whole value.
+      Authorization: 'Bearer unique-suite-bearer',
+      // Opaque name, no credential word — only reachable by value.
+      'X-Gateway-Route': 'unique-suite-bearer',
+      // Base64 of a Basic pair the run holds structurally.
+      'X-Legacy-Envelope': `Basic ${Buffer.from('suite-user:unique-suite-password').toString('base64')}`,
+    },
+    test_kit: {
+      auth: {
+        api_key: 'kit-step-key',
+        probe_task: 'list_creatives',
+        basic: { username: 'suite-user', password: 'unique-suite-password' },
+      },
+    },
+    transport: { trustedFetchFn: (...args) => fetch(...args) },
+  });
+
+  assert.equal(result.overall_passed, true, JSON.stringify(result.phases));
+  assert.ok(requests.length >= 3);
+  for (const request of requests) {
+    assert.equal(request.headers.authorization, 'Bearer kit-step-key');
+    assert.equal(request.headers['x-adcp-tenant'], 'acme');
+    assert.equal(request.headers['x-gateway-route'], undefined, 'value-matched opaque header dropped');
+    assert.equal(request.headers['x-legacy-envelope'], undefined, 'Base64 Basic pair dropped');
+    for (const value of Object.values(request.headers)) {
+      assert.equal(String(value).includes('unique-suite-bearer'), false);
+      assert.equal(String(value).includes('unique-suite-password'), false);
+    }
+  }
+});
+
+// A routing header whose value collides with a run credential cannot be
+// resolved safely: forwarding leaks the suite principal, dropping reroutes
+// the step to another tenant. Refuse the run instead of guessing.
+test('a credential value parked in a routing header fails closed', async t => {
+  const { url, requests } = await startAgent(t);
+  const result = await runStoryboard(url, storyboard(), {
+    ...OPTIONS,
+    headers: { 'x-adcp-tenant': 'tenant-suite-key-must-not-leak' },
+    transport: { trustedFetchFn: (...args) => fetch(...args) },
+  });
+
+  assert.equal(result.overall_passed, false, 'the run must not grade a step it cannot route safely');
+  const step = result.phases[0].steps[0];
+  assert.match(step.error ?? '', /x-adcp-tenant is a routing header/);
+  assert.equal(
+    (step.error ?? '').includes('suite-key-must-not-leak'),
+    false,
+    'the error must name the header without echoing the credential'
+  );
+  // Fail closed means the colliding value never went out on the wire.
+  for (const request of requests) {
+    assert.equal(request.headers['x-adcp-tenant'], undefined);
+  }
+});
+
+// The schema documents a named-principal path form that this arm never
+// walked; any truthy value resolved to the primary key, grading a
+// multi-principal step against the wrong identity.
+test('a named test-kit API-key path is refused rather than resolved to the primary key', async t => {
+  const { url } = await startAgent(t);
+  const sb = storyboard();
+  sb.phases[0].steps[0].auth = { type: 'api_key', from_test_kit: 'auth.principals.secondary.api_key' };
+  const result = await runStoryboard(url, sb, {
+    ...OPTIONS,
+    transport: { trustedFetchFn: (...args) => fetch(...args) },
+  });
+  assert.equal(result.overall_passed, false);
+  const step = result.phases[0].steps[0];
+  assert.match(step.error ?? '', /Named test-kit API-key paths are not supported/);
+  assert.equal((step.error ?? '').includes('kit-step-key'), false, 'the refusal must not echo a credential');
+});

@@ -1339,7 +1339,12 @@ describe('storyboard runner: auth-override dispatch', () => {
         protocol: 'a2a',
         strictResponseSchemaValidation: false,
         agentTools: ['list_creatives'],
-        headers: { 'x-tenant': 'functional-buyer', 'x-api-key': 'suite-key-must-not-leak' },
+        headers: {
+          'x-tenant': 'functional-buyer',
+          'x-api-key': 'suite-key-must-not-leak',
+          XApiKey: 'distinct-camel-apikey',
+          'X-SessionToken': 'distinct-camel-sessiontoken',
+        },
         test_kit: { auth: { api_key: 'functional-kit-key', probe_task: 'list_creatives' } },
         transport: { trustedFetchFn: fetchFn },
         _profile: { name: 'A2A auth probe fixture', tools: ['list_creatives'] },
@@ -1355,6 +1360,15 @@ describe('storyboard runner: auth-override dispatch', () => {
     assert.strictEqual(functionalCall.adcpAuth, 'functional-kit-key');
     assert.strictEqual(functionalCall.headers['x-tenant'], 'functional-buyer');
     assert.strictEqual(functionalCall.headers['x-api-key'], undefined);
+    // Same credential isolation on the A2A path: a camel-case credential name
+    // evades the boundary-anchored denylist and its value is unlearnable, so
+    // only compact-name matching excludes it.
+    assert.strictEqual(functionalCall.headers['xapikey'], undefined);
+    assert.strictEqual(functionalCall.headers['x-sessiontoken'], undefined);
+    for (const value of Object.values(functionalCall.headers)) {
+      assert.strictEqual(String(value).includes('must-not-leak'), false);
+      assert.strictEqual(String(value).startsWith('distinct-camel-'), false);
+    }
     assert.strictEqual(functionalResult.phases[0].steps[0].response_record.transport, 'a2a');
   });
 
