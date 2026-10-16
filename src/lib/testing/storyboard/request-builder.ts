@@ -463,9 +463,9 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     //
     // Spread the fixture (after $context injection) so proposal-mode-
     // required fields like `total_budget` flow through. Resolve the account
-    // with the same authority rules as package mode: a trusted context wins,
-    // fixture-authored natural keys retain their operator, and opaque fixture
-    // account IDs cannot override the harness scope. Proposal-mode storyboards
+    // with the same authority rules as package mode: authored identities win,
+    // natural keys retain their operator and carry over sandbox routing, and
+    // context/harness scope fills in only absent identities. Proposal-mode storyboards
     // may still author a non-default brand that must survive the complete
     // brief/refine/finalize flow (adcp-client#1600). Dates and proposal_id are
     // still normalised by the enricher.

@@ -159,8 +159,9 @@ export function formatStoryboardResultsAsJUnit(
     const suiteGroup = options.suite_groups?.[sb.storyboard_id];
     const suiteClassname = suiteGroup ? `${suiteGroup}.${sb.storyboard_id}` : sb.storyboard_id;
     const suiteCases: string[] = [];
-    let suiteFailures = sb.failed_count;
+    let suiteFailures = 0;
     let representedSkipped = 0;
+    let suiteSkipped = 0;
     const passPhases = sb.passes?.length
       ? sb.passes.map(pass => ({ label: `Pass ${pass.pass_index} › `, phases: pass.phases }))
       : [{ label: '', phases: sb.phases }];
@@ -172,6 +173,7 @@ export function formatStoryboardResultsAsJUnit(
           const time = ((step.duration_ms || 0) / 1000).toFixed(3);
           if (step.skipped) {
             representedSkipped += 1;
+            suiteSkipped += 1;
             totalSkipped += 1;
             suiteCases.push(
               `    <testcase classname="${xmlEscape(suiteClassname)}" name="${xmlEscape(name)}" time="${time}">\n` +
@@ -181,7 +183,6 @@ export function formatStoryboardResultsAsJUnit(
             continue;
           }
           if (!step.passed) {
-            totalFailures += 1;
             const failureDetails = [
               step.error,
               ...step.validations
@@ -197,6 +198,16 @@ export function formatStoryboardResultsAsJUnit(
             ]
               .filter(Boolean)
               .join('\n');
+            if (step.counts_toward_failure === false) {
+              suiteCases.push(
+                `    <testcase classname="${xmlEscape(suiteClassname)}" name="${xmlEscape(name)}" time="${time}">\n` +
+                  `      <system-out>${xmlEscape(`Optional phase failure; excluded from storyboard verdict.\n${failureDetails}`)}</system-out>\n` +
+                  `    </testcase>`
+              );
+              continue;
+            }
+            totalFailures += 1;
+            suiteFailures += 1;
             // Attribute-only consumers (e.g. dashboards that surface only the
             // `message=` on failure) see the first hint when there's no
             // task-level `step.error` — common on validation-only failures
@@ -228,6 +239,7 @@ export function formatStoryboardResultsAsJUnit(
     if (hasStoryboardFixtureSkip) {
       totalTests += 1;
       totalSkipped += 1;
+      suiteSkipped += 1;
       suiteCases.push(
         `    <testcase classname="${xmlEscape(suiteClassname)}" name="Fixture resolution" time="0.000">\n` +
           `      <skipped message="${xmlEscape(fixtureGap.detail)}"/>\n` +
@@ -250,7 +262,7 @@ export function formatStoryboardResultsAsJUnit(
     totalDuration += sb.total_duration_ms || 0;
     const suiteTests = suiteCases.length;
     suites.push(
-      `  <testsuite name="${xmlEscape(suiteGroup ? `${suiteGroup} › ${sb.storyboard_title}` : sb.storyboard_title)}"${suiteGroup ? ` package="${xmlEscape(`adcp.${suiteGroup}`)}"` : ''} tests="${suiteTests}" failures="${suiteFailures}" skipped="${sb.skipped_count}" time="${((sb.total_duration_ms || 0) / 1000).toFixed(3)}" timestamp="${sb.tested_at || new Date().toISOString()}">\n` +
+      `  <testsuite name="${xmlEscape(suiteGroup ? `${suiteGroup} › ${sb.storyboard_title}` : sb.storyboard_title)}"${suiteGroup ? ` package="${xmlEscape(`adcp.${suiteGroup}`)}"` : ''} tests="${suiteTests}" failures="${suiteFailures}" skipped="${suiteSkipped}" time="${((sb.total_duration_ms || 0) / 1000).toFixed(3)}" timestamp="${sb.tested_at || new Date().toISOString()}">\n` +
         suiteCases.join('\n') +
         `\n  </testsuite>`
     );
