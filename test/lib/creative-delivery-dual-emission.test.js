@@ -89,13 +89,13 @@ describe('dual-emitted product format pairing (#3312)', () => {
     }
   });
 
-  test('invalid reference entries do not shift the index pairing', () => {
+  test('an invalid reference prevents inference for the whole product', () => {
     const selected = product();
     selected.format_ids[0] = {};
     assert.throws(() => projectCreativeForDelivery(creative(), selected, 'legacy'), CreativeFormatProjectionError);
-    assert.deepEqual(
-      projectCreativeForDelivery(creative('leaderboard'), selected, 'legacy').format_id,
-      selected.format_ids[1]
+    assert.throws(
+      () => projectCreativeForDelivery(creative('leaderboard'), selected, 'legacy'),
+      CreativeFormatProjectionError
     );
   });
 
@@ -107,6 +107,83 @@ describe('dual-emitted product format pairing (#3312)', () => {
     );
     selected.format_options[0].canonical_formats_only = true;
     assert.throws(() => projectCreativeForDelivery(creative(), selected, 'legacy'), CreativeFormatProjectionError);
+    assert.throws(
+      () => projectCreativeForDelivery(creative('leaderboard'), selected, 'legacy'),
+      CreativeFormatProjectionError
+    );
+  });
+
+  for (const divergence of ['kind', 'catalog size', 'explicit size', 'declared sizes', 'duration']) {
+    test(`refuses index inference for a divergent ${divergence} and retains diagnostics`, () => {
+      const selected = product();
+      if (divergence === 'kind') selected.format_ids[0].id = 'video_standard_30s';
+      if (divergence === 'catalog size') selected.format_ids.reverse();
+      if (divergence === 'explicit size') selected.format_ids[0].width = 728;
+      if (divergence === 'declared sizes') selected.format_options[0].params = { sizes: [{ width: 728, height: 90 }] };
+      if (divergence === 'duration') {
+        selected.format_ids[0] = { agent_url: AGENT, id: 'custom_video', duration_ms: 30000 };
+        selected.format_options[0] = {
+          format_option_id: 'mrec',
+          format_kind: 'video_hosted',
+          params: { duration_ms_exact: 15000 },
+        };
+      }
+      const input = creative();
+      input.format_kind = selected.format_options[0].format_kind;
+      assert.throws(() => projectCreativeForDelivery(input, selected, 'legacy'), CreativeFormatProjectionError);
+      const canonical = toCanonicalOnlyProduct(selected);
+      assert.equal(canonical.diagnostics.length, 2, 'untrusted alignment cannot hide unmapped references');
+    });
+  }
+
+  test('one contradictory explicit route prevents inference for all other options', () => {
+    const selected = product();
+    selected.format_options[0].v1_format_ref = [selected.format_ids[1]];
+    assert.throws(
+      () => projectCreativeForDelivery(creative('leaderboard'), selected, 'legacy'),
+      CreativeFormatProjectionError
+    );
+  });
+
+  test('duplicate references linked to distinct options remain ambiguous without a pin', () => {
+    const selected = product();
+    selected.format_ids[1] = { ...selected.format_ids[0] };
+    selected.format_options[1].params = { ...selected.format_options[0].params };
+    const input = creative();
+    delete input.format_option_ref;
+    assert.throws(() => projectCreativeForDelivery(input, selected, 'legacy'), CreativeFormatProjectionError);
+  });
+
+  test('restored explicit routes override the full product index pairing', () => {
+    const selected = product();
+    selected.format_options.reverse();
+    selected.format_options[0].v1_format_ref = [selected.format_ids[1]];
+    selected.format_options[1].v1_format_ref = [selected.format_ids[0]];
+    const restored = JSON.parse(JSON.stringify(toAdditiveCanonicalProduct(selected)));
+    const resolver = canonicalFormatLegacyResolverFromRoutes(restored.routes);
+    const projected = projectSyncCreativesForDelivery(
+      { creatives: [creative('leaderboard')] },
+      [restored.product],
+      'legacy',
+      undefined,
+      resolver
+    );
+    assert.deepEqual(projected.creatives[0].format_id, selected.format_ids[1]);
+  });
+
+  test('an adopter resolver takes precedence over index pairing', () => {
+    const selected = product();
+    const explicit = { agent_url: 'https://seller.example/formats', id: 'resolved_mrec' };
+    const projected = projectCreativeForDelivery(
+      creative(),
+      selected,
+      'legacy',
+      'sync_creatives',
+      undefined,
+      context =>
+        context.source === 'product' && context.declaration.format_option_id === 'mrec' ? explicit : undefined
+    );
+    assert.deepEqual(projected.format_id, explicit);
   });
 
   test('sync and inline create/update share the product pairing', () => {

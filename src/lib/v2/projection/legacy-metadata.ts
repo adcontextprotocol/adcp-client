@@ -55,34 +55,6 @@ export function legacyFormatRefsForDeclaration(value: unknown): readonly V1Forma
   return Array.isArray(declaration.v1_format_ref) ? declaration.v1_format_ref : [];
 }
 
-/** Preserve the seller-authored index pairing in a dual-emitted product. */
-export function withDualEmissionLegacyRefs<T>(formatOptions: T[], formatIds: unknown): T[] {
-  if (!Array.isArray(formatIds) || formatIds.length !== formatOptions.length) return formatOptions;
-  return formatOptions.map((value, index) => {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
-    const option = value as Record<string, unknown>;
-    if (option.canonical_formats_only === true || legacyFormatRefsForDeclaration(option).length > 0) return value;
-    const ref = formatIds[index] as V1FormatId | undefined;
-    if (
-      !ref ||
-      typeof ref !== 'object' ||
-      Array.isArray(ref) ||
-      typeof ref.agent_url !== 'string' ||
-      ref.agent_url.length === 0 ||
-      typeof ref.id !== 'string' ||
-      ref.id.length === 0
-    ) {
-      return value;
-    }
-    // Clone before attaching private routes: discovery and delivery must never
-    // mutate the seller's objects or expose legacy identity on canonical options.
-    const paired = { ...value };
-    transferLegacyCreativeMetadata(value, paired);
-    legacyRefsByDeclaration.set(paired, [{ ...ref }]);
-    return paired;
-  });
-}
-
 export function selectedFormatOptions(value: unknown): readonly DeclarationWithMetadata[] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
   const refs = (value as PackageSelectionMetadata).format_option_refs;

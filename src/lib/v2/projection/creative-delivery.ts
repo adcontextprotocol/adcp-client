@@ -37,8 +37,8 @@ import {
   legacyFormatRefsForDeclaration,
   selectedFormatOptions,
   transferLegacyCreativeMetadata,
-  withDualEmissionLegacyRefs,
 } from './legacy-metadata';
+import { withDualEmissionLegacyRefs } from './dual-emission';
 import type { CanonicalFormatDeclaration } from './legacy-metadata';
 import type { UndeclaredFormatOptionSelector } from './legacy-routes';
 import { canonicalize as canonicalizeJson } from '../../utils/jcs';
@@ -809,19 +809,15 @@ function candidatesFromContainer(
     );
   }
   const candidates: LegacyCandidate[] = [];
-  const formatOptions = [
-    ...withDualEmissionLegacyRefs(
-      Array.isArray(container.format_options) ? container.format_options : [],
-      container.format_ids
-    ),
-    ...selectedFormatOptions(container),
-  ];
-  for (const optionValue of formatOptions) {
+  const nativeOptions = Array.isArray(container.format_options) ? container.format_options : [];
+  const formatOptions = [...nativeOptions, ...selectedFormatOptions(container)];
+  const resolvedOptions = formatOptions.map(optionValue => {
     const option = record(optionValue);
-    if (!option) continue;
+    if (!option) return optionValue;
     const formatKind = typeof option.format_kind === 'string' ? option.format_kind : undefined;
     const formatOptionRef = optionReference(option);
     let refs = [...legacyFormatRefsForDeclaration(option)];
+    if (refs.length > 0) return optionValue;
     if (refs.length === 0 && option.canonical_formats_only !== true && formatKind) {
       try {
         refs =
@@ -840,16 +836,30 @@ function candidatesFromContainer(
         );
       }
     }
-    for (const ref of refs) {
+    return refs.length > 0 ? { ...option, v1_format_ref: refs } : optionValue;
+  });
+  // Explicit resolver routes (including restored sidecars) precede index
+  // inference and can disprove the alignment for the whole product.
+  const pairedOptions = [
+    ...withDualEmissionLegacyRefs(resolvedOptions.slice(0, nativeOptions.length), container.format_ids),
+    ...resolvedOptions.slice(nativeOptions.length),
+  ];
+  for (const optionValue of pairedOptions) {
+    const option = record(optionValue);
+    if (!option) continue;
+    const formatKind = typeof option.format_kind === 'string' ? option.format_kind : undefined;
+    const formatOptionRef = optionReference(option);
+    for (const ref of legacyFormatRefsForDeclaration(option)) {
       candidates.push({ ref, formatKind, formatOptionRef, selectorParams: option.params ?? container.params });
     }
   }
+  const linkedRefs = new Set(candidates.map(candidate => candidateKey({ ref: candidate.ref })));
   const containerKind = typeof container.format_kind === 'string' ? container.format_kind : undefined;
   for (const key of ['format_ids', 'formats'] as const) {
     for (const ref of refsFromValue(container[key])) {
       // A linked option already represents this reference with richer selector
       // evidence. Adding a bare copy would make an unpinned creative ambiguous.
-      if (candidates.some(candidate => candidateKey({ ref: candidate.ref }) === candidateKey({ ref }))) continue;
+      if (linkedRefs.has(candidateKey({ ref }))) continue;
       candidates.push({
         ref,
         formatKind: resolveCanonicalFormatKind(ref.id) ?? containerKind,
