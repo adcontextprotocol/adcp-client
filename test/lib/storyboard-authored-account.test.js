@@ -27,11 +27,13 @@ const SYNC_CONTEXT = {
 for (const [task, fields] of [
   ['get_products', { buying_mode: 'brief' }],
   ['get_products', { buying_mode: 'refine' }],
+  ['create_media_buy', { packages: [{ product_id: 'product-1', pricing_option_id: 'cpm', budget: 1000 }] }],
+  ['create_media_buy', { proposal_id: 'proposal-1', total_budget: { amount: 1000, currency: 'USD' } }],
   ['get_media_buys', {}],
   ['get_media_buy_delivery', {}],
   ['update_media_buy', { media_buy_id: 'buy-1', paused: true }],
 ]) {
-  describe(`${task} ${fields.buying_mode ?? ''} authored account precedence (#3195)`, () => {
+  describe(`${task} ${fields.buying_mode ?? (fields.proposal_id ? 'proposal' : '')} authored account precedence (#3195, #3267)`, () => {
     function request(account, context = SYNC_CONTEXT, options = OPTIONS) {
       return buildRequest(
         { id: 'account-probe', task, sample_request: { ...fields, ...(account !== undefined && { account }) } },

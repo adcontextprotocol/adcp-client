@@ -1030,6 +1030,7 @@ function applyBranchSetGrading(
       step.skip = { reason: 'peer_branch_taken', detail };
       delete step.error;
       delete step.adcp_error;
+      delete step.counts_toward_failure;
       skippedDelta++;
       regraded = true;
     }
@@ -4724,6 +4725,10 @@ async function executeStoryboardPass(
         if (!phase.optional || (routingContext ? routedOauthPresent.has(assignment.instanceIndex) : presenceDetected)) {
           failedCount++;
           countedAsFailed.add(result);
+        } else if (!result.validations.some(validation => validation.check === 'assertion' && !validation.passed)) {
+          // Cross-step invariants gate the storyboard even inside optional
+          // phases, independently of the executed-step failure count.
+          result.counts_toward_failure = false;
         }
         if (step.stateful) {
           // Real failure takes precedence over a prior skip-trigger in
@@ -6323,9 +6328,9 @@ async function executeStep(
     };
   }
 
-  // Execute the task. MCP auth overrides use the raw MCP probe so the runner
+  // Execute the task. MCP security probes use the raw MCP probe so the runner
   // can control credentials while still completing the Streamable HTTP
-  // handshake. A2A auth overrides use a one-shot TestClient instead: this
+  // handshake. A2A security probes use a one-shot TestClient instead: this
   // keeps agent-card discovery and message dispatch on the official A2A SDK
   // path, including `supportedInterfaces` endpoint selection. The existing
   // guarded A2A fetch boundary is wrapped with raw-response capture below so
@@ -6428,7 +6433,27 @@ async function executeStep(
       extraction: { path: 'none' },
     };
   }
-  const useRawProbe = rawProbeHeaders !== undefined;
+  // Credentialed functional steps use the configured official protocol client.
+  // Raw probes remain necessary for negative auth and HTTP-envelope assertions.
+  const useSdkAuthOverride =
+    typeof step.auth === 'object' &&
+    step.auth.type === 'api_key' &&
+    step.auth.from_test_kit === true &&
+    step.auth.value_strategy === undefined &&
+    step.expect_error !== true &&
+    !(step.validations ?? []).some(validation => validation.check.startsWith('http_'));
+  const useRawProbe = rawProbeHeaders !== undefined && !useSdkAuthOverride;
+  let authOverrideClient: TestClient | undefined;
+  const stepClient = () => {
+    if (!useSdkAuthOverride) return client;
+    if (rawProbeHeaders === undefined) throw new Error('Step auth override credentials were not resolved');
+    return (authOverrideClient ??= createAuthOverrideClient(
+      runState.agentUrl,
+      options.protocol ?? 'mcp',
+      options,
+      rawProbeHeaders
+    ));
+  };
 
   let taskResult: TaskResult | undefined;
   let stepResult: { duration_ms: number; error?: string; passed: boolean };
@@ -6533,7 +6558,7 @@ async function executeStep(
     const started = Date.now();
     try {
       if (options.protocol === 'a2a') {
-        const probeClient = createA2AAuthOverrideClient(runState.agentUrl, options, rawProbeHeaders ?? {});
+        const probeClient = createAuthOverrideClient(runState.agentUrl, 'a2a', options, rawProbeHeaders ?? {});
         const captured = await withRawResponseCapture(() =>
           runStep(step.title, effectiveStep.task, () =>
             executeStoryboardTask(probeClient, effectiveStep.task, request, {
@@ -6655,7 +6680,7 @@ async function executeStep(
       // authors writing follow-up steps that observe seller state after a
       // barrier timeout should account for this race.
       const started = Date.now();
-      crossResponses = await runParallelDispatches(client, effectiveStep.task, request, {
+      crossResponses = await runParallelDispatches(stepClient(), effectiveStep.task, request, {
         spec: step.parallel_dispatch,
         keyMinter: generateIdempotencyKey,
         correlationPrefix: step.id,
@@ -6705,7 +6730,7 @@ async function executeStep(
       }
     } else {
       const dispatch = () =>
-        executeStoryboardTask(client, effectiveStep.task, request, {
+        executeStoryboardTask(stepClient(), effectiveStep.task, request, {
           skipIdempotencyAutoInject: testsIdempotencyKeyOmission,
           skipAccountValidation: testsMissingAccount,
           skipRequestValidation: testsSchemaInvalidRequest,
@@ -10029,18 +10054,19 @@ function isCredentialHeaderName(name: string): boolean {
 }
 
 /**
- * Create an isolated A2A client whose credential-bearing headers are exactly
+ * Create an isolated protocol client whose credential-bearing headers are exactly
  * the step override. Removing `test_kit` is load-bearing: createTestClient
  * otherwise promotes its API key back into `auth`, defeating `auth: none`.
  * Credential-looking custom headers are removed as well, while non-auth
  * routing headers remain intact. Functional request signing is deliberately
- * disabled because it is another authentication channel and would defeat an
- * unauthenticated probe. The configured transport (most importantly
+ * disabled to avoid mixing the suite's signing identity with a different
+ * step principal or authenticating an unauthenticated probe. The configured transport (most importantly
  * trustedFetchFn for private CAs / hosted egress) still flows through the
  * protocol layer's guarded fetch boundary.
  */
-function createA2AAuthOverrideClient(
+function createAuthOverrideClient(
   agentUrl: string,
+  protocol: 'mcp' | 'a2a',
   options: StoryboardRunOptions,
   authHeaders: Record<string, string>
 ): TestClient {
@@ -10051,7 +10077,7 @@ function createA2AAuthOverrideClient(
   for (const [name, value] of Object.entries(authHeaders)) {
     if (name.toLowerCase() === 'authorization' && value.startsWith('Bearer ')) {
       // Route bearer overrides through the normal AgentConfig auth field so
-      // the official A2A path emits both Authorization and x-adcp-auth, just
+      // the official protocol path emits both Authorization and x-adcp-auth, just
       // like an ordinary SDK dispatch. Basic auth remains a custom header.
       auth = { type: 'bearer', token: value.slice('Bearer '.length) };
     } else {
@@ -10059,9 +10085,9 @@ function createA2AAuthOverrideClient(
     }
   }
 
-  return createTestClient(agentUrl, 'a2a', {
+  return createTestClient(agentUrl, protocol, {
     ...options,
-    protocol: 'a2a',
+    protocol,
     auth,
     test_kit: undefined,
     _client: undefined,

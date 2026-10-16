@@ -4,6 +4,7 @@ const http = require('http');
 
 const { runStoryboard, runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner');
 const { parseStoryboard } = require('../../dist/lib/testing/storyboard/loader');
+const { formatStoryboardResultsAsJUnit } = require('../../dist/lib/testing/storyboard/junit');
 
 /**
  * Build a minimal http stub that answers every request with the given status
@@ -134,11 +135,13 @@ describe('branch_set any_of: peer_branch_taken grading', () => {
         'detail must match the runner-output contract exactly'
       );
       assert.strictEqual(rejectStep.error, undefined, 'residual error string cleared on re-grade');
+      assert.strictEqual(rejectStep.counts_toward_failure, undefined, 'residual failure grading cleared');
 
       assert.strictEqual(result.phases[1].passed, true, 'peer phase with all steps skipped grades passed');
       assert.strictEqual(result.phases[2].passed, true, 'gate passes via accumulated flag');
       assert.strictEqual(result.overall_passed, true);
       assert.strictEqual(result.failed_count, 0);
+      assert.doesNotMatch(formatStoryboardResultsAsJUnit([result]), /<failure\b/);
     } finally {
       server.close();
     }
@@ -165,6 +168,12 @@ describe('branch_set any_of: peer_branch_taken grading', () => {
 
       assert.strictEqual(gateStep.passed, false, 'assert_contribution fails when no branch contributed');
       assert.strictEqual(result.overall_passed, false);
+      assert.strictEqual(acceptStep.counts_toward_failure, false);
+      assert.strictEqual(rejectStep.counts_toward_failure, false);
+      assert.strictEqual(gateStep.counts_toward_failure, undefined);
+      const xml = formatStoryboardResultsAsJUnit([result]);
+      assert.strictEqual((xml.match(/<failure\b/g) || []).length, 1, 'required gate remains the failure signal');
+      assert.match(xml, /<testsuites [^>]*failures="1"/);
     } finally {
       server.close();
     }

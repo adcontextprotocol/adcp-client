@@ -19,6 +19,7 @@ const {
   resolveAssertions,
 } = require('../../dist/lib/testing/storyboard/assertions.js');
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
+const { formatStoryboardResultsAsJUnit } = require('../../dist/lib/testing/storyboard/junit.js');
 
 describe('assertion registry', () => {
   beforeEach(() => clearAssertionRegistry());
@@ -392,6 +393,37 @@ describe('runStoryboard: assertion hooks', () => {
     assert.ok(asValidation, 'step.validations must carry an assertion-check entry');
     assert.strictEqual(asValidation.passed, false);
     assert.match(asValidation.description, /fail\.on\.second: step 2 broke the rule/);
+  });
+
+  it('onStep invariant failures in optional phases still fail JUnit', async () => {
+    registerAssertion({
+      id: 'optional.invariant',
+      description: 'gates optional steps too',
+      onStep(_ctx, stepResult) {
+        return stepResult.step_id === 's1'
+          ? [{ passed: false, description: 'optional step broke a required invariant', error: 'invariant failed' }]
+          : [];
+      },
+    });
+    const storyboard = buildStoryboard({ invariants: ['optional.invariant'] });
+    const [optionalStep, requiredStep] = storyboard.phases[0].steps;
+    storyboard.phases = [
+      { id: 'optional', title: 'Optional probe', optional: true, steps: [optionalStep] },
+      { id: 'required', title: 'Required path', depends_on: [], steps: [requiredStep] },
+    ];
+    const result = await runStoryboard('https://seller.example/mcp', storyboard, {
+      ...runnerOptions,
+      _client: {
+        executeTask: async () => ({ success: true, status: 'completed', data: { creatives: [] } }),
+      },
+    });
+    assert.strictEqual(result.overall_passed, false);
+    assert.strictEqual(result.phases[1].passed, true, 'the required path passed');
+    assert.strictEqual(result.phases[0].steps[0].counts_toward_failure, undefined);
+    const xml = formatStoryboardResultsAsJUnit([result]);
+    assert.match(xml, /<testsuites [^>]*failures="1"/);
+    assert.match(xml, /<testsuite [^>]*failures="1"/);
+    assert.match(xml, /<failure\b[^>]*>[^<]*optional step broke a required invariant/);
   });
 
   it('onEnd failures surface storyboard-scoped and flip overall_passed even with all validations green', async () => {
