@@ -75,10 +75,13 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // The BigQuery sink convergence backport for SDK 15.9.1 adds no published files
 // but grows the sink module and runbook; the measured tarball is 20,451,293
 // bytes. Allow about 28 KB above that for compressor variance.
-// Raised for the signed 3.2.5 + 3.1.29 bundle replacement. Measured packed size
-// of the final both-corpus replacement is 20,489,403 bytes (the previous 15.9.3
-// release packed 20,455,431). This keeps roughly the same headroom the budget
-// carried before rather than opening a larger allowance.
+// Raised for the signed 3.2.5 + 3.1.29 bundle replacement. The final both-corpus
+// replacement measures 20,489,403 bytes packed (the previous 15.9.3 release
+// packed 20,455,431 — a real growth of 33,972 bytes). This follows the same rule
+// the entries above use: keep the ~25 KB compressor margin and round up to the
+// next 10 KB, i.e. 20,489,403 + 25,000 = 20,514,403 -> 20,520,000. The resulting
+// 30,597-byte headroom is therefore the convention applied, not a discretionary
+// increase; a strictly minimal ceiling would leave no compressor variance.
 const MAX_PACKED_TARBALL_BYTES = 20_520_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
