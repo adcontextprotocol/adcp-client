@@ -1142,25 +1142,57 @@ describe('storyboard runner: auth-override dispatch', () => {
               jsonrpc: '2.0',
               id: body.id,
               result: {
-                kind: 'task',
-                id: `capabilities-${rpcCalls.length}`,
-                contextId: `capabilities-context-${rpcCalls.length}`,
-                status: { state: 'completed', timestamp: new Date().toISOString() },
-                artifacts: [
-                  {
-                    artifactId: 'capabilities',
-                    parts: [
-                      {
-                        kind: 'data',
-                        data: {
-                          adcp_version: '3.2',
-                          supported_protocols: ['creative'],
-                          tools: [{ name: 'list_creatives' }],
+                task: {
+                  id: `capabilities-${rpcCalls.length}`,
+                  contextId: `capabilities-context-${rpcCalls.length}`,
+                  status: { state: 'TASK_STATE_COMPLETED', timestamp: new Date().toISOString() },
+                  artifacts: [
+                    {
+                      artifactId: 'capabilities',
+                      parts: [
+                        {
+                          data: {
+                            adcp: {
+                              major_versions: [3],
+                              supported_versions: ['3.2'],
+                              idempotency: { supported: true, replay_ttl_seconds: 86400 },
+                            },
+                            supported_protocols: ['creative'],
+                            specialisms: [],
+                          },
+                          mediaType: 'application/json',
                         },
-                      },
-                    ],
-                  },
-                ],
+                      ],
+                    },
+                  ],
+                },
+              },
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        if (JSON.stringify(body).includes('functional-a2a-kit')) {
+          return new Response(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: body.id,
+              result: {
+                task: {
+                  id: 'functional-kit-task',
+                  contextId: 'functional-kit-context',
+                  status: { state: 'TASK_STATE_COMPLETED', timestamp: new Date().toISOString() },
+                  artifacts: [
+                    {
+                      artifactId: 'creatives',
+                      parts: [
+                        {
+                          data: { creatives: [], context: { correlation_id: 'functional-a2a-kit' } },
+                          mediaType: 'application/json',
+                        },
+                      ],
+                    },
+                  ],
+                },
               },
             }),
             { status: 200, headers: { 'content-type': 'application/json' } }
@@ -1278,6 +1310,66 @@ describe('storyboard runner: auth-override dispatch', () => {
       assert.strictEqual(step.response_record.status, 401);
       assert.match(step.response_record.headers['www-authenticate'], /^Bearer /);
     }
+
+    const functionalResult = await runStoryboard(
+      agentUrl,
+      {
+        ...storyboard,
+        id: 'a2a_functional_test_kit_override',
+        phases: [
+          {
+            id: 'functional',
+            title: 'Functional test-kit call',
+            steps: [
+              {
+                id: 'functional_kit_call',
+                title: 'Read creatives with the test-kit principal',
+                task: 'list_creatives',
+                auth: { type: 'api_key', from_test_kit: true },
+                sample_request: { context: { correlation_id: 'functional-a2a-kit' } },
+                validations: [
+                  { check: 'field_present', path: 'creatives', description: 'Official A2A response is extracted' },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        protocol: 'a2a',
+        strictResponseSchemaValidation: false,
+        agentTools: ['list_creatives'],
+        headers: {
+          'x-tenant': 'functional-buyer',
+          'x-api-key': 'suite-key-must-not-leak',
+          XApiKey: 'distinct-camel-apikey',
+          'X-SessionToken': 'distinct-camel-sessiontoken',
+        },
+        test_kit: { auth: { api_key: 'functional-kit-key', probe_task: 'list_creatives' } },
+        transport: { trustedFetchFn: fetchFn },
+        _profile: { name: 'A2A auth probe fixture', tools: ['list_creatives'] },
+        _client: {},
+      }
+    );
+    assert.strictEqual(functionalResult.overall_passed, true, JSON.stringify(functionalResult.phases));
+    const functionalCall = rpcCalls.find(call => JSON.stringify(call.body).includes('functional-a2a-kit'));
+    assert.ok(functionalCall, 'functional override reaches the card-selected official A2A endpoint');
+    assert.strictEqual(functionalCall.url, rpcUrl);
+    assert.strictEqual(functionalCall.body.method, 'SendMessage');
+    assert.strictEqual(functionalCall.authorization, 'Bearer functional-kit-key');
+    assert.strictEqual(functionalCall.adcpAuth, 'functional-kit-key');
+    assert.strictEqual(functionalCall.headers['x-tenant'], 'functional-buyer');
+    assert.strictEqual(functionalCall.headers['x-api-key'], undefined);
+    // Same credential isolation on the A2A path: a camel-case credential name
+    // evades the boundary-anchored denylist and its value is unlearnable, so
+    // only compact-name matching excludes it.
+    assert.strictEqual(functionalCall.headers['xapikey'], undefined);
+    assert.strictEqual(functionalCall.headers['x-sessiontoken'], undefined);
+    for (const value of Object.values(functionalCall.headers)) {
+      assert.strictEqual(String(value).includes('must-not-leak'), false);
+      assert.strictEqual(String(value).startsWith('distinct-camel-'), false);
+    }
+    assert.strictEqual(functionalResult.phases[0].steps[0].response_record.transport, 'a2a');
   });
 
   it('reports A2A auth-probe transport failures instead of grading discovery responses or empty captures', async () => {
@@ -2265,6 +2357,11 @@ describe('security_baseline: unconditional PRM enforcement (#677)', () => {
       assert.strictEqual(oauthPhase.passed, false, 'oauth_discovery phase fails');
       const prmStep = oauthPhase.steps.find(s => s.step_id === 'probe_protected_resource');
       assert.strictEqual(prmStep.passed, false, 'PRM probe step fails resource_equals_agent_url');
+      assert.strictEqual(prmStep.counts_toward_failure, undefined, 'advertised OAuth failures remain mandatory');
+      const { formatStoryboardResultsAsJUnit } = require('../../dist/lib/testing/storyboard/junit');
+      const xml = formatStoryboardResultsAsJUnit([result]);
+      assert.match(xml, /<testsuites [^>]*failures="[1-9][0-9]*"/);
+      assert.match(xml, /<failure\b/);
       const resourceCheck = prmStep.validations.find(v => v.check === 'resource_equals_agent_url');
       assert.ok(resourceCheck && resourceCheck.passed === false, 'resource_equals_agent_url validation failed');
     } finally {
@@ -5199,6 +5296,27 @@ describe('mcp_session_probe: redaction fails closed at traversal limits (#2940 r
 });
 
 describe('mcp_session_probe: routing headers are derived, not name-guessed (#2940 review)', () => {
+  it('refuses routing values containing known credentials before a session probe dispatches', async () => {
+    const agent = await startProbeAgent({ enforce: 'session', servePrm: true });
+    try {
+      const result = await runStoryboard(
+        agent.agentUrl,
+        securityBaselineStoryboard(),
+        runOptionsFor(agent, { headers: { 'x-adcp-tenant': 'tenant-sk_valid' } })
+      );
+      const step = stepsById(result).probe_unauth;
+      assert.strictEqual(step.skipped, true, JSON.stringify(step));
+      assert.strictEqual(step.skip_reason, 'session_probe_ungradable');
+      assert.match(step.skip.detail, /x-adcp-tenant/);
+      assert.match(step.skip.detail, /value containing a credential/);
+      assert.match(step.skip.detail, /Choose a routing value or suite credential/);
+      assert.strictEqual(step.skip.detail.includes('sk_valid'), false);
+      assert.strictEqual(agent.rpc().length, 0, 'no session request may carry the colliding routing value');
+    } finally {
+      agent.close();
+    }
+  });
+
   it('preserves routing headers a name-based credential filter would drop', async () => {
     // `isCredentialHeaderName`'s regex treats any `…-key…` segment as a
     // credential, which would strip these and silently reroute the probe.
@@ -5317,6 +5435,10 @@ describe('mcp_session_probe: hard streaming body cap (#2940 review P1)', () => {
     const selfStopBytes = 64 * 1024 * 1024;
     let streamed = 0;
     let closedByPeer = false;
+    let resolveStreamClosed;
+    const streamClosed = new Promise(resolve => {
+      resolveStreamClosed = resolve;
+    });
     const server = http.createServer(async (req, res) => {
       if (req.method === 'GET') {
         res.writeHead(405);
@@ -5356,21 +5478,30 @@ describe('mcp_session_probe: hard streaming body cap (#2940 review P1)', () => {
       // Unbounded SSE flood: `wrapFetchWithSizeLimit` exempts this content
       // type entirely, which is why the probe needs its own cap.
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
-      const filler = 'x'.repeat(bytesPerFrame);
-      const pump = setInterval(() => {
-        if (res.writableEnded || res.destroyed) return clearInterval(pump);
-        // Keep writing through backpressure: a mock that stops on a false
-        // return never exceeds the cap and would not test it.
-        for (let i = 0; i < 8; i += 1) {
-          streamed += bytesPerFrame;
-          res.write(`: ${filler}\n\n`);
+      const frame = `: ${'x'.repeat(bytesPerFrame)}\n\n`;
+      const frameBytes = Buffer.byteLength(frame);
+      let pendingPump;
+      function pump() {
+        pendingPump = undefined;
+        if (res.writableEnded || res.destroyed) return;
+        for (let i = 0; i < 8 && streamed < selfStopBytes; i += 1) {
+          streamed += frameBytes;
+          // False means queued, not rejected. Resume on drain so a busy
+          // consumer cannot turn this fixture into an unbounded server buffer.
+          if (!res.write(frame)) {
+            res.once('drain', pump);
+            return;
+          }
         }
-        if (streamed > selfStopBytes) clearInterval(pump);
-      }, 1);
-      res.on('close', () => {
+        if (streamed < selfStopBytes) pendingPump = setImmediate(pump);
+      }
+      res.once('close', () => {
         closedByPeer = !res.writableEnded;
-        clearInterval(pump);
+        clearImmediate(pendingPump);
+        res.off('drain', pump);
+        resolveStreamClosed();
       });
+      pump();
       return;
     });
     await new Promise(resolve => server.listen(0, resolve));
@@ -5380,7 +5511,24 @@ describe('mcp_session_probe: hard streaming body cap (#2940 review P1)', () => {
       streamedBytes: () => streamed,
       closedByPeer: () => closedByPeer,
       selfStopBytes,
-      close: () => server.close(),
+      waitForStreamClose: async () => {
+        let timeout;
+        try {
+          await Promise.race([
+            streamClosed,
+            new Promise((_, reject) => {
+              timeout = setTimeout(() => reject(new Error('The probe did not close the SSE stream')), 1000);
+            }),
+          ]);
+        } finally {
+          clearTimeout(timeout);
+        }
+      },
+      close: () =>
+        new Promise((resolve, reject) => {
+          server.close(error => (error ? reject(error) : resolve()));
+          server.closeAllConnections();
+        }),
     };
   }
 
@@ -5396,10 +5544,11 @@ describe('mcp_session_probe: hard streaming body cap (#2940 review P1)', () => {
         allowPrivateIp: true,
         timeoutMs: 8000,
       });
-      const elapsed = Date.now() - started;
-      // Not certified, and bounded well under the flood's 8 MiB. The cap
+      // Not certified, and bounded well under the flood's 64 MiB. The cap
       // aborts the in-flight request, so this must not cost the deadline.
       assert.ok(httpResult.error, 'an oversized reply must not be certified');
+      await agent.waitForStreamClose();
+      const elapsed = Date.now() - started;
       assert.ok(elapsed < 4000, `the cap fails fast rather than burning the deadline (${elapsed}ms)`);
       // The probe aborted the in-flight request rather than buffering to the
       // end: the server saw its peer close a response it never finished.
@@ -5409,7 +5558,7 @@ describe('mcp_session_probe: hard streaming body cap (#2940 review P1)', () => {
         `teardown happened long before the flood gave up (streamed ${agent.streamedBytes()} bytes)`
       );
     } finally {
-      agent.close();
+      await agent.close();
     }
   });
 
@@ -5426,7 +5575,7 @@ describe('mcp_session_probe: hard streaming body cap (#2940 review P1)', () => {
       });
       assert.ok(httpResult.error, 'a Content-Length over the cap must not be certified');
     } finally {
-      agent.close();
+      await agent.close();
     }
   });
 });

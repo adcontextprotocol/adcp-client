@@ -2674,6 +2674,12 @@ export interface StoryboardStepResult {
   title: string;
   task: string;
   passed: boolean;
+  /**
+   * False when a failed step is diagnostic only and does not count toward
+   * the storyboard verdict (for example, an optional discovery phase).
+   * Absent on ordinary failures, including mandatory OAuth and invariant checks.
+   */
+  counts_toward_failure?: boolean;
   /** True when the step was not executed */
   skipped?: boolean;
   /**
