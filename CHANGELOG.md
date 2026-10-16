@@ -1,5 +1,86 @@
 # Changelog
 
+## 16.0.0-beta.4
+
+### Major Changes
+
+- 01cd708: Reliable Reporting storage moved out of `@adcp/sdk` into a new package, `@adcp/reporting-storage` (adcp-client#3286). This is a clean break during the SDK 16 beta: the moved subpaths are removed and there are no re-export shims. `@adcp/sdk` keeps the protocol layer and never imports the new package.
+
+  **Removed from `@adcp/sdk`.**
+  - `@adcp/sdk/reporting/gcs`, `/s3`, `/azure` and `/bigquery` are now `@adcp/reporting-storage/gcs`, `/s3`, `/azure` and `/bigquery`.
+  - From `@adcp/sdk/reporting/ledger`: `PostgresReportingLedgerStore` and every migration (`REPORTING_LEDGER_MIGRATION`, the finality writer fence, `REPORTING_ROW_STORAGE_MIGRATION`, `REPORTING_LEDGER_CHANGES_MIGRATION`, the object-write migrations) move to `@adcp/reporting-storage`, together with row storage, object writes and the change feed. The managed-delivery runtime, `PostgresReportingManagedDeliveryStore` and the adapter router move to `@adcp/reporting-storage/managed`. Notification activity moves to `@adcp/reporting-storage/notifications`.
+  - From `@adcp/sdk/reporting/service`: `createPostgresReliableReportingProductionService` moves to `@adcp/reporting-storage/service`, and the retention, compaction, orphan-collection and change-feed maintenance helpers move to `@adcp/reporting-storage`.
+  - The optional peers `@aws-sdk/client-s3`, `@azure/storage-blob` and `@google-cloud/storage` are now optional peers of `@adcp/reporting-storage`, not of `@adcp/sdk`.
+
+  **Still in `@adcp/sdk`.** The `ReportingLedgerStore` interface and its lease, transaction, row-read and revision-metadata types; the canonical row encoding and digests; `createReportingDeliveryHandler`, the status, sync-status and receipt handlers and status ingest; the producer; `createReliableReportingService`; `@adcp/sdk/reporting/consumer` and `/source`; and the health, coverage, lifecycle and schedule helpers.
+
+  **Breaking changes beyond the import paths.**
+  - `createReliableReportingService({ maintenance })` takes a factory instead of an options object, because retention, compaction and orphan collection are about the PostgreSQL store's data model. Pass `reportingLedgerMaintenance({ ...sameOptions })` from `@adcp/reporting-storage`. The service calls the factory once at construction with `{ store, statusRetentionDays, automatedRecoveryWindowSeconds }`, so retention still cannot disagree with the retention the service advertises, and a store that cannot be maintained still fails construction. `runMaintenance()` returns the neutral `ReliableReportingMaintenanceTaskResultV1`.
+  - `service.setup.migrations` is now the store's own `migrations` (`ReportingLedgerStore.migrations`, optional); `PostgresReportingLedgerStore` lists the ledger migration, so `reporting.setup.migrations[0]` keeps working, and a store with nothing to install gives `[]`.
+  - `ReportingLedgerLeaseLostError`, `ReportingLedgerPeriodRetiredError` and `ReportingLedgerContinuityError` moved into `@adcp/sdk/reporting/ledger`'s store types; the import path is unchanged.
+  - `createReportingManagedDeliveryRuntime` and its store interface are no longer in the SDK, but `createSyncReportingReceiptsHandler` and `reportingManagedDeliveryBindingV1` stay, against a new narrow `ReportingReceiptSyncStoreV1`.
+  - Core-only services refuse managed-delivery offerings with an error that names `@adcp/reporting-storage/service`.
+
+  **Added** so storage can be built against public API only: `compareReportingInstants`, `reportingPeriodDate`, `reportingPeriodSchedule`, `isFrozenCalendarRulesMismatch`, the receipt and verification evidence guards, `isWellFormedUnicodeString` and `getReportingDeliveryOfferingValidatorV1` on `@adcp/sdk/reporting/ledger`; the scheduler helpers and `REPORTING_MANAGED_DELIVERY_COMPOSITION_V1` on `@adcp/sdk/reporting/service`; and `DEFAULT_UNKNOWN_ERROR_RECOVERY` on `@adcp/sdk`. `npm run lint:boundaries` and `test/lib/reporting-storage-boundary.test.js` keep `@adcp/sdk` from importing the storage package.
+
+  **Migration.** Install `@adcp/reporting-storage` beside the SDK, change the imports, and wrap `maintenance` in `reportingLedgerMaintenance`. No database migration is needed: every migration has the same SQL under its new path. The full old-path to new-path table is in `docs/migration-reporting-storage-package.md`.
+
+### Minor Changes
+
+- 891ed2d: Reliable Reporting: enforce AdCP's `pagination` bounds in the reporting handlers (#3213). `createReportingStatusHandler` (`get_reporting_status`) and `createReportingDeliveryHandler` (`get_media_buy_delivery` exact revision reads) accepted `pagination.max_results` up to 500, defaulted it to 100 and also read a non-AdCP `pagination.limit`, while `core/pagination-request.json` allows an integer from 1 to 100 with a default of 50. The same request could return 500 rows from a seller on this SDK and be refused by one that validates the schema.
+
+  The bounds and the default now come from the pinned release's `core/pagination-request.json`, not from literals in the handler, so a schema change carries through (and a release that defines none fails when the handler is created, not on a request). `pagination.max_results` outside the bounds or not an integer, a `pagination` that is not an object, and a `cursor` that is not a string are refused with `VALIDATION_ERROR` (`field: 'pagination.max_results'`, `'pagination'` or `'pagination.cursor'`) before any ledger read and, for exact revision reads, before a legacy revision reader is consulted. The `pagination.limit` fallback is gone.
+
+  The buyer-side walkers (`reconcileReporting`'s ledger and row walks, and `drainReportingChangesV1`) now ask for `max_results: 100`, the schema maximum, instead of relying on the seller's default, so they keep their reach and round trips against a seller that applies the schema default of 50.
+
+  This ships as a minor. It is a protocol-conformance fix to stable handlers whose signatures do not change, and the requests it refuses were already schema-invalid. It can still fail a request that used to succeed and changes the default page size, so a patch would understate it, and a major would be out of proportion to a fix that brings the handlers to what the pinned schema already requires. `docs/guides/REPORTING-STABILITY.md` puts the buyer-visible behavior under AdCP's own versioning.
+
+  **Migration note.**
+  - A buyer or host calling these handlers with `max_results` from 101 to 500 must send at most 100 and follow `pagination.cursor`.
+  - A request without `max_results` now returns pages of 50 rows or items, not 100, as the schema's default says. A consumer that assumed one page of up to 100 for a small revision should follow the cursor. `@adcp/sdk`'s own consumers send 100 explicitly.
+  - Remove `pagination.limit` from requests; it is not an AdCP field and is ignored.
+  - A custom `ReportingReconciliationClient.getMediaBuyDelivery` now receives `pagination: { max_results: 100, cursor? }`; its `pagination` parameter type gains an optional `max_results`.
+
+### Patch Changes
+
+- 2a0fa78: Keep optional storyboard probe failures visible in JUnit diagnostics without failing CI when the runner excludes them from the verdict. Required failures, including checks on advertised OAuth metadata, still fail CI. JUnit suite and aggregate counts now match the emitted test cases.
+- 2a0fa78: Run successful test-kit-authenticated storyboard steps through the configured official MCP or A2A client. Preserve HTTP development transport settings and routing headers while isolating step credentials from the suite's authentication.
+
+  The suite's request-signing identity is excluded from isolated steps, and a suite header is withheld when its name looks like a credential — now including separator-less spellings such as `XApiKey` and `X-AuthToken` — or when its value carries a credential the run holds, including the Base64 form of a Basic pair and the payload of a scheme-prefixed header. Curated routing header names (`X-AdCP-Tenant`, `x-routing-key`, `x-idempotency-key`) are exempt from the name test so they keep routing; if such a header's _value_ collides with a run credential the step fails closed with a header-name-only error rather than silently rerouting or forwarding the credential. A secret under an unrecognised name with an unlearnable value still cannot be detected — use non-credential routing header names such as `X-AdCP-Tenant`.
+
+  Non-Basic steps declaring `auth.from_test_kit` as a named-principal key path are now refused instead of silently resolving to the primary test-kit key.
+
+  Unauthenticated MCP session probes also refuse credential-bearing routing values as an explicit ungradable coverage gap, with a header-name-only diagnostic and no probe dispatch.
+
+- bdaf068: OAuth diagnostics: `decodeAccessTokenClaims` now decodes the JWT header and claims with `jose` (`decodeProtectedHeader`, `decodeJwt`) instead of a hand-written base64url decoder. `adcp diagnose-auth` now checks the audience of the token it already decoded instead of re-encoding it into a synthetic JWT. As before, nothing is verified. Well-formed JWTs decode exactly as before.
+
+  Tokens that are not RFC 7515 compact serializations now return `null` and are reported as opaque, instead of being decoded leniently. That covers:
+  - segments with characters outside the base64url alphabet, including a standard-alphabet header;
+  - non-UTF-8 JSON;
+  - a header or claims set that is not a JSON object.
+
+  The `@adcp/sdk/auth` entry point now loads `jose` when it is imported. The other entry points already did. `jose` is ESM-only, so this entry, like the others, needs a runtime that supports `require(esm)` when loaded from CommonJS, which the declared Node engines do.
+
+- daf93e7: Signing: the RFC 9421 signer now serializes `Signature-Input` (`formatSignatureParams`), `Signature` and `Content-Digest` with `structured-headers`, the parser the verifier already uses, instead of string templates. The request-signing grader's parameter lists move to the serializer too.
+
+  For every value the profile can carry, the output is byte-identical. The request-signing, webhook and response vectors are unchanged. The AdCP 3.0/3.1 Base64URL byte-sequence form is not an RFC 8941 `sf-binary`, so it stays hand-written.
+
+  Input that could never verify is now refused up front instead of producing a malformed field:
+  - **Parameters:** a `keyid`, `nonce`, `alg` or `tag` containing a control character or non-ASCII throws `TypeError` from `formatSignatureParams`.
+  - **Labels:** a label that is not an RFC 8941 key (`^[a-z*][a-z0-9_.*-]*$`) throws `TypeError` before signing.
+  - **Clock:** a `now()` that does not return integer epoch seconds throws `TypeError` before signing.
+
+  A `"` or `\` in a string parameter is now escaped rather than ending the string, so it can no longer inject a second parameter.
+
+- e4eb640: Identity 3.3 (experimental): `signWebBotAuth` and `createSignedSignatureDirectory` now build the RFC 9421 signature base and serialize `Signature-Input` / `Signature` with Cloudflare's `http-message-sig` (Apache-2.0, the package the interop tests already use) instead of hand-written code. `http-message-sig@0.3.0` moves from a dev dependency to a runtime dependency. It depends on `structured-headers@2.0.3`, the exact version the SDK pins, so one copy is installed; bump the two together.
+
+  Signed output is byte-identical: the Cloudflare interop fixtures and the Web Bot Auth profile vectors are unchanged, and relays still refuse to sign over earlier signatures the profile cannot verify. Signer-side differences, all for input that never verified:
+  - A target URL with a fragment is signed without it. The fragment never reaches the wire, so these signatures used to fail verification.
+  - A covered field that is not RFC 9110 field content (control characters, non-ASCII) or a method that is not a token now throws `WebBotAuthError` (400, `component_value`) instead of being signed.
+  - A non-finite `now()` throws `TypeError('Invalid Web Bot Auth clock')`.
+
+  Verification is unchanged. It stays hand-written until adcontextprotocol/adcp#7894 settles the wire rules.
+
 ## 16.0.0-beta.3
 
 ### Minor Changes
