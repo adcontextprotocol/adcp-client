@@ -437,7 +437,13 @@ describe('runStoryboard: assertion hooks', () => {
     const { server, url } = await startStubAgent();
     let result;
     try {
-      result = await runStoryboard(url, buildStoryboard({ invariants: ['end.only'] }), runnerOptions);
+      result = await runStoryboard(url, buildStoryboard({ invariants: ['end.only'] }), {
+        ...runnerOptions,
+        _client: {
+          ...runnerOptions._client,
+          executeTask: async () => ({ success: true, data: { creatives: [] } }),
+        },
+      });
     } finally {
       server.close();
     }
@@ -446,6 +452,10 @@ describe('runStoryboard: assertion hooks', () => {
     assert.strictEqual(globals.length, 1);
     assert.strictEqual(globals[0].step_id, undefined);
     assert.strictEqual(globals[0].assertion_id, 'end.only');
+    assert.ok(
+      result.phases.flatMap(phase => phase.steps).every(step => step.passed),
+      'only the onEnd hook fails'
+    );
     const xml = formatStoryboardResultsAsJUnit([result]);
     assert.match(xml, /<testcase[^>]*name="Assertion › end.only"/);
     assert.match(xml, /<failure[^>]*type="StoryboardAssertionFailure"/);

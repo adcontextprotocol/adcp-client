@@ -9351,6 +9351,12 @@ function setHeaderIfAbsent(
  */
 function runCredentialValues(options: StoryboardRunOptions): string[] {
   const values: string[] = [];
+  const pushHeaderToken = (value: string) => {
+    // HTTP normalizes surrounding optional whitespace in header values.
+    // Basic plaintext passwords do not pass through this helper: their
+    // whitespace is meaningful inside the encoded user/password pair.
+    values.push(value, value.replace(/^[\t ]+|[\t ]+$/g, ''));
+  };
   // A `user:password` pair is also a credential in its on-the-wire Base64
   // form. Without this, a pair the run holds structurally is unrecognisable
   // once an opaque header carries it as `Basic dXNlcjpwYXNz`.
@@ -9360,7 +9366,7 @@ function runCredentialValues(options: StoryboardRunOptions): string[] {
     if (separator >= 0) values.push(userpass.slice(separator + 1));
   };
   const auth = options.auth;
-  if (auth?.type === 'bearer' && typeof auth.token === 'string') values.push(auth.token);
+  if (auth?.type === 'bearer' && typeof auth.token === 'string') pushHeaderToken(auth.token);
   if (auth?.type === 'basic') {
     if (typeof auth.password === 'string') values.push(auth.password);
     if (typeof auth.username === 'string' && typeof auth.password === 'string') {
@@ -9369,10 +9375,10 @@ function runCredentialValues(options: StoryboardRunOptions): string[] {
   }
   if (auth?.type === 'oauth' || auth?.type === 'oauth_client_credentials') {
     const token = auth.tokens?.access_token;
-    if (typeof token === 'string') values.push(token);
+    if (typeof token === 'string') pushHeaderToken(token);
   }
   const kit = options.test_kit?.auth;
-  if (typeof kit?.api_key === 'string') values.push(kit.api_key);
+  if (typeof kit?.api_key === 'string') pushHeaderToken(kit.api_key);
   const basic = kit?.basic;
   if (typeof basic?.password === 'string') values.push(basic.password);
   if (typeof basic?.username === 'string' && typeof basic?.password === 'string') {
@@ -9394,7 +9400,7 @@ function runCredentialValues(options: StoryboardRunOptions): string[] {
   for (const [name, value] of Object.entries(options.headers ?? {})) {
     if (typeof value !== 'string' || value.length === 0) continue;
     if (!AUTH_OVERRIDE_HEADER_NAMES.has(name.toLowerCase()) && !isCredentialHeaderName(name)) continue;
-    values.push(value);
+    pushHeaderToken(value);
     const scheme = /^(Bearer|Basic|Token|ApiKey)\s+(.+)$/i.exec(value.trim());
     if (scheme?.[1] !== undefined && scheme[2] !== undefined) {
       const payload = scheme[2].trim();
@@ -9409,6 +9415,7 @@ function runCredentialValues(options: StoryboardRunOptions): string[] {
         if (
           bytes.toString('base64').replace(/=+$/, '') === payload.replace(/=+$/, '') &&
           Buffer.from(decoded, 'utf8').equals(bytes) &&
+          !/[\x00-\x1f\x7f]/.test(decoded) &&
           decoded.includes(':')
         ) {
           pushUserPass(decoded);
@@ -9459,26 +9466,28 @@ const SESSION_PROBE_ROUTING_HEADERS: ReadonlySet<string> = new Set([
  * Returns the offending header name so the caller can fail the step with an
  * actionable message instead of silently choosing one of two wrong answers.
  * Known credential names and values matching a configured run credential are
- * dropped deliberately (they must not reach an `auth: none` probe) and are not
- * reported.
+ * dropped deliberately (they must not reach an `auth: none` probe). A known
+ * secret in a routing header is reported instead: dropping it would reroute.
  */
-function unroutableProbeHeader(options: StoryboardRunOptions): string | undefined {
+function unroutableProbeHeader(
+  options: StoryboardRunOptions
+): { name: string; reason: 'credential_collision' | 'malformed' | 'unknown' } | undefined {
   const runSecrets = runCredentialValues(options);
   for (const [name, value] of Object.entries(options.headers ?? {})) {
     const lower = name.toLowerCase();
     if (SESSION_PROBE_ROUTING_HEADERS.has(lower)) {
-      if (runSecrets.some(secret => value.includes(secret))) return name;
+      if (runSecrets.some(secret => value.includes(secret))) return { name, reason: 'credential_collision' };
       try {
         assertSafeAuthHeaderPart(value, `options.headers.${name}`);
       } catch {
         // Dropping a malformed routing header can reroute the tenant.
-        return name;
+        return { name, reason: 'malformed' };
       }
       continue;
     }
     if (AUTH_OVERRIDE_HEADER_NAMES.has(lower)) continue; // Known credential: dropped.
     if (runSecrets.some(secret => value.includes(secret))) continue; // Known secret value: dropped.
-    return name;
+    return { name, reason: 'unknown' };
   }
   return undefined;
 }
@@ -10012,18 +10021,23 @@ function planMcpSessionSentinel(
     // invoked, so this is reported as an ungradable coverage gap: the probe
     // still refuses to forward or drop the header, it just says why instead of
     // blaming the agent.
-    return {
-      kind: 'skip',
-      reason: 'session_probe_ungradable',
-      detail:
-        `The runner cannot classify run header "${escapeControlChars(unroutable.slice(0, 64))}", and both ` +
-        `answers are unsafe — forwarding it could make the unauthenticated probe authenticated, dropping it ` +
-        `could send the probe to a different tenant than the rest of this run. Nothing was graded, and this ` +
-        `is a property of the run, not of the agent. Three ways forward: rename it to a recognised routing ` +
-        `header (${[...SESSION_PROBE_ROUTING_HEADERS].join(', ')}); drop it from this run if the probe does ` +
-        `not need it; or, if it carries a credential, move that into \`options.auth\` / \`test_kit.auth\` ` +
-        `where the runner owns it.`,
-    };
+    const name = escapeControlChars(unroutable.name.slice(0, 64));
+    const detail =
+      unroutable.reason === 'credential_collision'
+        ? `Routing header "${name}" has a value containing a credential this run holds. Nothing was graded: ` +
+          `forwarding it could authenticate the unauthenticated probe, and dropping it could change tenants. ` +
+          `Choose a routing value or suite credential that does not collide.`
+        : unroutable.reason === 'malformed'
+          ? `Routing header "${name}" contains invalid header characters. Nothing was graded because ` +
+            `dropping it could change tenants. Correct this run header before retrying the probe.`
+          : `The runner cannot classify run header "${name}", and both ` +
+            `answers are unsafe — forwarding it could make the unauthenticated probe authenticated, dropping it ` +
+            `could send the probe to a different tenant than the rest of this run. Nothing was graded, and this ` +
+            `is a property of the run, not of the agent. Three ways forward: rename it to a recognised routing ` +
+            `header (${[...SESSION_PROBE_ROUTING_HEADERS].join(', ')}); drop it from this run if the probe does ` +
+            `not need it; or, if it carries a credential, move that into \`options.auth\` / \`test_kit.auth\` ` +
+            `where the runner owns it.`;
+    return { kind: 'skip', reason: 'session_probe_ungradable', detail };
   }
 
   const routing = sessionProbeRoutingHeaders(options);
