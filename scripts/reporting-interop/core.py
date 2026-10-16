@@ -6,6 +6,7 @@ Each invocation owns a fresh database, process, readiness proof and credentials.
 
 import contextlib
 import hashlib
+import importlib.util
 import json
 import os
 import secrets
@@ -28,28 +29,16 @@ class GateError(ValueError):
 
 
 def typescript_protocol(package, script_path):
-    """Exact AdCP protocol the TypeScript seller actor must run.
-
-    The TypeScript seller is built from this checkout and graded against the
-    package installed from it, so its protocol is the SDK's own adcp_version —
-    NOT pins.json. pins.adcp_schema_version records the protocol the
-    independently verified Python wheel/harness was validated against, and that
-    artifact is immutable, so the two actors legitimately diverge whenever this
-    SDK adopts a newer bundle. Conflating them made the seller claim a protocol
-    it does not serve.
-
-    Requiring checkout == installed keeps the identity check the old assertion
-    provided: a stale or substituted install still fails closed.
-    """
-    checkout = json.loads((Path(script_path).parents[2] / "package.json").read_bytes()).get("adcp_version")
-    installed = package.get("adcp_version")
-    # Assert presence before equality: two missing values compare equal and
-    # would let the gate pass vacuously against no protocol at all.
-    require(bool(checkout), "checkout package.json is missing adcp_version")
-    require(bool(installed), "installed @adcp/sdk is missing adcp_version")
-    require(installed == checkout,
-            f"installed SDK adcp_version {installed} must equal checkout {checkout}")
-    return installed
+    """Seller protocol identity; see protocol_identity.py for the actor split."""
+    spec = importlib.util.spec_from_file_location(
+        "adcp_protocol_identity", Path(__file__).with_name("protocol_identity.py")
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    try:
+        return module.typescript_protocol(package, script_path)
+    except module.ProtocolIdentityError as error:
+        require(False, str(error))
 
 def require(condition, label):
     if not condition:
