@@ -180,10 +180,10 @@ Programmatic runners can pair the two directories explicitly as well:
 import { comply } from '@adcp/sdk/testing';
 
 await comply(agentUrl, {
-  version: '3.0.12',
-  complianceDir: '/app/dist/compliance/3.0.12',
-  schemaRoot: '/app/dist/schemas/3.0.12',
-  adcpVersion: '3.0.12',
+  version: '3.1.29',
+  complianceDir: '/app/dist/compliance/3.1.29',
+  schemaRoot: '/app/dist/schemas/3.1.29',
+  adcpVersion: '3.1.29',
 });
 ```
 
@@ -326,7 +326,7 @@ A single-tenant run still produces useful signal — baseline catches a signific
 If you claim the `signed-requests` specialism, run the RFC 9421 grader. The grader signs its own requests with test keypairs from `compliance/cache/<version>/test-kits/signed-requests-runner.yaml` — no `--auth` flag; your agent's verifier must accept the runner's JWKS ahead of time.
 
 ```bash
-# All 38 vectors
+# All vectors (the grader prints the count for your pinned cache)
 npx @adcp/sdk@15.9 grade request-signing https://sandbox.agent.example/mcp
 
 # Skip rate-abuse (vector 020 fires cap+1 requests; skip in dev loops)

@@ -297,7 +297,7 @@ adcp storyboard run myagent --storyboards creative-template
 adcp storyboard run myagent --tracks core,products,media_buy
 
 # Pin the compliance cache/spec line used for storyboard resolution
-adcp storyboard run myagent --compliance-version 3.0.12
+adcp storyboard run myagent --compliance-version 3.1.29
 
 # Recommended for CI: --json for machine-readable output + --strict-flags
 # so stale flags fail the build instead of passing advisory warnings.
