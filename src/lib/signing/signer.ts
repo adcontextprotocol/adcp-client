@@ -221,6 +221,7 @@ export function prepareRequestSignature(
   const windowSeconds = Math.min(options.windowSeconds ?? 300, MAX_SIGNATURE_WINDOW_SECONDS);
   const nonce = options.nonce ?? base64UrlRandom(16);
   const label = options.label ?? 'sig1';
+  assertLabelAndClock(label, now);
   const hasBody = (request.body ?? '').length > 0;
 
   // Keep the low-level helper backward compatible for callers that do not
@@ -326,6 +327,7 @@ export function prepareWebhookSignature(
   const windowSeconds = Math.min(options.windowSeconds ?? 300, MAX_SIGNATURE_WINDOW_SECONDS);
   const nonce = options.nonce ?? base64UrlRandom(16);
   const label = options.label ?? 'sig1';
+  assertLabelAndClock(label, now);
 
   const headers: Record<string, string> = { ...flattenHeaders(request.headers) };
   headers['Content-Digest'] = computeContentDigest(request.body ?? '', 'legacy-base64url');
@@ -421,6 +423,7 @@ export function prepareResponseSignature(
   const windowSeconds = Math.min(options.windowSeconds ?? 300, MAX_SIGNATURE_WINDOW_SECONDS);
   const nonce = options.nonce ?? base64UrlRandom(16);
   const label = options.label ?? 'sig1';
+  assertLabelAndClock(label, now);
   const hasBody = (response.body ?? '').length > 0;
   const coverDigest = (options.coverContentDigest ?? true) && hasBody;
 
@@ -487,6 +490,16 @@ function flattenHeaders(headers: Record<string, string | string[] | undefined>):
     out[k] = Array.isArray(v) ? v.map(entry => entry.trim()).join(', ') : v.trim();
   }
   return out;
+}
+
+/**
+ * Both fields are serialized as RFC 8941 Dictionaries, so the label must be a
+ * Dictionary key and `created`/`expires` integers. Checked before signing so a
+ * KMS call is never spent on a header that cannot be emitted.
+ */
+function assertLabelAndClock(label: string, now: number): void {
+  if (!/^[a-z*][a-z0-9_.*-]*$/.test(label)) throw new TypeError(`Signature label "${label}" is not an RFC 8941 key`);
+  if (!Number.isSafeInteger(now)) throw new TypeError('Signature clock must return integer epoch seconds');
 }
 
 function base64UrlRandom(byteLength: number): string {

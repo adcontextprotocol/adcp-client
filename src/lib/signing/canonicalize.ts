@@ -1,4 +1,4 @@
-import { serializeInnerList, serializeItem, type Item } from 'structured-headers';
+import { SerializeError, serializeInnerList, serializeItem, type Item } from 'structured-headers';
 import { RequestSignatureError } from './errors';
 
 export interface RequestLike {
@@ -187,7 +187,13 @@ export function formatSignatureParams(components: ReadonlyArray<string>, params:
     const raw = params[key];
     if (raw !== undefined) parameters.set(key, raw);
   }
-  return serializeInnerList([components.map(componentItem), parameters]);
+  try {
+    return serializeInnerList([components.map(componentItem), parameters]);
+  } catch (error) {
+    if (!(error instanceof SerializeError)) throw error;
+    // A value that cannot form an RFC 8941 field (e.g. a non-ASCII keyid) is a caller error.
+    throw new TypeError(`Signature parameters are not RFC 8941 serializable: ${error.message}`);
+  }
 }
 
 function parseComponentIdentifier(component: string): { bare: string; requestBound: boolean } {

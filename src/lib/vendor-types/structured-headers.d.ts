@@ -24,6 +24,8 @@ declare module 'structured-headers' {
     constructor(position: number, message: string);
   }
 
+  export class SerializeError extends Error {}
+
   export function parseDictionary(input: string): Dictionary;
   export function parseItem(input: string): Item;
   export function serializeItem(input: Item): string;

@@ -22,11 +22,17 @@ export function computeContentDigest(body: string | Uint8Array, encoding: SfBina
  * profile wrote byte sequences in unpadded Base64URL, which is not an RFC 8941
  * `sf-binary` and no serializer emits, so that legacy form stays hand-written.
  */
-export function serializeByteSequenceMember(key: string, bytes: Uint8Array, encoding: SfBinaryEncoding): string {
-  if (encoding === 'legacy-base64url') return `${key}=:${Buffer.from(bytes).toString('base64url')}:`;
-  const copy = new Uint8Array(bytes.byteLength);
-  copy.set(bytes);
-  return serializeDictionary(new Map([[key, [copy.buffer, new Map()]]]));
+export function serializeByteSequenceMember(
+  key: string,
+  bytes: Uint8Array | ArrayBuffer,
+  encoding: SfBinaryEncoding
+): string {
+  // Buffer.from accepts the ArrayBuffer a WebCrypto-backed provider may return
+  // as well as views at any offset; the serializer needs an exact ArrayBuffer.
+  const buf = Buffer.from(bytes as Uint8Array);
+  if (encoding === 'legacy-base64url') return `${key}=:${buf.toString('base64url')}:`;
+  const exact = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+  return serializeDictionary(new Map([[key, [exact, new Map()]]]));
 }
 
 /**
