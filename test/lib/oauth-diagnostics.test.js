@@ -130,6 +130,17 @@ describe('decodeAccessTokenClaims', () => {
     assert.deepStrictEqual(decoded.claims.aud, ['a', 'b']);
   });
 
+  test('returns null for segments outside the base64url alphabet or a non-object claims set', () => {
+    const header = Buffer.from(JSON.stringify({ alg: 'RS256' })).toString('base64url');
+    const claims = Buffer.from(JSON.stringify({ aud: 'x' })).toString('base64url');
+    assert.strictEqual(decodeAccessTokenClaims(`${header}.${claims}*.sig`), null);
+    assert.strictEqual(decodeAccessTokenClaims(makeJWT({ alg: 'RS256' }, [1])), null);
+    assert.strictEqual(decodeAccessTokenClaims(makeJWT([1], { aud: 'x' })), null);
+    const standardHeader = Buffer.from(JSON.stringify({ alg: 'RS256', x: '>>>?' })).toString('base64');
+    assert.match(standardHeader, /[+/]/);
+    assert.strictEqual(decodeAccessTokenClaims(`${standardHeader}.${claims}.sig`), null);
+  });
+
   test('does NOT verify signature — even tampered tokens decode successfully', () => {
     const jwt = makeJWT({ alg: 'HS256' }, { sub: 'attacker' }, 'obviously-wrong');
     const decoded = decodeAccessTokenClaims(jwt);

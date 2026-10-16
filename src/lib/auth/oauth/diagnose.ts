@@ -16,7 +16,7 @@
 import { ssrfSafeFetch, decodeBodyAsJsonOrText, SsrfRefusedError } from '../../net';
 import type { AgentConfig } from './types';
 import { assertOAuthCredentialIssuer, assertOAuthServerIssuer, OAuthError } from './types';
-import { decodeAccessTokenClaims, parseWWWAuthenticate, validateTokenAudience } from './diagnostics';
+import { decodeAccessTokenClaims, parseWWWAuthenticate, validateDecodedTokenAudience } from './diagnostics';
 import type { DecodedAccessToken } from './diagnostics';
 
 /**
@@ -625,7 +625,7 @@ function rankH2(
     ];
     return base;
   }
-  const result = validateTokenAudience(jwtFromDecoded(refreshedDecoded), agentUrl);
+  const result = validateDecodedTokenAudience(refreshedDecoded, agentUrl);
   if (result.ok) {
     base.verdict = 'ruled_out';
     base.summary = 'Refreshed token `aud` claim matches the expected resource — AS honors RFC 8707 `resource`';
@@ -713,7 +713,7 @@ function rankH5(
   const expected = prmResource ?? agentUrl;
   const prmDiffersFromAgent =
     prmResource !== undefined && normalizeForCompare(prmResource) !== normalizeForCompare(agentUrl);
-  const result = validateTokenAudience(jwtFromDecoded(currentDecoded), expected);
+  const result = validateDecodedTokenAudience(currentDecoded, expected);
   if (result.ok) {
     base.verdict = 'ruled_out';
     base.summary = `Saved token \`aud\` matches expected resource (${expected})`;
@@ -751,7 +751,7 @@ function rankH6(agentUrl: string, currentDecoded: DecodedAccessToken | null, too
     base.summary = `tool_call returned HTTP ${toolStep.http.status} — agent did not accept the token blindly`;
     return base;
   }
-  const audResult = validateTokenAudience(jwtFromDecoded(currentDecoded), agentUrl);
+  const audResult = validateDecodedTokenAudience(currentDecoded, agentUrl);
   if (audResult.ok) {
     base.verdict = 'ruled_out';
     base.summary = 'Token `aud` matches agent URL and tool_call succeeded — cannot distinguish from correct behavior';
@@ -909,26 +909,6 @@ function isDefaultPort(scheme: string, port: string): boolean {
   if (scheme === 'https:' && port === '443') return true;
   if (scheme === 'http:' && port === '80') return true;
   return false;
-}
-
-function jwtFromDecoded(_decoded: DecodedAccessToken): string {
-  // validateTokenAudience re-decodes from a JWT string, so we round-trip.
-  // Since we already decoded this, we can't reconstruct the original signature,
-  // but the validator only cares about the claims segment — so we synthesize a
-  // three-segment token with the original claims and dummy header/signature.
-  const h = base64url(JSON.stringify(_decoded.header));
-  const c = base64url(JSON.stringify(_decoded.claims));
-  return `${h}.${c}.${_decoded.signature || 'sig'}`;
-}
-
-function base64url(input: string): string {
-  // `base64` output has at most 2 trailing `=` characters; the bounded form
-  // `={0,2}$` avoids the polynomial-regex flag CodeQL raises on `=+$`.
-  return Buffer.from(input)
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/={0,2}$/, '');
 }
 
 function formatError(err: unknown): string {
