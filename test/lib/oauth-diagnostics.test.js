@@ -135,6 +135,10 @@ describe('decodeAccessTokenClaims', () => {
     const claims = Buffer.from(JSON.stringify({ aud: 'x' })).toString('base64url');
     assert.strictEqual(decodeAccessTokenClaims(`${header}.${claims}*.sig`), null);
     assert.strictEqual(decodeAccessTokenClaims(makeJWT({ alg: 'RS256' }, [1])), null);
+    assert.strictEqual(decodeAccessTokenClaims(makeJWT([1], { aud: 'x' })), null);
+    const standardHeader = Buffer.from(JSON.stringify({ alg: 'RS256', x: '>>>?' })).toString('base64');
+    assert.match(standardHeader, /[+/]/);
+    assert.strictEqual(decodeAccessTokenClaims(`${standardHeader}.${claims}.sig`), null);
   });
 
   test('does NOT verify signature — even tampered tokens decode successfully', () => {

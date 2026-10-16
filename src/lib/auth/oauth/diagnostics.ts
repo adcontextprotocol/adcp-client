@@ -168,7 +168,8 @@ export interface DecodedAccessToken {
  *
  * For diagnostics only — the returned claims MUST NOT be trusted for
  * authorization decisions. Returns `null` if the token is not a well-formed
- * three-part JWT, or if the header/claims segments are not valid JSON.
+ * three-part JWS compact serialization: segments that are not base64url, or a
+ * header or claims set that is not a JSON object. Decoding uses `jose`.
  *
  * Opaque (non-JWT) tokens always return `null`, which is the expected outcome
  * for servers that issue reference tokens rather than JWTs.
