@@ -240,6 +240,20 @@ describe('dual-emitted product format pairing (#3312)', () => {
     assert.deepEqual(selected, original);
   });
 
+  test('seller response assembly can preserve declarations without inferring buyer routes', () => {
+    const selected = product();
+    for (const project of [toAdditiveCanonicalProduct, toCanonicalOnlyProduct]) {
+      const projected = project(selected, { _inferDualEmissionLegacyRefs: false });
+      assert.deepEqual(projected.product.format_options, selected.format_options);
+      const selection = packageRefsForFormatOptions(projected.product, ['mrec']);
+      assert.throws(
+        () => projectSyncCreativesForDelivery({ creatives: [creative()] }, [selection], 'legacy'),
+        CreativeFormatProjectionError
+      );
+    }
+    assert.equal(toCanonicalOnlyProduct(selected, { _inferDualEmissionLegacyRefs: false }).diagnostics.length, 2);
+  });
+
   test('retains canonical delivery and conservative 3.1 wire negotiation', () => {
     const input = creative();
     assert.deepEqual(projectCreativeForDelivery(input, product(), 'canonical'), input);

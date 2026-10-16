@@ -376,7 +376,9 @@ export function toAdditiveCanonicalProduct<P extends V1Product>(
   const { product: augmented, diagnostics } = augmentProductWithFormatOptions(product, options);
   const projected = toCanonicalFormatOptionsWithRoutes(
     product.product_id,
-    withDualEmissionLegacyRefs(augmented.format_options, product.format_ids)
+    options?._inferDualEmissionLegacyRefs === false
+      ? augmented.format_options
+      : withDualEmissionLegacyRefs(augmented.format_options, product.format_ids)
   );
   return {
     product: {
@@ -531,7 +533,10 @@ export function toCanonicalOnlyProduct<P extends V1ProductInput>(
   // redundant v1 fallback, but flag any legacy ref neither a declaration's
   // explicit route nor the dual-emission index pairing covers.
   if (Array.isArray(existing)) {
-    const formatOptions = withDualEmissionLegacyRefs(existing as V2ProductFormatDeclaration[], product.format_ids);
+    const formatOptions =
+      options?._inferDualEmissionLegacyRefs === false
+        ? (existing as V2ProductFormatDeclaration[])
+        : withDualEmissionLegacyRefs(existing as V2ProductFormatDeclaration[], product.format_ids);
     const diagnostics: ProjectionDiagnostic[] = [];
     const inputIds = Array.isArray(product.format_ids) ? product.format_ids : [];
     if (inputIds.length > 0) {

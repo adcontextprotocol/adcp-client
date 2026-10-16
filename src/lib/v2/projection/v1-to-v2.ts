@@ -159,6 +159,8 @@ export interface V1ToV2ProjectionOptions {
   projectionCatalogs?: readonly ProjectionCatalogSnapshot[];
   /** @internal Filesystem-isolated catalog fixture used by projector tests. */
   _catalogPath?: string;
+  /** @internal Disable buyer-only route inference when assembling seller wire responses. */
+  _inferDualEmissionLegacyRefs?: boolean;
 }
 
 /**
@@ -816,7 +818,12 @@ function compatible(option: Record<string, unknown>, ref: V1FormatId): boolean {
   return true;
 }
 
-/** Preserve index pairing only when the whole seller-authored alignment is credible. */
+/**
+ * Preserve index pairing only when the whole seller-authored alignment is credible.
+ * AdCP 3.1.24 core/product.json defines this correspondence: "the format_options[i]
+ * narrows the canonical that the named format in format_ids[i] resolves to via the
+ * registry / explicit canonical field". Explicit routes remain authoritative.
+ */
 export function withDualEmissionLegacyRefs<T>(formatOptions: T[], formatIds: unknown): T[] {
   if (!Array.isArray(formatIds) || formatIds.length !== formatOptions.length) return formatOptions;
   const aligned = formatOptions.every((value, index) => {
