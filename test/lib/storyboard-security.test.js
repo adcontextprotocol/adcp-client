@@ -5296,6 +5296,25 @@ describe('mcp_session_probe: redaction fails closed at traversal limits (#2940 r
 });
 
 describe('mcp_session_probe: routing headers are derived, not name-guessed (#2940 review)', () => {
+  it('refuses routing values containing known credentials before a session probe dispatches', async () => {
+    const agent = await startProbeAgent({ enforce: 'session', servePrm: true });
+    try {
+      const result = await runStoryboard(
+        agent.agentUrl,
+        securityBaselineStoryboard(),
+        runOptionsFor(agent, { headers: { 'x-adcp-tenant': 'tenant-sk_valid' } })
+      );
+      const step = stepsById(result).probe_unauth;
+      assert.strictEqual(step.skipped, true, JSON.stringify(step));
+      assert.strictEqual(step.skip_reason, 'session_probe_ungradable');
+      assert.match(step.skip.detail, /x-adcp-tenant/);
+      assert.strictEqual(step.skip.detail.includes('sk_valid'), false);
+      assert.strictEqual(agent.rpc().length, 0, 'no session request may carry the colliding routing value');
+    } finally {
+      agent.close();
+    }
+  });
+
   it('preserves routing headers a name-based credential filter would drop', async () => {
     // `isCredentialHeaderName`'s regex treats any `…-key…` segment as a
     // credential, which would strip these and silently reroute the probe.

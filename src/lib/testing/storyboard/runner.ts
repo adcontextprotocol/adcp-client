@@ -6429,9 +6429,30 @@ async function executeStep(
   // override auth. Missing-field vectors stay on the shared SDK transport
   // with the skip flags below so transport setup completes before the
   // malformed tool call reaches the seller handler.
+  // Credentialed functional steps use the configured official protocol client.
+  // Raw probes remain necessary for negative auth and HTTP-envelope assertions.
+  const useSdkAuthOverride =
+    typeof step.auth === 'object' &&
+    step.auth.type === 'api_key' &&
+    step.auth.from_test_kit === true &&
+    step.auth.value_strategy === undefined &&
+    step.expect_error !== true &&
+    !(step.validations ?? []).some(validation => HTTP_PROBE_ONLY_CHECKS.has(validation.check));
   let rawProbeHeaders: Record<string, string> | undefined;
+  let authOverrideClient: TestClient | undefined;
   try {
     rawProbeHeaders = step.auth !== undefined ? authHeadersForStep(step.auth, options) : undefined;
+    if (useSdkAuthOverride) {
+      if (rawProbeHeaders === undefined) throw new Error('Step auth override credentials were not resolved');
+      // Resolve configuration inside the same guard for both ordinary and
+      // parallel dispatch. A routing collision must become a step error.
+      authOverrideClient = createAuthOverrideClient(
+        runState.agentUrl,
+        options.protocol ?? 'mcp',
+        options,
+        rawProbeHeaders
+      );
+    }
   } catch (err) {
     // adcp#6735 — an unresolvable from_test_kit credential is a step-level
     // configuration failure with an explicit message, never a silent
@@ -6449,27 +6470,8 @@ async function executeStep(
       extraction: { path: 'none' },
     };
   }
-  // Credentialed functional steps use the configured official protocol client.
-  // Raw probes remain necessary for negative auth and HTTP-envelope assertions.
-  const useSdkAuthOverride =
-    typeof step.auth === 'object' &&
-    step.auth.type === 'api_key' &&
-    step.auth.from_test_kit === true &&
-    step.auth.value_strategy === undefined &&
-    step.expect_error !== true &&
-    !(step.validations ?? []).some(validation => HTTP_PROBE_ONLY_CHECKS.has(validation.check));
   const useRawProbe = rawProbeHeaders !== undefined && !useSdkAuthOverride;
-  let authOverrideClient: TestClient | undefined;
-  const stepClient = () => {
-    if (!useSdkAuthOverride) return client;
-    if (rawProbeHeaders === undefined) throw new Error('Step auth override credentials were not resolved');
-    return (authOverrideClient ??= createAuthOverrideClient(
-      runState.agentUrl,
-      options.protocol ?? 'mcp',
-      options,
-      rawProbeHeaders
-    ));
-  };
+  const stepClient = () => authOverrideClient ?? client;
 
   let taskResult: TaskResult | undefined;
   let stepResult: { duration_ms: number; error?: string; passed: boolean };
@@ -9291,8 +9293,10 @@ function defaultAuthHeadersForRawProbe(options: StoryboardRunOptions): Record<st
  */
 function sessionProbeRoutingHeaders(options: StoryboardRunOptions): Record<string, string> {
   const headers: Record<string, string> = {};
+  const runSecrets = runCredentialValues(options);
   for (const [name, value] of Object.entries(options.headers ?? {})) {
     if (!SESSION_PROBE_ROUTING_HEADERS.has(name.toLowerCase())) continue;
+    if (runSecrets.some(secret => value.includes(secret))) continue; // Refused as ungradable upstream.
     try {
       assertSafeAuthHeaderPart(value, `options.headers.${name}`);
     } catch {
@@ -9397,12 +9401,17 @@ function runCredentialValues(options: StoryboardRunOptions): string[] {
       values.push(payload);
       // A Base64 Basic payload also yields the pair it encodes, so a later
       // header carrying the pair unencoded is still recognised.
-      if (/^Basic$/i.test(scheme[1])) {
-        try {
-          const decoded = Buffer.from(payload, 'base64').toString('utf8');
-          if (decoded.includes(':')) pushUserPass(decoded);
-        } catch {
-          // Not valid Base64 — the raw payload is already recorded above.
+      if (/^Basic$/i.test(scheme[1]) && /^[A-Za-z0-9+/]+={0,2}$/.test(payload)) {
+        const bytes = Buffer.from(payload, 'base64');
+        const decoded = bytes.toString('utf8');
+        // Buffer's decoder tolerates malformed input. Only learn decoded
+        // passwords from valid Base64/UTF-8 pairs, not arbitrary byte tails.
+        if (
+          bytes.toString('base64').replace(/=+$/, '') === payload.replace(/=+$/, '') &&
+          Buffer.from(decoded, 'utf8').equals(bytes) &&
+          decoded.includes(':')
+        ) {
+          pushUserPass(decoded);
         }
       }
     }
@@ -9458,6 +9467,7 @@ function unroutableProbeHeader(options: StoryboardRunOptions): string | undefine
   for (const [name, value] of Object.entries(options.headers ?? {})) {
     const lower = name.toLowerCase();
     if (SESSION_PROBE_ROUTING_HEADERS.has(lower)) {
+      if (runSecrets.some(secret => value.includes(secret))) return name;
       try {
         assertSafeAuthHeaderPart(value, `options.headers.${name}`);
       } catch {
@@ -10148,7 +10158,7 @@ const AUTH_OVERRIDE_CREDENTIAL_HEADER_RE =
  * names are excluded before either name heuristic runs.
  */
 const AUTH_OVERRIDE_COMPACT_CREDENTIAL_RE =
-  /(auth(?:entication|orization)?|credentials?|secrets?|tokens?|passwords?|passwd|signatures?|certificates?|bearer|(?:api|access|private|session)keys?|(?:client|tls|ssl)certs?)$/i;
+  /(auth(?:entication|orization)?|credentials?|secrets?|tokens?|passwords?|passwd|signatures?|certificates?|bearer|(?:api|access|private|session|auth|secret|client|app|master|signing|shared|subscription)keys?|(?:client|tls|ssl)certs?)$/i;
 
 function isCredentialHeaderName(name: string): boolean {
   const normalized = name.toLowerCase();
@@ -10206,7 +10216,7 @@ function createAuthOverrideClient(
         throw new Error(
           `options.headers.${name} is a routing header but its value contains a credential this run holds; ` +
             `an isolated step cannot both route correctly and withhold the suite principal. ` +
-            `Give the step credential a distinct value, or move the credential to a dedicated header.`
+            `Choose a routing value or suite credential that does not collide.`
         );
       }
       continue;
