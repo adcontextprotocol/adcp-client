@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-10-12T10:25:55.256Z
+// Generated at: 2026-10-16T15:17:51.848Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -965,7 +965,7 @@ export const MacroProcessingCapabilitySchema = /* @__PURE__ */ (() => (z.object(
     universal_semantic: UniversalMacroSchema.optional(),
     operation: z.union([z.literal("translate_to_native"), z.literal("resolve_value")]),
     performed_by: MacroProcessingActorSchema,
-    supported_contexts: z.array(MacroValueContextSchema.and(z.object({}).passthrough())),
+    supported_contexts: z.array(z.enum(["url_query_value","url_path_segment"])),
     supported_encodings: z.array(MacroEncodingSchema).optional(),
     translation_target: MacroTranslationTargetSchema.optional()
 }).passthrough()).merge(z.object({
@@ -977,7 +977,7 @@ export const MacroProcessingCapabilitySchema = /* @__PURE__ */ (() => (z.object(
     universal_semantic: UniversalMacroSchema.optional(),
     operation: z.union([z.literal("translate_to_native"), z.literal("resolve_value")]),
     performed_by: MacroProcessingActorSchema,
-    supported_contexts: z.array(MacroValueContextSchema.and(z.object({}).passthrough())),
+    supported_contexts: z.array(z.enum(["url_query_value","url_path_segment"])),
     supported_encodings: z.array(MacroEncodingSchema).optional(),
     translation_target: MacroTranslationTargetSchema.optional()
 }).passthrough())))();
@@ -5731,7 +5731,7 @@ export const AgentEncryptionKeySchema = /* @__PURE__ */ (() => (z.object({
 export const AgentNotificationConfigStateSchema = /* @__PURE__ */ (() => (z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(NotificationTypeSchema.and(z.object({}).passthrough())),
+    event_types: z.array(z.enum(["creative.status_changed","creative.assignment_changed","indicators.changed","creative.purged","account.status_changed","account.change_recorded","product.created","product.updated","product.priced","product.removed","signal.created","signal.updated","signal.priced","signal.removed","wholesale_feed.bulk_change","capabilities.changed","reporting.delivery_ready","reporting.status_changed","reporting.ledger_changed","principal.changed"])),
     all_authorized_accounts: z.boolean().optional(),
     include_future_event_types: z.boolean().optional(),
     authentication: z.object({
@@ -5744,7 +5744,7 @@ export const AgentNotificationConfigStateSchema = /* @__PURE__ */ (() => (z.obje
 export const AgentNotificationConfigSchema = /* @__PURE__ */ (() => (z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(NotificationTypeSchema.and(z.object({}).passthrough())),
+    event_types: z.array(z.enum(["creative.status_changed","creative.assignment_changed","indicators.changed","creative.purged","account.status_changed","account.change_recorded","product.created","product.updated","product.priced","product.removed","signal.created","signal.updated","signal.priced","signal.removed","wholesale_feed.bulk_change","capabilities.changed","reporting.delivery_ready","reporting.status_changed","reporting.ledger_changed","principal.changed"])),
     all_authorized_accounts: z.boolean().optional(),
     include_future_event_types: z.boolean().optional(),
     authentication: z.object({
@@ -6581,7 +6581,7 @@ export const OutcomeTargetCostPerSchema = /* @__PURE__ */ (() => (z.object({
 
 export const PackageDeliveryMetricValueSchema = /* @__PURE__ */ (() => (z.object({}).passthrough().merge(z.object({
     scope: z.literal("standard"),
-    metric_id: AvailableMetricSchema.and(z.object({}).passthrough()),
+    metric_id: z.enum(["impressions","clicks","ctr","views","completed_views","completion_rate","conversions","conversion_value","commissionable_value","roas","cost_per_acquisition","new_to_brand_rate","leads","reach","frequency","grps","engagements","engagement_rate","follows","saves","profile_visits","viewable_rate","viewable_impressions","measurable_impressions","viewed_seconds","quartile_25","quartile_50","quartile_75","quartile_100","ooh_metrics","cost_per_click","cost_per_completed_view","cpm","downloads","units_sold","new_to_brand_units","plays","incremental_sales_lift","brand_lift","foot_traffic","conversion_lift","brand_search_lift"]),
     qualifier: CanonicalMetricQualifierSchema.optional(),
     value: z.number(),
     measurable_impressions: z.number().optional(),
@@ -13186,7 +13186,7 @@ export const PixelTrackerAssetSchema = /* @__PURE__ */ (() => (z.object({}).pass
 
 export const VASTTrackerAssetSchema = /* @__PURE__ */ (() => (z.object({}).passthrough().merge(z.object({
     asset_type: z.literal("vast_tracker"),
-    vast_event: VASTTrackingEventSchema.and(z.object({}).passthrough()),
+    vast_event: z.enum(["creativeView","loaded","start","firstQuartile","midpoint","thirdQuartile","complete","mute","unmute","pause","resume","rewind","skip","playerExpand","playerCollapse","fullscreen","exitFullscreen","progress","acceptInvitation","adExpand","adCollapse","minimize","overlayViewDuration","otherAdInteraction","interactiveStart","close","closeLinear"]),
     url: MacroBearingURL7Schema,
     macro_declarations: z.array(MacroDeclarationSchema.and(z.object({
         location: z.object({
@@ -13200,7 +13200,7 @@ export const VASTTrackerAssetSchema = /* @__PURE__ */ (() => (z.object({}).passt
 
 export const DAASTTrackerAssetSchema = /* @__PURE__ */ (() => (z.object({}).passthrough().merge(z.object({
     asset_type: z.literal("daast_tracker"),
-    daast_event: DAASTTrackingEventSchema.and(z.object({}).passthrough()),
+    daast_event: z.enum(["creativeView","start","firstQuartile","midpoint","thirdQuartile","complete","mute","unmute","pause","resume","rewind","skip","progress","close"]),
     url: MacroBearingURL8Schema,
     macro_declarations: z.array(MacroDeclarationSchema.and(z.object({
         location: z.object({
