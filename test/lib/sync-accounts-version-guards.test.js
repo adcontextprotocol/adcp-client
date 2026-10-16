@@ -117,6 +117,48 @@ describe('sync_accounts provisioning identity version guards', () => {
     assert.equal(calls.length, 0);
   });
 
+  for (const method of ['executeTask', 'syncAccounts']) {
+    test(`${method} refuses a per-call legacy wire override before discovery`, async t => {
+      const { client, discovered } = makeClient();
+      const calls = captureDispatch(t);
+      const params = request({ ...LEGACY_ACCOUNT, currency: 'USD' });
+      const options = { wireAdcpVersion: LEGACY_VERSION };
+      await assert.rejects(
+        method === 'executeTask'
+          ? client.executeTask('sync_accounts', params, undefined, options)
+          : client.syncAccounts(params, undefined, options),
+        unsupported('accounts[0].currency')
+      );
+      assert.equal(discovered.length, 0);
+      assert.equal(calls.length, 0);
+    });
+  }
+
+  test('a per-call modern wire version overrides the configured legacy wire version', async t => {
+    const { client } = makeClient({ wireAdcpVersion: LEGACY_VERSION });
+    const calls = captureDispatch(t);
+    const account = { ...LEGACY_ACCOUNT, currency: 'USD' };
+    const result = await client.executeTask('sync_accounts', request(account), undefined, {
+      wireAdcpVersion: CURRENT_VERSION,
+    });
+    assert.equal(result.success, true);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].params.accounts, [account]);
+  });
+
+  test('a per-call modern wire version still refuses a discovered legacy seller', async t => {
+    const { client, discovered } = makeClient({ wireAdcpVersion: LEGACY_VERSION }, capabilities(LEGACY_VERSION));
+    const calls = captureDispatch(t);
+    await assert.rejects(
+      client.executeTask('sync_accounts', request({ ...LEGACY_ACCOUNT, currency: 'USD' }), undefined, {
+        wireAdcpVersion: CURRENT_VERSION,
+      }),
+      unsupported('accounts[0].currency')
+    );
+    assert.ok(discovered.length > 0);
+    assert.equal(calls.length, 0);
+  });
+
   for (const target of ['configured client', 'discovered seller']) {
     test(`typed syncAccounts refuses an incompatible ${target} before dispatch`, async t => {
       const { client } = makeClient(

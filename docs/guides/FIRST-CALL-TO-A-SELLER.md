@@ -56,8 +56,9 @@ Account provisioning with `operator_unit`, `currency`, `timezone`, or
 `brand.countries` requires AdCP 3.2 on both the client and seller. The same applies
 to natural keys under `accounts[i].account` in settings updates. `syncAccounts()`
 and `executeTask('sync_accounts', ...)` reject these fields before dispatch when
-either client pin (`adcpVersion` or `wireAdcpVersion`) is below 3.2, or discovery
-does not establish seller support. The error names the field and confirms that
+either client pin (`adcpVersion` or the effective `wireAdcpVersion`, including a
+per-call override) is below 3.2, or discovery does not establish seller support.
+The error names the field and confirms that
 no request was sent, even when request validation is disabled. To deliberately
 use legacy identity, remove these fields from the provisioning entries yourself;
 distinct 3.2 keys may then resolve to the same seller account. Fields set to

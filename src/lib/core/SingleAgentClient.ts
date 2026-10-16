@@ -11329,15 +11329,16 @@ export class SingleAgentClient {
   private assertRequestSupportedByConfiguredVersion(
     taskName: string,
     params: unknown,
-    _options?: TaskOptions,
+    options?: TaskOptions,
     canonicalCreativeInvocation = false
   ): void {
     const configuredVersion = this.config.wireAdcpVersion ?? this.resolvedAdcpVersion;
-    if (isPre32AdcpVersion(this.resolvedAdcpVersion) || isPre32AdcpVersion(configuredVersion)) {
+    const accountWireVersion = options?.wireAdcpVersion ?? configuredVersion;
+    if (isPre32AdcpVersion(this.resolvedAdcpVersion) || isPre32AdcpVersion(accountWireVersion)) {
       this.assertLegacySyncAccountsIdentity(
         taskName,
         params,
-        isPre32AdcpVersion(this.resolvedAdcpVersion) ? this.resolvedAdcpVersion : configuredVersion
+        isPre32AdcpVersion(this.resolvedAdcpVersion) ? this.resolvedAdcpVersion : accountWireVersion
       );
     }
     const beta6Issue = beta6ReportingRequestIssue(taskName, params);
