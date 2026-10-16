@@ -8,9 +8,9 @@ const cache = path.resolve(__dirname, '../../schemas/cache/latest');
 const document = name => JSON.parse(readFileSync(path.join(cache, name), 'utf8'));
 const macroCapability = {
   dialect: 'adcp',
-  dialect_semantic: 'CACHEBUSTING',
+  dialect_semantic: 'CACHEBUSTER',
   mapping_status: 'verified_universal',
-  universal_semantic: 'CACHEBUSTING',
+  universal_semantic: 'CACHEBUSTER',
   operation: 'resolve_value',
   performed_by: 'seller',
   supported_contexts: ['url_query_value'],
