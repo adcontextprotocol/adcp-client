@@ -31,7 +31,7 @@ describe('request-signing profile selection after AdCP 3.2', () => {
       assert.equal(signingProfileForAdcpVersion(version), '3.2');
     });
   }
-  for (const version of [undefined, '', '2.9', '3.0.27', '3.1.24', 'v3', 'not-a-version']) {
+  for (const version of [undefined, '', '2.9', '3.0.27', '3.1.29', 'v3', 'not-a-version']) {
     test(`${String(version)} retains the legacy corpus`, () => {
       assert.equal(signingProfileForAdcpVersion(version), undefined);
     });

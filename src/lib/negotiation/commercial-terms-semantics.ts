@@ -192,6 +192,23 @@ export const COMMERCIAL_SEMANTIC_OVERRIDES_BY_RELEASE: Readonly<Record<string, R
       },
     },
   },
+  // 3.2.5 carries the identical reviewed semantics. The signed 3.2.5 bundle was
+  // compared against 3.2.4 and shows zero required/dependency additions or
+  // removals and zero x-adcp-validation added/removed/changed, with the 91-doc
+  // commercial graph, its 10 annotations and its edges unchanged. The override
+  // is therefore an evidence-backed restatement, not a new judgement.
+  '3.2.5': {
+    'media-buy/product-purchase.json': {
+      verifier_constraints: {
+        accepted_snapshot_terms:
+          'Inside canonical-proposal.commercial_terms, each purchase MUST carry resolved start_time and end_time and MUST preserve every applicable measurement term and performance standard. Omission of measurement_terms or performance_standards means the accepted offer declared none.',
+        pricing_identity: {
+          pricing_option_id: 'equals_pricing.pricing_option_id_when_pricing_present',
+          on_violation: 'reject_before_commitment',
+        },
+      },
+    },
+  },
 };
 
 /** Binding snapshots keep JSON Schema enum membership even for extensible taxonomies. */

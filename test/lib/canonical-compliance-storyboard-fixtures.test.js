@@ -69,9 +69,14 @@ function assertCanonicalPackagedFixture({
     ADCP_VERSION,
     'canonical fixture provenance must select the primary compliance cache shipped with this SDK'
   );
-  assert.equal(fixtureSetProvenance.protocol_version, '3.2.4');
-  assert.equal(fixtureSetProvenance.source_commit, '5e6c4b01113237234b440b6c95adb8c6e0a07ca9');
-  assert.equal(fixtureSetProvenance.bundle_sha256, 'd5a0b167b323e5ee05ac2c8da9ca01c46a5cb5a7b988570f40f746bb8b15ae76');
+  // Pinned to the actual signed 3.2.5 release: tag v3.2.5 -> commit 3512882b
+  // (the TAG commit, not the producer), bundle digest 5cc94606. The two fixture
+  // files are byte-identical to 3.2.4, so their per-file hashes are unchanged —
+  // only the release identity moves. Asserting the identity here is what stops
+  // unchanged bytes from silently keeping a stale release provenance.
+  assert.equal(fixtureSetProvenance.protocol_version, '3.2.5');
+  assert.equal(fixtureSetProvenance.source_commit, '3512882b67592622d2ae8bf5c853f565cf58043a');
+  assert.equal(fixtureSetProvenance.bundle_sha256, '5cc946062f3ed035f5332db7b1de68e3b6d2af8c01207e3959f2648addfe6e14');
 }
 
 test('packaged consumers receive the exact canonical universal/principal storyboard', () => {

@@ -609,8 +609,8 @@
     "!skills/*.previous/**/*",
     ".claude-plugin/**/*",
     "compliance/cache/3.0.25/**/*",
-    "compliance/cache/3.1.24/**/*",
-    "compliance/cache/3.2.4/**/*",
+    "compliance/cache/3.1.29/**/*",
+    "compliance/cache/3.2.5/**/*",
     "ADCP_VERSION",
     "docs/README.md",
     "docs/TYPE-SUMMARY.md",
@@ -692,7 +692,7 @@
     "test:status-report": "node test/utils/final-status-report.js",
     "sync-schemas": "tsx scripts/sync-schemas.ts",
     "sync-schemas:v2.5": "tsx scripts/sync-v2-5-schemas.ts",
-    "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas -- 3.1.24 && npm run sync-schemas -- 3.0.25 && npm run sync-schemas:v2.5",
+    "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas -- 3.1.29 && npm run sync-schemas -- 3.0.25 && npm run sync-schemas:v2.5",
     "sync:canonical-storyboard-fixtures": "tsx scripts/sync-canonical-storyboard-fixtures.ts --update",
     "check:canonical-storyboard-fixtures": "tsx scripts/sync-canonical-storyboard-fixtures.ts --check",
     "sync-registry-schemas": "tsx scripts/generate-registry-types.ts --sync",
@@ -879,7 +879,7 @@
     },
     "minimatch": "^10.2.1"
   },
-  "adcp_version": "3.2.4",
+  "adcp_version": "3.2.5",
   "sideEffects": [
     "**/default-invariants.*"
   ]

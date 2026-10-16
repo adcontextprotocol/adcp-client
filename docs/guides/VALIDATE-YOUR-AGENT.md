@@ -342,9 +342,9 @@ npx @adcp/sdk@adcp-3.2 grade request-signing https://sandbox.agent.example/mcp -
 npx @adcp/sdk@adcp-3.2 grade request-signing https://sandbox.agent.example/mcp --signing-profile 3.2
 ```
 
-`--signing-profile 3.2` selects only the 3.2 profile vectors. The current
-3.2.1 compliance cache includes 11 positive and 19 negative profile
-vectors. Library callers can select
+`--signing-profile 3.2` selects only the 3.2 profile vectors. The exact counts
+move with each signed bundle, so run the command against your pinned compliance
+cache to see them rather than relying on a number here. Library callers can select
 the same set with `gradeRequestSigning(agentUrl, { signingProfileVersion: '3.2' })`.
 
 #### A2A operation-resolution vectors (`--transport a2a`)
@@ -367,7 +367,7 @@ npx @adcp/sdk@adcp-3.2 storyboard run https://sandbox.agent.example/mcp signed_r
 
 - **`--signing-transport` is not `--transport`.** `--transport`/`--protocol` selects how the storyboard talks to your agent; `--signing-transport` selects how the conformance vectors are framed. Mirrors `adcp grade request-signing --transport`.
 - **Leave it unset by default.** The vector transport is inferred from the resolved protocol: MCP frames each vector as a `tools/call` envelope; A2A signs the exact request emitted by the official `@a2a-js/sdk` client after Agent Card discovery.
-- **The 3.2 signing profile follows the storyboard version.** Select a 3.2 compliance cache with `--compliance-version 3.2.1`; the `signed_requests` storyboard then selects its authored 3.2 profile vectors automatically. The `request_signing` options on `comply()` control transport and filtering; profile selection follows the resolved storyboard `adcp_version`.
+- **The 3.2 signing profile follows the storyboard version.** Select a 3.2 compliance cache with `--compliance-version 3.2.5`; the `signed_requests` storyboard then selects its authored 3.2 profile vectors automatically. The `request_signing` options on `comply()` control transport and filtering; profile selection follows the resolved storyboard `adcp_version`.
 - **A2A discovery fails closed.** If the Agent Card cannot resolve to a supported JSON-RPC interface, networked vectors skip with detailed reason `signing_transport_unavailable`; the storyboard cannot pass, the `security_transport` track stays `partial`, and the command exits 3. Publish a resolvable modern or legacy Agent Card, or grade an MCP/REST binding. Do not use `--soft-fail` to dismiss actual A2A verifier failures: once discovery succeeds, they are real grades.
 - **The in-library vector remains transport-independent.** `025-jwk-alg-crv-mismatch` is decided against the SDK verifier with no wire exchange, so its result does not grade your agent.
 - **Vectors excluded on their own terms say so, on every protocol.** `026-non-ascii-host` reports `transport_ungradable` (no HTTP client can carry a non-ASCII authority — `fetch` punycodes it first). `028-unsigned-protocol-method-required` reports `capability_profile_mismatch` unless your `get_adcp_capabilities` declares `request_signing.protocol_methods_required_for` — **this applies on MCP runs too, not just A2A**: previously the storyboard dispatched 028 at every agent, so one that never claimed the JSON-RPC bucket could fail it. Declare the bucket (e.g. `['tasks/cancel']`) if you verify signatures on protocol methods; a declaration your AdCP line's schema rejects is discarded rather than treated as "not declared", so it cannot suppress the vector. Note `adcp grade request-signing` does not read your advertisement — it uses the profile you pass it — so the two commands can disagree about 028 by design.

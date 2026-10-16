@@ -75,7 +75,11 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // The BigQuery sink convergence backport for SDK 15.9.1 adds no published files
 // but grows the sink module and runbook; the measured tarball is 20,451,293
 // bytes. Allow about 28 KB above that for compressor variance.
-const MAX_PACKED_TARBALL_BYTES = 20_480_000;
+// Raised for the signed 3.2.5 + 3.1.29 bundle replacement. Measured packed size
+// of the final both-corpus replacement is 20,489,403 bytes (the previous 15.9.3
+// release packed 20,455,431). This keeps roughly the same headroom the budget
+// carried before rather than opening a larger allowance.
+const MAX_PACKED_TARBALL_BYTES = 20_520_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -221,7 +225,13 @@ const MAX_PACKED_FILE_COUNT =
   8 + // Browser schemas entry and shared get-products validator (two dual-format runtime/declaration sets).
   4 + // Local creative-schema reference inspection (one dual-format runtime/declaration set).
   4 + // Managed-delivery adapter router (`reporting/ledger/managed-router`, one dual-format set).
-  22; // AdCP 3.2.4 signed request-signing compliance vectors; no new runtime module sets.
+  22 + // AdCP 3.2.4 signed request-signing compliance vectors; no new runtime module sets.
+  // Signed 3.2.5 primary + 3.1.29 maintained bundle REPLACEMENT (not an addition:
+  // 3.2.4 and 3.1.24 are removed in the same change). The net +2 is the new
+  // `core/macro-bearing-url.json` schema landing in both maintained corpora;
+  // it adds no public 3.1 types and no runtime module sets. Measured on the
+  // final both-corpus replacement: 6,567 files.
+  2;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
