@@ -11333,6 +11333,13 @@ export class SingleAgentClient {
     canonicalCreativeInvocation = false
   ): void {
     const configuredVersion = this.config.wireAdcpVersion ?? this.resolvedAdcpVersion;
+    if (isPre32AdcpVersion(this.resolvedAdcpVersion) || isPre32AdcpVersion(configuredVersion)) {
+      this.assertLegacySyncAccountsIdentity(
+        taskName,
+        params,
+        isPre32AdcpVersion(this.resolvedAdcpVersion) ? this.resolvedAdcpVersion : configuredVersion
+      );
+    }
     const beta6Issue = beta6ReportingRequestIssue(taskName, params);
     if (beta6Issue && !isAdcpVersionAtLeast(configuredVersion, '3.2.0-beta.6')) {
       this.throwBeta6ReportingUnsupported(taskName, beta6Issue, configuredVersion);
@@ -11434,6 +11441,27 @@ export class SingleAgentClient {
     canonicalCreativeInvocation = false,
     serverVersion?: 'v2' | 'v3'
   ): void {
+    if (taskName === 'sync_accounts') {
+      const advertisedVersions = capabilities?.supportedVersions ?? [];
+      const servedVersion = capabilities?.servedVersion ?? capabilities?._raw?.adcp_version;
+      // The selected release takes precedence over the seller's broader
+      // supported set. A build version is never evidence of wire support.
+      const supports32 =
+        serverVersion !== 'v2' &&
+        (typeof servedVersion === 'string'
+          ? isAdcpVersionAtLeast(servedVersion, '3.2.0-0')
+          : advertisedVersions.some(version => isAdcpVersionAtLeast(version, '3.2.0-0')));
+      if (!supports32) {
+        this.assertLegacySyncAccountsIdentity(
+          taskName,
+          params,
+          typeof servedVersion === 'string'
+            ? servedVersion
+            : advertisedVersions.join(', ') || serverVersion || 'unknown',
+          'the target seller has not negotiated AdCP 3.2 support'
+        );
+      }
+    }
     const beta6Issue = beta6ReportingRequestIssue(taskName, params);
     if (beta6Issue) {
       const advertisedVersions = capabilities?.supportedVersions ?? [];
@@ -11501,6 +11529,57 @@ export class SingleAgentClient {
         incompatibility: 'the target seller does not advertise AdCP 3.1 support',
         suffix: 'Retry with a meaningful signal_spec, or probe signals.discovery_modes before issuing wholesale calls.',
       });
+    }
+  }
+
+  /** Account-key fields must never be silently ignored by legacy sellers. */
+  private assertLegacySyncAccountsIdentity(
+    taskName: string,
+    params: unknown,
+    currentVersion: string,
+    incompatibility = `this client is pinned to ${currentVersion}`
+  ): void {
+    if (taskName !== 'sync_accounts' || !params || typeof params !== 'object') return;
+    const accounts = (params as Record<string, unknown>).accounts;
+    if (!Array.isArray(accounts)) return;
+    for (const [index, entry] of accounts.entries()) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+      // Settings updates can address a natural key under `account`. Inspect
+      // both locations even on mixed-mode rows: legacy sellers may ignore
+      // `account` and provision from the top-level fields instead.
+      for (const [key, path] of [
+        [entry, `accounts[${index}]`],
+        [entry.account, `accounts[${index}].account`],
+      ] as const) {
+        if (!key || typeof key !== 'object' || Array.isArray(key)) continue;
+        const brand = key.brand;
+        const identityField = ['operator_unit', 'currency', 'timezone'].find(
+          field => Object.hasOwn(key, field) && key[field] !== undefined
+        );
+        const field = identityField
+          ? `${path}.${identityField}`
+          : brand && typeof brand === 'object' && Object.hasOwn(brand, 'countries') && brand.countries !== undefined
+            ? `${path}.brand.countries`
+            : undefined;
+        if (!field) continue;
+        const suggestion =
+          'Use AdCP 3.2 or later on both the client (adcpVersion and wireAdcpVersion) and seller, ' +
+          'or explicitly project to a legacy account key by removing operator_unit, currency, timezone, ' +
+          'and brand.countries. Distinct keys may then share a seller account.';
+        throw new ProtocolFeatureUnsupportedError([`${taskName}.${field}`], [], this.agent.agent_uri, {
+          message: `${taskName} ${field} requires AdCP 3.2 or later; ${incompatibility}. No request was sent. ${suggestion}`,
+          field,
+          suggestion,
+          details: {
+            feature: `${taskName}.${field}`,
+            required_version: '3.2',
+            capability_path: 'adcp.supported_versions',
+            current_version: currentVersion,
+            tool: taskName,
+            field,
+          },
+        });
+      }
     }
   }
 
