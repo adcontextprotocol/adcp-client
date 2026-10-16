@@ -780,3 +780,17 @@ test('review: a saturated directory fetch limiter sheds load with 429, not a re-
     await first;
   }
 });
+
+test('library-first: the signed target URI omits the fragment the HTTP client never sends', async () => {
+  const key = newKey();
+  const proof = await wba.createSignedSignatureDirectory(origin, [{ privateKey: key }], { now: () => T });
+  const withFragment = { ...request, url: 'https://seller.example.com/mcp?x=1#section' };
+  const headers = await wba.signWebBotAuth(withFragment, { privateKey: key }, { origin, now: () => T });
+  const received = { ...request, url: 'https://seller.example.com/mcp?x=1', headers };
+  const [signer] = await wba.verifyWebBotAuth(received, {
+    directory: directoryFor(proof, () => T),
+    replayStore: new InMemoryReplayStore(),
+    now: () => T,
+  });
+  assert.equal(signer.origin, origin);
+});
