@@ -27,7 +27,7 @@ function verificationOptions(vector, loaded, adcpVersion) {
 }
 
 describe('request-signing compatibility across frozen AdCP bundles', () => {
-  for (const version of ['3.0.25', '3.1.24']) {
+  for (const version of ['3.0.25', '3.1.29']) {
     test(`${version} positive vectors work with both omitted and explicit endpoint pins`, async () => {
       const loaded = loadRequestSigningVectors({ version });
       const vectors = ['001-basic-post', '002-post-with-content-digest'].map(id =>
@@ -43,17 +43,24 @@ describe('request-signing compatibility across frozen AdCP bundles', () => {
       }
     });
 
-    test(`${version} omitted endpoint pin preserves negative-vector error precedence`, async () => {
+    test(`${version} omitted and explicit endpoint pins preserve negative-vector error precedence`, async () => {
       const loaded = loadRequestSigningVectors({ version });
       for (const id of ['002-wrong-tag', '007-missing-content-digest', '018-digest-covered-when-forbidden']) {
         const vector = loaded.negative.find(candidate => candidate.id === id);
         assert.ok(vector, `${version} negative vector ${id} should exist`);
+        assert.ok(Number.isInteger(vector.expected_failed_step), `${version} ${id} declares an expected failure step`);
 
-        await assert.rejects(
-          () => verifyRequestSignature(vector.request, verificationOptions(vector, loaded)),
-          error => error instanceof RequestSignatureError && error.code === vector.expected_error_code,
-          `${id} should fail with ${vector.expected_error_code}`
-        );
+        for (const adcpVersion of [undefined, version]) {
+          await assert.rejects(
+            () => verifyRequestSignature(vector.request, verificationOptions(vector, loaded, adcpVersion)),
+            error =>
+              error instanceof RequestSignatureError &&
+              error.code === vector.expected_error_code &&
+              error.failedStep === vector.expected_failed_step,
+            `${id} with pin ${adcpVersion ?? 'omitted'} should fail with ` +
+              `${vector.expected_error_code} at step ${vector.expected_failed_step}`
+          );
+        }
       }
     });
   }

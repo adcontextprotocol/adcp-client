@@ -1470,7 +1470,7 @@ Flow: `create_media_buy → sync_plans → sync_accounts → sync_governance →
 Flow: `create_media_buy → sync_plans → sync_accounts → sync_governance → get_products → check_governance → sync_plans → create_media_buy → check_governance → create_media_buy`
 
 **Inline media-buy creatives without sync_creatives** — Verifies that a seller advertising inline_creative_management accepts package creatives on create_media_buy and update_media_buy without requiring the Creative Protocol or sync_creatives.
-Flow: `get_adcp_capabilities → get_products → create_media_buy → update_media_buy → get_products → create_media_buy → update_media_buy → get_media_buys`
+Flow: `get_adcp_capabilities → get_products → create_media_buy → update_media_buy → get_media_buys → create_media_buy → update_media_buy → get_media_buys → create_media_buy → update_media_buy → get_media_buys → get_products → create_media_buy → update_media_buy → get_media_buys`
 
 **Seller rejects illegal state transitions and unknown references** — Validates that the seller returns structured AdCP errors (MEDIA_BUY_NOT_FOUND, PACKAGE_NOT_FOUND, NOT_CANCELLABLE) rather than 500s or undefined behavior when the buyer references missing entities or attempts forbidden state transitions.
 Flow: `update_media_buy → get_products → create_media_buy → update_media_buy`

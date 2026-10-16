@@ -4,21 +4,26 @@ This page joins the release facts that adopters need before changing a productio
 
 ## Release represented by this checkout
 
-The changesets version lifecycle regenerates this section whenever the package
-version changes. For an unpublished version, integrity is intentionally shown
-as unavailable until the registry assigns it; use the exact registry command
-below as the publication/deployment gate.
+This section describes the source checkout. Commits after a release can change
+the protocol bundle before Changesets assigns the next SDK version. Those
+changes are pending publication. Any version already on npm retains its
+released bundle. For production, use the worksheet and `ADCP_VERSION` from
+the exact npm tarball you install. The Changesets version
+lifecycle regenerates the version rows before publication.
+
+Registry integrity identifies the published tarball. Confirm the protocol
+pin using `ADCP_VERSION` inside that tarball.
 
 | Fact | Value |
 | --- | --- |
-| Exact npm package | `@adcp/sdk@16.0.0-beta.5` |
+| Checkout `package.json` version | `@adcp/sdk@16.0.0-beta.5` |
 | npm integrity | registry-derived after publication; run `npm view @adcp/sdk@16.0.0-beta.5 dist.integrity` |
 | Node.js runtime | `^20.19.0 || >=22.12.0` |
-| Default AdCP wire release | `3.2.4` |
-| Maintained wire releases | `v2.5`, `v2.6`, `v3`, `3.0.0`, `3.0`, `3.0.1`, `3.0.2`, `3.0.3`, `3.0.4`, `3.0.5`, `3.0.6`, `3.0.7`, `3.0.8`, `3.0.9`, `3.0.10`, `3.0.11`, `3.0.12`, `3.0.13`, `3.0.14`, `3.0.15`, `3.0.16`, `3.0.17`, `3.0.18`, `3.0.19`, `3.0.20`, `3.0.21`, `3.0.22`, `3.0.23`, `3.0.24`, `3.0.25`, `3.1.0`, `3.1`, `3.1.1`, `3.1.2`, `3.1.3`, `3.1.4`, `3.1.5`, `3.1.6`, `3.1.7`, `3.1.8`, `3.1.9`, `3.1.10`, `3.1.11`, `3.1.12`, `3.1.13`, `3.1.14`, `3.1.15`, `3.1.16`, `3.1.17`, `3.1.18`, `3.1.19`, `3.1.20`, `3.1.21`, `3.1.22`, `3.1.23`, `3.1.24`, `3.2.1`, `3.2`, `3.2.2`, `3.2.3`, `3.2.4` |
+| Default AdCP wire release | `3.2.5` |
+| Maintained wire releases | `v2.5`, `v2.6`, `v3`, `3.0.0`, `3.0`, `3.0.1`, `3.0.2`, `3.0.3`, `3.0.4`, `3.0.5`, `3.0.6`, `3.0.7`, `3.0.8`, `3.0.9`, `3.0.10`, `3.0.11`, `3.0.12`, `3.0.13`, `3.0.14`, `3.0.15`, `3.0.16`, `3.0.17`, `3.0.18`, `3.0.19`, `3.0.20`, `3.0.21`, `3.0.22`, `3.0.23`, `3.0.24`, `3.0.25`, `3.1.0`, `3.1`, `3.1.1`, `3.1.2`, `3.1.3`, `3.1.4`, `3.1.5`, `3.1.6`, `3.1.7`, `3.1.8`, `3.1.9`, `3.1.10`, `3.1.11`, `3.1.12`, `3.1.13`, `3.1.14`, `3.1.15`, `3.1.16`, `3.1.17`, `3.1.18`, `3.1.19`, `3.1.20`, `3.1.21`, `3.1.22`, `3.1.23`, `3.1.24`, `3.1.25`, `3.1.26`, `3.1.27`, `3.1.28`, `3.1.29`, `3.2.1`, `3.2`, `3.2.2`, `3.2.3`, `3.2.4`, `3.2.5` |
 | Canonical migration notes | [SDK 15 OAuth](./migration-oauth-issuer-bindings.md), [issuer-binding and storage](./guides/OAUTH-ISSUER-BINDING.md); historical [13.x → 14](./migration-13-to-14.md) |
 
-Install exact production inputs rather than a moving range or dist-tag:
+For a checkout at the published release commit, install the exact package version:
 
 ```bash
 npm install --save-exact '@adcp/sdk@16.0.0-beta.5'
@@ -57,10 +62,11 @@ the authored tool schema.
 ESM example:
 
 ```ts
+import { ADCP_VERSION } from '@adcp/sdk';
 import { getCanonicalToolValidator } from '@adcp/sdk/schemas';
 
 const validate = getCanonicalToolValidator('get_reporting_status', 'sync', {
-  adcpVersion: '3.2.4',
+  adcpVersion: ADCP_VERSION,
 });
 if (!validate) throw new Error('Requested protocol schema is unavailable');
 
@@ -81,9 +87,10 @@ console.error(validate.errors); // all collected normative violations
 CommonJS uses the same packed-artifact export:
 
 ```js
+const { ADCP_VERSION } = require('@adcp/sdk');
 const { getCanonicalToolValidator } = require('@adcp/sdk/schemas');
 const validate = getCanonicalToolValidator('get_reporting_status', 'sync', {
-  adcpVersion: '3.2.4',
+  adcpVersion: ADCP_VERSION,
 });
 if (!validate) throw new Error('Requested protocol schema is unavailable');
 if (validate({ status: 'completed', view: 'summary' })) {

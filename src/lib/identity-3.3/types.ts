@@ -1,4 +1,4 @@
-/** Experimental drafts; the released SDK wire/schema pin remains 3.2.4. */
+/** Experimental drafts; the released SDK wire/schema pin remains 3.2.5. */
 import type { GeneratedAccountCapabilities, ResolveAgentOnboarding } from './generated-compat';
 
 export type BillingParty = 'operator' | 'agent' | 'advertiser';
