@@ -9,7 +9,15 @@ import {
   type JsonWebKey,
 } from 'crypto';
 import { parseDictionary, parseItem, serializeItem } from 'structured-headers';
-import { component, componentIdentity, createSignature, type ComponentDescriptor, type Signer } from 'http-message-sig';
+import {
+  component,
+  componentIdentity,
+  createSignature,
+  isSignatureError,
+  type ComponentDescriptor,
+  type SignatureFields,
+  type Signer,
+} from 'http-message-sig';
 import { ssrfSafeFetch, type SsrfFetchOptions } from '../net';
 import { eTldPlusOne } from './agent-resolver/etld';
 import { canonicalAgentOrigin } from './agent-resolver/canonicalize';
@@ -920,7 +928,9 @@ function webBotSigner(key: WebBotSigningKey): Signer {
   if ('provider' in key) {
     if (key.provider.keyid !== jwkThumbprint(jwk) || key.provider.algorithm !== alg)
       throw new TypeError('Web Bot Auth provider identity does not match its public key');
-    return { algorithm: alg, sign: data => key.provider.sign(Buffer.from(data)) };
+    // Buffer.from accepts the Uint8Array the contract names and the ArrayBuffer
+    // a WebCrypto-backed provider may return; the library's copy would not.
+    return { algorithm: alg, sign: async data => Buffer.from(await key.provider.sign(Buffer.from(data))) };
   }
   if (alg === 'rsa-pss-sha512') {
     const privateKey = createPrivateKey({ key: jwk as JsonWebKey, format: 'jwk' });
@@ -936,6 +946,19 @@ function webBotSigner(key: WebBotSigningKey): Signer {
   }
   // WebCrypto for ES256 when available (edge runtimes, #3243); node:crypto otherwise.
   return { algorithm: alg, sign: data => signWithPrivateJwkAsync(alg, jwk as AdcpJsonWebKey, Buffer.from(data)) };
+}
+/**
+ * Run `http-message-sig`, keeping the SDK's error surface: a message the
+ * library refuses (a covered field that is not RFC 9110 field content, a
+ * method that is not a token) is a malformed Web Bot Auth message.
+ */
+async function createWebBotSignature(...args: Parameters<typeof createSignature>): Promise<SignatureFields> {
+  try {
+    return await createSignature(...args);
+  } catch (error) {
+    if (isSignatureError(error)) throw new WebBotAuthError(400, 'component_value');
+    throw error;
+  }
 }
 /** A received component identifier (`name;param=...`) as an `http-message-sig` descriptor. */
 function componentDescriptor(identifier: string): ComponentDescriptor {
@@ -966,6 +989,7 @@ export async function signWebBotAuth(
   const now = Math.floor((options.now ?? (() => Date.now() / 1000))());
   const window = options.windowSeconds ?? 300;
   const nonce = options.nonce ?? randomBytes(64).toString('base64url');
+  if (!Number.isSafeInteger(now)) throw new TypeError('Invalid Web Bot Auth clock');
   if (!Number.isInteger(window) || window < 1 || window > 300 || !/^[A-Za-z0-9_+\/-]{22,256}={0,2}$/.test(nonce))
     throw new TypeError('Invalid Web Bot Auth lifetime or nonce');
   if (
@@ -1002,6 +1026,8 @@ export async function signWebBotAuth(
   const priorAgent = options.relay ? getHeaderValue(request.headers, 'signature-agent') : undefined;
   if (priorAgent) dictionary(priorAgent, 'Signature-Agent');
   headers['signature-agent'] = `${priorAgent ? priorAgent + ', ' : ''}${label}="${origin}"`;
+  // The relay's member must be the only one under its label (AdCP rejects duplicate keys).
+  if (priorAgent) dictionary(headers['signature-agent'], 'Signature-Agent');
   components.push(component('signature-agent', { key: label }));
   const covered = new Set(components.map(componentIdentity));
   const cover = (descriptor: ComponentDescriptor) => {
@@ -1022,12 +1048,17 @@ export async function signWebBotAuth(
     throw new TypeError('Relay requires the existing signature fields');
   if (priorInput) headers['signature-input'] = priorInput;
   if (priorSignature) headers.signature = priorSignature;
+  // Re-cover only what this profile verifies: each earlier signature's base
+  // must resolve under the AdCP Web Bot Auth component rules before a relay
+  // signs over it (the library also accepts @path, @query and @scheme).
+  for (const inner of earlier)
+    buildWebBotAuthSignatureBase(inner, { ...request, url: new URL(request.url).href, headers });
   // RFC 9421 signature base and field serialization come from http-message-sig.
   // Sign the target URI exactly as the HTTP client will send it: normalized by
   // the WHATWG URL parser, and without a fragment, which never reaches the wire.
   const targetUri = new URL(request.url);
   targetUri.hash = '';
-  const signed = await createSignature(
+  const signed = await createWebBotSignature(
     {
       kind: 'request',
       method: request.method.toUpperCase(),
@@ -1091,7 +1122,7 @@ export async function createSignedSignatureDirectory(
   const signatureInputs: string[] = [],
     signatures: string[] = [];
   for (let i = 0; i < keys.length; i++) {
-    const signed = await createSignature(
+    const signed = await createWebBotSignature(
       {
         kind: 'response',
         status: response.status,

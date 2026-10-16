@@ -794,3 +794,57 @@ test('library-first: the signed target URI omits the fragment the HTTP client ne
   });
   assert.equal(signer.origin, origin);
 });
+
+test('library-first: a provider may return an ArrayBuffer, as WebCrypto does', async () => {
+  const key = newKey();
+  const { d: _d, ...publicKey } = key;
+  const privateKey = createPrivateKey({ key, format: 'jwk' });
+  const provider = {
+    keyid: key.kid,
+    algorithm: 'ed25519',
+    fingerprint: key.kid,
+    sign: async data => {
+      const bytes = nodeSign(null, data, privateKey);
+      return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    },
+  };
+  const proof = await wba.createSignedSignatureDirectory(origin, [{ publicKey, provider }], { now: () => T });
+  const headers = await wba.signWebBotAuth(request, { publicKey, provider }, { origin, now: () => T });
+  assert.match(headers.signature, /^sig1=:[A-Za-z0-9+/]{86}==:$/);
+  const [signer] = await wba.verifyWebBotAuth(
+    { ...request, headers },
+    { directory: directoryFor(proof, () => T), replayStore: new InMemoryReplayStore(), now: () => T }
+  );
+  assert.equal(signer.keyid, key.kid);
+});
+
+test('library-first: relays refuse what the profile cannot verify, as before', async () => {
+  const inner = await wba.signWebBotAuth(request, { privateKey: newKey() }, { origin, now: () => T });
+  const relay = headers =>
+    wba.signWebBotAuth(
+      { ...request, headers },
+      { privateKey: newKey() },
+      { origin: 'https://relay.example.com', label: 'sig2', relay: true, now: () => T }
+    );
+  // An earlier signature covering a derived component outside the profile.
+  await assert.rejects(
+    relay({ ...inner, 'signature-input': inner['signature-input'].replace('("@method"', '("@path" "@method"') }),
+    e => e instanceof wba.WebBotAuthError && e.status === 400 && e.reason === 'derived_component'
+  );
+  // A Signature-Agent that already names the relay's label.
+  await assert.rejects(
+    relay({ ...inner, 'signature-agent': `${inner['signature-agent']}, sig2="https://evil.example.com"` }),
+    e => e instanceof wba.WebBotAuthError && e.status === 400
+  );
+});
+
+test('library-first: covered fields the library refuses are malformed messages', async () => {
+  await assert.rejects(
+    wba.signWebBotAuth(
+      { ...request, headers: { 'content-type': 'application/json\u0001' } },
+      { privateKey: newKey() },
+      { origin, now: () => T }
+    ),
+    e => e instanceof wba.WebBotAuthError && e.status === 400 && e.reason === 'component_value'
+  );
+});
