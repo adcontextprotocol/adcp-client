@@ -28,6 +28,8 @@ your context: `src/lib/types/*.generated.ts`, `src/lib/agents/index.generated.ts
 
 **Building a signals agent?** Read and follow `skills/build-signals-agent/SKILL.md` — covers marketplace vs owned data, segments, pricing, activation destinations.
 
+**Building seller-side Reliable Reporting (a durable reporting ledger)?** Read `docs/guides/REPORTING-LEDGER.md`. The protocol layer (`createReliableReportingService`, the handlers, the `ReportingLedgerStore` interface) is `@adcp/sdk/reporting/service` and `/ledger`; the PostgreSQL store, migrations, row storage, managed delivery and the production service are the separate pre-1.0 `@adcp/reporting-storage` package (`npm install @adcp/sdk @adcp/reporting-storage`). Coming from `@adcp/sdk/reporting/gcs|s3|azure|bigquery` or the store on the ledger subpath? See `docs/migration-reporting-storage-package.md`.
+
 **Building a retail media network?** Read and follow `skills/build-retail-media-agent/SKILL.md` — covers catalog sync, conversion tracking, performance feedback, dynamic ads.
 
 **Building a creative agent?** Read and follow `skills/build-creative-agent/SKILL.md` — covers ad servers, creative management platforms, format discovery, preview, and build.
@@ -142,7 +144,7 @@ Pick the specialisms you want to claim in `get_adcp_capabilities`. Each maps to 
 - ✅ Schema changes (`src/schemas/`)
 - ✅ TypeScript types changes
 
-**Experimental reporting subpaths:** breaking changes to the `@experimental` Reliable Reporting storage exports (`@adcp/sdk/reporting/ledger`, `gcs`, `s3`, `azure`, `bigquery`; policy in [`docs/guides/REPORTING-STABILITY.md`](./docs/guides/REPORTING-STABILITY.md)) use a `minor` changeset plus a migration note, not `major`.
+**Reliable Reporting storage package:** the storage implementations (PostgreSQL ledger store, row storage and the GCS, S3 and Azure providers, managed delivery, notification activity, the BigQuery sink, the production service) live in the separate, pre-1.0 `@adcp/reporting-storage` workspace package (`packages/reporting-storage`, imports `@adcp/reporting-storage`, `/managed`, `/notifications`, `/service`, `/gcs`, `/s3`, `/azure`, `/bigquery`). Every export of it is `@experimental`, so a breaking change there uses a `minor` changeset for `@adcp/reporting-storage` plus a migration note, not `major`; the store interfaces that stay in `@adcp/sdk/reporting/ledger` are `@experimental` and change together with it (policy in [`docs/guides/REPORTING-STABILITY.md`](./docs/guides/REPORTING-STABILITY.md), move guide in [`docs/migration-reporting-storage-package.md`](./docs/migration-reporting-storage-package.md)). `@adcp/sdk` must never import `@adcp/reporting-storage`: `test/lib/reporting-storage-boundary.test.js` and `npm run lint:boundaries` enforce it, and the storage package imports only public `@adcp/sdk` subpaths.
 
 **NO changeset needed for:**
 

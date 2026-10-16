@@ -1321,6 +1321,10 @@ function generateLlmsTxt(
     ['Seller quick start (AdCP 3.2)', 'guides/SELLER-QUICKSTART-3.2.md'],
     ['Production durability checklist', 'guides/PRODUCTION-DURABILITY.md'],
     ['Persistent notification subscriptions', 'guides/PERSISTENT-NOTIFICATION-RUNTIME.md'],
+    [
+      'Reliable Reporting storage moved to @adcp/reporting-storage (SDK 16 beta)',
+      'migration-reporting-storage-package.md',
+    ],
     ['Migrating SDK 13 → 14', 'migration-13-to-14.md'],
     ['Getting started / install', 'getting-started.md'],
     ['Build a server-side agent', 'guides/BUILD-AN-AGENT.md'],
@@ -1338,7 +1342,7 @@ function generateLlmsTxt(
     ['Reporting ledger cutover from custom tables', 'guides/REPORTING-LEDGER-CUTOVER.md'],
     ['Buyer reporting reconciliation', 'guides/REPORTING-RECONCILIATION.md'],
     ['Reliable Reporting production operations', 'guides/REPORTING-OPERATIONS.md'],
-    ['Reliable Reporting stability policy (experimental storage subpaths)', 'guides/REPORTING-STABILITY.md'],
+    ['Reliable Reporting stability policy (experimental storage package)', 'guides/REPORTING-STABILITY.md'],
     ['Validate your agent (5-command checklist)', 'guides/VALIDATE-YOUR-AGENT.md'],
     ['Async patterns (polling, webhooks, deferred)', 'guides/ASYNC-DEVELOPER-GUIDE.md'],
     ['Async API reference', 'guides/ASYNC-API-REFERENCE.md'],
@@ -2209,10 +2213,24 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`## Seller Reporting Ledger`);
   ln();
   ln(
-    `Ledger symbols import from \`@adcp/sdk/reporting/ledger\`; \`createPostgresPersistentNotificationRuntime\` is a server symbol and imports from \`@adcp/sdk/server\`.`
+    `The ledger interface, handlers and producer import from \`@adcp/sdk/reporting/ledger\`. The PostgreSQL store, its migrations, row storage and maintenance import from \`@adcp/reporting-storage\`, managed delivery from \`@adcp/reporting-storage/managed\` and notification activity from \`@adcp/reporting-storage/notifications\` (install \`@adcp/reporting-storage\` next to \`@adcp/sdk\`; it is pre-1.0 and every export is experimental). \`createPostgresPersistentNotificationRuntime\` is a server symbol and imports from \`@adcp/sdk/server\`.`
   );
   ln();
   ln('```typescript');
+  ln(`import { Pool } from 'pg';`);
+  ln(`import { createPostgresPersistentNotificationRuntime } from '@adcp/sdk/server';`);
+  ln(`import {`);
+  ln(`  createReportingDeliveryHandler,`);
+  ln(`  createReportingProducer,`);
+  ln(`  createReportingStatusHandler,`);
+  ln(`  createSyncReportingStatusHandler,`);
+  ln(`} from '@adcp/sdk/reporting/ledger';`);
+  ln(`import { PostgresReportingLedgerStore, REPORTING_LEDGER_MIGRATION } from '@adcp/reporting-storage';`);
+  ln(`import {`);
+  ln(`  createPostgresReportingNotificationActivityRuntime,`);
+  ln(`  createPostgresReportingNotificationAttemptCheckpoint,`);
+  ln(`} from '@adcp/reporting-storage/notifications';`);
+  ln();
   ln(`// Build the notification path first: the store must be constructed with the`);
   ln(`// activity port, or lifecycle transitions record no activity and notify nobody.`);
   ln(`const attemptCheckpoint = createPostgresReportingNotificationAttemptCheckpoint({`);
@@ -2283,6 +2301,9 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   );
   ln();
   ln('```typescript');
+  ln(`import { createReliableReportingService } from '@adcp/sdk/reporting/service';`);
+  ln(`import { PostgresReportingLedgerStore, reportingLedgerMaintenance } from '@adcp/reporting-storage';`);
+  ln();
   ln(`interface ReliableReportingAdapterV1 {`);
   ln(`  readonly sourceOffering: ReportingSourceOfferingV1;`);
   ln(`  readonly deliveryOffering: ReportingDeliveryOffering;`);
@@ -2305,9 +2326,12 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`  resolveCurrency: account => currency,`);
   ln(`  resolveCoverage: account => ({ constituents }), // authorized media-buy/package denominator`);
   ln(`  resolveConsumerId, // optional; controls consumer-status handler/capability`);
+  ln(
+    `  maintenance: reportingLedgerMaintenance({ retention: { enabled: true } }), // optional factory from @adcp/reporting-storage`
+  );
   ln(`});`);
   ln();
-  ln(`await pool.query(reporting.setup.migrations[0]);`);
+  ln(`for (const sql of reporting.setup.migrations) await pool.query(sql);`);
   ln(`const installedPlatform = reporting.install(platform);`);
   ln(`await reporting.installConfiguration(configuration, { account: ctx.account });`);
   ln(`await reporting.runCycle({ accountId }); // tenant-partitioned`);
@@ -2320,7 +2344,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   );
   ln();
   ln(
-    `For complete seller production assembly, use async \`createPostgresReliableReportingProductionService\` from \`@adcp/sdk/reporting/service\`. It owns the PostgreSQL Core/Managed stores, receipts, all three reporting notifications, webhook activity, migrations, probes, recovery, and capability publication. Supply \`activity.tenantScopeForAccount\`; Reconciled Billing offerings also require a trusted \`obligatedConsumers\` roster. Its scheduler and \`recoverOnce\` require explicit \`deploymentWide: true\` because recovery scans the whole namespace. See \`docs/guides/REPORTING-LEDGER.md\` and \`docs/guides/REPORTING-OPERATIONS.md\`.`
+    `For complete seller production assembly, use async \`createPostgresReliableReportingProductionService\` from \`@adcp/reporting-storage/service\`. It owns the PostgreSQL Core/Managed stores, receipts, all three reporting notifications, webhook activity, migrations, probes, recovery, and capability publication. Supply \`activity.tenantScopeForAccount\`; Reconciled Billing offerings also require a trusted \`obligatedConsumers\` roster. Its scheduler and \`recoverOnce\` require explicit \`deploymentWide: true\` because recovery scans the whole namespace. See \`docs/guides/REPORTING-LEDGER.md\` and \`docs/guides/REPORTING-OPERATIONS.md\`.`
   );
   ln();
   ln(

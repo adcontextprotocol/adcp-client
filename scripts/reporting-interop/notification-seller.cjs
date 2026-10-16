@@ -7,6 +7,7 @@ const { createRequire } = require('node:module');
 const path = require('node:path');
 const { setTimeout: sleep } = require('node:timers/promises');
 const { createFixture } = require('./managed-seller.cjs');
+const { mergedLedger } = require('./storage-compat.cjs');
 
 async function main() {
   const [installation, phase, mode = 'standalone'] = process.argv.slice(2);
@@ -14,7 +15,7 @@ async function main() {
   assert.ok(['standalone', 'activity'].includes(mode));
   const req = createRequire(path.join(installation, 'package.json'));
   const server = req('@adcp/sdk/server');
-  const ledger = req('@adcp/sdk/reporting/ledger');
+  const ledger = mergedLedger(req);
   const reporting = req('@adcp/sdk');
   const { Pool } = req('pg');
   const input = JSON.parse(

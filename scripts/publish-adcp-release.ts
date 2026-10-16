@@ -2,6 +2,12 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import {
+  describeHeldBack,
+  findUnbootstrappedPackages,
+  listWorkspacePackages,
+  withPackagesHeldBack,
+} from './lib/hold-back-unbootstrapped-packages.mjs';
 
 type ChangesetPreState = {
   mode?: string;
@@ -17,18 +23,34 @@ function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function runChangesetPublish(): number {
+/**
+ * Run `changeset publish`, without a workspace package the registry has never seen. npm trusted publishing
+ * cannot do a package's first publish, and a failure there must not take the other packages' release down
+ * with it. See scripts/lib/hold-back-unbootstrapped-packages.mjs and docs/development/NPM-DIST-TAGS.md.
+ */
+function changesetPublish(args: string[]): number {
+  const held = findUnbootstrappedPackages(listWorkspacePackages(resolve('.')));
+  if (held.length > 0) {
+    const message = describeHeldBack(held);
+    console.warn(message);
+    if (process.env.GITHUB_ACTIONS) console.log(`::warning title=First publish needed::${message}`);
+  }
   if (isDryRun) {
-    console.log('[dry-run] changeset publish');
+    console.log(`[dry-run] changeset ${args.join(' ')}`);
     return 0;
   }
-
-  const result = spawnSync('changeset', ['publish'], {
-    stdio: 'inherit',
-    env: process.env,
-    shell: process.platform === 'win32',
-  });
+  const result = withPackagesHeldBack(held, () =>
+    spawnSync('changeset', args, {
+      stdio: 'inherit',
+      env: process.env,
+      shell: process.platform === 'win32',
+    })
+  );
   return result.status ?? 1;
+}
+
+function runChangesetPublish(): number {
+  return changesetPublish(['publish']);
 }
 
 function resolvePublishTag(preState?: ChangesetPreState): string {
@@ -42,16 +64,7 @@ function main(): void {
     const tag = resolvePublishTag();
     const publishArgs = ['publish', '--tag', tag];
     console.log(`Publishing packages under npm dist-tag ${tag}.`);
-    if (isDryRun) {
-      console.log(`[dry-run] changeset ${publishArgs.join(' ')}`);
-      return;
-    }
-    const result = spawnSync('changeset', publishArgs, {
-      stdio: 'inherit',
-      env: process.env,
-      shell: process.platform === 'win32',
-    });
-    process.exit(result.status ?? 1);
+    process.exit(changesetPublish(publishArgs));
   }
 
   const originalPreStateText = readFileSync(PRE_STATE_PATH, 'utf8');
@@ -61,16 +74,7 @@ function main(): void {
 
   if (preState.mode !== 'pre') {
     console.log(`Publishing packages under npm dist-tag ${tag}.`);
-    if (isDryRun) {
-      console.log(`[dry-run] changeset ${publishArgs.join(' ')}`);
-      return;
-    }
-    const result = spawnSync('changeset', publishArgs, {
-      stdio: 'inherit',
-      env: process.env,
-      shell: process.platform === 'win32',
-    });
-    process.exit(result.status ?? 1);
+    process.exit(changesetPublish(publishArgs));
   }
 
   console.log(

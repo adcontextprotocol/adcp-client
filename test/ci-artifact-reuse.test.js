@@ -20,6 +20,7 @@ const consumers = [
   'unit-tests-fast',
   'unit-tests-slow',
   'webhook-delivery-backends',
+  'reporting-storage-tests',
   'eslint-plugin-tests',
   'node-undici-network-matrix',
 ];
@@ -204,6 +205,10 @@ test(
     fs.mkdirSync(path.join(cwd, 'dist'));
     const content = fs.readFileSync(path.join(root, 'package.json'));
     fs.writeFileSync(path.join(cwd, 'dist/package.json'), content);
+    // The storage workspace package builds beside the SDK and travels in the same artifact.
+    const storageDist = 'packages/reporting-storage/dist';
+    fs.mkdirSync(path.join(cwd, storageDist), { recursive: true });
+    fs.writeFileSync(path.join(cwd, storageDist, 'index.js'), 'module.exports = {};\n');
     for (const cache of ['schemas/cache', 'compliance/cache']) {
       fs.mkdirSync(path.join(cwd, cache, 'current'), { recursive: true });
       fs.copyFileSync(path.join(root, 'ADCP_VERSION'), path.join(cwd, cache, 'current/ADCP_VERSION'));
@@ -230,13 +235,14 @@ test(
     fs.mkdirSync(artifactDir);
     const artifactPath = path.join(artifactDir, 'library-dist.tar.gz');
     fs.writeFileSync(artifactPath, bytes);
-    for (const tree of ['dist', 'schemas/cache', 'compliance/cache']) {
+    for (const tree of ['dist', storageDist, 'schemas/cache', 'compliance/cache']) {
       fs.writeFileSync(path.join(cwd, tree, 'stale'), 'must not survive extraction');
     }
     const consumerEnv = { ...env, LIBRARY_SHA256: outputs.sha256, LIBRARY_COMMIT: outputs.commit };
     succeeds(shell(verify.run, cwd, consumerEnv));
     assert.deepEqual(fs.readFileSync(path.join(cwd, 'dist/package.json')), content);
-    for (const tree of ['dist', 'schemas/cache', 'compliance/cache']) {
+    assert.equal(fs.readFileSync(path.join(cwd, storageDist, 'index.js'), 'utf8'), 'module.exports = {};\n');
+    for (const tree of ['dist', storageDist, 'schemas/cache', 'compliance/cache']) {
       assert.equal(fs.existsSync(path.join(cwd, tree, 'stale')), false);
     }
     for (const cache of ['schemas/cache', 'compliance/cache']) {

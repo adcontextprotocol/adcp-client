@@ -13,8 +13,12 @@ const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 
 async function main() {
   const args = process.argv.slice(2);
-  assert.equal(args.length, 6, 'usage: run.mjs PYTHON PACKAGE_ROOT TS_ARCHIVE PY_WHEEL PY_HARNESS OUTPUT');
-  const [python, packageRoot, archive, wheel, upstream, output] = args.map(value => path.resolve(value));
+  assert.equal(
+    args.length,
+    7,
+    'usage: run.mjs PYTHON PACKAGE_ROOT TS_ARCHIVE STORAGE_ARCHIVE PY_WHEEL PY_HARNESS OUTPUT'
+  );
+  const [python, packageRoot, archive, storageArchive, wheel, upstream, output] = args.map(value => path.resolve(value));
   const pins = JSON.parse(await readFile(path.join(here, 'pins.json')));
   assert.equal(digest(await readFile(wheel)), pins.python_wheel_sha256, 'Python wheel differs from pin');
   const identity = await exec('git', ['--no-replace-objects', 'rev-parse', 'HEAD'], { cwd: upstream, timeout: 30_000 });
@@ -39,6 +43,7 @@ async function main() {
     python_harness_commit: pins.python_harness_commit,
     python_wheel_sha256: pins.python_wheel_sha256,
     typescript_archive_sha256: digest(await readFile(archive)),
+    typescript_storage_archive_sha256: digest(await readFile(storageArchive)),
     typescript_package_lock_sha256: digest(await readFile(path.join(packageRoot, 'package-lock.json'))),
     fixture_sha256: digest(await readFile(path.join(root, 'test/fixtures/reporting-interop/evidence-v1.json'))),
     gate_entrypoints: Object.fromEntries(
@@ -104,10 +109,11 @@ async function main() {
     // Verify actual installed package members against both archives before
     // attributing any result to a published wheel or packed checkout.
     report.active_step = 'verify-installed-artifacts';
-    const installed = await exec(python, ['-I', path.join(here, 'verify.py'), packageRoot, archive, wheel], {
-      timeout: 120_000,
-      maxBuffer: 1024 * 1024,
-    });
+    const installed = await exec(
+      python,
+      ['-I', path.join(here, 'verify.py'), packageRoot, archive, storageArchive, wheel],
+      { timeout: 120_000, maxBuffer: 1024 * 1024 }
+    );
     report.installed_artifacts = JSON.parse(installed.stdout);
     await writeFile(
       path.join(output, 'typescript-package-lock.json'),

@@ -164,6 +164,9 @@ jobs:
       - name: Check SDK→docs URLs resolve (URL-rot guard)
         run: npm run ci:doc-links
 
+      - name: Check @adcp/sdk does not import @adcp/reporting-storage
+        run: npm run lint:boundaries
+
   typescript-typecheck:
     name: TypeScript Typecheck
     runs-on: ubuntu-latest
@@ -235,7 +238,7 @@ jobs:
             echo "::error::Commit regenerated library sources before sharing this build."
             exit 1
           fi
-          tar -czf "$RUNNER_TEMP/library-dist.tar.gz" dist schemas/cache compliance/cache
+          tar -czf "$RUNNER_TEMP/library-dist.tar.gz" dist packages/reporting-storage/dist schemas/cache compliance/cache
           digest=$(sha256sum "$RUNNER_TEMP/library-dist.tar.gz" | cut -d ' ' -f 1)
           echo "sha256=$digest" >> "$GITHUB_OUTPUT"
           echo "commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
@@ -300,7 +303,7 @@ jobs:
             echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
             exit 1
           fi
-          rm -rf dist schemas/cache compliance/cache
+          rm -rf dist packages/reporting-storage/dist schemas/cache compliance/cache
           tar -xzf "$archive"
 
       - name: Guard public Zod OpenAPI portability
@@ -311,6 +314,9 @@ jobs:
 
       - name: Enforce publish-size budgets
         run: npm run check:package-size
+
+      - name: Typecheck reporting storage package
+        run: npm run typecheck:reporting-storage
 
       - name: Validate package exports
         run: |
@@ -431,7 +437,7 @@ jobs:
             echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
             exit 1
           fi
-          rm -rf dist schemas/cache compliance/cache
+          rm -rf dist packages/reporting-storage/dist schemas/cache compliance/cache
           tar -xzf "$archive"
 
       - name: Adopter type-check (catch d.ts leaks)
@@ -485,7 +491,7 @@ jobs:
             echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
             exit 1
           fi
-          rm -rf dist schemas/cache compliance/cache
+          rm -rf dist packages/reporting-storage/dist schemas/cache compliance/cache
           tar -xzf "$archive"
 
       - name: Typecheck examples
@@ -580,7 +586,7 @@ jobs:
             echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
             exit 1
           fi
-          rm -rf dist schemas/cache compliance/cache
+          rm -rf dist packages/reporting-storage/dist schemas/cache compliance/cache
           tar -xzf "$archive"
 
       # Pull requests can restore the default branch cache but never save it.
@@ -693,7 +699,7 @@ jobs:
             echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
             exit 1
           fi
-          rm -rf dist schemas/cache compliance/cache
+          rm -rf dist packages/reporting-storage/dist schemas/cache compliance/cache
           tar -xzf "$archive"
 
       - name: Run slow unit tests
@@ -768,7 +774,7 @@ jobs:
             echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
             exit 1
           fi
-          rm -rf dist schemas/cache compliance/cache
+          rm -rf dist packages/reporting-storage/dist schemas/cache compliance/cache
           tar -xzf "$archive"
 
       - name: Run durable webhook backend contract
@@ -790,59 +796,100 @@ jobs:
           NODE_ENV: test
           DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
           REPORTING_LEDGER_PG_URL: postgresql://postgres@127.0.0.1:5432/postgres
-          REPORTING_LIFECYCLE_PG_URL: postgresql://postgres@127.0.0.1:5432/postgres
         run: >-
           node --test --test-timeout=120000
           test/server-decisioning-postgres-task-registry.test.js
           test/server-decisioning-postgres-task-settlement-intents.test.js
           test/lib/postgres-proposal-store.test.js
           test/examples/durable-buyer-writes.test.js
-          test/lib/reporting-ledger-pg.test.js
-          test/lib/reporting-managed-delivery-pg.test.js
-          test/lib/reporting-ledger-writer-fence-pg.test.js
-          test/lib/reporting-notification-activity-pg.test.js
           test/lib/reporting-consumer-postgres.test.js
           test/lib/reporting-webhook-activity-pg.test.js
-          test/lib/reliable-reporting-production-pg.test.js
-          test/lib/reporting-status-ingest-pg.test.js
-          test/lib/reporting-row-storage-migration-pg.test.js
-          test/lib/reporting-row-storage-pg.test.js
-          test/lib/reporting-row-storage-object-pg.test.js
-          test/lib/reporting-row-shared-object-pg.test.js
-          test/lib/reporting-snapshot-compaction-pg.test.js
-          test/reliable-reporting-lifecycle-pg.test.js
 
-      # The change feeds hold a page back while an older transaction is open, and `xmin` is
-      # cluster-wide. These files either hold a transaction open on purpose or read the feed
-      # until it is empty, so they must not overlap other files' write transactions.
-      - name: Run PostgreSQL change-feed ordering contracts serially
+  # The Reliable Reporting storage package (`@adcp/reporting-storage`) holds the PostgreSQL ledger store, row
+  # storage, managed delivery, notification activity and the BigQuery sink, with their tests. It has its own job
+  # and its own PostgreSQL server: the change-feed suites need an idle cluster (`xmin` is cluster-wide), and the
+  # groups are defined in packages/reporting-storage/scripts/run-tests.mjs. REPORTING_REQUIRE_POSTGRES makes the
+  # runner fail when a database URL is missing instead of skipping every database suite.
+  reporting-storage-tests:
+    name: Reporting Storage Tests
+    runs-on: ubuntu-latest
+    needs: library-build
+    timeout-minutes: 15
+    env:
+      NODE_ENV: test
+      REPORTING_REQUIRE_POSTGRES: '1'
+      DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
+      REPORTING_LEDGER_PG_URL: postgresql://postgres@127.0.0.1:5432/postgres
+      REPORTING_LIFECYCLE_PG_URL: postgresql://postgres@127.0.0.1:5432/postgres
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
         env:
-          NODE_ENV: test
-          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
-          REPORTING_LEDGER_PG_URL: postgresql://postgres@127.0.0.1:5432/postgres
-        run: >-
-          node --test --test-concurrency=1 --test-timeout=120000
-          test/lib/reporting-host-reads-pg.test.js
-          test/lib/reporting-bigquery-sink-pg.test.js
-          test/lib/reporting-head-of-line-pg.test.js
-          test/lib/reporting-row-retention-pg.test.js
-          test/lib/reporting-row-orphan-collector-pg.test.js
-          test/lib/reliable-reporting-core-maintenance-pg.test.js
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download library output
+        uses: actions/download-artifact@v7
+        with:
+          name: library-dist-${{ github.run_id }}
+          path: ${{ runner.temp }}/library-artifact
+
+      - name: Verify and extract library output
+        shell: bash
+        env:
+          LIBRARY_SHA256: ${{ needs.library-build.outputs.sha256 }}
+          LIBRARY_COMMIT: ${{ needs.library-build.outputs.commit }}
+        run: |
+          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" || "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
+            echo "::error::Missing library-build digest or checkout identity mismatch."
+            exit 1
+          fi
+          archive="$RUNNER_TEMP/library-artifact/library-dist.tar.gz"
+          if [[ ! -f "$archive" ]]; then
+            echo "::error::Missing library-build artifact (expires after 1 day). Use Re-run all jobs."
+            exit 1
+          fi
+          if ! echo "$LIBRARY_SHA256  $archive" | sha256sum --check --status; then
+            echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
+            exit 1
+          fi
+          rm -rf dist packages/reporting-storage/dist schemas/cache compliance/cache
+          tar -xzf "$archive"
+
+      - name: Run reporting storage tests (parallel group)
+        run: npm run test --workspace=@adcp/reporting-storage -- --group parallel
+
+      # The change feeds hold a page back while an older transaction is open, and `xmin` is cluster-wide. These
+      # files either hold a transaction open on purpose or read the feed until it is empty, so they must not
+      # overlap other files' write transactions.
+      - name: Run PostgreSQL change-feed ordering contracts serially
+        run: npm run test --workspace=@adcp/reporting-storage -- --group serial
 
       - name: Run PostgreSQL reporting contracts with chunked row storage
         env:
-          NODE_ENV: test
-          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
-          REPORTING_LEDGER_PG_URL: postgresql://postgres@127.0.0.1:5432/postgres
           REPORTING_ROW_STORAGE: chunked
-        run: >-
-          node --test --test-timeout=120000
-          test/lib/reporting-ledger-pg.test.js
-          test/lib/reporting-managed-delivery-pg.test.js
-          test/lib/reporting-ledger-writer-fence-pg.test.js
-          test/lib/reporting-notification-activity-pg.test.js
-          test/lib/reporting-status-ingest-pg.test.js
-          test/lib/reliable-reporting-production-pg.test.js
+        run: npm run test --workspace=@adcp/reporting-storage -- --group chunked
 
   eslint-plugin-tests:
     name: ESLint Plugin Tests
@@ -888,7 +935,7 @@ jobs:
             echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
             exit 1
           fi
-          rm -rf dist schemas/cache compliance/cache
+          rm -rf dist packages/reporting-storage/dist schemas/cache compliance/cache
           tar -xzf "$archive"
 
       - name: Run ESLint plugin tests
@@ -1098,7 +1145,7 @@ jobs:
             echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
             exit 1
           fi
-          rm -rf dist schemas/cache compliance/cache
+          rm -rf dist packages/reporting-storage/dist schemas/cache compliance/cache
           tar -xzf "$archive"
 
       - name: Published-package Undici 7 consumer override
@@ -1134,6 +1181,7 @@ jobs:
       - typecheck-build
       - unit-tests
       - webhook-delivery-backends
+      - reporting-storage-tests
       - example-integration-tests
       - security-audit
       - package-smoke

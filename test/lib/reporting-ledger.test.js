@@ -3,8 +3,6 @@ const { createHash } = require('node:crypto');
 const { describe, test } = require('node:test');
 
 const {
-  REPORTING_LEDGER_MIGRATION,
-  REPORTING_NOTIFICATION_ACTIVITY_MIGRATION,
   REPORTING_STATUS_REVISION_VIEW_MAX_ROWS,
   ReportingLedgerSnapshotUnavailableError,
   ReportingRowStoreError,
@@ -2105,24 +2103,5 @@ describe('seller reporting ledger', () => {
     const parsedExact = GetReportingStatusResponseSchema.safeParse(exact);
     assert.equal(parsedExact.success, true, parsedExact.success ? undefined : JSON.stringify(parsedExact.error.issues));
     assert.equal(validateResponse('get_reporting_status', exact, '3.2.1').valid, true);
-  });
-
-  test('exports one idempotent migration for the complete store surface', () => {
-    for (const table of [
-      'configurations',
-      'obligations',
-      'revisions',
-      'adjustments',
-      'consumer_statuses',
-      'issues',
-      'snapshots',
-      'checkpoints',
-    ]) {
-      assert.match(REPORTING_LEDGER_MIGRATION, new RegExp(`CREATE TABLE IF NOT EXISTS adcp_reporting_${table}`));
-    }
-    assert.match(
-      REPORTING_NOTIFICATION_ACTIVITY_MIGRATION,
-      /CREATE TABLE IF NOT EXISTS "adcp_reporting_notification_activity"/
-    );
   });
 });

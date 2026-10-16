@@ -99,13 +99,17 @@ def run(upstream, installation, node, output):
             connection.execute(sql.SQL("CREATE DATABASE {} TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C'").format(sql.Identifier(database)))
         owner.callback(drop, admin, database)
         with (output / "core-seller.stdout.log").open("wb") as stdout, (output / "core-seller.stderr.log").open("wb") as stderr:
+            # The pinned harness predates the package split and reads the PostgreSQL store from
+            # `@adcp/sdk/reporting/ledger`; the preload serves it the merged SDK and storage view.
             process = subprocess.Popen([
-                str(node), str(harness / "ts_core_server.cjs"), "--package-lock", str(lock_path),
+                str(node), "--require", str(Path(__file__).with_name("storage-compat.cjs")),
+                str(harness / "ts_core_server.cjs"), "--package-lock", str(lock_path),
                 "--expected-version", package["version"], "--expected-integrity", lock["integrity"],
                 "--adcp-version", pins["adcp_schema_version"], "--seller-role", "candidate",
                 "--port", str(port), "--ready-file", str(ready_file),
             ], cwd=output, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
-                env=narrow_env(DATABASE_URL=url, ADCP_INTEROP_TS_CORE_AUTH_TOKEN_A=token_a,
+                env=narrow_env(DATABASE_URL=url, ADCP_INTEROP_INSTALLATION=str(installation),
+                               ADCP_INTEROP_TS_CORE_AUTH_TOKEN_A=token_a,
                                ADCP_INTEROP_TS_CORE_AUTH_TOKEN_B=token_b, ADCP_INTEROP_TS_CORE_STARTUP_PROOF=proof))
             owner.callback(stop, process)
             deadline = time.monotonic() + 60

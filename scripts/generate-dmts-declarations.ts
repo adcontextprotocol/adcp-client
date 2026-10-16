@@ -30,7 +30,9 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 
-const DIST_LIB = path.resolve(process.cwd(), 'dist/lib');
+// Optional first argument: the dist directory to process (default `dist/lib`, the SDK layout).
+// `packages/reporting-storage` passes `dist`.
+const DIST_LIB = path.resolve(process.cwd(), process.argv[2] ?? 'dist/lib');
 
 function collectDeclarationFiles(dir: string): string[] {
   const out: string[] = [];

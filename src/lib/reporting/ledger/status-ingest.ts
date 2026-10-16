@@ -26,8 +26,7 @@ import {
 import {
   REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES,
   REPORTING_CONSUMER_STATUS_ERROR_MESSAGE_MAX_BYTES,
-  ReportingConsumerStatusConflictError,
-  ReportingLedgerSnapshotUnavailableError,
+  isReportingLedgerErrorNamed,
   type ReportingConsumerStatusLedgerStore,
   type ReportingLedgerRevisionMetadataV1,
   type ReportingLedgerStore,
@@ -239,7 +238,7 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
         });
         if (replay) return completed(replay);
       } catch (error) {
-        if (!(error instanceof ReportingConsumerStatusConflictError)) throw error;
+        if (!isReportingLedgerErrorNamed(error, 'ReportingConsumerStatusConflictError')) throw error;
         return failed(statusIds, 'IDEMPOTENCY_CONFLICT', 'Reporting status idempotency conflict');
       }
       const now = (options.now ?? (() => new Date()))();
@@ -306,7 +305,7 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
         });
         return completed(results);
       } catch (error) {
-        const conflict = error instanceof ReportingConsumerStatusConflictError;
+        const conflict = isReportingLedgerErrorNamed(error, 'ReportingConsumerStatusConflictError');
         if (!conflict && !(error instanceof ReportingStatusValidationError)) throw error;
         return failed(
           statusIds,
@@ -416,7 +415,7 @@ async function validateStatus(
     try {
       page = await store.readSnapshotPage(status.seller_ledger_snapshot_id, accountId, undefined, 1);
     } catch (error) {
-      if (!(error instanceof ReportingLedgerSnapshotUnavailableError)) throw error;
+      if (!isReportingLedgerErrorNamed(error, 'ReportingLedgerSnapshotUnavailableError')) throw error;
       throw new ReportingStatusValidationError('snapshot provenance unavailable');
     }
     const scope = reportingLedgerEffectivePeriod(page.snapshot.query, page.snapshot.ledgerAsOf);

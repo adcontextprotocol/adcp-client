@@ -420,46 +420,6 @@
         "default": "./dist/lib/media-buy/actions.js"
       }
     },
-    "./reporting/gcs": {
-      "import": {
-        "types": "./dist/lib/reporting/gcs/index.d.mts",
-        "default": "./dist/lib/reporting/gcs/index.mjs"
-      },
-      "require": {
-        "types": "./dist/lib/reporting/gcs/index.d.ts",
-        "default": "./dist/lib/reporting/gcs/index.js"
-      }
-    },
-    "./reporting/s3": {
-      "import": {
-        "types": "./dist/lib/reporting/s3/index.d.mts",
-        "default": "./dist/lib/reporting/s3/index.mjs"
-      },
-      "require": {
-        "types": "./dist/lib/reporting/s3/index.d.ts",
-        "default": "./dist/lib/reporting/s3/index.js"
-      }
-    },
-    "./reporting/azure": {
-      "import": {
-        "types": "./dist/lib/reporting/azure/index.d.mts",
-        "default": "./dist/lib/reporting/azure/index.mjs"
-      },
-      "require": {
-        "types": "./dist/lib/reporting/azure/index.d.ts",
-        "default": "./dist/lib/reporting/azure/index.js"
-      }
-    },
-    "./reporting/bigquery": {
-      "import": {
-        "types": "./dist/lib/reporting/bigquery/index.d.mts",
-        "default": "./dist/lib/reporting/bigquery/index.mjs"
-      },
-      "require": {
-        "types": "./dist/lib/reporting/bigquery/index.d.ts",
-        "default": "./dist/lib/reporting/bigquery/index.js"
-      }
-    },
     "./identity-3.3": {
       "import": {
         "types": "./dist/lib/identity-3.3/index.d.mts",
@@ -593,18 +553,6 @@
       "media-buy/actions": [
         "dist/lib/media-buy/actions.d.ts"
       ],
-      "reporting/gcs": [
-        "dist/lib/reporting/gcs/index.d.ts"
-      ],
-      "reporting/s3": [
-        "dist/lib/reporting/s3/index.d.ts"
-      ],
-      "reporting/azure": [
-        "dist/lib/reporting/azure/index.d.ts"
-      ],
-      "reporting/bigquery": [
-        "dist/lib/reporting/bigquery/index.d.ts"
-      ],
       "identity-3.3": [
         "dist/lib/identity-3.3/index.d.ts"
       ]
@@ -642,7 +590,6 @@
     "examples/CONTRIBUTING.md",
     "examples/storyboards/account-sync-contract.yaml",
     "examples/adcp.config.json",
-    "examples/reliable-reporting-service/README.md",
     "examples/reliable-reporting-buyer/**/*",
     "examples/seller-3.2-starter.ts",
     "examples/supply-path-verification.ts",
@@ -676,10 +623,10 @@
     "sync:agents": "node scripts/import-claude-agents.mjs",
     "prepublishOnly": "npm run clean && npm run sync-schemas:all && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && npm run check:publish-protocol-artifacts && node --test-timeout=60000 --test-force-exit --test test/lib/adcp-client.test.js test/lib/validation.test.js test/lib/zod-schemas.test.js",
     "build": "npm run build:lib",
-    "build:lib": "npm run sync-version && npm run schemas:ensure && tsx scripts/generate-wire-spec-fields.ts && tsup && node --max-old-space-size=8192 ./node_modules/typescript/bin/tsc --project tsconfig.lib.json --emitDeclarationOnly && tsx scripts/copy-schemas-to-dist.ts && tsx scripts/copy-reporting-source-schemas.ts && tsx scripts/copy-reporting-consumer-status-fixtures.ts && tsx scripts/sync-canonical-storyboard-fixtures.ts --copy-dist && tsx scripts/copy-v2-projection-catalog.ts && tsx scripts/generate-per-tool-types.ts && tsx scripts/generate-dmts-declarations.ts",
+    "build:lib": "npm run sync-version && npm run schemas:ensure && tsx scripts/generate-wire-spec-fields.ts && tsup && node --max-old-space-size=8192 ./node_modules/typescript/bin/tsc --project tsconfig.lib.json --emitDeclarationOnly && tsx scripts/copy-schemas-to-dist.ts && tsx scripts/copy-reporting-source-schemas.ts && tsx scripts/copy-reporting-consumer-status-fixtures.ts && tsx scripts/sync-canonical-storyboard-fixtures.ts --copy-dist && tsx scripts/copy-v2-projection-catalog.ts && tsx scripts/generate-per-tool-types.ts && tsx scripts/generate-dmts-declarations.ts && npm run build --workspace=@adcp/reporting-storage",
     "build:test-agents": "npm run build:lib && tsc -p test-agents/tsconfig.json --rootDir test-agents",
     "pretest": "npm run build:lib",
-    "test": "npm run test:node && npm test --workspace=packages/eslint-plugin --if-present && npm test --workspace=@adcp/reference-renderers",
+    "test": "npm run test:node && npm test --workspace=packages/eslint-plugin --if-present && npm test --workspace=@adcp/reference-renderers && npm run test:reporting-storage",
     "test:node": "npm run test:node:fast && npm run test:node:slow",
     "test:node:fast": "node scripts/run-node-tests.mjs --group fast",
     "test:node:fast:shard": "node scripts/run-node-tests.mjs --group fast --shard-env",
@@ -727,21 +674,23 @@
     "compliance:fork-matrix": "node --test --test-timeout=300000 'test/examples/hello-*.test.js' test/examples/proxy-seller-snap.test.js",
     "typecheck:skill-examples": "tsx scripts/typecheck-skill-examples.ts",
     "check:skill-sync": "tsx scripts/check-skill-sync.ts",
-    "check:package": "npm run check:runtime-compat && npm run check:packed-artifact && npm run check:publish-protocol-artifacts && npm run typecheck:examples && publint --strict && node --max-old-space-size=8192 ./node_modules/@arethetypeswrong/cli/dist/index.js --pack . --exclude-entrypoints compliance-fixtures/reporting-consumer-status-v1.json compliance-fixtures/principal.yaml compliance-fixtures/reporting-core.yaml compliance-fixtures/canonical-storyboards-provenance.json",
-    "check:packed-artifact": "node scripts/check-packed-artifact.mjs && node scripts/check-reporting-consumer-package.mjs",
+    "check:package": "npm run check:runtime-compat && npm run check:packed-artifact && npm run check:publish-protocol-artifacts && npm run typecheck:examples && publint --strict && node --max-old-space-size=8192 ./node_modules/@arethetypeswrong/cli/dist/index.js --pack . --exclude-entrypoints compliance-fixtures/reporting-consumer-status-v1.json compliance-fixtures/principal.yaml compliance-fixtures/reporting-core.yaml compliance-fixtures/canonical-storyboards-provenance.json && npm run check --workspace=@adcp/reporting-storage && node --max-old-space-size=8192 ./node_modules/@arethetypeswrong/cli/dist/index.js --pack packages/reporting-storage",
+    "check:packed-artifact": "node scripts/check-packed-artifact.mjs && node scripts/check-reporting-consumer-package.mjs && node scripts/check-reporting-storage-package.mjs",
     "check:runtime-compat": "node scripts/check-runtime-compat.mjs",
-    "check:package-size": "node scripts/check-package-size.mjs",
+    "check:package-size": "node scripts/check-package-size.mjs && node packages/reporting-storage/scripts/check-package.mjs --size",
     "check:publish-protocol-artifacts": "node scripts/check-publish-protocol-artifacts.mjs",
     "verify:package": "node scripts/verify-package.mjs",
-    "validate:reporting-gcp": "node scripts/validate-reporting-gcp.mjs",
+    "validate:reporting-gcp": "node packages/reporting-storage/scripts/validate-reporting-gcp.mjs",
     "check:adopter-types": "tsx scripts/check-adopter-types.ts",
     "check:adopter-types-narrow": "tsx scripts/check-adopter-types-narrow.ts",
     "sync-version": "tsx scripts/sync-version.ts",
     "validate-schemas": "tsx scripts/validate-schemas.ts",
     "lint": "eslint 'src/lib/testing/**/*.ts'",
     "lint:fix": "eslint 'src/lib/testing/**/*.ts' --fix",
+    "lint:boundaries": "eslint --config eslint.boundaries.config.mjs 'src/**/*.{ts,tsx,js,mjs,cjs}' 'bin/**/*.js' 'examples/**/*.{ts,js,mjs}'",
     "lint:workflows": "node scripts/lint-workflows.js",
     "typecheck": "node --max-old-space-size=8192 ./node_modules/typescript/bin/tsc --noEmit",
+    "typecheck:reporting-storage": "npm run typecheck --workspace=@adcp/reporting-storage",
     "typecheck:examples": "tsc --noEmit --project tsconfig.examples.json",
     "clean": "rm -rf dist/",
     "docs": "typedoc",
@@ -749,7 +698,7 @@
     "docs:serve": "npx http-server docs -p 4000 -o",
     "docs:open": "open docs/api/index.html || xdg-open docs/api/index.html || start docs/api/index.html",
     "ci:validate": "node scripts/ci-validate.js",
-    "ci:quick": "npm run format:check && npm run typecheck && npm run build:lib && npm test",
+    "ci:quick": "npm run format:check && npm run typecheck && npm run build:lib && npm run typecheck:reporting-storage && npm test",
     "test:zod-openapi-portability": "node --test test/lib/zod-openapi-portability.test.js",
     "test:schemas-browser": "node --test-timeout=60000 --test test/lib/schemas-browser.test.js",
     "ci:schema-check": "npm run sync-schemas && npm run generate-types && npm run generate-registry-types -- --sync && git diff --exit-code -I '// Generated at:' src/lib/types/ src/lib/agents/ src/lib/media-buy/action-metadata.generated.ts src/lib/media-buy/update-fields.generated.ts src/lib/registry/types.generated.ts schemas/registry/registry.yaml || (echo '⚠️  Generated files are out of sync. Run: npm run sync-schemas && npm run generate-types && npm run generate-registry-types -- --sync' && exit 1)",
@@ -766,7 +715,8 @@
     "registry:mcp": "tsx src/registry/mcp-server.ts",
     "format": "prettier --write \"./**/*.{css,html,js,ts,tsx,json}\"",
     "format:check": "prettier --check \"./**/*.{css,html,js,ts,tsx,json}\"",
-    "review:codex": "bash scripts/codex-review.sh"
+    "review:codex": "bash scripts/codex-review.sh",
+    "test:reporting-storage": "npm test --workspace=@adcp/reporting-storage"
   },
   "keywords": [
     "adcp",
@@ -814,24 +764,12 @@
   },
   "peerDependencies": {
     "@a2a-js/sdk": "^1.0.1",
-    "@aws-sdk/client-s3": "^3.700.0",
-    "@azure/storage-blob": "^12.23.0",
-    "@google-cloud/storage": "^7.22.0 || ^8.2.0",
     "@modelcontextprotocol/sdk": "^1.31.0",
     "@opentelemetry/api": "^1.0.0",
     "redis": "^4.6.0 || ^5.0.0 || ^6.0.0",
     "zod": "^4.1.5"
   },
   "peerDependenciesMeta": {
-    "@aws-sdk/client-s3": {
-      "optional": true
-    },
-    "@azure/storage-blob": {
-      "optional": true
-    },
-    "@google-cloud/storage": {
-      "optional": true
-    },
     "@opentelemetry/api": {
       "optional": true
     },
@@ -843,12 +781,9 @@
     "@a2a-js/sdk": "^1.0.1",
     "@apidevtools/json-schema-ref-parser": "^15.5.2",
     "@arethetypeswrong/cli": "^0.18.5",
-    "@aws-sdk/client-s3": "^3.1147.0",
-    "@azure/storage-blob": "~12.32.0",
     "@changesets/cli": "^3.0.3",
     "@commitlint/cli": "^20.5.3",
     "@commitlint/config-conventional": "^20.5.3",
-    "@google-cloud/storage": "^7.22.0",
     "@modelcontextprotocol/sdk": "^1.31.0",
     "@opentelemetry/api": "^1.9.1",
     "@types/express": "4.17.25",

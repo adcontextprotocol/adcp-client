@@ -179,13 +179,15 @@ schema compiler, or row validator in the same process. Applications requiring
 a hard CPU deadline must run inspection in an independently terminable worker
 or process; `maxSchemaCompileMs` rejects an overrun after compilation returns.
 
-Reproduce locally after building/packing and installing the SDK archives:
+Reproduce locally after building/packing and installing the SDK and storage archives
+(`npm pack`, and `npm pack --workspace=@adcp/reporting-storage`, then
+`npm install --prefix /path/to/npm-install sdk.tgz storage.tgz pg`):
 
 ```sh
 REPORTING_INTEROP_PG_URL=postgresql://localhost/postgres \
   node scripts/reporting-interop/run.mjs \
   /path/to/python-venv/bin/python /path/to/npm-install \
-  /path/to/sdk.tgz /path/to/adcp-8.0.0-py3-none-any.whl \
+  /path/to/sdk.tgz /path/to/reporting-storage.tgz /path/to/adcp-8.0.0-py3-none-any.whl \
   /path/to/pinned-python-checkout /path/to/new-evidence-directory
 ```
 

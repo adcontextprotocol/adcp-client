@@ -90,7 +90,12 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // conformance check, maintenance wiring and the operations runbook) measure
 // 20,702,804 bytes packed; allow about 37 KB for compressor variance. Other byte
 // budgets stay fixed.
-const MAX_PACKED_TARBALL_BYTES = 20_740_000;
+// The Reliable Reporting storage split moved the PostgreSQL store, row storage, managed delivery, notification
+// activity and the cloud providers (24 modules, 96 files) into @adcp/reporting-storage, which has its own budget in
+// packages/reporting-storage/scripts/check-package.mjs. The SDK keeps three new modules (receipts, offering
+// validation, scheduler support) and gains a migration guide. The measured tarball is 20,318,824 bytes; allow
+// about 40 KB for compressor variance.
+const MAX_PACKED_TARBALL_BYTES = 20_360_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -244,7 +249,11 @@ const MAX_PACKED_FILE_COUNT =
   1 + // Reliable Reporting stability policy guide.
   4 + // Identity 3.3 generated-type bridge (`identity-3.3/generated-compat`, one dual-format set).
   4 + // Shared consent-macro recognition (one dual-format runtime/declaration set).
-  4; // Reporting page-size helper (`reporting/pagination`, one dual-format runtime/declaration set).
+  4 + // Reporting page-size helper (`reporting/pagination`, one dual-format runtime/declaration set).
+  12 + // Reporting receipts, offering validation and scheduler support modules (three dual-format sets).
+  1 - // Reliable Reporting storage migration guide.
+  96 - // 24 storage modules (96 files) now ship in @adcp/reporting-storage.
+  1; // The integrated reporting-service example README now ships with @adcp/reporting-storage.
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

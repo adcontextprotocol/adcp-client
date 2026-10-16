@@ -59,10 +59,6 @@ export const SLOW_NODE_TESTS = new Set([
   // heavy file, while remaining stable in the single-concurrency slow lane.
   'test/lib/handler-controlled-flow.test.js',
   'test/lib/media-buy-lifecycle-release-gate.test.js',
-  // Exercises 54 real-PostgreSQL activity/recovery cases. The expanded
-  // reserved-before-I/O and retry coverage is intentionally comprehensive and
-  // now exceeds the fast lane's exact 60-second per-file ceiling on a cold DB.
-  'test/lib/reporting-notification-activity-pg.test.js',
   'test/lib/storyboard-notices.test.js',
   'test/lib/storyboard-requires-gate.test.js',
   // Boots live MCP agents and loads two real compliance bundles; ~25s standing

@@ -1290,7 +1290,12 @@ export { PlacementPresentationDocumentSchema, PlacementPresentationReferenceSche
 // ====== ERROR CODES ======
 // Standard error code vocabulary for programmatic error handling
 export type { Error as TaskErrorDetail } from './types/core.generated';
-export { STANDARD_ERROR_CODES, isStandardErrorCode, getErrorRecovery } from './types/error-codes';
+export {
+  STANDARD_ERROR_CODES,
+  isStandardErrorCode,
+  getErrorRecovery,
+  DEFAULT_UNKNOWN_ERROR_RECOVERY,
+} from './types/error-codes';
 export type { StandardErrorCode, ErrorRecovery } from './types/error-codes';
 
 // ====== SERVER-SIDE HELPERS ======
