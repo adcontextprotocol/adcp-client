@@ -13,14 +13,14 @@
  *
  * @packageDocumentation
  */
-import type { Account, ResolveContext } from '../../server/decisioning/account';
+import type { Account } from '../../server/decisioning/account';
 import type { RequestContext } from '../../server/decisioning/context';
 import type { DecisioningPlatform } from '../../server/decisioning/platform';
 import type { ReliableReportingPlatform } from '../../server/decisioning/specialisms/reporting';
 import { scanArgsForCredentials } from '../../server/credential-policy';
 import { canonicalize } from '../../utils/jcs';
 import type { ReportingDeliveryCapabilities, ReportingDeliveryOffering } from '../../types/tools.generated';
-import { ReportingDeliveryCapabilitiesSchema, ReportingDeliveryOfferingSchema } from '../../types/schemas.generated';
+import { ReportingDeliveryOfferingSchema } from '../../types/schemas.generated';
 import {
   assertReportingConsumerMismatchEscalation,
   reportingConsumerStatusCapabilityV1,
@@ -43,7 +43,6 @@ import {
   reportReportingSchedulerError,
   reportingDeploymentWideAccountIds,
   reportingSchedulerDelay,
-  reportingSchedulerErrorMessage,
   rotateReportingRoster,
 } from './scheduler-support';
 import type { InlineReportingReplayRetentionV1 } from '../source';

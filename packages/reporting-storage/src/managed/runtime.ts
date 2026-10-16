@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 
 import type {
   ReportingAdjustmentReceipt,
@@ -22,7 +22,6 @@ import {
   type ReportingReceiptSyncStoreV1,
   type SyncReportingReceiptsParamsV1,
 } from '@adcp/sdk/reporting/ledger';
-import { AdcpError } from '@adcp/sdk/server';
 import type {
   ReportingStatusConsumerScopeOptionsV1,
   ReportingLedgerAdjustmentV1,
@@ -1115,10 +1114,6 @@ export function adjustmentReceiptEvidenceMatches(
     receipt.adjusts_reporting_revision_id === adjustment.adjusts_reporting_revision_id &&
     receipt.observed_adjustment_sha256 === adjustment.wireAdjustment.canonical_adjustment_sha256
   );
-}
-
-function sha256(value: unknown): string {
-  return createHash('sha256').update(canonicalJson(value)).digest('hex');
 }
 
 function canonicalJson(value: unknown): string {
