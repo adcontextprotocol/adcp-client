@@ -21,11 +21,11 @@
  */
 
 import type { V1Product, V1ProductInput, V1FormatId, V2ProductFormatDeclaration, ProjectionDiagnostic } from './types';
-import { projectV1ProductToV2 } from './v1-to-v2';
+import { projectV1ProductToV2, withDualEmissionLegacyRefs } from './v1-to-v2';
 import type { V1ToV2ProjectionOptions } from './v1-to-v2';
 import { LIBRARY_VERSION } from '../../version';
 import { canonicalize as canonicalizeJson } from '../../utils/jcs';
-import { concealLegacyFormatRefs } from './legacy-metadata';
+import { concealLegacyFormatRefs, legacyFormatRefsForDeclaration } from './legacy-metadata';
 import type { CanonicalFormatDeclaration } from './legacy-metadata';
 import { legacyRoutesForProduct } from './legacy-routes';
 import type { CanonicalFormatLegacyRoute } from './legacy-routes';
@@ -374,7 +374,12 @@ export function toAdditiveCanonicalProduct<P extends V1Product>(
   routes: CanonicalFormatLegacyRoute[];
 } {
   const { product: augmented, diagnostics } = augmentProductWithFormatOptions(product, options);
-  const projected = toCanonicalFormatOptionsWithRoutes(product.product_id, augmented.format_options);
+  const projected = toCanonicalFormatOptionsWithRoutes(
+    product.product_id,
+    options?._inferDualEmissionLegacyRefs === false
+      ? augmented.format_options
+      : withDualEmissionLegacyRefs(augmented.format_options, product.format_ids)
+  );
   return {
     product: {
       ...augmented,
@@ -525,15 +530,19 @@ export function toCanonicalOnlyProduct<P extends V1ProductInput>(
   const existing = (product as unknown as { format_options?: unknown }).format_options;
 
   // v2-native: the seller already sent format_options[]. Drop the
-  // redundant v1 fallback, but flag any legacy ref no v1_format_ref covers.
+  // redundant v1 fallback, but flag any legacy ref neither a declaration's
+  // explicit route nor the dual-emission index pairing covers.
   if (Array.isArray(existing)) {
-    const formatOptions = existing as V2ProductFormatDeclaration[];
+    const formatOptions =
+      options?._inferDualEmissionLegacyRefs === false
+        ? (existing as V2ProductFormatDeclaration[])
+        : withDualEmissionLegacyRefs(existing as V2ProductFormatDeclaration[], product.format_ids);
     const diagnostics: ProjectionDiagnostic[] = [];
     const inputIds = Array.isArray(product.format_ids) ? product.format_ids : [];
     if (inputIds.length > 0) {
       const covered = new Set<string>();
       for (const opt of formatOptions) {
-        const refs = Array.isArray(opt?.v1_format_ref) ? opt.v1_format_ref : [];
+        const refs = legacyFormatRefsForDeclaration(opt);
         for (const ref of refs) covered.add(formatRefCoverageKey(ref));
       }
       for (let k = 0; k < inputIds.length; k++) {
