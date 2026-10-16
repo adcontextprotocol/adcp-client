@@ -74,6 +74,12 @@ def run(upstream, installation, node, output):
     package = json.loads((installation / "node_modules/@adcp/sdk/package.json").read_bytes())
     lock = json.loads(lock_path.read_bytes())["packages"]["node_modules/@adcp/sdk"]
     pins = json.loads(Path(__file__).with_name("pins.json").read_bytes())
+    # The Python pin records the independently verified wheel/harness. The
+    # candidate TypeScript seller must match this checkout's protocol instead.
+    checkout_package_bytes = (Path(__file__).resolve().parents[2] / "package.json").read_bytes()
+    seller_protocol = json.loads(checkout_package_bytes)["adcp_version"]
+    require(isinstance(seller_protocol, str) and bool(seller_protocol), "checkout protocol present")
+    require(package["adcp_version"] == seller_protocol, "installed seller matches checkout protocol")
     require(lock["version"] == package["version"], "installed version")
     database = f"adcp_reverse_{secrets.token_hex(8)}"
     admin = os.environ["REPORTING_INTEROP_PG_URL"]
@@ -105,7 +111,7 @@ def run(upstream, installation, node, output):
                 str(node), "--require", str(Path(__file__).with_name("storage-compat.cjs")),
                 str(harness / "ts_core_server.cjs"), "--package-lock", str(lock_path),
                 "--expected-version", package["version"], "--expected-integrity", lock["integrity"],
-                "--adcp-version", pins["adcp_schema_version"], "--seller-role", "candidate",
+                "--adcp-version", seller_protocol, "--seller-role", "candidate",
                 "--port", str(port), "--ready-file", str(ready_file),
             ], cwd=output, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
                 env=narrow_env(DATABASE_URL=url, ADCP_INTEROP_INSTALLATION=str(installation),
@@ -128,7 +134,7 @@ def run(upstream, installation, node, output):
             require(ready["pid"] == process.pid and ready["port"] == port, "owned seller process")
             require(ready["startup_proof_sha256"] == hashlib.sha256(proof.encode()).hexdigest(), "startup proof")
             require(ready["seller_package"]["integrity"] == lock["integrity"], "seller artifact")
-            require(ready["seller_package"]["protocol"] == pins["adcp_schema_version"], "seller schema version")
+            require(ready["seller_package"]["protocol"] == seller_protocol, "seller schema version")
             results = []
             for suffix, token in (("a", token_a), ("b", token_b)):
                 account = f"interop-account-{suffix}"
@@ -148,7 +154,9 @@ def run(upstream, installation, node, output):
                 results.append({"account": account, "result": result})
             with psycopg.connect(db_conninfo, connect_timeout=10) as connection:
                 version = connection.execute("SHOW server_version").fetchone()[0]
-            return {"status": "passed", "database": database, "postgres_version": version, "accounts": results}
+            return {"status": "passed", "database": database, "postgres_version": version,
+                    "seller_adcp_version": seller_protocol, "buyer_adcp_version": pins["adcp_schema_version"],
+                    "accounts": results}
 
 
 if __name__ == "__main__":
