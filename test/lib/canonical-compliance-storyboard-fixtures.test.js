@@ -69,9 +69,9 @@ function assertCanonicalPackagedFixture({
     ADCP_VERSION,
     'canonical fixture provenance must select the primary compliance cache shipped with this SDK'
   );
-  assert.equal(fixtureSetProvenance.protocol_version, '3.2.4');
-  assert.equal(fixtureSetProvenance.source_commit, '5e6c4b01113237234b440b6c95adb8c6e0a07ca9');
-  assert.equal(fixtureSetProvenance.bundle_sha256, 'd5a0b167b323e5ee05ac2c8da9ca01c46a5cb5a7b988570f40f746bb8b15ae76');
+  assert.equal(fixtureSetProvenance.protocol_version, '3.2.5');
+  assert.equal(fixtureSetProvenance.source_commit, '3512882b67592622d2ae8bf5c853f565cf58043a');
+  assert.equal(fixtureSetProvenance.bundle_sha256, '5cc946062f3ed035f5332db7b1de68e3b6d2af8c01207e3959f2648addfe6e14');
 }
 
 test('packaged consumers receive the exact canonical universal/principal storyboard', () => {

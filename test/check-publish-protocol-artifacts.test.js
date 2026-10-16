@@ -8,8 +8,18 @@ const modulePromise = import(
   pathToFileURL(path.resolve(__dirname, '..', 'scripts', 'check-publish-protocol-artifacts.mjs')).href
 );
 
-const currentProtocolVersion = '3.2.1';
-const compatibleVersions = ['v2.5', 'v3', '3.0.25', '3.1.24', currentProtocolVersion, '3.2'];
+const currentProtocolVersion = '3.2.5';
+const compatibleVersions = [
+  'v2.5',
+  'v3',
+  '3.0.1',
+  '3.0.25',
+  '3.1.24',
+  '3.1.29',
+  '3.2.4',
+  currentProtocolVersion,
+  '3.2',
+];
 
 function fixture(overrides = {}) {
   return {
@@ -20,7 +30,7 @@ function fixture(overrides = {}) {
         { path: 'dist/lib/schemas-data/3.1/bundled.schemas.br' },
         { path: 'dist/lib/schemas-data/3.2/bundled.schemas.br' },
         { path: 'compliance/cache/3.0.25/index.json' },
-        { path: 'compliance/cache/3.1.24/index.json' },
+        { path: 'compliance/cache/3.1.29/index.json' },
         { path: `compliance/cache/${currentProtocolVersion}/index.json` },
         { path: 'docs/releases/14.0.0-beta.0.md' },
       ],
@@ -51,20 +61,25 @@ test('rejects superseded schema, compliance, and type preview bundles', async ()
   }
 });
 
-test('requires the exact maintained stable compliance inventory', async () => {
+test('requires the exact current and maintained stable compliance inventory', async () => {
   const { assertPublishProtocolArtifacts } = await modulePromise;
   const missingStable = fixture();
   missingStable.packageInfo.files = missingStable.packageInfo.files.filter(
-    file => !file.path.startsWith('compliance/cache/3.1.24/')
+    file => !file.path.startsWith('compliance/cache/3.1.29/')
   );
   assert.throws(
     () => assertPublishProtocolArtifacts(missingStable),
-    /3\.1\.24 \(required compliance bundle is missing\)/
+    /3\.1\.29 \(required compliance bundle is missing\)/
   );
 
-  const staleStable = fixture();
-  staleStable.packageInfo.files.push({ path: 'compliance/cache/3.0.1/index.json' });
-  assert.throws(() => assertPublishProtocolArtifacts(staleStable), /unsupported compliance bundle 3\.0\.1/);
+  for (const staleVersion of ['3.0.1', '3.1.24', '3.2.4']) {
+    const staleStable = fixture();
+    staleStable.packageInfo.files.push({ path: `compliance/cache/${staleVersion}/index.json` });
+    assert.throws(
+      () => assertPublishProtocolArtifacts(staleStable),
+      error => error.message.includes(`unsupported compliance bundle ${staleVersion}`)
+    );
+  }
 });
 
 test('requires every maintained stable schema root including v2.5', async () => {
@@ -111,7 +126,7 @@ test('allows a beta only when it is the exact current primary pin', async () => 
             { path: 'dist/lib/schemas-data/3.1/bundled.schemas.br' },
             { path: `dist/lib/schemas-data/${beta}/bundled.schemas.br` },
             { path: 'compliance/cache/3.0.25/index.json' },
-            { path: 'compliance/cache/3.1.24/index.json' },
+            { path: 'compliance/cache/3.1.29/index.json' },
             { path: `compliance/cache/${beta}/index.json` },
           ],
         },

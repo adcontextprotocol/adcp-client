@@ -88,6 +88,12 @@ def run(upstream, installation, node, output, mode):
     package = json.loads((installation / "node_modules/@adcp/sdk/package.json").read_bytes())
     lock = json.loads(lock_path.read_bytes())["packages"]["node_modules/@adcp/sdk"]
     pins = json.loads((here / "pins.json").read_bytes())
+    # The Python pin records the independently verified wheel/harness. The
+    # candidate TypeScript seller must match this checkout's protocol instead.
+    checkout_package_bytes = (Path(__file__).resolve().parents[2] / "package.json").read_bytes()
+    seller_protocol = json.loads(checkout_package_bytes)["adcp_version"]
+    require(isinstance(seller_protocol, str) and bool(seller_protocol), "checkout protocol present")
+    require(package["adcp_version"] == seller_protocol, "installed seller matches checkout protocol")
     require(lock["version"] == package["version"], "installed artifact")
     admin = os.environ["REPORTING_INTEROP_PG_URL"]
     fields = conninfo_to_dict(admin)
@@ -115,7 +121,7 @@ def run(upstream, installation, node, output, mode):
             str(node), "--require", str(here / "storage-compat.cjs"), str(here / "managed-seller.cjs"),
             "--upstream", str(upstream), "--mode", mode,
             "--package-lock", str(lock_path), "--expected-version", package["version"],
-            "--expected-integrity", lock["integrity"], "--adcp-version", pins["adcp_schema_version"],
+            "--expected-integrity", lock["integrity"], "--adcp-version", seller_protocol,
             "--port", str(port), "--ready-file", str(ready_file),
         ], cwd=output, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
             env=environment(DATABASE_URL=url, ADCP_INTEROP_INSTALLATION=str(installation),
@@ -138,7 +144,7 @@ def run(upstream, installation, node, output, mode):
         require(ready["startup_proof_sha256"] == hashlib.sha256(proof.encode()).hexdigest(), "startup proof")
         require(ready["auth_binding_sha256"] == hashlib.sha256(token.encode()).hexdigest(), "authentication binding")
         require(ready["seller_package"]["integrity"] == lock["integrity"] and
-                ready["seller_package"]["adcp_version"] == pins["adcp_schema_version"], "artifact identity")
+                ready["seller_package"]["adcp_version"] == seller_protocol, "artifact identity")
         client = subprocess.run([
             sys.executable, "-I", str(here / "managed-buyer.py"), f"http://127.0.0.1:{port}/mcp",
             str(destination), str(here.parents[1] / "test/fixtures/reporting-interop"), mode,
@@ -152,7 +158,7 @@ def run(upstream, installation, node, output, mode):
         with psycopg.connect(conninfo, connect_timeout=10) as connection:
             pg_version = connection.execute("SHOW server_version").fetchone()[0]
         return {"status": "passed", "mode": mode, "postgres_version": pg_version,
-                "seller_version": package["version"], "buyer": result}
+                "seller_version": package["version"], "seller_adcp_version": seller_protocol, "buyer": result}
 
 
 def interrupted(_signal, _frame):

@@ -18,8 +18,15 @@ async function main() {
     7,
     'usage: run.mjs PYTHON PACKAGE_ROOT TS_ARCHIVE STORAGE_ARCHIVE PY_WHEEL PY_HARNESS OUTPUT'
   );
-  const [python, packageRoot, archive, storageArchive, wheel, upstream, output] = args.map(value => path.resolve(value));
+  const [python, packageRoot, archive, storageArchive, wheel, upstream, output] = args.map(value =>
+    path.resolve(value)
+  );
   const pins = JSON.parse(await readFile(path.join(here, 'pins.json')));
+  const checkout = JSON.parse(await readFile(path.join(root, 'package.json')));
+  const installedSeller = JSON.parse(await readFile(path.join(packageRoot, 'node_modules/@adcp/sdk/package.json')));
+  assert.equal(typeof checkout.adcp_version, 'string', 'Checkout protocol must be present');
+  assert.ok(checkout.adcp_version.length > 0, 'Checkout protocol must not be empty');
+  assert.equal(installedSeller.adcp_version, checkout.adcp_version, 'TypeScript seller differs from checkout protocol');
   assert.equal(digest(await readFile(wheel)), pins.python_wheel_sha256, 'Python wheel differs from pin');
   const identity = await exec('git', ['--no-replace-objects', 'rev-parse', 'HEAD'], { cwd: upstream, timeout: 30_000 });
   assert.equal(identity.stdout.trim(), pins.python_harness_commit, 'Python harness differs from pin');
@@ -34,7 +41,11 @@ async function main() {
   const report = {
     contract: 'reporting_evidence_interop_v1',
     fixture_version: 1,
+    // Keep the historical Python pin explicit; candidate TypeScript releases
+    // may use a newer compatible schema patch without relabelling the wheel.
     adcp_schema_version: pins.adcp_schema_version,
+    python_adcp_schema_version: pins.adcp_schema_version,
+    typescript_adcp_schema_version: checkout.adcp_version,
     fixture_adcp_schema_version: JSON.parse(
       await readFile(path.join(root, 'test/fixtures/reporting-interop/evidence-v1.json'))
     ).adcp_schema_version,

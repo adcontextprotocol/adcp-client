@@ -148,6 +148,12 @@ def run(upstream, installation, node, output, mode, gcs_input, wheel, grant_hook
     package = json.loads((installation / "node_modules/@adcp/sdk/package.json").read_bytes())
     lock = json.loads(lock_path.read_bytes())["packages"]["node_modules/@adcp/sdk"]
     pins = json.loads((here / "pins.json").read_bytes())
+    # The Python pin records the independently verified wheel/harness. The
+    # candidate TypeScript seller must match this checkout's protocol instead.
+    checkout_package_bytes = (Path(__file__).resolve().parents[2] / "package.json").read_bytes()
+    seller_protocol = json.loads(checkout_package_bytes)["adcp_version"]
+    require(isinstance(seller_protocol, str) and bool(seller_protocol), "checkout protocol present")
+    require(package["adcp_version"] == seller_protocol, "installed seller matches checkout protocol")
     require(lock["version"] == package["version"], "installed artifact")
     require(gcs_input.stat().st_mode & 0o777 == 0o600, "private GCS input mode")
     gcs = json.loads(gcs_input.read_bytes())
@@ -213,7 +219,7 @@ def run(upstream, installation, node, output, mode, gcs_input, wheel, grant_hook
         process = subprocess.Popen([
             str(node), str(supplement / "gcs-managed-seller.cjs"), "--upstream", str(upstream), "--mode", mode,
             "--package-lock", str(lock_path), "--expected-version", package["version"],
-            "--expected-integrity", lock["integrity"], "--adcp-version", pins["adcp_schema_version"],
+            "--expected-integrity", lock["integrity"], "--adcp-version", seller_protocol,
             "--port", str(port), "--ready-file", str(ready_file),
         ], cwd=output, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
             env=environment(DATABASE_URL=url, REPORTING_INTEROP_DESTINATION=str(destination),
@@ -237,7 +243,7 @@ def run(upstream, installation, node, output, mode, gcs_input, wheel, grant_hook
         require(ready["startup_proof_sha256"] == hashlib.sha256(proof.encode()).hexdigest(), "startup proof")
         require(ready["auth_binding_sha256"] == hashlib.sha256(token.encode()).hexdigest(), "authentication binding")
         require(ready["seller_package"]["integrity"] == lock["integrity"] and
-                ready["seller_package"]["adcp_version"] == pins["adcp_schema_version"], "artifact identity")
+                ready["seller_package"]["adcp_version"] == seller_protocol, "artifact identity")
         preflight = execute([sys.executable, '-I', str(supplement / 'gcs-managed-preflight.py')], env=environment(GCS_PREFLIGHT_URL=f'http://127.0.0.1:{port}/mcp', GCS_PREFLIGHT_MODE=mode, GCS_PREFLIGHT_VERSION=pins['adcp_schema_version'], ADCP_INTEROP_BUYER_TOKEN=token), text=True,timeout=180)
         require(preflight.returncode == 0, 'official MCP preflight')
         grant = execute([sys.executable, '-I', str(grant_hook), str(destination / 'gcs-grant.json')], env=environment(), text=True,timeout=180)
@@ -259,12 +265,14 @@ def run(upstream, installation, node, output, mode, gcs_input, wheel, grant_hook
         with psycopg.connect(conninfo, connect_timeout=10) as connection:
             pg_version = connection.execute("SHOW server_version").fetchone()[0]
         return {"status": "passed", "mode": mode, "postgres_version": pg_version,
-                "seller_version": package["version"], "seller_integrity": lock["integrity"],
+                "seller_version": package["version"], "seller_adcp_version": seller_protocol, "seller_integrity": lock["integrity"],
+                "preflight_adcp_version": pins["adcp_schema_version"],
                 "node_version": ready["node"]["version"],
                 "storage_peer_version": json.loads((installation / "node_modules/@google-cloud/storage/package.json").read_bytes())["version"],
                 "python_dependencies": {name: importlib.metadata.version(name) for name in ("adcp", "mcp", "google-cloud-storage", "google-auth", "psycopg", "pydantic")},
                 "typescript_archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
                 "typescript_lock_sha256": hashlib.sha256(lock_path.read_bytes()).hexdigest(),
+                "checkout_package_sha256": hashlib.sha256(checkout_package_bytes).hexdigest(),
                 "grant_hook_sha256": grant_hook_digest,
                 "fixture_sha256": {name: hashlib.sha256((here.parents[1] / "test/fixtures/reporting-interop" / name).read_bytes()).hexdigest() for name in ("evidence-v1.json", "resources/rows.jsonl")},
                 "python_wheel_sha256": pins["python_wheel_sha256"], "python_harness_commit": pins["python_harness_commit"],
