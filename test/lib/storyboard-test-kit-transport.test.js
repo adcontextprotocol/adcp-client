@@ -173,6 +173,10 @@ test('camel-case credential headers with values the run cannot learn are still e
     'X-AccessToken': 'distinct-camel-accesstoken',
     'X-SessionToken': 'distinct-camel-sessiontoken',
     XSecret: 'distinct-camel-secret',
+    XAuthKey: 'distinct-camel-authkey',
+    'X-SecretKey': 'distinct-camel-secretkey',
+    XClientKey: 'distinct-camel-clientkey',
+    'X-SigningKey': 'distinct-camel-signingkey',
   };
   for (const name of Object.keys(stowaways)) {
     assert.equal(
@@ -344,3 +348,35 @@ for (const source of ['structured', 'kit-pair', 'header']) {
     assert.deepEqual({ auth: options.auth, headers: options.headers, test_kit: options.test_kit }, before);
   });
 }
+
+test('parallel routing collisions are graded as step errors without dispatching', async t => {
+  const { url, requests } = await startAgent(t);
+  const sb = storyboard();
+  sb.phases[0].steps[0].parallel_dispatch = { count: 2 };
+  const result = await runStoryboard(url, sb, {
+    ...OPTIONS,
+    contracts: ['parallel_dispatch_runner'],
+    headers: { 'x-adcp-tenant': 'tenant-suite-key-must-not-leak' },
+  });
+  assert.equal(result.overall_passed, false);
+  assert.match(result.phases[0].steps[0].error ?? '', /x-adcp-tenant is a routing header/);
+  assert.equal(requests.length, 0);
+});
+
+test('invalid Basic payloads do not invent passwords that collide with routing', async t => {
+  const { url, requests } = await startAgent(t);
+  const result = await runStoryboard(url, storyboard(), {
+    ...OPTIONS,
+    headers: {
+      'x-adcp-tenant': 'acme-tenant',
+      Authorization: `Basic !!!${Buffer.from('routing:tenant').toString('base64')}!!!`,
+    },
+    transport: { trustedFetchFn: (...args) => fetch(...args) },
+  });
+  assert.equal(result.overall_passed, true, JSON.stringify(result.phases));
+  assert.ok(requests.length >= 3);
+  for (const request of requests) {
+    assert.equal(request.headers.authorization, 'Bearer kit-step-key');
+    assert.equal(request.headers['x-adcp-tenant'], 'acme-tenant');
+  }
+});

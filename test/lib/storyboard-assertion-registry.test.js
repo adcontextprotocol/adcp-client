@@ -446,6 +446,11 @@ describe('runStoryboard: assertion hooks', () => {
     assert.strictEqual(globals.length, 1);
     assert.strictEqual(globals[0].step_id, undefined);
     assert.strictEqual(globals[0].assertion_id, 'end.only');
+    const xml = formatStoryboardResultsAsJUnit([result]);
+    assert.match(xml, /<testcase[^>]*name="Assertion › end.only"/);
+    assert.match(xml, /<failure[^>]*type="StoryboardAssertionFailure"/);
+    assert.strictEqual((xml.match(/<failure\b/g) ?? []).length, 1);
+    assert.strictEqual((xml.match(/failures="1"/g) ?? []).length, 2, 'suite and aggregate count the invariant');
   });
 
   it('state carries across onStart → onStep → onEnd on the same assertion', async () => {
