@@ -46,11 +46,13 @@ function pack() {
 
 function checkBudgets(info) {
   const problems = [];
-  if (info.size > MAX_PACKED_BYTES) problems.push(`packed tarball is ${info.size} bytes; budget is ${MAX_PACKED_BYTES}`);
+  if (info.size > MAX_PACKED_BYTES)
+    problems.push(`packed tarball is ${info.size} bytes; budget is ${MAX_PACKED_BYTES}`);
   if (info.unpackedSize > MAX_UNPACKED_BYTES) {
     problems.push(`unpacked package is ${info.unpackedSize} bytes; budget is ${MAX_UNPACKED_BYTES}`);
   }
-  if (info.entryCount > MAX_FILE_COUNT) problems.push(`package has ${info.entryCount} files; budget is ${MAX_FILE_COUNT}`);
+  if (info.entryCount > MAX_FILE_COUNT)
+    problems.push(`package has ${info.entryCount} files; budget is ${MAX_FILE_COUNT}`);
   return problems;
 }
 
@@ -78,6 +80,15 @@ function checkContents(info) {
     if (/^(src|test|scripts)\//.test(file) || (/^examples\//.test(file) && file !== PUBLISHED_EXAMPLE)) {
       problems.push(`${file} must not be published`);
     }
+  }
+  // Declaration emit can inline an inferred type as a relative path into the SDK's build output
+  // (`import("../../../../dist/lib/...")`), which resolves in this workspace and nowhere else. Public types must be
+  // named explicitly, so every `@adcp/sdk` reference in a declaration is a package specifier.
+  for (const file of packed) {
+    if (!/\.d\.m?ts$/.test(file)) continue;
+    const text = readFileSync(path.join(packageRoot, file), 'utf8');
+    if (/["'](?:\.\.\/)+dist\/lib\//.test(text))
+      problems.push(`${file} imports the SDK's build output by relative path`);
   }
   return problems;
 }

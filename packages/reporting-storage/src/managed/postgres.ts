@@ -2047,7 +2047,10 @@ export class PostgresReportingManagedDeliveryStore
     return result.rowCount === 1;
   }
 
-  async getReadableResource(input: { account_id: string; resource_ref: string }) {
+  async getReadableResource(input: {
+    account_id: string;
+    resource_ref: string;
+  }): Promise<{ materialization: ReportingMaterialization; binding: ReportingManagedDeliveryBindingV1 } | null> {
     const result = await this.query<
       QueryRow & { materialization: ReportingMaterialization; binding: ReportingManagedDeliveryBindingV1 }
     >(
