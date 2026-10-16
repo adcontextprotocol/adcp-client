@@ -452,8 +452,10 @@ describe('runStoryboard: assertion hooks', () => {
     assert.strictEqual(globals.length, 1);
     assert.strictEqual(globals[0].step_id, undefined);
     assert.strictEqual(globals[0].assertion_id, 'end.only');
+    const steps = result.phases.flatMap(phase => phase.steps);
+    assert.strictEqual(steps.length, 2);
     assert.ok(
-      result.phases.flatMap(phase => phase.steps).every(step => step.passed),
+      steps.every(step => step.passed),
       'only the onEnd hook fails'
     );
     const xml = formatStoryboardResultsAsJUnit([result]);
