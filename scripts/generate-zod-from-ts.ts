@@ -1171,24 +1171,244 @@ function postProcessRecordIntersections(content: string): string {
  * projection must preserve the primitive runtime shape.
  */
 function postProcessPrimitiveIntersections(content: string): string {
-  const emptyObject = String.raw`z\.object\(\{\}\)(?:\.passthrough\(\))?`;
-  const emptyObjectUnion = String.raw`z\.union\(\[\s*${emptyObject}(?:\s*,\s*${emptyObject})+\s*\]\)`;
-  const emptyObjectThenPrimitive = new RegExp(
-    String.raw`(?:${emptyObject}|${emptyObjectUnion})\.and\(z\.(string|number|boolean)\(\)\)`,
-    'g'
-  );
-  const primitiveThenEmptyObject = new RegExp(
-    String.raw`z\.(string|number|boolean)\(\)\.and\((?:${emptyObject}|${emptyObjectUnion})\)`,
-    'g'
-  );
-
   let result = content;
-  let previous: string;
-  do {
-    previous = result;
-    result = result.replace(emptyObjectThenPrimitive, 'z.$1()').replace(primitiveThenEmptyObject, 'z.$1()');
-  } while (result !== previous);
-  return result;
+  for (;;) {
+    const source = ts.createSourceFile('adcp-generated-zod.ts', result, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const declarations = new Map<string, ts.Expression>();
+    for (const statement of source.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name) && declaration.initializer) {
+          declarations.set(declaration.name.text, declaration.initializer);
+        }
+      }
+    }
+    const isZodCall = (node: ts.Expression, method: string): node is ts.CallExpression =>
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === 'z' &&
+      node.expression.name.text === method;
+    const isMarker = (node: ts.Expression): boolean => {
+      if (ts.isParenthesizedExpression(node)) return isMarker(node.expression);
+      if (isZodCall(node, 'object')) {
+        const shape = node.arguments[0];
+        return !!shape && ts.isObjectLiteralExpression(shape) && shape.properties.length === 0;
+      }
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === 'passthrough' &&
+        node.arguments.length === 0
+      ) {
+        return isMarker(node.expression.expression);
+      }
+      if (isZodCall(node, 'union')) {
+        const arms = node.arguments[0];
+        return !!arms && ts.isArrayLiteralExpression(arms) && arms.elements.length > 0 && arms.elements.every(isMarker);
+      }
+      return false;
+    };
+    const isPrimitive = (node: ts.Expression, seen = new Set<string>()): boolean => {
+      if (ts.isParenthesizedExpression(node)) return isPrimitive(node.expression, seen);
+      if (ts.isIdentifier(node)) {
+        if (seen.has(node.text)) return false;
+        const initializer = declarations.get(node.text);
+        return !!initializer && isPrimitive(initializer, new Set([...seen, node.text]));
+      }
+      if (
+        ['string', 'number', 'boolean', 'bigint', 'null', 'literal', 'enum'].some(method => isZodCall(node, method))
+      ) {
+        // Literal arrays and objects are not primitive values.
+        return (
+          !isZodCall(node, 'literal') ||
+          node.arguments.every(
+            argument =>
+              ts.isStringLiteral(argument) ||
+              ts.isNumericLiteral(argument) ||
+              argument.kind === ts.SyntaxKind.TrueKeyword ||
+              argument.kind === ts.SyntaxKind.FalseKeyword ||
+              argument.kind === ts.SyntaxKind.NullKeyword
+          )
+        );
+      }
+      if (isZodCall(node, 'union')) {
+        const arms = node.arguments[0];
+        return (
+          !!arms &&
+          ts.isArrayLiteralExpression(arms) &&
+          arms.elements.length > 0 &&
+          arms.elements.every(arm => isPrimitive(arm, seen))
+        );
+      }
+      return false;
+    };
+    const edits: Array<{ start: number; end: number; text: string }> = [];
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === 'and' &&
+        node.arguments.length === 1
+      ) {
+        const left = node.expression.expression;
+        const right = node.arguments[0];
+        const primitive =
+          isMarker(left) && isPrimitive(right) ? right : isPrimitive(left) && isMarker(right) ? left : undefined;
+        if (primitive) {
+          edits.push({ start: node.getStart(source), end: node.end, text: primitive.getText(source) });
+          return;
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    if (edits.length === 0) return result;
+    result = edits
+      .reverse()
+      .reduce((text, edit) => text.slice(0, edit.start) + edit.text + text.slice(edit.end), result);
+  }
+}
+
+/**
+ * `not.const` and `not.enum` become empty object marker arms in the TypeScript
+ * projection. Removing those impossible primitive intersections must retain
+ * the canonical exclusions. Narrow the finite vocabulary from its source
+ * enum, keeping validators portable to Zod's JSON Schema exporter.
+ */
+function postProcessPrimitiveEnumExclusions(
+  content: string,
+  cacheRoot = path.join(__dirname, '../schemas/cache/latest')
+): string {
+  const readSource = (file: string): any => JSON.parse(readFileSync(path.join(cacheRoot, file), 'utf8'));
+  const excludedValues = (schema: any): string[] => {
+    if (isDeepStrictEqual(schema, { const: schema?.const }) && typeof schema.const === 'string') {
+      return [schema.const];
+    }
+    if (
+      isDeepStrictEqual(schema, { enum: schema?.enum }) &&
+      Array.isArray(schema.enum) &&
+      schema.enum.every((value: unknown) => typeof value === 'string')
+    ) {
+      return schema.enum;
+    }
+    throw new Error('Unsupported canonical primitive enum exclusion.');
+  };
+  const domain = (schema: any, enumFile: string, additionalExclusions: string[] = []): string[] => {
+    const arms = schema?.allOf;
+    if (
+      !Array.isArray(arms) ||
+      arms.length !== 2 ||
+      typeof arms[0]?.$ref !== 'string' ||
+      !arms[0].$ref.endsWith(`/${enumFile}`) ||
+      !isDeepStrictEqual(arms[0], { $ref: arms[0].$ref }) ||
+      !isDeepStrictEqual(arms[1], { not: arms[1]?.not })
+    ) {
+      throw new Error(`Unsupported canonical primitive enum intersection for ${enumFile}.`);
+    }
+    const enumeration = readSource(enumFile);
+    if (
+      enumeration.type !== 'string' ||
+      !Array.isArray(enumeration.enum) ||
+      !enumeration.enum.every((value: unknown) => typeof value === 'string')
+    ) {
+      throw new Error(`Expected a canonical string enum in ${enumFile}.`);
+    }
+    const excluded = new Set([...excludedValues(arms[1].not), ...additionalExclusions]);
+    const allowed = enumeration.enum.filter((value: string) => !excluded.has(value));
+    if (allowed.length === 0 || allowed.length === enumeration.enum.length) {
+      throw new Error(`Canonical exclusions did not narrow ${enumFile} to a non-empty vocabulary.`);
+    }
+    return allowed;
+  };
+  const macro = readSource('core/macro-resolution-capability.json');
+  const vast = readSource('core/assets/vast-tracker-asset.json');
+  const daast = readSource('core/assets/daast-tracker-asset.json');
+  const notification = readSource('core/agent-notification-config.json');
+  const notificationState = readSource('core/agent-notification-config-state.json');
+  const packageMetric = readSource('core/package-delivery-metric-value.json');
+  const aggregate = readSource('core/delivery-metric-aggregate.json');
+  const packageExclusion = packageMetric.allOf?.[1]?.not;
+  if (
+    !isDeepStrictEqual(packageExclusion, {
+      properties: { metric_id: packageExclusion?.properties?.metric_id },
+      required: ['metric_id'],
+    }) ||
+    !packageMetric.allOf?.[0]?.$ref?.endsWith('/core/delivery-metric-aggregate.json#/oneOf/0')
+  ) {
+    throw new Error('Unsupported package delivery metric exclusion.');
+  }
+  const targets = [
+    {
+      name: 'MacroProcessingCapabilitySchema',
+      field: 'supported_contexts',
+      reference: 'MacroValueContextSchema',
+      values: domain(macro.properties.supported_contexts.items, 'enums/macro-value-context.json'),
+    },
+    {
+      name: 'VASTTrackerAssetSchema',
+      field: 'vast_event',
+      reference: 'VASTTrackingEventSchema',
+      values: domain(vast.properties.vast_event, 'enums/vast-tracking-event.json'),
+    },
+    {
+      name: 'DAASTTrackerAssetSchema',
+      field: 'daast_event',
+      reference: 'DAASTTrackingEventSchema',
+      values: domain(daast.properties.daast_event, 'enums/daast-tracking-event.json'),
+    },
+    {
+      name: 'PackageDeliveryMetricValueSchema',
+      field: 'metric_id',
+      reference: 'AvailableMetricSchema',
+      values: domain(
+        aggregate.oneOf[0].properties.metric_id,
+        'enums/available-metric.json',
+        excludedValues(packageExclusion.properties.metric_id)
+      ),
+    },
+    {
+      name: 'AgentNotificationConfigSchema',
+      field: 'event_types',
+      reference: 'NotificationTypeSchema',
+      values: domain(notification.properties.event_types.items, 'enums/notification-type.json'),
+    },
+    {
+      name: 'AgentNotificationConfigStateSchema',
+      field: 'event_types',
+      reference: 'NotificationTypeSchema',
+      values: domain(notificationState.properties.event_types.items, 'enums/notification-type.json'),
+    },
+  ];
+  const source = ts.createSourceFile('adcp-generated-zod.ts', content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const edits: Array<{ start: number; end: number; text: string }> = [];
+  for (const target of targets) {
+    const schema = findSchemaVariable(source, target.name);
+    if (!schema) throw new Error(`Missing ${target.name} while restoring canonical primitive exclusions.`);
+    const fields = collectObjectPropertyValues(schema, [target.field]);
+    if (fields.length === 0) throw new Error(`Missing ${target.name}.${target.field}.`);
+    const narrowed = `z.enum(${JSON.stringify(target.values)})`;
+    for (const field of fields) {
+      let found = false;
+      const visit = (node: ts.Node): void => {
+        if (ts.isIdentifier(node) && node.text === target.reference) {
+          edits.push({ start: node.getStart(source), end: node.end, text: narrowed });
+          found = true;
+          return;
+        }
+        if (node.getText(source) === narrowed) {
+          found = true;
+          return;
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(field);
+      if (!found) throw new Error(`Unsupported ${target.name}.${target.field} primitive projection.`);
+    }
+  }
+  return edits
+    .sort((a, b) => b.start - a.start)
+    .reduce((text, edit) => text.slice(0, edit.start) + edit.text + text.slice(edit.end), content);
 }
 
 /**
@@ -5947,6 +6167,7 @@ async function generateZodSchemas() {
     zodSchemas = postProcessCanonicalVastAudioConstraints(zodSchemas);
     zodSchemas = postProcessPricingOptionConstraints(zodSchemas);
     zodSchemas = postProcessJsonSchemaUriFormats(zodSchemas);
+    zodSchemas = postProcessPrimitiveEnumExclusions(zodSchemas);
     // Inspect the final canonical primitive constraints before checking that
     // the compact object's fields safely narrow the shared envelopes.
     zodSchemas = postProcessCompactTaskSubmittedEnvelope(zodSchemas);
@@ -6009,6 +6230,8 @@ if (require.main === module) {
 
 export const __test__ = {
   postProcessPureInitializers,
+  postProcessPrimitiveIntersections,
+  postProcessPrimitiveEnumExclusions,
   postProcessCompatibilityPurchaseCoordinatorInput,
   postProcessForPassthrough,
   postProcessTupleRestArrays,
