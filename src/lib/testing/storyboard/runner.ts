@@ -6441,7 +6441,7 @@ async function executeStep(
     step.auth.from_test_kit === true &&
     step.auth.value_strategy === undefined &&
     step.expect_error !== true &&
-    !(step.validations ?? []).some(validation => validation.check.startsWith('http_'));
+    !(step.validations ?? []).some(validation => HTTP_PROBE_ONLY_CHECKS.has(validation.check));
   const useRawProbe = rawProbeHeaders !== undefined && !useSdkAuthOverride;
   let authOverrideClient: TestClient | undefined;
   const stepClient = () => {
@@ -9331,12 +9331,18 @@ function setHeaderIfAbsent(
  */
 function runCredentialValues(options: StoryboardRunOptions): string[] {
   const values: string[] = [];
+  // A `user:password` pair is also a credential in its on-the-wire Base64
+  // form. Without this, a pair the run holds structurally is unrecognisable
+  // once an opaque header carries it as `Basic dXNlcjpwYXNz`.
+  const pushUserPass = (userpass: string) => {
+    values.push(userpass, Buffer.from(userpass).toString('base64'));
+  };
   const auth = options.auth;
   if (auth?.type === 'bearer' && typeof auth.token === 'string') values.push(auth.token);
   if (auth?.type === 'basic') {
     if (typeof auth.password === 'string') values.push(auth.password);
     if (typeof auth.username === 'string' && typeof auth.password === 'string') {
-      values.push(`${auth.username}:${auth.password}`);
+      pushUserPass(`${auth.username}:${auth.password}`);
     }
   }
   if (auth?.type === 'oauth' || auth?.type === 'oauth_client_credentials') {
@@ -9348,17 +9354,40 @@ function runCredentialValues(options: StoryboardRunOptions): string[] {
   const basic = kit?.basic;
   if (typeof basic?.password === 'string') values.push(basic.password);
   if (typeof basic?.username === 'string' && typeof basic?.password === 'string') {
-    values.push(`${basic.username}:${basic.password}`);
+    pushUserPass(`${basic.username}:${basic.password}`);
   }
-  if (typeof basic?.credentials === 'string') values.push(basic.credentials);
+  // `basic.credentials` is validated as unencoded `username:password`
+  // (`normalizeBasicCredentials`), so it is a pair, not an opaque blob.
+  if (typeof basic?.credentials === 'string') pushUserPass(basic.credentials);
   // Custom `options.headers` values are credentials too whenever the header
   // name says so — an adopter's `x-gateway-token` is as much a secret as a
   // bearer, and it must be redactable even though the probe refuses to forward
   // it. No length floor: a short credential is still a credential, and the
   // caller configured it deliberately.
+  //
+  // Record the scheme-stripped payload alongside the whole header value. A
+  // custom `Authorization: Bearer <tok>` otherwise teaches the run only the
+  // full `Bearer <tok>` string, so the same `<tok>` re-parked under an opaque
+  // name stays unrecognised.
   for (const [name, value] of Object.entries(options.headers ?? {})) {
     if (typeof value !== 'string' || value.length === 0) continue;
-    if (AUTH_OVERRIDE_HEADER_NAMES.has(name.toLowerCase()) || isCredentialHeaderName(name)) values.push(value);
+    if (!AUTH_OVERRIDE_HEADER_NAMES.has(name.toLowerCase()) && !isCredentialHeaderName(name)) continue;
+    values.push(value);
+    const scheme = /^(Bearer|Basic|Token|ApiKey)\s+(.+)$/i.exec(value.trim());
+    if (scheme?.[1] !== undefined && scheme[2] !== undefined) {
+      const payload = scheme[2].trim();
+      values.push(payload);
+      // A Base64 Basic payload also yields the pair it encodes, so a later
+      // header carrying the pair unencoded is still recognised.
+      if (/^Basic$/i.test(scheme[1])) {
+        try {
+          const decoded = Buffer.from(payload, 'base64').toString('utf8');
+          if (decoded.includes(':') && /^[\x20-\x7e]+$/.test(decoded)) values.push(decoded);
+        } catch {
+          // Not valid Base64 — the raw payload is already recorded above.
+        }
+      }
+    }
   }
   return values.filter(value => value.trim().length > 0);
 }
@@ -9377,6 +9406,12 @@ function runCredentialValues(options: StoryboardRunOptions): string[] {
 const SESSION_PROBE_ROUTING_HEADERS: ReadonlySet<string> = new Set([
   'x-tenant-id',
   'x-tenant',
+  // AdCP's own tenant-routing header (`src/lib/testing/types.ts` names it as
+  // the canonical example). Omitting it meant a run that routes on it had the
+  // header classified as unknown: dropped from session probes, and — once the
+  // isolated-client value test landed — silently strippable on a credential
+  // collision, which reroutes the step to another tenant.
+  'x-adcp-tenant',
   'x-account',
   'x-account-id',
   'x-routing-key',
@@ -10010,6 +10045,20 @@ function authHeadersForStep(directive: StepAuthDirective, options: StoryboardRun
   if ('value' in directive && directive.value) {
     value = directive.value;
   } else if ('from_test_kit' in directive && directive.from_test_kit) {
+    // The storyboard schema documents a named-principal path form
+    // (`auth.principals.<name>.api_key`). The `basic` arm walks it via
+    // `resolveStepBasicFromTestKit`; this arm never did, and any truthy value
+    // — a path string included — resolved to the *primary* principal, which
+    // silently grades a multi-principal isolation step against the wrong
+    // identity. Refuse it until the path form is properly supported. The type
+    // declares `boolean`, but storyboards are YAML and are not type-checked at
+    // runtime, so the string case is reachable. The message echoes neither the
+    // path nor any credential.
+    if (typeof (directive.from_test_kit as string | boolean) === 'string') {
+      throw new Error(
+        'Named test-kit API-key paths are not supported; use from_test_kit: true only for the primary key.'
+      );
+    }
     value = options.test_kit?.auth?.api_key;
     if (!value) {
       // adcp#6735 — hard-fail instead of silently degrading to an
@@ -10038,6 +10087,23 @@ function authHeadersForStep(directive: StepAuthDirective, options: StoryboardRun
   return { authorization: `Bearer ${value}` };
 }
 
+/**
+ * Checks graded from the raw HTTP probe result rather than the task result.
+ *
+ * These must keep the step on the raw-probe path: the SDK dispatch leaves
+ * `ctx.httpResult` undefined and `requireHttpResult` then hard-fails the
+ * validation. A `check.startsWith('http_')` test is not equivalent — three of
+ * the five `requireHttpResult` callers in `validations.ts` carry no `http_`
+ * prefix. Keep in sync with that switch.
+ */
+const HTTP_PROBE_ONLY_CHECKS: ReadonlySet<string> = new Set([
+  'http_status',
+  'http_status_in',
+  'probe_passed',
+  'on_401_require_header',
+  'resource_equals_agent_url',
+]);
+
 const AUTH_OVERRIDE_HEADER_NAMES = new Set([
   'authorization',
   'proxy-authorization',
@@ -10048,9 +10114,31 @@ const AUTH_OVERRIDE_HEADER_NAMES = new Set([
 const AUTH_OVERRIDE_CREDENTIAL_HEADER_RE =
   /(^|[-_])(auth(?:entication|orization)?|credentials?|secrets?|tokens?|keys?|api[-_]?keys?|access[-_]?keys?|private[-_]?keys?|password|passwd|signatures?|cert(?:ificate)?s?)([-_]|$)/i;
 
+/**
+ * Same credential words, matched after separators are stripped.
+ *
+ * Every alternative in `AUTH_OVERRIDE_CREDENTIAL_HEADER_RE` is anchored to a
+ * `-`/`_` boundary, so it recognises `X-Api-Key` but not the separator-less
+ * spellings of the same thing — `XApiKey`, `X-AuthToken`, `X-AccessToken`,
+ * `X-SessionToken`, `XSecret`. Those are legal header names, and a credential
+ * parked under one used to ride along into an isolated step. Compacting the
+ * name first closes that class without needing to know the value.
+ *
+ * `key` subsumes `apikey`/`accesskey`/`privatekey`. Deliberately absent:
+ * `session` and `id`, which would strip the runner's own
+ * `x-test-session-id` routing header and reroute the probe to another tenant.
+ * Routing names that carry no credential word (`X-AdCP-Tenant`, `x-tenant`,
+ * `x-correlation-id`) are unaffected.
+ */
+const AUTH_OVERRIDE_COMPACT_CREDENTIAL_RE = /(auth|credential|secret|token|password|passwd|signature|cert|bearer|key)/i;
+
 function isCredentialHeaderName(name: string): boolean {
   const normalized = name.toLowerCase();
-  return AUTH_OVERRIDE_HEADER_NAMES.has(normalized) || AUTH_OVERRIDE_CREDENTIAL_HEADER_RE.test(normalized);
+  return (
+    AUTH_OVERRIDE_HEADER_NAMES.has(normalized) ||
+    AUTH_OVERRIDE_CREDENTIAL_HEADER_RE.test(normalized) ||
+    AUTH_OVERRIDE_COMPACT_CREDENTIAL_RE.test(normalized.replace(/[-_]/g, ''))
+  );
 }
 
 /**
@@ -10063,6 +10151,18 @@ function isCredentialHeaderName(name: string): boolean {
  * step principal or authenticating an unauthenticated probe. The configured transport (most importantly
  * trustedFetchFn for private CAs / hosted egress) still flows through the
  * protocol layer's guarded fetch boundary.
+ *
+ * Exclusion is by name **and by value**. The name test alone is a denylist,
+ * and a denylist cannot recognise a credential parked under a name it has
+ * never seen: `isCredentialHeaderName`'s alternatives each require a `-`/`_`
+ * boundary, so `XApiKey`, `X-AuthToken` and `X-SessionToken` all slip past it
+ * while `X-Api-Key` is caught. Any header carrying a credential this run
+ * actually holds is therefore dropped on value as well, the same way
+ * `sessionProbeRoutingHeaders` does it — otherwise the suite principal rides
+ * along beside the step's own credential and an agent that authenticates on
+ * the stowaway header grades the step against the wrong principal. Dropping
+ * the step's own credential here is harmless: `authHeaders` re-adds it below
+ * under the name the step declared.
  */
 function createAuthOverrideClient(
   agentUrl: string,
@@ -10070,9 +10170,33 @@ function createAuthOverrideClient(
   options: StoryboardRunOptions,
   authHeaders: Record<string, string>
 ): TestClient {
-  const headers = Object.fromEntries(
-    Object.entries(options.headers ?? {}).filter(([name]) => !isCredentialHeaderName(name))
-  );
+  const runSecrets = runCredentialValues(options);
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(options.headers ?? {})) {
+    const isRouting = SESSION_PROBE_ROUTING_HEADERS.has(name.toLowerCase());
+    // Curated routing names are exempt from the *name* heuristics only.
+    // `x-routing-key`, `x-partition-key` and `x-idempotency-key` all trip the
+    // `key` alternative without being credentials, and dropping them reroutes
+    // the step to another tenant.
+    if (!isRouting && isCredentialHeaderName(name)) continue;
+    if (typeof value === 'string' && runSecrets.some(secret => value.includes(secret))) {
+      // The value test is never waived, or a secret parked in `x-tenant`
+      // would be forwarded under cover of the routing exemption.
+      if (isRouting) {
+        // Silently dropping would reroute the step; forwarding would leak the
+        // suite principal. Neither is a safe default, so refuse the run and
+        // let the operator rename the header or the credential. Name only —
+        // the message must not echo the value.
+        throw new Error(
+          `options.headers.${name} is a routing header but its value contains a credential this run holds; ` +
+            `an isolated step cannot both route correctly and withhold the suite principal. ` +
+            `Give the step credential a distinct value, or move the credential to a dedicated header.`
+        );
+      }
+      continue;
+    }
+    headers[name] = value;
+  }
   let auth: StoryboardRunOptions['auth'];
   for (const [name, value] of Object.entries(authHeaders)) {
     if (name.toLowerCase() === 'authorization' && value.startsWith('Bearer ')) {
