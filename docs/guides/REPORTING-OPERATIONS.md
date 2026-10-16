@@ -5,7 +5,7 @@ consumer runtime. Reliable Reporting controls evidence used for billing and
 large media-spend decisions. Treat its PostgreSQL state, destination objects,
 signing keys, and authentication registry as financial infrastructure.
 
-> **Stability:** the storage subpaths this runbook operates are experimental. Pin `@adcp/sdk` with `~` and read each minor's changeset before upgrading. See the [Reliable Reporting stability policy](REPORTING-STABILITY.md).
+> **Stability:** the storage this runbook operates lives in `@adcp/reporting-storage`, which is pre-1.0 and experimental. Pin it with `~` (for example `~0.1.0`) and read each minor's changeset before upgrading. See the [Reliable Reporting stability policy](REPORTING-STABILITY.md).
 
 ## Production topology
 
@@ -388,7 +388,7 @@ For complete GCS file-transfer delivery, private contracts and scoped buyer read
 
 ## Live GCP validation
 
-`scripts/validate-reporting-gcp.mjs` runs the built SDK against a real BigQuery
+`packages/reporting-storage/scripts/validate-reporting-gcp.mjs` (`npm run validate:reporting-gcp`) runs the built `@adcp/reporting-storage` against a real BigQuery
 project and a real GCS bucket. The in-memory doubles in the test suite cannot
 prove how BigQuery names jobs, where it stores load options, or what a real
 bucket policy looks like; this script does. It is not published with the
@@ -396,7 +396,7 @@ package, so run it from a repository checkout.
 
 What it checks:
 
-- **BigQuery warehouse sink** (`@adcp/sdk/reporting/bigquery`). It applies the
+- **BigQuery warehouse sink** (`@adcp/reporting-storage/bigquery`). It applies the
   ledger migrations into fresh PostgreSQL schemas, commits revisions, creates a
   uniquely named dataset in the destination project from `defaultTablesSql` and
   `currentRowsViewSql`, and runs the sink. It verifies row and revision counts
@@ -432,7 +432,7 @@ What it checks:
   `GCP_BQ_PROJECT`. Load jobs are then created in the destination project, and
   the crash replay fails if the "job already exists" status check looks in the
   client's default project instead.
-- **GCS row provider** (`@adcp/sdk/reporting/gcs`). It prints the bucket policy,
+- **GCS row provider** (`@adcp/reporting-storage/gcs`). It prints the bucket policy,
   runs the provider probe (uniform bucket-level access, public access
   prevention, lifecycle rules) and `runReportingRowObjectProviderConformanceV1`,
   then commits a revision through an object binding on the bucket and reads it

@@ -1,8 +1,10 @@
 # Seller Reporting Ledger
 
-`@adcp/sdk/reporting/ledger` turns a conforming reporting source into durable seller-side Reliable Reporting Core. It is separate from the buyer-side `reconcileReporting` API.
+Reliable Reporting Core turns a conforming reporting source into durable seller-side reporting. It is separate from the buyer-side `reconcileReporting` API.
 
-> **Stability:** the storage, row, change-feed, managed-delivery and warehouse-sink exports (`@adcp/sdk/reporting/gcs`, `s3`, `azure`, `bigquery`, and the `@experimental` exports of `ledger`) are experimental and may change in minor releases. Pin with `~`. See the [Reliable Reporting stability policy](REPORTING-STABILITY.md).
+Two packages make it up. `@adcp/sdk` holds the protocol layer: the `ReportingLedgerStore` interface, the protocol handlers, the producer, `createReliableReportingService` and row encoding (`@adcp/sdk/reporting/ledger`, `@adcp/sdk/reporting/service`). [`@adcp/reporting-storage`](https://github.com/adcontextprotocol/adcp-client/blob/main/packages/reporting-storage/README.md) holds the storage behind it: the PostgreSQL ledger store and migrations, row storage and its GCS, S3 and Azure providers, managed delivery, notification activity, the BigQuery sink and the production composition. Install both (`npm install @adcp/sdk @adcp/reporting-storage pg`). Moving from the pre-split `@adcp/sdk/reporting/*` imports? See [Reliable Reporting storage moved to `@adcp/reporting-storage`](../migration-reporting-storage-package.md).
+
+> **Stability:** `@adcp/reporting-storage` is pre-1.0 and every export of it is experimental: breaking changes ship in its minor releases. Pin it with `~`. The store, transaction, lease and row-read interfaces in `@adcp/sdk/reporting/ledger` that it implements are `@experimental` too. See the [Reliable Reporting stability policy](REPORTING-STABILITY.md).
 
 ## Recommended: install the lifecycle service
 
@@ -13,7 +15,7 @@ producer, handlers, and decisioning-platform account resolver.
 
 ```ts
 import { Pool } from 'pg';
-import { PostgresReportingLedgerStore } from '@adcp/sdk/reporting/ledger';
+import { PostgresReportingLedgerStore } from '@adcp/reporting-storage';
 import { createReliableReportingService } from '@adcp/sdk/reporting/service';
 import { createAdcpServerFromPlatform } from '@adcp/sdk/server';
 
@@ -86,7 +88,7 @@ still use an `accountIds` roster. Production setup requires
 `activity.tenantScopeForAccount`; when an offering uses `consumer_receipt`, it
 also requires a trusted `obligatedConsumers` callback so lifecycle health can
 become reconciled only after every obligated consumer has accepted.
-See the [integrated seller example](../../examples/reliable-reporting-service/README.md#integrated-seller-production-service)
+See the [integrated seller example](https://github.com/adcontextprotocol/adcp-client/blob/main/packages/reporting-storage/examples/reliable-reporting-service/README.md#integrated-seller-production-service)
 for the full option shape.
 
 Install a buyer declaration after the account and its media-buy scope have
@@ -135,6 +137,8 @@ import {
   PostgresReportingLedgerStore,
   REPORTING_LEDGER_MIGRATION,
   sweepExpiredReportingLedgerState,
+} from '@adcp/reporting-storage';
+import {
   createReportingDeliveryHandler,
   createReportingProducer,
   createReportingStatusHandler,
@@ -291,7 +295,7 @@ rows as verified canonical JSONL chunks (the shared SDK persistence layout,
 adcontextprotocol/adcp#7996):
 
 ```ts
-import { REPORTING_ROW_STORAGE_MIGRATION } from '@adcp/sdk/reporting/ledger';
+import { REPORTING_ROW_STORAGE_MIGRATION } from '@adcp/reporting-storage';
 
 await pool.query(REPORTING_ROW_STORAGE_MIGRATION); // after REPORTING_LEDGER_MIGRATION; PostgreSQL 13+
 const store = new PostgresReportingLedgerStore(pool, {
@@ -364,7 +368,7 @@ point reads or writes at a destination the host did not configure.
 import {
   PostgresReportingLedgerStore,
   createFilesystemReportingRowObjectProviderV1,
-} from '@adcp/sdk/reporting/ledger';
+} from '@adcp/reporting-storage';
 
 const store = new PostgresReportingLedgerStore(pool, {
   acknowledgeIsolatedDatabase: true,
@@ -480,12 +484,12 @@ reference fails `UNSAFE_BINDING`. Provider errors surface only as stable
 `ReportingRowStoreError` codes. Row buckets are separate from Managed Delivery
 buckets.
 
-**Google Cloud Storage** (`@adcp/sdk/reporting/gcs`, optional peer
+**Google Cloud Storage** (`@adcp/reporting-storage/gcs`, optional peer
 `@google-cloud/storage`):
 
 ```ts
 import { Storage } from '@google-cloud/storage';
-import { createGcsReportingRowObjectProviderV1 } from '@adcp/sdk/reporting/gcs';
+import { createGcsReportingRowObjectProviderV1 } from '@adcp/reporting-storage/gcs';
 
 const gcs = createGcsReportingRowObjectProviderV1({
   storage: new Storage(), // keyless credentials (workload identity / ADC)
@@ -508,12 +512,12 @@ const gcs = createGcsReportingRowObjectProviderV1({
 - The client needs `storage.buckets.get` for the probe plus object create, get
   and delete on the bucket.
 
-**Amazon S3 and S3-compatible stores** (`@adcp/sdk/reporting/s3`, optional peer
+**Amazon S3 and S3-compatible stores** (`@adcp/reporting-storage/s3`, optional peer
 `@aws-sdk/client-s3`):
 
 ```ts
 import { S3Client } from '@aws-sdk/client-s3';
-import { createS3ReportingRowObjectProviderV1 } from '@adcp/sdk/reporting/s3';
+import { createS3ReportingRowObjectProviderV1 } from '@adcp/reporting-storage/s3';
 
 const s3 = createS3ReportingRowObjectProviderV1({
   client: new S3Client({ region: 'us-east-1' }), // default credential chain
@@ -550,13 +554,13 @@ const s3 = createS3ReportingRowObjectProviderV1({
   `s3:GetBucketPolicyStatus` is optional. For stores without flexible
   checksums, construct the client with `requestChecksumCalculation: 'WHEN_REQUIRED'`.
 
-**Azure Blob Storage** (`@adcp/sdk/reporting/azure`, optional peer
+**Azure Blob Storage** (`@adcp/reporting-storage/azure`, optional peer
 `@azure/storage-blob`):
 
 ```ts
 import { DefaultAzureCredential } from '@azure/identity';
 import { BlobServiceClient } from '@azure/storage-blob';
-import { createAzureBlobReportingRowObjectProviderV1 } from '@adcp/sdk/reporting/azure';
+import { createAzureBlobReportingRowObjectProviderV1 } from '@adcp/reporting-storage/azure';
 
 const azure = createAzureBlobReportingRowObjectProviderV1({
   client: new BlobServiceClient('https://acmerows.blob.core.windows.net', new DefaultAzureCredential()),
@@ -685,7 +689,7 @@ an unknown ID. A revision in (a) to (d) whose content cannot be served is
 // Core-only service
 createReliableReportingService({
   // ...
-  maintenance: { compaction: { enabled: true, limit: 100 } },
+  maintenance: reportingLedgerMaintenance({ compaction: { enabled: true, limit: 100 } }),
 });
 
 // Production service
@@ -759,7 +763,8 @@ and `compactSupersededSnapshots` re-check before compacting.
 
 You do not need the production service (managed delivery, notifications and
 activity) to keep a ledger tidy. Build the store with the options you want and
-give `createReliableReportingService` a `maintenance` option. The production
+give `createReliableReportingService` a `maintenance` option built by
+`reportingLedgerMaintenance` from `@adcp/reporting-storage`. The production
 service does the same work automatically; the two share one implementation, so
 partial-failure reporting, the `maxFeedHoldDays` that retention honours, per-task
 limits and abort handling are identical.
@@ -770,7 +775,8 @@ import {
   REPORTING_LEDGER_MIGRATION,
   REPORTING_ROW_STORAGE_MIGRATION,
   REPORTING_LEDGER_CHANGES_MIGRATION,
-} from '@adcp/sdk/reporting/ledger';
+  reportingLedgerMaintenance,
+} from '@adcp/reporting-storage';
 import { createReliableReportingService } from '@adcp/sdk/reporting/service';
 
 // Apply the three migrations, then:
@@ -785,11 +791,11 @@ const reporting = createReliableReportingService({
   store,
   statusRetentionDays: 90, // the commitment advertised to buyers; retention uses it
   // ...adapters, contact, resolveSource, resolveCurrency, resolveCoverage
-  maintenance: {
+  maintenance: reportingLedgerMaintenance({
     intervalMilliseconds: 300_000, // default: at most one pass per 5 minutes
     retention: { enabled: true, recordRetentionDays: 120, limit: 100 },
     changeFeed: { changeRetentionDays: 30, maxFeedHoldDays: 7 },
-  },
+  }),
 });
 
 reporting.start({ intervalMilliseconds: 60_000, deploymentWide: true, onError });
@@ -825,7 +831,11 @@ Tasks, in order:
 
 Notes:
 
-- `maintenance` requires a `PostgresReportingLedgerStore` (or a store with the
+- The service's `maintenance` option takes a factory, not an options object:
+  the SDK does not know what maintenance a store needs, so it calls the factory
+  once at construction with the store and the retention and recovery-window
+  commitments it advertises. `reportingLedgerMaintenance(options)` is the
+  PostgreSQL one. It requires a `PostgresReportingLedgerStore` (or a store with the
   same `retireExpiredPeriods`, `pruneChanges` and `sweepRowWriteIntents`
   methods, plus `collectOrphanedRowObjects` when `orphanCollection` is set) and
   fails at construction otherwise. `maintenance.changeFeed` also
@@ -848,7 +858,7 @@ In-process consumers such as pacing, alerts and warehouse loaders read from the
 ledger, never from a warehouse copy.
 
 ```ts
-import { REPORTING_LEDGER_CHANGES_MIGRATION } from '@adcp/sdk/reporting/ledger';
+import { REPORTING_LEDGER_CHANGES_MIGRATION } from '@adcp/reporting-storage';
 
 await pool.query(REPORTING_LEDGER_CHANGES_MIGRATION); // PostgreSQL 13+
 const store = new PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true, changeFeed: true });
@@ -958,7 +968,7 @@ await store.saveFeedConsumerCursor('pacing', page.cursor); // holds back pruning
 
 ### BigQuery warehouse sink
 
-`@adcp/sdk/reporting/bigquery` loads committed revisions into your own BigQuery
+`@adcp/reporting-storage/bigquery` loads committed revisions into your own BigQuery
 tables for analysts. The warehouse copy is derived and non-authoritative. It
 is never read for serving or verification, so its table names, columns,
 partitioning and retention are yours.
@@ -968,7 +978,7 @@ import { BigQuery } from '@google-cloud/bigquery';
 import {
   REPORTING_WAREHOUSE_SINK_MIGRATION,
   createBigQueryReportingWarehouseSinkV1,
-} from '@adcp/sdk/reporting/bigquery';
+} from '@adcp/reporting-storage/bigquery';
 
 await pool.query(REPORTING_WAREHOUSE_SINK_MIGRATION); // after REPORTING_LEDGER_CHANGES_MIGRATION
 const bigquery = new BigQuery({ projectId: 'analytics-prod' }); // ADC / workload identity
@@ -1149,9 +1159,13 @@ Core remains the default and has no destination, external-resource, or receipt d
 ```ts
 import {
   PostgresReportingLedgerStore,
+} from '@adcp/reporting-storage';
+import {
   PostgresReportingManagedDeliveryStore,
   REPORTING_MANAGED_DELIVERY_MIGRATION,
   createReportingManagedDeliveryRuntime,
+} from '@adcp/reporting-storage/managed';
+import {
   reportingManagedDeliveryBindingV1,
 } from '@adcp/sdk/reporting/ledger';
 
@@ -1222,7 +1236,7 @@ A seller often delivers one feed through several transports: one buyer takes fil
 import {
   createReportingManagedDeliveryAdapterRouterV1,
   createReportingManagedDeliveryRuntime,
-} from '@adcp/sdk/reporting/ledger';
+} from '@adcp/reporting-storage/managed';
 
 const adapter = createReportingManagedDeliveryAdapterRouterV1({
   routes: [
@@ -1302,12 +1316,14 @@ only for health changes:
 ```ts
 import { createPostgresPersistentNotificationRuntime } from '@adcp/sdk/server';
 import {
-  createPostgresReportingNotificationActivityRuntime,
-  createPostgresReportingNotificationAttemptCheckpoint,
   PostgresReportingLedgerStore,
   REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION,
   REPORTING_LEDGER_MIGRATION,
-} from '@adcp/sdk/reporting/ledger';
+} from '@adcp/reporting-storage';
+import {
+  createPostgresReportingNotificationActivityRuntime,
+  createPostgresReportingNotificationAttemptCheckpoint,
+} from '@adcp/reporting-storage/notifications';
 
 // Build the durable pre-POST checkpoint first. The notification runtime needs
 // it, and the activity runtime verifies it targets the same durable store —

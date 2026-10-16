@@ -789,6 +789,47 @@ export interface ReportingLedgerLeaseV1 {
   expiresAt: string;
 }
 
+/**
+ * The writer's lease was lost before the commit completed.
+ *
+ * `ReportingLedgerLeaseLostError`, `ReportingLedgerPeriodRetiredError` and
+ * `ReportingLedgerContinuityError` are the errors every `ReportingLedgerStore` throws. The protocol
+ * layer recognizes them by `name`, so a store from another package (or another copy of the SDK) is
+ * understood as well as one built here. Store implementations should throw these classes.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export class ReportingLedgerLeaseLostError extends Error {
+  constructor(message = 'Reporting ledger lease was lost before commit') {
+    super(message);
+    this.name = 'ReportingLedgerLeaseLostError';
+  }
+}
+
+/**
+ * A planner or writer named a period whose ledger records were retired by retention.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export class ReportingLedgerPeriodRetiredError extends Error {
+  constructor(message = 'Reporting obligation period was retired by retention') {
+    super(message);
+    this.name = 'ReportingLedgerPeriodRetiredError';
+  }
+}
+
+/**
+ * A revision continuity invariant failed (a gap or a fork in the revision chain).
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export class ReportingLedgerContinuityError extends Error {
+  constructor(message = 'Reporting ledger revision continuity invariant failed') {
+    super(message);
+    this.name = 'ReportingLedgerContinuityError';
+  }
+}
+
 export class ReportingLedgerSnapshotUnavailableError extends Error {
   constructor() {
     super('Reporting ledger snapshot is unavailable');
@@ -811,6 +852,12 @@ export class ReportingConsumerStatusConflictError extends Error {
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export interface ReportingLedgerStore {
+  /**
+   * Setup scripts the host applies before first use (SQL for a SQL store), in order and idempotent.
+   * `createReliableReportingService` surfaces them as `service.setup.migrations`. A store with nothing
+   * to install omits it.
+   */
+  readonly migrations?: readonly string[];
   /** Optional substrate identity for an add-on store that must prove shared authority. */
   readonly [REPORTING_LEDGER_AUTHORITY]?: ReportingLedgerAuthorityV1;
   /**

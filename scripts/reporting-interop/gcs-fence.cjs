@@ -6,6 +6,7 @@ const { createRequire } = require('node:module');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const path = require('node:path');
+const { mergedLedger } = require('./storage-compat.cjs');
 const run = promisify(execFile);
 const sha = body => createHash('sha256').update(body).digest('hex');
 const [inputFile, packageRoot, fixtures, output, mode] = process.argv.slice(2);
@@ -17,8 +18,8 @@ async function main() {
   const req = createRequire(path.resolve(packageRoot, 'package.json'));
   const { Storage } = req('@google-cloud/storage');
   const { Pool } = req('pg');
-  const sdk = req('@adcp/sdk/reporting/gcs');
-  const ledger = req('@adcp/sdk/reporting/ledger');
+  const sdk = req('@adcp/reporting-storage/gcs');
+  const ledger = mergedLedger(req);
   const storage = new Storage({ projectId: config.project_id, keyFilename: config.adc_path });
   const schema = config.schema;
   assert.match(schema, /^adcp_gcs_fence_[a-f0-9]+$/);
@@ -275,7 +276,7 @@ async function main() {
       anotherNamespace.register(scope('isolated'), 'changed-binding', bodies),
       e => e.code === 'CONTENT_CONFLICT'
     );
-    const esm = await import(path.resolve(packageRoot, 'node_modules/@adcp/sdk/dist/lib/reporting/gcs/index.mjs'));
+    const esm = await import(path.resolve(packageRoot, 'node_modules/@adcp/reporting-storage/dist/gcs/index.mjs'));
     const mixed = esm.createGcsReportingObjectFenceV1({
       storage,
       store,

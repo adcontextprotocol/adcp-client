@@ -109,13 +109,17 @@ def run(upstream, installation, node, output, mode):
             connection.execute(sql.SQL("CREATE DATABASE {} TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C'").format(sql.Identifier(database)))
         stdout = owner.enter_context((output / "seller.stdout.log").open("wb"))
         stderr = owner.enter_context((output / "seller.stderr.log").open("wb"))
+        # The pinned harness wrapper hands the seller script the SDK ledger subpath, which predates the
+        # package split; the preload serves it the merged SDK and storage view (see storage-compat.cjs).
         process = subprocess.Popen([
-            str(node), str(here / "managed-seller.cjs"), "--upstream", str(upstream), "--mode", mode,
+            str(node), "--require", str(here / "storage-compat.cjs"), str(here / "managed-seller.cjs"),
+            "--upstream", str(upstream), "--mode", mode,
             "--package-lock", str(lock_path), "--expected-version", package["version"],
             "--expected-integrity", lock["integrity"], "--adcp-version", pins["adcp_schema_version"],
             "--port", str(port), "--ready-file", str(ready_file),
         ], cwd=output, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
-            env=environment(DATABASE_URL=url, REPORTING_INTEROP_DESTINATION=str(destination),
+            env=environment(DATABASE_URL=url, ADCP_INTEROP_INSTALLATION=str(installation),
+                            REPORTING_INTEROP_DESTINATION=str(destination),
                             ADCP_INTEROP_TS_STORYBOARD_AUTH_TOKEN=token,
                             ADCP_INTEROP_TS_STORYBOARD_STARTUP_PROOF=proof))
         owner.callback(stop, process)

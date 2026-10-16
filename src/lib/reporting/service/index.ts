@@ -1,8 +1,9 @@
 /**
- * Reliable Reporting service wiring, conformance runner and ledger maintenance.
+ * Reliable Reporting service wiring and conformance runner.
  *
- * Only the retention, compaction and change-feed maintenance exports (`./maintenance`) are `@experimental`.
- * The service factories and conformance runner follow normal semver.
+ * `createReliableReportingService` takes any `ReportingLedgerStore`. The PostgreSQL store, the production
+ * composition (`createPostgresReliableReportingProductionService`) and ledger maintenance
+ * (`reportingLedgerMaintenance`) live in `@adcp/reporting-storage`.
  *
  * Stability policy: https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  *
@@ -14,25 +15,9 @@ import type { DecisioningPlatform } from '../../server/decisioning/platform';
 import type { ReliableReportingPlatform } from '../../server/decisioning/specialisms/reporting';
 import { scanArgsForCredentials } from '../../server/credential-policy';
 import { canonicalize } from '../../utils/jcs';
-import { redactCredentialPatterns } from '../../utils/redact-credential-patterns';
 import type { ReportingDeliveryCapabilities, ReportingDeliveryOffering } from '../../types/tools.generated';
 import { ReportingDeliveryCapabilitiesSchema, ReportingDeliveryOfferingSchema } from '../../types/schemas.generated';
 import {
-  createPostgresPersistentNotificationRuntime,
-  type CreatePostgresPersistentNotificationRuntimeOptions,
-  type PostgresPersistentNotificationRuntime,
-} from '../../server/notification-subscriptions';
-import {
-  REPORTING_LEDGER_MIGRATION,
-  REPORTING_MANAGED_DELIVERY_MIGRATION,
-  REPORTING_ROW_STORAGE_MIGRATION,
-  REPORTING_LEDGER_CHANGES_MIGRATION,
-  PostgresReportingLedgerStore,
-  sweepExpiredReportingLedgerState,
-  PostgresReportingManagedDeliveryStore,
-  createPostgresReportingNotificationActivityRuntime,
-  createPostgresReportingNotificationAttemptCheckpoint,
-  createReportingManagedDeliveryRuntime,
   assertReportingConsumerMismatchEscalation,
   reportingConsumerStatusCapabilityV1,
   reportingEffectiveConsumerMismatchEscalationV1,
@@ -48,33 +33,15 @@ import {
   type ReportingLegacyRevisionReaderV1,
   type ReportingProducerContactV1,
   type ReportingProducerV1,
-  type ReportingManagedDeliveryAdapterV1,
-  type ReportingManagedDeliveryRuntimeV1,
-  type PostgresReportingManagedDeliveryStoreOptions,
-  type PostgresReportingNotificationActivityOptions,
-  type PostgresReportingNotificationActivityRuntime,
-  type ReportingPgPool,
-  type ReportingRowStorageOptionsV1,
   type ReportingSourceWithReaderV1,
 } from '../ledger';
 import {
-  composeNotificationDeliveryAttemptCheckpoints,
-  composeWebhookAttemptResultObservers,
-  createPostgresReportingWebhookActivityV1,
-  projectListAccountsReportingWebhookActivityV1,
-  type PostgresReportingWebhookActivityV1,
-} from '../webhook-activity';
-import {
-  assertReportingLedgerMaintenanceOptions,
-  runReportingLedgerMaintenance,
-  type ReportingChangeFeedMaintenanceOptionsV1,
-  type ReportingLedgerMaintenanceStoreV1,
-  type ReportingLedgerMaintenanceTaskResultV1,
-  type ReportingCompactionOptionsV1,
-  type ReportingOrphanCollectionOptionsV1,
-  type ReportingOrphanCollectionStateV1,
-  type ReportingRetentionOptionsV1,
-} from './maintenance';
+  reportReportingSchedulerError,
+  reportingDeploymentWideAccountIds,
+  reportingSchedulerDelay,
+  reportingSchedulerErrorMessage,
+  rotateReportingRoster,
+} from './scheduler-support';
 import type { InlineReportingReplayRetentionV1 } from '../source';
 import { assertReportingCalendarDaySource, reportingCalendarDayOrigin } from '../ledger/schedule';
 import {
@@ -94,7 +61,6 @@ import {
 } from '../source';
 
 const ADAPTER_SCOPE_KEY = '_adcp_reporting_adapter';
-const PRODUCTION_MANAGED_COMPOSITION = Symbol('production-managed-reporting-composition');
 
 /** The intentionally small provider boundary: one bounded slice fetch plus immutable metadata. */
 export interface ReliableReportingAdapterV1 {
@@ -264,20 +230,18 @@ export interface CreateReliableReportingServiceOptionsV1<TCtxMeta = Record<strin
   statusRetentionDays: number;
   subscribers?: CreateReportingProducerOptionsV1['subscribers'];
   /**
-   * Opt in to scheduled ledger maintenance for a Core-only deployment on a
-   * `PostgresReportingLedgerStore`. `start()` runs it at most once per
-   * `intervalMilliseconds`; `runMaintenance()` runs it on demand for a host
-   * with its own scheduler. The production service does this itself and does
-   * not take this option.
+   * Opt in to scheduled ledger maintenance (retention, compaction, change-feed pruning, abandoned-upload
+   * sweeps) for a Core-only deployment. `start()` runs it at most once per `intervalMilliseconds`;
+   * `runMaintenance()` runs it on demand for a host with its own scheduler.
    *
-   * Always swept: expired cursor snapshots and checkpoints, and abandoned row
-   * uploads. `retention` and `changeFeed` have the same shape and meaning as
-   * on `createPostgresReliableReportingProductionService`. Retention uses
-   * this service's `statusRetentionDays`, so it can never retire a period
-   * earlier than the retention advertised to buyers. `changeFeed` requires the
-   * store to be built with `changeFeed: true`.
+   * The SDK does not know what maintenance a store needs: the option takes a factory, called once at
+   * construction with the store and the retention and recovery-window commitments this service advertises
+   * to buyers, so maintenance can never retire a period earlier than that retention. For the PostgreSQL
+   * store, pass `reportingLedgerMaintenance({ ... })` from `@adcp/reporting-storage`. A factory that
+   * throws fails service construction, not the first scheduled pass. The production service in
+   * `@adcp/reporting-storage/service` runs maintenance itself and does not take this option.
    */
-  maintenance?: ReliableReportingMaintenanceOptionsV1;
+  maintenance?: ReliableReportingMaintenanceFactoryV1;
   /**
    * Serve exact revision reads (`get_media_buy_delivery`) for revisions this
    * ledger does not hold, such as a seller's pre-cutover ledger tables. The
@@ -296,24 +260,66 @@ export interface CreateReliableReportingServiceOptionsV1<TCtxMeta = Record<strin
   legacyRevisionReader?: ReportingLegacyRevisionReaderV1;
 }
 
-export interface ReliableReportingMaintenanceOptionsV1 {
-  /** Minimum time between scheduled maintenance passes. Defaults to 300000 (5 minutes). */
-  intervalMilliseconds?: number;
-  /** Period-aligned retention; see the production service's `retention`. */
-  retention?: ReportingRetentionOptionsV1;
-  /** Opt-in snapshot compaction; see the production service's `compaction`. */
-  compaction?: ReportingCompactionOptionsV1;
-  /** Change-feed pruning and consumer hold; see the production service's `changeFeed`. */
-  changeFeed?: ReportingChangeFeedMaintenanceOptionsV1;
-  /** Opt-in listing collector for orphaned row objects; see the production service's `orphanCollection`. */
-  orphanCollection?: ReportingOrphanCollectionOptionsV1;
+/**
+ * Outcome of one maintenance task. A task that resolved but could not process some items is `completed`
+ * with `partialFailure` set; the pass resumes those items next time.
+ */
+export type ReliableReportingMaintenanceTaskResultV1 =
+  | {
+      readonly task: string;
+      readonly status: 'completed';
+      readonly result: unknown;
+      readonly partialFailure?: Error;
+    }
+  | { readonly task: string; readonly status: 'failed'; readonly error: unknown };
+
+/** One scheduled maintenance pass, as built by a {@link ReliableReportingMaintenanceFactoryV1}. */
+export interface ReliableReportingMaintenanceV1 {
+  /** Minimum time between scheduled passes. A positive safe integer. */
+  readonly intervalMilliseconds: number;
+  /**
+   * Run one pass. Tasks are isolated: a task failure is reported in its result, never thrown. `report`
+   * is awaited, in task order, for every task that rejected or partially failed, unless `signal` has
+   * aborted (an abort is shutdown, not a fault).
+   */
+  run(input: {
+    signal?: AbortSignal | undefined;
+    report?: (error: unknown) => Promise<void>;
+  }): Promise<readonly ReliableReportingMaintenanceTaskResultV1[]>;
 }
 
-const DEFAULT_MAINTENANCE_INTERVAL_MILLISECONDS = 300_000;
+/** What the service tells a maintenance factory about the store it will maintain. */
+export interface ReliableReportingMaintenanceContextV1 {
+  readonly store: ReportingLedgerStore;
+  /** The `statusRetentionDays` this service advertises. */
+  readonly statusRetentionDays: number;
+  /** The `automatedRecoveryWindowSeconds` this service advertises. */
+  readonly automatedRecoveryWindowSeconds: number;
+}
+
+/**
+ * Builds the maintenance for one service. Throw from it to refuse a configuration the store cannot
+ * serve; the service lets the error reach the caller of `createReliableReportingService`.
+ */
+export type ReliableReportingMaintenanceFactoryV1 = (
+  context: ReliableReportingMaintenanceContextV1
+) => ReliableReportingMaintenanceV1;
+
+/**
+ * Composition token. A service composed with a managed-delivery runtime (such as
+ * `createPostgresReliableReportingProductionService` in `@adcp/reporting-storage/service`) passes it as
+ * a property key set to `true` so the Core service accepts the managed-delivery and reconciled-billing
+ * offerings that only that composition can serve. A plain Core service refuses them. It is a
+ * `Symbol.for` key so it holds across duplicate copies of the SDK.
+ */
+export const REPORTING_MANAGED_DELIVERY_COMPOSITION_V1: unique symbol = Symbol.for(
+  '@adcp/sdk/reporting/managed-delivery-composition'
+) as never;
 
 export interface ReliableReportingSetupV1 {
   readonly component: 'reliable-reporting-core';
-  readonly migrations: readonly [typeof REPORTING_LEDGER_MIGRATION];
+  /** The store's own `migrations`: what to apply before first use. Empty for a store that needs none. */
+  readonly migrations: readonly string[];
   readonly requiresIsolatedLedgerDatabaseAcknowledgement: true;
 }
 
@@ -350,7 +356,7 @@ export interface ReliableReportingServiceV1<TCtxMeta = Record<string, unknown>> 
    * hosts that run their own scheduler instead of `start()`. A task failure is
    * reported in its result, not thrown. Requires the `maintenance` option.
    */
-  runMaintenance(options?: { signal?: AbortSignal }): Promise<ReportingLedgerMaintenanceTaskResultV1[]>;
+  runMaintenance(options?: { signal?: AbortSignal }): Promise<readonly ReliableReportingMaintenanceTaskResultV1[]>;
   start(options: ReliableReportingSchedulerOptionsV1): void;
   stop(): Promise<void>;
 }
@@ -365,9 +371,9 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
   const allowManagedDelivery =
     (
       options as CreateReliableReportingServiceOptionsV1<TCtxMeta> & {
-        [PRODUCTION_MANAGED_COMPOSITION]?: boolean;
+        [REPORTING_MANAGED_DELIVERY_COMPOSITION_V1]?: boolean;
       }
-    )[PRODUCTION_MANAGED_COMPOSITION] === true;
+    )[REPORTING_MANAGED_DELIVERY_COMPOSITION_V1] === true;
   const adapterEntries = Object.entries(options.adapters);
   if (adapterEntries.length === 0) throw new TypeError('Reliable reporting requires at least one adapter');
   positiveInteger(options.automatedRecoveryWindowSeconds, 'automatedRecoveryWindowSeconds');
@@ -449,76 +455,34 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
   if (hasConsumerStatus) assertConsumerStatusStore(options.store);
   const retentionDays = options.statusRetentionDays;
   positiveInteger(retentionDays, 'statusRetentionDays');
-  const maintenance = options.maintenance;
-  let maintenanceStore: ReportingLedgerMaintenanceStoreV1 & {
-    sweepExpiredState?: PostgresReportingLedgerStore['sweepExpiredState'];
-    changeFeedEnabled?: boolean;
-  };
-  let maintenanceIntervalMilliseconds = DEFAULT_MAINTENANCE_INTERVAL_MILLISECONDS;
-  if (maintenance !== undefined) {
-    if (maintenance === null || typeof maintenance !== 'object') {
-      throw new TypeError('maintenance must be an options object');
+  // Built here, not on the first scheduled pass: a factory that cannot serve this store or these
+  // retention commitments fails service construction.
+  let maintenance: ReliableReportingMaintenanceV1 | undefined;
+  if (options.maintenance !== undefined) {
+    if (typeof options.maintenance !== 'function') {
+      throw new TypeError('maintenance must be a factory, for example reportingLedgerMaintenance({ ... })');
     }
-    // Duck-typed rather than `instanceof`: a host that loads two copies of the
-    // SDK still holds a real store, and a non-Postgres store has no maintenance
-    // to run. Failing here beats a scheduler that silently never retires.
-    const candidate = options.store as Partial<ReportingLedgerMaintenanceStoreV1> & {
-      sweepExpiredState?: PostgresReportingLedgerStore['sweepExpiredState'];
-      changeFeedEnabled?: boolean;
-    };
-    for (const method of [
-      'retireExpiredPeriods',
-      'pruneChanges',
-      'sweepRowWriteIntents',
-      ...(maintenance.compaction ? (['compactSupersededSnapshots'] as const) : []),
-      ...(maintenance.orphanCollection ? (['collectOrphanedRowObjects'] as const) : []),
-    ] as const) {
-      if (typeof candidate[method] !== 'function') {
-        throw new TypeError(
-          `maintenance requires a PostgresReportingLedgerStore (or a store with ${method}); the configured store cannot run ledger maintenance`
-        );
-      }
-    }
-    maintenanceStore = candidate as typeof maintenanceStore;
-    if (maintenance.compaction) {
-      // Fail at construction, not on the first scheduled pass: key templates without
-      // {revision_key} let compaction delete an object a concurrent commit is adopting.
-      (candidate as { assertCompactionSafeRowBindings?: () => void }).assertCompactionSafeRowBindings?.();
-    }
-    if (maintenance.changeFeed && maintenanceStore.changeFeedEnabled === false) {
+    maintenance = options.maintenance({
+      store: options.store,
+      statusRetentionDays: retentionDays,
+      automatedRecoveryWindowSeconds: options.automatedRecoveryWindowSeconds,
+    });
+    if (
+      !maintenance ||
+      typeof maintenance.run !== 'function' ||
+      !Number.isSafeInteger(maintenance.intervalMilliseconds) ||
+      maintenance.intervalMilliseconds <= 0
+    ) {
       throw new TypeError(
-        'maintenance.changeFeed requires the store to be built with changeFeed: true; otherwise pruning silently does nothing'
+        'maintenance factory must return { intervalMilliseconds: positive integer, run(): Promise<results> }'
       );
     }
-    if (maintenance.intervalMilliseconds !== undefined) {
-      positiveInteger(maintenance.intervalMilliseconds, 'maintenance.intervalMilliseconds');
-      maintenanceIntervalMilliseconds = maintenance.intervalMilliseconds;
-    }
-    assertReportingLedgerMaintenanceOptions(maintenance, retentionDays);
   }
-  // Where the orphan collector is up to, kept across passes of this process.
-  const orphanState: ReportingOrphanCollectionStateV1 = { cursors: {} };
-  // Snapshot/checkpoint sweeping needs the pool, which only the store holds.
-  // A store without `sweepExpiredState` simply skips that task.
   const runLedgerMaintenance = (
     signal: AbortSignal | undefined,
     report?: (error: unknown) => Promise<void>
-  ): Promise<ReportingLedgerMaintenanceTaskResultV1[]> =>
-    runReportingLedgerMaintenance({
-      store: maintenanceStore,
-      ...(typeof maintenanceStore.sweepExpiredState === 'function'
-        ? { sweepSnapshots: (limit: number) => maintenanceStore.sweepExpiredState!(limit) }
-        : {}),
-      statusRetentionDays: retentionDays,
-      automatedRecoveryWindowSeconds: options.automatedRecoveryWindowSeconds,
-      retention: maintenance!.retention,
-      compaction: maintenance!.compaction,
-      changeFeed: maintenance!.changeFeed,
-      orphanCollection: maintenance!.orphanCollection,
-      orphanState,
-      signal,
-      ...(report ? { report } : {}),
-    });
+  ): Promise<readonly ReliableReportingMaintenanceTaskResultV1[]> =>
+    maintenance!.run({ signal, ...(report ? { report } : {}) });
 
   const capabilities = deepFreeze({
     supported: true as const,
@@ -572,7 +536,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
   const service: ReliableReportingServiceV1<TCtxMeta> = {
     setup: Object.freeze({
       component: 'reliable-reporting-core',
-      migrations: Object.freeze([REPORTING_LEDGER_MIGRATION]) as readonly [typeof REPORTING_LEDGER_MIGRATION],
+      migrations: Object.freeze([...(options.store.migrations ?? [])]),
       requiresIsolatedLedgerDatabaseAcknowledgement: true,
     }),
     capabilities,
@@ -745,10 +709,10 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
         maintenance === undefined
           ? undefined
           : {
-              intervalMilliseconds: maintenanceIntervalMilliseconds,
+              intervalMilliseconds: maintenance.intervalMilliseconds,
               run: () =>
                 runLedgerMaintenance(signal, error =>
-                  reportSchedulerError(scheduler, signal, error, { phase: 'maintenance' })
+                  reportReportingSchedulerError(scheduler, signal, error, { phase: 'maintenance' })
                 ),
             };
       schedulerPromise = schedulerLoop(service, scheduler, signal, options.store, scheduledMaintenance).finally(() => {
@@ -764,524 +728,6 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     },
   };
 
-  return service;
-}
-
-type ProductionNotificationOptions = Omit<
-  CreatePostgresPersistentNotificationRuntimeOptions,
-  'db' | 'publisherScope' | 'checkpointDeliveryAttempt' | 'supportedAccountEventTypes'
->;
-
-export type CreatePostgresReliableReportingProductionServiceOptionsV1<TCtxMeta = Record<string, unknown>> = Omit<
-  CreateReliableReportingServiceOptionsV1<TCtxMeta>,
-  'store' | 'subscribers' | 'maintenance'
-> & {
-  db: ReportingPgPool;
-  /** Stable, non-secret deployment namespace shared by reporting workers. */
-  namespace: string;
-  /** Stable webhook publisher identity; credentials must never be used here. */
-  publisherScope: string;
-  /** Explicit acknowledgement required by the authoritative Core store. */
-  acknowledgeIsolatedDatabase: true;
-  /**
-   * Store new revision rows as verified canonical JSONL chunks. Adds
-   * `REPORTING_ROW_STORAGE_MIGRATION` (PostgreSQL 13+) to `setup.migrations`
-   * and probes it before publishing capabilities.
-   */
-  rowStorage?: boolean | ReportingRowStorageOptionsV1;
-  /**
-   * Opt in to period-aligned retention. Each scheduler pass retires whole
-   * periods once `max(statusRetentionDays, recordRetentionDays)` has elapsed
-   * since both the period end and its latest publication, deleting their
-   * rows and ledger records and leaving a tombstone. Abandoned row uploads
-   * and expired cursor snapshots are always swept. With `changeFeed`, a
-   * period is also held until every live registered feed consumer (updated
-   * within `changeFeed.maxFeedHoldDays`, default 7) has read its changes.
-   */
-  retention?: ReportingRetentionOptionsV1;
-  /**
-   * Opt in to compacting superseded snapshot revisions to metadata only, as
-   * adcontextprotocol/adcp#8100 permits. Off by default. Each scheduler pass
-   * drops the row content of snapshots that are superseded, past their
-   * recovery grace and not owed to any caller (receipts, current
-   * `received` / `unreadable` / `content_mismatch` statements), while every
-   * revision's metadata stays. Official revisions are never compacted. Uses
-   * this service's `statusRetentionDays` and `automatedRecoveryWindowSeconds`.
-   * The protocol takes compaction into effect only in the next eligible minor
-   * after November 20, 2026: do not enable this in production before then.
-   */
-  compaction?: ReportingCompactionOptionsV1;
-  /**
-   * Opt in to the listing collector for row objects the write-intent sweep cannot see (an upload that
-   * succeeded before its intent recorded it, intents for a binding no running host configures, intents
-   * lost to a database restore). Off by default. Each scheduler pass lists every configured object
-   * binding under `{prefix}/{namespace_key}/`, examines at most `limit` objects per binding, and
-   * deletes an object only when it is older than `minAgeSeconds` (default 7 days) and no ledger record
-   * or open upload names it. Needs `rowStorage` bindings whose provider can `list`; others are reported
-   * as unsupported. Enable it only on the ledger database that owns the namespace, never on a clone or
-   * restore that still points at the same bucket. Start with `dryRun: true`.
-   */
-  orphanCollection?: ReportingOrphanCollectionOptionsV1;
-  /**
-   * Maintain the host change feed (`changesAfter`, `getCurrentRevision`,
-   * `listCurrentRevisions` on `stores.core`). Adds
-   * `REPORTING_LEDGER_CHANGES_MIGRATION` (PostgreSQL 13+); the scheduler prunes
-   * changes older than `changeRetentionDays` (default 30) unless a registered
-   * consumer updated within `maxFeedHoldDays` (default 7) still needs them.
-   */
-  changeFeed?: ReportingChangeFeedMaintenanceOptionsV1;
-  notifications: ProductionNotificationOptions;
-  managedDelivery: {
-    adapter: ReportingManagedDeliveryAdapterV1;
-    resourceRetentionDays: number;
-    authorizationRevocationSeconds: number;
-    store?: Omit<PostgresReportingManagedDeliveryStoreOptions, 'notificationActivityPort'>;
-  };
-  activity: Omit<
-    PostgresReportingNotificationActivityOptions,
-    'db' | 'notifications' | 'namespace' | 'attemptCheckpoint' | 'tenantScopeForAccount'
-  > & {
-    tenantScopeForAccount(accountId: string): string;
-  };
-  webhookActivity?: { tableName?: string; retentionDays?: number };
-  /** Resolve activity visibility from verified auth/registry state, never request fields. */
-  resolveWebhookActivityScope(
-    context: ResolveContext
-  ): { tenantId: string; principalId: string } | Promise<{ tenantId: string; principalId: string }>;
-  /** Trusted complete roster of consumers that owe receipts for an obligation. */
-  obligatedConsumers?: (input: {
-    reporting_obligation_id: string;
-    account_id: string;
-  }) => Promise<{ ids: readonly string[]; complete: boolean; version?: string }>;
-  /** Optional migration-system bridge. Called before any capability probe. */
-  applyMigrations?: (migrations: readonly string[]) => Promise<void>;
-};
-
-export interface PostgresReliableReportingProductionServiceV1<TCtxMeta = Record<string, unknown>> {
-  readonly setup: {
-    readonly component: 'reliable-reporting-production';
-    readonly migrations: readonly string[];
-  };
-  readonly capabilities: ReportingDeliveryCapabilities;
-  readonly platform: ReliableReportingPlatform<TCtxMeta>;
-  readonly core: ReliableReportingServiceV1<TCtxMeta>;
-  readonly managed: ReportingManagedDeliveryRuntimeV1<RequestContext<Account<TCtxMeta>>>;
-  readonly notifications: PostgresPersistentNotificationRuntime;
-  readonly notificationActivity: PostgresReportingNotificationActivityRuntime;
-  readonly webhookActivity: PostgresReportingWebhookActivityV1;
-  readonly stores: {
-    core: PostgresReportingLedgerStore;
-    managed: PostgresReportingManagedDeliveryStore;
-  };
-  readonly running: boolean;
-  installConfiguration: ReliableReportingServiceV1<TCtxMeta>['installConfiguration'];
-  install<TPlatform extends DecisioningPlatform<unknown, TCtxMeta>>(
-    platform: TPlatform
-  ): TPlatform & { reporting: ReliableReportingPlatform<TCtxMeta> };
-  runCycle(options: ReliableReportingCycleOptionsV1): Promise<{
-    core: Awaited<ReturnType<ReliableReportingServiceV1<TCtxMeta>['runCycle']>>;
-    managed: Awaited<ReturnType<ReportingManagedDeliveryRuntimeV1['runWorker']>>;
-  }>;
-  recoverOnce(options: { deploymentWide: true }): Promise<{
-    activity: Awaited<ReturnType<PostgresReportingNotificationActivityRuntime['recoverOnce']>>;
-    webhookOutbox: Awaited<ReturnType<PostgresPersistentNotificationRuntime['recoverOnce']>>;
-  }>;
-  start(options: ReliableReportingSchedulerOptionsV1 & { deploymentWide: true }): void;
-  stop(): Promise<void>;
-}
-
-/**
- * Assemble and probe the complete seller-side Reliable Reporting production
- * chain. Capability publication happens only after every durable component is
- * present and the managed policy has been adopted.
- */
-export async function createPostgresReliableReportingProductionService<TCtxMeta = Record<string, unknown>>(
-  options: CreatePostgresReliableReportingProductionServiceOptionsV1<TCtxMeta>
-): Promise<PostgresReliableReportingProductionServiceV1<TCtxMeta>> {
-  if (!options.db || typeof options.db.query !== 'function' || typeof options.db.connect !== 'function') {
-    throw new TypeError('Reliable Reporting production service requires a PostgreSQL pool');
-  }
-  if (!/^[A-Za-z0-9_.:-]{1,255}$/.test(options.namespace)) {
-    throw new TypeError('Reliable Reporting production namespace must be a bounded non-secret identifier');
-  }
-  if (!/^[A-Za-z0-9_.:-]{1,255}$/.test(options.publisherScope)) {
-    throw new TypeError('Reliable Reporting publisherScope must be a bounded non-secret identifier');
-  }
-  if (typeof options.resolveWebhookActivityScope !== 'function') {
-    throw new TypeError('Reliable Reporting production service requires resolveWebhookActivityScope');
-  }
-  if (typeof options.activity?.tenantScopeForAccount !== 'function') {
-    throw new TypeError('Reliable Reporting production service requires activity.tenantScopeForAccount');
-  }
-  assertReportingLedgerMaintenanceOptions(
-    { compaction: options.compaction, orphanCollection: options.orphanCollection },
-    options.statusRetentionDays
-  );
-  if (
-    Object.values(options.adapters).some(
-      adapter => adapter.deliveryOffering.reconciliation_mode === 'consumer_receipt'
-    ) &&
-    typeof options.obligatedConsumers !== 'function'
-  ) {
-    throw new TypeError('Reconciled Billing production offerings require a trusted obligatedConsumers roster');
-  }
-
-  const recipientCheckpoint = createPostgresReportingNotificationAttemptCheckpoint({
-    db: options.db,
-    namespace: options.namespace,
-    ...(options.activity?.tableName !== undefined ? { tableName: options.activity.tableName } : {}),
-  });
-  const webhookActivity = createPostgresReportingWebhookActivityV1({
-    db: options.db,
-    namespace: options.namespace,
-    ...(options.webhookActivity?.tableName !== undefined ? { tableName: options.webhookActivity.tableName } : {}),
-    ...(options.webhookActivity?.retentionDays !== undefined
-      ? { retentionDays: options.webhookActivity.retentionDays }
-      : {}),
-  });
-  const composedAttemptCheckpoint = composeNotificationDeliveryAttemptCheckpoints(
-    recipientCheckpoint,
-    webhookActivity.checkpointDeliveryAttempt
-  );
-  const attemptCheckpoint = Object.assign(
-    async (input: Parameters<typeof recipientCheckpoint>[0]) => composedAttemptCheckpoint(input),
-    { activityStore: recipientCheckpoint.activityStore }
-  );
-  const adopterAttemptResult = options.notifications.webhooks.onAttemptResult;
-  const adopterAttemptObserverError = options.notifications.webhooks.onAttemptObserverError;
-  const notifications = createPostgresPersistentNotificationRuntime({
-    ...options.notifications,
-    db: options.db,
-    publisherScope: options.publisherScope,
-    checkpointDeliveryAttempt: attemptCheckpoint,
-    supportedAccountEventTypes: ['reporting.ledger_changed', 'reporting.status_changed', 'reporting.delivery_ready'],
-    webhooks: {
-      ...options.notifications.webhooks,
-      onAttemptResult: composeWebhookAttemptResultObservers(
-        webhookActivity.emitterObservers.onAttemptResult,
-        adopterAttemptResult
-      ),
-      onAttemptObserverError(error, phase) {
-        if (adopterAttemptObserverError) {
-          try {
-            adopterAttemptObserverError(error, phase);
-            return;
-          } catch (observerError) {
-            console.warn(
-              `[adcp/reporting] webhook observer-error hook failed: ${safeMessage(observerError)}; original: ${safeMessage(error)}`
-            );
-            return;
-          }
-        }
-        console.warn(`[adcp/reporting] webhook ${phase} observer failed: ${safeMessage(error)}`);
-      },
-    },
-  });
-  const notificationActivity = createPostgresReportingNotificationActivityRuntime({
-    ...options.activity,
-    db: options.db,
-    notifications,
-    namespace: options.namespace,
-    attemptCheckpoint,
-    tenantScopeForAccount: options.activity.tenantScopeForAccount,
-  });
-  const coreStore = new PostgresReportingLedgerStore(options.db, {
-    acknowledgeIsolatedDatabase: options.acknowledgeIsolatedDatabase,
-    managedDelivery: true,
-    ...(options.obligatedConsumers ? { obligatedConsumers: options.obligatedConsumers } : {}),
-    ...(options.consumerMismatchEscalation ? { consumerMismatchEscalation: options.consumerMismatchEscalation } : {}),
-    notificationActivityPort: notificationActivity.port,
-    ...(options.rowStorage ? { rowStorage: options.rowStorage } : {}),
-    ...(options.changeFeed ? { changeFeed: true } : {}),
-  });
-  // Fail at construction, not on the first scheduled pass (see createReliableReportingService).
-  if (options.compaction) coreStore.assertCompactionSafeRowBindings();
-  const managedStore = new PostgresReportingManagedDeliveryStore(options.db, {
-    ...options.managedDelivery.store,
-    statusRetentionDays: options.statusRetentionDays,
-    advertisedRecoveryWindowSeconds: options.automatedRecoveryWindowSeconds,
-    notificationActivityPort: notificationActivity.port,
-  });
-  const coreOptions = {
-    ...options,
-    store: coreStore,
-    [PRODUCTION_MANAGED_COMPOSITION]: true,
-  } as CreateReliableReportingServiceOptionsV1<TCtxMeta> & { [PRODUCTION_MANAGED_COMPOSITION]: true };
-  const core = createReliableReportingService(coreOptions);
-  const migrations = Object.freeze([
-    REPORTING_LEDGER_MIGRATION,
-    ...(options.rowStorage ? [REPORTING_ROW_STORAGE_MIGRATION] : []),
-    ...(options.changeFeed ? [REPORTING_LEDGER_CHANGES_MIGRATION] : []),
-    REPORTING_MANAGED_DELIVERY_MIGRATION,
-    ...notifications.migrations.all,
-    ...notificationActivity.migrations.all,
-    ...webhookActivity.migrations.all,
-  ]);
-  await options.applyMigrations?.(migrations);
-  await coreStore.readyRowStorage();
-  await notifications.probe();
-  await notificationActivity.probe();
-  await webhookActivity.probe();
-
-  const managed = await createReportingManagedDeliveryRuntime<RequestContext<Account<TCtxMeta>>>({
-    coreStore,
-    ...(options.legacyRevisionReader ? { legacyRevisionReader: options.legacyRevisionReader } : {}),
-    store: managedStore,
-    adapter: options.managedDelivery.adapter,
-    offerings: core.capabilities.offerings,
-    automatedRecoveryWindowSeconds: options.automatedRecoveryWindowSeconds,
-    statusRetentionDays: options.statusRetentionDays,
-    resourceRetentionDays: options.managedDelivery.resourceRetentionDays,
-    authorizationRevocationSeconds: options.managedDelivery.authorizationRevocationSeconds,
-    ...(options.resolveConsumerId ? { resolveConsumerId: options.resolveConsumerId } : {}),
-    ...(options.consumerMismatchEscalation ? { consumerMismatchEscalation: options.consumerMismatchEscalation } : {}),
-  });
-  const capabilities = deepFreeze(
-    ReportingDeliveryCapabilitiesSchema.parse({
-      ...core.capabilities,
-      ...managed.reportingDeliveryCapabilities,
-      ledger_notification: 'reporting.ledger_changed',
-      status_notification: 'reporting.status_changed',
-      readiness_notification: 'reporting.delivery_ready',
-      supports_webhook_activity: true,
-    }) as ReportingDeliveryCapabilities
-  );
-  const platform: ReliableReportingPlatform<TCtxMeta> = {
-    capabilities,
-    getReportingStatus: (request, context) => managed.getReportingStatus(request, context as never),
-    getMediaBuyDelivery: (request, context) => managed.getMediaBuyDelivery(request, context as never),
-    ...(core.platform.syncReportingStatus
-      ? {
-          syncReportingStatus: core.platform.syncReportingStatus,
-          resolveConsumerId: core.platform.resolveConsumerId,
-        }
-      : {}),
-    ...(managed.syncReportingReceipts
-      ? {
-          syncReportingReceipts: (request, context) => managed.syncReportingReceipts!(request, context),
-        }
-      : {}),
-    async projectListAccounts(request, response, context) {
-      const withoutDiagnostics = () =>
-        projectListAccountsReportingWebhookActivityV1({
-          request: { ...request, include_webhook_activity: false },
-          response,
-          tenantId: 'diagnostics-not-requested',
-          principalId: 'diagnostics-not-requested',
-          activity: webhookActivity,
-        });
-      if (request.include_webhook_activity !== true) return withoutDiagnostics();
-      try {
-        const scope = await options.resolveWebhookActivityScope(context);
-        return await projectListAccountsReportingWebhookActivityV1({
-          request,
-          response,
-          tenantId: scope.tenantId,
-          principalId: scope.principalId,
-          activity: webhookActivity,
-        });
-      } catch (error) {
-        // Transport diagnostics are a debug aid. A logging-store outage must
-        // not take down the authoritative account roster or leak stale
-        // adopter-supplied activity fields.
-        defaultSchedulerWarn(`[adcp/reporting] webhook activity projection unavailable: ${safeMessage(error)}`);
-        return withoutDiagnostics();
-      }
-    },
-  };
-
-  let auxiliaryAbort: AbortController | undefined;
-  let auxiliaryPromise: Promise<void> | undefined;
-  let auxiliaryRotation = 0;
-  // Where the orphan collector is up to, kept across scheduler passes of this process.
-  const orphanState: ReportingOrphanCollectionStateV1 = { cursors: {} };
-  const reportAuxiliaryError = async (
-    scheduler: ReliableReportingSchedulerOptionsV1,
-    error: unknown
-  ): Promise<void> => {
-    if (scheduler.onError) {
-      try {
-        await scheduler.onError(error);
-        return;
-      } catch (observerError) {
-        warnSchedulerFailure(scheduler, { phase: 'cycle' }, error, observerError);
-        return;
-      }
-    }
-    warnSchedulerFailure(scheduler, { phase: 'cycle' }, error);
-  };
-  const runAuxiliaryPass = async (
-    scheduler: ReliableReportingSchedulerOptionsV1,
-    signal: AbortSignal
-  ): Promise<void> => {
-    signal.throwIfAborted();
-    try {
-      const totalLimit = scheduler.notificationRecoveryLimit ?? 25;
-      const concurrency = Math.min(scheduler.notificationRecoveryConcurrency ?? 4, totalLimit);
-      const baseLimit = Math.floor(totalLimit / concurrency);
-      const remainder = totalLimit % concurrency;
-      await Promise.all(
-        Array.from({ length: concurrency }, (_, index) =>
-          notificationActivity.recoverOnce({
-            limit: baseLimit + (index < remainder ? 1 : 0),
-            signal,
-            onError: error => reportAuxiliaryError(scheduler, error),
-          })
-        )
-      );
-    } catch (error) {
-      if (!signal.aborted) await reportAuxiliaryError(scheduler, error);
-    }
-    signal.throwIfAborted();
-    try {
-      await notifications.recoverOnce({ limit: scheduler.webhookRecoveryLimit ?? 10 });
-    } catch (error) {
-      if (!signal.aborted) await reportAuxiliaryError(scheduler, error);
-    }
-    signal.throwIfAborted();
-    const pruneResults = await Promise.allSettled([
-      notificationActivity.pruneProjected({ limit: 1_000 }),
-      webhookActivity.pruneCompleted({ limit: 1_000 }),
-    ]);
-    for (const result of pruneResults) {
-      if (result.status === 'rejected' && !signal.aborted) await reportAuxiliaryError(scheduler, result.reason);
-    }
-    await runReportingLedgerMaintenance({
-      store: coreStore,
-      sweepSnapshots: limit => sweepExpiredReportingLedgerState(options.db, limit),
-      statusRetentionDays: options.statusRetentionDays,
-      automatedRecoveryWindowSeconds: options.automatedRecoveryWindowSeconds,
-      retention: options.retention,
-      compaction: options.compaction,
-      changeFeed: options.changeFeed,
-      orphanCollection: options.orphanCollection,
-      orphanState,
-      signal,
-      report: error => reportAuxiliaryError(scheduler, error),
-    });
-    const accountIds = rotate(await deploymentWideAccountIds(coreStore), auxiliaryRotation);
-    auxiliaryRotation += 1;
-    for (const accountId of accountIds) {
-      signal.throwIfAborted();
-      try {
-        await managed.runWorker({
-          signal,
-          ...(accountId ? { account_id: accountId } : {}),
-          ...(scheduler.maxWorkerIterationsPerAccount !== undefined
-            ? { maxIterations: scheduler.maxWorkerIterationsPerAccount }
-            : {}),
-        });
-        if (accountId) await managedStore.pruneExpiredEvidence?.({ account_id: accountId, limit: 1_000 });
-      } catch (error) {
-        if (!signal.aborted) await reportAuxiliaryError(scheduler, error);
-      }
-    }
-  };
-
-  const service: PostgresReliableReportingProductionServiceV1<TCtxMeta> = {
-    setup: Object.freeze({ component: 'reliable-reporting-production', migrations }),
-    capabilities,
-    platform,
-    core,
-    managed,
-    notifications,
-    notificationActivity,
-    webhookActivity,
-    stores: Object.freeze({ core: coreStore, managed: managedStore }),
-    get running() {
-      return core.running || auxiliaryPromise !== undefined;
-    },
-    installConfiguration: core.installConfiguration.bind(core),
-    install<TPlatform extends DecisioningPlatform<unknown, TCtxMeta>>(target: TPlatform) {
-      if (typeof target.accounts.upsert !== 'function') {
-        throw new TypeError('Reliable reporting requires accounts.upsert');
-      }
-      if (typeof target.accounts.list !== 'function') {
-        throw new TypeError(
-          'Reliable reporting production webhook activity requires accounts.list so list_accounts can serve the advertised diagnostics'
-        );
-      }
-      if (target.reporting && target.reporting !== platform) {
-        throw new TypeError('DecisioningPlatform already has a reporting lifecycle installed');
-      }
-      if (!target.reporting) {
-        Object.defineProperty(target, 'reporting', {
-          value: platform,
-          enumerable: true,
-          configurable: false,
-          writable: false,
-        });
-      }
-      return target as TPlatform & { reporting: ReliableReportingPlatform<TCtxMeta> };
-    },
-    async runCycle(cycle) {
-      const coreResult = await core.runCycle(cycle);
-      const managedResult = await managed.runWorker({
-        ...(cycle.signal ? { signal: cycle.signal } : {}),
-        ...(!cycle.deploymentWide ? { account_id: cycle.accountId } : {}),
-        ...(cycle.maxWorkerIterations !== undefined ? { maxIterations: cycle.maxWorkerIterations } : {}),
-      });
-      return { core: coreResult, managed: managedResult };
-    },
-    async recoverOnce(recoveryOptions) {
-      if (recoveryOptions?.deploymentWide !== true) {
-        throw new TypeError('Reliable Reporting production recovery requires deploymentWide: true');
-      }
-      const activityResult = await notificationActivity.recoverOnce();
-      const webhookOutbox = await notifications.recoverOnce();
-      return { activity: activityResult, webhookOutbox };
-    },
-    start(scheduler) {
-      if (auxiliaryPromise) throw new Error('Reliable Reporting production scheduler is already running');
-      if (scheduler.deploymentWide !== true) {
-        throw new TypeError('Reliable Reporting production scheduler requires deploymentWide: true');
-      }
-      if (
-        scheduler.notificationRecoveryLimit !== undefined &&
-        (!Number.isSafeInteger(scheduler.notificationRecoveryLimit) ||
-          scheduler.notificationRecoveryLimit < 1 ||
-          scheduler.notificationRecoveryLimit > 1_000)
-      ) {
-        throw new TypeError('notificationRecoveryLimit must be an integer from 1 through 1000');
-      }
-      if (
-        scheduler.notificationRecoveryConcurrency !== undefined &&
-        (!Number.isSafeInteger(scheduler.notificationRecoveryConcurrency) ||
-          scheduler.notificationRecoveryConcurrency < 1 ||
-          scheduler.notificationRecoveryConcurrency > 64)
-      ) {
-        throw new TypeError('notificationRecoveryConcurrency must be an integer from 1 through 64');
-      }
-      if (
-        scheduler.webhookRecoveryLimit !== undefined &&
-        (!Number.isSafeInteger(scheduler.webhookRecoveryLimit) ||
-          scheduler.webhookRecoveryLimit < 1 ||
-          scheduler.webhookRecoveryLimit > 1_000)
-      ) {
-        throw new TypeError('webhookRecoveryLimit must be an integer from 1 through 1000');
-      }
-      core.start(scheduler);
-      auxiliaryAbort = new AbortController();
-      const signal = auxiliaryAbort.signal;
-      auxiliaryPromise = (async () => {
-        while (!signal.aborted) {
-          try {
-            await runAuxiliaryPass(scheduler, signal);
-          } catch (error) {
-            if (!signal.aborted) await reportAuxiliaryError(scheduler, error);
-          }
-          if (!signal.aborted) await abortableDelay(scheduler.intervalMilliseconds, signal);
-        }
-      })().finally(() => {
-        auxiliaryAbort = undefined;
-        auxiliaryPromise = undefined;
-      });
-    },
-    async stop() {
-      auxiliaryAbort?.abort();
-      await Promise.all([core.stop(), auxiliaryPromise]);
-    },
-  };
   return service;
 }
 
@@ -1337,15 +783,15 @@ async function schedulerLoop<TCtxMeta>(
           // it — the producer's own default cap starves the rest just as an
           // explicit per-account cap would. Enumerate the roster so each tenant
           // gets its own bounded cycle, and rotate the starting point each pass.
-          rotate(await deploymentWideAccountIds(store), rotation)
-        : rotate(
+          rotateReportingRoster(await reportingDeploymentWideAccountIds(store), rotation)
+        : rotateReportingRoster(
             validateAccountIds(
               typeof options.accountIds === 'function' ? await options.accountIds() : options.accountIds
             ),
             rotation
           );
     } catch (error) {
-      await reportSchedulerError(options, signal, error, { phase: 'roster' });
+      await reportReportingSchedulerError(options, signal, error, { phase: 'roster' });
     }
     rotation += 1;
     for (const accountId of accountIds) {
@@ -1374,7 +820,7 @@ async function schedulerLoop<TCtxMeta>(
         // One tenant's cycle failure must not starve the tenants queued behind
         // it: a persistently failing account would otherwise skip every later
         // account on every interval, indefinitely.
-        await reportSchedulerError(options, signal, error, { phase: 'cycle', accountId });
+        await reportReportingSchedulerError(options, signal, error, { phase: 'cycle', accountId });
       }
     }
     // Maintenance is paced independently of the cycle interval: it runs on the
@@ -1390,169 +836,11 @@ async function schedulerLoop<TCtxMeta>(
         await maintenance.run();
       } catch (error) {
         // A failing maintenance pass must not stop the producer loop.
-        await reportSchedulerError(options, signal, error, { phase: 'maintenance' });
+        await reportReportingSchedulerError(options, signal, error, { phase: 'maintenance' });
       }
     }
-    if (!signal.aborted) await abortableDelay(options.intervalMilliseconds, signal);
+    if (!signal.aborted) await reportingSchedulerDelay(options.intervalMilliseconds, signal);
   }
-}
-
-interface SchedulerFailureSiteV1 {
-  readonly phase: 'roster' | 'cycle' | 'maintenance';
-  readonly accountId?: string | undefined;
-}
-
-async function reportSchedulerError(
-  options: ReliableReportingSchedulerOptionsV1,
-  signal: AbortSignal,
-  error: unknown,
-  site: SchedulerFailureSiteV1
-): Promise<void> {
-  if (signal.aborted) return;
-  if (options.onError) {
-    try {
-      await options.onError(error);
-    } catch (observerError) {
-      // Error observers must not terminate the reporting lifecycle -- and must
-      // not make the failure they were handed disappear with their own.
-      warnSchedulerFailure(options, site, error, observerError);
-    }
-    return;
-  }
-  // No observer is configured, so this is the only place the failure surfaces.
-  warnSchedulerFailure(options, site, error);
-}
-
-function warnSchedulerFailure(
-  options: ReliableReportingSchedulerOptionsV1,
-  site: SchedulerFailureSiteV1,
-  error: unknown,
-  observerError?: unknown
-): void {
-  const where =
-    site.phase === 'roster'
-      ? 'could not resolve its account roster, so this pass ran no tenants'
-      : site.phase === 'maintenance'
-        ? 'ledger maintenance failed; the scheduler continues'
-        : site.accountId === undefined
-          ? 'deployment-wide cycle failed; the scheduler continues'
-          : `cycle failed for account ${site.accountId}; later tenants continue`;
-  const observed =
-    observerError === undefined ? '' : ` (the configured onError also threw: ${safeMessage(observerError)})`;
-  const message = `[adcp/reporting] scheduler ${where}: ${safeMessage(error)}${observed}`;
-  const logger = options.logger;
-  try {
-    // Called on its owner, not through an extracted reference: a pino, winston
-    // or class-based logger reads `this` inside `warn`, and a bare `warn(...)`
-    // threw `Cannot read properties of undefined` into the catch below —
-    // losing exactly the diagnostic this path exists to emit.
-    if (logger !== undefined) logger.warn(message);
-    else defaultSchedulerWarn(message);
-  } catch {
-    // A logger that throws must not terminate the reporting lifecycle either.
-  }
-}
-
-function defaultSchedulerWarn(message: string): void {
-  console.warn(message);
-}
-
-/** Bound on the diagnostic, so no error message can flood the log sink. */
-const MAX_SCHEDULER_MESSAGE_CHARS = 512;
-/** Bound on what redaction is asked to scan, so it stays cheap on huge inputs. */
-const MAX_SCHEDULER_SCAN_CHARS = 8_192;
-const UNREPORTABLE_SCHEDULER_ERROR = '<unreportable error>';
-
-/**
- * The error's own message only, credential-redacted, bounded, and total.
- *
- * Stacks and error objects can carry request payloads and upstream credentials
- * into a log sink the adopter did not choose, so only `message` is read. Every
- * step is guarded because the value is arbitrary: `String(Object.create(null))`
- * throws, a `Symbol.toPrimitive` or `message` getter can throw or run adopter
- * code, and a Proxy can trap the prototype walk `instanceof` performs. This
- * function runs while building the diagnostic, outside the catch that guards
- * the logger call, so a throw here escaped `reportSchedulerError`, rejected the
- * scheduler loop, and surfaced as an unhandled rejection — killing the
- * background loop, or the host, over an error object's shape.
- */
-function safeMessage(error: unknown): string {
-  try {
-    const raw = rawMessage(error);
-    // Redact before truncating, so no fragment of a credential can survive
-    // being cut; scan a bounded prefix so a pathological message stays cheap.
-    const redacted = redactCredentialPatterns(raw.slice(0, MAX_SCHEDULER_SCAN_CHARS));
-    const text = typeof redacted === 'string' && redacted.length > 0 ? redacted : UNREPORTABLE_SCHEDULER_ERROR;
-    return text.length > MAX_SCHEDULER_MESSAGE_CHARS ? `${text.slice(0, MAX_SCHEDULER_MESSAGE_CHARS)}…` : text;
-  } catch {
-    // The failure stays observable: the phase, the account, and the fact that
-    // something threw are all still in the warning.
-    return UNREPORTABLE_SCHEDULER_ERROR;
-  }
-}
-
-/**
- * Never coerces. Only a primitive, or a `message` that is already a string, is
- * trusted; anything else is described rather than stringified.
- */
-function rawMessage(error: unknown): string {
-  switch (typeof error) {
-    case 'string':
-      return error;
-    case 'number':
-    case 'boolean':
-    case 'bigint':
-      return String(error);
-    case 'undefined':
-      return 'undefined';
-    case 'symbol':
-      return error.description ?? 'symbol';
-    default:
-      break;
-  }
-  if (error === null) return 'null';
-  const message = (error as { message?: unknown }).message;
-  return typeof message === 'string' ? message : 'non-Error scheduler failure';
-}
-
-const MAX_TIMER_DELAY_MILLISECONDS = 2_147_483_647;
-
-async function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
-  let remaining = milliseconds;
-  while (remaining > 0 && !signal.aborted) {
-    const chunk = Math.min(remaining, MAX_TIMER_DELAY_MILLISECONDS);
-    await abortableTimeout(chunk, signal);
-    remaining -= chunk;
-  }
-}
-
-function abortableTimeout(milliseconds: number, signal: AbortSignal): Promise<void> {
-  return new Promise(resolve => {
-    const timer = setTimeout(done, milliseconds);
-    function done() {
-      clearTimeout(timer);
-      signal.removeEventListener('abort', done);
-      resolve();
-    }
-    signal.addEventListener('abort', done, { once: true });
-  });
-}
-
-/** Start each pass one tenant further along so no fixed order can starve. */
-function rotate<T>(values: readonly T[], by: number): T[] {
-  if (values.length < 2) return [...values];
-  const offset = ((by % values.length) + values.length) % values.length;
-  return [...values.slice(offset), ...values.slice(0, offset)];
-}
-
-/**
- * Every account the ledger currently holds a configuration for. This is the
- * roster a deployment-wide worker is authorized over, so it is also the roster
- * the per-account budgets apply to.
- */
-async function deploymentWideAccountIds(store: ReportingLedgerStore): Promise<string[]> {
-  const configurations = await store.listConfigurations();
-  return [...new Set(configurations.map(value => value.account.account_id))].sort();
 }
 
 function validateAccountIds(values: readonly string[]): Array<string | undefined> {
@@ -1666,7 +954,7 @@ function validateDeliveryOffering(
       delivery.feed_purpose === 'billing')
   ) {
     throw new TypeError(
-      'Managed Delivery and Reconciled Billing require createPostgresReliableReportingProductionService from @adcp/sdk/reporting/service'
+      'Managed Delivery and Reconciled Billing require createPostgresReliableReportingProductionService from @adcp/reporting-storage/service'
     );
   }
   // Refused here rather than at install: capabilities are built from these
@@ -2211,14 +1499,4 @@ function deepFreeze<T>(value: T): T {
 }
 
 export * from './conformance';
-export {
-  ReportingMaintenancePartialFailureError,
-  type ReportingChangeFeedMaintenanceOptionsV1,
-  type ReportingCompactionOptionsV1,
-  type ReportingOrphanCollectionOptionsV1,
-  type ReportingOrphanCollectionStateV1,
-  type ReportingLedgerMaintenanceStoreV1,
-  type ReportingLedgerMaintenanceTaskNameV1,
-  type ReportingLedgerMaintenanceTaskResultV1,
-  type ReportingRetentionOptionsV1,
-} from './maintenance';
+export * from './scheduler-support';

@@ -13,7 +13,7 @@ async function main() {
   if ((fs.statSync(privateFile).mode & 0o777) !== 0o600) throw new Error('Private config mode');
   const config = JSON.parse(fs.readFileSync(privateFile));
   const { Storage } = req('@google-cloud/storage');
-  const gcs = req('@adcp/sdk/reporting/gcs');
+  const gcs = req('@adcp/reporting-storage/gcs');
   const storage = new Storage({ projectId: config.project_id, keyFilename: config.adc_path });
   const wrapper = require(
     path.join(path.resolve(upstream), 'scripts/ci/reporting_interop/ts_managed_reporting_server.cjs')

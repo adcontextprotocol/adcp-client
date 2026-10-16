@@ -57,3 +57,94 @@ Changesets pre-mode normally uses the pre-mode tag for both the npm dist-tag and
 the semver prerelease identifier. The release wrapper keeps that pre-mode tag
 unless `ADCP_NPM_TAG` is set. That prevents prereleases from moving `latest`
 accidentally.
+
+## Workspace packages
+
+The repository publishes more than `@adcp/sdk`. Changesets versions and publishes every non-private workspace
+package in one release, with the same pre-mode tag:
+
+| Package                      | Directory                      | Dist-tag while SDK 16 is in beta | Notes                                                                        |
+| ---------------------------- | ------------------------------ | -------------------------------- | ---------------------------------------------------------------------------- |
+| `@adcp/sdk`                  | `.`                            | `beta`                           | The SDK.                                                                     |
+| `@adcp/reporting-storage`    | `packages/reporting-storage`   | `beta`                           | Reliable Reporting storage. Pre-1.0 (`0.x`); depends on `@adcp/sdk` as a peer. |
+| `@adcp/eslint-plugin`        | `packages/eslint-plugin`       | `beta`                           |                                                                              |
+| `@adcp/reference-renderers`  | `packages/reference-renderers` | `beta`                           |                                                                              |
+
+`@adcp/reporting-storage` starts at `0.0.0` in `package.json` so a changeset sets its first real version. Under
+pre-release mode its first changeset (`minor`) produces `0.1.0-beta.0`, published on the `beta` tag and never on
+`latest`. It reaches `1.0.0` when the `@experimental` tags come off
+([stability policy](../guides/REPORTING-STABILITY.md)). Its `@adcp/sdk` peer range is rewritten by Changesets to the
+SDK version released with it, so install the pair published together.
+
+## First publish of a new workspace package
+
+npm trusted publishing (GitHub OIDC) can only be configured for a package that already exists on the registry. A
+new workspace package therefore cannot make its first publish from `release.yml`. A maintainer with publish rights on
+the `@adcp` scope does one manual publish, then configures the trusted publisher; every later release is OIDC with
+provenance.
+
+**The release workflow will not fail on an unbootstrapped package.** `scripts/publish-adcp-release.ts` asks the
+registry about each publishable workspace package first. One the registry has never seen (a definite 404) is marked
+`private` for the duration of `changeset publish`, which skips it, and the run prints a warning that names the package
+and points here. Every other package, `@adcp/sdk` included, publishes as usual. A registry lookup that fails for any
+other reason holds nothing back. The held-back package keeps its version in `package.json`, so the first release after
+the bootstrap publishes it with no other change. (`test/lib/hold-back-unbootstrapped-packages.test.js` pins this.)
+
+### Steps for `@adcp/reporting-storage`
+
+Do these once, as an `@adcp` npm maintainer. Do 1 to 4 before the `chore: release package` PR that first includes the
+package is merged if you can; if it has merged already, the same steps work and publish whatever version `main` holds.
+
+1. Check out a clean `main` and build the whole workspace. `npm run build` builds `@adcp/sdk` and then the package.
+
+   ```bash
+   git checkout main && git pull
+   npm ci
+   npm run build
+   npm run check --workspace=@adcp/reporting-storage
+   ```
+
+2. Log in and confirm who you are:
+
+   ```bash
+   npm login
+   npm whoami
+   ```
+
+3. Publish once, from your machine, under a throwaway tag. Provenance is off because it needs the GitHub OIDC
+   identity. The package's `prepublishOnly` cleans, rebuilds and re-checks it.
+
+   ```bash
+   NPM_CONFIG_PROVENANCE=false npm publish \
+     --workspace=@adcp/reporting-storage \
+     --access public \
+     --tag bootstrap
+   ```
+
+   This publishes the version in `packages/reporting-storage/package.json` (`0.0.0` until the release PR bumps it to
+   `0.1.0-beta.0`). Then keep an install of the placeholder from becoming the default:
+
+   ```bash
+   npm dist-tag ls @adcp/reporting-storage
+   npm dist-tag rm @adcp/reporting-storage latest      # only if latest points at 0.0.0
+   ```
+
+4. Configure the trusted publisher on npmjs.com (package page, Settings, Trusted Publisher, GitHub Actions):
+
+   - GitHub organization: `adcontextprotocol`
+   - Repository: `adcp-client`
+   - Workflow filename: `release.yml`
+   - Environment: blank
+   - Allowed action: `npm publish`
+
+5. Merge the release PR (or let the next `release.yml` run on `main` publish the held-back package). Its run
+   publishes `@adcp/reporting-storage@0.1.0-beta.0` through OIDC with provenance on the `beta` tag. Check:
+
+   ```bash
+   npm view @adcp/reporting-storage dist-tags
+   npm view @adcp/reporting-storage@0.1.0-beta.0 dist.attestations
+   ```
+
+6. Remove the temporary tag: `npm dist-tag rm @adcp/reporting-storage bootstrap`.
+
+The same steps bootstrap any future workspace package: swap the name, and use the OIDC settings above.

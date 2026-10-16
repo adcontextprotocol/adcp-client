@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-10-15
+> Generated at: 2026-10-16
 > @adcp/sdk v16.0.0-beta.3
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -2900,7 +2900,7 @@ interface InlineReportingAvailabilityEvidenceV1 {
 
 ## Seller Reporting Ledger
 
-Ledger symbols import from `@adcp/sdk/reporting/ledger`; `createPostgresPersistentNotificationRuntime` is a server symbol and imports from `@adcp/sdk/server`.
+The ledger interface, handlers and producer import from `@adcp/sdk/reporting/ledger`. The PostgreSQL store, its migrations, row storage and maintenance import from `@adcp/reporting-storage`, managed delivery from `@adcp/reporting-storage/managed` and notification activity from `@adcp/reporting-storage/notifications` (install `@adcp/reporting-storage` next to `@adcp/sdk`; it is pre-1.0 and every export is experimental). `createPostgresPersistentNotificationRuntime` is a server symbol and imports from `@adcp/sdk/server`.
 
 ```typescript
 // Build the notification path first: the store must be constructed with the
@@ -2999,7 +2999,7 @@ await reporting.stop();
 
 Account identity comes only from the framework-resolved context. Trusted host callbacks derive adapter routing, credential-free `sourceScope`, source timezone, currency, and the authorized constituent denominator. A declaration cannot supply `account`, `sourceScope`, `sourceTimezone`, `contract`, `currency`, `constituents`, or `mediaBuyIds`; `mediaBuyIds` is derived from `resolveCoverage`, so a buyer cannot name another buyer's media buys on a shared upstream network. Currency is frozen into configuration and obligation lineage. Capabilities are Core-only and derived from installed adapters and handlers; managed delivery, reconciled billing, receipts, webhook activity, and notifications are not advertised. Installation requires `platform.accounts.upsert`, which owns the advertised `sync_accounts` configuration path.
 
-For complete seller production assembly, use async `createPostgresReliableReportingProductionService` from `@adcp/sdk/reporting/service`. It owns the PostgreSQL Core/Managed stores, receipts, all three reporting notifications, webhook activity, migrations, probes, recovery, and capability publication. Supply `activity.tenantScopeForAccount`; Reconciled Billing offerings also require a trusted `obligatedConsumers` roster. Its scheduler and `recoverOnce` require explicit `deploymentWide: true` because recovery scans the whole namespace. See `docs/guides/REPORTING-LEDGER.md` and `docs/guides/REPORTING-OPERATIONS.md`.
+For complete seller production assembly, use async `createPostgresReliableReportingProductionService` from `@adcp/reporting-storage/service`. It owns the PostgreSQL Core/Managed stores, receipts, all three reporting notifications, webhook activity, migrations, probes, recovery, and capability publication. Supply `activity.tenantScopeForAccount`; Reconciled Billing offerings also require a trusted `obligatedConsumers` roster. Its scheduler and `recoverOnce` require explicit `deploymentWide: true` because recovery scans the whole namespace. See `docs/guides/REPORTING-LEDGER.md` and `docs/guides/REPORTING-OPERATIONS.md`.
 
 Buyer production processes use `createPostgresReportingConsumerRuntimeV1` with `createReliableReportingConsumerV1` from the package root. Verify webhook signatures before passing authenticated hints, preserve seller/principal scope, and configure `evaluateAdjustment` to authorize integrity-valid post-official corrections; the default defers them. See `docs/guides/REPORTING-RECONCILIATION.md`.
 

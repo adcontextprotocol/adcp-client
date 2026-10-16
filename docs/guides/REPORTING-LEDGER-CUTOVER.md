@@ -3,7 +3,7 @@
 This guide is for a seller that already runs its own Reliable Reporting ledger
 (tables for configuration generations, obligations and revisions, row files in
 object storage and a warehouse, status issues and transitions) and wants
-`@adcp/sdk` to own the ledger from now on. Read the
+`@adcp/sdk` and `@adcp/reporting-storage` to own the ledger from now on. Read the
 [ledger guide](REPORTING-LEDGER.md) first for the SDK side, and the
 [operations runbook](REPORTING-OPERATIONS.md) for production practice.
 
@@ -28,7 +28,7 @@ You have two ways to run the SDK's service on top of what you have.
 | Change feed | `changeFeed: true`: `changesAfter`, current-revision reads, consumer cursors | You implement it, or go without host reads and the warehouse sink |
 | Retention | `maintenance.retention`: period-aligned retirement honouring the change-feed hold | You implement `retireExpiredPeriods` and tombstones, or never retire |
 | Maintenance | `maintenance`: snapshot sweep, abandoned-upload sweep, feed pruning | You write all of it |
-| Warehouse | `@adcp/sdk/reporting/bigquery` sink | Not available: it reads the SDK store |
+| Warehouse | `@adcp/reporting-storage/bigquery` sink | Not available: it reads the SDK store |
 | Correctness | Lease fencing, gap-free status checkpoints, immutable generations and the revision binding are enforced in one tested place | Every one of those guarantees is yours to prove |
 | Existing data | Starts empty; old tables stay behind a read-only hook | Old data served natively |
 
@@ -52,8 +52,8 @@ advertise Managed Delivery or Reconciled Billing today, read
 ```ts
 import { Pool } from 'pg';
 import { Storage } from '@google-cloud/storage';
-import { PostgresReportingLedgerStore } from '@adcp/sdk/reporting/ledger';
-import { createGcsReportingRowObjectProviderV1 } from '@adcp/sdk/reporting/gcs';
+import { PostgresReportingLedgerStore, reportingLedgerMaintenance } from '@adcp/reporting-storage';
+import { createGcsReportingRowObjectProviderV1 } from '@adcp/reporting-storage/gcs';
 import { createReliableReportingService } from '@adcp/sdk/reporting/service';
 
 // Apply once, in order, with your migration owner (PostgreSQL 13+):
@@ -86,10 +86,10 @@ const reporting = createReliableReportingService({
   statusRetentionDays: 90, // the commitment advertised to buyers; retention uses it
   // ...adapters, contact, resolveSource, resolveCurrency, resolveCoverage
   legacyRevisionReader, // see "The legacy fallback hook"
-  maintenance: {
+  maintenance: reportingLedgerMaintenance({
     retention: { enabled: true, recordRetentionDays: 120, limit: 100 },
     changeFeed: { changeRetentionDays: 30, maxFeedHoldDays: 7 },
-  },
+  }),
 });
 ```
 
@@ -118,7 +118,7 @@ state. The bytes live in your bucket.
 
 ### Keeping your BigQuery tables fed
 
-`@adcp/sdk/reporting/bigquery` follows the change feed and loads every
+`@adcp/reporting-storage/bigquery` follows the change feed and loads every
 committed revision's verified rows into BigQuery tables you name
 ([sink details](REPORTING-LEDGER.md#bigquery-warehouse-sink)). The warehouse
 copy is derived and never served.

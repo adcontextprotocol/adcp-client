@@ -1,12 +1,12 @@
 # Durable GCS reporting write fence
 
-`@adcp/sdk/reporting/gcs` provides a provider write-fence primitive backed by the existing PostgreSQL destination authority. It is a building block for a managed delivery adapter; it does not advertise Managed Delivery or Reconciled Billing capabilities or implement `ReportingManagedDeliveryAdapterV1`.
+`@adcp/reporting-storage/gcs` provides a provider write-fence primitive backed by the existing PostgreSQL destination authority. It is a building block for a managed delivery adapter; it does not advertise Managed Delivery or Reconciled Billing capabilities or implement `ReportingManagedDeliveryAdapterV1`.
 
-Install the optional official Google client with `npm install @google-cloud/storage@^7.22.0` for Node 20 or Node 22+. Google client `^8.2.0` is also supported on Node 22+. This peer is required when compiling or using the GCS subpath, including its public types; other SDK subpaths remain independent. Apply `REPORTING_LEDGER_MIGRATION`, `REPORTING_MANAGED_DELIVERY_MIGRATION`, then the additive `REPORTING_OBJECT_WRITE_MIGRATION` from `@adcp/sdk/reporting/ledger` in the same isolated tenant schema. Apply the final migration to a fresh object-write schema if experimenting with earlier, unpublished versions of these tables: `CREATE TABLE IF NOT EXISTS` does not upgrade incompatible prerelease tables.
+Install the optional official Google client with `npm install @google-cloud/storage@^7.22.0` for Node 20 or Node 22+. Google client `^8.2.0` is also supported on Node 22+. This peer is required when compiling or using the GCS subpath, including its public types; other subpaths remain independent. Apply `REPORTING_LEDGER_MIGRATION`, `REPORTING_MANAGED_DELIVERY_MIGRATION`, then the additive `REPORTING_OBJECT_WRITE_MIGRATION` from `@adcp/reporting-storage` (and `@adcp/reporting-storage/managed` for the managed-delivery one) in the same isolated tenant schema. Apply the final migration to a fresh object-write schema if experimenting with earlier, unpublished versions of these tables: `CREATE TABLE IF NOT EXISTS` does not upgrade incompatible prerelease tables.
 
 ```typescript
 import { Storage } from '@google-cloud/storage';
-import { createGcsReportingObjectFenceV1 } from '@adcp/sdk/reporting/gcs';
+import { createGcsReportingObjectFenceV1 } from '@adcp/reporting-storage/gcs';
 
 const fence = createGcsReportingObjectFenceV1({
   storage: new Storage({ retryOptions: { totalTimeout: 60, maxRetries: 3 } }), // Host-owned ADC; retry timeout is in seconds.

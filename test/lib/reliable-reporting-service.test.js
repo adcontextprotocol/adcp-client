@@ -405,7 +405,7 @@ describe('ReliableReportingService', () => {
     for (const claim of ['managed_delivery', 'reconciled_billing', 'status_notification', 'ledger_notification']) {
       assert.equal(service.capabilities[claim], undefined);
     }
-    assert.deepEqual(service.setup.migrations.length, 1);
+    assert.deepEqual(service.setup.migrations, [], 'the in-memory store has nothing to install');
 
     const platform = service.install({
       capabilities: { specialisms: [], config: {} },
@@ -757,7 +757,7 @@ describe('ReliableReportingService', () => {
             resolveCurrency: () => 'USD',
             resolveCoverage: account => ({ constituents: [authorizedConstituent(account.id)] }),
           }),
-        /createPostgresReliableReportingProductionService/
+        /createPostgresReliableReportingProductionService from @adcp\/reporting-storage\/service/
       );
     }
 
@@ -4299,94 +4299,99 @@ describe('ReliableReportingService', () => {
   });
 });
 
-describe('ReliableReportingService ledger maintenance option', () => {
-  /** The three methods maintenance drives, on an object that is not a Postgres store. */
-  const maintenanceCapable = store => {
-    const stub = Object.create(store);
-    stub.retireExpiredPeriods = async () => ({ retired: 0, failed: [], failures: [] });
-    stub.pruneChanges = async () => ({ deleted: 0 });
-    stub.sweepRowWriteIntents = async () => ({ swept: 0, objectsDeleted: 0, failed: 0 });
-    return stub;
-  };
+describe('ReliableReportingService maintenance hook', () => {
+  // The SDK does not know what maintenance a store needs; `@adcp/reporting-storage` supplies the
+  // PostgreSQL one. These tests pin the contract the service enforces around any factory.
+  const run = async () => [{ task: 'fake task', status: 'completed', result: { swept: 0 } }];
 
-  test('fails fast at construction when the store cannot run ledger maintenance', () => {
-    assert.throws(
-      () => serviceFixture({ maintenance: { retention: { enabled: true } } }),
-      /maintenance requires a PostgresReportingLedgerStore .*retireExpiredPeriods/
-    );
-  });
-
-  test('fails fast on a change feed the store does not maintain and on options the store would refuse', () => {
-    const store = maintenanceCapable(new MemoryLedgerStore());
-    const build = maintenance => serviceFixture({ store, maintenance });
-    assert.doesNotThrow(() => build({ retention: { enabled: true }, changeFeed: true }));
-    store.changeFeedEnabled = false;
-    assert.throws(() => build({ changeFeed: true }), /changeFeed: true/);
-    assert.doesNotThrow(() => build({ retention: { enabled: true } }), 'retention does not need the feed');
-    store.changeFeedEnabled = true;
-    assert.throws(() => build({ intervalMilliseconds: 0 }), /intervalMilliseconds/);
-    assert.throws(() => build({ retention: { enabled: false } }), /enabled: true/);
-    assert.throws(() => build({ retention: { enabled: true, limit: 0 } }), /limit/);
-    assert.throws(
-      () => build({ retention: { enabled: true, recordRetentionDays: 1 } }),
-      /no shorter than statusRetentionDays/
-    );
-    assert.throws(() => build({ changeFeed: { maxFeedHoldDays: 0 } }), /maxFeedHoldDays/);
-    assert.throws(() => build({ changeFeed: { changeRetentionDays: 1.5 } }), /changeRetentionDays/);
-  });
-
-  test('orphanCollection needs a store that can collect, the acknowledgement to delete, and runs through runMaintenance', async () => {
-    const store = maintenanceCapable(new MemoryLedgerStore());
-    const build = maintenance => serviceFixture({ store, maintenance });
-    const ack = { enabled: true, acknowledgeExclusiveNamespace: true };
-    assert.throws(() => build({ orphanCollection: ack }), /collectOrphanedRowObjects/);
-    const calls = [];
-    store.collectOrphanedRowObjects = async options => {
-      calls.push(options);
-      return {
-        dryRun: options.dryRun === true,
-        listed: 0,
-        referenced: 0,
-        tooYoung: 0,
-        foreign: 0,
-        deleted: 0,
-        wouldDelete: 0,
-        failed: 0,
-        unsupported: [],
-        skippedReadOnly: [],
-        candidates: [],
-        cursors: { objects: 'next-page' },
-        completed: [],
-        bindings: [],
-      };
-    };
-    assert.throws(() => build({ orphanCollection: { enabled: true } }), /acknowledgeExclusiveNamespace/);
-    assert.throws(() => build({ orphanCollection: { ...ack, minAgeSeconds: 60 } }), /at least 1 day/);
-    assert.throws(() => build({ orphanCollection: { ...ack, limit: 0 } }), /limit/);
-    const { service } = build({ orphanCollection: { ...ack, limit: 50, includeReadOnly: true } });
-    const first = await service.runMaintenance();
-    assert.ok(first.some(result => result.task === 'orphan object collection' && result.status === 'completed'));
-    assert.deepEqual(calls[0], {
-      acknowledgeExclusiveNamespace: true,
-      limit: 50,
-      includeReadOnly: true,
-      cursors: {},
-      skipBindings: [],
+  test('takes a factory, built once at construction with the commitments the service advertises', () => {
+    const contexts = [];
+    const { service, store } = serviceFixture({
+      maintenance: context => {
+        contexts.push(context);
+        return { intervalMilliseconds: 60_000, run };
+      },
     });
-    // The next pass resumes from the position the service kept.
-    await service.runMaintenance();
-    assert.deepEqual(calls[1].cursors, { objects: 'next-page' });
-    const dry = build({ orphanCollection: { enabled: true, dryRun: true } });
-    await dry.service.runMaintenance();
-    assert.equal(calls[2].dryRun, true);
+    assert.equal(contexts.length, 1);
+    assert.equal(contexts[0].store, store);
+    assert.equal(contexts[0].statusRetentionDays, redactedReportingSourceOfferingV1.retentionDays);
+    assert.equal(contexts[0].automatedRecoveryWindowSeconds, 86_400);
+    assert.equal(typeof service.runMaintenance, 'function');
   });
 
-  test('runMaintenance requires the option, and omits the snapshot sweep when the store cannot reach the pool', async () => {
-    await assert.rejects(() => serviceFixture().service.runMaintenance(), /requires the maintenance option/);
-    const { service } = serviceFixture({ store: maintenanceCapable(new MemoryLedgerStore()), maintenance: {} });
-    assert.deepEqual(
-      (await service.runMaintenance()).map(result => result.task),
-      ['row upload sweep']
+  test('fails construction, not the first pass, on a factory that throws or a malformed one', () => {
+    assert.throws(
+      () =>
+        serviceFixture({
+          maintenance: () => {
+            throw new RangeError('this store cannot be maintained');
+          },
+        }),
+      /this store cannot be maintained/
     );
+    assert.throws(() => serviceFixture({ maintenance: { retention: { enabled: true } } }), /must be a factory/);
+    assert.throws(() => serviceFixture({ maintenance: () => undefined }), /maintenance factory must return/);
+    assert.throws(
+      () => serviceFixture({ maintenance: () => ({ intervalMilliseconds: 0, run }) }),
+      /maintenance factory must return/
+    );
+    assert.throws(
+      () => serviceFixture({ maintenance: () => ({ intervalMilliseconds: 1_000 }) }),
+      /maintenance factory must return/
+    );
+  });
+
+  test('runMaintenance requires the option and hands the signal to the pass', async () => {
+    await assert.rejects(() => serviceFixture().service.runMaintenance(), /requires the maintenance option/);
+    const inputs = [];
+    const { service } = serviceFixture({
+      maintenance: () => ({
+        intervalMilliseconds: 60_000,
+        run: async input => {
+          inputs.push(input);
+          return run();
+        },
+      }),
+    });
+    const controller = new AbortController();
+    const results = await service.runMaintenance({ signal: controller.signal });
+    assert.deepEqual(
+      results.map(result => result.task),
+      ['fake task']
+    );
+    assert.equal(inputs[0].signal, controller.signal);
+    controller.abort();
+    await assert.rejects(() => service.runMaintenance({ signal: controller.signal }));
+  });
+
+  test('the scheduler runs it on the first pass and reports a failed pass to onError without stopping', async () => {
+    const calls = [];
+    const errors = [];
+    const { service } = serviceFixture({
+      maintenance: () => ({
+        intervalMilliseconds: 3_600_000,
+        run: async input => {
+          calls.push(input);
+          if (calls.length === 1) throw new Error('maintenance pass failed');
+          return run();
+        },
+      }),
+    });
+    service.start({ accountIds: [], intervalMilliseconds: 5, onError: error => void errors.push(error) });
+    const deadline = Date.now() + 2_000;
+    while (errors.length === 0 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(service.running, true, 'a failed maintenance pass does not stop the producer loop');
+    // The interval is an hour, so later cycles do not run it again.
+    await new Promise(resolve => setTimeout(resolve, 40));
+    await service.stop();
+    assert.equal(calls.length, 1);
+    assert.match(String(errors[0]), /maintenance pass failed/);
+  });
+
+  test('surfaces the store migrations as setup.migrations', () => {
+    const store = new MemoryLedgerStore();
+    store.migrations = Object.freeze(['-- create the ledger']);
+    assert.deepEqual(serviceFixture({ store }).service.setup.migrations, ['-- create the ledger']);
+    assert.deepEqual(serviceFixture().service.setup.migrations, []);
   });
 });

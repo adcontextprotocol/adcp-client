@@ -10,6 +10,7 @@ const path = require('node:path');
 const { createRequire } = require('node:module');
 const { createInterface } = require('node:readline');
 const { createFixture } = require('./managed-seller.cjs');
+const { mergedLedger } = require('./storage-compat.cjs');
 const ACCOUNT = 'reporting_core_lab';
 const sha = value => createHash('sha256').update(value).digest('hex');
 
@@ -24,7 +25,7 @@ async function main() {
   assert.equal(lock.packages['node_modules/@adcp/sdk'].integrity, settings.integrity);
   const sdk = req('@adcp/sdk');
   const api = {
-    ledger: req('@adcp/sdk/reporting/ledger'),
+    ledger: mergedLedger(req),
     server: req('@adcp/sdk/server'),
     schemas: req('@adcp/sdk/schemas'),
     jcs: { canonicalize: sdk.canonicalize },

@@ -1,0 +1,189 @@
+{
+  "name": "@adcp/reporting-storage",
+  "version": "0.0.0",
+  "description": "Storage for AdCP Reliable Reporting: the PostgreSQL ledger store, row storage with GCS, S3 and Azure providers, managed delivery, notification activity and the BigQuery warehouse sink. Depends on @adcp/sdk for the protocol layer.",
+  "main": "dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "type": "commonjs",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./managed": {
+      "import": {
+        "types": "./dist/managed/index.d.mts",
+        "default": "./dist/managed/index.mjs"
+      },
+      "require": {
+        "types": "./dist/managed/index.d.ts",
+        "default": "./dist/managed/index.js"
+      }
+    },
+    "./notifications": {
+      "import": {
+        "types": "./dist/notifications/index.d.mts",
+        "default": "./dist/notifications/index.mjs"
+      },
+      "require": {
+        "types": "./dist/notifications/index.d.ts",
+        "default": "./dist/notifications/index.js"
+      }
+    },
+    "./service": {
+      "import": {
+        "types": "./dist/service/index.d.mts",
+        "default": "./dist/service/index.mjs"
+      },
+      "require": {
+        "types": "./dist/service/index.d.ts",
+        "default": "./dist/service/index.js"
+      }
+    },
+    "./gcs": {
+      "import": {
+        "types": "./dist/gcs/index.d.mts",
+        "default": "./dist/gcs/index.mjs"
+      },
+      "require": {
+        "types": "./dist/gcs/index.d.ts",
+        "default": "./dist/gcs/index.js"
+      }
+    },
+    "./s3": {
+      "import": {
+        "types": "./dist/s3/index.d.mts",
+        "default": "./dist/s3/index.mjs"
+      },
+      "require": {
+        "types": "./dist/s3/index.d.ts",
+        "default": "./dist/s3/index.js"
+      }
+    },
+    "./azure": {
+      "import": {
+        "types": "./dist/azure/index.d.mts",
+        "default": "./dist/azure/index.mjs"
+      },
+      "require": {
+        "types": "./dist/azure/index.d.ts",
+        "default": "./dist/azure/index.js"
+      }
+    },
+    "./bigquery": {
+      "import": {
+        "types": "./dist/bigquery/index.d.mts",
+        "default": "./dist/bigquery/index.mjs"
+      },
+      "require": {
+        "types": "./dist/bigquery/index.d.ts",
+        "default": "./dist/bigquery/index.js"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "managed": [
+        "dist/managed/index.d.ts"
+      ],
+      "notifications": [
+        "dist/notifications/index.d.ts"
+      ],
+      "service": [
+        "dist/service/index.d.ts"
+      ],
+      "gcs": [
+        "dist/gcs/index.d.ts"
+      ],
+      "s3": [
+        "dist/s3/index.d.ts"
+      ],
+      "azure": [
+        "dist/azure/index.d.ts"
+      ],
+      "bigquery": [
+        "dist/bigquery/index.d.ts"
+      ]
+    }
+  },
+  "files": [
+    "dist",
+    "examples/reliable-reporting-service/README.md",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup && tsc -p tsconfig.build.json && tsx ../../scripts/generate-dmts-declarations.ts dist",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node scripts/run-tests.mjs",
+    "check": "node scripts/check-package.mjs && publint --strict .",
+    "clean": "rm -rf dist/",
+    "prepublishOnly": "npm run clean && npm run build && npm run check",
+    "test:serial": "node scripts/run-tests.mjs --group serial",
+    "test:chunked": "node scripts/run-tests.mjs --group chunked",
+    "validate:gcp": "node scripts/validate-reporting-gcp.mjs"
+  },
+  "keywords": [
+    "adcp",
+    "reporting",
+    "ledger",
+    "postgresql",
+    "gcs",
+    "s3",
+    "azure",
+    "bigquery"
+  ],
+  "author": {
+    "name": "AdCP Community",
+    "email": "maintainers@adcontextprotocol.org",
+    "url": "https://adcontextprotocol.org"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adcontextprotocol/adcp-client.git",
+    "directory": "packages/reporting-storage"
+  },
+  "homepage": "https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md",
+  "bugs": {
+    "url": "https://github.com/adcontextprotocol/adcp-client/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "peerDependencies": {
+    "@adcp/sdk": "^16.0.0-beta.0",
+    "@aws-sdk/client-s3": "^3.700.0",
+    "@azure/storage-blob": "^12.23.0",
+    "@google-cloud/storage": "^7.22.0 || ^8.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@aws-sdk/client-s3": {
+      "optional": true
+    },
+    "@azure/storage-blob": {
+      "optional": true
+    },
+    "@google-cloud/storage": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1147.0",
+    "@azure/storage-blob": "~12.32.0",
+    "@google-cloud/storage": "^7.22.0",
+    "typescript": "^5.9.3"
+  }
+}

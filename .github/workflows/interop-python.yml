@@ -89,6 +89,33 @@ jobs:
           if-no-files-found: error
           path: ${{ runner.temp }}/adcp-sdk-pack/*.tgz
 
+      # The reporting evidence gate installs the PostgreSQL ledger store from its own package. A manual
+      # probe of a published SDK ref (RUNNER_PACKAGE_REF) has no storage package to pack, and that gate
+      # does not run for it.
+      - name: Pack reporting storage
+        if: env.RUNNER_PACKAGE_REF == ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          pack_dir="$RUNNER_TEMP/adcp-reporting-storage-pack"
+          mkdir -p "$pack_dir"
+          npm pack --workspace=@adcp/reporting-storage --pack-destination "$pack_dir" --silent
+          mapfile -t tarballs < <(find "$pack_dir" -maxdepth 1 -type f -name '*.tgz' -print)
+          if [[ "${#tarballs[@]}" -ne 1 ]]; then
+            echo "::error::Expected one packed reporting storage tarball in $pack_dir, found ${#tarballs[@]}."
+            printf '%s\n' "${tarballs[@]}"
+            exit 1
+          fi
+          echo "Packed reporting storage at ${tarballs[0]}"
+
+      - name: Upload reporting storage tarball
+        if: env.RUNNER_PACKAGE_REF == ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: adcp-reporting-storage-tarball
+          if-no-files-found: error
+          path: ${{ runner.temp }}/adcp-reporting-storage-pack/*.tgz
+
   reporting-evidence-and-reverse-runtime:
     name: Reporting evidence and reverse runtime (Node ${{ matrix.node }})
     # Historical runner probes remain available; this gate qualifies the checkout.
@@ -147,6 +174,12 @@ jobs:
           name: adcp-sdk-runner-tarball
           path: ${{ runner.temp }}/reporting-sdk
 
+      - name: Download packed reporting storage
+        uses: actions/download-artifact@v7
+        with:
+          name: adcp-reporting-storage-tarball
+          path: ${{ runner.temp }}/reporting-storage
+
       - name: Install pinned SDK artifacts and record resolved dependencies
         shell: bash
         run: |
@@ -154,7 +187,9 @@ jobs:
           task_dir="$RUNNER_TEMP/reporting-sdk"
           mapfile -t archives < <(find "$task_dir" -maxdepth 1 -name '*.tgz' -type f)
           test "${#archives[@]}" -eq 1
-          npm install --prefix "$task_dir/install" --ignore-scripts --no-audit --no-fund "${archives[0]}" pg
+          mapfile -t storage_archives < <(find "$RUNNER_TEMP/reporting-storage" -maxdepth 1 -name '*.tgz' -type f)
+          test "${#storage_archives[@]}" -eq 1
+          npm install --prefix "$task_dir/install" --ignore-scripts --no-audit --no-fund "${archives[0]}" "${storage_archives[0]}" pg
           python - "$task_dir" <<'PY'
           import hashlib, json, sys, urllib.request
           from pathlib import Path
@@ -169,6 +204,7 @@ jobs:
           python -m venv "$task_dir/python"
           "$task_dir/python/bin/python" -m pip install "$task_dir/adcp-8.0.0-py3-none-any.whl" 'psycopg[binary,pool]' pytest pytest-asyncio
           echo "REPORTING_TS_ARCHIVE=${archives[0]}" >> "$GITHUB_ENV"
+          echo "REPORTING_STORAGE_ARCHIVE=${storage_archives[0]}" >> "$GITHUB_ENV"
 
       - name: Verify both evidence directions and TypeScript seller with Python buyer
         env:
@@ -178,6 +214,7 @@ jobs:
             "$RUNNER_TEMP/reporting-sdk/python/bin/python" \
             "$RUNNER_TEMP/reporting-sdk/install" \
             "$REPORTING_TS_ARCHIVE" \
+            "$REPORTING_STORAGE_ARCHIVE" \
             "$RUNNER_TEMP/reporting-sdk/adcp-8.0.0-py3-none-any.whl" \
             "$GITHUB_WORKSPACE/.context/reporting-python-harness" \
             "$RUNNER_TEMP/reporting-evidence"

@@ -25,7 +25,7 @@ import {
 } from './health';
 import { compareReportingInstants } from './instant';
 import { getRevisionMetadataFromStore, readRevisionRowsFromStore } from './revision-metadata';
-import { isReportingRowStoreError } from './row-storage';
+import { isReportingRowStoreError } from './row-storage-errors';
 import { reportingPeriodSchedule } from './schedule';
 import { ReportingLedgerSnapshotUnavailableError } from './types';
 import type {

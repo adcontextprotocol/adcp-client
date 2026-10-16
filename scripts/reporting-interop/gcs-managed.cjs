@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createRequire } = require('node:module');
 const { createHash } = require('node:crypto');
+const { mergedLedger } = require('./storage-compat.cjs');
 let stage = 'initialization';
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const [inputFile, packageRoot, output] = process.argv.slice(2);
@@ -16,8 +17,8 @@ async function main() {
   const req = createRequire(path.resolve(packageRoot, 'package.json'));
   const installed = fs.realpathSync(path.join(packageRoot, 'node_modules/@adcp/sdk'));
   assert.ok(fs.realpathSync(req.resolve('@adcp/sdk')).startsWith(installed + path.sep));
-  const api = { ledger: req('@adcp/sdk/reporting/ledger'), jcs: req(path.join(installed, 'dist/lib/utils/jcs.js')) };
-  const gcs = req('@adcp/sdk/reporting/gcs');
+  const api = { ledger: mergedLedger(req), jcs: req(path.join(installed, 'dist/lib/utils/jcs.js')) };
+  const gcs = req('@adcp/reporting-storage/gcs');
   const reporting = req('@adcp/sdk');
   const { Storage } = req('@google-cloud/storage');
   const { Pool } = req('pg');
