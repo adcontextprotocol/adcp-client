@@ -1,3 +1,4 @@
+import { serializeInnerList, serializeItem, type Item } from 'structured-headers';
 import { RequestSignatureError } from './errors';
 
 export interface RequestLike {
@@ -43,8 +44,6 @@ const DEFAULT_PARAM_ORDER: ReadonlyArray<keyof SignatureParams> = [
   'alg',
   'tag',
 ];
-
-const STRING_PARAMS = new Set<keyof SignatureParams>(['nonce', 'keyid', 'alg', 'tag']);
 
 const SUPPORTED_DERIVED = new Set(['@method', '@target-uri', '@authority', '@status']);
 
@@ -178,15 +177,17 @@ export function buildResponseSignatureBase(
   return lines.join('\n');
 }
 
+/**
+ * Serialize the `@signature-params` inner list (RFC 9421 §2.3) with the
+ * structured-field serializer, in the canonical AdCP parameter order.
+ */
 export function formatSignatureParams(components: ReadonlyArray<string>, params: SignatureParams): string {
-  const componentList = components.map(formatComponentIdentifier).join(' ');
-  const paramPairs: string[] = [];
+  const parameters = new Map<string, string | number>();
   for (const key of DEFAULT_PARAM_ORDER) {
     const raw = params[key];
-    if (raw === undefined) continue;
-    paramPairs.push(STRING_PARAMS.has(key) ? `${key}="${raw}"` : `${key}=${raw}`);
+    if (raw !== undefined) parameters.set(key, raw);
   }
-  return `(${componentList});${paramPairs.join(';')}`;
+  return serializeInnerList([components.map(componentItem), parameters]);
 }
 
 function parseComponentIdentifier(component: string): { bare: string; requestBound: boolean } {
@@ -206,9 +207,13 @@ function parseComponentIdentifier(component: string): { bare: string; requestBou
   };
 }
 
-function formatComponentIdentifier(component: string): string {
+function componentItem(component: string): Item {
   const { bare, requestBound } = parseComponentIdentifier(component);
-  return `"${bare}"${requestBound ? ';req' : ''}`;
+  return [bare, new Map(requestBound ? [['req', true]] : [])];
+}
+
+function formatComponentIdentifier(component: string): string {
+  return serializeItem(componentItem(component));
 }
 
 function resolveResponseComponentValue(

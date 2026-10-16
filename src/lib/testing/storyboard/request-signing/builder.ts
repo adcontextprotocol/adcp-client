@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'crypto';
+import { serializeInnerList } from 'structured-headers';
 import { signWithPrivateJwk } from '../../../signing/crypto';
 import {
   buildSignatureBase,
@@ -884,15 +885,15 @@ function formatParamsWithOmissions(
   params: SignatureParams,
   override: ParamOverride
 ): string {
-  const componentList = components.map(c => `"${c}"`).join(' ');
-  const pairs: string[] = [];
-  pairs.push(`created=${params.created}`);
-  if (!override.omitExpires) pairs.push(`expires=${params.expires}`);
-  if (!override.omitNonce) pairs.push(`nonce="${params.nonce}"`);
-  pairs.push(`keyid="${params.keyid}"`);
-  pairs.push(`alg="${params.alg}"`);
-  pairs.push(`tag="${params.tag}"`);
-  return `(${componentList});${pairs.join(';')}`;
+  const omitted = new Set<string>([
+    ...(override.omitExpires ? ['expires'] : []),
+    ...(override.omitNonce ? ['nonce'] : []),
+  ]);
+  const pairs = new Map<string, string | number>();
+  for (const key of ['created', 'expires', 'nonce', 'keyid', 'alg', 'tag'] as const) {
+    if (!omitted.has(key) && params[key] !== undefined) pairs.set(key, params[key]);
+  }
+  return serializeInnerList([components.map(c => [c, new Map()] as const), pairs]);
 }
 
 function produceSignature(key: SignerKey, data: Buffer): Uint8Array {

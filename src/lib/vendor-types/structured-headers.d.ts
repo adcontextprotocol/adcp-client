@@ -16,7 +16,7 @@ declare module 'structured-headers' {
 
   type BareItem = number | string | Token | ArrayBuffer | Date | boolean | DisplayString;
   type Parameters = Map<string, BareItem>;
-  type Item = [BareItem, Parameters];
+  export type Item = [BareItem, Parameters];
   export type InnerList = [Item[], Parameters];
   type Dictionary = Map<string, Item | InnerList>;
 
@@ -28,4 +28,5 @@ declare module 'structured-headers' {
   export function parseItem(input: string): Item;
   export function serializeItem(input: Item): string;
   export function serializeInnerList(input: InnerList): string;
+  export function serializeDictionary(input: Dictionary): string;
 }

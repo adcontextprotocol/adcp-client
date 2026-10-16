@@ -8,7 +8,7 @@ import {
   type ResponseLike,
   type SignatureParams,
 } from './canonicalize';
-import { computeContentDigest, type SfBinaryEncoding } from './content-digest';
+import { computeContentDigest, serializeByteSequenceMember, type SfBinaryEncoding } from './content-digest';
 import { RequestSignatureError, ResponseSignatureError, WebhookSignatureError } from './errors';
 import type { AdcpUse } from './jwks-helpers';
 import {
@@ -270,11 +270,8 @@ export function prepareRequestSignature(
  */
 export function finalizeRequestSignature(prepared: PreparedRequestSignature, signature: Uint8Array): SignedRequest {
   const headers = { ...prepared.headers };
-  const sigB64 = Buffer.from(signature).toString(
-    prepared.binaryEncoding === 'legacy-base64url' ? 'base64url' : 'base64'
-  );
   headers['Signature-Input'] = `${prepared.label}=${formatSignatureParams(prepared.components, prepared.params)}`;
-  headers['Signature'] = `${prepared.label}=:${sigB64}:`;
+  headers['Signature'] = serializeByteSequenceMember(prepared.label, signature, prepared.binaryEncoding);
   return { headers, signatureBase: prepared.base, params: prepared.params };
 }
 
@@ -458,9 +455,9 @@ export function prepareResponseSignature(
 
 export function finalizeResponseSignature(prepared: PreparedResponseSignature, signature: Uint8Array): SignedResponse {
   const headers = { ...prepared.headers };
-  const sigB64 = Buffer.from(signature).toString('base64url');
   headers['Signature-Input'] = `${prepared.label}=${formatSignatureParams(prepared.components, prepared.params)}`;
-  headers['Signature'] = `${prepared.label}=:${sigB64}:`;
+  // Response signatures keep the AdCP 3.0/3.1 Base64URL byte-sequence form.
+  headers['Signature'] = serializeByteSequenceMember(prepared.label, signature, 'legacy-base64url');
   return { status: prepared.status, headers, signatureBase: prepared.base, params: prepared.params };
 }
 
