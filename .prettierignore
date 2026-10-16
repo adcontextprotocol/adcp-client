@@ -36,3 +36,15 @@ test/fixtures/reporting-consumer-status/canonical-rc3.json
 # Canonical supply-path verdict vectors, byte-identical to the upstream corpus.
 test/fixtures/supply-path/vectors.json
 test/fixtures/request-signing-a2a/
+
+# Canonical storyboard fixtures whose bytes are asserted against the immutable
+# provenance record in canonical-storyboards-provenance.json. Reformatting them
+# fails the build with "drifted from immutable provenance".
+src/lib/compliance-fixtures/principal.yaml
+src/lib/compliance-fixtures/reporting-core.yaml
+
+# Routed-applicability corpus vendored byte-for-byte from published protocol
+# bundles. Each filename prefix IS the sha256 of the file's contents and is
+# recorded in manifest.json, so any reformat silently invalidates provenance.
+# See test/fixtures/routed-applicability/README.md.
+test/fixtures/routed-applicability/storyboards/

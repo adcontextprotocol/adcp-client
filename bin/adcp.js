@@ -2073,8 +2073,11 @@ RUN OPTIONS (full assessment):
   --tracks TRACKS     Comma-separated tracks to include in the report
   --storyboards IDS   Comma-separated storyboard/bundle IDs to run
   --compliance-version VERSION
-                      Select a compliance cache version, e.g. 3.0.12 or
-                      3.1.0-beta.3. The runner uses this cache for
+                      Select a packaged compliance cache version, e.g.
+                      3.2.5 or 3.1.29. Pass an unrecognised value (e.g.
+                      --compliance-version ?) and the error lists the
+                      versions this install packages. The runner uses
+                      this cache for
                       storyboard resolution and wire-version defaults. When
                       --test-kit points into a compliance cache, its version is
                       selected automatically; an explicit mismatch is rejected.

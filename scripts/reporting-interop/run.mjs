@@ -24,13 +24,40 @@ async function main() {
     timeout: 30_000,
   });
   assert.equal(status.stdout, '', 'Python harness has modified tracked files');
+  // The TypeScript seller runs the SDK's own protocol, which is independent of
+  // the protocol the immutable Python wheel was verified against. Assert the
+  // installed package matches this checkout so a stale or substituted install
+  // still fails closed — that is the identity guarantee the old shared
+  // pins.adcp_schema_version assertion used to provide.
+  const checkoutProtocol = JSON.parse(await readFile(path.join(root, 'package.json'))).adcp_version;
+  const installedProtocol = JSON.parse(
+    await readFile(path.join(packageRoot, 'node_modules/@adcp/sdk/package.json'))
+  ).adcp_version;
+  // Assert presence explicitly: a missing adcp_version would otherwise make
+  // both sides `undefined` and the equality below would pass vacuously.
+  assert.ok(checkoutProtocol, 'checkout package.json is missing adcp_version');
+  assert.ok(installedProtocol, 'installed @adcp/sdk is missing adcp_version');
+  assert.equal(
+    installedProtocol,
+    checkoutProtocol,
+    `installed SDK adcp_version ${installedProtocol} must equal checkout ${checkoutProtocol}`
+  );
   // A fresh evidence directory prevents an old successful result from surviving
   // a failed run. The runner always executes both production and consumption.
   await mkdir(output);
   const report = {
     contract: 'reporting_evidence_interop_v1',
     fixture_version: 1,
+    // Retained verbatim as the PYTHON-PIN fact it has always been: the protocol
+    // the verified Python wheel/harness was validated against. The explicit
+    // fields below remove the ambiguity that let this value be applied to the
+    // TypeScript seller. Note the Python actors are NOT uniform — the core
+    // buyer runs the pin while the managed and GCS buyers run the fixture
+    // protocol — so there is deliberately no single "python" field here.
     adcp_schema_version: pins.adcp_schema_version,
+    core_buyer_adcp_schema_version: pins.adcp_schema_version,
+    seller_adcp_version: installedProtocol,
+    typescript_adcp_schema_version: installedProtocol,
     fixture_adcp_schema_version: JSON.parse(
       await readFile(path.join(root, 'test/fixtures/reporting-interop/evidence-v1.json'))
     ).adcp_schema_version,

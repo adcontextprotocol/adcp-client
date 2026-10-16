@@ -616,7 +616,7 @@ function generateLlmsTxt(
   ln(`## Start here: SDK 14 and AdCP 3.2`);
   ln();
   ln(
-    `SDK 14 requires Node.js \`^20.19.0 || >=22.12.0\`; install it with \`npm install @adcp/sdk\`, or pin the AdCP 3.2 line with \`@adcp/sdk@adcp-3.2\`.`
+    `SDK 14 requires Node.js \`^20.19.0 || >=22.12.0\`; install it with \`npm install @adcp/sdk\`, or pin the current stable maintenance line with \`@adcp/sdk@15.9\`. The \`adcp-3.x\` dist-tags are frozen pointers at older SDK majors and do not receive new compliance caches. To see what an install actually carries, read \`adcp_version\` from its \`package.json\`, and run \`adcp storyboard list --compliance-version ?\` — the error enumerates the packaged compliance caches.`
   );
   ln();
   ln(

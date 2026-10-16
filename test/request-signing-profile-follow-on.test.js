@@ -31,7 +31,11 @@ describe('request-signing profile selection after AdCP 3.2', () => {
       assert.equal(signingProfileForAdcpVersion(version), '3.2');
     });
   }
-  for (const version of [undefined, '', '2.9', '3.0.27', '3.1.24', 'v3', 'not-a-version']) {
+  // 3.1.24 stays alongside 3.1.29: signingProfileForAdcpVersion is a pure
+  // string mapping with no cache dependency, and this is the only assertion
+  // that 3.1.24 still maps to the legacy corpus — the wire-compatibility
+  // guarantee the changeset makes. Replacing it would have deleted that proof.
+  for (const version of [undefined, '', '2.9', '3.0.27', '3.1.24', '3.1.29', 'v3', 'not-a-version']) {
     test(`${String(version)} retains the legacy corpus`, () => {
       assert.equal(signingProfileForAdcpVersion(version), undefined);
     });

@@ -3,6 +3,7 @@
 import contextlib
 import hashlib
 import html
+import importlib.util
 import json
 import os
 import secrets
@@ -22,6 +23,19 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 class GateError(ValueError):
     """A static harness stage label, safe to retain in aggregate diagnostics."""
 
+
+
+def typescript_protocol(package, script_path):
+    """Seller protocol identity; see protocol_identity.py for the actor split."""
+    spec = importlib.util.spec_from_file_location(
+        "adcp_protocol_identity", Path(__file__).with_name("protocol_identity.py")
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    try:
+        return module.typescript_protocol(package, script_path)
+    except module.ProtocolIdentityError as error:
+        require(False, str(error))
 
 def require(condition, label):
     if not condition:
@@ -88,6 +102,7 @@ def run(upstream, installation, node, output, mode):
     package = json.loads((installation / "node_modules/@adcp/sdk/package.json").read_bytes())
     lock = json.loads(lock_path.read_bytes())["packages"]["node_modules/@adcp/sdk"]
     pins = json.loads((here / "pins.json").read_bytes())
+    ts_protocol = typescript_protocol(package, __file__)
     require(lock["version"] == package["version"], "installed artifact")
     admin = os.environ["REPORTING_INTEROP_PG_URL"]
     fields = conninfo_to_dict(admin)
@@ -112,7 +127,7 @@ def run(upstream, installation, node, output, mode):
         process = subprocess.Popen([
             str(node), str(here / "managed-seller.cjs"), "--upstream", str(upstream), "--mode", mode,
             "--package-lock", str(lock_path), "--expected-version", package["version"],
-            "--expected-integrity", lock["integrity"], "--adcp-version", pins["adcp_schema_version"],
+            "--expected-integrity", lock["integrity"], "--adcp-version", ts_protocol,
             "--port", str(port), "--ready-file", str(ready_file),
         ], cwd=output, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
             env=environment(DATABASE_URL=url, REPORTING_INTEROP_DESTINATION=str(destination),
@@ -134,7 +149,7 @@ def run(upstream, installation, node, output, mode):
         require(ready["startup_proof_sha256"] == hashlib.sha256(proof.encode()).hexdigest(), "startup proof")
         require(ready["auth_binding_sha256"] == hashlib.sha256(token.encode()).hexdigest(), "authentication binding")
         require(ready["seller_package"]["integrity"] == lock["integrity"] and
-                ready["seller_package"]["adcp_version"] == pins["adcp_schema_version"], "artifact identity")
+                ready["seller_package"]["adcp_version"] == ts_protocol, "artifact identity")
         client = subprocess.run([
             sys.executable, "-I", str(here / "managed-buyer.py"), f"http://127.0.0.1:{port}/mcp",
             str(destination), str(here.parents[1] / "test/fixtures/reporting-interop"), mode,

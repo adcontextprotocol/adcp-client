@@ -1,6 +1,6 @@
 /**
  * Reviewed non-JSON-Schema semantics from the 3.2 beta.8 / rc.2 / rc.3 / rc.4 / rc.6 / rc.7 / 3.2.1 / 3.2.3 /
- * 3.2.4 bundles.
+ * 3.2.4 / 3.2.5 bundles.
  * These are semantic contracts, NOT a binding-field allowlist: properties and
  * comparison always come from the selected runtime schema. Additions to these
  * annotations require a deliberate implementation/review instead of AJV silently
@@ -181,6 +181,23 @@ export const COMMERCIAL_SEMANTIC_OVERRIDES_BY_RELEASE: Readonly<Record<string, R
     },
   },
   '3.2.4': {
+    'media-buy/product-purchase.json': {
+      verifier_constraints: {
+        accepted_snapshot_terms:
+          'Inside canonical-proposal.commercial_terms, each purchase MUST carry resolved start_time and end_time and MUST preserve every applicable measurement term and performance standard. Omission of measurement_terms or performance_standards means the accepted offer declared none.',
+        pricing_identity: {
+          pricing_option_id: 'equals_pricing.pricing_option_id_when_pricing_present',
+          on_violation: 'reject_before_commitment',
+        },
+      },
+    },
+  },
+  // 3.2.5 carries the identical reviewed semantics. The signed 3.2.5 bundle was
+  // compared against 3.2.4 and shows zero required/dependency additions or
+  // removals and zero x-adcp-validation added/removed/changed, with the 91-doc
+  // commercial graph, its 10 annotations and its edges unchanged. The override
+  // is therefore an evidence-backed restatement, not a new judgement.
+  '3.2.5': {
     'media-buy/product-purchase.json': {
       verifier_constraints: {
         accepted_snapshot_terms:
