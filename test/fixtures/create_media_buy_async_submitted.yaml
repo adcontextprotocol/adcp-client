@@ -1,6 +1,6 @@
 id: media_buy_seller/create_media_buy_async_submitted
-version: '1.0.0'
-title: 'Seller creates buy returning async submitted state (cross-transport)'
+version: "1.0.0"
+title: "Seller creates buy returning async submitted state (cross-transport)"
 category: media_buy_seller
 summary: >
   Verifies the submitted task envelope for create_media_buy: status: submitted with task_id
@@ -51,12 +51,12 @@ agent:
     - sells_media
     - supports_guaranteed
   examples:
-    - 'Guaranteed seller requiring IO signing before a buy goes live'
-    - 'Seller that queues create_media_buy for batch processing or internal approval'
+    - "Guaranteed seller requiring IO signing before a buy goes live"
+    - "Seller that queues create_media_buy for batch processing or internal approval"
 
 caller:
   role: buyer_agent
-  example: 'Pinnacle Agency (buyer)'
+  example: "Pinnacle Agency (buyer)"
 
 prerequisites:
   description: |
@@ -64,65 +64,65 @@ prerequisites:
     cannot be confirmed synchronously. The test controller seeds an async-returning responder
     and drives the submitted → completed transition so the completion phase can assert the
     final active state via get_media_buys.
-  test_kit: 'test-kits/acme-outdoor.yaml'
+  test_kit: "test-kits/acme-outdoor.yaml"
   controller_seeding: true
 
 fixtures:
   products:
-    - product_id: 'display_async_q2'
-      delivery_type: 'guaranteed'
-      channels: ['display']
+    - product_id: "display_async_q2"
+      delivery_type: "guaranteed"
+      channels: ["display"]
       format_ids:
-        - id: 'display_300x250'
+        - id: "display_300x250"
   pricing_options:
-    - product_id: 'display_async_q2'
-      pricing_option_id: 'cpm_standard'
-      pricing_model: 'cpm'
-      currency: 'USD'
+    - product_id: "display_async_q2"
+      pricing_option_id: "cpm_standard"
+      pricing_model: "cpm"
+      currency: "USD"
       fixed_price: 10.0
 
 phases:
   - id: setup
-    title: 'Discover products'
+    title: "Discover products"
     narrative: |
       The buyer calls get_products to discover available inventory before creating a buy.
       This phase confirms the seller advertises the product the scenario will purchase.
     steps:
       - id: get_products_brief
-        title: 'Discover a display product'
+        title: "Discover a display product"
         task: get_products
-        schema_ref: 'media-buy/get-products-request.json'
-        response_schema_ref: 'media-buy/get-products-response.json'
-        doc_ref: '/media-buy/task-reference/get_products'
+        schema_ref: "media-buy/get-products-request.json"
+        response_schema_ref: "media-buy/get-products-response.json"
+        doc_ref: "/media-buy/task-reference/get_products"
         comply_scenario: full_sales_flow
         stateful: false
         expected: |
           Return at least one display product with pricing options.
         sample_request:
-          buying_mode: 'brief'
-          brief: 'Display inventory on outdoor lifestyle content. Q2 flight, $10K budget.'
+          buying_mode: "brief"
+          brief: "Display inventory on outdoor lifestyle content. Q2 flight, $10K budget."
           account:
             brand:
-              domain: 'acmeoutdoor.example'
-            operator: 'pinnacle-agency.example'
+              domain: "acmeoutdoor.example"
+            operator: "pinnacle-agency.example"
           context:
-            correlation_id: 'create_media_buy_async_submitted--get_products_brief'
+            correlation_id: "create_media_buy_async_submitted--get_products_brief"
         validations:
           - check: response_schema
-            description: 'Response matches get-products-response.json schema'
+            description: "Response matches get-products-response.json schema"
           - check: field_present
-            path: 'products'
-            description: 'Response contains at least one product'
+            path: "products"
+            description: "Response contains at least one product"
           - check: field_present
-            path: 'context'
-            description: 'Response echoes back the context object'
+            path: "context"
+            description: "Response echoes back the context object"
           - check: field_value
-            path: 'context.correlation_id'
-            value: 'create_media_buy_async_submitted--get_products_brief'
-            description: 'Context correlation_id returned unchanged'
+            path: "context.correlation_id"
+            value: "create_media_buy_async_submitted--get_products_brief"
+            description: "Context correlation_id returned unchanged"
 
   - id: create_submitted
-    title: 'Create buy — seller returns submitted'
+    title: "Create buy — seller returns submitted"
     narrative: |
       The buyer creates a media buy. The controller-seeded seller returns status: submitted
       with a task_id rather than media_buy_id or packages. The buyer registers a
@@ -136,11 +136,11 @@ phases:
 
     steps:
       - id: create_media_buy
-        title: 'Create buy (submitted task envelope)'
+        title: "Create buy (submitted task envelope)"
         task: create_media_buy
-        schema_ref: 'media-buy/create-media-buy-request.json'
-        response_schema_ref: 'media-buy/create-media-buy-response.json'
-        doc_ref: '/media-buy/task-reference/create_media_buy'
+        schema_ref: "media-buy/create-media-buy-request.json"
+        response_schema_ref: "media-buy/create-media-buy-response.json"
+        doc_ref: "/media-buy/task-reference/create_media_buy"
         comply_scenario: create_media_buy
         stateful: true
         expected: |
@@ -157,46 +157,46 @@ phases:
 
         sample_request:
           brand:
-            domain: 'acmeoutdoor.example'
+            domain: "acmeoutdoor.example"
           account:
             brand:
-              domain: 'acmeoutdoor.example'
-            operator: 'pinnacle-agency.example'
-          start_time: '2026-05-01T00:00:00Z'
-          end_time: '2026-07-31T23:59:59Z'
+              domain: "acmeoutdoor.example"
+            operator: "pinnacle-agency.example"
+          start_time: "2026-05-01T00:00:00Z"
+          end_time: "2026-07-31T23:59:59Z"
           packages:
-            - product_id: 'display_async_q2'
+            - product_id: "display_async_q2"
               budget: 10000
-              pricing_option_id: 'cpm_standard'
+              pricing_option_id: "cpm_standard"
           push_notification_config:
-            url: 'https://buyer.example/webhooks/adcp'
-            operation_id: 'storyboard_create_media_buy_async_submitted'
-          idempotency_key: '$generate:uuid_v4#media_buy_seller_create_submitted_create_media_buy'
+            url: "https://buyer.example/webhooks/adcp"
+            operation_id: "storyboard_create_media_buy_async_submitted"
+          idempotency_key: "$generate:uuid_v4#media_buy_seller_create_submitted_create_media_buy"
           context:
-            correlation_id: 'create_media_buy_async_submitted--create_media_buy'
+            correlation_id: "create_media_buy_async_submitted--create_media_buy"
         context_outputs:
           - name: task_id
-            path: 'task_id'
+            path: "task_id"
         validations:
           - check: response_schema
-            description: 'Response matches create-media-buy-response.json schema (submitted branch)'
+            description: "Response matches create-media-buy-response.json schema (submitted branch)"
           - check: field_value
-            path: 'status'
-            value: 'submitted'
-            description: 'Response is the submitted task envelope, not the synchronous success branch'
+            path: "status"
+            value: "submitted"
+            description: "Response is the submitted task envelope, not the synchronous success branch"
           - check: field_present
-            path: 'task_id'
-            description: 'task_id present for async polling or webhook correlation'
+            path: "task_id"
+            description: "task_id present for async polling or webhook correlation"
           - check: field_present
-            path: 'context'
-            description: 'Response echoes back the context object'
+            path: "context"
+            description: "Response echoes back the context object"
           - check: field_value
-            path: 'context.correlation_id'
-            value: 'create_media_buy_async_submitted--create_media_buy'
-            description: 'Context correlation_id returned unchanged'
+            path: "context.correlation_id"
+            value: "create_media_buy_async_submitted--create_media_buy"
+            description: "Context correlation_id returned unchanged"
 
   - id: confirm_active
-    title: 'Confirm buy is active after task completion'
+    title: "Confirm buy is active after task completion"
     narrative: |
       The test controller drives the submitted → completed transition and the seller issues a
       media_buy_id. The buyer calls get_media_buys to confirm the buy is live — this mirrors
@@ -209,11 +209,11 @@ phases:
 
     steps:
       - id: get_media_buys_active
-        title: 'Verify buy is active after task completes'
+        title: "Verify buy is active after task completes"
         task: get_media_buys
-        schema_ref: 'media-buy/get-media-buys-request.json'
-        response_schema_ref: 'media-buy/get-media-buys-response.json'
-        doc_ref: '/media-buy/task-reference/get_media_buys'
+        schema_ref: "media-buy/get-media-buys-request.json"
+        response_schema_ref: "media-buy/get-media-buys-response.json"
+        doc_ref: "/media-buy/task-reference/get_media_buys"
         comply_scenario: media_buy_lifecycle
         stateful: true
         expected: |
@@ -229,26 +229,26 @@ phases:
         sample_request:
           account:
             brand:
-              domain: 'acmeoutdoor.example'
-            operator: 'pinnacle-agency.example'
+              domain: "acmeoutdoor.example"
+            operator: "pinnacle-agency.example"
           context:
-            correlation_id: 'create_media_buy_async_submitted--get_media_buys_active'
+            correlation_id: "create_media_buy_async_submitted--get_media_buys_active"
         validations:
           - check: response_schema
-            description: 'Response matches get-media-buys-response.json schema'
+            description: "Response matches get-media-buys-response.json schema"
           - check: field_present
-            path: 'media_buys'
-            description: 'At least one media buy returned — the task-completed buy is now queryable'
+            path: "media_buys"
+            description: "At least one media buy returned — the task-completed buy is now queryable"
           - check: field_present
-            path: 'media_buys[0].media_buy_id'
-            description: 'Completion artifact issued a media_buy_id; the task is complete'
+            path: "media_buys[0].media_buy_id"
+            description: "Completion artifact issued a media_buy_id; the task is complete"
           - check: field_present
-            path: 'media_buys[0].status'
-            description: 'Media buy has a live status after task completion'
+            path: "media_buys[0].status"
+            description: "Media buy has a live status after task completion"
           - check: field_present
-            path: 'context'
-            description: 'Response echoes back the context object'
+            path: "context"
+            description: "Response echoes back the context object"
           - check: field_value
-            path: 'context.correlation_id'
-            value: 'create_media_buy_async_submitted--get_media_buys_active'
-            description: 'Context correlation_id returned unchanged'
+            path: "context.correlation_id"
+            value: "create_media_buy_async_submitted--get_media_buys_active"
+            description: "Context correlation_id returned unchanged"

@@ -18,11 +18,11 @@
 # real-world analogue — same task, same identifier_paths shape.
 
 id: upstream_traffic_fixture
-version: '1.0.0'
-title: 'Upstream-traffic round-trip fixture'
+version: "1.0.0"
+title: "Upstream-traffic round-trip fixture"
 protocol: media-buy
 category: audience_sync
-summary: 'Test-only storyboard pinning recorder → controller → runner round-trip.'
+summary: "Test-only storyboard pinning recorder → controller → runner round-trip."
 track: audiences
 required_tools:
   - sync_audiences
@@ -35,32 +35,32 @@ caller:
   role: buyer_agent
 
 prerequisites:
-  description: 'Adopter must register comply_test_controller with query_upstream_traffic scenario.'
+  description: "Adopter must register comply_test_controller with query_upstream_traffic scenario."
 
 phases:
   - id: sync
-    title: 'Sync audiences and verify upstream call'
+    title: "Sync audiences and verify upstream call"
     steps:
       - id: sync_audiences
-        title: 'Sync hashed-PII audience and verify the adapter forwarded the right identifiers upstream'
+        title: "Sync hashed-PII audience and verify the adapter forwarded the right identifiers upstream"
         task: sync_audiences
         sample_request:
           account:
             brand:
-              domain: 'acmeoutdoor.example'
-            operator: 'test.example'
-          idempotency_key: '$generate:uuid_v4#upstream_traffic_sync'
+              domain: "acmeoutdoor.example"
+            operator: "test.example"
+          idempotency_key: "$generate:uuid_v4#upstream_traffic_sync"
           audiences:
-            - audience_id: 'aud_test_1'
+            - audience_id: "aud_test_1"
               add:
-                - hashed_email: 'vec-real-1'
-                - hashed_email: 'vec-real-2'
+                - hashed_email: "vec-real-1"
+                - hashed_email: "vec-real-2"
         validations:
           - check: upstream_traffic
-            description: 'Adapter MUST forward audience hashed_email identifiers to upstream'
+            description: "Adapter MUST forward audience hashed_email identifiers to upstream"
             min_count: 1
             payload_must_contain:
-              - path: 'users[*].hashed_email'
+              - path: "users[*].hashed_email"
                 match: present
             identifier_paths:
-              - 'audiences[*].add[*].hashed_email'
+              - "audiences[*].add[*].hashed_email"
