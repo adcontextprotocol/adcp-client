@@ -130,7 +130,7 @@ test('D5: directory proofs are backdated and tolerate a verifier clock slightly 
   const input = parseSignatureInput(proof.headers['signature-input'], 'key1');
   assert.ok(input.params.created < T, 'created is backdated');
   assert.equal(input.params.expires, T + 86_400);
-  assert.equal(wba.verifySignatureDirectory(proof, T - 30).keys[0].kid, key.kid);
+  assert.equal((await wba.verifySignatureDirectory(proof, T - 30)).keys[0].kid, key.kid);
 });
 
 test('D6: a web-bot-auth tagged request without Signature-Agent is a 403 verification failure', async () => {
@@ -179,21 +179,16 @@ test("D7: signing never silently drops another party's signature fields", async 
     wba.signWebBotAuth(foreign, { privateKey: key }, { origin, now: () => T }),
     /already carries signature fields/
   );
-  // Relays still append a covering signature and keep the earlier fields.
+  // Relays were removed from the profile: a second signature is never added.
   const inner = await wba.signWebBotAuth(request, { privateKey: key }, { origin, now: () => T });
-  const relayKey = newKey();
-  const relayed = await wba.signWebBotAuth(
-    { ...request, headers: inner },
-    { privateKey: relayKey },
-    {
-      origin: 'https://relay.example.com',
-      label: 'sig2',
-      relay: true,
-      now: () => T,
-    }
+  await assert.rejects(
+    wba.signWebBotAuth(
+      { ...request, headers: inner },
+      { privateKey: newKey() },
+      { origin, label: 'sig2', now: () => T }
+    ),
+    /already carries signature fields/
   );
-  assert.ok(relayed['signature-input'].startsWith(inner['signature-input']));
-  assert.ok(relayed.signature.startsWith(inner.signature));
 });
 
 test('D1: a synchronously throwing fetcher cannot poison the directory resolver', async () => {
@@ -237,9 +232,12 @@ test('D2: directory proofs must cover the exact "content-digest" component', asy
     return response;
   };
   // Control: the same construction with exact coverage verifies.
-  assert.equal(wba.verifySignatureDirectory(signedWith('"@authority";req "content-digest"'), T).keys[0].kid, key.kid);
-  assert.throws(
-    () => wba.verifySignatureDirectory(signedWith('"@authority";req "content-digest";key="sha-512"'), T),
+  assert.equal(
+    (await wba.verifySignatureDirectory(signedWith('"@authority";req "content-digest"'), T)).keys[0].kid,
+    key.kid
+  );
+  await assert.rejects(
+    wba.verifySignatureDirectory(signedWith('"@authority";req "content-digest";key="sha-512"'), T),
     e => e.reason === 'directory_proof'
   );
 });
@@ -332,10 +330,10 @@ test('D6: missing Signature or Signature-Input is a 403 with a body-aware challe
   );
 });
 
-test('D7: relay signing without existing fields is a caller error', async () => {
+test('one signature per request: the removed relay option is a caller error', async () => {
   await assert.rejects(
     wba.signWebBotAuth(request, { privateKey: newKey() }, { origin, relay: true, label: 'sig2', now: () => T }),
-    e => e instanceof TypeError && /Relay requires/.test(e.message)
+    e => e instanceof TypeError && /relays were removed/.test(e.message)
   );
 });
 
@@ -439,53 +437,47 @@ test('§6.10: discovery failures leave the request unverified and never evict ca
   );
 });
 
-test('unsigned key directories: plain JWKS is accepted by thumbprint unless signatures are required', async () => {
+test('unsigned key directories are discovery failures; the deprecated opt-outs have no effect', async () => {
   const key = newKey();
   const { d: _d, kid: _kid, ...publicJwk } = key;
   const headers = await wba.signWebBotAuth(request, { privateKey: key }, { origin, now: () => T });
-  const plain = (body, contentType = 'application/jwk-set+json') =>
-    new wba.SignatureDirectoryResolver({
+  for (const [contentType, options] of [
+    ['application/jwk-set+json', {}],
+    [wba.SIGNATURE_DIRECTORY_MEDIA_TYPE, { requireSignedDirectories: false, maxUnsignedDirectoryAgeSeconds: 10 }],
+  ]) {
+    const body = JSON.stringify({ keys: [publicJwk] });
+    const directory = new wba.SignatureDirectoryResolver({
       now: () => T,
+      ...options,
       fetchOptions: {
         trustedFetchFn: async () =>
-          new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': contentType } }),
+          new Response(body, {
+            status: 200,
+            headers: { 'content-type': contentType, 'content-digest': computeContentDigest(body, 'rfc8941-base64') },
+          }),
       },
     });
-  for (const body of [{ keys: [publicJwk] }, { keys: [{ ...publicJwk, kid: key.kid }] }])
-    assert.equal(
-      (
-        await wba.verifyWebBotAuth(
-          { ...request, headers },
-          { directory: plain(body), replayStore: new InMemoryReplayStore(), now: () => T }
-        )
-      ).length,
-      1
+    await assert.rejects(
+      wba.verifyWebBotAuth(
+        { ...request, headers },
+        { directory, replayStore: new InMemoryReplayStore(), now: () => T }
+      ),
+      e => e.status === 403 && e.unverified && e.reason === 'directory_unsigned' && !!e.headers['Accept-Signature']
     );
-  // A kid that is not the thumbprint is refused.
+  }
   await assert.rejects(
-    wba.verifyWebBotAuth(
-      { ...request, headers },
+    wba.verifyKeyDirectory(
       {
-        directory: plain({ keys: [{ ...publicJwk, kid: 'x'.repeat(43) }] }),
-        replayStore: new InMemoryReplayStore(),
-        now: () => T,
-      }
+        status: 200,
+        headers: { 'content-type': wba.SIGNATURE_DIRECTORY_MEDIA_TYPE },
+        body: JSON.stringify({ keys: [publicJwk] }),
+        request: { method: 'GET', url: origin + wba.SIGNATURE_DIRECTORY_PATH },
+      },
+      T,
+      { requireSigned: false }
     ),
-    e => e.status === 403 && e.unverified
+    e => e.reason === 'directory_unsigned'
   );
-  // Operators can still require Appendix B signatures.
-  const strict = new wba.SignatureDirectoryResolver({
-    now: () => T,
-    requireSignedDirectories: true,
-    fetchOptions: {
-      trustedFetchFn: async () =>
-        new Response(JSON.stringify({ keys: [publicJwk] }), {
-          status: 200,
-          headers: { 'content-type': 'application/jwk-set+json' },
-        }),
-    },
-  });
-  await assert.rejects(strict.resolve(key.kid, origin), e => e.reason === 'directory_unsigned' && e.status === 403);
 });
 
 test('identity layer: revoked, unknown, absent and store failures are decided after verification', async () => {
@@ -654,64 +646,30 @@ test('review: a key rotated in during a directory outage is a discovery failure'
   assert.equal((await directory.resolve(oldKey.kid, origin)).kid, oldKey.kid);
 });
 
-test('review: unsigned directories keep verifying through failed refreshes until their age bound', async () => {
-  const key = newKey();
-  const { d: _d, ...publicJwk } = key;
-  assert.throws(() => new wba.SignatureDirectoryResolver({ maxUnsignedDirectoryAgeSeconds: Number.NaN }), TypeError);
-  assert.throws(() => new wba.SignatureDirectoryResolver({ maxUnsignedDirectoryAgeSeconds: 10 }), TypeError);
-  let clock = T,
-    up = true;
-  const directory = new wba.SignatureDirectoryResolver({
-    now: () => clock,
-    maxUnsignedDirectoryAgeSeconds: 3600,
-    fetchOptions: {
-      trustedFetchFn: async () =>
-        up
-          ? new Response(JSON.stringify({ keys: [publicJwk] }), {
-              status: 200,
-              headers: { 'content-type': 'application/jwk-set+json' },
-            })
-          : new Response('', { status: 500 }),
-    },
-  });
-  assert.equal((await directory.resolve(key.kid, origin)).kid, key.kid);
-  up = false;
-  clock += 1800;
-  assert.equal((await directory.resolve(key.kid, origin)).kid, key.kid);
-  clock = T + 3601;
-  await assert.rejects(directory.resolve(key.kid, origin), e => e.unverified);
-  // Direct callers get a finite expiry for unsigned directories too.
-  const checked = wba.verifyKeyDirectory(
-    {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ keys: [publicJwk] }),
-      request: { method: 'GET', url: origin + wba.SIGNATURE_DIRECTORY_PATH },
-    },
-    T
-  );
-  assert.equal(checked.signed, false);
-  assert.equal(checked.expires, T + 86_400);
-});
-
 test('review: RSA keys are bounded to 2048-4096 bits with e = 65537', async () => {
   const { generateKeyPairSync: generate } = require('crypto');
   const small = generate('rsa', { modulusLength: 1024 }).publicKey.export({ format: 'jwk' });
   const oddExponent = generate('rsa', { modulusLength: 2048, publicExponent: 3 }).publicKey.export({ format: 'jwk' });
-  for (const jwk of [small, oddExponent])
-    assert.throws(
-      () =>
-        wba.verifyKeyDirectory(
-          {
-            status: 200,
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ keys: [jwk] }),
-            request: { method: 'GET', url: origin + wba.SIGNATURE_DIRECTORY_PATH },
+  for (const jwk of [small, oddExponent]) {
+    const body = JSON.stringify({ keys: [jwk] });
+    await assert.rejects(
+      wba.verifyKeyDirectory(
+        {
+          status: 200,
+          headers: {
+            'content-type': wba.SIGNATURE_DIRECTORY_MEDIA_TYPE,
+            'content-digest': computeContentDigest(body, 'rfc8941-base64'),
+            'signature-input': `key1=("@authority";req "content-digest");created=${T};expires=${T + 60};keyid="${wba.jwkThumbprint(jwk)}";tag="http-message-signatures-directory"`,
+            signature: 'key1=:AAAA:',
           },
-          T
-        ),
-      e => e.status === 403
+          body,
+          request: { method: 'GET', url: origin + wba.SIGNATURE_DIRECTORY_PATH },
+        },
+        T
+      ),
+      e => e.status === 403 && e.reason === 'directory_unsupported_key'
     );
+  }
 });
 
 test('review: revocation status transitions between absent, unknown and current', async () => {
@@ -816,26 +774,6 @@ test('library-first: a provider may return an ArrayBuffer, as WebCrypto does', a
     { directory: directoryFor(proof, () => T), replayStore: new InMemoryReplayStore(), now: () => T }
   );
   assert.equal(signer.keyid, key.kid);
-});
-
-test('library-first: relays refuse what the profile cannot verify, as before', async () => {
-  const inner = await wba.signWebBotAuth(request, { privateKey: newKey() }, { origin, now: () => T });
-  const relay = headers =>
-    wba.signWebBotAuth(
-      { ...request, headers },
-      { privateKey: newKey() },
-      { origin: 'https://relay.example.com', label: 'sig2', relay: true, now: () => T }
-    );
-  // An earlier signature covering a derived component outside the profile.
-  await assert.rejects(
-    relay({ ...inner, 'signature-input': inner['signature-input'].replace('("@method"', '("@path" "@method"') }),
-    e => e instanceof wba.WebBotAuthError && e.status === 400 && e.reason === 'derived_component'
-  );
-  // A Signature-Agent that already names the relay's label.
-  await assert.rejects(
-    relay({ ...inner, 'signature-agent': `${inner['signature-agent']}, sig2="https://evil.example.com"` }),
-    e => e instanceof wba.WebBotAuthError && e.status === 400
-  );
 });
 
 test('library-first: covered fields the library refuses are malformed messages', async () => {

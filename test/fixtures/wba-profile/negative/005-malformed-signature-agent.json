@@ -17,7 +17,9 @@
   },
   "directories": {
     "https://buyer-7k3q.com": {
-      "keys_ref": ["6WsKMCObba49V3uN0vIENnk1BKAk7c9zjBJcWKyQ9_I"]
+      "keys_ref": [
+        "6WsKMCObba49V3uN0vIENnk1BKAk7c9zjBJcWKyQ9_I"
+      ]
     }
   },
   "expected_outcome": {

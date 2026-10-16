@@ -782,6 +782,7 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
               signatureError: signatureCode,
               errorDescription: publicMessage,
               resourceMetadata: resourceMetadataUrl,
+              ...(err instanceof AuthError && err.headers && { headers: err.headers }),
             });
             return;
           }

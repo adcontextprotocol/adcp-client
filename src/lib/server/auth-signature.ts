@@ -42,8 +42,11 @@ import type { IncomingMessage } from 'http';
 import type { RequestLike } from '../signing/canonicalize';
 import { RequestSignatureError } from '../signing/errors';
 import {
+  advertisesOnlyWebBotAuth,
   selectSignatureProfile,
+  unsignedWebBotAuthError,
   verifyWebBotAuth,
+  webBotAuthAcceptSignature,
   isWebBotAuthRevocationChecked,
   webBotAuthUnavailableResponse,
   WebBotAuthUnavailableError,
@@ -325,7 +328,42 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
   };
 
   const tagged = tagAuthenticatorNeedsRawBody(authenticator);
+  if (options.webBotAuth) webBotAuthProfiles.set(tagged, options.capability.profiles ?? []);
   return options.webBotAuth ? tagAuthenticatorPresenceGated(tagged) : tagged;
+}
+
+/** `request_signing.profiles` of signature authenticators that verify Web Bot Auth. */
+const webBotAuthProfiles = new WeakMap<Authenticator, readonly string[]>();
+
+/**
+ * Answer an unsigned request that must be signed (adcp#7894 "Error responses")
+ * when the signature authenticator verifies Web Bot Auth: a verifier that
+ * advertises only `web-bot-auth` answers 403 with `Accept-Signature`; one that
+ * also advertises the AdCP RFC 9421 profile keeps that profile's 401
+ * `request_signature_required` and adds `Accept-Signature` for Web Bot Auth.
+ */
+function unsignedRequiredError(err: unknown, signatureAuth: Authenticator, body: string | undefined): unknown {
+  const profiles = webBotAuthProfiles.get(signatureAuth);
+  if (
+    !profiles?.includes('web-bot-auth') ||
+    !(err instanceof RequestSignatureError) ||
+    err.code !== 'request_signature_required'
+  )
+    return asSignatureAuthError(err);
+  const hasBody = body !== undefined && body !== '';
+  if (advertisesOnlyWebBotAuth(profiles)) {
+    const refused = unsignedWebBotAuthError(hasBody);
+    return new AuthError(refused.message, {
+      cause: refused,
+      status: refused.status,
+      headers: refused.headers,
+      body: refused.body,
+    });
+  }
+  return new AuthError(`Signature rejected (${err.code}).`, {
+    cause: err,
+    headers: { 'Accept-Signature': webBotAuthAcceptSignature('sig1', hasBody) },
+  });
 }
 
 /**
@@ -554,7 +592,7 @@ export function requireSignatureWhenPresent(
     try {
       assertUnsignedWebhookAuthenticationAbsent(body);
     } catch (err) {
-      throw asSignatureAuthError(err);
+      throw unsignedRequiredError(err, signatureAuth, body);
     }
     // Catch the fallback's throw so the `requiredFor` pre-check can run
     // regardless of fallback outcome. Without this, a caller presenting
@@ -586,7 +624,7 @@ export function requireSignatureWhenPresent(
       assertUnsignedOperationNotRequired(operation, unsignedCapability);
       assertUnsignedProtocolMethodNotRequired(body, unsignedCapability);
     } catch (err) {
-      throw asSignatureAuthError(err);
+      throw unsignedRequiredError(err, signatureAuth, body);
     }
     // Op not in requiredFor: rethrow the fallback's original error so the
     // 401 carries the fallback's challenge (Bearer for bad-bearer,

@@ -638,6 +638,12 @@ export interface RespondUnauthorizedOptions {
    * directly.
    */
   signatureError?: RequestSignatureErrorCode;
+  /**
+   * Additional response headers, such as the Web Bot Auth `Accept-Signature`
+   * challenge added to an AdCP RFC 9421 `request_signature_required` answer.
+   * Cannot replace `WWW-Authenticate` or `Content-Type`.
+   */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -672,6 +678,7 @@ export function respondUnauthorized(
 
   const scheme = useSignatureChallenge ? 'Signature' : 'Bearer';
   res.writeHead(options.status ?? 401, {
+    ...options.headers,
     'Content-Type': 'application/json',
     'WWW-Authenticate': `${scheme} ${parts.join(', ')}`,
   });

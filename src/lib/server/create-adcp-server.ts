@@ -1,4 +1,4 @@
-import { getWebBotAuthLegacyOriginGate } from '../signing/web-bot-auth';
+import { assertWebBotAuthSigningKey, getWebBotAuthLegacyOriginGate } from '../signing/web-bot-auth';
 import {
   isIdentity33SchemaScope,
   withIdentity33SchemaScope,
@@ -12,6 +12,9 @@ import {
   webBotAuthToolFailure,
   selectSignatureProfile,
   verifyWebBotAuth,
+  advertisesOnlyWebBotAuth,
+  unsignedWebBotAuthError,
+  webBotAuthAcceptSignature,
   isWebBotAuthRevocationChecked,
   webBotAuthUnavailableResponse,
   WebBotAuthUnavailableError,
@@ -4473,6 +4476,8 @@ function buildSignedRequestsPreTransport(
       'Web Bot Auth requires origin revocation: use createIdentity33PrincipalResolver({ revocation }) or supply isRevoked'
     );
   const requiredFor = effectiveRequestSigning.required_for ?? [];
+  const advertisedProfiles = (effectiveRequestSigning as { profiles?: readonly string[] }).profiles;
+  const webBotAuthAdvertised = !!signedRequests.webBotAuth && !!advertisedProfiles?.includes('web-bot-auth');
   const verifier = createExpressVerifier({
     capability: {
       supported: true,
@@ -4585,6 +4590,27 @@ function buildSignedRequestsPreTransport(
             res.setHeader(k, v);
             return {
               json(body: unknown) {
+                // An unsigned request that must be signed, when Web Bot Auth is
+                // advertised (adcp#7894 "Error responses"): WBA-only answers
+                // 403 with Accept-Signature; alongside the RFC 9421 profile the
+                // 401 request_signature_required also carries Accept-Signature.
+                if (
+                  webBotAuthAdvertised &&
+                  code === 401 &&
+                  (body as { error?: unknown } | null)?.error === 'request_signature_required'
+                ) {
+                  const hasBody = !!req.rawBody;
+                  if (advertisesOnlyWebBotAuth(advertisedProfiles)) {
+                    const refused = unsignedWebBotAuthError(hasBody);
+                    res.removeHeader('WWW-Authenticate');
+                    res.statusCode = refused.status;
+                    for (const [name, value] of Object.entries(refused.headers)) res.setHeader(name, value);
+                    res.setHeader('Content-Type', 'application/json');
+                    res.end(JSON.stringify(refused.body));
+                    return;
+                  }
+                  res.setHeader('Accept-Signature', webBotAuthAcceptSignature('sig1', hasBody));
+                }
                 res.setHeader('Content-Type', 'application/json');
                 res.end(JSON.stringify(body));
               },
@@ -5502,6 +5528,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     throw new Error('Select Web Bot Auth on each trusted webhook registration, not as a server-wide default');
   if (config.webhooks?.webBotAuth && !config.identity33)
     throw new Error('Web Bot Auth webhook signing requires the identity33 experiment');
+  if (config.webhooks?.webBotAuth?.key) assertWebBotAuthSigningKey(config.webhooks.webBotAuth.key);
   const toolsWithErrorArm = getToolsWithErrorArm(adcpVersion);
 
   // Defaults gated on `process.env.NODE_ENV`:
@@ -9268,14 +9295,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       algorithms: [
         ...new Set([
           algorithm,
-          ...(webhooks.webBotAuth
-            ? [
-                ('privateKey' in webhooks.webBotAuth.key
-                  ? webhooks.webBotAuth.key.privateKey.crv
-                  : webhooks.webBotAuth.key.publicKey.crv) === 'P-256'
-                  ? 'ecdsa-p256-sha256'
-                  : 'ed25519',
-              ]
+          // `algorithms` lists AdCP webhook-profile values; a Web Bot Auth key
+          // is Ed25519 or RSA-PSS (adcp#7894), and only Ed25519 has a value here.
+          ...(webhooks.webBotAuth &&
+          ('privateKey' in webhooks.webBotAuth.key
+            ? webhooks.webBotAuth.key.privateKey.crv
+            : webhooks.webBotAuth.key.publicKey.crv) === 'Ed25519'
+            ? ['ed25519']
             : []),
         ]),
       ] as ('ed25519' | 'ecdsa-p256-sha256')[],

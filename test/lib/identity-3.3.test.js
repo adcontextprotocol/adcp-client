@@ -45,9 +45,40 @@ function options(v, replayStore = new InMemoryReplayStore()) {
   });
   return { now: () => v.reference_now, replayStore, allowTestKeys: true, isRevoked: async () => false, directory };
 }
-for (const name of ['001-single-signer-request', '002-relay-request-two-signatures'])
+const PINNED = require('../fixtures/wba-profile/PINNED.json');
+const vectorFiles = dir =>
+  fs
+    .readdirSync(path.join(fixtures, dir))
+    .filter(name => name.endsWith('.json'))
+    .map(name => `${dir}/${name.replace('.json', '')}`);
+test('every vendored WBA vector is graded or recorded as non-applicable', () => {
+  const graded = new Set([...vectorFiles('positive'), ...vectorFiles('negative')]);
+  const nonApplicable = new Set(PINNED.non_applicable.map(name => name.replace('.json', '')));
+  for (const name of ['positive', 'negative', 'governance'].flatMap(vectorFiles))
+    assert.ok(graded.has(name) !== nonApplicable.has(name), `${name} must be graded xor non-applicable`);
+  assert.equal(PINNED.sha, 'e24eeb090c4365707641099cbbb45f9945c6d6e0');
+});
+async function preloadReplay(v, replayStore) {
+  for (const entry of v.test_harness_state?.replay_cache_entries ?? [])
+    assert.equal(
+      await replayStore.insert(entry.identity, 'web-bot-auth', entry.nonce, entry.ttl_seconds, v.reference_now),
+      'ok'
+    );
+  return replayStore;
+}
+function assertAcceptSignature(error, expected) {
+  const value = error.headers['Accept-Signature'];
+  assert.ok(value, 'Accept-Signature is required');
+  assert.ok(value.startsWith(`${expected.label}=${expected.components}`), value);
+  for (const parameter of expected.parameters) assert.match(value, new RegExp(`;${parameter}(=|;|$)`));
+  assert.match(value, /;tag="web-bot-auth"$/);
+  const nonce = value.match(/;nonce="([^"]*)"/)?.[1];
+  if (expected.nonce === 'verifier-chosen') assert.equal(Buffer.from(nonce, 'base64url').length, 64);
+  else assert.equal(nonce, undefined);
+}
+for (const name of vectorFiles('positive').filter(name => !name.includes('directory-response')))
   test(`pinned WBA vector ${name}`, async () => {
-    const v = vector('positive/' + name);
+    const v = vector(name);
     for (const [label, expected] of Object.entries(v.expected_signature_base))
       assert.equal(
         wba.buildWebBotAuthSignatureBase(parseSignatureInput(v.request.headers['Signature-Input'], label), v.request),
@@ -56,29 +87,56 @@ for (const name of ['001-single-signer-request', '002-relay-request-two-signatur
     const result = await wba.verifyWebBotAuth(v.request, options(v));
     assert.deepEqual(Object.fromEntries(result.map(s => [s.label, s.origin])), v.expected_outcome.identities);
   });
-for (const name of fs.readdirSync(path.join(fixtures, 'negative')).filter(name => !name.startsWith('002')))
+for (const name of vectorFiles('negative'))
   test(`pinned WBA rejection ${name}`, async () => {
-    const v = vector('negative/' + name.replace('.json', ''));
-    await assert.rejects(
-      wba.verifyWebBotAuth(v.request, options(v)),
-      e => e instanceof wba.WebBotAuthError && e.status === v.expected_outcome.status
+    const v = vector(name);
+    const opts = options(v, await preloadReplay(v, new InMemoryReplayStore()));
+    const error = await wba.verifyWebBotAuth(v.request, opts).then(
+      () => assert.fail('vector must be rejected'),
+      e => e
     );
+    assert.ok(error instanceof wba.WebBotAuthError, String(error));
+    assert.equal(error.status, v.expected_outcome.status, error.reason);
+    if (v.expected_outcome.accept_signature) assertAcceptSignature(error, v.expected_outcome.accept_signature);
+    else assert.equal(error.headers['Accept-Signature'], undefined);
+    // Signature-path failures carry the generic authentication error only.
+    assert.equal(error.body.adcp_error.code, 'AUTH_INVALID');
   });
-test('replay is partitioned by origin across endpoints and rotation; ratified 429 and older vector 403 are explicit', async () => {
+test('negative/002 is positive/001 resent: it verifies once, then is a 429 replay', async () => {
+  const replayed = vector('negative/002-replayed-nonce');
+  const opts = options(replayed);
+  assert.equal((await wba.verifyWebBotAuth(replayed.request, opts))[0].origin, 'https://buyer-7k3q.com');
+  await assert.rejects(
+    wba.verifyWebBotAuth(replayed.request, opts),
+    e => e.status === 429 && e.reason === 'replayed' && /;nonce="[A-Za-z0-9_-]{86}"/.test(e.headers['Accept-Signature'])
+  );
+});
+test('replay is partitioned by origin across endpoints and rotation; replayStatus is deprecated and ignored', async () => {
   const v = vector('positive/001-single-signer-request');
-  for (const status of [429, 403]) {
-    const opts = { ...options(v), replayStatus: status };
+  for (const replayStatus of [undefined, 403]) {
+    const opts = { ...options(v), replayStatus };
     await wba.verifyWebBotAuth(v.request, opts);
-    await assert.rejects(wba.verifyWebBotAuth(v.request, opts), e => e.status === status && e.reason === 'replayed');
+    await assert.rejects(wba.verifyWebBotAuth(v.request, opts), e => e.status === 429 && e.reason === 'replayed');
   }
 });
-test('signed directory vector, exact audit bytes, tampering, wrong origin, future proof and test-key exclusion', () => {
-  const v = vector('positive/003-signed-directory-response');
+test('signed directory vector, exact audit bytes, tampering, wrong origin, future proof and test-key exclusion', async () => {
+  const v = vector('positive/002-signed-directory-response');
   const response = { ...v.response, request: v.request };
-  assert.equal(wba.verifySignatureDirectory(response, v.reference_now, true).proof.body, v.response.body);
-  assert.throws(() => wba.verifySignatureDirectory(response, v.reference_now), /verification failed/);
-  assert.throws(() => wba.verifySignatureDirectory({ ...response, body: response.body + ' ' }, v.reference_now, true));
-  assert.throws(() =>
+  for (const [label, expected] of Object.entries(v.expected_signature_base))
+    assert.equal(
+      wba.buildWebBotAuthSignatureBase(
+        parseSignatureInput(v.response.headers['Signature-Input'], label),
+        v.request,
+        response
+      ),
+      expected
+    );
+  const checked = await wba.verifyKeyDirectory(response, v.reference_now, { allowTestKeys: true });
+  assert.equal(checked.proof.body, v.response.body);
+  assert.equal(new URL(checked.proof.request.url).origin, v.expected_outcome.identities.key1);
+  await assert.rejects(wba.verifySignatureDirectory(response, v.reference_now), /verification failed/);
+  await assert.rejects(wba.verifySignatureDirectory({ ...response, body: response.body + ' ' }, v.reference_now, true));
+  await assert.rejects(
     wba.verifySignatureDirectory(
       { ...response, request: { ...v.request, url: 'https://other.com' + wba.SIGNATURE_DIRECTORY_PATH } },
       v.reference_now,
@@ -86,20 +144,21 @@ test('signed directory vector, exact audit bytes, tampering, wrong origin, futur
     )
   );
   // Directory proofs tolerate a verifier clock up to 60 s behind `created`, no more.
-  assert.equal(wba.verifySignatureDirectory(response, 1790840999, true).proof.body, v.response.body);
-  assert.throws(() => wba.verifySignatureDirectory(response, 1790841000 - 61, true));
+  assert.equal((await wba.verifySignatureDirectory(response, 1790840940, true)).proof.body, v.response.body);
+  await assert.rejects(wba.verifySignatureDirectory(response, 1790841000 - 61, true));
 });
-for (const curve of ['ed25519', 'ec'])
-  test(`signing and directory authoring roundtrip: ${curve}`, async () => {
-    const pair =
-      curve === 'ec' ? generateKeyPairSync('ec', { namedCurve: 'prime256v1' }) : generateKeyPairSync('ed25519');
+test('signing and directory authoring roundtrip: ed25519 and rsa-pss-sha512', async () => {
+  for (const pair of [
+    generateKeyPairSync('ed25519'),
+    generateKeyPairSync('rsa', { modulusLength: 2048, publicExponent: 0x10001 }),
+  ]) {
     const jwk = pair.privateKey.export({ format: 'jwk' });
     jwk.kid = wba.jwkThumbprint(jwk);
     const key = { privateKey: jwk };
     const directory = await wba.createSignedSignatureDirectory('https://agent.example.com/mcp', [key], {
       now: () => now,
     });
-    const checked = wba.verifySignatureDirectory(directory, now);
+    const checked = await wba.verifyKeyDirectory(directory, now);
     assert.equal(checked.keys[0].d, undefined);
     assert.equal(checked.keys[0].adcp_use, undefined);
     const request = {
@@ -118,8 +177,25 @@ for (const curve of ['ed25519', 'ec'])
         now: () => now,
       }
     );
+    assert.equal(result.length, 1);
     assert.equal(result[0].origin, 'https://agent.example.com');
-  });
+  }
+});
+test('ES256 is not a Web Bot Auth algorithm: signing, directories and fetch wrappers refuse P-256 keys', async () => {
+  const jwk = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ format: 'jwk' });
+  jwk.kid = wba.jwkThumbprint(jwk);
+  const request = { method: 'GET', url: 'https://seller.example.com/mcp', headers: {} };
+  await assert.rejects(
+    wba.signWebBotAuth(request, { privateKey: jwk }, { origin: 'https://agent.example.com' }),
+    /Ed25519 or RSA-PSS-SHA512/
+  );
+  await assert.rejects(
+    wba.createSignedSignatureDirectory('https://agent.example.com', [{ privateKey: jwk }]),
+    TypeError
+  );
+  assert.throws(() => wba.createWebBotAuthFetch(fetch, { privateKey: jwk }, { origin: 'https://agent.example.com' }));
+  assert.throws(() => wba.assertWebBotAuthSigningKey({ privateKey: jwk }), TypeError);
+});
 test('Signature-Agent forces WBA, including empty or uncovered field; no legacy profile retry', () => {
   assert.equal(wba.selectSignatureProfile({ headers: { 'Signature-Agent': '' } }), 'web-bot-auth');
   assert.equal(
@@ -432,24 +508,6 @@ test('draft principal validation accepts relationship only in successful result 
       },
     }).valid,
     false
-  );
-});
-test('relay signer reproduces an independently verifiable layered request and dictionary order is irrelevant', async () => {
-  const v = vector('positive/001-single-signer-request');
-  const jwk = { ...keys[2], d: keys[2]._private_d_for_test_only };
-  const headers = await wba.signWebBotAuth(
-    v.request,
-    { privateKey: jwk },
-    { origin: jwk.identity, relay: true, label: 'relay', now: () => v.reference_now }
-  );
-  const opts = options({ ...v, directories: { ...v.directories, [jwk.identity]: { keys_ref: [jwk.kid] } } });
-  assert.equal((await wba.verifyWebBotAuth({ ...v.request, headers }, opts)).length, 2);
-  const input = headers['signature-input'];
-  const split = input.indexOf(', relay=');
-  headers['signature-input'] = input.slice(split + 2) + ', ' + input.slice(0, split);
-  assert.equal(
-    (await wba.verifyWebBotAuth({ ...v.request, headers }, { ...opts, replayStore: new InMemoryReplayStore() })).length,
-    2
   );
 });
 test('relationship outbox retries a failed publish without losing its event or repeating expiry after other changes', async () => {
@@ -765,7 +823,7 @@ test('WBA challenges include required fields; revocations cannot suggest re-sign
   await assert.rejects(
     wba.verifyWebBotAuth(missing.request, options(missing)),
     e =>
-      e.headers['Accept-Signature'].includes(';created;expires;nonce;keyid;tag="web-bot-auth"') &&
+      e.headers['Accept-Signature'].includes(';created;expires;nonce;keyid;alg;tag="web-bot-auth"') &&
       e.headers['Accept-Signature'].includes('"content-digest"')
   );
   const v = vector('positive/001-single-signer-request');

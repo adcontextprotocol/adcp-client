@@ -256,7 +256,7 @@ test('directories: Cloudflare verifies ours and we verify theirs', async () => {
   );
   assert.ok(verified);
   const theirs = await theirDirectory(ED25519);
-  const checked = wba.verifyKeyDirectory({ ...theirs, request: { method: 'GET', url: theirs.url } }, NOW);
+  const checked = await wba.verifyKeyDirectory({ ...theirs, request: { method: 'GET', url: theirs.url } }, NOW);
   assert.equal(checked.signed, true);
   assert.deepEqual(
     checked.keys.map(key => key.kid),

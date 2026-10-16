@@ -284,8 +284,8 @@ export class OriginRevocationResolver {
           if (
             header.typ !== 'adcp-gov-revocation+jws' ||
             typeof header.kid !== 'string' ||
-            typeof header.alg !== 'string' ||
-            !['EdDSA', 'ES256'].includes(header.alg)
+            // Directory keys are Ed25519 or RSA-PSS under the profile (adcp#7894); lists are EdDSA.
+            header.alg !== 'EdDSA'
           )
             continue;
           await this.options.directory.resolve(header.kid, origin);
@@ -295,7 +295,7 @@ export class OriginRevocationResolver {
           const jwk = checked.keys.find(key => key.kid === header.kid);
           if (!jwk) continue;
           const result = await compactVerify(token, await importJWK(jwk as JWK, header.alg), {
-            algorithms: ['EdDSA', 'ES256'],
+            algorithms: ['EdDSA'],
           });
           verifiedPayload = result.payload;
           break;
@@ -394,8 +394,10 @@ export async function createSignedOriginRevocationList(
   const kid = jwkThumbprint(privateKey);
   if (privateKey.kid && privateKey.kid !== kid)
     throw new TypeError('Revocation signing kid must be the JWK thumbprint');
-  const alg = privateKey.crv === 'Ed25519' ? 'EdDSA' : privateKey.crv === 'P-256' ? 'ES256' : undefined;
-  if (!alg || !privateKey.d) throw new TypeError('Revocations require a private Ed25519 or P-256 key');
+  // The signing key must be publishable in the origin's key directory, which
+  // holds Ed25519 or RSA-PSS keys only (adcp#7894); lists are signed with Ed25519.
+  const alg = privateKey.crv === 'Ed25519' ? 'EdDSA' : undefined;
+  if (!alg || !privateKey.d) throw new TypeError('Revocations require a private Ed25519 key');
   return new CompactSign(Buffer.from(JSON.stringify(snapshot)))
     .setProtectedHeader({ alg, kid, typ: 'adcp-gov-revocation+jws' })
     .sign(await importJWK(privateKey, alg));
