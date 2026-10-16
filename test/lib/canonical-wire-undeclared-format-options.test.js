@@ -27,14 +27,18 @@ const AAO = 'https://creative.adcontextprotocol.org/';
 const PRICING_OPTIONS = [{ pricing_option_id: 'po_cpm', pricing_model: 'cpm', currency: 'USD', fixed_price: 5 }];
 const ACCOUNT = { account_id: 'acct-canonical' };
 
-async function canonicalSeller(products, config = {}, { cacheScope, conditional = false, version = '3.2.1' } = {}) {
+async function canonicalSeller(
+  products,
+  config = {},
+  { cacheScope, conditional = false, version = '3.2.1', declareCanonicalCreatives = true } = {}
+) {
   const captured = { productReads: [] };
   const server = new McpServer({ name: 'canonical-seller', version: '1.0.0' });
   server.registerTool('get_adcp_capabilities', { inputSchema: {} }, async () => {
     const capabilities = {
       adcp: { major_versions: [3], supported_versions: [version] },
       supported_protocols: ['media_buy'],
-      media_buy: { features: { canonical_creatives: !version.startsWith('3.0') } },
+      media_buy: { features: declareCanonicalCreatives ? { canonical_creatives: !version.startsWith('3.0') } : {} },
     };
     return { content: [{ type: 'text', text: '{}' }], structuredContent: capabilities };
   });
@@ -120,6 +124,56 @@ function mediaBuy(pkg) {
 }
 
 describe('canonical wire: format options the seller did not declare', () => {
+  test('a 3.1 seller without a creative-wire declaration accepts creatives through its dual-emitted pairing', async () => {
+    const formatIds = [
+      { agent_url: AAO, id: 'display_300x250_image' },
+      { agent_url: AAO, id: 'display_728x90_image' },
+    ];
+    const sellerProduct = {
+      ...legacyOnlyProduct('dual-emitted', formatIds),
+      format_options: [
+        { format_option_id: 'mrec', format_kind: 'image', params: { width: 300, height: 250 } },
+        { format_option_id: 'leaderboard', format_kind: 'image', params: { width: 728, height: 90 } },
+      ],
+    };
+    const seller = await canonicalSeller(
+      [sellerProduct],
+      { productCache: createProductCache(), wireAdcpVersion: '3.1.24' },
+      { cacheScope: 'account', version: '3.1.24', declareCanonicalCreatives: false }
+    );
+    try {
+      const request = { buying_mode: 'brief', brief: 'Display', account: ACCOUNT };
+      await seller.agent.getProducts(request);
+      const products = await seller.agent.getProducts(request);
+      assert.strictEqual(seller.captured.productReads.length, 1, 'the second discovery uses the product cache');
+      const product = products.data.products[0];
+      const selected = packageRefsForFormatOptions(product, ['mrec']);
+      const creative = {
+        creative_id: 'paired-image',
+        name: 'Paired image',
+        format_kind: 'image',
+        format_option_ref: { scope: 'product', format_option_id: 'mrec' },
+        assets: { image: { asset_type: 'image', url: 'https://cdn.example/ad.png', width: 300, height: 250 } },
+      };
+      assert.strictEqual(await seller.agent.resolveCreativeFormatWireMode('sync_creatives'), 'unknown');
+      const synced = await seller.agent.syncCreatives({ account: ACCOUNT, creatives: [creative] }, undefined, {
+        creativeFormatProjection: { selectorContainers: [{ product_id: product.product_id, ...selected }] },
+      });
+      assert.strictEqual(synced.success, true);
+      assert.deepStrictEqual(seller.captured.sync.creatives[0].format_id, formatIds[0]);
+      const created = await seller.agent.createMediaBuy(
+        mediaBuy({ product_id: product.product_id, ...selected, creatives: [creative] })
+      );
+      assert.strictEqual(created.success, true);
+      assert.deepStrictEqual(seller.captured.create.packages[0].format_ids, [formatIds[0]]);
+      assert.deepStrictEqual(seller.captured.create.packages[0].creatives[0].format_id, formatIds[0]);
+      assert.strictEqual(seller.captured.create.packages[0].format_option_refs, undefined);
+      assert.strictEqual(product.format_ids, undefined);
+    } finally {
+      await seller.close();
+    }
+  });
+
   test("legacy wire still downgrades selected options to the seller's format_ids", async () => {
     const formatId = { agent_url: AAO, id: 'display_300x250_image' };
     const seller = await canonicalSeller([legacyOnlyProduct('legacy-shaped', [formatId])], {}, { version: '3.0.25' });

@@ -561,7 +561,10 @@ function projectResponseCreativeIdentities(
   let projected: Record<string, unknown> = dataRecord;
   if (isProjectionProductInput(projected)) {
     if (wireMode === 'canonical') {
-      const canonical = toCanonicalOnlyResponse({ products: [projected] }, { legacyFormatConverter });
+      const canonical = toCanonicalOnlyResponse(
+        { products: [projected] },
+        { legacyFormatConverter, _inferDualEmissionLegacyRefs: false }
+      );
       if (canonical.diagnostics.length > 0 || canonical.response.products.length !== 1) {
         throw new CreativeFormatProjectionError(
           operation,
@@ -894,6 +897,7 @@ function asCanonicalProductResponse<T extends { products?: unknown[] }>(
   validateDualProductFormatDeclarations(response, legacyFormatConverter);
   const projected = toCanonicalOnlyResponse(response as T & { products?: V1Product[] }, {
     legacyFormatConverter,
+    _inferDualEmissionLegacyRefs: false,
   });
   const blockingDiagnostics = projected.diagnostics.filter(
     diagnostic => diagnostic.code !== 'LEGACY_FORMAT_ID_DROPPED_UNMAPPED'
