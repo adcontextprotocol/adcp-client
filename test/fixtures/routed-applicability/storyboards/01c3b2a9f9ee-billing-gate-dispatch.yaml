@@ -1,8 +1,8 @@
 id: billing_gate_dispatch
-version: "1.0.0"
-title: "Billing-gate dispatch — sync_accounts capability vs per-buyer-agent gate"
+version: '1.0.0'
+title: 'Billing-gate dispatch — sync_accounts capability vs per-buyer-agent gate'
 category: error_compliance
-summary: "Validates the two distinct billing-rejection paths on sync_accounts — seller-wide capability gate (BILLING_NOT_SUPPORTED) and per-buyer-agent commercial-relationship gate (BILLING_NOT_PERMITTED_FOR_AGENT) — and the clamped error.details shape that prevents the per-agent code from acting as a commercial-state oracle."
+summary: 'Validates the two distinct billing-rejection paths on sync_accounts — seller-wide capability gate (BILLING_NOT_SUPPORTED) and per-buyer-agent commercial-relationship gate (BILLING_NOT_PERMITTED_FOR_AGENT) — and the clamped error.details shape that prevents the per-agent code from acting as a commercial-state oracle.'
 track: error_handling
 required_tools:
   - get_adcp_capabilities
@@ -98,11 +98,11 @@ agent:
   interaction_model: media_buy_seller
   capabilities: []
   examples:
-    - "Any AdCP agent that accepts sync_accounts"
+    - 'Any AdCP agent that accepts sync_accounts'
 
 caller:
   role: buyer_agent
-  example: "Compliance test harness"
+  example: 'Compliance test harness'
 
 prerequisites:
   description: |
@@ -132,19 +132,19 @@ prerequisites:
     (`comply_test_controller` `seed_buyer_agent`) MAY let runners
     establish the precondition programmatically; until then the test
     kit declares it.
-  test_kit: "test-kits/billing-gate-runner.yaml"
+  test_kit: 'test-kits/billing-gate-runner.yaml'
   controller_seeding: false
 
 phases:
   - id: capability_discovery
-    title: "Capability discovery"
+    title: 'Capability discovery'
     narrative: |
       Read `account.supported_billing` so subsequent phases can dispatch
       on which gate is testable for this seller.
 
     steps:
       - id: get_capabilities
-        title: "Read supported_billing"
+        title: 'Read supported_billing'
         narrative: |
           The runner inspects `account.supported_billing` to confirm the
           seller advertises billing capabilities at all and to provide
@@ -152,9 +152,9 @@ phases:
           phase echoes the seller's capability list back in the error
           response).
         task: get_adcp_capabilities
-        schema_ref: "protocol/get-adcp-capabilities-request.json"
-        response_schema_ref: "protocol/get-adcp-capabilities-response.json"
-        doc_ref: "/protocol/get_adcp_capabilities"
+        schema_ref: 'protocol/get-adcp-capabilities-request.json'
+        response_schema_ref: 'protocol/get-adcp-capabilities-response.json'
+        doc_ref: '/protocol/get_adcp_capabilities'
         comply_scenario: capability_discovery
         stateful: false
         expected: |
@@ -164,30 +164,30 @@ phases:
 
         sample_request:
           context:
-            correlation_id: "billing_gate_dispatch--get_capabilities"
+            correlation_id: 'billing_gate_dispatch--get_capabilities'
 
         context_outputs:
-          - path: "account.supported_billing"
-            key: "supported_billing"
+          - path: 'account.supported_billing'
+            key: 'supported_billing'
 
         validations:
           - check: response_schema
-            description: "Response matches get-adcp-capabilities-response.json schema"
+            description: 'Response matches get-adcp-capabilities-response.json schema'
           - check: field_present
-            path: "account.supported_billing"
-            description: "Seller declares supported_billing"
+            path: 'account.supported_billing'
+            description: 'Seller declares supported_billing'
           - check: field_present
-            path: "context"
-            description: "Response echoes back the context object"
+            path: 'context'
+            description: 'Response echoes back the context object'
           - check: field_value
-            path: "context.correlation_id"
-            value: "billing_gate_dispatch--get_capabilities"
-            description: "Context correlation_id returned unchanged"
+            path: 'context.correlation_id'
+            value: 'billing_gate_dispatch--get_capabilities'
+            description: 'Context correlation_id returned unchanged'
 
   - id: capability_gate
-    title: "Capability gate — BILLING_NOT_SUPPORTED"
+    title: 'Capability gate — BILLING_NOT_SUPPORTED'
     optional: true
-    skip_if: "!test_kit.account.unsupported_billing_probe"
+    skip_if: '!test_kit.account.unsupported_billing_probe'
     narrative: |
       When the test kit declares `account.unsupported_billing_probe` (a
       value the seller does NOT support at the capability level), the
@@ -198,11 +198,11 @@ phases:
 
     steps:
       - id: sync_accounts_unsupported_billing
-        title: "Submit a billing value the seller does not support"
+        title: 'Submit a billing value the seller does not support'
         task: sync_accounts
-        schema_ref: "account/sync-accounts-request.json"
-        response_schema_ref: "account/sync-accounts-response.json"
-        doc_ref: "/accounts/tasks/sync_accounts"
+        schema_ref: 'account/sync-accounts-request.json'
+        response_schema_ref: 'account/sync-accounts-response.json'
+        doc_ref: '/accounts/tasks/sync_accounts'
         # sync_accounts returns transport-level success with per-account
         # errors in accounts[].errors[] — this is the per-account-error
         # envelope, not a transport-layer failure. expect_error: true would
@@ -220,50 +220,50 @@ phases:
         sample_request:
           accounts:
             - brand:
-                domain: "acmeoutdoor.example"
-              operator: "pinnacle-agency.example"
-              billing: "$test_kit.account.unsupported_billing_probe"
-          idempotency_key: "$generate:uuid_v4#billing_gate_dispatch_capability_probe"
+                domain: 'acmeoutdoor.example'
+              operator: 'pinnacle-agency.example'
+              billing: '$test_kit.account.unsupported_billing_probe'
+          idempotency_key: '$generate:uuid_v4#billing_gate_dispatch_capability_probe'
           context:
-            correlation_id: "billing_gate_dispatch--capability_gate"
+            correlation_id: 'billing_gate_dispatch--capability_gate'
 
         validations:
           - check: response_schema
-            description: "Response matches sync-accounts-response.json schema even on per-account failure"
+            description: 'Response matches sync-accounts-response.json schema even on per-account failure'
           - check: field_value
-            path: "accounts[0].action"
-            value: "failed"
-            description: "Per-account action is failed"
+            path: 'accounts[0].action'
+            value: 'failed'
+            description: 'Per-account action is failed'
           - check: field_value
-            path: "accounts[0].status"
-            value: "rejected"
-            description: "Per-account status is rejected"
+            path: 'accounts[0].status'
+            value: 'rejected'
+            description: 'Per-account status is rejected'
           - check: field_value
-            value: "BILLING_NOT_SUPPORTED"
-            path: "accounts[0].errors[0].code"
-            description: "Per-account error code is BILLING_NOT_SUPPORTED"
+            value: 'BILLING_NOT_SUPPORTED'
+            path: 'accounts[0].errors[0].code'
+            description: 'Per-account error code is BILLING_NOT_SUPPORTED'
           - check: field_value
-            path: "accounts[0].errors[0].recovery"
-            value: "correctable"
-            description: "error.recovery is correctable per the enum metadata for BILLING_NOT_SUPPORTED"
+            path: 'accounts[0].errors[0].recovery'
+            value: 'correctable'
+            description: 'error.recovery is correctable per the enum metadata for BILLING_NOT_SUPPORTED'
           - check: field_value
-            path: "accounts[0].errors[0].details.scope"
-            value: "capability"
-            description: "error.details.scope identifies the capability gate"
+            path: 'accounts[0].errors[0].details.scope'
+            value: 'capability'
+            description: 'error.details.scope identifies the capability gate'
           - check: field_present
-            path: "accounts[0].errors[0].details.supported_billing"
+            path: 'accounts[0].errors[0].details.supported_billing'
             description: "error.details.supported_billing echoes the seller's capability"
           - check: field_value
-            path: "context.correlation_id"
-            value: "billing_gate_dispatch--capability_gate"
-            description: "Context correlation_id returned unchanged on error response"
+            path: 'context.correlation_id'
+            value: 'billing_gate_dispatch--capability_gate'
+            description: 'Context correlation_id returned unchanged on error response'
 
   - id: per_agent_gate_reject
-    title: "Per-agent gate — BILLING_NOT_PERMITTED_FOR_AGENT (reject)"
+    title: 'Per-agent gate — BILLING_NOT_PERMITTED_FOR_AGENT (reject)'
     optional: true
     requires_capability:
-      path: "account.supported_billing"
-      contains: "agent"
+      path: 'account.supported_billing'
+      contains: 'agent'
     skip_if: "test_kit.commercial_relationship != 'passthrough_only'"
     narrative: |
       The test kit declares the calling buyer agent is registered with
@@ -280,11 +280,11 @@ phases:
 
     steps:
       - id: sync_accounts_passthrough_rejects_agent
-        title: "Passthrough-only buyer agent submits billing: agent"
+        title: 'Passthrough-only buyer agent submits billing: agent'
         task: sync_accounts
-        schema_ref: "account/sync-accounts-request.json"
-        response_schema_ref: "account/sync-accounts-response.json"
-        doc_ref: "/accounts/tasks/sync_accounts"
+        schema_ref: 'account/sync-accounts-request.json'
+        response_schema_ref: 'account/sync-accounts-response.json'
+        doc_ref: '/accounts/tasks/sync_accounts'
         # sync_accounts returns transport-level success with per-account
         # errors in accounts[].errors[] — this is the per-account-error
         # envelope, not a transport-layer failure. expect_error: true would
@@ -306,72 +306,72 @@ phases:
         sample_request:
           accounts:
             - brand:
-                domain: "acmeoutdoor.example"
-              operator: "pinnacle-agency.example"
-              billing: "agent"
-          idempotency_key: "$generate:uuid_v4#billing_gate_dispatch_passthrough_retry"
+                domain: 'acmeoutdoor.example'
+              operator: 'pinnacle-agency.example'
+              billing: 'agent'
+          idempotency_key: '$generate:uuid_v4#billing_gate_dispatch_passthrough_retry'
           context:
-            correlation_id: "billing_gate_dispatch--per_agent_reject"
+            correlation_id: 'billing_gate_dispatch--per_agent_reject'
 
         context_outputs:
-          - path: "accounts[0].errors[0].details.suggested_billing"
-            key: "suggested_billing"
+          - path: 'accounts[0].errors[0].details.suggested_billing'
+            key: 'suggested_billing'
 
         validations:
           - check: response_schema
-            description: "Response matches sync-accounts-response.json schema even on per-account failure"
+            description: 'Response matches sync-accounts-response.json schema even on per-account failure'
           - check: field_value
-            path: "accounts[0].action"
-            value: "failed"
-            description: "Per-account action is failed"
+            path: 'accounts[0].action'
+            value: 'failed'
+            description: 'Per-account action is failed'
           - check: field_value
-            path: "accounts[0].status"
-            value: "rejected"
-            description: "Per-account status is rejected"
+            path: 'accounts[0].status'
+            value: 'rejected'
+            description: 'Per-account status is rejected'
           - check: field_value
-            value: "BILLING_NOT_PERMITTED_FOR_AGENT"
-            path: "accounts[0].errors[0].code"
-            description: "Per-account error code is BILLING_NOT_PERMITTED_FOR_AGENT"
+            value: 'BILLING_NOT_PERMITTED_FOR_AGENT'
+            path: 'accounts[0].errors[0].code'
+            description: 'Per-account error code is BILLING_NOT_PERMITTED_FOR_AGENT'
           - check: field_value
-            path: "accounts[0].errors[0].recovery"
-            value: "correctable"
-            description: "error.recovery is correctable per the enum metadata for BILLING_NOT_PERMITTED_FOR_AGENT"
+            path: 'accounts[0].errors[0].recovery'
+            value: 'correctable'
+            description: 'error.recovery is correctable per the enum metadata for BILLING_NOT_PERMITTED_FOR_AGENT'
           - check: field_value
-            path: "accounts[0].errors[0].details.rejected_billing"
-            value: "agent"
-            description: "error.details.rejected_billing echoes the submitted value"
+            path: 'accounts[0].errors[0].details.rejected_billing'
+            value: 'agent'
+            description: 'error.details.rejected_billing echoes the submitted value'
           - check: field_present
-            path: "accounts[0].errors[0].details.suggested_billing"
-            description: "error.details.suggested_billing names a value the agent can retry with (typically operator). Recovery is asserted by the per_agent_gate_recover phase succeeding under the suggested value."
+            path: 'accounts[0].errors[0].details.suggested_billing'
+            description: 'error.details.suggested_billing names a value the agent can retry with (typically operator). Recovery is asserted by the per_agent_gate_recover phase succeeding under the suggested value.'
           - check: field_absent
-            path: "accounts[0].errors[0].details.permitted_billing"
-            description: "Full permitted_billing subset MUST NOT be returned (commercial-state oracle)"
+            path: 'accounts[0].errors[0].details.permitted_billing'
+            description: 'Full permitted_billing subset MUST NOT be returned (commercial-state oracle)'
           - check: field_absent
-            path: "accounts[0].errors[0].details.rate_card"
-            description: "rate_card MUST NOT leak through error.details"
+            path: 'accounts[0].errors[0].details.rate_card'
+            description: 'rate_card MUST NOT leak through error.details'
           - check: field_absent
-            path: "accounts[0].errors[0].details.payment_terms"
-            description: "payment_terms MUST NOT leak through error.details"
+            path: 'accounts[0].errors[0].details.payment_terms'
+            description: 'payment_terms MUST NOT leak through error.details'
           - check: field_absent
-            path: "accounts[0].errors[0].details.credit_limit"
-            description: "credit_limit MUST NOT leak through error.details"
+            path: 'accounts[0].errors[0].details.credit_limit'
+            description: 'credit_limit MUST NOT leak through error.details'
           - check: field_absent
-            path: "accounts[0].errors[0].details.billing_entity"
-            description: "billing_entity MUST NOT leak through error.details"
+            path: 'accounts[0].errors[0].details.billing_entity'
+            description: 'billing_entity MUST NOT leak through error.details'
           - check: field_absent
-            path: "accounts[0].errors[0].details.account_id"
-            description: "Per-account state MUST NOT leak through error.details"
+            path: 'accounts[0].errors[0].details.account_id'
+            description: 'Per-account state MUST NOT leak through error.details'
           - check: field_value
-            path: "context.correlation_id"
-            value: "billing_gate_dispatch--per_agent_reject"
-            description: "Context correlation_id returned unchanged on error response"
+            path: 'context.correlation_id'
+            value: 'billing_gate_dispatch--per_agent_reject'
+            description: 'Context correlation_id returned unchanged on error response'
 
   - id: per_agent_gate_recover
-    title: "Per-agent gate — autonomous recovery via suggested_billing"
+    title: 'Per-agent gate — autonomous recovery via suggested_billing'
     optional: true
     requires_capability:
-      path: "account.supported_billing"
-      contains: "agent"
+      path: 'account.supported_billing'
+      contains: 'agent'
     skip_if: "test_kit.commercial_relationship != 'passthrough_only'"
     narrative: |
       The runner submits a new request with the `billing` value the
@@ -393,9 +393,9 @@ phases:
       - id: sync_accounts_recover_with_suggested
         title: "Retry with the seller's suggested_billing value"
         task: sync_accounts
-        schema_ref: "account/sync-accounts-request.json"
-        response_schema_ref: "account/sync-accounts-response.json"
-        doc_ref: "/accounts/tasks/sync_accounts"
+        schema_ref: 'account/sync-accounts-request.json'
+        response_schema_ref: 'account/sync-accounts-response.json'
+        doc_ref: '/accounts/tasks/sync_accounts'
         stateful: true
         expected: |
           Provision the account using `billing: $context.suggested_billing`.
@@ -408,33 +408,33 @@ phases:
         sample_request:
           accounts:
             - brand:
-                domain: "acmeoutdoor.example"
-              operator: "pinnacle-agency.example"
-              billing: "$context.suggested_billing"
+                domain: 'acmeoutdoor.example'
+              operator: 'pinnacle-agency.example'
+              billing: '$context.suggested_billing'
           # Fresh idempotency_key — the recover phase is a new request
           # carrying a different payload (different `billing` value), not
           # a replay. Reusing the reject phase's key would produce
           # IDEMPOTENCY_CONFLICT per error-handling.mdx (same key + different
           # payload within the replay window). Validated end-to-end against
           # the training-agent reference implementation in #3851.
-          idempotency_key: "$generate:uuid_v4#billing_gate_dispatch_passthrough_recover"
+          idempotency_key: '$generate:uuid_v4#billing_gate_dispatch_passthrough_recover'
           context:
-            correlation_id: "billing_gate_dispatch--per_agent_recover"
+            correlation_id: 'billing_gate_dispatch--per_agent_recover'
 
         validations:
           - check: response_schema
-            description: "Response matches sync-accounts-response.json schema"
+            description: 'Response matches sync-accounts-response.json schema'
           - check: field_present
-            path: "accounts[0].account_id"
-            description: "Account has a platform-assigned ID"
+            path: 'accounts[0].account_id'
+            description: 'Account has a platform-assigned ID'
           - check: field_value
-            path: "accounts[0].billing"
-            value: "$context.suggested_billing"
+            path: 'accounts[0].billing'
+            value: '$context.suggested_billing'
             description: "Account is provisioned with the seller's suggested_billing value"
           - check: field_value
-            path: "context.correlation_id"
-            value: "billing_gate_dispatch--per_agent_recover"
-            description: "Context correlation_id returned unchanged"
+            path: 'context.correlation_id'
+            value: 'billing_gate_dispatch--per_agent_recover'
+            description: 'Context correlation_id returned unchanged'
 
 # Follow-ups (out of scope for this storyboard, tracked separately):
 #
