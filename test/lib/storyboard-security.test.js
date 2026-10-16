@@ -5308,6 +5308,8 @@ describe('mcp_session_probe: routing headers are derived, not name-guessed (#294
       assert.strictEqual(step.skipped, true, JSON.stringify(step));
       assert.strictEqual(step.skip_reason, 'session_probe_ungradable');
       assert.match(step.skip.detail, /x-adcp-tenant/);
+      assert.match(step.skip.detail, /value containing a credential/);
+      assert.match(step.skip.detail, /Choose a routing value or suite credential/);
       assert.strictEqual(step.skip.detail.includes('sk_valid'), false);
       assert.strictEqual(agent.rpc().length, 0, 'no session request may carry the colliding routing value');
     } finally {

@@ -363,20 +363,61 @@ test('parallel routing collisions are graded as step errors without dispatching'
   assert.equal(requests.length, 0);
 });
 
-test('invalid Basic payloads do not invent passwords that collide with routing', async t => {
+for (const payload of [
+  `!!!${Buffer.from('routing:tenant').toString('base64')}!!!`,
+  Buffer.from('bad\u0000user:tenant').toString('base64'),
+  Buffer.from('bad\nuser:tenant').toString('base64'),
+]) {
+  test(`invalid Basic payload ${payload} does not invent a password that collides with routing`, async t => {
+    const { url, requests } = await startAgent(t);
+    const result = await runStoryboard(url, storyboard(), {
+      ...OPTIONS,
+      headers: {
+        'x-adcp-tenant': 'acme-tenant',
+        Authorization: `Basic ${payload}`,
+      },
+      transport: { trustedFetchFn: (...args) => fetch(...args) },
+    });
+    assert.equal(result.overall_passed, true, JSON.stringify(result.phases));
+    assert.ok(requests.length >= 3);
+    for (const request of requests) {
+      assert.equal(request.headers.authorization, 'Bearer kit-step-key');
+      assert.equal(request.headers['x-adcp-tenant'], 'acme-tenant');
+    }
+  });
+}
+
+for (const source of ['header', 'bearer']) {
+  test(`HTTP-normalized ${source} credentials cannot survive under an opaque header`, async t => {
+    const { url, requests } = await startAgent(t);
+    const result = await runStoryboard(url, storyboard(), {
+      ...OPTIONS,
+      auth: source === 'bearer' ? { type: 'bearer', token: '  normalized-suite-secret  ' } : undefined,
+      headers: {
+        'x-adcp-tenant': 'acme',
+        ...(source === 'header' ? { XAuthToken: '  normalized-suite-secret  ' } : {}),
+        'X-Gateway-Route': 'normalized-suite-secret',
+      },
+      transport: { trustedFetchFn: (...args) => fetch(...args) },
+    });
+    assert.equal(result.overall_passed, true, JSON.stringify(result.phases));
+    assert.ok(requests.length >= 3);
+    for (const request of requests) {
+      assert.equal(request.headers.authorization, 'Bearer kit-step-key');
+      assert.equal(request.headers['x-adcp-tenant'], 'acme');
+      assert.equal(request.headers['x-gateway-route'], undefined);
+    }
+  });
+}
+
+test('normalized credential collisions in routing headers fail closed', async t => {
   const { url, requests } = await startAgent(t);
   const result = await runStoryboard(url, storyboard(), {
     ...OPTIONS,
-    headers: {
-      'x-adcp-tenant': 'acme-tenant',
-      Authorization: `Basic !!!${Buffer.from('routing:tenant').toString('base64')}!!!`,
-    },
-    transport: { trustedFetchFn: (...args) => fetch(...args) },
+    auth: undefined,
+    headers: { XAuthToken: '  normalized-suite-secret  ', 'x-adcp-tenant': 'tenant-normalized-suite-secret' },
   });
-  assert.equal(result.overall_passed, true, JSON.stringify(result.phases));
-  assert.ok(requests.length >= 3);
-  for (const request of requests) {
-    assert.equal(request.headers.authorization, 'Bearer kit-step-key');
-    assert.equal(request.headers['x-adcp-tenant'], 'acme-tenant');
-  }
+  assert.equal(result.overall_passed, false);
+  assert.match(result.phases[0].steps[0].error ?? '', /x-adcp-tenant is a routing header/);
+  assert.equal(requests.length, 0);
 });
