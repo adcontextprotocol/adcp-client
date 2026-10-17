@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   resolveCreativeBuildProbe,
+  createTestClient,
   parseStoryboard,
   runStoryboard,
   runStoryboardStep,
@@ -147,10 +148,19 @@ phases:
         expect_error: true
         stateful: true
         sample_request:
-          target_capability_id: "$context.evaluator_build_capability_id"
           evaluator:
             agent_url: "https://off-list.example/adcp"
         context_inputs:
+          - key: evaluator_build_capability_id
+            inject_at: target_capability_id
+          - key: evaluator_build_target_format_id
+            inject_at: target_format_id
+          - key: evaluator_build_creative_id
+            inject_at: creative_id
+          - key: evaluator_build_transformer_id
+            inject_at: transformer_id
+          - key: evaluator_build_config
+            inject_at: config
           - key: evaluator_build_message
             inject_at: message
           - key: evaluator_build_creative_manifest
@@ -168,12 +178,21 @@ phases:
         expect_error: true
         stateful: true
         sample_request:
-          target_capability_id: "$context.evaluator_build_capability_id"
           evaluator:
             agent_url: "https://accepted.example/adcp"
             feature_agent:
               agent_url: "https://off-list.example/adcp"
         context_inputs:
+          - key: evaluator_build_capability_id
+            inject_at: target_capability_id
+          - key: evaluator_build_target_format_id
+            inject_at: target_format_id
+          - key: evaluator_build_creative_id
+            inject_at: creative_id
+          - key: evaluator_build_transformer_id
+            inject_at: transformer_id
+          - key: evaluator_build_config
+            inject_at: config
           - key: evaluator_build_message
             inject_at: message
           - key: evaluator_build_creative_manifest
@@ -188,13 +207,18 @@ function options(caps, calls, badForm, testKit) {
   return {
     _profile: { tools, raw_capabilities: { creative: caps } },
     agentTools: tools,
-    context: { evaluator_build_creative_manifest: { stale: true }, evaluator_build_config: { stale: true } },
+    context: {
+      evaluator_build_creative_manifest: { stale: true },
+      evaluator_build_config: { stale: true },
+      evaluator_build_target_format_id: { stale: true },
+    },
     test_kit: testKit,
     _client: {
       resetContext() {},
       async executeTask(task, input) {
         calls.push({ task, input });
         assert.equal(input.target_capability_id, 'build');
+        assert.equal(input.target_format_id, undefined);
         assert.notDeepEqual(input.creative_manifest, { stale: true });
         assert.equal(input.config, undefined);
         const form = input.evaluator.feature_agent ? 'nested' : 'direct';
@@ -301,7 +325,7 @@ test('manifest and recipe mode validation rejects malformed harness inputs befor
 test('input mode eligibility never suppresses a later satisfiable provisioned route', () => {
   for (const [input, flag] of [
     [{ creative_id: 'provisioned-library-id' }, 'has_creative_library'],
-    [{ transformer_id: 'provisioned-transformer', message: 'Render', config: {} }, 'supports_transformers'],
+    [{ transformer_id: 'provisioned-transformer', config: {} }, 'supports_transformers'],
   ]) {
     const kit = {
       creative_build_probes: [{ match: [{ path: '/capability_id', operator: 'equals', value: 'build' }], input }],
@@ -480,4 +504,203 @@ test('operator recipe budgets bound repeated aliases and bytes before recursive 
       /budget/
     );
   }
+});
+
+const legacyTarget = { agent_url: 'https://formats.example', id: 'provisioned_format' };
+test('selected 3.1 catalog/selector contract accepts explicit provisioned FormatID without inventing capability identity', () => {
+  for (const capability_id of [undefined, 'seller.route:with-dots']) {
+    const entry = { format: { format_kind: 'image', params: {} }, ...(capability_id && { capability_id }) };
+    const kit = { creative_build_probes: [{ ...recipe, input: { ...recipe.input, target_format_id: legacyTarget } }] };
+    const result = resolveCreativeBuildProbe(
+      { supports_transformation: true, supported_formats: [entry] },
+      spec,
+      kit,
+      '3.1.29'
+    );
+    assert.equal(result.status, 'resolved');
+    assert.deepEqual(result.formatId, legacyTarget);
+    assert.deepEqual(result.context.evaluator_build_target_format_id, legacyTarget);
+    assert.equal(result.context.evaluator_build_capability_id, undefined);
+    assert.equal(resolveCreativeBuildProbe(creative(entry), spec, undefined, '3.1.29').status, 'unsatisfied');
+  }
+});
+test('3.1 open-enum unknown route is preserved while later known provisioned route executes', () => {
+  const caps = {
+    supports_transformation: true,
+    supported_formats: [route('future', undefined, 'future_canonical'), route('known')],
+  };
+  const before = structuredClone(caps);
+  const kit = { creative_build_probes: [{ ...recipe, input: { ...recipe.input, target_format_id: legacyTarget } }] };
+  assert.equal(resolveCreativeBuildProbe(caps, spec, kit, '3.1.29').status, 'resolved');
+  assert.deepEqual(caps, before);
+  assert.equal(
+    resolveCreativeBuildProbe({ ...caps, supported_formats: [caps.supported_formats[0]] }, spec, kit, '3.1.29').status,
+    'unsatisfied'
+  );
+});
+for (const standalone of [false, true])
+  for (const badForm of [undefined, 'direct', 'nested']) {
+    test(`transformer-only provisioned recipe dispatches and grades independently: standalone=${standalone}, bad=${badForm}`, async () => {
+      const calls = [];
+      const opts = options(
+        { supports_evaluator: true, supports_transformers: true, supported_formats: [route('build')] },
+        calls,
+        badForm,
+        {
+          creative_build_probes: [
+            { ...recipe, input: { transformer_id: 'provisioned-transformer', config: { headline: 'Winter offer' } } },
+          ],
+        }
+      );
+      opts._client.executeTask = async (task, input) => {
+        calls.push({ task, input });
+        assert.equal(input.message, undefined);
+        assert.equal(input.creative_manifest, undefined);
+        assert.equal(input.transformer_id, 'provisioned-transformer');
+        assert.deepEqual(input.config, { headline: 'Winter offer' });
+        return {
+          success: false,
+          data: {
+            errors: [
+              {
+                code:
+                  (input.evaluator.feature_agent ? 'nested' : 'direct') === badForm
+                    ? 'INVALID_REQUEST'
+                    : 'EVALUATOR_AGENT_NOT_ACCEPTED',
+                message: 'Rejected',
+              },
+            ],
+          },
+        };
+      };
+      if (standalone) {
+        for (const [id, form] of [
+          ['reject_direct', 'direct'],
+          ['reject_nested', 'nested'],
+        ]) {
+          const result = await runStoryboardStep('https://agent.example/mcp', storyboard(), id, opts);
+          assert.equal(result.passed, badForm !== form);
+        }
+      } else {
+        const result = await runStoryboard('https://agent.example/mcp', storyboard(), opts);
+        assert.equal(result.overall_passed, !badForm);
+      }
+      assert.ok(calls.length > 0);
+    });
+  }
+for (const key of [
+  'x-api-key',
+  'x_api_key',
+  'signing_key',
+  'signingKey',
+  'secretKey',
+  'hmac_key',
+  'clientKey',
+  'jwksUri',
+]) {
+  test(`operator credential alias ${key} is rejected in objects and URL queries`, () => {
+    for (const config of [{ [key]: 'secret' }, { asset_url: `https://assets.example/x?${key}=secret` }]) {
+      assert.throws(
+        () =>
+          resolveCreativeBuildProbe({ supports_transformers: true, supported_formats: [route('build')] }, spec, {
+            creative_build_probes: [{ ...recipe, input: { transformer_id: 'provisioned-transformer', config } }],
+          }),
+        /credential/
+      );
+    }
+  });
+}
+
+test('legacy recipes honor explicit no-projection and named-format pairing declarations', () => {
+  const kit = { creative_build_probes: [{ ...recipe, input: { ...recipe.input, target_format_id: legacyTarget } }] };
+  const r = route('build');
+  const caps = { supports_transformation: true, supported_formats: [r] };
+  r.format.canonical_formats_only = true;
+  assert.equal(resolveCreativeBuildProbe(caps, spec, kit, '3.1.29').status, 'unsatisfied');
+  delete r.format.canonical_formats_only;
+  r.format.v1_format_ref = [{ ...legacyTarget, id: 'different_provisioned_format' }];
+  assert.equal(resolveCreativeBuildProbe(caps, spec, kit, '3.1.29').status, 'unsatisfied');
+  r.format.v1_format_ref = [{ ...legacyTarget, agent_url: 'https://FORMATS.example:443/' }];
+  assert.equal(resolveCreativeBuildProbe(caps, spec, kit, '3.1.29').status, 'resolved');
+});
+for (const standalone of [false, true])
+  test(`legacy full/standalone binding clears opposite selector: ${standalone}`, async () => {
+    const calls = [];
+    const opts = options(
+      { supports_evaluator: true, supports_transformation: true, supported_formats: [route('build')] },
+      calls,
+      undefined,
+      {
+        creative_build_probes: [{ ...recipe, input: { ...recipe.input, target_format_id: legacyTarget } }],
+      }
+    );
+    opts.adcpVersion = '3.1.29';
+    opts.context.evaluator_build_capability_id = 'stale-canonical-route';
+    opts._client.executeTask = async (task, input) => {
+      calls.push(input);
+      assert.equal(input.target_capability_id, undefined);
+      assert.deepEqual(input.target_format_id, legacyTarget);
+      return { success: false, data: { errors: [{ code: 'EVALUATOR_AGENT_NOT_ACCEPTED', message: 'Rejected' }] } };
+    };
+    opts._client = Object.assign(createTestClient('https://agent.example/mcp', 'mcp', opts), opts._client);
+    opts._client.buildCreativeLegacy = input => opts._client.executeTask('build_creative', input);
+    if (standalone) {
+      assert.equal(
+        (await runStoryboardStep('https://agent.example/mcp', storyboard(), 'reject_nested', opts)).passed,
+        true
+      );
+    } else {
+      const result = await runStoryboard('https://agent.example/mcp', storyboard(), opts);
+      assert.equal(result.overall_passed, true);
+      assert.deepEqual(result.fixture_resolutions[0].seller_ids, { format_id: legacyTarget });
+    }
+    assert.ok(calls.length > 0);
+  });
+
+test('3.1 unknown-kind tolerance does not suppress unrelated declared catalog errors', () => {
+  const caps = {
+    supports_transformation: true,
+    supported_formats: [{ capability_id: 123, format: { format_kind: 'future_kind', params: {} } }, route('build')],
+  };
+  const kit = { creative_build_probes: [{ ...recipe, input: { ...recipe.input, target_format_id: legacyTarget } }] };
+  assert.equal(resolveCreativeBuildProbe(caps, spec, kit, '3.1.29').status, 'failed');
+});
+
+test('legacy explicit pairing cannot equate two URLs rejected by the authoritative canonicalizer', () => {
+  const id = { ...legacyTarget, agent_url: 'ftp://formats.example' };
+  const r = route('build');
+  r.format.v1_format_ref = [id];
+  assert.equal(
+    resolveCreativeBuildProbe(
+      { supports_transformation: true, supported_formats: [r] },
+      spec,
+      { creative_build_probes: [{ ...recipe, input: { ...recipe.input, target_format_id: id } }] },
+      '3.1.29'
+    ).status,
+    'unsatisfied'
+  );
+});
+
+test('3.1 undeclared extension fields do not acquire newer producer requirements', () => {
+  const r = route('legacy.route:id', ['preview']);
+  r.format.technical_requirements_complete = 'extension-value';
+  const kit = { creative_build_probes: [{ ...recipe, input: { ...recipe.input, target_format_id: legacyTarget } }] };
+  assert.equal(
+    resolveCreativeBuildProbe({ supports_transformation: true, supported_formats: [r] }, spec, kit, '3.1.29').status,
+    'resolved'
+  );
+});
+test('3.2 permits an explicitly provisioned legacy selector without requiring a new catalog ID', () => {
+  const r = route(undefined, ['build']);
+  delete r.capability_id;
+  const kit = { creative_build_probes: [{ ...recipe, input: { ...recipe.input, target_format_id: legacyTarget } }] };
+  const result = resolveCreativeBuildProbe(
+    { supports_transformation: true, supported_formats: [r] },
+    spec,
+    kit,
+    '3.2.5'
+  );
+  assert.equal(result.status, 'resolved');
+  assert.equal(result.context.evaluator_build_capability_id, undefined);
+  assert.deepEqual(result.context.evaluator_build_target_format_id, legacyTarget);
 });

@@ -474,6 +474,7 @@ export interface FixtureResolutionRecord {
     product_id?: string;
     pricing_option_id?: string;
     capability_id?: string;
+    format_id?: Record<string, unknown>;
   };
 }
 

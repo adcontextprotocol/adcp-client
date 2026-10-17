@@ -15,7 +15,7 @@ these account/task prerequisites. The resolver does not issue a hidden build.
 Match clauses use the existing fixture-resolution DSL against the catalog entry.
 The operator asserts that the input is valid for **every** matched route for this
 account. Input can contain message, creative_manifest, creative_id, transformer_id,
-and config; it cannot replace evaluator, account, auth or trust material. Use a
+config and legacy target_format_id; it cannot replace evaluator, account, auth or trust material. Use a
 specific capability-ID predicate when a kind-only predicate is insufficient.
 Full manifest schema validation runs before dispatch. Config requires a transformer;
 provision its live parameter values and an appropriate output route. Library IDs,
@@ -26,11 +26,11 @@ supports_generation, technical_requirements_complete, a known non-custom kind,
 empty params, and no unhandled declaration metadata (descriptive identity/preference/channel metadata is inert).
 It supplies the brief and `{format_kind: selectedKind, assets: {}}`. Otherwise a
 matched recipe is required; omitted catalog operations still mean build and
-missing legacy IDs remain discoverable but unaddressable. Non-build entries and
+missing catalog IDs remain discoverable but unaddressable through capability-ID routing. Non-build entries and
 unsatisfiable routes do not prevent selecting a later satisfiable route.
 
 Resolved records use fixture_type `creative_format`, the prefix as handle, exact
-matched requirements, and seller_ids.capability_id. Unsatisfied whole runs have a
+matched requirements, and seller_ids.capability_id or seller_ids.format_id. Unsatisfied whole runs have a
 fixture_unsatisfied coverage gap and zero executed security validations; standalone
 steps use skip_reason fixture_unsatisfied and canonical not_applicable, with detail
 naming creative_format:<prefix>. This does not establish producer nonconformance
@@ -43,7 +43,7 @@ The protocol-side harness contract and consuming fixture are tracked in
 
 ## Payload-bound authorization limitation
 
- Current probe preparation requires a sandbox build fixture that does not need
+Current probe preparation requires a sandbox build fixture that does not need
 a per-request signed governance_context. The runner detects an advertised
 build_creative signed_context enforcement claim and reports fixture_unsatisfied
 with zero security credit; static recipes cannot pre-sign the fresh request.
@@ -64,3 +64,33 @@ string/key bytes, and the existing JSON depth bound per recipe. Repeated aliases
 count on every visit, before match normalization. These are harness configuration
 limits, not producer catalog requirements. Missing required selected-version
 validators yield a zero-credit harness gap; they never authorize a dispatch.
+
+
+## Selected-version routing
+
+Read the selected capabilities schema's format reference and selected build request
+selector. A 3.2 recipe normally binds the advertised capability ID; a provisioned legacy selector remains supported when the selected request declares it. A 3.1 recipe must supply
+an existing schema-valid `target_format_id` and assert that its discovered or
+provisioned named format maps to every matched catalog route. The resolver never
+constructs a named format from a capability ID. Missing legacy capability IDs are
+legal. Without a provisioned legacy selector there is a coverage gap; an unknown
+extra `target_capability_id` is not a valid 3.1 routing contract. Automatic generation
+is restricted to capability-ID routing. Unknown 3.1 canonical kinds remain intact
+as unsupported routes while resolution continues to understood routes. Older
+catalogs do not acquire 3.2 ID-pattern or operations-field producer requirements.
+
+Transformer-only recipes need no dummy brief/source manifest. Provision valid live
+configuration and matching transformer output_capability_ids (3.2) or
+output_format_ids (legacy). Recipe messages are trusted operator-authored input and
+remain exactly as supplied; banning a brief would not prevent a dishonest fixture
+author from biasing other input content. Credential-key and URL checks reject known
+aliases but cannot prove opaque values or custom encodings secret-free. Operators
+must provision non-secret fixture content. A malformed recipe throws an authoring
+error after the runner closes any receiver/connections it owns.
+
+
+An explicit legacy selector recipe is also supported on newer versions that retain
+`target_format_id`; bind exactly one selector. Recipes cannot override
+`canonical_formats_only: true` or contradict an advertised `v1_format_ref` pairing.
+Reference agent URLs use existing canonicalization, and declared dimensions/duration
+must agree. Incompatible pairs are unavailable; continue to another usable route.

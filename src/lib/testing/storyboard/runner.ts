@@ -3691,6 +3691,7 @@ async function executeStoryboardPass(
   // `failed_count`/`skipped_count` by N when a single fixture broke.
   let seedingPhaseResult: StoryboardPhaseResult | null = null;
   let seedingFailed = false;
+  let creativeBuildCatalogFailed = false;
   let seedingMissingController = false;
   let seedingUnsupported = false;
   let fixtureUnsatisfied = false;
@@ -3698,20 +3699,31 @@ async function executeStoryboardPass(
   let fixtureResolutionRecords: FixtureResolutionRecord[] | undefined;
   let fixtureCoverageGap: FixtureResolutionCoverageGap | undefined;
   if (storyboard.creative_build_probe && !skipControllerSeedingForPhaseGates) {
-    const resolution =
-      routingContext || isMultiInstance
-        ? {
-            status: 'unsatisfied' as const,
-            detail: `fixture_unsatisfied: creative_format:${storyboard.creative_build_probe.context_prefix}: resolve an independent fixture for each routed or replicated agent in a single-agent run`,
-          }
-        : resolveCreativeBuildProbe(
-            (profile?.raw_capabilities as Record<string, unknown> | undefined)?.creative,
-            storyboard.creative_build_probe,
-            options.test_kit,
-            options.adcpVersion,
-            (profile?.raw_capabilities as { adcp?: { governance_enforcement?: unknown } } | undefined)?.adcp
-              ?.governance_enforcement
-          );
+    let resolution: ReturnType<typeof resolveCreativeBuildProbe>;
+    try {
+      resolution =
+        routingContext || isMultiInstance
+          ? {
+              status: 'unsatisfied',
+              detail: `fixture_unsatisfied: creative_format:${storyboard.creative_build_probe.context_prefix}: resolve an independent fixture for each routed or replicated agent in a single-agent run`,
+            }
+          : resolveCreativeBuildProbe(
+              (profile?.raw_capabilities as Record<string, unknown> | undefined)?.creative,
+              storyboard.creative_build_probe,
+              options.test_kit,
+              options.adcpVersion,
+              (profile?.raw_capabilities as { adcp?: { governance_enforcement?: unknown } } | undefined)?.adcp
+                ?.governance_enforcement
+            );
+    } catch (error) {
+      // Operator fixture errors remain authoring errors, but must release the
+      // adapters already created for this run before propagating to the caller.
+      await Promise.allSettled([
+        ...(webhookReceiver ? [webhookReceiver.close()] : []),
+        ...(!callerOwnsClients ? [closeScopedConnections(options.protocol)] : []),
+      ]);
+      throw error;
+    }
     const handle = storyboard.creative_build_probe.context_prefix;
     fixtureResolutionRecords = [
       {
@@ -3719,7 +3731,14 @@ async function executeStoryboardPass(
         handle,
         requirements: resolution.status === 'resolved' ? resolution.requirements : [],
         status: resolution.status,
-        ...(resolution.status === 'resolved' ? { seller_ids: { capability_id: resolution.capabilityId } } : {}),
+        ...(resolution.status === 'resolved'
+          ? {
+              seller_ids:
+                resolution.capabilityId !== undefined
+                  ? { capability_id: resolution.capabilityId }
+                  : { format_id: resolution.formatId },
+            }
+          : {}),
         strategy: 'discover',
         strategies_attempted: [
           {
@@ -3742,6 +3761,7 @@ async function executeStoryboardPass(
     }
     if (resolution.status === 'failed') {
       seedingFailed = true;
+      creativeBuildCatalogFailed = true;
       failedCount += 1;
       seedingPhaseResult = {
         phase_id: 'fixture_resolution',
@@ -3771,7 +3791,15 @@ async function executeStoryboardPass(
         ],
       };
     } else if (resolution.status === 'resolved') {
-      for (const key of ['capability_id', 'message', 'creative_manifest', 'creative_id', 'transformer_id', 'config']) {
+      for (const key of [
+        'capability_id',
+        'target_format_id',
+        'message',
+        'creative_manifest',
+        'creative_id',
+        'transformer_id',
+        'config',
+      ]) {
         delete context[`${handle}_${key}`];
       }
       Object.assign(context, resolution.context);
@@ -4253,15 +4281,23 @@ async function executeStoryboardPass(
               skip_reason: 'fixture_seed_unsupported',
               skip: { reason: 'not_applicable', detail: FIXTURE_SEED_UNSUPPORTED_DETAIL },
             }
-          : seedingFailed
+          : creativeBuildCatalogFailed
             ? {
-                skip_reason: 'controller_seeding_failed',
-                skip: { reason: 'prerequisite_failed', detail: CONTROLLER_SEEDING_FAILED_DETAIL },
+                skip_reason: 'prerequisite_failed',
+                skip: {
+                  reason: 'prerequisite_failed',
+                  detail: 'Creative build catalog validation failed in fixture_resolution.creative_build_catalog.',
+                },
               }
-            : {
-                skip_reason: 'controller_seeding_failed',
-                skip: { reason: 'prerequisite_failed', detail: CONTROLLER_SEEDING_FAILED_DETAIL },
-              };
+            : seedingFailed
+              ? {
+                  skip_reason: 'controller_seeding_failed',
+                  skip: { reason: 'prerequisite_failed', detail: CONTROLLER_SEEDING_FAILED_DETAIL },
+                }
+              : {
+                  skip_reason: 'controller_seeding_failed',
+                  skip: { reason: 'prerequisite_failed', detail: CONTROLLER_SEEDING_FAILED_DETAIL },
+                };
       const cascadeSteps: StoryboardStepResult[] = phase.steps.map(step => ({
         storyboard_id: storyboard.id,
         step_id: step.id,
@@ -5672,14 +5708,24 @@ async function runStoryboardStepBody(
   }
 
   if (storyboard.creative_build_probe) {
-    const resolution = resolveCreativeBuildProbe(
-      (profile?.raw_capabilities as Record<string, unknown> | undefined)?.creative,
-      storyboard.creative_build_probe,
-      options.test_kit,
-      options.adcpVersion,
-      (profile?.raw_capabilities as { adcp?: { governance_enforcement?: unknown } } | undefined)?.adcp
-        ?.governance_enforcement
-    );
+    let resolution: ReturnType<typeof resolveCreativeBuildProbe>;
+    try {
+      resolution = resolveCreativeBuildProbe(
+        (profile?.raw_capabilities as Record<string, unknown> | undefined)?.creative,
+        storyboard.creative_build_probe,
+        options.test_kit,
+        options.adcpVersion,
+        (profile?.raw_capabilities as { adcp?: { governance_enforcement?: unknown } } | undefined)?.adcp
+          ?.governance_enforcement
+      );
+    } catch (error) {
+      // No receiver has been created here. In particular the caller's injected
+      // receiver remains caller-owned even when fixture authoring fails.
+      if (!clientResolution.reusedShared) {
+        await Promise.allSettled([closeScopedConnections(options.protocol)]);
+      }
+      throw error;
+    }
     if (resolution.status === 'failed') {
       if (!clientResolution.reusedShared) await closeScopedConnections(options.protocol);
       return {
@@ -5722,7 +5768,15 @@ async function runStoryboardStepBody(
         contributions: Array.from(options.contributions ?? []),
       };
     }
-    for (const key of ['capability_id', 'message', 'creative_manifest', 'creative_id', 'transformer_id', 'config']) {
+    for (const key of [
+      'capability_id',
+      'target_format_id',
+      'message',
+      'creative_manifest',
+      'creative_id',
+      'transformer_id',
+      'config',
+    ]) {
       delete context[`${storyboard.creative_build_probe.context_prefix}_${key}`];
     }
     Object.assign(context, resolution.context);
